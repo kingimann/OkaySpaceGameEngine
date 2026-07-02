@@ -17,10 +17,13 @@
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/StructureBuilder.hpp"
+#include "okay/Components/BuilderMode.hpp"
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
+#include "okay/Components/CraftingStation.hpp"
+#include "okay/Components/ChestInventory.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -77,6 +80,27 @@
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/TerrainDigger.hpp"
+#include "okay/Components/WorldStreamer.hpp"
+#include "okay/Components/Destructible.hpp"
+#include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Components/VoxelDigger.hpp"
+#include "okay/Components/Water.hpp"
+#include "okay/Components/Flashlight.hpp"
+#include "okay/Components/FirstPersonHand.hpp"
+#include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkPlayerSpawner.hpp"
+#include "okay/Components/SkinnedMesh.hpp"
+#include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/Joint3D.hpp"
+#include "okay/Components/Joint2D.hpp"
+#include "okay/Components/AimIK.hpp"
+#include "okay/Components/LookAtIK.hpp"
+#include "okay/Components/FootIK.hpp"
+#include "okay/Components/LimbIK.hpp"
+#include "okay/Components/ChainIK.hpp"
+#include "okay/Components/RootMotion.hpp"
+#include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
@@ -91,6 +115,7 @@
 
 #include <cctype>
 #include <functional>
+#include "okay/Core/DataPack.hpp"   // transparent unpack of obfuscated game data
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -151,6 +176,30 @@ int IndexOf(const Scene& scene, const GameObject* go) {
     return -1;
 }
 
+// A Character's "Rig" (the separated part objects) is a GENERATED view of the
+// Character — like Terrain's mesh — so it isn't serialized. It's rebuilt from the
+// Character on load (BuildParts), which keeps part colours correct and avoids both
+// file bloat and duplicate rigs. True for the "Rig" node and everything under it.
+static bool IsGeneratedRig(GameObject* go) {
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent()) {
+        GameObject* g = t->gameObject;
+        if (g && g->name == "Rig") {
+            Transform* par = t->Parent();
+            if (par && par->gameObject && par->gameObject->GetComponent<Character>()) return true;
+        }
+    }
+    return false;
+}
+
+// The first-person arm VIEWMODEL is spawned at runtime by FirstPersonHand (a "FP_Arm"
+// child of the camera). Like the rig, it's regenerated each run, so it must not be
+// written to the scene file — otherwise it would reload as a stale duplicate.
+static bool IsGeneratedViewmodel(GameObject* go) {
+    if (!go || go->name != "FP_Arm" || !go->transform) return false;
+    Transform* par = go->transform->Parent();
+    return par && par->gameObject && par->gameObject->GetComponent<FirstPersonHand>();
+}
+
 // Write a GameObject's Transform + all known components (no header/parent line).
 void WriteComponents(std::ostream& out, GameObject* go) {
     Transform* t = go->transform;
@@ -168,7 +217,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << sr->uvMin.x << " " << sr->uvMin.y
             << " " << sr->uvMax.x << " " << sr->uvMax.y
             << " " << sr->sortOrder
-            << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0) << "\n";
+            << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0)
+            << " " << sr->sortingLayer << "\n";   // trailing (back-compatible)
     }
     if (auto* cam = go->GetComponent<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -196,7 +246,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // .OBJ path is hand-edited, so its vertices/triangles can't be regenerated
         // from a name — write them verbatim. This record follows the `mesh` line
         // and overwrites the placeholder geometry on load.
-        if (mr->mesh.name.empty() && mr->meshPath.empty() && !mr->mesh.vertices.empty()) {
+        // (Skip when a SkinnedMesh owns this renderer — it serializes the BIND mesh via
+        // `skinmesh` below and rebuilds the deformed mesh at runtime; storing the live
+        // deformed pose here would be wrong and redundant.)
+        if (mr->mesh.name.empty() && mr->meshPath.empty() && !mr->mesh.vertices.empty()
+            && !go->GetComponent<SkinnedMesh>()) {
             out << "  meshgeo " << mr->mesh.vertices.size();
             for (const Vec3& v : mr->mesh.vertices)
                 out << " " << v.x << " " << v.y << " " << v.z;
@@ -210,6 +264,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
             << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
             << mr->tiling.x << " " << mr->tiling.y << "\n";
+        // Texture filter + offset (separate record; written when non-default).
+        if (mr->texFilter != MeshRenderer::TexFilter::Smooth ||
+            mr->texOffset.x != 0.0f || mr->texOffset.y != 0.0f)
+            out << "  texopts " << (int)mr->texFilter << " "
+                << mr->texOffset.x << " " << mr->texOffset.y << "\n";
         // Normal map (separate record so older scenes still load).
         if (!mr->normalMap.empty())
             out << "  normalmap " << Quote(mr->normalMap) << " " << mr->normalStrength << "\n";
@@ -220,9 +279,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Specular/gloss map (separate record so older scenes still load).
         if (!mr->specularMap.empty())
             out << "  specmap " << Quote(mr->specularMap) << "\n";
+        // Ambient-occlusion map + strength (separate record so older scenes still load).
+        if (!mr->aoMap.empty())
+            out << "  aomap " << Quote(mr->aoMap) << " " << mr->aoStrength << "\n";
         // Shading model (separate record so older scenes still load).
         if (mr->shader != MeshRenderer::Shader::Standard)
-            out << "  shader " << (int)mr->shader << " " << mr->toonBands << "\n";
+            out << "  shader " << (int)mr->shader << " " << mr->toonBands
+                << " " << mr->gradientTop.r << " " << mr->gradientTop.g << " " << mr->gradientTop.b
+                << " " << mr->gradientBottom.r << " " << mr->gradientBottom.g << " " << mr->gradientBottom.b << "\n";
         // Per-material rim (Fresnel) backlight (separate record).
         if (mr->rimStrength > 0.0f)
             out << "  rim " << mr->rimStrength << " " << mr->rimPower << " "
@@ -235,6 +299,57 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (mr->uvScroll.x != 0.0f || mr->uvScroll.y != 0.0f || mr->triplanar)
             out << "  uvanim " << mr->uvScroll.x << " " << mr->uvScroll.y << " "
                 << (mr->triplanar ? 1 : 0) << "\n";
+        // Ground contact shadow (separate record; written when it differs from default).
+        if (!mr->groundShadow || mr->groundShadowY != 0.0f || mr->groundShadowStrength != 0.5f)
+            out << "  groundshadow " << (mr->groundShadow ? 1 : 0) << " "
+                << mr->groundShadowY << " " << mr->groundShadowStrength << "\n";
+    }
+    // Skinned mesh: the bind-pose geometry + per-vertex bone weights + joint names +
+    // inverse-bind matrices, so an imported rigged character survives save/reload
+    // (the joints are re-resolved by name and the mesh re-skins at runtime).
+    if (auto* sm = go->GetComponent<SkinnedMesh>()) {
+        const Mesh& bm = sm->bind;
+        out << "  skinmesh " << bm.vertices.size();
+        for (const Vec3& v : bm.vertices) out << " " << v.x << " " << v.y << " " << v.z;
+        out << " " << bm.normals.size();
+        for (const Vec3& n : bm.normals) out << " " << n.x << " " << n.y << " " << n.z;
+        out << " " << bm.uvs.size();
+        for (const Vec2& u : bm.uvs) out << " " << u.x << " " << u.y;
+        out << " " << bm.triangles.size();
+        for (int t : bm.triangles) out << " " << t;
+        out << " " << sm->jointIdx.size();
+        for (std::size_t i = 0; i < sm->jointIdx.size(); ++i) {
+            const auto& ji = sm->jointIdx[i]; const auto& jw = sm->jointWt[i];
+            out << " " << ji[0] << " " << ji[1] << " " << ji[2] << " " << ji[3]
+                << " " << jw[0] << " " << jw[1] << " " << jw[2] << " " << jw[3];
+        }
+        out << " " << sm->jointNames.size();
+        for (const std::string& nm : sm->jointNames) out << " " << Quote(nm);
+        out << " " << sm->inverseBind.size();
+        for (const Mat4& M : sm->inverseBind) for (int e = 0; e < 16; ++e) out << " " << M.m[e];
+        out << "\n";
+    }
+    // Model animation library: every imported clip (idle/walk/run) as per-node tracks,
+    // so a saved model keeps all its animations and the picker still works on reload.
+    if (auto* ma = go->GetComponent<ModelAnimator>()) {
+        out << "  modelanim " << ma->active << " " << (ma->autoPlay ? 1 : 0)
+            << " " << ma->speed << " " << (ma->loop ? 1 : 0) << " " << ma->clips.size();
+        for (const auto& clip : ma->clips) {
+            out << " " << Quote(clip.name) << " " << clip.nodes.size();
+            for (const auto& nc : clip.nodes) {
+                out << " " << Quote(nc.node) << " " << nc.clip.Tracks().size();
+                for (const auto& tr : nc.clip.Tracks()) {
+                    out << " " << Quote(tr.first) << " " << tr.second.Keys().size();
+                    for (const auto& key : tr.second.Keys()) out << " " << key.time << " " << key.value;
+                }
+            }
+        }
+        out << "\n";
+        // Locomotion (auto idle/walk/run) — separate record so it's optional.
+        if (ma->driveByMovement || !ma->idleClip.empty() || !ma->walkClip.empty() || !ma->runClip.empty())
+            out << "  modelanimdrive " << (ma->driveByMovement ? 1 : 0)
+                << " " << ma->walkThreshold << " " << ma->runThreshold
+                << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip) << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -247,7 +362,90 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wcol(tr->waterColor); wcol(tr->sandColor); wcol(tr->grassColor);
         wcol(tr->rockColor); wcol(tr->snowColor);
         out << " " << tr->waterLevel << " " << tr->snowLevel << " " << tr->rockSlope;
+        // Texturing (appended; quote-guarded on read so older scenes still load).
+        out << " " << Quote(tr->texture) << " " << tr->textureTiling << " " << (tr->triplanarTex ? 1 : 0)
+            << " " << Quote(tr->normalMap) << " " << tr->normalStrength;
         out << "\n";
+    }
+    if (auto* td = go->GetComponent<TerrainDigger>()) {
+        out << "  terraindigger " << (int)td->mode << " " << td->button
+            << " " << (int)(unsigned char)td->key << " " << td->radius << " " << td->strength
+            << " " << td->range << " " << td->relax
+            << " " << td->hardness << " " << (td->showBrush ? 1 : 0)
+            << " " << td->brushColor.r << " " << td->brushColor.g
+            << " " << td->brushColor.b << " " << td->brushColor.a
+            << " " << td->raiseButton << "\n";
+    }
+    if (auto* v = go->GetComponent<VoxelTerrain>()) {
+        out << "  voxelterrain " << v->nx << " " << v->ny << " " << v->nz
+            << " " << v->voxelSize << " " << v->iso << " " << (v->autoColor ? 1 : 0)
+            << " " << v->snowLevel << " " << v->rockSlope
+            << " " << v->color.r << " " << v->color.g << " " << v->color.b << " " << v->color.a
+            << " " << v->grassColor.r << " " << v->grassColor.g << " " << v->grassColor.b
+            << " " << v->rockColor.r << " " << v->rockColor.g << " " << v->rockColor.b
+            << " " << v->soilColor.r << " " << v->soilColor.g << " " << v->soilColor.b
+            << " " << v->snowColor.r << " " << v->snowColor.g << " " << v->snowColor.b
+            << " " << v->textureTiling << " " << Quote(v->texture)
+            << " " << v->EncodeDensity() << "\n";
+    }
+    if (auto* vd = go->GetComponent<VoxelDigger>()) {
+        out << "  voxeldigger " << (int)vd->mode << " " << vd->button
+            << " " << (int)(unsigned char)vd->key << " " << vd->radius << " " << vd->strength
+            << " " << vd->range << " " << (vd->showBrush ? 1 : 0)
+            << " " << vd->brushColor.r << " " << vd->brushColor.g
+            << " " << vd->brushColor.b << " " << vd->brushColor.a
+            << " " << vd->addButton << "\n";
+    }
+    if (auto* pm = go->GetComponent<PauseMenu>()) {
+        out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
+            << " " << (pm->showResume ? 1 : 0) << " " << (pm->showQuit ? 1 : 0)
+            << " " << pm->dimColor.r << " " << pm->dimColor.g << " " << pm->dimColor.b << " " << pm->dimColor.a
+            << " " << pm->panelColor.r << " " << pm->panelColor.g << " " << pm->panelColor.b << " " << pm->panelColor.a
+            << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene) << "\n";
+    }
+    if (auto* fl = go->GetComponent<Flashlight>()) {
+        out << "  flashlight " << (int)(unsigned char)fl->toggleKey << " " << (fl->on ? 1 : 0)
+            << " " << fl->range << " " << fl->angle << " " << fl->intensity
+            << " " << fl->color.r << " " << fl->color.g << " " << fl->color.b << "\n";
+    }
+    if (auto* fh = go->GetComponent<FirstPersonHand>()) {
+        out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
+            << " " << (fh->showLeftArm ? 1 : 0)
+            << " " << (fh->followPitch ? 1 : 0) << " " << (fh->bobbing ? 1 : 0)
+            << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow << "\n";
+    }
+    if (auto* ps = go->GetComponent<NetworkPlayerSpawner>()) {
+        out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
+            << " " << ps->spawnPoint.x << " " << ps->spawnPoint.y << " " << ps->spawnPoint.z
+            << " " << ps->spawnSpread << " " << (ps->spawnLocalPlayer ? 1 : 0)
+            << " " << (int)(unsigned char)ps->glyph << "\n";
+    }
+    if (auto* ns = go->GetComponent<NetworkSync>()) {
+        out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
+            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId) << "\n";
+    }
+    if (auto* w = go->GetComponent<Water>()) {
+        out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
+            << " " << w->waveLength << " " << w->waveSpeed
+            << " " << w->color.r << " " << w->color.g << " " << w->color.b
+            << " " << w->opacity << " " << w->reflectivity << " " << w->specular
+            << " " << w->shininess << " " << w->flow.x << " " << w->flow.y
+            << " " << Quote(w->texture) << "\n";
+    }
+    if (auto* ws = go->GetComponent<WorldStreamer>()) {
+        out << "  worldstreamer " << ws->cellSize << " " << ws->loadRadius
+            << " " << ws->unloadRadius << " " << (ws->onlyOnCellChange ? 1 : 0)
+            << " " << Quote(ws->folder) << " " << Quote(ws->prefix)
+            << " " << Quote(ws->ext) << " " << Quote(ws->target) << "\n";
+    }
+    if (auto* de = go->GetComponent<Destructible>()) {
+        out << "  destructible " << Quote(de->blockTag) << " " << de->voxelSize
+            << " " << de->fractureChunks << " " << de->debrisLifetime
+            << " " << de->explosionForce << " " << de->upwardBias
+            << " " << de->debrisGravityScale << " " << de->debrisDrag
+            << " " << (de->collapseEnabled ? 1 : 0) << " " << de->anchorY
+            << " " << de->maxDebris << " " << de->breakButton
+            << " " << de->breakRadius << " " << de->reach << "\n";
     }
     if (auto* ch = go->GetComponent<Character>()) out << "  character " << ch->ToText() << "\n";
     if (auto* li = go->GetComponent<Light>()) {
@@ -259,7 +457,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
-            << rb->mass << " " << rb->drag << " " << rb->bounciness << "\n";
+            << rb->mass << " " << rb->drag << " " << rb->bounciness
+            << " " << rb->friction                                    // trailing (back-compatible)
+            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0) << "\n";
     }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -276,13 +476,105 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (int)cap->direction << " " << cap->offset.x << " " << cap->offset.y << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
+    if (auto* ec = go->GetComponent<EdgeCollider2D>()) {
+        out << "  edgecollider2d " << ec->offset.x << " " << ec->offset.y << " "
+            << (ec->isTrigger ? 1 : 0) << " " << ec->layer << " "
+            << (ec->oneWay ? 1 : 0) << " " << ec->oneWayNormal.x << " " << ec->oneWayNormal.y
+            << " " << ec->points.size();
+        for (const Vec2& p : ec->points) out << " " << p.x << " " << p.y;
+        out << "\n";
+    }
+    if (auto* pc = go->GetComponent<PolygonCollider2D>()) {
+        out << "  polygoncollider2d " << pc->offset.x << " " << pc->offset.y << " "
+            << (pc->isTrigger ? 1 : 0) << " " << pc->layer
+            << " " << pc->points.size();
+        for (const Vec2& p : pc->points) out << " " << p.x << " " << p.y;
+        out << "\n";
+    }
     if (auto* rb = go->GetComponent<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
             << (rb->freezeX ? 1 : 0) << " " << (rb->freezeY ? 1 : 0) << " "
-            << (rb->freezeZ ? 1 : 0) << "\n";
+            << (rb->freezeZ ? 1 : 0)
+            << " " << rb->maxFallSpeed
+            << " " << rb->friction                                    // trailing (back-compatible)
+            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0) << "\n";
     }
-    if (auto* bc = go->GetComponent<BoxCollider3D>()) {
+    if (auto* j = go->GetComponent<Joint3D>()) {
+        out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
+            << " " << j->anchor.x << " " << j->anchor.y << " " << j->anchor.z
+            << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
+            << " " << j->spring << " " << j->damper
+            << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
+            << " " << j->axis.x << " " << j->axis.y << " " << j->axis.z     // hinge (trailing)
+            << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque << "\n";
+    }
+    if (auto* j = go->GetComponent<Joint2D>()) {
+        out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)
+            << " " << j->anchor.x << " " << j->anchor.y
+            << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
+            << " " << j->spring << " " << j->damper
+            << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
+            << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque   // hinge (trailing)
+            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle << "\n";
+    }
+    if (auto* a = go->GetComponent<AimIK>()) {
+        out << "  aimik " << Quote(a->boneName) << " " << Quote(a->targetName)
+            << " " << a->aimAxis.x << " " << a->aimAxis.y << " " << a->aimAxis.z
+            << " " << a->upAxis.x << " " << a->upAxis.y << " " << a->upAxis.z
+            << " " << a->weight << " " << a->maxAngle
+            << " " << a->target.x << " " << a->target.y << " " << a->target.z << "\n";
+    }
+    if (auto* l = go->GetComponent<LookAtIK>()) {
+        out << "  lookatik " << Quote(l->targetName)
+            << " " << l->forwardAxis.x << " " << l->forwardAxis.y << " " << l->forwardAxis.z
+            << " " << l->weight << " " << l->maxAngle
+            << " " << l->target.x << " " << l->target.y << " " << l->target.z
+            << " " << l->chainNames.size();
+        for (const std::string& n : l->chainNames) out << " " << Quote(n);
+        out << "\n";
+    }
+    if (auto* f = go->GetComponent<FootIK>()) {
+        out << "  footik " << Quote(f->leftHipName) << " " << Quote(f->leftKneeName) << " " << Quote(f->leftFootName)
+            << " " << Quote(f->rightHipName) << " " << Quote(f->rightKneeName) << " " << Quote(f->rightFootName)
+            << " " << Quote(f->pelvisName)
+            << " " << f->weight << " " << f->footOffset << " " << (f->useRaycast ? 1 : 0) << " " << f->groundY
+            << " " << (f->adjustPelvis ? 1 : 0) << " " << (f->plantDown ? 1 : 0) << " " << (f->alignToGround ? 1 : 0)
+            << " " << f->minKneeBend << " " << f->maxKneeBend << "\n";
+    }
+    if (auto* lb = go->GetComponent<LimbIK>()) {
+        out << "  limbik " << Quote(lb->upperName) << " " << Quote(lb->lowerName) << " " << Quote(lb->endName)
+            << " " << Quote(lb->targetName) << " " << Quote(lb->poleName)
+            << " " << lb->weight << " " << lb->minBend << " " << lb->maxBend << " " << (lb->matchTargetRotation ? 1 : 0)
+            << " " << lb->target.x << " " << lb->target.y << " " << lb->target.z
+            << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z << "\n";
+    }
+    if (auto* ci = go->GetComponent<ChainIK>()) {
+        out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
+            << " " << ci->solver << " " << (ci->orient ? 1 : 0)
+            << " " << ci->target.x << " " << ci->target.y << " " << ci->target.z
+            << " " << ci->boneNames.size();
+        for (const std::string& n : ci->boneNames) out << " " << Quote(n);
+        out << "\n";
+    }
+    if (auto* rm = go->GetComponent<RootMotion>()) {
+        out << "  rootmotion " << Quote(rm->rootNodeName) << " " << rm->mode
+            << " " << (rm->lockHeight ? 1 : 0) << " " << (rm->applyToRigidbody ? 1 : 0)
+            << " " << rm->loopThreshold << "\n";
+    }
+    // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
+    // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
+    if (auto* mc = go->GetComponent<MeshCollider3D>()) {
+        out << "  meshcollider3d " << mc->size.x << " " << mc->size.y << " " << mc->size.z << " "
+            << mc->offset.x << " " << mc->offset.y << " " << mc->offset.z << " "
+            << (mc->isTrigger ? 1 : 0) << " " << mc->layer << " " << (mc->autoFit ? 1 : 0) << "\n";
+    }
+    if (auto* cy = go->GetComponent<CylinderCollider3D>()) {
+        out << "  cylindercollider3d " << cy->radius << " " << cy->height << " " << cy->axis << " "
+            << cy->offset.x << " " << cy->offset.y << " " << cy->offset.z << " "
+            << (cy->isTrigger ? 1 : 0) << " " << cy->layer << " " << (cy->autoFit ? 1 : 0) << "\n";
+    }
+    if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
         out << "  boxcollider3d " << bc->size.x << " " << bc->size.y << " " << bc->size.z << " "
             << bc->offset.x << " " << bc->offset.y << " " << bc->offset.z << " "
             << (bc->isTrigger ? 1 : 0) << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
@@ -292,7 +584,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sc->offset.x << " " << sc->offset.y << " " << sc->offset.z << " "
             << (sc->isTrigger ? 1 : 0) << " " << sc->layer << " " << (sc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cap = go->GetComponent<CapsuleCollider3D>()) {
+    if (auto* cap = go->GetComponent<CapsuleCollider3D>(); cap && cap->shape() == Collider3D::Shape::Capsule) {
         out << "  capsulecollider3d " << cap->radius << " " << cap->height << " " << cap->axis << " "
             << cap->offset.x << " " << cap->offset.y << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
@@ -326,7 +618,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << cc->maxFallSpeed << " " << cc->extraFallGravity << "\n";
     }
     if (auto* cc = go->GetComponent<CharacterController3D>()) {
-        out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0) << "\n";
+        out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0)
+            << " " << cc->runSpeed << " " << (int)(unsigned char)cc->sprintKey         // trailing (back-compatible)
+            << " " << cc->acceleration << " " << cc->deceleration << " " << cc->airControl
+            << " " << (cc->driveAnimation ? 1 : 0) << " " << (cc->footIK ? 1 : 0) << "\n";
     }
     if (auto* v = go->GetComponent<VehicleController>()) {
         out << "  vehicle " << v->acceleration << " " << v->maxSpeed << " " << v->reverseSpeed
@@ -357,6 +652,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << Quote(sb->structureTag) << " " << Quote(sb->structureTexture)
             << " " << Quote(sb->woodItem) << " " << Quote(sb->stoneItem) << " " << Quote(sb->metalItem) << "\n";
     }
+    if (auto* bm = go->GetComponent<BuilderMode>()) {
+        out << "  buildermode " << (int)bm->brush << " " << bm->gridSize << " " << (bm->snapToGrid ? 1 : 0)
+            << " " << bm->reach << " " << bm->rotateStepDeg << " " << bm->scaleStep
+            << " " << bm->minScale << " " << bm->maxScale
+            << " " << bm->partColor.r << " " << bm->partColor.g << " " << bm->partColor.b << " " << bm->partColor.a
+            << " " << bm->placeButton << " " << bm->removeButton
+            << " " << (bm->parentToModel ? 1 : 0) << " " << (bm->brushHotkeys ? 1 : 0)
+            << " " << (bm->showPreview ? 1 : 0) << " " << (bm->showCrosshair ? 1 : 0)
+            << " " << Quote(bm->buildTag) << " " << Quote(bm->partTexture)
+            << " " << Quote(bm->prefabPath) << " " << Quote(bm->modelName)
+            << " " << Quote(bm->mapPath) << "\n";
+    }
     if (auto* bp = go->GetComponent<BuildPiece>()) {
         out << "  buildpiece " << bp->tier << " " << bp->health << " " << bp->maxHealth
             << " " << bp->cost << " " << Quote(bp->material) << "\n";
@@ -373,6 +680,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << Quote(ls->title) << " " << Quote(ls->targetScene) << " " << Quote(ls->backgroundImage)
             << " " << ls->tips.size();
         for (const auto& t : ls->tips) out << " " << Quote(t);
+        // Style block (appended; numeric-peek guarded on read).
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << " " << (ls->gradientBackground ? 1 : 0); wc(ls->backgroundColor2);
+        wc(ls->titleColor); out << " " << ls->titleScale << " " << ls->titleY;
+        wc(ls->tipColor);   out << " " << ls->tipScale << " " << ls->tipY;
+        out << " " << ls->barWidth << " " << ls->barHeight << " " << ls->barY << " " << ls->barRadius
+            << " " << (ls->barBorder ? 1 : 0); wc(ls->barBorderColor);
+        out << " " << (ls->showPercent ? 1 : 0) << " " << (ls->showSpinner ? 1 : 0); wc(ls->spinnerColor);
+        out << " " << ls->spinnerRadius << " " << ls->spinnerDotSize << " " << ls->spinnerSpeed << " " << ls->spinnerY;
         out << "\n";
     }
     if (auto* ui = go->GetComponent<InventoryUI>()) {
@@ -390,6 +706,27 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << (ui->showPanel ? 1 : 0) << " " << ui->panelPad;
         wc(ui->hoverColor);
         out << " " << (ui->showSelectedName ? 1 : 0) << " " << ui->nameChars;
+        // Features (appended; read with numeric-peek guards for back-compat).
+        out << " " << (ui->showTooltips ? 1 : 0) << " " << (ui->slotNumbers ? 1 : 0)
+            << " " << (int)(unsigned char)ui->sortKey;
+        wc(ui->tooltipColor); wc(ui->tooltipText); wc(ui->numberColor);
+        // Split / quick-move / rarity rules (appended; numeric-peek guarded).
+        out << " " << (ui->splitRightClick ? 1 : 0) << " " << (ui->shiftQuickMove ? 1 : 0)
+            << " " << ui->rarities.size();
+        for (const auto& rr : ui->rarities) { out << " " << Quote(rr.item); wc(rr.color); }
+        // Scaling / split / icon (appended; numeric-peek guarded).
+        out << " " << (ui->scaleToScreen ? 1 : 0) << " " << ui->referenceHeight
+            << " " << (ui->splitHalf ? 1 : 0) << " " << ui->iconInset;
+        // Sort mode / auto-sort / drop key (appended; numeric-peek guarded).
+        out << " " << (int)ui->sortMode << " " << (ui->sortOnClose ? 1 : 0)
+            << " " << (int)(unsigned char)ui->dropKey;
+        // Style: align / selected pop / empty + hotbar colours / panel border / title
+        // (appended; numeric-peek + quote guarded on read).
+        out << " " << (int)ui->hAlign << " " << ui->selectedScale;
+        wc(ui->emptySlotColor); wc(ui->hotbarColor); wc(ui->panelBorder);
+        out << " " << ui->panelBorderWidth << " " << (ui->showTitle ? 1 : 0);
+        wc(ui->titleColor);
+        out << " " << Quote(ui->backpackTitle);
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -398,6 +735,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& it : gi->items)
             out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.x
                 << " " << it.y << " " << it.count << " " << it.weight;
+        out << " " << gi->weightLimit;   // appended (numeric-peek guarded on read)
+        out << " " << Quote(gi->category) << " " << (gi->worldItem ? 1 : 0);   // Unturned role (guarded)
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -407,6 +746,49 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wc(gu->panelColor); wc(gu->cellColor); wc(gu->itemColor); wc(gu->itemBorder); wc(gu->textColor);
         out << " " << Quote(gu->iconFolder) << " " << gu->cornerRadius;
         wc(gu->titleBar); wc(gu->hoverColor); wc(gu->dropOk); wc(gu->dropBad);
+        // Features (appended; read with numeric-peek guards for back-compat).
+        out << " " << (gu->showTooltips ? 1 : 0) << " " << (int)(unsigned char)gu->rotateKey;
+        wc(gu->tooltipColor); wc(gu->tooltipText);
+        // Overweight colour + rarity rules (appended; numeric-peek guarded).
+        wc(gu->overweightColor);
+        out << " " << gu->rarities.size();
+        for (const auto& rr : gu->rarities) { out << " " << Quote(rr.item); wc(rr.color); }
+        // Unturned multi-container screen (appended; numeric-peek guarded on read).
+        out << " " << (gu->multiContainer ? 1 : 0) << " " << gu->nearbyRange << " " << Quote(gu->nearbyTitle);
+        // Layout + style customisation (appended; quote-peek guarded on read).
+        out << " " << gu->columnGap << " " << gu->panelPad << " " << gu->containerGap << " " << gu->headerHeight
+            << " " << (gu->showMasterTitle ? 1 : 0) << " " << Quote(gu->masterTitle)
+            << " " << (gu->useGradients ? 1 : 0) << " " << (gu->dropShadows ? 1 : 0)
+            << " " << (gu->accentBars ? 1 : 0) << " " << (gu->autoAccent ? 1 : 0);
+        wc(gu->accentColor); wc(gu->headerColor); wc(gu->weightGood); wc(gu->weightWarn);
+        out << " " << gu->titleScale << " " << gu->itemNameScale
+            << " " << (gu->showItemNames ? 1 : 0) << " " << gu->backdropDim;
+        out << "\n";
+    }
+    if (auto* cs = go->GetComponent<CraftingStation>()) {
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  craftingstation " << (cs->open ? 1 : 0) << " " << (int)(unsigned char)cs->toggleKey
+            << " " << Quote(cs->title) << " " << (cs->closeWhenCrafted ? 1 : 0)
+            << " " << cs->rowHeight << " " << cs->width << " " << cs->marginX << " " << cs->marginY
+            << " " << cs->cornerRadius << " " << Quote(cs->iconFolder);
+        wc(cs->panelColor); wc(cs->titleBar); wc(cs->rowColor); wc(cs->canColor);
+        wc(cs->cantColor); wc(cs->textColor); wc(cs->hoverColor);
+        out << " " << cs->recipes.size();
+        for (const auto& r : cs->recipes) {
+            out << " " << r.inputs.size();
+            for (const auto& in : r.inputs) out << " " << Quote(in.item) << " " << in.count;
+            out << " " << Quote(r.output) << " " << r.outputCount;
+        }
+        out << "\n";
+    }
+    if (auto* ch = go->GetComponent<ChestInventory>()) {
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  chestinventory " << (ch->open ? 1 : 0) << " " << (int)(unsigned char)ch->openKey
+            << " " << ch->range << " " << Quote(ch->title) << " " << ch->cols
+            << " " << ch->slotSize << " " << ch->gap << " " << ch->cornerRadius
+            << " " << Quote(ch->iconFolder) << " " << (ch->darkenWhenOpen ? 1 : 0);
+        wc(ch->panelColor); wc(ch->titleBar); wc(ch->slotColor); wc(ch->slotBorder);
+        wc(ch->textColor); wc(ch->hoverColor);
         out << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
@@ -541,7 +923,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  npc " << c->behavior << " " << c->moveSpeed << " " << c->sightRange << " "
             << c->wanderRadius << " " << c->attackRange << " " << c->attackDamage << " "
             << c->attackInterval << " " << (c->faceMovement ? 1 : 0) << " " << Quote(c->targetName)
-            << " " << c->maxHealth << " " << (c->invulnerable ? 1 : 0) << "\n";
+            << " " << c->maxHealth << " " << (c->invulnerable ? 1 : 0)
+            // smarter-AI trailing fields (older files stop after invulnerable):
+            << " " << c->runSpeed << " " << c->turnSpeed << " " << c->acceleration
+            << " " << c->stopDistance << " " << c->fieldOfView << " " << (c->lineOfSight ? 1 : 0)
+            << " " << c->eyeHeight << " " << c->hearingRange << " " << c->detectionTime
+            << " " << c->loseSightTime << " " << c->searchTime << " " << (c->aggressive ? 1 : 0)
+            << " " << (c->provokable ? 1 : 0) << " " << (c->returnsHome ? 1 : 0)
+            << " " << c->leashRange << " " << c->wanderPause << " " << (c->patrolLoop ? 1 : 0)
+            << " " << c->waypointWait << " " << c->attackWindup << " " << c->fleeHealthPct
+            << " " << c->separationRadius << " " << (c->driveAnimation ? 1 : 0)
+            << " " << (c->lookAtTarget ? 1 : 0)
+            << " " << (c->footIK ? 1 : 0) << "\n";
+        for (const Vec3& w : c->waypoints)
+            out << "  npcwp " << w.x << " " << w.y << " " << w.z << "\n";
     }
     if (auto* c = go->GetComponent<MeleeAttacker>()) {
         out << "  melee " << c->damage << " " << c->range << " " << c->arc << " " << c->cooldown
@@ -582,7 +977,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)fp->leanLeftKey << " " << (int)(unsigned char)fp->leanRightKey
             << " " << fp->leanAngle << " " << fp->leanOffset << " " << fp->leanSpeed
-            << " " << fp->maxJumps << "\n";
+            << " " << fp->maxJumps
+            << " " << (fp->footIK ? 1 : 0) << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
@@ -608,7 +1004,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)tp->leanLeftKey << " " << (int)(unsigned char)tp->leanRightKey
             << " " << tp->leanAngle << " " << tp->leanOffset << " " << tp->leanSpeed
-            << " " << tp->maxJumps << "\n";
+            << " " << tp->maxJumps
+            << " " << (tp->footIK ? 1 : 0) << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
@@ -616,7 +1013,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (td->driveAnimation ? 1 : 0) << " " << (td->rotateToFace ? 1 : 0) << " " << td->turnSpeed << " "
             << td->acceleration << " " << td->deceleration << " " << (td->cameraRelative ? 1 : 0) << " "
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
-            << td->lookHeight << " " << td->cameraDamping << "\n";
+            << td->lookHeight << " " << td->cameraDamping
+            << " " << (td->footIK ? 1 : 0) << "\n";
     }
     if (auto* fr = go->GetComponent<FreeRoamController>()) {
         out << "  frctrl " << fr->moveSpeed << " " << fr->boostMultiplier << " "
@@ -641,7 +1039,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)ts->leanLeftKey << " " << (int)(unsigned char)ts->leanRightKey
             << " " << ts->leanAngle << " " << ts->leanOffset << " " << ts->leanSpeed
-            << " " << ts->maxJumps << "\n";
+            << " " << ts->maxJumps
+            << " " << (ts->footIK ? 1 : 0) << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -657,7 +1056,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cm->rotateLeftKey ? cm->rotateLeftKey : '-')
             << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
             << " " << cm->cameraDamping
-            << " " << cm->arriveRadius << "\n";   // extended (back-compatible trailing field)
+            << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
+            << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0) << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -677,6 +1077,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* inv = go->GetComponent<Inventory>()) {
         out << "  inventory " << inv->capacity << " " << inv->slots.size();
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
+        out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         out << "\n";
     }
     if (auto* tm = go->GetComponent<TurnManager>()) {
@@ -706,7 +1107,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (vc->orbitInput ? 1 : 0) << " " << vc->orbitButton << " " << vc->mouseSensitivity
             // dolly block (back-compatible trailing fields)
             << " " << (vc->dolly ? 1 : 0) << " " << Quote(vc->dollyPath)
-            << " " << vc->dollyPosition << " " << (vc->autoDolly ? 1 : 0) << "\n";
+            << " " << vc->dollyPosition << " " << (vc->autoDolly ? 1 : 0)
+            // dutch + confiner (back-compatible trailing fields)
+            << " " << vc->dutch << " " << (vc->confine ? 1 : 0)
+            << " " << vc->confineMin.x << " " << vc->confineMin.y << " " << vc->confineMin.z
+            << " " << vc->confineMax.x << " " << vc->confineMax.y << " " << vc->confineMax.z << "\n";
     }
     if (auto* cb = go->GetComponent<CinemachineBrain>()) {
         out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
@@ -742,7 +1147,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (tr->italic ? 1 : 0) << " " << (tr->gradient ? 1 : 0) << " "
             << tr->colorBottom.r << " " << tr->colorBottom.g << " " << tr->colorBottom.b << " " << tr->colorBottom.a
             << " " << tr->visibleChars << " " << tr->typeSpeed << " " << (tr->alignBottom ? 1 : 0)
-            << " " << Quote(tr->fontPath) << "\n";   // optional TTF font path (newest)
+            << " " << Quote(tr->fontPath)            // optional TTF font path
+            << " " << (tr->autoSize ? 1 : 0) << " " << tr->autoSizeMin << " " << tr->autoSizeMax
+            << "\n";   // best-fit auto-size (newest)
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -816,7 +1223,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->shadowOffset.x << " " << pn->shadowOffset.y
             // extended (back-compatible trailing fields): shape + gradient direction + soft shadow
             << " " << (int)pn->shape << " " << (pn->gradientHorizontal ? 1 : 0)
-            << " " << pn->shadowSoftness << "\n";
+            << " " << pn->shadowSoftness
+            // newest trailing block: gradient direction enum + outer outline + top sheen
+            << " " << (int)pn->gradientDir
+            << " " << pn->outlineWidth << " "
+            << pn->outlineColor.r << " " << pn->outlineColor.g << " " << pn->outlineColor.b << " " << pn->outlineColor.a
+            << " " << (pn->topHighlight ? 1 : 0) << " "
+            << pn->highlightColor.r << " " << pn->highlightColor.g << " " << pn->highlightColor.b << " " << pn->highlightColor.a
+            << " " << pn->cornerMask   // newest: per-corner rounding bitmask
+            << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -972,11 +1387,66 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mm->borderWidth << " " << Quote(mm->target) << " "
             << mm->targetColor.r << " " << mm->targetColor.g << " " << mm->targetColor.b << " " << mm->targetColor.a << " "
             << mm->worldPerPixel << " " << (mm->useXZ ? 1 : 0) << " " << mm->blipSize
-            << " " << (int)mm->anchor << "\n";
+            << " " << (int)mm->anchor << " "
+            // --- appended (v2): circular / rotation / arrow / clamp / grid ---
+            << (mm->circular ? 1 : 0) << " " << (mm->rotateWithTarget ? 1 : 0) << " "
+            << (mm->playerArrow ? 1 : 0) << " " << (mm->clampBlips ? 1 : 0) << " "
+            << (mm->showGrid ? 1 : 0) << " "
+            << mm->gridColor.r << " " << mm->gridColor.g << " " << mm->gridColor.b << " " << mm->gridColor.a << " "
+            << mm->gridSpacing
+            // --- appended (v3): GTA-style custom map ---
+            << " " << Quote(mm->mapTexture) << " " << mm->mapWorldSize
+            << " " << mm->mapWorldCenter.x << " " << mm->mapWorldCenter.y
+            << " " << (int)(unsigned char)mm->fullscreenKey << " " << mm->fullscreenZoom
+            << " " << mm->fullscreenFrac
+            // --- appended (v4): zoom keys + waypoint markers ---
+            << " " << (int)(unsigned char)mm->zoomInKey << " " << (int)(unsigned char)mm->zoomOutKey
+            << " " << mm->minZoom << " " << mm->maxZoom << " " << mm->zoomStep
+            << " " << mm->markers.size();
+        for (const auto& mk : mm->markers)
+            out << " " << mk.world.x << " " << mk.world.y << " "
+                << mk.color.r << " " << mk.color.g << " " << mk.color.b << " " << mk.color.a << " " << mk.size;
+        // --- appended (v5): self/cone/rings/north ---
+        out << " " << (mm->showSelf ? 1 : 0)
+            << " " << (mm->viewCone ? 1 : 0) << " " << mm->viewConeAngle << " " << mm->viewConeLength
+            << " " << mm->viewConeColor.r << " " << mm->viewConeColor.g << " " << mm->viewConeColor.b << " " << mm->viewConeColor.a
+            << " " << mm->rangeRings
+            << " " << mm->ringColor.r << " " << mm->ringColor.g << " " << mm->ringColor.b << " " << mm->ringColor.a
+            << " " << (mm->showNorth ? 1 : 0)
+            << " " << mm->northColor.r << " " << mm->northColor.g << " " << mm->northColor.b << " " << mm->northColor.a
+            // --- appended (v6): labels + route line + per-marker labels ---
+            << " " << (mm->showLabels ? 1 : 0)
+            << " " << mm->labelColor.r << " " << mm->labelColor.g << " " << mm->labelColor.b << " " << mm->labelColor.a
+            << " " << mm->labelSize
+            << " " << mm->routeMarker
+            << " " << mm->routeColor.r << " " << mm->routeColor.g << " " << mm->routeColor.b << " " << mm->routeColor.a
+            << " " << mm->routeWidth;
+        for (const auto& mk : mm->markers) out << " " << Quote(mk.label);
+        // --- appended (v7): authorable vector map shapes ---
+        out << " " << mm->mapShapes.size();
+        for (const auto& sh : mm->mapShapes) {
+            out << " " << (int)sh.kind
+                << " " << sh.color.r << " " << sh.color.g << " " << sh.color.b << " " << sh.color.a
+                << " " << sh.thickness << " " << (sh.filled ? 1 : 0)
+                << " " << sh.points.size();
+            for (const auto& p : sh.points) out << " " << p.x << " " << p.y;
+        }
+        // --- appended (v8): radar blip range ---
+        out << " " << mm->blipRange;
+        // --- appended (v9): user waypoint (click-to-place) ---
+        out << " " << (mm->mapClickWaypoint ? 1 : 0) << " " << (mm->hasUserWaypoint ? 1 : 0)
+            << " " << mm->userWaypoint.x << " " << mm->userWaypoint.y
+            << " " << mm->userWaypointColor.r << " " << mm->userWaypointColor.g
+            << " " << mm->userWaypointColor.b << " " << mm->userWaypointColor.a;
+        out << "\n";
     }
     if (auto* bl = go->GetComponent<MinimapBlip>()) {
         out << "  minimapblip " << bl->color.r << " " << bl->color.g << " " << bl->color.b << " " << bl->color.a << " "
-            << bl->size << " " << (bl->square ? 1 : 0) << "\n";
+            << bl->size << " " << (bl->square ? 1 : 0) << " "
+            // --- appended (v2): shape enum + heading rotation ---
+            << (int)bl->shape << " " << (bl->rotateWithObject ? 1 : 0)
+            // --- appended (v3): icon texture, (v4): label ---
+            << " " << Quote(bl->icon) << " " << Quote(bl->label) << "\n";
     }
     if (auto* cr = go->GetComponent<Crosshair>()) {
         out << "  crosshair " << cr->position.x << " " << cr->position.y << " "
@@ -987,7 +1457,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cr->dotColor.r << " " << cr->dotColor.g << " " << cr->dotColor.b << " " << cr->dotColor.a << " "
             << (cr->outline ? 1 : 0) << " "
             << cr->outlineColor.r << " " << cr->outlineColor.g << " " << cr->outlineColor.b << " " << cr->outlineColor.a
-            << " " << (int)cr->anchor << "\n";
+            << " " << (int)cr->anchor;
+        // Style block (appended; numeric-peek guarded on read).
+        out << " " << (cr->lineUp ? 1 : 0) << " " << (cr->lineDown ? 1 : 0)
+            << " " << (cr->lineLeft ? 1 : 0) << " " << (cr->lineRight ? 1 : 0) << " " << cr->spread
+            << " " << (cr->circle ? 1 : 0) << " " << cr->circleRadius << " " << cr->circleThickness
+            << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a;
+        out << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -996,7 +1472,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(im->texture) << " " << (int)im->anchor << " "
             << (im->nineSlice ? 1 : 0) << " " << im->border << " "
             << (int)im->fillMode << " " << im->fillAmount << " " << im->cornerRadius
-            << " " << (int)im->shape << "\n";   // extended (back-compatible trailing field)
+            << " " << (int)im->shape   // extended (back-compatible trailing field)
+            // newest trailing block: flip + preserve-aspect + frame border
+            << " " << (im->flipX ? 1 : 0) << " " << (im->flipY ? 1 : 0)
+            << " " << (im->preserveAspect ? 1 : 0)
+            << " " << im->borderWidth << " "
+            << im->borderColor.r << " " << im->borderColor.g << " " << im->borderColor.b << " " << im->borderColor.a
+            // newest: per-corner rounding mask + drop shadow
+            << " " << im->cornerMask
+            << " " << (im->shadow ? 1 : 0) << " "
+            << im->shadowColor.r << " " << im->shadowColor.g << " " << im->shadowColor.b << " " << im->shadowColor.a << " "
+            << im->shadowOffset.x << " " << im->shadowOffset.y << " " << im->shadowSoftness
+            << "\n";
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
@@ -1052,7 +1539,27 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ps->startColor.r << " " << ps->startColor.g << " " << ps->startColor.b << " "
             << ps->startColor.a << " " << ps->startVelocity.x << " " << ps->startVelocity.y << " "
             << ps->velocityRandom << " " << ps->gravity.x << " " << ps->gravity.y << " "
-            << (ps->fadeOverLife ? 1 : 0) << " " << ps->seed << "\n";
+            << (ps->fadeOverLife ? 1 : 0) << " " << ps->seed << " "
+            // --- appended (v2): over-lifetime, shapes, bursts, duration ---
+            << ps->endColor.r << " " << ps->endColor.g << " " << ps->endColor.b << " "
+            << ps->endColor.a << " " << (ps->colorOverLife ? 1 : 0) << " "
+            << ps->endSize << " " << (ps->sizeOverLife ? 1 : 0) << " "
+            << ps->startLifetimeRandom << " " << ps->startSizeRandom << " " << ps->speedRandom << " "
+            << (int)ps->shape << " " << ps->shapeRadius << " " << ps->shapeAngle << " "
+            << ps->boxSize.x << " " << ps->boxSize.y << " "
+            << ps->gravityModifier << " " << ps->damping << " "
+            << ps->duration << " " << (ps->loop ? 1 : 0) << " "
+            << ps->burstCount << " " << ps->burstTime << " "
+            // --- appended (v3): 3D z-components for the now-3D vectors ---
+            << ps->startVelocity.z << " " << ps->gravity.z << " " << ps->boxSize.z << " "
+            // --- appended (v4): sprite texture + billboard rotation ---
+            << Quote(ps->texture) << " " << ps->startRotation << " " << ps->startRotationRandom << " "
+            << ps->rotationSpeed << " " << ps->rotationSpeedRandom << " "
+            // --- appended (v5): ground-plane collision ---
+            << (ps->collision ? 1 : 0) << " " << ps->collisionY << " " << ps->bounce << " "
+            << ps->collisionFriction << " " << ps->collisionLifeLoss << " "
+            // --- appended (v6): render mode (billboard/stretch) ---
+            << (int)ps->renderMode << " " << ps->stretchScale << "\n";
     }
 }
 } // namespace
@@ -1073,10 +1580,12 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         out << "fog " << (rs.fog ? 1 : 0) << " "
             << rs.fogColor.r << " " << rs.fogColor.g << " " << rs.fogColor.b << " "
             << rs.fogStart << " " << rs.fogEnd << "\n";
+        if (rs.vignette > 0.0f) out << "vignette " << rs.vignette << "\n";
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
         GameObject* go = objs[i].get();
+        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         Transform* t = go->transform;
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
@@ -1084,6 +1593,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         if (go->isStatic) out << "  static 1\n";
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
+        if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
         int parent = t->Parent() ? IndexOf(scene, t->Parent()->gameObject) : -1;
         out << "  parent " << parent << "\n";
         WriteComponents(out, go);
@@ -1118,26 +1628,34 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     std::vector<std::pair<int, int>> parentLinks; // child index -> parent index
 
     while (in >> token) {
+        // The file-level globals (name, gravity, lighting, fog) describe the WHOLE
+        // scene, so a merge/additive load (clear == false) reads past them but keeps
+        // the host scene's own settings — only a full load (clear) applies them.
         if (token == "name") {
-            scene.SetName(ReadQuoted(in));
+            std::string nm = ReadQuoted(in); if (clear) scene.SetName(nm);
         } else if (token == "uifont") {
-            scene.uiFont = ReadQuoted(in);
+            std::string uf = ReadQuoted(in); if (clear) scene.uiFont = uf;
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
-            scene.physics().gravity = g;
+            if (clear) scene.physics().gravity = g;
         } else if (token == "rendersettings") {
-            auto& rs = scene.renderSettings;
-            int sky = 1;
-            in >> sky >> rs.skyTop.r >> rs.skyTop.g >> rs.skyTop.b
-               >> rs.skyHorizon.r >> rs.skyHorizon.g >> rs.skyHorizon.b
-               >> rs.skyBottom.r >> rs.skyBottom.g >> rs.skyBottom.b >> rs.ambient;
-            rs.skybox = (sky != 0);
+            int sky = 1; Color top, hor, bot; float amb = 0.0f;
+            in >> sky >> top.r >> top.g >> top.b
+               >> hor.r >> hor.g >> hor.b
+               >> bot.r >> bot.g >> bot.b >> amb;
+            if (clear) {
+                auto& rs = scene.renderSettings;
+                rs.skybox = (sky != 0); rs.skyTop = top; rs.skyHorizon = hor;
+                rs.skyBottom = bot; rs.ambient = amb;
+            }
         } else if (token == "fog") {
             auto& rs = scene.renderSettings;
-            int on = 0;
-            in >> on >> rs.fogColor.r >> rs.fogColor.g >> rs.fogColor.b
-               >> rs.fogStart >> rs.fogEnd;
-            rs.fog = (on != 0);
+            int on = 0; Color fc; float fs = rs.fogStart, fe = rs.fogEnd;
+            in >> on >> fc.r >> fc.g >> fc.b >> fs >> fe;
+            if (clear) { rs.fog = (on != 0); rs.fogColor = fc; rs.fogStart = fs; rs.fogEnd = fe; }
+        } else if (token == "vignette") {
+            float v = 0.0f; in >> v;
+            if (clear) scene.renderSettings.vignette = v;
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;
@@ -1153,6 +1671,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
                 else if (field == "layer") { in >> go->layer; }
                 else if (field == "uiorder") { in >> go->uiDrawOrder; }
+                else if (field == "srcscene") { go->sourceScene = ReadQuoted(in); }
                 else if (field == "parent") { int p = -1; in >> p; if (p >= 0) parentLinks.push_back({idx, p}); }
                 else if (field == "transform") {
                     Vec3 p, s; Quat q;
@@ -1182,6 +1701,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (std::isdigit(in.peek())) {
                                 int fx = 0, fy = 0; in >> fx >> fy;
                                 sr->flipX = (fx != 0); sr->flipY = (fy != 0);
+                                in >> std::ws; // optional sortingLayer follows flips
+                                if (in.peek() == '-' || std::isdigit(in.peek()))
+                                    in >> sr->sortingLayer;
                             }
                         }
                     }
@@ -1256,6 +1778,72 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // force smooth normals, or an edited box/ground reloads looking like
                     // a soft rounded blob instead of clean flat faces.
                     mr->mesh.normals.clear();
+                } else if (field == "skinmesh") {
+                    // Rebuild a SkinnedMesh from its bind geometry + weights + joint
+                    // names + inverse-bind matrices. Joints are re-resolved by name at
+                    // runtime (SkinnedMesh::Start); show the bind mesh now for the editor.
+                    auto* sm = go->GetComponent<SkinnedMesh>();
+                    if (!sm) sm = go->AddComponent<SkinnedMesh>();
+                    Mesh bm;
+                    long vc = 0; in >> vc;
+                    for (long i = 0; i < vc; ++i) { Vec3 v; in >> v.x >> v.y >> v.z; bm.vertices.push_back(v); }
+                    long nc = 0; in >> nc;
+                    for (long i = 0; i < nc; ++i) { Vec3 n; in >> n.x >> n.y >> n.z; bm.normals.push_back(n); }
+                    long uc = 0; in >> uc;
+                    for (long i = 0; i < uc; ++i) { Vec2 u; in >> u.x >> u.y; bm.uvs.push_back(u); }
+                    long tc = 0; in >> tc;
+                    for (long i = 0; i < tc; ++i) { int t = 0; in >> t; bm.triangles.push_back(t); }
+                    long wc = 0; in >> wc;
+                    sm->jointIdx.clear(); sm->jointWt.clear();
+                    for (long i = 0; i < wc; ++i) {
+                        std::array<int, 4> ji{}; std::array<float, 4> jw{};
+                        in >> ji[0] >> ji[1] >> ji[2] >> ji[3] >> jw[0] >> jw[1] >> jw[2] >> jw[3];
+                        sm->jointIdx.push_back(ji); sm->jointWt.push_back(jw);
+                    }
+                    long jc = 0; in >> jc;
+                    sm->jointNames.clear();
+                    for (long i = 0; i < jc; ++i) sm->jointNames.push_back(ReadQuoted(in));
+                    long bc = 0; in >> bc;
+                    sm->inverseBind.clear();
+                    for (long i = 0; i < bc; ++i) { Mat4 M; for (int e = 0; e < 16; ++e) in >> M.m[e]; sm->inverseBind.push_back(M); }
+                    sm->bind = bm;
+                    sm->joints.clear();   // re-resolved from names in Start()
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) mr->mesh = bm;   // show bind pose until skinned
+                } else if (field == "modelanim") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int autop = 1, lp = 1; long clipCount = 0;
+                    in >> ma->active >> autop >> ma->speed >> lp >> clipCount;
+                    ma->autoPlay = (autop != 0); ma->loop = (lp != 0);
+                    ma->clips.clear();
+                    for (long c = 0; c < clipCount; ++c) {
+                        ModelAnimator::Clip clip;
+                        clip.name = ReadQuoted(in);
+                        long nodeCnt = 0; in >> nodeCnt;
+                        for (long n = 0; n < nodeCnt; ++n) {
+                            ModelAnimator::NodeClip nc;
+                            nc.node = ReadQuoted(in);
+                            long trackCnt = 0; in >> trackCnt;
+                            for (long tk = 0; tk < trackCnt; ++tk) {
+                                std::string trackName = ReadQuoted(in);
+                                long keyCnt = 0; in >> keyCnt;
+                                for (long k = 0; k < keyCnt; ++k) {
+                                    float tm = 0, val = 0; in >> tm >> val;
+                                    nc.clip.AddKey(trackName, tm, val);
+                                }
+                            }
+                            clip.nodes.push_back(std::move(nc));
+                        }
+                        ma->clips.push_back(std::move(clip));
+                    }
+                } else if (field == "modelanimdrive") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int dm = 0; in >> dm >> ma->walkThreshold >> ma->runThreshold;
+                    ma->driveByMovement = (dm != 0);
+                    ma->idleClip = ReadQuoted(in);
+                    ma->walkClip = ReadQuoted(in);
+                    ma->runClip  = ReadQuoted(in);
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;
@@ -1268,6 +1856,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int p = in.peek();
                         if (std::isdigit(p) || p == '-' || p == '.')
                             in >> mr->tiling.x >> mr->tiling.y;
+                    }
+                } else if (field == "texopts") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        int fl = 0; in >> fl >> mr->texOffset.x >> mr->texOffset.y;
+                        mr->texFilter = (MeshRenderer::TexFilter)fl;
                     }
                 } else if (field == "normalmap") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -1289,10 +1882,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> std::ws;
                         if (in.peek() == '"') mr->specularMap = ReadQuoted(in);
                     }
+                } else if (field == "aomap") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->aoMap = ReadQuoted(in);
+                        in >> std::ws;
+                        int p = in.peek();   // optional trailing strength
+                        if (std::isdigit(p) || p == '-' || p == '.') in >> mr->aoStrength;
+                    }
                 } else if (field == "shader") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         int s = 0; in >> s >> mr->toonBands;
                         mr->shader = (MeshRenderer::Shader)s;
+                        in >> std::ws;   // optional gradient colours (appended later)
+                        int gpk = in.peek();
+                        if (std::isdigit(gpk) || gpk == '-' || gpk == '.') {
+                            in >> mr->gradientTop.r >> mr->gradientTop.g >> mr->gradientTop.b
+                               >> mr->gradientBottom.r >> mr->gradientBottom.g >> mr->gradientBottom.b;
+                        }
                     }
                 } else if (field == "rim") {
                     if (auto* mr = go->GetComponent<MeshRenderer>())
@@ -1307,6 +1914,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         int tp = 0; in >> mr->uvScroll.x >> mr->uvScroll.y >> tp;
                         mr->triplanar = (tp != 0);
+                    }
+                } else if (field == "groundshadow") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        int gs = 1; in >> gs >> mr->groundShadowY >> mr->groundShadowStrength;
+                        mr->groundShadow = (gs != 0);
                     }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();
@@ -1331,6 +1943,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* rb = go->AddComponent<Rigidbody2D>();
                     rb->bodyType = (Rigidbody2D::BodyType)bt;
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
+                    in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                 } else if (field == "boxcollider2d") {
                     Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
@@ -1356,6 +1971,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cap->size = sz; cap->direction = (CapsuleCollider2D::Direction)dir;
                     cap->offset = off; cap->isTrigger = (trig != 0); cap->layer = layer;
                     cap->autoFit = (af != 0);
+                } else if (field == "edgecollider2d") {
+                    Vec2 off, n{0, 1}; int trig = 0, layer = 0, ow = 0; std::size_t count = 0;
+                    in >> off.x >> off.y >> trig >> layer >> ow >> n.x >> n.y >> count;
+                    auto* ec = go->AddComponent<EdgeCollider2D>();
+                    ec->offset = off; ec->isTrigger = (trig != 0); ec->layer = layer;
+                    ec->oneWay = (ow != 0); ec->oneWayNormal = n;
+                    ec->points.clear();
+                    for (std::size_t k = 0; k < count; ++k) { Vec2 p; in >> p.x >> p.y; ec->points.push_back(p); }
+                } else if (field == "polygoncollider2d") {
+                    Vec2 off; int trig = 0, layer = 0; std::size_t count = 0;
+                    in >> off.x >> off.y >> trig >> layer >> count;
+                    auto* pc = go->AddComponent<PolygonCollider2D>();
+                    pc->offset = off; pc->isTrigger = (trig != 0); pc->layer = layer;
+                    pc->points.clear();
+                    for (std::size_t k = 0; k < count; ++k) { Vec2 p; in >> p.x >> p.y; pc->points.push_back(p); }
                 } else if (field == "rigidbody3d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;
                     int fx = 0, fy = 0, fz = 0;
@@ -1364,6 +1994,86 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rb->bodyType = (Rigidbody3D::BodyType)bt;
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
                     rb->freezeX = (fx != 0); rb->freezeY = (fy != 0); rb->freezeZ = (fz != 0);
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->maxFallSpeed;
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
+                    in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
+                } else if (field == "joint3d") {
+                    auto* j = go->AddComponent<Joint3D>();
+                    int bk = 0, ac = 1;
+                    in >> j->mode;
+                    j->connectedBody = ReadQuoted(in);
+                    in >> j->anchor.x >> j->anchor.y >> j->anchor.z
+                       >> j->distance >> ac >> j->spring >> j->damper >> bk >> j->breakForce;
+                    j->autoConfigure = (ac != 0); j->breakable = (bk != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {   // hinge fields (trailing)
+                        int um = 0;
+                        in >> j->axis.x >> j->axis.y >> j->axis.z >> um >> j->motorSpeed >> j->maxMotorTorque;
+                        j->useMotor = (um != 0);
+                    }
+                } else if (field == "joint2d") {
+                    auto* j = go->AddComponent<Joint2D>();
+                    int bk = 0, ac = 1;
+                    in >> j->mode;
+                    j->connectedBody = ReadQuoted(in);
+                    in >> j->anchor.x >> j->anchor.y
+                       >> j->distance >> ac >> j->spring >> j->damper >> bk >> j->breakForce;
+                    j->autoConfigure = (ac != 0); j->breakable = (bk != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {           // hinge fields (trailing)
+                        int um = 0, ul = 0;
+                        in >> um >> j->motorSpeed >> j->maxMotorTorque >> ul >> j->minAngle >> j->maxAngle;
+                        j->useMotor = (um != 0); j->useLimits = (ul != 0);
+                    }
+                } else if (field == "aimik") {
+                    auto* a = go->AddComponent<AimIK>();
+                    a->boneName = ReadQuoted(in); a->targetName = ReadQuoted(in);
+                    in >> a->aimAxis.x >> a->aimAxis.y >> a->aimAxis.z
+                       >> a->upAxis.x >> a->upAxis.y >> a->upAxis.z
+                       >> a->weight >> a->maxAngle
+                       >> a->target.x >> a->target.y >> a->target.z;
+                } else if (field == "lookatik") {
+                    auto* l = go->AddComponent<LookAtIK>();
+                    l->targetName = ReadQuoted(in);
+                    in >> l->forwardAxis.x >> l->forwardAxis.y >> l->forwardAxis.z
+                       >> l->weight >> l->maxAngle
+                       >> l->target.x >> l->target.y >> l->target.z;
+                    std::size_t n = 0; in >> n;
+                    for (std::size_t k = 0; k < n; ++k) l->chainNames.push_back(ReadQuoted(in));
+                } else if (field == "footik") {
+                    auto* f = go->AddComponent<FootIK>();
+                    f->leftHipName = ReadQuoted(in); f->leftKneeName = ReadQuoted(in); f->leftFootName = ReadQuoted(in);
+                    f->rightHipName = ReadQuoted(in); f->rightKneeName = ReadQuoted(in); f->rightFootName = ReadQuoted(in);
+                    f->pelvisName = ReadQuoted(in);
+                    int ur = 1, ap = 0, pd = 0, ag = 0;
+                    in >> f->weight >> f->footOffset >> ur >> f->groundY >> ap >> pd >> ag
+                       >> f->minKneeBend >> f->maxKneeBend;
+                    f->useRaycast = (ur != 0); f->adjustPelvis = (ap != 0); f->plantDown = (pd != 0); f->alignToGround = (ag != 0);
+                } else if (field == "limbik") {
+                    auto* lb = go->AddComponent<LimbIK>();
+                    lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
+                    lb->targetName = ReadQuoted(in); lb->poleName = ReadQuoted(in);
+                    int mr = 0;
+                    in >> lb->weight >> lb->minBend >> lb->maxBend >> mr
+                       >> lb->target.x >> lb->target.y >> lb->target.z
+                       >> lb->pole.x >> lb->pole.y >> lb->pole.z;
+                    lb->matchTargetRotation = (mr != 0);
+                } else if (field == "chainik") {
+                    auto* ci = go->AddComponent<ChainIK>();
+                    ci->targetName = ReadQuoted(in);
+                    int orient = 0;
+                    in >> ci->weight >> ci->iterations >> ci->solver >> orient
+                       >> ci->target.x >> ci->target.y >> ci->target.z;
+                    ci->orient = (orient != 0);
+                    std::size_t bn = 0; in >> bn;
+                    for (std::size_t k = 0; k < bn; ++k) ci->boneNames.push_back(ReadQuoted(in));
+                } else if (field == "rootmotion") {
+                    auto* rm = go->AddComponent<RootMotion>();
+                    rm->rootNodeName = ReadQuoted(in);
+                    int lh = 1, ar = 0;
+                    in >> rm->mode >> lh >> ar >> rm->loopThreshold;
+                    rm->lockHeight = (lh != 0); rm->applyToRigidbody = (ar != 0);
                 } else if (field == "boxcollider3d") {
                     Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;
@@ -1389,6 +2099,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cap->radius = r; cap->height = h; cap->axis = ax;
                     cap->offset = off; cap->isTrigger = (trig != 0); cap->layer = layer;
                     cap->autoFit = (af != 0);
+                } else if (field == "meshcollider3d") {
+                    Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
+                    in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> layer;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;
+                    auto* mc = go->AddComponent<MeshCollider3D>();
+                    mc->size = sz; mc->offset = off; mc->isTrigger = (trig != 0); mc->layer = layer;
+                    mc->autoFit = (af != 0);
+                } else if (field == "cylindercollider3d") {
+                    float r = 0.5f, h = 2.0f; int ax = 1; Vec3 off; int trig = 0, layer = 0, af = 0;
+                    in >> r >> h >> ax >> off.x >> off.y >> off.z >> trig;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> layer;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;
+                    auto* cy = go->AddComponent<CylinderCollider3D>();
+                    cy->radius = r; cy->height = h; cy->axis = ax;
+                    cy->offset = off; cy->isTrigger = (trig != 0); cy->layer = layer;
+                    cy->autoFit = (af != 0);
                 } else if (field == "script") {
                     std::string lang = ReadQuoted(in);
                     std::string src  = ReadQuoted(in);
@@ -1471,6 +2198,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cm->cameraDamping = cdamp;
                         in >> std::ws; // optional arrival radius (added later)
                         if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
+                        in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; cm->footIK = (fik != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -1482,6 +2211,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> sp >> jf >> cj;
                     auto* cc = go->AddComponent<CharacterController3D>();
                     cc->speed = sp; cc->jumpForce = jf; cc->canJump = (cj != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {   // trailing extras
+                        int sk = 0, da = 1, fik = 0;
+                        in >> cc->runSpeed >> sk >> cc->acceleration >> cc->deceleration
+                           >> cc->airControl >> da >> fik;
+                        cc->sprintKey = (char)sk; cc->driveAnimation = (da != 0); cc->footIK = (fik != 0);
+                    }
                 } else if (field == "vehicle") {
                     auto* v = go->AddComponent<VehicleController>();
                     in >> v->acceleration >> v->maxSpeed >> v->reverseSpeed >> v->brakeForce
@@ -1532,6 +2268,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sb->woodItem = ReadQuoted(in);
                     sb->stoneItem = ReadQuoted(in);
                     sb->metalItem = ReadQuoted(in);
+                } else if (field == "buildermode") {
+                    auto* bm = go->AddComponent<BuilderMode>();
+                    int br = 0; in >> br; bm->brush = (BuilderMode::Brush)br;
+                    int sg = 1; in >> bm->gridSize >> sg; bm->snapToGrid = (sg != 0);
+                    in >> bm->reach >> bm->rotateStepDeg >> bm->scaleStep
+                       >> bm->minScale >> bm->maxScale
+                       >> bm->partColor.r >> bm->partColor.g >> bm->partColor.b >> bm->partColor.a
+                       >> bm->placeButton >> bm->removeButton;
+                    int pm = 1, bh = 1, sp = 1, sc = 1; in >> pm >> bh >> sp >> sc;
+                    bm->parentToModel = (pm != 0); bm->brushHotkeys = (bh != 0);
+                    bm->showPreview = (sp != 0); bm->showCrosshair = (sc != 0);
+                    bm->buildTag = ReadQuoted(in);
+                    bm->partTexture = ReadQuoted(in);
+                    bm->prefabPath = ReadQuoted(in);
+                    bm->modelName = ReadQuoted(in);
+                    // Optional trailing token (added later): the map-save path.
+                    in >> std::ws;
+                    if (in.peek() == '"') bm->mapPath = ReadQuoted(in);
                 } else if (field == "buildpiece") {
                     auto* bp = go->AddComponent<BuildPiece>();
                     in >> bp->tier >> bp->health >> bp->maxHealth >> bp->cost;
@@ -1550,6 +2304,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int n = 0; in >> n;
                     ls->tips.clear();
                     for (int i = 0; i < n; ++i) ls->tips.push_back(ReadQuoted(in));
+                    in >> std::ws;   // optional style block (appended later)
+                    int lpk = in.peek();
+                    if (std::isdigit(lpk) || lpk == '-' || lpk == '.') {
+                        auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                        int gb = 0, bb2 = 0, sp = 0, ss2 = 0;
+                        in >> gb; rc(ls->backgroundColor2);
+                        rc(ls->titleColor); in >> ls->titleScale >> ls->titleY;
+                        rc(ls->tipColor);   in >> ls->tipScale >> ls->tipY;
+                        in >> ls->barWidth >> ls->barHeight >> ls->barY >> ls->barRadius >> bb2; rc(ls->barBorderColor);
+                        in >> sp >> ss2; rc(ls->spinnerColor);
+                        in >> ls->spinnerRadius >> ls->spinnerDotSize >> ls->spinnerSpeed >> ls->spinnerY;
+                        ls->gradientBackground = (gb != 0); ls->barBorder = (bb2 != 0);
+                        ls->showPercent = (sp != 0); ls->showSpinner = (ss2 != 0);
+                    }
                 } else if (field == "inventoryui") {
                     auto* ui = go->AddComponent<InventoryUI>();
                     int tk = 'e', sh = 1, ss = 1, dk = 1;
@@ -1578,6 +2346,53 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                >> ui->hoverColor.r >> ui->hoverColor.g >> ui->hoverColor.b >> ui->hoverColor.a
                                >> ssn >> ui->nameChars;
                             ui->showPanel = (sp != 0); ui->showSelectedName = (ssn != 0);
+                            in >> std::ws;   // optional features block (tooltips / numbers / sort)
+                            int pk3 = in.peek();
+                            if (std::isdigit(pk3) || pk3 == '-' || pk3 == '.') {
+                                int st = 1, sn = 0, srt = 0;
+                                in >> st >> sn >> srt;
+                                ui->showTooltips = (st != 0); ui->slotNumbers = (sn != 0); ui->sortKey = (char)srt;
+                                rc(ui->tooltipColor); rc(ui->tooltipText); rc(ui->numberColor);
+                                in >> std::ws;   // optional split / quick-move / rarity block
+                                int pk4 = in.peek();
+                                if (std::isdigit(pk4) || pk4 == '-' || pk4 == '.') {
+                                    int sr = 1, qm = 1; std::size_t rn = 0;
+                                    in >> sr >> qm >> rn;
+                                    ui->splitRightClick = (sr != 0); ui->shiftQuickMove = (qm != 0);
+                                    ui->rarities.clear();
+                                    for (std::size_t ri = 0; ri < rn; ++ri) {
+                                        InventoryUI::RarityRule rr; rr.item = ReadQuoted(in); rc(rr.color);
+                                        ui->rarities.push_back(rr);
+                                    }
+                                    in >> std::ws;   // optional scaling / split / icon block
+                                    int pk5 = in.peek();
+                                    if (std::isdigit(pk5) || pk5 == '-' || pk5 == '.') {
+                                        int sts = 1, sh = 1;
+                                        in >> sts >> ui->referenceHeight >> sh >> ui->iconInset;
+                                        ui->scaleToScreen = (sts != 0); ui->splitHalf = (sh != 0);
+                                        in >> std::ws;   // optional sort-mode / auto-sort / drop-key block
+                                        int pk6 = in.peek();
+                                        if (std::isdigit(pk6) || pk6 == '-' || pk6 == '.') {
+                                            int sm = 0, soc = 0, dk = 0;
+                                            in >> sm >> soc >> dk;
+                                            ui->sortMode = (InventoryUI::SortMode)sm;
+                                            ui->sortOnClose = (soc != 0);
+                                            ui->dropKey = (char)dk;
+                                            in >> std::ws;   // optional style block (align/pop/colours/border/title)
+                                            int pk7 = in.peek();
+                                            if (std::isdigit(pk7) || pk7 == '-' || pk7 == '.') {
+                                                int ha = 0, st = 0;
+                                                in >> ha; ui->hAlign = (InventoryUI::HAlign)ha;
+                                                in >> ui->selectedScale;
+                                                rc(ui->emptySlotColor); rc(ui->hotbarColor); rc(ui->panelBorder);
+                                                in >> ui->panelBorderWidth >> st; ui->showTitle = (st != 0);
+                                                rc(ui->titleColor);
+                                                ui->backpackTitle = ReadQuoted(in);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 } else if (field == "gridinventory") {
@@ -1589,6 +2404,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         GridItem it; it.name = ReadQuoted(in);
                         in >> it.w >> it.h >> it.x >> it.y >> it.count >> it.weight;
                         gi->items.push_back(it);
+                    }
+                    in >> std::ws;   // optional weight limit (appended later)
+                    int wpk = in.peek();
+                    if (std::isdigit(wpk) || wpk == '-' || wpk == '.') {
+                        in >> gi->weightLimit;
+                        in >> std::ws;   // optional Unturned role (category + worldItem)
+                        if (in.peek() == '"') {
+                            gi->category = ReadQuoted(in);
+                            int wi = 0; in >> wi; gi->worldItem = (wi != 0);
+                        }
                     }
                 } else if (field == "gridinventoryui") {
                     auto* gu = go->AddComponent<GridInventoryUI>();
@@ -1602,7 +2427,79 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(gpk) || gpk == '-' || gpk == '.') {
                         in >> gu->cornerRadius;
                         rc(gu->titleBar); rc(gu->hoverColor); rc(gu->dropOk); rc(gu->dropBad);
+                        in >> std::ws;   // optional features block (tooltips / rotate)
+                        int gpk2 = in.peek();
+                        if (std::isdigit(gpk2) || gpk2 == '-' || gpk2 == '.') {
+                            int st = 1, rkk = (int)(unsigned char)'r';
+                            in >> st >> rkk;
+                            gu->showTooltips = (st != 0); gu->rotateKey = (char)rkk;
+                            rc(gu->tooltipColor); rc(gu->tooltipText);
+                            in >> std::ws;   // optional overweight colour + rarity rules
+                            int gpk3 = in.peek();
+                            if (std::isdigit(gpk3) || gpk3 == '-' || gpk3 == '.') {
+                                rc(gu->overweightColor);
+                                std::size_t rn = 0; in >> rn;
+                                gu->rarities.clear();
+                                for (std::size_t ri = 0; ri < rn; ++ri) {
+                                    GridInventoryUI::RarityRule rr; rr.item = ReadQuoted(in); rc(rr.color);
+                                    gu->rarities.push_back(rr);
+                                }
+                                in >> std::ws;   // optional Unturned multi-container block
+                                int gpk4 = in.peek();
+                                if (std::isdigit(gpk4) || gpk4 == '-' || gpk4 == '.') {
+                                    int mc = 1; in >> mc >> gu->nearbyRange;
+                                    gu->multiContainer = (mc != 0);
+                                    gu->nearbyTitle = ReadQuoted(in);
+                                    in >> std::ws;   // optional layout + style block
+                                    int gpk5 = in.peek();
+                                    if (std::isdigit(gpk5) || gpk5 == '-' || gpk5 == '.') {
+                                        int sm = 1, ug = 1, ds = 1, ab = 1, aa = 1;
+                                        in >> gu->columnGap >> gu->panelPad >> gu->containerGap >> gu->headerHeight >> sm;
+                                        gu->masterTitle = ReadQuoted(in);
+                                        in >> ug >> ds >> ab >> aa;
+                                        gu->showMasterTitle = (sm != 0); gu->useGradients = (ug != 0);
+                                        gu->dropShadows = (ds != 0); gu->accentBars = (ab != 0); gu->autoAccent = (aa != 0);
+                                        rc(gu->accentColor); rc(gu->headerColor); rc(gu->weightGood); rc(gu->weightWarn);
+                                        in >> std::ws; int gpk6 = in.peek();
+                                        if (std::isdigit(gpk6) || gpk6 == '-' || gpk6 == '.') {
+                                            int sin = 1; in >> gu->titleScale >> gu->itemNameScale >> sin >> gu->backdropDim;
+                                            gu->showItemNames = (sin != 0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+                } else if (field == "craftingstation") {
+                    auto* cs = go->AddComponent<CraftingStation>();
+                    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    int op = 0, tk = 'c', cw = 0;
+                    in >> op >> tk; cs->title = ReadQuoted(in); in >> cw
+                       >> cs->rowHeight >> cs->width >> cs->marginX >> cs->marginY >> cs->cornerRadius;
+                    cs->open = (op != 0); cs->toggleKey = (char)tk; cs->closeWhenCrafted = (cw != 0);
+                    cs->iconFolder = ReadQuoted(in);
+                    rc(cs->panelColor); rc(cs->titleBar); rc(cs->rowColor); rc(cs->canColor);
+                    rc(cs->cantColor); rc(cs->textColor); rc(cs->hoverColor);
+                    std::size_t rn = 0; in >> rn; cs->recipes.clear();
+                    for (std::size_t ri = 0; ri < rn; ++ri) {
+                        CraftingStation::Recipe r; std::size_t ic = 0; in >> ic;
+                        for (std::size_t ii = 0; ii < ic; ++ii) {
+                            CraftingStation::Ingredient ing; ing.item = ReadQuoted(in); in >> ing.count;
+                            r.inputs.push_back(ing);
+                        }
+                        r.output = ReadQuoted(in); in >> r.outputCount;
+                        cs->recipes.push_back(r);
+                    }
+                } else if (field == "chestinventory") {
+                    auto* ch = go->AddComponent<ChestInventory>();
+                    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    int op = 0, ok = 'f', dk = 1;
+                    in >> op >> ok >> ch->range; ch->title = ReadQuoted(in);
+                    in >> ch->cols >> ch->slotSize >> ch->gap >> ch->cornerRadius;
+                    ch->iconFolder = ReadQuoted(in); in >> dk;
+                    ch->open = (op != 0); ch->openKey = (char)ok; ch->darkenWhenOpen = (dk != 0);
+                    rc(ch->panelColor); rc(ch->titleBar); rc(ch->slotColor); rc(ch->slotBorder);
+                    rc(ch->textColor); rc(ch->hoverColor);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce
@@ -1755,6 +2652,39 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
                         in >> c->maxHealth; c->health = c->maxHealth;
                         int iv = 0; in >> iv; c->invulnerable = (iv != 0);
+                        // Smarter-AI trailing fields: read whatever remains (old files stop here).
+                        std::string rest; std::getline(in, rest);
+                        std::istringstream rs(rest); std::vector<float> v; float f;
+                        while (rs >> f) v.push_back(f);
+                        auto g = [&](std::size_t i, float d) { return i < v.size() ? v[i] : d; };
+                        c->runSpeed       = g(0,  c->runSpeed);
+                        c->turnSpeed      = g(1,  c->turnSpeed);
+                        c->acceleration   = g(2,  c->acceleration);
+                        c->stopDistance   = g(3,  c->stopDistance);
+                        c->fieldOfView    = g(4,  c->fieldOfView);
+                        c->lineOfSight    = g(5,  c->lineOfSight ? 1.f : 0.f) != 0.0f;
+                        c->eyeHeight      = g(6,  c->eyeHeight);
+                        c->hearingRange   = g(7,  c->hearingRange);
+                        c->detectionTime  = g(8,  c->detectionTime);
+                        c->loseSightTime  = g(9,  c->loseSightTime);
+                        c->searchTime     = g(10, c->searchTime);
+                        c->aggressive     = g(11, c->aggressive ? 1.f : 0.f) != 0.0f;
+                        c->provokable     = g(12, c->provokable ? 1.f : 0.f) != 0.0f;
+                        c->returnsHome    = g(13, c->returnsHome ? 1.f : 0.f) != 0.0f;
+                        c->leashRange     = g(14, c->leashRange);
+                        c->wanderPause    = g(15, c->wanderPause);
+                        c->patrolLoop     = g(16, c->patrolLoop ? 1.f : 0.f) != 0.0f;
+                        c->waypointWait   = g(17, c->waypointWait);
+                        c->attackWindup   = g(18, c->attackWindup);
+                        c->fleeHealthPct  = g(19, c->fleeHealthPct);
+                        c->separationRadius = g(20, c->separationRadius);
+                        c->driveAnimation = g(21, c->driveAnimation ? 1.f : 0.f) != 0.0f;
+                        c->lookAtTarget   = g(22, c->lookAtTarget ? 1.f : 0.f) != 0.0f;
+                        c->footIK         = g(23, c->footIK ? 1.f : 0.f) != 0.0f;
+                    }
+                } else if (field == "npcwp") {
+                    if (auto* c = go->GetComponent<NPCController>()) {
+                        Vec3 w; in >> w.x >> w.y >> w.z; c->waypoints.push_back(w);
                     }
                 } else if (field == "melee") {
                     auto* c = go->AddComponent<MeleeAttacker>();
@@ -1826,7 +2756,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 fp->leanLeftKey = (char)ll; fp->leanRightKey = (char)lr;
                                 fp->leanAngle = la; fp->leanOffset = lo; fp->leanSpeed = lsp;
                                 in >> std::ws;
-                                if (std::isdigit(in.peek())) { int mj = fp->maxJumps; in >> mj; fp->maxJumps = mj; }
+                                if (std::isdigit(in.peek())) { int mj = fp->maxJumps; in >> mj; fp->maxJumps = mj;
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; fp->footIK = (fik != 0); } }
                             }
                         }
                     }
@@ -1880,7 +2811,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         tp->leanLeftKey = (char)ll; tp->leanRightKey = (char)lr;
                                         tp->leanAngle = la; tp->leanOffset = lo; tp->leanSpeed = lsp;
                                         in >> std::ws;
-                                        if (std::isdigit(in.peek())) { int mj = tp->maxJumps; in >> mj; tp->maxJumps = mj; }
+                                        if (std::isdigit(in.peek())) { int mj = tp->maxJumps; in >> mj; tp->maxJumps = mj;
+                                            in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; tp->footIK = (fik != 0); } }
                                     }
                                 }
                             }
@@ -1895,6 +2827,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> td->lookHeight >> td->cameraDamping;
                     td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
+                    in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; td->footIK = (fik != 0); }
                 } else if (field == "frctrl") {
                     auto* fr = go->AddComponent<FreeRoamController>();
                     int sk = (unsigned char)fr->sprintKey, uk = (unsigned char)fr->upKey,
@@ -1926,7 +2859,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         ts->leanLeftKey = (char)ll; ts->leanRightKey = (char)lr;
                         ts->leanAngle = la; ts->leanOffset = lo; ts->leanSpeed = lsp;
                         in >> std::ws;
-                        if (std::isdigit(in.peek())) { int mj = ts->maxJumps; in >> mj; ts->maxJumps = mj; }
+                        if (std::isdigit(in.peek())) { int mj = ts->maxJumps; in >> mj; ts->maxJumps = mj;
+                            in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; ts->footIK = (fik != 0); } }
                     }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
@@ -1950,6 +2884,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         Inventory::Slot s; s.item = ReadQuoted(in); in >> s.count;
                         inv->slots.push_back(s);
                     }
+                    in >> std::ws;   // optional max stack size (appended later)
+                    int mpk = in.peek();
+                    if (std::isdigit(mpk) || mpk == '-') in >> inv->maxStack;
                 } else if (field == "turnmgr") {
                     auto* tm = go->AddComponent<TurnManager>();
                     int as = 1; std::size_t count = 0;
@@ -1995,6 +2932,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> vc->dollyPosition >> ad;
                         vc->dolly = (dl != 0);
                         vc->autoDolly = (ad != 0);
+                    }
+                    in >> std::ws;   // optional dutch + confiner (back-compatible)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int cf = 0;
+                        in >> vc->dutch >> cf
+                           >> vc->confineMin.x >> vc->confineMin.y >> vc->confineMin.z
+                           >> vc->confineMax.x >> vc->confineMax.y >> vc->confineMax.z;
+                        vc->confine = (cf != 0);
                     }
                 } else if (field == "dollypath") {
                     auto* dp = go->AddComponent<DollyPath>();
@@ -2063,6 +3008,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws; // optional TTF font path (newest)
                     if (in.peek() == '"') tr->fontPath = ReadQuoted(in);
+                    in >> std::ws; // optional best-fit auto-size (newest)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int as = 0;
+                        in >> as >> tr->autoSizeMin >> tr->autoSizeMax;
+                        tr->autoSize = (as != 0);
+                    }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;
@@ -2201,8 +3152,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int sp = 0, gh = 0; in >> sp >> gh;
                         pn->shape = (UIShape)sp; pn->gradientHorizontal = (gh != 0);
+                        pn->gradientDir = gh ? UIPanel::GradientDir::Horizontal   // seed from legacy flag
+                                             : UIPanel::GradientDir::Vertical;
                         in >> std::ws; // optional shadow softness (added later)
                         if (std::isdigit(in.peek()) || in.peek() == '.') in >> pn->shadowSoftness;
+                        in >> std::ws; // optional gradient dir enum + outline + top sheen (newest)
+                        if (std::isdigit(in.peek())) {
+                            int gd = 0; in >> gd; pn->gradientDir = (UIPanel::GradientDir)gd;
+                            Color oc; in >> pn->outlineWidth >> oc.r >> oc.g >> oc.b >> oc.a;
+                            pn->outlineColor = oc;
+                            int th = 0; Color hc; in >> th >> hc.r >> hc.g >> hc.b >> hc.a;
+                            pn->topHighlight = (th != 0); pn->highlightColor = hc;
+                            in >> std::ws;   // optional per-corner rounding mask (newest)
+                            if (std::isdigit(in.peek())) in >> pn->cornerMask;
+                        }
                     }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();
@@ -2225,8 +3188,135 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         rcol(tr->waterColor); rcol(tr->sandColor); rcol(tr->grassColor);
                         rcol(tr->rockColor);  rcol(tr->snowColor);
                         in >> tr->waterLevel >> tr->snowLevel >> tr->rockSlope;
+                        in >> std::ws;   // optional texturing block (quoted texture path)
+                        if (in.peek() == '"') {
+                            int tp = 1;
+                            tr->texture = ReadQuoted(in);
+                            in >> tr->textureTiling >> tp; tr->triplanarTex = (tp != 0);
+                            in >> std::ws;
+                            if (in.peek() == '"') { tr->normalMap = ReadQuoted(in); in >> tr->normalStrength; }
+                        }
                     }
                     tr->Apply();   // rebuild the mesh into a MeshRenderer
+                } else if (field == "terraindigger") {
+                    auto* td = go->AddComponent<TerrainDigger>();
+                    int md = 0, btn = 0, k = 0;
+                    in >> md >> btn >> k >> td->radius >> td->strength >> td->range >> td->relax;
+                    td->mode = (TerrainDigger::Mode)md;
+                    td->button = btn;
+                    td->key = (char)k;
+                    // Optional trailing block (hardness, showBrush, brush rgba) —
+                    // guarded so older scenes without it still load.
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                        in >> td->hardness;
+                        int sb = 1; in >> sb; td->showBrush = (sb != 0);
+                        in >> td->brushColor.r >> td->brushColor.g >> td->brushColor.b >> td->brushColor.a;
+                        in >> std::ws;
+                        if (std::isdigit(in.peek()) || in.peek() == '-') in >> td->raiseButton;
+                    }
+                } else if (field == "voxelterrain") {
+                    auto* v = go->AddComponent<VoxelTerrain>();
+                    int X = 48, Y = 28, Z = 48, ac = 1;
+                    in >> X >> Y >> Z;
+                    v->Resize(X, Y, Z);
+                    in >> v->voxelSize >> v->iso >> ac >> v->snowLevel >> v->rockSlope;
+                    v->autoColor = (ac != 0);
+                    in >> v->color.r >> v->color.g >> v->color.b >> v->color.a
+                       >> v->grassColor.r >> v->grassColor.g >> v->grassColor.b
+                       >> v->rockColor.r >> v->rockColor.g >> v->rockColor.b
+                       >> v->soilColor.r >> v->soilColor.g >> v->soilColor.b
+                       >> v->snowColor.r >> v->snowColor.g >> v->snowColor.b
+                       >> v->textureTiling;
+                    v->texture = ReadQuoted(in);
+                    std::string blob; in >> blob;     // base64 density (whitespace-free)
+                    v->DecodeDensity(blob);
+                    v->Apply();
+                } else if (field == "voxeldigger") {
+                    auto* vd = go->AddComponent<VoxelDigger>();
+                    int md = 0, btn = 0, k = 0, sb = 1;
+                    in >> md >> btn >> k >> vd->radius >> vd->strength >> vd->range >> sb
+                       >> vd->brushColor.r >> vd->brushColor.g >> vd->brushColor.b >> vd->brushColor.a;
+                    vd->mode = (VoxelDigger::Mode)md;
+                    vd->button = btn; vd->key = (char)k; vd->showBrush = (sb != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') in >> vd->addButton;
+                } else if (field == "pausemenu") {
+                    auto* pm = go->AddComponent<PauseMenu>();
+                    int tk = 27, sr = 1, sq = 1;
+                    in >> tk >> sr >> sq
+                       >> pm->dimColor.r >> pm->dimColor.g >> pm->dimColor.b >> pm->dimColor.a
+                       >> pm->panelColor.r >> pm->panelColor.g >> pm->panelColor.b >> pm->panelColor.a;
+                    pm->toggleKey = (char)tk; pm->showResume = (sr != 0); pm->showQuit = (sq != 0);
+                    pm->title = ReadQuoted(in);
+                    pm->mainMenuScene = ReadQuoted(in);
+                } else if (field == "flashlight") {
+                    auto* fl = go->AddComponent<Flashlight>();
+                    int tk = 'f', onv = 1;
+                    in >> tk >> onv >> fl->range >> fl->angle >> fl->intensity
+                       >> fl->color.r >> fl->color.g >> fl->color.b;
+                    fl->toggleKey = (char)tk; fl->on = (onv != 0);
+                } else if (field == "fphand") {
+                    auto* fh = go->AddComponent<FirstPersonHand>();
+                    int hs = 1;
+                    in >> fh->attackButton >> hs;
+                    fh->holdToSwing = (hs != 0);
+                    // Optional trailing fields (older rows tolerated): showLeftArm,
+                    // followPitch, bobbing. (Some builds wrote extra arm-styling tokens
+                    // between showLeftArm and these; a stray middle token is harmless.)
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream rs(rest);
+                    std::vector<float> v; float f;
+                    while (rs >> f) v.push_back(f);
+                    if (v.size() >= 1) fh->showLeftArm = (v[0] != 0.0f);
+                    if (v.size() >= 2) fh->followPitch = (v[1] != 0.0f);
+                    if (v.size() >= 3) fh->bobbing     = (v[2] != 0.0f);
+                    if (v.size() >= 4) fh->steadyArm   = (v[3] != 0.0f);
+                    if (v.size() >= 5) fh->armRaise    = v[4];
+                    if (v.size() >= 6) fh->armElbow    = v[5];
+                } else if (field == "npspawner") {
+                    auto* ps = go->AddComponent<NetworkPlayerSpawner>();
+                    ps->playerTemplate = ReadQuoted(in);
+                    ps->prefabFile = ReadQuoted(in);
+                    int slp = 1, g = '@';
+                    in >> ps->spawnPoint.x >> ps->spawnPoint.y >> ps->spawnPoint.z
+                       >> ps->spawnSpread >> slp >> g;
+                    ps->spawnLocalPlayer = (slp != 0); ps->glyph = (char)g;
+                } else if (field == "netsync") {
+                    auto* ns = go->AddComponent<NetworkSync>();
+                    int au = 0, ow = 1; in >> au >> ow;
+                    ns->authority = (NetworkSync::Authority)au; ns->owned = (ow != 0);
+                    // syncAnimation is optional (added after the first netsync release):
+                    // a leading digit means it's present; a quote means the old form.
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int sa = 1; in >> sa; ns->syncAnimation = (sa != 0); }
+                    ns->netId = ReadQuoted(in);
+                } else if (field == "water") {
+                    auto* w = go->AddComponent<Water>();
+                    in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed
+                       >> w->color.r >> w->color.g >> w->color.b >> w->opacity
+                       >> w->reflectivity >> w->specular >> w->shininess >> w->flow.x >> w->flow.y;
+                    w->color.a = w->opacity;
+                    w->texture = ReadQuoted(in);
+                    w->Apply();
+                } else if (field == "worldstreamer") {
+                    auto* ws = go->AddComponent<WorldStreamer>();
+                    int once = 1;
+                    in >> ws->cellSize >> ws->loadRadius >> ws->unloadRadius >> once;
+                    ws->onlyOnCellChange = (once != 0);
+                    ws->folder = ReadQuoted(in);
+                    ws->prefix = ReadQuoted(in);
+                    ws->ext    = ReadQuoted(in);
+                    ws->target = ReadQuoted(in);
+                } else if (field == "destructible") {
+                    auto* de = go->AddComponent<Destructible>();
+                    int collapse = 1;
+                    de->blockTag = ReadQuoted(in);
+                    in >> de->voxelSize >> de->fractureChunks >> de->debrisLifetime
+                       >> de->explosionForce >> de->upwardBias >> de->debrisGravityScale
+                       >> de->debrisDrag >> collapse >> de->anchorY >> de->maxDebris
+                       >> de->breakButton >> de->breakRadius >> de->reach;
+                    de->collapseEnabled = (collapse != 0);
                 } else if (field == "character") {
                     std::string rest; std::getline(in, rest);   // rest of the line after the field token
                     if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
@@ -2462,11 +3552,121 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> mm->worldPerPixel >> xz >> mm->blipSize >> an;
                     mm->background = bg; mm->border = bd; mm->targetColor = tc;
                     mm->useXZ = (xz != 0); mm->anchor = (UIAnchor)an;
+                    // Appended v2 fields (older scenes simply stop here).
+                    in >> std::ws;
+                    int pk = in.peek();
+                    if (std::isdigit(pk) || pk == '-' || pk == '+' || pk == '.') {
+                        int ci = 0, rt = 0, pa = 1, cb = 0, sg = 0;
+                        Color gc;
+                        in >> ci >> rt >> pa >> cb >> sg
+                           >> gc.r >> gc.g >> gc.b >> gc.a >> mm->gridSpacing;
+                        mm->circular = (ci != 0); mm->rotateWithTarget = (rt != 0);
+                        mm->playerArrow = (pa != 0); mm->clampBlips = (cb != 0);
+                        mm->showGrid = (sg != 0); mm->gridColor = gc;
+                        // v3: GTA-style custom map (starts with a quoted texture path).
+                        in >> std::ws;
+                        if (in.peek() == '"') {
+                            mm->mapTexture = ReadQuoted(in);
+                            int fk = 'm';
+                            in >> mm->mapWorldSize >> mm->mapWorldCenter.x >> mm->mapWorldCenter.y
+                               >> fk >> mm->fullscreenZoom >> mm->fullscreenFrac;
+                            mm->fullscreenKey = (char)fk;
+                            // v4: zoom keys + waypoint markers.
+                            in >> std::ws;
+                            int pk7 = in.peek();
+                            if (std::isdigit(pk7) || pk7 == '-' || pk7 == '+' || pk7 == '.') {
+                                int zi = 0, zo = 0; std::size_t mn = 0;
+                                in >> zi >> zo >> mm->minZoom >> mm->maxZoom >> mm->zoomStep >> mn;
+                                mm->zoomInKey = (char)zi; mm->zoomOutKey = (char)zo;
+                                mm->markers.clear();
+                                for (std::size_t mi = 0; mi < mn; ++mi) {
+                                    Minimap::Marker mk;
+                                    in >> mk.world.x >> mk.world.y
+                                       >> mk.color.r >> mk.color.g >> mk.color.b >> mk.color.a >> mk.size;
+                                    mm->markers.push_back(mk);
+                                }
+                                // v5: self / view cone / range rings / north.
+                                in >> std::ws;
+                                int pk8 = in.peek();
+                                if (std::isdigit(pk8) || pk8 == '-' || pk8 == '+' || pk8 == '.') {
+                                    int ss = 1, vc = 0, sn = 0;
+                                    Color vcc, rc2, nc;
+                                    in >> ss >> vc >> mm->viewConeAngle >> mm->viewConeLength
+                                       >> vcc.r >> vcc.g >> vcc.b >> vcc.a
+                                       >> mm->rangeRings
+                                       >> rc2.r >> rc2.g >> rc2.b >> rc2.a
+                                       >> sn >> nc.r >> nc.g >> nc.b >> nc.a;
+                                    mm->showSelf = (ss != 0); mm->viewCone = (vc != 0);
+                                    mm->viewConeColor = vcc; mm->ringColor = rc2;
+                                    mm->showNorth = (sn != 0); mm->northColor = nc;
+                                    // v6: labels + route line + per-marker labels.
+                                    in >> std::ws;
+                                    int pk9 = in.peek();
+                                    if (std::isdigit(pk9) || pk9 == '-' || pk9 == '+' || pk9 == '.') {
+                                        int sl = 0; Color lc, rcl;
+                                        in >> sl >> lc.r >> lc.g >> lc.b >> lc.a >> mm->labelSize
+                                           >> mm->routeMarker
+                                           >> rcl.r >> rcl.g >> rcl.b >> rcl.a >> mm->routeWidth;
+                                        mm->showLabels = (sl != 0); mm->labelColor = lc; mm->routeColor = rcl;
+                                        for (auto& mk : mm->markers) mk.label = ReadQuoted(in);
+                                        // v7: authorable vector map shapes.
+                                        in >> std::ws;
+                                        int pk10 = in.peek();
+                                        if (std::isdigit(pk10) || pk10 == '-' || pk10 == '+' || pk10 == '.') {
+                                            std::size_t shn = 0; in >> shn;
+                                            mm->mapShapes.clear();
+                                            for (std::size_t si = 0; si < shn; ++si) {
+                                                Minimap::MapShape sh; int kd = 0, fl = 1; std::size_t pn = 0;
+                                                in >> kd >> sh.color.r >> sh.color.g >> sh.color.b >> sh.color.a
+                                                   >> sh.thickness >> fl >> pn;
+                                                sh.kind = (Minimap::MapShape::Kind)kd; sh.filled = (fl != 0);
+                                                for (std::size_t pi = 0; pi < pn; ++pi) {
+                                                    Vec2 p; in >> p.x >> p.y; sh.points.push_back(p);
+                                                }
+                                                mm->mapShapes.push_back(std::move(sh));
+                                            }
+                                            // v8: radar blip range.
+                                            in >> std::ws;
+                                            int pk11 = in.peek();
+                                            if (std::isdigit(pk11) || pk11 == '-' || pk11 == '+' || pk11 == '.') {
+                                                in >> mm->blipRange;
+                                                // v9: user waypoint (click-to-place).
+                                                in >> std::ws;
+                                                int pk12 = in.peek();
+                                                if (std::isdigit(pk12) || pk12 == '-' || pk12 == '+' || pk12 == '.') {
+                                                    int mcw = 1, huw = 0; Color uwc;
+                                                    in >> mcw >> huw >> mm->userWaypoint.x >> mm->userWaypoint.y
+                                                       >> uwc.r >> uwc.g >> uwc.b >> uwc.a;
+                                                    mm->mapClickWaypoint = (mcw != 0);
+                                                    mm->hasUserWaypoint = (huw != 0);
+                                                    mm->userWaypointColor = uwc;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else if (field == "minimapblip") {
                     auto* bl = go->AddComponent<MinimapBlip>();
                     Color c; int sq = 1;
                     in >> c.r >> c.g >> c.b >> c.a >> bl->size >> sq;
                     bl->color = c; bl->square = (sq != 0);
+                    bl->shape = (sq != 0) ? MinimapBlip::Shape::Square : MinimapBlip::Shape::Dot;
+                    // Appended v2 fields.
+                    in >> std::ws;
+                    int pk = in.peek();
+                    if (std::isdigit(pk) || pk == '-' || pk == '+' || pk == '.') {
+                        int sh = 0, rot = 0;
+                        in >> sh >> rot;
+                        bl->shape = (MinimapBlip::Shape)sh;
+                        bl->rotateWithObject = (rot != 0);
+                        in >> std::ws;
+                        if (in.peek() == '"') bl->icon = ReadQuoted(in);    // v3: icon texture
+                        in >> std::ws;
+                        if (in.peek() == '"') bl->label = ReadQuoted(in);   // v4: label
+                    }
                 } else if (field == "crosshair") {
                     auto* cr = go->AddComponent<Crosshair>();
                     Color c, dc, oc; int sl = 1, dt = 0, ol = 1, an = 0;
@@ -2479,6 +3679,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cr->color = c; cr->dotColor = dc; cr->outlineColor = oc;
                     cr->showLines = (sl != 0); cr->dot = (dt != 0); cr->outline = (ol != 0);
                     cr->anchor = (UIAnchor)an;
+                    in >> std::ws;   // optional style block (appended later)
+                    int cpk = in.peek();
+                    if (std::isdigit(cpk) || cpk == '-' || cpk == '.') {
+                        int lu = 1, ld = 1, ll = 1, lr = 1, ci = 0; Color qc;
+                        in >> lu >> ld >> ll >> lr >> cr->spread
+                           >> ci >> cr->circleRadius >> cr->circleThickness
+                           >> qc.r >> qc.g >> qc.b >> qc.a;
+                        cr->lineUp = (lu != 0); cr->lineDown = (ld != 0);
+                        cr->lineLeft = (ll != 0); cr->lineRight = (lr != 0);
+                        cr->circle = (ci != 0); cr->circleColor = qc;
+                    }
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;
@@ -2499,7 +3710,25 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         im->fillMode = (UIImage::FillMode)fm;
                     }
                     in >> std::ws; // optional shape (added later)
-                    if (std::isdigit(in.peek())) { int sp = 0; in >> sp; im->shape = (UIShape)sp; }
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0; in >> sp; im->shape = (UIShape)sp;
+                        in >> std::ws; // optional flip + preserve-aspect + frame border (newest)
+                        if (std::isdigit(in.peek())) {
+                            int fx = 0, fy = 0, pa = 0; Color bc;
+                            in >> fx >> fy >> pa >> im->borderWidth
+                               >> bc.r >> bc.g >> bc.b >> bc.a;
+                            im->flipX = (fx != 0); im->flipY = (fy != 0);
+                            im->preserveAspect = (pa != 0); im->borderColor = bc;
+                            in >> std::ws;   // optional corner mask + drop shadow (newest)
+                            if (std::isdigit(in.peek())) {
+                                in >> im->cornerMask;
+                                int sh = 0; Color sc;
+                                in >> sh >> sc.r >> sc.g >> sc.b >> sc.a
+                                   >> im->shadowOffset.x >> im->shadowOffset.y >> im->shadowSoftness;
+                                im->shadow = (sh != 0); im->shadowColor = sc;
+                            }
+                        }
+                    }
                 } else if (field == "uislider") {
                     auto* sl = go->AddComponent<UISlider>();
                     Color bg, fl, kn;
@@ -2583,6 +3812,57 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ps->playing = (playing != 0);
                     ps->fadeOverLife = (fade != 0);
                     ps->seed = static_cast<std::uint64_t>(seed);
+                    // Appended v2 fields (older scenes simply stop here).
+                    in >> std::ws;
+                    int pk = in.peek();
+                    if (std::isdigit(pk) || pk == '-' || pk == '+' || pk == '.') {
+                        int colLife = 0, szLife = 0, shapeI = 0, loopI = 1;
+                        in >> ps->endColor.r >> ps->endColor.g >> ps->endColor.b >> ps->endColor.a
+                           >> colLife >> ps->endSize >> szLife
+                           >> ps->startLifetimeRandom >> ps->startSizeRandom >> ps->speedRandom
+                           >> shapeI >> ps->shapeRadius >> ps->shapeAngle
+                           >> ps->boxSize.x >> ps->boxSize.y
+                           >> ps->gravityModifier >> ps->damping
+                           >> ps->duration >> loopI >> ps->burstCount >> ps->burstTime;
+                        ps->colorOverLife = (colLife != 0);
+                        ps->sizeOverLife = (szLife != 0);
+                        ps->loop = (loopI != 0);
+                        ps->shape = (ParticleSystem::Shape)shapeI;
+                        // Appended v3 fields: 3D z-components (older v2 scenes stop here,
+                        // leaving z at its 0/1 default so they still load flat-but-valid).
+                        in >> std::ws;
+                        int pk3 = in.peek();
+                        if (std::isdigit(pk3) || pk3 == '-' || pk3 == '+' || pk3 == '.') {
+                            in >> ps->startVelocity.z >> ps->gravity.z >> ps->boxSize.z;
+                            // Appended v4 fields: sprite texture (quoted) + billboard rotation.
+                            in >> std::ws;
+                            if (in.peek() == '"') {
+                                ps->texture = ReadQuoted(in);
+                                in >> std::ws;
+                                int pk4 = in.peek();
+                                if (std::isdigit(pk4) || pk4 == '-' || pk4 == '+' || pk4 == '.') {
+                                    in >> ps->startRotation >> ps->startRotationRandom
+                                       >> ps->rotationSpeed >> ps->rotationSpeedRandom;
+                                    // Appended v5 fields: ground-plane collision.
+                                    in >> std::ws;
+                                    int pk5 = in.peek();
+                                    if (std::isdigit(pk5) || pk5 == '-' || pk5 == '+' || pk5 == '.') {
+                                        int coll = 0;
+                                        in >> coll >> ps->collisionY >> ps->bounce
+                                           >> ps->collisionFriction >> ps->collisionLifeLoss;
+                                        ps->collision = (coll != 0);
+                                        // Appended v6 fields: render mode + stretch scale.
+                                        in >> std::ws;
+                                        int pk6 = in.peek();
+                                        if (std::isdigit(pk6) || pk6 == '-' || pk6 == '+' || pk6 == '.') {
+                                            int rm = 0; in >> rm >> ps->stretchScale;
+                                            ps->renderMode = (ParticleSystem::RenderMode)rm;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;
@@ -2624,12 +3904,14 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     out << "okayscene 1\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
+        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
+        if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
         Transform* parent = go->transform->Parent();
         int pIdx = -1;
         if (parent) {
@@ -2659,11 +3941,13 @@ bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string
 
 GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string& path,
                                                  std::string* error) {
-    std::ifstream f(path);
+    std::ifstream f(path, std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
     std::stringstream ss; ss << f.rdbuf();
+    std::string text = DataPack::Unpack(ss.str());   // decode if obfuscated
+    if (text.empty() && DataPack::IsPacked(ss.str())) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
     GameObject* root = nullptr;
-    if (!ParseInto(scene, ss.str(), /*clear=*/false, &root, error)) return nullptr;
+    if (!ParseInto(scene, text, /*clear=*/false, &root, error)) return nullptr;
     return root;
 }
 
@@ -2684,7 +3968,9 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     for (const auto& go : scene.Objects()) {
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
-        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); }
+        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); }
+        if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); }
+        if (auto* ps = go->GetComponent<ParticleSystem>())  add(ps->texture);
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
         if (auto* an = go->GetComponent<SpriteAnimator>())
@@ -2694,11 +3980,44 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
 }
 
 bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::string* error) {
-    std::ifstream f(path);
+    std::ifstream f(path, std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
     ss << f.rdbuf();
-    return Deserialize(scene, ss.str(), error);
+    std::string raw = ss.str();
+    std::string text = DataPack::Unpack(raw);   // decode if obfuscated (plaintext passes through)
+    if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
+    return Deserialize(scene, text, error);
+}
+
+bool SceneSerializer::MergeFromText(Scene& scene, const std::string& text, const Vec3& offset,
+                                    std::vector<GameObject*>* addedRoots, std::string* error) {
+    std::size_t base = scene.Objects().size();          // everything from here is new
+    GameObject* first = nullptr;
+    if (!ParseInto(scene, text, /*clear=*/false, &first, error)) return false;
+    const bool shift = (offset.x != 0.0f || offset.y != 0.0f || offset.z != 0.0f);
+    const auto& objs = scene.Objects();
+    for (std::size_t i = base; i < objs.size(); ++i) {
+        GameObject* go = objs[i].get();
+        // Roots of the merged set (parents were linked within the merge during parse).
+        if (go->transform && go->transform->Parent() == nullptr) {
+            if (shift) go->transform->localPosition = go->transform->localPosition + offset;
+            if (addedRoots) addedRoots->push_back(go);
+        }
+    }
+    return true;
+}
+
+bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const Vec3& offset,
+                                    std::vector<GameObject*>* addedRoots, std::string* error) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { if (error) *error = "cannot open " + path; return false; }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    std::string raw = ss.str();
+    std::string text = DataPack::Unpack(raw);
+    if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
+    return MergeFromText(scene, text, offset, addedRoots, error);
 }
 
 } // namespace okay

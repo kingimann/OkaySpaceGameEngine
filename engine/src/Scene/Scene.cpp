@@ -9,6 +9,7 @@
 #include "okay/Physics/ColliderFit.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Renderer.hpp"
+#include "okay/Core/Profiler.hpp"
 #include <algorithm>
 #include <functional>
 #include <limits>
@@ -92,9 +93,12 @@ void Scene::Update(float deltaTime) {
 
     m_scheduler.Update(deltaTime);
 
-    for (Component* c : m_active) {
-        if (c && c->enabled && c->gameObject && c->gameObject->active)
-            c->Update(deltaTime);
+    {
+        OKAY_PROFILE("Scripts.Update");
+        for (Component* c : m_active) {
+            if (c && c->enabled && c->gameObject && c->gameObject->active)
+                c->Update(deltaTime);
+        }
     }
 
     DispatchPointer();   // OnMouseEnter/Exit/Over/Down/Up/Click against the cursor
@@ -103,40 +107,20 @@ void Scene::Update(float deltaTime) {
     for (const auto& go : m_objects)
         if (go->active) FitColliders(go.get(), /*onlyAuto*/ true);
 
-    if (physicsEnabled) { m_physics.Step(*this, deltaTime); m_physics3d.Step(*this, deltaTime); }
-
-    for (Component* c : m_active) {
-        if (c && c->enabled && c->gameObject && c->gameObject->active)
-            c->LateUpdate(deltaTime);
+    if (physicsEnabled) {
+        { OKAY_PROFILE("Physics.2D"); m_physics.Step(*this, deltaTime); }
+        { OKAY_PROFILE("Physics.3D"); m_physics3d.Step(*this, deltaTime); }
     }
 
-    if (!m_destroyQueue.empty()) {
-        for (GameObject* go : m_destroyQueue) {
-            // Run OnDestroy and drop the object's components from the lists.
-            for (auto& obj : m_objects) {
-                if (obj.get() != go) continue;
-                for (Component* c : m_active)
-                    if (c && c->gameObject == go) c->OnDestroy();
-                break;
-            }
-            // Also drops any null slots (components removed this frame).
-            auto isOwned = [go](Component* c) { return !c || c->gameObject == go; };
-            m_active.erase(std::remove_if(m_active.begin(), m_active.end(), isOwned),
-                           m_active.end());
-            m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(), isOwned),
-                            m_pending.end());
-            if (mainCamera && mainCamera->gameObject == go) mainCamera = nullptr;
-            if (m_mouseHover == go) m_mouseHover = nullptr;   // avoid dangling pointers
-            if (m_mousePress == go) m_mousePress = nullptr;
-            m_objects.erase(
-                std::remove_if(m_objects.begin(), m_objects.end(),
-                               [go](const std::unique_ptr<GameObject>& o) {
-                                   return o.get() == go;
-                               }),
-                m_objects.end());
+    {
+        OKAY_PROFILE("Scripts.LateUpdate");
+        for (Component* c : m_active) {
+            if (c && c->enabled && c->gameObject && c->gameObject->active)
+                c->LateUpdate(deltaTime);
         }
-        m_destroyQueue.clear();
     }
+
+    FlushDestroyed();
 
     // A deferred scene load (requested via RequestLoad) happens here, after all
     // iteration is done, so it's safe to replace the whole scene.
@@ -144,9 +128,21 @@ void Scene::Update(float deltaTime) {
         std::string path = m_pendingLoad;
         m_hasPendingLoad = false;
         m_pendingLoad.clear();
+        m_pendingMerges.clear();   // a full load supersedes queued merges
         if (SceneSerializer::LoadFromFile(*this, path)) {
             Start(); // run Awake/Start for the freshly loaded objects
         }
+    }
+
+    // Deferred additive merges (RequestMerge): fold another scene's objects into this
+    // one, then Start() — which only Awakes/Starts the newly added components.
+    if (!m_pendingMerges.empty()) {
+        auto merges = std::move(m_pendingMerges);
+        m_pendingMerges.clear();
+        bool any = false;
+        for (auto& m : merges)
+            if (SceneSerializer::MergeFromFile(*this, m.first, m.second)) any = true;
+        if (any) Start();
     }
 }
 
@@ -247,6 +243,8 @@ void Scene::Destroy(GameObject* go) {
     // root — the descendants' parents are destroyed together with them.)
     std::function<void(GameObject*)> queue = [&](GameObject* g) {
         if (!g) return;
+        // Don't queue the same object twice (a double Destroy would double-free it).
+        if (std::find(m_destroyQueue.begin(), m_destroyQueue.end(), g) != m_destroyQueue.end()) return;
         m_destroyQueue.push_back(g);
         if (g->transform) {
             std::vector<Transform*> kids = g->transform->Children();   // copy: recursion-safe
@@ -255,6 +253,29 @@ void Scene::Destroy(GameObject* go) {
         }
     };
     queue(go);
+}
+
+void Scene::FlushDestroyed() {
+    if (m_destroyQueue.empty()) return;
+    for (GameObject* go : m_destroyQueue) {
+        // Run OnDestroy and drop the object's components from the lists.
+        for (auto& obj : m_objects) {
+            if (obj.get() != go) continue;
+            for (Component* c : m_active)
+                if (c && c->gameObject == go) c->OnDestroy();
+            break;
+        }
+        auto isOwned = [go](Component* c) { return !c || c->gameObject == go; };
+        m_active.erase(std::remove_if(m_active.begin(), m_active.end(), isOwned), m_active.end());
+        m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(), isOwned), m_pending.end());
+        if (mainCamera && mainCamera->gameObject == go) mainCamera = nullptr;
+        if (m_mouseHover == go) m_mouseHover = nullptr;
+        if (m_mousePress == go) m_mousePress = nullptr;
+        m_objects.erase(std::remove_if(m_objects.begin(), m_objects.end(),
+                                       [go](const std::unique_ptr<GameObject>& o) { return o.get() == go; }),
+                        m_objects.end());
+    }
+    m_destroyQueue.clear();
 }
 
 GameObject* Scene::Find(const std::string& name) const {

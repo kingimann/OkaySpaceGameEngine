@@ -11,6 +11,7 @@
 #include <Okay.hpp>
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
+#include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
 #include "OkayScriptUIBridge.hpp"
@@ -22,6 +23,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -41,9 +43,12 @@ static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int 
 // scanline by scanline so any silhouette uses one code path. Supports a linear
 // gradient (top->bottom, or left->right when `horizontal`); pass equal colors for
 // a flat fill. `op` is the canvas master opacity.
+// `diag`: 0 = axis-aligned (obey `horizontal`); 1 = diagonal top-left->bottom-right;
+// 2 = diagonal bottom-left->top-right. Diagonals blend `top`->`bottom` across the
+// corner and, like the horizontal case, step per pixel.
 static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
                         const Color& top, const Color& bottom, bool gradient, bool horizontal,
-                        float op) {
+                        float op, int diag = 0, int cornerMask = UICornerAll) {
     if (r.w <= 0 || r.h <= 0) return;
     auto lerp = [](const Color& a, const Color& b, float t) {
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
@@ -51,13 +56,13 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
     };
     for (int row = 0; row < r.h; ++row) {
         float x0, x1;
-        if (!UIShapeRowSpan(shape, (float)r.w, (float)r.h, radius, row, x0, x1)) continue;
+        if (!UIShapeRowSpan(shape, (float)r.w, (float)r.h, radius, row, x0, x1, cornerMask)) continue;
         if (!gradient) {
             SDL_SetRenderDrawColor(ren, (Uint8)(top.r * 255), (Uint8)(top.g * 255),
                                    (Uint8)(top.b * 255), (Uint8)(top.a * 255 * op));
             SDL_Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
             SDL_RenderFillRect(ren, &span);
-        } else if (!horizontal) {
+        } else if (!horizontal && diag == 0) {
             float t = r.h > 1 ? (float)row / (r.h - 1) : 0.0f;
             Color c = lerp(top, bottom, t);
             SDL_SetRenderDrawColor(ren, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
@@ -65,10 +70,14 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
             SDL_Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
             SDL_RenderFillRect(ren, &span);
         } else {
-            // Horizontal gradient: step across the span pixel-cluster by cluster.
+            // Horizontal or diagonal gradient: step across the span pixel by pixel.
             int ix0 = (int)x0, ix1 = (int)x1;
+            float fy = r.h > 1 ? (float)row / (r.h - 1) : 0.0f;
             for (int x = ix0; x <= ix1; ++x) {
-                float t = r.w > 1 ? (float)x / (r.w - 1) : 0.0f;
+                float fx = r.w > 1 ? (float)x / (r.w - 1) : 0.0f;
+                float t = diag == 1 ? (fx + fy) * 0.5f
+                        : diag == 2 ? (fx + (1.0f - fy)) * 0.5f
+                        : fx;                                   // plain horizontal
                 Color c = lerp(top, bottom, t);
                 SDL_SetRenderDrawColor(ren, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
                                        (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op));
@@ -79,12 +88,19 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
     }
 }
 
+// Map a panel's gradient direction to FillUIShape's (horizontal, diag) params.
+static void GradientParams(UIPanel::GradientDir d, bool& horizontal, int& diag) {
+    horizontal = (d == UIPanel::GradientDir::Horizontal);
+    diag = (d == UIPanel::GradientDir::DiagonalDown) ? 1
+         : (d == UIPanel::GradientDir::DiagonalUp)   ? 2 : 0;
+}
+
 // Draw a drop shadow for a UI shape. softness == 0 is a crisp shadow; softness > 0
 // fakes a blur by stacking a few expanding, fading copies into a soft penumbra.
 static void FillUIShadow(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
-                         const Color& color, float softness, float op) {
+                         const Color& color, float softness, float op, int cornerMask = UICornerAll) {
     if (softness <= 0.0f) {
-        FillUIShape(ren, r, shape, radius, color, color, false, false, op);
+        FillUIShape(ren, r, shape, radius, color, color, false, false, op, 0, cornerMask);
         return;
     }
     const int layers = 5;
@@ -92,9 +108,9 @@ static void FillUIShadow(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, fl
         float grow = softness * (float)k / layers;
         SDL_Rect r2{r.x - (int)grow, r.y - (int)grow, r.w + (int)(2 * grow), r.h + (int)(2 * grow)};
         Color c = color; c.a = color.a * (0.6f / layers);     // accumulate toward the edge
-        FillUIShape(ren, r2, shape, radius + grow, c, c, false, false, op);
+        FillUIShape(ren, r2, shape, radius + grow, c, c, false, false, op, 0, cornerMask);
     }
-    FillUIShape(ren, r, shape, radius, color, color, false, false, op);   // solid core
+    FillUIShape(ren, r, shape, radius, color, color, false, false, op, 0, cornerMask);   // solid core
 }
 
 // A stable, distinct color for each non-zero tile id (no palette is stored).
@@ -112,6 +128,63 @@ static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, flo
     SDL_Rect rect{c.x - hw, c.y - hh, hw * 2 > 0 ? hw * 2 : 1, hh * 2 > 0 ? hh * 2 : 1};
     SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     SDL_RenderFillRect(r, &rect);
+}
+
+// --- Small raster helpers for the minimap (filled circle / ring / triangle). ----
+static void MMFillCircle(SDL_Renderer* r, int cx, int cy, int rad, SDL_Color col) {
+    if (rad < 1) rad = 1;
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    for (int dy = -rad; dy <= rad; ++dy) {
+        int dx = (int)std::sqrt((double)(rad * rad - dy * dy));
+        SDL_RenderDrawLine(r, cx - dx, cy + dy, cx + dx, cy + dy);
+    }
+}
+static void MMDrawRing(SDL_Renderer* r, int cx, int cy, int rad, int width, SDL_Color col) {
+    if (rad < 1) rad = 1; if (width < 1) width = 1;
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    const int seg = 64;
+    int prevx = cx + rad, prevy = cy;
+    for (int i = 1; i <= seg; ++i) {
+        float a = (float)i / seg * 6.2831853f;
+        int x = cx + (int)(std::cos(a) * rad), y = cy + (int)(std::sin(a) * rad);
+        for (int w2 = 0; w2 < width; ++w2) SDL_RenderDrawLine(r, prevx, prevy + w2, x, y + w2);
+        prevx = x; prevy = y;
+    }
+}
+static void MMThickLine(SDL_Renderer* r, float x0, float y0, float x1, float y1, float width, SDL_Color col);
+static void MMFillTriangle(SDL_Renderer* r, SDL_Point a, SDL_Point b, SDL_Point c, SDL_Color col) {
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    int minY = std::min({a.y, b.y, c.y}), maxY = std::max({a.y, b.y, c.y});
+    auto edgeX = [](SDL_Point p, SDL_Point q, int y, float& x) -> bool {
+        if (p.y == q.y) return false;
+        if (y < std::min(p.y, q.y) || y > std::max(p.y, q.y)) return false;
+        float t = (float)(y - p.y) / (float)(q.y - p.y);
+        x = p.x + t * (q.x - p.x); return true;
+    };
+    for (int y = minY; y <= maxY; ++y) {
+        float xs[3]; int n = 0; float xv;
+        if (edgeX(a, b, y, xv)) xs[n++] = xv;
+        if (edgeX(b, c, y, xv)) xs[n++] = xv;
+        if (edgeX(c, a, y, xv)) xs[n++] = xv;
+        if (n >= 2) {
+            int x0 = (int)std::min(xs[0], xs[1]), x1 = (int)std::max(xs[0], xs[1]);
+            SDL_RenderDrawLine(r, x0, y, x1, y);
+        }
+    }
+}
+// A line segment with thickness, drawn as a filled quad (for minimap roads/walls).
+static void MMThickLine(SDL_Renderer* r, float x0, float y0, float x1, float y1, float width, SDL_Color col) {
+    float dx = x1 - x0, dy = y1 - y0, len = std::sqrt(dx*dx + dy*dy);
+    if (len < 1e-3f) return;
+    float nx = -dy / len * width * 0.5f, ny = dx / len * width * 0.5f;
+    SDL_Point a{(int)(x0+nx),(int)(y0+ny)}, b{(int)(x1+nx),(int)(y1+ny)},
+              c{(int)(x1-nx),(int)(y1-ny)}, d{(int)(x0-nx),(int)(y0-ny)};
+    MMFillTriangle(r, a, b, c, col); MMFillTriangle(r, a, c, d, col);
+}
+// Fill a simple (convex) polygon by fanning triangles from the first vertex.
+static void MMFillPoly(SDL_Renderer* r, const std::vector<SDL_Point>& pts, SDL_Color col) {
+    for (std::size_t i = 1; i + 1 < pts.size(); ++i)
+        MMFillTriangle(r, pts[0], pts[i], pts[i+1], col);
 }
 
 // Upload a TTF glyph atlas as an SDL texture (once, cached) for the player.
@@ -221,6 +294,36 @@ static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
     return tex;
 }
 
+// Screen-space vignette (RenderSettings.vignette): darken the frame's edges toward
+// the corners. A cheap post overlay of stepped 1px border frames fading inward, so
+// it looks the same regardless of which 3D backend rendered the scene beneath it.
+static void DrawVignette(SDL_Renderer* r, float strength) {
+    if (strength <= 0.0f) return;
+    if (strength > 1.0f) strength = 1.0f;
+    int w = 0, h = 0;
+    SDL_GetRendererOutputSize(r, &w, &h);
+    if (w <= 2 || h <= 2) return;
+    SDL_BlendMode prev; SDL_GetRenderDrawBlendMode(r, &prev);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    const int steps = 56;
+    const float maxInset = 0.42f * (float)std::min(w, h);   // how far the fade reaches
+    for (int i = 0; i < steps; ++i) {
+        float t = (float)i / (float)(steps - 1);            // 0 at edge .. 1 inward
+        int inset = (int)(t * maxInset);
+        if (w - 2 * inset <= 0 || h - 2 * inset <= 0) break;
+        Uint8 a = (Uint8)(strength * 160.0f * (1.0f - t) * (1.0f - t));   // strongest at edge
+        if (a == 0) continue;
+        SDL_SetRenderDrawColor(r, 0, 0, 0, a);
+        SDL_Rect top{inset, inset, w - 2 * inset, 1};
+        SDL_Rect bot{inset, h - inset - 1, w - 2 * inset, 1};
+        SDL_Rect lft{inset, inset, 1, h - 2 * inset};
+        SDL_Rect rgt{w - inset - 1, inset, 1, h - 2 * inset};
+        SDL_RenderFillRect(r, &top); SDL_RenderFillRect(r, &bot);
+        SDL_RenderFillRect(r, &lft); SDL_RenderFillRect(r, &rgt);
+    }
+    SDL_SetRenderDrawBlendMode(r, prev);
+}
+
 // Full-screen loading-screen overlay (background + centred title + tip + progress bar).
 static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
                               std::unordered_map<std::string, SDL_Texture*>& cache) {
@@ -232,6 +335,18 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
     SDL_Rect full{0, 0, W, H};
     SDL_Texture* bgTex = ls.backgroundImage.empty() ? nullptr : GetTexture(r, ls.backgroundImage, baseDir, cache);
     if (bgTex) { SDL_SetTextureAlphaMod(bgTex, A); SDL_RenderCopy(r, bgTex, nullptr, &full); }
+    else if (ls.gradientBackground) {
+        const Color& b0 = ls.backgroundColor; const Color& b1 = ls.backgroundColor2;
+        const int bands = 64;
+        for (int i = 0; i < bands; ++i) {
+            float t = (float)i / (bands - 1);
+            SDL_SetRenderDrawColor(r, (Uint8)((b0.r + (b1.r - b0.r) * t) * 255),
+                                   (Uint8)((b0.g + (b1.g - b0.g) * t) * 255),
+                                   (Uint8)((b0.b + (b1.b - b0.b) * t) * 255), A);
+            SDL_Rect band{0, (int)(H * i / (float)bands), W, H / bands + 1};
+            SDL_RenderFillRect(r, &band);
+        }
+    }
     else {
         const Color& b = ls.backgroundColor;
         SDL_SetRenderDrawColor(r, (Uint8)(b.r * 255), (Uint8)(b.g * 255), (Uint8)(b.b * 255), A);
@@ -242,26 +357,48 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
     };
     const float adv = (float)(Font8x8::Width + 1);
     if (ls.showTitle && !ls.title.empty()) {
-        float px = H * 0.006f; if (px < 2.0f) px = 2.0f;
+        float px = H * 0.006f * ls.titleScale; if (px < 2.0f) px = 2.0f;
         float tw = ls.title.size() * adv * px;
-        DrawText(r, ls.title, (W - tw) * 0.5f, H * 0.40f, px, sc(ls.textColor, A));
+        DrawText(r, ls.title, (W - tw) * 0.5f, H * ls.titleY, px, sc(ls.titleColor, A));
     }
     if (!ls.CurrentTip().empty()) {
-        float px = H * 0.0032f; if (px < 1.0f) px = 1.0f;
+        float px = H * 0.0032f * ls.tipScale; if (px < 1.0f) px = 1.0f;
         float tw = ls.CurrentTip().size() * adv * px;
-        DrawText(r, ls.CurrentTip(), (W - tw) * 0.5f, H * 0.78f, px, sc(ls.textColor, A));
+        DrawText(r, ls.CurrentTip(), (W - tw) * 0.5f, H * ls.tipY, px, sc(ls.tipColor, A));
     }
     if (ls.showBar) {
-        int bw = (int)(W * 0.5f), bh = (int)(H * 0.022f); if (bh < 6) bh = 6;
-        int bx = (W - bw) / 2, by = (int)(H * 0.86f);
+        int bw = (int)(W * ls.barWidth), bh = (int)(H * ls.barHeight); if (bh < 4) bh = 4;
+        int bx = (W - bw) / 2, by = (int)(H * ls.barY);
         SDL_Rect bgr{bx, by, bw, bh};
-        const Color& bb = ls.barBackground;
-        SDL_SetRenderDrawColor(r, (Uint8)(bb.r * 255), (Uint8)(bb.g * 255), (Uint8)(bb.b * 255), A);
-        SDL_RenderFillRect(r, &bgr);
+        UIShape shp = ls.barRadius > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
+        FillUIShape(r, bgr, shp, ls.barRadius, ls.barBackground, ls.barBackground, false, false, a);
         SDL_Rect fr{bx, by, (int)(bw * ls.Progress()), bh};
-        const Color& bf = ls.barFill;
-        SDL_SetRenderDrawColor(r, (Uint8)(bf.r * 255), (Uint8)(bf.g * 255), (Uint8)(bf.b * 255), A);
-        SDL_RenderFillRect(r, &fr);
+        if (fr.w > 0) FillUIShape(r, fr, shp, ls.barRadius, ls.barFill, ls.barFill, false, false, a);
+        if (ls.barBorder) {
+            SDL_SetRenderDrawColor(r, (Uint8)(ls.barBorderColor.r*255), (Uint8)(ls.barBorderColor.g*255),
+                                   (Uint8)(ls.barBorderColor.b*255), A);
+            SDL_RenderDrawRect(r, &bgr);
+        }
+        if (ls.showPercent) {
+            char pc[8]; std::snprintf(pc, sizeof(pc), "%d%%", (int)(ls.Progress() * 100.0f + 0.5f));
+            float px = H * 0.0030f; if (px < 1.0f) px = 1.0f;
+            DrawText(r, pc, bx + bw + 8, by + (bh - (Font8x8::Height) * px) * 0.5f, px, sc(ls.textColor, A));
+        }
+    }
+    if (ls.showSpinner) {
+        float ccx = W * 0.5f, ccy = H * ls.spinnerY, rad = H * ls.spinnerRadius;
+        float ds = ls.spinnerDotSize * (H / 720.0f); if (ds < 2.0f) ds = 2.0f;
+        const int dots = 8;
+        float phase = ls.Elapsed() * ls.spinnerSpeed;
+        for (int i = 0; i < dots; ++i) {
+            float ang = (float)i / dots * 6.2831853f;
+            float dx = ccx + std::cos(ang) * rad, dy = ccy + std::sin(ang) * rad;
+            float bright = 0.25f + 0.75f * (0.5f + 0.5f * std::cos(ang - phase));   // chase
+            SDL_SetRenderDrawColor(r, (Uint8)(ls.spinnerColor.r*255), (Uint8)(ls.spinnerColor.g*255),
+                                   (Uint8)(ls.spinnerColor.b*255), (Uint8)(A * bright));
+            SDL_Rect d{(int)(dx - ds*0.5f), (int)(dy - ds*0.5f), (int)ds, (int)ds};
+            SDL_RenderFillRect(r, &d);
+        }
     }
 }
 
@@ -272,7 +409,12 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
     const int n = ui.hotbarSlots < 1 ? 1 : ui.hotbarSlots;
-    const float sz = ui.slotSize, gap = ui.slotGap;
+    // Resolution-independent UI: scale by the window height vs the authored reference,
+    // so the inventory keeps the same on-screen proportion in a small built-game window
+    // as it does in the (usually larger) editor Game view. Unity's "Scale With Screen Size".
+    const float uiScale = (ui.scaleToScreen && ui.referenceHeight > 1.0f) ? (float)H / ui.referenceHeight : 1.0f;
+    const float sz = ui.slotSize * uiScale, gap = ui.slotGap * uiScale;
+    const float marginX = ui.marginX * uiScale, marginY = ui.marginY * uiScale, panelPad = ui.panelPad * uiScale;
     auto setc = [&](const Color& c, int a = -1) {
         SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
                                (Uint8)(a < 0 ? c.a * 255 : a));
@@ -282,30 +424,43 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     const UIShape shp = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
     // Draw one slot at (x,y) for inventory stack index `idx`, highlighted if selected.
     auto slot = [&](float x, float y, int idx, bool sel) {
+        // Selected hotbar slot "pop": grow it about its centre by selectedScale.
+        float S = sz, X = x, Y = y;
+        if (sel && ui.selectedScale != 1.0f && ui.selectedScale > 0.01f) {
+            S = sz * ui.selectedScale; X = x - (S - sz) * 0.5f; Y = y - (S - sz) * 0.5f;
+        }
         float b = (ui.borderWidth < 0 ? 0 : ui.borderWidth) + (sel ? 1.0f : 0.0f);
-        SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
-        const Color& bc = sel ? ui.selectedColor : ui.slotBorder;
+        SDL_Rect outer{(int)X, (int)Y, (int)S, (int)S};
+        Color bc = sel ? ui.selectedColor : ui.slotBorder;
+        bool empty = !(inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty());
+        if (!sel && !empty)
+            if (const Color* rc = ui.RarityOf(inv->slots[idx].item)) bc = *rc;   // rarity tint
         FillUIShape(r, outer, shp, cr, bc, bc, false, false, 1.0f);
-        SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
+        SDL_Rect inner{(int)(X + b), (int)(Y + b), (int)(S - 2 * b), (int)(S - 2 * b)};
         float ir = cr > 0.5f ? (cr - b < 0 ? 0 : cr - b) : 0.0f;
-        FillUIShape(r, inner, ir > 0.5f ? UIShape::Rounded : UIShape::Rectangle, ir, ui.slotColor, ui.slotColor, false, false, 1.0f);
-        if (idx != ui.dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+        Color fillc = empty ? ui.emptySlotColor : (idx < n ? ui.hotbarColor : ui.slotColor);
+        FillUIShape(r, inner, ir > 0.5f ? UIShape::Rounded : UIShape::Rectangle, ir, fillc, fillc, false, false, 1.0f);
+        // Count shown in the slot: the source of a split-drag still shows its remainder
+        // (a whole-stack drag lifts everything, so the source draws empty).
+        int shown = (inv && idx >= 0 && idx < (int)inv->slots.size()) ? inv->slots[idx].count : 0;
+        if (idx == ui.dragIndex) shown -= (ui.dragAmount > 0 ? ui.dragAmount : shown);
+        if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
             SDL_Texture* icon = ui.iconFolder.empty() ? nullptr
                               : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
-            if (icon) { SDL_Rect d{inner.x + 2, inner.y + 2, inner.w - 4, inner.h - 4}; SDL_RenderCopy(r, icon, nullptr, &d); }
+            if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; SDL_RenderCopy(r, icon, nullptr, &d); }
             else if (ui.showNames) {
                 std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-                float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-                if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;   // fit the slot
-                DrawText(r, nm, x + 4, y + 5, px,
+                float px = (S - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
+                if (px < 1.0f) px = 1.0f; if (px > S * 0.05f) px = S * 0.05f;   // fit the slot
+                DrawText(r, nm, X + 4, Y + 5, px,
                          SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
             }
-            if (ui.showCounts && it.count > 1) {
-                std::string cs = std::to_string(it.count);
-                float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+            if (ui.showCounts && shown > 1) {
+                std::string cs = std::to_string(shown);
+                float px = S * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
                 float tw = cs.size() * (Font8x8::Width + 1) * px;
-                DrawText(r, cs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
+                DrawText(r, cs, X + S - tw - 3, Y + S - (Font8x8::Height + 1) * px - 3, px,
                          SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
             }
         }
@@ -313,38 +468,87 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     // Layout: hotbar docked to the bottom (or top), nudged by margins; the backpack
     // grows away from the docked edge.
     const float rowW = n * sz + (n - 1) * gap;
-    const float hx = (W - rowW) * 0.5f + ui.marginX;
-    const float hy = ui.anchorTop ? ui.marginY : H - sz - ui.marginY;
+    const float hx = (ui.hAlign == InventoryUI::HAlign::Left)  ? marginX
+                   : (ui.hAlign == InventoryUI::HAlign::Right) ? (W - rowW - marginX)
+                   : (W - rowW) * 0.5f + marginX;   // Center (default)
+    const float hy = ui.anchorTop ? marginY : H - sz - marginY;
     auto bpY = [&](int row) {
         return ui.anchorTop ? hy + sz + 14.0f + row * (sz + gap)
                             : hy - 14.0f - (ui.backpackRows - row) * (sz + gap);
     };
     auto panel = [&](float x, float y, float w, float h) {
         SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
-        FillUIShape(r, rc, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr + 2.0f,
-                    ui.panelColor, ui.panelColor, false, false, 1.0f);
+        UIShape psh = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
+        FillUIShape(r, rc, psh, cr + 2.0f, ui.panelColor, ui.panelColor, false, false, 1.0f);
+        // Optional outline (alpha 0 = off): a few inset frames approximate a border.
+        if (ui.panelBorder.a > 0.001f && ui.panelBorderWidth > 0.0f) {
+            int bw = (int)(ui.panelBorderWidth * uiScale); if (bw < 1) bw = 1;
+            setc(ui.panelBorder);
+            for (int k = 0; k < bw; ++k) {
+                SDL_Rect fr{rc.x + k, rc.y + k, rc.w - 2 * k, rc.h - 2 * k};
+                if (fr.w > 0 && fr.h > 0) SDL_RenderDrawRect(r, &fr);
+            }
+        }
     };
     // Backpack (when open): darken, then the grid.
     if (ui.open && ui.backpackRows > 0) {
         if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
         if (ui.showPanel) {
             float t = bpY(0), b = bpY(ui.backpackRows - 1);
-            float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = ui.panelPad;
+            float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = panelPad;
             panel(hx - pad, top - pad, rowW + 2 * pad, (bot - top) + 2 * pad);
+        }
+        // Backpack header title above the grid.
+        if (ui.showTitle && !ui.backpackTitle.empty()) {
+            float t = bpY(0), b = bpY(ui.backpackRows - 1);
+            float top = (t < b ? t : b);
+            float px = 2.0f * ui.labelScale * uiScale; if (px < 1.0f) px = 1.0f;
+            float tw = ui.backpackTitle.size() * (Font8x8::Width + 1) * px;
+            DrawText(r, ui.backpackTitle, hx + rowW * 0.5f - tw * 0.5f,
+                     top - panelPad - (Font8x8::Height + 1) * px - 2.0f, px,
+                     SDL_Color{(Uint8)(ui.titleColor.r*255),(Uint8)(ui.titleColor.g*255),(Uint8)(ui.titleColor.b*255),255});
         }
         for (int row = 0; row < ui.backpackRows; ++row)
             for (int c = 0; c < n; ++c)
                 slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
     }
-    if (ui.showPanel) panel(hx - ui.panelPad, hy - ui.panelPad, rowW + 2 * ui.panelPad, sz + 2 * ui.panelPad);
+    if (ui.showPanel) panel(hx - panelPad, hy - panelPad, rowW + 2 * panelPad, sz + 2 * panelPad);
     for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+    // Hotbar slot numbers (1–9) in the top-left corner.
+    if (ui.slotNumbers) {
+        float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+        for (int i = 0; i < n && i < 9; ++i)
+            DrawText(r, std::to_string(i + 1), hx + i * (sz + gap) + 3, hy + 2, px,
+                     SDL_Color{(Uint8)(ui.numberColor.r*255),(Uint8)(ui.numberColor.g*255),(Uint8)(ui.numberColor.b*255),255});
+    }
+    // Tooltip helper: a small panel near the cursor with the item's name + count.
+    okay::Vec2 mpos = okay::Input::MousePosition();
+    auto drawTip = [&](const std::string& label) {
+        if (!ui.showTooltips || label.empty()) return;
+        float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+        float tw = label.size() * (Font8x8::Width + 1) * px, th = Font8x8::Height * px, pad = 6.0f;
+        SDL_Rect bg{(int)(mpos.x + 14), (int)(mpos.y + 14), (int)(tw + pad * 2), (int)(th + pad * 2)};
+        FillUIShape(r, bg, UIShape::Rounded, 4.0f, ui.tooltipColor, ui.tooltipColor, false, false, 1.0f);
+        DrawText(r, label, bg.x + pad, bg.y + pad, px,
+                 SDL_Color{(Uint8)(ui.tooltipText.r*255),(Uint8)(ui.tooltipText.g*255),(Uint8)(ui.tooltipText.b*255),255});
+    };
+    auto slotLabel = [&](const Inventory::Slot& it) {
+        return it.item + (it.count > 1 ? " x" + std::to_string(it.count) : std::string());
+    };
+    // Hotbar tooltip on hover (shown even when the backpack is closed).
+    if (inv && ui.showTooltips && !ui.open && ui.dragIndex < 0)
+        for (int i = 0; i < n && i < (int)inv->slots.size(); ++i) {
+            float sx = hx + i * (sz + gap);
+            if (mpos.x >= sx && mpos.x < sx + sz && mpos.y >= hy && mpos.y < hy + sz &&
+                !inv->slots[i].item.empty()) { drawTip(slotLabel(inv->slots[i])); break; }
+        }
     // Minecraft-style held-item name above (or below) the hotbar.
     if (ui.showSelectedName) {
         std::string nm = ui.SelectedItem();
         if (!nm.empty()) {
-            float px = 2.0f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+            float px = 2.0f * ui.labelScale * uiScale; if (px < 1.0f) px = 1.0f;
             float tw = nm.size() * (Font8x8::Width + 1) * px;
-            float ty = ui.anchorTop ? hy + sz + ui.panelPad + 4.0f : hy - (Font8x8::Height + 1) * px - ui.panelPad - 4.0f;
+            float ty = ui.anchorTop ? hy + sz + panelPad + 4.0f : hy - (Font8x8::Height + 1) * px - panelPad - 4.0f;
             DrawText(r, nm, hx + rowW * 0.5f - tw * 0.5f, ty, px,
                      SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
         }
@@ -352,14 +556,21 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
 
     // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
     // drop it on the NEAREST slot (forgiving — gaps/imperfect aim still land cleanly).
-    if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; return; }
+    if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; ui.dragAmount = 0; return; }
     auto slotXY = [&](int idx, float& sx, float& sy) {
         if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
         else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
     };
     const int slotCount = n + ui.backpackRows * n;
-    // Slot whose centre is closest to (px,py), within a slot's reach (else -1).
+    // Which slot a point picks: the slot it's actually inside (so hovering over a
+    // slot always picks THAT slot), else — for gaps / imperfect aim — the slot whose
+    // centre is nearest, within a slot's reach. Containment wins so the cursor sitting
+    // between two rows never snaps to the row above the one it's visually over.
     auto nearest = [&](float px, float py) -> int {
+        for (int idx = 0; idx < slotCount; ++idx) {
+            float sx, sy; slotXY(idx, sx, sy);
+            if (px >= sx && px < sx + sz && py >= sy && py < sy + sz) return idx;
+        }
         int best = -1; float bestD = (sz + gap) * (sz + gap) * 1.1f;
         for (int idx = 0; idx < slotCount; ++idx) {
             float sx, sy; slotXY(idx, sx, sy);
@@ -377,17 +588,29 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     };
     // Highlight the target slot: the one under the cursor while hovering, or the
     // nearest slot the dragged item will drop into.
-    if (ui.dragIndex < 0) hilite(nearest(mp.x, mp.y), ui.hoverColor);
+    if (ui.dragIndex < 0) {
+        int hi = nearest(mp.x, mp.y);
+        hilite(hi, ui.hoverColor);
+        if (inv && hi >= 0 && hi < (int)inv->slots.size() && !inv->slots[hi].item.empty())
+            drawTip(slotLabel(inv->slots[hi]));
+    }
     else { int t = nearest(mp.x, mp.y);
         if (t >= 0 && t != ui.dragIndex)
             hilite(t, Color{ui.selectedColor.r, ui.selectedColor.g, ui.selectedColor.b, 0.40f}); }
-    if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+    if (ui.dragIndex < 0) {
         int idx = nearest(mp.x, mp.y);
-        if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui.dragIndex = idx;
+        bool onItem = idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty();
+        if (onItem && okay::Input::GetMouseButtonDown(0)) {
+            if (ui.shiftQuickMove && okay::Input::GetKey(okay::Input::KeyShift)) ui.QuickMove(idx);
+            else { ui.dragIndex = idx; ui.dragAmount = 0; }           // drag the whole stack
+        } else if (onItem && ui.splitRightClick && okay::Input::GetMouseButtonDown(1) && inv->slots[idx].count > 1) {
+            ui.dragIndex = idx; ui.dragAmount = ui.splitHalf ? inv->slots[idx].count / 2 : 1;   // pick up half (or one)
+        }
     }
-    if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-        ui.MoveSlot(ui.dragIndex, nearest(mp.x, mp.y));
-        ui.dragIndex = -1;
+    // Drop when the held button is released (either button — you held one to drag).
+    if (ui.dragIndex >= 0 && (okay::Input::GetMouseButtonUp(0) || okay::Input::GetMouseButtonUp(1))) {
+        ui.ApplyDrag(ui.dragIndex, nearest(mp.x, mp.y));
+        ui.dragIndex = -1; ui.dragAmount = 0;
     }
     if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {
         const auto& it = inv->slots[ui.dragIndex];
@@ -402,91 +625,374 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             DrawText(r, nm, x + 4, y + 5, px,
                      SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
         }
+        // The carried count (the split amount, or the whole stack).
+        int carried = ui.dragAmount > 0 ? ui.dragAmount : it.count;
+        if (ui.showCounts && carried > 1) {
+            std::string ccs = std::to_string(carried);
+            float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+            float tw = ccs.size() * (Font8x8::Width + 1) * px;
+            DrawText(r, ccs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
+                     SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
+        }
     }
 }
 
 // A DayZ/Unturned grid inventory: multi-cell items, drag-and-drop within the grid.
+// Unturned-style multi-container inventory: the player's own grid + every worn
+// clothing/bag grid stacked in a left column, and nearby ground containers in a
+// right column. Drag-and-drop works across all of them (cross-bag / loot moves).
 static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const std::string& baseDir,
                               std::unordered_map<std::string, SDL_Texture*>& cache) {
-    okay::GridInventory* inv = ui.Inv();
-    if (!inv || !inv->open) { ui.dragIndex = -1; return; }
+    okay::GridInventory* primary = ui.Inv();
+    if (!primary || !primary->open) { ui.dragIndex = -1; ui.dragInv = nullptr; return; }
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
-    const float cs = ui.cellSize, gp = ui.gap;
-    float gridW = inv->cols * cs + (inv->cols - 1) * gp;
-    float gridH = inv->rows * cs + (inv->rows - 1) * gp;
-    float ox = (W - gridW) * 0.5f, oy = (H - gridH) * 0.5f + 10.0f;
+    // Honour the configured sizes (just a minimal sane floor); kept in sync with the
+    // editor preview so drag hit-testing matches.
+    const float cs = ui.cellSize < 24.0f ? 24.0f : ui.cellSize;
+    const float gp = ui.gap < 0.0f ? 0.0f : ui.gap;
+    const float cr = ui.cornerRadius < 0.0f ? 0.0f : ui.cornerRadius;
     auto setc = [&](const Color& c, int a = -1) {
         SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
     };
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255}; };
-    const float cr = ui.cornerRadius;
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
         SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
         FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
-    okay::Vec2 mp = okay::Input::MousePosition();
-    int cx = (int)std::floor((mp.x - ox) / (cs + gp));
-    int cy = (int)std::floor((mp.y - oy) / (cs + gp));
-    // Panel + a title bar strip.
-    fill(ox - 12, oy - 38, gridW + 24, gridH + 50, ui.panelColor, cr + 2);
-    fill(ox - 12, oy - 38, gridW + 24, 28, ui.titleBar, cr + 2);
-    DrawText(r, inv->title, ox, oy - 31, 2.0f, sc(ui.textColor));
-    if (ui.showWeight) {
-        char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
-        float px = 2.0f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
-        DrawText(r, wb, ox + gridW - tw, oy - 31, px, sc(ui.textColor));
-    }
-    for (int y = 0; y < inv->rows; ++y)
-        for (int x = 0; x < inv->cols; ++x)
-            fill(ox + x * (cs + gp), oy + y * (cs + gp), cs, cs, ui.cellColor, cr);
-    // While dragging, tint the target footprint green (fits) / red (blocked).
-    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
-        const auto& it = inv->items[ui.dragIndex];
-        int tx = cx - ui.grabX, ty = cy - ui.grabY;
-        bool ok = inv->CanPlace(tx, ty, it.w, it.h, ui.dragIndex);
-        for (int yy = 0; yy < it.h; ++yy)
-            for (int xx = 0; xx < it.w; ++xx) {
-                int gxc = tx + xx, gyc = ty + yy;
-                if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
-                fill(ox + gxc * (cs + gp), oy + gyc * (cs + gp), cs, cs, ok ? ui.dropOk : ui.dropBad, cr);
-            }
-    }
-    auto drawItem = [&](const okay::GridItem& it, float px0, float py0, bool ghost, bool hover) {
-        float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
-        fill(px0, py0, w, h, ghost ? Color{ui.itemColor.r, ui.itemColor.g, ui.itemColor.b, 0.6f} : ui.itemColor, cr);
-        SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
-        setc(ui.itemBorder, ghost ? 170 : 255); SDL_RenderDrawRect(r, &box);
-        if (hover) fill(px0, py0, w, h, ui.hoverColor, cr);
-        SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.name + ".png", baseDir, cache);
-        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 4, box.y + 4, box.w - 8, box.h - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else DrawText(r, it.name.substr(0, 8), box.x + 4, box.y + 5, 1.4f, sc(ui.textColor));
-        if (it.count > 1) {
-            std::string cstr = std::to_string(it.count); float px = 1.4f;
-            float tw = cstr.size() * (Font8x8::Width + 1) * px;
-            DrawText(r, cstr, box.x + box.w - tw - 3, box.y + box.h - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255, 255, 255, 255});
+    auto fillG = [&](float x, float y, float w, float h, const Color& a, const Color& b, float rad) {
+        SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
+        if (ui.useGradients) FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, a, b, true, false, 1.0f);
+        else                 FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, a, a, false, false, 1.0f);
+    };
+    auto lighten = [&](Color c, float f) { return Color{c.r + (1 - c.r) * f, c.g + (1 - c.g) * f, c.b + (1 - c.b) * f, c.a}; };
+    auto darken  = [&](Color c, float f) { return Color{c.r * (1 - f), c.g * (1 - f), c.b * (1 - f), c.a}; };
+    auto shadow  = [&](float x, float y, float w, float h, float rad) { if (ui.dropShadows) fill(x + 3, y + 5, w, h, Color{0, 0, 0, 0.35f}, rad); };
+    auto stroke  = [&](float x, float y, float w, float h, const Color& c, int a) {
+        setc(c, a); SDL_Rect bx{(int)x, (int)y, (int)w, (int)h}; SDL_RenderDrawRect(r, &bx);
+    };
+
+    // Gather the containers to show, then lay them out in (up to) two columns.
+    std::vector<okay::GridInventory*> equipped, nearby;
+    if (ui.multiContainer) ui.CollectContainers(equipped, nearby);
+    else equipped.push_back(primary);
+    const float labelH = ui.headerHeight < 16.0f ? 16.0f : ui.headerHeight;
+    const float vspace = ui.containerGap < 4.0f ? 4.0f : ui.containerGap;
+    const float colGap = ui.columnGap < 8.0f ? 8.0f : ui.columnGap;
+    const float pad    = ui.panelPad < 4.0f ? 4.0f : ui.panelPad;
+    const float headH  = ui.showMasterTitle ? 30.0f : 0.0f;
+    const float headGap = ui.showMasterTitle ? 18.0f : 6.0f;
+    auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
+        cw = 0; ch = 0;
+        for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
+                            ch += labelH + (g->rows*cs + (g->rows-1)*gp) + vspace; }
+        if (!L.empty()) ch -= vspace;
+    };
+    float lw, lh, rw, rh; colSize(equipped, lw, lh); colSize(nearby, rw, rh);
+    bool hasNear = !nearby.empty();
+    float totalW = lw + (hasNear ? colGap + rw : 0.0f);
+    float totalH = lh > rh ? lh : rh;
+    float startX = (W - totalW) * 0.5f, startY = (H - totalH) * 0.5f + 14.0f + headH + headGap;
+
+    struct Panel { okay::GridInventory* inv; float ox, oy, gw, gh; std::string label; bool ground; };
+    std::vector<Panel> panels;
+    auto placeCol = [&](const std::vector<okay::GridInventory*>& L, float colX, float colW, bool ground) {
+        float y = startY;
+        for (auto* g : L) {
+            float gw = g->cols*cs + (g->cols-1)*gp, gh = g->rows*cs + (g->rows-1)*gp;
+            panels.push_back({g, colX + (colW-gw)*0.5f, y + labelH, gw, gh,
+                              g->category.empty() ? g->title : g->category, ground});
+            y += labelH + gh + vspace;
         }
     };
-    int hovered = (ui.dragIndex < 0 && cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
-    for (int i = 0; i < (int)inv->items.size(); ++i) {
-        if (i == ui.dragIndex) continue;
-        const auto& it = inv->items[i];
-        drawItem(it, ox + it.x * (cs + gp), oy + it.y * (cs + gp), false, i == hovered);
+    placeCol(equipped, startX, lw, false);
+    if (hasNear) placeCol(nearby, startX + lw + colGap, rw, true);
+
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+    // Backing panels (drop shadow + soft vertical gradient + hairline rim) per column.
+    auto backing = [&](float x, float y, float w, float h) {
+        shadow(x, y, w, h, cr + 3);
+        fillG(x, y, w, h, lighten(ui.panelColor, 0.05f), darken(ui.panelColor, 0.14f), cr + 3);
+        stroke(x, y, w, h, lighten(ui.panelColor, 0.16f), 110);
+    };
+    backing(startX - pad, startY - pad, lw + pad*2, lh + pad*2);
+    if (hasNear) backing(startX + lw + colGap - pad, startY - pad, rw + pad*2, rh + pad*2);
+
+    // One slim centred title over the equipped column (the per-bag headers below
+    // carry the container names), plus an aggregate weight bar.
+    if (ui.showMasterTitle) {
+        float hbX = startX - pad, hbW = lw + pad*2, hbY = startY - pad - headH - headGap;
+        if (hbW < 200.0f) hbW = 200.0f;
+        const std::string& mt = ui.masterTitle; float px = ui.titleScale;
+        float tw = (float)mt.size() * (Font8x8::Width + 1) * px;
+        DrawText(r, mt, hbX + (hbW - tw) * 0.5f, hbY, px, sc(ui.textColor));
+        float totW = 0, totL = 0; for (auto* g : equipped) { totW += g->TotalWeight(); totL += g->weightLimit; }
+        if (ui.showWeight && totL > 0.0f) {
+            bool over = totW > totL; float frac = totW / totL; if (frac > 1.0f) frac = 1.0f; if (frac < 0.0f) frac = 0.0f;
+            float bx = hbX + 4, bw = hbW - 8, by = hbY + 20.0f;
+            fill(bx, by, bw, 5, darken(ui.panelColor, 0.4f), 2);
+            Color bc = over ? ui.overweightColor : (frac > 0.85f ? ui.weightWarn : ui.weightGood);
+            fill(bx, by, bw * frac, 5, bc, 2);
+        }
     }
-    // Drag-and-drop: pick an item under the cursor, drop it where it fits.
-    if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
-        int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
-        if (idx >= 0) { ui.dragIndex = idx; ui.grabX = cx - inv->items[idx].x; ui.grabY = cy - inv->items[idx].y; }
+    if (hasNear) {
+        float nx = startX + lw + colGap;
+        fill(nx - 4, startY - pad - headH - headGap + 2, 4, 14, Color::FromBytes(200, 170, 110, 255), 0);
+        DrawText(r, ui.nearbyTitle, nx + 6, startY - pad - headH - headGap, 1.6f, sc(ui.textColor));
     }
-    if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-        inv->PlaceAt(ui.dragIndex, cx - ui.grabX, cy - ui.grabY);   // no-op if it doesn't fit
-        ui.dragIndex = -1;
+
+    okay::Vec2 mp = okay::Input::MousePosition();
+    // Which panel + cell is under the cursor?
+    int hovPanel = -1, hovCx = 0, hovCy = 0;
+    for (int pi = 0; pi < (int)panels.size(); ++pi) {
+        const Panel& P = panels[pi];
+        int cx = (int)std::floor((mp.x - P.ox) / (cs + gp)), cy = (int)std::floor((mp.y - P.oy) / (cs + gp));
+        if (mp.x >= P.ox && mp.y >= P.oy && cx >= 0 && cy >= 0 && cx < P.inv->cols && cy < P.inv->rows) {
+            hovPanel = pi; hovCx = cx; hovCy = cy;
+        }
     }
-    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
-        const auto& it = inv->items[ui.dragIndex];
-        drawItem(it, mp.x - ui.grabX * (cs + gp) - cs * 0.5f, mp.y - ui.grabY * (cs + gp) - cs * 0.5f, true, false);
+
+    auto drawItem = [&](okay::GridInventoryUI& u, const okay::GridItem& it, float px0, float py0, bool ghost, bool hover) {
+        float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
+        const Color* rar = u.RarityOf(it.name);
+        Color accent = rar ? *rar : u.Accent(it.name);
+        Color top = lighten(u.itemColor, hover ? 0.16f : 0.08f), bot = darken(u.itemColor, 0.16f);
+        if (ghost) { top.a *= 0.72f; bot.a *= 0.72f; }
+        fillG(px0, py0, w, h, top, bot, cr);
+        if (u.useGradients) fill(px0 + 2, py0 + 2, w - 4, 2, Color{1, 1, 1, ghost ? 0.10f : 0.18f}, 0);   // top sheen
+        if (u.accentBars) fill(px0, py0, 3, h, accent, 0);                            // rarity/category bar
+        SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
+        stroke(px0, py0, w, h, rar ? *rar : u.itemBorder, ghost ? 170 : 235);
+        if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
+        SDL_Texture* icon = u.iconFolder.empty() ? nullptr : GetTexture(r, u.iconFolder + it.name + ".png", baseDir, cache);
+        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 6, box.y + 6, box.w - 12, box.h - 12}; SDL_RenderCopy(r, icon, nullptr, &d); }
+        else if (u.showItemNames) {   // clip the name to the tile width so it never overflows the cell
+            float px = u.itemNameScale; int maxc = (int)((w - 12) / ((Font8x8::Width + 1) * px)); if (maxc < 1) maxc = 1;
+            std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
+            DrawText(r, nm, box.x + 6, box.y + 7, px, sc(u.textColor));
+        }
+        if (it.count > 1) {
+            std::string cstr = std::to_string(it.count); float px = 1.3f;
+            float tw = cstr.size() * (Font8x8::Width + 1) * px, ph = Font8x8::Height * px;
+            float pwid = tw + 7, phgt = ph + 5;
+            fill(box.x + box.w - pwid - 2, box.y + box.h - phgt - 2, pwid, phgt, Color::FromBytes(10, 12, 18, 225), 3);
+            DrawText(r, cstr, box.x + box.w - tw - 5, box.y + box.h - ph - 4, px, SDL_Color{255, 255, 255, 255});
+        }
+    };
+
+    // Draw every container: accent header, inset cells, drop highlight, items.
+    for (int pi = 0; pi < (int)panels.size(); ++pi) {
+        const Panel& P = panels[pi]; okay::GridInventory* inv = P.inv;
+        Color acc = ui.Accent(P.label);
+        float hy = P.oy - labelH - 2;
+        fillG(P.ox - 6, hy, P.gw + 12, labelH, lighten(ui.headerColor, 0.08f), darken(ui.headerColor, 0.05f), cr);
+        if (ui.accentBars) fill(P.ox - 6, hy, 3, labelH, acc, 0);    // category accent stripe
+        DrawText(r, P.label, P.ox + (ui.accentBars ? 2.0f : 6.0f), hy + 5, 1.4f, sc(ui.textColor));
+        if (ui.showWeight && inv->weightLimit > 0.0f) {
+            char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
+            float px = 1.2f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
+            DrawText(r, wb, P.ox + P.gw - tw, hy + 6, px, sc(inv->OverWeight() ? ui.overweightColor : ui.textColor));
+        }
+        for (int y = 0; y < inv->rows; ++y)
+            for (int x = 0; x < inv->cols; ++x) {
+                float cxp = P.ox + x * (cs + gp), cyp = P.oy + y * (cs + gp);
+                fillG(cxp, cyp, cs, cs, darken(ui.cellColor, 0.04f), darken(ui.cellColor, 0.18f), cr);
+                stroke(cxp, cyp, cs, cs, darken(ui.cellColor, 0.32f), 130);
+            }
+        if (ui.dragInv && hovPanel == pi && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size()) {
+            const auto& it = ui.dragInv->items[ui.dragIndex];
+            int tx = hovCx - ui.grabX, ty = hovCy - ui.grabY;
+            int ign = (inv == ui.dragInv) ? ui.dragIndex : -1;
+            bool ok = inv->CanPlace(tx, ty, it.w, it.h, ign);
+            for (int yy = 0; yy < it.h; ++yy)
+                for (int xx = 0; xx < it.w; ++xx) {
+                    int gxc = tx + xx, gyc = ty + yy;
+                    if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
+                    fill(P.ox + gxc * (cs + gp), P.oy + gyc * (cs + gp), cs, cs, ok ? ui.dropOk : ui.dropBad, cr);
+                }
+        }
+        int hovered = (!ui.dragInv && hovPanel == pi) ? inv->ItemAtCell(hovCx, hovCy) : -1;
+        for (int i = 0; i < (int)inv->items.size(); ++i) {
+            if (inv == ui.dragInv && i == ui.dragIndex) continue;
+            const auto& it = inv->items[i];
+            drawItem(ui, it, P.ox + it.x * (cs + gp), P.oy + it.y * (cs + gp), false, i == hovered);
+        }
+    }
+
+    // Rotate the held item 90° (validated on drop).
+    if (ui.rotateKey && ui.dragInv && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size() &&
+        okay::Input::GetKeyDown(ui.rotateKey)) {
+        auto& it = ui.dragInv->items[ui.dragIndex];
+        std::swap(it.w, it.h);
+        if (ui.grabX >= it.w) ui.grabX = it.w - 1;
+        if (ui.grabY >= it.h) ui.grabY = it.h - 1;
+    }
+    // Hover tooltip.
+    if (ui.showTooltips && !ui.dragInv && hovPanel >= 0) {
+        okay::GridInventory* inv = panels[hovPanel].inv;
+        int hov = inv->ItemAtCell(hovCx, hovCy);
+        if (hov >= 0) {
+            const auto& it = inv->items[hov];
+            char tip[96];
+            std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
+                          it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
+            float px = 1.4f, tw = (float)std::strlen(tip) * (Font8x8::Width + 1) * px, tpad = 6.0f;
+            fill(mp.x + 14, mp.y + 14, tw + tpad * 2, Font8x8::Height * px + tpad * 2, ui.tooltipColor, 4.0f);
+            DrawText(r, tip, mp.x + 14 + tpad, mp.y + 14 + tpad, px, sc(ui.tooltipText));
+        }
+    }
+    // Pick up an item.
+    if (!ui.dragInv && okay::Input::GetMouseButtonDown(0) && hovPanel >= 0) {
+        okay::GridInventory* inv = panels[hovPanel].inv;
+        int idx = inv->ItemAtCell(hovCx, hovCy);
+        if (idx >= 0) { ui.dragInv = inv; ui.dragIndex = idx; ui.grabX = hovCx - inv->items[idx].x; ui.grabY = hovCy - inv->items[idx].y; }
+    }
+    // Drop it — same container = move, different container = transfer (cross-bag / loot).
+    if (ui.dragInv && okay::Input::GetMouseButtonUp(0)) {
+        if (hovPanel >= 0) {
+            okay::GridInventory* dst = panels[hovPanel].inv;
+            int tx = hovCx - ui.grabX, ty = hovCy - ui.grabY;
+            if (dst == ui.dragInv) dst->PlaceAt(ui.dragIndex, tx, ty);
+            else ui.dragInv->MoveTo(ui.dragIndex, *dst, tx, ty);
+        }
+        ui.dragInv = nullptr; ui.dragIndex = -1;
+    }
+    // The lifted item floats under the cursor (with a soft drop shadow).
+    if (ui.dragInv && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size()) {
+        const auto& it = ui.dragInv->items[ui.dragIndex];
+        float gx = mp.x - ui.grabX * (cs + gp) - cs * 0.5f, gy = mp.y - ui.grabY * (cs + gp) - cs * 0.5f;
+        float gw = it.w * cs + (it.w - 1) * gp, gh = it.h * cs + (it.h - 1) * gp;
+        shadow(gx, gy, gw, gh, cr);
+        drawItem(ui, it, gx, gy, true, false);
+    }
+}
+
+// Crafting bench panel: lists recipes, tints by affordability, crafts on click.
+static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
+    if (!cs.open) return;
+    okay::Inventory* inv = cs.Inv();
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    const float cr = cs.cornerRadius;
+    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
+    auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
+        SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
+        FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
+    };
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    int n = (int)cs.recipes.size();
+    float pw = cs.width, ph = n * cs.rowHeight + 8.0f;
+    float px = (W - pw) * 0.5f + cs.marginX, py = (H - ph) * 0.5f + cs.marginY;
+    fill(px, py - 26, pw, ph + 26, cs.panelColor, cr + 2);
+    fill(px, py - 26, pw, 24, cs.titleBar, cr + 2);
+    DrawText(r, cs.title, px + 8, py - 20, 1.6f, sc(cs.textColor));
+    okay::Vec2 mp = okay::Input::MousePosition();
+    for (int i = 0; i < n; ++i) {
+        const auto& rec = cs.recipes[i];
+        float ry = py + i * cs.rowHeight + 4.0f;
+        bool can = inv && cs.CanCraft(rec, *inv);
+        bool hover = mp.x >= px + 4 && mp.x < px + pw - 4 && mp.y >= ry && mp.y < ry + cs.rowHeight - 2;
+        fill(px + 4, ry, pw - 8, cs.rowHeight - 2, can ? cs.canColor : cs.cantColor, cr);
+        if (hover) fill(px + 4, ry, pw - 8, cs.rowHeight - 2, cs.hoverColor, cr);
+        std::string out = rec.output + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
+        DrawText(r, out, px + 10, ry + 4, 1.4f, sc(cs.textColor));
+        std::string ins;
+        for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
+        float tw = ins.size() * (Font8x8::Width + 1) * 1.0f;
+        DrawText(r, ins, px + pw - 10 - tw, ry + 6, 1.0f, sc(cs.textColor));
+        if (hover && can && okay::Input::GetMouseButtonDown(0)) cs.Craft(i);
+    }
+}
+
+// A lootable chest: chest contents on top, your inventory below. Click a stack to
+// move the whole thing to the other side (take loot / stash items).
+static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::string& baseDir,
+                      std::unordered_map<std::string, SDL_Texture*>& cache) {
+    if (!ch.open) return;
+    okay::Inventory* cinv = ch.Inv(); okay::Inventory* pinv = ch.PlayerInv();
+    if (!cinv) return;
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H); if (W <= 0 || H <= 0) return;
+    const float cr = ch.cornerRadius;
+    // Chest grid uses the chest's size; the player grid uses the player's OWN inventory
+    // UI size/columns — so resizing the chest doesn't resize your inventory.
+    float cs = ch.slotSize, cg = ch.gap; int cc = ch.cols < 1 ? 1 : ch.cols;
+    okay::InventoryUI* pui = ch.PlayerUI();
+    float ps = pui ? pui->slotSize : cs, pg = pui ? pui->slotGap : cg;
+    int   pc = pui ? (pui->hotbarSlots < 1 ? 1 : pui->hotbarSlots) : cc;
+    int chestN = cinv->capacity > 0 ? cinv->capacity : (int)cinv->slots.size();
+    int playN  = pinv ? (pinv->capacity > 0 ? pinv->capacity : (int)pinv->slots.size()) : 0;
+    int chestRows = (chestN + cc - 1) / cc, playRows = playN > 0 ? (playN + pc - 1) / pc : 0;
+    float chestW = cc * cs + (cc - 1) * cg, playW = pc * ps + (pc - 1) * pg;
+    float panelW = chestW > playW ? chestW : playW;
+    float chestH = chestRows * (cs + cg), playH = playRows * (ps + pg);
+    float totalH = chestH + 30.0f + playH;
+    float panelX = (W - panelW) * 0.5f, topY = (H - totalH) * 0.5f + 16.0f;
+    float chestOx = panelX + (panelW - chestW) * 0.5f, playOx = panelX + (panelW - playW) * 0.5f;
+    float chestGy = topY, playGy = topY + chestH + 24.0f;
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    if (ch.darkenWhenOpen) { SDL_SetRenderDrawColor(r, 0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; SDL_RenderFillRect(r, &f); }
+    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
+    auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
+        SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
+        FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
+    };
+    okay::Vec2 mp = okay::Input::MousePosition();
+    fill(panelX - 12, topY - 34, panelW + 24, totalH + 46, ch.panelColor, cr + 2);
+    fill(panelX - 12, topY - 34, panelW + 24, 26, ch.titleBar, cr + 2);
+    DrawText(r, ch.title, panelX, topY - 28, 1.6f, sc(ch.textColor));
+    int hovSide = -1, hovIdx = -1;   // which grid + slot the cursor is over
+    auto grid = [&](okay::Inventory* inv, float gx, float gy, float sz, float gp, int cols, int count, int side) {
+        for (int i = 0; i < count; ++i) {
+            float x = gx + (i % cols) * (sz + gp), y = gy + (i / cols) * (sz + gp);
+            fill(x, y, sz, sz, ch.slotBorder, cr);
+            fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
+            bool hov = mp.x >= x && mp.x < x + sz && mp.y >= y && mp.y < y + sz;
+            if (hov) { hovSide = side; hovIdx = i; fill(x, y, sz, sz, ch.hoverColor, cr); }
+            bool dragged = (side == ch.dragSide && i == ch.dragIndex);   // hide the lifted item
+            if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
+                const auto& it = inv->slots[i];
+                SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
+                if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+                else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+                if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
+                    float tw = c.size() * (Font8x8::Width + 1) * px;
+                    DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
+            }
+        }
+    };
+    grid(cinv, chestOx, chestGy, cs, cg, cc, chestN, 0);
+    DrawText(r, "Your inventory", playOx, topY + chestH + 6, 1.2f, sc(ch.textColor));
+    if (pinv) grid(pinv, playOx, playGy, ps, pg, pc, playN, 1);
+    auto sideInv = [&](int side) { return side == 0 ? cinv : pinv; };
+    float sz = ch.dragSide == 1 ? ps : cs;   // floating-item size = source grid's slot size
+    // Start a drag by pressing on a non-empty slot.
+    if (ch.dragSide < 0 && hovIdx >= 0 && okay::Input::GetMouseButtonDown(0)) {
+        okay::Inventory* inv = sideInv(hovSide);
+        if (inv && hovIdx < (int)inv->slots.size() && !inv->slots[hovIdx].item.empty()) {
+            ch.dragSide = hovSide; ch.dragIndex = hovIdx;
+        }
+    }
+    // Drop onto the slot under the cursor (move / swap / merge), or cancel if outside.
+    if (ch.dragSide >= 0 && okay::Input::GetMouseButtonUp(0)) {
+        if (hovIdx >= 0) okay::ChestInventory::MoveStack(sideInv(ch.dragSide), ch.dragIndex, sideInv(hovSide), hovIdx);
+        ch.dragSide = -1; ch.dragIndex = -1;
+    }
+    // The lifted item floats under the cursor.
+    if (ch.dragSide >= 0) {
+        okay::Inventory* inv = sideInv(ch.dragSide);
+        if (inv && ch.dragIndex < (int)inv->slots.size() && !inv->slots[ch.dragIndex].item.empty()) {
+            const auto& it = inv->slots[ch.dragIndex];
+            float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
+            fill(x, y, sz, sz, ch.slotBorder, cr);
+            fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
+            SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
+            if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+            else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+            if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
+                float tw = c.size() * (Font8x8::Width + 1) * px;
+                DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
+        } else { ch.dragSide = -1; ch.dragIndex = -1; }
     }
 }
 
@@ -497,9 +1003,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Resolve where the game files live (beside the executable).
+    // Resolve where the game files live. New builds use a clean Unity-style layout
+    // (exe + DLLs at the root, scenes/config/assets in a Data/ subfolder); prefer
+    // that when present, else fall back to the flat layout (everything beside exe).
     std::string baseDir;
     { char* base = SDL_GetBasePath(); baseDir = base ? base : ""; if (base) SDL_free(base); }
+    {
+        std::ifstream probe(baseDir + "Data/game.okayconfig");
+        if (probe.good()) baseDir += "Data/";
+    }
 
     // Build settings (written by the editor's Build Settings) live in an optional
     // game.okayconfig beside the exe: window size/title/flags, the scene list (so
@@ -512,13 +1024,31 @@ int main(int argc, char** argv) {
         int  fpsCap = 0;
         float volume = 1.0f;
         bool lockCursor = false, perPixel = false, shadows = false, bloom = false, ssao = false, fxaa = true;
+        float shadowDistance = 80.0f, shadowSoftness = 2.5f;
+        int  shadowCascades = 3, shadowResolution = 1024;
         int  antialias = 1;
         bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
+        bool d3d12 = false; // opt-in: prefer the Direct3D 12 backend (Windows) over D3D11
         std::string startup;
         std::vector<std::string> scenes;
+        // Presentation (Unity-parity).
+        std::string icon;          // window icon PNG (in the Data folder)
+        bool runInBackground = true;
+        bool muteOnFocusLoss = false;
+        bool startMaximized = false;
+        int  minWidth = 0, minHeight = 0;
+        std::string company = "OkaySpace";
+        bool saveToUserDir = true; // saves -> per-user app folder (persistentDataPath)
+        std::string splash;        // startup logo PNG (in the Data folder)
+        float splashTime = 2.0f;   // seconds the splash shows
+        int   splashBg[3] = {12, 12, 16};  // splash background colour
     } cfg;
     {
-        std::ifstream cf(baseDir + "game.okayconfig");
+        // Read the whole config and transparently decode it if it was obfuscated at
+        // build time (DataPack), so encrypted builds load their settings too.
+        std::ifstream cfRaw(baseDir + "game.okayconfig", std::ios::binary);
+        std::stringstream cfBuf; cfBuf << cfRaw.rdbuf();
+        std::istringstream cf(okay::DataPack::Unpack(cfBuf.str()));
         std::string line;
         while (std::getline(cf, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -540,13 +1070,29 @@ int main(int argc, char** argv) {
             else if (k == "lock_cursor") cfg.lockCursor = std::atoi(v.c_str()) != 0;
             else if (k == "perpixel")   cfg.perPixel = std::atoi(v.c_str()) != 0;
             else if (k == "shadows")    cfg.shadows = std::atoi(v.c_str()) != 0;
+            else if (k == "shadow_distance")   cfg.shadowDistance = (float)std::atof(v.c_str());
+            else if (k == "shadow_softness")   cfg.shadowSoftness = (float)std::atof(v.c_str());
+            else if (k == "shadow_cascades")   cfg.shadowCascades = std::atoi(v.c_str());
+            else if (k == "shadow_resolution") cfg.shadowResolution = std::atoi(v.c_str());
             else if (k == "bloom")      cfg.bloom = std::atoi(v.c_str()) != 0;
             else if (k == "ssao")       cfg.ssao = std::atoi(v.c_str()) != 0;
             else if (k == "fxaa")       cfg.fxaa = std::atoi(v.c_str()) != 0;
             else if (k == "antialias")  cfg.antialias = std::atoi(v.c_str());
             else if (k == "gpu")        cfg.gpu = std::atoi(v.c_str()) != 0;
+            else if (k == "d3d12")      cfg.d3d12 = std::atoi(v.c_str()) != 0;
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
+            else if (k == "icon")           cfg.icon = v;
+            else if (k == "run_background") cfg.runInBackground = std::atoi(v.c_str()) != 0;
+            else if (k == "mute_unfocused") cfg.muteOnFocusLoss = std::atoi(v.c_str()) != 0;
+            else if (k == "start_maximized")cfg.startMaximized = std::atoi(v.c_str()) != 0;
+            else if (k == "min_width")      cfg.minWidth = std::atoi(v.c_str());
+            else if (k == "min_height")     cfg.minHeight = std::atoi(v.c_str());
+            else if (k == "company")        cfg.company = v;
+            else if (k == "save_userdir")   cfg.saveToUserDir = std::atoi(v.c_str()) != 0;
+            else if (k == "splash")         cfg.splash = v;
+            else if (k == "splash_time")    cfg.splashTime = (float)std::atof(v.c_str());
+            else if (k == "splash_bg")      std::sscanf(v.c_str(), "%d,%d,%d", &cfg.splashBg[0], &cfg.splashBg[1], &cfg.splashBg[2]);
         }
     }
     // Register the build's scenes so scripts can load_scene_index / load_next.
@@ -559,10 +1105,21 @@ int main(int argc, char** argv) {
     else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
     else scenePath = baseDir + "game.okayscene";
 
-    // Persistent prefs (high scores, settings) live beside the scene file.
-    std::string prefsPath = baseDir + "game.okayprefs";
+    // Where the game WRITES saves (Unity's persistentDataPath): a per-user, writable
+    // app folder when enabled — so saving works even from a read-only install (e.g.
+    // Program Files) and two games never clash. Falls back to beside-the-exe.
+    std::string saveDir = baseDir;
+    if (cfg.saveToUserDir) {
+        const char* org = cfg.company.empty() ? "OkaySpace" : cfg.company.c_str();
+        const char* app = cfg.title.empty() ? "Game" : cfg.title.c_str();
+        if (char* pref = SDL_GetPrefPath(org, app)) { saveDir = pref; SDL_free(pref); }
+    }
+    okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
+
+    // Persistent prefs (high scores, settings) live in the save folder.
+    std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
-    DataAsset::SetBaseDir(baseDir);   // resolve .okaydata assets beside the game
+    DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
 
     Scene scene("Game");
     std::string err;
@@ -575,11 +1132,23 @@ int main(int argc, char** argv) {
     if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;
     if (cfg.fullscreen) winFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     if (cfg.borderless) winFlags |= SDL_WINDOW_BORDERLESS;
+    if (cfg.startMaximized && cfg.resizable && !cfg.fullscreen) winFlags |= SDL_WINDOW_MAXIMIZED;
     if (!cfg.showCursor) SDL_ShowCursor(SDL_DISABLE);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
     SDL_Window* window = SDL_CreateWindow(
         title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         cfg.width, cfg.height, winFlags);
+    if (window && cfg.minWidth > 0 && cfg.minHeight > 0)
+        SDL_SetWindowMinimumSize(window, cfg.minWidth, cfg.minHeight);
+    // Window/taskbar icon (Unity's Default Icon): load the PNG and apply it.
+    if (window && !cfg.icon.empty()) {
+        okay::Image ico;
+        if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon)) {
+            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
+                (void*)ico.Data(), ico.Width(), ico.Height(), 32, ico.Width() * 4, SDL_PIXELFORMAT_ABGR8888);
+            if (surf) { SDL_SetWindowIcon(window, surf); SDL_FreeSurface(surf); }
+        }
+    }
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
@@ -587,6 +1156,10 @@ int main(int argc, char** argv) {
     // Apply the build's graphics/quality settings to the renderer + cursor.
     PerPixelLighting() = cfg.perPixel;
     ShadowsEnabled()   = cfg.shadows;
+    ShadowDistance()   = cfg.shadowDistance;
+    ShadowSoftness()   = cfg.shadowSoftness;
+    ShadowCascades()   = cfg.shadowCascades;
+    ShadowMapResolution() = cfg.shadowResolution;
     BloomEnabled()     = cfg.bloom;
     SSAOEnabled()      = cfg.ssao;
     FXAAEnabled()      = cfg.fxaa;
@@ -602,13 +1175,20 @@ int main(int argc, char** argv) {
     okay::GLRenderer*    glRenderer = nullptr;   // OpenGL backend (any platform)
 #if defined(_WIN32)
     okay::D3D11Renderer* d3dRenderer = nullptr;  // Direct3D 11 backend (Windows)
+    okay::D3D12Renderer* d3d12Renderer = nullptr;// Direct3D 12 backend (Windows, opt-in)
 #endif
     SDL_Window*          glWindow = nullptr;      // hidden context window for the GL path
     SDL_GLContext        glCtx = nullptr;
-    bool                 glReady = false, d3dReady = false;
+    bool                 glReady = false, d3dReady = false, d3d12Ready = false;
 #ifndef __EMSCRIPTEN__
     if (cfg.gpu) {
 #if defined(_WIN32)
+        // Opt-in Direct3D 12 backend, preferred when enabled; otherwise D3D11.
+        if (cfg.d3d12) {
+            d3d12Renderer = new okay::D3D12Renderer();
+            if (d3d12Renderer->Init()) d3d12Ready = true;
+            else { delete d3d12Renderer; d3d12Renderer = nullptr; }
+        }
         d3dRenderer = new okay::D3D11Renderer();
         if (d3dRenderer->Init()) d3dReady = true;
         else { delete d3dRenderer; d3dRenderer = nullptr; }
@@ -669,6 +1249,7 @@ int main(int argc, char** argv) {
         if (ok && !m.vertices.empty()) mr->mesh = m;
     }
 
+    okay::Game::Reset();   // clear any stale pause/quit state from a prior scene
     scene.Start();
 
     // Open the first connected game controller, if any.
@@ -679,28 +1260,37 @@ int main(int argc, char** argv) {
     bool running = true;
 #ifdef OKAY_HAVE_OKAYUI
     bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
+    bool g_statsUI = false;           // F3 toggles the OkayUI performance HUD
     char g_uiText[32] = {0}; bool g_uiBack = false;
+    float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
     // Let game scripts draw OkayUI via the ui_* builtins.
     static okay::OkayUIScriptBridge g_uiBridge;
     okay::SetScriptUI(&g_uiBridge);
 #endif
     Uint64 last = SDL_GetPerformanceCounter();
+    bool windowFocused = true;   // Unity's Run In Background / mute-on-focus-loss
     auto frame = [&]() {
         Uint64 fStart = SDL_GetPerformanceCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
 #ifdef OKAY_HAVE_OKAYUI
-        g_uiText[0] = '\0'; g_uiBack = false;
+        g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
 #endif
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
 #ifdef OKAY_HAVE_OKAYUI
             if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1) g_testUI = !g_testUI;
+            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F3) g_statsUI = !g_statsUI;
+            if (e.type == SDL_MOUSEWHEEL) g_uiWheel += (float)e.wheel.y;   // for OkayUI scrolling
             if (g_testUI) {
                 if (e.type == SDL_TEXTINPUT) SDL_strlcat(g_uiText, e.text.text, sizeof(g_uiText));
                 if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
             }
 #endif
+            if (e.type == SDL_WINDOWEVENT) {
+                if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) windowFocused = true;
+                else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) windowFocused = false;
+            }
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
@@ -710,7 +1300,10 @@ int main(int argc, char** argv) {
                 bool typing = false;
                 for (const auto& up : scene.Objects())
                     if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
-                if (!typing && cfg.quitOnEscape) running = false;
+                // A PauseMenu owns Escape (it pauses instead of quitting); only hard-quit
+                // on Escape when the scene has no pause menu.
+                bool hasPause = scene.FindObjectOfType<okay::PauseMenu>() != nullptr;
+                if (!typing && cfg.quitOnEscape && !hasPause) running = false;
             }
         }
 
@@ -772,12 +1365,26 @@ int main(int argc, char** argv) {
             }
             if (auto* gi = up->GetComponent<GridInventory>()) { if (gi->open) invModal = true; }
             if (auto* gu = up->GetComponent<GridInventoryUI>()) { if (gu->dragIndex >= 0) itemDragging = true; }
+            if (auto* cs = up->GetComponent<CraftingStation>()) { if (cs->open) invModal = true; }
+            if (auto* ce = up->GetComponent<ChestInventory>()) { if (ce->open) invModal = true; }
+            // The fullscreen pause-map is modal too: free + show the cursor so it can be
+            // clicked to drop a waypoint (GTA-style), and pause look/move.
+            if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
         }
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
         // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
         static Vec2 s_virtualMouse{0, 0};
         bool locked = Cursor::IsLocked() && !invModal;
+        // Unity-style hand-off: when a bag opens (mouselook was locked) free the pointer
+        // AT SCREEN CENTRE, and when it closes warp back to centre before re-locking, so
+        // the cursor always appears in the middle and the look anchor resets cleanly.
+        static bool s_prevInvModal = false;
+        if (invModal != s_prevInvModal && Cursor::IsLocked()) {
+            int ww = 0, wh = 0; SDL_GetWindowSize(window, &ww, &wh);
+            SDL_WarpMouseInWindow(window, ww / 2, wh / 2);
+        }
+        s_prevInvModal = invModal;
         SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
         // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
         // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its
@@ -855,15 +1462,46 @@ int main(int argc, char** argv) {
             OkayUI::Input ui;
             ui.mouseX = (float)mx; ui.mouseY = (float)my;
             ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            ui.rightDown = (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0;
             ui.text = g_uiText[0] ? g_uiText : nullptr;
             ui.backspace = g_uiBack;
+            ui.wheel = g_uiWheel;
             OkayUI::BeginFrame(ui);
         }
 #endif
+        // Focus behaviour (Unity-parity): optionally pause the sim and/or mute audio
+        // when the window isn't focused.
+        if (cfg.muteOnFocusLoss) AudioMixer::masterVolume = windowFocused ? cfg.volume : 0.0f;
+        const bool tick = windowFocused || cfg.runInBackground;
+
+        // --- Built-in Builder Mode (an engine feature, not a component to add): F2
+        // toggles in-game modeling on the main camera's player. Left-click places the
+        // current brush, right-click removes, R rotates, +/- scales, G grabs, P saves
+        // the model as a prefab, O saves the whole map — so any game lets players
+        // build and save with zero setup. ---
+        {
+            static bool s_bmPrev = false, s_bmOn = false;
+            static BuilderMode* s_bm = nullptr;
+            const Uint8* kb = SDL_GetKeyboardState(nullptr);
+            bool f2 = kb && kb[SDL_SCANCODE_F2] != 0;
+            if (f2 && !s_bmPrev) {
+                s_bmOn = !s_bmOn;
+                if (s_bmOn && !s_bm && scene.mainCamera && scene.mainCamera->gameObject) {
+                    Transform* t = scene.mainCamera->gameObject->transform;
+                    while (t->Parent()) t = t->Parent();          // attach to the player root
+                    GameObject* host = t->gameObject ? t->gameObject : scene.mainCamera->gameObject;
+                    s_bm = host->AddComponent<BuilderMode>();
+                }
+                if (s_bm) s_bm->enabled = s_bmOn;
+            }
+            s_bmPrev = f2;
+        }
+
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
-        Time::Step(dt);
-        scene.Update(Time::DeltaTime());
+        Time::Step(tick ? dt : 0.0f);
+        if (tick) scene.Update(Time::DeltaTime());
+        if (okay::Game::QuitRequested()) running = false;   // a PauseMenu / script asked to quit
 
         // Keyboard / gamepad menu navigation (arrows/WASD + Enter/Space/A).
         NavigateUI(scene);
@@ -942,12 +1580,16 @@ int main(int argc, char** argv) {
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
                 const GameObject* ignore = cam ? cam->ignoreObject : nullptr;
+                okay::RenderCullingMask() = cam ? cam->cullingMask : ~0;   // honor the camera's layer mask (software + GPU)
                 const std::uint32_t* px = nullptr;
                 // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
                 // offscreen target and reading back RGBA8. A self-heal counter disables
                 // the GPU path after repeated failures so the game is never stuck.
-                if (cfg.gpu && (d3dReady || glReady) && gpuFails < 3) {
+                if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
 #if defined(_WIN32)
+                    if (!px && d3d12Ready && d3d12Renderer)
+                        px = d3d12Renderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                                                           0.0f, 0.0f, 0.0f, 0.0f, ignore);
                     if (!px && d3dReady && d3dRenderer)
                         px = d3dRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
                                                          0.0f, 0.0f, 0.0f, 0.0f, ignore);
@@ -965,6 +1607,9 @@ int main(int argc, char** argv) {
                 // Software fallback: native-resolution z-buffered raster (FXAA handles
                 // edge AA). 2x supersampling is 4x the pixels — off by default.
                 static std::vector<std::uint32_t> mesh3DDown;
+                // GPU renderers don't read back depth, so particle occlusion is off for
+                // them; the software path (next line) fills + validates the depth buffer.
+                SceneOcclusionDepth().valid = false;
                 if (!px)
                     px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
@@ -979,19 +1624,98 @@ int main(int argc, char** argv) {
                     SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
                     SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
                 }
+                // Depth occlusion on the GPU color path: the GPU renderers don't read
+                // their depth back, so when one of them drew the frame, run a cheap
+                // HALF-resolution software depth pre-pass to fill the occlusion buffer so
+                // particles still hide behind geometry. Only pay it when particles exist.
+                if (!SceneOcclusionDepth().valid) {
+                    bool anyParticles = false;
+                    for (const auto& up : scene.Objects())
+                        if (up && up->active && up->GetComponent<ParticleSystem>()) { anyParticles = true; break; }
+                    if (anyParticles) {
+                        static Raster occWork; static std::vector<std::uint32_t> occDown;
+                        int hw = w > 1 ? w / 2 : 1, hh = h > 1 ? h / 2 : 1;
+                        RenderMeshesSS(occWork, occDown, scene, vp, camPos, hw, hh, 1, ignore);
+                    }
+                }
+                // Particles in 3D: camera-facing billboards projected with the camera
+                // (the 2D quad path below only runs for orthographic scenes, so 3D games
+                // showed no particles at all). Collected, depth-sorted back-to-front, and
+                // drawn as soft volumetric puffs so the 3D particle motion reads as depth.
+                {
+                    // len/wid = half-extents along/across the billboard; ang = long-axis angle (deg).
+                    struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; SDL_Texture* tex; bool stretch; };
+                    std::vector<PP> pp;
+                    for (const auto& up : scene.Objects()) {
+                        auto* ps = up->GetComponent<ParticleSystem>();
+                        if (!ps || !up->active || UIHidden(up.get())) continue;
+                        SDL_Texture* ptex = ps->texture.empty() ? nullptr
+                                            : GetTexture(renderer, ps->texture, baseDir, textureCache);
+                        const bool stretchMode = ps->renderMode == ParticleSystem::RenderMode::Stretch;
+                        for (const auto& p : ps->Particles()) {
+                            if (!p.alive) continue;
+                            Vec4 c = vp * Vec4{p.position, 1.0f};
+                            if (c.w <= 0.05f) continue;
+                            float sx = w * 0.5f + (c.x / c.w) * w * 0.5f;
+                            float sy = h * 0.5f - (c.y / c.w) * h * 0.5f;
+                            if (ParticleOccluded(sx / w, sy / h, c.w)) continue;  // hidden behind geometry
+                            float rad = p.size * 0.5f / c.w * w * 0.5f;
+                            if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
+                            SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),
+                                          (Uint8)(p.color.b*255), (Uint8)(p.color.a*255)};
+                            float len = rad, ang = p.rotation; bool stretched = false;
+                            float speed = std::sqrt(p.velocity.x*p.velocity.x + p.velocity.y*p.velocity.y + p.velocity.z*p.velocity.z);
+                            if (stretchMode && speed > 1e-3f) {
+                                Vec3 vn = p.velocity * (1.0f / speed);
+                                Vec4 c2 = vp * Vec4{p.position + vn, 1.0f};
+                                if (c2.w > 0.05f) {
+                                    float s2x = w * 0.5f + (c2.x / c2.w) * w * 0.5f;
+                                    float s2y = h * 0.5f - (c2.y / c2.w) * h * 0.5f;
+                                    float dx = s2x - sx, dy = s2y - sy, dl2 = std::sqrt(dx*dx + dy*dy);
+                                    if (dl2 > 1e-3f) {
+                                        ang = std::atan2(dy, dx) * 57.29578f;
+                                        len = rad * (1.0f + ps->stretchScale * speed);
+                                        stretched = true;
+                                    }
+                                }
+                            }
+                            pp.push_back({c.w, sx, sy, len, rad, ang, col, ptex, stretched});
+                        }
+                    }
+                    std::sort(pp.begin(), pp.end(), [](const PP& a, const PP& b){ return a.depth > b.depth; });
+                    for (const PP& q : pp) {
+                        if (q.tex) {
+                            // Rotated, tinted sprite — elongated along velocity in stretch mode.
+                            SDL_SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
+                            SDL_SetTextureAlphaMod(q.tex, q.col.a);
+                            SDL_SetTextureBlendMode(q.tex, SDL_BLENDMODE_BLEND);
+                            SDL_FRect dst{q.sx - q.len, q.sy - q.wid, q.len * 2.0f, q.wid * 2.0f};
+                            SDL_RenderCopyExF(renderer, q.tex, nullptr, &dst, q.ang, nullptr, SDL_FLIP_NONE);
+                        } else if (q.stretch) {
+                            // Untextured streak: a thick line along the velocity.
+                            float a = q.ang * 0.01745329f, cx = std::cos(a) * q.len, cy = std::sin(a) * q.len;
+                            MMThickLine(renderer, q.sx - cx, q.sy - cy, q.sx + cx, q.sy + cy, q.wid * 2.0f, q.col);
+                        } else {
+                            SDL_Color halo = q.col; halo.a = (Uint8)(q.col.a / 3);   // soft outer glow
+                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)(q.wid * 1.6f), halo);
+                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)q.wid, q.col);  // bright core
+                        }
+                    }
+                }
             }
         } else {
             float ortho = cam ? cam->orthographicSize : 5.0f;
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
             float scale = h / (2.0f * ortho);
-            // Gather active sprites and draw back-to-front by sortOrder (stable,
-            // so same-order sprites keep scene order). Enables layered 2D scenes.
+            // Gather active sprites and draw back-to-front by sort key — sorting
+            // layer first, then order-in-layer (stable, so same-key sprites keep
+            // scene order). Enables layered 2D scenes.
             std::vector<GameObject*> sprites;
             for (const auto& up : scene.Objects())
                 if (up->active && up->GetComponent<SpriteRenderer>()) sprites.push_back(up.get());
             std::stable_sort(sprites.begin(), sprites.end(), [](GameObject* a, GameObject* b) {
-                return a->GetComponent<SpriteRenderer>()->sortOrder <
-                       b->GetComponent<SpriteRenderer>()->sortOrder;
+                return a->GetComponent<SpriteRenderer>()->SortKey() <
+                       b->GetComponent<SpriteRenderer>()->SortKey();
             });
             for (GameObject* obj : sprites) {
                 auto* sr = obj->GetComponent<SpriteRenderer>();
@@ -1078,7 +1802,7 @@ int main(int argc, char** argv) {
                 SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
                              (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
                 SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
-                float px = tr->pixelSize * scale;
+                float px = tr->EffectivePixelSize() * scale;
                 okay::TtfFont* fnt = tr->Font();
                 if (tr->shadow)
                     DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
@@ -1176,13 +1900,21 @@ int main(int argc, char** argv) {
             if (!im || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
             Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+            Vec2 isz = UIResolveSize(up.get(), (float)w, (float)h);   // honors stretch anchors
             enterScroll(up.get(), o);
-            SDL_Rect r{(int)o.x, (int)o.y, (int)im->size.x, (int)im->size.y};
+            SDL_Rect r{(int)o.x, (int)o.y, (int)isz.x, (int)isz.y};
             // Radial/linear fill: shrink the drawn rect to fillAmount along an axis.
             float fox, foy, fw, fh;
-            im->FilledRect(im->size.x, im->size.y, fox, foy, fw, fh);
+            im->FilledRect(isz.x, isz.y, fox, foy, fw, fh);
             SDL_Rect fr{(int)(o.x + fox), (int)(o.y + foy), (int)fw, (int)fh};
             bool filled = im->fillMode != UIImage::FillMode::None;
+            SDL_RendererFlip flip = (SDL_RendererFlip)((im->flipX ? SDL_FLIP_HORIZONTAL : 0) |
+                                                       (im->flipY ? SDL_FLIP_VERTICAL   : 0));
+            if (im->shadow) {   // drop shadow behind the image (parity with panels)
+                SDL_Rect sh{r.x + (int)im->shadowOffset.x, r.y + (int)im->shadowOffset.y, r.w, r.h};
+                FillUIShadow(renderer, sh, im->shape, im->cornerRadius,
+                             im->shadowColor, im->shadowSoftness, op, im->cornerMask);
+            }
             SDL_Texture* tex = GetTexture(renderer, im->texture, baseDir, textureCache);
             if (tex) {
                 SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
@@ -1204,23 +1936,40 @@ int main(int argc, char** argv) {
                             SDL_Rect s{sx[cx], sy[cy], sx[cx + 1] - sx[cx], sy[cy + 1] - sy[cy]};
                             SDL_Rect d{dx[cx], dy[cy], dx[cx + 1] - dx[cx], dy[cy + 1] - dy[cy]};
                             if (s.w > 0 && s.h > 0 && d.w > 0 && d.h > 0)
-                                SDL_RenderCopy(renderer, tex, &s, &d);
+                                SDL_RenderCopyEx(renderer, tex, &s, &d, 0.0, nullptr, flip);
                         }
                 } else if (filled) {                        // reveal a proportional slice
                     int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
                     SDL_Rect src{
-                        (int)(im->size.x > 0 ? fox / im->size.x * tw : 0),
-                        (int)(im->size.y > 0 ? foy / im->size.y * th : 0),
-                        (int)(im->size.x > 0 ? fw  / im->size.x * tw : tw),
-                        (int)(im->size.y > 0 ? fh  / im->size.y * th : th)};
-                    SDL_RenderCopy(renderer, tex, &src, &fr);
+                        (int)(isz.x > 0 ? fox / isz.x * tw : 0),
+                        (int)(isz.y > 0 ? foy / isz.y * th : 0),
+                        (int)(isz.x > 0 ? fw  / isz.x * tw : tw),
+                        (int)(isz.y > 0 ? fh  / isz.y * th : th)};
+                    SDL_RenderCopyEx(renderer, tex, &src, &fr, 0.0, nullptr, flip);
                 } else {
-                    SDL_RenderCopy(renderer, tex, nullptr, &r);
+                    SDL_Rect dst = r;
+                    if (im->preserveAspect) {               // letterbox to keep source aspect
+                        int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+                        float aox, aoy, afw, afh;
+                        im->AspectRect((float)r.w, (float)r.h, (float)tw, (float)th, aox, aoy, afw, afh);
+                        dst = SDL_Rect{r.x + (int)aox, r.y + (int)aoy, (int)afw, (int)afh};
+                    }
+                    SDL_RenderCopyEx(renderer, tex, nullptr, &dst, 0.0, nullptr, flip);
                 }
             } else {                                        // no image -> colored shape fill
                 const SDL_Rect& rr = filled ? fr : r;
                 FillUIShape(renderer, rr, im->shape, im->cornerRadius,
-                            im->color, im->color, false, false, op);
+                            im->color, im->color, false, false, op, 0, im->cornerMask);
+            }
+            if (im->borderWidth > 0.0f) {                   // optional frame/matte around the image
+                int b = (int)im->borderWidth;
+                SDL_SetRenderDrawColor(renderer, (Uint8)(im->borderColor.r * 255),
+                                       (Uint8)(im->borderColor.g * 255), (Uint8)(im->borderColor.b * 255),
+                                       (Uint8)(im->borderColor.a * 255 * op));
+                for (int e = 0; e < b; ++e) {               // nested rects = a b-px stroke
+                    SDL_Rect frm{r.x + e, r.y + e, r.w - 2 * e, r.h - 2 * e};
+                    if (frm.w > 0 && frm.h > 0) SDL_RenderDrawRect(renderer, &frm);
+                }
             }
         }
             else if (_it.kind == K_Panel) {   // panels (backgrounds) first
@@ -1228,24 +1977,46 @@ int main(int argc, char** argv) {
             if (!pn || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
             Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+            Vec2 psz = UIResolveSize(up.get(), (float)w, (float)h);   // honors stretch anchors
             enterScroll(up.get(), o);
-            SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
+            SDL_Rect r{(int)o.x, (int)o.y, (int)psz.x, (int)psz.y};
+            // A backdrop far larger than the screen (e.g. a pause-menu dim) covers the
+            // whole window — clamp it so it tiles exactly the screen, not huge coords.
+            if (psz.x > w * 1.5f && psz.y > h * 1.5f) r = SDL_Rect{0, 0, w, h};
+            bool gh; int gdiag; GradientParams(pn->gradientDir, gh, gdiag);
+            int cm = pn->cornerMask;                        // per-corner rounding
             if (pn->shadow) {                               // drop shadow behind (same shape)
                 SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
                 FillUIShadow(renderer, sh, pn->shape, pn->cornerRadius,
-                             pn->shadowColor, pn->shadowSoftness, op);
+                             pn->shadowColor, pn->shadowSoftness, op, cm);
+            }
+            if (pn->outlineWidth > 0.0f) {                  // outer keyline/glow ring
+                int ow = (int)pn->outlineWidth;
+                SDL_Rect outer{r.x - ow, r.y - ow, r.w + 2 * ow, r.h + 2 * ow};
+                FillUIShape(renderer, outer, pn->shape, pn->cornerRadius + ow,
+                            pn->outlineColor, pn->outlineColor, false, false, op, 0, cm);
             }
             if (pn->borderWidth > 0.0f) {                   // border = outer shape, then inner fill
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
-                            pn->borderColor, pn->borderColor, false, false, op);
+                            pn->borderColor, pn->borderColor, false, false, op, 0, cm);
                 int b = (int)pn->borderWidth;
                 SDL_Rect inner{r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b};
                 float innerR = pn->cornerRadius - b; if (innerR < 0.0f) innerR = 0.0f;
                 FillUIShape(renderer, inner, pn->shape, innerR,
-                            pn->color, pn->colorBottom, pn->useGradient, pn->gradientHorizontal, op);
+                            pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag, cm);
+                if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
+                    Color hb = pn->highlightColor; hb.a = 0.0f;
+                    FillUIShape(renderer, inner, pn->shape, innerR,
+                                pn->highlightColor, hb, true, false, op, 0, cm);
+                }
             } else {
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
-                            pn->color, pn->colorBottom, pn->useGradient, pn->gradientHorizontal, op);
+                            pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag, cm);
+                if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
+                    Color hb = pn->highlightColor; hb.a = 0.0f;
+                    FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
+                                pn->highlightColor, hb, true, false, op, 0, cm);
+                }
             }
         }
             else if (_it.kind == K_DropHi) {   // drop-target highlight (drag feedback)
@@ -1341,47 +2112,275 @@ int main(int argc, char** argv) {
             if (!mm || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
             Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
+            // GTA-style fullscreen pause map: re-centre + enlarge, and zoom out.
+            float wpp = mm->worldPerPixel;
+            if (mm->fullscreen) {
+                float frac = mm->fullscreenFrac > 0.1f ? mm->fullscreenFrac : 0.82f;
+                float fw = w * frac, fh = h * frac;
+                o = Vec2{(w - fw) * 0.5f, (h - fh) * 0.5f}; sz = Vec2{fw, fh};
+                wpp = mm->worldPerPixel * (mm->fullscreenZoom > 0.01f ? mm->fullscreenZoom : 1.0f);
+            }
             SDL_Rect box{(int)o.x, (int)o.y, (int)sz.x, (int)sz.y};
-            // Background fill.
-            SDL_SetRenderDrawColor(renderer, (Uint8)(mm->background.r*255), (Uint8)(mm->background.g*255),
-                                   (Uint8)(mm->background.b*255), (Uint8)(mm->background.a*255*op));
-            SDL_RenderFillRect(renderer, &box);
-            // Border (nested 1px rects for borderWidth).
-            SDL_SetRenderDrawColor(renderer, (Uint8)(mm->border.r*255), (Uint8)(mm->border.g*255),
-                                   (Uint8)(mm->border.b*255), (Uint8)(mm->border.a*255*op));
+            int cx = (int)(o.x + sz.x * 0.5f), cy = (int)(o.y + sz.y * 0.5f);
+            int radius = (int)((sz.x < sz.y ? sz.x : sz.y) * 0.5f);
+            SDL_Color bgCol{(Uint8)(mm->background.r*255), (Uint8)(mm->background.g*255),
+                            (Uint8)(mm->background.b*255), (Uint8)(mm->background.a*255*op)};
+            SDL_Color bdCol{(Uint8)(mm->border.r*255), (Uint8)(mm->border.g*255),
+                            (Uint8)(mm->border.b*255), (Uint8)(mm->border.a*255*op)};
             int bw = (int)mm->borderWidth; if (bw < 1) bw = 1;
-            for (int i = 0; i < bw; ++i) {
-                SDL_Rect e{box.x + i, box.y + i, box.w - 2*i, box.h - 2*i};
-                if (e.w <= 0 || e.h <= 0) break;
-                SDL_RenderDrawRect(renderer, &e);
+            // Clip everything (grid + blips) to the map rect so nothing bleeds out.
+            SDL_Rect prevClip; SDL_RenderGetClipRect(renderer, &prevClip);
+            bool hadClip = SDL_RenderIsClipEnabled(renderer);
+            if (mm->circular) {
+                MMFillCircle(renderer, cx, cy, radius, bgCol);
+            } else {
+                SDL_SetRenderDrawColor(renderer, bgCol.r, bgCol.g, bgCol.b, bgCol.a);
+                SDL_RenderFillRect(renderer, &box);
             }
-            // Center world position: the target object if named/found, else origin.
+            SDL_RenderSetClipRect(renderer, &box);
+            // Center world position + heading of the target.
             Vec3 center{0,0,0};
+            float targetHeading = 0.0f;
             if (!mm->target.empty()) {
-                if (GameObject* tg = scene.Find(mm->target); tg && tg->transform)
+                if (GameObject* tg = scene.Find(mm->target); tg && tg->transform) {
                     center = tg->transform->Position();
+                    targetHeading = Minimap::HeadingOf(tg->transform->Forward(), mm->useXZ);
+                }
             }
+            // A custom map renders north-up (GTA pause-map style); a plain radar can
+            // spin with the target when rotateWithTarget is on.
+            float mapHeading = (!mm->HasMap() && mm->rotateWithTarget) ? targetHeading : 0.0f;
+            // GTA-style world-map image: pan/zoom a sub-rectangle under the blips.
+            if (mm->HasMap()) {
+                if (SDL_Texture* mtex = GetTexture(renderer, mm->mapTexture, baseDir, textureCache)) {
+                    int tw = 0, th = 0; SDL_QueryTexture(mtex, nullptr, nullptr, &tw, &th);
+                    float u0, v0, u1, v1;
+                    Minimap::MapSrcUV(*mm, center, sz.x, sz.y, wpp, u0, v0, u1, v1);
+                    SDL_Rect src{(int)(u0*tw), (int)(v0*th), (int)((u1-u0)*tw), (int)((v1-v0)*th)};
+                    SDL_SetTextureAlphaMod(mtex, (Uint8)(255*op));
+                    SDL_RenderCopy(renderer, mtex, &src, &box);
+                }
+            }
+            // Reference grid (rectangular maps only).
+            if (mm->showGrid && !mm->circular && mm->gridSpacing > 1.0f) {
+                SDL_SetRenderDrawColor(renderer, (Uint8)(mm->gridColor.r*255), (Uint8)(mm->gridColor.g*255),
+                                       (Uint8)(mm->gridColor.b*255), (Uint8)(mm->gridColor.a*255*op));
+                for (float gx = sz.x*0.5f; gx < sz.x; gx += mm->gridSpacing) {
+                    SDL_RenderDrawLine(renderer, (int)(o.x+gx), box.y, (int)(o.x+gx), box.y+box.h);
+                    SDL_RenderDrawLine(renderer, (int)(o.x+sz.x-gx), box.y, (int)(o.x+sz.x-gx), box.y+box.h);
+                }
+                for (float gy = sz.y*0.5f; gy < sz.y; gy += mm->gridSpacing) {
+                    SDL_RenderDrawLine(renderer, box.x, (int)(o.y+gy), box.x+box.w, (int)(o.y+gy));
+                    SDL_RenderDrawLine(renderer, box.x, (int)(o.y+sz.y-gy), box.x+box.w, (int)(o.y+sz.y-gy));
+                }
+            }
+            float selfAng = targetHeading - mapHeading;   // facing of the player on-map
+            // Click the open (fullscreen) map to drop a waypoint; right-click clears it.
+            if (mm->fullscreen && mm->mapClickWaypoint) {
+                okay::Vec2 cur = Input::MousePosition();
+                bool inBox = cur.x >= o.x && cur.x < o.x + sz.x && cur.y >= o.y && cur.y < o.y + sz.y;
+                if (inBox && Input::GetMouseButtonDown(0)) {
+                    mm->userWaypoint = Minimap::MapToWorldPlane(*mm, center, sz.x, sz.y, mapHeading,
+                                                               cur.x - o.x, cur.y - o.y, wpp);
+                    mm->hasUserWaypoint = true;
+                } else if (inBox && Input::GetMouseButtonDown(1)) {
+                    mm->hasUserWaypoint = false;
+                }
+            }
+            // Authorable vector map: roads (lines), houses (rects), zones (polys).
+            auto projPlane = [&](const Vec2& en, float& ox, float& oy) {
+                float pmx, pmy;
+                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(en), sz.x, sz.y, mapHeading, pmx, pmy, wpp);
+                ox = o.x + pmx; oy = o.y + pmy;
+            };
+            for (const auto& shp : mm->mapShapes) {
+                if (shp.points.empty()) continue;
+                SDL_Color col{(Uint8)(shp.color.r*255), (Uint8)(shp.color.g*255),
+                              (Uint8)(shp.color.b*255), (Uint8)(shp.color.a*255*op)};
+                std::vector<SDL_Point> pts;
+                if (shp.kind == Minimap::MapShape::Kind::Rect && shp.points.size() >= 2) {
+                    Vec2 p0 = shp.points[0], p1 = shp.points[1];
+                    Vec2 corners[4] = {{p0.x,p0.y},{p1.x,p0.y},{p1.x,p1.y},{p0.x,p1.y}};
+                    for (auto& c : corners) { float x,y; projPlane(c,x,y); pts.push_back({(int)x,(int)y}); }
+                } else {
+                    for (const auto& p : shp.points) { float x,y; projPlane(p,x,y); pts.push_back({(int)x,(int)y}); }
+                }
+                bool fill = shp.filled && shp.kind != Minimap::MapShape::Kind::Line;
+                if (fill && pts.size() >= 3) {
+                    MMFillPoly(renderer, pts, col);
+                } else if (shp.kind == Minimap::MapShape::Kind::Line) {
+                    for (std::size_t i = 0; i + 1 < pts.size(); ++i)
+                        MMThickLine(renderer, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y, shp.thickness, col);
+                } else {   // closed outline for Rect/Poly
+                    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+                    for (std::size_t i = 0; i < pts.size(); ++i) {
+                        const SDL_Point& a2 = pts[i]; const SDL_Point& b2 = pts[(i+1)%pts.size()];
+                        MMThickLine(renderer, a2.x, a2.y, b2.x, b2.y, shp.thickness, col);
+                    }
+                }
+            }
+            // Range rings (concentric distance circles).
+            if (mm->rangeRings > 0) {
+                SDL_Color rc{(Uint8)(mm->ringColor.r*255), (Uint8)(mm->ringColor.g*255),
+                             (Uint8)(mm->ringColor.b*255), (Uint8)(mm->ringColor.a*255*op)};
+                for (int k = 1; k <= mm->rangeRings; ++k)
+                    MMDrawRing(renderer, cx, cy, radius * k / (mm->rangeRings + 1), 1, rc);
+            }
+            // View cone (FOV wedge from the centre along the player's facing).
+            if (mm->viewCone) {
+                SDL_Color vc{(Uint8)(mm->viewConeColor.r*255), (Uint8)(mm->viewConeColor.g*255),
+                             (Uint8)(mm->viewConeColor.b*255), (Uint8)(mm->viewConeColor.a*255*op)};
+                float half = mm->viewConeAngle * 0.5f * 0.0174532925f, L = mm->viewConeLength;
+                SDL_Point apex{cx, cy};
+                SDL_Point lft{(int)(cx + std::sin(selfAng-half)*L), (int)(cy - std::cos(selfAng-half)*L)};
+                SDL_Point rgt{(int)(cx + std::sin(selfAng+half)*L), (int)(cy - std::cos(selfAng+half)*L)};
+                MMFillTriangle(renderer, apex, lft, rgt, vc);
+            }
+            // Draw a marker (square/dot/triangle/arrow) at (px,py).
+            auto drawBlip = [&](float px, float py, int half, SDL_Color col,
+                                MinimapBlip::Shape shp, float ang) {
+                switch (shp) {
+                    case MinimapBlip::Shape::Dot:
+                        MMFillCircle(renderer, (int)px, (int)py, half, col); break;
+                    case MinimapBlip::Shape::Triangle:
+                    case MinimapBlip::Shape::Arrow: {
+                        SDL_Point tip{(int)(px + std::sin(ang)*half), (int)(py - std::cos(ang)*half)};
+                        float ba = 2.4f;
+                        SDL_Point l{(int)(px + std::sin(ang-ba)*half), (int)(py - std::cos(ang-ba)*half)};
+                        SDL_Point r{(int)(px + std::sin(ang+ba)*half), (int)(py - std::cos(ang+ba)*half)};
+                        if (shp == MinimapBlip::Shape::Arrow) {
+                            SDL_Point tail{(int)(px - std::sin(ang)*half*0.4f), (int)(py + std::cos(ang)*half*0.4f)};
+                            MMFillTriangle(renderer, tip, l, tail, col);
+                            MMFillTriangle(renderer, tip, r, tail, col);
+                        } else {
+                            MMFillTriangle(renderer, tip, l, r, col);
+                        }
+                    } break;
+                    default: {
+                        SDL_Rect br{(int)px - half, (int)py - half, half*2, half*2};
+                        SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+                        SDL_RenderFillRect(renderer, &br);
+                    }
+                }
+            };
             // Plot every MinimapBlip.
             for (const auto& bp : scene.Objects()) {
                 if (!bp || !bp->active) continue;
                 auto* bl = bp->GetComponent<MinimapBlip>();
                 if (!bl || !bp->transform) continue;
+                if (!Minimap::WithinRange(*mm, center, bp->transform->Position())) continue;   // radar range
                 float mx, my;
-                if (!Minimap::WorldToMap(*mm, center, bp->transform->Position(), sz.x, sz.y, mx, my))
-                    continue;   // outside the map rect
+                bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my, wpp);
+                if (!inside) {
+                    if (!mm->clampBlips) continue;
+                    float dx = mx - sz.x*0.5f, dy = my - sz.y*0.5f;
+                    float len = std::sqrt(dx*dx + dy*dy); if (len < 1e-3f) continue;
+                    float rr = (mm->circular ? radius : (sz.x < sz.y ? sz.x : sz.y) * 0.5f) - mm->blipSize;
+                    mx = sz.x*0.5f + dx/len*rr; my = sz.y*0.5f + dy/len*rr;
+                }
                 int half = (int)(bl->size > 0 ? bl->size : mm->blipSize);
-                SDL_SetRenderDrawColor(renderer, (Uint8)(bl->color.r*255), (Uint8)(bl->color.g*255),
-                                       (Uint8)(bl->color.b*255), (Uint8)(bl->color.a*255*op));
-                SDL_Rect br{(int)(o.x + mx) - half, (int)(o.y + my) - half, half*2, half*2};
-                SDL_RenderFillRect(renderer, &br);
+                SDL_Color col{(Uint8)(bl->color.r*255), (Uint8)(bl->color.g*255),
+                              (Uint8)(bl->color.b*255), (Uint8)(bl->color.a*255*op)};
+                SDL_Texture* bicon = bl->icon.empty() ? nullptr : GetTexture(renderer, bl->icon, baseDir, textureCache);
+                if (bicon) {
+                    SDL_SetTextureAlphaMod(bicon, (Uint8)(255*op));
+                    SDL_Rect dr{(int)(o.x+mx)-half, (int)(o.y+my)-half, half*2, half*2};
+                    SDL_RenderCopy(renderer, bicon, nullptr, &dr);
+                } else {
+                    float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
+                    drawBlip(o.x + mx, o.y + my, half, col, bl->shape, ang);
+                }
+                if (mm->showLabels && !bl->label.empty()) {
+                    SDL_Color lc{(Uint8)(mm->labelColor.r*255), (Uint8)(mm->labelColor.g*255),
+                                 (Uint8)(mm->labelColor.b*255), (Uint8)(mm->labelColor.a*255*op)};
+                    DrawText(renderer, bl->label, o.x+mx+half+2, o.y+my-half, mm->labelSize, lc);
+                }
             }
-            // The target marker at the map center.
-            {
+            // Route lines (GTA pink line from the player centre to a chosen marker
+            // and/or the user-placed waypoint).
+            auto drawRoute = [&](const Vec2& worldEN) {
+                float rmx, rmy;
+                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(worldEN), sz.x, sz.y, mapHeading, rmx, rmy, wpp);
+                SDL_SetRenderDrawColor(renderer, (Uint8)(mm->routeColor.r*255), (Uint8)(mm->routeColor.g*255),
+                                       (Uint8)(mm->routeColor.b*255), (Uint8)(mm->routeColor.a*255*op));
+                int rw = (int)mm->routeWidth; if (rw < 1) rw = 1;
+                for (int t = -(rw/2); t <= rw/2; ++t)
+                    SDL_RenderDrawLine(renderer, cx, cy+t, (int)(o.x+rmx), (int)(o.y+rmy)+t);
+            };
+            if (mm->routeMarker >= 0 && mm->routeMarker < (int)mm->markers.size())
+                drawRoute(mm->markers[mm->routeMarker].world);
+            if (mm->hasUserWaypoint) drawRoute(mm->userWaypoint);
+            // Waypoint markers (GTA POIs): fixed world points drawn as diamonds.
+            for (const auto& mk : mm->markers) {
+                float mx, my;
+                bool inside = Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mk.world), sz.x, sz.y, mapHeading, mx, my, wpp);
+                if (!inside) {
+                    if (!mm->clampBlips) continue;
+                    float dx = mx - sz.x*0.5f, dy = my - sz.y*0.5f;
+                    float len = std::sqrt(dx*dx + dy*dy); if (len < 1e-3f) continue;
+                    float rr = (mm->circular ? radius : (sz.x < sz.y ? sz.x : sz.y) * 0.5f) - mk.size;
+                    mx = sz.x*0.5f + dx/len*rr; my = sz.y*0.5f + dy/len*rr;
+                }
+                SDL_Color col{(Uint8)(mk.color.r*255), (Uint8)(mk.color.g*255),
+                              (Uint8)(mk.color.b*255), (Uint8)(mk.color.a*255*op)};
+                float px = o.x + mx, py = o.y + my; int h = (int)mk.size;
+                SDL_Point top{(int)px,(int)(py-h)}, rgt{(int)(px+h),(int)py},
+                          bot{(int)px,(int)(py+h)}, lft{(int)(px-h),(int)py};
+                MMFillTriangle(renderer, top, rgt, bot, col);
+                MMFillTriangle(renderer, top, lft, bot, col);
+                if (mm->showLabels && !mk.label.empty()) {
+                    SDL_Color lc{(Uint8)(mm->labelColor.r*255), (Uint8)(mm->labelColor.g*255),
+                                 (Uint8)(mm->labelColor.b*255), (Uint8)(mm->labelColor.a*255*op)};
+                    DrawText(renderer, mk.label, px+h+2, py-h, mm->labelSize, lc);
+                }
+            }
+            // User-placed waypoint (click-to-set): a bright diamond on the map.
+            if (mm->hasUserWaypoint) {
+                float wmx, wmy;
+                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mm->userWaypoint), sz.x, sz.y, mapHeading, wmx, wmy, wpp);
+                SDL_Color col{(Uint8)(mm->userWaypointColor.r*255), (Uint8)(mm->userWaypointColor.g*255),
+                              (Uint8)(mm->userWaypointColor.b*255), (Uint8)(mm->userWaypointColor.a*255*op)};
+                float px = o.x + wmx, py = o.y + wmy; int h = (int)(mm->blipSize * 1.3f);
+                SDL_Point top{(int)px,(int)(py-h)}, rgt{(int)(px+h),(int)py},
+                          bot{(int)px,(int)(py+h)}, lft{(int)(px-h),(int)py};
+                MMFillTriangle(renderer, top, rgt, bot, col);
+                MMFillTriangle(renderer, top, lft, bot, col);
+            }
+            // The target marker at the map center (the arrow shows facing; a north-up
+            // map spins the arrow GTA-style).
+            if (mm->showSelf) {
                 int half = (int)(mm->blipSize);
-                SDL_SetRenderDrawColor(renderer, (Uint8)(mm->targetColor.r*255), (Uint8)(mm->targetColor.g*255),
-                                       (Uint8)(mm->targetColor.b*255), (Uint8)(mm->targetColor.a*255*op));
-                SDL_Rect tr{(int)(o.x + sz.x*0.5f) - half, (int)(o.y + sz.y*0.5f) - half, half*2, half*2};
-                SDL_RenderFillRect(renderer, &tr);
+                SDL_Color col{(Uint8)(mm->targetColor.r*255), (Uint8)(mm->targetColor.g*255),
+                              (Uint8)(mm->targetColor.b*255), (Uint8)(mm->targetColor.a*255*op)};
+                if (mm->playerArrow)
+                    drawBlip((float)cx, (float)cy, (int)(half*1.4f), col, MinimapBlip::Shape::Arrow, selfAng);
+                else
+                    drawBlip((float)cx, (float)cy, half, col, MinimapBlip::Shape::Square, 0.0f);
+            }
+            // North indicator: a small tick at the edge in the world-north direction.
+            if (mm->showNorth) {
+                float northAng = -mapHeading;   // north is "up" rotated by the map heading
+                float edge = (mm->circular ? radius : (sz.x < sz.y ? sz.x : sz.y) * 0.5f) - 4.0f;
+                float nx = cx + std::sin(northAng) * edge, ny = cy - std::cos(northAng) * edge;
+                SDL_Color nc{(Uint8)(mm->northColor.r*255), (Uint8)(mm->northColor.g*255),
+                             (Uint8)(mm->northColor.b*255), (Uint8)(mm->northColor.a*255*op)};
+                SDL_Point tip{(int)(cx + std::sin(northAng)*(edge+5)), (int)(cy - std::cos(northAng)*(edge+5))};
+                SDL_Point l{(int)(nx + std::sin(northAng-2.4f)*5), (int)(ny - std::cos(northAng-2.4f)*5)};
+                SDL_Point r{(int)(nx + std::sin(northAng+2.4f)*5), (int)(ny - std::cos(northAng+2.4f)*5)};
+                MMFillTriangle(renderer, tip, l, r, nc);
+            }
+            // Restore clip and draw the border on top (rect rings or circle ring).
+            if (hadClip) SDL_RenderSetClipRect(renderer, &prevClip);
+            else SDL_RenderSetClipRect(renderer, nullptr);
+            if (mm->circular) {
+                MMDrawRing(renderer, cx, cy, radius, bw, bdCol);
+            } else {
+                SDL_SetRenderDrawColor(renderer, bdCol.r, bdCol.g, bdCol.b, bdCol.a);
+                for (int i = 0; i < bw; ++i) {
+                    SDL_Rect e{box.x + i, box.y + i, box.w - 2*i, box.h - 2*i};
+                    if (e.w <= 0 || e.h <= 0) break;
+                    SDL_RenderDrawRect(renderer, &e);
+                }
             }
         }
             else if (_it.kind == K_Crosshair) {   // aim reticle at screen center
@@ -1405,11 +2404,23 @@ int main(int argc, char** argv) {
                 SDL_RenderFillRect(renderer, &ln);
             };
             if (cr->showLines) {
-                int g0 = (int)cr->gap, g1 = (int)(cr->gap + cr->length);
-                drawLine((int)cx - th/2, (int)cy - g1, th, g1 - g0);          // up
-                drawLine((int)cx - th/2, (int)cy + g0, th, g1 - g0);          // down
-                drawLine((int)cx - g1, (int)cy - th/2, g1 - g0, th);          // left
-                drawLine((int)cx + g0, (int)cy - th/2, g1 - g0, th);          // right
+                int g0 = (int)(cr->gap + cr->spread), g1 = (int)(cr->gap + cr->spread + cr->length);
+                if (cr->lineUp)    drawLine((int)cx - th/2, (int)cy - g1, th, g1 - g0);   // up
+                if (cr->lineDown)  drawLine((int)cx - th/2, (int)cy + g0, th, g1 - g0);   // down
+                if (cr->lineLeft)  drawLine((int)cx - g1, (int)cy - th/2, g1 - g0, th);   // left
+                if (cr->lineRight) drawLine((int)cx + g0, (int)cy - th/2, g1 - g0, th);   // right
+            }
+            if (cr->circle) {
+                int segs = 48; float rr = cr->circleRadius, ct = cr->circleThickness < 1 ? 1 : cr->circleThickness;
+                SDL_SetRenderDrawColor(renderer, (Uint8)(cr->circleColor.r*255), (Uint8)(cr->circleColor.g*255),
+                                       (Uint8)(cr->circleColor.b*255), (Uint8)(cr->circleColor.a*255*op));
+                for (float t = 0; t < ct; t += 1.0f) {
+                    float ring = rr + t;
+                    for (int i = 0; i < segs; ++i) {
+                        float a0 = (float)i / segs * 6.2831853f;
+                        SDL_RenderDrawPoint(renderer, (int)(cx + std::cos(a0) * ring), (int)(cy + std::sin(a0) * ring));
+                    }
+                }
             }
             if (cr->dot) {
                 int half = (int)(cr->dotSize * 0.5f); if (half < 1) half = 1;
@@ -1669,7 +2680,7 @@ int main(int argc, char** argv) {
             // text). UIResolveOrigin/UIScaleFor are world-aware; pixelSize scales by k.
             Canvas* tcv = OwningCanvas(up.get());
             bool tWorld = (tcv && tcv->worldSpace) || WorldUIRoot(up.get()) != nullptr;
-            float p = tr->pixelSize, ls = tr->letterSpacing, lp = tr->lineSpacing;
+            float p = tr->EffectivePixelSize(), ls = tr->letterSpacing, lp = tr->lineSpacing;
             float tk = 1.0f;
             if (tWorld) {
                 tk = UIScaleFor(up.get(), (float)w, (float)h);
@@ -1855,6 +2866,37 @@ int main(int argc, char** argv) {
         // F1 "Test UI" panel on top, then flush the whole OkayUI frame here so it
         // composites above the game.
         if (g_testUI) okay_testui::Panel(24.0f, 24.0f);
+        // F3 performance HUD — a real in-engine use of OkayUI (FPS graph, frame time,
+        // and a scrollable list of scene objects). Showcases PlotLines/LabelText/child.
+        if (g_statsUI) {
+            static float s_fps = 0.0f;
+            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
+            s_fps = s_fps <= 0.0f ? inst : s_fps * 0.9f + inst * 0.1f;   // smoothed FPS
+            static float s_fpsHist[90] = {0};
+            static int   s_fpsIdx = 0;
+            s_fpsHist[s_fpsIdx] = s_fps;
+            s_fpsIdx = (s_fpsIdx + 1) % 90;
+            float plot[90];
+            for (int i = 0; i < 90; ++i) plot[i] = s_fpsHist[(s_fpsIdx + i) % 90];  // chronological
+
+            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 320.0f, 320.0f);
+            char line[64];
+            std::snprintf(line, sizeof(line), "%d", (int)(s_fps + 0.5f));
+            OkayUI::LabelText("FPS", line);
+            std::snprintf(line, sizeof(line), "%.2f ms", dt * 1000.0f);
+            OkayUI::LabelText("Frame time", line);
+            std::snprintf(line, sizeof(line), "%d", (int)scene.Objects().size());
+            OkayUI::LabelText("Objects", line);
+            OkayUI::SeparatorText("FPS (last 90 frames)");
+            OkayUI::PlotLines("##fps", plot, 90, 0.0f, 0.0f, 56.0f);
+            OkayUI::SeparatorText("Scene objects");
+            if (OkayUI::BeginChild("##objs", 0.0f, 130.0f, true)) {
+                for (const auto& up : scene.Objects())
+                    if (up) OkayUI::BulletText(up->name.c_str());
+            }
+            OkayUI::EndChild();
+            OkayUI::End();
+        }
         OkayUI::EndFrame(renderer);
         SDL_StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
@@ -1871,6 +2913,18 @@ int main(int argc, char** argv) {
             DrawGridInventory(renderer, *gui, baseDir, textureCache);
             break;
         }
+        for (const auto& up : scene.Objects()) {
+            auto* cs = up ? up->GetComponent<CraftingStation>() : nullptr;
+            if (!cs) continue;
+            DrawCrafting(renderer, *cs);
+            break;
+        }
+        for (const auto& up : scene.Objects()) {
+            auto* ce = up ? up->GetComponent<ChestInventory>() : nullptr;
+            if (!ce || !ce->open) continue;
+            DrawChest(renderer, *ce, baseDir, textureCache);
+            break;
+        }
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.
         for (const auto& up : scene.Objects()) {
             auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;
@@ -1878,6 +2932,8 @@ int main(int argc, char** argv) {
             DrawLoadingScreen(renderer, *ls, baseDir, textureCache);
             break;
         }
+        // Post: screen-space vignette (on top of the scene + UI, under nothing).
+        DrawVignette(renderer, scene.renderSettings.vignette);
         SDL_RenderPresent(renderer);
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.
@@ -1897,6 +2953,44 @@ int main(int argc, char** argv) {
     static auto* s_frame = &frame;
     emscripten_set_main_loop([]() { (*s_frame)(); }, 0, 1);
 #else
+    // Startup splash (Unity-style): show a logo over a solid colour, fading in and
+    // out, before the game proper. Skippable with a key/click; closing quits.
+    if (running && !cfg.splash.empty()) {
+        if (SDL_Texture* stex = GetTexture(renderer, cfg.splash, baseDir, textureCache)) {
+            Uint64 t0 = SDL_GetPerformanceCounter();
+            const double dur = cfg.splashTime > 0.1f ? cfg.splashTime : 2.0;
+            const double fade = std::min(0.5, dur * 0.3);
+            bool done = false;
+            while (running && !done) {
+                double el = (double)(SDL_GetPerformanceCounter() - t0) / (double)SDL_GetPerformanceFrequency();
+                if (el >= dur) break;
+                SDL_Event e;
+                while (SDL_PollEvent(&e)) {
+                    if (e.type == SDL_QUIT) { running = false; }
+                    else if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN) done = true;  // skip
+                }
+                double a = 1.0;
+                if (el < fade) a = el / fade;
+                else if (el > dur - fade) a = (dur - el) / fade;
+                if (a < 0) a = 0; if (a > 1) a = 1;
+                int w = 0, h = 0; SDL_GetRendererOutputSize(renderer, &w, &h);
+                SDL_SetRenderDrawColor(renderer, (Uint8)cfg.splashBg[0], (Uint8)cfg.splashBg[1], (Uint8)cfg.splashBg[2], 255);
+                SDL_RenderClear(renderer);
+                int iw = 0, ih = 0; SDL_QueryTexture(stex, nullptr, nullptr, &iw, &ih);
+                if (iw > 0 && ih > 0) {
+                    double fit = std::min((double)w / iw, (double)h / ih) * 0.55;  // 55% of the window
+                    int dw = (int)(iw * fit), dh = (int)(ih * fit);
+                    SDL_Rect dst{(w - dw) / 2, (h - dh) / 2, dw, dh};
+                    SDL_SetTextureBlendMode(stex, SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureAlphaMod(stex, (Uint8)(a * 255));
+                    SDL_RenderCopy(renderer, stex, nullptr, &dst);
+                }
+                SDL_RenderPresent(renderer);
+                SDL_Delay(8);
+            }
+        }
+    }
+
     while (running) frame();
 #endif
 
@@ -1907,6 +3001,7 @@ int main(int argc, char** argv) {
     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
 #if defined(_WIN32)
+    if (d3d12Renderer) { d3d12Renderer->Destroy(); delete d3d12Renderer; }
     if (d3dRenderer) { d3dRenderer->Destroy(); delete d3dRenderer; }
 #endif
     if (glRenderer) {

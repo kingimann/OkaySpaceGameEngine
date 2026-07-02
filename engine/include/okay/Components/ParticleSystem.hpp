@@ -4,37 +4,111 @@
 #include "okay/Core/Random.hpp"
 #include "okay/Render/Color.hpp"
 #include <vector>
+#include <cmath>
 
 namespace okay {
 
-/// A simple 2D particle emitter. Spawns particles at the GameObject's position
-/// and integrates them with velocity, gravity, fading, and lifetime — a compact
-/// version of Unity's ParticleSystem. Deterministic for a given seed.
+/// A billboarded particle emitter — a compact but feature-rich take on Unity's
+/// ParticleSystem. Spawns particles from a configurable emission SHAPE and
+/// integrates them with velocity, gravity, drag, colour-over-lifetime,
+/// size-over-lifetime, lifetime/size/speed randomness, timed bursts, and a
+/// looping duration. Deterministic for a given seed. Particles are drawn as
+/// small world-space quads (position + size + colour), so the renderer only
+/// needs those three fields and nothing here breaks the existing draw path.
 class ParticleSystem : public Behaviour {
 public:
+    /// Where new particles spawn and which way they're flung.
+    ///   Point  — all from the emitter origin (classic).
+    ///   Circle — on a ring of `shapeRadius`, pushed outward.
+    ///   Sphere — filled disc of `shapeRadius`, pushed outward (2D billboard).
+    ///   Box    — inside a `boxSize` rectangle, using the start velocity.
+    ///   Cone   — a `shapeAngle`-degree spray around the start velocity.
+    ///   Edge   — along a horizontal line of width `shapeRadius`*2.
+    enum class Shape { Point, Circle, Sphere, Box, Cone, Edge };
+
     struct Particle {
         Vec3  position;
-        Vec2  velocity;
+        Vec3  velocity;        // full 3D velocity (particles move through space, not a flat plane)
         float life = 0.0f;     // remaining seconds
         float maxLife = 1.0f;
-        float size = 0.25f;
+        float size = 0.25f;    // current (rendered) size
+        float size0 = 0.25f;   // size at birth (for size-over-life lerp)
+        float rotation = 0.0f; // billboard spin, degrees
+        float angularVel = 0.0f;  // degrees/second
         Color color = Color::White;
         bool  alive = false;
     };
 
-    // Emission
+    // ---- Emission ----
     float emissionRate = 20.0f;   // particles per second
     int   maxParticles = 300;
     bool  playing = true;
 
-    // Per-particle start values
+    // ---- Duration / looping ----
+    float duration = 0.0f;        // seconds of emission per cycle (0 = forever)
+    bool  loop = true;            // restart the cycle (and refire bursts) at `duration`
+
+    // ---- Burst (one shot of N particles at `burstTime` into each cycle) ----
+    int   burstCount = 0;         // 0 = no burst
+    float burstTime  = 0.0f;      // seconds into the cycle when the burst fires
+
+    // ---- Emission shape ----
+    Shape shape = Shape::Point;
+    float shapeRadius = 1.0f;     // Circle/Sphere/Edge extent
+    float shapeAngle  = 25.0f;    // Cone half-angle, degrees
+    Vec3  boxSize{1.0f, 1.0f, 1.0f};   // Box extents (3D)
+
+    // ---- Per-particle start values ----
     float startLifetime = 1.5f;
+    float startLifetimeRandom = 0.0f;   // +/- seconds
     float startSize = 0.25f;
+    float startSizeRandom = 0.0f;       // +/- size units
     Color startColor = Color::White;
-    Vec2  startVelocity{0.0f, 3.0f};
-    float velocityRandom = 1.5f;   // +/- added to each velocity component
-    Vec2  gravity{0.0f, -2.0f};
-    bool  fadeOverLife = true;
+    Vec3  startVelocity{0.0f, 3.0f, 0.0f};   // launch velocity (3D)
+    float velocityRandom = 1.5f;        // +/- added to each velocity component
+    float speedRandom = 0.0f;           // +/- scale on the launch speed (shapes)
+
+    // ---- Appearance ----
+    /// Optional sprite texture for each particle (smoke/spark/flare/glow PNG),
+    /// drawn as a camera-facing billboard tinted by the particle colour. Empty =
+    /// a soft round puff. Build Game bundles the file alongside the exe.
+    std::string texture;
+    /// Per-particle billboard spin (Unity's Rotation / Rotation-over-Lifetime),
+    /// degrees and degrees-per-second, each with a +/- randomiser.
+    float startRotation = 0.0f;
+    float startRotationRandom = 0.0f;
+    float rotationSpeed = 0.0f;
+    float rotationSpeedRandom = 0.0f;
+
+    /// How particles face the camera. Billboard = an upright camera-facing quad
+    /// (the default). Stretch = elongated along the velocity (Unity's Stretched
+    /// Billboard) for rain, sparks, tracers and speed lines; `stretchScale` sets
+    /// how much speed lengthens the streak.
+    enum class RenderMode { Billboard, Stretch };
+    RenderMode renderMode = RenderMode::Billboard;
+    float stretchScale = 0.15f;   // length added per unit of speed
+
+    // ---- Over-lifetime ----
+    Color endColor = Color::White;
+    bool  colorOverLife = false;        // lerp startColor -> endColor over life
+    float endSize = 0.0f;               // size at death
+    bool  sizeOverLife = false;         // lerp size0 -> endSize over life
+    bool  fadeOverLife = true;          // fade alpha out as the particle dies
+
+    // ---- Forces ----
+    Vec3  gravity{0.0f, -2.0f, 0.0f};   // 3D gravity/wind acceleration
+    float gravityModifier = 1.0f;       // scales gravity (Unity-style)
+    float damping = 0.0f;               // linear drag per second (0 = none)
+
+    // ---- Collision (Unity's Collision module, world-plane mode) ----
+    /// Bounce particles off a horizontal ground plane at world height `collisionY`
+    /// (sparks skittering off a floor, bouncing debris, rain splatter). Cheap — one
+    /// plane test per particle, no colliders needed.
+    bool  collision = false;
+    float collisionY = 0.0f;            // world height of the plane
+    float bounce = 0.5f;                // restitution: 0 = stick, 1 = perfect bounce
+    float collisionFriction = 0.1f;     // 0..1 tangential speed lost per bounce
+    float collisionLifeLoss = 0.0f;     // 0..1 fraction of remaining life lost per bounce
 
     std::uint64_t seed = 1234567u;
 
@@ -42,27 +116,68 @@ public:
     /// maxParticles) can't trigger length_error / bad_alloc.
     int SafeMax() const { return maxParticles < 0 ? 0 : (maxParticles > 100000 ? 100000 : maxParticles); }
 
-    void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); }
+    void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); m_age = 0.0f; m_burstFired = false; }
+
+    /// Begin/stop emitting (existing particles keep living when stopped).
+    void Play()  { playing = true; }
+    void Stop()  { playing = false; }
+    /// Clear all particles and restart the cycle from zero.
+    void Restart() { for (Particle& p : m_particles) p.alive = false; m_age = 0.0f; m_burstFired = false; m_accum = 0.0f; }
 
     void Update(float dt) override {
         if (m_particles.empty()) m_particles.assign(SafeMax(), Particle{});
 
-        // Emit.
+        // Advance the cycle clock and decide whether we're still emitting.
+        bool emitting = playing;
         if (playing) {
-            m_accum += emissionRate * dt;
-            while (m_accum >= 1.0f) {
-                m_accum -= 1.0f;
-                Emit();
+            m_age += dt;
+            if (duration > 0.0f) {
+                if (m_age >= duration) {
+                    if (loop) { m_age = std::fmod(m_age, duration); m_burstFired = false; }
+                    else      { emitting = false; }
+                }
+            }
+            // Timed burst (once per cycle).
+            if (emitting && burstCount > 0 && !m_burstFired && m_age >= burstTime) {
+                Emit(burstCount);
+                m_burstFired = true;
             }
         }
+
+        // Steady-rate emission.
+        if (emitting && emissionRate > 0.0f) {
+            m_accum += emissionRate * dt;
+            while (m_accum >= 1.0f) { m_accum -= 1.0f; Emit(); }
+        }
+
         // Integrate.
+        const float drag = damping > 0.0f ? Mathf::Clamp01(1.0f - damping * dt) : 1.0f;
         for (Particle& p : m_particles) {
             if (!p.alive) continue;
             p.life -= dt;
             if (p.life <= 0.0f) { p.alive = false; continue; }
-            p.velocity += gravity * dt;
-            p.position += Vec3{p.velocity * dt};
-            if (fadeOverLife) p.color.a = Mathf::Clamp01(p.life / p.maxLife);
+            p.velocity += gravity * (gravityModifier * dt);
+            if (drag != 1.0f) p.velocity *= drag;
+            p.position += p.velocity * dt;
+            p.rotation += p.angularVel * dt;
+            // Ground-plane collision: reflect downward motion, lose tangential speed
+            // to friction and (optionally) some life on each impact.
+            if (collision && p.position.y < collisionY && p.velocity.y < 0.0f) {
+                p.position.y = collisionY;
+                p.velocity.y = -p.velocity.y * bounce;
+                float keep = 1.0f - Mathf::Clamp01(collisionFriction);
+                p.velocity.x *= keep; p.velocity.z *= keep;
+                if (collisionLifeLoss > 0.0f) p.life -= p.maxLife * Mathf::Clamp01(collisionLifeLoss);
+            }
+            float t = 1.0f - Mathf::Clamp01(p.life / p.maxLife);   // 0 at birth -> 1 at death
+            if (sizeOverLife) p.size = p.size0 + (endSize - p.size0) * t;
+            if (colorOverLife) {
+                p.color.r = startColor.r + (endColor.r - startColor.r) * t;
+                p.color.g = startColor.g + (endColor.g - startColor.g) * t;
+                p.color.b = startColor.b + (endColor.b - startColor.b) * t;
+                p.color.a = startColor.a + (endColor.a - startColor.a) * t;
+            }
+            if (fadeOverLife) p.color.a *= Mathf::Clamp01(p.life / p.maxLife);
         }
     }
 
@@ -82,18 +197,89 @@ private:
         for (Particle& p : m_particles) {
             if (p.alive) continue;
             p.alive = true;
-            p.maxLife = p.life = startLifetime;
-            p.size = startSize;
+            p.maxLife = p.life = startLifetime + (startLifetimeRandom > 0.0f
+                                  ? m_rng.Range(-startLifetimeRandom, startLifetimeRandom) : 0.0f);
+            if (p.life < 0.01f) p.life = p.maxLife = 0.01f;
+            p.size0 = p.size = startSize + (startSizeRandom > 0.0f
+                               ? m_rng.Range(-startSizeRandom, startSizeRandom) : 0.0f);
+            if (p.size0 < 0.0f) p.size0 = p.size = 0.0f;
+            p.rotation = startRotation + (startRotationRandom > 0.0f
+                         ? m_rng.Range(-startRotationRandom, startRotationRandom) : 0.0f);
+            p.angularVel = rotationSpeed + (rotationSpeedRandom > 0.0f
+                           ? m_rng.Range(-rotationSpeedRandom, rotationSpeedRandom) : 0.0f);
             p.color = startColor;
-            p.position = transform ? transform->Position() : Vec3::Zero;
-            p.velocity = startVelocity + Vec2{m_rng.Range(-velocityRandom, velocityRandom),
-                                              m_rng.Range(-velocityRandom, velocityRandom)};
+
+            Vec3 origin = transform ? transform->Position() : Vec3::Zero;
+            Vec3 off{0.0f, 0.0f, 0.0f};
+            Vec3 vel = startVelocity;
+            const float spd = VLen(startVelocity);
+            switch (shape) {
+                case Shape::Point: break;
+                case Shape::Circle: {
+                    // Ring laid flat on the ground (XZ plane), flung outward — reads
+                    // as a 3D ripple/shockwave from any camera angle.
+                    float a = m_rng.Range(0.0f, 6.2831853f);
+                    Vec3 dir{std::cos(a), 0.0f, std::sin(a)};
+                    off = dir * shapeRadius;
+                    vel = dir * spd + Vec3{0.0f, startVelocity.y, 0.0f};
+                } break;
+                case Shape::Sphere: {
+                    // Filled 3D ball, pushed radially outward (a real burst, not a disc).
+                    Vec3 dir = RandUnitVec();
+                    float r = shapeRadius * std::cbrt(m_rng.Range(0.0f, 1.0f));
+                    off = dir * r;
+                    vel = dir * spd;
+                } break;
+                case Shape::Box: {
+                    off = Vec3{m_rng.Range(-boxSize.x * 0.5f, boxSize.x * 0.5f),
+                               m_rng.Range(-boxSize.y * 0.5f, boxSize.y * 0.5f),
+                               m_rng.Range(-boxSize.z * 0.5f, boxSize.z * 0.5f)};
+                } break;
+                case Shape::Cone: {
+                    // Spray within a 3D cone around the start-velocity axis.
+                    Vec3 axis = spd > 1e-5f ? startVelocity * (1.0f / spd) : Vec3{0, 1, 0};
+                    float half = shapeAngle * 0.0174532925f;
+                    float cosT = std::cos(half);
+                    float ct = m_rng.Range(cosT, 1.0f);            // cosine of the polar angle
+                    float st = std::sqrt(std::fmax(0.0f, 1.0f - ct * ct));
+                    float phi = m_rng.Range(0.0f, 6.2831853f);
+                    // Build an orthonormal frame around the cone axis.
+                    Vec3 up = std::fabs(axis.y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+                    Vec3 t1 = Vec3::Cross(up, axis); { float l = VLen(t1); t1 = l > 1e-5f ? t1 * (1.0f / l) : Vec3{1, 0, 0}; }
+                    Vec3 t2 = Vec3::Cross(axis, t1);
+                    Vec3 dir = axis * ct + (t1 * std::cos(phi) + t2 * std::sin(phi)) * st;
+                    vel = dir * (spd > 1e-5f ? spd : 1.0f);
+                } break;
+                case Shape::Edge: {
+                    off = Vec3{m_rng.Range(-shapeRadius, shapeRadius), 0.0f, 0.0f};
+                } break;
+            }
+            if (speedRandom > 0.0f) vel *= (1.0f + m_rng.Range(-speedRandom, speedRandom));
+            if (velocityRandom > 0.0f)
+                vel += Vec3{m_rng.Range(-velocityRandom, velocityRandom),
+                            m_rng.Range(-velocityRandom, velocityRandom),
+                            m_rng.Range(-velocityRandom, velocityRandom)};
+
+            p.position = origin + off;
+            p.velocity = vel;
             return;
         }
     }
 
+    static float VLen(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
+
+    /// A uniformly-distributed unit vector on the sphere (for 3D burst directions).
+    Vec3 RandUnitVec() {
+        float z = m_rng.Range(-1.0f, 1.0f);
+        float a = m_rng.Range(0.0f, 6.2831853f);
+        float r = std::sqrt(std::fmax(0.0f, 1.0f - z * z));
+        return Vec3{r * std::cos(a), r * std::sin(a), z};
+    }
+
     std::vector<Particle> m_particles;
     float m_accum = 0.0f;
+    float m_age = 0.0f;        // seconds into the current cycle
+    bool  m_burstFired = false;
     Random m_rng;
 };
 

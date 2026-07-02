@@ -1,5 +1,933 @@
 OkaySpace Game Engine — Changelog
 
+v2.336.0  (Camera/Cinemachine, modeling, terrain, editor UX + duplicate fixes)
+  Fixes
+  - Player lean now follows the camera on a separated character (the lean/head
+    easing never ran on the part rig — "the camera leans but the player doesn't").
+  - No more duplicate spawns: the Flashlight adopts an existing beam (and clears
+    strays), "Separate Into Parts" collapses to a SINGLE rig, and the editor flushes
+    deferred deletes in edit mode — so Play→Stop no longer stacks up players/cameras.
+    Scene::Destroy also guards against double-queueing the same object.
+  - First-person body hides LOCALLY: a camera's ignore now skips the whole subtree,
+    so a separated player's rig parts (children) are hidden from its own view but
+    still seen by other cameras/players. The first-person arm view is parked for now
+    (the character shows normally; click still punches).
+  - Layers honored on the GPU: the D3D11/D3D12/GL renderers now respect the camera's
+    cullingMask, and the player sets it from its camera (previously layer culling only
+    worked in the software renderer).
+  Camera & Cinemachine
+  - Camera: ScreenPointToRay / ScreenToWorldPoint / WorldToViewportPoint /
+    IsPointVisible / ViewportPointToRay — Unity-style picking & on-screen tests.
+  - VirtualCamera: Dutch (roll) and Confiner (clamp the shot to a box).
+  Editor
+  - F focuses (frames) the selection like Unity (also right-click > Focus).
+  - Hierarchy multi-select (Ctrl-click), Group Selected (Ctrl+Shift+G), and
+    activating/deactivating a parent (or a multi-selection) now takes the children
+    with it. More accent colours; left-aligned section headers.
+  Content tools & APIs
+  - Mesh modeling: Mirror, Spherify, Twist, Solidify, Taper, Bend.
+  - Voxel terrain: denser default mesh, floater cleanup on the digger, and a new
+    Box dig mode (sharp rectangular rooms/tunnels).
+  - Input: AnyKey/AnyKeyDown, MouseDelta, gamepad button-up.
+  - Animation: clip queries (HasClip/ClipDuration/ClipTime/ClipNormalizedTime/
+    ClipFinished) and events, in C++ and OkayScript; UI text Best Fit (auto-size).
+  - Physics: Rigidbody3D::AddExplosionForce (Unity-style blast).
+
+v2.335.0  (The part rig is built in the EDITOR — nothing spawned at Play)
+  - "Separate Into Parts" now builds the rig RIGHT IN THE EDITOR: the moment you
+    tick it, the part objects (Hips, Torso, Head, arms, legs under a "Rig" node)
+    appear in the scene, ready to select, recolour, parent things to, and animate.
+    They are no longer spawned when you press Play — so you can actually customize
+    them. Untick to tear the rig down and show the baked mesh again.
+  - The Animation window now PREVIEWS in the editor. Previously the pose only
+    applied at Play (Update didn't run while stopped), so the tab "did nothing".
+    Posing a bone, scrubbing, and Play preview now drive the rig live in the
+    viewport.
+  - The rig is treated as a generated view of the Character (like Terrain's mesh):
+    it is not written to the scene file and is rebuilt from the Character on load,
+    so there are never duplicate rigs and part colours stay correct. Existing
+    separated characters materialize their rig in the editor automatically.
+  - New test_char_editor_parts: builds once (no duplicate on rebuild), isn't
+    serialized, regenerates on load, and RemoveParts restores the mesh.
+
+v2.334.0  (Fix: the punch swung backward)
+  - The first-person/melee punch swung the arm the WRONG way — toward the body's
+    back (+Z) instead of where it faces (-Z, where the camera looks). In first
+    person the arm "faced the opposite way". The punch arc now swings forward, so
+    the hand lands in front in both first- and third-person.
+  - New test_fp_punch verifies the right hand reaches in front of the shoulder
+    (forward, -Z) at the peak of the swing.
+
+v2.333.0  (Animation events — react when a clip hits a marker)
+  - Clips can now carry named EVENT markers. As a clip plays past a marker the
+    Character fires it, so gameplay can react in time with the animation — a
+    footstep sound on each step of a walk cycle, a "hit" window partway through a
+    punch, "spawn" when a throw releases. Events re-fire every loop.
+  - React two ways: set Character::onAnimEvent for a push callback, or call
+    ConsumeAnimEvents() each frame to drain the names that fired. No code in the
+    clip itself.
+  - Author them in View > Animation: type an event name, scrub to a time, and click
+    "Add Event at Time"; the marker list shows each one (click to jump, x to remove).
+    Events save with the scene (per clip) and survive save/load.
+  - New test_char_anim_events verifies markers fire at the right time via both the
+    queue and the callback, re-fire across loops, and persist through serialization.
+
+v2.332.0  (Smooth animation blending — no more snapping)
+  - Switching animations now CROSSFADES instead of snapping. When idle→walk→run
+    (or any PlayClip) changes the active clip, the character eases from its current
+    pose into the new one over a short blend, so locomotion and clip transitions
+    look smooth instead of popping to frame 0.
+  - New "Blend (s)" slider on the Character (default 0.15s; 0 = instant). Serialized
+    with the scene. Works on both the single mesh and the separated part rig, and
+    blends in both directions (into a clip and back to the built-in animation).
+  - New test_char_blend verifies a switch is partway mid-blend, reaches the new pose
+    once the blend completes, and that the blend time round-trips through save/load.
+
+v2.331.0  (Your animations drive the character — no scripting)
+  - NEW "Movement animations" on the Character: bind your authored clips to the
+    Idle / Walk / Run states a controller drives. When the character enters that
+    state it plays YOUR clip instead of the built-in procedural animation — so the
+    walk cycle you posed and keyed actually plays as the player walks, with zero
+    scripting. Leave a state on "(built-in)" to keep the stock animation for it.
+  - The inspector lists your clips in a dropdown per state (make one in
+    View > Animation, Apply to Character, then pick it here). A state with no
+    binding hands smoothly back to the built-in animation. Bindings save with the
+    scene. Works on both the single mesh and the separated part rig.
+  - New test_char_state_anim verifies state changes swap to the bound clip, an
+    unbound state falls back to built-in, and the bindings survive save/load.
+
+v2.330.0  (Character animation workflow — pose, key, play)
+  - The Animation window now drives the CHARACTER itself, not just transform
+    tracks. Select a separated character, open View > Animation, and you get a
+    bone picker with rotation sliders: pose any bone (arm up, leg forward, head
+    tilt) and the character previews the pose live in the viewport.
+  - "Key Pose" captures ALL the character's bones at the current time into a
+    keyframe; build a walk cycle or a wave by posing and keying frame by frame.
+    Press Play to preview the clip, then "Apply to Character" to make it the
+    character's clip (auto-plays on load).
+  - Authored character clips are saved with the scene (clip name, loop, every
+    keyframe's full per-bone pose) and replay on the separated part rig at Play —
+    no scripting. New test_char_anim verifies a keyed clip poses the right part
+    and survives a save/load round-trip.
+
+v2.329.0  (Customizable pause menu — real editable UI)
+  - The pause menu is no longer generated at Play and no longer un-customizable.
+    Adding the Pause Menu component now drops its UI into the scene as REAL,
+    editable objects (under "PauseMenu UI": the dim panel, card, title, Resume /
+    Quit buttons, volume slider). Select and restyle any of them — move, recolour,
+    rename, resize — and it's saved with the scene.
+  - At Play it just shows/hides those objects (hidden until you pause) — nothing is
+    spawned. Existing pause menus: open the component and click "Create Editable
+    Menu UI". New test_pause_menu verifies the UI persists and is adopted (not
+    duplicated) at Play.
+
+v2.328.0  (Animation editor — a real timeline)
+  - NEW Animation window (View > Animation): a keyframe timeline for the selected
+    object. Scrub the playhead, pose/move the object, and press Key to record its
+    position / rotation / scale at that time; press Play to preview. Loop, speed,
+    clip name, per-track keyframe view, and delete-track are all there. Saved with
+    the scene (it edits the object's Animator clip).
+  - Pairs with separated characters: separate a Character into parts, select a part
+    (e.g. an arm), open Animation, and keyframe its rotation over time to build a
+    custom animation — no scripting.
+  - The Animator now applies FULL euler rotation (rotation.x / .y / .z), not just a
+    2D spin, so 3D rigs animate correctly. Existing clips still work.
+
+v2.327.0  (The character is now separate, editable parts)
+  - NEW "Separate Into Parts" on the Character: instead of one baked mesh, the
+    character builds as a HIERARCHY of part objects — Hips, Torso, Head, both arms
+    (upper/fore/hand) and legs (thigh/shin/foot) — each a real GameObject with its
+    own MeshRenderer. You can select them, recolour them, parent things to them
+    (e.g. a sword under the Hand), and pose/animate them part-by-part. This is the
+    foundation for a proper character + animation workflow (one baked mesh made all
+    of that impossible).
+  - The built-in animations still play (they drive the part transforms). Turn off
+    "Play built-in animation on parts" to hold the parts still and author your own
+    poses/keyframes.
+  - First-person hand now just HIDES every part except your arm — so you see only
+    your real arm, never your body, with nothing spawned. (Set the Character to
+    "Separate Into Parts"; the Voxel Sandbox player already is.) "Show left arm"
+    flips which arm.
+  - Saved with the scene.
+  Next: a visual animation timeline/editor, and making the pause menu + inventory
+  editable pieces the same way.
+
+v2.326.0  (First-person hand spawns nothing)
+  - The first-person hand no longer spawns ANY object into the scene. While it's
+    active the Character simply renders only its OWN arm in its existing mesh — the
+    body isn't in the mesh that frame, so you see just your arm and never your
+    torso/legs (even looking straight down), with no extra "FP Arm" object in the
+    hierarchy. It's the real arm geometry + colours, split out by bone.
+  - In the editor (edit mode) the whole character still shows so you can pose/edit
+    it; the arm-only view only happens in Play.
+  - Empty-handed the arm rests low; holdingItem / SetHolding(true) raises it. Hand
+    Raise / Elbow Bend position it live in Play. Click swings the real arm.
+
+v2.325.0  (First-person hand = your real arm, body frozen)
+  - No more separate/floating viewmodel arm. The first-person hand is your
+    CHARACTER'S OWN arm again — and the body is now FROZEN while it's active, so
+    walking never brings your torso or legs into view. You only ever see your arm.
+  - Empty-handed, the arm rests low in the lower-right (your real arm, where
+    Minecraft shows it). Equip a weapon/item (holdingItem / SetHolding(true)) to
+    raise + present it higher; it eases between the two.
+  - Adjust it yourself, no back-and-forth: new "Hand Raise" and "Elbow Bend" sliders
+    on the First Person Hand component position the hand live in Play (plus Raise
+    Speed). Saved with the scene.
+  - Click still swings the arm via the real Character punch, so third-person and
+    networked players see the hit.
+
+v2.324.0  (First-person hand = hand only, like Minecraft)
+  - First person now hides your body and shows ONLY a hand in the corner (no body
+    visible while walking, no second arm). The hand is built from YOUR character's
+    colours (skin / sleeve / glove) so it still reads as your own.
+  - Empty-handed, the hand rests LOW (out of the way) and only peeks at the bottom,
+    just like Minecraft. When you equip a weapon/item it raises up — drive this with
+    `holdingItem` / SetHolding(true) on the component (weapons/items can hook into
+    it later). It eases smoothly between lowered and raised.
+  - Only the local player sees their own hand — it's created on that player's own
+    camera and lives on a reserved viewmodel layer, so other players and the editor
+    Scene view don't see it.
+  - Make it short: new "Arm Length" control keeps the hand close to the camera.
+    Everything is tunable in the inspector (size, length, offset, yaw/pitch/roll,
+    swing time) and saved with the scene. Click swings it (and fires the real punch
+    so onlookers see the hit).
+
+v2.323.0  (First-person hand = your character's OWN arm)
+  - No more separate/added arm. The First Person Hand now raises your CHARACTER'S
+    own arm up into the first-person view (Minecraft-style) and swings THAT arm on
+    a click — it's literally part of your character, not an extra mesh bolted on.
+  - Two real bugs behind the earlier misses, both fixed:
+      * The arm was reaching the wrong way (toward +Z) while the first-person camera
+        looks -Z, so it sat behind you and you saw nothing. It now reaches along the
+        camera's forward, so the hand fills the lower-right of the screen.
+      * It's posed on the bone that lands on the screen's RIGHT (the body mesh is
+        mirror-built), so your hand is where Minecraft puts it.
+    Verified by rendering the actual controller-driven first-person view in a test,
+    not just by checking an object exists.
+  - The punch swing drives the same raised arm. Networked / third-person viewers
+    still see a normal right-arm punch (the first-person hold is local-only).
+
+v2.322.0  (First-person hand: actually visible now)
+  - Fixed the First Person Hand so the hand is actually ON SCREEN. With the default
+    60° camera it was sitting just off the bottom-right edge, so you saw nothing
+    (just your hidden body) — exactly the "same as before" problem. The forearm +
+    fist now sits prominently in the lower-right corner of the view, tilted like
+    Minecraft, and swings on click. (Verified by a render test, not just by the
+    object existing.)
+  - The viewmodel no longer clutters the editor Scene view. It lives on a reserved
+    "first-person viewmodel" layer (31) that cameras render but the Scene view hides,
+    so you won't see a stray box floating next to your character while editing — only
+    the real hand in the Game view / build.
+  - Placement is fully tunable in the inspector (size, offset, yaw/pitch/roll) if you
+    want it somewhere other than the lower-right.
+
+v2.321.0  (First-person hand, done right)
+  - The First Person Hand is now an actual Minecraft-style hand. The previous
+    version revealed your WHOLE body in first person (you'd see your torso when
+    walking) — that's gone. Now it:
+      * hides your body, and
+      * draws ONLY a forearm + fist in the lower corner of the view, coloured from
+        your Character (skin, sleeve = shirt/jacket, glove), so it clearly reads as
+        YOUR arm — not a stray floating box,
+      * swings on click (and still triggers the real Character punch, so third-person
+        and networked players see the swing too).
+    The viewmodel is built when you press Play and is parented to the camera, so it
+    never shows up as a loose object in the editor Scene view.
+  - Fully tunable in the inspector: attack button, swing-while-held, left/right hand,
+    idle sway, swing time, hand size, and the hand's offset + yaw/pitch/roll so you
+    can place it exactly where you like. Held weapons/items can be layered on later.
+  - All of it saves with the scene. (Existing scenes load fine; the old "show body"
+    flag is simply dropped.)
+
+v2.320.0  (No-code multiplayer nodes + actions)
+  - The whole multiplayer toolbox is now usable WITHOUT code, in both visual-script
+    systems:
+      * Flow-graph nodes: NetChat, NetRpc <name>, NetSpawnOwned <prefab>, NetDespawn,
+        NetReady, NetStartMatch, plus value nodes NetMatchStarted and NetAllReady —
+        alongside the existing NetHost / NetJoin / NetSend / NetSetVar / NetDisconnect.
+      * Actions palette (the no-code action list): "Send Chat", "Call Event (RPC)",
+        "Spawn Mine (synced)", "Despawn Networked" — so a button or key can fan out
+        chat, fire an RPC, or spawn a replicated bullet with one entry.
+  - New script builtins net_chat("text") and net_rpc("name"[, data]) round out the
+    scripting API (net_spawn_owned / net_despawn arrived in 2.319.0).
+  - So you can build chat, abilities, and a ready-up lobby flow entirely from the
+    node graph or the action list — no C++.
+
+v2.319.0  (Networked spawn + despawn)
+  - NEW NetworkManager::SpawnOwned(prefab, pos): spawn a prefab on every peer AND
+    make THIS peer its network authority — the instance is auto-given a NetworkSync
+    (unique id, owned here, followed everywhere else), so as you move it the
+    transform (and Character animation, if any) replicate with no extra setup.
+    Perfect for bullets, thrown/dropped items, and abilities whose mover lives on
+    the spawner. Returns the local instance.
+  - NEW NetworkManager::Despawn(id): destroy a SpawnOwned object on every peer by
+    its sync id — the matching teardown for replicated bullets / pickups.
+  - Scripting: net_spawn_owned("prefab", x, y[, z]) returns the new object's sync
+    id; net_despawn(id) removes it everywhere. (net_spawn stays the un-owned,
+    fire-and-forget version.)
+  - NetworkSync followers now track the authority even when interpolation is off
+    (interpolationRate <= 0 snaps every frame instead of only on the first sample).
+
+v2.318.0  (Networked animation)
+  - Network Sync now replicates ANIMATION too. If the synced object (or a child)
+    has a Character, the authority also broadcasts its current animation index and
+    its punches, so remote players actually walk / run / idle / gesture and throw
+    a punch in sync — not just glide around. Toggle it with "Sync animation" on the
+    component (on by default). One-shot punches replay exactly once on each peer.
+  - Under the hood the sync layer gained a generic optional "extra state" payload
+    (NetworkManager::SetSyncExtra) that rides in the same packet as the transform,
+    so the net core stays character-agnostic and other components can piggy-back
+    their own small state later. The net_sync test now also covers animation +
+    punch replication.
+
+v2.317.0  (Drop-in networked objects)
+  - NEW Network Sync component: drop it on ANY object and its position + rotation
+    replicate to every peer in the session — no networking code at all. One peer
+    is the authority (it broadcasts); everyone else eases their copy toward the
+    latest state at the local frame rate.
+      * Authority "Host" — the server drives it, clients follow (moving platforms,
+        doors, AI, pickups; the common case).
+      * Authority "Mine" — this peer drives it.
+      * Authority "Manual" — you set Owned yourself / from script (ownership
+        transfer via NetworkSync::SetOwned / NetworkManager::SetSyncOwned).
+    Give the matching object the same Net Id on each peer (blank = the object's
+    name). It finds the scene's Network Manager on its own.
+  - Under the hood NetworkManager gained RegisterSync / UnregisterSync /
+    SetSyncOwned and a reserved "__xform" channel, so replication rides the same
+    dispatch (and works over UDP and the relay, encrypted or not). New `syncRate`
+    controls how often owned transforms broadcast (default 15 Hz). New net_sync
+    test covers host->client position + rotation replication and that a
+    non-authority client never pushes state back.
+  - Add it from Add Component > Network Sync, or it loads/saves with the scene.
+
+v2.316.0  (Easy multiplayer + Steam, real first-person arm, more inventory style)
+  - MULTIPLAYER is much easier to add. The Network Manager now has a tiny high-level
+    API on top of the existing transport:
+      * RPCs — Rpc("name", data) / RpcTo(slot, ...) / RpcReliable(...) and
+        OnRpc("name", handler). Call a function on every other peer (or one peer)
+        with no manual channel wiring.
+      * Chat — Chat("text") broadcasts a chat line, ChatLog() is the rolling history,
+        and OnChat(handler) fires on every received line. Your own lines show up
+        locally too (no echo from the server needed).
+    Both ride the same Deliver() dispatch as everything else, so they work over UDP
+    and the relay unchanged.
+  - STEAM is much easier to add. SteamManager grew convenience wrappers so common
+    things are one call: int stats (Set/Get/Increment + StoreStats), rich presence,
+    the friend list (count / name / invite / overlay), and full lobbies
+    (Create / Join / Leave / Current / List / Set+Get lobby data / member list).
+    The Null (no-Steam) backend simulates all of it in-process — including a
+    process-wide lobby registry — so multiplayer/Steam flows are unit-testable with
+    no client running (new net_rpc + extended steam tests cover it).
+  - FIRST-PERSON PUNCH now uses your character's OWN arm. The previous floating
+    view-model box is gone: First Person Hand reveals your real Character to the
+    first-person camera (your head sits inside the near plane, so you see your arms,
+    not your head) and swings the character's actual right arm via Character::Punch()
+    on click. Tunable attack button, hold-to-swing, punch duration, and whether the
+    body is shown. The Sandbox player has one.
+  - INVENTORY gained more style controls in "Layout & Style": master-title scale,
+    per-tile item-name scale, a toggle to hide item names entirely (icon/colour only),
+    and a backdrop-dim slider for how dark the screen behind the open inventory is.
+    All saved with the scene (older scenes load with the new defaults).
+
+v2.315.0  (First-person hand + punch, and a very customizable inventory)
+  - NEW First Person Hand: a Minecraft-style arm (forearm + fist + sleeve) drawn in
+    the corner of the view, with a quick punch/swing arc when you click. Add it from
+    Add Component > First Person Hand (put it on the FPS camera) — the Sandbox player
+    has one. Tunable handedness, swing button (hold-to-swing), swing speed, punch
+    pitch/yaw, lunge, idle bob, arm size, and skin/sleeve colours.
+  - INVENTORY is now VERY customizable. The whole Unturned screen reads from new
+    fields you can tweak live in the inspector under "Layout & Style":
+      * Layout: cell size (up to 160), gap, corner radius, header height, panel
+        padding, gap between stacked bags, and gap between the two columns.
+      * Title: toggle the master title and set its text.
+      * Style toggles: gradients, drop shadows, accent bars, and auto-vs-fixed
+        accent colour.
+      * Colours: accent, header, text, hover tint, and the three weight-bar colours
+        (OK / near limit / over) — on top of the existing panel/cell/item colours.
+  - All of it is saved with the scene (back-compatible: older scenes load with the
+    new defaults).
+  - Inventory was TOO COMPACT: cells now have comfortable minimum sizes and bigger
+    gaps (existing tight grids breathe too), columns and container headers are more
+    generously spaced, and item names are clipped to their tile so they never spill.
+  - Removed the duplicate header: the screen now shows one slim centred "INVENTORY"
+    title (with the aggregate weight bar); each bag keeps its own accent-coloured
+    header below, so you no longer see e.g. "Backpack" twice.
+  - New inventories default to larger cells; the comfortable minimums also lift
+    older saved layouts without changing your data.
+  - Pause menu: the dim backdrop now reliably covers the WHOLE screen (an oversized
+    full-screen panel is clamped to the viewport in both the editor and the game,
+    fixing the bright area that showed through). Buttons get a drop shadow, a subtle
+    top sheen, a hover tint/grow and a hairline border for a cleaner, lifted look.
+  - The Unturned inventory screen got a visual pass. Each column now sits on a
+    drop-shadowed, soft-gradient panel; a master header above your bags shows the
+    screen title with an aggregate weight bar (green → amber → red as you fill up).
+  - Every container has an accent-coloured header (a stable colour derived from its
+    category, so Shirt/Vest/Backpack each read distinctly), with per-bag weight.
+  - Cells are inset with a hairline border; item tiles get a soft gradient, a top
+    sheen, a rarity/category accent bar, a rounded count badge, and a brighter
+    glow + border on hover. The item you're carrying casts a drop shadow.
+  - TIDIER demo: "Add > UI > Unturned Inventory" now drops a single, collapsible
+    "Unturned Inventory" group (Player with a worn Vest + Backpack, and one nearby
+    Loot Crate) instead of scattering a separate player and several crates across
+    the scene. The screen now keys off the object it's on (not the topmost parent),
+    so the whole rig can live tidily under one group.
+  - PAUSE MENU FIX: the menu now builds up front and just shows/hides on Esc
+    (instead of creating its UI mid-frame, which popped in late and looked glitchy).
+    The card is sized to its contents with everything properly centred, and while
+    paused the world ignores clicks/look so input no longer leaks behind the menu.
+
+v2.312.0  (Unturned-style inventory — worn bags, clothes & nearby loot)
+  - The grid inventory is now a full UNTURNED-STYLE screen. Opening it shows every
+    container you have — your own pockets PLUS each worn clothing/bag's grid (any
+    child object with a Grid Inventory: Shirt, Pants, Vest, Backpack...) — stacked
+    in a labelled left column, and every nearby ground container in a right
+    "Nearby" column. Drag items freely across all of them: re-pack a bag, move a
+    rifle from your vest to your backpack, or loot a crate straight into your pack.
+  - Grid Inventory gained a "Category" label (shown above its grid, e.g. "Backpack")
+    and a "Ground / Nearby container" flag — tick it on world crates/loot so they
+    appear in the player's Nearby column when within range.
+  - Grid Inventory UI gained "Unturned layout" (on by default), a "Nearby Range"
+    (how close a ground container must be to show), and a "Nearby" column title.
+  - New menu: Add > UI > "Unturned Inventory (worn bags + nearby loot)" drops in a
+    ready Player with Shirt/Pants/Vest/Backpack grids and two nearby loot crates —
+    press I in Play and drag loot across bags.
+  - Back-compatible: existing single-grid inventories still work (turn off
+    "Unturned layout" for the classic one-grid screen). Saves are versioned.
+
+v2.311.0  (GPU cast-shadow maps on every backend + Direct3D 12 MSAA)
+  - REAL CAST SHADOWS on the GPU. OpenGL, Direct3D 11 and Direct3D 12 now render a
+    depth pre-pass from the sun into a shadow map and sample it (4-tap PCF) during
+    shading, so meshes cast real directional shadows onto each other and the ground
+    — not just the flat "contact" blob. Turn it on with Shadows in the Environment
+    panel (Shadow distance + resolution controls already there). The light's
+    view-projection is fit with the same math the software cascaded path uses, so
+    GPU shadows line up with the CPU reference. (GPU path uses a single high-res
+    map; the software renderer keeps its multi-cascade split.)
+  - DIRECT3D 12 MSAA: the D3D12 backend now renders to a multisampled target (up to
+    4x, device-permitting) and resolves it before read-back, matching D3D11's
+    anti-aliasing. Edges are smooth instead of stair-stepped.
+  - With these, the Direct3D 12 backend is at feature parity with Direct3D 11
+    (lights, fog, ground shadows, cast-shadow maps, MSAA).
+  - Shadow mapping is opt-in (off by default for performance); transparent meshes
+    don't cast. Compile/link-verified on the Windows build; the D3D11/D3D12 paths
+    are intended to be runtime-tested on Windows hardware.
+
+v2.310.0  (Renderer expansion — more lights, fog, ground shadows, view distance)
+  - MORE LIGHTS: every GPU backend (OpenGL, Direct3D 11, Direct3D 12) now shades
+    up to 16 scene lights at once (was 8). Light a big interior or a busy scene
+    without running out of slots; the software renderer already had no fixed cap.
+  - DISTANCE FOG on the GPU: the scene's Distance Fog (Environment panel) is now
+    honoured by OpenGL, D3D11 and D3D12 too — not just the software renderer. Far
+    geometry fades toward the fog colour between Fog Start and Fog End, so large
+    worlds melt into the horizon instead of popping at the far clip plane.
+  - D3D12 feature parity: the Direct3D 12 path now draws the planar ground-shadow
+    pass (blended contact shadows under meshes), matching D3D11.
+  - VIEW DISTANCE: the default camera far clip is now 4000 (was 1000) so big voxel
+    terrains and open worlds stay visible to the horizon. You can still set any far
+    distance per-camera in the inspector (up to 100000).
+  - The Sandbox template now ships with gentle atmospheric fog tuned to the larger
+    view distance, so the edges of a dug-out world read as depth, not a wall.
+
+v2.309.0  (Direct3D 12 renderer — opt-in)
+  - NEW Direct3D 12 backend. A full D3D12 scene renderer (isolated device, command
+    queue/list, descriptor heaps, root signature + PSOs, fence sync, offscreen
+    render + read-back) that reuses the exact D3D11 shader, so shading matches
+    (lights, textures, normal/gloss/AO maps, PBR reflections, transparency). It's
+    OPT-IN: enable "Prefer Direct3D 12 (Windows)" in Build Settings (or set
+    d3d12=1 in the game config). When on, the game tries D3D12 first and falls back
+    to D3D11 / OpenGL / software automatically.
+    Note: for this engine's read-back rendering, D3D12 performs like D3D11 (its
+    wins are CPU-driver overhead that a read-back path doesn't expose); it's here
+    for compatibility/choice. Compile- and link-verified via the Windows build;
+    test it on Windows hardware. (No MSAA / ground-shadow pass on this path yet.)
+
+v2.308.0  (Flashlight, dig brush + pause, voxel frame-rate, no jump pose)
+  - NEW Flashlight component: a spot light that follows your view so you can SEE
+    inside the caves/tunnels you dig. Press F to toggle. The Sandbox player has one;
+    add your own from Add Component > Flashlight (mount it on the player or camera).
+  - FIX: the voxel dig brush (the orange sphere marker) stayed on screen while the
+    game was paused. Both the Voxel Digger and Terrain Digger now hide their aim
+    marker and stop acting while the pause menu is up.
+  - FRAME RATE: the voxel terrain now renders single-sided. Its marching-cubes
+    winding is forced consistently outward, so the editor's software renderer
+    backface-culls the hidden ~half of the terrain's triangles — a big speedup on
+    large terrains — while caves still draw correctly from the inside. (The built
+    game's GPU renderers were already fast; this mainly helps the editor preview.)
+  - Removed the jump / fall character pose (it looked off): while airborne the body
+    now keeps its matching ground pose (idle / walk / run) in first and third person.
+
+v2.307.0  (Pause fix, solid terrain, no-tunnel collision, FPS feel)
+  - FIX: pause menu was glitchy in the editor — the game kept simulating behind the
+    menu (the editor Play loop ticked at full speed regardless of pause), so the
+    player kept falling and could tunnel through the terrain. The editor now ticks
+    the scene with dt=0 while paused: the menu's UI still works, but physics and
+    gravity freeze (the built player already did this).
+  - SOLID terrain. The Sandbox (and the Voxel Terrain create/add menus) now
+    generate a SOLID block with NO pre-cut caves or tunnels — dig your own.
+  - FIX: voxel collision no longer lets you fall through after digging a tunnel and
+    jumping around. Collision now uses overlapping probe spheres (a thin wall/floor
+    can't slip between them) plus a swept (continuous) downward catch using the
+    body's previous position — so even a fast fall or a low frame rate can't tunnel
+    the player through a thin floor.
+  - FPS feel: the first-person camera now has a subtle walking head-bob (scales with
+    speed, smooths out when idle/airborne) so movement feels grounded.
+
+v2.306.0  (GPU transparency + terrain/water/digging polish)
+  - See-through water in the BUILT game. Transparency now works on the GPU
+    renderers too (Direct3D 11 + OpenGL), not just the software preview: a material
+    with alpha < 1 (water, glass) alpha-blends over the scene and skips depth
+    writes, so you see the ground and depth through it. (Order transparent meshes
+    after opaque ones — they draw in scene order.)
+  - Voxel terrain texturing: a triplanar ground texture option so cave walls,
+    overhangs and floors texture cleanly with no seams (tinted by the auto-colours).
+  - Better digging & filling: the voxel brush now uses a smoothstep falloff (softer,
+    rounder holes), and the Voxel Digger gains a Smooth mode (and VoxelTerrain a
+    SmoothAt brush) that relaxes the field to round off the jagged faces a fresh dig
+    leaves — so carving and filling both look clean.
+
+v2.305.0  (Voxel collision, unified sandbox, see-through water, pause polish)
+  - FIX: voxel terrain collision. Players (and any rigid body) now collide with the
+    voxel terrain — you stand on the ground and on cave floors, walk through tunnels
+    and are blocked by walls/ceilings, instead of falling straight through. Each
+    body is resolved as a capsule of probe spheres against the density field, and
+    standing on a voxel floor counts as grounded (so you can jump on it).
+  - One unified Sandbox. The separate "Terrain Sandbox" and "Voxel Sandbox"
+    templates are merged into a single "Sandbox": one smooth voxel terrain you walk
+    on AND dig real caves into, with a water lake and a pause menu — no more two
+    separate terrains.
+  - SEE-THROUGH water. The software renderer now alpha-blends transparent materials,
+    so water actually reads as water — you see the ground and depth through it
+    instead of a flat opaque plane. Water also got livelier waves (a finer ripple on
+    top of the swell). (Order transparent surfaces after opaque ones.)
+  - Pause menu polish + FIX. The overlay now hides correctly (it toggles every UI
+    object, not just the root — previously the buttons could linger), and gained a
+    master-volume slider, an optional Restart button, a hint line, and a roomier
+    card. Buttons work with mouse and keyboard/gamepad navigation.
+
+v2.304.0  (Voxel caves, real water, pause menu, bigger terrain)
+  - VOXEL TERRAIN (real caves). A new smooth marching-cubes voxel terrain you can
+    dig actual caves, tunnels and overhangs into — the "dig a real hole, not
+    Minecraft cubes" terrain that heightmaps can't do. Generate a landscape with a
+    cave network, then carve it live in Play with the new Voxel Digger (a brush
+    sphere marker shows your aim). Create from GameObject > 3D Object > Voxel
+    Terrain, or start with the new "Voxel Sandbox" template.
+  - RAISE terrain too. Both the heightmap Terrain Digger and the Voxel Digger now
+    have a secondary button (right mouse by default) that does the OPPOSITE of the
+    primary action — so one digger both digs AND builds the ground up.
+  - REAL WATER. A new Water component: a living, reflective, semi-transparent water
+    surface with rolling waves (it actually animates), a flowing current, and
+    sun-glint — not just a flat blue plane. Create from GameObject > 3D Object >
+    Water; the Terrain Sandbox now includes a lake.
+  - PAUSE MENU. A ready-made pause menu component: press Escape (configurable) to
+    freeze the game and pop up Resume / Quit (and an optional Main Menu) buttons
+    over a dimmed backdrop — no scripting. It pauses all gameplay via a new global
+    game state and frees the cursor to click; Quit cleanly exits the built game (or
+    stops Play in the editor). Both sandbox templates ship with one.
+  - BIGGER terrain. The terrain Size / Resolution (and voxel grid, water size)
+    limits are lifted — make maps as large as you want (huge values cost memory /
+    CPU, but that's your call). Pairs with World Streaming for giant worlds.
+
+v2.303.0  (Terrain overhaul: erosion, collision, digging)
+  A big terrain pass — realism, physics, and fixes for the digging workflow:
+
+  - Erosion. Generated terrain can now be weathered into believable landscape:
+    Hydraulic Erode runs a rain-droplet simulation that carves river valleys and
+    sediment fans; Thermal Erode slumps steep slopes into scree. Both in the
+    Terrain inspector.
+  - Two new generators — Ridged Mountains (knife-edge ridgelines) and Canyons
+    (carved channels) — using ridged noise + domain warping for organic shapes.
+  - Heightmap import / export (PNG). Round-trip with World Machine, Gaea or
+    Photoshop: export the heightmap as grayscale, or paint/import one (black =
+    low, white = high), resampled to any terrain resolution.
+  - Better sculpting. Brushes now have a Hardness control (soft feathered edge ..
+    hard flat-topped core) with a smoothstep falloff, plus two new brushes: Noise
+    (paint fractal detail) and Erode (weather a patch under the cursor).
+  - Slope-aware terrain collision. Bodies on terrain now resolve against the
+    surface normal — they slide down hills, bounce (restitution) and lose speed to
+    friction, so debris tumbles and rolls instead of sticking flat where it lands.
+  - FIX: jumping on terrain. Heightmap terrain has no collider, so controllers
+    never refilled the jump counter on it — you got exactly one jump, then never
+    again. Physics now flags resting-on-terrain and the first/third-person
+    controllers treat it as ground, so you can jump freely on terrain.
+  - FIX: the Terrain Digger aimed *behind* the camera (un-negated forward), so it
+    never hit the ground in front of you — "digger doesn't work". Now it aims
+    where you're looking, matching the block builder.
+  - NEW dig indicator: the Terrain Digger draws a ring marker on the ground where
+    (and how big) the brush will dig, so you can see your aim. Color configurable.
+  - NEW "Terrain Sandbox" template: a procedurally generated, eroded hilly terrain
+    you walk on in first person and reshape live (hold Left Mouse to dig, Space to
+    jump) — a base for survival / mining / building games.
+
+v2.302.0  (AAA trio: cascaded shadows + world streaming + chaos destruction)
+  Three features inspired by what big engines do, scoped honestly to OkaySpace's
+  renderer/architecture:
+
+  - Cascaded, camera-focused shadow maps ("virtual shadow maps", practical
+    version). Instead of stretching one shadow map over the whole level (blurry on
+    big maps), shadows now render as several cascades that hug a shrinking region
+    in front of the camera: the near cascade has dense texels (crisp shadows where
+    you're looking) while far cascades cheaply cover distance. Each shaded pixel
+    samples the tightest cascade that contains it. New View > Lighting controls and
+    Build Settings: Shadow distance, Cascades (1-4), Softness, Resolution. Setting
+    Shadow distance to 0 keeps the old whole-scene behaviour. (True Nanite-style
+    virtual paging isn't possible in a read-back renderer - this is the standard
+    DX11-class technique that delivers "sharp + cheap over a huge map".)
+
+  - World Partition / streaming. New "World Streamer" component: author a huge map
+    as a grid of cell prefab files (cell_<x>_<z>.okayprefab) and only the chunks
+    near a target (the camera, or a named object) stay loaded - cells within a load
+    radius instantiate, cells past an unload radius are destroyed, with a hysteresis
+    gap so pacing a border doesn't thrash. Missing cells are skipped, so sparse /
+    non-rectangular worlds just work. Lets you build maps far bigger than RAM.
+
+  - Chaos destruction. New "Destructible" component: voxel blocks (BlockBuilder's,
+    or anything tagged) no longer just vanish - they shatter into a cluster of
+    physics-driven debris shards that fly out and despawn, and a structural-support
+    pass flood-fills from the ground so any block left unconnected collapses under
+    gravity. Knock out a wall's base and the top sags and tumbles. Optional built-in
+    "destruction gun" (camera ray + blast radius) for instant use in Play.
+
+v2.301.0  (Editor theme refresh + accent colours)
+  - Retuned the dark editor theme toward a neutral, professional Unity-style grey
+    (instead of a blue-tinted near-black): flatter panels, subtle frame borders,
+    crisper rounding, and the accent colour reserved for interactive states.
+  - NEW View > Accent color: pick Blue / Teal / Violet / Green / Amber / Rose /
+    Slate. Theme, accent and UI scale now persist between sessions.
+
+v2.300.0  (Build size breakdown report)
+  - After a build, the result dialog now shows a size breakdown: category bars
+    (Executable / Libraries / Game data / Assets) with their share of the total,
+    a largest-files-first table (assets over 10 MB flagged so bloat stands out),
+    the total size + file count, a missing-asset warning, and a Copy-report
+    button. Helps you see exactly what is in the build and trim it down.
+
+v2.299.0  (Startup splash screen)
+  - Build Settings > Player > Splash screen: show your studio/game logo at startup
+    before the game loads. It fades in and out over a solid background colour, is
+    skippable with a key or click, and the image is bundled into the build.
+  - Configurable image, duration, and background colour. Leave the image blank for
+    no splash.
+
+v2.298.0  (Per-user save folder — persistentDataPath)
+  - Games now save to a proper per-user app folder (Unity's persistentDataPath),
+    derived from Company + Product name, instead of next to the .exe. So saving
+    works even when the game is installed in a read-only location (e.g. Program
+    Files), and two different games never overwrite each other's saves.
+  - Applies to Prefs (high scores/settings) and the Save system's relative files;
+    absolute save paths are never relocated. Toggle in Build Settings > Player
+    ("Save to user folder"); off keeps the old beside-the-exe behaviour.
+  - Read-only game assets still load from the install/Data folder as before.
+
+v2.297.0  (Encrypted game data + expanded build settings)
+  - Encrypt game data (Build Settings > Scenes): optionally obfuscate the shipped
+    scenes + config so players can't open them in a text editor to read or
+    cheat-edit your game. The player decodes them transparently, and a checksum
+    detects tampering. (Obfuscation, not strong DRM — the key ships in the game.)
+  - Expanded, Unity-style build settings:
+    * Player: Application Identifier (bundle id) and a Default Icon (PNG) for the
+      window/taskbar.
+    * Display: Start Maximized, a Minimum window size, Run In Background (keep
+      updating when unfocused — off pauses the game), and Mute Audio When Unfocused.
+  - The player honors all of the above and bundles the icon into the build.
+
+v2.296.0  (Cleaner, safer game builds + easier profiler)
+  Build Game:
+  - Tidy Unity-style layout: the game .exe + runtime DLLs sit at the folder root;
+    scenes, config and assets go in a "Data/" subfolder, so the game root is clean
+    (toggle in Build Settings > Scenes > Output).
+  - Clean output: a build first removes the files a previous build left behind, so
+    no stale/leftover junk piles up. Only files OkaySpace itself writes are touched.
+  - Safer: assets are de-duplicated and copied path-traversal-safe (a crafted "../"
+    or absolute asset path can no longer write outside the build). The build refuses
+    to scatter files into a filesystem root, your home folder, or the project folder.
+  - Build report now shows the total size on disk and the bundled asset size.
+  - The player auto-detects the Data/ layout and still runs older flat-layout builds.
+  Profiler:
+  - Added a plain-language "Diagnosis" line (CPU- vs GPU-bound, the heaviest section,
+    and an FPS verdict) and a column-help tooltip, so it's easy to see what to fix.
+
+v2.295.0  (Profiler — CPU/GPU, Unity-style)
+  - New View > Profiler window: a detailed CPU/GPU performance profiler.
+    * Frame-time + GPU-time timelines (last ~4s); Pause and SCRUB back through
+      individual recorded frames.
+    * CPU broken into categories with %-of-frame bars: Scripts, Physics, Render,
+      Other — coloured like Unity.
+    * Per-section table: Self ms / Total ms / % / Calls, plus min/avg/max over the
+      window; nested scopes indented by call depth; "hot" sections (>30% of CPU)
+      flagged red.
+    * Live draw stats: meshes, triangles, particles. FPS / frame-ms / avg / peak.
+    * Copy CSV of the selected frame to the clipboard.
+  - Instrumented hot paths with lightweight scoped timers (Scripts.Update,
+    Scripts.LateUpdate, Physics.2D, Physics.3D, Render3D). Timing only runs while
+    the Profiler window is open, so there's zero cost otherwise.
+
+v2.294.0  (Walkable terrain — dig and fall in)
+  - Heightmap terrain is now solid ground for 3D physics: dynamic bodies (the
+    player, props) stand on the actual terrain surface — hills, slopes and the
+    craters/trenches carved by the Terrain Digger — instead of a flat bounding box.
+  - So digging is now playable: dig a hole and you fall into it; raise the ground
+    and you ride up with it. Each body samples the terrain height beneath it and
+    rests its feet (collider underside) on the surface, grounding downward motion
+    (jumps still work). Cheap — one height sample per body per terrain.
+
+v2.293.0  (Terrain digging + texturing)
+  - NEW Terrain Digger component: aim with the camera and hold a button to reshape
+    a heightmap terrain at runtime — Dig (lower), Raise, Smooth or Flatten. Smooth
+    craters/trenches/mounds, NOT Minecraft cubes. The mesh rebuilds live. (Heightmaps
+    are a single top surface, so it carves holes and hills but not caves/overhangs.)
+    Created automatically with new Terrains; also under Add Component > Rendering.
+  - Terrain texturing: terrains can now wear a tiled ground texture (grass/rock/dirt)
+    with Triplanar projection so steep cliffs don't smear, plus an optional normal
+    map for fine bump detail. The auto-colour layers tint the texture, so one grass
+    texture reads green on flats and grey on slopes. Build Game bundles the files.
+  - All exposed in the Terrain inspector (Texturing section); round-trips through the
+    scene file; old terrains load unchanged.
+
+v2.292.0  (More inventory UI customization)
+  - Hotbar Align: dock the hotbar Left / Center / Right (still nudged by Margin X).
+  - Selected Pop: the selected hotbar slot grows by a tunable factor (Minecraft-
+    style emphasis); 1 = off.
+  - Empty Slot color: give empty slots their own fill so the grid reads clearly.
+  - Hotbar Slot color: separate fill for the hotbar vs the backpack.
+  - Panel Border: an outline (color + width) around the hotbar/backpack panel.
+  - Backpack title: an optional header label above the open grid, with its own
+    colour.
+  - All in the Inventory UI inspector's Layout / Style section, mirrored in the
+    editor preview and the built game. Old scenes load unchanged (defaults match
+    the previous look).
+
+v2.291.0  (Particle occlusion on the GPU path too)
+  - Particle depth occlusion now also works when the game runs on the Direct3D /
+    OpenGL renderer (the default). Those paths don't read their depth buffer back,
+    so when particles are present the player does a cheap half-resolution software
+    depth pre-pass and occludes particles against it — they hide behind walls and
+    objects regardless of renderer.
+  - The pre-pass only runs when the scene actually has a particle system, so games
+    without particles pay nothing.
+
+v2.290.0  (Particles hide behind geometry — depth occlusion)
+  - Particles no longer always draw on top of the world ("in your face"). They're
+    now depth-tested against the scene, so a particle behind a wall, hill, or
+    object is correctly hidden instead of floating over everything.
+  - Works on the software renderer (which exposes its depth buffer). The OpenGL /
+    Direct3D paths don't read depth back yet, so occlusion is skipped there for
+    now (particles still render, just without hiding behind geometry) — GPU-path
+    depth read-back is the next step.
+
+v2.289.0  (Stretched-billboard particles + Game-view fix)
+  - FIX: particles were invisible in the editor's Game view and during Play (an
+    early-out for the non-interactive Game view returned before the particle
+    pass ran). They now render in the Scene view, the Game view, AND Play —
+    matching the built game.
+  - New particle Render mode: "Stretch" (Unity's Stretched Billboard) elongates
+    each particle along its velocity, so rain, sparks, tracers and speed lines
+    read as fast 3D streaks. "Billboard" (the upright camera-facing quad) stays
+    the default.
+  - A Stretch amount controls how much speed lengthens the streak. Works
+    textured (the sprite stretches + rotates to face its travel) or untextured
+    (a tapered streak), in the editor preview AND the exported game, still
+    depth-sorted.
+  - New Inspector "Render" dropdown + Stretch slider in the Appearance section.
+    Old scenes load unchanged (default Billboard).
+
+v2.288.0  (Particle collision)
+  - Particles can now bounce off a horizontal ground plane (Unity's Collision
+    module, world-plane mode): sparks skittering off a floor, bouncing debris,
+    rain splatter — all without adding colliders.
+  - Tunable per system: enable collision, the plane height (Ground Y), Bounce
+    (restitution 0..1), Friction (tangential speed lost per hit), and Life Loss
+    (fraction of life shed per impact, for quick-settling effects).
+  - One cheap plane test per particle in the integration step, so it runs the
+    same in the editor preview and the exported game. New Inspector "Collision"
+    section; old scenes load unchanged.
+
+v2.287.0  (Particle sprites + spin)
+  - Particles can now use a sprite TEXTURE (smoke/spark/flare/glow PNG), drawn as
+    a camera-facing billboard tinted by the particle colour — so emitters read as
+    real fire/smoke/magic instead of flat dots. Empty = the soft round puff.
+  - Per-particle billboard ROTATION + spin (Unity's Rotation / Rotation-over-
+    Lifetime): start angle, angle randomness, spin speed, and spin randomness.
+    Textured particles tumble as they fly.
+  - Works in the editor preview AND the exported game (depth-sorted with the rest
+    of the particles). Build Game bundles the sprite alongside the exe.
+  - New Inspector "Appearance" section (Sprite field + drag-drop from Project,
+    Rotation, Rotation +/-, Spin/sec, Spin +/-). Old scenes load unchanged.
+
+v2.286.0  (Particles are now fully 3D)
+  - Fixes "I can see particles in the Scene view but not the Game tab" and
+    "the particle system is too 2D": both had the same root cause — particles
+    only moved on a flat XY plane (Vec2 velocity/gravity), so a camera looking
+    at that plane edge-on saw almost nothing and from any angle it was a flat
+    sheet.
+  - Particle velocity, gravity, start-velocity and Box size are now full 3D
+    vectors, and particles integrate through 3D space. They're visible from any
+    camera angle and read as real volume.
+  - Emission shapes rebuilt in 3D: Sphere is a true radial ball burst, Circle is
+    a ground-plane (XZ) ring/shockwave, Cone is a real 3D spray cone around the
+    launch direction, Box is a 3D volume. Velocity randomness jitters all three
+    axes.
+  - Rendering: particles are depth-sorted back-to-front and drawn as soft
+    volumetric puffs (outer glow + bright core) in the editor preview AND the
+    exported game, so overlap and depth read correctly.
+  - Inspector gains Z controls for Velocity / Gravity / Box Size. Old scenes load
+    unchanged (the new Z components default to 0 / flat) and re-save as 3D.
+
+v2.285.0  (PBR materials on the GPU + Occlusion maps — Unity/Unreal parity)
+  - The metallic + reflective Standard material now renders on the OpenGL +
+    Direct3D 11 paths (editor preview AND exported game), not just the software
+    fallback. Closes the gap with Unity's Standard / Unreal's default Lit:
+      * Metallic — metals lose their diffuse and tint both their specular
+        highlight and their environment reflection by the albedo (gold reflects
+        gold).
+      * Reflectivity — surfaces mirror the scene's sky gradient, Fresnel-weighted
+        (Schlick), so edges always reflect a little more than face-on.
+      * Specular/gloss map — per-texel luminance scales the highlight + reflection,
+        so one material mixes shiny and matte regions.
+  - NEW Occlusion (ambient-occlusion) map — the dedicated slot Unity and Unreal
+    both have that OkaySpace lacked. A grayscale map darkens ambient + diffuse in
+    creases/contact areas; an Occlusion strength slider blends it in. Works on the
+    software AND GPU renderers.
+  - Texture Offset control wired into every renderer (slide a texture or pick a
+    cell from an atlas) — previously a dead field on the GPU path.
+
+v2.284.0  (GPU normal/bump maps)
+  - Normal (bump) maps now light up on the OpenGL + Direct3D 11 renderers — the
+    same maps the software renderer already used. Flat faces show sculpted detail
+    (bricks, panels, fabric) under every light in the editor preview AND the
+    exported game, not just the CPU fallback.
+  - Per-face tangents are derived from mesh edges + UV deltas and a per-fragment
+    TBN basis perturbs the surface normal, matching the software path exactly, so
+    a material looks the same whichever renderer draws it.
+  - Honors the existing material Normal Map field + Normal Strength slider; works
+    alongside tiling, the texture filter, multi-light shading and ground shadows.
+
+v2.283.0  (Texture filter: fix up-close blur)
+  - New per-material texture Filter: "Smooth" (bilinear, the default) or "Pixel"
+    (nearest-neighbour) — pick Pixel for crisp pixel-art with no blur when the
+    texture is magnified up close. Works on the OpenGL + Direct3D 11 renderers.
+  - (Tiling, your-own-texture import via the Texture field + asset drag, and
+    software normal maps already shipped; GPU normal maps are coming next.)
+
+v2.282.0  (Colliders: auto-add, new shapes, glitch fix)
+  - Every new 3D primitive (Cube/Pyramid/Mesh) now spawns with a Box collider
+    auto-fitted to its mesh, so objects block and can be stood on immediately.
+  - Two new collider shapes: Cylinder (barrels/pillars — resolves like a capsule)
+    and Mesh (fits the model's bounds, resolves as its box). Add them from
+    Add Component > Physics; both serialize.
+  - Fixed a collider glitch: OverlapSphere invalid-cast a mesh/box collider to a
+    capsule (undefined behaviour / wrong overlaps). Shape dispatch now routes
+    box-like and capsule-like shapes correctly everywhere.
+
+v2.281.0  (Particles work in 3D + sharper textures)
+  - FIXED: particles were only drawn in the 2D/orthographic path, so in a 3D
+    (perspective) scene they were invisible. They now render as camera-projected
+    billboards in both the editor 3D view and the exported game.
+  - Textures: anisotropic filtering (8x) on the GPU renderers, so floors and
+    terrain stay sharp at grazing angles instead of blurring into the distance.
+
+v2.280.0  (All lights work on the GPU + Velvet shader)
+  - Lighting: the OpenGL and Direct3D 11 renderers now shade with EVERY scene
+    light — point and spot lights (with range falloff + soft spot cones) and
+    multiple directionals — not just the sun, matching the software renderer.
+    Ambient is also taken from the scene now. So your Point/Spot lights finally
+    light objects in the editor preview and exported game.
+  - New Velvet shader: a soft fuzzy sheen that brightens at grazing angles
+    (cloth / peach-skin), across all three renderers.
+
+v2.279.0  (More shaders + richer ambient lighting)
+  - Three new Mesh Renderer shader models: Iridescent (oil-slick hue that shifts
+    with the view angle), Hologram (dark, scan-lined body lit at the edges), and
+    Posterize (retro colour banding). Pick them from the Shader dropdown; they
+    render in the software, OpenGL, and Direct3D 11 paths.
+  - Lighting: the GPU renderers now use hemisphere ambient (a brighter sky tint
+    up-facing, darker ground tint down-facing) like the software renderer, so
+    objects read with more depth instead of a flat ambient wash.
+
+v2.278.0  (Ground contact shadows — objects stop floating)
+  - Mesh Renderers now cast a flat "blob" contact shadow projected onto the
+    ground plane, so cubes and props sit on the floor instead of looking like
+    they float. On by default; tune Ground Y + Strength (or turn it off) per
+    object in the inspector. Implemented in the GPU renderers (Direct3D 11 +
+    OpenGL) used by the editor preview and exported game, via a shared planar-
+    projection matrix (Mat4::PlanarShadow) that's unit-tested.
+
+v2.277.0  (Click-to-place waypoints on the map)
+  - Open the fullscreen map (your map key) and LEFT-CLICK anywhere to drop a
+    waypoint; the route line auto-draws from the player to it. Right-click clears
+    it. The fullscreen map now frees the cursor (GTA pause-map style) so it's
+    clickable. Works in the player and the editor Game view; colour configurable.
+
+v2.276.0  (Minimap radar range / fog-of-war)
+  - New "Blip Range" on the Minimap: blips farther than this many world units
+    from the centre are hidden (0 = show all) — a radar-style sweep / soft
+    fog-of-war for contacts. Renders in player + editor, serialized + tested.
+
+v2.275.0  (Minimap: generate map from scene)
+  - New "Generate from Scene" button on the Minimap: auto-creates a footprint
+    rectangle for every MeshRenderer in the level (using its world position +
+    scale), so the map mirrors your actual buildings without hand-drawing each
+    one. Plus a "Clear Shapes" button to start over.
+
+v2.274.0  (Authorable vector map: roads, houses, zones)
+  - Draw your own minimap world without an image: add Map Shapes in world
+    coordinates — Line (roads/walls, with thickness), Rect (houses/buildings),
+    and Poly (zones/lots), each with colour and fill/outline. Edit points right
+    in the inspector with quick "+ Road / + House / + Zone" buttons.
+  - Shapes pan/zoom/rotate with the map and render in the player + editor;
+    serialized and tested.
+
+v2.273.0  (Minimap labels + route line)
+  - Minimap text labels: name your blips and waypoint markers and toggle
+    "Show Labels" to draw them on the map (size + colour configurable).
+  - GTA-style route line: pick a waypoint index ("Route To Marker") to draw a
+    coloured line from the player to that objective.
+  - Renders in the player + editor, serializes, with inspector fields per blip
+    and per marker; tests extended.
+
+v2.272.0  (More minimap options)
+  - Minimap radar options: a view cone (FOV wedge showing where the player
+    faces), concentric range rings, a north-indicator tick, and a "show self"
+    toggle for the centre marker. All render in the player + editor, serialize,
+    and have inspector controls. Tests extended.
+
+v2.271.0  (Camera freeze fix, GTA maps, particle preview)
+  - FIXED: opening the inventory or a chest no longer moves the camera. The
+    third-person-shooter and free-roam controllers were ignoring the modal-UI
+    pause; now all four controllers freeze look + movement while a bag is open,
+    and the camera no longer snaps when the panel closes.
+  - Particle System now PREVIEWS live in the editor scene view without pressing
+    Play (Unity-style), so a new emitter is visible immediately.
+  - Minimap, massively expanded: a GTA-style custom world-map image (pan + zoom,
+    north-up), a fullscreen pause-map toggle, waypoint markers (POIs), runtime
+    zoom-in/out keys, and per-blip icon images. Plus the earlier circular mask,
+    heading-up rotation, player arrow, edge-clamped blips, grid, and blip shapes.
+  - All new fields serialize and round-trip; tests cover the controller freeze,
+    the map UV projection, zoom keys, and markers.
+
+v2.270.0  (Expanded minimap + inventory sorting)
+  - Minimap: big upgrade — a circular mask, heading-up rotation (the map spins so
+    the target always faces up), a directional player arrow at the centre, off-map
+    blips clamped to the edge as objective markers, and an optional reference grid.
+    Blips now choose a shape (Square / Dot / Triangle / Arrow) and can rotate to
+    point along the object's heading. Works in the built player and the editor.
+  - Inventory: the Sort key now has modes — Compact (close holes), Name (A-Z),
+    Count (biggest first), or Rarity (your rarity list's order). Added "Sort on
+    close" to auto-tidy the bag, and a Drop key to discard the held item.
+  - All new fields serialize and round-trip; full tests added.
+
+v2.269.0  (Expanded shaders, particles, Unity cursor lock)
+  - Shaders: new Gradient (vertical colour ramp) and Fresnel (rim-glow) surface
+    models on the Mesh Renderer, wired through the software, OpenGL, and Direct3D 11
+    renderers, with gradient colour pickers in the inspector.
+  - Particle System: expanded from a basic emitter to a Unity-style system —
+    emission shapes (Point / Circle / Sphere / Box / Cone / Edge), timed bursts,
+    looping duration, colour- and size-over-lifetime, lifetime/size/speed
+    randomness, a gravity multiplier, and linear damping, with a full inspector.
+  - Cursor: Unity-style lock hand-off — opening a bag/chest frees the pointer at
+    the screen centre and closing it warps back to centre before re-locking, in
+    both the player and the editor Game tab. Third-person controller now locks the
+    cursor by default. Opening a chest also freezes the camera like the inventory.
+
 v2.148.0  (Canvas sort order: stack UI canvases)
   - The Canvas "Sort Order" now actually layers canvases in built games: a popup
     or modal Canvas with a higher Sort Order draws on top of the HUD. Widgets that

@@ -8,7 +8,10 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
@@ -35,6 +38,7 @@ public:
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
     bool  canJump = true;
     bool  driveAnimation = true;
+    bool  footIK = false;               // plant the Character's feet on the ground
 
     // ---- Stance: crouch & prone ----
     // Lower the character to crouch or go prone, each with its own speed; the
@@ -75,7 +79,7 @@ public:
     float mouseSensitivity = 0.2f;      // degrees per pixel
     bool  invertY = false;              // invert vertical mouse look
     bool  invertX = false;             // invert horizontal mouse look
-    bool  lockCursor = false;           // hide + lock the cursor while playing (off: keep the pointer for UI)
+    bool  lockCursor = true;            // hide + lock the cursor while playing (off: keep the pointer for UI)
     float distance  = 5.0f;             // camera distance from the player
     float minDistance = 2.0f, maxDistance = 12.0f;
     float zoomSpeed = 1.0f;             // wheel zoom step
@@ -100,8 +104,12 @@ public:
 
     float yaw = 0.0f, pitch = 18.0f;    // camera orbit angles (degrees)
 
+    void Start() override { if (footIK) AttachCharacterFootIK(gameObject); }
+
     void Update(float dt) override {
         if (!transform) return;
+        if (Game::Paused()) return;   // frozen while the pause menu is up
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         // Optionally hide + lock the cursor while playing (re-assert if freed).
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
 
@@ -110,12 +118,15 @@ public:
         // first-person controller's convention (yaw decreases as the mouse moves
         // right). Flip per-axis with invertX / invertY.
         Vec2 mp = Input::MousePosition();
-        if (m_haveMouse && !Input::UICaptured()) {   // a modal UI (open inventory) pauses look
+        bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
+        if (m_haveMouse && !uiBlocked) {
             yaw   += (invertX ? 1.0f : -1.0f) * (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
-        m_lastMouse = mp; m_haveMouse = true;
+        // Drop the baseline while a bag is open (locked/free mouse space switch) so the
+        // camera doesn't snap on the first frame after the panel closes.
+        m_lastMouse = mp; m_haveMouse = !uiBlocked;
         float wheel = Input::UICaptured() ? 0.0f : Input::MouseWheel();
         if (wheel != 0.0f) distance = Mathf::Clamp(distance - wheel * zoomSpeed, minDistance, maxDistance);
 
@@ -144,11 +155,14 @@ public:
         // that works regardless of how the ground is set up — OR a fresh ground
         // contact. Coyote time + a jump buffer make jumping forgiving.
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f;
+        // Heightmap terrain has no collider (no collision callbacks); Physics3D flags
+        // resting-on-terrain on the body so terrain counts as ground for jumping.
+        bool terrainGround = rb && rb->groundedOnTerrain;
+        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || terrainGround;
         // Jump count refills only on a real ground contact, so the zero-velocity at
         // the jump apex can't grant another jump (no more endless jumping). maxJumps
         // enables double (or more) jumps.
-        if (m_groundContact > 0.0f) m_jumpsUsed = 0;
+        if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
@@ -170,7 +184,7 @@ public:
             rb->velocity.x = cur.x + dv.x;
             rb->velocity.z = cur.z + dv.z;
             // Jump: first jump needs ground/coyote; extra jumps (double-jump) up to maxJumps.
-            if (canJump && m_jumpBuf > 0.0f) {
+            if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
@@ -206,9 +220,10 @@ public:
         // ---- Animation ----
         if (driveAnimation)
             if (Character* ch = FindCharacter()) {
-                ch->anim = airborne ? 5
-                         : m_stance == Stance::Prone  ? 7
-                         : m_stance == Stance::Crouch ? 6
+                // No jump/fall pose (it looked off): airborne keeps the matching
+                // ground pose (idle / walk / run).
+                ch->anim = m_stance == Stance::Prone  ? 7
+                         : m_stance == Stance::Crouch ? (moving ? 17 : 6)   // crouch-walk vs sneak-idle
                          : (moving ? (running ? 3 : 2) : 1);
                 // The head turns to keep looking where the camera points (relative to
                 // the body's current facing) AND tilts up/down with the orbit pitch,

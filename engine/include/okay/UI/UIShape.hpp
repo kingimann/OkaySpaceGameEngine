@@ -47,13 +47,20 @@ inline bool UIShapeUsesRadius(UIShape s) {
            s == UIShape::TabTop;
 }
 
+/// Corner bits for `cornerMask` (which corners a Rounded/Pill shape actually
+/// rounds). All four set (0xF) = every corner rounded, the default.
+enum UICorner { UICornerTL = 1, UICornerTR = 2, UICornerBR = 4, UICornerBL = 8,
+                UICornerAll = 15 };
+
 /// For a widget occupying the box [0,w] x [0,h] (local pixels), compute the inside
 /// horizontal span [x0,x1) at integer row `row`. Returns false when the row is
 /// entirely outside the shape. `radius` is the corner radius for Rounded (pixels);
-/// it's ignored by the other shapes. This is the single source of truth both the
-/// fill and the hit-test use, so the visible shape and the clickable area agree.
+/// it's ignored by the other shapes. `cornerMask` selects which corners a
+/// Rounded/Pill shape rounds (default all); an un-masked corner stays square. This
+/// is the single source of truth both the fill and the hit-test use, so the visible
+/// shape and the clickable area agree.
 inline bool UIShapeRowSpan(UIShape shape, float w, float h, float radius, int row,
-                           float& x0, float& x1) {
+                           float& x0, float& x1, int cornerMask = UICornerAll) {
     if (w <= 0.0f || h <= 0.0f || row < 0 || (float)row >= h) return false;
     const float cy = (float)row + 0.5f;
 
@@ -174,18 +181,23 @@ inline bool UIShapeRowSpan(UIShape shape, float w, float h, float radius, int ro
 
     // Rounded / Pill: straight sides with circular caps top and bottom. A Pill is
     // just a Rounded box whose radius is half the short side (fully round ends).
+    // `cornerMask` lets each corner be rounded or left square independently.
     const float r = (shape == UIShape::Pill)
                         ? std::min(w, h) * 0.5f
                         : Mathf::Clamp(radius, 0.0f, std::min(w, h) * 0.5f);
-    float inset = 0.0f;
+    float leftInset = 0.0f, rightInset = 0.0f;
     if (cy < r) {                                        // inside the top caps
         const float dy = r - cy;
-        inset = r - std::sqrt(std::max(0.0f, r * r - dy * dy));
+        const float ins = r - std::sqrt(std::max(0.0f, r * r - dy * dy));
+        if (cornerMask & UICornerTL) leftInset  = ins;
+        if (cornerMask & UICornerTR) rightInset = ins;
     } else if (cy > h - r) {                             // inside the bottom caps
         const float dy = cy - (h - r);
-        inset = r - std::sqrt(std::max(0.0f, r * r - dy * dy));
+        const float ins = r - std::sqrt(std::max(0.0f, r * r - dy * dy));
+        if (cornerMask & UICornerBL) leftInset  = ins;
+        if (cornerMask & UICornerBR) rightInset = ins;
     }
-    x0 = inset; x1 = w - inset;
+    x0 = leftInset; x1 = w - rightInset;
     return x1 > x0;
 }
 

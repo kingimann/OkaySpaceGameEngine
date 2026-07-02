@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.259.0
+    VERSION 2.412.0
     DESCRIPTION "A Unity-inspired C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (e.g. tinyfiledialogs)
 
@@ -22,6 +22,7 @@ option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
+option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
 if(MSVC)
@@ -60,7 +61,9 @@ add_subdirectory(engine)
 # ---- OkayUI (SDL_Renderer immediate-mode UI toolkit) -----------------
 # Self-gates on SDL2 (skips quietly if absent). Added before the editor and tests
 # so both can link okay::ui. Only needed by SDL-based hosts and its own test.
-if(OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_TESTS)
+# Skip OkayUI on Emscripten/WebGL: the web player links only okay::engine, and the
+# toolkit includes a Direct3D 11 backend that can't compile to WASM.
+if((OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_TESTS) AND NOT EMSCRIPTEN)
     add_subdirectory(okayui)
 endif()
 
@@ -120,8 +123,11 @@ if(OKAY_BUILD_TOOLS)
 endif()
 
 # ---- Reference relay (NAT traversal) ---------------------------------
-# A tiny console UDP forwarder; no graphics deps, always built.
-add_subdirectory(relay)
+# A tiny console UDP forwarder; no graphics deps, always built — except on
+# Emscripten/WebGL, where raw UDP sockets don't exist in the browser sandbox.
+if(NOT EMSCRIPTEN)
+    add_subdirectory(relay)
+endif()
 
 # ---- Tests ------------------------------------------------------------
 if(OKAY_BUILD_TESTS)

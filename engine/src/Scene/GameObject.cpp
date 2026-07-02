@@ -1,10 +1,18 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/Transform.hpp"
 
 namespace okay {
 
 GameObject::GameObject(Scene* scene, std::string name)
     : name(std::move(name)), m_scene(scene) {}
+
+bool GameObject::IsSelfOrDescendantOf(const GameObject* other) const {
+    if (!other) return false;
+    for (const Transform* t = transform; t; t = t->Parent())
+        if (t->gameObject == other) return true;
+    return false;
+}
 
 void GameObject::NotifyComponentAdded(Component* component) {
     if (m_scene) m_scene->QueuePending(component);

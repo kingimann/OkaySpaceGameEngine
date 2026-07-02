@@ -39,11 +39,23 @@ public:
 
     /// Mark a GameObject for destruction; removed at the end of the frame.
     void Destroy(GameObject* go);
+    /// Process the pending-destroy queue now (runs OnDestroy + frees the objects).
+    /// Update() calls this each frame; the editor calls it in edit mode so deferred
+    /// destroys (e.g. removing a rig) take effect without a full simulation tick.
+    void FlushDestroyed();
 
     /// Request loading a .okayscene file at the end of the current frame
     /// (safe to call from a script/Update). Replaces this scene's contents.
     void RequestLoad(const std::string& path) { m_pendingLoad = path; m_hasPendingLoad = true; }
     bool HasPendingLoad() const { return m_hasPendingLoad; }
+
+    /// Additively MERGE another .okayscene into this one at the end of the frame,
+    /// translated by `offset` — combine scenes into one seamless world without
+    /// replacing what's already here. Safe to call from a script/Update; the new
+    /// objects get Awake/Start on the next flush.
+    void RequestMerge(const std::string& path, const Vec3& offset = Vec3{0, 0, 0}) {
+        m_pendingMerges.push_back({path, offset});
+    }
 
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;
@@ -111,6 +123,11 @@ public:
         Color fogColor   = Color::FromBytes(150, 185, 225);  // default = horizon
         float fogStart   = 20.0f;
         float fogEnd     = 90.0f;
+        // Screen-space vignette: darken the frame's edges/corners by `vignette`
+        // strength (0 = off .. 1 = strong). A cheap post overlay drawn on top of the
+        // finished frame, so it looks identical on every renderer backend. Great for
+        // focus/mood without touching the 3D shading path.
+        float vignette   = 0.0f;
     };
     RenderSettings renderSettings;
 
@@ -151,6 +168,7 @@ private:
     std::vector<GameObject*> m_destroyQueue;
     std::string m_pendingLoad;
     bool        m_hasPendingLoad = false;
+    std::vector<std::pair<std::string, Vec3>> m_pendingMerges;   // deferred additive scene merges
 };
 
 } // namespace okay

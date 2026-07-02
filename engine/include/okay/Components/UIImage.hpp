@@ -35,6 +35,38 @@ public:
     /// Silhouette of the colored-rect fallback (no texture): box, rounded, circle
     /// or pill — so a textureless UIImage can be an avatar dot, badge or chip.
     UIShape shape = UIShape::Rectangle;
+    /// Mirror the texture horizontally / vertically (flip a sprite without a second
+    /// asset — face a character the other way, mirror an arrow, etc.).
+    bool  flipX = false;
+    bool  flipY = false;
+    /// Preserve aspect ratio (Unity's "Preserve Aspect"): fit the source texture
+    /// inside `size` without stretching, centered, letterboxed. Ignored for
+    /// nine-slice and fills (which intentionally reshape the image).
+    bool  preserveAspect = false;
+    /// Optional frame drawn around the image rect (a matte/keyline). 0 = no frame.
+    float borderWidth = 0.0f;
+    Color borderColor = Color::FromBytes(255, 255, 255, 90);
+    /// Which corners the Rounded/Pill fallback shape rounds (bitmask of UICorner).
+    /// Default all; clear a bit to leave that corner square.
+    int   cornerMask = UICornerAll;
+    /// Optional drop shadow behind the image (lifts logos/cards off the scene),
+    /// mirroring UIPanel. `shadowSoftness` fakes a blur; 0 = crisp.
+    bool  shadow = false;
+    Color shadowColor = Color::FromBytes(0, 0, 0, 120);
+    Vec2  shadowOffset{6.0f, 6.0f};
+    float shadowSoftness = 0.0f;
+
+    /// Fit `srcW`x`srcH` inside the `w`x`h` box preserving aspect, centered. Writes
+    /// the letterboxed sub-rect (offset + size in local pixels). Falls back to the
+    /// full box if either dimension is degenerate.
+    void AspectRect(float w, float h, float srcW, float srcH,
+                    float& ox, float& oy, float& fw, float& fh) const {
+        ox = 0; oy = 0; fw = w; fh = h;
+        if (srcW <= 0.0f || srcH <= 0.0f || w <= 0.0f || h <= 0.0f) return;
+        float sr = srcW / srcH, br = w / h;
+        if (sr > br) { fw = w; fh = w / sr; oy = (h - fh) * 0.5f; }   // wide: bars top/bottom
+        else         { fh = h; fw = h * sr; ox = (w - fw) * 0.5f; }   // tall: bars left/right
+    }
 
     /// The visible sub-rectangle after applying the fill (origin + size in local
     /// pixels relative to the widget's top-left). Returns the full rect when the

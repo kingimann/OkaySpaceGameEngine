@@ -5,6 +5,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
@@ -207,10 +208,64 @@ void NetworkManager::InterpolateRemotes(float dt) {
     }
 }
 
+void NetworkManager::RegisterSync(const std::string& id, Transform* t, bool owned) {
+    if (id.empty()) return;
+    SyncObj o; o.t = t; o.owned = owned;
+    if (t) { o.targetPos = t->localPosition; o.targetRot = t->localRotation; }
+    m_syncObjs[id] = o;
+}
+
+void NetworkManager::UnregisterSync(const std::string& id) { m_syncObjs.erase(id); }
+
+void NetworkManager::SetSyncOwned(const std::string& id, bool owned) {
+    auto it = m_syncObjs.find(id);
+    if (it != m_syncObjs.end()) it->second.owned = owned;
+}
+
+void NetworkManager::SetSyncExtra(const std::string& id, std::function<std::string()> get,
+                                  std::function<void(const std::string&)> set) {
+    auto it = m_syncObjs.find(id);
+    if (it == m_syncObjs.end()) return;
+    it->second.getExtra = std::move(get);
+    it->second.setExtra = std::move(set);
+}
+
+void NetworkManager::SyncTick(float dt) {
+    if (m_syncObjs.empty()) return;
+    // Move non-owned objects toward their last received state every frame: ease at
+    // interpolationRate, or snap exactly when it's <= 0.
+    {
+        float t = interpolationRate > 0.0f ? interpolationRate * dt : 1.0f;
+        if (t > 1.0f) t = 1.0f;
+        for (auto& [id, o] : m_syncObjs) {
+            if (o.owned || !o.t || !o.hasTarget) continue;
+            o.t->localPosition = o.t->localPosition + (o.targetPos - o.t->localPosition) * t;
+            o.t->localRotation = Quat::Slerp(o.t->localRotation, o.targetRot, t);
+        }
+    }
+    // Broadcast the objects we own at the sync rate.
+    if (!IsConnected()) return;
+    float interval = syncRate > 0.0f ? 1.0f / syncRate : 0.0f;
+    m_syncTimer += dt;
+    if (m_syncTimer < interval) return;
+    m_syncTimer = 0.0f;
+    for (auto& [id, o] : m_syncObjs) {
+        if (!o.owned || !o.t) continue;
+        const Vec3& p = o.t->localPosition;
+        const Quat& q = o.t->localRotation;
+        std::ostringstream os;
+        os << id << '|' << p.x << ' ' << p.y << ' ' << p.z << ' '
+           << q.x << ' ' << q.y << ' ' << q.z << ' ' << q.w;
+        if (o.getExtra) os << '|' << o.getExtra();   // optional per-object state
+        Send("__xform", os.str());
+    }
+}
+
 void NetworkManager::Update(float dt) {
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
     InterpolateRemotes(dt);
+    SyncTick(dt);
 }
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
@@ -228,13 +283,87 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
         std::string path; float x = 0, y = 0, z = 0; char sep;
         std::getline(ss, path, '|');
         ss >> x >> sep >> y >> sep >> z;
-        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, path))
+        // Optional "|<netId>" marks a SpawnOwned object: attach a follower
+        // NetworkSync so its transform/animation track the authority that spawned it.
+        std::string netId; char bar;
+        if (ss.get(bar) && bar == '|') std::getline(ss, netId);
+        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, path)) {
             if (g->transform) g->transform->localPosition = {x, y, z};
+            if (!netId.empty()) {
+                auto* ns = g->GetComponent<NetworkSync>();
+                if (!ns) ns = g->AddComponent<NetworkSync>();
+                ns->netId = netId; ns->authority = NetworkSync::Authority::Manual; ns->owned = false;
+            }
+        }
+        return;
+    }
+    if (channel == "__despawn") {   // remove a SpawnOwned object on this peer
+        DestroyLocalSync(data);
+        return;
+    }
+    // Networked transform: "__xform" carries "<id>|px py pz qx qy qz qw". The
+    // matching registered object eases toward it (unless we own it — then we're
+    // authoritative and ignore remote state).
+    if (channel == "__xform") {
+        std::string::size_type bar = data.find('|');
+        if (bar != std::string::npos) {
+            std::string id = data.substr(0, bar);
+            auto it = m_syncObjs.find(id);
+            if (it != m_syncObjs.end() && !it->second.owned) {
+                // "<floats>[|<extra>]" — the optional extra payload follows a second '|'.
+                std::string rest = data.substr(bar + 1);
+                std::string extra;
+                std::string::size_type bar2 = rest.find('|');
+                if (bar2 != std::string::npos) { extra = rest.substr(bar2 + 1); rest.resize(bar2); }
+                std::stringstream ss(rest);
+                Vec3 p; Quat q;
+                ss >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w;
+                it->second.targetPos = p;
+                it->second.targetRot = q;
+                // Snap on the first sample so a freshly seen object doesn't slide
+                // in from wherever it happened to spawn.
+                if (!it->second.hasTarget && it->second.t) {
+                    it->second.t->localPosition = p;
+                    it->second.t->localRotation = q;
+                }
+                it->second.hasTarget = true;
+                if (it->second.setExtra && bar2 != std::string::npos) it->second.setExtra(extra);
+            }
+        }
+        return;
+    }
+    // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
+    // (with the sender id + payload) instead of surfacing as a raw message.
+    if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
+        auto it = m_rpcHandlers.find(channel.substr(6));
+        if (it != m_rpcHandlers.end() && it->second) it->second(from, data);
+        return;
+    }
+    // Chat: "__chat" carries "<name>\n<text>"; logged + handed to the chat handler.
+    if (channel == "__chat") {
+        ChatEntry e{from, "", data};
+        std::string::size_type nl = data.find('\n');
+        if (nl != std::string::npos) { e.name = data.substr(0, nl); e.text = data.substr(nl + 1); }
+        m_chatLog.push_back(e);
+        if (chatHistory > 0 && (int)m_chatLog.size() > chatHistory)
+            m_chatLog.erase(m_chatLog.begin(), m_chatLog.begin() + ((int)m_chatLog.size() - chatHistory));
+        if (m_chatHandler) m_chatHandler(e);
         return;
     }
     NetMessage m{from, channel, data};
     if (m_msgHandler) m_msgHandler(m);
     m_inbox.push_back(std::move(m));
+}
+
+void NetworkManager::Chat(const std::string& text) {
+    // Show our own line locally first (a broadcast Send never echoes to the sender),
+    // then fan it out to everyone else in the room.
+    ChatEntry e{m_localId, m_localName, text};
+    m_chatLog.push_back(e);
+    if (chatHistory > 0 && (int)m_chatLog.size() > chatHistory)
+        m_chatLog.erase(m_chatLog.begin(), m_chatLog.begin() + ((int)m_chatLog.size() - chatHistory));
+    if (m_chatHandler) m_chatHandler(e);
+    Send("__chat", m_localName + "\n" + text);
 }
 
 void NetworkManager::Spawn(const std::string& prefabPath, const Vec3& position) {
@@ -247,6 +376,42 @@ void NetworkManager::Spawn(const std::string& prefabPath, const Vec3& position) 
     std::ostringstream os;
     os << prefabPath << '|' << position.x << '|' << position.y << '|' << position.z;
     Send("__spawn", os.str());
+}
+
+GameObject* NetworkManager::SpawnOwned(const std::string& prefabPath, const Vec3& position) {
+    // A globally-unique id: our peer id namespaces it, so two peers spawning at the
+    // same moment never collide.
+    std::string id = "sp/" + std::to_string(m_localId) + "/" + std::to_string(++m_spawnCounter);
+    GameObject* g = nullptr;
+    if (Scene* s = GetScene()) {
+        g = SceneSerializer::InstantiateFromFile(*s, prefabPath);
+        if (g) {
+            if (g->transform) g->transform->localPosition = position;
+            // We own it: drive its replication. NetworkSync registers on its first
+            // Update (the instance is updated every frame once spawned).
+            auto* ns = g->GetComponent<NetworkSync>();
+            if (!ns) ns = g->AddComponent<NetworkSync>();
+            ns->netId = id; ns->authority = NetworkSync::Authority::Manual; ns->owned = true;
+        }
+    }
+    std::ostringstream os;
+    os << prefabPath << '|' << position.x << '|' << position.y << '|' << position.z << '|' << id;
+    Send("__spawn", os.str());
+    return g;
+}
+
+void NetworkManager::DestroyLocalSync(const std::string& id) {
+    auto it = m_syncObjs.find(id);
+    if (it != m_syncObjs.end()) {
+        GameObject* go = it->second.t ? it->second.t->gameObject : nullptr;
+        if (go) if (Scene* s = GetScene()) s->Destroy(go);
+        m_syncObjs.erase(it);
+    }
+}
+
+void NetworkManager::Despawn(const std::string& netId) {
+    DestroyLocalSync(netId);
+    Send("__despawn", netId);
 }
 
 void NetworkManager::Start() {
@@ -759,6 +924,10 @@ void NetworkManager::ServerTick(float dt) {
         m_snapshotTimer = 0.0f;
         Vec3 lp = m_localAvatar ? m_localAvatar->localPosition : Vec3::Zero;
         for (auto& [ep, recipient] : m_clients) {
+            // A lambda below needs the recipient; capturing a structured binding directly
+            // is ill-formed before C++20 (Clang/Emscripten rejects it), so alias it to a
+            // plain reference the closure can capture portably.
+            auto& rc = recipient;
             const std::string& room = recipient.room;
             bool hostHere = (m_localRoom == room);
             // Interest culling needs the recipient's own position; until it has
@@ -772,20 +941,20 @@ void NetworkManager::ServerTick(float dt) {
             // skip peers whose state is unchanged since we last sent it (delta).
             std::vector<PeerState> include;
             auto consider = [&](const PeerState& s, bool known) {
-                if (s.id == recipient.id) return;                   // don't echo their own avatar
+                if (s.id == rc.id) return;                          // don't echo their own avatar
                 if (interestRadius > 0.0f) {                        // area-of-interest cull
                     if (!known) return;                             // position unknown -> don't sync yet
                     float dx = s.x - rpos.x, dy = s.y - rpos.y, dz = s.z - rpos.z;
                     if (dx * dx + dy * dy + dz * dz > interestRadius * interestRadius) return;
                 }
-                auto it = recipient.sentStates.find(s.id);          // delta: only if changed
-                bool changed = it == recipient.sentStates.end() ||
+                auto it = rc.sentStates.find(s.id);                 // delta: only if changed
+                bool changed = it == rc.sentStates.end() ||
                                std::fabs(it->second.x - s.x) > 1e-4f ||
                                std::fabs(it->second.y - s.y) > 1e-4f ||
                                std::fabs(it->second.z - s.z) > 1e-4f ||
                                it->second.glyph != s.glyph;
                 if (!changed) return;
-                recipient.sentStates[s.id] = s;
+                rc.sentStates[s.id] = s;
                 include.push_back(s);
             };
             if (hostHere) consider(PeerState{0, lp.x, lp.y, lp.z, m_localGlyph}, true);

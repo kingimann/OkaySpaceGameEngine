@@ -1,4 +1,18 @@
 #include "EditorState.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderFit.hpp"
+
+namespace {
+// Every new 3D primitive ships with a collider fitted to its mesh (Unity-style), so
+// objects block and can be stood on the moment they're created. A box matches most
+// primitives; it's auto-fit so it tracks the mesh.
+void AddFittedBoxCollider(okay::GameObject* go) {
+    if (!go || go->GetComponent<okay::Collider3D>()) return;   // don't double up
+    auto* bc = go->AddComponent<okay::BoxCollider3D>();
+    bc->autoFit = true;
+    okay::FitColliders(go);
+}
+} // namespace
 
 namespace okay::editor {
 
@@ -115,6 +129,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Cube();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -127,6 +142,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Pyramid();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -139,30 +155,66 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::FromName(meshName);
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
     dirty = true;
     return go;
 }
 
+// True if any ANCESTOR of `go` is also in `set` (so we only act on top-level picks).
+static bool AncestorInSet(GameObject* go, const std::vector<GameObject*>& set) {
+    if (!go || !go->transform) return false;
+    for (Transform* t = go->transform->Parent(); t; t = t->Parent())
+        if (t->gameObject && std::find(set.begin(), set.end(), t->gameObject) != set.end()) return true;
+    return false;
+}
+
 GameObject* EditorState::DuplicateSelected() {
+    if (m_multi.empty() && !m_selected) return nullptr;
     PushUndo();
-    if (!m_selected) return nullptr;
-    GameObject* clone = m_scene.Instantiate(*m_selected);
-    if (clone) {
-        clone->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f}; // offset so it's visible
-        m_selected = clone;
-        dirty = true;
+    std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>{m_selected} : m_multi;
+    std::vector<GameObject*> clones;
+    for (GameObject* g : targets) {
+        if (!g || AncestorInSet(g, targets)) continue;   // a parent clone already brings its children
+        GameObject* clone = m_scene.Instantiate(*g);
+        if (clone) { clone->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f}; clones.push_back(clone); }
     }
-    return clone;
+    if (clones.empty()) return nullptr;
+    m_multi = clones;
+    m_selected = clones.back();
+    dirty = true;
+    return m_selected;
+}
+
+GameObject* EditorState::GroupSelected(const std::string& name) {
+    std::vector<GameObject*> targets = m_multi.empty()
+        ? (m_selected ? std::vector<GameObject*>{m_selected} : std::vector<GameObject*>{})
+        : m_multi;
+    if (targets.empty()) return nullptr;
+    PushUndo();
+    // The group sits under the first pick's parent; children keep their world place.
+    Transform* parent = targets[0]->transform ? targets[0]->transform->Parent() : nullptr;
+    GameObject* group = m_scene.CreateGameObject(name);
+    if (parent) group->transform->SetParent(parent, false);
+    for (GameObject* g : targets) {
+        if (!g || g == group || AncestorInSet(g, targets)) continue;
+        g->transform->SetParent(group->transform, /*worldPositionStays=*/true);
+    }
+    Select(group);
+    dirty = true;
+    return group;
 }
 
 void EditorState::DeleteSelected() {
+    if (m_multi.empty() && !m_selected) return;
     PushUndo();
-    if (!m_selected) return;
-    m_scene.Destroy(m_selected);
+    // Delete the whole selection (multi-select), not just the primary object.
+    std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>{m_selected} : m_multi;
+    for (GameObject* g : targets) if (g) m_scene.Destroy(g);
     m_scene.Update(0.0f); // flush the destroy queue immediately
     m_selected = nullptr;
+    m_multi.clear();
     dirty = true;
 }
 
@@ -259,10 +311,46 @@ void EditorState::NewFPS() {
     dirty = false;
 }
 
+void EditorState::NewTerrainSandbox() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::TerrainSandbox(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 2, 0};
+    camDist = 30.0f;
+    m_selected = m_scene.Find("Terrain");
+    dirty = false;
+}
+
+void EditorState::NewVoxelSandbox() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::VoxelSandbox(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 4, 0};
+    camDist = 36.0f;
+    m_selected = m_scene.Find("Voxel Terrain");
+    dirty = false;
+}
+
 void EditorState::NewThirdPerson() {
     NewScene();
     m_suppressUndo = true;
     Templates::ThirdPerson(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 1, 0};
+    camDist = 8.0f;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
+void EditorState::NewHumanoid() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Humanoid(m_scene);
     m_suppressUndo = false;
     view3D = true;
     camTarget = {0, 1, 0};
@@ -400,6 +488,7 @@ void EditorState::Play() {
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
     m_selected = nullptr;
     ActionList::ResetVars();   // clear visual-script variables each Play session
+    Game::Reset();             // clear stale pause/quit state from a prior session
     m_scene.Start();
     m_playing = true;
 }
@@ -407,6 +496,7 @@ void EditorState::Play() {
 void EditorState::Stop() {
     if (!m_playing) return;
     m_playing = false;
+    Game::Reset();   // unpause + clear quit so the next Play starts clean
     // Deserialize rebuilds the scene, destroying every live component — including
     // any NetworkManager m_net points at. Drop the pointer first so TickServices
     // never dereferences freed memory (a use-after-free crash).

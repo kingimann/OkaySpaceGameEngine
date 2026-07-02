@@ -6,6 +6,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -255,6 +256,18 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LFOOT]  = {12, 0, 0};    r[B_RFOOT]  = {12, 0, 0};   // soles stay flat
         r[B_LUPARM] = {16, 0, 8};    r[B_RUPARM] = {16, 0, -8};  // arms hang slightly forward
         r[B_LFORE]  = {20, 0, 0};    r[B_RFORE]  = {20, 0, 0};
+    } else if (anim == 17) {               // crouch-walk (sneak while moving: legs cycle)
+        float amp = 16.0f;                 // a shorter, lower stride than the upright walk
+        float ss = std::sin(t * 6.0f);
+        r[B_HIPS]   = {10, 0, 0};                            // keep the crouch upper body
+        r[B_TORSO]  = {34, 0, 0};
+        r[B_HEAD]   = {-24, 0, 0};
+        r[B_LTHIGH] = {18 + amp * ss, 0, 0};   r[B_RTHIGH] = {18 - amp * ss, 0, 0};   // legs swing
+        r[B_LSHIN]  = {-30 + std::fmax(0.0f, -1.2f * amp * ss), 0, 0};
+        r[B_RSHIN]  = {-30 + std::fmax(0.0f,  1.2f * amp * ss), 0, 0};
+        r[B_LFOOT]  = {12, 0, 0};    r[B_RFOOT]  = {12, 0, 0};
+        r[B_LUPARM] = {16 - 0.6f * amp * ss, 0, 8};   r[B_RUPARM] = {16 + 0.6f * amp * ss, 0, -8};
+        r[B_LFORE]  = {20, 0, 0};    r[B_RFORE]  = {20, 0, 0};
     } else if (anim == 7) {                // prone (whole body flat on the ground)
         // Rotate ONLY the hips 90° so the body lies flat: the torso/head swing
         // forward along the ground and the legs swing straight back — no counter
@@ -336,7 +349,7 @@ std::vector<Vec3> Character::PoseAt(float t) const {
 }
 
 Vec3 Character::StanceOffset() const {
-    if (anim == 6) return {0.0f, -0.12f, 0.0f};   // crouch: light knee bend, feet stay planted (forward-hunch sneak)
+    if (anim == 6 || anim == 17) return {0.0f, -0.12f, 0.0f};   // crouch / crouch-walk: light knee bend
     if (anim == 7) return {0.0f, -0.78f, 0.0f};   // prone: lay the body on the ground
     return {0.0f, 0.0f, 0.0f};
 }
@@ -399,6 +412,7 @@ bool Character::PlayClip(const std::string& name) {
     if (name.empty()) { StopClip(); return true; }
     auto it = m_clips.find(name);
     if (it == m_clips.end()) return false;
+    if (m_activeClipName != name) BeginBlend();   // crossfade from the current pose
     m_activeClip = &it->second;
     m_activeClipName = name;
     m_clipTime = 0.0f;
@@ -406,31 +420,148 @@ bool Character::PlayClip(const std::string& name) {
 }
 
 void Character::StopClip() {
+    if (m_activeClip) BeginBlend();               // crossfade back to the built-in animation
     m_activeClip = nullptr;
     m_activeClipName.clear();
     m_clipTime = 0.0f;
 }
 
+void Character::BeginBlend() {
+    if (blendTime <= 1e-4f) { m_blendT = 1.0f; return; }   // instant
+    m_blendFrom = CurrentSourcePose();                     // freeze where we are right now
+    m_blendT = 0.0f;
+}
+
+void Character::FireClipEvents(float from, float to) {
+    if (!m_activeClip || m_activeClip->events.empty() || to <= from) return;
+    auto inRange = [&](float a, float b) {
+        for (const auto& e : m_activeClip->events)
+            if (e.time > a && e.time <= b && !e.name.empty()) {
+                m_animEvents.push_back(e.name);
+                if (onAnimEvent) onAnimEvent(e.name);
+            }
+    };
+    float dur = m_activeClip->Duration();
+    if (m_activeClip->loop && dur > 0.0f && to > dur) {
+        inRange(from, dur);                       // up to the loop point
+        float wrapped = std::fmod(to, dur);
+        inRange(-1e-6f, wrapped);                 // and from the start after wrapping
+    } else {
+        inRange(from, to);
+    }
+}
+
+void Character::AdvanceClip(float dt) {
+    if (!m_activeClip) return;
+    float from = m_clipTime;
+    m_clipTime += dt * animSpeed * m_activeClip->speed;   // per-clip playback rate
+    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
+    float dur = m_activeClip->Duration();
+    if (dur > 0.0f) {
+        if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
+        else if (m_clipTime > dur) m_clipTime = dur;
+    }
+}
+
+std::vector<std::string> Character::ClipNames() const {
+    std::vector<std::string> names;
+    names.reserve(m_clips.size());
+    for (const auto& kv : m_clips) names.push_back(kv.first);
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+void Character::SyncStateClips() {
+    // No-code: when the user has bound a clip to a movement state, make that clip the
+    // active one (so YOUR animation plays instead of the built-in for that state).
+    if (clipIdle.empty() && clipWalk.empty() && clipRun.empty()) return;
+    if (m_blendTreeOn) return;    // the locomotion blend tree owns the base pose
+    if (m_editorPosing) return;   // editor preview owns the pose
+    const std::string* want = nullptr;
+    if      (anim == 1 && !clipIdle.empty()) want = &clipIdle;
+    else if (anim == 2 && !clipWalk.empty()) want = &clipWalk;
+    else if (anim == 3 && !clipRun.empty())  want = &clipRun;
+    if (want) {
+        if (m_activeClipName != *want && m_clips.count(*want)) { PlayClip(*want); m_stateDriven = true; }
+        else if (m_activeClipName == *want) m_stateDriven = true;
+    } else if (m_stateDriven && m_activeClip) {
+        // Entered a state with no binding: hand back to the built-in animation. (Only
+        // when WE put the clip there — never stomp a manual PlayClip / autoPlayClip.)
+        StopClip();
+        m_stateDriven = false;
+    }
+}
+
 void Character::Update(float dt) {
+    SyncStateClips();
+    // Advance any in-progress crossfade (covers every render path below).
+    if (m_blendT < 1.0f) {
+        m_blendT += (blendTime > 1e-4f ? dt / blendTime : 1.0f);
+        if (m_blendT > 1.0f) m_blendT = 1.0f;
+    }
+    AdvanceLayer(dt);   // tick the partial-body layer clip (if any), every path below uses it
+    AdvanceBlendTree(dt);   // tick the locomotion blend tree's shared clock
+    // Separate-parts rig: animate the part transforms instead of baking one mesh.
+    if (separateParts) {
+        if (!m_partsBuilt) BuildParts();
+        if (m_partsBuilt) {
+            // Keep the baked single mesh hidden EVERY frame while the rig drives the
+            // body — otherwise the original character renders on top of the rig and you
+            // see "two characters" (most obvious when leaning). (BuildParts disables it
+            // once, but anything that re-enables it, e.g. a re-Apply, would bring it
+            // back; this makes it stick.)
+            if (auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr)
+                mr->enabled = false;
+            if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+                m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
+                if (m_punchT > 1.0f) m_punchT = 1.0f;
+            }
+            // A playing clip drives the parts; otherwise the built-in animation.
+            if (m_activeClip) AdvanceClip(dt);
+            else animTime += dt * animSpeed;
+            // Ease the head turn / tilt and the body lean toward their targets, just
+            // like the single-mesh path — otherwise a separated character never leans
+            // or head-tracks ("the camera leans but not the player").
+            float k = headTurnSpeed > 0.0f ? (1.0f - std::exp(-headTurnSpeed * dt)) : 1.0f;
+            m_headYaw   += (lookYaw   - m_headYaw)   * k;
+            m_headPitch += (lookPitch - m_headPitch) * k;
+            m_bodyLean  += (bodyLean  - m_bodyLean)  * k;
+            if (animateParts || m_editorPosing || m_activeClip) DriveParts();   // preview / clip still drive
+            return;
+        }
+    }
+    // Editor preview (single mesh): show the forced pose.
+    if (m_editorPosing) {
+        auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
+        if (mr) {
+            EnsureRest();
+            Mesh m = m_rest;
+            std::vector<Vec3> pose = m_editorPose; pose.resize(B_COUNT, Vec3{0, 0, 0});
+            Skin(m, m_bone, pose);
+            for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }
+            m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
+        }
+        return;
+    }
     // A custom clip, if one is playing, drives the whole body and overrides the
     // built-in animations.
     if (m_activeClip) {
-        m_clipTime += dt * animSpeed;
-        float dur = m_activeClip->Duration();
-        if (dur > 0.0f) {
-            if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
-            else if (m_clipTime > dur) m_clipTime = dur;
-        }
+        AdvanceClip(dt);
         auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
         if (!mr) return;
         EnsureRest();
         Mesh m = m_rest;
-        Skin(m, m_bone, m_activeClip->Sample(m_clipTime));
+        Skin(m, m_bone, CurrentSourcePose());   // crossfade-aware (blends into the clip)
         for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }  // face -Z (see Apply)
         m.normals.clear();
         mr->mesh = std::move(m);
         mr->doubleSided = true;
         return;
+    }
+    // Advance the punch arc even when posing manually, so a punch always plays.
+    if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+        m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
+        if (m_punchT > 1.0f) m_punchT = 1.0f;
     }
     if (anim == 0) return;
     animTime += dt * animSpeed;
@@ -466,12 +597,322 @@ void Character::Update(float dt) {
     if (!mr) return;
     EnsureRest();
     Mesh m = m_rest;
-    Skin(m, m_bone, PoseAt(animTime));
+    std::vector<Vec3> pose = CurrentSourcePose();   // built-in anim, crossfade-aware
+    // Layer a punch arc over the right arm (swings forward and back), so the
+    // character's own arm does the hitting on top of whatever it's already doing.
+    if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
+        float arc = std::sin(m_punchT * 3.14159265f);   // 0..1..0
+        // Swing forward (-Z, the body's facing), so the punch lands in front.
+        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {18.0f, 0.0f, 0.0f};
+        pose[B_RUPARM] = pose[B_RUPARM] + (up   - pose[B_RUPARM]) * arc;
+        pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
+    }
+    Skin(m, m_bone, pose);
     Vec3 so = StanceOffset();
     for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();
+    if (firstPersonArm) { BuildFpArm(m); m_fpArmReady = true; } else m_fpArmReady = false;
     mr->mesh = std::move(m);
     mr->doubleSided = true;
+}
+
+// Copy just the arm bones out of the fully-skinned body mesh (per-face colours kept),
+// so a separate first-person arm object can render the real arm geometry.
+void Character::BuildFpArm(const Mesh& full) {
+    m_fpArm.vertices.clear(); m_fpArm.triangles.clear();
+    m_fpArm.triColors.clear(); m_fpArm.normals.clear(); m_fpArm.name.clear();
+    const bool cols = full.HasFaceColors();
+    auto isArm = [](int b) { return b == B_LUPARM || b == B_LFORE || b == B_LHAND; };
+    int faces = (int)full.triangles.size() / 3;
+    for (int f = 0; f < faces; ++f) {
+        int a = full.triangles[f * 3], b = full.triangles[f * 3 + 1], c = full.triangles[f * 3 + 2];
+        if (a >= (int)m_bone.size() || b >= (int)m_bone.size() || c >= (int)m_bone.size()) continue;
+        if (!(isArm(m_bone[a]) && isArm(m_bone[b]) && isArm(m_bone[c]))) continue;
+        for (int idx : {a, b, c}) {
+            m_fpArm.triangles.push_back((int)m_fpArm.vertices.size());
+            m_fpArm.vertices.push_back(full.vertices[idx]);
+        }
+        if (cols) m_fpArm.triColors.push_back(full.triColors[f]);
+    }
+}
+
+// Build the character as a HIERARCHY of editable part objects (one MeshRenderer per
+// bone), so it can be selected / recoloured / animated part-by-part instead of being
+// one baked mesh. Geometry is re-centred to each joint; a "Rig" root applies the same
+// 180° face flip + height the single mesh used.
+GameObject* Character::FindRig() const {
+    if (!gameObject || !gameObject->transform) return nullptr;
+    for (Transform* c : gameObject->transform->Children())
+        if (c && c->gameObject && c->gameObject->name == "Rig") return c->gameObject;
+    return nullptr;
+}
+
+bool Character::AdoptParts(GameObject* rig) {
+    if (!rig || !rig->transform) return false;
+    m_rigRoot = rig;
+    m_parts.assign(B_COUNT, nullptr);
+    // Match each bone object by name (recurse — the rig is a hierarchy, not flat).
+    std::function<void(Transform*)> walk = [&](Transform* t) {
+        if (!t) return;
+        for (Transform* c : t->Children()) {
+            if (!c || !c->gameObject) continue;
+            for (int bi = 0; bi < B_COUNT; ++bi)
+                if (c->gameObject->name == BoneName(bi)) { m_parts[bi] = c->gameObject; break; }
+            walk(c);
+        }
+    };
+    walk(rig->transform);
+    if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;
+    m_partsBuilt = true;
+    return true;
+}
+
+void Character::RemoveParts() {
+    if (GameObject* rig = FindRig())
+        if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it
+    m_rigRoot = nullptr;
+    m_parts.clear();
+    m_partsBuilt = false;
+    if (gameObject) if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = true;
+}
+
+void Character::EditorPreviewTick() {
+    if (separateParts) {
+        if (!m_partsBuilt) BuildParts();
+        if (m_partsBuilt) DriveParts();      // push the (preview/rest) pose onto the rig
+        return;
+    }
+    // Single mesh: rebuild from the previewed pose so the editor shows it live.
+    auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
+    if (!mr) return;
+    EnsureRest();
+    Mesh m = m_rest;
+    Skin(m, m_bone, CurrentSourcePose());
+    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }
+    m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
+}
+
+void Character::BuildParts() {
+    Scene* s = GetScene();
+    if (!s || !gameObject || !gameObject->transform) return;
+    // Collapse to a SINGLE rig: adopt the first existing "Rig" child and destroy any
+    // extras, so clicking "Separate Into Parts" (or replaying) never stacks up rigs.
+    std::vector<GameObject*> rigs;
+    for (Transform* c : gameObject->transform->Children())
+        if (c && c->gameObject && c->gameObject->name == "Rig") rigs.push_back(c->gameObject);
+    if (!rigs.empty()) {
+        for (std::size_t i = 1; i < rigs.size(); ++i) s->Destroy(rigs[i]);
+        AdoptParts(rigs[0]);
+        return;
+    }
+    m_partsBuilt = false;   // no rig present — (re)build one even if the flag was stale
+    EnsureRest();   // m_rest (pre-flip/height) + m_bone (per-vertex bone)
+    auto sk = Skeleton();
+    if ((int)sk.size() < B_COUNT) return;
+    m_parts.assign(B_COUNT, nullptr);
+
+    GameObject* root = s->CreateGameObject("Rig");
+    root->transform->SetParent(gameObject->transform, false);
+    root->transform->localRotation = Quat::Euler(0.0f, 180.0f, 0.0f);   // face -Z, like the baked mesh
+    root->transform->localScale = Vec3{1.0f, height, 1.0f};
+    m_rigRoot = root;
+
+    const bool cols = m_rest.HasFaceColors();
+    const int faces = (int)m_rest.triangles.size() / 3;
+    for (int bi = 0; bi < B_COUNT; ++bi) {
+        Mesh part;
+        for (int f = 0; f < faces; ++f) {
+            int a = m_rest.triangles[f*3], b = m_rest.triangles[f*3+1], c = m_rest.triangles[f*3+2];
+            if (a >= (int)m_bone.size() || b >= (int)m_bone.size() || c >= (int)m_bone.size()) continue;
+            if (m_bone[a] != bi || m_bone[b] != bi || m_bone[c] != bi) continue;
+            for (int idx : {a, b, c}) {
+                part.triangles.push_back((int)part.vertices.size());
+                part.vertices.push_back(m_rest.vertices[idx] - sk[bi].joint);   // re-centre to the joint
+            }
+            if (cols) part.triColors.push_back(m_rest.triColors[f]);
+        }
+        if (part.vertices.empty()) continue;
+        GameObject* po = s->CreateGameObject(BoneName(bi));
+        auto* mr = po->AddComponent<MeshRenderer>();
+        mr->mesh = std::move(part); mr->doubleSided = true;
+        m_parts[bi] = po;
+    }
+    // Parent per the skeleton so rotating a bone moves its children (real rig).
+    for (int bi = 0; bi < B_COUNT; ++bi) {
+        if (!m_parts[bi]) continue;
+        int par = sk[bi].parent;
+        Vec3 parentJoint = (par >= 0) ? sk[par].joint : Vec3{0.0f, 0.0f, 0.0f};
+        GameObject* parentObj = (par >= 0 && m_parts[par]) ? m_parts[par] : root;
+        m_parts[bi]->transform->SetParent(parentObj->transform, false);
+        m_parts[bi]->transform->localPosition = sk[bi].joint - parentJoint;
+    }
+    if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;   // hide the baked mesh
+    m_partsBuilt = true;
+}
+
+std::vector<Vec3> Character::CurrentSourcePose() const {
+    std::vector<Vec3> p;
+    if (m_editorPosing)                       { p = m_editorPose; p.resize(B_COUNT, Vec3{0, 0, 0}); }
+    else if (m_activeClip && !m_stateDriven)  { p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); }  // manual clip wins
+    else if (m_blendTreeOn)                   p = SampleBlendTree();          // locomotion blend tree
+    else if (m_activeClip)                    { p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); }  // state clip
+    else                                      p = PoseAt(animTime);
+    // Crossfade from the pose captured at the last clip switch (smoothstep weight).
+    if (m_blendT < 1.0f && m_blendFrom.size() == p.size() && !p.empty()) {
+        float w = m_blendT * m_blendT * (3.0f - 2.0f * m_blendT);
+        for (std::size_t i = 0; i < p.size(); ++i) p[i] = m_blendFrom[i] + (p[i] - m_blendFrom[i]) * w;
+    }
+    ApplyLayer(p);   // overlay a partial-body layer clip (e.g. wave while walking) on top
+    return p;
+}
+
+void Character::ApplyLayer(std::vector<Vec3>& pose) const {
+    if (!m_layerClip || m_layerMask == 0 || m_layerWeight <= 0.0f) return;
+    std::vector<Vec3> lp = m_layerClip->Sample(m_layerTime);
+    if (lp.empty()) return;
+    if ((int)pose.size() < B_COUNT) pose.resize(B_COUNT, Vec3{0, 0, 0});
+    float w = m_layerWeight;
+    for (int b = 0; b < B_COUNT && b < (int)lp.size(); ++b) {
+        if (!(m_layerMask & (1u << b))) continue;
+        if (m_layerAdditive) pose[b] = pose[b] + lp[b] * w;            // add (aim offset / recoil)
+        else                 pose[b] = pose[b] + (lp[b] - pose[b]) * w; // weighted override
+    }
+}
+
+void Character::AdvanceLayer(float dt) {
+    if (!m_layerClip) return;
+    m_layerTime += dt * animSpeed * m_layerClip->speed;
+    float dur = m_layerClip->Duration();
+    if (dur > 0.0f) {
+        if (m_layerClip->loop) m_layerTime = std::fmod(m_layerTime, dur);
+        else if (m_layerTime > dur) m_layerTime = dur;   // hold the final pose
+    }
+}
+
+bool Character::PlayLayer(const std::string& clip, std::uint32_t boneMask, bool additive, float weight) {
+    auto it = m_clips.find(clip);
+    if (it == m_clips.end()) return false;
+    m_layerClip = &it->second;
+    m_layerName = clip;
+    m_layerTime = 0.0f;
+    m_layerMask = boneMask;
+    m_layerAdditive = additive;
+    m_layerWeight = weight < 0.0f ? 0.0f : (weight > 1.0f ? 1.0f : weight);
+    return true;
+}
+
+void Character::MirrorPose(std::vector<Vec3>& pose) {
+    if ((int)pose.size() < B_COUNT) pose.resize(B_COUNT, Vec3{0, 0, 0});
+    // Swap the symmetric limb bones (and flip their yaw/roll so the motion mirrors).
+    const int pairs[][2] = {
+        {B_LUPARM, B_RUPARM}, {B_LFORE, B_RFORE}, {B_LHAND, B_RHAND},
+        {B_LTHIGH, B_RTHIGH}, {B_LSHIN, B_RSHIN}, {B_LFOOT, B_RFOOT},
+    };
+    for (auto& pr : pairs) {
+        Vec3 l = pose[pr[0]], r = pose[pr[1]];
+        // mirror across the body's sagittal plane: keep pitch (x), flip yaw (y) & roll (z)
+        pose[pr[0]] = Vec3{r.x, -r.y, -r.z};
+        pose[pr[1]] = Vec3{l.x, -l.y, -l.z};
+    }
+    // Centre bones just flip yaw/roll in place.
+    for (int b : {B_HIPS, B_TORSO, B_HEAD}) pose[b] = Vec3{pose[b].x, -pose[b].y, -pose[b].z};
+}
+
+void Character::StopLayer() {
+    m_layerClip = nullptr;
+    m_layerName.clear();
+    m_layerTime = 0.0f;
+    m_layerMask = 0;
+}
+
+void Character::SetBlendTree(const std::vector<BlendStop>& stops) {
+    m_blendStops = stops;
+    std::sort(m_blendStops.begin(), m_blendStops.end(),
+              [](const BlendStop& a, const BlendStop& b) { return a.at < b.at; });
+    m_blendTreeOn = !m_blendStops.empty();
+    m_blendTreeTime = 0.0f;
+}
+
+void Character::AdvanceBlendTree(float dt) {
+    if (m_blendTreeOn) m_blendTreeTime += dt * animSpeed;
+}
+
+std::vector<Vec3> Character::SampleBlendTree() const {
+    // Sample one clip at the shared (looping) phase.
+    auto sampleClip = [&](const std::string& name) -> std::vector<Vec3> {
+        auto it = m_clips.find(name);
+        if (it == m_clips.end()) return std::vector<Vec3>(B_COUNT, Vec3{0, 0, 0});
+        float dur = it->second.Duration();
+        float t = dur > 0.0f ? std::fmod(m_blendTreeTime, dur) : 0.0f;
+        std::vector<Vec3> p = it->second.Sample(t);
+        p.resize(B_COUNT, Vec3{0, 0, 0});
+        return p;
+    };
+    if (m_blendStops.empty()) return std::vector<Vec3>(B_COUNT, Vec3{0, 0, 0});
+    if (m_blendParam <= m_blendStops.front().at) return sampleClip(m_blendStops.front().clip);
+    if (m_blendParam >= m_blendStops.back().at)  return sampleClip(m_blendStops.back().clip);
+    for (std::size_t i = 0; i + 1 < m_blendStops.size(); ++i) {
+        const BlendStop& a = m_blendStops[i];
+        const BlendStop& b = m_blendStops[i + 1];
+        if (m_blendParam < a.at || m_blendParam > b.at) continue;
+        float span = b.at - a.at;
+        float w = span > 1e-6f ? (m_blendParam - a.at) / span : 0.0f;
+        std::vector<Vec3> pa = sampleClip(a.clip), pb = sampleClip(b.clip);
+        std::vector<Vec3> out(B_COUNT, Vec3{0, 0, 0});
+        for (int k = 0; k < B_COUNT; ++k) out[k] = pa[k] + (pb[k] - pa[k]) * w;
+        return out;
+    }
+    return sampleClip(m_blendStops.back().clip);
+}
+
+std::uint32_t Character::ArmsMask() {
+    return BoneBit(B_LUPARM) | BoneBit(B_LFORE) | BoneBit(B_LHAND) |
+           BoneBit(B_RUPARM) | BoneBit(B_RFORE) | BoneBit(B_RHAND);
+}
+std::uint32_t Character::UpperBodyMask() {
+    return ArmsMask() | BoneBit(B_TORSO) | BoneBit(B_HEAD);
+}
+std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
+
+void Character::DriveParts() {
+    if (!m_partsBuilt) return;
+    std::vector<Vec3> pose = CurrentSourcePose();
+    // First-person: raise the visible arm into the lower corner of the view like a
+    // Minecraft hand (overriding the walk pose for those three bones).
+    int fpb = (firstPersonArm && fpArmBase >= 0 && fpArmBase + 2 < (int)pose.size()) ? fpArmBase : -1;
+    if (fpb >= 0) {
+        // The arm hangs off the hips/torso, which also carry the walk bob and the
+        // crouch/prone pose. We can only steady the arm by zeroing those SHARED bones,
+        // which would distort the BODY if it's visible — so we do it ONLY for the opt-in
+        // "Steady arm" / "no bob" cases (meant for first person, where the body is culled
+        // from the owner's own camera). The body's own crouch/prone pose is left intact.
+        if (fpSteady || !fpArmBob) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
+        // Raise the arm; subtract the camera pitch so the arm follows the view up/down
+        // (the rig's 180° flip maps the bone's local X to a world rotation such that
+        // subtracting pitch tilts the arm the same way the camera tilts).
+        pose[fpb]     = {fpRaise - fpPitch, 0.0f, 0.0f};   // upper arm: into frame + follow look
+        pose[fpb + 1] = {fpElbow, 0.0f, 0.0f};             // forearm bend (hand height)
+        pose[fpb + 2] = {0.0f, 0.0f, 0.0f};
+    }
+    // Punch swings the VISIBLE arm: the first-person arm if we're in first person,
+    // otherwise the right arm. Forward (-Z, the body's facing) so it lands in front.
+    int pb = (fpb >= 0) ? fpb : B_RUPARM;
+    if (m_punchT >= 0.0f && m_punchT < 1.0f && pb + 1 < (int)pose.size()) {
+        float arc = std::sin(m_punchT * 3.14159265f);
+        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {18.0f, 0.0f, 0.0f};
+        pose[pb]     = pose[pb]     + (up   - pose[pb])     * arc;
+        pose[pb + 1] = pose[pb + 1] + (fore - pose[pb + 1]) * arc;
+    }
+    for (int bi = 0; bi < B_COUNT && bi < (int)pose.size(); ++bi)
+        if (m_parts[bi] && m_parts[bi]->transform)
+            m_parts[bi]->transform->localRotation = Quat::Euler(pose[bi]);
+    if (m_rigRoot && m_rigRoot->transform) {
+        Vec3 so = StanceOffset();
+        // A steady first-person arm ignores the crouch/prone height drop so it stays in
+        // view (the owner only sees the arm, so the body's true height is irrelevant).
+        float y = (firstPersonArm && fpSteady) ? 0.0f : so.y;
+        m_rigRoot->transform->localPosition = Vec3{0.0f, y, 0.0f};
+    }
 }
 
 std::string Character::ToText() const {
@@ -490,7 +931,35 @@ std::string Character::ToText() const {
       // Custom-clip fields last so older saves (which lack them) still parse; "-"
       // stands in for an empty value (single tokens, no embedded spaces).
       << (clipsFile.empty() ? "-" : clipsFile) << ' '
-      << (autoPlayClip.empty() ? "-" : autoPlayClip);
+      << (autoPlayClip.empty() ? "-" : autoPlayClip) << ' '
+      << (separateParts ? 1 : 0) << ' ' << (animateParts ? 1 : 0);
+    // Authored animation clips (per-bone euler keyframes) so editor-made animations
+    // persist + auto-play. Names are single tokens (no spaces); poses are by index.
+    o << ' ' << m_clips.size();
+    for (const auto& kv : m_clips) {
+        const AnimClip& c = kv.second;
+        o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << (c.loop ? 1 : 0) << ' ' << c.keys.size();
+        for (const auto& k : c.keys) {
+            o << ' ' << k.time << ' ' << k.pose.size();
+            for (const auto& p : k.pose) o << ' ' << p.x << ' ' << p.y << ' ' << p.z;
+        }
+    }
+    // State-clip bindings last (trailing, so older saves still parse). "-" = unbound.
+    o << ' ' << (clipIdle.empty() ? "-" : clipIdle)
+      << ' ' << (clipWalk.empty() ? "-" : clipWalk)
+      << ' ' << (clipRun.empty()  ? "-" : clipRun)
+      << ' ' << blendTime;
+    // Animation events per clip (trailing + count-prefixed, so older saves parse as
+    // "no events"). Only clips that actually have events are written.
+    int withEvents = 0;
+    for (const auto& kv : m_clips) if (!kv.second.events.empty()) ++withEvents;
+    o << ' ' << withEvents;
+    for (const auto& kv : m_clips) {
+        const AnimClip& c = kv.second;
+        if (c.events.empty()) continue;
+        o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.events.size();
+        for (const auto& e : c.events) o << ' ' << e.time << ' ' << (e.name.empty() ? "-" : e.name);
+    }
     return o.str();
 }
 
@@ -512,6 +981,51 @@ void Character::FromText(const std::string& text) {
     std::string cf, ap;
     if (in >> cf && cf != "-") clipsFile = cf;
     if (in >> ap && ap != "-") autoPlayClip = ap;
+    int sp = 0, an = 1;
+    if (in >> sp) separateParts = (sp != 0);
+    if (in >> an) animateParts = (an != 0);
+    // Authored clips (optional; absent in older saves).
+    int nc = 0;
+    if (in >> nc) {
+        for (int ci = 0; ci < nc; ++ci) {
+            std::string cn; int lp = 1; int nk = 0;
+            if (!(in >> cn >> lp >> nk)) break;
+            AnimClip c; c.name = (cn == "-" ? "" : cn); c.loop = (lp != 0);
+            for (int ki = 0; ki < nk; ++ki) {
+                AnimKey key; int np = 0;
+                if (!(in >> key.time >> np)) break;
+                key.pose.resize(np);
+                for (int pi = 0; pi < np; ++pi) in >> key.pose[pi].x >> key.pose[pi].y >> key.pose[pi].z;
+                c.keys.push_back(std::move(key));
+            }
+            if (!c.name.empty()) AddClip(std::move(c));
+        }
+    }
+    // Optional trailing state-clip bindings (absent in older saves -> unbound).
+    std::string si, sw, sr;
+    if (in >> si) clipIdle = (si == "-" ? "" : si);
+    if (in >> sw) clipWalk = (sw == "-" ? "" : sw);
+    if (in >> sr) clipRun  = (sr == "-" ? "" : sr);
+    float bt = 0.15f;
+    if (in >> bt) blendTime = bt;
+    // Optional trailing per-clip animation events (absent in older saves).
+    int we = 0;
+    if (in >> we) {
+        for (int i = 0; i < we; ++i) {
+            std::string cn; int nev = 0;
+            if (!(in >> cn >> nev)) break;
+            std::vector<AnimEvent> evs;
+            for (int j = 0; j < nev; ++j) {
+                AnimEvent e; std::string en;
+                if (!(in >> e.time >> en)) break;
+                e.name = (en == "-" ? "" : en);
+                evs.push_back(std::move(e));
+            }
+            std::string key = (cn == "-" ? "" : cn);
+            auto it = m_clips.find(key);
+            if (it != m_clips.end()) it->second.events = std::move(evs);
+        }
+    }
     m_built = false;
 }
 

@@ -18,7 +18,10 @@ public:
     ~OkayScriptVM() override;
 
     const char* Language() const override { return "okayscript"; }
+    std::vector<std::string> BuiltinNames() const override;
     bool Load(const std::string& source, std::string* error = nullptr) override;
+    bool Validate(const std::string& source, std::string* error = nullptr) override;
+    std::vector<ScriptDiagnostic> ValidateAll(const std::string& source) override;
     void Bind(ScriptHost* host) override;
     void CallStart() override;
     void CallUpdate(float deltaTime) override;

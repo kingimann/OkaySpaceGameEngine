@@ -27,6 +27,57 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("answer").AsFloat(), 42.0f, 0.001f);
     }
 
+    // --- Validate: side-effect-free syntax check for live editor diagnostics ---
+    {
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        // Valid code passes with no error.
+        CHECK(vm->Validate("function f(n) { return n + 1; }\nvar x = f(2);", &err));
+        CHECK(err.empty());
+        // A syntax error fails and reports a line.
+        err.clear();
+        CHECK(!vm->Validate("function bad( { return 1; }", &err));
+        CHECK(!err.empty());
+        // Validate does NOT execute: a global assigned at top level is not created
+        // (Load would create it; Validate only parses).
+        auto vm2 = CreateScriptVM("okayscript");
+        vm2->Validate("var sideEffect = 123;", nullptr);
+        CHECK(vm2->GetGlobal("sideEffect").AsFloat() == 0.0f);   // never ran → unset
+        // ...whereas Load DOES run it.
+        vm2->Load("var sideEffect = 123;", nullptr);
+        CHECK_NEAR(vm2->GetGlobal("sideEffect").AsFloat(), 123.0f, 1e-4f);
+    }
+
+    // --- ValidateAll: report EVERY syntax error via statement-level recovery ---
+    {
+        auto vm = CreateScriptVM("okayscript");
+        // Clean source → no diagnostics.
+        CHECK(vm->ValidateAll("var a = 1;\nvar b = 2;\nfunction f() { return a + b; }").empty());
+        // Two independent broken statements → recovery finds BOTH, not just the first.
+        auto diags = vm->ValidateAll("var a = ;\nvar b = 2;\nvar c = ;\n");
+        CHECK(diags.size() >= 2);
+        // Diagnostics carry a source line so the editor can jump to each.
+        bool anyLine = false;
+        for (auto& d : diags) if (d.line > 0) anyLine = true;
+        CHECK(anyLine);
+        // A later broken function after a good statement is still reached (recovery works).
+        auto diags2 = vm->ValidateAll("function bad( { }\nvar ok = 5;\nfunction alsoBad( { }");
+        CHECK(diags2.size() >= 2);
+    }
+
+    // --- BuiltinNames: the editor pulls the full builtin set for autocomplete ---
+    {
+        auto vm = CreateScriptVM("okayscript");
+        auto names = vm->BuiltinNames();
+        CHECK(names.size() > 100);                       // hundreds of builtins
+        auto has = [&](const char* n){ for (auto& s : names) if (s == n) return true; return false; };
+        CHECK(has("print") && has("move") && has("spawn") && has("key"));
+        // Sorted (the impl sorts), so it's stable for the UI.
+        bool sorted = true;
+        for (std::size_t i = 1; i < names.size(); ++i) if (names[i] < names[i-1]) sorted = false;
+        CHECK(sorted);
+    }
+
     // --- Control flow: while loop sum 1..5 = 15 ---
     {
         const char* src = R"SCRIPT(
@@ -145,6 +196,331 @@ int main() {
         CHECK(sc->LoadSource(src, &err));
         scene.Start();
         CHECK_NEAR(go->transform->localPosition.x, 10.0f, 0.001f);
+    }
+
+    // --- New array/map/string/type builtins ---
+    {
+        const char* src = R"SCRIPT(
+            var xs = array(3, 1, 2);
+            var f = first(xs);          // 3
+            var l = last(xs);           // 2
+            sort_num(xs);               // [1,2,3]
+            var lo = first(xs);         // 1
+            var sl = slice(xs, 1, 3);   // [2,3]
+            var sln = count(sl);        // 2
+            var r = range(5);           // [0,1,2,3,4]
+            var rn = count(r);          // 5
+            var rsum = sum(range(1, 5)); // 1+2+3+4 = 10
+            insert_at(xs, 0, 99);       // [99,1,2,3]
+            var head = first(xs);       // 99
+            clear(xs);
+            var empty = count(xs);      // 0
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("f").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("l").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("lo").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("sln").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("rn").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("rsum").AsFloat(), 10.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("head").AsFloat(), 99.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("empty").AsFloat(), 0.0f, 0.001f);
+    }
+    {
+        const char* src = R"SCRIPT(
+            var m = map();
+            map_set(m, "a", 1);
+            map_set(m, "b", 2);
+            var vs = map_values(m);
+            var vc = count(vs);         // 2
+            var vsum = sum(vs);         // 3
+            var n = map();
+            map_set(n, "b", 20);
+            map_set(n, "c", 3);
+            map_merge(m, n);            // a=1, b=20, c=3
+            var bb = map_get(m, "b");   // 20 (src wins)
+            var cc = map_get(m, "c");   // 3
+            map_clear(m);
+            var mc = map_count(m);      // 0
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("vc").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("vsum").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("bb").AsFloat(), 20.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("cc").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("mc").AsFloat(), 0.0f, 0.001f);
+    }
+    {
+        const char* src = R"SCRIPT(
+            var a = capitalize("hello");        // "Hello"
+            var b = title_case("hi there world"); // "Hi There World"
+            var c = str_reverse("abc");         // "cba"
+            var d = trim_start("  x");          // "x"
+            var e = trim_end("y  ");            // "y"
+            var t1 = typeof(array(1));          // "array"
+            var t2 = typeof("s");               // "string"
+            var t3 = typeof(3);                 // "number"
+            var t4 = typeof(true);              // "bool"
+            var isa = is_array(array(1));       // true
+            var isn = is_num(5);                // true
+            var fr = fract(2.75);               // 0.75
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK(vm->GetGlobal("a").AsString() == "Hello");
+        CHECK(vm->GetGlobal("b").AsString() == "Hi There World");
+        CHECK(vm->GetGlobal("c").AsString() == "cba");
+        CHECK(vm->GetGlobal("d").AsString() == "x");
+        CHECK(vm->GetGlobal("e").AsString() == "y");
+        CHECK(vm->GetGlobal("t1").AsString() == "array");
+        CHECK(vm->GetGlobal("t2").AsString() == "string");
+        CHECK(vm->GetGlobal("t3").AsString() == "number");
+        CHECK(vm->GetGlobal("t4").AsString() == "bool");
+        CHECK(vm->GetGlobal("isa").AsBool());
+        CHECK(vm->GetGlobal("isn").AsBool());
+        CHECK_NEAR(vm->GetGlobal("fr").AsFloat(), 0.75f, 0.001f);
+    }
+
+    // --- Higher-order array builtins with named-function callbacks ---
+    {
+        const char* src = R"SCRIPT(
+            function dbl(x) { return x * 2; }
+            function isBig(x) { return x >= 3; }
+            function add(acc, x) { return acc + x; }
+            var xs = array(1, 2, 3, 4);
+            var doubled = map_fn(xs, "dbl");      // [2,4,6,8]
+            var dsum = sum(doubled);              // 20
+            var big = filter_fn(xs, "isBig");     // [3,4]
+            var bc = count(big);                  // 2
+            var total = reduce_fn(xs, "add", 0);  // 10
+            var found = find_fn(xs, "isBig");     // 3
+            var anyBig = any_fn(xs, "isBig");     // true
+            var allBig = all_fn(xs, "isBig");     // false
+            var nBig = count_fn(xs, "isBig");     // 2
+            var called = call("dbl", 21);         // 42
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("dsum").AsFloat(), 20.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("bc").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("total").AsFloat(), 10.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("found").AsFloat(), 3.0f, 0.001f);
+        CHECK(vm->GetGlobal("anyBig").AsBool());
+        CHECK(!vm->GetGlobal("allBig").AsBool());
+        CHECK_NEAR(vm->GetGlobal("nBig").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("called").AsFloat(), 42.0f, 0.001f);
+    }
+
+    // --- foreach over arrays AND maps; easing curves ---
+    {
+        const char* src = R"SCRIPT(
+            var xs = array(10, 20, 30);
+            var total = 0;
+            foreach (var x in xs) { total += x; }   // 60
+
+            var m = map();
+            map_set(m, "a", 1);
+            map_set(m, "b", 2);
+            map_set(m, "c", 4);
+            var ksum = 0;              // sum of values reached via keys
+            var klen = 0;              // number of keys seen
+            foreach (var k in m) { ksum += map_get(m, k); klen += 1; }  // 7, 3
+
+            // Easing endpoints: every curve maps 0 -> 0 and 1 -> 1.
+            var i0 = ease_in(0);   var i1 = ease_in(1);
+            var o0 = ease_out(0);  var o1 = ease_out(1);
+            var mid = ease_in(0.5);          // 0.25
+            var b1 = ease_bounce(1);         // 1
+            var c1 = ease_in_out_cubic(1);   // 1
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("total").AsFloat(), 60.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("ksum").AsFloat(), 7.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("klen").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("i0").AsFloat(), 0.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("i1").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("o0").AsFloat(), 0.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("o1").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("mid").AsFloat(), 0.25f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("b1").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("c1").AsFloat(), 1.0f, 0.001f);
+    }
+
+    // --- JSON round-trip: to_json / from_json for save data ---
+    {
+        const char* src = R"SCRIPT(
+            var save = map();
+            map_set(save, "level", 7);
+            map_set(save, "name", "Ada");
+            var inv = array("sword", "shield");
+            map_set(save, "items", inv);
+
+            var text = to_json(save);          // serialize
+            var back = from_json(text);        // parse it back
+
+            var lvl = map_get(back, "level");  // 7
+            var nm = map_get(back, "name");    // "Ada"
+            var items = map_get(back, "items");
+            var nItems = count(items);         // 2
+            var firstItem = first(items);      // "sword"
+
+            // Parse a raw JSON literal too.
+            var arr = from_json("[1, 2, 3, 4]");
+            var arrSum = sum(arr);             // 10
+            var flag = from_json("true");      // bool true
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("lvl").AsFloat(), 7.0f, 0.001f);
+        CHECK(vm->GetGlobal("nm").AsString() == "Ada");
+        CHECK_NEAR(vm->GetGlobal("nItems").AsFloat(), 2.0f, 0.001f);
+        CHECK(vm->GetGlobal("firstItem").AsString() == "sword");
+        CHECK_NEAR(vm->GetGlobal("arrSum").AsFloat(), 10.0f, 0.001f);
+        CHECK(vm->GetGlobal("flag").AsBool());
+    }
+
+    // --- try/catch/throw error handling ---
+    {
+        const char* src = R"SCRIPT(
+            var caught = "";
+            var ran = 0;
+            try {
+                throw "boom";
+                ran = 999;              // unreachable
+            } catch (e) {
+                caught = e;             // "boom"
+            }
+
+            // A runtime error (undefined function) is catchable too.
+            var caught2 = 0;
+            try {
+                totally_undefined_function();
+            } catch (err) {
+                caught2 = 1;
+            }
+
+            // No error -> catch body is skipped, body runs fully.
+            var ok = 0;
+            try { ok = 5; } catch (e) { ok = -1; }
+
+            // try without catch swallows the error and continues.
+            var after = 0;
+            try { throw "ignored"; }
+            after = 7;
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK(vm->GetGlobal("caught").AsString() == "boom");
+        CHECK_NEAR(vm->GetGlobal("ran").AsFloat(), 0.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("caught2").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("ok").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("after").AsFloat(), 7.0f, 0.001f);
+    }
+
+    // --- Subscript on maps + compound/increment assignment to elements ---
+    {
+        const char* src = R"SCRIPT(
+            var a = array(10, 20, 30);
+            a[1] += 5;        // 25
+            a[2] -= 10;       // 20
+            a[0] *= 3;        // 30
+            a[1]++;           // 26
+            var s = a[0] + a[1] + a[2];   // 30 + 26 + 20 = 76
+
+            var m = map();
+            m["hp"] = 100;             // subscript assign on a map
+            m["hp"] -= 30;             // 70
+            m["kills"] = 0;
+            m["kills"]++;              // 1
+            m["kills"]++;              // 2
+            var hp = m["hp"];          // subscript read
+            var kills = m["kills"];    // 2
+
+            // Missing key reads as null/0 and += starts from there.
+            m["score"] += 40;          // 40
+            var score = m["score"];
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("s").AsFloat(), 76.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("hp").AsFloat(), 70.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("kills").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("score").AsFloat(), 40.0f, 0.001f);
+    }
+
+    // --- Vector constructors and helpers ---
+    {
+        const char* src = R"SCRIPT(
+            var a = vec3(1, 2, 3);
+            var b = vec3(4, 5, 6);
+            var d = vec_dot(a, b);            // 1*4 + 2*5 + 3*6 = 32
+            var sum = vec_add(a, b);          // (5,7,9)
+            var sx = vec_x(sum);              // 5
+            var sz = vec_z(sum);              // 9
+            var len = vec_length(vec3(3, 4, 0));   // 5
+            var cr = vec_cross(vec3(1,0,0), vec3(0,1,0));  // (0,0,1)
+            var crz = vec_z(cr);              // 1
+            var clamped = vec_clamp_len(vec3(3, 4, 0), 2.5);  // magnitude 2.5
+            var clen = vec_length(clamped);   // 2.5
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("d").AsFloat(), 32.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("sx").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("sz").AsFloat(), 9.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("len").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("crz").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("clen").AsFloat(), 2.5f, 0.001f);
+    }
+
+    // --- Bitwise / integer helpers ---
+    {
+        const char* src = R"SCRIPT(
+            var a = bit_or(bit_and(12, 10), 1);   // (12&10)=8, 8|1 = 9
+            var x = bit_xor(6, 3);                // 5
+            var s = shl(1, 4);                    // 16
+            var r = shr(256, 2);                  // 64
+            var flags = 0;
+            flags = bit_set(flags, 0);            // 1
+            flags = bit_set(flags, 3);            // 9
+            var has3 = bit_test(flags, 3);        // true
+            var has1 = bit_test(flags, 1);        // false
+            flags = bit_clear(flags, 0);          // 8
+            var pi = parse_int("ff", 16);         // 255
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("a").AsFloat(), 9.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("x").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("s").AsFloat(), 16.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("r").AsFloat(), 64.0f, 0.001f);
+        CHECK(vm->GetGlobal("has3").AsBool());
+        CHECK(!vm->GetGlobal("has1").AsBool());
+        CHECK_NEAR(vm->GetGlobal("flags").AsFloat(), 8.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("pi").AsFloat(), 255.0f, 0.001f);
     }
 
     TEST_MAIN_RESULT();

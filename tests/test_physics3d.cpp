@@ -105,6 +105,86 @@ int main() {
         }
     }
 
+    // ---- Mesh + Cylinder colliders: overlap, resolve, round-trip ----
+    {
+        Scene s("col3d_new");
+        // A mesh collider (box-like) sized 4x1x4 at the origin.
+        GameObject* floor = s.CreateGameObject("MeshFloor");
+        auto* mc = floor->AddComponent<MeshCollider3D>();
+        mc->size = {4.0f, 1.0f, 4.0f};
+        // A cylinder collider standing on it.
+        GameObject* pillar = s.CreateGameObject("Pillar");
+        pillar->transform->localPosition = {0, 2, 0};
+        auto* cy = pillar->AddComponent<CylinderCollider3D>();
+        cy->radius = 0.5f; cy->height = 2.0f; cy->isTrigger = true;
+        s.Start(); s.Update(0.0f);
+
+        // OverlapSphere at the mesh floor centre finds the mesh collider — this used to
+        // invalid-cast a Mesh (box-like) to a capsule.
+        auto hits = s.physics3D().OverlapSphere(s, {0, 0, 0}, 0.5f);
+        bool foundMesh = false;
+        for (auto* c : hits) if (c == mc) foundMesh = true;
+        CHECK(foundMesh);
+
+        // Depenetrate a sphere sitting inside the mesh floor — it gets pushed out (up).
+        Vec3 fixed = s.physics3D().ResolveSphere(s, Vec3{0, 0.2f, 0}, 0.5f, nullptr, 4);
+        CHECK(fixed.y > 0.2f);
+
+        // Round-trip both new collider types.
+        Scene loaded("L");
+        CHECK(SceneSerializer::Deserialize(loaded, SceneSerializer::Serialize(s)));
+        auto* lm = loaded.Find("MeshFloor") ? loaded.Find("MeshFloor")->GetComponent<MeshCollider3D>() : nullptr;
+        auto* lc = loaded.Find("Pillar") ? loaded.Find("Pillar")->GetComponent<CylinderCollider3D>() : nullptr;
+        CHECK(lm != nullptr);
+        CHECK(lc != nullptr);
+        if (lm) CHECK_NEAR(lm->size.x, 4.0f, 1e-4f);
+        if (lc) { CHECK_NEAR(lc->radius, 0.5f, 1e-4f); CHECK(lc->isTrigger); }
+    }
+
+    // ---- Mesh collider (exact): a body lands on a modeled floor + is blocked by a wall ----
+    {
+        Scene s("meshtri");
+        // A flat floor mesh (XZ plane at y=0) with a MeshCollider3D — no rigidbody, so
+        // it's static world geometry that collides against its actual triangles.
+        GameObject* floor = s.CreateGameObject("Floor");
+        floor->AddComponent<MeshRenderer>()->mesh = Mesh::Plane(20.0f);
+        floor->AddComponent<MeshCollider3D>();
+
+        // A dynamic ball falling onto the floor.
+        GameObject* ball = s.CreateGameObject("Ball");
+        ball->transform->localPosition = {0, 4, 0};
+        auto* rb = ball->AddComponent<Rigidbody3D>();
+        ball->AddComponent<SphereCollider3D>()->radius = 0.5f;
+        s.Start();
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);   // ~4s of falling
+        // It rests on the floor (centre ~radius above y=0), not tunneling through.
+        CHECK(ball->transform->Position().y > 0.2f);
+        CHECK(ball->transform->Position().y < 1.2f);
+        (void)rb;
+    }
+
+    // A tall thin wall mesh blocks a body driven into it (no walk-through).
+    {
+        Scene s("meshwall");
+        GameObject* wall = s.CreateGameObject("Wall");
+        Mesh m = Mesh::Cube();
+        for (Vec3& v : m.vertices) { v.x *= 0.2f; v.y *= 4.0f; v.z *= 6.0f; }  // thin in X, tall, wide
+        wall->transform->localPosition = {2, 0, 0};
+        wall->AddComponent<MeshRenderer>()->mesh = m;
+        wall->AddComponent<MeshCollider3D>();
+
+        GameObject* body = s.CreateGameObject("Body");
+        body->transform->localPosition = {0, 0, 0};
+        auto* rb = body->AddComponent<Rigidbody3D>();
+        rb->gravityScale = 0.0f;
+        body->AddComponent<SphereCollider3D>()->radius = 0.5f;
+        s.Start();
+        // Drive it toward the wall each frame; it must be stopped before passing through.
+        for (int i = 0; i < 120; ++i) { rb->velocity = {4, 0, 0}; s.Update(1.0f / 60.0f); }
+        // Blocked near the wall's near face (~1.4), never through it (wall centre x=2).
+        CHECK(body->transform->Position().x < 1.7f);
+    }
+
     // ---- 2D capsule collider: overlaps a circle, round-trips ----
     {
         Scene s("cap2d");

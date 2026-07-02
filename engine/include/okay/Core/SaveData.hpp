@@ -106,13 +106,32 @@ private:
 class Save {
 public:
     static const std::string& DefaultFile() { static std::string f = "save.okaysave"; return f; }
+
+    /// Folder that relative save files resolve into (Unity's persistentDataPath).
+    /// The player points this at a per-user, writable app folder so saves work in
+    /// read-only install locations and don't clash between games. Empty = current
+    /// dir (the legacy behaviour). Absolute file paths are never relocated.
+    static std::string& BaseDir() { static std::string d; return d; }
+    static void SetBaseDir(const std::string& dir) {
+        std::string d = dir;
+        if (!d.empty() && d.back() != '/' && d.back() != '\\') d += '/';
+        BaseDir() = d;
+    }
+    static std::string Resolve(const std::string& path) {
+        const std::string& b = BaseDir();
+        if (b.empty() || path.empty()) return path;
+        bool abs = path[0] == '/' || path[0] == '\\' || (path.size() > 1 && path[1] == ':');
+        return abs ? path : b + path;
+    }
+
     static SaveFile& File(const std::string& path) {
+        std::string key = Resolve(path);
         auto& m = Files();
-        auto it = m.find(path);
-        if (it == m.end()) { SaveFile sf; sf.Load(path); it = m.emplace(path, std::move(sf)).first; }
+        auto it = m.find(key);
+        if (it == m.end()) { SaveFile sf; sf.Load(key); it = m.emplace(key, std::move(sf)).first; }
         return it->second;
     }
-    static bool Flush(const std::string& path) { return File(path).Save(path); }
+    static bool Flush(const std::string& path) { return File(path).Save(Resolve(path)); }
 
     // Write-through helpers (set + persist immediately), Easy-Save-3 style.
     static void SetFloat (const std::string& k, float v, const std::string& file = DefaultFile())              { File(file).SetFloat(k, v);  Flush(file); }
@@ -131,11 +150,12 @@ public:
     static void Delete(const std::string& k, const std::string& file = DefaultFile()) { File(file).Delete(k); Flush(file); }
     static void Clear(const std::string& file = DefaultFile())                        { File(file).Clear();   Flush(file); }
     static bool FileExists(const std::string& file = DefaultFile()) {
-        std::ifstream f(file); return (bool)f;
+        std::ifstream f(Resolve(file)); return (bool)f;
     }
     static bool DeleteFile(const std::string& file = DefaultFile()) {
-        Files().erase(file);
-        return std::remove(file.c_str()) == 0;
+        std::string key = Resolve(file);
+        Files().erase(key);
+        return std::remove(key.c_str()) == 0;
     }
 
 private:

@@ -27,7 +27,7 @@ public:
     float fieldOfView = 60.0f;
     bool  fovAxisHorizontal = false;   // false = vertical FOV (Unity default), true = horizontal
     float nearClip = 0.3f;   // Unity-like near plane
-    float farClip  = 1000.0f;
+    float farClip  = 4000.0f; // generous default so large voxel worlds / open terrain stay visible to the horizon
 
     /// Physical camera (Unity's Physical Camera): derive the field of view from a
     /// real lens focal length + sensor size instead of an angle. Great for matching
@@ -61,6 +61,17 @@ public:
     /// Transient (set at runtime by controllers; not serialized).
     GameObject* ignoreObject = nullptr;
 
+    /// Build a world-space picking ray through a screen pixel (origin top-left,
+    /// +Y down) — Unity's Camera.ScreenPointToRay, for click-to-select / shooting.
+    /// `outOrigin`/`outDir` (dir normalized) are set from this camera's transform and
+    /// lens; works for both perspective and orthographic.
+    void ScreenPointToRay(float screenX, float screenY, float screenW, float screenH,
+                          Vec3& outOrigin, Vec3& outDir) const;
+    /// World point at screen pixel (screenX,screenY) and `viewDepth` world units in
+    /// front of the camera (Unity's Camera.ScreenToWorldPoint with z = distance).
+    Vec3 ScreenToWorldPoint(float screenX, float screenY, float viewDepth,
+                            float screenW, float screenH) const;
+
     /// World-to-camera matrix (inverse of the Transform's world matrix).
     Mat4 ViewMatrix() const;
     /// Projection matrix for the given viewport aspect ratio.
@@ -84,6 +95,34 @@ public:
         out = Vec2{(ndcX * 0.5f + 0.5f) * screenW, (1.0f - (ndcY * 0.5f + 0.5f)) * screenH};
         if (outDepth) *outDepth = clip.w;
         return true;
+    }
+
+    /// World point to viewport coordinates (Unity's WorldToViewportPoint): x,y in
+    /// 0..1 with the ORIGIN BOTTOM-LEFT (+Y up); *outDepth is the view depth. Returns
+    /// false when the point is behind the camera.
+    bool WorldToViewportPoint(const Vec3& world, float screenW, float screenH,
+                              Vec2& out, float* outDepth = nullptr) const {
+        Vec2 px; float d = 0.0f;
+        if (!WorldToScreen(world, screenW, screenH, px, &d)) return false;
+        out = Vec2{screenW > 0.0f ? px.x / screenW : 0.0f,
+                   screenH > 0.0f ? 1.0f - px.y / screenH : 0.0f};   // flip to +Y up
+        if (outDepth) *outDepth = d;
+        return true;
+    }
+
+    /// True if a world point is in front of the camera AND inside the viewport rect —
+    /// a quick on-screen test for culling labels, spawning, off-screen indicators.
+    bool IsPointVisible(const Vec3& world, float screenW, float screenH) const {
+        Vec2 vp; float d = 0.0f;
+        if (!WorldToViewportPoint(world, screenW, screenH, vp, &d)) return false;
+        return d > 0.0f && vp.x >= 0.0f && vp.x <= 1.0f && vp.y >= 0.0f && vp.y <= 1.0f;
+    }
+
+    /// Picking ray from a viewport point (0..1, origin bottom-left) — the viewport
+    /// twin of ScreenPointToRay.
+    void ViewportPointToRay(float vx, float vy, float screenW, float screenH,
+                            Vec3& outOrigin, Vec3& outDir) const {
+        ScreenPointToRay(vx * screenW, (1.0f - vy) * screenH, screenW, screenH, outOrigin, outDir);
     }
 
     void Awake() override;

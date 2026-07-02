@@ -126,10 +126,40 @@ planet, `A` player ship.)*
   built-in **VS Code-style editor** (line-number gutter, syntax highlighting,
   Find, inline errors, comment-toggle, go-to-line, duplicate/move-line, zoom and
   snippets).
-- **Terrain** — a Unity-style heightmap terrain you sculpt with a brush (drag in
-  the 3D view to raise, Shift to lower) or generate (Flatten / Smooth / Randomize
-  / Hills), rendered as a generated mesh. Create from GameObject > 3D Object >
-  Terrain; the heightmap saves with the scene.
+- **Terrain** — a Unity-style heightmap terrain you sculpt with brushes (Raise/
+  Lower, Smooth, Flatten, Set Height, Noise, Erode — each with a Hardness control)
+  or generate (Mountains, Hills, Plains, Plateau, Islands, Ridged Mountains,
+  Canyons). **Erosion** weathers generated terrain into believable landscape
+  (hydraulic droplet sim carves valleys; thermal slumps cliffs), and heightmaps
+  **import/export as PNG** (round-trip with World Machine / Gaea / Photoshop).
+  Bodies walk on it with slope-aware collision (slide / bounce / friction), and a
+  runtime **Terrain Digger** carves it live in Play with an on-ground brush marker.
+  Try the **Terrain Sandbox** template. The heightmap saves with the scene. Size
+  and resolution are uncapped — build maps as large as you like.
+- **Voxel terrain (real caves)** — a smooth marching-cubes `VoxelTerrain` you can
+  dig actual caves, tunnels and overhangs into (not heightmap craters). Generate a
+  cave-riddled landscape and carve it live in Play with the `VoxelDigger` (left
+  mouse digs, right mouse adds), with a brush marker. See the **Voxel Sandbox**
+  template.
+- **Water** — a living `Water` surface: reflective, semi-transparent, with rolling
+  animated waves, a flowing current and sun-glint (not a flat blue plane).
+- **Pause menu** — a no-code `PauseMenu`: press Escape to freeze the game and show
+  Resume / Quit (and optional Main Menu) buttons. Pauses all gameplay and exits the
+  built game cleanly.
+- **Cascaded shadows** — directional cast shadows rendered as several
+  camera-focused cascades so they stay crisp up close while cheaply covering
+  distance on big maps (the practical, DX11-class stand-in for virtual shadow
+  maps). Tunable Shadow distance / Cascades / Softness / Resolution in
+  View > Lighting and Build Settings; distance 0 falls back to a single
+  whole-scene map.
+- **World Partition / streaming** — the `WorldStreamer` component loads a huge map
+  as a grid of cell prefab files, keeping only the chunks near a target (camera or
+  named object) resident (load/unload radii with hysteresis). Build worlds far
+  bigger than RAM; missing cells are skipped so sparse maps just work.
+- **Chaos destruction** — the `Destructible` component shatters voxel blocks (from
+  `BlockBuilder` or any tagged object) into physics debris instead of vanishing,
+  then runs a structural-support pass so blocks that lose their path to the ground
+  collapse under gravity. Optional camera-ray "destruction gun" for instant use.
 - **Materials** — reusable surface presets (albedo, emissive, specular, texture,
   tiling, unlit, double-sided) saved as `.okaymat` assets and applied to any
   Mesh Renderer (Save/Load in the inspector, or drag a `.okaymat` from Project).
@@ -240,9 +270,12 @@ planet, `A` player ship.)*
   your scene(s) + a `game.okayconfig` next to a tiny SDL2 **player runtime**,
   renamed `<Game>.exe` — a double-clickable game (2D sprites, shaded 3D meshes
   with **skybox + lighting**, audio, input) you can ship. The shipped player
-  uses the same **GPU 3D renderer** as the editor (Direct3D 11 on Windows,
-  OpenGL elsewhere; toggle in Build Game), and falls back to the software
-  rasterizer when no GPU is available. See [`docs/editor.md`](docs/editor.md).
+  uses the same **GPU 3D renderer** as the editor (Direct3D 11 — or opt-in
+  Direct3D 12 — on Windows, OpenGL elsewhere; toggle in Build Game), and falls
+  back to the software rasterizer when no GPU is available. All GPU backends
+  shade up to 16 dynamic lights, honour distance fog, and render real directional
+  **cast-shadow maps** (opt-in, with PCF); Direct3D 11/12 add MSAA anti-aliasing.
+  See [`docs/editor.md`](docs/editor.md).
 - **Core has no external dependencies** — just a C++17 compiler, CMake, threads.
   Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) and the editor
   (SDL2/OpenGL) are opt-in.

@@ -3,6 +3,7 @@
 #include "okay/Net/UdpSocket.hpp"
 #include "okay/Net/SecureChannel.hpp"
 #include "okay/Math/Vec3.hpp"
+#include "okay/Math/Quat.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -202,6 +203,42 @@ public:
     /// same position — replicated object creation with one call.
     void Spawn(const std::string& prefabPath, const Vec3& position = Vec3::Zero);
 
+    /// Spawn a prefab on every peer AND make THIS peer the network authority for
+    /// it: the new instance is given a NetworkSync (a unique id, owned here and
+    /// followed everywhere else) so its transform — and Character animation, if any
+    /// — replicate automatically as you move it. Use for bullets, thrown/dropped
+    /// items, abilities: the mover lives on the spawner, everyone else just sees it.
+    /// Returns the local instance (or nullptr if it couldn't be created).
+    GameObject* SpawnOwned(const std::string& prefabPath, const Vec3& position = Vec3::Zero);
+
+    /// Destroy a previously SpawnOwned object on every peer by its sync id (the
+    /// NetworkSync netId). Removes it locally and tells the others to do the same —
+    /// the matching despawn for replicated bullets / pickups.
+    void Despawn(const std::string& netId);
+
+    // ---- Networked transforms (drop-in object replication) -------------
+    /// Replicate a Transform across the whole session under a unique `id`. The peer
+    /// that owns it (`owned` = true) broadcasts its position + rotation `syncRate`
+    /// times a second; every other peer eases its local copy toward the latest
+    /// received state (using `interpolationRate`). This is what the NetworkSync
+    /// component is built on, so ANY object can replicate with no networking code —
+    /// just give matching ids on each peer and flag the authority as the owner.
+    void RegisterSync(const std::string& id, Transform* t, bool owned);
+    /// Stop replicating the object registered under `id`.
+    void UnregisterSync(const std::string& id);
+    /// Change who is authoritative for `id` at runtime (ownership transfer).
+    void SetSyncOwned(const std::string& id, bool owned);
+    /// Attach optional EXTRA state to a synced object: on the owner, `get` is called
+    /// each broadcast to pack a small string (e.g. an animation index); on everyone
+    /// else, `set` is called with the received string. Rides alongside the transform
+    /// in the same packet. This is how NetworkSync replicates Character animation
+    /// without the net core knowing anything about characters.
+    void SetSyncExtra(const std::string& id, std::function<std::string()> get,
+                      std::function<void(const std::string&)> set);
+    /// True if a transform is currently registered under `id`.
+    bool HasSync(const std::string& id) const { return m_syncObjs.count(id) != 0; }
+    float syncRate = 15.0f;   ///< networked-transform broadcasts per second (0 = every frame)
+
     // ---- Reliable messaging (guaranteed delivery + de-dup over UDP) ----
     /// Like Send(), but resent until the other end acknowledges it and de-duped
     /// on arrival — for events you can't afford to drop (deaths, score, "go!").
@@ -210,6 +247,40 @@ public:
     void SendReliable(const std::string& channel, const std::string& data);
     /// Reliable message to a single peer id (server routes; 0 = the host).
     void SendReliableTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+
+    // ---- Remote procedure calls (named events) -------------------------
+    /// A first-class RPC: every peer that registered a handler for `name` runs it
+    /// with the sender id + payload. Built on the message system but dispatched by
+    /// name to a callback (no manual channel parsing). Broadcast to everyone else.
+    void Rpc(const std::string& name, const std::string& data = "") { Send("__rpc/" + name, data); }
+    /// RPC to a single peer id (0 = the server/host).
+    void RpcTo(std::uint32_t targetId, const std::string& name, const std::string& data = "") {
+        SendTo(targetId, "__rpc/" + name, data);
+    }
+    /// RPC that is guaranteed to arrive (resent until acked) — for one-off events
+    /// you can't drop (a death, "round start", a door opening).
+    void RpcReliable(const std::string& name, const std::string& data = "") { SendReliable("__rpc/" + name, data); }
+    /// Register the handler that runs when an RPC named `name` arrives. The callback
+    /// gets (senderId, payload). Replaces any previous handler for that name.
+    void OnRpc(const std::string& name, std::function<void(std::uint32_t, const std::string&)> f) {
+        m_rpcHandlers[name] = std::move(f);
+    }
+    /// Remove a previously registered RPC handler.
+    void ClearRpc(const std::string& name) { m_rpcHandlers.erase(name); }
+
+    // ---- Chat ----------------------------------------------------------
+    /// One chat line: who said it (peer id + the name they joined with) and the text.
+    struct ChatEntry { std::uint32_t from; std::string name; std::string text; };
+    /// Send a chat line to everyone (reliable, so it isn't dropped). It's stamped
+    /// with your name and added to your own log too.
+    void Chat(const std::string& text);
+    /// The rolling chat history (most recent last, capped at `chatHistory`).
+    const std::vector<ChatEntry>& ChatLog() const { return m_chatLog; }
+    /// Clear the local chat history.
+    void ClearChat() { m_chatLog.clear(); }
+    /// Fired the moment a chat line arrives (for live UIs / sounds).
+    void OnChat(std::function<void(const ChatEntry&)> f) { m_chatHandler = std::move(f); }
+    int chatHistory = 100;   ///< how many chat lines to keep
 
     // ---- Moderation ----------------------------------------------------
     /// Server: disconnect a client by id (with an optional reason it's told).
@@ -381,6 +452,27 @@ private:
     std::vector<NetMessage> m_inbox;
     std::function<void(std::uint32_t, const std::string&)> m_peerJoined;
     std::function<void(std::uint32_t)> m_peerLeft;
+
+    // Networked transforms (drop-in object replication via NetworkSync).
+    struct SyncObj {
+        Transform* t = nullptr;
+        bool  owned = false;
+        Vec3  targetPos{};
+        Quat  targetRot{};
+        bool  hasTarget = false;
+        std::function<std::string()> getExtra;            // owner packs extra state
+        std::function<void(const std::string&)> setExtra; // remote applies it
+    };
+    std::unordered_map<std::string, SyncObj> m_syncObjs;
+    float m_syncTimer = 0.0f;
+    std::uint32_t m_spawnCounter = 0;     // unique-id source for SpawnOwned
+    void SyncTick(float dt);
+    void DestroyLocalSync(const std::string& id);   // despawn a synced object here
+
+    // First-class RPC handlers (by name) + chat log/handler.
+    std::unordered_map<std::string, std::function<void(std::uint32_t, const std::string&)>> m_rpcHandlers;
+    std::vector<ChatEntry> m_chatLog;
+    std::function<void(const ChatEntry&)> m_chatHandler;
 
     // Server-authoritative synced variables
     std::unordered_map<std::string, std::string> m_syncVars;

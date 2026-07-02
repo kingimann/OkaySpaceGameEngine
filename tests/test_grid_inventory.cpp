@@ -44,5 +44,53 @@ int main() {
     CHECK(inv2->items.size() == 1 && inv2->items[0].name == "Rifle");
     CHECK(inv->items.size() == 1 && inv->items[0].name == "Can");
 
+    // ---- Unturned multi-container screen: equipped (worn) + nearby (ground) ----
+    Scene s2("unturned");
+    GameObject* player = s2.CreateGameObject("Player");
+    auto* body = player->AddComponent<GridInventory>();   // the player's own grid
+    body->cols = 5; body->rows = 3; body->category = "Hands";
+    auto* screen = player->AddComponent<GridInventoryUI>();
+    screen->multiContainer = true; screen->nearbyRange = 4.0f;
+
+    // A worn backpack: a CHILD of the player with its own grid → counts as equipped.
+    GameObject* pack = s2.CreateGameObject("Backpack");
+    pack->transform->SetParent(player->transform, false);
+    auto* packInv = pack->AddComponent<GridInventory>();
+    packInv->cols = 6; packInv->rows = 6; packInv->category = "Backpack";
+
+    // A nearby loot crate (worldItem) 3m away → within range.
+    GameObject* crate = s2.CreateGameObject("Crate");
+    crate->transform->localPosition = {3.0f, 0.0f, 0.0f};
+    auto* crateInv = crate->AddComponent<GridInventory>();
+    crateInv->worldItem = true; crateInv->cols = 4; crateInv->rows = 4;
+    crateInv->AddItem("Loot", 1, 1, 5, 0.2f);
+
+    // A far crate 20m away → out of range, must NOT show.
+    GameObject* far = s2.CreateGameObject("FarCrate");
+    far->transform->localPosition = {20.0f, 0.0f, 0.0f};
+    auto* farInv = far->AddComponent<GridInventory>();
+    farInv->worldItem = true;
+
+    // Nest the whole rig under one tidy group: the player + the crate are SIBLINGS
+    // under "Unturned" (the crate is NOT a child of the player). The screen keys off
+    // the object it sits on, so worn bags (player's children) stay "equipped" and the
+    // sibling crate stays "nearby" — exactly the clean, grouped layout we want.
+    GameObject* group = s2.CreateGameObject("Unturned");
+    player->transform->SetParent(group->transform, false);
+    crate->transform->SetParent(group->transform, false);
+
+    std::vector<GridInventory*> equipped, nearby;
+    screen->CollectContainers(equipped, nearby);
+    CHECK(equipped.size() == 2);            // body + worn backpack
+    CHECK(equipped[0] == body);             // primary first
+    CHECK(equipped[1] == packInv);
+    CHECK(nearby.size() == 1);              // only the in-range crate
+    CHECK(nearby[0] == crateInv);
+
+    // Loot a nearby item straight into the worn backpack (cross-container).
+    CHECK(crateInv->MoveTo(0, *packInv, 0, 0));
+    CHECK(packInv->items.size() == 1 && packInv->items[0].name == "Loot");
+    CHECK(crateInv->items.empty());
+
     TEST_MAIN_RESULT();
 }

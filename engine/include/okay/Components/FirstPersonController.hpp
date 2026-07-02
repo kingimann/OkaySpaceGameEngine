@@ -7,7 +7,10 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
@@ -42,10 +45,16 @@ public:
     float mouseSensitivity = 0.15f;     // degrees per pixel of mouse movement
     float minPitch = -85.0f, maxPitch = 85.0f;
     bool  invertY = false;              // invert vertical mouse look
+    // View bob: a subtle up/down camera sway in step with walking, so movement
+    // feels grounded instead of gliding. Scales with speed; smooths out when idle.
+    bool  headBob   = true;
+    float bobAmount = 0.05f;            // bob height (world units)
+    float bobSpeed  = 9.0f;             // bob cadence (≈ footstep rate)
     char  sprintKey = Input::KeyShift;  // hold (or tap, if toggleRun) to run; 0 = disabled
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
     bool  canJump = true;
     bool  driveAnimation = true;        // set a sibling Character's anim from movement
+    bool  footIK = false;               // plant the Character's feet on the ground (foot IK)
     bool  showBody = false;             // first person: hide your own body (no head clipping)
     bool  lockCursor = true;            // hide + lock the cursor to the window while playing
 
@@ -79,6 +88,7 @@ public:
     void Start() override {
         ApplyBodyVisibility();
         if (lockCursor) Cursor::Capture(true);   // hide + lock for mouse-look
+        if (footIK) AttachCharacterFootIK(gameObject);
     }
 
     // First person: the player's own camera should IGNORE the body (so you don't
@@ -87,7 +97,14 @@ public:
     // tell the child camera to skip this object. showBody=true clears that.
     void ApplyBodyVisibility() {
         if (gameObject)
-            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = true;  // never hide globally
+            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) {
+                // Normally keep the baked body mesh enabled (hidden from your own view
+                // via the camera's ignore, still seen by other cameras). BUT when the
+                // Character is a separated rig, the rig renders the body instead — so
+                // leave the baked mesh hidden, or you'd see TWO characters overlapping.
+                auto* ch = gameObject->GetComponent<Character>();
+                mr->enabled = !(ch && ch->separateParts);
+            }
         if (Transform* camT = FindCameraChild())
             if (auto* cam = camT->gameObject->GetComponent<Camera>())
                 cam->ignoreObject = showBody ? nullptr : gameObject;
@@ -95,6 +112,8 @@ public:
 
     void Update(float dt) override {
         if (!transform) return;
+        if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         ApplyBodyVisibility();
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.
@@ -104,12 +123,16 @@ public:
         // Mouse-right turns right and mouse-up looks up. The camera looks down its
         // local -Z, so yaw decreases with rightward mouse movement.
         Vec2 mp = Input::MousePosition();
-        if (m_haveMouse && !Input::UICaptured()) {   // a modal UI (open inventory) pauses look
+        bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
+        if (m_haveMouse && !uiBlocked) {
             yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
-        m_lastMouse = mp; m_haveMouse = true;
+        // Drop the baseline while a bag is open: the fed mouse switches between locked
+        // (accumulated relative) and free (absolute) space, so without this the first
+        // frame after closing computes one huge delta and snaps the camera.
+        m_lastMouse = mp; m_haveMouse = !uiBlocked;
 
         // Lean: hold Q/E to peek; the camera rolls and shifts sideways.
         UpdateLean(dt);
@@ -147,11 +170,16 @@ public:
         // Grounded: resting (low vertical speed) — reliable across any ground setup —
         // OR a fresh ground contact. Coyote time + jump buffer make jumping forgiving.
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f;
+        // Heightmap terrain has no collider, so it never fires collision callbacks;
+        // Physics3D flags resting-on-terrain on the body instead. Treat it as a real
+        // ground contact so the jump counter refills (otherwise you get exactly one
+        // jump on terrain, then never again).
+        bool terrainGround = rb && rb->groundedOnTerrain;
+        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || terrainGround;
         // The jump COUNT is what stops endless jumping: it refills only on a real
         // ground contact, so the brief zero-velocity at the jump apex can't hand you
         // another jump. maxJumps allows double (or more) jumps.
-        if (m_groundContact > 0.0f) m_jumpsUsed = 0;
+        if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;  // ground jump spent
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
@@ -167,7 +195,7 @@ public:
             if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
             rb->velocity.x = cur.x + dv.x;
             rb->velocity.z = cur.z + dv.z;
-            if (canJump && m_jumpBuf > 0.0f) {
+            if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
@@ -183,12 +211,20 @@ public:
                 ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
         }
 
+        // ---- View bob (footstep sway) ----
+        {
+            float hSpeed = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z)
+                              : (moving ? speed : 0.0f);
+            ApplyHeadBob(dt, grounded, hSpeed);
+        }
+
         // ---- Animation ----
         if (driveAnimation)
             if (Character* ch = FindCharacter()) {
-                ch->anim = airborne ? 5
-                         : m_stance == Stance::Prone  ? 7
-                         : m_stance == Stance::Crouch ? 6
+                // No jump/fall pose (it looked off): airborne keeps the matching
+                // ground pose (idle / walk / run) instead of a special jump anim.
+                ch->anim = m_stance == Stance::Prone  ? 7
+                         : m_stance == Stance::Crouch ? (moving ? 17 : 6)   // crouch-walk vs sneak-idle
                          : (moving ? (running ? 3 : 2) : 1);
                 // The body turns with yaw, so the head only needs to tilt with the
                 // look pitch (visible to other players / shadows in first person).
@@ -243,20 +279,41 @@ private:
         m_lean += (target - m_lean) * t;
     }
 
-    // Ease the child camera's local height toward the active stance's eye height.
+    // Ease the base eye height toward the active stance's height (the view bob is
+    // added on top of this each frame in ApplyHeadBob).
     void ApplyEyeHeight(float dt) {
         Transform* cam = FindCameraChild();
         if (!cam) return;
+        if (!m_haveEyeBase) { m_eyeBase = cam->localPosition.y; m_haveEyeBase = true; }
         float target = m_stance == Stance::Prone  ? proneEyeHeight
                      : m_stance == Stance::Crouch ? crouchEyeHeight : standEyeHeight;
         float t = stanceLerp > 0.0f ? (1.0f - std::exp(-stanceLerp * dt)) : 1.0f;
-        cam->localPosition.y += (target - cam->localPosition.y) * t;
+        m_eyeBase += (target - m_eyeBase) * t;
+        cam->localPosition.y = m_eyeBase;     // bob (if any) is layered on after movement
+    }
+
+    // Layer a walking head-bob on top of the eased eye height.
+    void ApplyHeadBob(float dt, bool grounded, float hSpeed) {
+        Transform* cam = FindCameraChild();
+        if (!cam) return;
+        if (headBob && grounded && hSpeed > 0.3f) {
+            float ref = Mathf::Max(0.1f, walkSpeed);
+            m_bobPhase += dt * bobSpeed * Mathf::Max(0.4f, hSpeed / ref);
+            float amp = bobAmount * Mathf::Min(1.0f, hSpeed / ref);
+            m_bob = std::sin(m_bobPhase) * amp;
+        } else {
+            m_bob += (0.0f - m_bob) * Mathf::Min(1.0f, 10.0f * dt);   // ease out when idle/airborne
+        }
+        cam->localPosition.y = m_eyeBase + m_bob;
     }
 
     Vec2 m_lastMouse{0, 0};
     bool m_haveMouse = false;
     bool m_runToggled = false;
     Stance m_stance = Stance::Stand;
+    float m_eyeBase = 1.6f;          // eased base eye height (bob layered on top)
+    bool  m_haveEyeBase = false;
+    float m_bobPhase = 0.0f, m_bob = 0.0f;   // walking view-bob state
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     float m_groundContact = 0.0f;

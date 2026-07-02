@@ -77,6 +77,30 @@ Recent additions (v2.12–2.14):
   highlighting, **Find** (Ctrl+F), inline compile errors, current-line
   highlight, **zoom** (Ctrl+scroll), **comment toggle** (Ctrl+/), **go-to-line**,
   **duplicate line** (Ctrl+D), **move line** (Alt+↑/↓), and a **Snippets** menu.
+  Prefer your own editor? **Open in IDE** launches the script in VS Code / your
+  OS default, and with **Live Sync** on (enabled automatically when you open it)
+  every save out there reloads in-engine — so you can code entirely outside
+  OkaySpace. If you also have unsaved edits in-app when the file changes, a banner
+  lets you pick which version to keep. The editor can also **Float** into its own
+  window or **Dock** back as a tab.
+- **UI editing** — two ways to edit the Canvas on a flat screen (Unity's UI view):
+  a **mode toggle** that locks the Scene view to UI-only (View ▸ UI Editing Mode, or
+  the **UI Only** button on the Scene toolbar), and a **dedicated dockable "UI" tab**
+  (View ▸ UI Editor (separate tab)) you can keep open **beside** the 3D Scene so you
+  see the world and the UI layout at once. Both share the same tools — zoom/pan,
+  rule-of-thirds guides, an **All Bounds** outline of every widget, a **safe-area**
+  inset, grid snap, an **aspect-ratio device frame** (16:9 / 4:3 / 1:1 / 9:16
+  phone…) that shows how the layout crops on that shape, a **Frame Sel** button that
+  zooms/centres on the selected widget, and a compact **pos/size** editor right on
+  the toolbar. Only the viewport under the pointer processes a drag, so having both
+  the Scene view and the UI tab open never double-moves a widget. Dragging a UI
+  child **snaps stickily to its parent** (edges, center and thirds), Unity-style, in
+  addition to the canvas and sibling smart-guides.
+- **Flow Graph** (Window ▸ Flow Graph) — a node view of the selected object's
+  **Actions** (visual scripting): the trigger wires to its conditions and a chain
+  of instructions. **Add** a condition/instruction and **click any node to edit it
+  in place** — pick the op and fill its arguments with the same editor the
+  Inspector uses, so both stay in sync. Drag nodes to arrange; the ✕ deletes one.
 - **Material inspector** — double-click a `.okaymat` to edit albedo / emissive /
   specular / texture / tiling, then Save or **Apply to Selection**; or drag a
   `.okaymat`/image onto an object to apply it.
@@ -84,9 +108,24 @@ Recent additions (v2.12–2.14):
   save files (typed key/value table); the editor side of `save()` / `load()`.
 - **Drag & drop from Project** — drop prefabs/scenes/images/`.obj` into the Scene
   to place them; drop scripts/materials onto the Inspector or Hierarchy.
+- **Combine scenes (seamless worlds)** — **File ▸ Merge Scene into Current…**
+  (or **drag a `.okayscene` from Project onto the Hierarchy**) folds another
+  scene's objects into the open one (the host keeps its own name,
+  gravity and lighting). Merged objects are tagged with their source scene, and
+  the **Hierarchy** groups them under a labelled **section header** so you can see
+  where each combined scene starts and ends. At runtime, `load_scene_additive(
+  "Town", x, y[, z])` merges a scene chunk at an offset without unloading the
+  current one — build open worlds from tiles. (Engine: `SceneSerializer::Merge
+  FromFile`, `Scene::RequestMerge`.)
+- **Edit Collider** — on a Box Collider 3D, click **Edit Collider** to show six
+  draggable face handles in the Scene view; pull each side to hand-fit the box to
+  your model (Unity-style). Adjusts the collider's size + offset; undoable.
 - **Scene gizmos** — **snapping** for Move/Rotate/Scale (grid + 15° detents) and
   a **Local/Global** toggle (X); a live **Camera Preview** inset for a selected
   perspective camera; colored **light gizmos** (range sphere / spot cone).
+  **Unity-style billboard icons** with name labels mark every camera and light in
+  the Scene (a camera glyph; a sun/bulb/spot glyph by light type), so lights and
+  cameras are easy to see and pick even with no mesh.
 - **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
   (Quit-on-Escape, Master Volume, Show-FPS).
 - **Crash-safe autosave** (File ▸ Autosave) writes a `<scene>.autosave` recovery
@@ -126,8 +165,11 @@ Recent additions (v2.12–2.14):
   from the *Primitive* dropdown. (More procedural shapes are available in C++:
   `Mesh::Extrude` a 2D outline into a prism, `Mesh::Lathe` a profile into a
   vase/column, `Mesh::Rotated` to orient a part before `Combine`, and
-  `Mesh::FlipWinding` to fix inside-out imports.) *Subdivide* splits every triangle into four (more
-  detail), *Smooth* subdivides then re-projects onto a sphere, *Weld* merges
+  `Mesh::FlipWinding` to fix inside-out imports.) The **Modeling** panel is
+  organized into tabs — **Shape / Edit / Modifiers / Edit Mesh / Import** — so
+  the toolset is easy to navigate. *Subdivide* splits every triangle into four
+  (more detail) — or, when you've picked faces in **Edit Mesh**, only the selected
+  face(s); *Smooth* subdivides then re-projects onto a sphere, *Weld* merges
   coincident vertices, and *Recenter* / *Fit 1u* normalize an imported model's
   position and scale; or type an *OBJ File*
   path and click *Load* to import a Wavefront `.obj` model (positions + faces,
@@ -144,7 +186,20 @@ Recent additions (v2.12–2.14):
 - **UI anchors** — every UI widget has an *Anchor* (Top-Left … Center …
   Bottom-Right). The position becomes an offset from that screen point, so a
   Bottom-Right pause button or a Centered menu stays put at any window size or
-  resolution. Hit-testing and the built game honor the anchor.
+  resolution. Hit-testing and the built game honor the anchor. Three **stretch
+  anchors** (Stretch Horizontal / Vertical / Fill) make a widget fill the canvas
+  on that axis — its Position/Size fields then read as **margins** (Unity's
+  offsetMin/offsetMax: Left/Top/Right/Bottom), so a full-bleed backdrop or a
+  top bar reflows with the window. The **Game view resolution** menu now scales a
+  Constant-Pixel-Size HUD to the picked resolution, like Unity's CanvasScaler.
+- **Panel & image styling** — *UI Panel* adds a **gradient direction** (vertical,
+  horizontal, or either diagonal), an outer **outline** ring (focus keylines /
+  neon accents, distinct from the inset border), and an inner **top highlight**
+  sheen (the glossy "glass" look), on top of corner radius, border, shadow and
+  17 shapes. *UI Image* adds **Flip X/Y**, **Preserve Aspect** (letterbox the
+  texture without stretching), a **frame** border and a **drop shadow**. Both
+  support **per-corner rounding** — toggle TL/TR/BL/BR to leave a corner square
+  (tab headers, speech bubbles, one-sided cards).
 - **UI widgets** — build menus and HUDs from screen-space components: *UI Panel*
   (background/overlay), *UI Image* (logos/icons/title art from a PNG/JPG, tinted;
   a colored rect when no texture; optional *Nine-slice* keeps a bordered frame
@@ -184,7 +239,13 @@ Recent additions (v2.12–2.14):
   an `Assets/` subfolder and saves the starting scene into it. The **Project**
   panel is an asset browser rooted at the project's `Assets/`: navigate folders,
   tick **All** to list the whole subtree (Unity-style), and click a `.okayscene`
-  to open or a `.okayprefab` to instantiate.
+  to open or a `.okayprefab` to instantiate. It supports **create / import /
+  rename (F2) / duplicate**, **sort by Name / Type / Size / Date**, a type filter
+  and thumbnail-size slider, and drag-and-drop to move assets or make prefabs.
+  **Cut / Copy / Paste** assets (right-click or Ctrl+X / Ctrl+C / Ctrl+V; paste
+  into a folder or the current view), **Delete** asks for confirmation (Del key or
+  the menu), and **Find References in Scene** selects the objects that use an
+  asset (texture, mesh, font, script) — Unity's most-used Project action.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a
   standalone, double-clickable game.
@@ -209,6 +270,24 @@ Double-clicking the exe runs the scene through the same engine lifecycle the
 editor's **Play** uses — sprites in 2D (orthographic camera), wireframe meshes
 in 3D (perspective camera), keyboard input fed into `Input`, and audio mixed
 through `AudioMixer`. Press **Esc** to quit.
+
+### Other platforms — Web & Android
+
+The Build dialog's **Platform** selector also exports for **Web (WebGL / WASM)**
+and **Android**. Because the editor can't run Emscripten or the Android NDK
+itself, these targets *export a ready-to-build project* rather than a finished
+binary:
+
+- **Web** writes your `game/` data (scene + config + assets) and a `build-web.sh`
+  script. Install the Emscripten SDK, `source emsdk_env.sh`, set `OKAY_SRC` to the
+  engine source, run `./build-web.sh`, and serve the resulting
+  `build-web/web/okay-player.html`. (This mirrors the engine's
+  `scripts/build-web.sh`, which is already WebAssembly-ready via the player's
+  `EMSCRIPTEN` CMake path.)
+- **Android** writes an `assets/` folder ready to drop into an SDL2 Android
+  project's `app/src/main/assets/`, plus a README outlining the NDK build (the
+  player is C++ on SDL2, which has an official Android port). Finishing an APK
+  needs Android Studio + the NDK.
 
 The player (`player/`) is a tiny SDL2-only program (no editor/ImGui). Build it
 on its own with `-DOKAY_BUILD_PLAYER=ON`; it is also built automatically with

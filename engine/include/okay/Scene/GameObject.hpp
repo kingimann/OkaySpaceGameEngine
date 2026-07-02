@@ -24,12 +24,27 @@ public:
     /// static are not expected to move at runtime.
     bool isStatic = false;
 
+    /// The name of the scene this object was MERGED in from (empty = it belongs to
+    /// the main/host scene). Set when combining scenes so the editor's Hierarchy can
+    /// show where each merged scene starts and ends. Persisted with the scene.
+    std::string sourceScene;
+
     /// Per-object UI layering override. 0 = use the widget's default type layer
     /// (the historic per-type pass order); any non-zero value places this widget in
     /// the single UI draw pass by this key instead (higher = drawn later / on top),
     /// letting non-nested widgets of different types be layered freely. Ignored by
     /// non-UI objects. Hierarchy pre-order breaks ties.
     int uiDrawOrder = 0;
+
+    /// First-person viewmodel flag. A camera that is told to IGNORE this object's
+    /// owner (the local player, via Camera::ignoreObject) normally skips the whole
+    /// player subtree — that's how you don't see your own body in first person.
+    /// Objects flagged here are the EXCEPTION: they render for the owner's own camera
+    /// even though they live inside the ignored subtree — exactly the Minecraft/Unturned
+    /// "viewmodel": the body is hidden from the owner only, while the arm (this flag)
+    /// stays visible to the owner. Other cameras (remote players) don't ignore this
+    /// player at all, so they see the full body regardless of this flag.
+    bool firstPersonViewmodel = false;
 
     /// Every GameObject has a Transform from birth.
     Transform* transform = nullptr;
@@ -53,6 +68,11 @@ public:
 
     /// Iterate the attached components in their stored order.
     const std::vector<std::unique_ptr<Component>>& Components() const { return m_components; }
+
+    /// True if `other` is this object or any ancestor of it — used by cameras to skip
+    /// a whole subtree (e.g. hiding the local player's body, rig parts included, from
+    /// the first-person view without affecting other cameras).
+    bool IsSelfOrDescendantOf(const GameObject* other) const;
 
     /// Move `component` by `delta` positions within the stored order. Transform
     /// is pinned to index 0: the valid target range is [1, size-1], so neither the

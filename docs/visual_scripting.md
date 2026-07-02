@@ -59,7 +59,11 @@ passes any value type through), `Concat` (in0+in1 as strings),
 object's position), `Destroy` (remove this object — terminal, no exec out)
 
 **Actions — multiplayer**: `NetHost <port>`, `NetJoin <host> <port>`,
-`NetSend <channel>` (in0=data), `NetSetVar <key>` (in0=value), `NetDisconnect`
+`NetSend <channel>` (in0=data), `NetSetVar <key>` (in0=value), `NetDisconnect`,
+`NetChat` (in0=text), `NetRpc <name>` (in0=data — run a named event on every other
+peer), `NetSpawnOwned <prefab>` (spawn an object you own that auto-syncs to all
+peers, at this object's position), `NetDespawn` (in0=sync id), `NetReady` (in0=bool),
+`NetStartMatch`. Value nodes: `NetMatchStarted`, `NetAllReady`
 
 **Actions — Steam**: `SteamUnlock <achievement>`, `SteamSetStat <name>` (in0=value),
 `SteamStore`, `SteamLeaderboard <board>` (in0=score)

@@ -24,14 +24,44 @@ namespace okay {
 class LoadingScreen : public Behaviour {
 public:
     Color       backgroundColor = Color::FromBytes(12, 14, 20);
+    Color       backgroundColor2 = Color::FromBytes(20, 24, 34); ///< gradient bottom colour
+    bool        gradientBackground = false;      ///< vertical gradient backgroundColor -> backgroundColor2
     std::string backgroundImage;                 ///< optional full-screen image (else a flat colour)
     std::string title           = "Loading...";
     std::vector<std::string> tips;               ///< a different one is shown each time
     Color       textColor       = Color::White;
+
+    // ---- Title ----
+    bool        showTitle       = true;
+    Color       titleColor      = Color::White;
+    float       titleScale      = 1.0f;          ///< multiplier on the auto title size
+    float       titleY          = 0.40f;         ///< vertical position (0=top, 1=bottom)
+
+    // ---- Tip line ----
+    Color       tipColor        = Color::FromBytes(180, 186, 200);
+    float       tipScale        = 1.0f;
+    float       tipY            = 0.78f;
+
+    // ---- Progress bar ----
     Color       barBackground   = Color::FromBytes(40, 40, 50);
     Color       barFill         = Color::FromBytes(90, 200, 110);
     bool        showBar         = true;
-    bool        showTitle       = true;
+    float       barWidth        = 0.5f;          ///< fraction of screen width
+    float       barHeight       = 0.022f;        ///< fraction of screen height
+    float       barY            = 0.86f;         ///< vertical position (0..1)
+    float       barRadius       = 0.0f;          ///< rounded corners (px)
+    bool        barBorder       = false;
+    Color       barBorderColor  = Color::FromBytes(90, 96, 110);
+    bool        showPercent     = false;         ///< draw "NN%" next to the bar
+
+    // ---- Spinner (a chasing ring of dots) ----
+    bool        showSpinner     = false;
+    Color       spinnerColor    = Color::White;
+    float       spinnerRadius   = 0.05f;         ///< fraction of screen height
+    float       spinnerDotSize  = 5.0f;          ///< dot size (px, scaled by height)
+    float       spinnerSpeed    = 6.0f;          ///< revolutions-ish per second
+    float       spinnerY        = 0.62f;
+
     float       duration        = 2.5f;          ///< minimum seconds the screen stays up
     std::string targetScene;                     ///< scene to load when done (empty = reveal this one)
     bool        showOnStart     = true;          ///< show automatically when the scene starts
@@ -39,6 +69,7 @@ public:
 
     // ---- Runtime state (read by the renderer) ----
     bool  Active()    const { return active_; }
+    float Elapsed()   const { return timer_; }   ///< seconds shown (drives the spinner)
     float Progress()  const { return duration > 1e-4f ? Mathf::Clamp01(timer_ / duration) : 1.0f; }
     const std::string& CurrentTip() const { return tip_; }
     /// Overlay opacity 0..1 — eases in at the start and (for a reveal) out at the end.

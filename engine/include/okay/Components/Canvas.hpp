@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Components/UIAnchor.hpp"   // UIResolutionScale()
 #include <cmath>
 
 namespace okay {
@@ -46,7 +47,7 @@ public:
     /// as an extra UI zoom.
     float ScaleFactor(float screenW, float screenH) const {
         if (scaleMode == ScaleMode::ConstantPixelSize)
-            return scaleFactor;
+            return scaleFactor * UIResolutionScale();   // preview a fixed-px HUD at any resolution
         float rw = referenceResolution.x > 1.0f ? referenceResolution.x : 1.0f;
         float rh = referenceResolution.y > 1.0f ? referenceResolution.y : 1.0f;
         float logW = std::log2((screenW > 1.0f ? screenW : 1.0f) / rw);

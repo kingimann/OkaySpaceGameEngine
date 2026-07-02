@@ -81,6 +81,13 @@ struct Mathf {
         return a + DeltaAngle(a, b) * Clamp01(t);
     }
 
+    /// Move toward a target angle (degrees) by at most maxDelta, shortest way round.
+    static float MoveTowardsAngle(float current, float target, float maxDelta) {
+        float d = DeltaAngle(current, target);
+        if (-maxDelta < d && d < maxDelta) return target;
+        return MoveTowards(current, current + d, maxDelta);
+    }
+
     /// Critically-damped spring toward a target (Unity's SmoothDamp).
     static float SmoothDamp(float current, float target, float& velocity,
                             float smoothTime, float deltaTime,
@@ -101,6 +108,14 @@ struct Mathf {
             velocity = (output - target) / deltaTime;
         }
         return output;
+    }
+
+    /// SmoothDamp toward a target angle (degrees), taking the shortest path.
+    static float SmoothDampAngle(float current, float target, float& velocity,
+                                 float smoothTime, float deltaTime,
+                                 float maxSpeed = Infinity) {
+        target = current + DeltaAngle(current, target);
+        return SmoothDamp(current, target, velocity, smoothTime, deltaTime, maxSpeed);
     }
 };
 

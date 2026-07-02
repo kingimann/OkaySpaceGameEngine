@@ -4,6 +4,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -315,6 +316,36 @@ void ActionList::Update(float dt) {
         }
         else if (op == "play_anim") {
             if (gameObject) if (auto* an = gameObject->GetComponent<SpriteAnimator>()) an->Restart();
+        }
+        // ---- Character animation (visual scripting / flow-graph nodes) ----
+        else if (op == "set_anim" || op == "play_clip" || op == "stop_clip" ||
+                 op == "play_layer" || op == "stop_layer" || op == "clip_speed") {
+            // The Character may be on this object or a descendant (e.g. the player root
+            // with the script on a child). Find the nearest one.
+            std::function<Character*(GameObject*)> findCh = [&](GameObject* g) -> Character* {
+                if (!g) return nullptr;
+                if (auto* c = g->GetComponent<Character>()) return c;
+                if (g->transform)
+                    for (Transform* ch : g->transform->Children())
+                        if (ch) if (Character* c = findCh(ch->gameObject)) return c;
+                return nullptr;
+            };
+            Character* ch = findCh(gameObject);
+            if (ch) {
+                if (op == "set_anim")        ch->anim = (int)Num(it, 0);
+                else if (op == "play_clip")  ch->PlayClip(Str(it, 0));
+                else if (op == "stop_clip")  ch->StopClip();
+                else if (op == "clip_speed") ch->animSpeed = Num(it, 0);
+                else if (op == "stop_layer") ch->StopLayer();
+                else if (op == "play_layer") {
+                    std::string m = Str(it, 1);
+                    std::uint32_t mask = (m == "upper" || m == "upper_body") ? Character::UpperBodyMask()
+                                       : (m == "arms" || m.empty())          ? Character::ArmsMask()
+                                       : Character::BoneBit(Character::BoneIndex(m));
+                    if (mask == 0) mask = Character::ArmsMask();
+                    ch->PlayLayer(Str(it, 0), mask);
+                }
+            }
         }
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {

@@ -46,11 +46,26 @@ inline void ParallelRows(int y0, int y1, Fn&& fn) {
 
 // Directional shadow map (depth from the light). Defined up here so the Raster's
 // per-pixel shading can consult it; the implementation lives below RenderMeshes.
-struct ShadowMap {
+//
+// "Virtual"/cascaded shadows: instead of stretching one map over the whole world
+// (blurry once the map covers a big level), we render several cascades that hug a
+// shrinking region in front of the camera. The nearest cascade is tiny in world
+// units so its texels are dense -> crisp shadows where you're looking; farther
+// cascades grow to cover distance cheaply. Each fragment samples the tightest
+// cascade that contains it. This is how "sharp + cheap over a huge map" is done on
+// DX11-class hardware (the practical stand-in for Nanite-era virtual shadow maps).
+struct ShadowCascade {
     std::vector<float> depth;   // min light-space NDC depth per texel
     int   size = 0;
     Mat4  viewProj;
     float texelWorld = 0.0f;    // world size of one shadow texel (for normal-offset bias)
+    Vec3  center{0, 0, 0};      // world-space centre of the region this cascade covers
+    float radius = 0.0f;        // world-space radius of that region (for cascade selection)
+};
+struct ShadowMap {
+    static const int kMaxCascades = 4;
+    ShadowCascade cascade[kMaxCascades];
+    int   count   = 0;          // active cascades
     bool  enabled = false;
 };
 inline ShadowMap& Shadows();
@@ -78,6 +93,30 @@ struct EnvSkyData {
     bool enabled = false;
 };
 inline EnvSkyData& EnvSky() { static EnvSkyData e; return e; }
+
+// Scene depth for particle occlusion: the per-pixel W-buffer (1/w, larger = nearer)
+// from the most recent software 3D render, downsampled to the output resolution.
+// The particle overlay samples this so particles hide BEHIND solid geometry instead
+// of always drawing on top ("in your face"). `valid` is false when the frame was
+// drawn by a GPU renderer (no depth read-back), so the overlay then skips occlusion.
+struct OcclusionDepth { std::vector<float> d; int w = 0, h = 0; bool valid = false; };
+inline OcclusionDepth& SceneOcclusionDepth() { static OcclusionDepth o; return o; }
+
+/// True if the scene is NEARER than a particle at clip-w `clipW` at normalized
+/// screen coords (nx,ny in [0,1]) — so the particle is hidden behind geometry. The
+/// normalized coords make this independent of the depth buffer's resolution (the
+/// occlusion pre-pass may run at a lower res than the screen). Safe with no/invalid
+/// data: returns false (visible).
+inline bool ParticleOccluded(float nx, float ny, float clipW) {
+    const OcclusionDepth& od = SceneOcclusionDepth();
+    if (!od.valid || od.w <= 0 || od.h <= 0) return false;
+    int x = (int)(nx * od.w), y = (int)(ny * od.h);
+    if (x < 0 || y < 0 || x >= od.w || y >= od.h) return false;
+    float sceneNear = od.d[(std::size_t)y * od.w + x];   // 1/w; 0 = empty/far
+    if (sceneNear <= 0.0f) return false;                 // nothing drawn here
+    float partNear = clipW > 1e-4f ? 1.0f / clipW : 0.0f;
+    return sceneNear > partNear * 1.02f;                 // scene clearly in front -> occlude
+}
 
 /// Sample the sky gradient by a world-space direction's vertical component:
 /// horizon at the equator, fading to `top` looking up and `bottom` looking down.
@@ -403,7 +442,9 @@ public:
                        float matRimStr = 0.0f, float matRimPow = 3.0f,
                        float rimR = 1.0f, float rimG = 1.0f, float rimB = 1.0f,
                        bool triplanar = false, float triTileX = 1.0f, float triTileY = 1.0f,
-                       int clipY0 = 0, int clipY1 = (1 << 30)) {
+                       int clipY0 = 0, int clipY1 = (1 << 30),
+                       int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
+                       const std::vector<Image>* aoMips = nullptr, float aoStrength = 1.0f) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -425,6 +466,9 @@ public:
         const bool glossMap = specMips && !specMips->empty() && (*specMips)[0].Width() > 0;
         int gw = glossMap ? (*specMips)[0].Width() : 0, gh = glossMap ? (*specMips)[0].Height() : 0;
         LodGrad lgG = glossMap ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
+        const bool aoMap = aoMips && !aoMips->empty() && (*aoMips)[0].Width() > 0;
+        int aw = aoMap ? (*aoMips)[0].Width() : 0, ah = aoMap ? (*aoMips)[0].Height() : 0;
+        LodGrad lgA = aoMap ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
         // Hoist the global render-state out of the per-pixel loop: these accessors
         // each carry a function-call + thread-safe-static-guard cost that adds up
         // over a million pixels.
@@ -501,6 +545,19 @@ public:
                         gloss = 0.2126f * gc.r + 0.7152f * gc.g + 0.0722f * gc.b;
                     }
                 }
+                // Ambient-occlusion map: darken the ambient + diffuse lighting in
+                // creases/contact areas (Unity's Occlusion / Unreal's AO). 1 = lit.
+                float ao = 1.0f;
+                if (aoMap) {
+                    float iwa = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                    if (iwa != 0.0f) {
+                        float ua = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iwa;
+                        float va = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iwa;
+                        Color ac = SampleMips(*aoMips, ua, va, PixelLod(ua * iwa, va * iwa, iwa, lgA, aw, ah));
+                        float l = 0.2126f * ac.r + 0.7152f * ac.g + 0.0722f * ac.b;
+                        ao = 1.0f - aoStrength * (1.0f - l);   // aoStrength blends toward full occlusion
+                    }
+                }
                 // Cast shadows: fade the direct light toward the ambient floor for
                 // fragments occluded from the light (specular is shadowed below).
                 float sh = 1.0f;
@@ -521,6 +578,7 @@ public:
                     lit.y = std::ceil(lit.y * q) / q;
                     lit.z = std::ceil(lit.z * q) / q;
                 }
+                if (aoMap) { lit.x *= ao; lit.y *= ao; lit.z *= ao; }   // occlude ambient + diffuse
                 // Colored Blinn-Phong specular from every light (sun + point + spot),
                 // each tinted by its own color and attenuation; the sun's part is
                 // shadowed. Scaled by the material strength and the gloss map.
@@ -562,6 +620,37 @@ public:
                         br = tc.r * tint.r; bg = tc.g * tint.g; bb2 = tc.b * tint.b;
                     }
                 }
+                // Gradient shader: replace the albedo with a two-colour ramp by the
+                // surface's up-ness (downward faces -> bottom colour, up -> top).
+                if (shaderMode == 3 && gradTop && gradBot) {
+                    float t = n.y * 0.5f + 0.5f; t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                    br  = gradBot[0] + (gradTop[0] - gradBot[0]) * t;
+                    bg  = gradBot[1] + (gradTop[1] - gradBot[1]) * t;
+                    bb2 = gradBot[2] + (gradTop[2] - gradBot[2]) * t;
+                }
+                // Fresnel shader: a dark body with a glowing rim (the rim colour does the work).
+                if (shaderMode == 4) { br *= 0.10f; bg *= 0.10f; bb2 *= 0.10f; }
+                // Iridescent shader: an oil-slick / thin-film sheen — the albedo's hue
+                // shifts with the view angle (Fresnel) through a cosine palette.
+                if (shaderMode == 5) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    float fz = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
+                    float ph = fz * 6.2831853f;
+                    br  *= 0.5f + 0.5f * std::cos(ph);
+                    bg  *= 0.5f + 0.5f * std::cos(ph + 2.094395f);
+                    bb2 *= 0.5f + 0.5f * std::cos(ph + 4.188790f);
+                }
+                // Hologram shader: a dark, scan-lined body lit only at the grazing edges
+                // (handled by the rim block below, forced strong like Fresnel).
+                if (shaderMode == 6) {
+                    float band = 0.55f + 0.45f * std::sin(wpos.y * 40.0f);   // horizontal scanlines
+                    br *= 0.18f * band; bg *= 0.18f * band; bb2 *= 0.18f * band;
+                }
+                // Posterize shader: quantise the albedo into a few bands (retro / PSX).
+                if (shaderMode == 7) {
+                    const float lv = 5.0f;
+                    br = std::floor(br * lv) / lv; bg = std::floor(bg * lv) / lv; bb2 = std::floor(bb2 * lv) / lv;
+                }
                 // Metallic workflow: metals have (almost) no diffuse, and they tint
                 // both their specular highlight and their environment reflection by
                 // the albedo color (so gold reflects gold). Dielectrics keep a white
@@ -587,19 +676,29 @@ public:
                 // Per-material Fresnel rim: an additive, colored backlight independent
                 // of the global rim toggle (a first-class shader feature).
                 float mrimR = 0.0f, mrimG = 0.0f, mrimB = 0.0f;
-                if (matRimStr > 0.0f) {
+                float useRim = matRimStr;                      // Fresnel/Hologram force a strong rim
+                if ((shaderMode == 4 || shaderMode == 6) && useRim < 0.8f) useRim = 1.6f;
+                if (useRim > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
                     float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
                     float fp = (matRimPow == 3.0f) ? f * f * f
                              : (matRimPow == 2.0f) ? f * f
                              : (matRimPow == 4.0f) ? (f * f) * (f * f)
                              : std::pow(f, matRimPow);
-                    float m = fp * matRimStr;
+                    float m = fp * useRim;
                     mrimR = m * rimR; mrimG = m * rimG; mrimB = m * rimB;
                 }
                 float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + er;
                 float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + mrimG + eg;
                 float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + mrimB + eb;
+                // Velvet shader: a soft fuzzy sheen that brightens grazing angles
+                // (backscatter), lit by the scene — cloth / peach-skin look.
+                if (shaderMode == 8) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    float fz = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
+                    float s = fz * fz * 0.6f;
+                    cr += br * lit.x * s; cg += bg * lit.y * s; cb += bb2 * lit.z * s;
+                }
                 // Environment reflection: mirror the sky gradient about the normal
                 // and blend it in by a Fresnel-weighted reflectivity (Schlick).
                 // Metals reflect strongly even without an explicit reflectivity, and
@@ -624,9 +723,22 @@ public:
                     cg = cg * (1.0f - fog) + fg * fog;
                     cb = cb * (1.0f - fog) + fb * fog;
                 }
-                depth[i] = d;
-                color[i] = PackRGB(cr, cg, cb);
-                if (!gvalid.empty()) { gpos[i] = wpos; gnrm[i] = n; gvalid[i] = 1; }
+                // Transparency: a material alpha < 1 (e.g. water) blends over what's
+                // already in the buffer instead of overwriting it, and does NOT write
+                // depth — so geometry behind shows through. (Order transparent meshes
+                // after opaque ones — they draw in scene order.)
+                if (base.a < 0.999f) {
+                    std::uint32_t dst = color[i];
+                    float a = base.a, ia = 1.0f - a;
+                    cr = cr * a + (float)(dst & 0xFF)        / 255.0f * ia;
+                    cg = cg * a + (float)((dst >> 8) & 0xFF) / 255.0f * ia;
+                    cb = cb * a + (float)((dst >> 16) & 0xFF)/ 255.0f * ia;
+                    color[i] = PackRGB(cr, cg, cb);
+                } else {
+                    depth[i] = d;
+                    color[i] = PackRGB(cr, cg, cb);
+                    if (!gvalid.empty()) { gpos[i] = wpos; gnrm[i] = n; gvalid[i] = 1; }
+                }
             }
         }
     }
@@ -714,43 +826,48 @@ inline bool& PerPixelLighting() { static bool v = false; return v; }  // default
 // declared above the Raster class so shading can consult it.)
 inline ShadowMap& Shadows()      { static ShadowMap s; return s; }
 inline bool& ShadowsEnabled()    { static bool v = false; return v; }  // off by default (perf); opt-in
-inline int&  ShadowMapResolution(){ static int s = 1024; return s; }
+inline int&  ShadowMapResolution(){ static int s = 1024; return s; }   // per-cascade texels
 
-/// Render the scene depth from the directional light into the shadow map. Call
-/// once before RenderMeshes (RenderMeshes does this automatically).
-inline void RenderShadowMap(const Scene& scene) {
-    ShadowMap& sm = Shadows();
-    if (!ShadowsEnabled()) { sm.enabled = false; return; }
-    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
-    bool any = false;
+/// How far (world units) cascaded shadows reach in front of the camera. The near
+/// cascade hugs a small slice of this so its shadows stay crisp no matter how big
+/// the level is; the far cascade stretches to the full distance. 0 (or less) =
+/// legacy mode: one map fit to the whole scene (blurry on big maps, kept for
+/// back-compat). Default focuses on the playable area around the camera.
+inline float& ShadowDistance()   { static float v = 80.0f; return v; }
+/// Number of cascades (1..ShadowMap::kMaxCascades). More = sharper falloff across
+/// distance at the cost of extra depth passes. 0/legacy distance ignores this.
+inline int&   ShadowCascades()   { static int v = 3; return v; }
+
+namespace detail {
+/// Rasterize every shadow-casting triangle in `scene` into one cascade's depth
+/// buffer (min light-space depth per texel). `cull` skips casters whose bounds
+/// don't touch the cascade region, keeping far cascades cheap.
+inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull) {
+    const int S = cas.size;
     auto visible = [](const GameObject& go) {
         auto* mr = go.GetComponent<MeshRenderer>();
         return mr && go.active && mr->enabled && !mr->wireframe ? mr : nullptr;
     };
+    const float cr = cas.radius * 1.05f, cr2 = cr * cr;
     for (const auto& go : scene.Objects()) {
         auto* mr = visible(*go); if (!mr) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();
-        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
-        for (int c = 0; c < 8; ++c) {
-            Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
-            lo.x = std::fmin(lo.x, w.x); lo.y = std::fmin(lo.y, w.y); lo.z = std::fmin(lo.z, w.z);
-            hi.x = std::fmax(hi.x, w.x); hi.y = std::fmax(hi.y, w.y); hi.z = std::fmax(hi.z, w.z);
-            any = true;
+        if (cull) {
+            // Sphere(cascade) vs the caster's world AABB: clamp the centre into the
+            // box and test the squared distance — skip casters wholly outside.
+            Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+            Vec3 wlo{1e30f, 1e30f, 1e30f}, whi{-1e30f, -1e30f, -1e30f};
+            for (int c = 0; c < 8; ++c) {
+                Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
+                wlo.x = std::fmin(wlo.x, w.x); wlo.y = std::fmin(wlo.y, w.y); wlo.z = std::fmin(wlo.z, w.z);
+                whi.x = std::fmax(whi.x, w.x); whi.y = std::fmax(whi.y, w.y); whi.z = std::fmax(whi.z, w.z);
+            }
+            float qx = std::fmax(wlo.x, std::fmin(cas.center.x, whi.x)) - cas.center.x;
+            float qy = std::fmax(wlo.y, std::fmin(cas.center.y, whi.y)) - cas.center.y;
+            float qz = std::fmax(wlo.z, std::fmin(cas.center.z, whi.z)) - cas.center.z;
+            if (qx * qx + qy * qy + qz * qz > cr2) continue;
         }
-    }
-    if (!any) { sm.enabled = false; return; }
-    Vec3 ctr{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
-    float R = 0.5f * std::sqrt((hi.x - lo.x) * (hi.x - lo.x) + (hi.y - lo.y) * (hi.y - lo.y) +
-                               (hi.z - lo.z) * (hi.z - lo.z)) + 0.05f;
-    Vec3 L = SceneLight::Direction(); { float m = L.Magnitude(); L = m > 1e-6f ? L * (1.0f / m) : Vec3{0, -1, 0}; }
-    Vec3 eye = ctr - L * (R * 2.0f);
-    Vec3 up = std::fabs(L.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
-    sm.viewProj = Mat4::Ortho(-R, R, -R, R, 0.05f, R * 4.0f) * Mat4::LookAt(eye, ctr, up);
-    int S = ShadowMapResolution(); sm.size = S; sm.depth.assign((std::size_t)S * S, 2.0f);
-    sm.texelWorld = (2.0f * R) / (float)S;
-    for (const auto& go : scene.Objects()) {
-        auto* mr = visible(*go); if (!mr) continue;
-        Mat4 mvp = sm.viewProj * go->transform->LocalToWorldMatrix();
+        Mat4 mvp = cas.viewProj * model;
         const auto& V = mr->mesh.vertices; const auto& T = mr->mesh.triangles;
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             float sxv[3], syv[3], szv[3]; bool ok = true;
@@ -780,12 +897,164 @@ inline void RenderShadowMap(const Scene& scene) {
                     float w2 = 1.0f - w0 - w1;
                     if (w0 < 0 || w1 < 0 || w2 < 0) continue;
                     float z = w0 * szv[0] + w1 * szv[1] + w2 * szv[2];
-                    float& dref = sm.depth[(std::size_t)y * S + x];
+                    float& dref = cas.depth[(std::size_t)y * S + x];
                     if (z < dref) dref = z;
                 }
         }
     }
+}
+
+/// Fit a single cascade's light-space ortho to a world sphere (centre/radius),
+/// snapping the centre to the texel grid so shadows don't shimmer as the camera
+/// moves, then rasterize the scene depth into it.
+inline void BuildCascade(const Scene& scene, ShadowCascade& cas, const Vec3& center,
+                         float radius, const Vec3& L, float depthPad, int S, bool cull) {
+    cas.size = S;
+    cas.radius = radius;
+    float texel = (2.0f * radius) / (float)S;
+    // Snap the centre to whole-texel steps (reduces edge crawling under motion).
+    Vec3 ctr{std::floor(center.x / texel) * texel,
+             std::floor(center.y / texel) * texel,
+             std::floor(center.z / texel) * texel};
+    cas.center = ctr;
+    cas.texelWorld = texel;
+    Vec3 up = std::fabs(L.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    float back = radius * 2.0f + depthPad;
+    Vec3 eye = ctr - L * back;
+    cas.viewProj = Mat4::Ortho(-radius, radius, -radius, radius, 0.05f, back + radius * 2.0f + depthPad)
+                 * Mat4::LookAt(eye, ctr, up);
+    cas.depth.assign((std::size_t)S * S, 2.0f);
+    RenderCascadeDepth(scene, cas, cull);
+}
+} // namespace detail
+
+/// Render the scene depth from the directional light into the cascaded shadow
+/// maps. `vp` and `eye` are the camera's view-projection and position — the
+/// cascades are focused in front of the camera. Called by RenderMeshes.
+inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye) {
+    ShadowMap& sm = Shadows();
+    sm.count = 0;
+    if (!ShadowsEnabled()) { sm.enabled = false; return; }
+
+    // Whole-scene bounds: used for the legacy fit and to size the light's depth
+    // range so tall casters above a cascade still register.
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    bool any = false;
+    auto visible = [](const GameObject& go) {
+        auto* mr = go.GetComponent<MeshRenderer>();
+        return mr && go.active && mr->enabled && !mr->wireframe ? mr : nullptr;
+    };
+    for (const auto& go : scene.Objects()) {
+        auto* mr = visible(*go); if (!mr) continue;
+        Mat4 model = go->transform->LocalToWorldMatrix();
+        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        for (int c = 0; c < 8; ++c) {
+            Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
+            lo.x = std::fmin(lo.x, w.x); lo.y = std::fmin(lo.y, w.y); lo.z = std::fmin(lo.z, w.z);
+            hi.x = std::fmax(hi.x, w.x); hi.y = std::fmax(hi.y, w.y); hi.z = std::fmax(hi.z, w.z);
+            any = true;
+        }
+    }
+    if (!any) { sm.enabled = false; return; }
+
+    Vec3 L = SceneLight::Direction(); { float m = L.Magnitude(); L = m > 1e-6f ? L * (1.0f / m) : Vec3{0, -1, 0}; }
+    const int S = ShadowMapResolution();
+    // Depth padding = the scene's vertical extent, so a caster anywhere above a
+    // cascade region is still inside the light frustum's depth range.
+    float depthPad = (hi.y - lo.y) + (hi.x - lo.x) + (hi.z - lo.z);
+
+    float dist = ShadowDistance();
+    if (dist <= 0.0f) {
+        // ---- Legacy: one cascade fit to the entire scene -------------------
+        Vec3 ctr{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        float R = 0.5f * std::sqrt((hi.x - lo.x) * (hi.x - lo.x) + (hi.y - lo.y) * (hi.y - lo.y) +
+                                   (hi.z - lo.z) * (hi.z - lo.z)) + 0.05f;
+        detail::BuildCascade(scene, sm.cascade[0], ctr, R, L, depthPad, S, /*cull=*/false);
+        sm.count = 1; sm.enabled = true;
+        return;
+    }
+
+    // ---- Cascaded, camera-focused --------------------------------------------
+    // Camera forward, recovered from the view-projection (works for any camera
+    // source — editor fly-cam or the game's main camera).
+    Mat4 invVp = vp.Inverse();
+    Vec3 pNear = invVp.MultiplyPoint({0.0f, 0.0f, -1.0f});
+    Vec3 pFar  = invVp.MultiplyPoint({0.0f, 0.0f,  1.0f});
+    Vec3 fwd = pFar - pNear; { float m = fwd.Magnitude(); fwd = m > 1e-6f ? fwd * (1.0f / m) : Vec3{0, 0, -1}; }
+
+    int n = ShadowCascades(); if (n < 1) n = 1; if (n > ShadowMap::kMaxCascades) n = ShadowMap::kMaxCascades;
+    // Split the [near, far] range so each cascade's radius grows geometrically:
+    // dense texels up close, broad coverage far away.
+    const float nearR = std::fmax(dist * 0.06f, 1.0f);
+    for (int i = 0; i < n; ++i) {
+        float t = (float)(i + 1) / (float)n;
+        float R = nearR * std::pow(dist / nearR, t);          // end radius of cascade i
+        // Centre the cascade sphere in front of the camera so it covers the view.
+        Vec3 ctr = eye + fwd * (R * 0.85f);
+        detail::BuildCascade(scene, sm.cascade[i], ctr, R, L, depthPad, S, /*cull=*/true);
+    }
+    sm.count = n;
     sm.enabled = true;
+}
+
+/// Compute a SINGLE directional-light orthographic view-projection that the GPU
+/// backends (OpenGL / D3D11 / D3D12) render their depth pre-pass into and then
+/// sample for real cast shadows. This reuses the exact ortho/LookAt fit the
+/// software cascades use (so GPU shadows line up with the CPU reference), but
+/// collapses to one camera-focused map: the region is a sphere of radius
+/// ~ShadowDistance centred just in front of the camera (or the whole scene when
+/// ShadowDistance<=0). Returns false when there's nothing to shadow.
+///   `outVP`        light-space view-projection (clip space, GL/D3D both use the
+///                  0.5*xy+0.5 remap on the GPU side).
+///   `outTexelWorld` world size of one shadow texel (for normal-offset bias).
+inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, const Vec3& eye,
+                                       Mat4& outVP, float& outTexelWorld) {
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    bool any = false;
+    for (const auto& go : scene.Objects()) {
+        auto* mr = go->template GetComponent<MeshRenderer>();
+        if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;
+        Mat4 model = go->transform->LocalToWorldMatrix();
+        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        for (int c = 0; c < 8; ++c) {
+            Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
+            lo.x = std::fmin(lo.x, w.x); lo.y = std::fmin(lo.y, w.y); lo.z = std::fmin(lo.z, w.z);
+            hi.x = std::fmax(hi.x, w.x); hi.y = std::fmax(hi.y, w.y); hi.z = std::fmax(hi.z, w.z);
+            any = true;
+        }
+    }
+    if (!any) return false;
+
+    Vec3 L = SceneLight::Direction(); { float m = L.Magnitude(); L = m > 1e-6f ? L * (1.0f / m) : Vec3{0, -1, 0}; }
+    const int S = ShadowMapResolution();
+    float depthPad = (hi.y - lo.y) + (hi.x - lo.x) + (hi.z - lo.z);
+
+    Vec3 ctr; float R;
+    float dist = ShadowDistance();
+    Vec3 sceneCtr{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+    float sceneR = 0.5f * std::sqrt((hi.x - lo.x) * (hi.x - lo.x) + (hi.y - lo.y) * (hi.y - lo.y) +
+                                    (hi.z - lo.z) * (hi.z - lo.z)) + 0.05f;
+    if (dist <= 0.0f) {
+        ctr = sceneCtr; R = sceneR;
+    } else {
+        // Camera-focused: a sphere of radius ~dist sitting in front of the camera.
+        Mat4 invVp = camVp.Inverse();
+        Vec3 pNear = invVp.MultiplyPoint({0.0f, 0.0f, -1.0f});
+        Vec3 pFar  = invVp.MultiplyPoint({0.0f, 0.0f,  1.0f});
+        Vec3 fwd = pFar - pNear; { float m = fwd.Magnitude(); fwd = m > 1e-6f ? fwd * (1.0f / m) : Vec3{0, 0, -1}; }
+        R = std::fmin(dist, sceneR);
+        if (R < 1.0f) R = 1.0f;
+        ctr = eye + fwd * (R * 0.85f);
+    }
+
+    float texel = (2.0f * R) / (float)S;
+    Vec3 csnap{std::floor(ctr.x / texel) * texel, std::floor(ctr.y / texel) * texel, std::floor(ctr.z / texel) * texel};
+    Vec3 up = std::fabs(L.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    float back = R * 2.0f + depthPad;
+    Vec3 leye = csnap - L * back;
+    outVP = Mat4::Ortho(-R, R, -R, R, 0.05f, back + R * 2.0f + depthPad) * Mat4::LookAt(leye, csnap, up);
+    outTexelWorld = texel;
+    return true;
 }
 
 /// Shadow softness in shadow-map texels (the Poisson disk's radius). Larger =
@@ -793,34 +1062,51 @@ inline void RenderShadowMap(const Scene& scene) {
 inline float& ShadowSoftness() { static float v = 2.5f; return v; }
 
 /// 0 = fully shadowed, 1 = fully lit, for a world position (Poisson-disk PCF).
-/// The sample point is pushed a couple of texels along the surface normal — this
-/// "normal-offset bias" is what stops a lit surface from shadowing itself (acne).
+/// Picks the tightest cascade that contains the point (crispest available), pushes
+/// the sample a few texels along the normal ("normal-offset bias", anti-acne),
+/// then does a 6-tap Poisson-disk PCF lookup.
 inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
     ShadowMap& sm = Shadows();
-    if (!sm.enabled || sm.size <= 0) return 1.0f;
-    Vec3 p = wpos + n * (sm.texelWorld * 3.5f);     // normal-offset bias (anti-acne)
-    Vec4 lc = sm.viewProj * Vec4{p, 1.0f};
-    if (lc.w == 0) return 1.0f;
-    float iw = 1.0f / lc.w, x = lc.x * iw, y = lc.y * iw, z = lc.z * iw;
-    if (x < -1 || x > 1 || y < -1 || y > 1 || z > 1) return 1.0f;
-    float fx = (x * 0.5f + 0.5f) * sm.size, fy = (1.0f - (y * 0.5f + 0.5f)) * sm.size;
-    const float bias = 0.004f;
+    if (!sm.enabled || sm.count <= 0) return 1.0f;
+
     // 6-tap Poisson-disk PCF (center + 5 ring taps): scattered samples give a
-    // smoother penumbra than a rigid grid, at roughly half the cost of a 12-tap
+    // smoother penumbra than a rigid grid at roughly half the cost of a 12-tap
     // kernel — this runs per shaded pixel so the tap count matters for FPS.
     static const float kPoisson[6][2] = {
         { 0.000f,  0.000f}, {-0.326f, -0.406f}, { 0.840f, -0.074f},
         {-0.696f,  0.457f}, { 0.185f,  0.893f}, { 0.507f, -0.640f},
     };
-    float radius = ShadowSoftness();
-    float lit = 0.0f;
-    for (int s = 0; s < 6; ++s) {
-        int px = (int)(fx + kPoisson[s][0] * radius);
-        int py = (int)(fy + kPoisson[s][1] * radius);
-        if (px < 0 || py < 0 || px >= sm.size || py >= sm.size) { lit += 1.0f; continue; }
-        if (z - bias <= sm.depth[(std::size_t)py * sm.size + px]) lit += 1.0f;
+    const float radius = ShadowSoftness();
+    const float bias = 0.004f;
+
+    // Choose the smallest cascade whose region contains the fragment (its texels
+    // are the densest available there); fall back to the last (widest) cascade.
+    for (int ci = 0; ci < sm.count; ++ci) {
+        const ShadowCascade& cas = sm.cascade[ci];
+        if (cas.size <= 0) continue;
+        bool last = (ci == sm.count - 1);
+        if (!last) {
+            Vec3 d = wpos - cas.center;
+            if (d.x * d.x + d.y * d.y + d.z * d.z > cas.radius * cas.radius) continue;  // try the next ring out
+        }
+        Vec3 p = wpos + n * (cas.texelWorld * 3.5f);     // normal-offset bias
+        Vec4 lc = cas.viewProj * Vec4{p, 1.0f};
+        if (lc.w == 0) return 1.0f;
+        float iw = 1.0f / lc.w, x = lc.x * iw, y = lc.y * iw, z = lc.z * iw;
+        if (x < -1 || x > 1 || y < -1 || y > 1 || z > 1) {
+            if (last) return 1.0f; else continue;
+        }
+        float fx = (x * 0.5f + 0.5f) * cas.size, fy = (1.0f - (y * 0.5f + 0.5f)) * cas.size;
+        float lit = 0.0f;
+        for (int s = 0; s < 6; ++s) {
+            int px = (int)(fx + kPoisson[s][0] * radius);
+            int py = (int)(fy + kPoisson[s][1] * radius);
+            if (px < 0 || py < 0 || px >= cas.size || py >= cas.size) { lit += 1.0f; continue; }
+            if (z - bias <= cas.depth[(std::size_t)py * cas.size + px]) lit += 1.0f;
+        }
+        return lit / 6.0f;
     }
-    return lit / 6.0f;
+    return 1.0f;
 }
 
 // ---- Screen-space ambient occlusion ----------------------------------------
@@ -1188,7 +1474,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                         cl(a.y + (grdC.y - mid.y) * k),
                                         cl(a.z + (grdC.z - mid.z) * k)};
     }
-    RenderShadowMap(scene);   // depth-from-light pre-pass for cast shadows
+    RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
     if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
         r.gpos.assign(n, Vec3{0, 0, 0}); r.gnrm.assign(n, Vec3{0, 0, 0});
@@ -1205,6 +1491,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
         if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
+        if (!mr->aoMap.empty())       GetCachedMips(mr->aoMap);
         if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
     }
     // Rasterize the meshes across CPU cores: each worker owns a horizontal band
@@ -1213,7 +1500,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Vertex transforms are repeated per band, but pixel fill dominates.
     auto renderBand = [&](int bandY0, int bandY1) {
     for (const auto& go : scene.Objects()) {
-        if (ignore && go.get() == ignore) continue;   // this camera skips this object (1st-person body)
+        if (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel) continue;   // skip the owner's subtree (1st-person body) — except viewmodel parts (the arm)
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
@@ -1231,6 +1518,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
         const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const std::vector<Image>* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
+        const std::vector<Image>* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
         Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && mr->mesh.HasNormals();
@@ -1499,8 +1787,17 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // Toon needs the per-pixel path (that's where the cel banding lives), so
             // it forces per-pixel lighting for its mesh regardless of the global toggle.
             const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon
+                                   || mr->shader == MeshRenderer::Shader::Gradient
+                                   || mr->shader == MeshRenderer::Shader::Fresnel
+                                   || mr->shader == MeshRenderer::Shader::Iridescent
+                                   || mr->shader == MeshRenderer::Shader::Hologram
+                                   || mr->shader == MeshRenderer::Shader::Posterize
+                                   || mr->shader == MeshRenderer::Shader::Velvet
                                    || mr->rimStrength > 0.0f || mr->triplanar)
                                   && !unlit && !useMatcap;
+            const int  shaderMode = (int)mr->shader;
+            const float gradTopC[3] = {mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b};
+            const float gradBotC[3] = {mr->gradientBottom.r, mr->gradientBottom.g, mr->gradientBottom.b};
             for (int j = 1; j + 1 < pn; ++j) {
                 const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
                 float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];
@@ -1525,7 +1822,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->rimStrength, mr->rimPower,
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
-                                    bandY0, bandY1);
+                                    bandY0, bandY1, shaderMode, gradTopC, gradBotC,
+                                    aoMips, mr->aoStrength);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
@@ -1569,6 +1867,22 @@ inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32
     work.Resize(iw, ih);
     work.Clear(0u);
     RenderMeshes(work, scene, vp, eye, ignore);
+    // Publish the depth (1/w) at the OUTPUT resolution for particle occlusion: take the
+    // nearest (max 1/w) sample over each supersample block so thin geometry still occludes.
+    {
+        OcclusionDepth& od = SceneOcclusionDepth();
+        od.w = w; od.h = h; od.valid = true;
+        od.d.assign((std::size_t)w * h, 0.0f);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                float best = 0.0f;
+                for (int sy = 0; sy < ss; ++sy) {
+                    const float* row = work.depth.data() + (std::size_t)(y * ss + sy) * iw + (std::size_t)x * ss;
+                    for (int sx = 0; sx < ss; ++sx) if (row[sx] > best) best = row[sx];
+                }
+                od.d[(std::size_t)y * w + x] = best;
+            }
+    }
     if (ss == 1) return work.color.data();
     out.assign((std::size_t)w * h, 0u);
     const std::uint32_t* src = work.color.data();

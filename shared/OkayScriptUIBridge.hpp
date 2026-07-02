@@ -13,6 +13,7 @@ struct OkayUIScriptBridge : ScriptUIBridge {
     void  Text(const char* s) override { OkayUI::Text(s); }
     bool  Button(const char* l) override { return OkayUI::Button(l); }
     bool  Checkbox(const char* l, bool v) override { OkayUI::Checkbox(l, &v); return v; }
+    bool  Switch(const char* l, bool v) override { OkayUI::ToggleSwitch(l, &v); return v; }
     float Slider(const char* l, float v, float lo, float hi) override { OkayUI::SliderFloat(l, &v, lo, hi); return v; }
     void  ProgressBar(float t) override { OkayUI::ProgressBar(t); }
     void  SameLine() override { OkayUI::SameLine(); }

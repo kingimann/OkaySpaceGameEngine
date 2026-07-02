@@ -7,8 +7,11 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
@@ -29,10 +32,11 @@ public:
     float walkSpeed = 4.5f;
     float runSpeed  = 7.5f;
     float jumpForce = 6.0f;
-    char  sprintKey = 0;
+    char  sprintKey = Input::KeyShift;   // hold to run (matches the other controllers)
     bool  canJump = true;
     int   maxJumps = 1;                  // 1 = single jump, 2 = double jump, etc.
     bool  driveAnimation = true;
+    bool  footIK = false;                // plant the Character's feet on the ground
     float acceleration = 60.0f, deceleration = 55.0f, airControl = 0.4f;
     float coyoteTime = 0.12f, jumpBufferTime = 0.12f;
     float turnSpeed = 18.0f;             // body snaps to the aim direction
@@ -75,39 +79,45 @@ public:
 
     void Start() override {
         if (lockCursor) Cursor::Capture(true);
+        if (footIK) AttachCharacterFootIK(gameObject);
     }
 
     void Update(float dt) override {
         if (!transform) return;
+        if (Game::Paused()) return;   // frozen while the pause menu is up
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         if (lockCursor && Cursor::lockState == Cursor::LockMode::None) Cursor::Capture(true);
 
         // ---- Mouse look ----
         // Mouse-right orbits right, mouse-up looks up — same convention as the
         // first/third-person controllers (yaw decreases as the mouse moves right).
         Vec2 mp = Input::MousePosition();
-        if (m_haveMouse) {
+        bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
+        if (m_haveMouse && !uiBlocked) {
             yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
-        m_lastMouse = mp; m_haveMouse = true;
+        // Drop the baseline while a bag is open (locked/free mouse space switch) so the
+        // camera doesn't snap on the first frame after the panel closes.
+        m_lastMouse = mp; m_haveMouse = !uiBlocked;
 
         // ---- Aim blend (right mouse) ----
-        m_aiming = Input::GetMouseButton(aimButton);
+        m_aiming = !uiBlocked && Input::GetMouseButton(aimButton);
         float aimT = 1.0f - std::exp(-aimSpeed * dt);
         m_aim += ((m_aiming ? 1.0f : 0.0f) - m_aim) * aimT;
 
-        // ---- Fire (left mouse) ----
+        // ---- Fire (left mouse) ----  (a click on an open bag shouldn't shoot)
         m_fireCooldown = Mathf::Max(0.0f, m_fireCooldown - dt);
-        bool wantFire = autoFire ? Input::GetMouseButton(fireButton) : Input::GetMouseButtonDown(fireButton);
+        bool wantFire = !uiBlocked && (autoFire ? Input::GetMouseButton(fireButton) : Input::GetMouseButtonDown(fireButton));
         if (wantFire && m_fireCooldown <= 0.0f) {
             m_fireCooldown = autoFire ? (1.0f / Mathf::Max(0.1f, fireRate)) : 0.0f;
             Fire();
         }
 
         // ---- Movement relative to the camera yaw (strafe shooter) ----
-        Vec2 axis = Input::AxisWASD();
-        Vec2 pad  = Input::GamepadAxis();
+        Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
+        Vec2 pad  = uiBlocked ? Vec2{0, 0} : Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad;
         Quat flat = Quat::Euler(0, yaw, 0);
         Vec3 fwd = flat * Vec3{0, 0, -1}, right = flat * Vec3::Right;
@@ -165,7 +175,7 @@ public:
 
         if (driveAnimation)
             if (Character* ch = FindCharacter()) {
-                ch->anim = airborne ? 5 : (moving ? (running ? 3 : 2) : 1);
+                ch->anim = (moving ? (running ? 3 : 2) : 1);   // no jump/fall pose
                 // The body already faces the aim yaw, so the head only tilts up/down
                 // with the pitch (12 = resting pitch, so it's level by default). If the
                 // Character is set to look at the camera/target, let it drive the head.
@@ -226,7 +236,18 @@ public:
 
     bool IsAiming() const { return m_aiming; }
 
+    // Ground contact refills the jump count (so you can jump again after landing —
+    // without this, m_jumpsUsed never reset and only the first jump ever worked).
+    void OnCollisionEnter3D(const Collision3D& c) override { NoteGround(c); }
+    void OnCollisionStay3D(const Collision3D& c)  override { NoteGround(c); }
+
 private:
+    void NoteGround(const Collision3D& c) {
+        bool vertical = Mathf::Abs(c.normal.y) > 0.5f;
+        bool below = c.gameObject && c.gameObject->transform && transform &&
+                     c.gameObject->transform->Position().y < transform->Position().y;
+        if (vertical && below) m_groundContact = 0.10f;
+    }
     void Fire() {
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())

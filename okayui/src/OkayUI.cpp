@@ -29,10 +29,51 @@ int        g_ovIdx[kMaxIdx];
 int        g_oni = 0;
 bool       g_toOverlay = false;   // route quad()/drawText() to the overlay batch
 
+// Draw spans: the main batch is split into contiguous index ranges, each carrying a
+// clip state and a texture, so scrolling child regions can clip and Image() can bind a
+// texture. A span records the index where a state begins; EndFrame draws each range
+// with the matching clip rect + texture. The overlay batch is never clipped.
+struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
+DrawSpan g_spans[128];
+int      g_nspans = 0;
+SDL_Rect g_clipStack[16];
+int      g_clipTop = 0;
+// Current draw state; a span is emitted whenever clip or texture changes.
+bool         g_curClipOn = false;
+SDL_Rect     g_curClipRect = { 0, 0, 0, 0 };
+SDL_Texture* g_curTex = nullptr;
+// Record a span at the current index position (coalescing if no geometry was added
+// since the previous span).
+void pushSpan() {
+    if (g_nspans > 0 && g_spans[g_nspans - 1].startIdx == g_ni) {   // overwrite empty span
+        g_spans[g_nspans - 1].on = g_curClipOn; g_spans[g_nspans - 1].rect = g_curClipRect;
+        g_spans[g_nspans - 1].tex = g_curTex; return;
+    }
+    if (g_nspans < 128) g_spans[g_nspans++] = DrawSpan{ g_ni, g_curClipOn, g_curClipRect, g_curTex };
+}
+// Backwards-compatible helper used by the clip API.
+void pushClipSpan(bool on, SDL_Rect rect) { g_curClipOn = on; g_curClipRect = rect; pushSpan(); }
+// Switch the bound texture for subsequent geometry (nullptr = untextured/flat color).
+void setTexture(SDL_Texture* t) { if (t != g_curTex) { g_curTex = t; pushSpan(); } }
+
 Input g_in;                      // this frame's input
 bool  g_prevDown = false;        // last frame's mouse-down (for edge detection)
 bool  g_pressed  = false;        // mouse went down this frame
 bool  g_released = false;        // mouse went up this frame
+bool  g_rPrevDown = false;       // last frame's right-mouse (edge detection)
+bool  g_rPressed  = false;       // right button went down this frame
+
+// Popup/context-menu registry. Each open popup remembers where it opened and its
+// measured height (so the background can be drawn before the content next frame).
+struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; };
+PopupSlot g_popups[8];
+PopupSlot* popupSlot(int id, bool create) {
+    for (PopupSlot& p : g_popups) if (p.used && p.id == id) return &p;
+    if (!create) return nullptr;
+    for (PopupSlot& p : g_popups) if (!p.used) { p.used = true; p.id = id; p.open = false; return &p; }
+    return nullptr;
+}
+int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
 bool  g_focusClaimed = false;    // a widget took the click this frame (keep focus)
@@ -52,6 +93,22 @@ struct CurMenu {
 CurMenu g_curMenu;
 Theme g_theme;
 
+// Scoped color-override stack: each entry remembers a theme color slot and its prior
+// value, so PopStyleColor can restore it. Reset every BeginFrame to survive imbalance.
+struct ColorSave { unsigned char* field; unsigned char prev[4]; };
+ColorSave g_colStack[64];
+int       g_colTop = 0;
+// Map a Col enum to the theme's 4-byte color field.
+inline unsigned char* themeColor(int which) {
+    switch (which) {
+        case 0: return g_theme.bg;      case 1: return g_theme.bgHover;
+        case 2: return g_theme.bgDown;  case 3: return g_theme.border;
+        case 4: return g_theme.text;    case 5: return g_theme.panel;
+        case 6: return g_theme.track;   case 7: return g_theme.accent;
+        default: return g_theme.text;
+    }
+}
+
 // Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
 inline int cstrlen(const char* s) { int n = 0; if (s) while (s[n]) ++n; return n; }
 
@@ -70,6 +127,56 @@ struct LayoutState {
 };
 LayoutState g_lay;
 
+// Saved parent layout + child metadata while inside a BeginChild/EndChild pair.
+struct ChildSave {
+    LayoutState lay;      // parent layout to restore
+    float rx, ry, rw, rh; // child region rect
+    float top;            // unscrolled content top (ry + pad)
+    float* scroll;        // persisted scroll offset
+    float* maxSlot;       // persisted max scroll from last frame (clamps this frame)
+    float pad;
+    bool  hovered;        // mouse over the region this frame
+};
+ChildSave g_childStack[8];
+int       g_childTop = 0;
+constexpr float kScrollbarW = 10.0f;
+
+// Multi-column layout state (Columns/NextColumn/EndColumns).
+struct ColumnState {
+    bool  active = false;
+    int   count = 1, index = 0;
+    float x0 = 0, fullW = 0;   // content origin + full width when Columns() began
+    float rowTop = 0, rowBottom = 0;
+};
+ColumnState g_col;
+
+// Table layout state (BeginTable/TableNextRow/TableNextColumn/EndTable).
+struct TableState {
+    bool  active = false;
+    int   id = 0, count = 0, index = -1;
+    float x0 = 0, fullW = 0;
+    float rowTop = 0, rowBottom = 0, rowStart = 0;
+    float* w[16] = {nullptr};   // persisted per-column widths (pixels)
+    float headerBottom = 0;     // y below the header row (for the resize handles)
+};
+TableState g_tbl;
+
+// Popup body layout context (uses LayoutState, so defined after it).
+struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; };
+PopupCtx g_popupStack[4];
+int      g_popupTop = 0;
+
+// Drag & drop: a single int payload. `armed` records a press on a source before it
+// has moved far enough to count as a drag; `active` means a drag is in flight.
+struct DragDrop {
+    bool  active = false;
+    int   payload = 0;
+    bool  armed = false;
+    int   armPayload = 0;
+    float armX = 0, armY = 0;
+};
+DragDrop g_dd;
+
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; };
 WinSlot g_wins[16];
@@ -82,12 +189,32 @@ bool* openState(int id, bool dflt) {
     for (OpenSlot& s : g_opens) if (!s.used) { s.used = true; s.id = id; s.open = dflt; return &s.open; }
     static bool sink = false; return &sink;   // table full: harmless fallback
 }
+// Per-id float state (child-region scroll offsets), persisted across frames.
+struct FloatSlot { int id = 0; float v = 0.0f; bool used = false; };
+FloatSlot g_floats[64];
+float* floatState(int id, float dflt) {
+    for (FloatSlot& s : g_floats) if (s.used && s.id == id) return &s.v;
+    for (FloatSlot& s : g_floats) if (!s.used) { s.used = true; s.id = id; s.v = dflt; return &s.v; }
+    static float sink = 0.0f; return &sink;
+}
 float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
 float g_mouseDX = 0.0f, g_mouseDY = 0.0f;         // cursor delta this frame
 
+// ID stack: an extra seed mixed into label hashing so same-labelled widgets in a
+// loop stay distinct. PushID/PopID adjust g_idSeed; a small stack remembers prior
+// seeds to restore on pop.
+unsigned g_idSeed = 0;
+unsigned g_idStack[32];
+int      g_idTop = 0;
+inline void pushIdSeed(unsigned mix) {
+    if (g_idTop < 32) g_idStack[g_idTop++] = g_idSeed;
+    g_idSeed = (g_idSeed ^ mix) * 16777619u;
+}
+inline void popIdSeed() { if (g_idTop > 0) g_idSeed = g_idStack[--g_idTop]; }
+
 // FNV-1a hash of a label -> stable nonzero widget id (so callers needn't pass ids).
 inline int hashLabel(const char* s) {
-    unsigned h = 2166136261u ^ (unsigned)g_lay.seed;
+    unsigned h = (2166136261u ^ (unsigned)g_lay.seed ^ g_idSeed);
     if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
     int id = (int)(h & 0x7fffffffu);
     return id ? id : 1;
@@ -119,8 +246,19 @@ inline float cursorX() {
     }
     return leftEdge();
 }
+// Item-width override: SetNextItemWidth (one-shot) / PushItemWidth (scoped). availW()
+// returns this instead of the full remaining width when set, so callers can size a
+// widget explicitly. Always clamped to what actually remains on the line.
+float g_nextItemW = -1.0f;
+float g_itemWStack[16];
+int   g_itemWTop = 0;
 // Remaining width from the next item's left edge to the content's right edge.
-inline float availW() { return g_lay.ox + g_lay.contentW - cursorX(); }
+inline float availW() {
+    float real = g_lay.ox + g_lay.contentW - cursorX();
+    float over = g_nextItemW > 0.0f ? g_nextItemW : (g_itemWTop > 0 ? g_itemWStack[g_itemWTop - 1] : -1.0f);
+    if (over > 0.0f && over < real) return over;
+    return real;
+}
 
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
@@ -138,6 +276,7 @@ void place(float w, float h, float& x, float& y) {
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
     g_lay.cx = leftEdge();
     g_lay.cy = y + h + g_lay.spacingY;
+    g_nextItemW = -1.0f;   // a one-shot SetNextItemWidth applies to just this item
 }
 
 inline SDL_Color toColor(const unsigned char c[4]) {
@@ -165,6 +304,172 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
     I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
 }
 
+// A textured quad: binds `tex`, samples uv [u0,v0]..[u1,v1], modulated by `tint`
+// (use white for the raw image). Reverts to the untextured state afterward so the
+// next flat quad starts a new span. Textured geometry always goes to the main batch.
+void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
+             float u0, float v0, float u1, float v1, const unsigned char tint[4]) {
+    setTexture(tex);
+    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { setTexture(nullptr); return; }
+    const SDL_Color sc = toColor(tint);
+    const int base = g_nv;
+    SDL_Vertex v; v.color = sc;
+    v.position.x = x;     v.position.y = y;     v.tex_coord.x = u0; v.tex_coord.y = v0; g_verts[g_nv++] = v;
+    v.position.x = x + w; v.position.y = y;     v.tex_coord.x = u1; v.tex_coord.y = v0; g_verts[g_nv++] = v;
+    v.position.x = x + w; v.position.y = y + h; v.tex_coord.x = u1; v.tex_coord.y = v1; g_verts[g_nv++] = v;
+    v.position.x = x;     v.position.y = y + h; v.tex_coord.x = u0; v.tex_coord.y = v1; g_verts[g_nv++] = v;
+    g_idx[g_ni++] = base + 0; g_idx[g_ni++] = base + 1; g_idx[g_ni++] = base + 2;
+    g_idx[g_ni++] = base + 0; g_idx[g_ni++] = base + 2; g_idx[g_ni++] = base + 3;
+    setTexture(nullptr);
+}
+
+// A quad from four arbitrary corners (for rotated/skewed shapes and thick lines).
+void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
+             float dx, float dy, const unsigned char c[4]) {
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
+    const SDL_Color sc = toColor(c);
+    const int base = nv;
+    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_Vertex v; v.color = sc; v.tex_coord = uv;
+    v.position.x = ax; v.position.y = ay; V[nv++] = v;
+    v.position.x = bx; v.position.y = by; V[nv++] = v;
+    v.position.x = cx; v.position.y = cy; V[nv++] = v;
+    v.position.x = dx; v.position.y = dy; V[nv++] = v;
+    I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
+    I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
+}
+
+// An axis-aligned quad whose four corners each have their own color; the GPU
+// interpolates between them (for gradients: hue bars, SV squares, fades).
+void gradQuad(float x, float y, float w, float h,
+              const unsigned char tl[4], const unsigned char tr[4],
+              const unsigned char br[4], const unsigned char bl[4]) {
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
+    const int base = nv;
+    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_Vertex v; v.tex_coord = uv;
+    v.position.x = x;     v.position.y = y;     v.color = toColor(tl); V[nv++] = v;
+    v.position.x = x + w; v.position.y = y;     v.color = toColor(tr); V[nv++] = v;
+    v.position.x = x + w; v.position.y = y + h; v.color = toColor(br); V[nv++] = v;
+    v.position.x = x;     v.position.y = y + h; v.color = toColor(bl); V[nv++] = v;
+    I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
+    I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
+}
+
+// HSV (h in [0,1), s,v in [0,1]) -> RGB bytes.
+void hsvToRgb(float h, float s, float v, unsigned char out[3]) {
+    h -= SDL_floorf(h); if (h < 0) h += 1.0f;
+    float r = v, g = v, b = v;
+    float hh = h * 6.0f;
+    int   i = (int)hh;
+    float f = hh - i;
+    float p = v * (1.0f - s), q = v * (1.0f - s * f), t = v * (1.0f - s * (1.0f - f));
+    switch (i % 6) {
+        case 0: r = v; g = t; b = p; break;
+        case 1: r = q; g = v; b = p; break;
+        case 2: r = p; g = v; b = t; break;
+        case 3: r = p; g = q; b = v; break;
+        case 4: r = t; g = p; b = v; break;
+        default:r = v; g = p; b = q; break;
+    }
+    out[0] = (unsigned char)(r * 255.0f + 0.5f);
+    out[1] = (unsigned char)(g * 255.0f + 0.5f);
+    out[2] = (unsigned char)(b * 255.0f + 0.5f);
+}
+
+// RGB bytes -> HSV (h,s,v in [0,1]).
+void rgbToHsv(unsigned char R, unsigned char G, unsigned char B, float& h, float& s, float& v) {
+    float r = R / 255.0f, g = G / 255.0f, b = B / 255.0f;
+    float mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    float mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    v = mx; float d = mx - mn;
+    s = mx <= 0.0f ? 0.0f : d / mx;
+    if (d <= 0.0f) { h = 0.0f; return; }
+    if (mx == r)      h = (g - b) / d + (g < b ? 6.0f : 0.0f);
+    else if (mx == g) h = (b - r) / d + 2.0f;
+    else              h = (r - g) / d + 4.0f;
+    h /= 6.0f;
+}
+
+// A straight line of thickness `th` between two points, as a thin rotated quad.
+void line(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]) {
+    float dx = x1 - x0, dy = y1 - y0;
+    float len = dx * dx + dy * dy;
+    if (len <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
+    len = 1.0f / SDL_sqrtf(len);
+    // Perpendicular unit vector * half thickness.
+    float px = -dy * len * th * 0.5f, py = dx * len * th * 0.5f;
+    quadPts(x0 + px, y0 + py, x1 + px, y1 + py, x1 - px, y1 - py, x0 - px, y0 - py, c);
+}
+
+// A single filled triangle.
+void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]) {
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) return;
+    const SDL_Color sc = toColor(c);
+    const int base = nv;
+    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_Vertex v; v.color = sc; v.tex_coord = uv;
+    v.position.x = ax; v.position.y = ay; V[nv++] = v;
+    v.position.x = bx; v.position.y = by; V[nv++] = v;
+    v.position.x = cx; v.position.y = cy; V[nv++] = v;
+    I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
+}
+
+// A filled circle as a triangle fan of `segments` wedges.
+void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments = 24) {
+    if (segments < 3) segments = 3;
+    const float step = 6.2831853f / segments;
+    float px = cx + radius, py = cy;
+    for (int i = 1; i <= segments; ++i) {
+        float a = step * i;
+        float nx = cx + radius * SDL_cosf(a), ny = cy + radius * SDL_sinf(a);
+        tri(cx, cy, px, py, nx, ny, c);
+        px = nx; py = ny;
+    }
+}
+
+// A filled circular arc/fan from angle a0 to a1 (radians), centered at (cx,cy).
+void arcFan(float cx, float cy, float r, float a0, float a1, const unsigned char c[4], int seg = 5) {
+    if (seg < 1) seg = 1;
+    const float step = (a1 - a0) / seg;
+    float px = cx + r * SDL_cosf(a0), py = cy + r * SDL_sinf(a0);
+    for (int i = 1; i <= seg; ++i) {
+        float a = a0 + step * i;
+        float nx = cx + r * SDL_cosf(a), ny = cy + r * SDL_sinf(a);
+        tri(cx, cy, px, py, nx, ny, c);
+        px = nx; py = ny;
+    }
+}
+
+// A filled rounded rectangle (falls back to a plain quad when rad <= 0). Decomposed
+// into three bars + four quarter-circle corners so translucent fills never overlap.
+void rrect(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
+    if (rad <= 0.5f || w <= 0.0f || h <= 0.0f) { quad(x, y, w, h, c); return; }
+    if (rad > w * 0.5f) rad = w * 0.5f;
+    if (rad > h * 0.5f) rad = h * 0.5f;
+    const float PI = 3.14159265f;
+    quad(x, y + rad, w, h - 2 * rad, c);            // middle band (full width)
+    quad(x + rad, y, w - 2 * rad, rad, c);          // top strip
+    quad(x + rad, y + h - rad, w - 2 * rad, rad, c);// bottom strip
+    arcFan(x + rad,     y + rad,     rad, PI,          1.5f * PI, c);  // top-left
+    arcFan(x + w - rad, y + rad,     rad, 1.5f * PI,   2.0f * PI, c);  // top-right
+    arcFan(x + w - rad, y + h - rad, rad, 0.0f,        0.5f * PI, c);  // bottom-right
+    arcFan(x + rad,     y + h - rad, rad, 0.5f * PI,   PI,        c);  // bottom-left
+}
+inline float rnd() { return g_theme.rounding; }
+
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str) return;
@@ -191,6 +496,10 @@ void BeginFrame(const Input& in) {
     g_pressed  =  in.mouseDown && !g_prevDown;
     g_released = !in.mouseDown &&  g_prevDown;
     g_prevDown = in.mouseDown;
+    g_rPressed  = in.rightDown && !g_rPrevDown;
+    g_rPrevDown = in.rightDown;
+    g_openPopupThisFrame = 0;
+    g_popupTop = 0;
     g_mouseDX = in.mouseX - g_prevMouseX;
     g_mouseDY = in.mouseY - g_prevMouseY;
     g_prevMouseX = in.mouseX;
@@ -203,6 +512,16 @@ void BeginFrame(const Input& in) {
     g_nv = 0; g_ni = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false;
     g_inMenuBar = false; g_curMenu.active = false;
+    g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
+    // Restore any colors left pushed by an imbalanced previous frame, then clear.
+    PopStyleColor(g_colTop);
+    g_colTop = 0;
+    g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
+    g_nspans = 0; g_clipTop = 0;           // reset draw spans/stack
+    g_curClipOn = false; g_curTex = nullptr;
+    g_childTop = 0;                        // reset child-region stack
+    g_col.active = false;                  // reset column layout
+    g_tbl.active = false;                  // reset table layout
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -222,10 +541,11 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
     if (g_active == id && inside) bg = g_theme.bgDown;
     else if (inside)             bg = g_theme.bgHover;
 
-    // Border frame, then the inset fill.
-    quad(x, y, w, h, g_theme.border);
+    // Rounded border frame, then the inset fill.
+    const float rd = rnd();
+    rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, bg);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
 
     // Centered label.
     if (label && *label) {
@@ -242,9 +562,10 @@ void Label(float x, float y, const char* text) {
 }
 
 void Panel(float x, float y, float w, float h) {
-    quad(x, y, w, h, g_theme.border);
+    const float rd = rnd();
+    rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.panel);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, g_theme.panel);
 }
 
 bool Checkbox(int id, float x, float y, float size, const char* label, bool* value) {
@@ -263,20 +584,52 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
     if (g_active == id && inside) bg = g_theme.bgDown;
     else if (inside)             bg = g_theme.bgHover;
 
-    // Box frame + fill.
-    quad(x, y, size, size, g_theme.border);
+    // Rounded box frame + fill.
+    const float rd = rnd() * 0.6f;
+    rrect(x, y, size, size, rd, g_theme.border);
     const float b = g_theme.borderPx;
-    if (size > 2.0f * b) quad(x + b, y + b, size - 2.0f * b, size - 2.0f * b, bg);
+    if (size > 2.0f * b) rrect(x + b, y + b, size - 2.0f * b, size - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
     // Check mark: a centered accent square when ticked.
     if (*value) {
         const float pad = size * 0.28f;
-        quad(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, g_theme.accent);
+        rrect(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, rd * 0.5f, g_theme.accent);
     }
     // Label to the right, vertically centered against the box.
     if (label && *label) {
         const float s  = g_theme.textScale;
         const float th = fH() * s;
         drawText(x + size + 8.0f, y + (size - th) * 0.5f, label, s, g_theme.text);
+    }
+    return changed;
+}
+
+bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label, bool* value) {
+    if (!value || w <= 0.0f || h <= 0.0f) return false;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+
+    bool changed = false;
+    if (g_active == id) {
+        if (g_released) { if (inside) { *value = !*value; changed = true; } g_active = 0; }
+    } else if (inside && g_pressed) {
+        g_active = id;
+    }
+
+    // Pill track: dim when off, accent when on; knob slides between the two ends.
+    const float rd = h * 0.5f;
+    const unsigned char* track = *value ? g_theme.accent : g_theme.bg;
+    rrect(x, y, w, h, rd, g_theme.border);
+    const float b = g_theme.borderPx;
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, track);
+    const float pad = h * 0.14f;
+    const float kd  = h - 2.0f * pad;                          // knob diameter
+    const float kx  = *value ? (x + w - pad - kd) : (x + pad); // slid to the on/off end
+    const unsigned char* knob = (inside || g_active == id) ? g_theme.text : g_theme.bgHover;
+    rrect(kx, y + pad, kd, kd, kd * 0.5f, knob);
+    // Label to the right of the switch, vertically centered.
+    if (label && *label) {
+        const float s = g_theme.textScale, th = fH() * s;
+        drawText(x + w + 8.0f, y + (h - th) * 0.5f, label, s, g_theme.text);
     }
     return changed;
 }
@@ -300,28 +653,31 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
         setFromMouse();                      // jump to the click position
     }
 
-    // Groove, then the filled portion, then the handle.
+    // Rounded groove, then the filled portion, then a circular handle.
     const float t = clamp01((*value - minV) / (maxV - minV));
     const float gy = y + h * 0.5f - 3.0f;     // 6px groove, vertically centered
-    quad(x, gy, w, 6.0f, g_theme.track);
-    quad(x, gy, w * t, 6.0f, g_theme.accent);
-    const float hw = 10.0f;                    // handle width
-    float hx = x + w * t - hw * 0.5f;
-    if (hx < x) hx = x; if (hx > x + w - hw) hx = x + w - hw;
+    rrect(x, gy, w, 6.0f, 3.0f, g_theme.track);
+    if (w * t > 0.0f) rrect(x, gy, w * t, 6.0f, 3.0f, g_theme.accent);
+    const float hr = h * 0.42f;                // handle radius
+    float hcx = x + w * t;
+    if (hcx < x + hr) hcx = x + hr;
+    if (hcx > x + w - hr) hcx = x + w - hr;
     const unsigned char* hc = (g_active == id || inside) ? g_theme.text : g_theme.accent;
-    quad(hx, y, hw, h, g_theme.border);
-    quad(hx + 1.0f, y + 1.0f, hw - 2.0f, h - 2.0f, hc);
+    fillCircle(hcx, y + h * 0.5f, hr, g_theme.border);
+    fillCircle(hcx, y + h * 0.5f, hr - 1.5f, hc);
     return changed;
 }
 
 void ProgressBar(float x, float y, float w, float h, float t) {
     t = clamp01(t);
-    quad(x, y, w, h, g_theme.border);
+    const float rd = rnd();
+    rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
     if (w > 2.0f * b && h > 2.0f * b) {
-        quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.track);
+        const float ir = rd > b ? rd - b : 0.0f;
+        rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, ir, g_theme.track);
         const float iw = (w - 2.0f * b) * t;
-        if (iw > 0.0f) quad(x + b, y + b, iw, h - 2.0f * b, g_theme.accent);
+        if (iw > 0.0f) rrect(x + b, y + b, iw, h - 2.0f * b, ir, g_theme.accent);
     }
 }
 
@@ -341,14 +697,12 @@ bool RadioButton(int id, float x, float y, float size, const char* label, int* v
     if (g_active == id && inside) bg = g_theme.bgDown;
     else if (inside)             bg = g_theme.bgHover;
 
-    quad(x, y, size, size, g_theme.border);
-    const float b = g_theme.borderPx;
-    if (size > 2.0f * b) quad(x + b, y + b, size - 2.0f * b, size - 2.0f * b, bg);
-    // Selected indicator: a smaller centered accent dot (distinct from the checkbox).
-    if (*value == option) {
-        const float pad = size * 0.32f;
-        quad(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, g_theme.accent);
-    }
+    // Circular radio (distinct from the square checkbox).
+    const float cx = x + size * 0.5f, cy = y + size * 0.5f, rr = size * 0.5f;
+    fillCircle(cx, cy, rr, g_theme.border);
+    fillCircle(cx, cy, rr - g_theme.borderPx, bg);
+    // Selected indicator: a smaller centered accent dot.
+    if (*value == option) fillCircle(cx, cy, size * 0.22f, g_theme.accent);
     if (label && *label) {
         const float s  = g_theme.textScale;
         const float th = fH() * s;
@@ -408,10 +762,11 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
         }
     }
 
-    // Box (focused gets a subtly lighter fill + accent border hint).
-    quad(x, y, w, h, focused ? g_theme.accent : g_theme.border);
+    // Rounded box (focused gets an accent border hint).
+    const float rd = rnd();
+    rrect(x, y, w, h, rd, focused ? g_theme.accent : g_theme.border);
     const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.track);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, g_theme.track);
 
     // Show the trailing characters that fit (so the caret stays visible) — this
     // avoids needing a scissor rect across the batched geometry.
@@ -438,6 +793,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
 namespace {
 // Append the overlay batch after the main batch so popups/tooltips draw on top.
 void mergeOverlay() {
+    if (g_oni > 0) { setTexture(nullptr); pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
     const int base = g_nv;
     for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
     for (int j = 0; j < g_oni && g_ni < kMaxIdx; ++j)   g_idx[g_ni++] = base + g_ovIdx[j];
@@ -447,6 +803,15 @@ void mergeOverlay() {
 void finalizeFrame() {
     if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
     if (g_pressed && !g_focusClaimed) g_focus = 0;   // click on empty space drops keyboard focus
+    // A floating chip follows the cursor while dragging (drawn in the overlay so it's
+    // on top). Any release ends the drag (a DropTarget already consumed it if hit).
+    if (g_dd.active) {
+        g_toOverlay = true;
+        const unsigned char* ac = g_theme.accent;
+        fillCircle(g_in.mouseX + 10.0f, g_in.mouseY + 10.0f, 7.0f, ac);
+        g_toOverlay = false;
+    }
+    if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; }
     mergeOverlay();
 }
 } // namespace
@@ -469,11 +834,49 @@ void EndFrame(SDL_Renderer* r) {
     SDL_BlendMode prev = SDL_BLENDMODE_NONE;
     SDL_GetRenderDrawBlendMode(r, &prev);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    SDL_RenderGeometry(r, nullptr, g_verts, g_nv, g_idx, g_ni);
+    if (g_nspans == 0) {
+        SDL_RenderGeometry(r, nullptr, g_verts, g_nv, g_idx, g_ni);   // fast path: no clipping
+    } else {
+        // Draw each contiguous index range under its clip rect. Ranges run from one
+        // span's startIdx to the next span's (last extends to g_ni).
+        SDL_bool hadClip = SDL_RenderIsClipEnabled(r);
+        SDL_Rect savedClip; SDL_RenderGetClipRect(r, &savedClip);
+        // Geometry before the first span (window frames drawn pre-clip) is unclipped.
+        if (g_spans[0].startIdx > 0) {
+            SDL_RenderSetClipRect(r, nullptr);
+            SDL_RenderGeometry(r, nullptr, g_verts, g_nv, &g_idx[0], g_spans[0].startIdx);
+        }
+        for (int s = 0; s < g_nspans; ++s) {
+            int from = g_spans[s].startIdx;
+            int to   = (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni;
+            if (to <= from) continue;
+            if (g_spans[s].on) SDL_RenderSetClipRect(r, &g_spans[s].rect);
+            else               SDL_RenderSetClipRect(r, nullptr);
+            SDL_RenderGeometry(r, g_spans[s].tex, g_verts, g_nv, &g_idx[from], to - from);
+        }
+        // Restore the renderer's prior clip state.
+        SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);
+    }
     SDL_SetRenderDrawBlendMode(r, prev);
 }
 
 Theme& Style() { return g_theme; }
+
+void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    if (g_colTop >= 64) return;
+    unsigned char* f = themeColor((int)which);
+    ColorSave& s = g_colStack[g_colTop++];
+    s.field = f;
+    s.prev[0] = f[0]; s.prev[1] = f[1]; s.prev[2] = f[2]; s.prev[3] = f[3];
+    f[0] = r; f[1] = g; f[2] = b; f[3] = a;
+}
+
+void PopStyleColor(int count) {
+    while (count-- > 0 && g_colTop > 0) {
+        ColorSave& s = g_colStack[--g_colTop];
+        s.field[0] = s.prev[0]; s.field[1] = s.prev[1]; s.field[2] = s.prev[2]; s.field[3] = s.prev[3];
+    }
+}
 
 void SetFont(const Font* f) { g_font = f ? f : &kFontDefault; }
 const Font* GetFont()       { return g_font; }
@@ -482,7 +885,7 @@ const Font* FontBold()      { return &kFontBold; }
 
 // ---- Auto-layout window + ImGui-style overloads --------------------------------
 
-bool Begin(const char* title, float x, float y, float w, float h) {
+bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) {
     g_lay.seed = 0;                    // hash the window id from a FIXED seed so it (and
     const int id = hashLabel(title);   // every widget id under it) is stable across frames
     WinSlot* slot = nullptr;
@@ -490,22 +893,58 @@ bool Begin(const char* title, float x, float y, float w, float h) {
     if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { ws.used = true; ws.id = id; ws.x = x; ws.y = y; slot = &ws; break; }
     float wx = slot ? slot->x : x, wy = slot ? slot->y : y;
     const float titleH = rowH();
+    bool* collapsed = openState(id ^ 0x5c01, false);   // per-window collapsed flag
 
-    // Drag the window by its title bar (reuses the active-item mechanism).
-    const bool overTitle = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, titleH);
-    if (overTitle) g_hot = id;
+    // Title-bar sub-rects: a collapse caret on the left, an optional close [x] on the
+    // right, and the draggable strip in between.
+    const float btn = titleH;
+    const float caretX = wx, caretW = btn;
+    const float closeX = wx + w - btn, closeW = p_open ? btn : 0.0f;
+
+    // Collapse toggle: click the caret to fold/unfold the window.
+    const bool overCaret = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, caretX, wy, caretW, titleH);
+    if (overCaret) g_hot = id ^ 0x5c01;
+    if (g_active == (id ^ 0x5c01)) { if (g_released) { if (overCaret) *collapsed = !*collapsed; g_active = 0; } }
+    else if (overCaret && g_pressed) { g_active = id ^ 0x5c01; g_focusClaimed = true; }
+
+    // Close button: click the [x] to clear *p_open.
+    bool overClose = false;
+    if (p_open) {
+        overClose = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, closeX, wy, closeW, titleH);
+        if (overClose) g_hot = id ^ 0xc105;
+        if (g_active == (id ^ 0xc105)) { if (g_released) { if (overClose) *p_open = false; g_active = 0; } }
+        else if (overClose && g_pressed) { g_active = id ^ 0xc105; g_focusClaimed = true; }
+    }
+
+    // Drag the window by the title bar (the strip between caret and close button).
+    const float dragX = wx + caretW, dragW = w - caretW - closeW;
+    const bool overDrag = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, dragX, wy, dragW, titleH);
+    if (overDrag) g_hot = id;
     if (g_active == id) {
         if (!g_in.mouseDown) g_active = 0;
         else if (slot) { slot->x += g_mouseDX; slot->y += g_mouseDY; wx = slot->x; wy = slot->y; }
-    } else if (overTitle && g_pressed) {
+    } else if (overDrag && g_pressed) {
         g_active = id; g_focusClaimed = true;
     }
 
-    // Frame: panel body + title bar + accent underline + title text.
-    Panel(wx, wy, w, h);
-    quad(wx, wy, w, titleH, g_theme.bgDown);
+    // Frame: panel body (only the title bar when collapsed) + accent underline + title.
+    const float bodyH = *collapsed ? titleH : h;
+    Panel(wx, wy, w, bodyH);
+    // Title bar: round the TOP corners to match the panel, square at the bottom edge
+    // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
+    const float rd = rnd();
+    rrect(wx, wy, w, titleH, rd, g_theme.bgDown);
+    if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, g_theme.bgDown);
     quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
-    if (title && *title) drawText(wx + 10.0f, wy + (titleH - textH()) * 0.5f, title, g_theme.textScale, g_theme.text);
+    const float s = g_theme.textScale;
+    drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
+    if (title && *title) drawText(wx + 8.0f + fW() * s * 2.0f, wy + (titleH - textH()) * 0.5f, title, s, g_theme.text);
+    if (p_open) {
+        const unsigned char* xcol = overClose ? g_theme.accent : g_theme.text;
+        drawText(closeX + (btn - fW() * s) * 0.5f, wy + (titleH - textH()) * 0.5f, "x", s, xcol);
+    }
+
+    if (*collapsed) { g_lay.active = false; return false; }   // folded: skip content
 
     // Establish the content layout region.
     const float pad = 10.0f;
@@ -525,10 +964,111 @@ bool Begin(const char* title, float x, float y, float w, float h) {
 
 void End() { g_lay.active = false; }
 
+bool BeginChild(const char* id, float w, float h, bool border) {
+    if (!g_lay.active) return false;
+    const int cid = hashLabel(id);
+    const float pad = 6.0f;
+    const float rw = w > 0.0f ? w : availW();
+    const float rh = h > 0.0f ? h : rowH() * 4.0f;
+    float rx, ry; place(rw, rh, rx, ry);
+
+    float* scroll  = floatState(cid, 0.0f);
+    float* maxSlot = floatState(cid ^ 0x4d61, 0.0f);   // last frame's max scroll
+    const bool hovered = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, rx, ry, rw, rh);
+    if (hovered && g_in.wheel != 0.0f) *scroll -= g_in.wheel * rowH();   // wheel scrolls
+    // Clamp with the previous frame's content extent so layout uses a sane offset.
+    if (*scroll < 0.0f) *scroll = 0.0f;
+    if (*scroll > *maxSlot) *scroll = *maxSlot;
+
+    // Frame + clip to the region.
+    if (border) { quad(rx, ry, rw, rh, g_theme.panel); }
+    PushClipRect(rx, ry, rw, rh);
+
+    // Save the parent layout, then set up the child's inner layout (scrolled).
+    if (g_childTop < 8) {
+        ChildSave& c = g_childStack[g_childTop++];
+        c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
+        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered;
+    }
+    g_lay.ox = rx + pad;
+    g_lay.contentW = rw - 2.0f * pad - kScrollbarW;
+    g_lay.oy = ry + pad - *scroll;
+    g_lay.cx = g_lay.ox;
+    g_lay.cy = g_lay.oy;
+    g_lay.indent = 0.0f;
+    g_lay.seed = cid;                   // child-local widget id namespace
+    g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    return true;
+}
+
+void EndChild() {
+    if (g_childTop <= 0) return;
+    ChildSave& c = g_childStack[--g_childTop];
+    // Content height = how far the cursor advanced from the (scrolled) top, in
+    // unscrolled space. cy currently sits at top - scroll + contentHeight.
+    const float contentH = g_lay.cy - (c.top - *c.scroll);
+    const float viewH = c.rh - 2.0f * c.pad;
+    float maxScroll = contentH - viewH; if (maxScroll < 0.0f) maxScroll = 0.0f;
+    *c.maxSlot = maxScroll;                     // remember for next frame's clamp
+    if (*c.scroll < 0.0f) *c.scroll = 0.0f;
+    if (*c.scroll > maxScroll) *c.scroll = maxScroll;
+
+    PopClipRect();   // stop clipping before drawing the scrollbar
+
+    // Scrollbar (only when content overflows).
+    if (maxScroll > 0.0f) {
+        const float sbx = c.rx + c.rw - kScrollbarW;
+        quad(sbx, c.ry, kScrollbarW, c.rh, g_theme.track);
+        float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
+        float thumbH = frac * c.rh; if (thumbH < 16.0f) thumbH = 16.0f;
+        float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
+        float thumbY = c.ry + t * (c.rh - thumbH);
+        // Drag the thumb.
+        const int sbId = (int)((unsigned)c.lay.seed ^ 0x5cb0u ^ (unsigned)(sbx * 7.0f)) & 0x7fffffff;
+        const bool overThumb = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, sbx, thumbY, kScrollbarW, thumbH);
+        if (overThumb) g_hot = sbId;
+        if (g_active == sbId) {
+            if (!g_in.mouseDown) g_active = 0;
+            else if (c.rh - thumbH > 0.0f) *c.scroll += g_mouseDY * (maxScroll / (c.rh - thumbH));
+        } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
+        if (*c.scroll < 0.0f) *c.scroll = 0.0f;
+        if (*c.scroll > maxScroll) *c.scroll = maxScroll;
+        const unsigned char* tc = (g_active == sbId || overThumb) ? g_theme.text : g_theme.accent;
+        quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, tc);
+    }
+
+    g_lay = c.lay;   // restore the parent layout (cursor already past the region)
+}
+
 void SameLine(float spacing) {
     if (!g_lay.active) return;
     g_lay.pendingSameLine = true;
     g_lay.sameLineSpacing = spacing;
+}
+
+void SetNextItemWidth(float w) { g_nextItemW = w; }
+void PushItemWidth(float w)    { if (g_itemWTop < 16) g_itemWStack[g_itemWTop++] = w; }
+void PopItemWidth()            { if (g_itemWTop > 0) --g_itemWTop; }
+
+void PushClipRect(float x, float y, float w, float h) {
+    SDL_Rect r; r.x = (int)x; r.y = (int)y; r.w = (int)(w < 0 ? 0 : w); r.h = (int)(h < 0 ? 0 : h);
+    // Intersect with the enclosing clip so nested regions never draw outside a parent.
+    if (g_clipTop > 0) {
+        SDL_Rect& p = g_clipStack[g_clipTop - 1];
+        int x0 = r.x > p.x ? r.x : p.x, y0 = r.y > p.y ? r.y : p.y;
+        int x1 = (r.x + r.w) < (p.x + p.w) ? (r.x + r.w) : (p.x + p.w);
+        int y1 = (r.y + r.h) < (p.y + p.h) ? (r.y + r.h) : (p.y + p.h);
+        r.x = x0; r.y = y0; r.w = x1 > x0 ? x1 - x0 : 0; r.h = y1 > y0 ? y1 - y0 : 0;
+    }
+    if (g_clipTop < 16) g_clipStack[g_clipTop++] = r;
+    pushClipSpan(true, r);
+}
+
+void PopClipRect() {
+    if (g_clipTop > 0) --g_clipTop;
+    if (g_clipTop > 0) pushClipSpan(true, g_clipStack[g_clipTop - 1]);
+    else               pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 });
 }
 
 void Spacing(float h) {
@@ -550,11 +1090,103 @@ void Text(const char* s) {
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, g_theme.text);
 }
 
+void TextColored(unsigned char r, unsigned char g, unsigned char b, const char* s) {
+    if (!g_lay.active) return;
+    const float h = rowH();
+    float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
+    const unsigned char col[4] = { r, g, b, 255 };
+    if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
+}
+
+void TextDisabled(const char* s) {
+    // Blend the theme text toward the panel color for a muted look.
+    const unsigned char* t = g_theme.text; const unsigned char* p = g_theme.panel;
+    TextColored((unsigned char)((t[0] + p[0]) / 2), (unsigned char)((t[1] + p[1]) / 2),
+                (unsigned char)((t[2] + p[2]) / 2), s);
+}
+
+void SeparatorText(const char* label) {
+    if (!g_lay.active) return;
+    const float h = rowH();
+    float x, y; place(fullW(), h, x, y);
+    const float ty = y + (h - textH()) * 0.5f;
+    const float lw = label && *label ? labelW(label) : 0.0f;
+    if (lw > 0.0f) drawText(x, ty, label, g_theme.textScale, g_theme.text);
+    // A line filling the space to the right of the label.
+    const float lineX = x + (lw > 0.0f ? lw + 8.0f : 0.0f);
+    const float lineW = (x + fullW()) - lineX;
+    if (lineW > 2.0f) quad(lineX, y + h * 0.5f, lineW, 1.0f, g_theme.border);
+}
+
+void Dummy(float w, float h) {
+    if (!g_lay.active) return;
+    float x, y; place(w, h, x, y);
+}
+
+void Indent(float w) {
+    if (!g_lay.active) return;
+    g_lay.indent += (w > 0.0f ? w : textH());   // default step = one text line height
+}
+
+void Unindent(float w) {
+    if (!g_lay.active) return;
+    g_lay.indent -= (w > 0.0f ? w : textH());
+    if (g_lay.indent < 0.0f) g_lay.indent = 0.0f;
+}
+
+void Bullet() {
+    if (!g_lay.active) return;
+    const float d = textH() * 0.35f, h = rowH();
+    float x, y; place(d, h, x, y);
+    quad(x, y + (h - d) * 0.5f, d, d, g_theme.text);
+}
+
+void BulletText(const char* s) {
+    if (!g_lay.active) return;
+    const float d = textH() * 0.35f, h = rowH();
+    const float w = d + 8.0f + (s && *s ? labelW(s) : 0.0f);
+    float x, y; place(w, h, x, y);
+    quad(x, y + (h - d) * 0.5f, d, d, g_theme.text);
+    if (s && *s) drawText(x + d + 8.0f, y + (h - textH()) * 0.5f, s, g_theme.textScale, g_theme.text);
+}
+
+void PushID(int id)         { pushIdSeed((unsigned)id * 2654435761u + 1u); }
+void PushID(const char* id) {
+    unsigned h = 2166136261u;
+    if (id) for (const char* p = id; *p; ++p) h = (h ^ (unsigned char)*p) * 16777619u;
+    pushIdSeed(h);
+}
+void PopID() { popIdSeed(); }
+
 bool Button(const char* label) {
     if (!g_lay.active) return false;
     const float w = labelW(label) + 24.0f, h = rowH();
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
+}
+
+bool SmallButton(const char* label) {
+    if (!g_lay.active) return false;
+    const float w = labelW(label) + 12.0f, h = textH() + 6.0f;   // tight padding
+    float x, y; place(w, h, x, y);
+    return Button(hashLabel(label), x, y, w, h, label);
+}
+
+void TabBar(const char* const* labels, int count, int* current) {
+    if (!g_lay.active || !labels || !current || count <= 0) return;
+    const float h = rowH();
+    // Reserve the full row; lay tabs left-to-right within it.
+    float x, y; place(fullW(), h, x, y);
+    float tx = x;
+    for (int i = 0; i < count; ++i) {
+        const char* lbl = labels[i] ? labels[i] : "";
+        const float tw = labelW(lbl) + 20.0f;
+        const unsigned uid = ((unsigned)hashLabel(lbl) ^ ((unsigned)i * 2654435761u)) & 0x7fffffffu;
+        Tab((int)uid, tx, y, tw, h, lbl, current, i);
+        tx += tw + 2.0f;
+    }
+    // A baseline under the whole tab row.
+    quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);
 }
 
 bool Checkbox(const char* label, bool* value) {
@@ -573,6 +1205,15 @@ bool RadioButton(const char* label, int* value, int option) {
     return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value, option);
 }
 
+bool ToggleSwitch(const char* label, bool* value) {
+    if (!g_lay.active || !value) return false;
+    const float h = rowH();
+    const float sh = textH() + 4.0f, sw = sh * 1.9f;   // switch pill size (track ~1.9:1)
+    const float w = sw + 8.0f + labelW(label);
+    float x, y; place(w, h, x, y);
+    return ToggleSwitch(hashLabel(label), x, y + (h - sh) * 0.5f, sw, sh, label, value);
+}
+
 bool SliderFloat(const char* label, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
     const float h = rowH();
@@ -583,6 +1224,77 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV) {
     const bool ch = Slider(hashLabel(label), x, y, ctrlW, h, value, minV, maxV);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
     return ch;
+}
+
+bool SliderInt(const char* label, int* value, int minV, int maxV) {
+    if (!g_lay.active || !value) return false;
+    float f = (float)*value;
+    // Reuse the float slider, then snap to the nearest integer.
+    bool ch = SliderFloat(label, &f, (float)minV, (float)maxV);
+    int iv = (int)(f + (f >= 0.0f ? 0.5f : -0.5f));
+    if (iv < minV) iv = minV;
+    if (iv > maxV) iv = maxV;
+    if (iv != *value) { *value = iv; return true; }
+    return ch && false;   // value unchanged after snapping
+}
+
+bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) {
+    if (!g_lay.active || !value) return false;
+    const int id = hashLabel(label);
+    if (w <= 0.0f) w = rowH();
+    if (h <= 0.0f) h = rowH() * 3.0f;
+    float x, y; place(w, h, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+    bool changed = false;
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;
+        else {
+            // Top = maxV, bottom = minV (natural for a level fader).
+            float t = 1.0f - clamp01((g_in.mouseY - y) / (h > 0 ? h : 1));
+            float nv = minV + t * (maxV - minV);
+            if (nv != *value) { *value = nv; changed = true; }
+        }
+    } else if (inside && g_pressed) { g_active = id; g_focusClaimed = true; }
+    // Groove + fill from the bottom up to the value.
+    quad(x, y, w, h, g_theme.track);
+    float span = maxV - minV; float t = span != 0.0f ? clamp01((*value - minV) / span) : 0.0f;
+    float fillH = t * h;
+    quad(x, y + h - fillH, w, fillH, g_theme.accent);
+    // Handle.
+    float hy = y + h - fillH - 3.0f;
+    quad(x, hy < y ? y : hy, w, 6.0f, (g_active == id || inside) ? g_theme.text : g_theme.bgHover);
+    return changed;
+}
+
+bool Knob(const char* label, float* value, float minV, float maxV, float size) {
+    if (!g_lay.active || !value) return false;
+    const int id = hashLabel(label);
+    const float d = size > 0.0f ? size : rowH() * 2.0f;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    float x, y; place(d + lw, d, x, y);
+    const float cx = x + d * 0.5f, cy = y + d * 0.5f, rad = d * 0.5f - 2.0f;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, d, d);
+    if (inside) g_hot = id;
+    bool changed = false;
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;
+        else {
+            // Drag up to increase (vertical drag is the common knob gesture).
+            float span = maxV - minV;
+            float nv = *value - g_mouseDY * span / 120.0f;   // 120px = full sweep
+            nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+            if (nv != *value) { *value = nv; changed = true; }
+        }
+    } else if (inside && g_pressed) { g_active = id; g_focusClaimed = true; }
+    // Dial + indicator sweeping ~270 degrees (from 135 to 405 deg).
+    fillCircle(cx, cy, rad, (g_active == id || inside) ? g_theme.bgHover : g_theme.track);
+    fillCircle(cx, cy, rad * 0.82f, g_theme.panel);
+    float span = maxV - minV; float t = span != 0.0f ? clamp01((*value - minV) / span) : 0.0f;
+    const float a = 2.35619f + t * 4.71239f;   // 135deg + t*270deg (radians)
+    line(cx, cy, cx + SDL_cosf(a) * rad, cy + SDL_sinf(a) * rad, 2.5f, g_theme.accent);
+    if (lw > 0.0f) drawText(x + d + 8.0f, y + (d - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    return changed;
 }
 
 void ProgressBar(float fraction, const char* overlay) {
@@ -596,6 +1308,101 @@ void ProgressBar(float fraction, const char* overlay) {
     }
 }
 
+// Shared framing + scaling for the two plot widgets. Returns the plot rect and the
+// resolved min/max; reserves layout space (leaving room for a label to the right).
+static bool plotFrame(const char* label, const float* values, int count,
+                      float& scaleMin, float& scaleMax, float height,
+                      float& px, float& py, float& pw, float& ph) {
+    if (!g_lay.active || !values || count <= 0) return false;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float h = height > 0.0f ? height : rowH() * 2.4f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    pw = w - lw; if (pw < 24.0f) pw = 24.0f;
+    px = x; py = y; ph = h;
+    if (lw > 0.0f) drawText(x + pw + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (scaleMin >= scaleMax) {              // auto-range from the data
+        scaleMin = values[0]; scaleMax = values[0];
+        for (int i = 1; i < count; ++i) { if (values[i] < scaleMin) scaleMin = values[i];
+                                          if (values[i] > scaleMax) scaleMax = values[i]; }
+        if (scaleMax - scaleMin < 0.0001f) scaleMax = scaleMin + 1.0f;
+    }
+    quad(px, py, pw, ph, g_theme.track);      // framed background
+    return true;
+}
+
+void PlotLines(const char* label, const float* values, int count,
+               float scaleMin, float scaleMax, float height) {
+    float px, py, pw, ph;
+    if (!plotFrame(label, values, count, scaleMin, scaleMax, height, px, py, pw, ph)) return;
+    const float span = scaleMax - scaleMin;
+    auto sy = [&](float v) { return py + ph - 2.0f - ((v - scaleMin) / span) * (ph - 4.0f); };
+    const float step = count > 1 ? (pw - 4.0f) / (count - 1) : 0.0f;
+    for (int i = 0; i + 1 < count; ++i) {
+        float x0 = px + 2.0f + step * i,     y0 = sy(values[i]);
+        float x1 = px + 2.0f + step * (i + 1), y1 = sy(values[i + 1]);
+        line(x0, y0, x1, y1, 1.5f, g_theme.accent);
+    }
+}
+
+void PlotHistogram(const char* label, const float* values, int count,
+                   float scaleMin, float scaleMax, float height) {
+    float px, py, pw, ph;
+    if (!plotFrame(label, values, count, scaleMin, scaleMax, height, px, py, pw, ph)) return;
+    const float span = scaleMax - scaleMin;
+    const float bw = (pw - 4.0f) / count;
+    for (int i = 0; i < count; ++i) {
+        float t = (values[i] - scaleMin) / span; if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+        float bh = t * (ph - 4.0f);
+        quad(px + 2.0f + bw * i + 1.0f, py + ph - 2.0f - bh, bw - 2.0f, bh, g_theme.accent);
+    }
+}
+
+void LabelText(const char* label, const char* value) {
+    if (!g_lay.active) return;
+    const float h = rowH(), w = availW();
+    float x, y; place(w, h, x, y);
+    if (value && *value) drawText(x, y + (h - textH()) * 0.5f, value, g_theme.textScale, g_theme.text);
+    if (label && *label) {
+        const float lw = labelW(label);
+        drawText(x + w - lw, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    }
+}
+
+void DrawTexture(SDL_Texture* tex, float x, float y, float w, float h,
+                 unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    if (!tex) return;
+    const unsigned char tint[4] = { r, g, b, a };
+    texQuad(x, y, w, h, tex, 0.0f, 0.0f, 1.0f, 1.0f, tint);
+}
+
+void Image(SDL_Texture* tex, float w, float h,
+           unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    if (!g_lay.active) return;
+    if (w <= 0.0f) w = rowH() * 2.0f;
+    if (h <= 0.0f) h = w;
+    float x, y; place(w, h, x, y);
+    DrawTexture(tex, x, y, w, h, r, g, b, a);
+}
+
+bool ImageButton(const char* id, SDL_Texture* tex, float w, float h) {
+    if (!g_lay.active) return false;
+    const int hid = hashLabel(id);
+    if (w <= 0.0f) w = rowH() * 2.0f;
+    if (h <= 0.0f) h = w;
+    const float pad = 4.0f;
+    float x, y; place(w + pad * 2.0f, h + pad * 2.0f, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w + pad * 2, h + pad * 2);
+    if (inside) g_hot = hid;
+    bool clicked = false;
+    if (g_active == hid) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
+    else if (inside && g_pressed) g_active = hid;
+    const unsigned char* bg = (g_active == hid && inside) ? g_theme.bgDown : (inside ? g_theme.bgHover : g_theme.bg);
+    quad(x, y, w + pad * 2, h + pad * 2, bg);
+    DrawTexture(tex, x + pad, y + pad, w, h);
+    return clicked;
+}
+
 bool InputText(const char* label, char* buf, int cap) {
     if (!g_lay.active || !buf) return false;
     const float h = rowH();
@@ -605,6 +1412,30 @@ bool InputText(const char* label, char* buf, int cap) {
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
     const bool ch = TextField(hashLabel(label), x, y, ctrlW, h, buf, cap);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    return ch;
+}
+
+bool InputInt(const char* label, int* value, int step) {
+    if (!g_lay.active || !value) return false;
+    const int id = hashLabel(label);
+    const float h = rowH();
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    const float btnW = h;                 // square [-]/[+] steppers
+    float fieldW = w - lw - btnW * 2.0f - 8.0f;
+    if (fieldW < 24.0f) fieldW = 24.0f;
+    // Value box.
+    quad(x, y, fieldW, h, g_theme.track);
+    char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *value);
+    drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text);
+    // Steppers (unique ids via the field id so they don't collide).
+    const float bx = x + fieldW + 4.0f;
+    bool ch = false;
+    if (Button(id ^ 0x2d, bx, y, btnW, h, "-"))              { *value -= step; ch = true; }
+    if (Button(id ^ 0x2b, bx + btnW + 4.0f, y, btnW, h, "+")) { *value += step; ch = true; }
+    if (lw > 0.0f) drawText(x + fieldW + btnW * 2.0f + 12.0f, y + (h - textH()) * 0.5f,
+                            label, g_theme.textScale, g_theme.text);
     return ch;
 }
 
@@ -781,6 +1612,81 @@ bool ColorEdit3(const char* label, float rgb[3]) {
     return changed;
 }
 
+bool ColorPicker3(const char* label, float rgb[3]) {
+    if (!g_lay.active || !rgb) return false;
+    const int id = hashLabel(label);
+    const float w = availW();
+    const float barW = 18.0f, gap = 8.0f;
+    float sq = w - barW - gap;                 // SV square is square-ish
+    const float maxSq = rowH() * 6.0f;
+    if (sq > maxSq) sq = maxSq;
+    if (sq < 40.0f) sq = 40.0f;
+    const float total = sq;
+    float x, y; place(w, total, x, y);
+
+    // Persist HSV across frames so hue survives S=0/V=0. Re-sync from rgb if it was
+    // changed externally (differs from what we last wrote).
+    float* H = floatState(id ^ 0x101, -1.0f);
+    float* S = floatState(id ^ 0x102, 0.0f);
+    float* V = floatState(id ^ 0x103, 0.0f);
+    float* lr = floatState(id ^ 0x104, -1.0f);
+    float* lg = floatState(id ^ 0x105, -1.0f);
+    float* lb = floatState(id ^ 0x106, -1.0f);
+    auto approxEq = [](float a, float b) { float d = a - b; return (d < 0 ? -d : d) < 0.004f; };
+    if (*H < 0.0f || !approxEq(*lr, rgb[0]) || !approxEq(*lg, rgb[1]) || !approxEq(*lb, rgb[2])) {
+        rgbToHsv((unsigned char)(clamp01(rgb[0]) * 255.0f), (unsigned char)(clamp01(rgb[1]) * 255.0f),
+                 (unsigned char)(clamp01(rgb[2]) * 255.0f), *H, *S, *V);
+    }
+
+    bool changed = false;
+    // --- Saturation/Value square (x = saturation, y = value inverted) ---
+    unsigned char hueCol[3]; hsvToRgb(*H, 1.0f, 1.0f, hueCol);
+    const unsigned char white[4] = {255,255,255,255}, black[4] = {0,0,0,255};
+    const unsigned char hue4[4] = {hueCol[0], hueCol[1], hueCol[2], 255};
+    gradQuad(x, y, sq, sq, white, hue4, black, black);   // white->hue across, ->black down
+    const bool inSq = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, sq, sq);
+    if (inSq && g_pressed) g_active = id;
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;
+        else {
+            *S = clamp01((g_in.mouseX - x) / sq);
+            *V = 1.0f - clamp01((g_in.mouseY - y) / sq);
+            changed = true;
+        }
+    }
+    // SV cursor ring.
+    float cxp = x + (*S) * sq, cyp = y + (1.0f - *V) * sq;
+    fillCircle(cxp, cyp, 4.0f, (*V > 0.5f && *S < 0.5f) ? black : white);
+
+    // --- Hue bar (vertical rainbow) ---
+    const float hx = x + sq + gap;
+    const int   segs = 6;
+    for (int i = 0; i < segs; ++i) {
+        unsigned char c0[3], c1[3];
+        hsvToRgb((float)i / segs, 1.0f, 1.0f, c0);
+        hsvToRgb((float)(i + 1) / segs, 1.0f, 1.0f, c1);
+        const unsigned char t0[4] = {c0[0],c0[1],c0[2],255}, t1[4] = {c1[0],c1[1],c1[2],255};
+        gradQuad(hx, y + sq * i / segs, barW, sq / segs, t0, t0, t1, t1);
+    }
+    const int hueId = id ^ 0x2a2a;
+    const bool inBar = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, hx, y, barW, sq);
+    if (inBar && g_pressed) g_active = hueId;
+    if (g_active == hueId) {
+        if (!g_in.mouseDown) g_active = 0;
+        else { *H = clamp01((g_in.mouseY - y) / sq); changed = true; }
+    }
+    // Hue marker.
+    float hy = y + (*H) * sq;
+    quad(hx - 2.0f, hy - 1.5f, barW + 4.0f, 3.0f, g_theme.text);
+
+    // Write the resolved color back and remember it for external-change detection.
+    unsigned char outc[3]; hsvToRgb(*H, *S, *V, outc);
+    rgb[0] = outc[0] / 255.0f; rgb[1] = outc[1] / 255.0f; rgb[2] = outc[2] / 255.0f;
+    *lr = rgb[0]; *lg = rgb[1]; *lb = rgb[2];
+    (void)label;
+    return changed;
+}
+
 bool TreeNode(const char* label) {
     if (!g_lay.active) return false;
     const int id = hashLabel(label);
@@ -882,6 +1788,271 @@ bool Selectable(const char* label, bool selected) {
     else if (inside)   quad(x, y, w, h, g_theme.bgHover);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return clicked;
+}
+
+void OpenPopup(const char* id) {
+    PopupSlot* p = popupSlot(hashLabel(id), true);
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; g_openPopupThisFrame = p->id; }
+}
+
+void CloseCurrentPopup() {
+    if (g_popupTop > 0) { PopupSlot* p = popupSlot(g_popupStack[g_popupTop - 1].id, false); if (p) p->open = false; }
+}
+
+// Shared popup body setup: redirect layout into a floating overlay box at (px,py),
+// drawing the background using last frame's measured height. Returns true if open.
+static bool beginPopupBody(int id) {
+    PopupSlot* p = popupSlot(id, false);
+    if (!p || !p->open) return false;
+    const float w = 160.0f, pad = 6.0f;
+    float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
+    float px = p->x, py = p->y;
+    // Frame (overlay so it sits above everything). Height is last frame's content.
+    g_toOverlay = true;
+    Panel(px, py, w, *hSlot + pad * 2.0f);
+    // Save parent layout; set up the popup's inner layout.
+    if (g_popupTop < 4) {
+        PopupCtx& c = g_popupStack[g_popupTop++];
+        c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
+    }
+    g_lay.active = true;
+    g_lay.ox = px + pad; g_lay.oy = py + pad;
+    g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
+    g_lay.contentW = w - 2.0f * pad;
+    g_lay.indent = 0.0f; g_lay.seed = id;
+    g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    return true;
+}
+
+void EndPopup() {
+    if (g_popupTop <= 0) return;
+    PopupCtx& c = g_popupStack[--g_popupTop];
+    *c.hSlot = g_lay.cy - (c.y + 6.0f);   // measured content height for next frame
+    g_toOverlay = false;
+    // Dismiss on a left-click outside the popup box (but not the click that opened it).
+    PopupSlot* p = popupSlot(c.id, false);
+    if (p && p->open && g_pressed && g_openPopupThisFrame != c.id) {
+        const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + 12.0f);
+        if (!inside) p->open = false;
+    }
+    g_lay = c.lay;   // restore parent layout
+}
+
+bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
+
+bool BeginPopupContextItem(const char* id) {
+    const int pid = hashLabel(id);
+    // Right-click on the last-issued widget opens the popup at the cursor.
+    if (g_lay.active && g_rPressed && !g_in.blocked &&
+        pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
+        PopupSlot* p = popupSlot(pid, true);
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; g_openPopupThisFrame = pid; }
+    }
+    return beginPopupBody(pid);
+}
+
+bool IsDragging() { return g_dd.active; }
+
+bool DragSource(int payload) {
+    if (!g_lay.active) return false;
+    const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
+    const bool overPrev = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, px, py, pw, ph);
+    // Arm on a press inside the source widget.
+    if (!g_dd.active && !g_dd.armed && g_pressed && overPrev) {
+        g_dd.armed = true; g_dd.armPayload = payload;
+        g_dd.armX = g_in.mouseX; g_dd.armY = g_in.mouseY;
+    }
+    // Promote to an active drag once the cursor has moved far enough.
+    if (g_dd.armed && g_dd.armPayload == payload && g_in.mouseDown) {
+        float dx = g_in.mouseX - g_dd.armX, dy = g_in.mouseY - g_dd.armY;
+        if ((dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) > 6.0f) {
+            g_dd.active = true; g_dd.payload = payload; g_dd.armed = false;
+        }
+    }
+    return g_dd.active && g_dd.payload == payload;
+}
+
+bool DropTarget(int* outPayload) {
+    if (!g_lay.active || !g_dd.active) return false;
+    const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
+    const bool over = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, px, py, pw, ph);
+    if (over) {
+        // Highlight the drop location with an accent outline.
+        quad(px, py, pw, 2.0f, g_theme.accent);
+        quad(px, py + ph - 2.0f, pw, 2.0f, g_theme.accent);
+        if (g_released) {
+            if (outPayload) *outPayload = g_dd.payload;
+            g_dd.active = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ListBox(const char* label, int* current, const char* const* items, int count, int visibleRows) {
+    if (!g_lay.active || !current || !items) return false;
+    if (visibleRows < 1) visibleRows = 1;
+    bool changed = false;
+    const float h = rowH() * visibleRows;
+    if (BeginChild(label, 0.0f, h, true)) {
+        for (int i = 0; i < count; ++i) {
+            PushID(i);
+            if (Selectable(items[i] ? items[i] : "", *current == i)) { *current = i; changed = true; }
+            PopID();
+        }
+    }
+    EndChild();
+    // Draw the visible part of the label (before any "##") to the right of the box.
+    if (label && *label && !(label[0] == '#' && label[1] == '#')) {
+        SameLine();
+        Text(label);
+    }
+    return changed;
+}
+
+// ---- Columns -------------------------------------------------------------------
+void Columns(int count) {
+    if (!g_lay.active || count < 1) return;
+    if (count > 16) count = 16;
+    g_col.active = true; g_col.count = count; g_col.index = 0;
+    g_col.x0 = g_lay.ox; g_col.fullW = g_lay.contentW;
+    g_col.rowTop = g_lay.cy; g_col.rowBottom = g_lay.cy;
+    g_lay.ox = g_col.x0;
+    g_lay.contentW = g_col.fullW / count - 6.0f;   // small gutter between columns
+    g_lay.cy = g_col.rowTop;
+}
+
+void NextColumn() {
+    if (!g_lay.active || !g_col.active) return;
+    if (g_lay.cy > g_col.rowBottom) g_col.rowBottom = g_lay.cy;   // track the tallest column
+    ++g_col.index;
+    if (g_col.index >= g_col.count) {          // past the last column: start a new row
+        g_col.index = 0;
+        g_col.rowTop = g_col.rowBottom;
+    }
+    const float colW = g_col.fullW / g_col.count;
+    g_lay.ox = g_col.x0 + g_col.index * colW;
+    g_lay.contentW = colW - 6.0f;
+    g_lay.cy = g_col.rowTop;
+    g_lay.pendingSameLine = false;
+}
+
+void EndColumns() {
+    if (!g_lay.active || !g_col.active) return;
+    if (g_lay.cy > g_col.rowBottom) g_col.rowBottom = g_lay.cy;
+    g_lay.ox = g_col.x0;
+    g_lay.contentW = g_col.fullW;
+    g_lay.cy = g_col.rowBottom;
+    g_col.active = false;
+}
+
+// ---- Tables --------------------------------------------------------------------
+namespace {
+// Left edge of column `i` (sum of prior column widths from the table origin).
+float tblColX(int i) {
+    float cx = g_tbl.x0;
+    for (int k = 0; k < i && k < g_tbl.count; ++k) cx += *g_tbl.w[k];
+    return cx;
+}
+// Point the layout at the current cell (column g_tbl.index at row g_tbl.rowTop).
+void tblEnterCell() {
+    const float pad = 4.0f;
+    const float cx = tblColX(g_tbl.index);
+    g_lay.ox = cx + pad;
+    g_lay.contentW = *g_tbl.w[g_tbl.index] - 2.0f * pad;
+    if (g_lay.contentW < 8.0f) g_lay.contentW = 8.0f;
+    g_lay.cy = g_tbl.rowTop;
+    g_lay.indent = 0.0f;
+    g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.cy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+}
+} // namespace
+
+bool BeginTable(const char* id, int columns, const char* const* headers) {
+    if (!g_lay.active || columns < 1) return false;
+    if (columns > 16) columns = 16;
+    const int tid = hashLabel(id);
+    g_tbl.active = true; g_tbl.id = tid; g_tbl.count = columns; g_tbl.index = -1;
+    g_tbl.x0 = g_lay.ox; g_tbl.fullW = g_lay.contentW;
+    g_tbl.rowTop = g_lay.cy; g_tbl.rowBottom = g_lay.cy; g_tbl.rowStart = g_lay.cy;
+
+    // Fetch/seed persisted column widths, then rescale so they exactly fill fullW
+    // (keeps the table snug when the window is resized).
+    float sum = 0.0f;
+    for (int i = 0; i < columns; ++i) {
+        g_tbl.w[i] = floatState(tid ^ (0x7100 + i), g_tbl.fullW / columns);
+        if (*g_tbl.w[i] < 12.0f) *g_tbl.w[i] = 12.0f;
+        sum += *g_tbl.w[i];
+    }
+    if (sum > 0.0f) { float f = g_tbl.fullW / sum; for (int i = 0; i < columns; ++i) *g_tbl.w[i] *= f; }
+
+    // Optional header row: a bar with bold column labels.
+    if (headers) {
+        const float hh = rowH();
+        quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, g_theme.bgDown);
+        const Font* prevF = g_font; g_font = &kFontBold;
+        for (int i = 0; i < columns; ++i) {
+            float cx = tblColX(i);
+            if (headers[i] && headers[i][0])
+                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, g_theme.text);
+        }
+        g_font = prevF;
+        g_tbl.rowTop += hh;
+        g_tbl.rowBottom = g_tbl.rowTop;
+        g_tbl.rowStart = g_tbl.rowTop;
+    }
+    g_tbl.headerBottom = g_tbl.rowTop;
+    return true;
+}
+
+void TableNextRow() {
+    if (!g_lay.active || !g_tbl.active) return;
+    if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
+    g_tbl.rowTop = g_tbl.rowBottom;   // next row starts below the tallest cell so far
+    g_tbl.index = -1;
+}
+
+bool TableNextColumn() {
+    if (!g_lay.active || !g_tbl.active) return false;
+    if (g_tbl.index >= 0) {           // remember how tall the cell we're leaving got
+        if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
+    }
+    ++g_tbl.index;
+    if (g_tbl.index >= g_tbl.count) return false;
+    tblEnterCell();
+    return true;
+}
+
+void EndTable() {
+    if (!g_lay.active || !g_tbl.active) return;
+    if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
+    const float top = g_tbl.rowStart, bottom = g_tbl.rowBottom;
+
+    // Column borders + draggable resize handles (applied next frame).
+    for (int i = 1; i < g_tbl.count; ++i) {
+        float bx = tblColX(i);
+        quad(bx - 0.5f, g_tbl.headerBottom - rowH(), 1.0f, bottom - (g_tbl.headerBottom - rowH()), g_theme.border);
+        const int hid = g_tbl.id ^ (0x7b00 + i);
+        const float grab = 4.0f;
+        const bool over = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, bx - grab, top - rowH(), grab * 2.0f, bottom - top + rowH());
+        if (over) g_hot = hid;
+        if (g_active == hid) {
+            if (!g_in.mouseDown) g_active = 0;
+            else {
+                float dx = g_mouseDX;
+                float a = *g_tbl.w[i - 1] + dx, b = *g_tbl.w[i] - dx;
+                if (a >= 20.0f && b >= 20.0f) { *g_tbl.w[i - 1] = a; *g_tbl.w[i] = b; }
+            }
+        } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
+    }
+
+    g_lay.ox = g_tbl.x0;
+    g_lay.contentW = g_tbl.fullW;
+    g_lay.cy = bottom + g_lay.spacingY;
+    g_lay.indent = 0.0f;
+    g_lay.pendingSameLine = false;
+    g_tbl.active = false;
 }
 
 } // namespace OkayUI

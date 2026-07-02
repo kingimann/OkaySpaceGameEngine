@@ -62,18 +62,36 @@ public:
 
 private:
     bool EnsureProgram();
+    bool EnsureDepthProgram();      // depth-only program for the shadow-map pass
+    bool EnsureShadow(int size);    // (re)create the depth-only shadow FBO + texture
     bool EnsureTargets(int w, int h, int samples);
     void DestroyTargets();   // free ONLY the size-dependent FBO/renderbuffers/resolve
+    void DestroyShadow();
 
     unsigned int m_prog = 0;
+    unsigned int m_depthProg = 0;                             // shadow-map depth pass
     unsigned int m_vao = 0, m_vbo = 0, m_ibo = 0;
     unsigned int m_fbo = 0, m_colorRb = 0, m_depthRb = 0;     // MSAA target
     unsigned int m_resolveFbo = 0, m_resolveTex = 0;          // single-sample resolve
+    unsigned int m_shadowFbo = 0, m_shadowTex = 0;            // directional shadow map
+    int m_shadowSize = 0;
     int m_w = 0, m_h = 0, m_samples = 0;
     int m_uMVP = -1, m_uModel = -1, m_uColor = -1, m_uLightDir = -1,
         m_uLightColor = -1, m_uAmbient = -1, m_uEmissive = -1, m_uEye = -1,
         m_uSpecular = -1, m_uShininess = -1, m_uUnlit = -1,
-        m_uTex = -1, m_uUseTex = -1, m_uTiling = -1;
+        m_uTex = -1, m_uUseTex = -1, m_uTiling = -1,
+        m_uShaderMode = -1, m_uToonBands = -1, m_uRimStr = -1,
+        m_uRimColor = -1, m_uGradTop = -1, m_uGradBot = -1, m_uShadowAlpha = -1, m_uAlpha = -1,
+        m_uLightCount = -1, m_uLType = -1, m_uLPos = -1, m_uLDir = -1,
+        m_uLCol = -1, m_uLRange = -1, m_uLCosOut = -1, m_uLCosIn = -1,
+        m_uNormalTex = -1, m_uHasNormal = -1, m_uNormalStrength = -1,
+        m_uTexOffset = -1, m_uSpecTex = -1, m_uHasSpecMap = -1,
+        m_uAoTex = -1, m_uHasAo = -1, m_uAoStrength = -1,
+        m_uMetallic = -1, m_uReflectivity = -1,
+        m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1,
+        m_uFogOn = -1, m_uFogColor = -1, m_uFogStart = -1, m_uFogEnd = -1,
+        m_uShadowTex = -1, m_uLightVP = -1, m_uShadowOn = -1,
+        m_uShadowTexel = -1, m_uShadowSize = -1, m_uDepthMVP = -1;
     std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result

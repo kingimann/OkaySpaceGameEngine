@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec2.hpp"
+#include <vector>
 
 namespace okay {
 
@@ -9,7 +10,7 @@ namespace okay {
 /// broad-phase tests; subclasses describe the actual shape.
 class Collider2D : public Component {
 public:
-    enum class Shape { Box, Circle, Capsule };
+    enum class Shape { Box, Circle, Capsule, Edge, Polygon };
 
     /// Trigger colliders detect overlap but don't push objects apart.
     bool isTrigger = false;
@@ -107,6 +108,56 @@ public:
         outMin = {Mathf::Min(a.x, b.x) - r, Mathf::Min(a.y, b.y) - r};
         outMax = {Mathf::Max(a.x, b.x) + r, Mathf::Max(a.y, b.y) + r};
     }
+};
+
+/// Shared base for vertex-list colliders (edges and polygons). Vertices are in
+/// local space, scaled and positioned by the Transform. The solver reduces these
+/// to the closest point on their segment chain, so they collide with box, circle
+/// and capsule colliders without any new shape-vs-shape math.
+class PolyShapeCollider2D : public Collider2D {
+public:
+    std::vector<Vec2> points;          ///< local-space vertices
+
+    /// Vertices transformed into world space.
+    std::vector<Vec2> WorldPoints() const {
+        Vec3 p = transform ? transform->Position() : Vec3::Zero;
+        Vec3 s = transform ? transform->LossyScale() : Vec3::One;
+        std::vector<Vec2> out; out.reserve(points.size());
+        for (const Vec2& v : points)
+            out.push_back({p.x + offset.x + v.x * s.x, p.y + offset.y + v.y * s.y});
+        return out;
+    }
+    /// True for polygons (the last vertex connects back to the first).
+    virtual bool closedLoop() const = 0;
+
+    void WorldAABB(Vec2& outMin, Vec2& outMax) const override {
+        std::vector<Vec2> wp = WorldPoints();
+        if (wp.empty()) { outMin = outMax = WorldCenter(); return; }
+        outMin = outMax = wp[0];
+        for (const Vec2& v : wp) { outMin = Vec2::Min(outMin, v); outMax = Vec2::Max(outMax, v); }
+    }
+};
+
+/// Edge collider: an open polyline (ground, slopes, curved terrain, walls). With
+/// `oneWay` set it only blocks bodies approaching from the `oneWayNormal` side —
+/// the classic one-way platform you can jump up through but land on top of.
+class EdgeCollider2D : public PolyShapeCollider2D {
+public:
+    bool oneWay = false;
+    Vec2 oneWayNormal = Vec2::Up;      ///< the side bodies are blocked from
+
+    EdgeCollider2D() { points = {{-1.0f, 0.0f}, {1.0f, 0.0f}}; }
+    Shape shape() const override { return Shape::Edge; }
+    bool  closedLoop() const override { return false; }
+};
+
+/// Polygon collider: a closed loop of vertices (convex works best). Bodies bounce
+/// off its boundary. Use it for ramps, platforms and arbitrary static shapes.
+class PolygonCollider2D : public PolyShapeCollider2D {
+public:
+    PolygonCollider2D() { points = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {0.0f, 0.5f}}; }
+    Shape shape() const override { return Shape::Polygon; }
+    bool  closedLoop() const override { return true; }
 };
 
 } // namespace okay

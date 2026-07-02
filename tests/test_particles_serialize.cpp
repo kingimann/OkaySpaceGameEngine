@@ -15,11 +15,44 @@ int main() {
     ps->startLifetime = 2.5f;
     ps->startSize = 0.4f;
     ps->startColor = Color(0.2f, 0.4f, 0.8f, 0.9f);
-    ps->startVelocity = {1.0f, 5.0f};
+    ps->startVelocity = {1.0f, 5.0f, -2.0f};
     ps->velocityRandom = 2.0f;
-    ps->gravity = {0.0f, -9.8f};
+    ps->gravity = {0.0f, -9.8f, 0.5f};
     ps->fadeOverLife = false;
     ps->seed = 99887766ull;
+    // Expanded (v2) fields.
+    ps->endColor = Color(0.9f, 0.1f, 0.05f, 0.0f);
+    ps->colorOverLife = true;
+    ps->endSize = 0.05f;
+    ps->sizeOverLife = true;
+    ps->startLifetimeRandom = 0.5f;
+    ps->startSizeRandom = 0.1f;
+    ps->speedRandom = 0.25f;
+    ps->shape = ParticleSystem::Shape::Cone;
+    ps->shapeRadius = 1.75f;
+    ps->shapeAngle = 33.0f;
+    ps->boxSize = {2.0f, 0.5f, 3.0f};
+    ps->gravityModifier = 1.5f;
+    ps->damping = 0.8f;
+    ps->duration = 4.0f;
+    ps->loop = false;
+    ps->burstCount = 25;
+    ps->burstTime = 0.2f;
+    // v4: sprite texture + billboard rotation.
+    ps->texture = "smoke.png";
+    ps->startRotation = 45.0f;
+    ps->startRotationRandom = 15.0f;
+    ps->rotationSpeed = 90.0f;
+    ps->rotationSpeedRandom = 10.0f;
+    // v5: ground-plane collision.
+    ps->collision = true;
+    ps->collisionY = -1.5f;
+    ps->bounce = 0.7f;
+    ps->collisionFriction = 0.25f;
+    ps->collisionLifeLoss = 0.1f;
+    // v6: stretched-billboard render mode.
+    ps->renderMode = ParticleSystem::RenderMode::Stretch;
+    ps->stretchScale = 0.4f;
 
     std::string text = SceneSerializer::Serialize(scene);
     Scene loaded("L");
@@ -35,10 +68,145 @@ int main() {
     CHECK_NEAR(r->startSize, 0.4f, 0.001f);
     CHECK_NEAR(r->startColor.b, 0.8f, 0.01f);
     CHECK_NEAR(r->startVelocity.y, 5.0f, 0.001f);
+    CHECK_NEAR(r->startVelocity.z, -2.0f, 0.001f);   // 3D z-component round-trips
     CHECK_NEAR(r->velocityRandom, 2.0f, 0.001f);
     CHECK_NEAR(r->gravity.y, -9.8f, 0.001f);
+    CHECK_NEAR(r->gravity.z, 0.5f, 0.001f);
     CHECK(!r->fadeOverLife);
     CHECK(r->seed == 99887766ull);
+    // Expanded (v2) fields round-trip.
+    CHECK_NEAR(r->endColor.r, 0.9f, 0.01f);
+    CHECK(r->colorOverLife);
+    CHECK_NEAR(r->endSize, 0.05f, 0.001f);
+    CHECK(r->sizeOverLife);
+    CHECK_NEAR(r->startLifetimeRandom, 0.5f, 0.001f);
+    CHECK_NEAR(r->startSizeRandom, 0.1f, 0.001f);
+    CHECK_NEAR(r->speedRandom, 0.25f, 0.001f);
+    CHECK(r->shape == ParticleSystem::Shape::Cone);
+    CHECK_NEAR(r->shapeRadius, 1.75f, 0.001f);
+    CHECK_NEAR(r->shapeAngle, 33.0f, 0.001f);
+    CHECK_NEAR(r->boxSize.x, 2.0f, 0.001f);
+    CHECK_NEAR(r->boxSize.z, 3.0f, 0.001f);
+    CHECK_NEAR(r->gravityModifier, 1.5f, 0.001f);
+    CHECK_NEAR(r->damping, 0.8f, 0.001f);
+    CHECK_NEAR(r->duration, 4.0f, 0.001f);
+    CHECK(!r->loop);
+    CHECK(r->burstCount == 25);
+    CHECK_NEAR(r->burstTime, 0.2f, 0.001f);
+    // v4 fields round-trip.
+    CHECK(r->texture == "smoke.png");
+    CHECK_NEAR(r->startRotation, 45.0f, 0.001f);
+    CHECK_NEAR(r->rotationSpeed, 90.0f, 0.001f);
+    // v5 collision fields round-trip.
+    CHECK(r->collision);
+    CHECK_NEAR(r->collisionY, -1.5f, 0.001f);
+    CHECK_NEAR(r->bounce, 0.7f, 0.001f);
+    CHECK_NEAR(r->collisionFriction, 0.25f, 0.001f);
+    CHECK(r->renderMode == ParticleSystem::RenderMode::Stretch);
+    CHECK_NEAR(r->stretchScale, 0.4f, 0.001f);
+
+    // Spin: a particle's billboard rotation advances by rotationSpeed * dt.
+    Scene spin("SP");
+    auto* ps5 = spin.CreateGameObject("E5")->AddComponent<ParticleSystem>();
+    ps5->emissionRate = 0.0f; ps5->rotationSpeed = 100.0f; ps5->startLifetime = 5.0f;
+    ps5->Awake();
+    ps5->Emit(1);
+    ps5->Update(0.5f);   // +50 degrees
+    for (const auto& p : ps5->Particles())
+        if (p.alive) CHECK_NEAR(p.rotation, 50.0f, 1.0f);
+
+    // Collision: a particle falling onto the ground plane bounces back UP, losing
+    // speed to restitution.
+    Scene coll("CL");
+    auto* ps6 = coll.CreateGameObject("E6")->AddComponent<ParticleSystem>();
+    ps6->emissionRate = 0.0f; ps6->startLifetime = 10.0f;
+    ps6->gravity = {0, 0, 0};            // isolate the bounce from gravity
+    ps6->collision = true; ps6->collisionY = 0.0f; ps6->bounce = 0.5f;
+    ps6->collisionFriction = 0.0f;
+    ps6->Awake();
+    ps6->Emit(1);
+    // Drive the single particle straight down through the plane.
+    for (auto& pp : const_cast<std::vector<ParticleSystem::Particle>&>(ps6->Particles()))
+        if (pp.alive) { pp.position = {0, 0.05f, 0}; pp.velocity = {0, -2.0f, 0}; }
+    ps6->Update(0.1f);                   // moves to y<0 -> reflects
+    for (const auto& pp : ps6->Particles())
+        if (pp.alive) {
+            CHECK(pp.velocity.y > 0.0f);          // bounced upward
+            CHECK_NEAR(pp.velocity.y, 1.0f, 0.01f); // 2.0 * 0.5 restitution
+            CHECK(pp.position.y >= 0.0f);         // pushed back to the plane
+        }
+
+    // Behaviour: a cone emitter actually spawns and integrates particles.
+    Scene sim("S");
+    GameObject* e2 = sim.CreateGameObject("E2");
+    auto* ps2 = e2->AddComponent<ParticleSystem>();
+    ps2->shape = ParticleSystem::Shape::Cone;
+    ps2->emissionRate = 100.0f;
+    ps2->startLifetime = 1.0f;
+    ps2->Awake();
+    ps2->Update(0.1f);
+    CHECK(ps2->AliveCount() > 0);
+    // A burst spawns its exact count immediately.
+    Scene sim2("S2");
+    auto* ps3 = sim2.CreateGameObject("E3")->AddComponent<ParticleSystem>();
+    ps3->emissionRate = 0.0f;
+    ps3->Awake();
+    ps3->Emit(10);
+    CHECK(ps3->AliveCount() == 10);
+
+    // 3D motion: a Sphere emitter flings particles in all directions, so their
+    // positions spread along Z (not just the XY plane the old 2D system used).
+    Scene sim3("S3");
+    auto* ps4 = sim3.CreateGameObject("E4")->AddComponent<ParticleSystem>();
+    ps4->shape = ParticleSystem::Shape::Sphere;
+    ps4->shapeRadius = 1.0f;
+    ps4->startVelocity = {0.0f, 0.0f, 0.0f};   // motion comes purely from the radial burst
+    ps4->gravity = {0.0f, 0.0f, 0.0f};
+    ps4->Awake();
+    ps4->Emit(200);
+    ps4->Update(0.2f);
+    float minZ = 1e9f, maxZ = -1e9f;
+    for (const auto& p : ps4->Particles())
+        if (p.alive) { minZ = Mathf::Min(minZ, p.position.z); maxZ = Mathf::Max(maxZ, p.position.z); }
+    CHECK((maxZ - minZ) > 0.2f);   // particles genuinely occupy 3D space
+
+    // Depth occlusion: a particle behind nearer scene geometry is hidden; one in
+    // front (or where nothing was drawn) stays visible.
+    {
+        OcclusionDepth& od = SceneOcclusionDepth();
+        od.w = 4; od.h = 4; od.valid = true;
+        od.d.assign(16, 0.0f);
+        od.d[1 * 4 + 1] = 1.0f;   // scene at cell (1,1) is at 1/w = 1.0 (w = 1.0, very near)
+
+        // Normalized coords ~ (0.3,0.3) land in cell (1,1). Particle clip-w 5 (1/w=0.2)
+        // is BEHIND the scene -> occluded.
+        CHECK(ParticleOccluded(0.3f, 0.3f, 5.0f));
+        // Same spot but the particle is nearer (w = 0.5 -> 1/w = 2.0) -> visible.
+        CHECK(!ParticleOccluded(0.3f, 0.3f, 0.5f));
+        // A spot with no geometry (depth 0) never occludes.
+        CHECK(!ParticleOccluded(0.6f, 0.6f, 100.0f));
+        // Out-of-bounds and invalid buffers are safe (visible).
+        CHECK(!ParticleOccluded(9.0f, 9.0f, 5.0f));
+        od.valid = false;
+        CHECK(!ParticleOccluded(0.3f, 0.3f, 5.0f));
+        od.valid = false; od.d.clear(); od.w = od.h = 0;   // leave the global clean
+    }
+
+    // The software renderer fills the occlusion depth: a cube in front of the camera
+    // writes a nonzero, valid depth at the screen centre.
+    {
+        Scene s("OCC"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Cube")->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        Raster work; std::vector<std::uint32_t> down;
+        Mat4 view = Mat4::LookAt({0, 0, 4}, {0, 0, 0}, Vec3::Up);
+        Mat4 proj = Mat4::Perspective(60.0f, 1.0f, 0.1f, 100.0f);
+        RenderMeshesSS(work, down, s, proj * view, {0, 0, 4}, 48, 48, 1);
+        const OcclusionDepth& od = SceneOcclusionDepth();
+        CHECK(od.valid);
+        CHECK(od.w == 48 && od.h == 48);
+        CHECK(od.d[24 * 48 + 24] > 0.0f);   // the cube wrote depth at the centre
+    }
 
     TEST_MAIN_RESULT();
 }

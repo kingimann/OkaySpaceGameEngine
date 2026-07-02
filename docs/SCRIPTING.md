@@ -168,6 +168,7 @@ returns the live value, so you read and write game state in one line.
 | `ui_text("s")` | A line of text |
 | `ui_button("Label")` | Returns 1 the frame it's clicked, else 0 |
 | `ui_checkbox("Label", on)` | Returns the new on/off (pass the current value back in) |
+| `ui_switch("Label", on)` | A sliding on/off switch; returns the new on/off (pass the current value back in) |
 | `ui_slider("Label", v, lo, hi)` | Returns the new value (pass the current value back in) |
 | `ui_progress(t)` | A progress/health bar, `t` in 0..1 |
 | `ui_sameline()` / `ui_separator()` | Lay the next widget beside / draw a divider |
@@ -228,6 +229,7 @@ editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
 | `load_scene_index(i)` | Load scene `i` from the build list |
 | `load_scene_name("n")` | Load by scene name (file stem) or path |
 | `load_next_scene()` | Load the next scene (wraps to the first) |
+| `load_scene_additive("n"[, x, y, z])` | **Merge** another scene into the running one at an offset (seamless worlds — the current scene stays loaded) |
 | `reload_scene()` | Reload the active scene |
 | `scene_count()` / `scene_index()` / `scene_name()` | Query the build list |
 
@@ -311,6 +313,110 @@ All of these print into the editor's **Console**.
 | `sqrt pow exp log abs sign floor ceil round` | Math |
 | `min max clamp clamp01 lerp smoothstep wrap ping_pong` | Ranges & easing |
 | `array push pop count contains index_of sort_num shuffle` | Lists |
+
+### Collections
+
+Arrays and maps (dictionaries) are shared by reference and can be nested.
+
+| Function | Description |
+|---|---|
+| `array(...)` / `count(a)` / `push(a, v)` / `pop(a)` | Make a list, its length, append, remove-last |
+| `first(a)` / `last(a)` | First / last item (null if empty) |
+| `insert_at(a, i, v)` / `remove_at(a, i)` | Insert at / remove at an index |
+| `slice(a, start, end)` | Sub-array; negative indices count from the end |
+| `range(n)` / `range(lo, hi[, step])` | Build a numeric array |
+| `contains(a, v)` / `index_of(a, v)` | Membership / first index (or -1) |
+| `sum(a)` / `min_of(a)` / `max_of(a)` | Reduce a numeric array |
+| `reverse(a)` / `sort_num(a)` / `sort_str(a)` / `shuffle(a)` / `choose(a)` | Reorder / random pick |
+| `clear(a_or_m)` | Empty an array or map in place |
+| `map()` / `map_set(m,"k",v)` / `map_get(m,"k")` / `map_has(m,"k")` | Dictionary basics |
+| `map_remove(m,"k")` / `map_keys(m)` / `map_values(m)` / `map_count(m)` | Delete / list keys/values / size |
+| `map_clear(m)` / `map_merge(dst, src)` | Empty / merge (src wins) |
+
+Read and write elements with `[]` — arrays by number, maps by key — and use
+compound assignment directly on an element:
+
+```
+var a = array(10, 20, 30);
+a[1] += 5;          // 25
+a[0]++;             // 11
+
+var m = map();
+m["hp"] = 100;      // same as map_set(m, "hp", 100)
+m["hp"] -= 30;      // 70
+m["score"] += 40;   // a missing key starts at 0 -> 40
+```
+
+Iterate either with `foreach`:
+
+```
+foreach (var item in myArray) { print(item); }
+foreach (var key in myMap)    { print(key + " = " + map_get(myMap, key)); }
+```
+
+### Functional helpers (named callbacks)
+
+Pass the **name** of a function to apply it across an array:
+
+| Function | Description |
+|---|---|
+| `map_fn(a, "fn")` | New array of `fn(item)` for each item |
+| `filter_fn(a, "fn")` | Keep items where `fn(item)` is true |
+| `reduce_fn(a, "fn", init)` | Fold left: `acc = fn(acc, item)` |
+| `for_each(a, "fn")` | Call `fn(item)` for every item |
+| `find_fn(a, "fn")` / `any_fn(a, "fn")` / `all_fn(a, "fn")` / `count_fn(a, "fn")` | Search / test / count |
+| `call("fn"[, args...])` | Invoke a function (user or builtin) by name |
+
+```
+function dbl(x) { return x * 2; }
+var doubled = map_fn(array(1, 2, 3), "dbl");   // [2, 4, 6]
+```
+
+### JSON & type introspection
+
+| Function | Description |
+|---|---|
+| `to_json(value)` / `from_json("...")` | Serialize / parse arrays, maps, numbers, strings, bools (also `json_stringify` / `json_parse`) |
+| `typeof(v)` | `"number"`, `"string"`, `"bool"`, `"array"`, `"map"`, `"vec3"` or `"null"` |
+| `is_num is_str is_bool is_array is_map` | Type tests |
+
+```
+var save = map();
+map_set(save, "level", 7);
+save_prefs("slot1", to_json(save));            // persist
+var loaded = from_json(load_prefs("slot1", "{}"));
+```
+
+### Error handling
+
+Wrap risky code in `try` / `catch`, and raise your own errors with `throw`:
+
+```
+try {
+    var data = from_json(load_prefs("save", "{}"));
+    if (map_count(data) == 0) { throw "no save data"; }
+    load_level(map_get(data, "level"));
+} catch (e) {
+    print("Load failed: " + e);   // e is the error message
+}
+```
+
+The `catch` clause is optional — `try { ... }` on its own just swallows any
+error and continues. Control flow (`return` / `break` / `continue`) passes
+through a `try` unaffected.
+
+### Easing curves
+
+Each maps a normalized `t` (0..1) to an eased 0..1 — feed the result to `lerp`:
+
+`ease_in`, `ease_out`, `ease_in_out`, `ease_in_cubic`, `ease_out_cubic`,
+`ease_in_out_cubic`, `ease_back`, `ease_elastic`, `ease_bounce`,
+plus `fract(x)` for the fractional part.
+
+### More string helpers
+
+`upper lower trim trim_start trim_end capitalize title_case str_reverse`
+`substr char_at replace split join repeat pad_left pad_right format`.
 
 ### Friendly aliases
 Intuitive names for common builtins so code reads naturally:

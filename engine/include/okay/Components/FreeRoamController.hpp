@@ -3,6 +3,8 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
@@ -45,30 +47,35 @@ public:
 
     void Update(float dt) override {
         if (!transform) return;
+        if (Game::Paused()) return;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
 
         // ---- Look ----
-        bool looking = lockCursor || !lookRequiresRightMouse || Input::GetMouseButton(1);
+        bool uiBlocked = Input::UICaptured();         // a modal UI (open inventory/chest) pauses look
+        bool looking = (lockCursor || !lookRequiresRightMouse || Input::GetMouseButton(1)) && !uiBlocked;
         Vec2 mp = Input::MousePosition();
         if (looking && m_haveMouse) {
             yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;   // mouse-right looks right
             pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
-        m_lastMouse = mp; m_haveMouse = true;
+        // Drop the baseline while a bag is open (locked/free mouse space switch) so the
+        // camera doesn't snap on the first frame after the panel closes.
+        m_lastMouse = mp; m_haveMouse = !uiBlocked;
         transform->localRotation = Quat::Euler(pitch, yaw, 0.0f);
 
         // ---- Move (full 3D, relative to where we look) ----
         Quat rot = transform->localRotation;
         Vec3 fwd = rot * Vec3{0, 0, -1};
         Vec3 right = rot * Vec3::Right;
-        Vec2 axis = Input::AxisWASD();
-        Vec2 pad  = Input::GamepadAxis();
+        Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
+        Vec2 pad  = uiBlocked ? Vec2{0, 0} : Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad;
 
         float upDown = 0.0f;
-        if (upKey   && Input::GetKey(upKey))   upDown += 1.0f;
-        if (downKey && Input::GetKey(downKey)) upDown -= 1.0f;
-        if (Input::GetKey(Input::KeyCtrl))     upDown -= 1.0f;   // Ctrl always descends
+        if (!uiBlocked && upKey   && Input::GetKey(upKey))   upDown += 1.0f;
+        if (!uiBlocked && downKey && Input::GetKey(downKey)) upDown -= 1.0f;
+        if (!uiBlocked && Input::GetKey(Input::KeyCtrl))     upDown -= 1.0f;   // Ctrl always descends
 
         Vec3 dir = fwd * axis.y + right * axis.x + Vec3{0, 1, 0} * upDown;
         float len = dir.Magnitude();

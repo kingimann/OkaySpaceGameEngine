@@ -43,6 +43,124 @@ int main() {
         }
     }
 
+    // Ground contact shadow: the planar projection flattens any point onto the
+    // ground plane along the light, and the MeshRenderer fields round-trip.
+    {
+        // Light pointing straight down: a point at (3, 5, -2) projects to y = groundY,
+        // keeping x/z (vertical light = no horizontal shear).
+        Mat4 s = Mat4::PlanarShadow(0.0f, Vec3{0, -1, 0});
+        Vec3 p = s.MultiplyPoint(Vec3{3.0f, 5.0f, -2.0f});
+        CHECK_NEAR(p.y, 0.0f, 1e-3f);
+        CHECK_NEAR(p.x, 3.0f, 1e-3f);
+        CHECK_NEAR(p.z, -2.0f, 1e-3f);
+        // A slanted light shears the shadow sideways but still lands on the plane.
+        Mat4 s2 = Mat4::PlanarShadow(1.0f, Vec3{1, -1, 0});
+        Vec3 q = s2.MultiplyPoint(Vec3{0.0f, 5.0f, 0.0f});   // 4 units above the plane
+        CHECK_NEAR(q.y, 1.0f, 1e-3f);
+        CHECK_NEAR(q.x, 4.0f, 1e-2f);                        // sheared east by the height drop
+
+        Scene sc("GS"); sc.physicsEnabled = false;
+        auto* mr = sc.CreateGameObject("Box")->AddComponent<MeshRenderer>();
+        CHECK(mr->groundShadow);                              // on by default
+        mr->groundShadow = false; mr->groundShadowY = 2.5f; mr->groundShadowStrength = 0.7f;
+        Scene s3("x"); SceneSerializer::Deserialize(s3, SceneSerializer::Serialize(sc));
+        auto* mr2 = s3.Find("Box") ? s3.Find("Box")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) {
+            CHECK(!mr2->groundShadow);
+            CHECK_NEAR(mr2->groundShadowY, 2.5f, 1e-3f);
+            CHECK_NEAR(mr2->groundShadowStrength, 0.7f, 1e-3f);
+        }
+    }
+
+    // Texture filter + offset round-trip through the scene serializer.
+    {
+        Scene s("TF"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Q")->AddComponent<MeshRenderer>();
+        mr->texFilter = MeshRenderer::TexFilter::Pixel;
+        mr->texOffset = {0.25f, -0.5f};
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("Q") ? s2.Find("Q")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) {
+            CHECK(mr2->texFilter == MeshRenderer::TexFilter::Pixel);
+            CHECK_NEAR(mr2->texOffset.x, 0.25f, 1e-4f);
+            CHECK_NEAR(mr2->texOffset.y, -0.5f, 1e-4f);
+        }
+    }
+
+    // Gradient shader round-trips its top/bottom colours through the scene.
+    {
+        Scene s("G"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Cube")->AddComponent<MeshRenderer>();
+        mr->shader = MeshRenderer::Shader::Gradient;
+        mr->gradientTop = Color::FromBytes(255, 0, 0);
+        mr->gradientBottom = Color::FromBytes(0, 0, 255);
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("Cube") ? s2.Find("Cube")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) {
+            CHECK(mr2->shader == MeshRenderer::Shader::Gradient);
+            CHECK_NEAR(mr2->gradientTop.r, 1.0f, 0.02f);
+            CHECK_NEAR(mr2->gradientBottom.b, 1.0f, 0.02f);
+        }
+    }
+
+    // Gradient + Fresnel actually change the rendered image vs Standard.
+    {
+        auto renderSphere = [](MeshRenderer::Shader shader) {
+            Scene scene("SH"); scene.physicsEnabled = false;
+            GameObject* lgo = scene.CreateGameObject("Sun");
+            auto* light = lgo->AddComponent<Light>();
+            light->type = Light::Type::Directional; light->intensity = 1.0f;
+            lgo->transform->localRotation = Quat::Euler(45, -30, 0);
+            GameObject* go = scene.CreateGameObject("Ball");
+            auto* mr = go->AddComponent<MeshRenderer>();
+            mr->mesh = Mesh::Sphere();
+            mr->color = Color::FromBytes(180, 180, 180);
+            mr->shader = shader;
+            mr->gradientTop = Color::FromBytes(255, 0, 0);
+            mr->gradientBottom = Color::FromBytes(0, 0, 255);
+            Raster r; r.Resize(64, 64); r.Clear(0xFF000000u);
+            Mat4 view = Mat4::LookAt({0, 0, 4}, {0, 0, 0}, Vec3::Up);
+            Mat4 proj = Mat4::Perspective(60.0f, 1.0f, 0.1f, 100.0f);
+            RenderMeshes(r, scene, proj * view, {0, 0, 4});
+            return r;
+        };
+        Raster std0 = renderSphere(MeshRenderer::Shader::Standard);
+        Raster grad = renderSphere(MeshRenderer::Shader::Gradient);
+        Raster fres = renderSphere(MeshRenderer::Shader::Fresnel);
+        Raster irid = renderSphere(MeshRenderer::Shader::Iridescent);
+        Raster holo = renderSphere(MeshRenderer::Shader::Hologram);
+        Raster post = renderSphere(MeshRenderer::Shader::Posterize);
+        Raster velv = renderSphere(MeshRenderer::Shader::Velvet);
+        int dGrad = 0, dFres = 0, dIrid = 0, dHolo = 0, dPost = 0, dVelv = 0;
+        for (int i = 0; i < 64 * 64; ++i) {
+            std::uint32_t s = std0.Get(i % 64, i / 64);
+            if (s != grad.Get(i % 64, i / 64)) ++dGrad;
+            if (s != fres.Get(i % 64, i / 64)) ++dFres;
+            if (s != irid.Get(i % 64, i / 64)) ++dIrid;
+            if (s != holo.Get(i % 64, i / 64)) ++dHolo;
+            if (s != post.Get(i % 64, i / 64)) ++dPost;
+            if (s != velv.Get(i % 64, i / 64)) ++dVelv;
+        }
+        CHECK(dVelv > 0);   // velvet sheen brightens the grazing edges
+        CHECK(dGrad > 0);   // gradient ramp repaints the sphere
+        CHECK(dFres > 0);   // fresnel rim/darkening repaints the sphere
+        CHECK(dIrid > 0);   // iridescent hue-shift repaints the sphere
+        CHECK(dHolo > 0);   // hologram darken + rim repaints the sphere
+        CHECK(dPost > 0);   // posterize banding repaints the sphere
+
+        // Round-trip the new shader models through the scene serializer.
+        Scene s4("IH"); s4.physicsEnabled = false;
+        s4.CreateGameObject("A")->AddComponent<MeshRenderer>()->shader = MeshRenderer::Shader::Iridescent;
+        s4.CreateGameObject("B")->AddComponent<MeshRenderer>()->shader = MeshRenderer::Shader::Hologram;
+        Scene s5("x"); SceneSerializer::Deserialize(s5, SceneSerializer::Serialize(s4));
+        CHECK(s5.Find("A")->GetComponent<MeshRenderer>()->shader == MeshRenderer::Shader::Iridescent);
+        CHECK(s5.Find("B")->GetComponent<MeshRenderer>()->shader == MeshRenderer::Shader::Hologram);
+    }
+
     // The Toon shader posterizes shading: a lit sphere shows far fewer distinct
     // shades than the smooth Standard shader.
     {
@@ -210,6 +328,67 @@ int main() {
         }
         CHECK(covered > 0);
         CHECK(diff > 0);                       // triplanar differs from UV mapping
+    }
+
+    // Ambient-occlusion map: a dark AO texture darkens the lit surface, and the
+    // aoMap + aoStrength fields round-trip through the scene serializer.
+    {
+        // Half-occluded map: left half black (occluded), right half white (lit).
+        Image ao(16, 16);
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x)
+                ao.SetPixel(x, y, x < 8 ? Color::FromBytes(10, 10, 10) : Color::White);
+        RegisterTexture("@aotest", ao);
+
+        auto renderBall = [](const std::string& aoMap) {
+            Scene scene("AO"); scene.physicsEnabled = false;
+            GameObject* sun = scene.CreateGameObject("Sun");
+            auto* light = sun->AddComponent<Light>();
+            light->type = Light::Type::Directional; light->intensity = 1.0f;
+            sun->transform->localRotation = Quat::Euler(20, 0, 0);
+            auto* mr = scene.CreateGameObject("Ball")->AddComponent<MeshRenderer>();
+            mr->mesh = Mesh::Sphere();
+            mr->color = Color::White;
+            mr->rimStrength = 0.0001f;     // force the per-pixel lit path (where AO applies)
+            mr->aoMap = aoMap; mr->aoStrength = 1.0f;
+            Raster r; r.Resize(64, 64); r.Clear(0xFF000000u);
+            Mat4 view = Mat4::LookAt({0, 0, 4}, {0, 0, 0}, Vec3::Up);
+            Mat4 proj = Mat4::Perspective(60.0f, 1.0f, 0.1f, 100.0f);
+            RenderMeshes(r, scene, proj * view, {0, 0, 4});
+            return r;
+        };
+        auto luma = [](const Raster& r) {
+            long sum = 0;
+            for (int i = 0; i < 64 * 64; ++i) { std::uint32_t p = r.Get(i % 64, i / 64);
+                sum += (p & 0xFF) + ((p >> 8) & 0xFF) + ((p >> 16) & 0xFF); }
+            return sum;
+        };
+        Raster noAo = renderBall("");
+        Raster withAo = renderBall("@aotest");
+        CHECK(luma(withAo) < luma(noAo));   // occlusion darkened the surface
+
+        Scene s("AOS"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Q")->AddComponent<MeshRenderer>();
+        mr->aoMap = "rock_ao.png"; mr->aoStrength = 0.6f;
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("Q") ? s2.Find("Q")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) { CHECK(mr2->aoMap == "rock_ao.png"); CHECK_NEAR(mr2->aoStrength, 0.6f, 1e-4f); }
+    }
+
+    // Metallic + reflectivity round-trip through the scene serializer.
+    {
+        Scene s("PBR"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("M")->AddComponent<MeshRenderer>();
+        mr->metallic = 0.8f; mr->reflectivity = 0.4f; mr->specularMap = "gloss.png";
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("M") ? s2.Find("M")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) {
+            CHECK_NEAR(mr2->metallic, 0.8f, 1e-4f);
+            CHECK_NEAR(mr2->reflectivity, 0.4f, 1e-4f);
+            CHECK(mr2->specularMap == "gloss.png");
+        }
     }
 
     TEST_MAIN_RESULT();

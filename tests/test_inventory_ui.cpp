@@ -62,5 +62,90 @@ int main() {
         CHECK(inv3->slots[0].item == "Stone");
     }
 
+    // Sort modes: Name (A→Z), Count (biggest first), Rarity (rarities-list order).
+    {
+        Scene s4("iu4");
+        GameObject* p4 = s4.CreateGameObject("P");
+        auto* inv4 = p4->AddComponent<Inventory>(); inv4->capacity = 36;
+        inv4->Add("Zucchini", 2);
+        inv4->Add("Apple", 5);
+        inv4->Add("Mango", 9);
+        auto* u4 = p4->AddComponent<InventoryUI>();
+
+        u4->sortMode = InventoryUI::SortMode::Name;
+        u4->Sort();
+        CHECK(inv4->slots[0].item == "Apple");
+        CHECK(inv4->slots[1].item == "Mango");
+        CHECK(inv4->slots[2].item == "Zucchini");
+
+        u4->sortMode = InventoryUI::SortMode::Count;
+        u4->Sort();
+        CHECK(inv4->slots[0].item == "Mango");      // 9 first
+        CHECK(inv4->slots[0].count == 9);
+        CHECK(inv4->slots[2].count == 2);           // Zucchini (2) last
+
+        u4->sortMode = InventoryUI::SortMode::Rarity;
+        u4->rarities.push_back({"Mango", Color::White});
+        u4->rarities.push_back({"Zucchini", Color::White});
+        u4->Sort();
+        CHECK(inv4->slots[0].item == "Mango");      // listed first = rarest
+        CHECK(inv4->slots[1].item == "Zucchini");
+        CHECK(inv4->slots[2].item == "Apple");      // unranked sorts last
+
+        // DropSelected removes one of the selected item and returns its name.
+        u4->selected = 0;
+        int before = inv4->Count("Mango");
+        std::string dropped = u4->DropSelected();
+        CHECK(dropped == "Mango");
+        CHECK(inv4->Count("Mango") == before - 1);
+    }
+
+    // Sort mode + drop key round-trip through serialization.
+    {
+        Scene s5("iu5");
+        GameObject* p5 = s5.CreateGameObject("P");
+        p5->AddComponent<Inventory>();
+        auto* u5 = p5->AddComponent<InventoryUI>();
+        u5->sortMode = InventoryUI::SortMode::Rarity;
+        u5->sortOnClose = true;
+        u5->dropKey = 'q';
+        Scene loaded("L");
+        CHECK(SceneSerializer::Deserialize(loaded, SceneSerializer::Serialize(s5)));
+        auto* r5 = loaded.Find("P")->GetComponent<InventoryUI>();
+        CHECK(r5 != nullptr);
+        CHECK(r5->sortMode == InventoryUI::SortMode::Rarity);
+        CHECK(r5->sortOnClose);
+        CHECK(r5->dropKey == 'q');
+    }
+
+    // New style options round-trip: align, selected pop, empty/hotbar/border/title.
+    {
+        Scene s6("iu6");
+        GameObject* p6 = s6.CreateGameObject("P");
+        p6->AddComponent<Inventory>();
+        auto* u6 = p6->AddComponent<InventoryUI>();
+        u6->hAlign = InventoryUI::HAlign::Right;
+        u6->selectedScale = 1.4f;
+        u6->emptySlotColor = Color::FromBytes(10, 12, 16, 200);
+        u6->hotbarColor = Color::FromBytes(40, 44, 60, 255);
+        u6->panelBorder = Color::FromBytes(200, 180, 60, 255);
+        u6->panelBorderWidth = 3.0f;
+        u6->showTitle = true;
+        u6->backpackTitle = "Backpack";
+        u6->titleColor = Color::FromBytes(250, 250, 250, 255);
+        Scene loaded("L");
+        CHECK(SceneSerializer::Deserialize(loaded, SceneSerializer::Serialize(s6)));
+        auto* r6 = loaded.Find("P")->GetComponent<InventoryUI>();
+        CHECK(r6 != nullptr);
+        CHECK(r6->hAlign == InventoryUI::HAlign::Right);
+        CHECK_NEAR(r6->selectedScale, 1.4f, 0.001f);
+        CHECK_NEAR(r6->emptySlotColor.b, 16.0f / 255.0f, 0.01f);
+        CHECK_NEAR(r6->hotbarColor.g, 44.0f / 255.0f, 0.01f);
+        CHECK(r6->panelBorder.a > 0.9f);
+        CHECK_NEAR(r6->panelBorderWidth, 3.0f, 0.001f);
+        CHECK(r6->showTitle);
+        CHECK(r6->backpackTitle == "Backpack");
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -10,6 +10,7 @@
 #include <functional>
 #include <fstream>
 #include <map>
+#include <set>
 #include <tuple>
 #include <sstream>
 #include <string>
@@ -65,6 +66,16 @@ struct Mesh {
             float m = n.Magnitude();
             normals[i] = m > 1e-8f ? n * (1.0f / m) : Vec3{0, 1, 0};
         }
+    }
+
+    /// Keep normals valid after an edit WITHOUT changing the mesh's shading mode:
+    /// if it was smooth-shaded (had per-vertex normals) recompute them at the new
+    /// resolution; if it had none, leave it flat (the renderer face-shades). This
+    /// fixes lighting after edits that add/move vertices (Subdivide, deformers) —
+    /// otherwise a stale, wrong-sized normals array corrupts the shading.
+    void RefreshNormals() {
+        if (normals.empty()) return;                 // flat-shaded: stay flat (face normals)
+        ComputeSmoothNormals();                       // was smooth: rebuild at the new resolution
     }
 
     // ---- Primitive generators -----------------------------------------
@@ -403,6 +414,72 @@ struct Mesh {
             outMax = {std::fmax(outMax.x, v.x), std::fmax(outMax.y, v.y), std::fmax(outMax.z, v.z)};
         }
     }
+    /// Edges worth drawing in a wireframe: every real edge EXCEPT the internal
+    /// triangulation diagonals of flat quads. Two coplanar triangles that form a
+    /// convex quad are treated as one face and their shared (diagonal) edge is
+    /// hidden — so a cube reads as 6 quads and a subdivided face as a clean grid,
+    /// instead of a mess of triangles. Boundary edges and creases (angled faces,
+    /// e.g. a sphere) are always kept. Returned as pairs of vertex indices.
+    /// `angleDeg` is the crease threshold; larger keeps fewer diagonals.
+    std::vector<std::pair<int, int>> VisibleEdges(float angleDeg = 12.0f) const {
+        std::vector<std::pair<int, int>> out;
+        const int nTris = TriangleCount();
+        if (nTris == 0) return out;
+        // Weld positions to canonical ids so shared edges match across duplicates.
+        std::map<std::tuple<int, int, int>, int> rep;
+        std::vector<int> cid(vertices.size());
+        std::vector<int> repVert;                            // canonical id -> a vertex index
+        auto key = [](const Vec3& v) {
+            return std::make_tuple((int)std::lround(v.x * 1024.0f),
+                                   (int)std::lround(v.y * 1024.0f),
+                                   (int)std::lround(v.z * 1024.0f));
+        };
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            auto it = rep.find(key(vertices[i]));
+            if (it == rep.end()) { int id = (int)repVert.size(); rep[key(vertices[i])] = id; repVert.push_back((int)i); cid[i] = id; }
+            else cid[i] = it->second;
+        }
+        // Per-triangle normal + the canonical ids of its corners.
+        struct Tri { int c[3]; Vec3 n; };
+        std::vector<Tri> tri(nTris);
+        for (int f = 0; f < nTris; ++f) {
+            int a = triangles[f * 3], b = triangles[f * 3 + 1], c = triangles[f * 3 + 2];
+            tri[f].c[0] = cid[a]; tri[f].c[1] = cid[b]; tri[f].c[2] = cid[c];
+            Vec3 fn = Vec3::Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]);
+            float m = fn.Magnitude(); tri[f].n = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 0, 0};
+        }
+        // Edge -> the (up to two) triangles sharing it.
+        std::map<std::pair<int, int>, std::vector<int>> edgeTris;
+        auto ek = [](int a, int b) { return std::make_pair(std::min(a, b), std::max(a, b)); };
+        for (int f = 0; f < nTris; ++f)
+            for (int e = 0; e < 3; ++e)
+                edgeTris[ek(tri[f].c[e], tri[f].c[(e + 1) % 3])].push_back(f);
+        // Candidate diagonals: internal, coplanar, convex-quad edges — sorted by
+        // descending length so a quad's true diagonal (longer) is hidden before its
+        // grid-edge legs (shorter), and each triangle is consumed at most once.
+        const float cosT = std::cos(angleDeg * 3.14159265358979323846f / 180.0f);
+        auto pos = [&](int c) { return vertices[repVert[c]]; };
+        struct Cand { std::pair<int, int> e; int t0, t1; float len; };
+        std::vector<Cand> cands;
+        for (auto& kv : edgeTris) {
+            if (kv.second.size() != 2) continue;
+            int t0 = kv.second[0], t1 = kv.second[1];
+            float d = tri[t0].n.x * tri[t1].n.x + tri[t0].n.y * tri[t1].n.y + tri[t0].n.z * tri[t1].n.z;
+            if (d < cosT) continue;                          // a crease — keep this edge
+            float len = (pos(kv.first.first) - pos(kv.first.second)).Magnitude();
+            cands.push_back({kv.first, t0, t1, len});
+        }
+        std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.len > b.len; });
+        std::vector<char> used(nTris, 0);
+        std::set<std::pair<int, int>> hidden;
+        for (const Cand& c : cands)
+            if (!used[c.t0] && !used[c.t1]) { used[c.t0] = used[c.t1] = 1; hidden.insert(c.e); }
+        for (auto& kv : edgeTris)
+            if (hidden.find(kv.first) == hidden.end())
+                out.push_back({repVert[kv.first.first], repVert[kv.first.second]});
+        return out;
+    }
+
     /// Center of the bounding box.
     Vec3 Center() const {
         Vec3 lo, hi; Bounds(lo, hi);
@@ -457,38 +534,49 @@ struct Mesh {
         if (!f) { if (ok) *ok = false; return m; }
         std::string dir;
         { std::size_t s = path.find_last_of("/\\"); if (s != std::string::npos) dir = path.substr(0, s + 1); }
-        std::vector<Vec3> pos; std::vector<Vec2> uv;
-        std::vector<std::vector<std::pair<int, int>>> faces;   // per-corner (posIdx, uvIdx), 0-based
+        std::vector<Vec3> pos, nrm; std::vector<Vec2> uv;
+        struct Corner { int p, t, n; };                        // 0-based pos / uv / normal (-1 = none)
+        std::vector<std::vector<Corner>> faces;
         std::string mtllib, line;
         while (std::getline(f, line)) {
             std::istringstream ss(line); std::string tag; ss >> tag;
             if (tag == "v") { Vec3 v; ss >> v.x >> v.y >> v.z; pos.push_back(v); }
             else if (tag == "vt") { Vec2 t; ss >> t.x >> t.y; uv.push_back(t); }
+            else if (tag == "vn") { Vec3 n; ss >> n.x >> n.y >> n.z; nrm.push_back(n); }
             else if (tag == "mtllib") { ss >> mtllib; }
             else if (tag == "f") {
-                std::vector<std::pair<int, int>> face; std::string tok;
+                std::vector<Corner> face; std::string tok;
                 while (ss >> tok) {
-                    int vi = 0, ti = 0; std::sscanf(tok.c_str(), "%d/%d", &vi, &ti);
+                    // Accept v, v/vt, v//vn and v/vt/vn (the OBJ corner forms).
+                    int vi = 0, ti = 0, ni = 0;
+                    if (std::sscanf(tok.c_str(), "%d/%d/%d", &vi, &ti, &ni) == 3) {}
+                    else if (std::sscanf(tok.c_str(), "%d//%d", &vi, &ni) == 2) ti = 0;
+                    else if (std::sscanf(tok.c_str(), "%d/%d", &vi, &ti) == 2) ni = 0;
+                    else { std::sscanf(tok.c_str(), "%d", &vi); ti = ni = 0; }
                     if (vi < 0) vi = (int)pos.size() + vi + 1;
                     if (ti < 0) ti = (int)uv.size() + ti + 1;
-                    face.push_back({vi - 1, ti - 1});
+                    if (ni < 0) ni = (int)nrm.size() + ni + 1;
+                    face.push_back({vi - 1, ti - 1, ni - 1});
                 }
                 if (face.size() >= 3) faces.push_back(std::move(face));
             }
         }
         auto tri = [&](int a, int b, int cc) { m.triangles.insert(m.triangles.end(), {a, b, cc}); };
-        if (uv.empty()) {                              // no texcoords: 1:1 with v lines
+        if (uv.empty() && nrm.empty()) {               // simplest case: 1:1 with v lines
             m.vertices = pos;
             for (auto& fc : faces)
-                for (std::size_t i = 2; i < fc.size(); ++i) tri(fc[0].first, fc[i - 1].first, fc[i].first);
-        } else {                                       // de-index per (pos,uv) so UVs map right
-            std::map<std::pair<int, int>, int> remap;
-            auto corner = [&](std::pair<int, int> c) {
-                auto it = remap.find(c); if (it != remap.end()) return it->second;
+                for (std::size_t i = 2; i < fc.size(); ++i) tri(fc[0].p, fc[i - 1].p, fc[i].p);
+        } else {                                       // de-index per (pos,uv,normal) so attributes map right
+            const bool haveUV = !uv.empty(), haveN = !nrm.empty();
+            std::map<std::tuple<int, int, int>, int> remap;
+            auto corner = [&](const Corner& c) {
+                auto key = std::make_tuple(c.p, c.t, c.n);
+                auto it = remap.find(key); if (it != remap.end()) return it->second;
                 int ni = (int)m.vertices.size();
-                m.vertices.push_back((c.first >= 0 && c.first < (int)pos.size()) ? pos[c.first] : Vec3{0, 0, 0});
-                m.uvs.push_back((c.second >= 0 && c.second < (int)uv.size()) ? uv[c.second] : Vec2{0, 0});
-                remap[c] = ni; return ni;
+                m.vertices.push_back((c.p >= 0 && c.p < (int)pos.size()) ? pos[c.p] : Vec3{0, 0, 0});
+                if (haveUV) m.uvs.push_back((c.t >= 0 && c.t < (int)uv.size()) ? uv[c.t] : Vec2{0, 0});
+                if (haveN)  m.normals.push_back((c.n >= 0 && c.n < (int)nrm.size()) ? nrm[c.n] : Vec3{0, 1, 0});
+                remap[key] = ni; return ni;
             };
             for (auto& fc : faces) {
                 std::vector<int> idx; for (auto& c : fc) idx.push_back(corner(c));
@@ -539,6 +627,7 @@ struct Mesh {
         Quat q = Quat::Euler(eulerDegrees);
         for (Vec3& v : vertices) v = q * v;
         name = "";
+        RefreshNormals();
     }
     Mesh Rotated(const Vec3& eulerDegrees) const { Mesh m = *this; m.RotateVerts(eulerDegrees); return m; }
 
@@ -556,8 +645,148 @@ struct Mesh {
         name = "";
         vertices.insert(vertices.end(), other.vertices.begin(), other.vertices.end());
         for (int t : other.triangles) triangles.push_back(t + base);
+        RefreshNormals();
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
+
+    /// Mirror the mesh across an axis plane through the origin (0 = X / yz-plane,
+    /// 1 = Y, 2 = Z), appending a flipped copy so the model becomes symmetric —
+    /// model one half, mirror the rest. When `weld` is on, vertices on the mirror
+    /// plane are merged so there's no seam down the middle.
+    void Mirror(int axis = 0, bool weld = true) {
+        if (axis < 0 || axis > 2 || vertices.empty()) return;
+        const bool faceCols = HasFaceColors();
+        const bool hadNormals = HasNormals();
+        Mesh copy = *this;
+        for (Vec3& v : copy.vertices) (&v.x)[axis] = -(&v.x)[axis];   // reflect
+        copy.FlipWinding();                                          // keep faces outward
+        int base = (int)vertices.size();
+        vertices.insert(vertices.end(), copy.vertices.begin(), copy.vertices.end());
+        for (int t : copy.triangles) triangles.push_back(t + base);
+        if (faceCols && copy.HasFaceColors())
+            triColors.insert(triColors.end(), copy.triColors.begin(), copy.triColors.end());
+        normals.clear();
+        name = "";
+        if (weld) WeldVertices();
+        if (hadNormals) ComputeSmoothNormals();      // preserve smooth shading through the mirror
+    }
+    Mesh Mirrored(int axis = 0, bool weld = true) const { Mesh m = *this; m.Mirror(axis, weld); return m; }
+
+    /// Push every vertex toward a sphere centred on the mesh, by `amount` in [0,1]
+    /// (0 = unchanged, 1 = fully spherical) — round off a cube into a ball, or just
+    /// soften a blocky shape. The sphere radius is the average vertex distance.
+    void Spherify(float amount = 1.0f) {
+        if (vertices.empty()) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        Vec3 c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        float rsum = 0.0f;
+        for (const Vec3& v : vertices) {
+            Vec3 d{v.x - c.x, v.y - c.y, v.z - c.z};
+            rsum += std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        }
+        float r = rsum / (float)vertices.size();
+        for (Vec3& v : vertices) {
+            Vec3 d{v.x - c.x, v.y - c.y, v.z - c.z};
+            float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+            if (len < 1e-6f) continue;
+            Vec3 onSphere{c.x + d.x / len * r, c.y + d.y / len * r, c.z + d.z / len * r};
+            v.x += (onSphere.x - v.x) * amount;
+            v.y += (onSphere.y - v.y) * amount;
+            v.z += (onSphere.z - v.z) * amount;
+        }
+        name = "";
+        RefreshNormals();                            // rounding a shape re-smooths its lighting
+    }
+
+    /// Twist the mesh around an axis: each vertex rotates about that axis by
+    /// `degreesPerUnit` × (its distance along the axis from the mesh centre) — the
+    /// classic "wring the model" deformer. axis: 0 = X, 1 = Y, 2 = Z.
+    void Twist(float degreesPerUnit, int axis = 1) {
+        if (vertices.empty() || axis < 0 || axis > 2) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        float mid = ((&lo.x)[axis] + (&hi.x)[axis]) * 0.5f;
+        const float deg2rad = 3.14159265358979323846f / 180.0f;
+        int a = (axis + 1) % 3, b = (axis + 2) % 3;   // the two perpendicular axes
+        for (Vec3& v : vertices) {
+            float along = (&v.x)[axis] - mid;
+            float ang = degreesPerUnit * along * deg2rad;
+            float ca = std::cos(ang), sa = std::sin(ang);
+            float pa = (&v.x)[a], pb = (&v.x)[b];
+            (&v.x)[a] = pa * ca - pb * sa;
+            (&v.x)[b] = pa * sa + pb * ca;
+        }
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Taper along an axis: scale the two perpendicular axes from full size at the
+    /// bottom (min of `axis`) to `endScale` at the top — turn a cylinder into a cone
+    /// or a box into a frustum/wedge. axis: 0 = X, 1 = Y, 2 = Z.
+    void Taper(int axis = 1, float endScale = 0.5f) {
+        if (vertices.empty() || axis < 0 || axis > 2) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis], range = a1 - a0;
+        if (range < 1e-6f) return;
+        Vec3 c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        int b = (axis + 1) % 3, d = (axis + 2) % 3;
+        for (Vec3& v : vertices) {
+            float t = ((&v.x)[axis] - a0) / range;       // 0 at bottom .. 1 at top
+            float s = 1.0f + (endScale - 1.0f) * t;
+            (&v.x)[b] = (&c.x)[b] + ((&v.x)[b] - (&c.x)[b]) * s;
+            (&v.x)[d] = (&c.x)[d] + ((&v.x)[d] - (&c.x)[d]) * s;
+        }
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Bend the mesh into an arc: sweep it around a circle so a straight bar curves by
+    /// `degrees` total over its length along `axis` (0 = X, 1 = Y, 2 = Z). The bend
+    /// happens in the plane of `axis` and the next axis. 0 leaves it straight.
+    void Bend(float degrees, int axis = 0) {
+        if (vertices.empty() || axis < 0 || axis > 2 || std::fabs(degrees) < 1e-4f) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis], len = a1 - a0;
+        if (len < 1e-6f) return;
+        const float kPi = 3.14159265358979323846f;
+        float total = degrees * kPi / 180.0f;            // total bend angle
+        float radius = len / total;                       // arc radius so the ends meet the angle
+        float mid = (a0 + a1) * 0.5f;
+        int up = (axis + 1) % 3;                          // the axis we curl toward
+        for (Vec3& v : vertices) {
+            float s = (&v.x)[axis] - mid;                 // distance along the bar from centre
+            float h = (&v.x)[up];                         // offset from the neutral fibre
+            float ang = s / radius;
+            float r = radius + h;                         // outer fibres travel a larger arc
+            (&v.x)[axis] = std::sin(ang) * r;
+            (&v.x)[up]   = radius - std::cos(ang) * r;
+        }
+        normals.clear();
+        name = "";
+    }
+
+    /// Give a thin surface real thickness: duplicate it, push the copy inward along
+    /// the (smooth) vertex normals by `thickness`, and flip it so the shell reads
+    /// solid from both sides — turn a plane/curved sheet into a slab/bowl wall.
+    void Solidify(float thickness = 0.1f) {
+        if (vertices.empty() || triangles.empty()) return;
+        Mesh src = *this;
+        if (!src.HasNormals()) src.ComputeSmoothNormals();
+        Mesh inner = src;
+        for (std::size_t i = 0; i < inner.vertices.size(); ++i) {
+            const Vec3& n = src.normals[i];
+            inner.vertices[i].x -= n.x * thickness;
+            inner.vertices[i].y -= n.y * thickness;
+            inner.vertices[i].z -= n.z * thickness;
+        }
+        inner.FlipWinding();
+        std::vector<Color> innerCols = HasFaceColors() ? triColors : std::vector<Color>{};   // copy before growing
+        int base = (int)vertices.size();
+        vertices.insert(vertices.end(), inner.vertices.begin(), inner.vertices.end());
+        for (int t : inner.triangles) triangles.push_back(t + base);
+        if (!innerCols.empty()) triColors.insert(triColors.end(), innerCols.begin(), innerCols.end());
+        normals.clear();
+        name = "";
+    }
 
     /// Extrude a 2D outline (XY, convex, counter-clockwise) into a 3D prism of
     /// the given depth along Z — custom signs, logos, blocky props. Builds a
@@ -659,6 +888,7 @@ struct Mesh {
         triangles = std::move(out);
         if (faceCols) triColors = std::move(outCols);
         name = "";
+        RefreshNormals();                            // keep lighting valid at the new resolution
     }
 
     /// Push every vertex onto a sphere of the given radius about the origin —
@@ -669,6 +899,7 @@ struct Mesh {
             if (m > 1e-6f) v = v * (radius / m);
         }
         name = "";
+        RefreshNormals();
     }
 
     /// Per-vertex normals, area-weighted from the adjacent faces (for lighting /
@@ -794,6 +1025,7 @@ struct Mesh {
                 : vertices[i];
         }
         vertices = std::move(moved);
+        RefreshNormals();
     }
 
     /// Take low-poly geometry up to smooth high-poly: `iterations` rounds of
@@ -837,6 +1069,7 @@ struct Mesh {
         for (int v : verts)
             if (v >= 0 && v < (int)vertices.size()) vertices[v] += delta;
         name = "";
+        RefreshNormals();
     }
 
     /// Region-extrude the selected set of triangles along their averaged normal:
@@ -900,7 +1133,7 @@ struct Mesh {
             triangles[i] = newIndex[v0]; triangles[i + 1] = newIndex[v1]; triangles[i + 2] = newIndex[v2];
         }
         name = "";
-        ComputeSmoothNormals();
+        RefreshNormals();     // keep the mesh's shading mode (flat stays flat → hard extrude edges)
     }
 
     /// Inset the selected region: duplicate its vertices, pulled toward the region
@@ -957,7 +1190,7 @@ struct Mesh {
             triangles[i] = newIndex[v0]; triangles[i + 1] = newIndex[v1]; triangles[i + 2] = newIndex[v2];
         }
         name = "";
-        ComputeSmoothNormals();
+        RefreshNormals();     // keep the mesh's shading mode (flat stays flat → hard extrude edges)
     }
 
     /// 1->4 midpoint subdivision of ONLY the listed triangles. Midpoints are
@@ -990,7 +1223,7 @@ struct Mesh {
         }
         triangles = std::move(out);
         name = "";
-        ComputeSmoothNormals();
+        RefreshNormals();
     }
 
     /// Delete the listed triangles (erasing their 3 indices each). Sorted
@@ -1047,6 +1280,520 @@ struct Mesh {
         name = "";
         ComputeSmoothNormals();
     }
+
+    // ---- Modifiers (Blender-style) ------------------------------------------
+
+    /// Array modifier: keep the original and append `count-1` more copies, each
+    /// shifted a further `offset` along. Great for fences, columns, stairs, gears.
+    void Array(int count, const Vec3& offset) {
+        if (count <= 1 || vertices.empty()) return;
+        Mesh base = *this;
+        for (int i = 1; i < count; ++i)
+            Add(base, {offset.x * (float)i, offset.y * (float)i, offset.z * (float)i});
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Decimate modifier (vertex clustering): snap vertices to a grid of `cellSize`
+    /// and collapse each cell to one averaged vertex, dropping faces that degenerate.
+    /// A fast, robust way to cut triangle count on dense/imported meshes. Returns the
+    /// new triangle count.
+    int Decimate(float cellSize) {
+        if (cellSize <= 1e-6f || vertices.empty()) return TriangleCount();
+        std::map<std::tuple<int, int, int>, int> cell;
+        std::vector<Vec3> sum; std::vector<int> cnt; std::vector<int> remap(vertices.size());
+        auto key = [&](const Vec3& v) {
+            return std::make_tuple((int)std::floor(v.x / cellSize),
+                                   (int)std::floor(v.y / cellSize),
+                                   (int)std::floor(v.z / cellSize));
+        };
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            auto k = key(vertices[i]);
+            auto it = cell.find(k);
+            int id;
+            if (it == cell.end()) { id = (int)sum.size(); cell[k] = id; sum.push_back(vertices[i]); cnt.push_back(1); }
+            else { id = it->second; sum[id] += vertices[i]; ++cnt[id]; }
+            remap[i] = id;
+        }
+        std::vector<Vec3> nv(sum.size());
+        for (std::size_t i = 0; i < sum.size(); ++i) nv[i] = sum[i] * (1.0f / (float)cnt[i]);
+        std::vector<int> nt; nt.reserve(triangles.size());
+        std::vector<Color> nc; const bool hadColors = HasFaceColors();
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int a = remap[triangles[t]], b = remap[triangles[t + 1]], c = remap[triangles[t + 2]];
+            if (a == b || b == c || a == c) continue;            // collapsed → drop
+            nt.push_back(a); nt.push_back(b); nt.push_back(c);
+            if (hadColors) nc.push_back(triColors[t / 3]);
+        }
+        vertices = std::move(nv); triangles = std::move(nt);
+        triColors = std::move(nc); uvs.clear();
+        name = "";
+        ComputeSmoothNormals();
+        return TriangleCount();
+    }
+
+    /// True if `p` is inside this CLOSED mesh — parity of how many faces a ray from
+    /// `p` crosses (odd = inside). The basis for the boolean/remesh ops. The ray is
+    /// slightly skewed off the axes so it never threads an exact shared edge/vertex
+    /// (which would double-count and flip the answer).
+    bool PointInside(const Vec3& p) const {
+        const Vec3 d{1.0f, 0.0009124f, 0.0007215f};              // near +X, off every edge
+        auto dot = [](const Vec3& u, const Vec3& w) { return u.x * w.x + u.y * w.y + u.z * w.z; };
+        int crossings = 0;
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
+            const Vec3& a = vertices[triangles[i]];
+            const Vec3& b = vertices[triangles[i + 1]];
+            const Vec3& c = vertices[triangles[i + 2]];
+            Vec3 e1 = b - a, e2 = c - a;
+            Vec3 h = Vec3::Cross(d, e2);
+            float det = dot(e1, h);
+            if (det > -1e-9f && det < 1e-9f) continue;           // ray parallel to face
+            float invDet = 1.0f / det;
+            Vec3 s = p - a;
+            float u = dot(s, h) * invDet;
+            if (u < 0.0f || u > 1.0f) continue;
+            Vec3 q = Vec3::Cross(s, e1);
+            float v = dot(d, q) * invDet;
+            if (v < 0.0f || u + v > 1.0f) continue;
+            float t = dot(e2, q) * invDet;
+            if (t > 1e-7f) ++crossings;                          // crossing ahead along the ray
+        }
+        return (crossings & 1) != 0;
+    }
+
+    enum class BoolOp { Union, Difference, Intersect };
+
+    /// Remesh modifier ("Blocks" mode): sample the solid on a voxel grid and emit a
+    /// watertight blocky surface between solid and empty cells. Follow with Smooth()
+    /// or SubdivideSmooth() to round it. `voxel` is the cell size; the grid is capped
+    /// at `maxDim` cells per axis so a tiny voxel on a big mesh can't explode.
+    static Mesh VoxelRemesh(const Mesh& src, float voxel, int maxDim = 64) {
+        if (src.vertices.empty() || voxel <= 1e-5f) return Mesh{};
+        Vec3 lo, hi; src.Bounds(lo, hi);
+        lo = lo - Vec3{voxel, voxel, voxel};
+        hi = hi + Vec3{voxel, voxel, voxel};
+        int nx, ny, nz; float v;
+        GridDims(lo, hi, voxel, maxDim, nx, ny, nz, v);
+        std::vector<unsigned char> occ((std::size_t)nx * ny * nz, 0);
+        SampleInto(src, occ, nx, ny, nz, lo, v);
+        return EmitOccupancy(occ, nx, ny, nz, lo, v);
+    }
+    /// Replace this mesh with its voxel remesh in place.
+    void Remesh(float voxel, int maxDim = 64) { *this = VoxelRemesh(*this, voxel, maxDim); }
+
+    /// Boolean modifier: combine two closed meshes with union (A∪B), difference
+    /// (A−B), or intersect (A∩B), via a shared voxel grid. Robust on any closed
+    /// input (no fragile coplanar-triangle clipping); the result is blocky at the
+    /// voxel scale, so pick `voxel` small for crisp seams and Smooth() to taste.
+    static Mesh Boolean(const Mesh& a, const Mesh& b, BoolOp op, float voxel, int maxDim = 96) {
+        if (a.vertices.empty() || b.vertices.empty() || voxel <= 1e-5f) return Mesh{};
+        Vec3 alo, ahi, blo, bhi; a.Bounds(alo, ahi); b.Bounds(blo, bhi);
+        // Union of both AABBs (covers every cell either solid could occupy), padded.
+        Vec3 lo{std::min(alo.x, blo.x), std::min(alo.y, blo.y), std::min(alo.z, blo.z)};
+        Vec3 hi{std::max(ahi.x, bhi.x), std::max(ahi.y, bhi.y), std::max(ahi.z, bhi.z)};
+        lo = lo - Vec3{voxel, voxel, voxel};
+        hi = hi + Vec3{voxel, voxel, voxel};
+        int nx, ny, nz; float v;
+        GridDims(lo, hi, voxel, maxDim, nx, ny, nz, v);
+        const std::size_t n = (std::size_t)nx * ny * nz;
+        std::vector<unsigned char> oa(n, 0), ob(n, 0);
+        SampleInto(a, oa, nx, ny, nz, lo, v);
+        SampleInto(b, ob, nx, ny, nz, lo, v);
+        std::vector<unsigned char> occ(n, 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            bool ia = oa[i] != 0, ib = ob[i] != 0;
+            occ[i] = (op == BoolOp::Union ? (ia || ib)
+                    : op == BoolOp::Intersect ? (ia && ib)
+                    : (ia && !ib)) ? 1 : 0;                      // Difference
+        }
+        return EmitOccupancy(occ, nx, ny, nz, lo, v);
+    }
+
+    /// Convex Hull: the tight convex shell around a set of points (incremental
+    /// algorithm). Great for turning a scan/blockout into a clean collider or a
+    /// crystal/rock silhouette. Returns an empty mesh if the points are degenerate
+    /// (fewer than 4, or all coplanar).
+    static Mesh ConvexHull(const std::vector<Vec3>& ptsIn) {
+        Mesh out;
+        // De-duplicate coincident points.
+        std::vector<Vec3> p;
+        p.reserve(ptsIn.size());
+        for (const Vec3& q : ptsIn) {
+            bool dup = false;
+            for (const Vec3& e : p) if ((e - q).Magnitude() < 1e-6f) { dup = true; break; }
+            if (!dup) p.push_back(q);
+        }
+        if (p.size() < 4) return out;
+        auto dot = [](const Vec3& u, const Vec3& w) { return u.x * w.x + u.y * w.y + u.z * w.z; };
+
+        // Seed tetrahedron: spread-out, non-degenerate 4 points.
+        int i0 = 0, i1 = 1;
+        float best = -1.0f;
+        for (std::size_t i = 0; i < p.size(); ++i)
+            for (std::size_t j = i + 1; j < p.size(); ++j) {
+                float d = (p[i] - p[j]).Magnitude();
+                if (d > best) { best = d; i0 = (int)i; i1 = (int)j; }
+            }
+        int i2 = -1; best = -1.0f;
+        for (std::size_t i = 0; i < p.size(); ++i) {
+            Vec3 c = Vec3::Cross(p[i1] - p[i0], p[i] - p[i0]);
+            float d = c.Magnitude();
+            if (d > best) { best = d; i2 = (int)i; }
+        }
+        if (i2 < 0 || best < 1e-9f) return out;                 // all collinear
+        Vec3 nrm = Vec3::Cross(p[i1] - p[i0], p[i2] - p[i0]);
+        int i3 = -1; best = 1e-9f;
+        for (std::size_t i = 0; i < p.size(); ++i) {
+            float d = std::fabs(dot(nrm, p[i] - p[i0]));
+            if (d > best) { best = d; i3 = (int)i; }
+        }
+        if (i3 < 0) return out;                                  // all coplanar
+
+        Vec3 interior = (p[i0] + p[i1] + p[i2] + p[i3]) * 0.25f; // always inside the hull
+        struct Face { int a, b, c; };
+        std::vector<Face> faces;
+        auto faceNormal = [&](const Face& f) { return Vec3::Cross(p[f.b] - p[f.a], p[f.c] - p[f.a]); };
+        auto addFace = [&](int a, int b, int c) {
+            Face f{a, b, c};
+            // Wind so the normal points away from the interior point.
+            if (dot(faceNormal(f), p[a] - interior) < 0.0f) std::swap(f.b, f.c);
+            faces.push_back(f);
+        };
+        addFace(i0, i1, i2); addFace(i0, i1, i3); addFace(i0, i2, i3); addFace(i1, i2, i3);
+
+        for (int q = 0; q < (int)p.size(); ++q) {
+            if (q == i0 || q == i1 || q == i2 || q == i3) continue;
+            // Faces the new point can "see" (it's outside their plane).
+            std::vector<char> vis(faces.size(), 0);
+            bool any = false;
+            for (std::size_t f = 0; f < faces.size(); ++f) {
+                Vec3 n = faceNormal(faces[f]);
+                if (dot(n, p[q] - p[faces[f].a]) > 1e-9f) { vis[f] = 1; any = true; }
+            }
+            if (!any) continue;                                 // inside the current hull
+            // Horizon = directed edges of visible faces whose reverse isn't also visible.
+            std::map<std::pair<int, int>, int> dir;             // directed edge -> count among visible
+            auto add = [&](int a, int b) { dir[{a, b}]++; };
+            for (std::size_t f = 0; f < faces.size(); ++f)
+                if (vis[f]) { add(faces[f].a, faces[f].b); add(faces[f].b, faces[f].c); add(faces[f].c, faces[f].a); }
+            std::vector<std::pair<int, int>> horizon;
+            for (auto& kv : dir)
+                if (dir.find({kv.first.second, kv.first.first}) == dir.end())
+                    horizon.push_back(kv.first);
+            // Drop visible faces, add a fan from the horizon to q.
+            std::vector<Face> keep;
+            for (std::size_t f = 0; f < faces.size(); ++f) if (!vis[f]) keep.push_back(faces[f]);
+            faces.swap(keep);
+            for (auto& e : horizon) addFace(e.first, e.second, q);
+        }
+
+        // Emit unique vertices used by the hull faces.
+        std::map<int, int> remap;
+        for (const Face& f : faces)
+            for (int idx : {f.a, f.b, f.c})
+                if (remap.find(idx) == remap.end()) { remap[idx] = (int)out.vertices.size(); out.vertices.push_back(p[idx]); }
+        for (const Face& f : faces) {
+            out.triangles.push_back(remap[f.a]); out.triangles.push_back(remap[f.b]); out.triangles.push_back(remap[f.c]);
+        }
+        out.ComputeSmoothNormals();
+        return out;
+    }
+    /// Replace this mesh with the convex hull of its own vertices.
+    void MakeConvexHull() { *this = ConvexHull(vertices); }
+
+    /// Bisect: cut the mesh with a plane (point `planeP`, normal `planeN`) and keep
+    /// the half on the normal's side (flip `keepPositive` for the other). With `cap`,
+    /// the exposed cross-section is filled so the result stays a closed solid. This is
+    /// Blender's Bisect tool — slice a model cleanly in half, lop off a top, etc.
+    void Bisect(const Vec3& planeP, const Vec3& planeN, bool cap = true, bool keepPositive = true) {
+        Vec3 N = planeN; float nl = N.Magnitude();
+        if (nl < 1e-9f) return;
+        N = N * (1.0f / nl);
+        const float sign = keepPositive ? 1.0f : -1.0f;
+        auto sd = [&](const Vec3& v) { return sign * ((v.x - planeP.x) * N.x + (v.y - planeP.y) * N.y + (v.z - planeP.z) * N.z); };
+        std::vector<Vec3> nv; std::vector<int> nt;
+        std::vector<Vec3> cut;                                   // intersection points (for the cap)
+        auto emit = [&](const Vec3& a, const Vec3& b, const Vec3& c) {
+            int base = (int)nv.size(); nv.push_back(a); nv.push_back(b); nv.push_back(c);
+            nt.push_back(base); nt.push_back(base + 1); nt.push_back(base + 2);
+        };
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            Vec3 v[3] = {vertices[triangles[t]], vertices[triangles[t + 1]], vertices[triangles[t + 2]]};
+            float d[3] = {sd(v[0]), sd(v[1]), sd(v[2])};
+            // Clip the triangle to the kept half-space (Sutherland–Hodgman).
+            std::vector<Vec3> poly;
+            for (int i = 0; i < 3; ++i) {
+                int j = (i + 1) % 3;
+                if (d[i] >= 0.0f) poly.push_back(v[i]);
+                if ((d[i] >= 0.0f) != (d[j] >= 0.0f)) {          // edge crosses the plane
+                    float tt = d[i] / (d[i] - d[j]);
+                    Vec3 x = v[i] + (v[j] - v[i]) * tt;
+                    poly.push_back(x);
+                    cut.push_back(x);
+                }
+            }
+            for (std::size_t k = 1; k + 1 < poly.size(); ++k) emit(poly[0], poly[k], poly[k + 1]);
+        }
+        // Cap the cross-section: fan-triangulate the intersection ring in the plane.
+        if (cap && cut.size() >= 3) {
+            Vec3 ctr{0, 0, 0}; for (const Vec3& c : cut) ctr += c; ctr = ctr * (1.0f / (float)cut.size());
+            // Plane basis for angular sort.
+            Vec3 up = std::fabs(N.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+            Vec3 e0 = Vec3::Cross(up, N); e0 = e0 * (1.0f / std::max(1e-6f, e0.Magnitude()));
+            Vec3 e1 = Vec3::Cross(N, e0);
+            auto ang = [&](const Vec3& c) { Vec3 dd = c - ctr; return std::atan2(dd.x * e1.x + dd.y * e1.y + dd.z * e1.z,
+                                                                                 dd.x * e0.x + dd.y * e0.y + dd.z * e0.z); };
+            std::sort(cut.begin(), cut.end(), [&](const Vec3& a, const Vec3& b) { return ang(a) < ang(b); });
+            for (std::size_t k = 0; k < cut.size(); ++k) {
+                const Vec3& a = cut[k]; const Vec3& b = cut[(k + 1) % cut.size()];
+                // Wind the cap so its normal faces out of the kept half (-N side is the new surface).
+                Vec3 fn = Vec3::Cross(a - ctr, b - ctr);
+                int base = (int)nv.size();
+                if ((fn.x * N.x + fn.y * N.y + fn.z * N.z) * sign > 0.0f) { nv.push_back(ctr); nv.push_back(b); nv.push_back(a); }
+                else                                                       { nv.push_back(ctr); nv.push_back(a); nv.push_back(b); }
+                nt.push_back(base); nt.push_back(base + 1); nt.push_back(base + 2);
+            }
+        }
+        vertices = std::move(nv); triangles = std::move(nt);
+        triColors.clear(); uvs.clear();
+        name = "";
+        WeldVertices();
+        ComputeSmoothNormals();
+    }
+
+    /// Shrink/Fatten (Blender's Alt-S): push every vertex along its surface normal by
+    /// `dist` — positive inflates, negative deflates. Normals are oriented outward
+    /// (away from the mesh centre) so it inflates regardless of triangle winding.
+    void ShrinkFatten(float dist) {
+        if (vertices.empty()) return;
+        ComputeSmoothNormals();
+        Vec3 ctr{0, 0, 0};
+        for (const Vec3& v : vertices) ctr += v;
+        ctr = ctr * (1.0f / (float)vertices.size());
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            Vec3 n = normals[i];
+            Vec3 out = vertices[i] - ctr;
+            if (n.x * out.x + n.y * out.y + n.z * out.z < 0.0f) n = n * -1.0f;  // face outward
+            vertices[i] += n * dist;
+        }
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Wireframe modifier: replace every edge with a solid beam of square cross-
+    /// section (`thickness` across), turning the mesh into its wire lattice — handy
+    /// for cages, scaffolds, and stylised low-poly props.
+    void Wireframe(float thickness) {
+        if (triangles.empty() || thickness <= 1e-6f) return;
+        Mesh w = *this; w.WeldVertices();
+        std::set<std::pair<int, int>> edges;
+        for (std::size_t t = 0; t + 2 < w.triangles.size(); t += 3) {
+            int a = w.triangles[t], b = w.triangles[t + 1], c = w.triangles[t + 2];
+            auto add = [&](int i, int j) { edges.insert({std::min(i, j), std::max(i, j)}); };
+            add(a, b); add(b, c); add(c, a);
+        }
+        Mesh out;
+        float r = thickness * 0.5f;
+        for (const auto& e : edges) out.AddBeam(w.vertices[e.first], w.vertices[e.second], r);
+        *this = std::move(out);
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Displace modifier: perturb every vertex along its outward normal by value
+    /// noise sampled at its position — instant organic bumpiness (rocks, terrain,
+    /// bark). `frequency` sets the noise scale, `seed` picks the pattern; both are
+    /// deterministic. Subdivide first for finer detail.
+    void Displace(float amount, float frequency = 1.0f, int seed = 0) {
+        if (vertices.empty()) return;
+        ComputeSmoothNormals();
+        Vec3 ctr{0, 0, 0};
+        for (const Vec3& v : vertices) ctr += v;
+        ctr = ctr * (1.0f / (float)vertices.size());
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            Vec3 n = normals[i], out = vertices[i] - ctr;
+            if (n.x * out.x + n.y * out.y + n.z * out.z < 0.0f) n = n * -1.0f;
+            float d = ValueNoise(vertices[i] * frequency, seed);
+            vertices[i] += n * (d * amount);
+        }
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Cast modifier (to a cylinder): pull each vertex's radius (perpendicular to
+    /// `axis`: 0=X,1=Y,2=Z) toward `radius`, by `amount` (0 = none, 1 = full). Rounds
+    /// a boxy shape into a barrel/tube. Cast-to-sphere already exists as Spherify().
+    void CastToCylinder(float radius, int axis = 1, float amount = 1.0f) {
+        if (vertices.empty()) return;
+        for (Vec3& v : vertices) {
+            float a, b;
+            if (axis == 0)      { a = v.y; b = v.z; }
+            else if (axis == 2) { a = v.x; b = v.y; }
+            else                { a = v.x; b = v.z; }
+            float r = std::sqrt(a * a + b * b);
+            if (r < 1e-6f) continue;
+            float f = 1.0f + (radius / r - 1.0f) * amount;   // lerp(1, radius/r, amount)
+            a *= f; b *= f;
+            if (axis == 0)      { v.y = a; v.z = b; }
+            else if (axis == 2) { v.x = a; v.y = b; }
+            else                { v.x = a; v.z = b; }
+        }
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Stretch/squash along one axis (0=X,1=Y,2=Z) about the mesh centre. factor > 1
+    /// stretches, < 1 squashes, < 0 mirrors. A cheap Simple-Deform stretch.
+    void Stretch(int axis, float factor) {
+        if (vertices.empty() || axis < 0 || axis > 2) return;
+        float c = 0.0f;
+        for (const Vec3& v : vertices) c += (&v.x)[axis];
+        c /= (float)vertices.size();
+        for (Vec3& v : vertices) (&v.x)[axis] = c + ((&v.x)[axis] - c) * factor;
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Screw modifier: revolve a profile (x = radius, y = height) around Y, sweeping
+    /// `turns` full turns over `segments` steps and rising `pitch` per turn — a helix
+    /// (springs, screw threads, spiral ramps). With turns = 1 and pitch = 0 it's a
+    /// closed lathe.
+    static Mesh Screw(const std::vector<Vec2>& profile, float turns = 1.0f, float pitch = 0.0f,
+                      int segments = 32) {
+        Mesh m;
+        const int rows = (int)profile.size();
+        if (rows < 2 || segments < 2 || turns <= 0.0f) return m;
+        const float kPi = 3.14159265358979323846f;
+        const bool closed = (turns >= 0.999f && turns <= 1.001f && std::fabs(pitch) < 1e-6f);
+        const int rings = closed ? segments : segments + 1;     // open sweeps need a final ring
+        for (int s = 0; s < rings; ++s) {
+            float frac = (float)s / segments;                    // 0..turns across the sweep
+            float th = 2.0f * kPi * turns * frac;
+            float rise = pitch * turns * frac;
+            float c = std::cos(th), sn = std::sin(th);
+            for (const Vec2& p : profile)
+                m.vertices.push_back({p.x * c, p.y + rise, p.x * sn});
+        }
+        for (int s = 0; s + 1 < rings || (closed && s < segments); ++s) {
+            int s1 = closed ? (s + 1) % segments : s + 1;
+            if (!closed && s1 >= rings) break;
+            for (int r = 0; r + 1 < rows; ++r) {
+                int a = s * rows + r,  b = s * rows + r + 1;
+                int c = s1 * rows + r, d = s1 * rows + r + 1;
+                m.triangles.insert(m.triangles.end(), {a, c, b, b, c, d});
+            }
+        }
+        m.ComputeSmoothNormals();
+        return m;
+    }
+
+private:
+    /// Deterministic hash of an integer lattice point → [-1,1] (for value noise).
+    static float Hash3(int x, int y, int z, int seed) {
+        unsigned h = (unsigned)(x * 374761393 + y * 668265263 + z * 2147483647 + seed * 971);
+        h = (h ^ (h >> 13)) * 1274126177u;
+        return ((float)((h ^ (h >> 16)) & 0xffffu) / 65535.0f) * 2.0f - 1.0f;
+    }
+    /// Trilinear-interpolated value noise at `p` (smoothstep fade), range ~[-1,1].
+    static float ValueNoise(const Vec3& p, int seed) {
+        int xi = (int)std::floor(p.x), yi = (int)std::floor(p.y), zi = (int)std::floor(p.z);
+        float fx = p.x - xi, fy = p.y - yi, fz = p.z - zi;
+        auto sm = [](float t) { return t * t * (3.0f - 2.0f * t); };
+        fx = sm(fx); fy = sm(fy); fz = sm(fz);
+        auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
+        float c00 = lerp(Hash3(xi, yi, zi, seed),       Hash3(xi + 1, yi, zi, seed), fx);
+        float c10 = lerp(Hash3(xi, yi + 1, zi, seed),   Hash3(xi + 1, yi + 1, zi, seed), fx);
+        float c01 = lerp(Hash3(xi, yi, zi + 1, seed),   Hash3(xi + 1, yi, zi + 1, seed), fx);
+        float c11 = lerp(Hash3(xi, yi + 1, zi + 1, seed), Hash3(xi + 1, yi + 1, zi + 1, seed), fx);
+        return lerp(lerp(c00, c10, fy), lerp(c01, c11, fy), fz);
+    }
+    /// Append a square-section beam between two points (used by Wireframe()).
+    void AddBeam(const Vec3& p0, const Vec3& p1, float r) {
+        Vec3 d = p1 - p0; float len = d.Magnitude();
+        if (len < 1e-6f) return;
+        d = d * (1.0f / len);
+        Vec3 up = std::fabs(d.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+        Vec3 u = Vec3::Cross(d, up); u = u * (1.0f / std::max(1e-6f, u.Magnitude()));
+        Vec3 w = Vec3::Cross(d, u);
+        auto corner = [&](const Vec3& base, float su, float sw) { return base + u * (su * r) + w * (sw * r); };
+        int b = (int)vertices.size();
+        // 0..3 around p0, 4..7 around p1 (same order).
+        vertices.push_back(corner(p0, +1, +1)); vertices.push_back(corner(p0, +1, -1));
+        vertices.push_back(corner(p0, -1, -1)); vertices.push_back(corner(p0, -1, +1));
+        vertices.push_back(corner(p1, +1, +1)); vertices.push_back(corner(p1, +1, -1));
+        vertices.push_back(corner(p1, -1, -1)); vertices.push_back(corner(p1, -1, +1));
+        auto quad = [&](int a, int b2, int c, int dd) {
+            triangles.insert(triangles.end(), {b + a, b + b2, b + c, b + a, b + c, b + dd});
+        };
+        quad(0, 1, 5, 4); quad(1, 2, 6, 5); quad(2, 3, 7, 6); quad(3, 0, 4, 7);  // sides
+        quad(3, 2, 1, 0); quad(4, 5, 6, 7);                                       // caps
+    }
+
+    /// Choose a grid that covers [lo,hi] at ~`voxel`, capped to `maxDim` per axis
+    /// (enlarging the effective cell size `outV` if needed so it always fits).
+    static void GridDims(const Vec3& lo, const Vec3& hi, float voxel, int maxDim,
+                         int& nx, int& ny, int& nz, float& outV) {
+        outV = voxel;
+        auto dim = [&](float span) {
+            int d = (int)std::ceil(span / outV);
+            return d < 1 ? 1 : d;
+        };
+        nx = dim(hi.x - lo.x); ny = dim(hi.y - lo.y); nz = dim(hi.z - lo.z);
+        int m = std::max(nx, std::max(ny, nz));
+        if (maxDim > 0 && m > maxDim) {
+            outV *= (float)m / (float)maxDim;                   // grow cells to fit the cap
+            nx = dim(hi.x - lo.x); ny = dim(hi.y - lo.y); nz = dim(hi.z - lo.z);
+        }
+    }
+    /// Mark every grid cell whose centre is inside `src` as solid.
+    static void SampleInto(const Mesh& src, std::vector<unsigned char>& occ,
+                           int nx, int ny, int nz, const Vec3& origin, float v) {
+        for (int z = 0; z < nz; ++z)
+            for (int y = 0; y < ny; ++y)
+                for (int x = 0; x < nx; ++x) {
+                    Vec3 c{origin.x + (x + 0.5f) * v, origin.y + (y + 0.5f) * v, origin.z + (z + 0.5f) * v};
+                    if (src.PointInside(c)) occ[(std::size_t)(z * ny + y) * nx + x] = 1;
+                }
+    }
+    /// Build a surface from a solid/empty grid: a quad on every face between a solid
+    /// cell and an empty neighbour (or the grid edge), wound to face outward.
+    static Mesh EmitOccupancy(const std::vector<unsigned char>& occ,
+                              int nx, int ny, int nz, const Vec3& origin, float v) {
+        Mesh out;
+        auto solid = [&](int x, int y, int z) {
+            if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) return false;
+            return occ[(std::size_t)(z * ny + y) * nx + x] != 0;
+        };
+        auto face = [&](Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 outward) {
+            Vec3 nrm = Vec3::Cross(b - a, c - a);
+            float dot = nrm.x * outward.x + nrm.y * outward.y + nrm.z * outward.z;
+            int base = (int)out.vertices.size();
+            if (dot >= 0.0f) { out.vertices.push_back(a); out.vertices.push_back(b);
+                               out.vertices.push_back(c); out.vertices.push_back(d); }
+            else             { out.vertices.push_back(a); out.vertices.push_back(d);
+                               out.vertices.push_back(c); out.vertices.push_back(b); }
+            out.triangles.insert(out.triangles.end(),
+                                 {base, base + 1, base + 2, base, base + 2, base + 3});
+        };
+        for (int z = 0; z < nz; ++z)
+            for (int y = 0; y < ny; ++y)
+                for (int x = 0; x < nx; ++x) {
+                    if (!solid(x, y, z)) continue;
+                    float x0 = origin.x + x * v, y0 = origin.y + y * v, z0 = origin.z + z * v;
+                    float x1 = x0 + v, y1 = y0 + v, z1 = z0 + v;
+                    if (!solid(x + 1, y, z)) face({x1, y0, z0}, {x1, y1, z0}, {x1, y1, z1}, {x1, y0, z1}, {1, 0, 0});
+                    if (!solid(x - 1, y, z)) face({x0, y0, z0}, {x0, y1, z0}, {x0, y1, z1}, {x0, y0, z1}, {-1, 0, 0});
+                    if (!solid(x, y + 1, z)) face({x0, y1, z0}, {x1, y1, z0}, {x1, y1, z1}, {x0, y1, z1}, {0, 1, 0});
+                    if (!solid(x, y - 1, z)) face({x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}, {x0, y0, z1}, {0, -1, 0});
+                    if (!solid(x, y, z + 1)) face({x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}, {0, 0, 1});
+                    if (!solid(x, y, z - 1)) face({x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0}, {0, 0, -1});
+                }
+        out.WeldVertices();
+        out.ComputeSmoothNormals();
+        return out;
+    }
+
+public:
 };
 
 } // namespace okay

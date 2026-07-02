@@ -80,6 +80,24 @@ struct Mat4 {
         return Translate(t) * Rotate(r) * Scale(s);
     }
 
+    /// Planar projection that flattens points onto the horizontal plane y = groundY
+    /// along the directional-light direction `lightDir` (the way light travels — it
+    /// must point downward). Multiply in WORLD space (vp * PlanarShadow * model) to
+    /// cast a flat "blob" contact shadow that grounds objects. Column-major to match
+    /// this struct's storage and `M * v` convention.
+    static Mat4 PlanarShadow(float groundY, const Vec3& lightDir) {
+        Vec3 L = lightDir;
+        if (L.y > -0.05f) L.y = -1.0f;            // force a downward cast onto the plane below
+        const float P[4] = {0.0f, 1.0f, 0.0f, -groundY};   // plane y = groundY
+        const float Lh[4] = {L.x, L.y, L.z, 0.0f};
+        const float dot = Lh[1];                  // P · L  (only the y term survives)
+        Mat4 r;
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j)
+                r.at(j, i) = dot * (i == j ? 1.0f : 0.0f) - Lh[i] * P[j];
+        return r;
+    }
+
     static Mat4 Ortho(float left, float right, float bottom, float top, float zNear, float zFar) {
         Mat4 r;
         r.at(0,0) = 2.0f / (right - left);
@@ -139,6 +157,26 @@ struct Mat4 {
         float invDet = 1.0f / det;
         for (int i = 0; i < 16; ++i) inv[i] *= invDet;
         return out;
+    }
+
+    /// Transpose (swap rows and columns). Handy for normal matrices and for
+    /// converting between row- and column-major conventions.
+    Mat4 Transpose() const {
+        Mat4 r;
+        for (int c = 0; c < 4; ++c)
+            for (int row = 0; row < 4; ++row)
+                r.at(c, row) = at(row, c);
+        return r;
+    }
+
+    /// Determinant of the full 4x4 matrix (0 means singular / non-invertible).
+    float Determinant() const {
+        const float* a = m;
+        float s0 = a[5]*a[10]*a[15] - a[5]*a[11]*a[14] - a[9]*a[6]*a[15] + a[9]*a[7]*a[14] + a[13]*a[6]*a[11] - a[13]*a[7]*a[10];
+        float s1 = a[4]*a[10]*a[15] - a[4]*a[11]*a[14] - a[8]*a[6]*a[15] + a[8]*a[7]*a[14] + a[12]*a[6]*a[11] - a[12]*a[7]*a[10];
+        float s2 = a[4]*a[9]*a[15]  - a[4]*a[11]*a[13] - a[8]*a[5]*a[15] + a[8]*a[7]*a[13] + a[12]*a[5]*a[11] - a[12]*a[7]*a[9];
+        float s3 = a[4]*a[9]*a[14]  - a[4]*a[10]*a[13] - a[8]*a[5]*a[14] + a[8]*a[6]*a[13] + a[12]*a[5]*a[10] - a[12]*a[6]*a[9];
+        return a[0]*s0 - a[1]*s1 + a[2]*s2 - a[3]*s3;
     }
 
     static Mat4 Perspective(float fovDeg, float aspect, float zNear, float zFar) {

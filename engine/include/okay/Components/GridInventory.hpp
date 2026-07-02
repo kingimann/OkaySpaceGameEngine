@@ -3,6 +3,7 @@
 #include "okay/Input/Input.hpp"
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace okay {
 
@@ -26,6 +27,19 @@ public:
     bool open = false;
     char toggleKey = 'i';
     std::string title = "Inventory";
+    float weightLimit = 0.0f;     ///< max carry weight (0 = unlimited); shown by the UI
+
+    /// Unturned-style role of this container, shown as the label above its grid in the
+    /// multi-container screen ("Shirt", "Pants", "Vest", "Backpack", "Hands", ...). When
+    /// empty the title is used. Purely a label — the footprint logic is unchanged.
+    std::string category;
+    /// A ground / loot container: it appears in the player screen's "Nearby" column when
+    /// the player is within range, so you can drag loot straight into your bags. Equipped
+    /// containers (the player's own + its child clothes/bags) leave this false.
+    bool worldItem = false;
+
+    /// True when a weight limit is set and the contents exceed it (over-encumbered).
+    bool OverWeight() const { return weightLimit > 0.0f && TotalWeight() > weightLimit; }
 
     /// Is the w×h block at (x,y) fully in-bounds and free (ignoring item `ignore`)?
     bool CanPlace(int x, int y, int w, int h, int ignore = -1) const {
@@ -82,6 +96,16 @@ public:
 
     void RemoveAt(int index) {
         if (index >= 0 && index < (int)items.size()) items.erase(items.begin() + index);
+    }
+
+    /// Rotate item `index` 90° (swap its w/h) if the rotated footprint still fits at
+    /// its current cell. Returns true if it rotated. Used by the UI while dragging.
+    bool Rotate(int index) {
+        if (index < 0 || index >= (int)items.size()) return false;
+        GridItem& it = items[index];
+        if (!CanPlace(it.x, it.y, it.h, it.w, index)) return false;
+        std::swap(it.w, it.h);
+        return true;
     }
 
     float TotalWeight() const {

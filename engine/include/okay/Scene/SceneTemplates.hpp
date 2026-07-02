@@ -16,6 +16,8 @@
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/FootIK.hpp"
+#include "okay/Components/RootMotion.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
@@ -34,6 +36,14 @@
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
+#include "okay/Components/Terrain.hpp"
+#include "okay/Components/TerrainDigger.hpp"
+#include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Components/VoxelDigger.hpp"
+#include "okay/Components/Water.hpp"
+#include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/Flashlight.hpp"
+#include "okay/Components/Light.hpp"
 
 namespace okay {
 
@@ -114,6 +124,50 @@ inline GameObject* AddTopDownPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
 inline GameObject* AddThirdPersonShooterPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<ThirdPersonShooterController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Wire foot IK + root motion onto a part-rigged Character — the "humanoid setup"
+/// a Unity import gives you for free. Foot IK plants the feet on the ground; root
+/// motion is wired to the hips and left Disabled (the procedural anims bob the
+/// hips, so it's only meaningful for imported clips with real root translation —
+/// flip its mode to AnimDrivesMotion for those).
+inline void WireCharacterIK(GameObject* player, Character* pc) {
+    if (!pc) return;
+    pc->separateParts = true;
+    if (!pc->PartsBuilt()) pc->BuildParts();
+    // Bone indices (see Character.cpp): hips=0; L thigh/shin/foot = 9/10/11; R = 12/13/14.
+    auto T = [&](int b) -> Transform* { GameObject* g = pc->Part(b); return g ? g->transform : nullptr; };
+    auto* fik = player->AddComponent<FootIK>();
+    fik->leftHip  = T(9);  fik->leftKnee  = T(10); fik->leftFoot  = T(11);
+    fik->rightHip = T(12); fik->rightKnee = T(13); fik->rightFoot = T(14);
+    fik->useRaycast = true; fik->weight = 1.0f;
+    auto* rm = player->AddComponent<RootMotion>();
+    rm->rootNode = T(0);
+    rm->mode = (int)RootMotion::Mode::Disabled;
+}
+
+/// Build a fully-wired humanoid body: the part-rigged Character, a physics capsule,
+/// and foot IK + root motion already hooked to the right bones — Unity's "drop in a
+/// humanoid" in one call. Add a controller + camera to drive it.
+inline GameObject* BuildHumanoidBody(Scene& scene, const Vec3& pos, const char* name) {
+    GameObject* player = scene.CreateGameObject(name);
+    player->transform->localPosition = pos;
+    auto* pc = player->AddComponent<Character>();
+    pc->Apply();
+    player->AddComponent<Rigidbody3D>();
+    auto* col = player->AddComponent<CapsuleCollider3D>();   // physics capsule, feet->head
+    col->radius = 0.3f; col->height = 1.8f; col->offset = {0.0f, 0.9f, 0.0f};
+    WireCharacterIK(player, pc);                             // foot IK + root motion
+    return player;
+}
+
+/// Add a one-click humanoid third-person player: rig + capsule + camera + foot IK,
+/// all wired. This is the "model.transform just works" row made real.
+inline GameObject* AddHumanoidPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildHumanoidBody(scene, pos, "Player");
+    player->AddComponent<ThirdPersonController>();
     EnsureMainCamera(scene);
     return player;
 }
@@ -262,6 +316,43 @@ inline void ThirdPerson(Scene& scene) {
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->localPosition = {0, 3, 6};
+}
+
+/// A "drop-in humanoid" starter: the same third-person scene, but the player is a
+/// fully-wired humanoid (part rig + physics capsule + foot IK that plants the feet
+/// on uneven ground + root motion hooked to the hips). Shows the one-call setup
+/// AddHumanoidPlayer() gives you. Stepped ground so the foot IK is visible.
+inline void Humanoid(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Humanoid");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {40, 1, 40};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube();
+    gmr->color = Color::FromBytes(95, 110, 95);
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    // A couple of low steps so foot IK has uneven ground to plant on.
+    const Vec3 steps[2] = {{2.0f, 0.1f, 0}, {3.0f, 0.25f, 0}};
+    for (int i = 0; i < 2; ++i) {
+        GameObject* s = scene.CreateGameObject("Step");
+        s->transform->localPosition = steps[i];
+        s->transform->localScale = {1.5f, 0.2f + 0.3f * i, 1.5f};
+        auto* mr = s->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = Color::FromBytes(120, 120, 130);
+        s->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        s->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    AddHumanoidPlayer(scene, {0, 1.0f, 0});   // rig + capsule + camera + foot IK, wired
 }
 
 /// A third-person SHOOTER starter: the blocky Character driven by a
@@ -890,6 +981,141 @@ function update(d) {
     tr->text = "Score: 0";
     hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
+}
+
+/// A terrain-digging sandbox: a procedurally generated, eroded hilly terrain you
+/// can walk on (first-person) and reshape live in Play with a TerrainDigger — hold
+/// the mouse to carve craters, with a ring marker showing where you're digging.
+/// A ready base for survival / mining / building games.
+inline void TerrainSandbox(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Terrain Sandbox");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    // The terrain: a generated hilly landscape, lightly eroded so it reads natural.
+    GameObject* ground = scene.CreateGameObject("Terrain");
+    auto* terr = ground->AddComponent<Terrain>();
+    terr->resolution = 64;
+    terr->Resize(64);
+    terr->size = 100.0f;
+    terr->Generate(1, 10.0f, 3.0f, 5, 2024u);   // rolling hills
+    terr->Erode(20000, 0.35f, 7u);              // carve a few valleys
+    terr->autoColor = true;
+    terr->Apply();
+
+    // The digger lives on the terrain object: hold Left Mouse to dig, with a ring
+    // marker showing the brush. (It finds the main camera for the aim ray.)
+    auto* dig = ground->AddComponent<TerrainDigger>();
+    dig->mode = TerrainDigger::Mode::Dig;
+    dig->radius = 4.0f;
+    dig->strength = 12.0f;
+    dig->showBrush = true;
+
+    // A first-person player that walks on the terrain (Physics3D grounds it on the
+    // heightmap) and aims the digger with the camera.
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, 12, 0};   // drop in from above; it settles
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};
+    }
+    player->AddComponent<FirstPersonController>();
+
+    GameObject* camObj = scene.CreateGameObject("FPS Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->SetParent(player->transform, false);
+    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height
+
+    // A lake: animated reflective water sitting in the low ground.
+    GameObject* lake = scene.CreateGameObject("Water");
+    lake->transform->localPosition = {0, 3.0f, 0};
+    auto* water = lake->AddComponent<Water>();
+    water->size = 110.0f;
+    water->Apply();
+
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* ht = help->AddComponent<TextRenderer>();
+    ht->text = "WASD + mouse to move    Left Mouse dig / Right Mouse raise    Space jump";
+    ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
+
+    scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();   // Esc to pause / quit
+}
+
+/// The one unified sandbox: a single smooth voxel terrain you walk on AND dig real
+/// caves/tunnels/overhangs into (no separate heightmap terrain), with a lake of
+/// animated water, a first-person player with full voxel collision (you stand on
+/// the ground and in caves, not fall through), and a pause menu. Left mouse digs,
+/// right mouse fills, Space jumps, Esc pauses.
+inline void VoxelSandbox(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Sandbox");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    // Atmospheric distance fog so the far edges of a big voxel world melt into
+    // the horizon instead of popping at the camera's far clip plane. Now honoured
+    // by all four renderers (software, GL, D3D11, D3D12).
+    scene.renderSettings.fog      = true;
+    scene.renderSettings.fogColor = scene.renderSettings.skyHorizon;
+    scene.renderSettings.fogStart = 120.0f;
+    scene.renderSettings.fogEnd   = 520.0f;
+
+    // The single terrain: a voxel field with rolling hills and a cave network.
+    GameObject* ground = scene.CreateGameObject("Terrain");
+    auto* vox = ground->AddComponent<VoxelTerrain>();
+    vox->Resize(72, 44, 72);
+    vox->voxelSize = 1.5f;
+    vox->Generate(0.55f, 9.0f, 0.0f, 2024u);   // solid hills — NO pre-cut caves; dig your own
+    vox->Apply();
+    auto* dig = ground->AddComponent<VoxelDigger>();
+    dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
+
+    // A lake of animated water sitting in the low ground.
+    GameObject* lake = scene.CreateGameObject("Water");
+    lake->transform->localPosition = {0, vox->SizeY() * 0.32f, 0};
+    auto* water = lake->AddComponent<Water>();
+    water->size = vox->HalfX() * 2.4f;
+    water->Apply();
+
+    // First-person player. Spawned above a solid column so it drops onto the
+    // surface (voxel collision in Physics3D catches it).
+    GameObject* player = scene.CreateGameObject("Player");
+    float surfY = 0.0f; vox->SurfaceY(0, 0, surfY);
+    player->transform->localPosition = {0, surfY + 3.0f, 0};
+    { auto* pc = player->AddComponent<Character>(); pc->Apply(); pc->separateParts = true; }   // part rig: the FP hand raises your real arm and hides the rest of the body from your own camera only
+    player->AddComponent<Rigidbody3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};
+    }
+    player->AddComponent<FirstPersonController>();
+
+    GameObject* camObj = scene.CreateGameObject("FPS Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->SetParent(player->transform, false);
+    camObj->transform->localPosition = {0, 1.62f, 0.0f};
+    camObj->AddComponent<Flashlight>();   // F to toggle — so you can see inside caves
+    camObj->AddComponent<FirstPersonHand>();   // Minecraft-style arm + punch on LMB
+
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* ht = help->AddComponent<TextRenderer>();
+    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump: Space   Light: F   Pause: Esc";
+    ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
+
+    scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();
 }
 
 } // namespace Templates

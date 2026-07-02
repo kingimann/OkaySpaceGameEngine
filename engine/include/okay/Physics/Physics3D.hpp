@@ -63,6 +63,12 @@ public:
     /// ignoring the player it's attached to.
     RaycastHit3D Raycast(Scene& scene, const Vec3& origin, const Vec3& direction,
                          float maxDistance = 1e9f, GameObject* ignore = nullptr);
+    /// Cast between two points (Unity's Linecast): the nearest hit on segment a→b.
+    RaycastHit3D Linecast(Scene& scene, const Vec3& a, const Vec3& b, GameObject* ignore = nullptr) {
+        Vec3 d = b - a; float len = d.Magnitude();
+        if (len < 1e-6f) return RaycastHit3D{};
+        return Raycast(scene, a, d * (1.0f / len), len, ignore);
+    }
     /// All colliders overlapping a sphere.
     std::vector<Collider3D*> OverlapSphere(Scene& scene, const Vec3& center, float radius);
 

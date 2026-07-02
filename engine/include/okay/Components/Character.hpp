@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <vector>
 #include <string>
+#include <functional>
+#include <cstdint>
 
 namespace okay {
 
@@ -63,11 +65,118 @@ public:
     float animSpeed = 1.0f;
     float animTime  = 0.0f;  // runtime clock (not serialized)
 
+    // ---- Punch / swing (a quick right-arm arc layered over the current anim) ----
+    // Trigger a one-shot punch with Punch(); the right arm swings forward and back
+    // over `punchDuration` seconds on top of whatever the body is already doing
+    // (walking, idling). Used by the first-person hand so your OWN character's arm
+    // does the hitting — no separate floating viewmodel.
+    float punchDuration = 0.28f;
+    void  Punch() { if (m_punchT < 0.0f || m_punchT >= 1.0f) m_punchT = 0.0f; }
+    bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
+
+    // ---- First-person arm (driven by FirstPersonHand) ----
+    // When firstPersonArm is on, the body is frozen (so walking never brings your
+    // torso/legs into view) and your own arm is raised into the first-person camera —
+    // it's literally your character's arm, not a separate viewmodel. fpArmUp eases
+    // 0 (lowered, empty-handed) .. 1 (raised, holding). fpRaise / fpElbow let the
+    // FirstPersonHand inspector tune where the hand sits.
+    bool  firstPersonArm = false;
+    float fpArmUp = 1.0f;
+    float fpRaise = -96.0f;   // raised upper-arm forward angle
+    float fpElbow = 16.0f;    // raised forearm angle (hand closeness/height)
+    /// Which 3-bone arm the first-person view raises into frame (the base bone index,
+    /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand; the
+    /// separated-rig DriveParts poses these bones up like a Minecraft hand and routes
+    /// the punch onto them so the VISIBLE arm is the one that swings. Not serialized.
+    int   fpArmBase = -1;
+    /// Camera pitch (degrees) fed in by FirstPersonHand so the first-person arm tilts
+    /// up/down with your view (Minecraft-style). 0 = level. Not serialized.
+    float fpPitch = 0.0f;
+    /// Let the walk/run cycle bob the first-person arm (the arm inherits the body's
+    /// sway). Turn off for a rock-steady arm. Set by FirstPersonHand. Not serialized.
+    bool  fpArmBob = true;
+    /// Fully decouple the first-person arm from the body: ignore lean, crouch and prone
+    /// (zero the hips/torso the arm hangs from and skip the stance height drop) so the
+    /// arm stays put in view no matter what the body does. Set by FirstPersonHand.
+    bool  fpSteady = false;
+
+    // ---- Separate body parts (a real, editable rig) ----
+    // Instead of one baked mesh, build the character as a HIERARCHY of part
+    // GameObjects (one per bone: Hips, Torso, Head, arms, legs) you can select,
+    // recolour, attach things to (a sword in the Hand), and animate part-by-part.
+    // The built-in animations still play (they drive the part transforms) unless you
+    // turn `animateParts` off to author your own. The first-person hand just hides
+    // the non-arm parts. Call BuildParts() (or the editor's "Separate Into Parts").
+    bool separateParts = false;   ///< serialized: rebuild the part rig on load
+    bool animateParts  = true;    ///< let the built-in animation drive the parts
+    /// Create the part rig as REAL child objects (a "Rig" node with one object per
+    /// bone) so you can select / recolour / animate them. Safe to call any time: if a
+    /// "Rig" child already exists it is ADOPTED (not duplicated) — so building it in
+    /// the editor, saving, and reloading reuses the same objects instead of spawning
+    /// new ones at Play. Call from the editor's "Separate Into Parts" so the parts are
+    /// in the scene to customize, not spawned when you press Play.
+    void BuildParts();
+    /// Tear the rig back down (destroy the "Rig" child) and show the baked mesh again.
+    void RemoveParts();
+    /// Edit-time: ensure the rig exists and push the current/preview pose onto it, so
+    /// the Animation window previews in the editor (where Update() doesn't run).
+    void EditorPreviewTick();
+    bool PartsBuilt() const { return m_partsBuilt; }
+    GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
+
+    // ---- Animation authoring (the editor's Animation window uses these) ----
+    std::vector<Vec3> CurrentPose() const;  ///< the pose being shown right now (per-bone euler)
+    /// Force a specific per-bone pose for editor preview (overrides anim/clip until cleared).
+    void PreviewPose(const std::vector<Vec3>& pose) { m_editorPose = pose; m_editorPosing = true; }
+    void StopPreview() { m_editorPosing = false; }
+
+    /// The first-person arm as its OWN mesh (just the arm bones), kept for the
+    /// non-separated path. Rebuilt each frame while firstPersonArm.
+    const Mesh& FpArmMesh() const { return m_fpArm; }
+    bool        FpArmReady() const { return m_fpArmReady; }
+
     // ---- No-code custom clips ----
     // Set a clips file and (optionally) a clip name and it loads + plays on Start,
     // no scripting required. clipsFile is a path to a .okayanim text file.
     std::string clipsFile;
     std::string autoPlayClip;
+
+    // ---- No-code state animations ----
+    // Bind your AUTHORED clips to the movement states a controller drives (`anim`):
+    // when the character enters that state it plays YOUR clip instead of the built-in
+    // procedural animation. Leave a binding empty to keep the built-in for that state.
+    // This is the payoff of authoring — pose+key a walk cycle, drop its name in
+    // `clipWalk`, and the character walks with your animation, no scripting. Works on
+    // both the single mesh and the separated part rig.
+    std::string clipIdle;   ///< plays in the idle state (anim == 1)
+    std::string clipWalk;   ///< plays while walking   (anim == 2)
+    std::string clipRun;    ///< plays while running   (anim == 3)
+    /// True while a state binding (not a manual PlayClip) is driving the current clip.
+    bool StateDriven() const { return m_stateDriven; }
+
+    /// Crossfade time (seconds) when switching clips — the character eases from its
+    /// current pose into the new clip instead of snapping. So idle↔walk↔run (and any
+    /// PlayClip) blend smoothly. 0 = instant. Serialized.
+    float blendTime = 0.15f;
+    /// True while a crossfade is in progress (0..1 weight not yet at 1).
+    bool Blending() const { return m_blendT < 1.0f; }
+
+    // ---- Animation events ----
+    // Clips can carry named markers (AnimClip::events); as a clip plays past a marker
+    // the character fires it. React either way: set onAnimEvent for a push callback,
+    // or call ConsumeAnimEvents() each frame to drain the names that fired (footstep
+    // sounds, a "hit" window on a punch, "spawn" on a throw — no scripting in the clip).
+    std::function<void(const std::string&)> onAnimEvent;   // not serialized
+    /// Return the event names that fired since the last call, clearing the queue.
+    std::vector<std::string> ConsumeAnimEvents() { auto q = std::move(m_animEvents); m_animEvents.clear(); return q; }
+    /// Pop the oldest fired event name (or "" if none) — convenient for polling one
+    /// per frame from a script: `let e = anim_event(); if e == "step" { ... }`.
+    std::string NextAnimEvent() {
+        if (m_animEvents.empty()) return {};
+        std::string s = m_animEvents.front();
+        m_animEvents.erase(m_animEvents.begin());
+        return s;
+    }
 
     // Head look: layered on top of the current animation so the head turns/tilts
     // toward where the player (or camera) is aiming. Degrees; not serialized — the
@@ -127,8 +236,74 @@ public:
     bool PlayClip(const std::string& name);
     void StopClip();
     bool IsPlayingClip() const { return m_activeClip != nullptr; }
+    /// Names of every registered clip (for editor dropdowns), sorted.
+    std::vector<std::string> ClipNames() const;
+    /// Is a clip with this name registered?
+    bool HasClip(const std::string& name) const { return m_clips.find(name) != m_clips.end(); }
+    /// How many clips are registered.
+    int ClipCount() const { return (int)m_clips.size(); }
+    /// Length (seconds) of a registered clip, or 0 if there's no such clip.
+    float ClipDuration(const std::string& name) const {
+        auto it = m_clips.find(name);
+        return it == m_clips.end() ? 0.0f : it->second.Duration();
+    }
+    /// The active clip's playhead in seconds (0 if nothing is playing).
+    float ClipTime() const { return m_activeClip ? m_clipTime : 0.0f; }
+    /// The active clip's progress in [0,1] (0 if nothing is playing or zero-length).
+    float ClipNormalizedTime() const {
+        if (!m_activeClip) return 0.0f;
+        float d = m_activeClip->Duration();
+        if (d <= 0.0f) return 0.0f;
+        float t = m_clipTime / d;
+        return t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    }
+    /// True when a non-looping clip has played through to its end.
+    bool ClipFinished() const {
+        return m_activeClip && !m_activeClip->loop && m_clipTime >= m_activeClip->Duration();
+    }
     /// The clip currently playing, or "" — handy for state checks.
     const std::string& PlayingClip() const { return m_activeClipName; }
+    // ---- Animation layers (play a clip on PART of the body) ----
+    // Overlay a clip on a chosen set of bones on top of whatever the body is doing —
+    // e.g. wave with the upper body while the legs keep walking, or aim the arms while
+    // running. The masked bones take the layer clip's pose; the rest keep the base
+    // animation. Runs on its own clock and loops; call StopLayer to clear it.
+    /// Play `clip` on the bones whose bit is set in `boneMask` (bit i = bone i). Returns
+    /// false if there's no such clip. Pass UpperBodyMask()/ArmsMask() or build your own.
+    /// `additive` ADDS the layer onto the base pose (Unity additive layers — good for
+    /// aim offsets / recoil) instead of replacing it; `weight` (0..1) blends the layer in.
+    bool PlayLayer(const std::string& clip, std::uint32_t boneMask,
+                   bool additive = false, float weight = 1.0f);
+    void StopLayer();
+    void SetLayerWeight(float w) { m_layerWeight = w < 0.0f ? 0.0f : (w > 1.0f ? 1.0f : w); }
+    float LayerWeight() const { return m_layerWeight; }
+    bool IsLayering() const { return m_layerClip != nullptr; }
+    const std::string& LayerClip() const { return m_layerName; }
+
+    /// Mirror a pose left<->right in place: swaps the L/R limb bones and flips the
+    /// yaw/roll of the spine so a right-handed pose becomes its left-handed twin
+    /// (Blender's symmetrize / "paste flipped"). Author one side, mirror for the other.
+    static void MirrorPose(std::vector<Vec3>& pose);
+    /// Handy bone masks for layering.
+    static std::uint32_t ArmsMask();        ///< both upper arms, forearms, hands
+    static std::uint32_t UpperBodyMask();   ///< torso, head, arms (everything above the hips)
+    static std::uint32_t BoneBit(int bone) { return (bone >= 0 && bone < 32) ? (1u << bone) : 0u; }
+
+    // ---- 1D blend tree (Unity-style) ----
+    // Blend smoothly between clips by a single parameter — the classic locomotion setup:
+    // idle at speed 0, walk at ~2, run at ~5; drive the parameter from the controller's
+    // speed and the body morphs between them. Clips play on a shared, looping clock so
+    // their cycles stay in phase. A blend tree overrides the state/`anim` base pose; a
+    // manual PlayClip still takes priority, and layers still overlay on top.
+    struct BlendStop { float at; std::string clip; };
+    /// Define the tree: pairs of (parameter value, clip name), any order (sorted here).
+    void SetBlendTree(const std::vector<BlendStop>& stops);
+    /// Set the blend parameter (e.g. the player's speed) — call each frame.
+    void SetBlendParam(float v) { m_blendParam = v; }
+    void ClearBlendTree() { m_blendTreeOn = false; m_blendStops.clear(); }
+    bool HasBlendTree() const { return m_blendTreeOn; }
+    float BlendParam() const { return m_blendParam; }
+
     /// Resolve a short bone token ("hips","torso","head","l_uparm","l_fore",
     /// "l_hand","r_uparm","r_fore","r_hand","l_thigh","l_shin","l_foot","r_thigh",
     /// "r_shin","r_foot") to a rig index, or -1. Case-insensitive.
@@ -168,10 +343,45 @@ private:
     float m_headYaw = 0.0f;        // eased head turn (toward lookYaw)
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
+    float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
+    Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)
+    bool m_fpArmReady = false;
+    void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
+    bool m_partsBuilt = false;
+    GameObject* m_rigRoot = nullptr;
+    std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
+    GameObject* FindRig() const;         // an existing "Rig" child, or null
+    bool AdoptParts(GameObject* rig);    // reuse an existing rig instead of rebuilding
+    void DriveParts();                   // pose the part transforms from the animation
+    std::vector<Vec3> m_editorPose;      // forced pose for editor preview
+    bool m_editorPosing = false;
+    std::vector<Vec3> CurrentSourcePose() const;   // editorPose / active clip / built-in anim
     std::unordered_map<std::string, AnimClip> m_clips;  // registered custom clips
     const AnimClip* m_activeClip = nullptr;             // currently playing (or null)
     std::string m_activeClipName;
     float m_clipTime = 0.0f;
+    bool m_stateDriven = false;          // a state binding (not a manual PlayClip) owns the clip
+    const AnimClip* m_layerClip = nullptr;   // overlay clip (or null)
+    std::string m_layerName;
+    float m_layerTime = 0.0f;
+    std::uint32_t m_layerMask = 0;       // which bones the layer overrides (bit i = bone i)
+    bool  m_layerAdditive = false;       // add the layer onto the base instead of replacing
+    float m_layerWeight = 1.0f;          // 0..1 blend of the layer
+    void AdvanceLayer(float dt);         // step the layer's clock (loops)
+    void ApplyLayer(std::vector<Vec3>& pose) const;   // overlay the layer onto masked bones
+    std::vector<BlendStop> m_blendStops; // 1D blend tree stops, sorted by `at`
+    float m_blendParam = 0.0f;           // the driving parameter (e.g. speed)
+    float m_blendTreeTime = 0.0f;        // shared looping clock for the tree's clips
+    bool  m_blendTreeOn = false;
+    void AdvanceBlendTree(float dt);
+    std::vector<Vec3> SampleBlendTree() const;   // blended pose at the current parameter
+    void SyncStateClips();               // auto-play the clip bound to the current `anim` state
+    std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
+    float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)
+    void BeginBlend();                   // snapshot the current pose and start a crossfade
+    std::vector<std::string> m_animEvents;   // event names fired since the last ConsumeAnimEvents()
+    void AdvanceClip(float dt);          // step the active clip's clock and fire its events
+    void FireClipEvents(float from, float to);   // emit events in the (from, to] window (handles loop wrap)
     void EnsureRest() const;
 };
 

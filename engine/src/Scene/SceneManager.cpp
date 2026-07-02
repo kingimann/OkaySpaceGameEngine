@@ -70,6 +70,15 @@ bool SceneManager::LoadSceneByName(Scene& scene, const std::string& nameOrPath) 
     return false;
 }
 
+std::string SceneManager::PathForName(const std::string& nameOrPath) {
+    int idx = IndexOf(nameOrPath);
+    if (idx >= 0 && idx < (int)list().size()) return list()[idx];
+    // Not in the build list: accept a raw path so scripts aren't blocked.
+    if (nameOrPath.find('.') != std::string::npos || nameOrPath.find('/') != std::string::npos)
+        return nameOrPath;
+    return "";
+}
+
 bool SceneManager::LoadNextScene(Scene& scene) {
     if (list().empty()) return false;
     int next = (activeIndex() + 1) % (int)list().size();

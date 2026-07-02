@@ -70,8 +70,8 @@ int main() {
         cc->speed = 5.0f; cc->jumpForce = 6.0f;
         s.Start();
         Input::FeedKeys({'w'});
-        s.Update(1.0f / 60.0f);
-        CHECK_NEAR(rb->velocity.z, 5.0f, 1e-3f);
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);   // momentum ramps up to speed
+        CHECK_NEAR(rb->velocity.z, 5.0f, 1e-2f);
         Input::FeedKeys({'w', ' '});
         s.Update(1.0f / 60.0f);
         CHECK_NEAR(rb->velocity.y, 6.0f, 1e-3f);

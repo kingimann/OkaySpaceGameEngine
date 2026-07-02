@@ -21,8 +21,12 @@ int main() {
     auto* sc = go->AddComponent<ScriptComponent>("okayscript");
     sc->LoadSource(
         "var started = 0; var a = 0; var halt = 0;\n"
-        "function start() { started = play_clip(\"wave\"); set_anim(3); a = get_anim(); }\n"
-        "function update(d) { if (halt == 1) { stop_clip(); } }\n");
+        "var hasw = -1; var hasn = -1; var dur = 0; var nt = 0;\n"
+        "function start() {\n"
+        "  started = play_clip(\"wave\"); set_anim(3); a = get_anim();\n"
+        "  hasw = has_clip(\"wave\"); hasn = has_clip(\"nope\"); dur = clip_duration(\"wave\");\n"
+        "}\n"
+        "function update(d) { nt = clip_normalized(); if (halt == 1) { stop_clip(); } }\n");
 
     scene.Start();
     // play_clip returned 1, the clip is playing, and set_anim took effect.
@@ -31,6 +35,14 @@ int main() {
     CHECK_NEAR(sc->VM()->GetGlobal("started").AsFloat(), 1.0f, 0.001f);
     CHECK_NEAR(sc->VM()->GetGlobal("a").AsFloat(), 3.0f, 0.001f);
     CHECK(ch->anim == 3);
+    // New query builtins resolved correctly.
+    CHECK_NEAR(sc->VM()->GetGlobal("hasw").AsFloat(), 1.0f, 0.001f);
+    CHECK_NEAR(sc->VM()->GetGlobal("hasn").AsFloat(), 0.0f, 0.001f);
+    CHECK_NEAR(sc->VM()->GetGlobal("dur").AsFloat(), 1.0f, 0.001f);
+
+    // After advancing, clip_normalized() reports progress through the clip.
+    scene.Update(0.25f);
+    CHECK(sc->VM()->GetGlobal("nt").AsFloat() > 0.1f);
 
     // Telling the script to halt stops the clip.
     sc->VM()->SetGlobal("halt", vs::VsValue{1.0f});

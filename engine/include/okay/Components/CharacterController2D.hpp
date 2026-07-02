@@ -6,6 +6,7 @@
 #include "okay/Physics/Physics2D.hpp"            // Collision2D (grounded detection)
 #include "okay/Components/SpriteRenderer.hpp"    // face-flipping
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -52,6 +53,7 @@ public:
 
     void Update(float dt) override {
         if (!transform) return;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr;
 
         // Input: keyboard axis, optionally overridden by a pushed gamepad stick.

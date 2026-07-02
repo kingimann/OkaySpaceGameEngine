@@ -7,6 +7,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -66,6 +67,7 @@ public:
 
     void Update(float dt) override {
         if (!transform || dt <= 0.0f) return;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
 
         // ---- Read input: WASD/arrow axis (y = throttle, x = steer) ----
         Vec2 axis = Input::AxisWASD();

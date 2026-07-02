@@ -622,5 +622,85 @@ int main() {
         ActionList::ResetVars();
     }
 
+    // --- Stretch anchors: position/size become Unity offsetMin/offsetMax margins ---
+    {
+        Scene scene("Stretch");
+        GameObject* go = scene.CreateGameObject("Bar");
+        auto* p = go->AddComponent<UIPanel>();
+        // Fill-full with 10px left / 20px top margins and 20px right / 30px bottom.
+        p->anchor = UIAnchor::StretchFull;
+        p->position = {10, 20};
+        p->size = {20, 30};
+        Vec2 o, sz;
+        CHECK(GetUIScreenRect(go, 800, 600, o, sz));
+        CHECK_NEAR(o.x, 10.0f, 0.001f);
+        CHECK_NEAR(o.y, 20.0f, 0.001f);
+        CHECK_NEAR(sz.x, 770.0f, 0.001f);   // 800 - 10 - 20
+        CHECK_NEAR(sz.y, 550.0f, 0.001f);   // 600 - 20 - 30
+
+        // Horizontal stretch fills width, keeps an explicit height.
+        p->anchor = UIAnchor::StretchHorizontal;
+        p->position = {16, 40};
+        p->size = {16, 48};                 // right margin 16, height 48
+        CHECK(GetUIScreenRect(go, 800, 600, o, sz));
+        CHECK_NEAR(sz.x, 768.0f, 0.001f);   // 800 - 16 - 16
+        CHECK_NEAR(sz.y, 48.0f, 0.001f);
+        CHECK_NEAR(o.y, 40.0f, 0.001f);
+
+        // The appended anchor index round-trips through serialization.
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        CHECK(loaded.Find("Bar")->GetComponent<UIPanel>()->anchor == UIAnchor::StretchHorizontal);
+    }
+
+    // --- New panel/image styling fields round-trip; AspectRect letterboxes ---
+    {
+        Scene scene("Style");
+        GameObject* card = scene.CreateGameObject("Card");
+        auto* p = card->AddComponent<UIPanel>();
+        p->useGradient = true;
+        p->gradientDir = UIPanel::GradientDir::DiagonalDown;
+        p->outlineWidth = 3.0f;
+        p->topHighlight = true;
+        p->cornerMask = UICornerTL | UICornerTR;   // only round the top (tab/card)
+        GameObject* pic = scene.CreateGameObject("Pic");
+        auto* im = pic->AddComponent<UIImage>();
+        im->flipX = true; im->preserveAspect = true; im->borderWidth = 2.0f;
+        im->shadow = true; im->shadowOffset = {4, 5}; im->shadowSoftness = 2.0f;
+        im->cornerMask = UICornerBL | UICornerBR;
+
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* lp = loaded.Find("Card")->GetComponent<UIPanel>();
+        CHECK(lp && lp->useGradient);
+        CHECK(lp->gradientDir == UIPanel::GradientDir::DiagonalDown);
+        CHECK_NEAR(lp->outlineWidth, 3.0f, 0.001f);
+        CHECK(lp->topHighlight);
+        CHECK(lp->cornerMask == (UICornerTL | UICornerTR));
+        auto* li = loaded.Find("Pic")->GetComponent<UIImage>();
+        CHECK(li && li->flipX && li->preserveAspect);
+        CHECK_NEAR(li->borderWidth, 2.0f, 0.001f);
+        CHECK(li->shadow);
+        CHECK_NEAR(li->shadowOffset.y, 5.0f, 0.001f);
+        CHECK(li->cornerMask == (UICornerBL | UICornerBR));
+
+        // A masked corner stays square: with only the top rounded, the first row's
+        // left inset is > 0 (rounded) but the LAST row's left inset is 0 (square BL).
+        float x0t, x1t, x0b, x1b;
+        CHECK(UIShapeRowSpan(UIShape::Rounded, 100, 100, 20, 0, x0t, x1t, UICornerTL | UICornerTR));
+        CHECK(UIShapeRowSpan(UIShape::Rounded, 100, 100, 20, 99, x0b, x1b, UICornerTL | UICornerTR));
+        CHECK(x0t > 0.5f);            // top-left corner is rounded (inset)
+        CHECK_NEAR(x0b, 0.0f, 0.001f); // bottom-left corner left square by the mask
+
+        // A 200x100 source fit into a 100x100 box: full width, half height, centered.
+        float ox, oy, fw, fh;
+        li->AspectRect(100, 100, 200, 100, ox, oy, fw, fh);
+        CHECK_NEAR(fw, 100.0f, 0.001f);
+        CHECK_NEAR(fh, 50.0f, 0.001f);
+        CHECK_NEAR(oy, 25.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

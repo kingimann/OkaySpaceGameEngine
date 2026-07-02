@@ -586,6 +586,52 @@ struct NetDisconnectNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Stop(); return 0; }
 };
+// Broadcast a chat line (in0 = text).
+struct NetChatNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Chat(In(0, g, ctx).AsString()); return 0; }
+};
+// Fire a named RPC on every other peer (in0 = payload string).
+struct NetRpcNode : VsNode {
+    std::string name;
+    explicit NetRpcNode(std::string nm) : name(std::move(nm)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Rpc(name, In(0, g, ctx).AsString()); return 0; }
+};
+// Spawn a prefab THIS peer owns + auto-syncs, at this object's position.
+struct NetSpawnOwnedNode : VsNode {
+    std::string path;
+    explicit NetSpawnOwnedNode(std::string p) : path(std::move(p)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx))
+            n->SpawnOwned(path, ctx.transform ? ctx.transform->localPosition : Vec3::Zero);
+        return 0;
+    }
+};
+// Despawn a SpawnOwned object on every peer (in0 = its sync id).
+struct NetDespawnNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Despawn(In(0, g, ctx).AsString()); return 0; }
+};
+// Mark this peer ready / not ready in the lobby (in0 = bool).
+struct NetReadyNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->SetReady(In(0, g, ctx).AsBool()); return 0; }
+};
+// Host only: start the match for everyone in the room.
+struct NetStartMatchNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->StartMatch(); return 0; }
+};
+// True once the match has started for this peer's room.
+struct NetMatchStartedNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->MatchStarted(); }
+};
+// Host only: true when every client in the room is ready.
+struct NetAllReadyNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->AllReady(); }
+};
 
 // ---- Steam ------------------------------------------------------------
 struct SteamNameNode : VsNode {

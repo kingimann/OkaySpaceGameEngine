@@ -25,9 +25,20 @@ public:
     /// in atlas mode rewrites these to walk a sprite sheet.
     Vec2 uvMin{0.0f, 0.0f};
     Vec2 uvMax{1.0f, 1.0f};
-    /// Draw order: lower values render first (further back), higher on top.
-    /// Use it for parallax backgrounds, characters, foreground props, etc.
+    /// Sorting layer: a coarse band that ALWAYS wins over `sortOrder` (Unity-style).
+    /// Everything in a higher sorting layer draws on top of everything in a lower
+    /// one, regardless of order-in-layer. Use named bands like Background(-1),
+    /// Default(0), Foreground(1), UI(2); `sortOrder` then orders within a band.
+    int sortingLayer = 0;
+    /// Draw order within the sorting layer: lower renders first (further back),
+    /// higher on top. Use it for parallax backgrounds, characters, props, etc.
     int sortOrder = 0;
+
+    /// Combined back-to-front sort key: sorting layer first, then order-in-layer.
+    /// Compare these to draw correctly; smaller = further back.
+    long long SortKey() const {
+        return ((long long)sortingLayer << 32) | (unsigned int)(sortOrder + 0x40000000);
+    }
     /// Mirror the sprite horizontally / vertically (e.g. flip a character to
     /// face the way it's moving) without touching the Transform.
     bool flipX = false;

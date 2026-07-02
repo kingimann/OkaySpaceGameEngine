@@ -94,6 +94,10 @@ add_executable(test_structure_builder test_structure_builder.cpp)
 target_link_libraries(test_structure_builder PRIVATE okay::engine)
 add_test(NAME structure_builder COMMAND test_structure_builder)
 
+add_executable(test_builder_mode test_builder_mode.cpp)
+target_link_libraries(test_builder_mode PRIVATE okay::engine)
+add_test(NAME builder_mode COMMAND test_builder_mode)
+
 add_executable(test_loading_screen test_loading_screen.cpp)
 target_link_libraries(test_loading_screen PRIVATE okay::engine)
 add_test(NAME loading_screen COMMAND test_loading_screen)
@@ -145,6 +149,14 @@ add_test(NAME tilemap_collision COMMAND test_tilemap_collision)
 add_executable(test_particles_serialize test_particles_serialize.cpp)
 target_link_libraries(test_particles_serialize PRIVATE okay::engine)
 add_test(NAME particles_serialize COMMAND test_particles_serialize)
+
+add_executable(test_profiler test_profiler.cpp)
+target_link_libraries(test_profiler PRIVATE okay::engine)
+add_test(NAME profiler COMMAND test_profiler)
+
+add_executable(test_datapack test_datapack.cpp)
+target_link_libraries(test_datapack PRIVATE okay::engine)
+add_test(NAME datapack COMMAND test_datapack)
 
 add_executable(test_timescale test_timescale.cpp)
 target_link_libraries(test_timescale PRIVATE okay::engine)
@@ -317,6 +329,18 @@ add_executable(test_net_relay test_net_relay.cpp)
 target_link_libraries(test_net_relay PRIVATE okay::engine)
 add_test(NAME net_relay COMMAND test_net_relay)
 
+add_executable(test_net_rpc test_net_rpc.cpp)
+target_link_libraries(test_net_rpc PRIVATE okay::engine)
+add_test(NAME net_rpc COMMAND test_net_rpc)
+
+add_executable(test_net_sync test_net_sync.cpp)
+target_link_libraries(test_net_sync PRIVATE okay::engine)
+add_test(NAME net_sync COMMAND test_net_sync)
+
+add_executable(test_net_spawn test_net_spawn.cpp)
+target_link_libraries(test_net_spawn PRIVATE okay::engine)
+add_test(NAME net_spawn COMMAND test_net_spawn)
+
 add_executable(test_animclip test_animclip.cpp)
 target_link_libraries(test_animclip PRIVATE okay::engine)
 add_test(NAME animclip COMMAND test_animclip)
@@ -336,6 +360,26 @@ add_test(NAME net_rooms COMMAND test_net_rooms)
 add_executable(test_terrain test_terrain.cpp)
 target_link_libraries(test_terrain PRIVATE okay::engine)
 add_test(NAME terrain COMMAND test_terrain)
+
+add_executable(test_voxel test_voxel.cpp)
+target_link_libraries(test_voxel PRIVATE okay::engine)
+add_test(NAME voxel COMMAND test_voxel)
+
+add_executable(test_pausemenu test_pausemenu.cpp)
+target_link_libraries(test_pausemenu PRIVATE okay::engine)
+add_test(NAME pausemenu COMMAND test_pausemenu)
+
+add_executable(test_worldstreamer test_worldstreamer.cpp)
+target_link_libraries(test_worldstreamer PRIVATE okay::engine)
+add_test(NAME worldstreamer COMMAND test_worldstreamer)
+
+add_executable(test_destructible test_destructible.cpp)
+target_link_libraries(test_destructible PRIVATE okay::engine)
+add_test(NAME destructible COMMAND test_destructible)
+
+add_executable(test_shadows test_shadows.cpp)
+target_link_libraries(test_shadows PRIVATE okay::engine)
+add_test(NAME shadows COMMAND test_shadows)
 
 add_executable(test_script_debug test_script_debug.cpp)
 target_link_libraries(test_script_debug PRIVATE okay::engine)
@@ -393,6 +437,10 @@ add_executable(test_uiwidgets test_uiwidgets.cpp)
 target_link_libraries(test_uiwidgets PRIVATE okay::engine)
 add_test(NAME uiwidgets COMMAND test_uiwidgets)
 
+add_executable(test_uicapture_look test_uicapture_look.cpp)
+target_link_libraries(test_uicapture_look PRIVATE okay::engine)
+add_test(NAME uicapture_look COMMAND test_uicapture_look)
+
 add_executable(test_ui_layering test_ui_layering.cpp)
 target_link_libraries(test_ui_layering PRIVATE okay::engine)
 add_test(NAME ui_layering COMMAND test_ui_layering)
@@ -400,6 +448,10 @@ add_test(NAME ui_layering COMMAND test_ui_layering)
 add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)
 add_test(NAME jump COMMAND test_jump)
+
+add_executable(test_fp_hand test_fp_hand.cpp)
+target_link_libraries(test_fp_hand PRIVATE okay::engine)
+add_test(NAME fp_hand COMMAND test_fp_hand)
 
 # The account service core is header-only, so this test just needs the engine's
 # public include path and C++17 — no engine link required.
@@ -453,3 +505,151 @@ if(TARGET okay_ui)
     target_link_libraries(test_okayui PRIVATE okay_ui)
     add_test(NAME okayui COMMAND test_okayui)
 endif()
+
+add_executable(test_character_parts test_character_parts.cpp)
+target_link_libraries(test_character_parts PRIVATE okay::engine)
+add_test(NAME character_parts COMMAND test_character_parts)
+
+add_executable(test_animator_edit test_animator_edit.cpp)
+target_link_libraries(test_animator_edit PRIVATE okay::engine)
+add_test(NAME animator_edit COMMAND test_animator_edit)
+
+add_executable(test_pause_menu test_pause_menu.cpp)
+target_link_libraries(test_pause_menu PRIVATE okay::engine)
+add_test(NAME pause_menu COMMAND test_pause_menu)
+
+add_executable(test_char_anim test_char_anim.cpp)
+target_link_libraries(test_char_anim PRIVATE okay::engine)
+add_test(NAME char_anim COMMAND test_char_anim)
+
+add_executable(test_char_state_anim test_char_state_anim.cpp)
+target_link_libraries(test_char_state_anim PRIVATE okay::engine)
+add_test(NAME char_state_anim COMMAND test_char_state_anim)
+
+add_executable(test_char_blend test_char_blend.cpp)
+target_link_libraries(test_char_blend PRIVATE okay::engine)
+add_test(NAME char_blend COMMAND test_char_blend)
+
+add_executable(test_char_anim_events test_char_anim_events.cpp)
+target_link_libraries(test_char_anim_events PRIVATE okay::engine)
+add_test(NAME char_anim_events COMMAND test_char_anim_events)
+
+add_executable(test_fp_punch test_fp_punch.cpp)
+target_link_libraries(test_fp_punch PRIVATE okay::engine)
+add_test(NAME fp_punch COMMAND test_fp_punch)
+
+add_executable(test_char_editor_parts test_char_editor_parts.cpp)
+target_link_libraries(test_char_editor_parts PRIVATE okay::engine)
+add_test(NAME char_editor_parts COMMAND test_char_editor_parts)
+
+add_executable(test_voxel_dig test_voxel_dig.cpp)
+target_link_libraries(test_voxel_dig PRIVATE okay::engine)
+add_test(NAME voxel_dig COMMAND test_voxel_dig)
+
+add_executable(test_api_expand test_api_expand.cpp)
+target_link_libraries(test_api_expand PRIVATE okay::engine)
+add_test(NAME api_expand COMMAND test_api_expand)
+
+add_executable(test_modeling test_modeling.cpp)
+target_link_libraries(test_modeling PRIVATE okay::engine)
+add_test(NAME modeling COMMAND test_modeling)
+
+add_executable(test_physics_explode test_physics_explode.cpp)
+target_link_libraries(test_physics_explode PRIVATE okay::engine)
+add_test(NAME physics_explode COMMAND test_physics_explode)
+
+add_executable(test_subtree test_subtree.cpp)
+target_link_libraries(test_subtree PRIVATE okay::engine)
+add_test(NAME subtree COMMAND test_subtree)
+
+add_executable(test_camera_cine test_camera_cine.cpp)
+target_link_libraries(test_camera_cine PRIVATE okay::engine)
+add_test(NAME camera_cine COMMAND test_camera_cine)
+
+add_executable(test_player_fixes test_player_fixes.cpp)
+target_link_libraries(test_player_fixes PRIVATE okay::engine)
+add_test(NAME player_fixes COMMAND test_player_fixes)
+
+add_executable(test_terrain_ops test_terrain_ops.cpp)
+target_link_libraries(test_terrain_ops PRIVATE okay::engine)
+add_test(NAME terrain_ops COMMAND test_terrain_ops)
+
+add_executable(test_npc_ai test_npc_ai.cpp)
+target_link_libraries(test_npc_ai PRIVATE okay::engine)
+add_test(NAME npc_ai COMMAND test_npc_ai)
+
+add_executable(test_mp_controllers test_mp_controllers.cpp)
+target_link_libraries(test_mp_controllers PRIVATE okay::engine)
+add_test(NAME mp_controllers COMMAND test_mp_controllers)
+
+add_executable(test_net_player_spawn test_net_player_spawn.cpp)
+target_link_libraries(test_net_player_spawn PRIVATE okay::engine)
+add_test(NAME net_player_spawn COMMAND test_net_player_spawn)
+
+add_executable(test_anim_layers test_anim_layers.cpp)
+target_link_libraries(test_anim_layers PRIVATE okay::engine)
+add_test(NAME anim_layers COMMAND test_anim_layers)
+
+add_executable(test_obj_import test_obj_import.cpp)
+target_link_libraries(test_obj_import PRIVATE okay::engine)
+add_test(NAME obj_import COMMAND test_obj_import)
+
+add_executable(test_gltf_import test_gltf_import.cpp)
+target_link_libraries(test_gltf_import PRIVATE okay::engine)
+add_test(NAME gltf_import COMMAND test_gltf_import)
+
+add_executable(test_skinning test_skinning.cpp)
+target_link_libraries(test_skinning PRIVATE okay::engine)
+add_test(NAME skinning COMMAND test_skinning)
+
+add_executable(test_physics_joints test_physics_joints.cpp)
+target_link_libraries(test_physics_joints PRIVATE okay::engine)
+add_test(NAME physics_joints COMMAND test_physics_joints)
+
+add_executable(test_math_extra test_math_extra.cpp)
+target_link_libraries(test_math_extra PRIVATE okay::engine)
+add_test(NAME math_extra COMMAND test_math_extra)
+
+add_executable(test_2d_expand test_2d_expand.cpp)
+target_link_libraries(test_2d_expand PRIVATE okay::engine)
+add_test(NAME 2d_expand COMMAND test_2d_expand)
+
+add_executable(test_phys_math test_phys_math.cpp)
+target_link_libraries(test_phys_math PRIVATE okay::engine)
+add_test(NAME phys_math COMMAND test_phys_math)
+
+add_executable(test_angular2d test_angular2d.cpp)
+target_link_libraries(test_angular2d PRIVATE okay::engine)
+add_test(NAME angular2d COMMAND test_angular2d)
+
+add_executable(test_angular3d test_angular3d.cpp)
+target_link_libraries(test_angular3d PRIVATE okay::engine)
+add_test(NAME angular3d COMMAND test_angular3d)
+
+add_executable(test_hinge2d test_hinge2d.cpp)
+target_link_libraries(test_hinge2d PRIVATE okay::engine)
+add_test(NAME hinge2d COMMAND test_hinge2d)
+
+add_executable(test_hinge3d test_hinge3d.cpp)
+target_link_libraries(test_hinge3d PRIVATE okay::engine)
+add_test(NAME hinge3d COMMAND test_hinge3d)
+
+add_executable(test_net_backend test_net_backend.cpp)
+target_link_libraries(test_net_backend PRIVATE okay::engine)
+add_test(NAME net_backend COMMAND test_net_backend)
+
+add_executable(test_anim_ik test_anim_ik.cpp)
+target_link_libraries(test_anim_ik PRIVATE okay::engine)
+add_test(NAME anim_ik COMMAND test_anim_ik)
+
+add_executable(test_humanoid_template test_humanoid_template.cpp)
+target_link_libraries(test_humanoid_template PRIVATE okay::engine)
+add_test(NAME humanoid_template COMMAND test_humanoid_template)
+
+add_executable(test_controllers_ik test_controllers_ik.cpp)
+target_link_libraries(test_controllers_ik PRIVATE okay::engine)
+add_test(NAME controllers_ik COMMAND test_controllers_ik)
+
+add_executable(test_ecs test_ecs.cpp)
+target_link_libraries(test_ecs PRIVATE okay::engine)
+add_test(NAME ecs COMMAND test_ecs)

@@ -18,16 +18,31 @@ public:
     /// Material). Standard = the full lit PBR-ish model; Unlit = flat base color, no
     /// lighting; Toon = cel-shaded (the diffuse banded into `toonBands` hard steps
     /// with a single hard specular glint).
-    enum class Shader { Standard, Unlit, Toon };
+    /// Standard = full lit; Unlit = flat base; Toon = cel bands; Gradient = a two-colour
+    /// ramp by surface up-ness (gradientBottom -> gradientTop); Fresnel = a glowing rim
+    /// look (base darkened, edges lit by rimColor). New models are honoured by the
+    /// software renderer and the GPU (GL / D3D11) renderers.
+    enum class Shader { Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet };
     Shader shader = Shader::Standard;
     /// Number of cel bands for the Toon shader (2-6 reads best). Ignored otherwise.
     int    toonBands = 3;
+    /// Gradient shader endpoints (bottom = downward faces, top = upward faces).
+    Color  gradientTop    = Color::FromBytes(120, 180, 255);
+    Color  gradientBottom = Color::FromBytes(20, 30, 60);
 
     /// Rim / Fresnel backlight (per-material; works with any shader, great with Toon):
     /// a colored glow that strengthens toward grazing angles (1 - n·view)^power. 0 = off.
     float  rimStrength = 0.0f;
     float  rimPower    = 3.0f;
     Color  rimColor    = Color::White;
+
+    /// Ground contact shadow: cast a flat "blob" shadow projected onto the horizontal
+    /// plane y = groundShadowY along the light, so objects sit on the ground instead of
+    /// looking like they float. Cheap (one extra flat pass) and works in every renderer.
+    /// On by default; turn off for flying/UI/skybox meshes.
+    bool   groundShadow         = true;
+    float  groundShadowY        = 0.0f;    // world height of the ground plane
+    float  groundShadowStrength = 0.5f;    // 0..1 darkness of the shadow
 
     /// Silhouette outline (inverted-hull): render an expanded shell of back faces in a
     /// solid color behind the mesh, leaving a clean cartoon edge. Pairs with Toon.
@@ -64,6 +79,13 @@ public:
     std::string texture;
     /// Texture repeat across the surface (UVs are multiplied by this).
     Vec2 tiling = {1.0f, 1.0f};
+    /// Texture offset (added to UVs after tiling) — slide/position a texture or atlas.
+    Vec2 texOffset = {0.0f, 0.0f};
+
+    /// How the texture is sampled. Smooth = bilinear (good for photos/3D); Pixel =
+    /// nearest-neighbour (crisp pixel-art, no up-close blur).
+    enum class TexFilter { Smooth, Pixel };
+    TexFilter texFilter = TexFilter::Smooth;
 
     /// Optional tangent-space normal map (PNG, RGB = XYZ in 0..1). Adds bumpy
     /// surface detail (per-pixel lighting only) without extra geometry. Build Game
@@ -81,6 +103,14 @@ public:
     /// the specular highlight and reflection, so one material can mix shiny and
     /// matte regions (per-pixel lighting only). Build Game bundles the file.
     std::string specularMap;
+
+    /// Optional ambient-occlusion map (grayscale PNG, like Unity's Occlusion slot
+    /// / Unreal's AO input): its per-texel luminance darkens the ambient + diffuse
+    /// in creases and contact areas the direct lighting can't see, grounding the
+    /// surface. 1 (white) = fully lit, 0 (black) = fully occluded. Build Game
+    /// bundles the file. `aoStrength` blends it in (0 = off, 1 = full).
+    std::string aoMap;
+    float aoStrength = 1.0f;
 
     /// Metalness [0,1]: metals lose their diffuse and tint both their specular
     /// highlight and their environment reflection by the albedo color (so gold

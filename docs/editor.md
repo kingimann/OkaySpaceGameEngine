@@ -91,15 +91,24 @@ Recent additions (v2.12–2.14):
   UI-only (View ▸ UI Editing Mode, or the **UI Only** button on the Scene toolbar),
   and a **dedicated dockable "UI" tab**
   (View ▸ UI Editor (separate tab)) you can keep open **beside** the 3D Scene so you
-  see the world and the UI layout at once. Both share the same tools — zoom/pan,
-  rule-of-thirds guides, an **All Bounds** outline of every widget, a **safe-area**
-  inset, grid snap, an **aspect-ratio device frame** (16:9 / 4:3 / 1:1 / 9:16
-  phone…) that shows how the layout crops on that shape, a **Frame Sel** button that
-  zooms/centres on the selected widget, and a compact **pos/size** editor right on
-  the toolbar. Only the viewport under the pointer processes a drag, so having both
-  the Scene view and the UI tab open never double-moves a widget. Dragging a UI
-  child **snaps stickily to its parent** (edges, center and thirds), Unity-style, in
-  addition to the canvas and sibling smart-guides.
+  see the world and the UI layout at once. The UI-only view frames the UI against the
+  **exact same screen the Game tab uses** — pick a resolution once in the **screen**
+  dropdown (it drives the Game view's *Resolution* menu too) and both tabs match
+  pixel-for-pixel: same aspect, same letterbox, and the same CanvasScaler
+  resolution-scale, so a HUD is the same size in the editor and the built game
+  (WYSIWYG, like Unity's Game view driving the Canvas). The letterbox margins outside
+  the screen are dimmed and any widget that runs **off-screen is outlined red**, so
+  "is my UI visible in-game?" is answerable at a glance, and the **safe-area** inset
+  is a true 5% inset of the real screen. Both views share the same tools — zoom/pan,
+  rule-of-thirds guides, an **All Bounds** outline of every widget, grid snap, a
+  **Subdivide** grid (split the screen into N×M cells and snap UI edges/centres to
+  them — subdivide, then resize UI to the divisions, like a 3D model), a **Frame Sel**
+  button that zooms/centres on the selected widget, and a compact **pos/size** editor
+  right on the toolbar. Drag a corner/edge handle to resize a widget to any size; only
+  the viewport under the pointer processes a drag, so having both the Scene view and
+  the UI tab open never double-moves a widget. Dragging a UI child **snaps stickily to
+  its parent** (edges, center and thirds), Unity-style, in addition to the canvas,
+  safe-area, subdivision and sibling smart-guides.
 - **Flow Graph** (Window ▸ Flow Graph) — a node view of the selected object's
   **Actions** (visual scripting): the trigger wires to its conditions and a chain
   of instructions. **Add** a condition/instruction and **click any node to edit it
@@ -194,8 +203,9 @@ Recent additions (v2.12–2.14):
   anchors** (Stretch Horizontal / Vertical / Fill) make a widget fill the canvas
   on that axis — its Position/Size fields then read as **margins** (Unity's
   offsetMin/offsetMax: Left/Top/Right/Bottom), so a full-bleed backdrop or a
-  top bar reflows with the window. The **Game view resolution** menu now scales a
-  Constant-Pixel-Size HUD to the picked resolution, like Unity's CanvasScaler.
+  top bar reflows with the window. The **Game view resolution** menu scales a
+  Constant-Pixel-Size HUD to the picked resolution, like Unity's CanvasScaler — and
+  the UI-only editor now applies the *same* scale, so the HUD is identical in both.
 - **Panel & image styling** — *UI Panel* adds a **gradient direction** (vertical,
   horizontal, or either diagonal), an outer **outline** ring (focus keylines /
   neon accents, distinct from the inset border), and an inner **top highlight**

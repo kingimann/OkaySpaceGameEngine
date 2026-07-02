@@ -695,7 +695,9 @@ bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view lo
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
 bool g_uiShowGuides = true;      // UI-Only: draw the thirds/center alignment guides
 bool g_uiShowSafeArea = false;   // UI-Only: draw a ~5% safe-area inset (TV/notch margin)
-int  g_uiAspectPreset = 1;       // UI-Only: the game-screen aspect the UI is edited against (1=16:9; 0=Free uses the whole panel)
+bool g_uiShowSubdiv = false;     // UI-Only: draw an N×M subdivision grid over the game screen (+ snap UI to it), like subdividing a 3D model
+int  g_uiSubdivX = 3;            // UI-Only: subdivision columns
+int  g_uiSubdivY = 3;            // UI-Only: subdivision rows
 int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Selectable editor accent colours (the highlight used on selections, buttons,
@@ -869,6 +871,9 @@ void LoadSettings() {
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
+        else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
+        else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
+        else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
@@ -899,7 +904,10 @@ void SaveSettings() {
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
-      << "gamecustomh " << g_gameCustomH << "\n";
+      << "gamecustomh " << g_gameCustomH << "\n"
+      << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
+      << "uisubdivx " << g_uiSubdivX << "\n"
+      << "uisubdivy " << g_uiSubdivY << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -16900,6 +16908,12 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         // snaps to the safe area for easy resize (as well as to siblings).
                         std::vector<float> cx{0.0f, canvasSize.x * 0.05f, canvasSize.x * 0.5f, canvasSize.x * 0.95f, canvasSize.x};
                         std::vector<float> cy{0.0f, canvasSize.y * 0.05f, canvasSize.y * 0.5f, canvasSize.y * 0.95f, canvasSize.y};
+                        // Subdivision-grid cell lines (when the grid is shown) so UI snaps to it.
+                        if (g_uiShowSubdiv) {
+                            int snx = g_uiSubdivX < 1 ? 1 : g_uiSubdivX, sny = g_uiSubdivY < 1 ? 1 : g_uiSubdivY;
+                            for (int si = 1; si < snx; ++si) cx.push_back(canvasSize.x * ((float)si / snx));
+                            for (int sj = 1; sj < sny; ++sj) cy.push_back(canvasSize.y * ((float)sj / sny));
+                        }
                         for (const auto& up2 : ed.scene().Objects()) {
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
@@ -16979,6 +16993,12 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         // snaps to the safe area for easy resize (as well as to siblings).
                         std::vector<float> cx{0.0f, canvasSize.x * 0.05f, canvasSize.x * 0.5f, canvasSize.x * 0.95f, canvasSize.x};
                         std::vector<float> cy{0.0f, canvasSize.y * 0.05f, canvasSize.y * 0.5f, canvasSize.y * 0.95f, canvasSize.y};
+                        // Subdivision-grid cell lines (when the grid is shown) so UI snaps to it.
+                        if (g_uiShowSubdiv) {
+                            int snx = g_uiSubdivX < 1 ? 1 : g_uiSubdivX, sny = g_uiSubdivY < 1 ? 1 : g_uiSubdivY;
+                            for (int si = 1; si < snx; ++si) cx.push_back(canvasSize.x * ((float)si / snx));
+                            for (int sj = 1; sj < sny; ++sj) cy.push_back(canvasSize.y * ((float)sj / sny));
+                        }
                         for (const auto& up2 : ed.scene().Objects()) {
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
@@ -18576,6 +18596,62 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 }
 
+// ---- Shared game / UI screen resolution ------------------------------------
+// The Game tab and the UI-Only editor frame UI against the SAME screen, so what you
+// lay out in the UI editor is exactly what ships — WYSIWYG, the way Unity's Game-view
+// resolution drives the Canvas rect you edit in the Scene view. Both index this one
+// table with g_gameResPreset; the UI editor has no separate aspect setting anymore.
+struct GameResPreset { const char* name; float aspect; int w, h; };
+static const GameResPreset kGameResPresets[] = {
+    {"Free Aspect",             0.0f,         0,    0},
+    {"16:9",                    16.0f/9,      0,    0},
+    {"16:10",                   16.0f/10,     0,    0},
+    {"21:9 (ultrawide)",        21.0f/9,      0,    0},
+    {"4:3",                     4.0f/3,       0,    0},
+    {"3:2",                     3.0f/2,       0,    0},
+    {"1:1 (square)",            1.0f,         0,    0},
+    {"9:16 (portrait)",         9.0f/16,      0,    0},
+    {"1920 x 1080  (1080p)",    1920.0f/1080, 1920, 1080},
+    {"2560 x 1440  (1440p)",    2560.0f/1440, 2560, 1440},
+    {"3840 x 2160  (4K)",       3840.0f/2160, 3840, 2160},
+    {"1280 x 720   (720p)",     1280.0f/720,  1280, 720},
+    {"1600 x 900",              1600.0f/900,  1600, 900},
+    {"1080 x 1920  (portrait)", 1080.0f/1920, 1080, 1920},
+    {"720 x 1280   (portrait)", 720.0f/1280,  720,  1280},
+    {"1170 x 2532  (iPhone)",   1170.0f/2532, 1170, 2532},
+    {"1668 x 2388  (iPad)",     1668.0f/2388, 1668, 2388},
+    {"Custom...",               0.0f,        -1,   -1},   // -1 => use g_gameCustomW/H
+};
+static constexpr int kGameResCount     = (int)(sizeof(kGameResPresets) / sizeof(kGameResPresets[0]));
+static constexpr int kGameResCustomIdx = kGameResCount - 1;
+
+// Resolve the current selection to aspect + pixel size. Pure-aspect presets report
+// w=h=0 (aspect only); fixed and Custom presets carry real pixel dimensions.
+static void CurrentGameRes(float& aspect, int& w, int& h) {
+    int i = g_gameResPreset; if (i < 0 || i >= kGameResCount) i = 0;
+    w = kGameResPresets[i].w; h = kGameResPresets[i].h;
+    if (i == kGameResCustomIdx) { w = g_gameCustomW; h = g_gameCustomH; }
+    aspect = (w > 0 && h > 0) ? (float)w / (float)h : kGameResPresets[i].aspect;
+}
+
+// Letterbox the current game screen inside an available region (centered). "Free"
+// aspect fills the region. Also returns the CanvasScaler resolution-scale a fixed-
+// resolution HUD previews at (Unity's UIResolutionScale = on-screen height / target
+// height) so a Constant-Pixel-Size canvas looks identical in the editor and the game.
+static void LetterboxGameScreen(ImVec2 origin, ImVec2 avail,
+                                ImVec2& outPos, ImVec2& outSize, float& outResScale) {
+    float aspect; int w, h; CurrentGameRes(aspect, w, h);
+    ImVec2 size = avail, pos = origin;
+    if (aspect > 0.0f) {
+        float boxW = avail.x, boxH = avail.x / aspect;
+        if (boxH > avail.y) { boxH = avail.y; boxW = avail.y * aspect; }
+        size = ImVec2(boxW, boxH);
+        pos  = ImVec2(origin.x + (avail.x - boxW) * 0.5f, origin.y + (avail.y - boxH) * 0.5f);
+    }
+    outPos = pos; outSize = size;
+    outResScale = (h > 0) ? size.y / (float)h : 1.0f;
+}
+
 void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // A dedicated "UI" tab is just the Scene view locked to UI-only mode, so UI
     // editing gets its own dockable window without losing the 3D Scene view.
@@ -18692,14 +18768,43 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap UI drags/resizes to the grid");
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
         ImGui::DragInt("grid##ui", &g_uiGrid, 1.0f, 1, 128, "%dpx");
-        // Aspect-ratio letterbox guide: preview how the layout frames on a given device
-        // shape (purely a visual guide — it does NOT change the canvas the UI resolves
-        // against, so nothing downstream can divide by it).
         ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-        ImGui::SetNextItemWidth(110);
-        ImGui::Combo("screen##ui", &g_uiAspectPreset,
-                     "Free\0" "16:9\0" "16:10\0" "4:3\0" "3:2\0" "1:1\0" "9:16 (phone)\0" "18:9 (phone)\0");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The game SCREEN the UI is edited against (letterboxed in the panel).\nUI is laid out inside this rect, so what you see here is what ships.\nWidgets that run off it are outlined red. 'Free' uses the whole panel.");
+        // The screen the UI is laid out against = the SAME resolution the Game view
+        // renders at. Editing g_gameResPreset here keeps the two tabs perfectly in sync
+        // (pick a resolution once; the UI editor and the Game tab both use it).
+        ImGui::SetNextItemWidth(150);
+        {
+            int gi = g_gameResPreset; if (gi < 0 || gi >= kGameResCount) gi = 0;
+            if (ImGui::BeginCombo("screen##ui", kGameResPresets[gi].name)) {
+                for (int i = 0; i < kGameResCount; ++i) {
+                    if (i == 1 || i == 8 || i == kGameResCustomIdx) ImGui::Separator();  // aspects / fixed / custom
+                    if (ImGui::Selectable(kGameResPresets[i].name, g_gameResPreset == i)) { g_gameResPreset = i; SaveSettings(); }
+                }
+                ImGui::EndCombo();
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The game screen the UI is laid out against — the SAME resolution as the Game view.\nWhat you see here is exactly what ships; widgets that run off-screen are outlined red.\n'Free Aspect' uses the whole panel.");
+        if (g_gameResPreset == kGameResCustomIdx) {   // custom W/H, mirrored from the Game tab
+            ImGui::SameLine(); ImGui::SetNextItemWidth(64);
+            if (ImGui::DragInt("##uicw", &g_gameCustomW, 1.0f, 16, 8192, "W %d")) SaveSettings();
+            ImGui::SameLine(); ImGui::SetNextItemWidth(64);
+            if (ImGui::DragInt("##uich", &g_gameCustomH, 1.0f, 16, 8192, "H %d")) SaveSettings();
+            g_gameCustomW = g_gameCustomW < 16 ? 16 : g_gameCustomW;
+            g_gameCustomH = g_gameCustomH < 16 ? 16 : g_gameCustomH;
+        }
+        // Subdivision grid (like subdividing a 3D model): split the game screen into
+        // N×M cells you can snap UI edges/centers to, for laying out clean grids fast.
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        if (AccentToggleButton("Subdivide", g_uiShowSubdiv)) { g_uiShowSubdiv = !g_uiShowSubdiv; SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Divide the game screen into an even grid of cells (with Snap on, UI edges/centers snap to it).\nLike subdividing a 3D model, then resizing UI to the divisions.");
+        if (g_uiShowSubdiv) {
+            ImGui::SameLine(); ImGui::SetNextItemWidth(54);
+            if (ImGui::DragInt("##subx", &g_uiSubdivX, 0.1f, 1, 32, "%d cols")) SaveSettings();
+            ImGui::SameLine(); ImGui::SetNextItemWidth(54);
+            if (ImGui::DragInt("##suby", &g_uiSubdivY, 0.1f, 1, 32, "%d rows")) SaveSettings();
+            g_uiSubdivX = g_uiSubdivX < 1 ? 1 : (g_uiSubdivX > 32 ? 32 : g_uiSubdivX);
+            g_uiSubdivY = g_uiSubdivY < 1 ? 1 : (g_uiSubdivY > 32 ? 32 : g_uiSubdivY);
+        }
         // Frame the selected widget: center + fit it in the view (zoom/pan the canvas).
         ImGui::SameLine();
         if (ImGui::SmallButton("Frame Sel") && ed.selected() &&
@@ -18803,24 +18908,20 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         g_uiEditZoom = Mathf::Clamp(std::isfinite(g_uiEditZoom) ? g_uiEditZoom : 1.0f, 0.25f, 4.0f);
     if (!std::isfinite(g_uiEditPan.x) || !std::isfinite(g_uiEditPan.y)) g_uiEditPan = ImVec2(0, 0);
 
-    // In UI-Only mode the UI is edited against the GAME SCREEN — an aspect-locked rect
-    // letterboxed inside the editor panel — not the raw panel. Everything (hit-testing,
-    // drawing, the safe-area inset) resolves against THIS rect, so a widget you place at
-    // the edge stays on-screen in the built game instead of running off it, and the
-    // safe area is a true inset of the real screen. "Free" aspect uses the whole panel.
+    // In UI-Only mode the UI is edited against the GAME SCREEN — the SAME resolution the
+    // Game tab renders at (g_gameResPreset), letterboxed inside the editor panel — not the
+    // raw panel. Everything (hit-testing, drawing, the safe-area inset) resolves against
+    // THIS rect AND at the same CanvasScaler resolution-scale, so what you lay out here is
+    // pixel-for-pixel what the Game view (and the built game) shows: a widget at the edge
+    // stays on-screen, the safe area is a true inset of the real screen, and a fixed-res
+    // HUD is the same size in both tabs. "Free Aspect" uses the whole panel.
     ImVec2 uiCanvasPos = canvasPos, uiCanvasSize = canvasSize;
-    if (uiOnly && g_uiAspectPreset > 0) {
-        static const float kUIScreenAspects[] = {0.0f, 16.0f/9, 16.0f/10, 4.0f/3, 3.0f/2, 1.0f, 9.0f/16, 18.0f/9};
-        int ai = g_uiAspectPreset; if (ai < 0 || ai >= (int)(sizeof(kUIScreenAspects)/sizeof(float))) ai = 0;
-        float ar = kUIScreenAspects[ai];
-        if (ar > 0.01f) {
-            float fw = canvasSize.x, fh = fw / ar;
-            if (fh > canvasSize.y) { fh = canvasSize.y; fw = fh * ar; }
-            uiCanvasSize = ImVec2(fw, fh);
-            uiCanvasPos  = ImVec2(canvasPos.x + (canvasSize.x - fw) * 0.5f,
-                                  canvasPos.y + (canvasSize.y - fh) * 0.5f);
-        }
-    }
+    float  uiResScale  = 1.0f;
+    if (uiOnly) LetterboxGameScreen(canvasPos, canvasSize, uiCanvasPos, uiCanvasSize, uiResScale);
+    // Match the Game view's HUD scaling so a Constant-Pixel-Size canvas previews at the
+    // same size here as in the Game tab. Reset at the end of the UI-Only branch below so
+    // the scale never leaks into the Scene 3D/2D draw or other views.
+    okay::UIResolutionScale() = uiResScale;
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
@@ -18956,6 +19057,19 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             dl->AddLine(ImVec2(ctr.x, uiCanvasPos.y), ImVec2(ctr.x, uiEnd.y), IM_COL32(255, 255, 255, 24));
             dl->AddLine(ImVec2(uiCanvasPos.x, ctr.y), ImVec2(uiEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
         }
+        // Subdivision grid: split the game screen into N×M cells (a layout grid you can
+        // snap UI to — "subdivide, then resize to the divisions", like a 3D model).
+        if (g_uiShowSubdiv) {
+            int nx = g_uiSubdivX < 1 ? 1 : g_uiSubdivX, ny = g_uiSubdivY < 1 ? 1 : g_uiSubdivY;
+            for (int i = 1; i < nx; ++i) {
+                float gx = uiCanvasPos.x + uiCanvasSize.x * ((float)i / nx);
+                dl->AddLine(ImVec2(gx, uiCanvasPos.y), ImVec2(gx, uiEnd.y), IM_COL32(120, 180, 255, 40));
+            }
+            for (int j = 1; j < ny; ++j) {
+                float gy = uiCanvasPos.y + uiCanvasSize.y * ((float)j / ny);
+                dl->AddLine(ImVec2(uiCanvasPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(120, 180, 255, 40));
+            }
+        }
         OKAY_TRACE(uiPanel ? "UItab:overlay" : "UIonly:overlay");
         DrawUIOverlay(ed, dl, uiCanvasPos, uiCanvasSize, /*gameView=*/false);
         // Outline every UI element's rect so the whole layout is visible at a glance.
@@ -18995,6 +19109,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     } else {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     }
+    okay::UIResolutionScale() = 1.0f;   // never leak the UI-Only preview scale past this view
 
     // Corner overlay (view mode, object count, live FPS, selection).
     OKAY_TRACE(uiPanel ? "UItab:corner" : "Scene:corner");
@@ -19185,45 +19300,22 @@ void DrawGameView(EditorState& ed) {
     Camera* mc = SceneCamera(ed.scene());
     bool persp = mc && mc->projection == Camera::Projection::Perspective;
 
-    // Resolution / aspect selector (Unity's Game-view dropdown): "Free", aspect
-    // ratios, and fixed pixel resolutions (desktop + mobile). Fixed entries carry a
-    // nominal width/height; letterboxing uses the entry's aspect either way.
-    struct GamePreset { const char* name; float aspect; int w, h; };
-    static const GamePreset kPresets[] = {
-        {"Free Aspect",        0.0f,       0,    0},
-        {"16:9",               16.0f/9,    0,    0},
-        {"16:10",              16.0f/10,   0,    0},
-        {"21:9 (ultrawide)",   21.0f/9,    0,    0},
-        {"4:3",                4.0f/3,     0,    0},
-        {"3:2",                3.0f/2,     0,    0},
-        {"1:1 (square)",       1.0f,       0,    0},
-        {"9:16 (portrait)",    9.0f/16,    0,    0},
-        {"1920 x 1080  (1080p)", 1920.0f/1080, 1920, 1080},
-        {"2560 x 1440  (1440p)", 2560.0f/1440, 2560, 1440},
-        {"3840 x 2160  (4K)",    3840.0f/2160, 3840, 2160},
-        {"1280 x 720   (720p)",  1280.0f/720,  1280, 720},
-        {"1600 x 900",           1600.0f/900,  1600, 900},
-        {"1080 x 1920  (portrait)", 1080.0f/1920, 1080, 1920},
-        {"720 x 1280   (portrait)", 720.0f/1280,  720,  1280},
-        {"1170 x 2532  (iPhone)",   1170.0f/2532, 1170, 2532},
-        {"1668 x 2388  (iPad)",     1668.0f/2388, 1668, 2388},
-        {"Custom...",               0.0f,        -1,   -1},   // -1 => use g_gameCustomW/H
-    };
-    const int kCustomIdx = (int)IM_ARRAYSIZE(kPresets) - 1;
+    // Resolution / aspect selector (Unity's Game-view dropdown): "Free", aspect ratios,
+    // and fixed pixel resolutions (desktop + mobile). Backed by the shared kGameResPresets
+    // table so the Game tab and the UI-Only editor always frame UI against the same screen.
     int& s_aspect = g_gameResPreset;   // persisted across sessions
-    if (s_aspect < 0 || s_aspect >= (int)IM_ARRAYSIZE(kPresets)) s_aspect = 0;
+    if (s_aspect < 0 || s_aspect >= kGameResCount) s_aspect = 0;
     ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("Resolution", kPresets[s_aspect].name)) {
-        for (int i = 0; i < (int)IM_ARRAYSIZE(kPresets); ++i) {
-            if (i == 1 || i == 8 || i == kCustomIdx) ImGui::Separator();  // group: aspects / fixed / custom
-            if (ImGui::Selectable(kPresets[i].name, s_aspect == i)) { s_aspect = i; SaveSettings(); }
+    if (ImGui::BeginCombo("Resolution", kGameResPresets[s_aspect].name)) {
+        for (int i = 0; i < kGameResCount; ++i) {
+            if (i == 1 || i == 8 || i == kGameResCustomIdx) ImGui::Separator();  // group: aspects / fixed / custom
+            if (ImGui::Selectable(kGameResPresets[i].name, s_aspect == i)) { s_aspect = i; SaveSettings(); }
         }
         ImGui::EndCombo();
     }
     // Custom width/height inputs (only for the Custom preset).
-    int curW = kPresets[s_aspect].w, curH = kPresets[s_aspect].h;
-    if (s_aspect == kCustomIdx) {
-        curW = g_gameCustomW; curH = g_gameCustomH;
+    int curW = kGameResPresets[s_aspect].w, curH = kGameResPresets[s_aspect].h;
+    if (s_aspect == kGameResCustomIdx) {
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
         if (ImGui::DragInt("##cw", &g_gameCustomW, 1.0f, 16, 8192, "W %d")) SaveSettings();
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
@@ -19232,7 +19324,6 @@ void DrawGameView(EditorState& ed) {
         g_gameCustomH = g_gameCustomH < 16 ? 16 : g_gameCustomH;
         curW = g_gameCustomW; curH = g_gameCustomH;
     }
-    const float kAspectVal = (s_aspect == kCustomIdx) ? (float)curW / (float)curH : kPresets[s_aspect].aspect;
     const bool  kFixedRes  = (curW > 0 && curH > 0);
     ImGui::SameLine();
     ImGui::TextDisabled(ed.isPlaying() ? "live" : "press Play to run");
@@ -19247,15 +19338,11 @@ void DrawGameView(EditorState& ed) {
     if (avail.y < 50) avail.y = 50;
     ImVec2 origin = ImGui::GetCursorScreenPos();
 
-    // Letterbox a fixed-aspect rect centered in the available region.
-    ImVec2 canvasSize = avail, canvasPos = origin;
-    if (kAspectVal > 0.0f) {
-        float target = kAspectVal;
-        float boxW = avail.x, boxH = avail.x / target;
-        if (boxH > avail.y) { boxH = avail.y; boxW = avail.y * target; }
-        canvasSize = {boxW, boxH};
-        canvasPos = {origin.x + (avail.x - boxW) * 0.5f, origin.y + (avail.y - boxH) * 0.5f};
-    }
+    // Letterbox the game screen centered in the available region — the SAME helper the
+    // UI-Only editor uses, so the two views are pixel-identical. resScale is applied
+    // just below (Unity's UIResolutionScale) for fixed-resolution HUD previews.
+    ImVec2 canvasSize, canvasPos; float resScale = 1.0f;
+    LetterboxGameScreen(origin, avail, canvasPos, canvasSize, resScale);
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
 
     // The Game view is the surface the running game is shown on, so feed mouse
@@ -19277,10 +19364,11 @@ void DrawGameView(EditorState& ed) {
     UICanvas::Set(canvasSize.x, canvasSize.y);
 
     // Preview a fixed-resolution HUD at the picked resolution: a Constant-Pixel-Size
-    // canvas authored for `curH` px should shrink/grow with the target, just like
-    // Unity's Game view. For a live (free) resolution the on-screen canvas *is* the
-    // target, so the scale is 1. ScaleWithScreenSize canvases ignore this entirely.
-    okay::UIResolutionScale() = (kFixedRes && curH > 0) ? canvasSize.y / (float)curH : 1.0f;
+    // canvas authored for the target height should shrink/grow with the on-screen size,
+    // just like Unity's Game view. For a live (free) resolution the on-screen canvas *is*
+    // the target, so the scale is 1. ScaleWithScreenSize canvases ignore this entirely.
+    // `resScale` is exactly what the UI-Only editor applies — same helper, same result.
+    okay::UIResolutionScale() = resScale;
 
     if (!mc) {
         dl->AddText(ImVec2(canvasPos.x + 10, canvasPos.y + 10),

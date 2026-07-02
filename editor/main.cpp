@@ -122,6 +122,7 @@ int main(int argc, char** argv) {
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
+#  include <dbghelp.h>   // symbolize the crash backtrace to function + file:line
 #else
 #  include <unistd.h>
 #  include <csignal>
@@ -171,24 +172,82 @@ static LONG WINAPI OkayCrashFilter(EXCEPTION_POINTERS* ep) {
     };
     char modName[MAX_PATH] = "?"; unsigned long long modBase = 0;
     modInfo(addr, modName, sizeof(modName), modBase);
-    char msg[1200];
+#ifndef OKAY_ENGINE_VERSION
+#  define OKAY_ENGINE_VERSION "?"
+#endif
+    // Timestamp so multiple reports are distinguishable.
+    SYSTEMTIME st; GetLocalTime(&st);
+    char when[32];
+    std::snprintf(when, sizeof(when), "%04d-%02d-%02d %02d:%02d:%02d",
+                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    // Write the report NEXT TO THE EXE (not the cwd, which may be the launcher's), so
+    // it's always found in the same folder as OkayEngine.exe.
+    char crashPath[MAX_PATH]; char exePath[MAX_PATH] = "";
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    std::snprintf(crashPath, sizeof(crashPath), "%s", exePath);
+    if (char* slash = std::strrchr(crashPath, '\\')) std::strcpy(slash + 1, "okay_crash.txt");
+    else std::strcpy(crashPath, "okay_crash.txt");
+    char msg[1400];
     std::snprintf(msg, sizeof(msg),
-        "OkaySpace crashed.\n\nLast step: %s\nException: 0x%08lX\nAt: %s + 0x%llX\n\n"
-        "Details were saved to okay_crash.txt next to the editor.\n"
-        "Please tell support the \"Last step\" line above.",
-        g_okayTrace, code, modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
-    if (FILE* f = std::fopen("okay_crash.txt", "w")) {
-        std::fprintf(f, "OkaySpace crash report\nLast step: %s\nException: 0x%08lX\nFault module: %s + 0x%llX\n\nBacktrace:\n",
-                     g_okayTrace, code, modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
+        "OkaySpace crashed.\n\nVersion: %s\nLast step: %s\nException: 0x%08lX\nAt: %s + 0x%llX\n\n"
+        "A report was saved to okay_crash.txt next to the editor.\n"
+        "Please send that file (or the \"Last step\" line above) to support.",
+        OKAY_ENGINE_VERSION, g_okayTrace, code, modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
+    if (FILE* f = std::fopen(crashPath, "w")) {
+        std::fprintf(f, "OkaySpace crash report\nVersion: %s\nWhen: %s\nExe: %s\nLast step: %s\n"
+                        "Exception: 0x%08lX\nFault module: %s + 0x%llX\n\nBacktrace:\n",
+                     OKAY_ENGINE_VERSION, when, exePath[0] ? exePath : "?", g_okayTrace, code,
+                     modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
+        // Symbolize on-device via dbghelp so the report is human-readable (function
+        // names + file:line where DWARF line info is present). Each line ALSO carries
+        // the raw module + offset as a fallback we can resolve with addr2line.
+        HANDLE proc = GetCurrentProcess();
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        bool symOk = SymInitialize(proc, nullptr, TRUE);
         void* frames[48];
         USHORT n = CaptureStackBackTrace(0, 48, frames, nullptr);
+        // SYMBOL_INFO + room for the name.
+        char symBuf[sizeof(SYMBOL_INFO) + 512];
         for (USHORT i = 0; i < n; ++i) {
+            unsigned long long a = (unsigned long long)(uintptr_t)frames[i];
             char mn[MAX_PATH]; unsigned long long mb = 0;
-            modInfo((unsigned long long)(uintptr_t)frames[i], mn, sizeof(mn), mb);
-            std::fprintf(f, "  #%02d %s + 0x%llX\n", i, mn[0] ? mn : "?",
-                         mb ? ((unsigned long long)(uintptr_t)frames[i] - mb) : (unsigned long long)(uintptr_t)frames[i]);
+            modInfo(a, mn, sizeof(mn), mb);
+            const char* modShort = mn[0] ? mn : "?";
+            if (const char* s = std::strrchr(modShort, '\\')) modShort = s + 1;
+            char fnName[540] = ""; char fileLine[560] = "";
+            if (symOk) {
+                SYMBOL_INFO* si = (SYMBOL_INFO*)symBuf;
+                std::memset(si, 0, sizeof(SYMBOL_INFO));
+                si->SizeOfStruct = sizeof(SYMBOL_INFO); si->MaxNameLen = 500;
+                DWORD64 disp = 0;
+                if (SymFromAddr(proc, (DWORD64)a, &disp, si))
+                    std::snprintf(fnName, sizeof(fnName), "  %s +0x%llX", si->Name, (unsigned long long)disp);
+                IMAGEHLP_LINE64 line; std::memset(&line, 0, sizeof(line));
+                line.SizeOfStruct = sizeof(line); DWORD ld = 0;
+                if (SymGetLineFromAddr64(proc, (DWORD64)a, &ld, &line) && line.FileName)
+                    std::snprintf(fileLine, sizeof(fileLine), "  (%s:%lu)", line.FileName, line.LineNumber);
+            }
+            std::fprintf(f, "  #%02d %s + 0x%llX%s%s\n", i, modShort,
+                         mb ? (a - mb) : a, fnName, fileLine);
         }
+        if (symOk) SymCleanup(proc);
         std::fclose(f);
+    }
+    // Also APPEND this report to a rolling history (okay_crashlog.txt) next to the exe,
+    // so the editor's Crash Log tab can show every past report — not just the latest.
+    char logPath[MAX_PATH];
+    std::snprintf(logPath, sizeof(logPath), "%s", exePath);
+    if (char* slash = std::strrchr(logPath, '\\')) std::strcpy(slash + 1, "okay_crashlog.txt");
+    else std::strcpy(logPath, "okay_crashlog.txt");
+    if (FILE* src = std::fopen(crashPath, "r")) {
+        if (FILE* hist = std::fopen(logPath, "a")) {
+            std::fprintf(hist, "\n========== crash @ %s (v%s) ==========\n", when, OKAY_ENGINE_VERSION);
+            char buf[1024]; size_t r;
+            while ((r = std::fread(buf, 1, sizeof(buf), src)) > 0) std::fwrite(buf, 1, r, hist);
+            std::fprintf(hist, "\n");
+            std::fclose(hist);
+        }
+        std::fclose(src);
     }
     MessageBoxA(nullptr, msg, "OkaySpace crash", MB_OK | MB_ICONERROR);
     return EXCEPTION_EXECUTE_HANDLER;
@@ -594,6 +653,7 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProject = true, g_showServices = true, g_showScriptEditor = true;
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
+bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
@@ -2035,6 +2095,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Profiler", nullptr, &g_showProfiler);
         ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
         ImGui::MenuItem("Console", nullptr, &g_showConsole);
+        ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
@@ -2607,6 +2669,69 @@ void DrawDockSpace(EditorState& ed) {
     DrawStatusBar(ed);
 
     DrawMenuAndToolbar(ed);
+    ImGui::End();
+}
+
+// The folder the editor exe lives in — where the crash handler writes its reports.
+static std::string OkayExeDir() {
+#if defined(_WIN32)
+    char buf[MAX_PATH] = ""; GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    std::string p(buf); auto s = p.find_last_of("\\/");
+    return s == std::string::npos ? std::string(".") : p.substr(0, s);
+#else
+    char buf[4096]; ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) { buf[n] = '\0'; std::string p(buf); auto s = p.find_last_of('/');
+                 return s == std::string::npos ? std::string(".") : p.substr(0, s); }
+    return ".";
+#endif
+}
+
+// Crash Log viewer: shows the crash reports the exception handler writes next to the
+// editor (okay_crashlog.txt = every past crash; okay_crash.txt = the latest), so a
+// user can read them and copy/paste them to send to support — no file hunting.
+void DrawCrashLog() {
+    namespace fs = std::filesystem;
+    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
+    static std::string text;
+    static bool loaded = false;
+    fs::path dir      = OkayExeDir();
+    fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
+    fs::path lastPath = dir / "okay_crash.txt";       // most recent report
+    auto readAll = [](const fs::path& p, std::string& out) -> bool {
+        std::ifstream f(p, std::ios::binary);
+        if (!f) return false;
+        std::stringstream ss; ss << f.rdbuf(); out = ss.str(); return true;
+    };
+    auto load = [&] {
+        text.clear();
+        if (!readAll(histPath, text) || text.empty()) readAll(lastPath, text);
+        loaded = true;
+    };
+    if (!loaded) load();
+
+    if (ImGui::Button("Refresh")) load();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(text.empty());
+    if (ImGui::Button("Copy All")) ImGui::SetClipboardText(text.c_str());
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered() && !text.empty()) ImGui::SetTooltip("%s", "Copy every report to the clipboard, then paste it to support.");
+    ImGui::SameLine();
+    if (ImGui::Button("Open Folder")) extide::RevealInFiles(dir.string());
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Delete the saved crash reports.");
+    ImGui::SameLine(); ImGui::TextDisabled("%s", histPath.string().c_str());
+    ImGui::Separator();
+
+    if (text.empty()) {
+        ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.5f, 1.0f), "No crash reports \xE2\x80\x94 nice.");
+        ImGui::TextDisabled("%s", "If the editor ever crashes, a report is written next to the exe and\nappears here. Use Copy All to send it to support.");
+    } else {
+        ImGui::TextDisabled("Newest report is at the bottom. \xE2\x80\xA2 %d bytes", (int)text.size());
+        // Read-only multiline: selectable + scrollable; Copy All grabs everything.
+        ImGui::InputTextMultiline("##crashbody", (char*)text.data(), text.size() + 1,
+                                  ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
+    }
     ImGui::End();
 }
 
@@ -16771,8 +16896,10 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     g_uiGuideX = g_uiGuideY = -1.0f;
                     bool gxHit = false, gyHit = false;
                     if (g_snap) {
-                        std::vector<float> cx{0.0f, canvasSize.x * 0.5f, canvasSize.x};
-                        std::vector<float> cy{0.0f, canvasSize.y * 0.5f, canvasSize.y};
+                        // Canvas edges + center, AND the 5% safe-area inset edges, so UI
+                        // snaps to the safe area for easy resize (as well as to siblings).
+                        std::vector<float> cx{0.0f, canvasSize.x * 0.05f, canvasSize.x * 0.5f, canvasSize.x * 0.95f, canvasSize.x};
+                        std::vector<float> cy{0.0f, canvasSize.y * 0.05f, canvasSize.y * 0.5f, canvasSize.y * 0.95f, canvasSize.y};
                         for (const auto& up2 : ed.scene().Objects()) {
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
@@ -16848,8 +16975,10 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     g_uiGuideX = g_uiGuideY = -1.0f;
                     if (g_snap) {
                         Vec2 o, sz; GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o, sz);
-                        std::vector<float> cx{0.0f, canvasSize.x * 0.5f, canvasSize.x};
-                        std::vector<float> cy{0.0f, canvasSize.y * 0.5f, canvasSize.y};
+                        // Canvas edges + center, AND the 5% safe-area inset edges, so UI
+                        // snaps to the safe area for easy resize (as well as to siblings).
+                        std::vector<float> cx{0.0f, canvasSize.x * 0.05f, canvasSize.x * 0.5f, canvasSize.x * 0.95f, canvasSize.x};
+                        std::vector<float> cy{0.0f, canvasSize.y * 0.05f, canvasSize.y * 0.5f, canvasSize.y * 0.95f, canvasSize.y};
                         for (const auto& up2 : ed.scene().Objects()) {
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
@@ -16970,7 +17099,24 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
         }
         // Otherwise pick a widget under the cursor and start moving it.
         if (!g_uiHandled) {
-            GameObject* hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
+            // Pick the SMALLEST widget under the cursor, not the top-most draw-order one
+            // (Unity selects the most specific element). This makes small widgets on top
+            // of big panels actually selectable — the old top-most rule made you keep
+            // hitting the panel/background. World-space widgets fall back to UIRaycast.
+            GameObject* hit = nullptr; float bestArea = 3.4e38f;
+            for (const auto& up : ed.scene().Objects()) {
+                GameObject* g = up.get();
+                if (!g || !g->active || UIHidden(g)) continue;
+                UIRect r = GetUIRect(g);
+                if (!r.valid) continue;
+                Vec2 o, sz;
+                if (!GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) continue;
+                if (mouseCanvas.x < o.x || mouseCanvas.y < o.y ||
+                    mouseCanvas.x > o.x + sz.x || mouseCanvas.y > o.y + sz.y) continue;
+                float area = (sz.x < 1 ? 1 : sz.x) * (sz.y < 1 ? 1 : sz.y);
+                if (area < bestArea) { bestArea = area; hit = g; }
+            }
+            if (!hit) hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
             if (hit) {
                 // Clicking a button's label text selects the BUTTON, so you grab and
                 // move the button (and its text) as one — unless the button is already
@@ -17158,7 +17304,10 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     SetEditorWorldUIProjector(ed, canvasSize, /*view3D=*/false, gameView);
 
     // Screen-space UI (text, images, panels, bars, sliders, toggles, buttons).
-    if (gameView || g_showUIOverlay) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+    // UI lives in its OWN section — the dedicated UI Only mode / UI tab — never mixed
+    // into the 3D or 2D scene while you edit world objects. So the Scene view never
+    // overlays the Canvas; only the Game view (what the player sees) draws UI here.
+    if (gameView) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Transform gizmo at the selection, reflecting the active tool (Move/Rotate/Scale).
     if (!gameView && ed.selected() && !IsUIElement(ed.selected())) {
@@ -17702,7 +17851,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Screen-space UI draws on top of the 3D view too, so UI added to a 3D
     // project (HUD, menus, buttons) is visible here and in the Game view.
-    if (gameView || g_showUIOverlay) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+    // UI lives in its OWN section — the dedicated UI Only mode / UI tab — never mixed
+    // into the 3D or 2D scene while you edit world objects. So the Scene view never
+    // overlays the Canvas; only the Game view (what the player sees) draws UI here.
+    if (gameView) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Camera Preview (Unity): when a perspective Camera is selected, show what
     // it sees in a small inset in the corner of the Scene view (slot 2 so it
@@ -18465,11 +18617,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // Local/Global handle orientation (Unity's toggle); X toggles it. Tinted when Local.
     if (AccentToggleButton(g_gizmoLocal ? "Local" : "Global", g_gizmoLocal)) g_gizmoLocal = !g_gizmoLocal;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gizmo orientation: Local (object) vs Global (world). Shortcut: X");
-    // UI section (Unity-style): toggle the screen-space UI overlay, and a "UI Only"
-    // mode that hides the 3D/2D scene and shows just the Canvas on a flat screen.
+    // UI section (Unity-style): a "UI Only" mode that hides the 3D/2D scene and shows
+    // just the Canvas on a flat screen. UI is NEVER overlaid on the 3D/2D scene — it
+    // has its own section (this mode + the dockable UI tab), so there's no scene
+    // "UI overlay" toggle anymore.
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    if (AccentToggleButton("UI", g_showUIOverlay)) g_showUIOverlay = !g_showUIOverlay;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the screen-space UI (Canvas) overlay in the Scene view");
     if (!uiPanel) {
         ImGui::SameLine();
         if (AccentToggleButton("UI Only", g_uiOnlyMode)) g_uiOnlyMode = !g_uiOnlyMode;   // flat UI view draws directly; never force the scene overlay on
@@ -19773,6 +19925,7 @@ int main(int argc, char** argv) {
         if (g_showProfiler)  DrawProfiler(ed);
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();
+        if (g_showCrashLog)  DrawCrashLog();
         if (g_showProject)   DrawProject(ed);
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);

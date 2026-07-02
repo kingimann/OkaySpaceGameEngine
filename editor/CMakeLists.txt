@@ -59,6 +59,14 @@ set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfi
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
 if(WIN32)
     target_link_libraries(okay-editor PRIVATE comdlg32 ole32 shell32 user32)
+    # dbghelp: the crash handler resolves each backtrace frame to a function name
+    # (and file:line where available) so okay_crash.txt is human-readable.
+    target_link_libraries(okay-editor PRIVATE dbghelp)
+    # Keep DWARF line info in the shipped editor so a crash's module+offset backtrace
+    # resolves to exact source lines (addr2line) and dbghelp can report file:line.
+    # Debug info lives in a separate part of the PE and doesn't slow the code.
+    target_compile_options(okay-editor PRIVATE -g)
+    target_link_options(okay-editor PRIVATE -g)
 endif()
 # OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
 if(TARGET okay_ui)

@@ -65,9 +65,12 @@ target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/font8x8
 )
-# Silence warnings from the third-party single-header libraries.
+# Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
+# is required in addition to `-w`: the vendored font8x8 tables initialise `char`
+# arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
+# that `-w` does not downgrade, even though GCC/MinGW accept it.
 set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Graphics/TtfFont.cpp
-    PROPERTIES COMPILE_OPTIONS "-w")
+    PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)
 

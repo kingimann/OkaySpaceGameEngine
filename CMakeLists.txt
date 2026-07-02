@@ -61,7 +61,9 @@ add_subdirectory(engine)
 # ---- OkayUI (SDL_Renderer immediate-mode UI toolkit) -----------------
 # Self-gates on SDL2 (skips quietly if absent). Added before the editor and tests
 # so both can link okay::ui. Only needed by SDL-based hosts and its own test.
-if(OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_TESTS)
+# Skip OkayUI on Emscripten/WebGL: the web player links only okay::engine, and the
+# toolkit includes a Direct3D 11 backend that can't compile to WASM.
+if((OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_TESTS) AND NOT EMSCRIPTEN)
     add_subdirectory(okayui)
 endif()
 
@@ -121,8 +123,11 @@ if(OKAY_BUILD_TOOLS)
 endif()
 
 # ---- Reference relay (NAT traversal) ---------------------------------
-# A tiny console UDP forwarder; no graphics deps, always built.
-add_subdirectory(relay)
+# A tiny console UDP forwarder; no graphics deps, always built — except on
+# Emscripten/WebGL, where raw UDP sockets don't exist in the browser sandbox.
+if(NOT EMSCRIPTEN)
+    add_subdirectory(relay)
+endif()
 
 # ---- Tests ------------------------------------------------------------
 if(OKAY_BUILD_TESTS)

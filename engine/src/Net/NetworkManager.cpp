@@ -924,6 +924,10 @@ void NetworkManager::ServerTick(float dt) {
         m_snapshotTimer = 0.0f;
         Vec3 lp = m_localAvatar ? m_localAvatar->localPosition : Vec3::Zero;
         for (auto& [ep, recipient] : m_clients) {
+            // A lambda below needs the recipient; capturing a structured binding directly
+            // is ill-formed before C++20 (Clang/Emscripten rejects it), so alias it to a
+            // plain reference the closure can capture portably.
+            auto& rc = recipient;
             const std::string& room = recipient.room;
             bool hostHere = (m_localRoom == room);
             // Interest culling needs the recipient's own position; until it has
@@ -937,20 +941,20 @@ void NetworkManager::ServerTick(float dt) {
             // skip peers whose state is unchanged since we last sent it (delta).
             std::vector<PeerState> include;
             auto consider = [&](const PeerState& s, bool known) {
-                if (s.id == recipient.id) return;                   // don't echo their own avatar
+                if (s.id == rc.id) return;                          // don't echo their own avatar
                 if (interestRadius > 0.0f) {                        // area-of-interest cull
                     if (!known) return;                             // position unknown -> don't sync yet
                     float dx = s.x - rpos.x, dy = s.y - rpos.y, dz = s.z - rpos.z;
                     if (dx * dx + dy * dy + dz * dz > interestRadius * interestRadius) return;
                 }
-                auto it = recipient.sentStates.find(s.id);          // delta: only if changed
-                bool changed = it == recipient.sentStates.end() ||
+                auto it = rc.sentStates.find(s.id);                 // delta: only if changed
+                bool changed = it == rc.sentStates.end() ||
                                std::fabs(it->second.x - s.x) > 1e-4f ||
                                std::fabs(it->second.y - s.y) > 1e-4f ||
                                std::fabs(it->second.z - s.z) > 1e-4f ||
                                it->second.glyph != s.glyph;
                 if (!changed) return;
-                recipient.sentStates[s.id] = s;
+                rc.sentStates[s.id] = s;
                 include.push_back(s);
             };
             if (hostHere) consider(PeerState{0, lp.x, lp.y, lp.z, m_localGlyph}, true);

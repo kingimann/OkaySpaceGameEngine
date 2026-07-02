@@ -71,6 +71,7 @@ int main() {
         s.renderSettings.fog = true;
         s.renderSettings.fogStart = 12.0f;
         s.renderSettings.fogEnd = 77.0f;
+        s.renderSettings.vignette = 0.6f;
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
         CHECK(s2.renderSettings.skybox == false);
@@ -79,10 +80,12 @@ int main() {
         CHECK(s2.renderSettings.fog == true);
         CHECK_NEAR(s2.renderSettings.fogStart, 12.0f, 1e-3f);
         CHECK_NEAR(s2.renderSettings.fogEnd, 77.0f, 1e-3f);
+        CHECK_NEAR(s2.renderSettings.vignette, 0.6f, 1e-4f);
 
-        // A scene file without the line keeps defaults (skybox on) after Clear.
+        // A scene file without the line keeps defaults (skybox on, no vignette) after Clear.
         Scene s3("y"); SceneSerializer::Deserialize(s3, "name \"NoEnv\"\n");
         CHECK(s3.renderSettings.skybox == true);
+        CHECK_NEAR(s3.renderSettings.vignette, 0.0f, 1e-4f);
     }
 
     // Font fields round-trip: scene default UI font, TextRenderer.fontPath, and

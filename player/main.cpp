@@ -294,6 +294,36 @@ static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
     return tex;
 }
 
+// Screen-space vignette (RenderSettings.vignette): darken the frame's edges toward
+// the corners. A cheap post overlay of stepped 1px border frames fading inward, so
+// it looks the same regardless of which 3D backend rendered the scene beneath it.
+static void DrawVignette(SDL_Renderer* r, float strength) {
+    if (strength <= 0.0f) return;
+    if (strength > 1.0f) strength = 1.0f;
+    int w = 0, h = 0;
+    SDL_GetRendererOutputSize(r, &w, &h);
+    if (w <= 2 || h <= 2) return;
+    SDL_BlendMode prev; SDL_GetRenderDrawBlendMode(r, &prev);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    const int steps = 56;
+    const float maxInset = 0.42f * (float)std::min(w, h);   // how far the fade reaches
+    for (int i = 0; i < steps; ++i) {
+        float t = (float)i / (float)(steps - 1);            // 0 at edge .. 1 inward
+        int inset = (int)(t * maxInset);
+        if (w - 2 * inset <= 0 || h - 2 * inset <= 0) break;
+        Uint8 a = (Uint8)(strength * 160.0f * (1.0f - t) * (1.0f - t));   // strongest at edge
+        if (a == 0) continue;
+        SDL_SetRenderDrawColor(r, 0, 0, 0, a);
+        SDL_Rect top{inset, inset, w - 2 * inset, 1};
+        SDL_Rect bot{inset, h - inset - 1, w - 2 * inset, 1};
+        SDL_Rect lft{inset, inset, 1, h - 2 * inset};
+        SDL_Rect rgt{w - inset - 1, inset, 1, h - 2 * inset};
+        SDL_RenderFillRect(r, &top); SDL_RenderFillRect(r, &bot);
+        SDL_RenderFillRect(r, &lft); SDL_RenderFillRect(r, &rgt);
+    }
+    SDL_SetRenderDrawBlendMode(r, prev);
+}
+
 // Full-screen loading-screen overlay (background + centred title + tip + progress bar).
 static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
                               std::unordered_map<std::string, SDL_Texture*>& cache) {
@@ -2902,6 +2932,8 @@ int main(int argc, char** argv) {
             DrawLoadingScreen(renderer, *ls, baseDir, textureCache);
             break;
         }
+        // Post: screen-space vignette (on top of the scene + UI, under nothing).
+        DrawVignette(renderer, scene.renderSettings.vignette);
         SDL_RenderPresent(renderer);
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.

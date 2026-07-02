@@ -603,6 +603,37 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
     return changed;
 }
 
+bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label, bool* value) {
+    if (!value || w <= 0.0f || h <= 0.0f) return false;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+
+    bool changed = false;
+    if (g_active == id) {
+        if (g_released) { if (inside) { *value = !*value; changed = true; } g_active = 0; }
+    } else if (inside && g_pressed) {
+        g_active = id;
+    }
+
+    // Pill track: dim when off, accent when on; knob slides between the two ends.
+    const float rd = h * 0.5f;
+    const unsigned char* track = *value ? g_theme.accent : g_theme.bg;
+    rrect(x, y, w, h, rd, g_theme.border);
+    const float b = g_theme.borderPx;
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, track);
+    const float pad = h * 0.14f;
+    const float kd  = h - 2.0f * pad;                          // knob diameter
+    const float kx  = *value ? (x + w - pad - kd) : (x + pad); // slid to the on/off end
+    const unsigned char* knob = (inside || g_active == id) ? g_theme.text : g_theme.bgHover;
+    rrect(kx, y + pad, kd, kd, kd * 0.5f, knob);
+    // Label to the right of the switch, vertically centered.
+    if (label && *label) {
+        const float s = g_theme.textScale, th = fH() * s;
+        drawText(x + w + 8.0f, y + (h - th) * 0.5f, label, s, g_theme.text);
+    }
+    return changed;
+}
+
 bool Slider(int id, float x, float y, float w, float h, float* value, float minV, float maxV) {
     if (!value || w <= 0.0f || maxV <= minV) return false;
     const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
@@ -1172,6 +1203,15 @@ bool RadioButton(const char* label, int* value, int option) {
     const float w = sz + 8.0f + labelW(label);
     float x, y; place(w, h, x, y);
     return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value, option);
+}
+
+bool ToggleSwitch(const char* label, bool* value) {
+    if (!g_lay.active || !value) return false;
+    const float h = rowH();
+    const float sh = textH() + 4.0f, sw = sh * 1.9f;   // switch pill size (track ~1.9:1)
+    const float w = sw + 8.0f + labelW(label);
+    float x, y; place(w, h, x, y);
+    return ToggleSwitch(hashLabel(label), x, y + (h - sh) * 0.5f, sw, sh, label, value);
 }
 
 bool SliderFloat(const char* label, float* value, float minV, float maxV) {

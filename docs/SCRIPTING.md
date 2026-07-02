@@ -168,6 +168,7 @@ returns the live value, so you read and write game state in one line.
 | `ui_text("s")` | A line of text |
 | `ui_button("Label")` | Returns 1 the frame it's clicked, else 0 |
 | `ui_checkbox("Label", on)` | Returns the new on/off (pass the current value back in) |
+| `ui_switch("Label", on)` | A sliding on/off switch; returns the new on/off (pass the current value back in) |
 | `ui_slider("Label", v, lo, hi)` | Returns the new value (pass the current value back in) |
 | `ui_progress(t)` | A progress/health bar, `t` in 0..1 |
 | `ui_sameline()` / `ui_separator()` | Lay the next widget beside / draw a divider |

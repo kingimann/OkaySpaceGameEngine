@@ -69,6 +69,11 @@ bool Button(int id, float x, float y, float w, float h, const char* label);
 /// *value on click; returns true on the frame the value changed. `value` required.
 bool Checkbox(int id, float x, float y, float size, const char* label, bool* value);
 
+/// A sliding on/off switch (pill track + knob) `w`*`h` at (x, y), `label` to its
+/// right. Toggles *value on click; the knob slides and the track lights the accent
+/// colour when on. Returns true the frame the value changed. `value` required.
+bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label, bool* value);
+
 /// A horizontal slider over [minV, maxV]. Click or drag the groove to set *value;
 /// returns true on any frame the value changed. `value` required.
 bool Slider(int id, float x, float y, float w, float h, float* value, float minV, float maxV);
@@ -185,6 +190,8 @@ bool SmallButton(const char* label);
 /// tab's contents below based on *current. `labels` and `current` required.
 void TabBar(const char* const* labels, int count, int* current);
 bool Checkbox(const char* label, bool* value);
+/// Auto-placed sliding on/off switch (pill + knob) with `label` to its right.
+bool ToggleSwitch(const char* label, bool* value);
 bool RadioButton(const char* label, int* value, int option);
 bool SliderFloat(const char* label, float* value, float minV, float maxV);
 /// An integer slider over [minV, maxV]. Edits *value in place; true on change.

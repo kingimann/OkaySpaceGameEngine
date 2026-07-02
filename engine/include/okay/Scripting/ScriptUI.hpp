@@ -22,6 +22,8 @@ struct ScriptUIBridge {
     virtual void  Text(const char* s) { (void)s; }
     virtual bool  Button(const char* label) { (void)label; return false; }
     virtual bool  Checkbox(const char* label, bool value) { (void)label; return value; }
+    /// A sliding on/off switch. Defaults to a checkbox for hosts that don't draw one.
+    virtual bool  Switch(const char* label, bool value) { return Checkbox(label, value); }
     virtual float Slider(const char* label, float value, float lo, float hi) { (void)label;(void)lo;(void)hi; return value; }
     virtual void  ProgressBar(float t) { (void)t; }
     virtual void  SameLine() {}

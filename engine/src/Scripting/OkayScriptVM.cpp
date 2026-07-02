@@ -1566,6 +1566,11 @@ struct OkayScriptVM::Impl {
             bool nv = u ? u->Checkbox(a.empty() ? "" : a[0].AsString().c_str(), cur) : cur;
             return Value{nv ? 1.0f : 0.0f};
         };
+        b["ui_switch"]    = [](std::vector<Value>& a)  {   // sliding on/off switch
+            auto* u = GetScriptUI(); bool cur = a.size() > 1 && a[1].AsFloat() != 0.0f;
+            bool nv = u ? u->Switch(a.empty() ? "" : a[0].AsString().c_str(), cur) : cur;
+            return Value{nv ? 1.0f : 0.0f};
+        };
         b["ui_slider"]    = [](std::vector<Value>& a)  {
             auto* u = GetScriptUI();
             float v = a.size() > 1 ? a[1].AsFloat() : 0.0f;

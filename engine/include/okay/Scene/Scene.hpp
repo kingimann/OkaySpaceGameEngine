@@ -123,6 +123,11 @@ public:
         Color fogColor   = Color::FromBytes(150, 185, 225);  // default = horizon
         float fogStart   = 20.0f;
         float fogEnd     = 90.0f;
+        // Screen-space vignette: darken the frame's edges/corners by `vignette`
+        // strength (0 = off .. 1 = strong). A cheap post overlay drawn on top of the
+        // finished frame, so it looks identical on every renderer backend. Great for
+        // focus/mood without touching the 3D shading path.
+        float vignette   = 0.0f;
     };
     RenderSettings renderSettings;
 

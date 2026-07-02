@@ -1580,6 +1580,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         out << "fog " << (rs.fog ? 1 : 0) << " "
             << rs.fogColor.r << " " << rs.fogColor.g << " " << rs.fogColor.b << " "
             << rs.fogStart << " " << rs.fogEnd << "\n";
+        if (rs.vignette > 0.0f) out << "vignette " << rs.vignette << "\n";
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
@@ -1652,6 +1653,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             int on = 0; Color fc; float fs = rs.fogStart, fe = rs.fogEnd;
             in >> on >> fc.r >> fc.g >> fc.b >> fs >> fe;
             if (clear) { rs.fog = (on != 0); rs.fogColor = fc; rs.fogStart = fs; rs.fogEnd = fe; }
+        } else if (token == "vignette") {
+            float v = 0.0f; in >> v;
+            if (clear) scene.renderSettings.vignette = v;
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;

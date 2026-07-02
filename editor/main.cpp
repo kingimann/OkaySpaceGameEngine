@@ -3771,6 +3771,11 @@ void DrawStats(EditorState& ed) {
             if (ImGui::DragFloat("Fog Start", &rs.fogStart, 0.5f, 0.0f, 4000.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Fog End", &rs.fogEnd, 0.5f, 0.0f, 8000.0f)) ed.dirty = true;
         }
+        ImGui::Spacing();
+        // Screen-space vignette: a post overlay darkening the frame edges. Saved with
+        // the scene; the shipped player draws the same effect. 0 = off.
+        if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Darken the frame's edges/corners (focus/mood).\nA post overlay — identical on every renderer backend. 0 = off.");
     }
 
     // Global renderer pipeline switches (process-wide, not per-scene). These let
@@ -19043,6 +19048,18 @@ void DrawGameView(EditorState& ed) {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
     }
     okay::UIResolutionScale() = 1.0f;   // never leak the preview scale outside the Game view
+
+    // Screen-space vignette preview (RenderSettings.vignette) — mirrors what the
+    // shipped player draws, using four edge gradient bands that fade inward.
+    if (ed.scene().renderSettings.vignette > 0.0f) {
+        float s = ed.scene().renderSettings.vignette; if (s > 1.0f) s = 1.0f;
+        ImU32 edge = IM_COL32(0, 0, 0, (int)(s * 160.0f)), clr = IM_COL32(0, 0, 0, 0);
+        float bw = canvasSize.x * 0.30f, bh = canvasSize.y * 0.30f;
+        dl->AddRectFilledMultiColor(canvasPos, ImVec2(canvasEnd.x, canvasPos.y + bh), edge, edge, clr, clr);            // top
+        dl->AddRectFilledMultiColor(ImVec2(canvasPos.x, canvasEnd.y - bh), canvasEnd, clr, clr, edge, edge);            // bottom
+        dl->AddRectFilledMultiColor(canvasPos, ImVec2(canvasPos.x + bw, canvasEnd.y), edge, clr, clr, edge);            // left
+        dl->AddRectFilledMultiColor(ImVec2(canvasEnd.x - bw, canvasPos.y), canvasEnd, clr, edge, edge, clr);            // right
+    }
 
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.

@@ -695,7 +695,7 @@ bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view lo
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
 bool g_uiShowGuides = true;      // UI-Only: draw the thirds/center alignment guides
 bool g_uiShowSafeArea = false;   // UI-Only: draw a ~5% safe-area inset (TV/notch margin)
-int  g_uiAspectPreset = 0;       // UI-Only: aspect-ratio letterbox guide (0=Free, see kUIAspects)
+int  g_uiAspectPreset = 1;       // UI-Only: the game-screen aspect the UI is edited against (1=16:9; 0=Free uses the whole panel)
 int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Selectable editor accent colours (the highlight used on selections, buttons,
@@ -18697,9 +18697,9 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         // against, so nothing downstream can divide by it).
         ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
         ImGui::SetNextItemWidth(110);
-        ImGui::Combo("aspect##ui", &g_uiAspectPreset,
+        ImGui::Combo("screen##ui", &g_uiAspectPreset,
                      "Free\0" "16:9\0" "16:10\0" "4:3\0" "3:2\0" "1:1\0" "9:16 (phone)\0" "18:9 (phone)\0");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a device aspect-ratio frame so you can see how the UI is cropped on that shape");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The game SCREEN the UI is edited against (letterboxed in the panel).\nUI is laid out inside this rect, so what you see here is what ships.\nWidgets that run off it are outlined red. 'Free' uses the whole panel.");
         // Frame the selected widget: center + fit it in the view (zoom/pan the canvas).
         ImGui::SameLine();
         if (ImGui::SmallButton("Frame Sel") && ed.selected() &&
@@ -18803,6 +18803,25 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         g_uiEditZoom = Mathf::Clamp(std::isfinite(g_uiEditZoom) ? g_uiEditZoom : 1.0f, 0.25f, 4.0f);
     if (!std::isfinite(g_uiEditPan.x) || !std::isfinite(g_uiEditPan.y)) g_uiEditPan = ImVec2(0, 0);
 
+    // In UI-Only mode the UI is edited against the GAME SCREEN — an aspect-locked rect
+    // letterboxed inside the editor panel — not the raw panel. Everything (hit-testing,
+    // drawing, the safe-area inset) resolves against THIS rect, so a widget you place at
+    // the edge stays on-screen in the built game instead of running off it, and the
+    // safe area is a true inset of the real screen. "Free" aspect uses the whole panel.
+    ImVec2 uiCanvasPos = canvasPos, uiCanvasSize = canvasSize;
+    if (uiOnly && g_uiAspectPreset > 0) {
+        static const float kUIScreenAspects[] = {0.0f, 16.0f/9, 16.0f/10, 4.0f/3, 3.0f/2, 1.0f, 9.0f/16, 18.0f/9};
+        int ai = g_uiAspectPreset; if (ai < 0 || ai >= (int)(sizeof(kUIScreenAspects)/sizeof(float))) ai = 0;
+        float ar = kUIScreenAspects[ai];
+        if (ar > 0.01f) {
+            float fw = canvasSize.x, fh = fw / ar;
+            if (fh > canvasSize.y) { fh = canvasSize.y; fw = fh * ar; }
+            uiCanvasSize = ImVec2(fw, fh);
+            uiCanvasPos  = ImVec2(canvasPos.x + (canvasSize.x - fw) * 0.5f,
+                                  canvasPos.y + (canvasSize.y - fh) * 0.5f);
+        }
+    }
+
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
 
@@ -18890,7 +18909,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // they can be picked, dragged and resized in the viewport (the pick/drag helpers
     // go through GetUIScreenRect, which needs this context). Screen-space UI ignores it.
     OKAY_TRACE(uiPanel ? "UItab:projector" : "Scene:projector");
-    SetEditorWorldUIProjector(ed, canvasSize, ed.view3D, /*gameView=*/false);
+    SetEditorWorldUIProjector(ed, uiCanvasSize, ed.view3D, /*gameView=*/false);
 
     // Only ONE viewport may process UI pick/drag per frame. With both the "Scene" view
     // and the dedicated "UI" tab open, letting BOTH run EditUIWidgets would double-apply
@@ -18907,7 +18926,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // UI editing (pick/drag screen-space widgets) runs first and may consume the
     // click so the world pickers below leave the selection alone.
     OKAY_TRACE(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
-    if (ownsUIInteraction) EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
+    if (ownsUIInteraction) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io);
     else                   g_uiHandled = false;   // this viewport isn't the active one
 
     if (uiOnly) {
@@ -18917,66 +18936,58 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         // the driver, where the software rasterizer just clips them. Clipping here keeps
         // all geometry finite and on-screen. Popped at the end of this branch.
         dl->PushClipRect(canvasPos, canvasEnd, true);
-        // Flat screen canvas: a neutral background + a dashed "screen" border, then
-        // just the UI overlay (no 3D/2D world). Unity's dedicated UI editing view.
-        dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(28, 28, 32, 255));
-        dl->AddRect(canvasPos, canvasEnd, IM_COL32(90, 95, 110, 200), 0.0f, 0, 1.5f);
-        // Rule-of-thirds guides + a brighter center cross, to help align UI.
+        ImVec2 uiEnd(uiCanvasPos.x + uiCanvasSize.x, uiCanvasPos.y + uiCanvasSize.y);
+        // Dark backdrop over the whole panel; the letterbox margins OUTSIDE the game
+        // screen are darkened so it's obvious what is off-screen (not part of the game).
+        dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(12, 12, 16, 255));
+        // The game "screen" rect: this is exactly what the player sees. UI is edited
+        // against it, so anything you place inside it is guaranteed visible in-game.
+        dl->AddRectFilled(uiCanvasPos, uiEnd, IM_COL32(28, 28, 32, 255));
+        dl->AddRect(uiCanvasPos, uiEnd, IM_COL32(120, 130, 150, 220), 0.0f, 0, 1.5f);
+        // Rule-of-thirds guides + a brighter center cross, relative to the game screen.
         if (g_uiShowGuides) {
             for (int i = 1; i <= 2; ++i) {
-                float gx = canvasPos.x + canvasSize.x * (i / 3.0f);
-                float gy = canvasPos.y + canvasSize.y * (i / 3.0f);
-                dl->AddLine(ImVec2(gx, canvasPos.y), ImVec2(gx, canvasEnd.y), IM_COL32(255, 255, 255, 12));
-                dl->AddLine(ImVec2(canvasPos.x, gy), ImVec2(canvasEnd.x, gy), IM_COL32(255, 255, 255, 12));
+                float gx = uiCanvasPos.x + uiCanvasSize.x * (i / 3.0f);
+                float gy = uiCanvasPos.y + uiCanvasSize.y * (i / 3.0f);
+                dl->AddLine(ImVec2(gx, uiCanvasPos.y), ImVec2(gx, uiEnd.y), IM_COL32(255, 255, 255, 12));
+                dl->AddLine(ImVec2(uiCanvasPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(255, 255, 255, 12));
             }
-            ImVec2 ctr(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
-            dl->AddLine(ImVec2(ctr.x, canvasPos.y), ImVec2(ctr.x, canvasEnd.y), IM_COL32(255, 255, 255, 24));
-            dl->AddLine(ImVec2(canvasPos.x, ctr.y), ImVec2(canvasEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
-        }
-        // Safe-area inset (5%): where important UI should stay on TVs / notched phones.
-        if (g_uiShowSafeArea) {
-            float mx = canvasSize.x * 0.05f, my = canvasSize.y * 0.05f;
-            dl->AddRect(ImVec2(canvasPos.x + mx, canvasPos.y + my),
-                        ImVec2(canvasEnd.x - mx, canvasEnd.y - my),
-                        IM_COL32(90, 220, 130, 130), 0.0f, 0, 1.5f);
-        }
-        // Aspect-ratio frame: a centered rect at the chosen device shape, dimming the
-        // cropped margins so you can see what a 16:9 / phone / square screen would show.
-        if (g_uiAspectPreset > 0) {
-            static const float kUIAspects[] = {0.0f, 16.0f/9, 16.0f/10, 4.0f/3, 3.0f/2, 1.0f, 9.0f/16, 18.0f/9};
-            int ai = g_uiAspectPreset; if (ai < 0 || ai >= (int)(sizeof(kUIAspects)/sizeof(float))) ai = 0;
-            float ar = kUIAspects[ai];
-            if (ar > 0.01f) {
-                float fw = canvasSize.x, fh = fw / ar;
-                if (fh > canvasSize.y) { fh = canvasSize.y; fw = fh * ar; }
-                float fx = canvasPos.x + (canvasSize.x - fw) * 0.5f;
-                float fy = canvasPos.y + (canvasSize.y - fh) * 0.5f;
-                // Dim the letterbox margins outside the device frame.
-                ImU32 dim = IM_COL32(0, 0, 0, 90);
-                if (fy > canvasPos.y) { dl->AddRectFilled(canvasPos, ImVec2(canvasEnd.x, fy), dim);
-                                        dl->AddRectFilled(ImVec2(canvasPos.x, fy + fh), canvasEnd, dim); }
-                if (fx > canvasPos.x) { dl->AddRectFilled(ImVec2(canvasPos.x, fy), ImVec2(fx, fy + fh), dim);
-                                        dl->AddRectFilled(ImVec2(fx + fw, fy), ImVec2(canvasEnd.x, fy + fh), dim); }
-                dl->AddRect(ImVec2(fx, fy), ImVec2(fx + fw, fy + fh), IM_COL32(255, 200, 90, 200), 0.0f, 0, 1.5f);
-            }
+            ImVec2 ctr(uiCanvasPos.x + uiCanvasSize.x * 0.5f, uiCanvasPos.y + uiCanvasSize.y * 0.5f);
+            dl->AddLine(ImVec2(ctr.x, uiCanvasPos.y), ImVec2(ctr.x, uiEnd.y), IM_COL32(255, 255, 255, 24));
+            dl->AddLine(ImVec2(uiCanvasPos.x, ctr.y), ImVec2(uiEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
         }
         OKAY_TRACE(uiPanel ? "UItab:overlay" : "UIonly:overlay");
-        DrawUIOverlay(ed, dl, canvasPos, canvasSize, /*gameView=*/false);
+        DrawUIOverlay(ed, dl, uiCanvasPos, uiCanvasSize, /*gameView=*/false);
         // Outline every UI element's rect so the whole layout is visible at a glance.
+        // A widget outside the screen rect is flagged in RED — that's UI that runs off
+        // screen in the built game (so "is my UI visible?" is answerable at a glance).
         OKAY_TRACE("UIonly:allbounds");
-        if (g_uiShowAllBounds) {
+        {
             for (const auto& up : ed.scene().Objects()) {
                 GameObject* g = up.get();
-                if (!g || !g->active || g == ed.selected()) continue;
+                if (!g || !g->active) continue;
                 UIRect r = GetUIRect(g);
                 if (!r.sizePtr && !r.position) continue;   // not a UI widget
                 Vec2 o, sz;
-                if (GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) {
-                    dl->AddRect(ImVec2(canvasPos.x + o.x, canvasPos.y + o.y),
-                                ImVec2(canvasPos.x + o.x + sz.x, canvasPos.y + o.y + sz.y),
-                                IM_COL32(120, 160, 220, 90), 0.0f, 0, 1.0f);
+                if (GetUIScreenRect(g, uiCanvasSize.x, uiCanvasSize.y, o, sz)) {
+                    ImVec2 a(uiCanvasPos.x + o.x, uiCanvasPos.y + o.y);
+                    ImVec2 b(a.x + sz.x, a.y + sz.y);
+                    bool offScreen = (o.x < -0.5f || o.y < -0.5f ||
+                                      o.x + sz.x > uiCanvasSize.x + 0.5f || o.y + sz.y > uiCanvasSize.y + 0.5f);
+                    if (offScreen)                 // runs off the game screen — warn in red
+                        dl->AddRect(a, b, IM_COL32(240, 90, 90, 220), 0.0f, 0, 2.0f);
+                    else if (g_uiShowAllBounds && g != ed.selected())
+                        dl->AddRect(a, b, IM_COL32(120, 160, 220, 90), 0.0f, 0, 1.0f);
                 }
             }
+        }
+        // Safe-area inset (5% of the game screen): keep important UI inside this on TVs
+        // / notched phones. It's a true inset of the real screen now, not the panel.
+        if (g_uiShowSafeArea) {
+            float mx = uiCanvasSize.x * 0.05f, my = uiCanvasSize.y * 0.05f;
+            dl->AddRect(ImVec2(uiCanvasPos.x + mx, uiCanvasPos.y + my),
+                        ImVec2(uiEnd.x - mx, uiEnd.y - my),
+                        IM_COL32(90, 220, 130, 150), 0.0f, 0, 1.5f);
         }
         dl->PopClipRect();   // balance the flat-UI clip pushed above
     } else if (ed.view3D) {

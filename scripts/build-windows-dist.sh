@@ -97,7 +97,16 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
 [ -f "$BUILD_DIR/bin/okayui_d3d11_demo.exe" ] && cp "$BUILD_DIR/bin/okayui_d3d11_demo.exe" "$OUT_DIR/Tools/"
-[ -f dist/VERSION.txt ] && cp dist/VERSION.txt "$OUT_DIR/Tools/"
+# VERSION.txt is the single source of truth for the self-updater: the launcher
+# compares its baked version against releases/latest/download/VERSION.txt and only
+# updates when the published one is strictly newer. Derive it from CMakeLists so it
+# is always in sync with the binaries (never a stale dist/VERSION.txt), and write it
+# at BOTH the dist root (where the launcher lives + the release workflow reads it)
+# and in Tools/ (beside the editor, whose in-app updater reads its own folder).
+OKAY_VER="$(grep -m1 -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+: "${OKAY_VER:=0.0.0}"
+printf '%s\n' "$OKAY_VER" > "$OUT_DIR/VERSION.txt"
+printf '%s\n' "$OKAY_VER" > "$OUT_DIR/Tools/VERSION.txt"
 [ -f docs/accounts.md ] && cp docs/accounts.md "$OUT_DIR/Tools/"
 
 # Starter texture pack (grass/dirt/stone/grid). Drop these into a project's Assets/

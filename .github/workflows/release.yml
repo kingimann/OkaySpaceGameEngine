@@ -78,11 +78,15 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Upload the individual files the in-app updater fetches by name from
+          # releases/latest/download/<name>. The launcher + its SDL2.dll sit at the
+          # dist root; the editor/player live in Tools/. softprops uses each file's
+          # basename as the asset name, so these resolve to the URLs the updater uses.
           files: |
             ${{ steps.pkg.outputs.zip }}
             build-win-dist/OkaySpace.exe
-            build-win-dist/OkayEngine.exe
-            build-win-dist/OkaySpacePlayer.exe
+            build-win-dist/Tools/OkayEngine.exe
+            build-win-dist/Tools/OkaySpacePlayer.exe
             build-win-dist/SDL2.dll
             build-win-dist/VERSION.txt
             dist/CHANGELOG.txt

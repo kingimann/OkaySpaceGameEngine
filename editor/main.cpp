@@ -858,6 +858,7 @@ char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
 bool  g_openBuildResult = false;
+int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 = Android
 
 // Unity-style Build Settings: window + player options written into the build's
 // game.okayconfig, plus which scenes to include.
@@ -1616,6 +1617,92 @@ std::string Build(EditorState& ed, const std::string& outDir,
     if (missing) msg += "  WARNING: " + std::to_string(missing) +
                         " referenced asset(s) not found and not copied.";
     return msg;
+}
+
+// Export the platform-independent game DATA (scene + config + assets) plus a
+// ready-to-build project for a non-desktop target. The editor can't run Emscripten
+// (web) or the Android NDK itself, so it lays down everything those toolchains need
+// and a build script / README with the exact commands. `target`: 1 = Web (WASM +
+// WebGL via Emscripten), 2 = Android (SDL2 + NDK).
+std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
+                              const std::string& gameName, const Options& opt, int target) {
+    std::error_code ec;
+    fs::path dir = fs::path(outDir);
+    if (dir.empty()) return "Pick an output folder.";
+    fs::create_directories(dir, ec);
+    if (ec) return "Couldn't create folder: " + ec.message();
+
+    // Web preloads a 'game/' folder; Android expects app/src/main/assets — either
+    // way it's just our scene + config + assets.
+    fs::path data = dir / (target == 2 ? "assets" : "game");
+    fs::create_directories(data, ec);
+    if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
+        return "Failed to write game.okayscene.";
+    { std::ofstream cf((data / "game.okayconfig").string());
+      cf << "title=" << gameName << "\ncompany=" << opt.company << "\nversion=" << opt.version
+         << "\nwidth=" << opt.width << "\nheight=" << opt.height << "\nstartup=game.okayscene\n"; }
+
+    int copied = 0, missing = 0;
+    std::set<std::string> seen;
+    for (const std::string& asset : SceneSerializer::CollectAssetPaths(ed.scene())) {
+        if (asset.empty() || !seen.insert(asset).second) continue;
+        fs::path src(asset); std::error_code aec;
+        if (!fs::exists(src, aec) || !fs::is_regular_file(src, aec)) { ++missing; continue; }
+        fs::path rel = src.is_absolute() ? fs::path(src.filename()) : SafeRelative(src);
+        if (rel.empty()) rel = src.filename();
+        fs::path dst = data / rel;
+        if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
+        if (!aec) ++copied;
+    }
+
+    if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
+        std::ofstream sh((dir / "build-web.sh").string());
+        sh << "#!/usr/bin/env bash\n"
+              "# Build this game for the web (WebAssembly + WebGL) with Emscripten.\n"
+              "# Prereqs: install emsdk (https://emscripten.org), 'source emsdk_env.sh',\n"
+              "# and set OKAY_SRC to your OkaySpace engine source checkout.\n"
+              "set -euo pipefail\n"
+              "cd \"$(dirname \"$0\")\"\n"
+              ": \"${OKAY_SRC:?Set OKAY_SRC to the OkaySpace engine source folder}\"\n"
+              "command -v emcmake >/dev/null || { echo 'Emscripten not found: source emsdk_env.sh'; exit 1; }\n"
+              "emcmake cmake -S \"$OKAY_SRC\" -B build-web -DCMAKE_BUILD_TYPE=Release \\\n"
+              "  -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \\\n"
+              "  -DCMAKE_EXE_LINKER_FLAGS=\"--preload-file game@/\"\n"
+              "cmake --build build-web -j\n"
+              "echo 'Built build-web/web/okay-player.html — serve it: python3 -m http.server -d build-web/web'\n";
+        std::ofstream rd((dir / "README.txt").string());
+        rd << "OkaySpace - Web (WebGL / WebAssembly) export of '" << gameName << "'\n"
+              "======================================================\n\n"
+              "game/         your scene + assets (game.okayscene, game.okayconfig, ...)\n"
+              "build-web.sh  builds a browser build with Emscripten.\n\n"
+              "Steps:\n"
+              "  1. Install the Emscripten SDK, then: source /path/to/emsdk/emsdk_env.sh\n"
+              "  2. export OKAY_SRC=/path/to/OkaySpace   (the engine source checkout)\n"
+              "  3. ./build-web.sh\n"
+              "  4. Serve build-web/web/ over HTTP and open okay-player.html\n\n"
+              "The engine ships this path as scripts/build-web.sh; this export bundles\n"
+              "your game's data and a matching build command.\n";
+        return "Exported Web (WebGL) project to " + dir.string() + " (" + std::to_string(copied) +
+               " asset(s)). Run build-web.sh with Emscripten to produce the .wasm build.";
+    }
+
+    // target == 2: ---- Android (SDL2 + NDK) ----
+    std::ofstream rd((dir / "README.txt").string());
+    rd << "OkaySpace - Android export of '" << gameName << "'\n"
+          "==============================================\n\n"
+          "assets/   your scene + assets, ready to drop into an Android app's\n"
+          "          app/src/main/assets/ folder.\n\n"
+          "Building an APK needs Android Studio + the NDK and SDL2's Android project\n"
+          "(the OkaySpace player is C++ on SDL2, which has an official Android port):\n"
+          "  1. Start from SDL2's androidproject template (SDL/build-scripts).\n"
+          "  2. Add the OkaySpace engine + player sources as the app's native code;\n"
+          "     they build against SDL2's Android port.\n"
+          "  3. Copy this 'assets/' folder into app/src/main/assets/.\n"
+          "  4. Build/run from Android Studio (Gradle + NDK).\n\n"
+          "Config: identifier " << opt.bundleId << ", version " << opt.version << ".\n";
+    return "Exported Android data + guide to " + dir.string() + " (" + std::to_string(copied) +
+           " asset(s)). See README.txt - an APK needs Android Studio + the NDK.";
 }
 } // namespace builder
 
@@ -6538,7 +6625,27 @@ void DrawFileDialogs(EditorState& ed) {
         }
 
         ImGui::Spacing(); ImGui::Separator();
-        if (ImGui::Button("Build", ImVec2(120, 0))) {
+        // Target platform: Desktop ships a Windows .exe; Web/Android export a
+        // ready-to-build project (the editor can't run Emscripten / the Android NDK
+        // itself, so it lays down the data + build script + instructions).
+        ImGui::SetNextItemWidth(200);
+        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)"};
+        ImGui::Combo("Platform##build", &g_buildPlatform, plats, 3);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Desktop builds a runnable .exe here.\nWeb/Android export your game data + a build script/README;\nfinish the build with Emscripten (web) or Android Studio+NDK (mobile).");
+        ImGui::Spacing();
+        const char* buildLabel = g_buildPlatform == 0 ? "Build" : "Export";
+        if (ImGui::Button(buildLabel, ImVec2(120, 0))) {
+          if (g_buildPlatform != 0) {
+            builder::Options wo;
+            wo.company = g_build.company; wo.version = g_build.version;
+            wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId;
+            g_buildReport = builder::BuildReport{};
+            g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
+            g_openBuildResult = true;
+            ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
+            ImGui::CloseCurrentPopup();
+          } else {
             builder::Options o;
             o.company = g_build.company; o.version = g_build.version;
             o.width = g_build.width; o.height = g_build.height;
@@ -6569,7 +6676,8 @@ void DrawFileDialogs(EditorState& ed) {
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);
             ImGui::CloseCurrentPopup();
-        }
+          }   // end desktop branch
+        }     // end Build/Export button
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();

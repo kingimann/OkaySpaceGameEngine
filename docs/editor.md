@@ -257,6 +257,24 @@ editor's **Play** uses — sprites in 2D (orthographic camera), wireframe meshes
 in 3D (perspective camera), keyboard input fed into `Input`, and audio mixed
 through `AudioMixer`. Press **Esc** to quit.
 
+### Other platforms — Web & Android
+
+The Build dialog's **Platform** selector also exports for **Web (WebGL / WASM)**
+and **Android**. Because the editor can't run Emscripten or the Android NDK
+itself, these targets *export a ready-to-build project* rather than a finished
+binary:
+
+- **Web** writes your `game/` data (scene + config + assets) and a `build-web.sh`
+  script. Install the Emscripten SDK, `source emsdk_env.sh`, set `OKAY_SRC` to the
+  engine source, run `./build-web.sh`, and serve the resulting
+  `build-web/web/okay-player.html`. (This mirrors the engine's
+  `scripts/build-web.sh`, which is already WebAssembly-ready via the player's
+  `EMSCRIPTEN` CMake path.)
+- **Android** writes an `assets/` folder ready to drop into an SDL2 Android
+  project's `app/src/main/assets/`, plus a README outlining the NDK build (the
+  player is C++ on SDL2, which has an official Android port). Finishing an APK
+  needs Android Studio + the NDK.
+
 The player (`player/`) is a tiny SDL2-only program (no editor/ImGui). Build it
 on its own with `-DOKAY_BUILD_PLAYER=ON`; it is also built automatically with
 the editor so Build Game always has a runtime to copy. Pass a scene path as the

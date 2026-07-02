@@ -408,6 +408,81 @@ SDL_Texture* GetThumb(const std::string& path) {
     return tex;
 }
 
+// ---- Built-in 2D sprite shapes --------------------------------------------
+// Shared by the "GameObject > 2D Shape" menu and the Sprite Editor's shape presets —
+// a quick way to get common sprites without external art. Defined up here so the menu
+// bar (earlier in the file) can use it.
+enum SpriteShape { SS_Square, SS_Circle, SS_Triangle, SS_Diamond, SS_Star,
+                   SS_Ring, SS_Heart, SS_Rounded, SS_Pentagon, SS_Hexagon, SS_Count };
+static const char* kSpriteShapeNames[SS_Count] = { "Square", "Circle", "Triangle",
+    "Diamond", "Star", "Ring", "Heart", "Rounded Square", "Pentagon", "Hexagon" };
+
+// Paint a shape (foreground colour on transparent) into an RGBA image, 2x2
+// supersampled so edges stay smooth at any size. Polygon shapes use even-odd fill.
+static void PaintSpriteShape(okay::Image& img, int shape, const okay::Color& fg) {
+    const int W = img.Width(), H = img.Height();
+    std::vector<ImVec2> poly;
+    auto ngon = [&](int n, float rot, float rad) {
+        for (int i = 0; i < n; ++i) { float a = rot + i * 6.2831853f / n; poly.push_back(ImVec2(std::cos(a) * rad, std::sin(a) * rad)); }
+    };
+    if (shape == SS_Triangle)      ngon(3, -1.5708f, 0.92f);
+    else if (shape == SS_Pentagon) ngon(5, -1.5708f, 0.92f);
+    else if (shape == SS_Hexagon)  ngon(6, -1.5708f, 0.92f);
+    else if (shape == SS_Star) {
+        for (int i = 0; i < 10; ++i) { float a = -1.5708f + i * 6.2831853f / 10.0f; float r = (i % 2 == 0) ? 0.95f : 0.42f; poly.push_back(ImVec2(std::cos(a) * r, std::sin(a) * r)); }
+    }
+    auto polyInside = [&](float px, float py) {
+        bool in = false; int n = (int)poly.size();
+        for (int i = 0, j = n - 1; i < n; j = i++)
+            if (((poly[i].y > py) != (poly[j].y > py)) &&
+                (px < (poly[j].x - poly[i].x) * (py - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)) in = !in;
+        return in;
+    };
+    const int SSf = 2;
+    for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x) {
+        float cov = 0.0f;
+        for (int sy = 0; sy < SSf; ++sy) for (int sx = 0; sx < SSf; ++sx) {
+            float nx = ((x + (sx + 0.5f) / SSf) / W) * 2.0f - 1.0f;
+            float ny = ((y + (sy + 0.5f) / SSf) / H) * 2.0f - 1.0f;
+            float r2 = nx * nx + ny * ny; bool inside = false;
+            switch (shape) {
+                case SS_Square:  inside = (std::fabs(nx) <= 0.9f && std::fabs(ny) <= 0.9f); break;
+                case SS_Circle:  inside = (r2 <= 0.9f * 0.9f); break;
+                case SS_Ring:    inside = (r2 <= 0.9f * 0.9f && r2 >= 0.55f * 0.55f); break;
+                case SS_Diamond: inside = (std::fabs(nx) + std::fabs(ny) <= 0.9f); break;
+                case SS_Rounded: {
+                    float qx = std::fabs(nx) - 0.55f, qy = std::fabs(ny) - 0.55f;
+                    float mx = qx > 0 ? qx : 0, my = qy > 0 ? qy : 0;
+                    inside = (std::sqrt(mx * mx + my * my) - 0.35f <= 0.0f); break; }
+                case SS_Heart: {
+                    float X = nx * 1.3f, Y = -ny * 1.3f + 0.45f;
+                    float t = (X * X + Y * Y - 1.0f); inside = (t * t * t - X * X * Y * Y * Y <= 0.0f); break; }
+                default: inside = polyInside(nx, ny); break;
+            }
+            if (inside) cov += 1.0f;
+        }
+        cov /= (SSf * SSf);
+        if (cov > 0.0f) { okay::Color c = fg; c.a *= cov; img.SetPixel(x, y, c); }
+    }
+}
+
+// Create a scene sprite from a built-in shape: paint it, save it under the project's
+// Assets/Sprites, then make a Sprite object pointing at it. Returns the object.
+static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
+    namespace fs = std::filesystem;
+    okay::Image im(64, 64);
+    PaintSpriteShape(im, shape, okay::Color(0.90f, 0.92f, 0.98f, 1.0f));
+    fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+    fs::path dir = assets / "Sprites"; std::error_code ec; fs::create_directories(dir, ec);
+    std::string fn = std::string("shape_") + kSpriteShapeNames[shape] + ".png";
+    for (auto& ch : fn) if (ch == ' ') ch = '_';
+    std::string out = (dir / fn).string();
+    im.SavePNG(out);
+    GameObject* go = ed.CreateSprite(kSpriteShapeNames[shape]);
+    if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = out;
+    return go;
+}
+
 // ---- Self-updater + runtime fetcher -----------------------------------
 // The editor can pull newer published builds from GitHub and, when exporting a
 // game, fetch the player runtime if it isn't sitting beside the editor — so a
@@ -654,6 +729,7 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
+bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
@@ -2105,6 +2181,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Console", nullptr, &g_showConsole);
         ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
+        ImGui::MenuItem("Sprite Editor", nullptr, &g_showSpriteEditor);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites.");
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
@@ -2189,6 +2267,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
         bool created = false;
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
+        if (ImGui::BeginMenu("2D Shape")) {     // premade sprite shapes (saved to Assets/Sprites)
+            for (int i = 0; i < SS_Count; ++i)
+                if (ImGui::MenuItem(kSpriteShapeNames[i])) {
+                    ed.Select(CreateShapeSprite(ed, i));
+                    ConsoleLog(std::string("Created ") + kSpriteShapeNames[i] + " sprite"); created = true;
+                }
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Sprite Editor..."))  g_showSpriteEditor = true;
         if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
         ImGui::Separator();
         if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
@@ -19223,6 +19310,213 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
 // Unity-style "Game" view: renders the scene through its main camera with no
 // editor chrome (grid, gizmos, selection) — what the built game shows. 2D or 3D
 // follows the camera's projection. Read-only; press Play to make it live.
+// ---- Sprite Editor (shape helpers live near the top of the file) -----------
+// 4-connected flood fill (the Sprite Editor's bucket tool).
+static void SpriteFloodFill(okay::Image& img, int sx, int sy, const okay::Color& to) {
+    if (sx < 0 || sy < 0 || sx >= img.Width() || sy >= img.Height()) return;
+    auto q = [](float v) { return (int)(v * 255.0f + 0.5f); };
+    auto eq = [&](const okay::Color& a, const okay::Color& b) { return q(a.r) == q(b.r) && q(a.g) == q(b.g) && q(a.b) == q(b.b) && q(a.a) == q(b.a); };
+    okay::Color from = img.GetPixel(sx, sy);
+    if (eq(from, to)) return;
+    std::vector<std::pair<int, int>> st; st.push_back({sx, sy});
+    while (!st.empty()) {
+        auto pr = st.back(); st.pop_back(); int x = pr.first, y = pr.second;
+        if (x < 0 || y < 0 || x >= img.Width() || y >= img.Height()) continue;
+        if (!eq(img.GetPixel(x, y), from)) continue;
+        img.SetPixel(x, y, to);
+        st.push_back({x + 1, y}); st.push_back({x - 1, y}); st.push_back({x, y + 1}); st.push_back({x, y - 1});
+    }
+}
+
+// Upload an okay::Image to a (recreated-on-resize) nearest-filtered SDL texture for
+// crisp 1:1 pixel preview in the Sprite Editor.
+static SDL_Texture* SpriteEdTexture(okay::Image& img, SDL_Texture*& tex, int& tw, int& th, bool& dirty) {
+    if (!g_sdlRenderer || img.Width() <= 0) return nullptr;
+    if (tex && (tw != img.Width() || th != img.Height())) { SDL_DestroyTexture(tex); tex = nullptr; }
+    if (!tex) {
+        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
+        if (tex) { SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest); }
+        tw = img.Width(); th = img.Height(); dirty = true;
+    }
+    if (tex && dirty) { SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4); dirty = false; }
+    return tex;
+}
+
+// Pixel-art Sprite Editor: paint custom 2D sprites, start from a built-in shape,
+// and save PNGs into the project's Assets/Sprites (optionally applying to the
+// selected SpriteRenderer). A CPU okay::Image is the source of truth; it's uploaded
+// to an SDL texture for a crisp nearest-neighbour preview.
+void DrawSpriteEditor(EditorState& ed) {
+    namespace fs = std::filesystem;
+    if (!ImGui::Begin("Sprite Editor", &g_showSpriteEditor)) { ImGui::End(); return; }
+    static okay::Image img(32, 32);
+    static SDL_Texture* tex = nullptr; static int texW = 0, texH = 0; static bool texDirty = true;
+    static float pri[4] = {0.90f, 0.32f, 0.36f, 1.0f};
+    static int tool = 0;          // 0 pencil, 1 eraser, 2 fill, 3 eyedropper
+    static int zoom = 12;         // display px per texel
+    static bool grid = true;
+    static int sizeIdx = 1;       // 0:16 1:32 2:64 3:128
+    static int shape = SS_Circle;
+    static char nameBuf[64] = "sprite";
+    static std::vector<okay::Image> undo;
+    static bool strokeOpen = false;
+    static int lastPx = -1, lastPy = -1;
+    auto sizeFor = [](int i) { return i == 0 ? 16 : i == 1 ? 32 : i == 2 ? 64 : 128; };
+    auto pushUndo = [&]() { undo.push_back(img); if (undo.size() > 40) undo.erase(undo.begin()); };
+    auto curCol = [&]() { return okay::Color(pri[0], pri[1], pri[2], pri[3]); };
+
+    // ---- Row 1: new / size / shape ----
+    ImGui::SetNextItemWidth(96);
+    ImGui::Combo("##spsize", &sizeIdx, "16 x 16\0" "32 x 32\0" "64 x 64\0" "128 x 128\0");
+    ImGui::SameLine();
+    if (ImGui::Button("New")) { pushUndo(); int s = sizeFor(sizeIdx); img = okay::Image(s, s); texDirty = true; ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) { pushUndo(); img.Fill(okay::Color(0, 0, 0, 0)); texDirty = true; ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("Undo") && !undo.empty()) { img = undo.back(); undo.pop_back(); texDirty = true; ed.dirty = true; }
+    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(130);
+    ImGui::Combo("##spshape", &shape, "Square\0Circle\0Triangle\0Diamond\0Star\0Ring\0Heart\0Rounded Square\0Pentagon\0Hexagon\0");
+    ImGui::SameLine();
+    if (ImGui::Button("Fill Shape")) { pushUndo(); img.Fill(okay::Color(0, 0, 0, 0)); PaintSpriteShape(img, shape, curCol()); texDirty = true; ed.dirty = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replace the canvas with the selected shape in the current colour");
+
+    // ---- Row 2: tools + colour ----
+    const char* toolNames[4] = {"Pencil", "Eraser", "Fill", "Pick"};
+    for (int i = 0; i < 4; ++i) {
+        if (i) ImGui::SameLine();
+        bool on = (tool == i);
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.44f, 0.72f, 1.0f));
+        if (ImGui::Button(toolNames[i])) tool = i;
+        if (on) ImGui::PopStyleColor();
+    }
+    ImGui::SameLine(); ImGui::SetNextItemWidth(220);
+    ImGui::ColorEdit4("##spcol", pri, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs);
+    // Small preset palette.
+    static const ImU32 kPal[] = {
+        IM_COL32(0,0,0,255), IM_COL32(255,255,255,255), IM_COL32(230,60,60,255), IM_COL32(240,150,40,255),
+        IM_COL32(245,220,60,255), IM_COL32(90,200,90,255), IM_COL32(60,150,240,255), IM_COL32(150,90,220,255),
+        IM_COL32(120,80,50,255), IM_COL32(150,150,160,255), IM_COL32(250,180,200,255), IM_COL32(0,0,0,0) };
+    for (int i = 0; i < (int)(sizeof(kPal) / sizeof(kPal[0])); ++i) {
+        ImGui::SameLine();
+        ImVec4 c = ImGui::ColorConvertU32ToFloat4(kPal[i]);
+        ImGui::PushID(1000 + i);
+        if (ImGui::ColorButton("##pal", c, ImGuiColorEditFlags_AlphaPreview, ImVec2(16, 16))) { pri[0] = c.x; pri[1] = c.y; pri[2] = c.z; pri[3] = c.w; }
+        ImGui::PopID();
+    }
+
+    // ---- Row 3: zoom + grid ----
+    ImGui::SetNextItemWidth(160); ImGui::SliderInt("Zoom", &zoom, 2, 32, "%dx");
+    ImGui::SameLine(); ImGui::Checkbox("Grid", &grid);
+    ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", img.Width(), img.Height());
+
+    // ---- Canvas ----
+    SDL_Texture* t = SpriteEdTexture(img, tex, texW, texH, texDirty);
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    float disp = (float)zoom;
+    ImVec2 canvasSz(img.Width() * disp, img.Height() * disp);
+    ImGui::InvisibleButton("spritecanvas", canvasSz,
+        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    // Checkerboard behind (shows transparency), then the sprite, then the grid.
+    for (int y = 0; y < img.Height(); ++y) for (int x = 0; x < img.Width(); ++x) {
+        ImVec2 p0(origin.x + x * disp, origin.y + y * disp), p1(p0.x + disp, p0.y + disp);
+        dl->AddRectFilled(p0, p1, ((x ^ y) & 1) ? IM_COL32(70, 70, 78, 255) : IM_COL32(48, 48, 54, 255));
+    }
+    if (t) dl->AddImage((ImTextureID)t, origin, ImVec2(origin.x + canvasSz.x, origin.y + canvasSz.y));
+    if (grid && disp >= 5.0f) {
+        for (int x = 0; x <= img.Width(); ++x)
+            dl->AddLine(ImVec2(origin.x + x * disp, origin.y), ImVec2(origin.x + x * disp, origin.y + canvasSz.y), IM_COL32(255, 255, 255, 22));
+        for (int y = 0; y <= img.Height(); ++y)
+            dl->AddLine(ImVec2(origin.x, origin.y + y * disp), ImVec2(origin.x + canvasSz.x, origin.y + y * disp), IM_COL32(255, 255, 255, 22));
+    }
+    dl->AddRect(origin, ImVec2(origin.x + canvasSz.x, origin.y + canvasSz.y), IM_COL32(120, 130, 150, 220));
+
+    // Painting: pencil/eraser draw continuously (interpolated so fast drags don't gap);
+    // fill + pick act once per click. One undo snapshot per stroke.
+    ImGuiIO& io = ImGui::GetIO();
+    auto pixelAt = [&](float mx, float my, int& px, int& py) {
+        px = (int)std::floor((mx - origin.x) / disp); py = (int)std::floor((my - origin.y) / disp);
+        return px >= 0 && py >= 0 && px < img.Width() && py < img.Height();
+    };
+    if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        pushUndo(); strokeOpen = true; lastPx = lastPy = -1;
+    }
+    if (strokeOpen && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        int px, py;
+        if (pixelAt(io.MousePos.x, io.MousePos.y, px, py)) {
+            auto apply = [&](int x, int y) {
+                if (x < 0 || y < 0 || x >= img.Width() || y >= img.Height()) return;
+                if (tool == 0) img.SetPixel(x, y, curCol());
+                else if (tool == 1) img.SetPixel(x, y, okay::Color(0, 0, 0, 0));
+            };
+            if (tool == 0 || tool == 1) {
+                if (lastPx < 0) apply(px, py);
+                else {   // integer line from (lastPx,lastPy) to (px,py)
+                    int x0 = lastPx, y0 = lastPy;
+                    int dx = (px > x0 ? px - x0 : x0 - px), dy = -(py > y0 ? py - y0 : y0 - py);
+                    int sx = x0 < px ? 1 : -1, sy = y0 < py ? 1 : -1, err = dx + dy;
+                    for (;;) { apply(x0, y0); if (x0 == px && y0 == py) break; int e2 = 2 * err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } }
+                }
+                lastPx = px; lastPy = py; texDirty = true; ed.dirty = true;
+            } else if (tool == 2 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                SpriteFloodFill(img, px, py, curCol()); texDirty = true; ed.dirty = true;
+            } else if (tool == 3 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                okay::Color c = img.GetPixel(px, py); pri[0] = c.r; pri[1] = c.g; pri[2] = c.b; pri[3] = c.a;
+            }
+        }
+    }
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) { strokeOpen = false; lastPx = lastPy = -1; }
+
+    // ---- Save / apply ----
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::SetNextItemWidth(180);
+    ImGui::InputText("name", nameBuf, sizeof(nameBuf));
+    auto savePath = [&]() {
+        fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+        fs::path dir = assets / "Sprites"; std::error_code ec; fs::create_directories(dir, ec);
+        std::string nm = nameBuf[0] ? std::string(nameBuf) : std::string("sprite");
+        return (dir / (nm + ".png")).string();
+    };
+    ImGui::SameLine();
+    if (ImGui::Button("Save PNG")) {
+        std::string out = savePath();
+        if (img.SavePNG(out)) ConsoleLog("Saved sprite " + out); else ConsoleLog("Sprite save FAILED: " + out);
+    }
+    ImGui::SameLine();
+    bool haveSprite = ed.selected() && ed.selected()->GetComponent<SpriteRenderer>();
+    if (!haveSprite) ImGui::BeginDisabled();
+    if (ImGui::Button("Save + Apply to Selected")) {
+        std::string out = savePath();
+        if (img.SavePNG(out)) {
+            if (auto* sr = ed.selected()->GetComponent<SpriteRenderer>()) { sr->texture = out; ed.dirty = true; }
+            ConsoleLog("Saved + applied sprite " + out);
+        } else ConsoleLog("Sprite save FAILED: " + out);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("New Sprite Object")) {
+        std::string out = savePath();
+        if (img.SavePNG(out)) {
+            GameObject* go = ed.CreateSprite(nameBuf[0] ? nameBuf : "Sprite");
+            if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = out;
+            ConsoleLog("Created sprite object from " + out);
+        }
+    }
+    if (!haveSprite) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Load Selected")) {
+        if (ed.selected()) if (auto* sr = ed.selected()->GetComponent<SpriteRenderer>()) {
+            okay::Image loaded;
+            if (!sr->texture.empty() && loaded.Load(sr->texture) && loaded.Valid()) { pushUndo(); img = loaded; texDirty = true; ConsoleLog("Loaded " + sr->texture); }
+            else ConsoleLog("Selected sprite has no loadable texture");
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load the selected object's sprite texture into the editor to tweak it");
+
+    ImGui::End();
+}
+
 // Advanced Unity-style CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
 // scrub, a stacked CPU-category area (Scripts / Physics / Render / Other), per-section
 // self/total/calls/%-of-frame with min/avg/max over the window, live draw stats, and
@@ -20120,6 +20414,7 @@ int main(int argc, char** argv) {
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();
         if (g_showCrashLog)  DrawCrashLog();
+        if (g_showSpriteEditor) DrawSpriteEditor(ed);
         if (g_showProject)   DrawProject(ed);
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);

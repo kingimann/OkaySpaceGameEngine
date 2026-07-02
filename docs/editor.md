@@ -239,7 +239,13 @@ Recent additions (v2.12–2.14):
   an `Assets/` subfolder and saves the starting scene into it. The **Project**
   panel is an asset browser rooted at the project's `Assets/`: navigate folders,
   tick **All** to list the whole subtree (Unity-style), and click a `.okayscene`
-  to open or a `.okayprefab` to instantiate.
+  to open or a `.okayprefab` to instantiate. It supports **create / import /
+  rename (F2) / duplicate**, **sort by Name / Type / Size / Date**, a type filter
+  and thumbnail-size slider, and drag-and-drop to move assets or make prefabs.
+  **Cut / Copy / Paste** assets (right-click or Ctrl+X / Ctrl+C / Ctrl+V; paste
+  into a folder or the current view), **Delete** asks for confirmation (Del key or
+  the menu), and **Find References in Scene** selects the objects that use an
+  asset (texture, mesh, font, script) — Unity's most-used Project action.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a
   standalone, double-clickable game.

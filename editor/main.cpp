@@ -2959,6 +2959,33 @@ void DrawProject(EditorState& ed) {
     // Asset operations toolbar + the deferred rename target.
     static std::string renameTarget;
     static char renameBuf[256] = "";
+    // Cut/Copy/Paste clipboard (a single asset path) and the deferred, confirmed
+    // delete target — both file-scope so they survive across frames/folders.
+    static std::string s_assetClip;      // path on the clipboard ("" = empty)
+    static bool        s_assetClipCut = false;   // true = move on paste, false = copy
+    static std::string deleteTarget;     // pending delete, awaiting confirm
+    // Paste the clipboard asset into `into`, copying (or moving, if cut) with a
+    // unique name. Shared by the folder and empty-space context menus.
+    auto pasteInto = [&](const fs::path& into) {
+        if (s_assetClip.empty()) return;
+        std::error_code pe;
+        fs::path src(s_assetClip);
+        if (!fs::exists(src, pe)) { s_assetClip.clear(); return; }
+        fs::path stem = src.stem(), x = src.extension();
+        fs::path dst = into / src.filename();
+        for (int n = 2; fs::exists(dst, pe); ++n)
+            dst = into / (stem.string() + " " + std::to_string(n) + x.string());
+        if (s_assetClipCut) {
+            fs::rename(src, dst, pe);
+            if (pe) { fs::copy(src, dst, fs::copy_options::recursive, pe); if (!pe) fs::remove_all(src, pe); }
+            ConsoleLog((pe ? "Move failed: " : "Moved to ") + dst.string());
+            s_assetClip.clear();            // a cut is consumed by the paste
+        } else {
+            fs::copy(src, dst, fs::copy_options::recursive, pe);
+            ConsoleLog((pe ? "Paste failed: " : "Pasted ") + dst.string());
+        }
+        if (!pe) selected = dst.string();
+    };
     auto uniquePath = [&](const std::string& base, const std::string& ext) {
         std::error_code ue;
         fs::path p = dir / (base + ext);
@@ -3024,12 +3051,12 @@ void DrawProject(EditorState& ed) {
 
     // ---- View options: type filter, sort, thumbnail size ---------------------
     static int   s_filter = 0;   // 0 All,1 Scripts,2 Images,3 Scenes,4 Materials,5 Prefabs,6 Data,7 Audio
-    static int   s_sort   = 0;   // 0 Name, 1 Type
+    static int   s_sort   = 0;   // 0 Name, 1 Type, 2 Size, 3 Date
     static float s_cell   = 76.0f;
     ImGui::SetNextItemWidth(110);
     ImGui::Combo("##filter", &s_filter, "All\0Scripts\0Images\0Scenes\0Materials\0Prefabs\0Data\0Audio\0");
-    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
-    ImGui::Combo("##sort", &s_sort, "Name\0Type\0");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+    ImGui::Combo("##sort", &s_sort, "Name\0Type\0Size\0Date\0");
     ImGui::SameLine(); ImGui::SetNextItemWidth(100);
     ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
     ImGui::Separator();
@@ -3058,6 +3085,14 @@ void DrawProject(EditorState& ed) {
         if (s_sort == 1 && !da) {    // by type (extension), then name
             std::string ea = Lower(a.path().extension().string()), eb = Lower(b.path().extension().string());
             if (ea != eb) return ea < eb;
+        } else if (s_sort == 2 && !da) {   // by size, largest first, then name
+            std::error_code sa, sb;
+            auto za = fs::file_size(a.path(), sa), zb = fs::file_size(b.path(), sb);
+            if (!sa && !sb && za != zb) return za > zb;
+        } else if (s_sort == 3) {          // by modified time, newest first
+            std::error_code ta, tb;
+            auto wa = fs::last_write_time(a.path(), ta), wb = fs::last_write_time(b.path(), tb);
+            if (!ta && !tb && wa != wb) return wa > wb;
         }
         return Lower(a.path().filename().string()) < Lower(b.path().filename().string());
     });
@@ -3148,14 +3183,28 @@ void DrawProject(EditorState& ed) {
                 fs::copy_file(src, dst, ce);
                 ConsoleLog((ce ? "Duplicate failed: " : "Duplicated ") + dst.string());
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Cut"))  { s_assetClip = full; s_assetClipCut = true; }
+            if (ImGui::MenuItem("Copy")) { s_assetClip = full; s_assetClipCut = false; }
+            // Paste lands inside a folder when right-clicked on one, else beside the item.
+            if (!s_assetClip.empty() && ImGui::MenuItem(isDir ? "Paste Into" : "Paste"))
+                pasteInto(isDir ? fs::path(full) : dir);
             if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(full.c_str());
+            // Find every scene object that references this asset (texture, mesh, font,
+            // script) and select the first — Unity's "Find References In Scene".
+            if (!isDir && ImGui::MenuItem("Find References in Scene")) {
+                std::string fn = fs::path(full).filename().string();
+                int hits = 0; GameObject* first = nullptr;
+                for (const auto& up : ed.scene().Objects()) {
+                    if (ObjectUsesAsset(up.get(), fn)) { ++hits; if (!first) first = up.get(); }
+                }
+                if (first) ed.Select(first);
+                ConsoleLog(hits ? (std::to_string(hits) + " object(s) use " + fn) : ("No scene object uses " + fn));
+            }
             if (ImGui::MenuItem("Show in Explorer"))
                 extide::RevealInFiles(fs::path(full).parent_path().string());
-            if (ImGui::MenuItem("Delete")) {
-                std::error_code re; fs::remove_all(full, re);
-                ConsoleLog((re ? "Delete failed: " : "Deleted ") + full);
-                if (selected == full) selected.clear();
-            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete")) deleteTarget = full;   // confirm below
             ImGui::EndPopup();
         }
 
@@ -3233,6 +3282,7 @@ void DrawProject(EditorState& ed) {
                 okay::Scene empty("New Scene");
                 if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
             }
+            if (!s_assetClip.empty() && ImGui::MenuItem("Paste")) pasteInto(dir);
             ImGui::Separator();
         }
         if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(dir.string());
@@ -3280,6 +3330,45 @@ void DrawProject(EditorState& ed) {
             renameTarget.clear(); ImGui::CloseCurrentPopup();
         } else if (cancel) { renameTarget.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
+    }
+
+    // Delete confirmation (a delete is destructive and irreversible on disk, so
+    // never do it on a single menu click). Opened by the item menu / Delete key.
+    if (!deleteTarget.empty() && !ImGui::IsPopupOpen("Delete Asset")) ImGui::OpenPopup("Delete Asset");
+    if (ImGui::BeginPopupModal("Delete Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        std::error_code de2; bool isDir = fs::is_directory(deleteTarget, de2);
+        ImGui::Text("Delete %s", fs::path(deleteTarget).filename().string().c_str());
+        ImGui::TextDisabled("%s", isDir ? "This folder and everything in it will be removed from disk."
+                                        : "This file will be removed from disk. This cannot be undone.");
+        ImGui::Spacing();
+        bool del = ImGui::Button("Delete", ImVec2(110, 0));
+        ImGui::SameLine();
+        bool cancel = ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+        if (del) {
+            std::error_code re; fs::remove_all(deleteTarget, re);
+            ConsoleLog((re ? "Delete failed: " : "Deleted ") + deleteTarget);
+            if (selected == deleteTarget) selected.clear();
+            if (s_assetClip == deleteTarget) s_assetClip.clear();
+            deleteTarget.clear(); ImGui::CloseCurrentPopup();
+        } else if (cancel) { deleteTarget.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+
+    // Keyboard: when the Project window is focused and nothing's being typed —
+    // Delete asks to delete the selection, Ctrl+C/X copy/cut it, Ctrl+V pastes here.
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+        ImGuiIO& kio = ImGui::GetIO();
+        if (!selected.empty() && renameTarget.empty() && deleteTarget.empty() &&
+            ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+            deleteTarget = selected;
+        if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_C, false)) { s_assetClip = selected; s_assetClipCut = false; }
+        if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_X, false)) { s_assetClip = selected; s_assetClipCut = true; }
+        if (kio.KeyCtrl && !s_assetClip.empty() && canEdit && ImGui::IsKeyPressed(ImGuiKey_V, false)) pasteInto(dir);
+    }
+    // Clipboard status hint in the footer area so Cut/Copy is discoverable.
+    if (!s_assetClip.empty()) {
+        ImGui::TextDisabled("%s: %s  (Ctrl+V to paste here)", s_assetClipCut ? "Cut" : "Copied",
+                            fs::path(s_assetClip).filename().string().c_str());
     }
 
     // Whole-grid drop: drag a GameObject from the Hierarchy anywhere onto the asset

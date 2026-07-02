@@ -1272,6 +1272,9 @@ static void MergeSceneIntoCurrent(EditorState& ed, const std::string& path) {
     }
 }
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
+bool   g_uiMarquee = false;      // box-select drag active in the UI editor
+bool   g_uiMarqueeAdd = false;   // additive (Ctrl/Shift held when it started)
+ImVec2 g_uiMarqueeA{0, 0}, g_uiMarqueeB{0, 0};   // absolute screen corners of the box
 int   g_spriteHandle = -1;   // 0..7 sprite resize handle being dragged in the 2D view
 
 // First connected game controller (opened in main); fed into Input during Play.
@@ -14139,12 +14142,17 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* lg = dynamic_cast<UILayoutGroup*>(curComp)) {
         if (CompHeader("UI Layout Group", lg, &toRemove)) {
-            const char* dirs[] = {"Vertical", "Horizontal"};
+            const char* dirs[] = {"Vertical", "Horizontal", "Grid"};
             int d = (int)lg->direction;
-            if (ImGui::Combo("Direction##lg", &d, dirs, 2)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            if (ImGui::Combo("Direction##lg", &d, dirs, 3)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            bool isGrid = (lg->direction == UILayoutGroup::Direction::Grid);
+            if (isGrid) {
+                if (ImGui::DragInt("Columns##lg", &lg->columns, 0.1f, 1, 32)) { if (lg->columns < 1) lg->columns = 1; lg->Arrange(); ed.dirty = true; }
+            }
             float orig[2] = {lg->origin.x, lg->origin.y};
             if (ImGui::DragFloat2("Origin##lg", orig, 1.0f)) { lg->origin = {orig[0], orig[1]}; lg->Arrange(); ed.dirty = true; }
-            if (ImGui::DragFloat("Spacing##lg", &lg->spacing, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            if (ImGui::DragFloat(isGrid ? "Column Gap##lg" : "Spacing##lg", &lg->spacing, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            if (isGrid && ImGui::DragFloat("Row Gap##lg", &lg->spacingY, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
             if (ImGui::DragFloat("Padding##lg", &lg->padding, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
             AnchorCombo("Anchor##lg", lg->anchor, ed);
             if (ImGui::SmallButton("Arrange Now##lg")) { lg->Arrange(); ed.dirty = true; }
@@ -17032,6 +17040,34 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     UICanvas::Set(canvasSize.x, canvasSize.y);
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
 
+    // Box-select (marquee): while active, track the far corner; on release, select
+    // every widget the box touches (Ctrl/Shift = add to the current selection). A
+    // tiny box is treated as a plain click on empty space -> deselect.
+    if (g_uiMarquee) {
+        g_uiMarqueeB = io.MousePos;
+        g_uiHandled = true;
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            ImVec2 a(std::min(g_uiMarqueeA.x, g_uiMarqueeB.x), std::min(g_uiMarqueeA.y, g_uiMarqueeB.y));
+            ImVec2 b(std::max(g_uiMarqueeA.x, g_uiMarqueeB.x), std::max(g_uiMarqueeA.y, g_uiMarqueeB.y));
+            bool tiny = (b.x - a.x < 3.0f && b.y - a.y < 3.0f);
+            if (tiny) { if (!g_uiMarqueeAdd) ed.Select(nullptr); }
+            else {
+                if (!g_uiMarqueeAdd) ed.Select(nullptr);
+                for (const auto& up : ed.scene().Objects()) {
+                    GameObject* g = up.get();
+                    if (!g || !g->active || UIHidden(g)) continue;
+                    UIRect rr = GetUIRect(g); if (!rr.valid) continue;
+                    Vec2 o, sz; if (!GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) continue;
+                    ImVec2 wa(canvasPos.x + o.x, canvasPos.y + o.y), wb(wa.x + sz.x, wa.y + sz.y);
+                    bool intersects = !(wb.x < a.x || wa.x > b.x || wb.y < a.y || wa.y > b.y);
+                    if (intersects && !ed.IsSelected(g)) ed.ToggleSelect(g);
+                }
+            }
+            g_uiMarquee = false;
+        }
+        return;
+    }
+
     // Mouse wheel over a Scroll View's viewport scrolls it (preview authoring).
     if (hovered && io.MouseWheel != 0.0f && !ed.isPlaying()) {  // play mode scrolls via Input wheel
         for (const auto& up : ed.scene().Objects()) {
@@ -17397,6 +17433,12 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 g_uiResizeHandle = -1;
                 g_uiDragRawValid = false;                  // fresh drag: reseed accumulator
                 g_uiHandled = true;
+            } else if (!ImGui::IsKeyDown(ImGuiKey_Space)) {
+                // Clicked empty canvas: begin a marquee box-select (Ctrl/Shift adds to
+                // the current selection instead of replacing it). Space+drag is reserved
+                // for panning the canvas, so don't start a marquee then.
+                g_uiMarquee = true; g_uiMarqueeAdd = (io.KeyCtrl || io.KeyShift);
+                g_uiMarqueeA = g_uiMarqueeB = io.MousePos; g_uiHandled = true;
             }
         }
     }
@@ -19411,6 +19453,13 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             dash(sa0, ImVec2(sa1.x, sa0.y)); dash(ImVec2(sa1.x, sa0.y), sa1);
             dash(sa1, ImVec2(sa0.x, sa1.y)); dash(ImVec2(sa0.x, sa1.y), sa0);
             dl->AddText(ImVec2(sa0.x + 4, sa0.y + 2), sg, "Safe Area");
+        }
+        // Marquee box-select rectangle (drag on empty canvas).
+        if (g_uiMarquee) {
+            ImVec2 ma(std::min(g_uiMarqueeA.x, g_uiMarqueeB.x), std::min(g_uiMarqueeA.y, g_uiMarqueeB.y));
+            ImVec2 mb(std::max(g_uiMarqueeA.x, g_uiMarqueeB.x), std::max(g_uiMarqueeA.y, g_uiMarqueeB.y));
+            dl->AddRectFilled(ma, mb, IM_COL32(90, 160, 240, 40));
+            dl->AddRect(ma, mb, IM_COL32(120, 180, 255, 220));
         }
         dl->PopClipRect();   // balance the flat-UI clip pushed above
     } else if (ed.view3D) {

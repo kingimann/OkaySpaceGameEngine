@@ -16928,10 +16928,32 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     if (right)  rr = Mathf::Max(rr + io.MouseDelta.x, l + minPx);
                     if (top)    t  = Mathf::Min(t + io.MouseDelta.y, bb - minPx);
                     if (bottom) bb = Mathf::Max(bb + io.MouseDelta.y, t + minPx);
-                    // Snap the dragged edge to canvas/sibling guide lines.
+                    // Resize modifiers (Unity/Photoshop-style): Shift = keep the original
+                    // aspect ratio, Alt = resize symmetrically about the original center.
+                    const float cx0 = o.x + sz.x * 0.5f, cy0 = o.y + sz.y * 0.5f;
+                    if (io.KeyShift && sz.x > 1e-3f && sz.y > 1e-3f) {
+                        float aspect0 = sz.x / sz.y;
+                        if ((left || right) && (top || bottom)) {   // corner: width drives, opposite corner fixed
+                            float newH = (rr - l) / aspect0;
+                            if (top) t = bb - newH; else bb = t + newH;
+                        } else if (left || right) {                 // horizontal edge: height about center
+                            float newH = (rr - l) / aspect0; t = cy0 - newH * 0.5f; bb = cy0 + newH * 0.5f;
+                        } else if (top || bottom) {                 // vertical edge: width about center
+                            float newW = (bb - t) * aspect0; l = cx0 - newW * 0.5f; rr = cx0 + newW * 0.5f;
+                        }
+                    }
+                    if (io.KeyAlt) {                                 // mirror each dragged edge about the center
+                        if (left)   rr = 2.0f * cx0 - l;
+                        if (right)  l  = 2.0f * cx0 - rr;
+                        if (top)    bb = 2.0f * cy0 - t;
+                        if (bottom) t  = 2.0f * cy0 - bb;
+                    }
+                    // Snap the dragged edge to canvas/sibling guide lines — skipped while
+                    // Shift/Alt is held so the constrained (aspect / centered) size isn't
+                    // broken by a guide pulling one edge on its own.
                     g_uiGuideX = g_uiGuideY = -1.0f;
                     bool gxHit = false, gyHit = false;
-                    if (g_snap) {
+                    if (g_snap && !io.KeyShift && !io.KeyAlt) {
                         // Canvas edges + center, AND the 5% safe-area inset edges, so UI
                         // snaps to the safe area for easy resize (as well as to siblings).
                         std::vector<float> cx{0.0f, canvasSize.x * 0.05f, canvasSize.x * 0.5f, canvasSize.x * 0.95f, canvasSize.x};
@@ -18928,6 +18950,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     ImGui::SameLine();
     ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"
                                   : "drag: move  right-drag: pan  wheel: zoom");
+    if (uiOnly) {   // surface the resize modifiers so they're discoverable
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        ImGui::TextDisabled("resize: Shift=ratio  Alt=center  (dbl-click a button = edit its text)");
+    }
 
     ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();

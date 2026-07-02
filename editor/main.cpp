@@ -19168,12 +19168,35 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             }
         }
         // Safe-area inset (5% of the game screen): keep important UI inside this on TVs
-        // / notched phones. A true inset of the real (zoomed) screen — not the panel.
+        // / notched phones. A true inset of the real (zoomed) screen — exactly the same
+        // viewPos/viewSize the screen rect above uses, so it's a uniform border. To make
+        // that unmistakable, the margin BETWEEN the screen edge and the safe area is
+        // tinted (like a TV-overscan mask) and the inset is a bright dashed green box.
         if (g_uiShowSafeArea) {
             float mx = viewSize.x * 0.05f, my = viewSize.y * 0.05f;
-            dl->AddRect(ImVec2(viewPos.x + mx, viewPos.y + my),
-                        ImVec2(uiEnd.x - mx, uiEnd.y - my),
-                        IM_COL32(90, 220, 130, 150), 0.0f, 0, 1.5f);
+            ImVec2 sa0(viewPos.x + mx, viewPos.y + my);      // safe-area top-left
+            ImVec2 sa1(uiEnd.x - mx,  uiEnd.y - my);         // safe-area bottom-right
+            // Tint the four margin bands (screen edge -> safe area) so the unsafe zone reads.
+            ImU32 mask = IM_COL32(70, 200, 120, 30);
+            dl->AddRectFilled(viewPos, ImVec2(uiEnd.x, sa0.y), mask);            // top band
+            dl->AddRectFilled(ImVec2(viewPos.x, sa1.y), uiEnd, mask);           // bottom band
+            dl->AddRectFilled(ImVec2(viewPos.x, sa0.y), ImVec2(sa0.x, sa1.y), mask); // left band
+            dl->AddRectFilled(ImVec2(sa1.x, sa0.y), ImVec2(uiEnd.x, sa1.y), mask);   // right band
+            // Bright dashed-ish green inset border (segmented so it can't be mistaken for
+            // the solid screen border) + a label.
+            ImU32 sg = IM_COL32(90, 230, 140, 230);
+            auto dash = [&](ImVec2 p0, ImVec2 p1) {
+                float len = std::sqrt((p1.x-p0.x)*(p1.x-p0.x) + (p1.y-p0.y)*(p1.y-p0.y));
+                int seg = (int)(len / 10.0f); if (seg < 1) seg = 1;
+                for (int i = 0; i < seg; i += 2) {
+                    float t0 = (float)i / seg, t1 = (float)(i+1) / seg;
+                    dl->AddLine(ImVec2(p0.x + (p1.x-p0.x)*t0, p0.y + (p1.y-p0.y)*t0),
+                                ImVec2(p0.x + (p1.x-p0.x)*t1, p0.y + (p1.y-p0.y)*t1), sg, 1.5f);
+                }
+            };
+            dash(sa0, ImVec2(sa1.x, sa0.y)); dash(ImVec2(sa1.x, sa0.y), sa1);
+            dash(sa1, ImVec2(sa0.x, sa1.y)); dash(ImVec2(sa0.x, sa1.y), sa0);
+            dl->AddText(ImVec2(sa0.x + 4, sa0.y + 2), sg, "Safe Area");
         }
         dl->PopClipRect();   // balance the flat-UI clip pushed above
     } else if (ed.view3D) {

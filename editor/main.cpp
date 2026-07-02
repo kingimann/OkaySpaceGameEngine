@@ -140,9 +140,61 @@ ImU32 ToColor(const Color& c) {
     return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(c.a * 255));
 }
 
-// ---- Z-buffered 3D: render meshes into an SDL texture we blit into the view,
-//      so overlapping faces occlude correctly (the ImGui draw list has no depth
-//      buffer). Set by main(); the texture is reused/resized across frames.
+// ---- Crash diagnostics -------------------------------------------------
+// A single "which step are we on" breadcrumb + (on Windows) an unhandled-exception
+// handler that reports it. The UI-editing crash reproduces only on some real Windows
+// GPUs (Direct3D) — never under Linux ASan/UBSan or Wine — so this captures the exact
+// step and faulting address on the user's machine. OKAY_TRACE is near-free (a copy
+// into a static buffer). In a release build ImGui's IM_ASSERT is a no-op, so a UI bug
+// surfaces as a real access violation, which the SEH filter below catches.
+char g_okayTrace[256] = "startup";
+inline void OkayTrace(const char* s) {
+    std::strncpy(g_okayTrace, s, sizeof(g_okayTrace) - 1);
+    g_okayTrace[sizeof(g_okayTrace) - 1] = '\0';
+}
+#define OKAY_TRACE(s) OkayTrace(s)
+
+#if defined(_WIN32)
+// On an unhandled access violation, report the last breadcrumb + faulting module and
+// offset (both to a MessageBox the user can read back, and to okay_crash.txt beside
+// the editor with a full module+offset backtrace we can resolve with addr2line).
+static LONG WINAPI OkayCrashFilter(EXCEPTION_POINTERS* ep) {
+    unsigned long long addr = (ep && ep->ExceptionRecord) ? (unsigned long long)(uintptr_t)ep->ExceptionRecord->ExceptionAddress : 0;
+    unsigned long      code = (ep && ep->ExceptionRecord) ? ep->ExceptionRecord->ExceptionCode : 0;
+    auto modInfo = [](unsigned long long a, char* name, size_t cap, unsigned long long& base) {
+        base = 0; if (name && cap) name[0] = '\0';
+        HMODULE m = nullptr;
+        if (a && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                    (LPCSTR)(uintptr_t)a, &m) && m) {
+            GetModuleFileNameA(m, name, (DWORD)cap); base = (unsigned long long)(uintptr_t)m;
+        }
+    };
+    char modName[MAX_PATH] = "?"; unsigned long long modBase = 0;
+    modInfo(addr, modName, sizeof(modName), modBase);
+    char msg[1200];
+    std::snprintf(msg, sizeof(msg),
+        "OkaySpace crashed.\n\nLast step: %s\nException: 0x%08lX\nAt: %s + 0x%llX\n\n"
+        "Details were saved to okay_crash.txt next to the editor.\n"
+        "Please tell support the \"Last step\" line above.",
+        g_okayTrace, code, modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
+    if (FILE* f = std::fopen("okay_crash.txt", "w")) {
+        std::fprintf(f, "OkaySpace crash report\nLast step: %s\nException: 0x%08lX\nFault module: %s + 0x%llX\n\nBacktrace:\n",
+                     g_okayTrace, code, modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
+        void* frames[48];
+        USHORT n = CaptureStackBackTrace(0, 48, frames, nullptr);
+        for (USHORT i = 0; i < n; ++i) {
+            char mn[MAX_PATH]; unsigned long long mb = 0;
+            modInfo((unsigned long long)(uintptr_t)frames[i], mn, sizeof(mn), mb);
+            std::fprintf(f, "  #%02d %s + 0x%llX\n", i, mn[0] ? mn : "?",
+                         mb ? ((unsigned long long)(uintptr_t)frames[i] - mb) : (unsigned long long)(uintptr_t)frames[i]);
+        }
+        std::fclose(f);
+    }
+    MessageBoxA(nullptr, msg, "OkaySpace crash", MB_OK | MB_ICONERROR);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 SDL_Renderer* g_sdlRenderer = nullptr;
 // GPU (OpenGL) 3D rendering — "what Unity uses". The scene is rasterized by the GPU
 // (hardware MSAA + depth) on an isolated hidden GL context, read back, and shown via
@@ -15172,6 +15224,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // lines up with the objects and gizmos in whatever view you're looking at.
     for (const UIDrawItem& _it : edItems) {
         const auto& up = objs[_it.index];
+        { static char _tb[80]; std::snprintf(_tb, sizeof(_tb), "overlay:item kind=%d idx=%zu name=%.24s",
+              _it.kind, (size_t)_it.index, (up && !up->name.empty()) ? up->name.c_str() : "?"); OkayTrace(_tb); }
         if (_it.kind == K_Scroll) {   // Scroll View backgrounds (behind content) + scrollbar
         auto* sv = up->GetComponent<UIScrollView>();
         if (!sv || !up->active || UIHidden(up.get())) continue;
@@ -18680,6 +18734,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // Project world-space-canvas widgets through the active view BEFORE editing, so
     // they can be picked, dragged and resized in the viewport (the pick/drag helpers
     // go through GetUIScreenRect, which needs this context). Screen-space UI ignores it.
+    OKAY_TRACE(uiPanel ? "UItab:projector" : "Scene:projector");
     SetEditorWorldUIProjector(ed, canvasSize, ed.view3D, /*gameView=*/false);
 
     // Only ONE viewport may process UI pick/drag per frame. With both the "Scene" view
@@ -18696,6 +18751,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
 
     // UI editing (pick/drag screen-space widgets) runs first and may consume the
     // click so the world pickers below leave the selection alone.
+    OKAY_TRACE(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
     if (ownsUIInteraction) EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
     else                   g_uiHandled = false;   // this viewport isn't the active one
 
@@ -18749,8 +18805,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 dl->AddRect(ImVec2(fx, fy), ImVec2(fx + fw, fy + fh), IM_COL32(255, 200, 90, 200), 0.0f, 0, 1.5f);
             }
         }
+        OKAY_TRACE(uiPanel ? "UItab:overlay" : "UIonly:overlay");
         DrawUIOverlay(ed, dl, canvasPos, canvasSize, /*gameView=*/false);
         // Outline every UI element's rect so the whole layout is visible at a glance.
+        OKAY_TRACE("UIonly:allbounds");
         if (g_uiShowAllBounds) {
             for (const auto& up : ed.scene().Objects()) {
                 GameObject* g = up.get();
@@ -18773,6 +18831,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     }
 
     // Corner overlay (view mode, object count, live FPS, selection).
+    OKAY_TRACE(uiPanel ? "UItab:corner" : "Scene:corner");
     char overlay[160];
     std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects  |  %.0f FPS%s%s",
                   ed.view3D ? "3D" : "2D", (int)ed.scene().Objects().size(),
@@ -18781,6 +18840,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                   ed.selected() ? ed.selected()->name.c_str() : "");
     dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(200, 200, 210, 255), overlay);
 
+    OKAY_TRACE(uiPanel ? "UItab:end" : "Scene:end");
     ImGui::End();
 }
 
@@ -19179,6 +19239,9 @@ static bool PassesLauncherGate(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
+#endif
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
 

@@ -11,6 +11,7 @@
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
+#include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -309,6 +310,7 @@ static long SceneTriangleLoad(const Scene& scene) {
 // but their definitions live further down the file.
 void SaveSettings();
 void ConsoleLog(const std::string& msg, int level = 0);   // default here so any call site can pass just a message
+static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir);   // defined below; used by the UI menu
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
@@ -2538,6 +2540,33 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 doc->Rebuild(); ed.scene().Update(0.0f);
                 ed.Select(g); ed.dirty = true; created = true;
             }
+            // Prebuilt, fully-editable UI screens — drop one in, then customize or save
+            // it as a reusable prefab/template ("Save Selected as UI" below).
+            if (ImGui::BeginMenu("Prebuilt Screens")) {
+                auto add = [&](const char* label, GameObject* (*fn)(okay::Scene&)) {
+                    if (ImGui::MenuItem(label)) {
+                        ed.PushUndo(); ed.Select(fn(ed.scene()));
+                        ConsoleLog(std::string("Added UI: ") + label); ed.dirty = true; created = true;
+                    }
+                };
+                add("Main Menu",          &okay::UITemplates::AddMainMenu);
+                add("Pause Menu",         &okay::UITemplates::AddPauseMenu);
+                add("Settings",           &okay::UITemplates::AddSettings);
+                add("HUD (health + score)", &okay::UITemplates::AddHUD);
+                add("Dialog Box",         &okay::UITemplates::AddDialogBox);
+                add("Health Bar",         &okay::UITemplates::AddHealthBar);
+                ImGui::EndMenu();
+            }
+            // Save the selected UI subtree as a reusable prefab under Assets/UI, so you
+            // can drop your own custom UI back into any scene from the Project panel.
+            if (ImGui::MenuItem("Save Selected as UI", nullptr, false, ed.selected() != nullptr)) {
+                namespace fs = std::filesystem;
+                fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+                fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
+                SavePrefabInto(ed.selected(), dir);
+                created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Save the selected UI (e.g. a Canvas or a menu Panel + its children) as a reusable .okayprefab in Assets/UI.\nDrop it from the Project panel into any scene to reuse it.");
             ImGui::Separator();
             if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
             if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });

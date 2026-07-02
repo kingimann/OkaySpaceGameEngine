@@ -15224,8 +15224,6 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // lines up with the objects and gizmos in whatever view you're looking at.
     for (const UIDrawItem& _it : edItems) {
         const auto& up = objs[_it.index];
-        { static char _tb[80]; std::snprintf(_tb, sizeof(_tb), "overlay:item kind=%d idx=%zu name=%.24s",
-              _it.kind, (size_t)_it.index, (up && !up->name.empty()) ? up->name.c_str() : "?"); OkayTrace(_tb); }
         if (_it.kind == K_Scroll) {   // Scroll View backgrounds (behind content) + scrollbar
         auto* sv = up->GetComponent<UIScrollView>();
         if (!sv || !up->active || UIHidden(up.get())) continue;
@@ -18531,7 +18529,12 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Outline every UI element's rect so you can see the whole layout");
         ImGui::SameLine();
         if (AccentToggleButton("Safe Area", g_uiShowSafeArea)) g_uiShowSafeArea = !g_uiShowSafeArea;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show a 5% safe-area inset (TV overscan / phone notch margin)");
+        // NOTE: pass the text via "%s" — the literal contains a '%' ("5%"), and handing
+        // it to SetTooltip as the FORMAT string makes vsnprintf read a vararg that was
+        // never passed (the "5% s..." parses as %s), which crashes MinGW's CRT on
+        // Windows (a different vararg ABI than the Linux glibc where it happened to
+        // survive). This is why opening the UI view crashed only on Windows.
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Show a 5% safe-area inset (TV overscan / phone notch margin)");
         ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
         if (AccentToggleButton("Snap", g_snap)) g_snap = !g_snap;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap UI drags/resizes to the grid");

@@ -16157,11 +16157,15 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             // Selection box.
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
                         IM_COL32(255, 200, 0, 255), 2.0f, 0, 2.0f);
-            if (r.sizePtr) {   // resizable: draw the 8 grab handles
+            if (r.sizePtr) {   // resizable: draw the 8 grab handles (white core + dark ring
+                                // so they read clearly over any content and are easy to hit)
                 ImVec2 h[8]; UIHandlePositions(a, b, h);
-                for (int i = 0; i < 8; ++i)
+                for (int i = 0; i < 8; ++i) {
+                    dl->AddRectFilled(ImVec2(h[i].x - 6, h[i].y - 6),
+                                      ImVec2(h[i].x + 6, h[i].y + 6), IM_COL32(20, 20, 24, 255), 2.0f);
                     dl->AddRectFilled(ImVec2(h[i].x - 4, h[i].y - 4),
-                                      ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 200, 0, 255));
+                                      ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 210, 40, 255), 1.5f);
+                }
             }
             // Live position + size readout above the box (the unscaled pixel values
             // you author), on a dark chip so it stays legible over any content.
@@ -16813,6 +16817,30 @@ static void MoveUIChildrenBy(GameObject* dragged, GameObject* go, float dx, floa
     }
 }
 
+// Scale a widget's descendants proportionally as the widget is resized, so a
+// container (a Button, Panel…) and everything inside it — its label Text, an icon —
+// grow and shrink as ONE group, like Unity's scale tool. Each child's offset, box
+// size and text pixel-size scale by (sx,sy); recurses through the subtree. Anchored
+// children already RE-POSITION within the parent's rect; this adds the proportional
+// GROW so the label no longer stays a fixed size while its button changes.
+static void ScaleUIChildrenBy(GameObject* go, float sx, float sy) {
+    if (!go || !go->transform) return;
+    if (!(sx > 0.0f) || !(sy > 0.0f)) return;          // guard NaN/negatives
+    if (sx == 1.0f && sy == 1.0f) return;
+    for (Transform* c : go->transform->Children()) {
+        if (!c || !c->gameObject) continue;
+        GameObject* ch = c->gameObject;
+        UIRect r = GetUIRect(ch);
+        if (r.valid) {
+            if (r.position) { r.position->x *= sx; r.position->y *= sy; }
+            if (r.sizePtr)  { r.sizePtr->x  *= sx; r.sizePtr->y  *= sy; }
+            // Text scales its font with the box (average the axes so glyphs stay round).
+            if (auto* tr = ch->GetComponent<TextRenderer>()) tr->pixelSize *= (sx + sy) * 0.5f;
+        }
+        ScaleUIChildrenBy(ch, sx, sy);
+    }
+}
+
 // Click-to-select and drag-to-reposition for screen-space UI in the Scene view.
 // Runs in both 2D and 3D modes (UI is an overlay, identical in either), and
 // takes priority over the world picking below it — clicking a HUD button selects
@@ -16967,8 +16995,13 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
                     // Grid-snap only on axes that didn't lock onto a guide.
                     auto gsnap = [&](float v, bool guided) { return (g_snap && !guided) ? Mathf::Round(v / grid) * grid : v; };
+                    float oldW = r.sizePtr->x, oldH = r.sizePtr->y;   // for proportional child scale
                     r.sizePtr->x  = gsnap(newScreen.x / s, gxHit);
                     r.sizePtr->y  = gsnap(newScreen.y / s, gyHit);
+                    // Grow/shrink the widget's children with it (label, icon…) so a button
+                    // and its text resize as one group — Unity's scale-tool feel.
+                    if (oldW > 0.5f && oldH > 0.5f)
+                        ScaleUIChildrenBy(g_uiDragTarget, r.sizePtr->x / oldW, r.sizePtr->y / oldH);
                     // Undo the scroll offset here (the stored position is scroll-free).
                     float scrollY = 0.0f;
                     if (UIScrollView* sv = OwningScrollView(g_uiDragTarget)) scrollY = sv->scroll * s;
@@ -17079,7 +17112,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 ImVec2 h[8]; UIHandlePositions(a, b, h);
                 for (int i = 0; i < 8; ++i) {
                     float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
-                    if (dx * dx + dy * dy <= 9.0f * 9.0f) {
+                    if (dx * dx + dy * dy <= 13.0f * 13.0f) {   // generous grab zone
                         ed.PushUndo();                     // checkpoint before a resize
                         g_uiDragTarget = ed.selected();
                         g_uiResizeHandle = i;
@@ -17138,14 +17171,16 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
             }
             if (!hit) hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
             if (hit) {
-                // Clicking a button's label text selects the BUTTON, so you grab and
-                // move the button (and its text) as one — unless the button is already
-                // selected, in which case a second click drills into the text.
-                if (Transform* pt = hit->transform ? hit->transform->Parent() : nullptr)
-                    if (GameObject* par = pt->gameObject)
-                        if (par->GetComponent<UIButton>() && UIButtonTextChild(par) == hit &&
-                            ed.selected() != par)
-                            hit = par;
+                // Clicking a button's label text selects the BUTTON so you always grab and
+                // move the button (and its text) as one. DOUBLE-click drills into the text
+                // child to edit it directly (Unity: click selects the object, double-click
+                // enters it). This makes "move the whole button" the default, reliably.
+                bool drillIn = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                if (!drillIn)
+                    if (Transform* pt = hit->transform ? hit->transform->Parent() : nullptr)
+                        if (GameObject* par = pt->gameObject)
+                            if (par->GetComponent<UIButton>() && UIButtonTextChild(par) == hit)
+                                hit = par;
                 ed.Select(hit);
                 ed.PushUndo();                             // checkpoint before a move
                 g_uiDragTarget = hit;
@@ -18919,9 +18954,12 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     float  uiResScale  = 1.0f;
     if (uiOnly) LetterboxGameScreen(canvasPos, canvasSize, uiCanvasPos, uiCanvasSize, uiResScale);
     // Match the Game view's HUD scaling so a Constant-Pixel-Size canvas previews at the
-    // same size here as in the Game tab. Reset at the end of the UI-Only branch below so
-    // the scale never leaks into the Scene 3D/2D draw or other views.
-    okay::UIResolutionScale() = uiResScale;
+    // same size here as in the Game tab, AND fold in the authoring zoom so the whole UI
+    // magnifies uniformly (widgets, not just the canvas box) — otherwise zooming moved
+    // widgets around without resizing them. ScaleWithScreenSize canvases pick the zoom up
+    // from the zoomed canvas size; Constant-Pixel-Size ones need it here. Reset at the end
+    // of the UI-Only branch so the scale never leaks into the Scene 3D/2D draw.
+    okay::UIResolutionScale() = uiResScale * (uiOnly ? g_uiEditZoom : 1.0f);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
@@ -19037,37 +19075,43 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         // the driver, where the software rasterizer just clips them. Clipping here keeps
         // all geometry finite and on-screen. Popped at the end of this branch.
         dl->PushClipRect(canvasPos, canvasEnd, true);
-        ImVec2 uiEnd(uiCanvasPos.x + uiCanvasSize.x, uiCanvasPos.y + uiCanvasSize.y);
+        // The authoring zoom/pan is a pure VIEW transform: apply it to the game-screen rect
+        // so the screen, its guides, the safe area, the subdivision grid, the off-screen
+        // outlines AND the widgets (DrawUIOverlay applies the identical transform + the
+        // matching resolution-scale) all magnify together and stay aligned at any zoom.
+        ImVec2 viewPos = uiCanvasPos, viewSize = uiCanvasSize;
+        ApplyUIEditZoom(viewPos, viewSize);
+        ImVec2 uiEnd(viewPos.x + viewSize.x, viewPos.y + viewSize.y);
         // Dark backdrop over the whole panel; the letterbox margins OUTSIDE the game
         // screen are darkened so it's obvious what is off-screen (not part of the game).
         dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(12, 12, 16, 255));
         // The game "screen" rect: this is exactly what the player sees. UI is edited
         // against it, so anything you place inside it is guaranteed visible in-game.
-        dl->AddRectFilled(uiCanvasPos, uiEnd, IM_COL32(28, 28, 32, 255));
-        dl->AddRect(uiCanvasPos, uiEnd, IM_COL32(120, 130, 150, 220), 0.0f, 0, 1.5f);
+        dl->AddRectFilled(viewPos, uiEnd, IM_COL32(28, 28, 32, 255));
+        dl->AddRect(viewPos, uiEnd, IM_COL32(120, 130, 150, 220), 0.0f, 0, 1.5f);
         // Rule-of-thirds guides + a brighter center cross, relative to the game screen.
         if (g_uiShowGuides) {
             for (int i = 1; i <= 2; ++i) {
-                float gx = uiCanvasPos.x + uiCanvasSize.x * (i / 3.0f);
-                float gy = uiCanvasPos.y + uiCanvasSize.y * (i / 3.0f);
-                dl->AddLine(ImVec2(gx, uiCanvasPos.y), ImVec2(gx, uiEnd.y), IM_COL32(255, 255, 255, 12));
-                dl->AddLine(ImVec2(uiCanvasPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(255, 255, 255, 12));
+                float gx = viewPos.x + viewSize.x * (i / 3.0f);
+                float gy = viewPos.y + viewSize.y * (i / 3.0f);
+                dl->AddLine(ImVec2(gx, viewPos.y), ImVec2(gx, uiEnd.y), IM_COL32(255, 255, 255, 12));
+                dl->AddLine(ImVec2(viewPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(255, 255, 255, 12));
             }
-            ImVec2 ctr(uiCanvasPos.x + uiCanvasSize.x * 0.5f, uiCanvasPos.y + uiCanvasSize.y * 0.5f);
-            dl->AddLine(ImVec2(ctr.x, uiCanvasPos.y), ImVec2(ctr.x, uiEnd.y), IM_COL32(255, 255, 255, 24));
-            dl->AddLine(ImVec2(uiCanvasPos.x, ctr.y), ImVec2(uiEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
+            ImVec2 ctr(viewPos.x + viewSize.x * 0.5f, viewPos.y + viewSize.y * 0.5f);
+            dl->AddLine(ImVec2(ctr.x, viewPos.y), ImVec2(ctr.x, uiEnd.y), IM_COL32(255, 255, 255, 24));
+            dl->AddLine(ImVec2(viewPos.x, ctr.y), ImVec2(uiEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
         }
         // Subdivision grid: split the game screen into N×M cells (a layout grid you can
         // snap UI to — "subdivide, then resize to the divisions", like a 3D model).
         if (g_uiShowSubdiv) {
             int nx = g_uiSubdivX < 1 ? 1 : g_uiSubdivX, ny = g_uiSubdivY < 1 ? 1 : g_uiSubdivY;
             for (int i = 1; i < nx; ++i) {
-                float gx = uiCanvasPos.x + uiCanvasSize.x * ((float)i / nx);
-                dl->AddLine(ImVec2(gx, uiCanvasPos.y), ImVec2(gx, uiEnd.y), IM_COL32(120, 180, 255, 40));
+                float gx = viewPos.x + viewSize.x * ((float)i / nx);
+                dl->AddLine(ImVec2(gx, viewPos.y), ImVec2(gx, uiEnd.y), IM_COL32(120, 180, 255, 40));
             }
             for (int j = 1; j < ny; ++j) {
-                float gy = uiCanvasPos.y + uiCanvasSize.y * ((float)j / ny);
-                dl->AddLine(ImVec2(uiCanvasPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(120, 180, 255, 40));
+                float gy = viewPos.y + viewSize.y * ((float)j / ny);
+                dl->AddLine(ImVec2(viewPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(120, 180, 255, 40));
             }
         }
         OKAY_TRACE(uiPanel ? "UItab:overlay" : "UIonly:overlay");
@@ -19075,6 +19119,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         // Outline every UI element's rect so the whole layout is visible at a glance.
         // A widget outside the screen rect is flagged in RED — that's UI that runs off
         // screen in the built game (so "is my UI visible?" is answerable at a glance).
+        // Resolved against the ZOOMED screen (viewSize) + the zoomed resolution-scale set
+        // above, so these outlines sit exactly on the widgets DrawUIOverlay drew.
         OKAY_TRACE("UIonly:allbounds");
         {
             for (const auto& up : ed.scene().Objects()) {
@@ -19083,11 +19129,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 UIRect r = GetUIRect(g);
                 if (!r.sizePtr && !r.position) continue;   // not a UI widget
                 Vec2 o, sz;
-                if (GetUIScreenRect(g, uiCanvasSize.x, uiCanvasSize.y, o, sz)) {
-                    ImVec2 a(uiCanvasPos.x + o.x, uiCanvasPos.y + o.y);
+                if (GetUIScreenRect(g, viewSize.x, viewSize.y, o, sz)) {
+                    ImVec2 a(viewPos.x + o.x, viewPos.y + o.y);
                     ImVec2 b(a.x + sz.x, a.y + sz.y);
                     bool offScreen = (o.x < -0.5f || o.y < -0.5f ||
-                                      o.x + sz.x > uiCanvasSize.x + 0.5f || o.y + sz.y > uiCanvasSize.y + 0.5f);
+                                      o.x + sz.x > viewSize.x + 0.5f || o.y + sz.y > viewSize.y + 0.5f);
                     if (offScreen)                 // runs off the game screen — warn in red
                         dl->AddRect(a, b, IM_COL32(240, 90, 90, 220), 0.0f, 0, 2.0f);
                     else if (g_uiShowAllBounds && g != ed.selected())
@@ -19096,10 +19142,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             }
         }
         // Safe-area inset (5% of the game screen): keep important UI inside this on TVs
-        // / notched phones. It's a true inset of the real screen now, not the panel.
+        // / notched phones. A true inset of the real (zoomed) screen — not the panel.
         if (g_uiShowSafeArea) {
-            float mx = uiCanvasSize.x * 0.05f, my = uiCanvasSize.y * 0.05f;
-            dl->AddRect(ImVec2(uiCanvasPos.x + mx, uiCanvasPos.y + my),
+            float mx = viewSize.x * 0.05f, my = viewSize.y * 0.05f;
+            dl->AddRect(ImVec2(viewPos.x + mx, viewPos.y + my),
                         ImVec2(uiEnd.x - mx, uiEnd.y - my),
                         IM_COL32(90, 220, 130, 150), 0.0f, 0, 1.5f);
         }

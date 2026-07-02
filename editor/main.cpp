@@ -583,6 +583,7 @@ bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view lo
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
 bool g_uiShowGuides = true;      // UI-Only: draw the thirds/center alignment guides
 bool g_uiShowSafeArea = false;   // UI-Only: draw a ~5% safe-area inset (TV/notch margin)
+int  g_uiAspectPreset = 0;       // UI-Only: aspect-ratio letterbox guide (0=Free, see kUIAspects)
 int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Selectable editor accent colours (the highlight used on selections, buttons,
@@ -1987,7 +1988,10 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
         if (ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode) && g_uiOnlyMode)
             g_showUIOverlay = true;   // enabling UI-only implies showing the UI overlay
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (Unity's UI view).\nAlso available as the 'UI Only' button on the Scene toolbar.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock THIS Scene view to a flat UI canvas with the 3D scene hidden (Unity's UI view).\nAlso available as the 'UI Only' button on the Scene toolbar.");
+        if (ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor) && g_showUIEditor)
+            g_showUIOverlay = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
         ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
         ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
         ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
@@ -2871,6 +2875,27 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
         AssetDropTarget(s);   // drop assets onto a folder to move them in
         if (open) { DrawFolderTree(s, dirBuf, bufsz); ImGui::TreePop(); }
     }
+}
+
+// Does a GameObject reference the asset with this filename? Checks the common
+// path-bearing components (textures, meshes, fonts, scripts) so the Project tab can
+// "Find References in Scene" — Unity's most-used Project action. Matches by filename
+// suffix so a relative or absolute path both count.
+static bool ObjectUsesAsset(GameObject* go, const std::string& fname) {
+    if (!go || fname.empty()) return false;
+    std::string b = Lower(fname);
+    auto hit = [&](const std::string& p) {
+        if (p.empty()) return false;
+        std::string a = Lower(p);
+        return a == b || (a.size() >= b.size() && a.compare(a.size() - b.size(), b.size(), b) == 0);
+    };
+    if (auto* sr = go->GetComponent<SpriteRenderer>()) if (hit(sr->texture)) return true;
+    if (auto* mr = go->GetComponent<MeshRenderer>())   if (hit(mr->texture) || hit(mr->meshPath)) return true;
+    if (auto* im = go->GetComponent<UIImage>())        if (hit(im->texture)) return true;
+    if (auto* tr = go->GetComponent<TextRenderer>())   if (hit(tr->fontPath)) return true;
+    if (auto* bt = go->GetComponent<UIButton>())       if (hit(bt->fontPath)) return true;
+    for (auto* sc : go->GetComponents<ScriptComponent>()) if (hit(sc->Path())) return true;
+    return false;
 }
 
 void DrawProject(EditorState& ed) {
@@ -18354,6 +18379,49 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap UI drags/resizes to the grid");
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
         ImGui::DragInt("grid##ui", &g_uiGrid, 1.0f, 1, 128, "%dpx");
+        // Aspect-ratio letterbox guide: preview how the layout frames on a given device
+        // shape (purely a visual guide — it does NOT change the canvas the UI resolves
+        // against, so nothing downstream can divide by it).
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        ImGui::Combo("aspect##ui", &g_uiAspectPreset,
+                     "Free\0" "16:9\0" "16:10\0" "4:3\0" "3:2\0" "1:1\0" "9:16 (phone)\0" "18:9 (phone)\0");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a device aspect-ratio frame so you can see how the UI is cropped on that shape");
+        // Frame the selected widget: center + fit it in the view (zoom/pan the canvas).
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Frame Sel") && ed.selected() &&
+            g_lastUICanvas.x > 1.0f && g_lastUICanvas.y > 1.0f) {
+            Vec2 fo, fsz;   // use last frame's canvas size (this row runs before this frame's is known)
+            if (GetUIScreenRect(ed.selected(), g_lastUICanvas.x, g_lastUICanvas.y, fo, fsz) &&
+                fsz.x > 1.0f && fsz.y > 1.0f) {
+                float zx = (g_lastUICanvas.x * 0.7f) / fsz.x, zy = (g_lastUICanvas.y * 0.7f) / fsz.y;
+                g_uiEditZoom = Mathf::Clamp(Mathf::Min(zx, zy), 0.25f, 4.0f);
+                // Pan so the widget's center sits at the canvas center.
+                Vec2 wc{fo.x + fsz.x * 0.5f, fo.y + fsz.y * 0.5f};
+                Vec2 cc{g_lastUICanvas.x * 0.5f, g_lastUICanvas.y * 0.5f};
+                g_uiEditPan = ImVec2((cc.x - wc.x) * g_uiEditZoom, (cc.y - wc.y) * g_uiEditZoom);
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom & center the view on the selected widget");
+        // Compact rect editor for the selected widget (fast edits without the Inspector).
+        if (ed.selected()) {
+            UIRect qr = GetUIRect(ed.selected());
+            if (qr.valid && qr.position) {
+                ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+                ImGui::SetNextItemWidth(96);
+                float pos[2] = {qr.position->x, qr.position->y};
+                if (ImGui::DragFloat2("pos##uiquick", pos, 1.0f, 0, 0, "%.0f")) {
+                    ed.PushUndo(); qr.position->x = pos[0]; qr.position->y = pos[1]; ed.dirty = true;
+                }
+                if (qr.sizePtr) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(96);
+                    float sza[2] = {qr.sizePtr->x, qr.sizePtr->y};
+                    if (ImGui::DragFloat2("size##uiquick", sza, 1.0f, 0, 0, "%.0f")) {
+                        ed.PushUndo(); qr.sizePtr->x = sza[0]; qr.sizePtr->y = sza[1]; ed.dirty = true;
+                    }
+                }
+            }
+        }
     }
     // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
     if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {
@@ -18413,6 +18481,14 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     if (canvasSize.x < 50) canvasSize.x = 50;
     if (canvasSize.y < 50) canvasSize.y = 50;
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+
+    // Defensive: keep the UI-authoring zoom/pan finite and in range. A NaN/Inf here
+    // would flow through ApplyUIEditZoom into the UI overlay's vertex coordinates;
+    // hardware SDL renderers (Direct3D/Metal) can choke on non-finite geometry where
+    // the software rasterizer merely clips it. Costs nothing when the values are sane.
+    if (!std::isfinite(g_uiEditZoom) || g_uiEditZoom < 0.25f || g_uiEditZoom > 4.0f)
+        g_uiEditZoom = Mathf::Clamp(std::isfinite(g_uiEditZoom) ? g_uiEditZoom : 1.0f, 0.25f, 4.0f);
+    if (!std::isfinite(g_uiEditPan.x) || !std::isfinite(g_uiEditPan.y)) g_uiEditPan = ImVec2(0, 0);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
@@ -18502,9 +18578,22 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // go through GetUIScreenRect, which needs this context). Screen-space UI ignores it.
     SetEditorWorldUIProjector(ed, canvasSize, ed.view3D, /*gameView=*/false);
 
+    // Only ONE viewport may process UI pick/drag per frame. With both the "Scene" view
+    // and the dedicated "UI" tab open, letting BOTH run EditUIWidgets would double-apply
+    // the mouse delta to the shared g_uiDragTarget and let one window's stale drag state
+    // bleed into the other — exactly the shared-state hazard that made the old two-window
+    // UI editor crash on open. The hovered viewport claims interaction (and because
+    // `hovered` includes IsItemActive, the viewport that STARTED a drag keeps it even if
+    // the pointer slips outside); a per-frame token blocks any second claimant.
+    static int s_uiInteractClaimFrame = -1;
+    const int s_frameNow = ImGui::GetFrameCount();
+    bool ownsUIInteraction = false;
+    if (hovered && s_uiInteractClaimFrame != s_frameNow) { s_uiInteractClaimFrame = s_frameNow; ownsUIInteraction = true; }
+
     // UI editing (pick/drag screen-space widgets) runs first and may consume the
     // click so the world pickers below leave the selection alone.
-    EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
+    if (ownsUIInteraction) EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
+    else                   g_uiHandled = false;   // this viewport isn't the active one
 
     if (uiOnly) {
         // Flat screen canvas: a neutral background + a dashed "screen" border, then
@@ -18529,6 +18618,26 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             dl->AddRect(ImVec2(canvasPos.x + mx, canvasPos.y + my),
                         ImVec2(canvasEnd.x - mx, canvasEnd.y - my),
                         IM_COL32(90, 220, 130, 130), 0.0f, 0, 1.5f);
+        }
+        // Aspect-ratio frame: a centered rect at the chosen device shape, dimming the
+        // cropped margins so you can see what a 16:9 / phone / square screen would show.
+        if (g_uiAspectPreset > 0) {
+            static const float kUIAspects[] = {0.0f, 16.0f/9, 16.0f/10, 4.0f/3, 3.0f/2, 1.0f, 9.0f/16, 18.0f/9};
+            int ai = g_uiAspectPreset; if (ai < 0 || ai >= (int)(sizeof(kUIAspects)/sizeof(float))) ai = 0;
+            float ar = kUIAspects[ai];
+            if (ar > 0.01f) {
+                float fw = canvasSize.x, fh = fw / ar;
+                if (fh > canvasSize.y) { fh = canvasSize.y; fw = fh * ar; }
+                float fx = canvasPos.x + (canvasSize.x - fw) * 0.5f;
+                float fy = canvasPos.y + (canvasSize.y - fh) * 0.5f;
+                // Dim the letterbox margins outside the device frame.
+                ImU32 dim = IM_COL32(0, 0, 0, 90);
+                if (fy > canvasPos.y) { dl->AddRectFilled(canvasPos, ImVec2(canvasEnd.x, fy), dim);
+                                        dl->AddRectFilled(ImVec2(canvasPos.x, fy + fh), canvasEnd, dim); }
+                if (fx > canvasPos.x) { dl->AddRectFilled(ImVec2(canvasPos.x, fy), ImVec2(fx, fy + fh), dim);
+                                        dl->AddRectFilled(ImVec2(fx + fw, fy), ImVec2(canvasEnd.x, fy + fh), dim); }
+                dl->AddRect(ImVec2(fx, fy), ImVec2(fx + fw, fy + fh), IM_COL32(255, 200, 90, 200), 0.0f, 0, 1.5f);
+            }
         }
         DrawUIOverlay(ed, dl, canvasPos, canvasSize, /*gameView=*/false);
         // Outline every UI element's rect so the whole layout is visible at a glance.
@@ -19467,7 +19576,8 @@ int main(int argc, char** argv) {
         DrawRecoveryPopup(ed);
         DrawProjectSettings(ed);
         if (g_showHierarchy) DrawHierarchy(ed);
-        DrawViewport(ed);   // the "Scene" panel (always shown; UI editing is a mode toggle in it)
+        DrawViewport(ed);   // the "Scene" panel (always shown; UI editing is also a mode toggle in it)
+        if (g_showUIEditor) DrawViewport(ed, /*uiPanel=*/true);   // dedicated dockable "UI" tab
         DrawDataAssetEditor();
         DrawMaterialEditor(ed);
         if (g_showGame)      DrawGameView(ed);

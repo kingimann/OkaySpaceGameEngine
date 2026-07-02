@@ -83,11 +83,19 @@ Recent additions (v2.12–2.14):
   OkaySpace. If you also have unsaved edits in-app when the file changes, a banner
   lets you pick which version to keep. The editor can also **Float** into its own
   window or **Dock** back as a tab.
-- **UI Editing mode** (View ▸ UI Editing Mode, or the **UI Only** button on the
-  Scene toolbar) — hide the 3D/2D scene and edit the Canvas on a flat screen, with
-  zoom/pan, rule-of-thirds guides and a safe-area overlay (Unity's UI view).
-  Dragging a UI child now **snaps stickily to its parent** (edges, center and
-  thirds), Unity-style, in addition to the canvas and sibling smart-guides.
+- **UI editing** — two ways to edit the Canvas on a flat screen (Unity's UI view):
+  a **mode toggle** that locks the Scene view to UI-only (View ▸ UI Editing Mode, or
+  the **UI Only** button on the Scene toolbar), and a **dedicated dockable "UI" tab**
+  (View ▸ UI Editor (separate tab)) you can keep open **beside** the 3D Scene so you
+  see the world and the UI layout at once. Both share the same tools — zoom/pan,
+  rule-of-thirds guides, an **All Bounds** outline of every widget, a **safe-area**
+  inset, grid snap, an **aspect-ratio device frame** (16:9 / 4:3 / 1:1 / 9:16
+  phone…) that shows how the layout crops on that shape, a **Frame Sel** button that
+  zooms/centres on the selected widget, and a compact **pos/size** editor right on
+  the toolbar. Only the viewport under the pointer processes a drag, so having both
+  the Scene view and the UI tab open never double-moves a widget. Dragging a UI
+  child **snaps stickily to its parent** (edges, center and thirds), Unity-style, in
+  addition to the canvas and sibling smart-guides.
 - **Flow Graph** (Window ▸ Flow Graph) — a node view of the selected object's
   **Actions** (visual scripting): the trigger wires to its conditions and a chain
   of instructions. **Add** a condition/instruction and **click any node to edit it

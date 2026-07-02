@@ -577,7 +577,7 @@ float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
-bool g_showUIOverlay = true;     // Scene view: draw the screen-space UI (Canvas) overlay
+bool g_showUIOverlay = false;    // Scene view: overlay the screen-space UI (Canvas) on the 3D/2D scene. OFF by default so editing 3D objects / 2D sprites isn't obscured by the HUD; edit UI in the dedicated UI Only mode / UI tab, or toggle this on. (The Game view always shows UI regardless.)
 bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
 bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view locked to UI-only)
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
@@ -1986,11 +1986,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
-        if (ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode) && g_uiOnlyMode)
-            g_showUIOverlay = true;   // enabling UI-only implies showing the UI overlay
+        ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode);   // flat UI canvas draws directly, independent of the scene overlay toggle
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock THIS Scene view to a flat UI canvas with the 3D scene hidden (Unity's UI view).\nAlso available as the 'UI Only' button on the Scene toolbar.");
-        if (ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor) && g_showUIEditor)
-            g_showUIOverlay = true;
+        ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
         ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
         ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
@@ -15089,6 +15087,18 @@ static Camera* SceneCamera(Scene& s) {
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
+    // Clip ALL UI geometry to the visible panel rect (captured before the authoring
+    // zoom rescales the working copies below). A widget with a bad anchor / stretch /
+    // scale can resolve to an enormous off-screen rect; feeding those extreme vertex
+    // and scissor coordinates to a hardware backend (Direct3D) can crash the driver,
+    // where the software rasterizer merely clips them. RAII so it's popped on every
+    // return path. Covers the Scene overlay, the Game view, and the UI-Only view.
+    struct UIClipGuard {
+        ImDrawList* d;
+        UIClipGuard(ImDrawList* dl_, ImVec2 a, ImVec2 b) : d(dl_) { d->PushClipRect(a, b, true); }
+        ~UIClipGuard() { d->PopClipRect(); }
+    } _uiClip(dl, canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y));
+
     // The scene's default UI font applies to every widget in this pass unless the
     // widget overrides it; cleared at the end so editor chrome stays unaffected.
     g_uiDefaultFont = okay::GetFont(ed.scene().uiFont);
@@ -18410,7 +18420,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the screen-space UI (Canvas) overlay in the Scene view");
     if (!uiPanel) {
         ImGui::SameLine();
-        if (AccentToggleButton("UI Only", g_uiOnlyMode)) { g_uiOnlyMode = !g_uiOnlyMode; if (g_uiOnlyMode) g_showUIOverlay = true; }
+        if (AccentToggleButton("UI Only", g_uiOnlyMode)) g_uiOnlyMode = !g_uiOnlyMode;   // flat UI view draws directly; never force the scene overlay on
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (like Unity's UI view).\nTip: View > UI Editor opens this as its own tab.");
     } else {
         ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "UI Editing");
@@ -18690,6 +18700,12 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     else                   g_uiHandled = false;   // this viewport isn't the active one
 
     if (uiOnly) {
+        // Clip EVERYTHING in the flat UI view to the canvas rect. A widget with a bad
+        // anchor/stretch/scale can resolve to an enormous off-canvas rect; feeding those
+        // extreme vertex + scissor coordinates to a hardware backend (Direct3D) can crash
+        // the driver, where the software rasterizer just clips them. Clipping here keeps
+        // all geometry finite and on-screen. Popped at the end of this branch.
+        dl->PushClipRect(canvasPos, canvasEnd, true);
         // Flat screen canvas: a neutral background + a dashed "screen" border, then
         // just the UI overlay (no 3D/2D world). Unity's dedicated UI editing view.
         dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(28, 28, 32, 255));
@@ -18749,6 +18765,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 }
             }
         }
+        dl->PopClipRect();   // balance the flat-UI clip pushed above
     } else if (ed.view3D) {
         DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     } else {

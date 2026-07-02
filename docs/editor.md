@@ -83,9 +83,13 @@ Recent additions (v2.12–2.14):
   OkaySpace. If you also have unsaved edits in-app when the file changes, a banner
   lets you pick which version to keep. The editor can also **Float** into its own
   window or **Dock** back as a tab.
-- **UI editing** — two ways to edit the Canvas on a flat screen (Unity's UI view):
-  a **mode toggle** that locks the Scene view to UI-only (View ▸ UI Editing Mode, or
-  the **UI Only** button on the Scene toolbar), and a **dedicated dockable "UI" tab**
+- **UI editing** — the screen-space UI (Canvas) is edited in its **own** view, kept
+  out of the way while you work on 3D objects / 2D sprites. The normal Scene view
+  shows **no UI overlay by default** (toggle it with the **UI** button if you want a
+  peek); the **Game** view always shows the UI, since that's what players see. Edit
+  UI two ways (Unity's UI view): a **mode toggle** that locks the Scene view to
+  UI-only (View ▸ UI Editing Mode, or the **UI Only** button on the Scene toolbar),
+  and a **dedicated dockable "UI" tab**
   (View ▸ UI Editor (separate tab)) you can keep open **beside** the 3D Scene so you
   see the world and the UI layout at once. Both share the same tools — zoom/pan,
   rule-of-thirds guides, an **All Bounds** outline of every widget, a **safe-area**

@@ -11,6 +11,7 @@
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
+#include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -122,6 +123,7 @@ int main(int argc, char** argv) {
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
+#  include <dbghelp.h>   // symbolize the crash backtrace to function + file:line
 #else
 #  include <unistd.h>
 #  include <csignal>
@@ -140,9 +142,119 @@ ImU32 ToColor(const Color& c) {
     return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(c.a * 255));
 }
 
-// ---- Z-buffered 3D: render meshes into an SDL texture we blit into the view,
-//      so overlapping faces occlude correctly (the ImGui draw list has no depth
-//      buffer). Set by main(); the texture is reused/resized across frames.
+// ---- Crash diagnostics -------------------------------------------------
+// A single "which step are we on" breadcrumb + (on Windows) an unhandled-exception
+// handler that reports it. The UI-editing crash reproduces only on some real Windows
+// GPUs (Direct3D) — never under Linux ASan/UBSan or Wine — so this captures the exact
+// step and faulting address on the user's machine. OKAY_TRACE is near-free (a copy
+// into a static buffer). In a release build ImGui's IM_ASSERT is a no-op, so a UI bug
+// surfaces as a real access violation, which the SEH filter below catches.
+char g_okayTrace[256] = "startup";
+inline void OkayTrace(const char* s) {
+    std::strncpy(g_okayTrace, s, sizeof(g_okayTrace) - 1);
+    g_okayTrace[sizeof(g_okayTrace) - 1] = '\0';
+}
+#define OKAY_TRACE(s) OkayTrace(s)
+
+#if defined(_WIN32)
+// On an unhandled access violation, report the last breadcrumb + faulting module and
+// offset (both to a MessageBox the user can read back, and to okay_crash.txt beside
+// the editor with a full module+offset backtrace we can resolve with addr2line).
+static LONG WINAPI OkayCrashFilter(EXCEPTION_POINTERS* ep) {
+    unsigned long long addr = (ep && ep->ExceptionRecord) ? (unsigned long long)(uintptr_t)ep->ExceptionRecord->ExceptionAddress : 0;
+    unsigned long      code = (ep && ep->ExceptionRecord) ? ep->ExceptionRecord->ExceptionCode : 0;
+    auto modInfo = [](unsigned long long a, char* name, size_t cap, unsigned long long& base) {
+        base = 0; if (name && cap) name[0] = '\0';
+        HMODULE m = nullptr;
+        if (a && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                    (LPCSTR)(uintptr_t)a, &m) && m) {
+            GetModuleFileNameA(m, name, (DWORD)cap); base = (unsigned long long)(uintptr_t)m;
+        }
+    };
+    char modName[MAX_PATH] = "?"; unsigned long long modBase = 0;
+    modInfo(addr, modName, sizeof(modName), modBase);
+#ifndef OKAY_ENGINE_VERSION
+#  define OKAY_ENGINE_VERSION "?"
+#endif
+    // Timestamp so multiple reports are distinguishable.
+    SYSTEMTIME st; GetLocalTime(&st);
+    char when[32];
+    std::snprintf(when, sizeof(when), "%04d-%02d-%02d %02d:%02d:%02d",
+                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    // Write the report NEXT TO THE EXE (not the cwd, which may be the launcher's), so
+    // it's always found in the same folder as OkayEngine.exe.
+    char crashPath[MAX_PATH]; char exePath[MAX_PATH] = "";
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    std::snprintf(crashPath, sizeof(crashPath), "%s", exePath);
+    if (char* slash = std::strrchr(crashPath, '\\')) std::strcpy(slash + 1, "okay_crash.txt");
+    else std::strcpy(crashPath, "okay_crash.txt");
+    char msg[1400];
+    std::snprintf(msg, sizeof(msg),
+        "OkaySpace crashed.\n\nVersion: %s\nLast step: %s\nException: 0x%08lX\nAt: %s + 0x%llX\n\n"
+        "A report was saved to okay_crash.txt next to the editor.\n"
+        "Please send that file (or the \"Last step\" line above) to support.",
+        OKAY_ENGINE_VERSION, g_okayTrace, code, modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
+    if (FILE* f = std::fopen(crashPath, "w")) {
+        std::fprintf(f, "OkaySpace crash report\nVersion: %s\nWhen: %s\nExe: %s\nLast step: %s\n"
+                        "Exception: 0x%08lX\nFault module: %s + 0x%llX\n\nBacktrace:\n",
+                     OKAY_ENGINE_VERSION, when, exePath[0] ? exePath : "?", g_okayTrace, code,
+                     modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
+        // Symbolize on-device via dbghelp so the report is human-readable (function
+        // names + file:line where DWARF line info is present). Each line ALSO carries
+        // the raw module + offset as a fallback we can resolve with addr2line.
+        HANDLE proc = GetCurrentProcess();
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        bool symOk = SymInitialize(proc, nullptr, TRUE);
+        void* frames[48];
+        USHORT n = CaptureStackBackTrace(0, 48, frames, nullptr);
+        // SYMBOL_INFO + room for the name.
+        char symBuf[sizeof(SYMBOL_INFO) + 512];
+        for (USHORT i = 0; i < n; ++i) {
+            unsigned long long a = (unsigned long long)(uintptr_t)frames[i];
+            char mn[MAX_PATH]; unsigned long long mb = 0;
+            modInfo(a, mn, sizeof(mn), mb);
+            const char* modShort = mn[0] ? mn : "?";
+            if (const char* s = std::strrchr(modShort, '\\')) modShort = s + 1;
+            char fnName[540] = ""; char fileLine[560] = "";
+            if (symOk) {
+                SYMBOL_INFO* si = (SYMBOL_INFO*)symBuf;
+                std::memset(si, 0, sizeof(SYMBOL_INFO));
+                si->SizeOfStruct = sizeof(SYMBOL_INFO); si->MaxNameLen = 500;
+                DWORD64 disp = 0;
+                if (SymFromAddr(proc, (DWORD64)a, &disp, si))
+                    std::snprintf(fnName, sizeof(fnName), "  %s +0x%llX", si->Name, (unsigned long long)disp);
+                IMAGEHLP_LINE64 line; std::memset(&line, 0, sizeof(line));
+                line.SizeOfStruct = sizeof(line); DWORD ld = 0;
+                if (SymGetLineFromAddr64(proc, (DWORD64)a, &ld, &line) && line.FileName)
+                    std::snprintf(fileLine, sizeof(fileLine), "  (%s:%lu)", line.FileName, line.LineNumber);
+            }
+            std::fprintf(f, "  #%02d %s + 0x%llX%s%s\n", i, modShort,
+                         mb ? (a - mb) : a, fnName, fileLine);
+        }
+        if (symOk) SymCleanup(proc);
+        std::fclose(f);
+    }
+    // Also APPEND this report to a rolling history (okay_crashlog.txt) next to the exe,
+    // so the editor's Crash Log tab can show every past report — not just the latest.
+    char logPath[MAX_PATH];
+    std::snprintf(logPath, sizeof(logPath), "%s", exePath);
+    if (char* slash = std::strrchr(logPath, '\\')) std::strcpy(slash + 1, "okay_crashlog.txt");
+    else std::strcpy(logPath, "okay_crashlog.txt");
+    if (FILE* src = std::fopen(crashPath, "r")) {
+        if (FILE* hist = std::fopen(logPath, "a")) {
+            std::fprintf(hist, "\n========== crash @ %s (v%s) ==========\n", when, OKAY_ENGINE_VERSION);
+            char buf[1024]; size_t r;
+            while ((r = std::fread(buf, 1, sizeof(buf), src)) > 0) std::fwrite(buf, 1, r, hist);
+            std::fprintf(hist, "\n");
+            std::fclose(hist);
+        }
+        std::fclose(src);
+    }
+    MessageBoxA(nullptr, msg, "OkaySpace crash", MB_OK | MB_ICONERROR);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 SDL_Renderer* g_sdlRenderer = nullptr;
 // GPU (OpenGL) 3D rendering — "what Unity uses". The scene is rasterized by the GPU
 // (hardware MSAA + depth) on an isolated hidden GL context, read back, and shown via
@@ -198,6 +310,7 @@ static long SceneTriangleLoad(const Scene& scene) {
 // but their definitions live further down the file.
 void SaveSettings();
 void ConsoleLog(const std::string& msg, int level = 0);   // default here so any call site can pass just a message
+static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir);   // defined below; used by the UI menu
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
@@ -295,6 +408,81 @@ SDL_Texture* GetThumb(const std::string& path) {
     }
     cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
     return tex;
+}
+
+// ---- Built-in 2D sprite shapes --------------------------------------------
+// Shared by the "GameObject > 2D Shape" menu and the Sprite Editor's shape presets —
+// a quick way to get common sprites without external art. Defined up here so the menu
+// bar (earlier in the file) can use it.
+enum SpriteShape { SS_Square, SS_Circle, SS_Triangle, SS_Diamond, SS_Star,
+                   SS_Ring, SS_Heart, SS_Rounded, SS_Pentagon, SS_Hexagon, SS_Count };
+static const char* kSpriteShapeNames[SS_Count] = { "Square", "Circle", "Triangle",
+    "Diamond", "Star", "Ring", "Heart", "Rounded Square", "Pentagon", "Hexagon" };
+
+// Paint a shape (foreground colour on transparent) into an RGBA image, 2x2
+// supersampled so edges stay smooth at any size. Polygon shapes use even-odd fill.
+static void PaintSpriteShape(okay::Image& img, int shape, const okay::Color& fg) {
+    const int W = img.Width(), H = img.Height();
+    std::vector<ImVec2> poly;
+    auto ngon = [&](int n, float rot, float rad) {
+        for (int i = 0; i < n; ++i) { float a = rot + i * 6.2831853f / n; poly.push_back(ImVec2(std::cos(a) * rad, std::sin(a) * rad)); }
+    };
+    if (shape == SS_Triangle)      ngon(3, -1.5708f, 0.92f);
+    else if (shape == SS_Pentagon) ngon(5, -1.5708f, 0.92f);
+    else if (shape == SS_Hexagon)  ngon(6, -1.5708f, 0.92f);
+    else if (shape == SS_Star) {
+        for (int i = 0; i < 10; ++i) { float a = -1.5708f + i * 6.2831853f / 10.0f; float r = (i % 2 == 0) ? 0.95f : 0.42f; poly.push_back(ImVec2(std::cos(a) * r, std::sin(a) * r)); }
+    }
+    auto polyInside = [&](float px, float py) {
+        bool in = false; int n = (int)poly.size();
+        for (int i = 0, j = n - 1; i < n; j = i++)
+            if (((poly[i].y > py) != (poly[j].y > py)) &&
+                (px < (poly[j].x - poly[i].x) * (py - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)) in = !in;
+        return in;
+    };
+    const int SSf = 2;
+    for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x) {
+        float cov = 0.0f;
+        for (int sy = 0; sy < SSf; ++sy) for (int sx = 0; sx < SSf; ++sx) {
+            float nx = ((x + (sx + 0.5f) / SSf) / W) * 2.0f - 1.0f;
+            float ny = ((y + (sy + 0.5f) / SSf) / H) * 2.0f - 1.0f;
+            float r2 = nx * nx + ny * ny; bool inside = false;
+            switch (shape) {
+                case SS_Square:  inside = (std::fabs(nx) <= 0.9f && std::fabs(ny) <= 0.9f); break;
+                case SS_Circle:  inside = (r2 <= 0.9f * 0.9f); break;
+                case SS_Ring:    inside = (r2 <= 0.9f * 0.9f && r2 >= 0.55f * 0.55f); break;
+                case SS_Diamond: inside = (std::fabs(nx) + std::fabs(ny) <= 0.9f); break;
+                case SS_Rounded: {
+                    float qx = std::fabs(nx) - 0.55f, qy = std::fabs(ny) - 0.55f;
+                    float mx = qx > 0 ? qx : 0, my = qy > 0 ? qy : 0;
+                    inside = (std::sqrt(mx * mx + my * my) - 0.35f <= 0.0f); break; }
+                case SS_Heart: {
+                    float X = nx * 1.3f, Y = -ny * 1.3f + 0.45f;
+                    float t = (X * X + Y * Y - 1.0f); inside = (t * t * t - X * X * Y * Y * Y <= 0.0f); break; }
+                default: inside = polyInside(nx, ny); break;
+            }
+            if (inside) cov += 1.0f;
+        }
+        cov /= (SSf * SSf);
+        if (cov > 0.0f) { okay::Color c = fg; c.a *= cov; img.SetPixel(x, y, c); }
+    }
+}
+
+// Create a scene sprite from a built-in shape: paint it, save it under the project's
+// Assets/Sprites, then make a Sprite object pointing at it. Returns the object.
+static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
+    namespace fs = std::filesystem;
+    okay::Image im(64, 64);
+    PaintSpriteShape(im, shape, okay::Color(0.90f, 0.92f, 0.98f, 1.0f));
+    fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+    fs::path dir = assets / "Sprites"; std::error_code ec; fs::create_directories(dir, ec);
+    std::string fn = std::string("shape_") + kSpriteShapeNames[shape] + ".png";
+    for (auto& ch : fn) if (ch == ' ') ch = '_';
+    std::string out = (dir / fn).string();
+    im.SavePNG(out);
+    GameObject* go = ed.CreateSprite(kSpriteShapeNames[shape]);
+    if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = out;
+    return go;
 }
 
 // ---- Self-updater + runtime fetcher -----------------------------------
@@ -542,6 +730,8 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProject = true, g_showServices = true, g_showScriptEditor = true;
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
+bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
+bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
@@ -577,13 +767,15 @@ float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
-bool g_showUIOverlay = true;     // Scene view: draw the screen-space UI (Canvas) overlay
+bool g_showUIOverlay = false;    // Scene view: overlay the screen-space UI (Canvas) on the 3D/2D scene. OFF by default so editing 3D objects / 2D sprites isn't obscured by the HUD; edit UI in the dedicated UI Only mode / UI tab, or toggle this on. (The Game view always shows UI regardless.)
 bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
 bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view locked to UI-only)
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
 bool g_uiShowGuides = true;      // UI-Only: draw the thirds/center alignment guides
 bool g_uiShowSafeArea = false;   // UI-Only: draw a ~5% safe-area inset (TV/notch margin)
-int  g_uiAspectPreset = 0;       // UI-Only: aspect-ratio letterbox guide (0=Free, see kUIAspects)
+bool g_uiShowSubdiv = false;     // UI-Only: draw an N×M subdivision grid over the game screen (+ snap UI to it), like subdividing a 3D model
+int  g_uiSubdivX = 3;            // UI-Only: subdivision columns
+int  g_uiSubdivY = 3;            // UI-Only: subdivision rows
 int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Selectable editor accent colours (the highlight used on selections, buttons,
@@ -757,6 +949,9 @@ void LoadSettings() {
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
+        else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
+        else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
+        else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
@@ -787,7 +982,10 @@ void SaveSettings() {
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
-      << "gamecustomh " << g_gameCustomH << "\n";
+      << "gamecustomh " << g_gameCustomH << "\n"
+      << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
+      << "uisubdivx " << g_uiSubdivX << "\n"
+      << "uisubdivy " << g_uiSubdivY << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -1076,6 +1274,9 @@ static void MergeSceneIntoCurrent(EditorState& ed, const std::string& path) {
     }
 }
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
+bool   g_uiMarquee = false;      // box-select drag active in the UI editor
+bool   g_uiMarqueeAdd = false;   // additive (Ctrl/Shift held when it started)
+ImVec2 g_uiMarqueeA{0, 0}, g_uiMarqueeB{0, 0};   // absolute screen corners of the box
 int   g_spriteHandle = -1;   // 0..7 sprite resize handle being dragged in the 2D view
 
 // First connected game controller (opened in main); fed into Input during Play.
@@ -1983,14 +2184,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Profiler", nullptr, &g_showProfiler);
         ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
         ImGui::MenuItem("Console", nullptr, &g_showConsole);
+        ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
+        ImGui::MenuItem("Sprite Editor", nullptr, &g_showSpriteEditor);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites.");
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
-        if (ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode) && g_uiOnlyMode)
-            g_showUIOverlay = true;   // enabling UI-only implies showing the UI overlay
+        ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode);   // flat UI canvas draws directly, independent of the scene overlay toggle
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock THIS Scene view to a flat UI canvas with the 3D scene hidden (Unity's UI view).\nAlso available as the 'UI Only' button on the Scene toolbar.");
-        if (ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor) && g_showUIEditor)
-            g_showUIOverlay = true;
+        ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
         ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
         ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
@@ -2069,6 +2272,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
         bool created = false;
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
+        if (ImGui::BeginMenu("2D Shape")) {     // premade sprite shapes (saved to Assets/Sprites)
+            for (int i = 0; i < SS_Count; ++i)
+                if (ImGui::MenuItem(kSpriteShapeNames[i])) {
+                    ed.Select(CreateShapeSprite(ed, i));
+                    ConsoleLog(std::string("Created ") + kSpriteShapeNames[i] + " sprite"); created = true;
+                }
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Sprite Editor..."))  g_showSpriteEditor = true;
         if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
         ImGui::Separator();
         if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
@@ -2328,6 +2540,33 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 doc->Rebuild(); ed.scene().Update(0.0f);
                 ed.Select(g); ed.dirty = true; created = true;
             }
+            // Prebuilt, fully-editable UI screens — drop one in, then customize or save
+            // it as a reusable prefab/template ("Save Selected as UI" below).
+            if (ImGui::BeginMenu("Prebuilt Screens")) {
+                auto add = [&](const char* label, GameObject* (*fn)(okay::Scene&)) {
+                    if (ImGui::MenuItem(label)) {
+                        ed.PushUndo(); ed.Select(fn(ed.scene()));
+                        ConsoleLog(std::string("Added UI: ") + label); ed.dirty = true; created = true;
+                    }
+                };
+                add("Main Menu",          &okay::UITemplates::AddMainMenu);
+                add("Pause Menu",         &okay::UITemplates::AddPauseMenu);
+                add("Settings",           &okay::UITemplates::AddSettings);
+                add("HUD (health + score)", &okay::UITemplates::AddHUD);
+                add("Dialog Box",         &okay::UITemplates::AddDialogBox);
+                add("Health Bar",         &okay::UITemplates::AddHealthBar);
+                ImGui::EndMenu();
+            }
+            // Save the selected UI subtree as a reusable prefab under Assets/UI, so you
+            // can drop your own custom UI back into any scene from the Project panel.
+            if (ImGui::MenuItem("Save Selected as UI", nullptr, false, ed.selected() != nullptr)) {
+                namespace fs = std::filesystem;
+                fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+                fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
+                SavePrefabInto(ed.selected(), dir);
+                created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Save the selected UI (e.g. a Canvas or a menu Panel + its children) as a reusable .okayprefab in Assets/UI.\nDrop it from the Project panel into any scene to reuse it.");
             ImGui::Separator();
             if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
             if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
@@ -2557,6 +2796,69 @@ void DrawDockSpace(EditorState& ed) {
     DrawStatusBar(ed);
 
     DrawMenuAndToolbar(ed);
+    ImGui::End();
+}
+
+// The folder the editor exe lives in — where the crash handler writes its reports.
+static std::string OkayExeDir() {
+#if defined(_WIN32)
+    char buf[MAX_PATH] = ""; GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    std::string p(buf); auto s = p.find_last_of("\\/");
+    return s == std::string::npos ? std::string(".") : p.substr(0, s);
+#else
+    char buf[4096]; ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) { buf[n] = '\0'; std::string p(buf); auto s = p.find_last_of('/');
+                 return s == std::string::npos ? std::string(".") : p.substr(0, s); }
+    return ".";
+#endif
+}
+
+// Crash Log viewer: shows the crash reports the exception handler writes next to the
+// editor (okay_crashlog.txt = every past crash; okay_crash.txt = the latest), so a
+// user can read them and copy/paste them to send to support — no file hunting.
+void DrawCrashLog() {
+    namespace fs = std::filesystem;
+    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
+    static std::string text;
+    static bool loaded = false;
+    fs::path dir      = OkayExeDir();
+    fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
+    fs::path lastPath = dir / "okay_crash.txt";       // most recent report
+    auto readAll = [](const fs::path& p, std::string& out) -> bool {
+        std::ifstream f(p, std::ios::binary);
+        if (!f) return false;
+        std::stringstream ss; ss << f.rdbuf(); out = ss.str(); return true;
+    };
+    auto load = [&] {
+        text.clear();
+        if (!readAll(histPath, text) || text.empty()) readAll(lastPath, text);
+        loaded = true;
+    };
+    if (!loaded) load();
+
+    if (ImGui::Button("Refresh")) load();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(text.empty());
+    if (ImGui::Button("Copy All")) ImGui::SetClipboardText(text.c_str());
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered() && !text.empty()) ImGui::SetTooltip("%s", "Copy every report to the clipboard, then paste it to support.");
+    ImGui::SameLine();
+    if (ImGui::Button("Open Folder")) extide::RevealInFiles(dir.string());
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Delete the saved crash reports.");
+    ImGui::SameLine(); ImGui::TextDisabled("%s", histPath.string().c_str());
+    ImGui::Separator();
+
+    if (text.empty()) {
+        ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.5f, 1.0f), "No crash reports \xE2\x80\x94 nice.");
+        ImGui::TextDisabled("%s", "If the editor ever crashes, a report is written next to the exe and\nappears here. Use Copy All to send it to support.");
+    } else {
+        ImGui::TextDisabled("Newest report is at the bottom. \xE2\x80\xA2 %d bytes", (int)text.size());
+        // Read-only multiline: selectable + scrollable; Copy All grabs everything.
+        ImGui::InputTextMultiline("##crashbody", (char*)text.data(), text.size() + 1,
+                                  ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
+    }
     ImGui::End();
 }
 
@@ -13869,12 +14171,17 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* lg = dynamic_cast<UILayoutGroup*>(curComp)) {
         if (CompHeader("UI Layout Group", lg, &toRemove)) {
-            const char* dirs[] = {"Vertical", "Horizontal"};
+            const char* dirs[] = {"Vertical", "Horizontal", "Grid"};
             int d = (int)lg->direction;
-            if (ImGui::Combo("Direction##lg", &d, dirs, 2)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            if (ImGui::Combo("Direction##lg", &d, dirs, 3)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            bool isGrid = (lg->direction == UILayoutGroup::Direction::Grid);
+            if (isGrid) {
+                if (ImGui::DragInt("Columns##lg", &lg->columns, 0.1f, 1, 32)) { if (lg->columns < 1) lg->columns = 1; lg->Arrange(); ed.dirty = true; }
+            }
             float orig[2] = {lg->origin.x, lg->origin.y};
             if (ImGui::DragFloat2("Origin##lg", orig, 1.0f)) { lg->origin = {orig[0], orig[1]}; lg->Arrange(); ed.dirty = true; }
-            if (ImGui::DragFloat("Spacing##lg", &lg->spacing, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            if (ImGui::DragFloat(isGrid ? "Column Gap##lg" : "Spacing##lg", &lg->spacing, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            if (isGrid && ImGui::DragFloat("Row Gap##lg", &lg->spacingY, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
             if (ImGui::DragFloat("Padding##lg", &lg->padding, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
             AnchorCombo("Anchor##lg", lg->anchor, ed);
             if (ImGui::SmallButton("Arrange Now##lg")) { lg->Arrange(); ed.dirty = true; }
@@ -15089,6 +15396,18 @@ static Camera* SceneCamera(Scene& s) {
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
+    // Clip ALL UI geometry to the visible panel rect (captured before the authoring
+    // zoom rescales the working copies below). A widget with a bad anchor / stretch /
+    // scale can resolve to an enormous off-screen rect; feeding those extreme vertex
+    // and scissor coordinates to a hardware backend (Direct3D) can crash the driver,
+    // where the software rasterizer merely clips them. RAII so it's popped on every
+    // return path. Covers the Scene overlay, the Game view, and the UI-Only view.
+    struct UIClipGuard {
+        ImDrawList* d;
+        UIClipGuard(ImDrawList* dl_, ImVec2 a, ImVec2 b) : d(dl_) { d->PushClipRect(a, b, true); }
+        ~UIClipGuard() { d->PopClipRect(); }
+    } _uiClip(dl, canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y));
+
     // The scene's default UI font applies to every widget in this pass unless the
     // widget overrides it; cleared at the end so editor chrome stays unaffected.
     g_uiDefaultFont = okay::GetFont(ed.scene().uiFont);
@@ -15932,6 +16251,20 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
     }   // end single UI preview pass
 
+    // Multi-selection: outline every selected widget (the primary gets the full
+    // box + handles below). Secondary members get a lighter cyan box so it's clear
+    // what a group move/align will act on.
+    if (!gameView && ed.MultiSelection().size() > 1) {
+        for (GameObject* g : ed.MultiSelection()) {
+            if (!g || g == ed.selected()) continue;
+            Vec2 o, sz;
+            if (GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) {
+                ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+                ImVec2 b(a.x + sz.x, a.y + sz.y);
+                dl->AddRect(a, b, IM_COL32(80, 210, 230, 220), 0.0f, 0, 1.5f);
+            }
+        }
+    }
     // Selection highlight for the selected widget — works for every UI type and
     // in both the 2D and 3D Scene views (the Game view stays clean). Drag the
     // body to move; drag a handle to resize (handles only on sizable widgets).
@@ -15962,11 +16295,15 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             // Selection box.
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
                         IM_COL32(255, 200, 0, 255), 2.0f, 0, 2.0f);
-            if (r.sizePtr) {   // resizable: draw the 8 grab handles
+            if (r.sizePtr) {   // resizable: draw the 8 grab handles (white core + dark ring
+                                // so they read clearly over any content and are easy to hit)
                 ImVec2 h[8]; UIHandlePositions(a, b, h);
-                for (int i = 0; i < 8; ++i)
+                for (int i = 0; i < 8; ++i) {
+                    dl->AddRectFilled(ImVec2(h[i].x - 6, h[i].y - 6),
+                                      ImVec2(h[i].x + 6, h[i].y + 6), IM_COL32(20, 20, 24, 255), 2.0f);
                     dl->AddRectFilled(ImVec2(h[i].x - 4, h[i].y - 4),
-                                      ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 200, 0, 255));
+                                      ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 210, 40, 255), 1.5f);
+                }
             }
             // Live position + size readout above the box (the unscaled pixel values
             // you author), on a dark chip so it stays legible over any content.
@@ -16618,6 +16955,88 @@ static void MoveUIChildrenBy(GameObject* dragged, GameObject* go, float dx, floa
     }
 }
 
+// Scale a widget's descendants proportionally as the widget is resized, so a
+// container (a Button, Panel…) and everything inside it — its label Text, an icon —
+// grow and shrink as ONE group, like Unity's scale tool. Each child's offset, box
+// size and text pixel-size scale by (sx,sy); recurses through the subtree. Anchored
+// children already RE-POSITION within the parent's rect; this adds the proportional
+// GROW so the label no longer stays a fixed size while its button changes.
+static void ScaleUIChildrenBy(GameObject* go, float sx, float sy) {
+    if (!go || !go->transform) return;
+    if (!(sx > 0.0f) || !(sy > 0.0f)) return;          // guard NaN/negatives
+    if (sx == 1.0f && sy == 1.0f) return;
+    for (Transform* c : go->transform->Children()) {
+        if (!c || !c->gameObject) continue;
+        GameObject* ch = c->gameObject;
+        UIRect r = GetUIRect(ch);
+        if (r.valid) {
+            if (r.position) { r.position->x *= sx; r.position->y *= sy; }
+            if (r.sizePtr)  { r.sizePtr->x  *= sx; r.sizePtr->y  *= sy; }
+            // Text scales its font with the box (average the axes so glyphs stay round).
+            if (auto* tr = ch->GetComponent<TextRenderer>()) tr->pixelSize *= (sx + sy) * 0.5f;
+        }
+        ScaleUIChildrenBy(ch, sx, sy);
+    }
+}
+
+// Align the multi-selection in SCREEN space. A widget's stored position is a linear
+// offset (screen edge = anchorBase + position*scale), so shifting position by
+// Δscreen/scale moves its on-screen edge by Δscreen — this works for ANY anchor.
+// mode: 0..5 = align Left, H-Center, Right, Top, V-Center, Bottom.
+static void AlignUISelection(EditorState& ed, int mode, float W, float H) {
+    const auto& sel = ed.MultiSelection();
+    if (sel.size() < 2 || W < 1.0f || H < 1.0f) return;
+    struct Item { UIRect r; Vec2 o, sz; float s; };
+    std::vector<Item> items;
+    float minL = 1e30f, maxR = -1e30f, minT = 1e30f, maxB = -1e30f;
+    for (GameObject* g : sel) {
+        if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
+        Vec2 o, sz; if (!GetUIScreenRect(g, W, H, o, sz)) continue;
+        float s = UIScaleFor(g, W, H); if (s < 1e-3f) s = 1.0f;
+        items.push_back({r, o, sz, s});
+        minL = std::min(minL, o.x); maxR = std::max(maxR, o.x + sz.x);
+        minT = std::min(minT, o.y); maxB = std::max(maxB, o.y + sz.y);
+    }
+    if (items.size() < 2) return;
+    ed.PushUndo();
+    float cx = (minL + maxR) * 0.5f, cy = (minT + maxB) * 0.5f;
+    for (auto& it : items) {
+        float tx = it.o.x, ty = it.o.y;
+        switch (mode) {
+            case 0: tx = minL; break;              case 1: tx = cx - it.sz.x * 0.5f; break;
+            case 2: tx = maxR - it.sz.x; break;    case 3: ty = minT; break;
+            case 4: ty = cy - it.sz.y * 0.5f; break; case 5: ty = maxB - it.sz.y; break;
+        }
+        it.r.position->x += (tx - it.o.x) / it.s;
+        it.r.position->y += (ty - it.o.y) / it.s;
+    }
+    ed.dirty = true;
+}
+
+// Evenly distribute the multi-selection by center, along X (horiz) or Y.
+static void DistributeUISelection(EditorState& ed, bool horiz, float W, float H) {
+    const auto& sel = ed.MultiSelection();
+    if (sel.size() < 3 || W < 1.0f || H < 1.0f) return;
+    struct Item { UIRect r; float s, c; };
+    std::vector<Item> items;
+    for (GameObject* g : sel) {
+        if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
+        Vec2 o, sz; if (!GetUIScreenRect(g, W, H, o, sz)) continue;
+        float s = UIScaleFor(g, W, H); if (s < 1e-3f) s = 1.0f;
+        items.push_back({r, s, horiz ? (o.x + sz.x * 0.5f) : (o.y + sz.y * 0.5f)});
+    }
+    if (items.size() < 3) return;
+    ed.PushUndo();
+    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.c < b.c; });
+    float first = items.front().c, last = items.back().c, step = (last - first) / (float)(items.size() - 1);
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        float target = first + step * i; auto& it = items[i];
+        if (horiz) it.r.position->x += (target - it.c) / it.s;
+        else       it.r.position->y += (target - it.c) / it.s;
+    }
+    ed.dirty = true;
+}
+
 // Click-to-select and drag-to-reposition for screen-space UI in the Scene view.
 // Runs in both 2D and 3D modes (UI is an overlay, identical in either), and
 // takes priority over the world picking below it — clicking a HUD button selects
@@ -16649,6 +17068,34 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
 
     UICanvas::Set(canvasSize.x, canvasSize.y);
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
+
+    // Box-select (marquee): while active, track the far corner; on release, select
+    // every widget the box touches (Ctrl/Shift = add to the current selection). A
+    // tiny box is treated as a plain click on empty space -> deselect.
+    if (g_uiMarquee) {
+        g_uiMarqueeB = io.MousePos;
+        g_uiHandled = true;
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            ImVec2 a(std::min(g_uiMarqueeA.x, g_uiMarqueeB.x), std::min(g_uiMarqueeA.y, g_uiMarqueeB.y));
+            ImVec2 b(std::max(g_uiMarqueeA.x, g_uiMarqueeB.x), std::max(g_uiMarqueeA.y, g_uiMarqueeB.y));
+            bool tiny = (b.x - a.x < 3.0f && b.y - a.y < 3.0f);
+            if (tiny) { if (!g_uiMarqueeAdd) ed.Select(nullptr); }
+            else {
+                if (!g_uiMarqueeAdd) ed.Select(nullptr);
+                for (const auto& up : ed.scene().Objects()) {
+                    GameObject* g = up.get();
+                    if (!g || !g->active || UIHidden(g)) continue;
+                    UIRect rr = GetUIRect(g); if (!rr.valid) continue;
+                    Vec2 o, sz; if (!GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) continue;
+                    ImVec2 wa(canvasPos.x + o.x, canvasPos.y + o.y), wb(wa.x + sz.x, wa.y + sz.y);
+                    bool intersects = !(wb.x < a.x || wa.x > b.x || wb.y < a.y || wa.y > b.y);
+                    if (intersects && !ed.IsSelected(g)) ed.ToggleSelect(g);
+                }
+            }
+            g_uiMarquee = false;
+        }
+        return;
+    }
 
     // Mouse wheel over a Scroll View's viewport scrolls it (preview authoring).
     if (hovered && io.MouseWheel != 0.0f && !ed.isPlaying()) {  // play mode scrolls via Input wheel
@@ -16705,12 +17152,42 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     if (right)  rr = Mathf::Max(rr + io.MouseDelta.x, l + minPx);
                     if (top)    t  = Mathf::Min(t + io.MouseDelta.y, bb - minPx);
                     if (bottom) bb = Mathf::Max(bb + io.MouseDelta.y, t + minPx);
-                    // Snap the dragged edge to canvas/sibling guide lines.
+                    // Resize modifiers (Unity/Photoshop-style): Shift = keep the original
+                    // aspect ratio, Alt = resize symmetrically about the original center.
+                    const float cx0 = o.x + sz.x * 0.5f, cy0 = o.y + sz.y * 0.5f;
+                    if (io.KeyShift && sz.x > 1e-3f && sz.y > 1e-3f) {
+                        float aspect0 = sz.x / sz.y;
+                        if ((left || right) && (top || bottom)) {   // corner: width drives, opposite corner fixed
+                            float newH = (rr - l) / aspect0;
+                            if (top) t = bb - newH; else bb = t + newH;
+                        } else if (left || right) {                 // horizontal edge: height about center
+                            float newH = (rr - l) / aspect0; t = cy0 - newH * 0.5f; bb = cy0 + newH * 0.5f;
+                        } else if (top || bottom) {                 // vertical edge: width about center
+                            float newW = (bb - t) * aspect0; l = cx0 - newW * 0.5f; rr = cx0 + newW * 0.5f;
+                        }
+                    }
+                    if (io.KeyAlt) {                                 // mirror each dragged edge about the center
+                        if (left)   rr = 2.0f * cx0 - l;
+                        if (right)  l  = 2.0f * cx0 - rr;
+                        if (top)    bb = 2.0f * cy0 - t;
+                        if (bottom) t  = 2.0f * cy0 - bb;
+                    }
+                    // Snap the dragged edge to canvas/sibling guide lines — skipped while
+                    // Shift/Alt is held so the constrained (aspect / centered) size isn't
+                    // broken by a guide pulling one edge on its own.
                     g_uiGuideX = g_uiGuideY = -1.0f;
                     bool gxHit = false, gyHit = false;
-                    if (g_snap) {
-                        std::vector<float> cx{0.0f, canvasSize.x * 0.5f, canvasSize.x};
-                        std::vector<float> cy{0.0f, canvasSize.y * 0.5f, canvasSize.y};
+                    if (g_snap && !io.KeyShift && !io.KeyAlt) {
+                        // Canvas edges + center, AND the 5% safe-area inset edges, so UI
+                        // snaps to the safe area for easy resize (as well as to siblings).
+                        std::vector<float> cx{0.0f, canvasSize.x * 0.05f, canvasSize.x * 0.5f, canvasSize.x * 0.95f, canvasSize.x};
+                        std::vector<float> cy{0.0f, canvasSize.y * 0.05f, canvasSize.y * 0.5f, canvasSize.y * 0.95f, canvasSize.y};
+                        // Subdivision-grid cell lines (when the grid is shown) so UI snaps to it.
+                        if (g_uiShowSubdiv) {
+                            int snx = g_uiSubdivX < 1 ? 1 : g_uiSubdivX, sny = g_uiSubdivY < 1 ? 1 : g_uiSubdivY;
+                            for (int si = 1; si < snx; ++si) cx.push_back(canvasSize.x * ((float)si / snx));
+                            for (int sj = 1; sj < sny; ++sj) cy.push_back(canvasSize.y * ((float)sj / sny));
+                        }
                         for (const auto& up2 : ed.scene().Objects()) {
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
@@ -16764,8 +17241,13 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
                     // Grid-snap only on axes that didn't lock onto a guide.
                     auto gsnap = [&](float v, bool guided) { return (g_snap && !guided) ? Mathf::Round(v / grid) * grid : v; };
+                    float oldW = r.sizePtr->x, oldH = r.sizePtr->y;   // for proportional child scale
                     r.sizePtr->x  = gsnap(newScreen.x / s, gxHit);
                     r.sizePtr->y  = gsnap(newScreen.y / s, gyHit);
+                    // Grow/shrink the widget's children with it (label, icon…) so a button
+                    // and its text resize as one group — Unity's scale-tool feel.
+                    if (oldW > 0.5f && oldH > 0.5f)
+                        ScaleUIChildrenBy(g_uiDragTarget, r.sizePtr->x / oldW, r.sizePtr->y / oldH);
                     // Undo the scroll offset here (the stored position is scroll-free).
                     float scrollY = 0.0f;
                     if (UIScrollView* sv = OwningScrollView(g_uiDragTarget)) scrollY = sv->scroll * s;
@@ -16786,8 +17268,16 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     g_uiGuideX = g_uiGuideY = -1.0f;
                     if (g_snap) {
                         Vec2 o, sz; GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o, sz);
-                        std::vector<float> cx{0.0f, canvasSize.x * 0.5f, canvasSize.x};
-                        std::vector<float> cy{0.0f, canvasSize.y * 0.5f, canvasSize.y};
+                        // Canvas edges + center, AND the 5% safe-area inset edges, so UI
+                        // snaps to the safe area for easy resize (as well as to siblings).
+                        std::vector<float> cx{0.0f, canvasSize.x * 0.05f, canvasSize.x * 0.5f, canvasSize.x * 0.95f, canvasSize.x};
+                        std::vector<float> cy{0.0f, canvasSize.y * 0.05f, canvasSize.y * 0.5f, canvasSize.y * 0.95f, canvasSize.y};
+                        // Subdivision-grid cell lines (when the grid is shown) so UI snaps to it.
+                        if (g_uiShowSubdiv) {
+                            int snx = g_uiSubdivX < 1 ? 1 : g_uiSubdivX, sny = g_uiSubdivY < 1 ? 1 : g_uiSubdivY;
+                            for (int si = 1; si < snx; ++si) cx.push_back(canvasSize.x * ((float)si / snx));
+                            for (int sj = 1; sj < sny; ++sj) cy.push_back(canvasSize.y * ((float)sj / sny));
+                        }
                         for (const auto& up2 : ed.scene().Objects()) {
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
@@ -16842,7 +17332,28 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     }
                     // Carry child widgets (e.g. a button's label) by the same amount
                     // so a parent and its children move together.
-                    MoveUIChildrenBy(g_uiDragTarget, g_uiDragTarget, r.position->x - beforeX, r.position->y - beforeY);
+                    float movedX = r.position->x - beforeX, movedY = r.position->y - beforeY;
+                    MoveUIChildrenBy(g_uiDragTarget, g_uiDragTarget, movedX, movedY);
+                    // Group move: shift every OTHER selected widget by the same design-space
+                    // delta so a multi-selection drags as one. Skip any widget that's a
+                    // descendant of another selected widget (its ancestor already carries it,
+                    // via MoveUIChildrenBy) so it isn't double-moved.
+                    if (ed.MultiSelection().size() > 1 && (movedX != 0.0f || movedY != 0.0f)) {
+                        const auto& sel = ed.MultiSelection();
+                        auto ancestorSelected = [&](GameObject* g) {
+                            for (Transform* p = g->transform ? g->transform->Parent() : nullptr; p; p = p->Parent())
+                                if (p->gameObject && std::find(sel.begin(), sel.end(), p->gameObject) != sel.end()) return true;
+                            return false;
+                        };
+                        for (GameObject* g : sel) {
+                            if (!g || g == g_uiDragTarget || ancestorSelected(g)) continue;
+                            UIRect gr = GetUIRect(g);
+                            if (gr.valid && gr.position) {
+                                gr.position->x += movedX; gr.position->y += movedY;
+                                MoveUIChildrenBy(g, g, movedX, movedY);
+                            }
+                        }
+                    }
                 }
                 ed.dirty = true;
             }
@@ -16868,7 +17379,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 ImVec2 h[8]; UIHandlePositions(a, b, h);
                 for (int i = 0; i < 8; ++i) {
                     float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
-                    if (dx * dx + dy * dy <= 9.0f * 9.0f) {
+                    if (dx * dx + dy * dy <= 13.0f * 13.0f) {   // generous grab zone
                         ed.PushUndo();                     // checkpoint before a resize
                         g_uiDragTarget = ed.selected();
                         g_uiResizeHandle = i;
@@ -16908,22 +17419,55 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
         }
         // Otherwise pick a widget under the cursor and start moving it.
         if (!g_uiHandled) {
-            GameObject* hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
+            // Pick the SMALLEST widget under the cursor, not the top-most draw-order one
+            // (Unity selects the most specific element). This makes small widgets on top
+            // of big panels actually selectable — the old top-most rule made you keep
+            // hitting the panel/background. World-space widgets fall back to UIRaycast.
+            GameObject* hit = nullptr; float bestArea = 3.4e38f;
+            for (const auto& up : ed.scene().Objects()) {
+                GameObject* g = up.get();
+                if (!g || !g->active || UIHidden(g)) continue;
+                UIRect r = GetUIRect(g);
+                if (!r.valid) continue;
+                Vec2 o, sz;
+                if (!GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) continue;
+                if (mouseCanvas.x < o.x || mouseCanvas.y < o.y ||
+                    mouseCanvas.x > o.x + sz.x || mouseCanvas.y > o.y + sz.y) continue;
+                float area = (sz.x < 1 ? 1 : sz.x) * (sz.y < 1 ? 1 : sz.y);
+                if (area < bestArea) { bestArea = area; hit = g; }
+            }
+            if (!hit) hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
             if (hit) {
-                // Clicking a button's label text selects the BUTTON, so you grab and
-                // move the button (and its text) as one — unless the button is already
-                // selected, in which case a second click drills into the text.
-                if (Transform* pt = hit->transform ? hit->transform->Parent() : nullptr)
-                    if (GameObject* par = pt->gameObject)
-                        if (par->GetComponent<UIButton>() && UIButtonTextChild(par) == hit &&
-                            ed.selected() != par)
-                            hit = par;
-                ed.Select(hit);
+                // Clicking a button's label text selects the BUTTON so you always grab and
+                // move the button (and its text) as one. DOUBLE-click drills into the text
+                // child to edit it directly (Unity: click selects the object, double-click
+                // enters it). This makes "move the whole button" the default, reliably.
+                bool drillIn = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                if (!drillIn)
+                    if (Transform* pt = hit->transform ? hit->transform->Parent() : nullptr)
+                        if (GameObject* par = pt->gameObject)
+                            if (par->GetComponent<UIButton>() && UIButtonTextChild(par) == hit)
+                                hit = par;
+                // Multi-select: Ctrl/Shift-click adds or removes this widget from the set
+                // (so you can build up a group). Clicking a widget that's ALREADY in a
+                // multi-selection keeps the whole group and drags it together; a plain
+                // click on a fresh widget selects just it.
+                if (io.KeyCtrl || io.KeyShift) {
+                    ed.ToggleSelect(hit);
+                } else if (!(ed.MultiSelection().size() > 1 && ed.IsSelected(hit))) {
+                    ed.Select(hit);
+                }
                 ed.PushUndo();                             // checkpoint before a move
                 g_uiDragTarget = hit;
                 g_uiResizeHandle = -1;
                 g_uiDragRawValid = false;                  // fresh drag: reseed accumulator
                 g_uiHandled = true;
+            } else if (!ImGui::IsKeyDown(ImGuiKey_Space)) {
+                // Clicked empty canvas: begin a marquee box-select (Ctrl/Shift adds to
+                // the current selection instead of replacing it). Space+drag is reserved
+                // for panning the canvas, so don't start a marquee then.
+                g_uiMarquee = true; g_uiMarqueeAdd = (io.KeyCtrl || io.KeyShift);
+                g_uiMarqueeA = g_uiMarqueeB = io.MousePos; g_uiHandled = true;
             }
         }
     }
@@ -17002,7 +17546,12 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float hy = sr->size.y * ls.y * 0.5f * scale;
             ImVec2 c = worldToScreen(wp);
             ImVec2 a(c.x - hx, c.y - hy), b(c.x + hx, c.y + hy);
-            dl->AddRectFilled(a, b, ToColor(sr->color));
+            // Draw the sprite's texture (tinted by its colour, alpha respected) so shapes
+            // and imported art actually show — falling back to a solid colour quad only
+            // when there's no (loadable) texture.
+            SDL_Texture* stex = sr->texture.empty() ? nullptr : GetThumb(sr->texture);
+            if (stex) dl->AddImage((ImTextureID)stex, a, b, ImVec2(0, 0), ImVec2(1, 1), ToColor(sr->color));
+            else      dl->AddRectFilled(a, b, ToColor(sr->color));
             if (!gameView && go == ed.selected())
                 dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2),
                             IM_COL32(255, 200, 0, 255), 0, 0, 2.0f);
@@ -17096,7 +17645,10 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     SetEditorWorldUIProjector(ed, canvasSize, /*view3D=*/false, gameView);
 
     // Screen-space UI (text, images, panels, bars, sliders, toggles, buttons).
-    if (gameView || g_showUIOverlay) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+    // UI lives in its OWN section — the dedicated UI Only mode / UI tab — never mixed
+    // into the 3D or 2D scene while you edit world objects. So the Scene view never
+    // overlays the Canvas; only the Game view (what the player sees) draws UI here.
+    if (gameView) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Transform gizmo at the selection, reflecting the active tool (Move/Rotate/Scale).
     if (!gameView && ed.selected() && !IsUIElement(ed.selected())) {
@@ -17640,7 +18192,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Screen-space UI draws on top of the 3D view too, so UI added to a 3D
     // project (HUD, menus, buttons) is visible here and in the Game view.
-    if (gameView || g_showUIOverlay) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+    // UI lives in its OWN section — the dedicated UI Only mode / UI tab — never mixed
+    // into the 3D or 2D scene while you edit world objects. So the Scene view never
+    // overlays the Canvas; only the Game view (what the player sees) draws UI here.
+    if (gameView) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Camera Preview (Unity): when a perspective Camera is selected, show what
     // it sees in a small inset in the corner of the Scene view (slot 2 so it
@@ -18362,6 +18917,62 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 }
 
+// ---- Shared game / UI screen resolution ------------------------------------
+// The Game tab and the UI-Only editor frame UI against the SAME screen, so what you
+// lay out in the UI editor is exactly what ships — WYSIWYG, the way Unity's Game-view
+// resolution drives the Canvas rect you edit in the Scene view. Both index this one
+// table with g_gameResPreset; the UI editor has no separate aspect setting anymore.
+struct GameResPreset { const char* name; float aspect; int w, h; };
+static const GameResPreset kGameResPresets[] = {
+    {"Free Aspect",             0.0f,         0,    0},
+    {"16:9",                    16.0f/9,      0,    0},
+    {"16:10",                   16.0f/10,     0,    0},
+    {"21:9 (ultrawide)",        21.0f/9,      0,    0},
+    {"4:3",                     4.0f/3,       0,    0},
+    {"3:2",                     3.0f/2,       0,    0},
+    {"1:1 (square)",            1.0f,         0,    0},
+    {"9:16 (portrait)",         9.0f/16,      0,    0},
+    {"1920 x 1080  (1080p)",    1920.0f/1080, 1920, 1080},
+    {"2560 x 1440  (1440p)",    2560.0f/1440, 2560, 1440},
+    {"3840 x 2160  (4K)",       3840.0f/2160, 3840, 2160},
+    {"1280 x 720   (720p)",     1280.0f/720,  1280, 720},
+    {"1600 x 900",              1600.0f/900,  1600, 900},
+    {"1080 x 1920  (portrait)", 1080.0f/1920, 1080, 1920},
+    {"720 x 1280   (portrait)", 720.0f/1280,  720,  1280},
+    {"1170 x 2532  (iPhone)",   1170.0f/2532, 1170, 2532},
+    {"1668 x 2388  (iPad)",     1668.0f/2388, 1668, 2388},
+    {"Custom...",               0.0f,        -1,   -1},   // -1 => use g_gameCustomW/H
+};
+static constexpr int kGameResCount     = (int)(sizeof(kGameResPresets) / sizeof(kGameResPresets[0]));
+static constexpr int kGameResCustomIdx = kGameResCount - 1;
+
+// Resolve the current selection to aspect + pixel size. Pure-aspect presets report
+// w=h=0 (aspect only); fixed and Custom presets carry real pixel dimensions.
+static void CurrentGameRes(float& aspect, int& w, int& h) {
+    int i = g_gameResPreset; if (i < 0 || i >= kGameResCount) i = 0;
+    w = kGameResPresets[i].w; h = kGameResPresets[i].h;
+    if (i == kGameResCustomIdx) { w = g_gameCustomW; h = g_gameCustomH; }
+    aspect = (w > 0 && h > 0) ? (float)w / (float)h : kGameResPresets[i].aspect;
+}
+
+// Letterbox the current game screen inside an available region (centered). "Free"
+// aspect fills the region. Also returns the CanvasScaler resolution-scale a fixed-
+// resolution HUD previews at (Unity's UIResolutionScale = on-screen height / target
+// height) so a Constant-Pixel-Size canvas looks identical in the editor and the game.
+static void LetterboxGameScreen(ImVec2 origin, ImVec2 avail,
+                                ImVec2& outPos, ImVec2& outSize, float& outResScale) {
+    float aspect; int w, h; CurrentGameRes(aspect, w, h);
+    ImVec2 size = avail, pos = origin;
+    if (aspect > 0.0f) {
+        float boxW = avail.x, boxH = avail.x / aspect;
+        if (boxH > avail.y) { boxH = avail.y; boxW = avail.y * aspect; }
+        size = ImVec2(boxW, boxH);
+        pos  = ImVec2(origin.x + (avail.x - boxW) * 0.5f, origin.y + (avail.y - boxH) * 0.5f);
+    }
+    outPos = pos; outSize = size;
+    outResScale = (h > 0) ? size.y / (float)h : 1.0f;
+}
+
 void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // A dedicated "UI" tab is just the Scene view locked to UI-only mode, so UI
     // editing gets its own dockable window without losing the 3D Scene view.
@@ -18403,14 +19014,14 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // Local/Global handle orientation (Unity's toggle); X toggles it. Tinted when Local.
     if (AccentToggleButton(g_gizmoLocal ? "Local" : "Global", g_gizmoLocal)) g_gizmoLocal = !g_gizmoLocal;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gizmo orientation: Local (object) vs Global (world). Shortcut: X");
-    // UI section (Unity-style): toggle the screen-space UI overlay, and a "UI Only"
-    // mode that hides the 3D/2D scene and shows just the Canvas on a flat screen.
+    // UI section (Unity-style): a "UI Only" mode that hides the 3D/2D scene and shows
+    // just the Canvas on a flat screen. UI is NEVER overlaid on the 3D/2D scene — it
+    // has its own section (this mode + the dockable UI tab), so there's no scene
+    // "UI overlay" toggle anymore.
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    if (AccentToggleButton("UI", g_showUIOverlay)) g_showUIOverlay = !g_showUIOverlay;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the screen-space UI (Canvas) overlay in the Scene view");
     if (!uiPanel) {
         ImGui::SameLine();
-        if (AccentToggleButton("UI Only", g_uiOnlyMode)) { g_uiOnlyMode = !g_uiOnlyMode; if (g_uiOnlyMode) g_showUIOverlay = true; }
+        if (AccentToggleButton("UI Only", g_uiOnlyMode)) g_uiOnlyMode = !g_uiOnlyMode;   // flat UI view draws directly; never force the scene overlay on
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (like Unity's UI view).\nTip: View > UI Editor opens this as its own tab.");
     } else {
         ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "UI Editing");
@@ -18467,20 +19078,80 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Outline every UI element's rect so you can see the whole layout");
         ImGui::SameLine();
         if (AccentToggleButton("Safe Area", g_uiShowSafeArea)) g_uiShowSafeArea = !g_uiShowSafeArea;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show a 5% safe-area inset (TV overscan / phone notch margin)");
+        // NOTE: pass the text via "%s" — the literal contains a '%' ("5%"), and handing
+        // it to SetTooltip as the FORMAT string makes vsnprintf read a vararg that was
+        // never passed (the "5% s..." parses as %s), which crashes MinGW's CRT on
+        // Windows (a different vararg ABI than the Linux glibc where it happened to
+        // survive). This is why opening the UI view crashed only on Windows.
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Show a 5% safe-area inset (TV overscan / phone notch margin)");
         ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
         if (AccentToggleButton("Snap", g_snap)) g_snap = !g_snap;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap UI drags/resizes to the grid");
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
         ImGui::DragInt("grid##ui", &g_uiGrid, 1.0f, 1, 128, "%dpx");
-        // Aspect-ratio letterbox guide: preview how the layout frames on a given device
-        // shape (purely a visual guide — it does NOT change the canvas the UI resolves
-        // against, so nothing downstream can divide by it).
         ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-        ImGui::SetNextItemWidth(110);
-        ImGui::Combo("aspect##ui", &g_uiAspectPreset,
-                     "Free\0" "16:9\0" "16:10\0" "4:3\0" "3:2\0" "1:1\0" "9:16 (phone)\0" "18:9 (phone)\0");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a device aspect-ratio frame so you can see how the UI is cropped on that shape");
+        // The screen the UI is laid out against = the SAME resolution the Game view
+        // renders at. Editing g_gameResPreset here keeps the two tabs perfectly in sync
+        // (pick a resolution once; the UI editor and the Game tab both use it).
+        ImGui::SetNextItemWidth(150);
+        {
+            int gi = g_gameResPreset; if (gi < 0 || gi >= kGameResCount) gi = 0;
+            if (ImGui::BeginCombo("screen##ui", kGameResPresets[gi].name)) {
+                for (int i = 0; i < kGameResCount; ++i) {
+                    if (i == 1 || i == 8 || i == kGameResCustomIdx) ImGui::Separator();  // aspects / fixed / custom
+                    if (ImGui::Selectable(kGameResPresets[i].name, g_gameResPreset == i)) { g_gameResPreset = i; SaveSettings(); }
+                }
+                ImGui::EndCombo();
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The game screen the UI is laid out against — the SAME resolution as the Game view.\nWhat you see here is exactly what ships; widgets that run off-screen are outlined red.\n'Free Aspect' uses the whole panel.");
+        if (g_gameResPreset == kGameResCustomIdx) {   // custom W/H, mirrored from the Game tab
+            ImGui::SameLine(); ImGui::SetNextItemWidth(64);
+            if (ImGui::DragInt("##uicw", &g_gameCustomW, 1.0f, 16, 8192, "W %d")) SaveSettings();
+            ImGui::SameLine(); ImGui::SetNextItemWidth(64);
+            if (ImGui::DragInt("##uich", &g_gameCustomH, 1.0f, 16, 8192, "H %d")) SaveSettings();
+            g_gameCustomW = g_gameCustomW < 16 ? 16 : g_gameCustomW;
+            g_gameCustomH = g_gameCustomH < 16 ? 16 : g_gameCustomH;
+        }
+        // Subdivision grid (like subdividing a 3D model): split the game screen into
+        // N×M cells you can snap UI edges/centers to, for laying out clean grids fast.
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        if (AccentToggleButton("Subdivide", g_uiShowSubdiv)) { g_uiShowSubdiv = !g_uiShowSubdiv; SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Divide the game screen into an even grid of cells (with Snap on, UI edges/centers snap to it).\nLike subdividing a 3D model, then resizing UI to the divisions.");
+        if (g_uiShowSubdiv) {
+            ImGui::SameLine(); ImGui::SetNextItemWidth(54);
+            if (ImGui::DragInt("##subx", &g_uiSubdivX, 0.1f, 1, 32, "%d cols")) SaveSettings();
+            ImGui::SameLine(); ImGui::SetNextItemWidth(54);
+            if (ImGui::DragInt("##suby", &g_uiSubdivY, 0.1f, 1, 32, "%d rows")) SaveSettings();
+            g_uiSubdivX = g_uiSubdivX < 1 ? 1 : (g_uiSubdivX > 32 ? 32 : g_uiSubdivX);
+            g_uiSubdivY = g_uiSubdivY < 1 ? 1 : (g_uiSubdivY > 32 ? 32 : g_uiSubdivY);
+        }
+        // Align & distribute the multi-selection (Ctrl/Shift-click widgets to build it).
+        if (ed.MultiSelection().size() >= 2) {
+            float aw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
+            float ah = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
+            ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+            ImGui::TextDisabled("Align:"); ImGui::SameLine();
+            struct AB { const char* lbl; int mode; const char* tip; };
+            static const AB kAlign[] = {
+                {"L", 0, "Align left edges"}, {"C", 1, "Align horizontal centers"}, {"R", 2, "Align right edges"},
+                {"T", 3, "Align top edges"},  {"M", 4, "Align vertical centers"},   {"B", 5, "Align bottom edges"} };
+            for (int i = 0; i < 6; ++i) {
+                if (i) ImGui::SameLine(0, 2);
+                ImGui::PushID(3200 + i);
+                if (ImGui::SmallButton(kAlign[i].lbl)) AlignUISelection(ed, kAlign[i].mode, aw, ah);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kAlign[i].tip);
+                ImGui::PopID();
+            }
+            if (ed.MultiSelection().size() >= 3) {
+                ImGui::SameLine(); ImGui::TextDisabled("Dist:"); ImGui::SameLine();
+                if (ImGui::SmallButton("H")) DistributeUISelection(ed, true, aw, ah);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distribute horizontally (even spacing)");
+                ImGui::SameLine(0, 2);
+                if (ImGui::SmallButton("V")) DistributeUISelection(ed, false, aw, ah);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distribute vertically (even spacing)");
+            }
+        }
         // Frame the selected widget: center + fit it in the view (zoom/pan the canvas).
         ImGui::SameLine();
         if (ImGui::SmallButton("Frame Sel") && ed.selected() &&
@@ -18569,6 +19240,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     ImGui::SameLine();
     ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"
                                   : "drag: move  right-drag: pan  wheel: zoom");
+    if (uiOnly) {   // surface the resize modifiers so they're discoverable
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        ImGui::TextDisabled("resize: Shift=ratio  Alt=center  (dbl-click a button = edit its text)");
+    }
 
     ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
@@ -18583,6 +19258,24 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     if (!std::isfinite(g_uiEditZoom) || g_uiEditZoom < 0.25f || g_uiEditZoom > 4.0f)
         g_uiEditZoom = Mathf::Clamp(std::isfinite(g_uiEditZoom) ? g_uiEditZoom : 1.0f, 0.25f, 4.0f);
     if (!std::isfinite(g_uiEditPan.x) || !std::isfinite(g_uiEditPan.y)) g_uiEditPan = ImVec2(0, 0);
+
+    // In UI-Only mode the UI is edited against the GAME SCREEN — the SAME resolution the
+    // Game tab renders at (g_gameResPreset), letterboxed inside the editor panel — not the
+    // raw panel. Everything (hit-testing, drawing, the safe-area inset) resolves against
+    // THIS rect AND at the same CanvasScaler resolution-scale, so what you lay out here is
+    // pixel-for-pixel what the Game view (and the built game) shows: a widget at the edge
+    // stays on-screen, the safe area is a true inset of the real screen, and a fixed-res
+    // HUD is the same size in both tabs. "Free Aspect" uses the whole panel.
+    ImVec2 uiCanvasPos = canvasPos, uiCanvasSize = canvasSize;
+    float  uiResScale  = 1.0f;
+    if (uiOnly) LetterboxGameScreen(canvasPos, canvasSize, uiCanvasPos, uiCanvasSize, uiResScale);
+    // Match the Game view's HUD scaling so a Constant-Pixel-Size canvas previews at the
+    // same size here as in the Game tab, AND fold in the authoring zoom so the whole UI
+    // magnifies uniformly (widgets, not just the canvas box) — otherwise zooming moved
+    // widgets around without resizing them. ScaleWithScreenSize canvases pick the zoom up
+    // from the zoomed canvas size; Constant-Pixel-Size ones need it here. Reset at the end
+    // of the UI-Only branch so the scale never leaks into the Scene 3D/2D draw.
+    okay::UIResolutionScale() = uiResScale * (uiOnly ? g_uiEditZoom : 1.0f);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
@@ -18670,7 +19363,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // Project world-space-canvas widgets through the active view BEFORE editing, so
     // they can be picked, dragged and resized in the viewport (the pick/drag helpers
     // go through GetUIScreenRect, which needs this context). Screen-space UI ignores it.
-    SetEditorWorldUIProjector(ed, canvasSize, ed.view3D, /*gameView=*/false);
+    OKAY_TRACE(uiPanel ? "UItab:projector" : "Scene:projector");
+    SetEditorWorldUIProjector(ed, uiCanvasSize, ed.view3D, /*gameView=*/false);
 
     // Only ONE viewport may process UI pick/drag per frame. With both the "Scene" view
     // and the dedicated "UI" tab open, letting BOTH run EditUIWidgets would double-apply
@@ -18686,76 +19380,131 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
 
     // UI editing (pick/drag screen-space widgets) runs first and may consume the
     // click so the world pickers below leave the selection alone.
-    if (ownsUIInteraction) EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
+    OKAY_TRACE(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
+    if (ownsUIInteraction) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io);
     else                   g_uiHandled = false;   // this viewport isn't the active one
 
     if (uiOnly) {
-        // Flat screen canvas: a neutral background + a dashed "screen" border, then
-        // just the UI overlay (no 3D/2D world). Unity's dedicated UI editing view.
-        dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(28, 28, 32, 255));
-        dl->AddRect(canvasPos, canvasEnd, IM_COL32(90, 95, 110, 200), 0.0f, 0, 1.5f);
-        // Rule-of-thirds guides + a brighter center cross, to help align UI.
+        // Clip EVERYTHING in the flat UI view to the canvas rect. A widget with a bad
+        // anchor/stretch/scale can resolve to an enormous off-canvas rect; feeding those
+        // extreme vertex + scissor coordinates to a hardware backend (Direct3D) can crash
+        // the driver, where the software rasterizer just clips them. Clipping here keeps
+        // all geometry finite and on-screen. Popped at the end of this branch.
+        dl->PushClipRect(canvasPos, canvasEnd, true);
+        // The authoring zoom/pan is a pure VIEW transform: apply it to the game-screen rect
+        // so the screen, its guides, the safe area, the subdivision grid, the off-screen
+        // outlines AND the widgets (DrawUIOverlay applies the identical transform + the
+        // matching resolution-scale) all magnify together and stay aligned at any zoom.
+        ImVec2 viewPos = uiCanvasPos, viewSize = uiCanvasSize;
+        ApplyUIEditZoom(viewPos, viewSize);
+        ImVec2 uiEnd(viewPos.x + viewSize.x, viewPos.y + viewSize.y);
+        // Dark backdrop over the whole panel; the letterbox margins OUTSIDE the game
+        // screen are darkened so it's obvious what is off-screen (not part of the game).
+        dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(12, 12, 16, 255));
+        // The game "screen" rect: this is exactly what the player sees. UI is edited
+        // against it, so anything you place inside it is guaranteed visible in-game.
+        dl->AddRectFilled(viewPos, uiEnd, IM_COL32(28, 28, 32, 255));
+        dl->AddRect(viewPos, uiEnd, IM_COL32(120, 130, 150, 220), 0.0f, 0, 1.5f);
+        // Rule-of-thirds guides + a brighter center cross, relative to the game screen.
         if (g_uiShowGuides) {
             for (int i = 1; i <= 2; ++i) {
-                float gx = canvasPos.x + canvasSize.x * (i / 3.0f);
-                float gy = canvasPos.y + canvasSize.y * (i / 3.0f);
-                dl->AddLine(ImVec2(gx, canvasPos.y), ImVec2(gx, canvasEnd.y), IM_COL32(255, 255, 255, 12));
-                dl->AddLine(ImVec2(canvasPos.x, gy), ImVec2(canvasEnd.x, gy), IM_COL32(255, 255, 255, 12));
+                float gx = viewPos.x + viewSize.x * (i / 3.0f);
+                float gy = viewPos.y + viewSize.y * (i / 3.0f);
+                dl->AddLine(ImVec2(gx, viewPos.y), ImVec2(gx, uiEnd.y), IM_COL32(255, 255, 255, 12));
+                dl->AddLine(ImVec2(viewPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(255, 255, 255, 12));
             }
-            ImVec2 ctr(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
-            dl->AddLine(ImVec2(ctr.x, canvasPos.y), ImVec2(ctr.x, canvasEnd.y), IM_COL32(255, 255, 255, 24));
-            dl->AddLine(ImVec2(canvasPos.x, ctr.y), ImVec2(canvasEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
+            ImVec2 ctr(viewPos.x + viewSize.x * 0.5f, viewPos.y + viewSize.y * 0.5f);
+            dl->AddLine(ImVec2(ctr.x, viewPos.y), ImVec2(ctr.x, uiEnd.y), IM_COL32(255, 255, 255, 24));
+            dl->AddLine(ImVec2(viewPos.x, ctr.y), ImVec2(uiEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
         }
-        // Safe-area inset (5%): where important UI should stay on TVs / notched phones.
-        if (g_uiShowSafeArea) {
-            float mx = canvasSize.x * 0.05f, my = canvasSize.y * 0.05f;
-            dl->AddRect(ImVec2(canvasPos.x + mx, canvasPos.y + my),
-                        ImVec2(canvasEnd.x - mx, canvasEnd.y - my),
-                        IM_COL32(90, 220, 130, 130), 0.0f, 0, 1.5f);
-        }
-        // Aspect-ratio frame: a centered rect at the chosen device shape, dimming the
-        // cropped margins so you can see what a 16:9 / phone / square screen would show.
-        if (g_uiAspectPreset > 0) {
-            static const float kUIAspects[] = {0.0f, 16.0f/9, 16.0f/10, 4.0f/3, 3.0f/2, 1.0f, 9.0f/16, 18.0f/9};
-            int ai = g_uiAspectPreset; if (ai < 0 || ai >= (int)(sizeof(kUIAspects)/sizeof(float))) ai = 0;
-            float ar = kUIAspects[ai];
-            if (ar > 0.01f) {
-                float fw = canvasSize.x, fh = fw / ar;
-                if (fh > canvasSize.y) { fh = canvasSize.y; fw = fh * ar; }
-                float fx = canvasPos.x + (canvasSize.x - fw) * 0.5f;
-                float fy = canvasPos.y + (canvasSize.y - fh) * 0.5f;
-                // Dim the letterbox margins outside the device frame.
-                ImU32 dim = IM_COL32(0, 0, 0, 90);
-                if (fy > canvasPos.y) { dl->AddRectFilled(canvasPos, ImVec2(canvasEnd.x, fy), dim);
-                                        dl->AddRectFilled(ImVec2(canvasPos.x, fy + fh), canvasEnd, dim); }
-                if (fx > canvasPos.x) { dl->AddRectFilled(ImVec2(canvasPos.x, fy), ImVec2(fx, fy + fh), dim);
-                                        dl->AddRectFilled(ImVec2(fx + fw, fy), ImVec2(canvasEnd.x, fy + fh), dim); }
-                dl->AddRect(ImVec2(fx, fy), ImVec2(fx + fw, fy + fh), IM_COL32(255, 200, 90, 200), 0.0f, 0, 1.5f);
+        // Subdivision grid: split the game screen into N×M cells (a layout grid you can
+        // snap UI to — "subdivide, then resize to the divisions", like a 3D model).
+        if (g_uiShowSubdiv) {
+            int nx = g_uiSubdivX < 1 ? 1 : g_uiSubdivX, ny = g_uiSubdivY < 1 ? 1 : g_uiSubdivY;
+            for (int i = 1; i < nx; ++i) {
+                float gx = viewPos.x + viewSize.x * ((float)i / nx);
+                dl->AddLine(ImVec2(gx, viewPos.y), ImVec2(gx, uiEnd.y), IM_COL32(120, 180, 255, 40));
+            }
+            for (int j = 1; j < ny; ++j) {
+                float gy = viewPos.y + viewSize.y * ((float)j / ny);
+                dl->AddLine(ImVec2(viewPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(120, 180, 255, 40));
             }
         }
-        DrawUIOverlay(ed, dl, canvasPos, canvasSize, /*gameView=*/false);
+        OKAY_TRACE(uiPanel ? "UItab:overlay" : "UIonly:overlay");
+        DrawUIOverlay(ed, dl, uiCanvasPos, uiCanvasSize, /*gameView=*/false);
         // Outline every UI element's rect so the whole layout is visible at a glance.
-        if (g_uiShowAllBounds) {
+        // A widget outside the screen rect is flagged in RED — that's UI that runs off
+        // screen in the built game (so "is my UI visible?" is answerable at a glance).
+        // Resolved against the ZOOMED screen (viewSize) + the zoomed resolution-scale set
+        // above, so these outlines sit exactly on the widgets DrawUIOverlay drew.
+        OKAY_TRACE("UIonly:allbounds");
+        {
             for (const auto& up : ed.scene().Objects()) {
                 GameObject* g = up.get();
-                if (!g || !g->active || g == ed.selected()) continue;
+                if (!g || !g->active) continue;
                 UIRect r = GetUIRect(g);
                 if (!r.sizePtr && !r.position) continue;   // not a UI widget
                 Vec2 o, sz;
-                if (GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) {
-                    dl->AddRect(ImVec2(canvasPos.x + o.x, canvasPos.y + o.y),
-                                ImVec2(canvasPos.x + o.x + sz.x, canvasPos.y + o.y + sz.y),
-                                IM_COL32(120, 160, 220, 90), 0.0f, 0, 1.0f);
+                if (GetUIScreenRect(g, viewSize.x, viewSize.y, o, sz)) {
+                    ImVec2 a(viewPos.x + o.x, viewPos.y + o.y);
+                    ImVec2 b(a.x + sz.x, a.y + sz.y);
+                    bool offScreen = (o.x < -0.5f || o.y < -0.5f ||
+                                      o.x + sz.x > viewSize.x + 0.5f || o.y + sz.y > viewSize.y + 0.5f);
+                    if (offScreen)                 // runs off the game screen — warn in red
+                        dl->AddRect(a, b, IM_COL32(240, 90, 90, 220), 0.0f, 0, 2.0f);
+                    else if (g_uiShowAllBounds && g != ed.selected())
+                        dl->AddRect(a, b, IM_COL32(120, 160, 220, 90), 0.0f, 0, 1.0f);
                 }
             }
         }
+        // Safe-area inset (5% of the game screen): keep important UI inside this on TVs
+        // / notched phones. A true inset of the real (zoomed) screen — exactly the same
+        // viewPos/viewSize the screen rect above uses, so it's a uniform border. To make
+        // that unmistakable, the margin BETWEEN the screen edge and the safe area is
+        // tinted (like a TV-overscan mask) and the inset is a bright dashed green box.
+        if (g_uiShowSafeArea) {
+            float mx = viewSize.x * 0.05f, my = viewSize.y * 0.05f;
+            ImVec2 sa0(viewPos.x + mx, viewPos.y + my);      // safe-area top-left
+            ImVec2 sa1(uiEnd.x - mx,  uiEnd.y - my);         // safe-area bottom-right
+            // Tint the four margin bands (screen edge -> safe area) so the unsafe zone reads.
+            ImU32 mask = IM_COL32(70, 200, 120, 30);
+            dl->AddRectFilled(viewPos, ImVec2(uiEnd.x, sa0.y), mask);            // top band
+            dl->AddRectFilled(ImVec2(viewPos.x, sa1.y), uiEnd, mask);           // bottom band
+            dl->AddRectFilled(ImVec2(viewPos.x, sa0.y), ImVec2(sa0.x, sa1.y), mask); // left band
+            dl->AddRectFilled(ImVec2(sa1.x, sa0.y), ImVec2(uiEnd.x, sa1.y), mask);   // right band
+            // Bright dashed-ish green inset border (segmented so it can't be mistaken for
+            // the solid screen border) + a label.
+            ImU32 sg = IM_COL32(90, 230, 140, 230);
+            auto dash = [&](ImVec2 p0, ImVec2 p1) {
+                float len = std::sqrt((p1.x-p0.x)*(p1.x-p0.x) + (p1.y-p0.y)*(p1.y-p0.y));
+                int seg = (int)(len / 10.0f); if (seg < 1) seg = 1;
+                for (int i = 0; i < seg; i += 2) {
+                    float t0 = (float)i / seg, t1 = (float)(i+1) / seg;
+                    dl->AddLine(ImVec2(p0.x + (p1.x-p0.x)*t0, p0.y + (p1.y-p0.y)*t0),
+                                ImVec2(p0.x + (p1.x-p0.x)*t1, p0.y + (p1.y-p0.y)*t1), sg, 1.5f);
+                }
+            };
+            dash(sa0, ImVec2(sa1.x, sa0.y)); dash(ImVec2(sa1.x, sa0.y), sa1);
+            dash(sa1, ImVec2(sa0.x, sa1.y)); dash(ImVec2(sa0.x, sa1.y), sa0);
+            dl->AddText(ImVec2(sa0.x + 4, sa0.y + 2), sg, "Safe Area");
+        }
+        // Marquee box-select rectangle (drag on empty canvas).
+        if (g_uiMarquee) {
+            ImVec2 ma(std::min(g_uiMarqueeA.x, g_uiMarqueeB.x), std::min(g_uiMarqueeA.y, g_uiMarqueeB.y));
+            ImVec2 mb(std::max(g_uiMarqueeA.x, g_uiMarqueeB.x), std::max(g_uiMarqueeA.y, g_uiMarqueeB.y));
+            dl->AddRectFilled(ma, mb, IM_COL32(90, 160, 240, 40));
+            dl->AddRect(ma, mb, IM_COL32(120, 180, 255, 220));
+        }
+        dl->PopClipRect();   // balance the flat-UI clip pushed above
     } else if (ed.view3D) {
         DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     } else {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     }
+    okay::UIResolutionScale() = 1.0f;   // never leak the UI-Only preview scale past this view
 
     // Corner overlay (view mode, object count, live FPS, selection).
+    OKAY_TRACE(uiPanel ? "UItab:corner" : "Scene:corner");
     char overlay[160];
     std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects  |  %.0f FPS%s%s",
                   ed.view3D ? "3D" : "2D", (int)ed.scene().Objects().size(),
@@ -18764,12 +19513,220 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                   ed.selected() ? ed.selected()->name.c_str() : "");
     dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(200, 200, 210, 255), overlay);
 
+    OKAY_TRACE(uiPanel ? "UItab:end" : "Scene:end");
     ImGui::End();
 }
 
 // Unity-style "Game" view: renders the scene through its main camera with no
 // editor chrome (grid, gizmos, selection) — what the built game shows. 2D or 3D
 // follows the camera's projection. Read-only; press Play to make it live.
+// ---- Sprite Editor (shape helpers live near the top of the file) -----------
+// 4-connected flood fill (the Sprite Editor's bucket tool).
+static void SpriteFloodFill(okay::Image& img, int sx, int sy, const okay::Color& to) {
+    if (sx < 0 || sy < 0 || sx >= img.Width() || sy >= img.Height()) return;
+    auto q = [](float v) { return (int)(v * 255.0f + 0.5f); };
+    auto eq = [&](const okay::Color& a, const okay::Color& b) { return q(a.r) == q(b.r) && q(a.g) == q(b.g) && q(a.b) == q(b.b) && q(a.a) == q(b.a); };
+    okay::Color from = img.GetPixel(sx, sy);
+    if (eq(from, to)) return;
+    std::vector<std::pair<int, int>> st; st.push_back({sx, sy});
+    while (!st.empty()) {
+        auto pr = st.back(); st.pop_back(); int x = pr.first, y = pr.second;
+        if (x < 0 || y < 0 || x >= img.Width() || y >= img.Height()) continue;
+        if (!eq(img.GetPixel(x, y), from)) continue;
+        img.SetPixel(x, y, to);
+        st.push_back({x + 1, y}); st.push_back({x - 1, y}); st.push_back({x, y + 1}); st.push_back({x, y - 1});
+    }
+}
+
+// Upload an okay::Image to a (recreated-on-resize) nearest-filtered SDL texture for
+// crisp 1:1 pixel preview in the Sprite Editor.
+static SDL_Texture* SpriteEdTexture(okay::Image& img, SDL_Texture*& tex, int& tw, int& th, bool& dirty) {
+    if (!g_sdlRenderer || img.Width() <= 0) return nullptr;
+    if (tex && (tw != img.Width() || th != img.Height())) { SDL_DestroyTexture(tex); tex = nullptr; }
+    if (!tex) {
+        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
+        if (tex) { SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest); }
+        tw = img.Width(); th = img.Height(); dirty = true;
+    }
+    if (tex && dirty) { SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4); dirty = false; }
+    return tex;
+}
+
+// Pixel-art Sprite Editor: paint custom 2D sprites, start from a built-in shape,
+// and save PNGs into the project's Assets/Sprites (optionally applying to the
+// selected SpriteRenderer). A CPU okay::Image is the source of truth; it's uploaded
+// to an SDL texture for a crisp nearest-neighbour preview.
+void DrawSpriteEditor(EditorState& ed) {
+    namespace fs = std::filesystem;
+    if (!ImGui::Begin("Sprite Editor", &g_showSpriteEditor)) { ImGui::End(); return; }
+    static okay::Image img(32, 32);
+    static SDL_Texture* tex = nullptr; static int texW = 0, texH = 0; static bool texDirty = true;
+    static float pri[4] = {0.90f, 0.32f, 0.36f, 1.0f};
+    static int tool = 0;          // 0 pencil, 1 eraser, 2 fill, 3 eyedropper
+    static int zoom = 12;         // display px per texel
+    static bool grid = true;
+    static int sizeIdx = 1;       // 0:16 1:32 2:64 3:128
+    static int shape = SS_Circle;
+    static char nameBuf[64] = "sprite";
+    static std::vector<okay::Image> undo;
+    static bool strokeOpen = false;
+    static int lastPx = -1, lastPy = -1;
+    auto sizeFor = [](int i) { return i == 0 ? 16 : i == 1 ? 32 : i == 2 ? 64 : 128; };
+    auto pushUndo = [&]() { undo.push_back(img); if (undo.size() > 40) undo.erase(undo.begin()); };
+    auto curCol = [&]() { return okay::Color(pri[0], pri[1], pri[2], pri[3]); };
+
+    // ---- Row 1: new / size / shape ----
+    ImGui::SetNextItemWidth(96);
+    ImGui::Combo("##spsize", &sizeIdx, "16 x 16\0" "32 x 32\0" "64 x 64\0" "128 x 128\0");
+    ImGui::SameLine();
+    if (ImGui::Button("New")) { pushUndo(); int s = sizeFor(sizeIdx); img = okay::Image(s, s); texDirty = true; ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) { pushUndo(); img.Fill(okay::Color(0, 0, 0, 0)); texDirty = true; ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("Undo") && !undo.empty()) { img = undo.back(); undo.pop_back(); texDirty = true; ed.dirty = true; }
+    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(130);
+    ImGui::Combo("##spshape", &shape, "Square\0Circle\0Triangle\0Diamond\0Star\0Ring\0Heart\0Rounded Square\0Pentagon\0Hexagon\0");
+    ImGui::SameLine();
+    if (ImGui::Button("Fill Shape")) { pushUndo(); img.Fill(okay::Color(0, 0, 0, 0)); PaintSpriteShape(img, shape, curCol()); texDirty = true; ed.dirty = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replace the canvas with the selected shape in the current colour");
+
+    // ---- Row 2: tools + colour ----
+    const char* toolNames[4] = {"Pencil", "Eraser", "Fill", "Pick"};
+    for (int i = 0; i < 4; ++i) {
+        if (i) ImGui::SameLine();
+        bool on = (tool == i);
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.44f, 0.72f, 1.0f));
+        if (ImGui::Button(toolNames[i])) tool = i;
+        if (on) ImGui::PopStyleColor();
+    }
+    ImGui::SameLine(); ImGui::SetNextItemWidth(220);
+    ImGui::ColorEdit4("##spcol", pri, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs);
+    // Small preset palette.
+    static const ImU32 kPal[] = {
+        IM_COL32(0,0,0,255), IM_COL32(255,255,255,255), IM_COL32(230,60,60,255), IM_COL32(240,150,40,255),
+        IM_COL32(245,220,60,255), IM_COL32(90,200,90,255), IM_COL32(60,150,240,255), IM_COL32(150,90,220,255),
+        IM_COL32(120,80,50,255), IM_COL32(150,150,160,255), IM_COL32(250,180,200,255), IM_COL32(0,0,0,0) };
+    for (int i = 0; i < (int)(sizeof(kPal) / sizeof(kPal[0])); ++i) {
+        ImGui::SameLine();
+        ImVec4 c = ImGui::ColorConvertU32ToFloat4(kPal[i]);
+        ImGui::PushID(1000 + i);
+        if (ImGui::ColorButton("##pal", c, ImGuiColorEditFlags_AlphaPreview, ImVec2(16, 16))) { pri[0] = c.x; pri[1] = c.y; pri[2] = c.z; pri[3] = c.w; }
+        ImGui::PopID();
+    }
+
+    // ---- Row 3: zoom + grid ----
+    ImGui::SetNextItemWidth(160); ImGui::SliderInt("Zoom", &zoom, 2, 32, "%dx");
+    ImGui::SameLine(); ImGui::Checkbox("Grid", &grid);
+    ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", img.Width(), img.Height());
+
+    // ---- Canvas ----
+    SDL_Texture* t = SpriteEdTexture(img, tex, texW, texH, texDirty);
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    float disp = (float)zoom;
+    ImVec2 canvasSz(img.Width() * disp, img.Height() * disp);
+    ImGui::InvisibleButton("spritecanvas", canvasSz,
+        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    // Checkerboard behind (shows transparency), then the sprite, then the grid.
+    for (int y = 0; y < img.Height(); ++y) for (int x = 0; x < img.Width(); ++x) {
+        ImVec2 p0(origin.x + x * disp, origin.y + y * disp), p1(p0.x + disp, p0.y + disp);
+        dl->AddRectFilled(p0, p1, ((x ^ y) & 1) ? IM_COL32(70, 70, 78, 255) : IM_COL32(48, 48, 54, 255));
+    }
+    if (t) dl->AddImage((ImTextureID)t, origin, ImVec2(origin.x + canvasSz.x, origin.y + canvasSz.y));
+    if (grid && disp >= 5.0f) {
+        for (int x = 0; x <= img.Width(); ++x)
+            dl->AddLine(ImVec2(origin.x + x * disp, origin.y), ImVec2(origin.x + x * disp, origin.y + canvasSz.y), IM_COL32(255, 255, 255, 22));
+        for (int y = 0; y <= img.Height(); ++y)
+            dl->AddLine(ImVec2(origin.x, origin.y + y * disp), ImVec2(origin.x + canvasSz.x, origin.y + y * disp), IM_COL32(255, 255, 255, 22));
+    }
+    dl->AddRect(origin, ImVec2(origin.x + canvasSz.x, origin.y + canvasSz.y), IM_COL32(120, 130, 150, 220));
+
+    // Painting: pencil/eraser draw continuously (interpolated so fast drags don't gap);
+    // fill + pick act once per click. One undo snapshot per stroke.
+    ImGuiIO& io = ImGui::GetIO();
+    auto pixelAt = [&](float mx, float my, int& px, int& py) {
+        px = (int)std::floor((mx - origin.x) / disp); py = (int)std::floor((my - origin.y) / disp);
+        return px >= 0 && py >= 0 && px < img.Width() && py < img.Height();
+    };
+    if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        pushUndo(); strokeOpen = true; lastPx = lastPy = -1;
+    }
+    if (strokeOpen && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        int px, py;
+        if (pixelAt(io.MousePos.x, io.MousePos.y, px, py)) {
+            auto apply = [&](int x, int y) {
+                if (x < 0 || y < 0 || x >= img.Width() || y >= img.Height()) return;
+                if (tool == 0) img.SetPixel(x, y, curCol());
+                else if (tool == 1) img.SetPixel(x, y, okay::Color(0, 0, 0, 0));
+            };
+            if (tool == 0 || tool == 1) {
+                if (lastPx < 0) apply(px, py);
+                else {   // integer line from (lastPx,lastPy) to (px,py)
+                    int x0 = lastPx, y0 = lastPy;
+                    int dx = (px > x0 ? px - x0 : x0 - px), dy = -(py > y0 ? py - y0 : y0 - py);
+                    int sx = x0 < px ? 1 : -1, sy = y0 < py ? 1 : -1, err = dx + dy;
+                    for (;;) { apply(x0, y0); if (x0 == px && y0 == py) break; int e2 = 2 * err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } }
+                }
+                lastPx = px; lastPy = py; texDirty = true; ed.dirty = true;
+            } else if (tool == 2 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                SpriteFloodFill(img, px, py, curCol()); texDirty = true; ed.dirty = true;
+            } else if (tool == 3 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                okay::Color c = img.GetPixel(px, py); pri[0] = c.r; pri[1] = c.g; pri[2] = c.b; pri[3] = c.a;
+            }
+        }
+    }
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) { strokeOpen = false; lastPx = lastPy = -1; }
+
+    // ---- Save / apply ----
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::SetNextItemWidth(180);
+    ImGui::InputText("name", nameBuf, sizeof(nameBuf));
+    auto savePath = [&]() {
+        fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+        fs::path dir = assets / "Sprites"; std::error_code ec; fs::create_directories(dir, ec);
+        std::string nm = nameBuf[0] ? std::string(nameBuf) : std::string("sprite");
+        return (dir / (nm + ".png")).string();
+    };
+    ImGui::SameLine();
+    if (ImGui::Button("Save PNG")) {
+        std::string out = savePath();
+        if (img.SavePNG(out)) ConsoleLog("Saved sprite " + out); else ConsoleLog("Sprite save FAILED: " + out);
+    }
+    ImGui::SameLine();
+    bool haveSprite = ed.selected() && ed.selected()->GetComponent<SpriteRenderer>();
+    if (!haveSprite) ImGui::BeginDisabled();
+    if (ImGui::Button("Save + Apply to Selected")) {
+        std::string out = savePath();
+        if (img.SavePNG(out)) {
+            if (auto* sr = ed.selected()->GetComponent<SpriteRenderer>()) { sr->texture = out; ed.dirty = true; }
+            ConsoleLog("Saved + applied sprite " + out);
+        } else ConsoleLog("Sprite save FAILED: " + out);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("New Sprite Object")) {
+        std::string out = savePath();
+        if (img.SavePNG(out)) {
+            GameObject* go = ed.CreateSprite(nameBuf[0] ? nameBuf : "Sprite");
+            if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = out;
+            ConsoleLog("Created sprite object from " + out);
+        }
+    }
+    if (!haveSprite) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Load Selected")) {
+        if (ed.selected()) if (auto* sr = ed.selected()->GetComponent<SpriteRenderer>()) {
+            okay::Image loaded;
+            if (!sr->texture.empty() && loaded.Load(sr->texture) && loaded.Valid()) { pushUndo(); img = loaded; texDirty = true; ConsoleLog("Loaded " + sr->texture); }
+            else ConsoleLog("Selected sprite has no loadable texture");
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load the selected object's sprite texture into the editor to tweak it");
+
+    ImGui::End();
+}
+
 // Advanced Unity-style CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
 // scrub, a stacked CPU-category area (Scripts / Physics / Render / Other), per-section
 // self/total/calls/%-of-frame with min/avg/max over the window, live draw stats, and
@@ -18942,45 +19899,22 @@ void DrawGameView(EditorState& ed) {
     Camera* mc = SceneCamera(ed.scene());
     bool persp = mc && mc->projection == Camera::Projection::Perspective;
 
-    // Resolution / aspect selector (Unity's Game-view dropdown): "Free", aspect
-    // ratios, and fixed pixel resolutions (desktop + mobile). Fixed entries carry a
-    // nominal width/height; letterboxing uses the entry's aspect either way.
-    struct GamePreset { const char* name; float aspect; int w, h; };
-    static const GamePreset kPresets[] = {
-        {"Free Aspect",        0.0f,       0,    0},
-        {"16:9",               16.0f/9,    0,    0},
-        {"16:10",              16.0f/10,   0,    0},
-        {"21:9 (ultrawide)",   21.0f/9,    0,    0},
-        {"4:3",                4.0f/3,     0,    0},
-        {"3:2",                3.0f/2,     0,    0},
-        {"1:1 (square)",       1.0f,       0,    0},
-        {"9:16 (portrait)",    9.0f/16,    0,    0},
-        {"1920 x 1080  (1080p)", 1920.0f/1080, 1920, 1080},
-        {"2560 x 1440  (1440p)", 2560.0f/1440, 2560, 1440},
-        {"3840 x 2160  (4K)",    3840.0f/2160, 3840, 2160},
-        {"1280 x 720   (720p)",  1280.0f/720,  1280, 720},
-        {"1600 x 900",           1600.0f/900,  1600, 900},
-        {"1080 x 1920  (portrait)", 1080.0f/1920, 1080, 1920},
-        {"720 x 1280   (portrait)", 720.0f/1280,  720,  1280},
-        {"1170 x 2532  (iPhone)",   1170.0f/2532, 1170, 2532},
-        {"1668 x 2388  (iPad)",     1668.0f/2388, 1668, 2388},
-        {"Custom...",               0.0f,        -1,   -1},   // -1 => use g_gameCustomW/H
-    };
-    const int kCustomIdx = (int)IM_ARRAYSIZE(kPresets) - 1;
+    // Resolution / aspect selector (Unity's Game-view dropdown): "Free", aspect ratios,
+    // and fixed pixel resolutions (desktop + mobile). Backed by the shared kGameResPresets
+    // table so the Game tab and the UI-Only editor always frame UI against the same screen.
     int& s_aspect = g_gameResPreset;   // persisted across sessions
-    if (s_aspect < 0 || s_aspect >= (int)IM_ARRAYSIZE(kPresets)) s_aspect = 0;
+    if (s_aspect < 0 || s_aspect >= kGameResCount) s_aspect = 0;
     ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("Resolution", kPresets[s_aspect].name)) {
-        for (int i = 0; i < (int)IM_ARRAYSIZE(kPresets); ++i) {
-            if (i == 1 || i == 8 || i == kCustomIdx) ImGui::Separator();  // group: aspects / fixed / custom
-            if (ImGui::Selectable(kPresets[i].name, s_aspect == i)) { s_aspect = i; SaveSettings(); }
+    if (ImGui::BeginCombo("Resolution", kGameResPresets[s_aspect].name)) {
+        for (int i = 0; i < kGameResCount; ++i) {
+            if (i == 1 || i == 8 || i == kGameResCustomIdx) ImGui::Separator();  // group: aspects / fixed / custom
+            if (ImGui::Selectable(kGameResPresets[i].name, s_aspect == i)) { s_aspect = i; SaveSettings(); }
         }
         ImGui::EndCombo();
     }
     // Custom width/height inputs (only for the Custom preset).
-    int curW = kPresets[s_aspect].w, curH = kPresets[s_aspect].h;
-    if (s_aspect == kCustomIdx) {
-        curW = g_gameCustomW; curH = g_gameCustomH;
+    int curW = kGameResPresets[s_aspect].w, curH = kGameResPresets[s_aspect].h;
+    if (s_aspect == kGameResCustomIdx) {
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
         if (ImGui::DragInt("##cw", &g_gameCustomW, 1.0f, 16, 8192, "W %d")) SaveSettings();
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
@@ -18989,7 +19923,6 @@ void DrawGameView(EditorState& ed) {
         g_gameCustomH = g_gameCustomH < 16 ? 16 : g_gameCustomH;
         curW = g_gameCustomW; curH = g_gameCustomH;
     }
-    const float kAspectVal = (s_aspect == kCustomIdx) ? (float)curW / (float)curH : kPresets[s_aspect].aspect;
     const bool  kFixedRes  = (curW > 0 && curH > 0);
     ImGui::SameLine();
     ImGui::TextDisabled(ed.isPlaying() ? "live" : "press Play to run");
@@ -19004,15 +19937,11 @@ void DrawGameView(EditorState& ed) {
     if (avail.y < 50) avail.y = 50;
     ImVec2 origin = ImGui::GetCursorScreenPos();
 
-    // Letterbox a fixed-aspect rect centered in the available region.
-    ImVec2 canvasSize = avail, canvasPos = origin;
-    if (kAspectVal > 0.0f) {
-        float target = kAspectVal;
-        float boxW = avail.x, boxH = avail.x / target;
-        if (boxH > avail.y) { boxH = avail.y; boxW = avail.y * target; }
-        canvasSize = {boxW, boxH};
-        canvasPos = {origin.x + (avail.x - boxW) * 0.5f, origin.y + (avail.y - boxH) * 0.5f};
-    }
+    // Letterbox the game screen centered in the available region — the SAME helper the
+    // UI-Only editor uses, so the two views are pixel-identical. resScale is applied
+    // just below (Unity's UIResolutionScale) for fixed-resolution HUD previews.
+    ImVec2 canvasSize, canvasPos; float resScale = 1.0f;
+    LetterboxGameScreen(origin, avail, canvasPos, canvasSize, resScale);
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
 
     // The Game view is the surface the running game is shown on, so feed mouse
@@ -19034,10 +19963,11 @@ void DrawGameView(EditorState& ed) {
     UICanvas::Set(canvasSize.x, canvasSize.y);
 
     // Preview a fixed-resolution HUD at the picked resolution: a Constant-Pixel-Size
-    // canvas authored for `curH` px should shrink/grow with the target, just like
-    // Unity's Game view. For a live (free) resolution the on-screen canvas *is* the
-    // target, so the scale is 1. ScaleWithScreenSize canvases ignore this entirely.
-    okay::UIResolutionScale() = (kFixedRes && curH > 0) ? canvasSize.y / (float)curH : 1.0f;
+    // canvas authored for the target height should shrink/grow with the on-screen size,
+    // just like Unity's Game view. For a live (free) resolution the on-screen canvas *is*
+    // the target, so the scale is 1. ScaleWithScreenSize canvases ignore this entirely.
+    // `resScale` is exactly what the UI-Only editor applies — same helper, same result.
+    okay::UIResolutionScale() = resScale;
 
     if (!mc) {
         dl->AddText(ImVec2(canvasPos.x + 10, canvasPos.y + 10),
@@ -19162,6 +20092,9 @@ static bool PassesLauncherGate(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
+#endif
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
 
@@ -19690,6 +20623,8 @@ int main(int argc, char** argv) {
         if (g_showProfiler)  DrawProfiler(ed);
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();
+        if (g_showCrashLog)  DrawCrashLog();
+        if (g_showSpriteEditor) DrawSpriteEditor(ed);
         if (g_showProject)   DrawProject(ed);
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);

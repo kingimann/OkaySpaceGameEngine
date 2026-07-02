@@ -1332,7 +1332,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
-            << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding << "\n";
+            << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding
+            << " " << lg->columns << " " << lg->spacingY << "\n";
     }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
@@ -3467,9 +3468,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tt->background = bg; tt->textColor = tc; tt->borderColor = bc;
                 } else if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
-                    int dir = 0, an = 0;
-                    in >> dir >> an >> lg->origin.x >> lg->origin.y >> lg->spacing >> lg->padding;
+                    std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
+                    std::istringstream rs(rest);
+                    int dir = 0, an = 0, cols = -1; float sy = -1.0f;
+                    rs >> dir >> an >> lg->origin.x >> lg->origin.y >> lg->spacing >> lg->padding;
+                    rs >> cols; rs >> sy;                        // absent in older scenes -> keep defaults
                     lg->direction = (UILayoutGroup::Direction)dir; lg->anchor = (UIAnchor)an;
+                    if (cols >= 1) lg->columns = cols;
+                    if (sy >= 0.0f) lg->spacingY = sy;
                     lg->Arrange();
                 } else if (field == "uiscroll") {
                     auto* sv = go->AddComponent<UIScrollView>();

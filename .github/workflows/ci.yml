@@ -43,3 +43,35 @@ jobs:
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON
           cmake --build build-editor -j
           ./build-editor/bin/OkayEngine --selftest
+
+  web-build:
+    name: WebGL build (Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pull in Emscripten. This runner has network, so Emscripten's SDL2 port is
+      # fetched + cached here (the one online step the web build needs).
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.51
+          actions-cache-folder: emsdk-cache
+
+      # Compile the player to WebAssembly/WebGL via the same script the editor's
+      # "Build ▸ Web" export writes, so a broken web build fails CI (it silently
+      # rotted before — the engine didn't even compile under Emscripten's Clang).
+      - name: Build WebGL player
+        run: bash scripts/build-web.sh
+
+      - name: Verify wasm output
+        run: |
+          test -f build-web/web/okay-player.html
+          test -f build-web/web/okay-player.wasm
+          ls -la build-web/web/
+
+      - name: Upload WebGL build
+        uses: actions/upload-artifact@v4
+        with:
+          name: okayspace-webgl
+          path: build-web/web/

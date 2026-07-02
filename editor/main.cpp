@@ -17517,7 +17517,12 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float hy = sr->size.y * ls.y * 0.5f * scale;
             ImVec2 c = worldToScreen(wp);
             ImVec2 a(c.x - hx, c.y - hy), b(c.x + hx, c.y + hy);
-            dl->AddRectFilled(a, b, ToColor(sr->color));
+            // Draw the sprite's texture (tinted by its colour, alpha respected) so shapes
+            // and imported art actually show — falling back to a solid colour quad only
+            // when there's no (loadable) texture.
+            SDL_Texture* stex = sr->texture.empty() ? nullptr : GetThumb(sr->texture);
+            if (stex) dl->AddImage((ImTextureID)stex, a, b, ImVec2(0, 0), ImVec2(1, 1), ToColor(sr->color));
+            else      dl->AddRectFilled(a, b, ToColor(sr->color));
             if (!gameView && go == ed.selected())
                 dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2),
                             IM_COL32(255, 200, 0, 255), 0, 0, 2.0f);

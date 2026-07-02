@@ -16214,6 +16214,20 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
     }   // end single UI preview pass
 
+    // Multi-selection: outline every selected widget (the primary gets the full
+    // box + handles below). Secondary members get a lighter cyan box so it's clear
+    // what a group move/align will act on.
+    if (!gameView && ed.MultiSelection().size() > 1) {
+        for (GameObject* g : ed.MultiSelection()) {
+            if (!g || g == ed.selected()) continue;
+            Vec2 o, sz;
+            if (GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) {
+                ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+                ImVec2 b(a.x + sz.x, a.y + sz.y);
+                dl->AddRect(a, b, IM_COL32(80, 210, 230, 220), 0.0f, 0, 1.5f);
+            }
+        }
+    }
     // Selection highlight for the selected widget — works for every UI type and
     // in both the 2D and 3D Scene views (the Game view stays clean). Drag the
     // body to move; drag a handle to resize (handles only on sizable widgets).
@@ -16928,6 +16942,64 @@ static void ScaleUIChildrenBy(GameObject* go, float sx, float sy) {
     }
 }
 
+// Align the multi-selection in SCREEN space. A widget's stored position is a linear
+// offset (screen edge = anchorBase + position*scale), so shifting position by
+// Δscreen/scale moves its on-screen edge by Δscreen — this works for ANY anchor.
+// mode: 0..5 = align Left, H-Center, Right, Top, V-Center, Bottom.
+static void AlignUISelection(EditorState& ed, int mode, float W, float H) {
+    const auto& sel = ed.MultiSelection();
+    if (sel.size() < 2 || W < 1.0f || H < 1.0f) return;
+    struct Item { UIRect r; Vec2 o, sz; float s; };
+    std::vector<Item> items;
+    float minL = 1e30f, maxR = -1e30f, minT = 1e30f, maxB = -1e30f;
+    for (GameObject* g : sel) {
+        if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
+        Vec2 o, sz; if (!GetUIScreenRect(g, W, H, o, sz)) continue;
+        float s = UIScaleFor(g, W, H); if (s < 1e-3f) s = 1.0f;
+        items.push_back({r, o, sz, s});
+        minL = std::min(minL, o.x); maxR = std::max(maxR, o.x + sz.x);
+        minT = std::min(minT, o.y); maxB = std::max(maxB, o.y + sz.y);
+    }
+    if (items.size() < 2) return;
+    ed.PushUndo();
+    float cx = (minL + maxR) * 0.5f, cy = (minT + maxB) * 0.5f;
+    for (auto& it : items) {
+        float tx = it.o.x, ty = it.o.y;
+        switch (mode) {
+            case 0: tx = minL; break;              case 1: tx = cx - it.sz.x * 0.5f; break;
+            case 2: tx = maxR - it.sz.x; break;    case 3: ty = minT; break;
+            case 4: ty = cy - it.sz.y * 0.5f; break; case 5: ty = maxB - it.sz.y; break;
+        }
+        it.r.position->x += (tx - it.o.x) / it.s;
+        it.r.position->y += (ty - it.o.y) / it.s;
+    }
+    ed.dirty = true;
+}
+
+// Evenly distribute the multi-selection by center, along X (horiz) or Y.
+static void DistributeUISelection(EditorState& ed, bool horiz, float W, float H) {
+    const auto& sel = ed.MultiSelection();
+    if (sel.size() < 3 || W < 1.0f || H < 1.0f) return;
+    struct Item { UIRect r; float s, c; };
+    std::vector<Item> items;
+    for (GameObject* g : sel) {
+        if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
+        Vec2 o, sz; if (!GetUIScreenRect(g, W, H, o, sz)) continue;
+        float s = UIScaleFor(g, W, H); if (s < 1e-3f) s = 1.0f;
+        items.push_back({r, s, horiz ? (o.x + sz.x * 0.5f) : (o.y + sz.y * 0.5f)});
+    }
+    if (items.size() < 3) return;
+    ed.PushUndo();
+    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.c < b.c; });
+    float first = items.front().c, last = items.back().c, step = (last - first) / (float)(items.size() - 1);
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        float target = first + step * i; auto& it = items[i];
+        if (horiz) it.r.position->x += (target - it.c) / it.s;
+        else       it.r.position->y += (target - it.c) / it.s;
+    }
+    ed.dirty = true;
+}
+
 // Click-to-select and drag-to-reposition for screen-space UI in the Scene view.
 // Runs in both 2D and 3D modes (UI is an overlay, identical in either), and
 // takes priority over the world picking below it — clicking a HUD button selects
@@ -17195,7 +17267,28 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     }
                     // Carry child widgets (e.g. a button's label) by the same amount
                     // so a parent and its children move together.
-                    MoveUIChildrenBy(g_uiDragTarget, g_uiDragTarget, r.position->x - beforeX, r.position->y - beforeY);
+                    float movedX = r.position->x - beforeX, movedY = r.position->y - beforeY;
+                    MoveUIChildrenBy(g_uiDragTarget, g_uiDragTarget, movedX, movedY);
+                    // Group move: shift every OTHER selected widget by the same design-space
+                    // delta so a multi-selection drags as one. Skip any widget that's a
+                    // descendant of another selected widget (its ancestor already carries it,
+                    // via MoveUIChildrenBy) so it isn't double-moved.
+                    if (ed.MultiSelection().size() > 1 && (movedX != 0.0f || movedY != 0.0f)) {
+                        const auto& sel = ed.MultiSelection();
+                        auto ancestorSelected = [&](GameObject* g) {
+                            for (Transform* p = g->transform ? g->transform->Parent() : nullptr; p; p = p->Parent())
+                                if (p->gameObject && std::find(sel.begin(), sel.end(), p->gameObject) != sel.end()) return true;
+                            return false;
+                        };
+                        for (GameObject* g : sel) {
+                            if (!g || g == g_uiDragTarget || ancestorSelected(g)) continue;
+                            UIRect gr = GetUIRect(g);
+                            if (gr.valid && gr.position) {
+                                gr.position->x += movedX; gr.position->y += movedY;
+                                MoveUIChildrenBy(g, g, movedX, movedY);
+                            }
+                        }
+                    }
                 }
                 ed.dirty = true;
             }
@@ -17290,7 +17383,15 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         if (GameObject* par = pt->gameObject)
                             if (par->GetComponent<UIButton>() && UIButtonTextChild(par) == hit)
                                 hit = par;
-                ed.Select(hit);
+                // Multi-select: Ctrl/Shift-click adds or removes this widget from the set
+                // (so you can build up a group). Clicking a widget that's ALREADY in a
+                // multi-selection keeps the whole group and drags it together; a plain
+                // click on a fresh widget selects just it.
+                if (io.KeyCtrl || io.KeyShift) {
+                    ed.ToggleSelect(hit);
+                } else if (!(ed.MultiSelection().size() > 1 && ed.IsSelected(hit))) {
+                    ed.Select(hit);
+                }
                 ed.PushUndo();                             // checkpoint before a move
                 g_uiDragTarget = hit;
                 g_uiResizeHandle = -1;
@@ -18948,6 +19049,32 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             if (ImGui::DragInt("##suby", &g_uiSubdivY, 0.1f, 1, 32, "%d rows")) SaveSettings();
             g_uiSubdivX = g_uiSubdivX < 1 ? 1 : (g_uiSubdivX > 32 ? 32 : g_uiSubdivX);
             g_uiSubdivY = g_uiSubdivY < 1 ? 1 : (g_uiSubdivY > 32 ? 32 : g_uiSubdivY);
+        }
+        // Align & distribute the multi-selection (Ctrl/Shift-click widgets to build it).
+        if (ed.MultiSelection().size() >= 2) {
+            float aw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
+            float ah = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
+            ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+            ImGui::TextDisabled("Align:"); ImGui::SameLine();
+            struct AB { const char* lbl; int mode; const char* tip; };
+            static const AB kAlign[] = {
+                {"L", 0, "Align left edges"}, {"C", 1, "Align horizontal centers"}, {"R", 2, "Align right edges"},
+                {"T", 3, "Align top edges"},  {"M", 4, "Align vertical centers"},   {"B", 5, "Align bottom edges"} };
+            for (int i = 0; i < 6; ++i) {
+                if (i) ImGui::SameLine(0, 2);
+                ImGui::PushID(3200 + i);
+                if (ImGui::SmallButton(kAlign[i].lbl)) AlignUISelection(ed, kAlign[i].mode, aw, ah);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kAlign[i].tip);
+                ImGui::PopID();
+            }
+            if (ed.MultiSelection().size() >= 3) {
+                ImGui::SameLine(); ImGui::TextDisabled("Dist:"); ImGui::SameLine();
+                if (ImGui::SmallButton("H")) DistributeUISelection(ed, true, aw, ah);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distribute horizontally (even spacing)");
+                ImGui::SameLine(0, 2);
+                if (ImGui::SmallButton("V")) DistributeUISelection(ed, false, aw, ah);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distribute vertically (even spacing)");
+            }
         }
         // Frame the selected widget: center + fit it in the view (zoom/pan the canvas).
         ImGui::SameLine();

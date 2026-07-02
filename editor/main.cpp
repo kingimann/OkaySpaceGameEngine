@@ -1898,8 +1898,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
-        ImGui::MenuItem("UI Editor", nullptr, &g_showUIEditor);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A dedicated tab for UI editing (the Scene view locked to UI-only). Dock it beside the Scene.");
+        if (ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode) && g_uiOnlyMode)
+            g_showUIOverlay = true;   // enabling UI-only implies showing the UI overlay
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (Unity's UI view).\nAlso available as the 'UI Only' button on the Scene toolbar.");
         ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
         ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
         ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
@@ -19340,6 +19341,12 @@ int main(int argc, char** argv) {
                 g_meshSelVerts.clear(); g_meshSelFaces.clear();
             }
             if (g_uiDragTarget && !alive(g_uiDragTarget)) g_uiDragTarget = nullptr;
+            // The SELECTION can dangle too: in Play a script may destroy(...) the
+            // selected object, after which the Inspector would dereference its freed
+            // components (e.g. editing a Text component in Play crashed). Drop it.
+            if (ed.selected() && !alive(ed.selected())) ed.Select(nullptr);
+            if (g_colliderEdit && ed.selected() && !ed.selected()->GetComponent<BoxCollider3D>())
+                g_colliderDragAxis = -1;
         }
 
         HandleShortcuts(ed);
@@ -19352,8 +19359,7 @@ int main(int argc, char** argv) {
         DrawRecoveryPopup(ed);
         DrawProjectSettings(ed);
         if (g_showHierarchy) DrawHierarchy(ed);
-        DrawViewport(ed);   // the "Scene" panel (always shown)
-        if (g_showUIEditor) DrawViewport(ed, /*uiPanel=*/true);   // dedicated UI editing tab
+        DrawViewport(ed);   // the "Scene" panel (always shown; UI editing is a mode toggle in it)
         DrawDataAssetEditor();
         DrawMaterialEditor(ed);
         if (g_showGame)      DrawGameView(ed);

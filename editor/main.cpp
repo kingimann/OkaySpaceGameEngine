@@ -774,6 +774,7 @@ bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view lo
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
 bool g_uiShowGuides = true;      // UI-Only: draw the thirds/center alignment guides
 bool g_uiShowSafeArea = false;   // UI-Only: draw a ~5% safe-area inset (TV/notch margin)
+bool g_uiSmartSnap = true;       // UI editor: Unity-style alignment snapping + blue guide lines (independent of the pixel-grid Snap)
 bool g_uiShowSubdiv = false;     // UI-Only: draw an N×M subdivision grid over the game screen (+ snap UI to it), like subdividing a 3D model
 int  g_uiSubdivX = 3;            // UI-Only: subdivision columns
 int  g_uiSubdivY = 3;            // UI-Only: subdivision rows
@@ -950,6 +951,7 @@ void LoadSettings() {
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
+        else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
@@ -984,6 +986,7 @@ void SaveSettings() {
       << "gameres " << g_gameResPreset << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
+      << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
       << "uisubdivy " << g_uiSubdivY << "\n";
@@ -16326,15 +16329,16 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                               IM_COL32(0, 0, 0, 140), 3.0f);
             dl->AddText(tp, IM_COL32(255, 220, 120, 255), dims);
         }
-        // Smart-snap alignment guides (magenta), full canvas extent.
+        // Smart-snap alignment guides (Unity-style BLUE lines), full canvas extent —
+        // shown while dragging an edge/center that lines up with a canvas/parent/sibling
+        // edge or center.
+        const ImU32 kSnapBlue = IM_COL32(70, 150, 255, 235);
         if (g_uiGuideX >= 0.0f)
             dl->AddLine(ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y),
-                        ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y + canvasSize.y),
-                        IM_COL32(255, 80, 220, 200), 1.0f);
+                        ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y + canvasSize.y), kSnapBlue, 1.5f);
         if (g_uiGuideY >= 0.0f)
             dl->AddLine(ImVec2(canvasPos.x, canvasPos.y + g_uiGuideY),
-                        ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY),
-                        IM_COL32(255, 80, 220, 200), 1.0f);
+                        ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY), kSnapBlue, 1.5f);
     }
     // Minecraft-style inventory hotbar / backpack preview (mirrors the player).
     for (const auto& up : objs) {
@@ -17187,7 +17191,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     // broken by a guide pulling one edge on its own.
                     g_uiGuideX = g_uiGuideY = -1.0f;
                     bool gxHit = false, gyHit = false;
-                    if (g_snap && !io.KeyShift && !io.KeyAlt) {
+                    if ((g_snap || g_uiSmartSnap) && !io.KeyShift && !io.KeyAlt) {
                         // Canvas edges + center, AND the 5% safe-area inset edges, so UI
                         // snaps to the safe area for easy resize (as well as to siblings).
                         std::vector<float> cx{0.0f, canvasSize.x * 0.05f, canvasSize.x * 0.5f, canvasSize.x * 0.95f, canvasSize.x};
@@ -17276,7 +17280,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     // Unity-style smart guides: snap our edges/center to the canvas
                     // edges/center and to sibling widgets, drawing a guide line.
                     g_uiGuideX = g_uiGuideY = -1.0f;
-                    if (g_snap) {
+                    if (g_snap || g_uiSmartSnap) {
                         Vec2 o, sz; GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o, sz);
                         // Canvas edges + center, AND the 5% safe-area inset edges, so UI
                         // snaps to the safe area for easy resize (as well as to siblings).
@@ -17350,17 +17354,30 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     // via MoveUIChildrenBy) so it isn't double-moved.
                     if (ed.MultiSelection().size() > 1 && (movedX != 0.0f || movedY != 0.0f)) {
                         const auto& sel = ed.MultiSelection();
-                        auto ancestorSelected = [&](GameObject* g) {
+                        auto selectedAncestor = [&](GameObject* g) {         // g carried by a selected ancestor?
                             for (Transform* p = g->transform ? g->transform->Parent() : nullptr; p; p = p->Parent())
                                 if (p->gameObject && std::find(sel.begin(), sel.end(), p->gameObject) != sel.end()) return true;
                             return false;
                         };
+                        auto ancestorOfTarget = [&](GameObject* g) {         // g already carries the drag target?
+                            for (Transform* p = g_uiDragTarget->transform ? g_uiDragTarget->transform->Parent() : nullptr; p; p = p->Parent())
+                                if (p->gameObject == g) return true;         // -> moving it too would double-move the target
+                            return false;
+                        };
+                        // Translate the group RIGIDLY: convert the target's move to a screen
+                        // delta, then back into each widget's own design space (scales differ
+                        // across canvases/nesting), matching Align/Distribute. Skip widgets
+                        // carried by a selected ancestor, and any ancestor of the drag target.
+                        float sT = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y); if (sT < 1e-3f) sT = 1.0f;
+                        float screenDX = movedX * sT, screenDY = movedY * sT;
                         for (GameObject* g : sel) {
-                            if (!g || g == g_uiDragTarget || ancestorSelected(g)) continue;
+                            if (!g || g == g_uiDragTarget || selectedAncestor(g) || ancestorOfTarget(g)) continue;
                             UIRect gr = GetUIRect(g);
                             if (gr.valid && gr.position) {
-                                gr.position->x += movedX; gr.position->y += movedY;
-                                MoveUIChildrenBy(g, g, movedX, movedY);
+                                float sg = UIScaleFor(g, canvasSize.x, canvasSize.y); if (sg < 1e-3f) sg = 1.0f;
+                                float dgx = screenDX / sg, dgy = screenDY / sg;
+                                gr.position->x += dgx; gr.position->y += dgy;
+                                MoveUIChildrenBy(g, g, dgx, dgy);
                             }
                         }
                     }
@@ -19096,8 +19113,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         // survive). This is why opening the UI view crashed only on Windows.
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Show a 5% safe-area inset (TV overscan / phone notch margin)");
         ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        if (AccentToggleButton("Smart Snap", g_uiSmartSnap)) { g_uiSmartSnap = !g_uiSmartSnap; SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Unity-style alignment snapping: while you drag an edge/center, blue guide lines appear\nwhere it lines up with a sibling, the parent, or the canvas edges/centers, and it snaps there.");
+        ImGui::SameLine();
         if (AccentToggleButton("Snap", g_snap)) g_snap = !g_snap;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap UI drags/resizes to the grid");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap UI drags/resizes to the pixel grid");
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
         ImGui::DragInt("grid##ui", &g_uiGrid, 1.0f, 1, 128, "%dpx");
         ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
@@ -19664,7 +19684,8 @@ void DrawSpriteEditor(EditorState& ed) {
         return px >= 0 && py >= 0 && px < img.Width() && py < img.Height();
     };
     if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        pushUndo(); strokeOpen = true; lastPx = lastPy = -1;
+        if (tool != 3) pushUndo();   // eyedropper doesn't mutate -> no undo entry
+        strokeOpen = true; lastPx = lastPy = -1;
     }
     if (strokeOpen && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         int px, py;
@@ -19717,8 +19738,9 @@ void DrawSpriteEditor(EditorState& ed) {
             ConsoleLog("Saved + applied sprite " + out);
         } else ConsoleLog("Sprite save FAILED: " + out);
     }
+    if (!haveSprite) ImGui::EndDisabled();   // only "Save + Apply to Selected" needs a selected sprite
     ImGui::SameLine();
-    if (ImGui::Button("New Sprite Object")) {
+    if (ImGui::Button("New Sprite Object")) {   // always available: makes a fresh sprite object
         std::string out = savePath();
         if (img.SavePNG(out)) {
             GameObject* go = ed.CreateSprite(nameBuf[0] ? nameBuf : "Sprite");
@@ -19726,7 +19748,6 @@ void DrawSpriteEditor(EditorState& ed) {
             ConsoleLog("Created sprite object from " + out);
         }
     }
-    if (!haveSprite) ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Load Selected")) {
         if (ed.selected()) if (auto* sr = ed.selected()->GetComponent<SpriteRenderer>()) {

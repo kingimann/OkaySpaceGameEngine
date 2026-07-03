@@ -489,6 +489,16 @@ void ActionList::Update(float dt) {
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>())
                 a->ReceiveMessage(Str(it, 0));
         }
+        // Events with a payload: the receiver reads `event_value` (number) and
+        // `event_text` (text), set just before the message fires.
+        else if (op == "send_value") {
+            Vars()["event_value"] = Num(it, 1); StrVars()["event_text"].clear();
+            if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
+        }
+        else if (op == "send_text") {
+            StrVars()["event_text"] = Rest(it, 1); Vars()["event_value"] = 0.0f;
+            if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
+        }
         else if (op == "move") { if (t) t->Translate({Num(it, 0), Num(it, 1), Num(it, 2)}); }
         else if (op == "set_pos") { if (t) t->localPosition = {Num(it, 0), Num(it, 1), Num(it, 2)}; }
         else if (op == "rotate") { if (t) t->Rotate({Num(it, 1), Num(it, 2), Num(it, 0)}); }

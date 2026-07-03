@@ -8628,6 +8628,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"call",        "Call Script Event",  "event name",           "Call a function on this object's Script.",                "Flow"},
     {"send",        "Broadcast Message",  "message",              "Send a message to ALL action lists in the scene.",        "Flow"},
     {"send_to",     "Message One Object", "object message",       "Send a message to one named object's actions.",           "Flow"},
+    {"send_value",  "Broadcast + Number", "message number",       "Broadcast a message with a number; receivers read `event_value`.", "Flow"},
+    {"send_text",   "Broadcast + Text",   "message text...",      "Broadcast a message with text; receivers read `event_text`.",      "Flow"},
     {"log",         "Log To Console",     "text",                 "Print text to the console (for debugging).",              "Flow"},
     {"load_scene",  "Load Scene",         "name",                 "Load a scene by file name.",                              "Scenes"},
     {"load_scene_index","Load Scene #",   "index",                "Load a scene by its build index.",                        "Scenes"},

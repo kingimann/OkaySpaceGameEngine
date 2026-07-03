@@ -8800,21 +8800,45 @@ static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
     if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
-    ActionList* al = go ? go->GetComponent<ActionList>() : nullptr;
-    if (!al) {
+    std::vector<ActionList*> als = go ? go->GetComponents<ActionList>() : std::vector<ActionList*>{};
+    if (als.empty()) {
         ImGui::TextDisabled("Select an object with an Actions component to see its flow graph.");
         ImGui::TextDisabled("(Add one via Add Component > Actions, or the Actions inspector.)");
         ImGui::End(); return;
     }
+    // An object can carry several (named) Actions — pick which one this graph shows.
+    static std::unordered_map<void*, int> s_flowPick;
+    int& pick = s_flowPick[(void*)go];
+    if (pick < 0 || pick >= (int)als.size()) pick = 0;
+    if (als.size() > 1) {
+        auto nameOf = [&](int i) {
+            return als[i]->name.empty() ? ("Actions " + std::to_string(i + 1)) : als[i]->name;
+        };
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::BeginCombo("##flowpick", nameOf(pick).c_str())) {
+            for (int i = 0; i < (int)als.size(); ++i) {
+                std::string nm = nameOf(i);
+                if (als[i]->IsRunning()) nm += "  ●";
+                if (ImGui::Selectable(nm.c_str(), i == pick)) pick = i;
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("This object has %d Actions scripts — choose which to view.", (int)als.size());
+        ImGui::SameLine();
+    }
+    ActionList* al = als[pick];
     if (!al->name.empty()) ImGui::Text("Flow: %s  (on '%s')", al->name.c_str(), go->name.c_str());
     else                   ImGui::Text("Flow of '%s'", go->name.c_str());
-    ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty space to pan");
+    ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty space to pan; scroll to zoom");
 
     // Toolbar: add/clear nodes (edits the live ActionList, mirrored in the Inspector)
     // and a running indicator that lights up while the list executes in Play.
     int delIns = -1, delCond = -1;            // node-delete requests, applied after layout
     static std::unordered_map<void*, ImVec2> panMap;
     ImVec2& pan = panMap[(void*)al];
+    static std::unordered_map<void*, float> zoomMap;
+    float& zoom = zoomMap[(void*)al];
+    if (zoom < 0.35f || zoom > 3.0f) zoom = 1.0f;   // init / sanitize
     if (ImGui::SmallButton("+ Instruction")) ImGui::OpenPopup("##addinspal");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run — pick it from a searchable list.");
     if (const char* op = FlowOpPalettePopup("##addinspal", kInstrOps, IM_ARRAYSIZE(kInstrOps))) {
@@ -8831,7 +8855,10 @@ static void DrawFlowGraph(EditorState& ed) {
         ed.dirty = true;
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Reset View")) pan = ImVec2(0, 0);
+    if (ImGui::SmallButton("Reset View")) { pan = ImVec2(0, 0); zoom = 1.0f; }
+    ImGui::SameLine();
+    ImGui::Text("%d%%", (int)(zoom * 100.0f + 0.5f));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom (scroll to change, Reset View for 100%%)");
     ImGui::SameLine();
     ImGui::TextDisabled("(click a node to edit; click the trigger to change it)");
     ImGui::SameLine();
@@ -8861,38 +8888,61 @@ static void DrawFlowGraph(EditorState& ed) {
     ImGui::SetCursorScreenPos(cp);
     ImGui::InvisibleButton("flow_bg", cs);
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pan.x += ImGui::GetIO().MouseDelta.x; pan.y += ImGui::GetIO().MouseDelta.y; }
+    // Scroll to zoom (per-graph), anchored on the cursor so the point under the mouse
+    // stays put — the standard node-editor feel.
+    if (ImGui::IsItemHovered()) {
+        float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f) {
+            ImVec2 m = ImGui::GetIO().MousePos;
+            float gx = (m.x - cp.x - pan.x) / zoom, gy = (m.y - cp.y - pan.y) / zoom;  // graph point under cursor
+            float nz = zoom * (1.0f + wheel * 0.12f);
+            nz = nz < 0.4f ? 0.4f : (nz > 2.5f ? 2.5f : nz);
+            pan.x = m.x - cp.x - gx * nz; pan.y = m.y - cp.y - gy * nz;               // keep it under the cursor
+            zoom = nz;
+        }
+    }
+    const float z = zoom;
 
     static std::unordered_map<std::string, ImVec2> pos;
     auto key = [&](const char* role, int i) {
         char b[64]; std::snprintf(b, sizeof(b), "%p:%s:%d", (void*)al, role, i); return std::string(b);
     };
-    const float NW = 190.0f, NH = 46.0f, GAPY = 72.0f;
+    const float NW = 190.0f * z, NH = 46.0f * z, GAPY = 72.0f;   // GAPY is graph-space (positions scale by z)
+    const float fs = ImGui::GetFontSize() * z;
+    ImFont* fnt = ImGui::GetFont();
     // Draw a node; *del set true if its little ✕ was clicked (cond/instruction only).
+    // Positions in `pos` are graph-space; screen = cp + r*z + pan, sizes scale by z.
     auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del, bool* clicked = nullptr) -> ImVec2 {
         if (pos.find(k) == pos.end()) pos[k] = def;
         ImVec2 r = pos[k];
-        ImVec2 p{cp.x + r.x + pan.x, cp.y + r.y + pan.y};
+        ImVec2 p{cp.x + r.x * z + pan.x, cp.y + r.y * z + pan.y};
         ImGui::SetCursorScreenPos(p);
         ImGui::PushID(k.c_str());
         ImGui::InvisibleButton("nd", ImVec2(NW, NH));
         bool ndClick = ImGui::IsItemClicked();        // a plain click (opens the node editor)
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pos[k].x += ImGui::GetIO().MouseDelta.x; pos[k].y += ImGui::GetIO().MouseDelta.y; }
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pos[k].x += ImGui::GetIO().MouseDelta.x / z; pos[k].y += ImGui::GetIO().MouseDelta.y / z; }
         bool hov = ImGui::IsItemHovered();
         if (del) {                                    // delete handle in the top-right corner
-            ImGui::SetCursorScreenPos(ImVec2(p.x + NW - 18, p.y + 3));
-            if (ImGui::InvisibleButton("x", ImVec2(15, 15))) { *del = true; ndClick = false; }
+            ImGui::SetCursorScreenPos(ImVec2(p.x + NW - 18 * z, p.y + 3 * z));
+            if (ImGui::InvisibleButton("x", ImVec2(15 * z, 15 * z))) { *del = true; ndClick = false; }
         }
         if (clicked) *clicked = ndClick;
         ImGui::PopID();
-        dl->AddRectFilled(p, ImVec2(p.x + NW, p.y + NH), col, 6.0f);
-        dl->AddRect(p, ImVec2(p.x + NW, p.y + NH), hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,40), 6.0f);
-        dl->AddText(ImVec2(p.x + 9, p.y + 6), IM_COL32(236,239,246,255), title);
-        if (!sub.empty()) dl->AddText(ImVec2(p.x + 9, p.y + 25), IM_COL32(172,178,192,255), sub.c_str());
-        if (del) dl->AddText(ImVec2(p.x + NW - 15, p.y + 3), IM_COL32(235, 150, 150, 255), "x");
+        dl->AddRectFilled(ImVec2(p.x + 3 * z, p.y + 4 * z), ImVec2(p.x + NW + 3 * z, p.y + NH + 4 * z), IM_COL32(0, 0, 0, 90), 6.0f * z);  // drop shadow
+        dl->AddRectFilled(p, ImVec2(p.x + NW, p.y + NH), col, 6.0f * z);
+        dl->AddRect(p, ImVec2(p.x + NW, p.y + NH), hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,40), 6.0f * z);
+        dl->AddText(fnt, fs, ImVec2(p.x + 9 * z, p.y + 6 * z), IM_COL32(236,239,246,255), title);
+        if (!sub.empty()) dl->AddText(fnt, fs * 0.92f, ImVec2(p.x + 9 * z, p.y + 25 * z), IM_COL32(172,178,192,255), sub.c_str());
+        if (del) dl->AddText(fnt, fs, ImVec2(p.x + NW - 15 * z, p.y + 3 * z), IM_COL32(235, 150, 150, 255), "x");
         return ImVec2(p.x + NW * 0.5f, p.y + NH * 0.5f);
     };
+    // Bright glow behind a node — marks the instruction currently executing in Play.
+    auto glow = [&](ImVec2 c) {
+        dl->AddRect(ImVec2(c.x - NW * 0.5f - 3, c.y - NH * 0.5f - 3),
+                    ImVec2(c.x + NW * 0.5f + 3, c.y + NH * 0.5f + 3), IM_COL32(90, 230, 130, 235), 8.0f * z, 0, 3.0f);
+    };
     auto wire = [&](ImVec2 a, ImVec2 b, ImU32 col) {
-        dl->AddBezierCubic(a, ImVec2(a.x, (a.y + b.y) * 0.5f), ImVec2(b.x, (a.y + b.y) * 0.5f), b, col, 2.5f);
+        dl->AddBezierCubic(a, ImVec2(a.x, (a.y + b.y) * 0.5f), ImVec2(b.x, (a.y + b.y) * 0.5f), b, col, 2.5f * z);
     };
 
     std::string tsub;
@@ -8906,7 +8956,7 @@ static void DrawFlowGraph(EditorState& ed) {
     for (std::size_t i = 0; i < al->conditions.size(); ++i) {
         bool d = false, clk = false;
         bool selHere = (g_flowSelAl == al && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
-        ImVec2 c = node(key("cond", (int)i), ImVec2(30 + NW + 60, 18 + i * GAPY),
+        ImVec2 c = node(key("cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + i * GAPY),   // graph-space default
                         ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), "if",
                         IM_COL32(58, 112, 92, 255), &d, &clk);
         if (selHere)   // selected node gets a bright accent frame
@@ -8928,6 +8978,7 @@ static void DrawFlowGraph(EditorState& ed) {
         ImVec2 c = node(key("ins", (int)i), ImVec2(30, startY + i * GAPY),
                         ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), al->instructions[i].op), sub,
                         IM_COL32(50, 82, 142, 255), &d, &clk);
+        if (al->CurrentInstruction() == (int)i) glow(c);   // live node during Play
         if (selHere)
             dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
                         ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
@@ -8937,7 +8988,7 @@ static void DrawFlowGraph(EditorState& ed) {
         prev = c;
     }
     if (al->instructions.empty())
-        dl->AddText(ImVec2(cp.x + 30 + pan.x, cp.y + startY + 12 + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions yet — use + Instruction)");
+        dl->AddText(ImVec2(cp.x + 30 * z + pan.x, cp.y + (startY + 12) * z + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions yet — use + Instruction)");
 
     dl->PopClipRect();
 

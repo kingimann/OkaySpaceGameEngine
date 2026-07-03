@@ -56,6 +56,9 @@ public:
     void OnMouseClick() override { if (trigger == Trigger::OnClick)      m_pending = true; }
 
     bool IsRunning() const { return m_running; }
+    // Index of the instruction about to run (or waiting) while running, else -1.
+    // Used by the Flow Graph to highlight the live node during Play.
+    int  CurrentInstruction() const { return m_running ? (int)m_ip : -1; }
 
     /// Deliver a named signal: fires this list if it's an OnMessage trigger
     /// listening for `msg`. Sent by the `send` instruction or send_message().

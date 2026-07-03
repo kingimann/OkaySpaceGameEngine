@@ -14,6 +14,8 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIBarBind.hpp"    // health bar follows a variable
+#include "okay/Components/UITextBind.hpp"   // score/text follows a variable
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
@@ -135,9 +137,11 @@ inline GameObject* AddHUD(Scene& scene) {
     GameObject* root = Group(scene, canvas, "HUD");
     { auto* g = scene.CreateGameObject("HealthBar"); auto* pb = g->AddComponent<UIProgressBar>();
       pb->anchor = UIAnchor::TopLeft; pb->position = {24, 24}; pb->size = {260, 26}; pb->value = 1.0f; pb->cornerRadius = 6.0f;
+      auto* bb = g->AddComponent<UIBarBind>(); bb->var = "hp"; bb->min = 0.0f; bb->max = 100.0f;   // fills from the `hp` variable
       g->transform->SetParent(root->transform, false); }
     Text(scene, root, "HealthLabel", "HP", UIAnchor::TopLeft, {30, 27}, 2.0f);
-    Text(scene, root, "Score", "Score: 0", UIAnchor::TopRight, {-30, 24}, 3.0f);
+    Text(scene, root, "Score", "Score: 0", UIAnchor::TopRight, {-30, 24}, 3.0f)
+        ->AddComponent<UITextBind>()->format = "Score: {score}";   // shows the live `score` variable
     return root;
 }
 
@@ -160,6 +164,7 @@ inline GameObject* AddHealthBar(Scene& scene) {
     GameObject* root = Group(scene, canvas, "Health Bar");
     { auto* g = scene.CreateGameObject("Bar"); auto* pb = g->AddComponent<UIProgressBar>();
       pb->anchor = UIAnchor::TopLeft; pb->position = {24, 24}; pb->size = {300, 28}; pb->value = 1.0f; pb->cornerRadius = 8.0f;
+      auto* bb = g->AddComponent<UIBarBind>(); bb->var = "hp"; bb->min = 0.0f; bb->max = 100.0f;   // fills from the `hp` variable
       g->transform->SetParent(root->transform, false); }
     Text(scene, root, "Label", "HEALTH", UIAnchor::TopLeft, {30, 28}, 2.0f);
     return root;

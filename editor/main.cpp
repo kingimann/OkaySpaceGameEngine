@@ -5109,7 +5109,7 @@ static void AddBufferIdentifiers(const char* src, std::vector<std::string>& pool
 // Signature (parameter list) for a builtin, shown as a hint while typing a call —
 // e.g. inside `move_toward(` the editor floats "move_toward(x, y, step)". Empty for
 // unknown names. A curated subset of the most-used OkayScript API (see docs).
-static const std::string* ScriptSignature(const std::string& name) {
+static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() {
     static const std::unordered_map<std::string, std::string> sig = {
         // transform / movement
         {"move","move(dx, dy)"}, {"set_pos","set_pos(x, y)"}, {"set_x","set_x(v)"}, {"set_y","set_y(v)"},
@@ -5230,6 +5230,14 @@ static const std::string* ScriptSignature(const std::string& name) {
         {"atan","atan(x)"}, {"atan2","atan2(y, x)"}, {"sign","sign(x)"},
         {"approach","approach(current, target, step)"}, {"approximately","approximately(a, b)"}, {"angle_to","angle_to(\"name\")"},
     };
+    return sig;
+}
+
+// Signature (parameter list) for a builtin, shown as a hint while typing a call —
+// e.g. inside `move_toward(` the editor floats "move_toward(x, y, step)". Empty for
+// unknown names. A curated subset of the most-used OkayScript API (see docs).
+static const std::string* ScriptSignature(const std::string& name) {
+    const auto& sig = ScriptSignatureMap();
     auto it = sig.find(name);
     return it == sig.end() ? nullptr : &it->second;
 }
@@ -5893,6 +5901,63 @@ void DrawScriptEditor(EditorState& ed) {
                 if (ImGui::MenuItem(s.name)) caret.insert = s.text;
             ImGui::EndPopup();
         }
+
+        // Insert browser: a searchable list of the ENTIRE scripting API (every
+        // builtin's signature + one-line description), click to splice a call at the
+        // caret. The fast way to discover "how do I do X" without leaving the editor.
+        ImGui::SameLine();
+        static char s_insQuery[64] = ""; static bool s_insFocus = false;
+        if (ImGui::SmallButton("Insert...")) { s_insQuery[0] = '\0'; s_insFocus = true; ImGui::OpenPopup("##insertbrowser"); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Browse & insert any script command (searchable API)");
+        ImGui::SetNextWindowSize(ImVec2(480, 440), ImGuiCond_Appearing);
+        if (ImGui::BeginPopup("##insertbrowser")) {
+            ImGui::TextDisabled("Insert command  —  type to search names, params, or descriptions");
+            if (s_insFocus) { ImGui::SetKeyboardFocusHere(); s_insFocus = false; }
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##insq", "Search the scripting API...", s_insQuery, sizeof(s_insQuery));
+            ImGui::Separator();
+            std::string q = s_insQuery;
+            for (auto& c : q) c = (char)std::tolower((unsigned char)c);
+            auto lc = [](std::string s){ for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+            // Collect matches (name / signature / description), sorted by name.
+            std::vector<const std::string*> names;
+            for (const auto& kv : ScriptSignatureMap()) {
+                if (!q.empty()) {
+                    bool hit = lc(kv.first).find(q) != std::string::npos || lc(kv.second).find(q) != std::string::npos;
+                    if (!hit) if (const std::string* d = ScriptDoc(kv.first)) hit = lc(*d).find(q) != std::string::npos;
+                    if (!hit) continue;
+                }
+                names.push_back(&kv.first);
+            }
+            std::sort(names.begin(), names.end(), [](const std::string* a, const std::string* b){ return *a < *b; });
+            // Insert the full signature as an editable template when it's a clean call,
+            // else just the call opener; the signature hint floats the rest.
+            auto callTemplate = [](const std::string& name, const std::string& sig) -> std::string {
+                if (sig.rfind(name + "(", 0) == 0 && !sig.empty() && sig.back() == ')' &&
+                    sig.find('|') == std::string::npos && sig.find("->") == std::string::npos &&
+                    sig.find("...") == std::string::npos)
+                    return sig;
+                return name + "(";
+            };
+            ImGui::BeginChild("##inslist", ImVec2(0, 360));
+            const auto& sigMap = ScriptSignatureMap();
+            for (const std::string* np : names) {
+                const std::string& name = *np;
+                const std::string& sig = sigMap.at(name);
+                std::string row = sig + "##ins_" + name;
+                if (ImGui::Selectable(row.c_str())) {
+                    caret.insert = callTemplate(name, sig);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered())
+                    if (const std::string* d = ScriptDoc(name))
+                        ImGui::SetTooltip("%s", d->c_str());
+            }
+            if (names.empty()) ImGui::TextDisabled("No commands match \"%s\".", s_insQuery);
+            ImGui::EndChild();
+            ImGui::EndPopup();
+        }
+
         ImGui::SameLine();
         ImGui::Checkbox("Auto", &caret.autoPairs);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-close brackets/quotes and auto-indent on Enter");

@@ -497,6 +497,7 @@ void EditorState::Stop() {
     if (!m_playing) return;
     m_playing = false;
     Game::Reset();   // unpause + clear quit so the next Play starts clean
+    ActionList::DebugPaused() = false; ActionList::StepBudget() = 0;   // never leave Actions frozen after Stop
     // Deserialize rebuilds the scene, destroying every live component — including
     // any NetworkManager m_net points at. Drop the pointer first so TickServices
     // never dereferences freed memory (a use-after-free crash).

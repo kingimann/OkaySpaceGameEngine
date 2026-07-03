@@ -83,6 +83,13 @@ public:
     static std::unordered_map<std::string, std::unordered_map<std::string, float>>& Maps();
     static void ResetVars();
 
+    // ---- Step debugging (driven from the editor's Flow Graph) --------------
+    // When paused, running lists execute only StepBudget() instructions, then hold
+    // at the next one. The editor grants budget with each "Step" and shows the live
+    // node. Off by default, so shipped games are unaffected.
+    static bool& DebugPaused();
+    static int&  StepBudget();
+
 private:
     void Fire();
     bool EvalConditions();

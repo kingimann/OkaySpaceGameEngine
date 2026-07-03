@@ -64,6 +64,9 @@ std::unordered_map<std::string, std::unordered_map<std::string, float>>& ActionL
 
 void ActionList::ResetVars() { Vars().clear(); Arrays().clear(); Maps().clear(); }
 
+bool& ActionList::DebugPaused() { static bool p = false; return p; }
+int&  ActionList::StepBudget()  { static int  b = 0;     return b; }
+
 // A goto/if_goto target: a plain line number, or the index of `label "<name>"`.
 int ActionList::ResolveTarget(const std::string& t) const {
     if (!t.empty() && (std::isdigit((unsigned char)t[0]) || t[0] == '-')) return std::atoi(t.c_str());
@@ -311,6 +314,9 @@ void ActionList::Update(float dt) {
     int guard = 0;   // cap steps per frame so a goto-loop without a wait can't hang
     while (m_ip < instructions.size()) {
         if (++guard > 10000) break;
+        // Step debugging: when paused, run only as many instructions as the editor
+        // has granted, then hold here (return keeps the list running so it resumes).
+        if (DebugPaused()) { if (StepBudget() <= 0) return; --StepBudget(); }
         const Item& it = instructions[m_ip];
         const std::string& op = it.op;
         ++m_ip;

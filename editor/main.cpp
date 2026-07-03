@@ -9155,6 +9155,26 @@ static void DrawFlowGraph(EditorState& ed) {
     ImGui::SameLine();
     if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "● running");
     else                 ImGui::TextDisabled("○ idle");
+
+    // Step debugger: pause running Actions and advance one instruction at a time,
+    // watching values change in the Variables panel. Shared across all lists.
+    bool& paused = ActionList::DebugPaused();
+    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+    if (ImGui::Checkbox("Pause", &paused)) { if (paused) ActionList::StepBudget() = 0; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause all Actions and step them one action at a time (for debugging).");
+    if (paused) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Step")) ActionList::StepBudget() += 1;      // run exactly one action
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run the next single action, then pause again.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Step 10")) ActionList::StepBudget() += 10;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Continue")) paused = false;                 // resume normal speed
+        ImGui::SameLine();
+        int cur = al->CurrentInstruction();
+        if (al->IsRunning() && cur >= 0) ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "paused at #%d", cur);
+        else ImGui::TextDisabled("paused");
+    }
     ImGui::Separator();
 
     static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",

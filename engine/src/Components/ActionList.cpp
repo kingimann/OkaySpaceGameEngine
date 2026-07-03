@@ -62,7 +62,12 @@ std::unordered_map<std::string, std::unordered_map<std::string, float>>& ActionL
     return m;
 }
 
-void ActionList::ResetVars() { Vars().clear(); Arrays().clear(); Maps().clear(); }
+std::unordered_map<std::string, std::string>& ActionList::StrVars() {
+    static std::unordered_map<std::string, std::string> s;
+    return s;
+}
+
+void ActionList::ResetVars() { Vars().clear(); Arrays().clear(); Maps().clear(); StrVars().clear(); }
 
 bool& ActionList::DebugPaused() { static bool p = false; return p; }
 int&  ActionList::StepBudget()  { static int  b = 0;     return b; }
@@ -253,6 +258,10 @@ bool ActionList::EvalConditions() {
         else if (op == "array_len_gt") ok = (int)Arrays()[Str(c, 0)].size() > (int)Num(c, 1);
         else if (op == "array_len_lt") ok = (int)Arrays()[Str(c, 0)].size() < (int)Num(c, 1);
         else if (op == "map_has")      { auto& m = Maps()[Str(c, 0)]; ok = m.find(Str(c, 1)) != m.end(); }
+        else if (op == "str_eq")       ok = StrVars()[Str(c, 0)] == Rest(c, 1);
+        else if (op == "str_neq")      ok = StrVars()[Str(c, 0)] != Rest(c, 1);
+        else if (op == "str_contains") ok = StrVars()[Str(c, 0)].find(Rest(c, 1)) != std::string::npos;
+        else if (op == "str_empty")    ok = StrVars()[Str(c, 0)].empty();
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
@@ -430,6 +439,23 @@ void ActionList::Update(float dt) {
         else if (op == "map_del")   { Maps()[Str(it, 0)].erase(Str(it, 1)); }
         else if (op == "map_clear") { Maps()[Str(it, 0)].clear(); }
         else if (op == "map_size")  { Vars()[Str(it, 1)] = (float)Maps()[Str(it, 0)].size(); }
+        // ---- Text (string) variables ----
+        else if (op == "str_set")    { StrVars()[Str(it, 0)] = Rest(it, 1); }               // literal text
+        else if (op == "str_copy")   { StrVars()[Str(it, 0)] = StrVars()[Str(it, 1)]; }
+        else if (op == "str_append") { StrVars()[Str(it, 0)] += Rest(it, 1); }
+        else if (op == "str_concat") { StrVars()[Str(it, 0)] = StrVars()[Str(it, 1)] + StrVars()[Str(it, 2)]; }
+        else if (op == "str_from_num"){                                                     // number -> text
+            float v = GetVar(Str(it, 1));
+            StrVars()[Str(it, 0)] = UITextBind::Resolve("{" + Str(it, 1) + "}");             // pretty-formats like the HUD
+            if (StrVars()[Str(it, 0)].empty()) { char b[32]; std::snprintf(b, sizeof(b), "%g", v); StrVars()[Str(it, 0)] = b; }
+        }
+        else if (op == "str_to_num") {                                                      // text -> number
+            try { Vars()[Str(it, 0)] = std::stof(StrVars()[Str(it, 1)]); } catch (...) { Vars()[Str(it, 0)] = 0.0f; }
+        }
+        else if (op == "str_set_text") {                                                    // put a string var on a Text object
+            if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
+                if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = StrVars()[Str(it, 1)];
+        }
         else if (op == "spawn3") {
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);

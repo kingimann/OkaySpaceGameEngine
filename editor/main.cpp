@@ -1192,6 +1192,23 @@ void DrawVarWatch() {
         }
     }
 
+    auto& svars = okay::ActionList::StrVars();
+    ImGui::SeparatorText("Text");
+    if (svars.empty()) ImGui::TextDisabled("(no text variables yet)");
+    else {
+        std::vector<std::string> keys; keys.reserve(svars.size());
+        for (auto& kv : svars) if (matches(kv.first)) keys.push_back(kv.first);
+        std::sort(keys.begin(), keys.end());
+        for (const auto& k : keys) {
+            ImGui::PushID(k.c_str());
+            ImGui::TextUnformatted(k.c_str()); ImGui::SameLine(170);
+            char sb[256]; std::strncpy(sb, svars[k].c_str(), sizeof(sb) - 1); sb[sizeof(sb) - 1] = '\0';
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::InputText("##sv", sb, sizeof(sb))) svars[k] = sb;
+            ImGui::PopID();
+        }
+    }
+
     auto& maps = okay::ActionList::Maps();
     ImGui::SeparatorText("Maps");
     if (maps.empty()) ImGui::TextDisabled("(no maps yet)");
@@ -8536,6 +8553,10 @@ static const ActionOpInfo kCondOps[] = {
     {"array_len_gt","Array Longer Than",   "array count",                "Passes if the array has more than N items.",                   "Arrays"},
     {"array_len_lt","Array Shorter Than",  "array count",                "Passes if the array has fewer than N items.",                  "Arrays"},
     {"map_has",    "Map Has Key",          "map key",                    "Passes if the named map contains the key.",                    "Maps"},
+    {"str_eq",     "Text Equals",          "var text...",                "Passes if the text variable exactly equals the words.",        "Text"},
+    {"str_neq",    "Text Not Equals",      "var text...",                "Passes if the text variable does not equal the words.",        "Text"},
+    {"str_contains","Text Contains",       "var text...",                "Passes if the text variable contains the words.",              "Text"},
+    {"str_empty",  "Text Is Empty",        "var",                        "Passes if the text variable is empty.",                        "Text"},
 };
 
 // Instructions — "do these, top to bottom".
@@ -8663,6 +8684,14 @@ static const ActionOpInfo kInstrOps[] = {
     {"map_del",     "Map Delete Key",     "map key",               "Remove a key from a map.",                                            "Maps"},
     {"map_size",    "Map Size",           "map into-var",          "Store the number of keys in a variable.",                             "Maps"},
     {"map_clear",   "Map Clear",          "map",                   "Empty a named map.",                                                  "Maps"},
+    // ---- Text (string) variables ----
+    {"str_set",     "Text Set",           "var text...",           "Set a text variable to some words. Show it on a HUD with {var}.",      "Text"},
+    {"str_append",  "Text Append",        "var text...",           "Add words to the end of a text variable.",                            "Text"},
+    {"str_copy",    "Text Copy",          "dest src",              "Copy one text variable into another.",                                "Text"},
+    {"str_concat",  "Text Join",          "dest a b",              "Join two text variables into a third (a + b).",                       "Text"},
+    {"str_from_num","Text From Number",   "text-var number-var",   "Turn a number variable into text (nicely formatted).",                "Text"},
+    {"str_to_num",  "Text To Number",     "number-var text-var",   "Parse a text variable into a number variable.",                       "Text"},
+    {"str_set_text","Text To Object",     "object text-var",       "Put a text variable's value on a named Text object.",                 "Text"},
 };
 
 // The friendly label for an op string (falls back to the raw op if unknown).

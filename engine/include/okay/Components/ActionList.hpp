@@ -81,6 +81,9 @@ public:
     static std::unordered_map<std::string, std::vector<float>>& Arrays();
     // Shared maps/dictionaries (string key -> float value). Cleared on Reset.
     static std::unordered_map<std::string, std::unordered_map<std::string, float>>& Maps();
+    // Shared text variables (str_set/str_eq/... ops). Cleared on Reset. Displayed by
+    // a UITextBind {key} the same as numbers, so names/dialogue can go on screen.
+    static std::unordered_map<std::string, std::string>& StrVars();
     static void ResetVars();
 
     // ---- Step debugging (driven from the editor's Flow Graph) --------------

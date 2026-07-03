@@ -94,8 +94,16 @@ private:
     float m_wait = 0.0f;
     bool m_fired = false;
     bool m_pending = false;    // latched by event callbacks (collision/trigger/mouse)
-    // Counted-loop frames (repeat/end_repeat) and subroutine return addresses (gosub/return).
-    struct LoopFrame { std::size_t bodyStart, endIp; int remaining; };
+    // Loop frames (repeat / while / for-each) and subroutine return addresses.
+    struct LoopFrame {
+        int kind = 0;              // 0 = repeat, 1 = while, 2 = for-each
+        std::size_t headIp = 0;    // the loop's opening instruction
+        std::size_t bodyStart = 0; // first instruction of the body
+        std::size_t endIp = 0;     // the matching end_* instruction
+        int remaining = 0;         // repeat: iterations left
+        std::string arr, idxVar, valVar;  // for-each state
+        std::size_t idx = 0;
+    };
     std::vector<LoopFrame>   m_loops;
     std::vector<std::size_t> m_callStack;
 };

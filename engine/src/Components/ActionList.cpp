@@ -322,20 +322,66 @@ void ActionList::Update(float dt) {
             int end = MatchingEnd(m_ip - 1, "repeat", "end_repeat");
             if (end < 0) { /* unmatched: ignore */ }
             else if (count <= 0) m_ip = (std::size_t)end + 1;      // zero iterations: skip the body
-            else m_loops.push_back({m_ip, (std::size_t)end, count - 1});
+            else { LoopFrame f; f.kind = 0; f.headIp = m_ip - 1; f.bodyStart = m_ip; f.endIp = (std::size_t)end; f.remaining = count - 1; m_loops.push_back(f); }
         }
         else if (op == "end_repeat") {
-            if (!m_loops.empty()) {
+            if (!m_loops.empty() && m_loops.back().kind == 0) {
                 auto& f = m_loops.back();
                 if (f.remaining > 0) { --f.remaining; m_ip = f.bodyStart; }
                 else m_loops.pop_back();
+            }
+        }
+        // ---- While loop: while <var> <op> <value> ... end_while ----
+        else if (op == "while") {
+            const std::string& cmp = Str(it, 1);
+            float lhs = GetVar(Str(it, 0)), rhs = Num(it, 2);
+            bool pass = (cmp == "eq")  ? Mathf::Approximately(lhs, rhs)
+                      : (cmp == "neq") ? !Mathf::Approximately(lhs, rhs)
+                      : (cmp == "gt")  ? (lhs > rhs) : (cmp == "lt") ? (lhs < rhs)
+                      : (cmp == "ge")  ? (lhs >= rhs) : (cmp == "le") ? (lhs <= rhs) : false;
+            int end = MatchingEnd(m_ip - 1, "while", "end_while");
+            if (end < 0) { /* unmatched */ }
+            else if (!pass) m_ip = (std::size_t)end + 1;           // condition false: exit
+            else { LoopFrame f; f.kind = 1; f.headIp = m_ip - 1; f.bodyStart = m_ip; f.endIp = (std::size_t)end; m_loops.push_back(f); }
+        }
+        else if (op == "end_while") {
+            if (!m_loops.empty() && m_loops.back().kind == 1) {
+                std::size_t head = m_loops.back().headIp;
+                m_loops.pop_back();                                 // the while op re-evaluates and re-pushes
+                m_ip = head;
+            }
+        }
+        // ---- For each over an array: for_each <array> <idxVar> <valVar> ... end_for ----
+        else if (op == "for_each") {
+            int end = MatchingEnd(m_ip - 1, "for_each", "end_for");
+            auto& a = Arrays()[Str(it, 0)];
+            if (end < 0) { /* unmatched */ }
+            else if (a.empty()) m_ip = (std::size_t)end + 1;
+            else {
+                LoopFrame f; f.kind = 2; f.headIp = m_ip - 1; f.bodyStart = m_ip; f.endIp = (std::size_t)end;
+                f.arr = Str(it, 0); f.idxVar = Str(it, 1); f.valVar = Str(it, 2); f.idx = 0;
+                if (!f.idxVar.empty()) Vars()[f.idxVar] = 0.0f;
+                if (!f.valVar.empty()) Vars()[f.valVar] = a[0];
+                m_loops.push_back(f);
+            }
+        }
+        else if (op == "end_for") {
+            if (!m_loops.empty() && m_loops.back().kind == 2) {
+                auto& f = m_loops.back();
+                auto& a = Arrays()[f.arr];
+                ++f.idx;
+                if (f.idx < a.size()) {
+                    if (!f.idxVar.empty()) Vars()[f.idxVar] = (float)f.idx;
+                    if (!f.valVar.empty()) Vars()[f.valVar] = a[f.idx];
+                    m_ip = f.bodyStart;
+                } else m_loops.pop_back();
             }
         }
         else if (op == "break") {
             if (!m_loops.empty()) { m_ip = m_loops.back().endIp + 1; m_loops.pop_back(); }
         }
         else if (op == "continue") {
-            if (!m_loops.empty()) m_ip = m_loops.back().endIp;      // jump to end_repeat -> next iteration
+            if (!m_loops.empty()) m_ip = m_loops.back().endIp;      // jump to the end_* -> next iteration
         }
         // ---- Subroutines (delegate-style): gosub <label> ... return_sub ----
         else if (op == "gosub") {

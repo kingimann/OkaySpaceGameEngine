@@ -9127,6 +9127,32 @@ static const char* FlowOpPalettePopup(const char* popupId, const ActionOpInfo* o
     return chosen;
 }
 
+// The palette group an op belongs to (Flow / Arrays / Text / Physics / ...).
+static const char* ActionOpGroup(const ActionOpInfo* ops, int n, const std::string& op) {
+    for (int i = 0; i < n; ++i) if (op == ops[i].op) return ops[i].group ? ops[i].group : "";
+    return "";
+}
+// Colour a flow-graph node by its category, so the graph reads at a glance.
+static ImU32 FlowNodeColor(const std::string& g) {
+    if (g == "Flow")                       return IM_COL32(150, 96, 44, 255);   // control flow — amber
+    if (g == "Variables")                  return IM_COL32(52, 110, 86, 255);   // green
+    if (g == "Arrays" || g == "Maps")      return IM_COL32(96, 68, 140, 255);   // purple
+    if (g == "Text")                       return IM_COL32(38, 108, 120, 255);  // teal
+    if (g == "Events")                     return IM_COL32(150, 110, 46, 255);  // gold
+    if (g.rfind("Physics", 0) == 0)        return IM_COL32(128, 72, 72, 255);   // red
+    if (g == "Animation" || g == "Character") return IM_COL32(108, 78, 132, 255);
+    if (g == "Audio")                      return IM_COL32(96, 96, 52, 255);
+    if (g == "Render" || g == "Look" || g == "Camera") return IM_COL32(56, 92, 132, 255);
+    if (g == "Survival")                   return IM_COL32(80, 110, 70, 255);
+    return IM_COL32(50, 82, 142, 255);   // default blue
+}
+static bool FlowIsOpener(const std::string& o) {
+    return o == "repeat" || o == "while" || o == "for_each" || o == "for_each_tag";
+}
+static bool FlowIsEnder(const std::string& o) {
+    return o == "end_repeat" || o == "end_while" || o == "end_for" || o == "end_for_tag";
+}
+
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
     if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
@@ -9320,16 +9346,44 @@ static void DrawFlowGraph(EditorState& ed) {
     }
 
     float startY = 18.0f + (al->conditions.empty() ? GAPY : (float)al->conditions.size() * GAPY);
+    const std::size_t nins = al->instructions.size();
+    // Indentation depth per instruction (loop/block bodies step in) + which opener
+    // each ender closes, so we can draw loop-back arrows.
+    std::vector<int> depth(nins, 0);
+    std::vector<int> openerOf(nins, -1);
+    {
+        std::vector<int> stack; int dcur = 0;
+        for (std::size_t i = 0; i < nins; ++i) {
+            const std::string& o = al->instructions[i].op;
+            if (FlowIsEnder(o)) { dcur = dcur > 0 ? dcur - 1 : 0; if (!stack.empty()) { openerOf[i] = stack.back(); stack.pop_back(); } }
+            depth[i] = dcur;
+            if (FlowIsOpener(o)) { stack.push_back((int)i); ++dcur; }
+        }
+    }
+    // Resolve a goto/if_goto/gosub target (line number or a label name) to an index.
+    auto targetIndex = [&](const std::string& t) -> int {
+        if (!t.empty() && (std::isdigit((unsigned char)t[0]) || t[0] == '-')) {
+            int n = std::atoi(t.c_str()); return (n >= 0 && n < (int)nins) ? n : -1;
+        }
+        for (std::size_t i = 0; i < nins; ++i)
+            if (al->instructions[i].op == "label" && !al->instructions[i].args.empty() && al->instructions[i].args[0] == t)
+                return (int)i;
+        return -1;
+    };
+    const float INDENT = 34.0f;              // graph-space step per nesting level
+    std::vector<ImVec2> insCenter(nins);     // node centres, for the jump wires below
     ImVec2 prev = trigC;
-    for (std::size_t i = 0; i < al->instructions.size(); ++i) {
+    for (std::size_t i = 0; i < nins; ++i) {
+        const auto& item = al->instructions[i];
         std::string sub;
-        for (const auto& a : al->instructions[i].args) { if (!sub.empty()) sub += " "; sub += a; }
+        for (const auto& a : item.args) { if (!sub.empty()) sub += " "; sub += a; }
         if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
         bool d = false, clk = false;
         bool selHere = (g_flowSelAl == al && g_flowSelKind == 2 && g_flowSelIdx == (int)i);
-        ImVec2 c = node(key("ins", (int)i), ImVec2(30, startY + i * GAPY),
-                        ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), al->instructions[i].op), sub,
-                        IM_COL32(50, 82, 142, 255), &d, &clk);
+        ImU32 col = FlowNodeColor(ActionOpGroup(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op));
+        ImVec2 c = node(key("ins", (int)i), ImVec2(30 + depth[i] * INDENT, startY + i * GAPY),
+                        ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op), sub, col, &d, &clk);
+        insCenter[i] = c;
         if (al->CurrentInstruction() == (int)i) glow(c);   // live node during Play
         if (selHere)
             dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
@@ -9338,6 +9392,23 @@ static void DrawFlowGraph(EditorState& ed) {
         if (clk) { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodeedit"); }
         wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
         prev = c;
+    }
+    // Jump / loop-back wires: goto/if_goto/gosub -> target label (amber), and each
+    // loop ender -> its opener (green), drawn as side arcs so the flow is visible.
+    auto jumpWire = [&](ImVec2 a, ImVec2 b, ImU32 col) {
+        float off = 60.0f * z + (a.y < b.y ? 0.0f : 40.0f * z);   // bow out to the right
+        dl->AddBezierCubic(ImVec2(a.x + NW * 0.5f, a.y), ImVec2(a.x + NW * 0.5f + off, a.y),
+                           ImVec2(b.x + NW * 0.5f + off, b.y), ImVec2(b.x + NW * 0.5f, b.y), col, 2.0f * z);
+        dl->AddCircleFilled(ImVec2(b.x + NW * 0.5f, b.y), 3.0f * z, col);   // arrow-ish dot at the target
+    };
+    for (std::size_t i = 0; i < nins; ++i) {
+        const auto& item = al->instructions[i];
+        int tgt = -1;
+        if (item.op == "goto" || item.op == "gosub") tgt = item.args.size() > 0 ? targetIndex(item.args[0]) : -1;
+        else if (item.op == "if_goto")               tgt = item.args.size() > 3 ? targetIndex(item.args[3]) : -1;
+        if (tgt >= 0 && tgt < (int)nins) jumpWire(insCenter[i], insCenter[tgt], IM_COL32(240, 190, 90, 210));
+        if (FlowIsEnder(item.op) && openerOf[i] >= 0)
+            jumpWire(insCenter[i], insCenter[openerOf[i]], IM_COL32(120, 210, 140, 200));   // loop back
     }
     if (al->instructions.empty())
         dl->AddText(ImVec2(cp.x + 30 * z + pan.x, cp.y + (startY + 12) * z + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions yet — use + Instruction)");

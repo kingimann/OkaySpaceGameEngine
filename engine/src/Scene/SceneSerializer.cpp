@@ -38,6 +38,7 @@
 #include "okay/Components/CraftingMenu.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/TopDownController2D.hpp"
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
@@ -1016,6 +1017,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
             << td->lookHeight << " " << td->cameraDamping
             << " " << (td->footIK ? 1 : 0) << "\n";
+    }
+    if (auto* t2 = go->GetComponent<TopDownController2D>()) {
+        out << "  tdctrl2d " << t2->speed << " " << t2->runSpeed << " " << (t2->sprintKey ? t2->sprintKey : '-')
+            << " " << (t2->normalizeDiagonal ? 1 : 0) << " " << (t2->useGamepad ? 1 : 0)
+            << " " << t2->acceleration << " " << t2->deceleration
+            << " " << (t2->dashKey ? t2->dashKey : '-') << " " << t2->dashSpeed << " " << t2->dashDuration << " " << t2->dashCooldown
+            << " " << t2->faceMode << " " << t2->spriteForward << " " << t2->turnSpeed << " " << (t2->driveAnimation ? 1 : 0)
+            << " " << (t2->clampBounds ? 1 : 0) << " " << t2->boundsMin.x << " " << t2->boundsMin.y
+            << " " << t2->boundsMax.x << " " << t2->boundsMax.y << " " << (t2->screenWrap ? 1 : 0) << "\n";
     }
     if (auto* fr = go->GetComponent<FreeRoamController>()) {
         out << "  frctrl " << fr->moveSpeed << " " << fr->boostMultiplier << " "
@@ -2846,6 +2856,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
                     in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; td->footIK = (fik != 0); }
+                } else if (field == "tdctrl2d") {
+                    auto* t2 = go->AddComponent<TopDownController2D>();
+                    std::string sk = "-", dk = "-"; int nd = 1, ug = 1, da = 1, cb = 0, sw = 0;
+                    in >> t2->speed >> t2->runSpeed >> sk >> nd >> ug
+                       >> t2->acceleration >> t2->deceleration
+                       >> dk >> t2->dashSpeed >> t2->dashDuration >> t2->dashCooldown
+                       >> t2->faceMode >> t2->spriteForward >> t2->turnSpeed >> da
+                       >> cb >> t2->boundsMin.x >> t2->boundsMin.y >> t2->boundsMax.x >> t2->boundsMax.y >> sw;
+                    t2->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
+                    t2->dashKey   = (dk == "-" || dk.empty()) ? 0 : dk[0];
+                    t2->normalizeDiagonal = (nd != 0); t2->useGamepad = (ug != 0);
+                    t2->driveAnimation = (da != 0); t2->clampBounds = (cb != 0); t2->screenWrap = (sw != 0);
                 } else if (field == "frctrl") {
                     auto* fr = go->AddComponent<FreeRoamController>();
                     int sk = (unsigned char)fr->sprintKey, uk = (unsigned char)fr->upKey,

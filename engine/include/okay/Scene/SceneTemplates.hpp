@@ -22,6 +22,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/TopDownController2D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
@@ -541,12 +542,12 @@ inline void TopDown(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     auto* psr = player->AddComponent<SpriteRenderer>();
     psr->color = Color::FromBytes(230, 120, 90);
-    auto* sc = player->AddComponent<ScriptComponent>("okayscript");
-    sc->LoadSource(
-        "function update(d) {\n"
-        "  var speed = 5;\n"
-        "  move(axis_x() * speed * d, axis_y() * speed * d);\n"
-        "}\n");
+    // Native, full-featured top-down movement (momentum + sprint + dash + facing) —
+    // no script needed. Shift to sprint, Space to dash.
+    auto* tdc = player->AddComponent<TopDownController2D>();
+    tdc->speed = 5.0f; tdc->runSpeed = 8.0f;
+    tdc->dashKey = ' ';             // Space to dash
+    tdc->acceleration = 60.0f; tdc->deceleration = 55.0f;
 
     for (int i = 0; i < 2; ++i) {
         GameObject* wall = scene.CreateGameObject(i == 0 ? "WallA" : "WallB");

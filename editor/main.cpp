@@ -14044,6 +14044,48 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
     }
+    if (auto* t2 = dynamic_cast<TopDownController2D*>(curComp)) {
+        if (CompHeader("Top Down Controller 2D", t2, &toRemove)) {
+            SectionHeader("Movement");
+            if (ImGui::DragFloat("Speed##t2", &t2->speed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Speed##t2", &t2->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (KeyBindCombo("Sprint Key##t2", t2->sprintKey)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##t2", &t2->acceleration, 1.0f, 0.0f, 400.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = instant (arcade). Higher = momentum/weight.");
+            if (ImGui::DragFloat("Deceleration##t2", &t2->deceleration, 1.0f, 0.0f, 400.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Normalize Diagonal##t2", &t2->normalizeDiagonal)) ed.dirty = true;
+            if (ImGui::Checkbox("Use Gamepad##t2", &t2->useGamepad)) ed.dirty = true;
+            SectionHeader("Dash");
+            if (KeyBindCombo("Dash Key##t2", t2->dashKey)) ed.dirty = true;
+            if (t2->dashKey) {
+                if (ImGui::DragFloat("Dash Speed##t2", &t2->dashSpeed, 0.2f, 0.0f, 80.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Dash Time##t2", &t2->dashDuration, 0.01f, 0.02f, 2.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::DragFloat("Dash Cooldown##t2", &t2->dashCooldown, 0.05f, 0.0f, 10.0f, "%.2fs")) ed.dirty = true;
+            }
+            SectionHeader("Facing");
+            const char* faces[] = {"None", "Move Direction", "Mouse (aim)"};
+            if (ImGui::Combo("Face##t2", &t2->faceMode, faces, 3)) ed.dirty = true;
+            if (t2->faceMode != 0) {
+                const char* fwd[] = {"Up", "Right", "Down", "Left"};
+                if (ImGui::Combo("Sprite Points##t2", &t2->spriteForward, fwd, 4)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which way the sprite art points, so it aligns when rotated.");
+                if (ImGui::DragFloat("Turn Speed##t2", &t2->turnSpeed, 1.0f, 0.0f, 1440.0f, "%.0f deg/s")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = snap instantly.");
+            }
+            if (ImGui::Checkbox("Drive Animation##t2", &t2->driveAnimation)) ed.dirty = true;
+            SectionHeader("World Limits");
+            if (ImGui::Checkbox("Clamp To Bounds##t2", &t2->clampBounds)) ed.dirty = true;
+            if (t2->clampBounds) {
+                float mn[2] = {t2->boundsMin.x, t2->boundsMin.y}, mx[2] = {t2->boundsMax.x, t2->boundsMax.y};
+                if (ImGui::DragFloat2("Min##t2", mn, 0.1f)) { t2->boundsMin = {mn[0], mn[1]}; ed.dirty = true; }
+                if (ImGui::DragFloat2("Max##t2", mx, 0.1f)) { t2->boundsMax = {mx[0], mx[1]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Screen Wrap##t2", &t2->screenWrap)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wrap around the camera view edges (asteroids-style).");
+            ImGui::TextDisabled("2D sprite top-down: WASD/arrows, sprint, dash, face move/mouse.");
+            if (ImGui::SmallButton("Remove##t2")) toRemove = t2;
+        }
+    }
     if (auto* fr = dynamic_cast<FreeRoamController*>(curComp)) {
         if (CompHeader("Free Roam (Fly) Controller", fr, &toRemove)) {
             if (ImGui::DragFloat("Move Speed##fr", &fr->moveSpeed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
@@ -16170,7 +16212,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { go->AddComponent<FirstPersonController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { go->AddComponent<ThirdPersonController>(); ed.dirty = true; }
-            if (item(!go->GetComponent<TopDownController>(), "Top Down Controller")) { go->AddComponent<TopDownController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TopDownController>(), "Top Down Controller (3D)")) { go->AddComponent<TopDownController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TopDownController2D>(), "Top Down Controller 2D")) { go->AddComponent<TopDownController2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { go->AddComponent<ThirdPersonShooterController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }

@@ -9057,14 +9057,70 @@ static bool ActionOpUsesVar(const std::string& o) {
            o == "copy_var" || o == "add_var_var" || o == "add_score";
 }
 
-// Gather every variable name already used by any Actions component in the scene, so
-// the editor can offer them instead of making the user re-type names by hand.
+// Gather every variable name the game is likely to use, so the editor can offer them
+// instead of making the user retype names. Pulls from FOUR sources so the list is
+// useful even before you've added a single Set Variable action:
+//   1. Actions (Set Variable / conditions) already in the scene.
+//   2. Names published by stat/health components present on any object.
+//   3. Variables referenced by scripts (set/get/set_var/save/prefs...) and UI binds.
+//   4. A curated set of common gameplay names (score, health, coins, ...).
 static void CollectSceneVarNames(Scene* scene, std::vector<std::string>& out) {
     out.clear();
-    if (!scene) return;
     auto add = [&](const std::string& v) {
         if (!v.empty() && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
     };
+    // (4) Common names, always suggested.
+    for (const char* v : {"score", "health", "hp", "coins", "lives", "level", "xp",
+                          "mana", "ammo", "kills", "time", "highscore", "won", "lost"})
+        add(v);
+    // Live variables during Play (whatever scripts/actions have actually created).
+    for (const auto& kv : ActionList::Vars()) add(kv.first);
+    if (!scene) { std::sort(out.begin(), out.end()); return; }
+
+    // (2) Names published by stat/health/survival components anywhere in the scene.
+    for (const auto& up : scene->Objects()) {
+        GameObject* g = up.get(); if (!g) continue;
+        if (g->GetComponent<HealthStat>())   add("health");
+        if (g->GetComponent<HungerStat>())   add("hunger");
+        if (g->GetComponent<ThirstStat>())   add("thirst");
+        if (g->GetComponent<StaminaStat>())  add("stamina");
+        if (g->GetComponent<OxygenStat>())   add("oxygen");
+        if (g->GetComponent<TemperatureStat>()) add("warmth");
+        if (g->GetComponent<SanityStat>())   add("sanity");
+        if (g->GetComponent<RadiationStat>())add("radiation");
+        if (g->GetComponent<PoisonStat>())   add("poison");
+        // (3) UI binds name variables directly.
+        if (auto* bb = g->GetComponent<UIBarBind>()) add(bb->var);
+        if (auto* tb = g->GetComponent<UITextBind>()) {
+            // pull every {token} out of the format string
+            const std::string& f = tb->format;
+            for (std::size_t i = 0; i + 1 < f.size(); ++i) {
+                if (f[i] != '{') continue;
+                std::size_t e = f.find('}', i + 1);
+                if (e == std::string::npos) break;
+                add(f.substr(i + 1, e - i - 1)); i = e;
+            }
+        }
+        // (3) Script sources: pull the first string literal after a var-ish call.
+        for (ScriptComponent* sc : g->GetComponents<ScriptComponent>()) {
+            const std::string& s = sc->Source();
+            static const char* calls[] = {"set_var(", "get_var(", "add_var(", "set(", "get(",
+                                          "save(", "load(", "save_prefs(", "load_prefs("};
+            for (const char* call : calls) {
+                std::size_t p = 0;
+                while ((p = s.find(call, p)) != std::string::npos) {
+                    std::size_t q = s.find('"', p);
+                    std::size_t nl = s.find('\n', p);
+                    if (q != std::string::npos && (nl == std::string::npos || q < nl)) {
+                        std::size_t r = s.find('"', q + 1);
+                        if (r != std::string::npos) add(s.substr(q + 1, r - q - 1));
+                    }
+                    p += std::strlen(call);
+                }
+            }
+        }
+    }
+    // (1) Actions already using variables.
     auto scan = [&](const std::vector<ActionList::Item>& items) {
         for (const auto& it : items) {
             if (!ActionOpUsesVar(it.op) || it.args.empty()) continue;
@@ -9085,8 +9141,8 @@ static bool VarNamePicker(const char* id, std::string& value, const std::vector<
     ImGui::SetNextItemWidth(96);
     if (ImGui::InputTextWithHint("##vn", "variable", buf, sizeof(buf))) { value = buf; changed = true; }
     ImGui::SameLine(0.0f, 2.0f);
-    if (ImGui::SmallButton("v")) ImGui::OpenPopup("##vnlist");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a variable already used in this scene");
+    if (ImGui::ArrowButton("##vnpick", ImGuiDir_Down)) ImGui::OpenPopup("##vnlist");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a detected variable");
     if (ImGui::BeginPopup("##vnlist")) {
         if (vars.empty()) ImGui::TextDisabled("(no variables yet — type a name)");
         for (const auto& v : vars)

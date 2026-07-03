@@ -1191,6 +1191,26 @@ void DrawVarWatch() {
             ImGui::Indent(); ImGui::TextWrapped("%s", vals.empty() ? "(empty)" : vals.c_str()); ImGui::Unindent();
         }
     }
+
+    auto& maps = okay::ActionList::Maps();
+    ImGui::SeparatorText("Maps");
+    if (maps.empty()) ImGui::TextDisabled("(no maps yet)");
+    else {
+        std::vector<std::string> keys; keys.reserve(maps.size());
+        for (auto& kv : maps) if (matches(kv.first)) keys.push_back(kv.first);
+        std::sort(keys.begin(), keys.end());
+        for (const auto& k : keys) {
+            const auto& m = maps[k];
+            ImGui::Text("%s", k.c_str());
+            ImGui::SameLine(170); ImGui::TextDisabled("{%d}", (int)m.size());
+            std::vector<std::string> mk; mk.reserve(m.size());
+            for (auto& e : m) mk.push_back(e.first);
+            std::sort(mk.begin(), mk.end());
+            ImGui::Indent();
+            for (const auto& kk : mk) ImGui::TextDisabled("%s = %g", kk.c_str(), m.at(kk));
+            ImGui::Unindent();
+        }
+    }
     ImGui::End();
 }
 
@@ -8515,6 +8535,7 @@ static const ActionOpInfo kCondOps[] = {
     {"array_has",  "Array Contains",       "array value",                "Passes if the named array contains the value.",                "Arrays"},
     {"array_len_gt","Array Longer Than",   "array count",                "Passes if the array has more than N items.",                   "Arrays"},
     {"array_len_lt","Array Shorter Than",  "array count",                "Passes if the array has fewer than N items.",                  "Arrays"},
+    {"map_has",    "Map Has Key",          "map key",                    "Passes if the named map contains the key.",                    "Maps"},
 };
 
 // Instructions — "do these, top to bottom".
@@ -8636,6 +8657,12 @@ static const ActionOpInfo kInstrOps[] = {
     {"array_get",   "Array Get",          "array index into-var",  "Read the value at an index into a variable.",                         "Arrays"},
     {"array_len",   "Array Length",       "array into-var",        "Store the array's length in a variable.",                             "Arrays"},
     {"array_clear", "Array Clear",        "array",                 "Empty a named array.",                                                "Arrays"},
+    // ---- Maps / dictionaries (key -> number) ----
+    {"map_set",     "Map Set",            "map key value",         "Store a value under a string key in a named map.",                    "Maps"},
+    {"map_get",     "Map Get",            "map key into-var [default]","Read a key's value into a variable (default if the key is missing.", "Maps"},
+    {"map_del",     "Map Delete Key",     "map key",               "Remove a key from a map.",                                            "Maps"},
+    {"map_size",    "Map Size",           "map into-var",          "Store the number of keys in a variable.",                             "Maps"},
+    {"map_clear",   "Map Clear",          "map",                   "Empty a named map.",                                                  "Maps"},
 };
 
 // The friendly label for an op string (falls back to the raw op if unknown).

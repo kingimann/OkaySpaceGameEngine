@@ -79,6 +79,8 @@ public:
     static float GetVar(const std::string& key);
     // Shared float arrays (array_push/get/... ops). Cleared with Vars on Reset.
     static std::unordered_map<std::string, std::vector<float>>& Arrays();
+    // Shared maps/dictionaries (string key -> float value). Cleared on Reset.
+    static std::unordered_map<std::string, std::unordered_map<std::string, float>>& Maps();
     static void ResetVars();
 
 private:

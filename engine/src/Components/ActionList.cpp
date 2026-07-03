@@ -57,7 +57,12 @@ std::unordered_map<std::string, std::vector<float>>& ActionList::Arrays() {
     return a;
 }
 
-void ActionList::ResetVars() { Vars().clear(); Arrays().clear(); }
+std::unordered_map<std::string, std::unordered_map<std::string, float>>& ActionList::Maps() {
+    static std::unordered_map<std::string, std::unordered_map<std::string, float>> m;
+    return m;
+}
+
+void ActionList::ResetVars() { Vars().clear(); Arrays().clear(); Maps().clear(); }
 
 // A goto/if_goto target: a plain line number, or the index of `label "<name>"`.
 int ActionList::ResolveTarget(const std::string& t) const {
@@ -244,6 +249,7 @@ bool ActionList::EvalConditions() {
         }
         else if (op == "array_len_gt") ok = (int)Arrays()[Str(c, 0)].size() > (int)Num(c, 1);
         else if (op == "array_len_lt") ok = (int)Arrays()[Str(c, 0)].size() < (int)Num(c, 1);
+        else if (op == "map_has")      { auto& m = Maps()[Str(c, 0)]; ok = m.find(Str(c, 1)) != m.end(); }
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
@@ -409,6 +415,15 @@ void ActionList::Update(float dt) {
             float v = a.empty() ? 0.0f : a.back(); if (!a.empty()) a.pop_back();
             if (it.args.size() > 1) Vars()[Str(it, 1)] = v;
         }
+        // ---- Maps / dictionaries (string key -> number) ----
+        else if (op == "map_set")   { Maps()[Str(it, 0)][Str(it, 1)] = Num(it, 2); }
+        else if (op == "map_get")   {
+            auto& m = Maps()[Str(it, 0)]; auto mit = m.find(Str(it, 1));
+            Vars()[Str(it, 2)] = (mit != m.end()) ? mit->second : (it.args.size() > 3 ? Num(it, 3) : 0.0f);
+        }
+        else if (op == "map_del")   { Maps()[Str(it, 0)].erase(Str(it, 1)); }
+        else if (op == "map_clear") { Maps()[Str(it, 0)].clear(); }
+        else if (op == "map_size")  { Vars()[Str(it, 1)] = (float)Maps()[Str(it, 0)].size(); }
         else if (op == "spawn3") {
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);

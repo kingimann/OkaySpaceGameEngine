@@ -732,6 +732,7 @@ bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
+bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
@@ -2188,6 +2189,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
         ImGui::MenuItem("Sprite Editor", nullptr, &g_showSpriteEditor);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites.");
+        ImGui::MenuItem("UI Theme", nullptr, &g_showUIThemer);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
@@ -19727,6 +19730,93 @@ void DrawSpriteEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// ---- UI Theme: reusable styles applied across widgets ----------------------
+// A theme is a small palette + corner/border. "Apply" bakes it into every UI widget
+// (by component type), so you define a look once and restyle the whole UI in a click.
+struct EdUITheme {
+    float panel[4], panelBottom[4], button[4], buttonText[4], accent[4], track[4], text[4];
+    float corner, border;
+};
+static EdUITheme g_uiTheme = {
+    {0.12f, 0.14f, 0.21f, 0.94f}, {0.07f, 0.09f, 0.14f, 0.94f},
+    {0.23f, 0.38f, 0.67f, 1.0f},  {0.95f, 0.96f, 1.0f, 1.0f},
+    {0.35f, 0.67f, 0.95f, 1.0f},  {0.16f, 0.16f, 0.20f, 1.0f},
+    {0.92f, 0.94f, 0.98f, 1.0f},  10.0f, 1.0f };
+
+static void UIThemePreset(EdUITheme& t, int p) {
+    auto s = [](float* d, float r, float g, float b, float a) { d[0] = r; d[1] = g; d[2] = b; d[3] = a; };
+    switch (p) {
+        case 0: s(t.panel,0.12f,0.14f,0.21f,0.94f); s(t.panelBottom,0.07f,0.09f,0.14f,0.94f); s(t.button,0.23f,0.38f,0.67f,1); s(t.buttonText,0.95f,0.96f,1,1); s(t.accent,0.35f,0.67f,0.95f,1); s(t.track,0.16f,0.16f,0.20f,1); s(t.text,0.92f,0.94f,0.98f,1); t.corner=10; t.border=1; break; // Dark
+        case 1: s(t.panel,0.95f,0.96f,0.98f,0.98f); s(t.panelBottom,0.86f,0.88f,0.92f,0.98f); s(t.button,0.30f,0.55f,0.90f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.20f,0.50f,0.90f,1); s(t.track,0.80f,0.82f,0.86f,1); s(t.text,0.10f,0.12f,0.16f,1); t.corner=8; t.border=1; break; // Light
+        case 2: s(t.panel,0.06f,0.06f,0.10f,0.96f); s(t.panelBottom,0.02f,0.02f,0.05f,0.96f); s(t.button,0.10f,0.10f,0.16f,1); s(t.buttonText,0.20f,1.0f,0.85f,1); s(t.accent,0.20f,1.0f,0.85f,1); s(t.track,0.10f,0.10f,0.16f,1); s(t.text,0.85f,0.95f,1.0f,1); t.corner=6; t.border=2; break; // Neon
+        case 3: s(t.panel,0.20f,0.12f,0.10f,0.96f); s(t.panelBottom,0.12f,0.07f,0.06f,0.96f); s(t.button,0.80f,0.45f,0.20f,1); s(t.buttonText,0.10f,0.06f,0.04f,1); s(t.accent,0.95f,0.70f,0.25f,1); s(t.track,0.30f,0.20f,0.15f,1); s(t.text,0.98f,0.92f,0.80f,1); t.corner=4; t.border=2; break; // Retro
+        case 4: s(t.panel,0.93f,0.90f,0.96f,0.97f); s(t.panelBottom,0.85f,0.82f,0.92f,0.97f); s(t.button,0.62f,0.55f,0.88f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.55f,0.78f,0.72f,1); s(t.track,0.82f,0.80f,0.88f,1); s(t.text,0.28f,0.24f,0.36f,1); t.corner=14; t.border=0; break; // Pastel
+        case 5: s(t.panel,0.14f,0.14f,0.15f,0.96f); s(t.panelBottom,0.09f,0.09f,0.10f,0.96f); s(t.button,0.30f,0.30f,0.32f,1); s(t.buttonText,0.95f,0.95f,0.96f,1); s(t.accent,0.75f,0.75f,0.78f,1); s(t.track,0.20f,0.20f,0.22f,1); s(t.text,0.92f,0.92f,0.94f,1); t.corner=6; t.border=1; break; // Mono
+    }
+}
+
+static bool UIIsUnder(GameObject* go, GameObject* root) {
+    if (!root) return true;
+    for (GameObject* p = go; p; p = (p->transform && p->transform->Parent()) ? p->transform->Parent()->gameObject : nullptr)
+        if (p == root) return true;
+    return false;
+}
+
+// Bake the theme into every UI widget (optionally only under `root`), by component
+// type. Returns how many widgets were restyled. Saved with the scene, shows in-game.
+static int ApplyUITheme(EditorState& ed, const EdUITheme& t, GameObject* root) {
+    auto C = [](const float* f) { return okay::Color(f[0], f[1], f[2], f[3]); };
+    int n = 0;
+    for (const auto& up : ed.scene().Objects()) {
+        GameObject* g = up.get();
+        if (!g || !UIIsUnder(g, root)) continue;
+        bool touched = false;
+        if (auto* p  = g->GetComponent<UIPanel>())       { p->color=C(t.panel); p->colorBottom=C(t.panelBottom); p->useGradient=true; p->cornerRadius=t.corner; p->borderWidth=t.border; p->borderColor=okay::Color(t.accent[0],t.accent[1],t.accent[2],0.5f); touched=true; }
+        if (auto* b  = g->GetComponent<UIButton>())       { b->color=C(t.button); b->textColor=C(t.buttonText); b->cornerRadius=t.corner; b->borderWidth=t.border; touched=true; }
+        if (auto* sl = g->GetComponent<UISlider>())        { sl->background=C(t.track); sl->fill=C(t.accent); sl->cornerRadius=t.corner; sl->textColor=C(t.text); touched=true; }
+        if (auto* tg = g->GetComponent<UIToggle>())        { tg->boxColor=C(t.track); tg->checkColor=C(t.accent); tg->textColor=C(t.text); tg->cornerRadius=t.corner; touched=true; }
+        if (auto* pb = g->GetComponent<UIProgressBar>())   { pb->background=C(t.track); pb->fill=C(t.accent); pb->fillEnd=C(t.accent); pb->cornerRadius=t.corner; pb->textColor=C(t.text); touched=true; }
+        if (auto* dd = g->GetComponent<UIDropdown>())      { dd->color=C(t.track); dd->listColor=C(t.panel); dd->textColor=C(t.text); dd->cornerRadius=t.corner; touched=true; }
+        if (auto* im = g->GetComponent<UIImage>())         { im->cornerRadius=t.corner; touched=true; }
+        if (auto* tr = g->GetComponent<TextRenderer>(); tr && tr->screenSpace) {
+            GameObject* par = (g->transform && g->transform->Parent()) ? g->transform->Parent()->gameObject : nullptr;
+            tr->color = (par && par->GetComponent<UIButton>()) ? C(t.buttonText) : C(t.text);
+            touched = true;
+        }
+        if (touched) ++n;
+    }
+    if (n) ed.dirty = true;
+    return n;
+}
+
+void DrawUIThemer(EditorState& ed) {
+    if (!ImGui::Begin("UI Theme", &g_showUIThemer)) { ImGui::End(); return; }
+    ImGui::TextDisabled("Define a reusable UI style, then apply it to every widget at once.");
+    ImGui::TextUnformatted("Presets:");
+    const char* names[] = {"Dark", "Light", "Neon", "Retro", "Pastel", "Mono"};
+    for (int i = 0; i < 6; ++i) { if (i) ImGui::SameLine(); if (ImGui::Button(names[i])) UIThemePreset(g_uiTheme, i); }
+    ImGui::Separator();
+    int cf = ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs;
+    ImGui::ColorEdit4("Panel",        g_uiTheme.panel,       cf);
+    ImGui::ColorEdit4("Panel bottom", g_uiTheme.panelBottom, cf);
+    ImGui::ColorEdit4("Button",       g_uiTheme.button,      cf);
+    ImGui::ColorEdit4("Button text",  g_uiTheme.buttonText,  ImGuiColorEditFlags_NoInputs);
+    ImGui::ColorEdit4("Accent",       g_uiTheme.accent,      ImGuiColorEditFlags_NoInputs);
+    ImGui::ColorEdit4("Track",        g_uiTheme.track,       ImGuiColorEditFlags_NoInputs);
+    ImGui::ColorEdit4("Text",         g_uiTheme.text,        ImGuiColorEditFlags_NoInputs);
+    ImGui::SliderFloat("Corner radius", &g_uiTheme.corner, 0.0f, 32.0f, "%.0f");
+    ImGui::SliderFloat("Border width",  &g_uiTheme.border, 0.0f, 6.0f, "%.0f");
+    ImGui::Separator();
+    if (ImGui::Button("Apply to All UI")) { int n = ApplyUITheme(ed, g_uiTheme, nullptr); ConsoleLog("Themed " + std::to_string(n) + " widget(s)"); }
+    ImGui::SameLine();
+    bool haveSel = ed.selected() != nullptr;
+    if (!haveSel) ImGui::BeginDisabled();
+    if (ImGui::Button("Apply to Selected + children")) { int n = ApplyUITheme(ed, g_uiTheme, ed.selected()); ConsoleLog("Themed " + std::to_string(n) + " widget(s)"); }
+    if (!haveSel) ImGui::EndDisabled();
+    ImGui::TextDisabled("Applied styles bake into the widgets and save with the scene.");
+    ImGui::End();
+}
+
 // Advanced Unity-style CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
 // scrub, a stacked CPU-category area (Scripts / Physics / Render / Other), per-section
 // self/total/calls/%-of-frame with min/avg/max over the window, live draw stats, and
@@ -20625,6 +20715,7 @@ int main(int argc, char** argv) {
         if (g_showConsole)   DrawConsole();
         if (g_showCrashLog)  DrawCrashLog();
         if (g_showSpriteEditor) DrawSpriteEditor(ed);
+        if (g_showUIThemer)     DrawUIThemer(ed);
         if (g_showProject)   DrawProject(ed);
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);

@@ -5152,6 +5152,12 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"overlap_circle","overlap_circle(x, y, r)"},
         // timers
         {"after","after(seconds, \"func\")"}, {"every","every(seconds, \"func\")"}, {"cancel_timers","cancel_timers()"},
+        // high-level one-liners (call every frame from update)
+        {"follow","follow(\"name\", speed[, stopDist])"}, {"follow3","follow3(\"name\", speed[, stopDist])"},
+        {"flee","flee(\"name\", speed)"}, {"patrol","patrol(x1, y1, x2, y2, speed)"},
+        {"orbit","orbit(\"name\", radius, degPerSec)"}, {"on_key_move","on_key_move(speed)"},
+        {"on_key_move3","on_key_move3(speed)"}, {"shoot_at","shoot_at(\"target\", \"prefab\", speed)"},
+        {"spawn_wave","spawn_wave(\"prefab\", count[, radius])"}, {"chase","chase(\"name\", speed[, stopDist])"},
         // velocity axes
         {"set_vx","set_vx(v)"}, {"set_vy","set_vy(v)"}, {"set_vz","set_vz(v)"}, {"set_z","set_z(v)"},
         {"set_rot3","set_rot3(x, y, z)"},
@@ -5247,6 +5253,17 @@ static const std::string* ScriptSignature(const std::string& name) {
 // documented; anything missing simply shows no description.
 static const std::string* ScriptDoc(const std::string& name) {
     static const std::unordered_map<std::string, std::string> doc = {
+        // high-level one-liners (call each frame from update)
+        {"follow","Chase a named object on the XY plane at `speed`, stopping `stopDist` away."},
+        {"follow3","Chase a named object in full 3D at `speed`, stopping `stopDist` away."},
+        {"chase","Chase a named object (alias of follow)."},
+        {"flee","Run directly away from a named object at `speed`."},
+        {"patrol","Walk back and forth between (x1,y1) and (x2,y2) at `speed`."},
+        {"orbit","Circle a named target at `radius`, turning `degPerSec` each second."},
+        {"on_key_move","WASD/arrow keys move this object on the XY plane (uses a Rigidbody2D if present)."},
+        {"on_key_move3","WASD/arrow keys move this object on the XZ ground plane (uses a Rigidbody3D if present)."},
+        {"shoot_at","Spawn a prefab projectile at self, flying toward a named target at `speed`."},
+        {"spawn_wave","Spawn `count` copies of a prefab in a ring of `radius` around self."},
         // arrays
         {"array","Make an array from the given values."},
         {"count","Number of items in an array."},

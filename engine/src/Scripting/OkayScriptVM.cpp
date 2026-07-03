@@ -1787,6 +1787,160 @@ struct OkayScriptVM::Impl {
             t->localRotation = Quat::Euler({0, 0, deg});
             return Value{};
         };
+
+        // ---- High-level one-liners -----------------------------------------
+        // Each is a whole behaviour in a single call, meant to be invoked every
+        // frame from update(): the "write less, do more" layer over the low-level
+        // move/spawn/input builtins.
+        b["follow"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // follow("name", speed[, stopDist]): chase a named object on the XY plane.
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
+            float stop  = a.size() > 2 ? a[2].AsFloat() : 0.0f;
+            Vec3 me = t->Position(), ot = g->transform->Position();
+            float dx = ot.x - me.x, dy = ot.y - me.y;
+            float dist = Mathf::Sqrt(dx * dx + dy * dy);
+            if (dist > stop && dist > 1e-5f) {
+                float step = Mathf::Min(speed * rt.host->deltaTime, dist - stop);
+                t->Translate({dx / dist * step, dy / dist * step, 0.0f});
+            }
+            return Value{};
+        };
+        b["follow3"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // follow3("name", speed[, stopDist]): chase a named object in full 3D.
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
+            float stop  = a.size() > 2 ? a[2].AsFloat() : 0.0f;
+            Vec3 d = g->transform->Position() - t->Position();
+            float dist = d.Magnitude();
+            if (dist > stop && dist > 1e-5f) {
+                float step = Mathf::Min(speed * rt.host->deltaTime, dist - stop);
+                t->Translate(d * (step / dist));
+            }
+            return Value{};
+        };
+        b["flee"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // flee("name", speed): run directly away from a named object (XY plane).
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
+            Vec3 me = t->Position(), ot = g->transform->Position();
+            float dx = me.x - ot.x, dy = me.y - ot.y;
+            float dist = Mathf::Sqrt(dx * dx + dy * dy);
+            if (dist > 1e-5f) {
+                float k = speed * rt.host->deltaTime / dist;
+                t->Translate({dx * k, dy * k, 0.0f});
+            }
+            return Value{};
+        };
+        b["patrol"] = [this, tf](std::vector<Value>& a) {
+            // patrol(x1, y1, x2, y2, speed): walk back and forth between two points.
+            // Uses a per-script time accumulator so it advances with update()'s dt.
+            if (a.size() < 5 || !rt.host) return Value{};
+            Transform* t = tf(); if (!t) return Value{};
+            float x1 = a[0].AsFloat(), y1 = a[1].AsFloat(), x2 = a[2].AsFloat(), y2 = a[3].AsFloat(), speed = a[4].AsFloat();
+            float dx = x2 - x1, dy = y2 - y1; float len = Mathf::Sqrt(dx * dx + dy * dy);
+            if (len < 1e-4f || speed <= 0.0f) return Value{};
+            auto& g = rt.host->globals;
+            float acc = 0.0f;
+            auto it = g.find("__patrol_t"); if (it != g.end()) acc = it->second.AsFloat();
+            acc += rt.host->deltaTime;
+            g["__patrol_t"] = Value{acc};
+            float period = 2.0f * len / speed;                             // full round trip
+            float ph = std::fmod(acc, period) / (period * 0.5f);           // 0..2
+            float f = ph < 1.0f ? ph : 2.0f - ph;                          // triangle 0..1..0
+            Vec3 me = t->Position();
+            t->SetPosition({x1 + dx * f, y1 + dy * f, me.z});
+            return Value{};
+        };
+        b["orbit"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // orbit("name", radius, degPerSec): circle a target each frame.
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float radius = a.size() > 1 ? a[1].AsFloat() : 2.0f;
+            float spd    = a.size() > 2 ? a[2].AsFloat() : 90.0f;
+            Vec3 c = g->transform->Position(), me = t->Position();
+            float ang = std::atan2(me.y - c.y, me.x - c.x) + spd * 0.01745329f * rt.host->deltaTime;
+            t->SetPosition({c.x + Mathf::Cos(ang) * radius, c.y + Mathf::Sin(ang) * radius, me.z});
+            return Value{};
+        };
+        b["on_key_move"] = [this, tf](std::vector<Value>& a) {
+            // on_key_move(speed): WASD/arrow keys move this object on the XY plane
+            // (drives a Rigidbody2D's velocity if present, else the Transform).
+            Transform* t = tf(); if (!t || !rt.host) return Value{};
+            float speed = a.empty() ? 5.0f : a[0].AsFloat();
+            Vec2 ax = Input::AxisWASD();
+            float len = Mathf::Sqrt(ax.x * ax.x + ax.y * ax.y);
+            if (len > 1.0f) { ax.x /= len; ax.y /= len; }
+            GameObject* go = rt.host->gameObject;
+            if (auto* rb = go ? go->GetComponent<Rigidbody2D>() : nullptr)
+                rb->velocity = {ax.x * speed, ax.y * speed};
+            else
+                t->Translate({ax.x * speed * rt.host->deltaTime, ax.y * speed * rt.host->deltaTime, 0.0f});
+            return Value{};
+        };
+        b["on_key_move3"] = [this, tf](std::vector<Value>& a) {
+            // on_key_move3(speed): WASD/arrow keys move this object on the XZ ground
+            // plane (drives a Rigidbody3D's velocity if present, else the Transform).
+            Transform* t = tf(); if (!t || !rt.host) return Value{};
+            float speed = a.empty() ? 5.0f : a[0].AsFloat();
+            Vec2 ax = Input::AxisWASD();
+            float len = Mathf::Sqrt(ax.x * ax.x + ax.y * ax.y);
+            if (len > 1.0f) { ax.x /= len; ax.y /= len; }
+            GameObject* go = rt.host->gameObject;
+            if (auto* rb = go ? go->GetComponent<Rigidbody3D>() : nullptr)
+                { rb->velocity.x = ax.x * speed; rb->velocity.z = ax.y * speed; }
+            else
+                t->Translate({ax.x * speed * rt.host->deltaTime, 0.0f, ax.y * speed * rt.host->deltaTime});
+            return Value{};
+        };
+        b["shoot_at"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // shoot_at("target", "prefab", speed): spawn a projectile at self flying
+            // toward the target (sets the new object's Rigidbody velocity).
+            if (a.size() < 2 || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* s = sceneOf(); if (!s) return Value{false};
+            GameObject* tgt = s->Find(a[0].AsString()); if (!tgt || !tgt->transform) return Value{false};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            GameObject* go = SceneSerializer::InstantiateFromFile(*s, a[1].AsString(), nullptr);
+            if (!go || !go->transform) return Value{false};
+            go->transform->localPosition = me;
+            float speed = a.size() > 2 ? a[2].AsFloat() : 8.0f;
+            Vec3 d = tgt->transform->Position() - me; float dist = d.Magnitude();
+            if (dist > 1e-5f) {
+                Vec3 v = d * (speed / dist);
+                if (auto* rb = go->GetComponent<Rigidbody2D>()) rb->velocity = {v.x, v.y};
+                else if (auto* rb3 = go->GetComponent<Rigidbody3D>()) rb3->velocity = v;
+            }
+            return Value{true};
+        };
+        b["spawn_wave"] = [this, sceneOf](std::vector<Value>& a) {
+            // spawn_wave("prefab", count[, radius]): ring of prefabs around self.
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
+            Scene* s = sceneOf(); if (!s) return Value{0.0f};
+            int count = a.size() > 1 ? (int)a[1].AsFloat() : 8;
+            if (count < 1) count = 1;
+            float radius = a.size() > 2 ? a[2].AsFloat() : 3.0f;
+            Vec3 c = rt.host->gameObject->transform->Position();
+            int made = 0;
+            for (int i = 0; i < count; ++i) {
+                GameObject* go = SceneSerializer::InstantiateFromFile(*s, a[0].AsString(), nullptr);
+                if (!go || !go->transform) continue;
+                float ang = (6.2831853f * i) / count;
+                go->transform->localPosition = {c.x + Mathf::Cos(ang) * radius, c.y + Mathf::Sin(ang) * radius, c.z};
+                ++made;
+            }
+            return Value{(float)made};
+        };
         // Main-camera control from script (screen-follow, cutscenes, zoom).
         b["cam_x"] = [sceneOf](std::vector<Value>&) -> Value {
             if (Scene* s = sceneOf()) if (s->mainCamera) return Value{s->mainCamera->gameObject->transform->localPosition.x};
@@ -4410,6 +4564,10 @@ struct OkayScriptVM::Impl {
         alias("position_z", "pos_z");
         alias("turn", "rotate");
         alias("face", "look_at");
+        alias("chase", "follow");
+        alias("run_from", "flee");
+        alias("wasd_move", "on_key_move");
+        alias("wasd_move3", "on_key_move3");
         alias("face_3d", "look_at3");
         alias("set_size", "set_scale");
         alias("move_towards_object", "move_toward3");

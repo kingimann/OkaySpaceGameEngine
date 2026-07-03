@@ -8671,6 +8671,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"end_while",   "End While",          "",                      "Marks the end of a While loop.",                                      "Flow"},
     {"for_each",    "For Each (array)",   "array index-var value-var","Loop over an array up to End For, setting the index and value variables each pass.", "Flow"},
     {"end_for",     "End For",            "",                      "Marks the end of a For Each loop.",                                   "Flow"},
+    {"for_each_tag","For Each Tagged",    "tag name-var",          "Loop over every object with a tag up to End For Tag; the name variable holds the current object. Use it as $name in object fields (Destroy/Look At/Follow/...).", "Flow"},
+    {"end_for_tag", "End For Tag",        "",                      "Marks the end of a For Each Tagged loop.",                            "Flow"},
     {"break",       "Break Loop",         "",                      "Exit the current loop immediately.",                                  "Flow"},
     {"continue",    "Continue Loop",      "",                      "Skip to the next iteration of the current loop.",                     "Flow"},
     {"gosub",       "Go Sub (call)",      "label",                 "Jump to a Label like a function; Return Sub comes back here (delegate-style).", "Flow"},

@@ -108,13 +108,14 @@ private:
     bool m_pending = false;    // latched by event callbacks (collision/trigger/mouse)
     // Loop frames (repeat / while / for-each) and subroutine return addresses.
     struct LoopFrame {
-        int kind = 0;              // 0 = repeat, 1 = while, 2 = for-each
+        int kind = 0;              // 0 = repeat, 1 = while, 2 = for-each array, 3 = for-each tagged
         std::size_t headIp = 0;    // the loop's opening instruction
         std::size_t bodyStart = 0; // first instruction of the body
         std::size_t endIp = 0;     // the matching end_* instruction
         int remaining = 0;         // repeat: iterations left
         std::string arr, idxVar, valVar;  // for-each state
         std::size_t idx = 0;
+        std::vector<std::string> names;   // for-each-tagged: the object names to visit
     };
     std::vector<LoopFrame>   m_loops;
     std::vector<std::size_t> m_callStack;

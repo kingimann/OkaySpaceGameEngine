@@ -104,6 +104,16 @@ std::string Rest(const ActionList::Item& it, std::size_t i) {
     for (; i < it.args.size(); ++i) { if (!s.empty()) s += " "; s += it.args[i]; }
     return s;
 }
+// An object-name argument: a literal name, or "$textvar" to read the name from a
+// text variable — so a For Each Tagged loop can act on "the current object".
+std::string ObjName(const ActionList::Item& it, std::size_t i) {
+    std::string s = Str(it, i);
+    if (s.size() > 1 && s[0] == '$') {
+        auto& sv = ActionList::StrVars(); auto v = sv.find(s.substr(1));
+        return v != sv.end() ? v->second : std::string();
+    }
+    return s;
+}
 
 // Resolve a raycast direction token into a world-space direction for `go`.
 // Keywords are relative to the object's facing (forward/back/up/down/left/right);
@@ -400,6 +410,31 @@ void ActionList::Update(float dt) {
                 } else m_loops.pop_back();
             }
         }
+        // ---- For each object with a tag: for_each_tag <tag> <name-var> ... end_for_tag ----
+        else if (op == "for_each_tag") {
+            int end = MatchingEnd(m_ip - 1, "for_each_tag", "end_for_tag");
+            std::vector<std::string> names;
+            if (scene) for (const auto& up : scene->Objects())
+                if (up && up->active && up->tag == Str(it, 0)) names.push_back(up->name);
+            if (end < 0) { /* unmatched */ }
+            else if (names.empty()) m_ip = (std::size_t)end + 1;
+            else {
+                LoopFrame f; f.kind = 3; f.headIp = m_ip - 1; f.bodyStart = m_ip; f.endIp = (std::size_t)end;
+                f.valVar = Str(it, 1); f.names = std::move(names); f.idx = 0;
+                if (!f.valVar.empty()) StrVars()[f.valVar] = f.names[0];   // the current object's name
+                m_loops.push_back(std::move(f));
+            }
+        }
+        else if (op == "end_for_tag") {
+            if (!m_loops.empty() && m_loops.back().kind == 3) {
+                auto& f = m_loops.back();
+                ++f.idx;
+                if (f.idx < f.names.size()) {
+                    if (!f.valVar.empty()) StrVars()[f.valVar] = f.names[f.idx];
+                    m_ip = f.bodyStart;
+                } else m_loops.pop_back();
+            }
+        }
         else if (op == "break") {
             if (!m_loops.empty()) { m_ip = m_loops.back().endIp + 1; m_loops.pop_back(); }
         }
@@ -455,7 +490,7 @@ void ActionList::Update(float dt) {
             try { Vars()[Str(it, 0)] = std::stof(StrVars()[Str(it, 1)]); } catch (...) { Vars()[Str(it, 0)] = 0.0f; }
         }
         else if (op == "str_set_text") {                                                    // put a string var on a Text object
-            if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
+            if (scene) if (GameObject* g = scene->Find(ObjName(it, 0)))
                 if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = StrVars()[Str(it, 1)];
         }
         else if (op == "str_upper") { auto& s = StrVars()[Str(it, 0)]; for (char& ch : s) ch = (char)std::toupper((unsigned char)ch); }
@@ -512,7 +547,7 @@ void ActionList::Update(float dt) {
         }
         else if (op == "look_at") {
             Scene* sc2 = GetScene();
-            GameObject* g = sc2 ? sc2->Find(Str(it, 0)) : nullptr;
+            GameObject* g = sc2 ? sc2->Find(ObjName(it, 0)) : nullptr;
             if (g && t && gameObject) {
                 Vec3 me = gameObject->transform->Position(), ot = g->transform->Position();
                 float deg = std::atan2(ot.y - me.y, ot.x - me.x) * 57.2957795f;
@@ -603,14 +638,14 @@ void ActionList::Update(float dt) {
         }
         else if (op == "set_text_on") {
             // Set a named object's text label, with {var}/{pref} interpolation.
-            if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
+            if (scene) if (GameObject* g = scene->Find(ObjName(it, 0)))
                 if (auto* tr = g->GetComponent<TextRenderer>())
                     tr->text = UITextBind::Resolve(Rest(it, 1));
         }
         else if (op == "set_bar") {
             // Fill a named progress bar from a variable: set_bar <object> <var> [max].
             // value = var / max (clamped 0..1); max defaults to 1.
-            if (scene) if (GameObject* g = scene->Find(Str(it, 0))) {
+            if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) {
                 float mx = Num(it, 2); if (mx == 0.0f) mx = 1.0f;
                 float frac = Mathf::Clamp01(GetVar(Str(it, 1)) / mx);
                 if (auto* pb = g->GetComponent<UIProgressBar>())    pb->SetValue(frac);
@@ -622,10 +657,10 @@ void ActionList::Update(float dt) {
         }
         else if (op == "destroy") { if (scene && gameObject) { scene->Destroy(gameObject); return; } }
         else if (op == "destroy_obj") {
-            if (scene) if (GameObject* g = scene->Find(Str(it, 0))) scene->Destroy(g);
+            if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) scene->Destroy(g);
         }
-        else if (op == "activate")   { if (scene) if (GameObject* g = scene->Find(Str(it, 0))) g->active = true; }
-        else if (op == "deactivate") { if (scene) if (GameObject* g = scene->Find(Str(it, 0))) g->active = false; }
+        else if (op == "activate")   { if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) g->active = true; }
+        else if (op == "deactivate") { if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) g->active = false; }
         else if (op == "spawn") {
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
@@ -723,7 +758,7 @@ void ActionList::Update(float dt) {
                 if (scc->VM()) scc->VM()->CallEvent(Str(it, 0));
         }
         else if (op == "send_to") {              // message one named object's action lists
-            if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
+            if (scene) if (GameObject* g = scene->Find(ObjName(it, 0)))
                 for (ActionList* a : g->GetComponents<ActionList>()) a->ReceiveMessage(Str(it, 1));
         }
         else if (op == "raycast") {              // cast a ray, store the result in variables
@@ -764,12 +799,12 @@ void ActionList::Update(float dt) {
         else if (op == "spawn_at") {                   // spawn a prefab at a named object's position
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
-                if (g && g->transform) if (GameObject* at = scene->Find(Str(it, 1)))
+                if (g && g->transform) if (GameObject* at = scene->Find(ObjName(it, 1)))
                     if (at->transform) g->transform->SetPosition(at->transform->Position());
             }
         }
         else if (op == "set_parent") {                 // parent this object under a named object
-            if (t && scene) if (GameObject* g = scene->Find(Str(it, 0)))
+            if (t && scene) if (GameObject* g = scene->Find(ObjName(it, 0)))
                 if (g->transform) t->SetParent(g->transform);
         }
         else if (op == "unparent") { if (t) t->SetParent(nullptr); }
@@ -783,7 +818,7 @@ void ActionList::Update(float dt) {
         else if (op == "craft")  { InvokeNativeUIAction(gameObject, "Craft",  Num(it, 0)); }
         else if (op == "survival") { InvokeNativeUIAction(gameObject, Str(it, 0), Num(it, 1)); }
         else if (op == "survival_on") {
-            if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
+            if (scene) if (GameObject* g = scene->Find(ObjName(it, 0)))
                 InvokeNativeUIAction(g, Str(it, 1), Num(it, 2));
         }
         else if (op == "use_item") {
@@ -803,7 +838,7 @@ void ActionList::Update(float dt) {
         else if (op == "lose") { Vars()["lost"] = 1.0f; Game::SetPaused(true); }
         else if (op == "quit") { Game::RequestQuit(); }
         else if (op == "follow" || op == "flee") {          // move toward/away from a named object (use under On Update)
-            GameObject* g = scene ? scene->Find(Str(it, 0)) : nullptr;
+            GameObject* g = scene ? scene->Find(ObjName(it, 0)) : nullptr;
             if (g && g->transform && t && gameObject) {
                 Vec3 me = gameObject->transform->Position(), ot = g->transform->Position();
                 float dx = ot.x - me.x, dy = ot.y - me.y;

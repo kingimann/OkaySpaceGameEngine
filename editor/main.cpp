@@ -9086,6 +9086,8 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
 static void* g_flowSelAl = nullptr;
 static int   g_flowSelKind = 0;   // 0 none, 1 condition, 2 instruction
 static int   g_flowSelIdx  = -1;
+static bool  g_flowAddInsReq = false;   // canvas menu -> open the add-instruction palette
+static bool  g_flowAddCondReq = false;  // canvas menu -> open the add-condition palette
 
 // Searchable op picker shown as a popup: type to filter across an op table by
 // label / id / description, click to choose. Returns the chosen op id (or nullptr).
@@ -9196,7 +9198,8 @@ static void DrawFlowGraph(EditorState& ed) {
     static std::unordered_map<void*, float> zoomMap;
     float& zoom = zoomMap[(void*)al];
     if (zoom < 0.35f || zoom > 3.0f) zoom = 1.0f;   // init / sanitize
-    if (ImGui::SmallButton("+ Instruction")) ImGui::OpenPopup("##addinspal");
+    if (ImGui::SmallButton("+ Instruction") || g_flowAddInsReq) ImGui::OpenPopup("##addinspal");
+    g_flowAddInsReq = false;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run — pick it from a searchable list.");
     if (const char* op = FlowOpPalettePopup("##addinspal", kInstrOps, IM_ARRAYSIZE(kInstrOps))) {
         al->instructions.push_back({op, {}});
@@ -9204,7 +9207,8 @@ static void DrawFlowGraph(EditorState& ed) {
         ed.dirty = true;
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("+ Condition")) ImGui::OpenPopup("##addcondpal");
+    if (ImGui::SmallButton("+ Condition") || g_flowAddCondReq) ImGui::OpenPopup("##addcondpal");
+    g_flowAddCondReq = false;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a gate — the actions run only if every condition passes. Pick it from a searchable list.");
     if (const char* op = FlowOpPalettePopup("##addcondpal", kCondOps, IM_ARRAYSIZE(kCondOps))) {
         al->conditions.push_back({op, {}});
@@ -9265,6 +9269,7 @@ static void DrawFlowGraph(EditorState& ed) {
     // view when you drag empty space (nodes, drawn after, take drag priority).
     ImGui::SetCursorScreenPos(cp);
     ImGui::InvisibleButton("flow_bg", cs);
+    ImGui::OpenPopupOnItemClick("##flowcanvasctx", ImGuiPopupFlags_MouseButtonRight);   // right-click empty space
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pan.x += ImGui::GetIO().MouseDelta.x; pan.y += ImGui::GetIO().MouseDelta.y; }
     // Scroll to zoom (per-graph), anchored on the cursor so the point under the mouse
     // stays put — the standard node-editor feel.
@@ -9290,14 +9295,15 @@ static void DrawFlowGraph(EditorState& ed) {
     ImFont* fnt = ImGui::GetFont();
     // Draw a node; *del set true if its little ✕ was clicked (cond/instruction only).
     // Positions in `pos` are graph-space; screen = cp + r*z + pan, sizes scale by z.
-    auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del, bool* clicked = nullptr) -> ImVec2 {
+    auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del, bool* clicked = nullptr, bool* rclicked = nullptr) -> ImVec2 {
         if (pos.find(k) == pos.end()) pos[k] = def;
         ImVec2 r = pos[k];
         ImVec2 p{cp.x + r.x * z + pan.x, cp.y + r.y * z + pan.y};
         ImGui::SetCursorScreenPos(p);
         ImGui::PushID(k.c_str());
-        ImGui::InvisibleButton("nd", ImVec2(NW, NH));
-        bool ndClick = ImGui::IsItemClicked();        // a plain click (opens the node editor)
+        ImGui::InvisibleButton("nd", ImVec2(NW, NH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+        bool ndClick = ImGui::IsItemClicked();        // a plain (left) click opens the node editor
+        if (rclicked) *rclicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);   // right-click: context menu
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pos[k].x += ImGui::GetIO().MouseDelta.x / z; pos[k].y += ImGui::GetIO().MouseDelta.y / z; }
         bool hov = ImGui::IsItemHovered();
         if (del) {                                    // delete handle in the top-right corner
@@ -9332,16 +9338,17 @@ static void DrawFlowGraph(EditorState& ed) {
     if (trigClicked) ImGui::OpenPopup("##flowtrigedit");
 
     for (std::size_t i = 0; i < al->conditions.size(); ++i) {
-        bool d = false, clk = false;
+        bool d = false, clk = false, rc = false;
         bool selHere = (g_flowSelAl == al && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
         ImVec2 c = node(key("cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + i * GAPY),   // graph-space default
                         ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), "if",
-                        IM_COL32(58, 112, 92, 255), &d, &clk);
+                        IM_COL32(58, 112, 92, 255), &d, &clk, &rc);
         if (selHere)   // selected node gets a bright accent frame
             dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
                         ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
         if (d) delCond = (int)i;
         if (clk) { g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodeedit"); }
+        if (rc)  { g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
         wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
     }
 
@@ -9378,11 +9385,11 @@ static void DrawFlowGraph(EditorState& ed) {
         std::string sub;
         for (const auto& a : item.args) { if (!sub.empty()) sub += " "; sub += a; }
         if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
-        bool d = false, clk = false;
+        bool d = false, clk = false, rc = false;
         bool selHere = (g_flowSelAl == al && g_flowSelKind == 2 && g_flowSelIdx == (int)i);
         ImU32 col = FlowNodeColor(ActionOpGroup(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op));
         ImVec2 c = node(key("ins", (int)i), ImVec2(30 + depth[i] * INDENT, startY + i * GAPY),
-                        ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op), sub, col, &d, &clk);
+                        ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op), sub, col, &d, &clk, &rc);
         insCenter[i] = c;
         if (al->CurrentInstruction() == (int)i) glow(c);   // live node during Play
         if (selHere)
@@ -9390,6 +9397,7 @@ static void DrawFlowGraph(EditorState& ed) {
                         ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
         if (d) delIns = (int)i;
         if (clk) { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodeedit"); }
+        if (rc)  { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
         wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
         prev = c;
     }
@@ -9489,6 +9497,41 @@ static void DrawFlowGraph(EditorState& ed) {
                 ImGui::TextDisabled(has3D ? "3D: picked by a camera ray vs this Collider."
                                           : "2D: picked by the sprite / collider bounds.");
         }
+        ImGui::EndPopup();
+    }
+
+    // Right-click a node: quick actions without opening the full editor.
+    if (ImGui::BeginPopup("##flownodectx")) {
+        bool isCond = (g_flowSelKind == 1);
+        auto& list = isCond ? al->conditions : al->instructions;
+        int idx = g_flowSelIdx;
+        if (idx >= 0 && idx < (int)list.size()) {
+            ImGui::TextDisabled("%s", isCond ? "Condition" : "Instruction");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Edit...")) ImGui::OpenPopup("##flownodeedit");
+            if (ImGui::MenuItem("Duplicate")) {
+                ActionList::Item copy = list[idx];
+                list.insert(list.begin() + idx + 1, copy); ed.dirty = true;
+            }
+            if (ImGui::MenuItem("Move Up", nullptr, false, idx > 0)) { std::swap(list[idx], list[idx - 1]); g_flowSelIdx = idx - 1; ed.dirty = true; }
+            if (ImGui::MenuItem("Move Down", nullptr, false, idx + 1 < (int)list.size())) { std::swap(list[idx], list[idx + 1]); g_flowSelIdx = idx + 1; ed.dirty = true; }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete")) { if (isCond) delCond = idx; else delIns = idx; }
+        }
+        ImGui::EndPopup();
+    }
+    // Right-click empty canvas: add nodes / tidy the layout.
+    if (ImGui::BeginPopup("##flowcanvasctx")) {
+        if (ImGui::MenuItem("Add Instruction...")) g_flowAddInsReq = true;
+        if (ImGui::MenuItem("Add Condition..."))   g_flowAddCondReq = true;
+        ImGui::Separator();
+        if (ImGui::MenuItem("Tidy Up Layout")) {
+            char pfx[24]; std::snprintf(pfx, sizeof(pfx), "%p:", (void*)al);   // drop this graph's dragged positions
+            for (auto it2 = pos.begin(); it2 != pos.end();) {
+                if (it2->first.rfind(pfx, 0) == 0) it2 = pos.erase(it2); else ++it2;
+            }
+        }
+        if (ImGui::MenuItem("Reset View")) { pan = ImVec2(0, 0); zoom = 1.0f; }
         ImGui::EndPopup();
     }
 

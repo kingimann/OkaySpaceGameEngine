@@ -8703,6 +8703,43 @@ static void* g_flowSelAl = nullptr;
 static int   g_flowSelKind = 0;   // 0 none, 1 condition, 2 instruction
 static int   g_flowSelIdx  = -1;
 
+// Searchable op picker shown as a popup: type to filter across an op table by
+// label / id / description, click to choose. Returns the chosen op id (or nullptr).
+// Grouped like the inspector dropdown when the search box is empty. Call every
+// frame; open it with ImGui::OpenPopup(popupId).
+static const char* FlowOpPalettePopup(const char* popupId, const ActionOpInfo* ops, int nops) {
+    const char* chosen = nullptr;
+    ImGui::SetNextWindowSize(ImVec2(320, 380), ImGuiCond_Appearing);
+    if (ImGui::BeginPopup(popupId)) {
+        static char q[64] = "";
+        if (ImGui::IsWindowAppearing()) { q[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##palq", "Search actions...", q, sizeof(q));
+        ImGui::Separator();
+        std::string ql = q;
+        for (auto& c : ql) c = (char)std::tolower((unsigned char)c);
+        auto lc = [](std::string s){ for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+        ImGui::BeginChild("##pallist", ImVec2(0, 300));
+        const char* lastGroup = nullptr;
+        for (int i = 0; i < nops; ++i) {
+            if (!ql.empty()) {
+                bool hit = lc(ops[i].label).find(ql) != std::string::npos ||
+                           lc(ops[i].op).find(ql) != std::string::npos ||
+                           (ops[i].desc && lc(ops[i].desc).find(ql) != std::string::npos);
+                if (!hit) continue;
+            } else if (ops[i].group && (!lastGroup || std::strcmp(ops[i].group, lastGroup) != 0)) {
+                SectionHeader(ops[i].group); lastGroup = ops[i].group;
+            }
+            if (ImGui::Selectable(ops[i].label)) { chosen = ops[i].op; ImGui::CloseCurrentPopup(); }
+            if (ImGui::IsItemHovered() && ops[i].desc && ops[i].desc[0])
+                ImGui::SetTooltip("%s", ops[i].desc);
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    return chosen;
+}
+
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
     if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
@@ -8713,7 +8750,8 @@ static void DrawFlowGraph(EditorState& ed) {
         ImGui::TextDisabled("(Add one via Add Component > Actions, or the Actions inspector.)");
         ImGui::End(); return;
     }
-    ImGui::Text("Flow of '%s'", go->name.c_str());
+    if (!al->name.empty()) ImGui::Text("Flow: %s  (on '%s')", al->name.c_str(), go->name.c_str());
+    else                   ImGui::Text("Flow of '%s'", go->name.c_str());
     ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty space to pan");
 
     // Toolbar: add/clear nodes (edits the live ActionList, mirrored in the Inspector)
@@ -8721,25 +8759,25 @@ static void DrawFlowGraph(EditorState& ed) {
     int delIns = -1, delCond = -1;            // node-delete requests, applied after layout
     static std::unordered_map<void*, ImVec2> panMap;
     ImVec2& pan = panMap[(void*)al];
-    if (ImGui::SmallButton("+ Instruction")) {
-        al->instructions.push_back({kInstrOps[0].op, {}});
+    if (ImGui::SmallButton("+ Instruction")) ImGui::OpenPopup("##addinspal");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run — pick it from a searchable list.");
+    if (const char* op = FlowOpPalettePopup("##addinspal", kInstrOps, IM_ARRAYSIZE(kInstrOps))) {
+        al->instructions.push_back({op, {}});
         g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)al->instructions.size() - 1;
-        ImGui::OpenPopup("##flownodeedit");   // open the editor on the fresh node
         ed.dirty = true;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run. Click any node to choose what it does.");
     ImGui::SameLine();
-    if (ImGui::SmallButton("+ Condition")) {
-        al->conditions.push_back({kCondOps[0].op, {}});
+    if (ImGui::SmallButton("+ Condition")) ImGui::OpenPopup("##addcondpal");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a gate — the actions run only if every condition passes. Pick it from a searchable list.");
+    if (const char* op = FlowOpPalettePopup("##addcondpal", kCondOps, IM_ARRAYSIZE(kCondOps))) {
+        al->conditions.push_back({op, {}});
         g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)al->conditions.size() - 1;
-        ImGui::OpenPopup("##flownodeedit");
         ed.dirty = true;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a gate — the actions run only if every condition passes. Click a node to pick it.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset View")) pan = ImVec2(0, 0);
     ImGui::SameLine();
-    ImGui::TextDisabled("(click a node to edit)");
+    ImGui::TextDisabled("(click a node to edit; click the trigger to change it)");
     ImGui::SameLine();
     if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "● running");
     else                 ImGui::TextDisabled("○ idle");
@@ -8805,7 +8843,9 @@ static void DrawFlowGraph(EditorState& ed) {
     if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnMessage)
         tsub = "\"" + al->triggerKey + "\"";
     ImU32 trigCol = al->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
-    ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, trigCol, nullptr);
+    bool trigClicked = false;
+    ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, trigCol, nullptr, &trigClicked);
+    if (trigClicked) ImGui::OpenPopup("##flowtrigedit");
 
     for (std::size_t i = 0; i < al->conditions.size(); ++i) {
         bool d = false, clk = false;
@@ -8867,11 +8907,58 @@ static void DrawFlowGraph(EditorState& ed) {
             DrawActionItem(al->instructions[g_flowSelIdx], kInstrOps, IM_ARRAYSIZE(kInstrOps),
                            72000 + g_flowSelIdx, nodeDirty, &ed.scene());
             ImGui::Separator();
+            // Order matters for instructions — offer reorder + duplicate right here.
+            int n = (int)al->instructions.size();
+            if (ImGui::SmallButton("Up##flowup") && g_flowSelIdx > 0) {
+                std::swap(al->instructions[g_flowSelIdx], al->instructions[g_flowSelIdx - 1]); g_flowSelIdx--; ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Down##flowdn") && g_flowSelIdx + 1 < n) {
+                std::swap(al->instructions[g_flowSelIdx], al->instructions[g_flowSelIdx + 1]); g_flowSelIdx++; ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Duplicate##flowdup")) {
+                ActionList::Item copy = al->instructions[g_flowSelIdx];
+                al->instructions.insert(al->instructions.begin() + g_flowSelIdx + 1, copy);
+                g_flowSelIdx++; ed.dirty = true;
+            }
+            ImGui::SameLine();
             if (ImGui::SmallButton("Delete node##flowdel")) { delIns = g_flowSelIdx; ImGui::CloseCurrentPopup(); }
         } else {
             ImGui::TextDisabled("Select a node to edit.");
         }
         if (nodeDirty) ed.dirty = true;
+        ImGui::EndPopup();
+    }
+
+    // Trigger editor: click the trigger node to change WHEN the actions run (and the
+    // key/message for On Key / On Message). Same live ActionList the Inspector edits.
+    if (ImGui::BeginPopup("##flowtrigedit")) {
+        ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), "Trigger");
+        ImGui::TextDisabled("When should these actions run?");
+        ImGui::Separator();
+        int ti2 = (int)al->trigger;
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::Combo("##flowtrigcombo", &ti2, trigs, IM_ARRAYSIZE(trigs))) {
+            al->trigger = (ActionList::Trigger)ti2; ed.dirty = true;
+        }
+        if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnMessage) {
+            char kb[64]; std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
+            ImGui::SetNextItemWidth(220);
+            const char* lbl = al->trigger == ActionList::Trigger::OnKey ? "Key" : "Message";
+            if (ImGui::InputText(lbl, kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
+        }
+        // Guardrail: the OnMouse* triggers need something pickable under the cursor.
+        if (al->trigger >= ActionList::Trigger::OnMouseEnter && al->trigger <= ActionList::Trigger::OnMouseOver) {
+            bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
+            bool has3D = go->GetComponent<Collider3D>();
+            if (!has2D && !has3D)
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                    "Add a Sprite Renderer / Collider so the mouse can hit this object.");
+            else
+                ImGui::TextDisabled(has3D ? "3D: picked by a camera ray vs this Collider."
+                                          : "2D: picked by the sprite / collider bounds.");
+        }
         ImGui::EndPopup();
     }
 
@@ -8914,17 +9001,34 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
     if (it.op.empty()) it.op = ops[0].op;
     int cur = 0;
     for (int i = 0; i < nops; ++i) if (it.op == ops[i].op) cur = i;
-    // Friendly, grouped dropdown with a hover description per choice.
+    // Friendly, grouped dropdown with a search box at the top (type to filter across
+    // labels / ids / descriptions) and a hover description per choice.
     ImGui::SetNextItemWidth(168);
     if (ImGui::BeginCombo("##op", ops[cur].label)) {
+        static char opq[48] = "";
+        if (ImGui::IsWindowAppearing()) { opq[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##opq", "Search actions...", opq, sizeof(opq));
+        ImGui::Separator();
+        std::string ql = opq;
+        for (auto& c : ql) c = (char)std::tolower((unsigned char)c);
+        auto lc = [](std::string s){ for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
         const char* lastGroup = nullptr;
+        int shown = 0;
         for (int i = 0; i < nops; ++i) {
-            if (ops[i].group && (!lastGroup || std::strcmp(ops[i].group, lastGroup) != 0)) {
+            if (!ql.empty()) {
+                bool hitm = lc(ops[i].label).find(ql) != std::string::npos ||
+                            lc(ops[i].op).find(ql) != std::string::npos ||
+                            (ops[i].desc && lc(ops[i].desc).find(ql) != std::string::npos);
+                if (!hitm) continue;
+            } else if (ops[i].group && (!lastGroup || std::strcmp(ops[i].group, lastGroup) != 0)) {
                 SectionHeader(ops[i].group); lastGroup = ops[i].group;
             }
             if (ImGui::Selectable(ops[i].label, i == cur)) { it.op = ops[i].op; dirty = true; }
             if (ImGui::IsItemHovered() && ops[i].desc[0]) ImGui::SetTooltip("%s", ops[i].desc);
+            ++shown;
         }
+        if (shown == 0) ImGui::TextDisabled("No actions match \"%s\".", opq);
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered() && ops[cur].desc[0]) ImGui::SetTooltip("%s", ops[cur].desc);
@@ -9107,7 +9211,11 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     // the user toggled it to. SetNextItemOpen(..., Always) seeds the state before the
     // header processes the click, and CollapsingHeader returns the post-click state,
     // so a click still toggles — we just capture and remember the result.
-    auto it = sCompOpen.find(label);
+    // Remember open/closed PER COMPONENT INSTANCE (keyed by pointer), not per label —
+    // otherwise several components of the same type (e.g. multiple Actions) would all
+    // collapse/expand together. Default open the first time we see an instance.
+    char okey[32]; std::snprintf(okey, sizeof(okey), "%p", (void*)comp);
+    auto it = sCompOpen.find(okey);
     ImGui::SetNextItemOpen(it == sCompOpen.end() ? true : it->second, ImGuiCond_Always);
     // A disabled component reads dimmed so it's obvious at a glance.
     if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
@@ -9123,7 +9231,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
             ImGui::GetColorU32(en ? barCol : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)),
             1.5f);
     }
-    sCompOpen[label] = open;
+    sCompOpen[okey] = open;
     if (ImGui::BeginPopupContextItem("##compctx")) {
         if (ImGui::MenuItem("Move Up"))   { sMoveComp = comp; sMoveDelta = -1; }
         if (ImGui::MenuItem("Move Down")) { sMoveComp = comp; sMoveDelta = +1; }
@@ -13263,7 +13371,14 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* al = dynamic_cast<ActionList*>(curComp)) {
         ImGui::PushID(al);   // each visual script gets its own ImGui ID scope
-        if (CompHeader("Actions (Visual Script)", al, &toRemove)) {
+        // Show the user's name in the header so stacked scripts are tellable apart.
+        std::string alHdr = al->name.empty() ? std::string("Actions (Visual Script)")
+                                             : ("Actions: " + al->name);
+        if (CompHeader(alHdr.c_str(), al, &toRemove)) {
+            // Editable label, saved in the project (serialized in ToText).
+            char nb[64]; std::strncpy(nb, al->name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::InputTextWithHint("##alname", "Script name (e.g. \"Open Door\")", nb, sizeof(nb))) { al->name = nb; ed.dirty = true; }
             // Trigger -> Conditions -> Instructions, Game-Creator style.
             const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision",
                                    "On Click", "On Key Up", "On Message",
@@ -13288,6 +13403,16 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::SameLine();
             if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
+
+            // Guardrail: OnMouse* triggers need pickable bounds. 3D meshes are picked
+            // by a camera ray vs a Collider3D; 2D objects by a sprite / 2D collider.
+            if (al->trigger >= ActionList::Trigger::OnMouseEnter && al->trigger <= ActionList::Trigger::OnMouseOver) {
+                bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
+                bool has3D = go->GetComponent<Collider3D>();
+                if (!has2D && !has3D)
+                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                        "Mouse triggers need a Collider (3D) or Sprite/Collider (2D) to be clickable.");
+            }
 
             SectionHeader("Conditions (all must pass)");
             if (al->conditions.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
@@ -15112,11 +15237,16 @@ void DrawInspector(EditorState& ed) {
         float availW = ImGui::GetContentRegionAvail().x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - ImGui::CalcTextSize(title).x) * 0.5f);
         ImGui::TextDisabled("%s", title);
+        // Auto-focus the search box the moment the popup opens, so you can just type.
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##acfilter", "Search", acFilter, sizeof(acFilter));
+        // Enter adds the first match, so "rigid<Enter>" adds a Rigidbody without the mouse.
+        bool acEnter = ImGui::InputTextWithHint("##acfilter", "Search", acFilter, sizeof(acFilter),
+                                                ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::Separator();
 
         bool searching = acFilter[0] != '\0';
+        bool acFirstConsumed = false;   // Enter only fires the first matching row
         // Case-insensitive substring match against the search box.
         auto F = [&](const char* name) {
             if (!searching) return true;
@@ -15131,9 +15261,13 @@ void DrawInspector(EditorState& ed) {
             return searching ? true : ImGui::BeginMenu(name);
         };
         auto EndCat = [&](bool opened) { if (!searching && opened) ImGui::EndMenu(); };
-        // One component row: shown only if absent + matches the search.
+        // One component row: shown only if absent + matches the search. While searching,
+        // pressing Enter picks the first shown row.
         auto item = [&](bool absent, const char* label) {
-            return absent && F(label) && ImGui::MenuItem(label);
+            if (!absent || !F(label)) return false;
+            bool clicked = ImGui::MenuItem(label);
+            if (!clicked && searching && acEnter && !acFirstConsumed) { acFirstConsumed = true; clicked = true; }
+            return clicked;
         };
 
         { bool o = BeginCat("Rendering");
@@ -15362,6 +15496,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
           } EndCat(o); }
 
+        // Enter added the first match (or matched nothing) — close and reset the search.
+        if (acEnter) { acFilter[0] = '\0'; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
 

@@ -3,67 +3,67 @@
 -- Configuring done (0.0s)
 -- Generating done (0.0s)
 -- Build files have been written to: /home/user/OkaySpaceGameEngine/build-win
-[  1%] Copying SDL2.dll next to the OkaySpace binaries
-[  2%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui.cpp.obj
-[  3%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/backends/imgui_impl_sdl2.cpp.obj
-[  4%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui.cpp.obj
-[  6%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_tables.cpp.obj
-[  7%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj
+[  1%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui.cpp.obj
+[  2%] Copying SDL2.dll next to the OkaySpace binaries
+[  3%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_draw.cpp.obj
+[  4%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_tables.cpp.obj
+[  6%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui.cpp.obj
+[  7%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_draw.cpp.obj
 [  8%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_widgets.cpp.obj
-[  9%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_draw.cpp.obj
-[ 10%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_draw.cpp.obj
+[  9%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_tables.cpp.obj
+[ 10%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_widgets.cpp.obj
 [ 12%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/backends/imgui_impl_sdl2.cpp.obj
-[ 13%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_tables.cpp.obj
-[ 14%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/imgui_widgets.cpp.obj
-[ 15%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj
+[ 13%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/backends/imgui_impl_sdl2.cpp.obj
+[ 14%] Building CXX object launcher/CMakeFiles/launcher_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj
 [ 15%] Built target okay_copy_sdl2
+[ 15%] Building CXX object editor/CMakeFiles/okay_imgui.dir/tmp/claude-0/-home-user-OkaySpaceGameEngine/6cc6664d-809e-5203-bee1-9e399f1fd2f7/scratchpad/deps/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj
 [ 16%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Application.cpp.obj
-[ 18%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Scheduler.cpp.obj
-[ 19%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Prefs.cpp.obj
-[ 20%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/DataAsset.cpp.obj
+[ 18%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Prefs.cpp.obj
+[ 19%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/DataAsset.cpp.obj
+[ 20%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Scheduler.cpp.obj
 [ 21%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Input/Input.cpp.obj
 [ 22%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/ConsoleRenderer.cpp.obj
 [ 24%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/GLRenderer.cpp.obj
-[ 25%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/D3D12Renderer.cpp.obj
-[ 26%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Component.cpp.obj
-[ 27%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/D3D11Renderer.cpp.obj
-[ 28%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/GameObject.cpp.obj
-[ 30%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Transform.cpp.obj
-[ 31%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/SceneSerializer.cpp.obj
-[ 32%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/SceneManager.cpp.obj
-[ 33%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Scene.cpp.obj
-[ 36%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/SpriteRenderer.cpp.obj
-[ 34%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Camera.cpp.obj
-[ 37%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/RelayServer.cpp.obj
-[ 38%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/UdpSocket.cpp.obj
-[ 39%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetworkManager.cpp.obj
-[ 40%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetTransport.cpp.obj
-[ 42%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/VisualScript/NodeGraph.cpp.obj
-[ 43%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/VisualScriptComponent.cpp.obj
-[ 44%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetBackend.cpp.obj
+[ 25%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/D3D11Renderer.cpp.obj
+[ 26%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/D3D12Renderer.cpp.obj
+[ 27%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Scene.cpp.obj
+[ 28%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Component.cpp.obj
+[ 31%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/SceneManager.cpp.obj
+[ 32%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Transform.cpp.obj
+[ 33%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Camera.cpp.obj
+[ 34%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/SpriteRenderer.cpp.obj
+[ 30%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/GameObject.cpp.obj
+[ 36%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/SceneSerializer.cpp.obj
+[ 38%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetworkManager.cpp.obj
+[ 37%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/UdpSocket.cpp.obj
+[ 39%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetTransport.cpp.obj
+[ 40%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/RelayServer.cpp.obj
+[ 42%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetBackend.cpp.obj
+[ 43%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/VisualScript/NodeGraph.cpp.obj
+[ 44%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/ScriptComponent.cpp.obj
 [ 45%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scripting/OkayScriptVM.cpp.obj
 [ 46%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scripting/ScriptVM.cpp.obj
-[ 48%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/ScriptComponent.cpp.obj
-[ 49%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UILayoutGroup.cpp.obj
-[ 50%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UIDocument.cpp.obj
-[ 51%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/ActionList.cpp.obj
-[ 53%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UIBarBind.cpp.obj
+[ 48%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/VisualScriptComponent.cpp.obj
+[ 49%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UIDocument.cpp.obj
+[ 50%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/ActionList.cpp.obj
+[ 51%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UILayoutGroup.cpp.obj
+[ 53%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UITextBind.cpp.obj
 [ 54%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UITooltip.cpp.obj
-[ 55%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UITextBind.cpp.obj
-[ 56%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UIDraggable.cpp.obj
-[ 57%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Draggable.cpp.obj
-[ 59%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Terrain.cpp.obj
-[ 60%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/VoxelTerrain.cpp.obj
-[ 61%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/AnimClip.cpp.obj
-[ 62%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Character.cpp.obj
+[ 55%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UIDraggable.cpp.obj
+[ 56%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/UIBarBind.cpp.obj
+[ 57%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/VoxelTerrain.cpp.obj
+[ 59%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Draggable.cpp.obj
+[ 60%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Character.cpp.obj
+[ 61%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Terrain.cpp.obj
+[ 62%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Platform/Steam/Steam.cpp.obj
 [ 63%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Platform/Steam/NullSteamService.cpp.obj
-[ 65%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Platform/Steam/Steam.cpp.obj
-[ 66%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/SteamManager.cpp.obj
-[ 67%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Platform/Account/Account.cpp.obj
+[ 65%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/AnimClip.cpp.obj
+[ 66%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Platform/Account/Account.cpp.obj
+[ 67%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/SteamManager.cpp.obj
 [ 68%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Physics/Physics2D.cpp.obj
 [ 69%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Physics/Physics3D.cpp.obj
-[ 71%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Audio/AudioClip.cpp.obj
-[ 72%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Audio/AudioMixer.cpp.obj
+[ 71%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Audio/AudioMixer.cpp.obj
+[ 72%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Audio/AudioClip.cpp.obj
 [ 73%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/AI/Pathfinding.cpp.obj
 [ 74%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Graphics/Image.cpp.obj
 [ 75%] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Graphics/Font.cpp.obj
@@ -116,15 +116,15 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Compone
       |            ^
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
-In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/Scene.cpp:7:
+In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/TextRenderer.hpp:3,
+                 from /home/user/OkaySpaceGameEngine/engine/src/Components/ActionList.cpp:3:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp: In function 'okay::Vec2 okay::ResolveAnchor(UIAnchor, const Vec2&, const Vec2&, float, float)':
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchHorizontal' not handled in switch [-Wswitch]
    54 |     switch (a) {
       |            ^
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
-In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/TextRenderer.hpp:3,
-                 from /home/user/OkaySpaceGameEngine/engine/src/Components/ActionList.cpp:3:
+In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/Scene.cpp:7:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp: In function 'okay::Vec2 okay::ResolveAnchor(UIAnchor, const Vec2&, const Vec2&, float, float)':
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchHorizontal' not handled in switch [-Wswitch]
    54 |     switch (a) {
@@ -209,20 +209,6 @@ In file included from /home/user/OkaySpaceGameEngine/engine/src/Render/ModelImpo
 /home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:339:39: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   339 |         if (x > dim - 2) x = dim - 2; if (z > dim - 2) z = dim - 2;
       |                                       ^~
-/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp: In member function 'void okay::Terrain::ThermalErode(int, float, float)':
-/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:404:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  404 |     if (strength < 0.0f) strength = 0.0f; if (strength > 1.0f) strength = 1.0f;
-      |     ^~
-/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:404:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  404 |     if (strength < 0.0f) strength = 0.0f; if (strength > 1.0f) strength = 1.0f;
-      |                                           ^~
-/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp: In member function 'float okay::Terrain::SlopeAt(float, float) const':
-/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:461:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  461 |     if (c > 1.0f) c = 1.0f; if (c < -1.0f) c = -1.0f;
-      |     ^~
-/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:461:29: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  461 |     if (c > 1.0f) c = 1.0f; if (c < -1.0f) c = -1.0f;
-      |                             ^~
 /home/user/OkaySpaceGameEngine/engine/src/Components/VoxelTerrain.cpp: In member function 'void okay::VoxelTerrain::FillSlab(float)':
 /home/user/OkaySpaceGameEngine/engine/src/Components/VoxelTerrain.cpp:339:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
   339 |     if (frac < 0) frac = 0; if (frac > 1) frac = 1;
@@ -237,6 +223,20 @@ In file included from /home/user/OkaySpaceGameEngine/engine/src/Render/ModelImpo
 /home/user/OkaySpaceGameEngine/engine/src/Components/VoxelTerrain.cpp:348:41: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   348 |     if (caveAmount < 0) caveAmount = 0; if (caveAmount > 1) caveAmount = 1;
       |                                         ^~
+/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp: In member function 'void okay::Terrain::ThermalErode(int, float, float)':
+/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:404:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  404 |     if (strength < 0.0f) strength = 0.0f; if (strength > 1.0f) strength = 1.0f;
+      |     ^~
+/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:404:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  404 |     if (strength < 0.0f) strength = 0.0f; if (strength > 1.0f) strength = 1.0f;
+      |                                           ^~
+/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp: In member function 'float okay::Terrain::SlopeAt(float, float) const':
+/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:461:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  461 |     if (c > 1.0f) c = 1.0f; if (c < -1.0f) c = -1.0f;
+      |     ^~
+/home/user/OkaySpaceGameEngine/engine/src/Components/Terrain.cpp:461:29: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  461 |     if (c > 1.0f) c = 1.0f; if (c < -1.0f) c = -1.0f;
+      |                             ^~
 /home/user/OkaySpaceGameEngine/engine/src/Components/VoxelTerrain.cpp: In lambda function:
 /home/user/OkaySpaceGameEngine/engine/src/Components/VoxelTerrain.cpp:488:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
   488 |         if (x < 0) x = 0; if (y < 0) y = 0; if (z < 0) z = 0;
@@ -264,6 +264,13 @@ In file included from /home/user/OkaySpaceGameEngine/engine/src/Render/ModelImpo
 /home/user/OkaySpaceGameEngine/engine/src/Components/VoxelTerrain.cpp:635:30: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   635 |     if (c == '+') return 62; if (c == '/') return 63;
       |                              ^~
+/home/user/OkaySpaceGameEngine/engine/src/Physics/Physics3D.cpp: In member function 'void okay::Physics3D::Step(okay::Scene&, float)':
+/home/user/OkaySpaceGameEngine/engine/src/Physics/Physics3D.cpp:537:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  537 |             if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
+      |             ^~
+/home/user/OkaySpaceGameEngine/engine/src/Physics/Physics3D.cpp:537:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  537 |             if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
+      |                                           ^~
 /home/user/OkaySpaceGameEngine/engine/src/Components/Character.cpp: In member function 'okay::Mesh okay::Character::BuildRig(std::vector<int>&) const':
 /home/user/OkaySpaceGameEngine/engine/src/Components/Character.cpp:127:17: warning: this 'for' clause does not guard... [-Wmisleading-indentation]
   127 |                 for (int s = -1; s <= 1; s += 2) box({s * 0.165f, 1.58f, 0}, {0.05f, 0.34f, 0.30f}, hair, B_HEAD); break;
@@ -292,19 +299,44 @@ In file included from /home/user/OkaySpaceGameEngine/engine/src/Render/ModelImpo
 /home/user/OkaySpaceGameEngine/engine/src/Components/Character.cpp:74:17: warning: variable 'mouth' set but not used [-Wunused-but-set-variable]
    74 |     const Color mouth    = Color::FromBytes(150, 95, 90);
       |                 ^~~~~
-/home/user/OkaySpaceGameEngine/engine/src/Physics/Physics3D.cpp: In member function 'void okay::Physics3D::Step(okay::Scene&, float)':
-/home/user/OkaySpaceGameEngine/engine/src/Physics/Physics3D.cpp:537:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  537 |             if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
-      |             ^~
-/home/user/OkaySpaceGameEngine/engine/src/Physics/Physics3D.cpp:537:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  537 |             if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
-      |                                           ^~
 /home/user/OkaySpaceGameEngine/engine/src/Physics/Physics3D.cpp:634:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
   634 |                 if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
       |                 ^~
 /home/user/OkaySpaceGameEngine/engine/src/Physics/Physics3D.cpp:634:47: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   634 |                 if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
       |                                               ^~
+In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:14:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp: In member function 'virtual void okay::FirstPersonController::Update(float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp:189:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  189 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:15:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp: In member function 'virtual void okay::ThirdPersonController::Update(float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp:173:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  173 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/Crosshair.hpp:3,
+                 from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/BlockBuilder.hpp:7,
+                 from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:18:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp: In function 'okay::Vec2 okay::ResolveAnchor(UIAnchor, const Vec2&, const Vec2&, float, float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchHorizontal' not handled in switch [-Wswitch]
+   54 |     switch (a) {
+      |            ^
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
+In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:22:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp: In lambda function:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:34: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  181 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
+      |                                  ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:64: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  181 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
+      |                                                                ^~~~~~
+In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:39:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp: In member function 'virtual void okay::ThirdPersonShooterController::Update(float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp:145:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  145 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
 In file included from /home/user/OkaySpaceGameEngine/engine/src/Render/GLRenderer.cpp:3:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::Triangle(float, float, float, float, float, float, float, float, float, uint32_t, int, int)':
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:214:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
@@ -361,49 +393,6 @@ In file included from /home/user/OkaySpaceGameEngine/engine/src/Render/GLRendere
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1864:23: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
  1864 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
       |                       ^~
-In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:14:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp: In member function 'virtual void okay::FirstPersonController::Update(float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp:189:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
-  189 |         bool airborne = rb ? !grounded : false;
-      |              ^~~~~~~~
-In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:15:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp: In member function 'virtual void okay::ThirdPersonController::Update(float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp:173:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
-  173 |         bool airborne = rb ? !grounded : false;
-      |              ^~~~~~~~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/Crosshair.hpp:3,
-                 from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/BlockBuilder.hpp:7,
-                 from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:18:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp: In function 'okay::Vec2 okay::ResolveAnchor(UIAnchor, const Vec2&, const Vec2&, float, float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchHorizontal' not handled in switch [-Wswitch]
-   54 |     switch (a) {
-      |            ^
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
-In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:22:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp: In lambda function:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:34: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  181 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
-      |                                  ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:64: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  181 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
-      |                                                                ^~~~~~
-In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:39:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp: In member function 'virtual void okay::ThirdPersonShooterController::Update(float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp:145:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
-  145 |         bool airborne = rb ? !grounded : false;
-      |              ^~~~~~~~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIProgressBar.hpp:3,
-                 from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/SurvivalStats.hpp:6,
-                 from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/NativeUIActions.hpp:3,
-                 from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIButton.hpp:6,
-                 from /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:19:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp: In function 'okay::Vec2 okay::ResolveAnchor(UIAnchor, const Vec2&, const Vec2&, float, float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchHorizontal' not handled in switch [-Wswitch]
-   54 |     switch (a) {
-      |            ^
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
 In file included from /home/user/OkaySpaceGameEngine/engine/src/Scene/SceneSerializer.cpp:119:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp: In lambda function:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:13: warning: this 'for' clause does not guard... [-Wmisleading-indentation]
@@ -461,6 +450,17 @@ In file included from /home/user/OkaySpaceGameEngine/engine/src/Render/D3D12Rend
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1245:47: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
  1245 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
       |                                               ^~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIProgressBar.hpp:3,
+                 from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/SurvivalStats.hpp:6,
+                 from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/NativeUIActions.hpp:3,
+                 from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIButton.hpp:6,
+                 from /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:19:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp: In function 'okay::Vec2 okay::ResolveAnchor(UIAnchor, const Vec2&, const Vec2&, float, float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchHorizontal' not handled in switch [-Wswitch]
+   54 |     switch (a) {
+      |            ^
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'const uint32_t* okay::RenderMeshesSS(Raster&, std::vector<unsigned int>&, const Scene&, const Mat4&, const Vec3&, int, int, int, const GameObject*)':
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1864:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
  1864 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
@@ -532,25 +532,25 @@ In file included from /home/user/OkaySpaceGameEngine/engine/src/Render/D3D11Rend
   264 |         if (err) err->Release(); if (vsb) vsb->Release();
       |                                  ^~
 /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp: In lambda function:
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3045:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 3045 |                 if (i < 0) i = 0; if (i > (int)arr->size()) i = (int)arr->size();
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3199:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 3199 |                 if (i < 0) i = 0; if (i > (int)arr->size()) i = (int)arr->size();
       |                 ^~
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3045:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 3045 |                 if (i < 0) i = 0; if (i > (int)arr->size()) i = (int)arr->size();
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3199:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 3199 |                 if (i < 0) i = 0; if (i > (int)arr->size()) i = (int)arr->size();
       |                                   ^~
 /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp: In lambda function:
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3056:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 3056 |                 if (start < 0) start += n; if (end < 0) end += n;
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3210:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 3210 |                 if (start < 0) start += n; if (end < 0) end += n;
       |                 ^~
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3056:44: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 3056 |                 if (start < 0) start += n; if (end < 0) end += n;
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3210:44: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 3210 |                 if (start < 0) start += n; if (end < 0) end += n;
       |                                            ^~
 /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp: In lambda function:
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:4349:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 4349 |             if (d > 180.0f) d -= 360.0f; if (d < -180.0f) d += 360.0f;
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:4503:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 4503 |             if (d > 180.0f) d -= 360.0f; if (d < -180.0f) d += 360.0f;
       |             ^~
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:4349:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 4349 |             if (d > 180.0f) d -= 360.0f; if (d < -180.0f) d += 360.0f;
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:4503:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 4503 |             if (d > 180.0f) d -= 360.0f; if (d < -180.0f) d += 360.0f;
       |                                          ^~
 [ 79%] Linking CXX static library libokay_imgui.a
 [ 79%] Built target okay_imgui
@@ -588,7 +588,7 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
     inlined from 'static void std::allocator_traits<std::allocator<_Tp1> >::construct(allocator_type&, _Up*, _Args&& ...) [with _Up = okay::vs::VsValue; _Args = {okay::vs::VsValue}; _Tp = okay::vs::VsValue]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/alloc_traits.h:537:17,
     inlined from 'std::vector<_Tp, _Alloc>::reference std::vector<_Tp, _Alloc>::emplace_back(_Args&& ...) [with _Args = {okay::vs::VsValue}; _Tp = okay::vs::VsValue; _Alloc = std::allocator<okay::vs::VsValue>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/vector.tcc:117:30,
     inlined from 'void std::vector<_Tp, _Alloc>::push_back(value_type&&) [with _Tp = okay::vs::VsValue; _Alloc = std::allocator<okay::vs::VsValue>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/stl_vector.h:1296:21,
-    inlined from 'okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>' at /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3071:107,
+    inlined from 'okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>' at /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3225:107,
     inlined from 'constexpr _Res std::__invoke_impl(__invoke_other, _Fn&&, _Args&& ...) [with _Res = okay::vs::VsValue; _Fn = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(vector<okay::vs::VsValue>&)>&; _Args = {vector<okay::vs::VsValue, allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/invoke.h:61:67,
     inlined from 'constexpr std::enable_if_t<is_invocable_r_v<_Res, _Callable, _Args ...>, _Res> std::__invoke_r(_Callable&&, _Args&& ...) [with _Res = okay::vs::VsValue; _Callable = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(vector<okay::vs::VsValue>&)>&; _Args = {vector<okay::vs::VsValue, allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/invoke.h:116:38,
     inlined from 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _ArgTypes&& ...) [with _Res = okay::vs::VsValue; _Functor = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>; _ArgTypes = {std::vector<okay::vs::VsValue, std::allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/std_function.h:291:44:
@@ -596,8 +596,8 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
   266 |             if (_M_string_length > _S_local_capacity)
       |                 ^~~~~~~~~~~~~~~~
 /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp: In static member function 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _ArgTypes&& ...) [with _Res = okay::vs::VsValue; _Functor = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>; _ArgTypes = {std::vector<okay::vs::VsValue, std::allocator<okay::vs::VsValue> >&}]':
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3071:115: note: '<anonymous>' declared here
- 3071 |             if (step > 0) for (float v = lo; v < hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3225:115: note: '<anonymous>' declared here
+ 3225 |             if (step > 0) for (float v = lo; v < hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
       |                                                                                                                   ^
 In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M_is_local() const [with _CharT = char; _Traits = std::char_traits<char>; _Alloc = std::allocator<char>]',
     inlined from 'std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::basic_string(std::__cxx11::basic_string<_CharT, _Traits, _Alloc>&&) [with _CharT = char; _Traits = std::char_traits<char>; _Alloc = std::allocator<char>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/basic_string.h:670:23,
@@ -623,7 +623,7 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
     inlined from 'static void std::allocator_traits<std::allocator<_Tp1> >::construct(allocator_type&, _Up*, _Args&& ...) [with _Up = okay::vs::VsValue; _Args = {okay::vs::VsValue}; _Tp = okay::vs::VsValue]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/alloc_traits.h:537:17,
     inlined from 'std::vector<_Tp, _Alloc>::reference std::vector<_Tp, _Alloc>::emplace_back(_Args&& ...) [with _Args = {okay::vs::VsValue}; _Tp = okay::vs::VsValue; _Alloc = std::allocator<okay::vs::VsValue>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/vector.tcc:117:30,
     inlined from 'void std::vector<_Tp, _Alloc>::push_back(value_type&&) [with _Tp = okay::vs::VsValue; _Alloc = std::allocator<okay::vs::VsValue>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/stl_vector.h:1296:21,
-    inlined from 'okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>' at /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3071:107,
+    inlined from 'okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>' at /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3225:107,
     inlined from 'constexpr _Res std::__invoke_impl(__invoke_other, _Fn&&, _Args&& ...) [with _Res = okay::vs::VsValue; _Fn = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(vector<okay::vs::VsValue>&)>&; _Args = {vector<okay::vs::VsValue, allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/invoke.h:61:67,
     inlined from 'constexpr std::enable_if_t<is_invocable_r_v<_Res, _Callable, _Args ...>, _Res> std::__invoke_r(_Callable&&, _Args&& ...) [with _Res = okay::vs::VsValue; _Callable = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(vector<okay::vs::VsValue>&)>&; _Args = {vector<okay::vs::VsValue, allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/invoke.h:116:38,
     inlined from 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _ArgTypes&& ...) [with _Res = okay::vs::VsValue; _Functor = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>; _ArgTypes = {std::vector<okay::vs::VsValue, std::allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/std_function.h:291:44:
@@ -631,8 +631,8 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
   266 |             if (_M_string_length > _S_local_capacity)
       |                 ^~~~~~~~~~~~~~~~
 /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp: In static member function 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _ArgTypes&& ...) [with _Res = okay::vs::VsValue; _Functor = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>; _ArgTypes = {std::vector<okay::vs::VsValue, std::allocator<okay::vs::VsValue> >&}]':
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3071:115: note: '<anonymous>' declared here
- 3071 |             if (step > 0) for (float v = lo; v < hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3225:115: note: '<anonymous>' declared here
+ 3225 |             if (step > 0) for (float v = lo; v < hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
       |                                                                                                                   ^
 In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M_is_local() const [with _CharT = char; _Traits = std::char_traits<char>; _Alloc = std::allocator<char>]',
     inlined from 'std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::basic_string(std::__cxx11::basic_string<_CharT, _Traits, _Alloc>&&) [with _CharT = char; _Traits = std::char_traits<char>; _Alloc = std::allocator<char>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/basic_string.h:670:23,
@@ -658,7 +658,7 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
     inlined from 'static void std::allocator_traits<std::allocator<_Tp1> >::construct(allocator_type&, _Up*, _Args&& ...) [with _Up = okay::vs::VsValue; _Args = {okay::vs::VsValue}; _Tp = okay::vs::VsValue]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/alloc_traits.h:537:17,
     inlined from 'std::vector<_Tp, _Alloc>::reference std::vector<_Tp, _Alloc>::emplace_back(_Args&& ...) [with _Args = {okay::vs::VsValue}; _Tp = okay::vs::VsValue; _Alloc = std::allocator<okay::vs::VsValue>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/vector.tcc:117:30,
     inlined from 'void std::vector<_Tp, _Alloc>::push_back(value_type&&) [with _Tp = okay::vs::VsValue; _Alloc = std::allocator<okay::vs::VsValue>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/stl_vector.h:1296:21,
-    inlined from 'okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>' at /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3072:107,
+    inlined from 'okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>' at /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3226:107,
     inlined from 'constexpr _Res std::__invoke_impl(__invoke_other, _Fn&&, _Args&& ...) [with _Res = okay::vs::VsValue; _Fn = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(vector<okay::vs::VsValue>&)>&; _Args = {vector<okay::vs::VsValue, allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/invoke.h:61:67,
     inlined from 'constexpr std::enable_if_t<is_invocable_r_v<_Res, _Callable, _Args ...>, _Res> std::__invoke_r(_Callable&&, _Args&& ...) [with _Res = okay::vs::VsValue; _Callable = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(vector<okay::vs::VsValue>&)>&; _Args = {vector<okay::vs::VsValue, allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/invoke.h:116:38,
     inlined from 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _ArgTypes&& ...) [with _Res = okay::vs::VsValue; _Functor = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>; _ArgTypes = {std::vector<okay::vs::VsValue, std::allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/std_function.h:291:44:
@@ -666,8 +666,8 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
   266 |             if (_M_string_length > _S_local_capacity)
       |                 ^~~~~~~~~~~~~~~~
 /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp: In static member function 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _ArgTypes&& ...) [with _Res = okay::vs::VsValue; _Functor = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>; _ArgTypes = {std::vector<okay::vs::VsValue, std::allocator<okay::vs::VsValue> >&}]':
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3072:115: note: '<anonymous>' declared here
- 3072 |             else          for (float v = lo; v > hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3226:115: note: '<anonymous>' declared here
+ 3226 |             else          for (float v = lo; v > hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
       |                                                                                                                   ^
 In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M_is_local() const [with _CharT = char; _Traits = std::char_traits<char>; _Alloc = std::allocator<char>]',
     inlined from 'std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::basic_string(std::__cxx11::basic_string<_CharT, _Traits, _Alloc>&&) [with _CharT = char; _Traits = std::char_traits<char>; _Alloc = std::allocator<char>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/basic_string.h:670:23,
@@ -693,7 +693,7 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
     inlined from 'static void std::allocator_traits<std::allocator<_Tp1> >::construct(allocator_type&, _Up*, _Args&& ...) [with _Up = okay::vs::VsValue; _Args = {okay::vs::VsValue}; _Tp = okay::vs::VsValue]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/alloc_traits.h:537:17,
     inlined from 'std::vector<_Tp, _Alloc>::reference std::vector<_Tp, _Alloc>::emplace_back(_Args&& ...) [with _Args = {okay::vs::VsValue}; _Tp = okay::vs::VsValue; _Alloc = std::allocator<okay::vs::VsValue>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/vector.tcc:117:30,
     inlined from 'void std::vector<_Tp, _Alloc>::push_back(value_type&&) [with _Tp = okay::vs::VsValue; _Alloc = std::allocator<okay::vs::VsValue>]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/stl_vector.h:1296:21,
-    inlined from 'okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>' at /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3072:107,
+    inlined from 'okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>' at /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3226:107,
     inlined from 'constexpr _Res std::__invoke_impl(__invoke_other, _Fn&&, _Args&& ...) [with _Res = okay::vs::VsValue; _Fn = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(vector<okay::vs::VsValue>&)>&; _Args = {vector<okay::vs::VsValue, allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/invoke.h:61:67,
     inlined from 'constexpr std::enable_if_t<is_invocable_r_v<_Res, _Callable, _Args ...>, _Res> std::__invoke_r(_Callable&&, _Args&& ...) [with _Res = okay::vs::VsValue; _Callable = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(vector<okay::vs::VsValue>&)>&; _Args = {vector<okay::vs::VsValue, allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/invoke.h:116:38,
     inlined from 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _ArgTypes&& ...) [with _Res = okay::vs::VsValue; _Functor = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>; _ArgTypes = {std::vector<okay::vs::VsValue, std::allocator<okay::vs::VsValue> >&}]' at /usr/lib/gcc/x86_64-w64-mingw32/13-win32/include/c++/bits/std_function.h:291:44:
@@ -701,8 +701,8 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
   266 |             if (_M_string_length > _S_local_capacity)
       |                 ^~~~~~~~~~~~~~~~
 /home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp: In static member function 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _ArgTypes&& ...) [with _Res = okay::vs::VsValue; _Functor = okay::OkayScriptVM::Impl::RegisterBuiltins()::<lambda(std::vector<okay::vs::VsValue>&)>; _ArgTypes = {std::vector<okay::vs::VsValue, std::allocator<okay::vs::VsValue> >&}]':
-/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3072:115: note: '<anonymous>' declared here
- 3072 |             else          for (float v = lo; v > hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
+/home/user/OkaySpaceGameEngine/engine/src/Scripting/OkayScriptVM.cpp:3226:115: note: '<anonymous>' declared here
+ 3226 |             else          for (float v = lo; v > hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
       |                                                                                                                   ^
 [ 84%] Linking CXX static library libokay_engine.a
 [ 84%] Built target okay_engine
@@ -722,8 +722,8 @@ In member function 'bool std::__cxx11::basic_string<_CharT, _Traits, _Alloc>::_M
 [ 90%] Built target okay_ui
 [ 91%] Building CXX object okayui/CMakeFiles/okayui_d3d11_demo.dir/d3d11_demo/main.cpp.obj
 [ 92%] Building CXX object player/CMakeFiles/okay-player.dir/main.cpp.obj
-[ 93%] Building CXX object editor/CMakeFiles/okay-editor.dir/main.cpp.obj
-[ 95%] Building CXX object editor/CMakeFiles/okay-editor.dir/EditorState.cpp.obj
+[ 93%] Building CXX object editor/CMakeFiles/okay-editor.dir/EditorState.cpp.obj
+[ 95%] Building CXX object editor/CMakeFiles/okay-editor.dir/main.cpp.obj
 [ 96%] Building C object editor/CMakeFiles/okay-editor.dir/__/engine/third_party/tinyfd/tinyfiledialogs.c.obj
 /home/user/OkaySpaceGameEngine/editor/main.cpp:157: warning: "OKAY_TRACE" redefined
   157 | #define OKAY_TRACE(s) OkayTrace(s)
@@ -734,14 +734,6 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:12,
 /home/user/OkaySpaceGameEngine/engine/include/okay/Core/Log.hpp:51: note: this is the location of the previous definition
    51 | #define OKAY_TRACE(...) ::okay::Log::Trace(__VA_ARGS__)
       | 
-In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:15:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp: In lambda function:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:13: warning: this 'for' clause does not guard... [-Wmisleading-indentation]
-   66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
-      |             ^~~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:104: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'for'
-   66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
-      |                                                                                                        ^~~~~~
 In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:15,
                  from /home/user/OkaySpaceGameEngine/editor/EditorState.hpp:2,
                  from /home/user/OkaySpaceGameEngine/editor/EditorState.cpp:1:
@@ -752,7 +744,85 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:15,
 /home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:104: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'for'
    66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
       |                                                                                                        ^~~~~~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:15:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp: In lambda function:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:13: warning: this 'for' clause does not guard... [-Wmisleading-indentation]
+   66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
+      |             ^~~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:104: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'for'
+   66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
+      |                                                                                                        ^~~~~~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:32:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp: In lambda function:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:125:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  125 |         if (c == '+') return 62; if (c == '/') return 63;
+      |         ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:125:34: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  125 |         if (c == '+') return 62; if (c == '/') return 63;
+      |                                  ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp: In function 'int okay::gltf_detail::TypeComps(const std::string&)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:203:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  203 |     if (t == "SCALAR") return 1; if (t == "VEC2") return 2; if (t == "VEC3") return 3;
+      |     ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:203:34: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  203 |     if (t == "SCALAR") return 1; if (t == "VEC2") return 2; if (t == "VEC3") return 3;
+      |                                  ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:204:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  204 |     if (t == "VEC4") return 4; if (t == "MAT4") return 16; return 1;
+      |     ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:204:32: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  204 |     if (t == "VEC4") return 4; if (t == "MAT4") return 16; return 1;
+      |                                ^~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:37:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::Triangle(float, float, float, float, float, float, float, float, float, uint32_t, int, int)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:214:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  214 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:214:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  214 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TriangleSmooth(const float*, const float*, const float*, const float*, const float*, const float*, const okay::Color&, const float*, float, float, float, const float*, float, float, float, int, int)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:259:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  259 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:259:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  259 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TriangleTex(const float*, const float*, const float*, const float*, const float*, const float*, const std::vector<okay::Image>&, const okay::Color&, const float*, const float*, const float*, const float*, float, float, float, const float*, float, float, float, int, int)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:375:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  375 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:375:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  375 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
 [ 97%] Linking CXX executable ../bin/okayui_d3d11_demo.exe
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TrianglePhong(const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const std::vector<okay::Image>*, const okay::Color&, const okay::Color&, const okay::Vec3&, float, float, float, float, float, const float*, float, float, float, const std::vector<okay::Image>*, const okay::Vec3&, float, float, const std::vector<okay::Image>*, float, int, float, float, float, float, float, bool, float, float, int, int, int, const float*, const float*, const std::vector<okay::Image>*, float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:456:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  456 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:456:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  456 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::detail::RenderCascadeDepth(const okay::Scene&, okay::ShadowCascade&, bool)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:887:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  887 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
+      |             ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:887:37: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  887 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
+      |                                     ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:888:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  888 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
+      |             ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:888:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  888 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
+      |                                          ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::ApplyBloom(Raster&)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1245:21: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1245 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
+      |                     ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1245:47: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1245 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
+      |                                               ^~
 In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:32:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp: In lambda function:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:125:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
@@ -774,27 +844,30 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:32:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:204:32: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   204 |     if (t == "VEC4") return 4; if (t == "MAT4") return 16; return 1;
       |                                ^~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:32:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp: In lambda function:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:125:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  125 |         if (c == '+') return 62; if (c == '/') return 63;
-      |         ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:125:34: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  125 |         if (c == '+') return 62; if (c == '/') return 63;
-      |                                  ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp: In function 'int okay::gltf_detail::TypeComps(const std::string&)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:203:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  203 |     if (t == "SCALAR") return 1; if (t == "VEC2") return 2; if (t == "VEC3") return 3;
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'const uint32_t* okay::RenderMeshesSS(Raster&, std::vector<unsigned int>&, const Scene&, const Mat4&, const Vec3&, int, int, int, const GameObject*)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1864:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1864 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
       |     ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:203:34: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  203 |     if (t == "SCALAR") return 1; if (t == "VEC2") return 2; if (t == "VEC3") return 3;
-      |                                  ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:204:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  204 |     if (t == "VEC4") return 4; if (t == "MAT4") return 16; return 1;
-      |     ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:204:32: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  204 |     if (t == "VEC4") return 4; if (t == "MAT4") return 16; return 1;
-      |                                ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1864:23: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1864 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
+      |                       ^~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/TextRenderer.hpp:3,
+                 from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:58:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp: In function 'okay::Vec2 okay::ResolveAnchor(UIAnchor, const Vec2&, const Vec2&, float, float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchHorizontal' not handled in switch [-Wswitch]
+   54 |     switch (a) {
+      |            ^
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
+In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:15,
+                 from /home/user/OkaySpaceGameEngine/player/main.cpp:11:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp: In lambda function:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:13: warning: this 'for' clause does not guard... [-Wmisleading-indentation]
+   66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
+      |             ^~~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:104: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'for'
+   66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
+      |                                                                                                        ^~~~~~
 [ 97%] Built target okayui_d3d11_demo
 In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:37:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::Triangle(float, float, float, float, float, float, float, float, float, uint32_t, int, int)':
@@ -825,28 +898,6 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:37:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:456:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   456 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
       |                                           ^~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:37:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::Triangle(float, float, float, float, float, float, float, float, float, uint32_t, int, int)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:214:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  214 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
-      |         ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:214:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  214 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
-      |                                           ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TriangleSmooth(const float*, const float*, const float*, const float*, const float*, const float*, const okay::Color&, const float*, float, float, float, const float*, float, float, float, int, int)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:259:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  259 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
-      |         ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:259:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  259 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
-      |                                           ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TriangleTex(const float*, const float*, const float*, const float*, const float*, const float*, const std::vector<okay::Image>&, const okay::Color&, const float*, const float*, const float*, const float*, float, float, float, const float*, float, float, float, int, int)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:375:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  375 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
-      |         ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:375:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  375 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
-      |                                           ^~
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::detail::RenderCascadeDepth(const okay::Scene&, okay::ShadowCascade&, bool)':
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:887:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
   887 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
@@ -860,48 +911,6 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:37:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:888:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   888 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
       |                                          ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TrianglePhong(const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const std::vector<okay::Image>*, const okay::Color&, const okay::Color&, const okay::Vec3&, float, float, float, float, float, const float*, float, float, float, const std::vector<okay::Image>*, const okay::Vec3&, float, float, const std::vector<okay::Image>*, float, int, float, float, float, float, float, bool, float, float, int, int, int, const float*, const float*, const std::vector<okay::Image>*, float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:456:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  456 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
-      |         ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:456:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  456 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
-      |                                           ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::ApplyBloom(Raster&)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1245:21: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 1245 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
-      |                     ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1245:47: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 1245 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
-      |                                               ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'const uint32_t* okay::RenderMeshesSS(Raster&, std::vector<unsigned int>&, const Scene&, const Mat4&, const Vec3&, int, int, int, const GameObject*)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1864:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 1864 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
-      |     ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1864:23: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 1864 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
-      |                       ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::detail::RenderCascadeDepth(const okay::Scene&, okay::ShadowCascade&, bool)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:887:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  887 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
-      |             ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:887:37: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  887 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
-      |                                     ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:888:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  888 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
-      |             ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:888:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  888 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
-      |                                          ^~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/TextRenderer.hpp:3,
-                 from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:58:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp: In function 'okay::Vec2 okay::ResolveAnchor(UIAnchor, const Vec2&, const Vec2&, float, float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchHorizontal' not handled in switch [-Wswitch]
-   54 |     switch (a) {
-      |            ^
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::ApplyBloom(Raster&)':
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:1245:21: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
  1245 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
@@ -924,15 +933,6 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Compone
       |            ^
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
-In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:15,
-                 from /home/user/OkaySpaceGameEngine/player/main.cpp:11:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp: In lambda function:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:13: warning: this 'for' clause does not guard... [-Wmisleading-indentation]
-   66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
-      |             ^~~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Core/DataPack.hpp:66:104: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'for'
-   66 |             for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
-      |                                                                                                        ^~~~~~
 In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonHand.hpp:19,
                  from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:84:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp: In member function 'virtual void okay::FirstPersonController::Update(float)':
@@ -944,23 +944,6 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Compone
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp: In member function 'virtual void okay::ThirdPersonController::Update(float)':
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp:173:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
   173 |         bool airborne = rb ? !grounded : false;
-      |              ^~~~~~~~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonHand.hpp:19,
-                 from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:84:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp: In member function 'virtual void okay::FirstPersonController::Update(float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp:189:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
-  189 |         bool airborne = rb ? !grounded : false;
-      |              ^~~~~~~~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/NetworkPlayerSpawner.hpp:25,
-                 from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:87:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp: In member function 'virtual void okay::ThirdPersonController::Update(float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp:173:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
-  173 |         bool airborne = rb ? !grounded : false;
-      |              ^~~~~~~~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/NetworkPlayerSpawner.hpp:26:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp: In member function 'virtual void okay::ThirdPersonShooterController::Update(float)':
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp:145:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
-  145 |         bool airborne = rb ? !grounded : false;
       |              ^~~~~~~~
 In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/NetworkPlayerSpawner.hpp:26:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp: In member function 'virtual void okay::ThirdPersonShooterController::Update(float)':
@@ -988,6 +971,18 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:32:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/Gltf.hpp:204:32: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   204 |     if (t == "VEC4") return 4; if (t == "MAT4") return 16; return 1;
       |                                ^~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonHand.hpp:19,
+                 from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:84:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp: In member function 'virtual void okay::FirstPersonController::Update(float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp:189:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  189 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/NetworkPlayerSpawner.hpp:25,
+                 from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:87:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp: In member function 'virtual void okay::ThirdPersonController::Update(float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonController.hpp:173:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  173 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
 In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:37:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::Triangle(float, float, float, float, float, float, float, float, float, uint32_t, int, int)':
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:214:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
@@ -1017,14 +1012,11 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:37:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Render/SoftwareRenderer.hpp:456:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
   456 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
       |                                           ^~
-In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:166:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp: In lambda function:
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:34: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-  181 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
-      |                                  ^~
-/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:64: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-  181 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
-      |                                                                ^~~~~~
+In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/NetworkPlayerSpawner.hpp:26:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp: In member function 'virtual void okay::ThirdPersonShooterController::Update(float)':
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/ThirdPersonShooterController.hpp:145:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  145 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
 In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:166:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp: In lambda function:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:34: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
@@ -1068,6 +1060,14 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Compone
       |            ^
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchVertical' not handled in switch [-Wswitch]
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/UIAnchor.hpp:54:12: warning: enumeration value 'StretchFull' not handled in switch [-Wswitch]
+In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:166:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp: In lambda function:
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:34: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  181 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
+      |                                  ^~
+/home/user/OkaySpaceGameEngine/engine/include/okay/Components/InventoryUI.hpp:181:64: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  181 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
+      |                                                                ^~~~~~
 In file included from /home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonHand.hpp:19,
                  from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:84:
 /home/user/OkaySpaceGameEngine/engine/include/okay/Components/FirstPersonController.hpp: In member function 'virtual void okay::FirstPersonController::Update(float)':
@@ -1146,156 +1146,156 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:166
  4313 |     auto header = [](const char* s) {
       |          ^~~~~~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In lambda function:
-/home/user/OkaySpaceGameEngine/editor/main.cpp:5397:9: warning: this 'for' clause does not guard... [-Wmisleading-indentation]
- 5397 |         for (int i = 0; i < n; ++i) if (s == arr[i]) return true; return false; };
+/home/user/OkaySpaceGameEngine/editor/main.cpp:5414:9: warning: this 'for' clause does not guard... [-Wmisleading-indentation]
+ 5414 |         for (int i = 0; i < n; ++i) if (s == arr[i]) return true; return false; };
       |         ^~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:5397:67: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'for'
- 5397 |         for (int i = 0; i < n; ++i) if (s == arr[i]) return true; return false; };
+/home/user/OkaySpaceGameEngine/editor/main.cpp:5414:67: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'for'
+ 5414 |         for (int i = 0; i < n; ++i) if (s == arr[i]) return true; return false; };
       |                                                                   ^~~~~~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In lambda function:
-/home/user/OkaySpaceGameEngine/editor/main.cpp:5572:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 5572 |             if (!n.empty()) out.push_back({lineNo, "C  " + n}); return;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:5589:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 5589 |             if (!n.empty()) out.push_back({lineNo, "C  " + n}); return;
       |             ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:5572:65: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 5572 |             if (!n.empty()) out.push_back({lineNo, "C  " + n}); return;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:5589:65: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 5589 |             if (!n.empty()) out.push_back({lineNo, "C  " + n}); return;
       |                                                                 ^~~~~~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::DrawScriptEditor(okay::editor::EditorState&)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:6541:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 6541 |                 if (target < 1) target = 1; if (target > lines) target = lines;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:6558:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 6558 |                 if (target < 1) target = 1; if (target > lines) target = lines;
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:6541:45: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 6541 |                 if (target < 1) target = 1; if (target > lines) target = lines;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:6558:45: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 6558 |                 if (target < 1) target = 1; if (target > lines) target = lines;
       |                                             ^~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::DrawCharacterAnim(okay::editor::EditorState&, okay::GameObject*, okay::Character*, int)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:8363:60: warning: unused parameter 'go' [-Wunused-parameter]
- 8363 | static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, int focusBone = -1) {
+/home/user/OkaySpaceGameEngine/editor/main.cpp:8380:60: warning: unused parameter 'go' [-Wunused-parameter]
+ 8380 | static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, int focusBone = -1) {
       |                                                ~~~~~~~~~~~~^~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::DrawAnimPreview(okay::editor::EditorState&, okay::GameObject*)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:8540:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 8540 |     if (w > 420.0f) w = 420.0f; if (w < 80.0f) w = 80.0f;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:8557:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 8557 |     if (w > 420.0f) w = 420.0f; if (w < 80.0f) w = 80.0f;
       |     ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:8540:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 8540 |     if (w > 420.0f) w = 420.0f; if (w < 80.0f) w = 80.0f;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:8557:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 8557 |     if (w > 420.0f) w = 420.0f; if (w < 80.0f) w = 80.0f;
       |                                 ^~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::DrawFlowGraph(okay::editor::EditorState&)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:8739:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
- 8739 |     if (cs.x < 80) cs.x = 80; if (cs.y < 80) cs.y = 80;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:8756:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 8756 |     if (cs.x < 80) cs.x = 80; if (cs.y < 80) cs.y = 80;
       |     ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:8739:31: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
- 8739 |     if (cs.x < 80) cs.x = 80; if (cs.y < 80) cs.y = 80;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:8756:31: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 8756 |     if (cs.x < 80) cs.x = 80; if (cs.y < 80) cs.y = 80;
       |                               ^~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In lambda function:
-/home/user/OkaySpaceGameEngine/editor/main.cpp:8978:13: warning: this 'while' clause does not guard... [-Wmisleading-indentation]
- 8978 |             while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:8995:13: warning: this 'while' clause does not guard... [-Wmisleading-indentation]
+ 8995 |             while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
       |             ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:8978:64: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'while'
- 8978 |             while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:8995:64: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'while'
+ 8995 |             while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
       |                                                                ^~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::DrawInspector(okay::editor::EditorState&)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:11990:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-11990 |             if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12007:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12007 |             if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
       |             ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:11990:85: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-11990 |             if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12007:85: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12007 |             if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
       |                                                                                     ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12046:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-12046 |                 if (ImGui::Checkbox("Border##lsbar", &ls->barBorder)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12063:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12063 |                 if (ImGui::Checkbox("Border##lsbar", &ls->barBorder)) ed.dirty = true; ImGui::SameLine();
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12046:88: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-12046 |                 if (ImGui::Checkbox("Border##lsbar", &ls->barBorder)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12063:88: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12063 |                 if (ImGui::Checkbox("Border##lsbar", &ls->barBorder)) ed.dirty = true; ImGui::SameLine();
       |                                                                                        ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12074:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-12074 |             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12091:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12091 |             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
       |             ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12074:89: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-12074 |             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12091:89: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12091 |             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
       |                                                                                         ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12075:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-12075 |             if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12092:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12092 |             if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
       |             ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12075:90: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-12075 |             if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12092:90: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12092 |             if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
       |                                                                                          ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12101:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-12101 |                 if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12118:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12118 |                 if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12101:91: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-12101 |                 if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12118:91: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12118 |                 if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
       |                                                                                           ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12103:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-12103 |                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12120:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12120 |                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12103:95: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-12103 |                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12120:95: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12120 |                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
       |                                                                                               ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12236:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-12236 |             if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12253:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12253 |             if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
       |             ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12236:96: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-12236 |             if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12253:96: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12253 |             if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
       |                                                                                                ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12270:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-12270 |                 if (ImGui::Checkbox("Gradients##gu", &gu->useGradients)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12287:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12287 |                 if (ImGui::Checkbox("Gradients##gu", &gu->useGradients)) ed.dirty = true; ImGui::SameLine();
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12270:91: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-12270 |                 if (ImGui::Checkbox("Gradients##gu", &gu->useGradients)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12287:91: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12287 |                 if (ImGui::Checkbox("Gradients##gu", &gu->useGradients)) ed.dirty = true; ImGui::SameLine();
       |                                                                                           ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12272:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-12272 |                 if (ImGui::Checkbox("Accent bars##gu", &gu->accentBars)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12289:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+12289 |                 if (ImGui::Checkbox("Accent bars##gu", &gu->accentBars)) ed.dirty = true; ImGui::SameLine();
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:12272:91: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-12272 |                 if (ImGui::Checkbox("Accent bars##gu", &gu->accentBars)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:12289:91: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+12289 |                 if (ImGui::Checkbox("Accent bars##gu", &gu->accentBars)) ed.dirty = true; ImGui::SameLine();
       |                                                                                           ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14614:25: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-14614 |                         if (he < 0.01f) he = 0.5f; if (hn < 0.01f) hn = 0.5f;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14631:25: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+14631 |                         if (he < 0.01f) he = 0.5f; if (hn < 0.01f) hn = 0.5f;
       |                         ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14614:52: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-14614 |                         if (he < 0.01f) he = 0.5f; if (hn < 0.01f) hn = 0.5f;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14631:52: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+14631 |                         if (he < 0.01f) he = 0.5f; if (hn < 0.01f) hn = 0.5f;
       |                                                    ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14699:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-14699 |                 if (ImGui::Checkbox("Up##uchl", &cr->lineUp)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14716:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+14716 |                 if (ImGui::Checkbox("Up##uchl", &cr->lineUp)) ed.dirty = true; ImGui::SameLine();
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14699:80: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-14699 |                 if (ImGui::Checkbox("Up##uchl", &cr->lineUp)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14716:80: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+14716 |                 if (ImGui::Checkbox("Up##uchl", &cr->lineUp)) ed.dirty = true; ImGui::SameLine();
       |                                                                                ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14700:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-14700 |                 if (ImGui::Checkbox("Down##uchl", &cr->lineDown)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14717:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+14717 |                 if (ImGui::Checkbox("Down##uchl", &cr->lineDown)) ed.dirty = true; ImGui::SameLine();
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14700:84: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-14700 |                 if (ImGui::Checkbox("Down##uchl", &cr->lineDown)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14717:84: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+14717 |                 if (ImGui::Checkbox("Down##uchl", &cr->lineDown)) ed.dirty = true; ImGui::SameLine();
       |                                                                                    ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14701:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-14701 |                 if (ImGui::Checkbox("Left##uchl", &cr->lineLeft)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14718:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+14718 |                 if (ImGui::Checkbox("Left##uchl", &cr->lineLeft)) ed.dirty = true; ImGui::SameLine();
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14701:84: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-14701 |                 if (ImGui::Checkbox("Left##uchl", &cr->lineLeft)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14718:84: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+14718 |                 if (ImGui::Checkbox("Left##uchl", &cr->lineLeft)) ed.dirty = true; ImGui::SameLine();
       |                                                                                    ^~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14740:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-14740 |             if (ImGui::Checkbox("Flip X##uim", &im->flipX)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14757:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+14757 |             if (ImGui::Checkbox("Flip X##uim", &im->flipX)) ed.dirty = true; ImGui::SameLine();
       |             ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:14740:78: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-14740 |             if (ImGui::Checkbox("Flip X##uim", &im->flipX)) ed.dirty = true; ImGui::SameLine();
+/home/user/OkaySpaceGameEngine/editor/main.cpp:14757:78: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+14757 |             if (ImGui::Checkbox("Flip X##uim", &im->flipX)) ed.dirty = true; ImGui::SameLine();
       |                                                                              ^~~~~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::AlignUISelection(okay::editor::EditorState&, int, float, float)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:17170:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-17170 |         if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:17187:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+17187 |         if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
       |         ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:17170:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-17170 |         if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:17187:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+17187 |         if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
       |                           ^~~~~~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::DistributeUISelection(okay::editor::EditorState&, bool, float, float)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:17200:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-17200 |         if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:17217:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+17217 |         if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
       |         ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:17200:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-17200 |         if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:17217:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+17217 |         if (!g) continue; UIRect r = GetUIRect(g); if (!r.valid || !r.position) continue;
       |                           ^~~~~~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::DrawScene3D(okay::editor::EditorState&, ImDrawList*, ImVec2, ImVec2, ImVec2, bool, ImGuiIO&, bool)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:18490:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
-18490 |                 if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:18507:17: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+18507 |                 if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
       |                 ^~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:18490:45: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
-18490 |                 if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
+/home/user/OkaySpaceGameEngine/editor/main.cpp:18507:45: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+18507 |                 if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
       |                                             ^~
 /home/user/OkaySpaceGameEngine/editor/main.cpp: At global scope:
 /home/user/OkaySpaceGameEngine/editor/main.cpp:771:6: warning: '{anonymous}::g_showUIOverlay' defined but not used [-Wunused-variable]
@@ -1313,11 +1313,11 @@ In file included from /home/user/OkaySpaceGameEngine/engine/include/Okay.hpp:166
 [ 98%] Linking CXX executable ../bin/OkaySpacePlayer.exe
 [ 98%] Built target okay-player
 /home/user/OkaySpaceGameEngine/editor/main.cpp: In function 'void {anonymous}::DrawProjectSettings(okay::editor::EditorState&)':
-/home/user/OkaySpaceGameEngine/editor/main.cpp:7450:25: warning: 'char* strncpy(char*, const char*, size_t)' output may be truncated copying 127 bytes from a string of length 127 [-Wstringop-truncation]
- 7450 |             std::strncpy(g_build.company, g_project.company, sizeof(g_build.company) - 1);
+/home/user/OkaySpaceGameEngine/editor/main.cpp:7467:25: warning: 'char* strncpy(char*, const char*, size_t)' output may be truncated copying 127 bytes from a string of length 127 [-Wstringop-truncation]
+ 7467 |             std::strncpy(g_build.company, g_project.company, sizeof(g_build.company) - 1);
       |             ~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/home/user/OkaySpaceGameEngine/editor/main.cpp:7451:25: warning: 'char* strncpy(char*, const char*, size_t)' output may be truncated copying 31 bytes from a string of length 31 [-Wstringop-truncation]
- 7451 |             std::strncpy(g_build.version, g_project.version, sizeof(g_build.version) - 1);
+/home/user/OkaySpaceGameEngine/editor/main.cpp:7468:25: warning: 'char* strncpy(char*, const char*, size_t)' output may be truncated copying 31 bytes from a string of length 31 [-Wstringop-truncation]
+ 7468 |             std::strncpy(g_build.version, g_project.version, sizeof(g_build.version) - 1);
       |             ~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [100%] Linking CXX executable ../bin/OkayEngine.exe
 [100%] Built target okay-editor

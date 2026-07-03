@@ -30,6 +30,7 @@ public:
         std::vector<std::string> args;
     };
 
+    std::string name;                 // optional label so several scripts are tellable apart
     Trigger trigger = Trigger::OnStart;
     std::string triggerKey = "e";     // OnKey: which key starts the list
     bool once = false;                // fire at most once

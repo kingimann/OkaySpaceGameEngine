@@ -104,9 +104,11 @@ RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size
 } // namespace
 
 std::string ActionList::ToText() const {
-    std::string out = "trigger " + std::to_string((int)trigger) + " " +
-                      (triggerKey.empty() ? std::string("-") : triggerKey) + " " +
-                      (once ? "1" : "0") + "\n";
+    std::string out;
+    if (!name.empty()) out += "name " + name + "\n";     // optional label (may contain spaces)
+    out += "trigger " + std::to_string((int)trigger) + " " +
+           (triggerKey.empty() ? std::string("-") : triggerKey) + " " +
+           (once ? "1" : "0") + "\n";
     auto emit = [&](const char* tag, const std::vector<Item>& list) {
         for (const Item& it : list) {
             out += tag; out += ' '; out += it.op;
@@ -120,7 +122,7 @@ std::string ActionList::ToText() const {
 }
 
 void ActionList::FromText(const std::string& text) {
-    trigger = Trigger::OnStart; triggerKey = "e"; once = false;
+    trigger = Trigger::OnStart; triggerKey = "e"; once = false; name.clear();
     conditions.clear(); instructions.clear();
     std::size_t pos = 0;
     while (pos < text.size()) {
@@ -137,7 +139,11 @@ void ActionList::FromText(const std::string& text) {
             if (i > b) tok.push_back(line.substr(b, i - b));
         }
         if (tok.empty()) continue;
-        if (tok[0] == "trigger") {
+        if (tok[0] == "name") {
+            // Everything after "name " is the label (joined tokens keep single spaces).
+            name.clear();
+            for (std::size_t k = 1; k < tok.size(); ++k) { if (k > 1) name += ' '; name += tok[k]; }
+        } else if (tok[0] == "trigger") {
             if (tok.size() > 1) trigger = (Trigger)std::atoi(tok[1].c_str());
             if (tok.size() > 2) triggerKey = (tok[2] == "-") ? std::string{} : tok[2];
             if (tok.size() > 3) once = (tok[3] == "1");

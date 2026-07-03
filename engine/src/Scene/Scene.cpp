@@ -6,6 +6,8 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"        // UICanvas::Width/Height (viewport)
 #include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Physics3D.hpp"        // camera-ray picking for 3D mouse events
 #include "okay/Physics/ColliderFit.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Renderer.hpp"
@@ -161,27 +163,37 @@ void Scene::DispatchPointer() {
     Vec3 world{camPos.x + (mp.x - w * 0.5f) / scale,
                camPos.y + (h * 0.5f - mp.y) / scale, 0.0f};
 
-    // Topmost object under the cursor: highest sprite sortOrder, then scene order.
-    // A SpriteRenderer's size or, failing that, a BoxCollider2D defines the bounds.
+    // Topmost object under the cursor. In a 3D (perspective) scene we cast a real
+    // camera ray against 3D colliders so OnMouse* fires on meshes (Unity-style); in
+    // a 2D (orthographic) scene we pick by SpriteRenderer / BoxCollider2D bounds.
     GameObject* hit = nullptr;
-    int best = std::numeric_limits<int>::min();
-    for (const auto& up : m_objects) {
-        GameObject* go = up.get();
-        if (!go->active || !go->transform) continue;
-        Vec3 c = go->transform->Position();
-        Vec3 ls = go->transform->LossyScale();
-        Vec2 half; int order = 0;
-        if (auto* sr = go->GetComponent<SpriteRenderer>()) {
-            half = {sr->size.x * ls.x * 0.5f, sr->size.y * ls.y * 0.5f};
-            order = sr->sortOrder;
-        } else if (auto* bc = go->GetComponent<BoxCollider2D>()) {
-            half = {bc->size.x * ls.x * 0.5f, bc->size.y * ls.y * 0.5f};
-        } else {
-            continue;
-        }
-        if (world.x >= c.x - half.x && world.x <= c.x + half.x &&
-            world.y >= c.y - half.y && world.y <= c.y + half.y && order >= best) {
-            best = order; hit = go;
+    if (mainCamera && mainCamera->projection == Camera::Projection::Perspective) {
+        Vec3 ro, rd;
+        mainCamera->ScreenPointToRay(mp.x, mp.y, w, h, ro, rd);
+        Physics3D phys;
+        RaycastHit3D rh = phys.Raycast(*this, ro, rd);
+        hit = rh.gameObject;   // needs a Collider3D on the object (primitives get one by default)
+    } else {
+        // A SpriteRenderer's size or, failing that, a BoxCollider2D defines the bounds.
+        int best = std::numeric_limits<int>::min();
+        for (const auto& up : m_objects) {
+            GameObject* go = up.get();
+            if (!go->active || !go->transform) continue;
+            Vec3 c = go->transform->Position();
+            Vec3 ls = go->transform->LossyScale();
+            Vec2 half; int order = 0;
+            if (auto* sr = go->GetComponent<SpriteRenderer>()) {
+                half = {sr->size.x * ls.x * 0.5f, sr->size.y * ls.y * 0.5f};
+                order = sr->sortOrder;
+            } else if (auto* bc = go->GetComponent<BoxCollider2D>()) {
+                half = {bc->size.x * ls.x * 0.5f, bc->size.y * ls.y * 0.5f};
+            } else {
+                continue;
+            }
+            if (world.x >= c.x - half.x && world.x <= c.x + half.x &&
+                world.y >= c.y - half.y && world.y <= c.y + half.y && order >= best) {
+                best = order; hit = go;
+            }
         }
     }
 

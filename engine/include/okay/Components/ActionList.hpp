@@ -77,17 +77,27 @@ public:
     // Read a variable by name: the shared visual-script pool first, then a saved
     // (Prefs) value — so stats/prefs published under a name are readable as variables.
     static float GetVar(const std::string& key);
+    // Shared float arrays (array_push/get/... ops). Cleared with Vars on Reset.
+    static std::unordered_map<std::string, std::vector<float>>& Arrays();
     static void ResetVars();
 
 private:
     void Fire();
     bool EvalConditions();
+    // Resolve a goto/if_goto target: a numeric line, or the index of a `label` op.
+    int  ResolveTarget(const std::string& t) const;
+    // Index of the matching `endOp` for a block opener at `openIp` (handles nesting).
+    int  MatchingEnd(std::size_t openIp, const char* openOp, const char* endOp) const;
 
     bool m_running = false;
     std::size_t m_ip = 0;
     float m_wait = 0.0f;
     bool m_fired = false;
     bool m_pending = false;    // latched by event callbacks (collision/trigger/mouse)
+    // Counted-loop frames (repeat/end_repeat) and subroutine return addresses (gosub/return).
+    struct LoopFrame { std::size_t bodyStart, endIp; int remaining; };
+    std::vector<LoopFrame>   m_loops;
+    std::vector<std::size_t> m_callStack;
 };
 
 } // namespace okay

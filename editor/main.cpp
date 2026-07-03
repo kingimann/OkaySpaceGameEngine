@@ -8451,6 +8451,9 @@ static const ActionOpInfo kCondOps[] = {
     {"is_moving",  "Is Moving",            "[min speed]",                "Passes if this object's Rigidbody is moving faster than the threshold.", "World"},
     {"tag_count_lt","Fewer Tagged Than",   "tag count",                  "Passes if fewer than N active objects have this tag (e.g. wave cleared).", "World"},
     {"tag_count_gt","More Tagged Than",    "tag count",                  "Passes if more than N active objects have this tag.",          "World"},
+    {"array_has",  "Array Contains",       "array value",                "Passes if the named array contains the value.",                "Arrays"},
+    {"array_len_gt","Array Longer Than",   "array count",                "Passes if the array has more than N items.",                   "Arrays"},
+    {"array_len_lt","Array Shorter Than",  "array count",                "Passes if the array has fewer than N items.",                  "Arrays"},
 };
 
 // Instructions — "do these, top to bottom".
@@ -8553,6 +8556,21 @@ static const ActionOpInfo kInstrOps[] = {
     {"survival_on", "Survival On Object", "target verb amount",   "Call a survival verb on a named object.",                  "Survival"},
     {"use_item",    "Use Item",           "recipe-index",         "Use a Consumables recipe by index.",                      "Survival"},
     {"craft",       "Craft",              "recipe-index",         "Craft a Crafting recipe by index.",                       "Survival"},
+    // ---- Control flow (labels, loops, subroutines) ----
+    {"label",       "Label (jump target)","name",                 "A named spot other actions can jump to (Go To / If Go To / Go Sub). Build switches with several If Go To to labels.", "Flow"},
+    {"repeat",      "Repeat (loop)",      "count",                 "Run the actions up to the matching End Repeat `count` times.",         "Flow"},
+    {"end_repeat",  "End Repeat",         "",                      "Marks the end of a Repeat loop.",                                     "Flow"},
+    {"break",       "Break Loop",         "",                      "Exit the current Repeat loop immediately.",                           "Flow"},
+    {"continue",    "Continue Loop",      "",                      "Skip to the next iteration of the current Repeat loop.",              "Flow"},
+    {"gosub",       "Go Sub (call)",      "label",                 "Jump to a Label like a function; Return Sub comes back here (delegate-style).", "Flow"},
+    {"return_sub",  "Return Sub",         "",                      "Return to the action after the last Go Sub.",                         "Flow"},
+    // ---- Arrays (lists of numbers) ----
+    {"array_push",  "Array Push",         "array value",           "Append a value to the end of a named array.",                         "Arrays"},
+    {"array_pop",   "Array Pop",          "array [into-var]",      "Remove the last value (optionally store it in a variable).",           "Arrays"},
+    {"array_set",   "Array Set",          "array index value",     "Set the value at an index (grows the array if needed).",              "Arrays"},
+    {"array_get",   "Array Get",          "array index into-var",  "Read the value at an index into a variable.",                         "Arrays"},
+    {"array_len",   "Array Length",       "array into-var",        "Store the array's length in a variable.",                             "Arrays"},
+    {"array_clear", "Array Clear",        "array",                 "Empty a named array.",                                                "Arrays"},
 };
 
 // The friendly label for an op string (falls back to the raw op if unknown).

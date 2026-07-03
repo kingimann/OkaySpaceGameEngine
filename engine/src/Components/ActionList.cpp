@@ -1,4 +1,6 @@
 #include "okay/Components/ActionList.hpp"
+#include <algorithm>
+#include <cctype>
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
@@ -50,7 +52,31 @@ float ActionList::GetVar(const std::string& key) {
     return Prefs::Has(key) ? Prefs::GetFloat(key, 0.0f) : 0.0f;   // fall back to a saved/published value
 }
 
-void ActionList::ResetVars() { Vars().clear(); }
+std::unordered_map<std::string, std::vector<float>>& ActionList::Arrays() {
+    static std::unordered_map<std::string, std::vector<float>> a;
+    return a;
+}
+
+void ActionList::ResetVars() { Vars().clear(); Arrays().clear(); }
+
+// A goto/if_goto target: a plain line number, or the index of `label "<name>"`.
+int ActionList::ResolveTarget(const std::string& t) const {
+    if (!t.empty() && (std::isdigit((unsigned char)t[0]) || t[0] == '-')) return std::atoi(t.c_str());
+    for (std::size_t i = 0; i < instructions.size(); ++i)
+        if (instructions[i].op == "label" && !instructions[i].args.empty() && instructions[i].args[0] == t)
+            return (int)i;
+    return -1;
+}
+
+// Find the matching `endOp` for a block that opens at `openIp`, honoring nesting.
+int ActionList::MatchingEnd(std::size_t openIp, const char* openOp, const char* endOp) const {
+    int depth = 0;
+    for (std::size_t i = openIp; i < instructions.size(); ++i) {
+        if (instructions[i].op == openOp) ++depth;
+        else if (instructions[i].op == endOp) { if (--depth == 0) return (int)i; }
+    }
+    return -1;
+}
 
 namespace {
 float Num(const ActionList::Item& it, std::size_t i) {
@@ -212,6 +238,12 @@ bool ActionList::EvalConditions() {
             if (s) for (const auto& up : s->Objects()) if (up && up->active && up->tag == Str(c, 0)) ++n;
             ok = (op == "tag_count_lt") ? (n < (int)Num(c, 1)) : (n > (int)Num(c, 1));
         }
+        else if (op == "array_has") {   // does the array contain the value?
+            auto& a = Arrays()[Str(c, 0)]; float v = Num(c, 1);
+            ok = std::find_if(a.begin(), a.end(), [&](float x){ return Mathf::Approximately(x, v); }) != a.end();
+        }
+        else if (op == "array_len_gt") ok = (int)Arrays()[Str(c, 0)].size() > (int)Num(c, 1);
+        else if (op == "array_len_lt") ok = (int)Arrays()[Str(c, 0)].size() < (int)Num(c, 1);
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
@@ -245,6 +277,7 @@ void ActionList::Fire() {
     if (once && m_fired) return;
     if (!EvalConditions()) return;
     m_running = true; m_ip = 0; m_wait = 0.0f;
+    m_loops.clear(); m_callStack.clear();
 }
 
 void ActionList::Update(float dt) {
@@ -278,9 +311,57 @@ void ActionList::Update(float dt) {
 
         if (op == "wait") { m_wait = Num(it, 0); if (m_wait > 0.0f) return; }
         else if (op == "stop") { m_ip = instructions.size(); }
+        else if (op == "label") { /* jump target marker — no-op */ }
         else if (op == "goto") {
-            int target = (int)Num(it, 0);
+            int target = ResolveTarget(Str(it, 0));   // a line number OR a label name
             if (target >= 0 && target < (int)instructions.size()) m_ip = (std::size_t)target;
+        }
+        // ---- Counted loops: repeat <count> ... end_repeat, with break/continue ----
+        else if (op == "repeat") {
+            int count = (int)Num(it, 0);
+            int end = MatchingEnd(m_ip - 1, "repeat", "end_repeat");
+            if (end < 0) { /* unmatched: ignore */ }
+            else if (count <= 0) m_ip = (std::size_t)end + 1;      // zero iterations: skip the body
+            else m_loops.push_back({m_ip, (std::size_t)end, count - 1});
+        }
+        else if (op == "end_repeat") {
+            if (!m_loops.empty()) {
+                auto& f = m_loops.back();
+                if (f.remaining > 0) { --f.remaining; m_ip = f.bodyStart; }
+                else m_loops.pop_back();
+            }
+        }
+        else if (op == "break") {
+            if (!m_loops.empty()) { m_ip = m_loops.back().endIp + 1; m_loops.pop_back(); }
+        }
+        else if (op == "continue") {
+            if (!m_loops.empty()) m_ip = m_loops.back().endIp;      // jump to end_repeat -> next iteration
+        }
+        // ---- Subroutines (delegate-style): gosub <label> ... return_sub ----
+        else if (op == "gosub") {
+            int target = ResolveTarget(Str(it, 0));
+            if (target >= 0 && target < (int)instructions.size()) { m_callStack.push_back(m_ip); m_ip = (std::size_t)target; }
+        }
+        else if (op == "return_sub") {
+            if (!m_callStack.empty()) { m_ip = m_callStack.back(); m_callStack.pop_back(); }
+            else m_ip = instructions.size();
+        }
+        // ---- Arrays (float lists) ----
+        else if (op == "array_clear") { Arrays()[Str(it, 0)].clear(); }
+        else if (op == "array_push")  { Arrays()[Str(it, 0)].push_back(Num(it, 1)); }
+        else if (op == "array_set")   {
+            auto& a = Arrays()[Str(it, 0)]; int i2 = (int)Num(it, 1);
+            if (i2 >= 0) { if ((int)a.size() <= i2) a.resize(i2 + 1, 0.0f); a[i2] = Num(it, 2); }
+        }
+        else if (op == "array_get")   {
+            auto& a = Arrays()[Str(it, 0)]; int i2 = (int)Num(it, 1);
+            Vars()[Str(it, 2)] = (i2 >= 0 && i2 < (int)a.size()) ? a[i2] : 0.0f;
+        }
+        else if (op == "array_len")   { Vars()[Str(it, 1)] = (float)Arrays()[Str(it, 0)].size(); }
+        else if (op == "array_pop")   {
+            auto& a = Arrays()[Str(it, 0)];
+            float v = a.empty() ? 0.0f : a.back(); if (!a.empty()) a.pop_back();
+            if (it.args.size() > 1) Vars()[Str(it, 1)] = v;
         }
         else if (op == "spawn3") {
             if (scene) {
@@ -537,9 +618,9 @@ void ActionList::Update(float dt) {
                 Vars()[pre + "_z"] = h.point.z;
             }
         }
-        else if (op == "if_goto") {              // conditional jump: var <op> value -> instruction line
+        else if (op == "if_goto") {              // conditional jump: var <op> value -> line or label
             const std::string& cmp = Str(it, 1);
-            float lhs = GetVar(Str(it, 0)), rhs = Num(it, 2); int line = (int)Num(it, 3);
+            float lhs = GetVar(Str(it, 0)), rhs = Num(it, 2); int line = ResolveTarget(Str(it, 3));
             bool pass = (cmp == "eq")  ? Mathf::Approximately(lhs, rhs)
                       : (cmp == "neq") ? !Mathf::Approximately(lhs, rhs)
                       : (cmp == "gt")  ? (lhs > rhs)

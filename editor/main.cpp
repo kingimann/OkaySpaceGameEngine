@@ -737,6 +737,14 @@ bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
 bool g_showFlowGraph = false;    // node/flow-graph view of the selected object's Actions
+bool g_showCustomActions = false;// manager for reusable custom instructions/conditions
+
+// A reusable, user-named group of Actions instructions or conditions. Saved to a
+// global library file (okay_custom_actions.txt) so it's available in every project;
+// picked from the "★ Custom" button to splice its steps into any Actions.
+struct CustomAction { std::string name; std::vector<okay::ActionList::Item> items; };
+std::vector<CustomAction> g_customInstr;   // reusable instruction groups
+std::vector<CustomAction> g_customCond;    // reusable condition groups
 bool g_showAnimation = false;    // keyframe animation timeline for the selected object
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
@@ -990,6 +998,140 @@ void SaveSettings() {
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
       << "uisubdivy " << g_uiSubdivY << "\n";
+}
+
+// ---- Reusable custom-action library (persisted globally) -----------------
+namespace {
+std::string CAQuote(const std::string& s) {   // quote a token that may contain spaces
+    std::string o = "\"";
+    for (char c : s) { if (c == '"' || c == '\\') o += '\\'; o += c; }
+    return o + "\"";
+}
+std::string CAReadQuoted(std::istream& in) {
+    std::string tok; in >> std::ws;
+    if (in.peek() != '"') { in >> tok; return tok; }
+    in.get(); std::string o; char c;
+    while (in.get(c)) { if (c == '\\') { if (in.get(c)) o += c; } else if (c == '"') break; else o += c; }
+    return o;
+}
+void WriteCAList(std::ostream& f, const char* tag, const std::vector<CustomAction>& lib) {
+    for (const auto& ca : lib) {
+        f << tag << " " << CAQuote(ca.name) << " " << ca.items.size() << "\n";
+        for (const auto& it : ca.items) {
+            f << "  " << CAQuote(it.op) << " " << it.args.size();
+            for (const auto& a : it.args) f << " " << CAQuote(a);
+            f << "\n";
+        }
+    }
+}
+}
+void SaveCustomActions() {
+    std::ofstream f("okay_custom_actions.txt");
+    if (!f) return;
+    WriteCAList(f, "instr", g_customInstr);
+    WriteCAList(f, "cond",  g_customCond);
+}
+void LoadCustomActions() {
+    g_customInstr.clear(); g_customCond.clear();
+    std::ifstream f("okay_custom_actions.txt");
+    if (!f) return;
+    std::string tag;
+    while (f >> tag) {
+        if (tag != "instr" && tag != "cond") { std::getline(f, tag); continue; }
+        CustomAction ca; ca.name = CAReadQuoted(f);
+        int count = 0; f >> count;
+        for (int i = 0; i < count; ++i) {
+            okay::ActionList::Item it; it.op = CAReadQuoted(f);
+            int argc = 0; f >> argc;
+            for (int k = 0; k < argc; ++k) it.args.push_back(CAReadQuoted(f));
+            ca.items.push_back(std::move(it));
+        }
+        (tag == "instr" ? g_customInstr : g_customCond).push_back(std::move(ca));
+    }
+}
+
+// "★ Custom" button: opens a popup listing the user's reusable groups; picking one
+// splices its steps into `target`. `cond` selects the condition library.
+static void CustomActionButton(const char* id, bool cond, std::vector<okay::ActionList::Item>& target, bool& dirty) {
+    auto& lib = cond ? g_customCond : g_customInstr;
+    ImGui::PushID(id);
+    if (ImGui::SmallButton("\xe2\x98\x85 Custom")) ImGui::OpenPopup("##capick");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Insert one of your reusable %s groups", cond ? "condition" : "instruction");
+    if (ImGui::BeginPopup("##capick")) {
+        if (lib.empty()) ImGui::TextDisabled("No custom %ss yet.\nBuild some steps, then 'Save as Custom'.", cond ? "condition" : "instruction");
+        for (const auto& ca : lib) {
+            std::string lbl = ca.name + "  (" + std::to_string(ca.items.size()) + ")";
+            if (ImGui::Selectable(lbl.c_str())) {
+                target.insert(target.end(), ca.items.begin(), ca.items.end());
+                dirty = true; ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Manage custom actions...")) g_showCustomActions = true;
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
+// "Save as Custom" button: names the current `src` steps and stores them in the
+// reusable library (persisted immediately).
+static void SaveAsCustomButton(const char* id, bool cond, const std::vector<okay::ActionList::Item>& src) {
+    ImGui::PushID(id);
+    if (ImGui::SmallButton("Save as Custom")) { ImGui::OpenPopup("##casave"); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save these %ss as a reusable group you can drop into any Actions", cond ? "condition" : "instruction");
+    if (ImGui::BeginPopup("##casave")) {
+        static char nm[64] = "";
+        ImGui::TextDisabled("Name this custom %s:", cond ? "condition" : "instruction");
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(200);
+        bool go = ImGui::InputTextWithHint("##caname", "e.g. Take Damage", nm, sizeof(nm), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if ((ImGui::Button("Save") || go) && nm[0] && !src.empty()) {
+            auto& lib = cond ? g_customCond : g_customInstr;
+            CustomAction ca; ca.name = nm; ca.items = src;
+            // replace an existing entry with the same name, else append
+            bool replaced = false;
+            for (auto& e : lib) if (e.name == ca.name) { e = ca; replaced = true; break; }
+            if (!replaced) lib.push_back(ca);
+            SaveCustomActions();
+            nm[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
+        if (src.empty()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add some steps first.");
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
+// Manager window: rename/delete saved custom instructions and conditions.
+void DrawCustomActions() {
+    if (!g_showCustomActions) return;
+    ImGui::SetNextWindowSize(ImVec2(420, 460), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Custom Actions", &g_showCustomActions)) { ImGui::End(); return; }
+    ImGui::TextWrapped("Reusable groups of steps. Build them in an Actions component and "
+        "click 'Save as Custom'; then drop them into any Actions via the '\xe2\x98\x85 Custom' button.");
+    ImGui::Separator();
+    auto section = [&](const char* title, std::vector<CustomAction>& lib) {
+        ImGui::PushID(title);
+        ImGui::SeparatorText(title);
+        if (lib.empty()) ImGui::TextDisabled("(none yet)");
+        int del = -1;
+        for (int i = 0; i < (int)lib.size(); ++i) {
+            ImGui::PushID(i);
+            char nb[64]; std::strncpy(nb, lib[i].name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+            ImGui::SetNextItemWidth(220);
+            if (ImGui::InputText("##nm", nb, sizeof(nb))) { lib[i].name = nb; SaveCustomActions(); }
+            ImGui::SameLine(); ImGui::TextDisabled("%d step%s", (int)lib[i].items.size(), lib[i].items.size() == 1 ? "" : "s");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete")) del = i;
+            ImGui::PopID();
+        }
+        if (del >= 0) { lib.erase(lib.begin() + del); SaveCustomActions(); }
+        ImGui::PopID();
+    };
+    section("Custom Instructions", g_customInstr);
+    section("Custom Conditions",  g_customCond);
+    ImGui::End();
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -2203,6 +2345,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
         ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
         ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
+        ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
         ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
@@ -8418,6 +8561,40 @@ static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::stri
     return op.c_str();
 }
 
+// What must exist for an action to actually do something — shown next to each op so
+// a beginner knows what to add first (e.g. a Rigidbody, an Audio Source, a prefab).
+// Derived from the op name; returns nullptr when nothing special is needed.
+static const char* ActionOpRequires(const std::string& op) {
+    if (op=="velocity"||op=="impulse"||op=="add_force"||op=="jump"||op=="set_gravity"||op=="set_vx"||op=="set_vy")
+        return "a Rigidbody 2D on this object";
+    if (op=="velocity3"||op=="impulse3"||op=="force3"||op=="set_vz")
+        return "a Rigidbody 3D on this object";
+    if (op=="is_moving") return "a Rigidbody on this object";
+    if (op=="heal"||op=="hurt"||op=="eat"||op=="drink"||op=="survival"||op=="survival_on")
+        return "a Health / Survival component on the object";
+    if (op=="use_item") return "a Consumables component on this object";
+    if (op=="craft") return "a Crafting component on this object";
+    if (op=="play_sound"||op=="set_volume") return "an Audio Source on this object";
+    if (op=="play_anim"||op=="stop_anim"||op=="set_anim"||op=="play_clip"||op=="stop_clip"||
+        op=="play_layer"||op=="stop_layer"||op=="clip_speed"||op=="anim_event")
+        return "a Character / Animator on this object";
+    if (op=="emit"||op=="particles_on") return "a Particle System on this object";
+    if (op=="set_text") return "a Text Renderer on this object";
+    if (op=="set_sprite"||op=="set_color"||op=="set_texture"||op=="set_mesh"||op=="set_unlit"||op=="set_emissive")
+        return "a Sprite / Mesh Renderer on this object";
+    if (op=="set_bar") return "a Progress Bar object to target";
+    if (op=="spawn"||op=="spawn3"||op=="spawn_at"||op=="spawn_wave"||op=="shoot_at")
+        return "a prefab (.okayprefab) file to spawn";
+    if (op=="look_at"||op=="follow"||op=="flee"||op=="orbit"||op=="set_parent"||op=="dist_lt"||
+        op=="dist_gt"||op=="exists"||op=="destroy_obj"||op=="set_text_on"||op=="raycast_name"||op=="angle_to")
+        return "the named target object to exist in the scene";
+    if (op.rfind("net_",0)==0) return "an active network session (Host / Join)";
+    if (op.rfind("steam_",0)==0) return "Steam running (built with Steamworks)";
+    if (op.rfind("raycast",0)==0) return "a Collider in the ray's path";
+    if (op=="load_scene"||op=="load_scene_index") return "the target scene file in the project";
+    return nullptr;
+}
+
 // A flow-graph (node) view of the selected object's Actions: the Trigger as a node,
 // its Conditions as gate nodes, and the Instructions wired top-to-bottom. It reads
 // the live ActionList (so it always matches the Inspector and the running game) and
@@ -8787,8 +8964,11 @@ static const char* FlowOpPalettePopup(const char* popupId, const ActionOpInfo* o
                 SectionHeader(ops[i].group); lastGroup = ops[i].group;
             }
             if (ImGui::Selectable(ops[i].label)) { chosen = ops[i].op; ImGui::CloseCurrentPopup(); }
-            if (ImGui::IsItemHovered() && ops[i].desc && ops[i].desc[0])
-                ImGui::SetTooltip("%s", ops[i].desc);
+            if (ImGui::IsItemHovered() && ops[i].desc && ops[i].desc[0]) {
+                const char* rq = ActionOpRequires(ops[i].op);
+                if (rq) ImGui::SetTooltip("%s\n\nRequires: %s", ops[i].desc, rq);
+                else    ImGui::SetTooltip("%s", ops[i].desc);
+            }
         }
         ImGui::EndChild();
         ImGui::EndPopup();
@@ -8854,6 +9034,7 @@ static void DrawFlowGraph(EditorState& ed) {
         g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)al->conditions.size() - 1;
         ed.dirty = true;
     }
+    ImGui::SameLine(); CustomActionButton("flowinscustom", /*cond*/false, al->instructions, ed.dirty);
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset View")) { pan = ImVec2(0, 0); zoom = 1.0f; }
     ImGui::SameLine();
@@ -9395,6 +9576,9 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
     ImGui::SameLine(); if (ImGui::SmallButton("^")) action = 2;
     ImGui::SameLine(); if (ImGui::SmallButton("v")) action = 3;
     ImGui::SameLine(); if (ImGui::SmallButton("X")) { action = 1; dirty = true; }
+    // Spell out what this action needs to work, so it's obvious what to add first.
+    if (const char* rq = ActionOpRequires(it.op))
+        ImGui::TextColored(ImVec4(0.60f, 0.64f, 0.72f, 1.0f), "   needs %s", rq);
     ImGui::PopID();
     return action;
 }
@@ -13661,6 +13845,8 @@ void DrawInspector(EditorState& ed) {
                 i = ApplyItemAction(al->conditions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
+            ImGui::SameLine(); CustomActionButton("alcondcustom", /*cond*/true, al->conditions, ed.dirty);
+            ImGui::SameLine(); SaveAsCustomButton("alcondsave", /*cond*/true, al->conditions);
 
             SectionHeader("Instructions (run top to bottom)");
             if (al->instructions.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
@@ -13669,6 +13855,8 @@ void DrawInspector(EditorState& ed) {
                 i = ApplyItemAction(al->instructions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({"move", {}}); ed.dirty = true; }
+            ImGui::SameLine(); CustomActionButton("alinscustom", /*cond*/false, al->instructions, ed.dirty);
+            ImGui::SameLine(); SaveAsCustomButton("alinssave", /*cond*/false, al->instructions);
 
             ImGui::Spacing();
             if (ImGui::SmallButton("Remove##al")) toRemove = al;
@@ -20895,6 +21083,7 @@ int main(int argc, char** argv) {
     EditorState ed;
     LoadRecent();
     LoadSettings();
+    LoadCustomActions();   // reusable custom instruction/condition library
     ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
 
     // Route engine logs (and script print/log/debug output) into the Console
@@ -21309,6 +21498,7 @@ int main(int argc, char** argv) {
         if (g_showScriptEditor) DrawScriptEditor(ed);
         if (g_showModeling)  DrawModeling(ed);
         DrawScriptDocs();
+        DrawCustomActions();
         DrawFlowGraph(ed);
         DrawAnimationEditor(ed);
         if (g_showStats)     DrawStats(ed);

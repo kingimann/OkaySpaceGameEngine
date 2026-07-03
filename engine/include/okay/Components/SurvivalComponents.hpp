@@ -37,7 +37,15 @@ protected:
         if (GameObject* g = s->Find(name))
             if (auto* pb = g->GetComponent<UIProgressBar>()) pb->SetValue(frac);
     }
-    void SaveValue(const char* key, float v) { if (publishPrefs) Prefs::SetFloat(key, v); }
+    // Publish a stat value under `key` so the rest of the game can read it by that
+    // name: as a saved value (Prefs) AND as a visual-scripting/script variable (the
+    // shared ActionList pool). This unifies the pools — health, hunger, etc. are
+    // usable directly in Set/Get Variable, conditions, {tokens}, and script get().
+    // The component stays the source of truth: it re-publishes every frame.
+    void SaveValue(const char* key, float v) {
+        if (publishPrefs) Prefs::SetFloat(key, v);
+        ActionList::Vars()[key] = v;
+    }
     void Broadcast(const std::string& msg) {
         if (!sendMessages) return;
         Scene* s = gameObject ? gameObject->scene() : nullptr;

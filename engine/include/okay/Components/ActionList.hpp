@@ -71,6 +71,9 @@ public:
     /// Shared variables for set_var / var_eq across all action lists. Cleared
     /// between scenes via Reset().
     static std::unordered_map<std::string, float>& Vars();
+    // Read a variable by name: the shared visual-script pool first, then a saved
+    // (Prefs) value — so stats/prefs published under a name are readable as variables.
+    static float GetVar(const std::string& key);
     static void ResetVars();
 
 private:

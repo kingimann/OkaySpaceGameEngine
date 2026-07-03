@@ -43,6 +43,13 @@ std::unordered_map<std::string, float>& ActionList::Vars() {
     static std::unordered_map<std::string, float> v;
     return v;
 }
+float ActionList::GetVar(const std::string& key) {
+    auto& v = Vars();
+    auto it = v.find(key);
+    if (it != v.end()) return it->second;
+    return Prefs::Has(key) ? Prefs::GetFloat(key, 0.0f) : 0.0f;   // fall back to a saved/published value
+}
+
 void ActionList::ResetVars() { Vars().clear(); }
 
 namespace {
@@ -179,19 +186,19 @@ bool ActionList::EvalConditions() {
         else if (op == "key_down") ok = !Str(c, 0).empty() && Input::GetKeyDown(Str(c, 0)[0]);
         else if (op == "mouse")    ok = Input::GetMouseButton((int)Num(c, 0));
         else if (op == "chance")   ok = Random::Shared().Range(0.0f, 1.0f) < Num(c, 0);
-        else if (op == "var_eq")   ok = Mathf::Approximately(Vars()[Str(c, 0)], Num(c, 1));
-        else if (op == "var_neq")  ok = !Mathf::Approximately(Vars()[Str(c, 0)], Num(c, 1));
-        else if (op == "var_gt")   ok = Vars()[Str(c, 0)] > Num(c, 1);
-        else if (op == "var_lt")   ok = Vars()[Str(c, 0)] < Num(c, 1);
-        else if (op == "var_ge")   ok = Vars()[Str(c, 0)] >= Num(c, 1);
-        else if (op == "var_le")   ok = Vars()[Str(c, 0)] <= Num(c, 1);
+        else if (op == "var_eq")   ok = Mathf::Approximately(GetVar(Str(c, 0)), Num(c, 1));
+        else if (op == "var_neq")  ok = !Mathf::Approximately(GetVar(Str(c, 0)), Num(c, 1));
+        else if (op == "var_gt")   ok = GetVar(Str(c, 0)) > Num(c, 1);
+        else if (op == "var_lt")   ok = GetVar(Str(c, 0)) < Num(c, 1);
+        else if (op == "var_ge")   ok = GetVar(Str(c, 0)) >= Num(c, 1);
+        else if (op == "var_le")   ok = GetVar(Str(c, 0)) <= Num(c, 1);
         else if (op == "key_up")   ok = !Str(c, 0).empty() && Input::GetKeyUp(Str(c, 0)[0]);
         else if (op == "mouse_down") ok = Input::GetMouseButtonDown((int)Num(c, 0));
         else if (op == "prefs_eq") ok = Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
         else if (op == "prefs_gt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) > Num(c, 1);
         else if (op == "prefs_lt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) < Num(c, 1);
         else if (op == "prefs_neq")ok = !Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
-        else if (op == "var_between") { float v = Vars()[Str(c, 0)]; ok = v >= Num(c, 1) && v <= Num(c, 2); }
+        else if (op == "var_between") { float v = GetVar(Str(c, 0)); ok = v >= Num(c, 1) && v <= Num(c, 2); }
         else if (op == "is_moving") {   // any Rigidbody velocity above the threshold (default 0.01)
             float thr = c.args.size() > 0 ? Num(c, 0) : 0.01f, sp = 0.0f;
             if (auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr)
@@ -400,7 +407,7 @@ void ActionList::Update(float dt) {
             // value = var / max (clamped 0..1); max defaults to 1.
             if (scene) if (GameObject* g = scene->Find(Str(it, 0))) {
                 float mx = Num(it, 2); if (mx == 0.0f) mx = 1.0f;
-                float frac = Mathf::Clamp01(Vars()[Str(it, 1)] / mx);
+                float frac = Mathf::Clamp01(GetVar(Str(it, 1)) / mx);
                 if (auto* pb = g->GetComponent<UIProgressBar>())    pb->SetValue(frac);
                 if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetValue(frac);
             }
@@ -532,7 +539,7 @@ void ActionList::Update(float dt) {
         }
         else if (op == "if_goto") {              // conditional jump: var <op> value -> instruction line
             const std::string& cmp = Str(it, 1);
-            float lhs = Vars()[Str(it, 0)], rhs = Num(it, 2); int line = (int)Num(it, 3);
+            float lhs = GetVar(Str(it, 0)), rhs = Num(it, 2); int line = (int)Num(it, 3);
             bool pass = (cmp == "eq")  ? Mathf::Approximately(lhs, rhs)
                       : (cmp == "neq") ? !Mathf::Approximately(lhs, rhs)
                       : (cmp == "gt")  ? (lhs > rhs)

@@ -3881,9 +3881,7 @@ struct OkayScriptVM::Impl {
         };
         b["gc_get"] = [](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value{0.0f};
-            auto& m = ActionList::Vars();
-            auto it = m.find(a[0].AsString());
-            return Value{it != m.end() ? it->second : 0.0f};
+            return Value{ActionList::GetVar(a[0].AsString())};   // shares stats/prefs too
         };
         // Broadcast a named signal to every Actions (OnMessage) list in the scene.
         b["send_message"] = [this](std::vector<Value>& a) {

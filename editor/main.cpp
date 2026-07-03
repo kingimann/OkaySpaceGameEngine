@@ -9088,6 +9088,8 @@ static int   g_flowSelKind = 0;   // 0 none, 1 condition, 2 instruction
 static int   g_flowSelIdx  = -1;
 static bool  g_flowAddInsReq = false;   // canvas menu -> open the add-instruction palette
 static bool  g_flowAddCondReq = false;  // canvas menu -> open the add-condition palette
+static okay::ActionList::Item g_flowClip;   // copied node (works across scripts)
+static int   g_flowClipKind = 0;            // 0 none, 1 condition, 2 instruction
 
 // Searchable op picker shown as a popup: type to filter across an op table by
 // label / id / description, click to choose. Returns the chosen op id (or nullptr).
@@ -9189,6 +9191,22 @@ static void DrawFlowGraph(EditorState& ed) {
     if (!al->name.empty()) ImGui::Text("Flow: %s  (on '%s')", al->name.c_str(), go->name.c_str());
     else                   ImGui::Text("Flow of '%s'", go->name.c_str());
     ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty space to pan; scroll to zoom");
+
+    // Keyboard: Ctrl+C copies the selected node, Ctrl+V pastes it (after the selection,
+    // or at the end) — works across scripts since a node is just op + args.
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_C) && g_flowSelAl == al && g_flowSelKind != 0) {
+            auto& list = g_flowSelKind == 1 ? al->conditions : al->instructions;
+            if (g_flowSelIdx >= 0 && g_flowSelIdx < (int)list.size()) { g_flowClip = list[g_flowSelIdx]; g_flowClipKind = g_flowSelKind; }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_V) && g_flowClipKind != 0) {
+            auto& list = g_flowClipKind == 1 ? al->conditions : al->instructions;
+            int at = (g_flowSelAl == al && g_flowSelKind == g_flowClipKind && g_flowSelIdx >= 0 && g_flowSelIdx < (int)list.size())
+                     ? g_flowSelIdx + 1 : (int)list.size();
+            list.insert(list.begin() + at, g_flowClip); ed.dirty = true;
+            g_flowSelAl = al; g_flowSelKind = g_flowClipKind; g_flowSelIdx = at;
+        }
+    }
 
     // Toolbar: add/clear nodes (edits the live ActionList, mirrored in the Inspector)
     // and a running indicator that lights up while the list executes in Play.
@@ -9513,6 +9531,10 @@ static void DrawFlowGraph(EditorState& ed) {
                 ActionList::Item copy = list[idx];
                 list.insert(list.begin() + idx + 1, copy); ed.dirty = true;
             }
+            if (ImGui::MenuItem("Copy")) { g_flowClip = list[idx]; g_flowClipKind = isCond ? 1 : 2; }
+            if (ImGui::MenuItem("Paste After", nullptr, false, g_flowClipKind == (isCond ? 1 : 2))) {
+                list.insert(list.begin() + idx + 1, g_flowClip); ed.dirty = true;
+            }
             if (ImGui::MenuItem("Move Up", nullptr, false, idx > 0)) { std::swap(list[idx], list[idx - 1]); g_flowSelIdx = idx - 1; ed.dirty = true; }
             if (ImGui::MenuItem("Move Down", nullptr, false, idx + 1 < (int)list.size())) { std::swap(list[idx], list[idx + 1]); g_flowSelIdx = idx + 1; ed.dirty = true; }
             ImGui::Separator();
@@ -9524,6 +9546,11 @@ static void DrawFlowGraph(EditorState& ed) {
     if (ImGui::BeginPopup("##flowcanvasctx")) {
         if (ImGui::MenuItem("Add Instruction...")) g_flowAddInsReq = true;
         if (ImGui::MenuItem("Add Condition..."))   g_flowAddCondReq = true;
+        if (ImGui::MenuItem("Paste", nullptr, false, g_flowClipKind != 0)) {
+            if (g_flowClipKind == 1) al->conditions.push_back(g_flowClip);
+            else                     al->instructions.push_back(g_flowClip);
+            ed.dirty = true;
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Tidy Up Layout")) {
             char pfx[24]; std::snprintf(pfx, sizeof(pfx), "%p:", (void*)al);   // drop this graph's dragged positions

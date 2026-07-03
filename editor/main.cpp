@@ -13277,6 +13277,88 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
     }
+    // ---- No-code mechanics --------------------------------------------------
+    // Shared: edit a std::string field via a temp char buffer, and warn if the
+    // touch-driven component has no collider to react to.
+    auto strField = [&](const char* label, std::string& s, const char* id) {
+        char buf[96]; std::strncpy(buf, s.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+        ImGui::PushID(id);
+        if (ImGui::InputText(label, buf, sizeof(buf))) { s = buf; ed.dirty = true; }
+        ImGui::PopID();
+    };
+    auto warnNoCollider = [&](GameObject* g) {
+        if (g && !g->GetComponent<Collider2D>() && !g->GetComponent<Collider3D>())
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Add a Collider (trigger) so this can react to touch.");
+    };
+    if (auto* co = dynamic_cast<Collectible*>(curComp)) {
+        if (CompHeader("Collectible", co, &toRemove)) {
+            strField("Score Var##co", co->scoreVar, "coSV");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Variable to add to on pickup. The prebuilt HUD shows it via  Score: {score}.");
+            if (ImGui::DragFloat("Points##co", &co->points, 0.1f, -100000.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Heal##co", &co->heal, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also heal the collector this much (needs a Health component).");
+            if (ImGui::Checkbox("Respawn##co", &co->respawn)) ed.dirty = true;
+            if (co->respawn) { ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                if (ImGui::DragFloat("Delay##cord", &co->respawnDelay, 0.05f, 0.0f, 10000.0f)) ed.dirty = true; }
+            strField("Collector Tag##co", co->collectorTag, "coCT");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who can collect it: a tag or name text. Empty = anyone.");
+            warnNoCollider(co->gameObject);
+            if (ImGui::SmallButton("Remove##co")) toRemove = co;
+        }
+    }
+    if (auto* dt = dynamic_cast<DamageOnTouch*>(curComp)) {
+        if (CompHeader("Damage On Touch", dt, &toRemove)) {
+            if (ImGui::DragFloat("Damage##dot", &dt->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Interval##dot", &dt->interval, 0.02f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds between repeat hits while overlapping (0 = every frame).");
+            if (ImGui::Checkbox("Hit Once##dot", &dt->once)) ed.dirty = true;
+            if (ImGui::DragFloat("Knockback##dot", &dt->knockback, 0.2f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push a Rigidbody toucher away from this object.");
+            if (ImGui::Checkbox("Destroy Self##dot", &dt->destroySelf)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vanish after landing a hit — turns this into a projectile.");
+            strField("Target Tag##dot", dt->targetTag, "dotTT");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who takes damage: a tag or name text. Empty = anyone.");
+            warnNoCollider(dt->gameObject);
+            if (ImGui::SmallButton("Remove##dot")) toRemove = dt;
+        }
+    }
+    if (auto* tp = dynamic_cast<Teleporter*>(curComp)) {
+        if (CompHeader("Teleporter", tp, &toRemove)) {
+            strField("Target Object##tp", tp->targetName, "tpTN");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Teleport to this object's position. Leave empty to use the fixed destination below.");
+            float d[3] = {tp->destination.x, tp->destination.y, tp->destination.z};
+            if (ImGui::DragFloat3("Destination##tp", d, 0.1f)) { tp->destination = {d[0], d[1], d[2]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Cooldown##tp", &tp->cooldown, 0.02f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ignore a just-teleported body this long (stops linked pads ping-ponging).");
+            strField("Trigger Tag##tp", tp->triggerTag, "tpTT");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who teleports: a tag or name text. Empty = anyone.");
+            warnNoCollider(tp->gameObject);
+            if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
+        }
+    }
+    if (auto* tz = dynamic_cast<TriggerZone*>(curComp)) {
+        if (CompHeader("Trigger Zone", tz, &toRemove)) {
+            const char* acts[] = {"Set Variable", "Add To Variable", "Activate Object", "Deactivate Object", "Win", "Lose", "Quit"};
+            if (ImGui::Combo("Action##tz", &tz->action, acts, IM_ARRAYSIZE(acts))) ed.dirty = true;
+            auto A = (TriggerZone::Action)tz->action;
+            if (A == TriggerZone::Action::SetVar || A == TriggerZone::Action::AddVar) {
+                strField("Variable##tz", tz->varName, "tzVN");
+                if (ImGui::DragFloat("Amount##tz", &tz->amount, 0.1f, -100000.0f, 100000.0f)) ed.dirty = true;
+            }
+            if (A == TriggerZone::Action::ActivateTarget || A == TriggerZone::Action::DeactivateTarget) {
+                strField("Target Object##tz", tz->targetName, "tzTN");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The object to show/hide when triggered.");
+            }
+            if (A == TriggerZone::Action::Win || A == TriggerZone::Action::Lose)
+                ImGui::TextDisabled("sets the 'won'/'lost' variable and pauses the game");
+            if (ImGui::Checkbox("Once##tz", &tz->once)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fire a single time, or every time something enters.");
+            strField("Trigger Tag##tz", tz->triggerTag, "tzTT");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who fires it: a tag or name text. Empty = anyone.");
+            warnNoCollider(tz->gameObject);
+            if (ImGui::SmallButton("Remove##tz")) toRemove = tz;
+        }
+    }
     if (auto* st = dynamic_cast<Stats*>(curComp)) {
         if (CompHeader("Stats", st, &toRemove)) {
             SectionHeader("Vitals");
@@ -15126,6 +15208,22 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
+          } EndCat(o); }
+
+        { bool o = BeginCat("No-Code Mechanics");
+          if (o) {
+            // These react to touch, so they need a Collider (a trigger collider for
+            // pickups/zones). Auto-add one matching the scene mode so they work on drop.
+            auto ensureCollider = [&](bool asTrigger) {
+                if (!go->GetComponent<Collider2D>() && !go->GetComponent<Collider3D>()) {
+                    if (ed.view3D) { auto* c = go->AddComponent<BoxCollider3D>(); c->isTrigger = asTrigger; c->autoFit = true; }
+                    else           { auto* c = go->AddComponent<BoxCollider2D>(); c->isTrigger = asTrigger; }
+                }
+            };
+            if (item(!go->GetComponent<Collectible>(), "Collectible (pickup → score)")) { go->AddComponent<Collectible>(); ensureCollider(true); ed.dirty = true; }
+            if (item(!go->GetComponent<DamageOnTouch>(), "Damage On Touch (hazard)")) { go->AddComponent<DamageOnTouch>(); ensureCollider(true); ed.dirty = true; }
+            if (item(!go->GetComponent<Teleporter>(), "Teleporter")) { go->AddComponent<Teleporter>(); ensureCollider(true); ed.dirty = true; }
+            if (item(!go->GetComponent<TriggerZone>(), "Trigger Zone (event)")) { go->AddComponent<TriggerZone>(); ensureCollider(true); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("RPG / Turn-Based");

@@ -133,6 +133,7 @@
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
+#include "okay/Components/NoCode.hpp"   // Collectible / DamageOnTouch / Teleporter / TriggerZone
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/TurnManager.hpp"

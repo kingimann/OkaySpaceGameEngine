@@ -48,6 +48,7 @@
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
+#include "okay/Components/NoCode.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/TurnManager.hpp"
@@ -1068,6 +1069,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* lt = go->GetComponent<Lifetime>()) {
         out << "  lifetime " << lt->seconds << "\n";
+    }
+    if (auto* co = go->GetComponent<Collectible>()) {
+        out << "  collectible " << Quote(co->scoreVar) << " " << co->points << " " << co->heal
+            << " " << (co->respawn ? 1 : 0) << " " << co->respawnDelay << " " << Quote(co->collectorTag) << "\n";
+    }
+    if (auto* dt = go->GetComponent<DamageOnTouch>()) {
+        out << "  damagetouch " << dt->damage << " " << dt->interval << " " << (dt->once ? 1 : 0)
+            << " " << dt->knockback << " " << (dt->destroySelf ? 1 : 0) << " " << Quote(dt->targetTag) << "\n";
+    }
+    if (auto* tp = go->GetComponent<Teleporter>()) {
+        out << "  teleporter " << Quote(tp->targetName) << " " << tp->destination.x << " " << tp->destination.y
+            << " " << tp->destination.z << " " << tp->cooldown << " " << Quote(tp->triggerTag) << "\n";
+    }
+    if (auto* tz = go->GetComponent<TriggerZone>()) {
+        out << "  triggerzone " << tz->action << " " << Quote(tz->varName) << " " << tz->amount
+            << " " << (tz->once ? 1 : 0) << " " << Quote(tz->targetName) << " " << Quote(tz->triggerTag) << "\n";
     }
     if (auto* st = go->GetComponent<Stats>()) {
         out << "  stats " << st->health << " " << st->maxHealth << " " << st->mana << " " << st->maxMana
@@ -2872,6 +2889,31 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "lifetime") {
                     float s = 1.0f; in >> s;
                     go->AddComponent<Lifetime>()->seconds = s;
+                } else if (field == "collectible") {
+                    auto* co = go->AddComponent<Collectible>();
+                    co->scoreVar = ReadQuoted(in);
+                    int rs = 0; in >> co->points >> co->heal >> rs >> co->respawnDelay;
+                    co->respawn = (rs != 0);
+                    in >> std::ws; if (in.peek() == '"') co->collectorTag = ReadQuoted(in);
+                } else if (field == "damagetouch") {
+                    auto* dt = go->AddComponent<DamageOnTouch>();
+                    int once = 0, ds = 0;
+                    in >> dt->damage >> dt->interval >> once >> dt->knockback >> ds;
+                    dt->once = (once != 0); dt->destroySelf = (ds != 0);
+                    in >> std::ws; if (in.peek() == '"') dt->targetTag = ReadQuoted(in);
+                } else if (field == "teleporter") {
+                    auto* tp = go->AddComponent<Teleporter>();
+                    tp->targetName = ReadQuoted(in);
+                    in >> tp->destination.x >> tp->destination.y >> tp->destination.z >> tp->cooldown;
+                    in >> std::ws; if (in.peek() == '"') tp->triggerTag = ReadQuoted(in);
+                } else if (field == "triggerzone") {
+                    auto* tz = go->AddComponent<TriggerZone>();
+                    int once = 1; in >> tz->action;
+                    tz->varName = ReadQuoted(in);
+                    in >> tz->amount >> once;
+                    tz->once = (once != 0);
+                    tz->targetName = ReadQuoted(in);
+                    in >> std::ws; if (in.peek() == '"') tz->triggerTag = ReadQuoted(in);
                 } else if (field == "stats") {
                     auto* st = go->AddComponent<Stats>();
                     in >> st->health >> st->maxHealth >> st->mana >> st->maxMana

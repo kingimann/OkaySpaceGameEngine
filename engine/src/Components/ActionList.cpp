@@ -26,6 +26,7 @@
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/Game.hpp"          // win / lose / quit instructions
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
@@ -189,6 +190,21 @@ bool ActionList::EvalConditions() {
         else if (op == "prefs_eq") ok = Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
         else if (op == "prefs_gt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) > Num(c, 1);
         else if (op == "prefs_lt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) < Num(c, 1);
+        else if (op == "prefs_neq")ok = !Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
+        else if (op == "var_between") { float v = Vars()[Str(c, 0)]; ok = v >= Num(c, 1) && v <= Num(c, 2); }
+        else if (op == "is_moving") {   // any Rigidbody velocity above the threshold (default 0.01)
+            float thr = c.args.size() > 0 ? Num(c, 0) : 0.01f, sp = 0.0f;
+            if (auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr)
+                sp = Mathf::Sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.y * rb->velocity.y);
+            else if (auto* rb3 = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr)
+                sp = rb3->velocity.Magnitude();
+            ok = sp > thr;
+        }
+        else if (op == "tag_count_lt" || op == "tag_count_gt") {   // # of objects with a tag (wave clears, spawns)
+            int n = 0; Scene* s = GetScene();
+            if (s) for (const auto& up : s->Objects()) if (up && up->active && up->tag == Str(c, 0)) ++n;
+            ok = (op == "tag_count_lt") ? (n < (int)Num(c, 1)) : (n > (int)Num(c, 1));
+        }
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
@@ -561,6 +577,42 @@ void ActionList::Update(float dt) {
         else if (op == "use_item") {
             if (gameObject) if (auto* cons = gameObject->GetComponent<Consumables>())
                 cons->UseIndex((int)Num(it, 0));
+        }
+        // ---- Added ops: single-axis position, game flow, facing, chase/spawn ----
+        else if (op == "set_x") { if (t) t->localPosition.x = Num(it, 0); }
+        else if (op == "set_y") { if (t) t->localPosition.y = Num(it, 0); }
+        else if (op == "set_z") { if (t) t->localPosition.z = Num(it, 0); }
+        else if (op == "flip_x") { if (t) t->localScale.x = -t->localScale.x; }   // face the other way (2D)
+        else if (op == "add_score") {                                            // add to a score-like var
+            std::string v = Str(it, 0).empty() ? std::string("score") : Str(it, 0);
+            Vars()[v] += (it.args.size() > 1 ? Num(it, 1) : 1.0f);
+        }
+        else if (op == "win")  { Vars()["won"]  = 1.0f; Game::SetPaused(true); }
+        else if (op == "lose") { Vars()["lost"] = 1.0f; Game::SetPaused(true); }
+        else if (op == "quit") { Game::RequestQuit(); }
+        else if (op == "follow" || op == "flee") {          // move toward/away from a named object (use under On Update)
+            GameObject* g = scene ? scene->Find(Str(it, 0)) : nullptr;
+            if (g && g->transform && t && gameObject) {
+                Vec3 me = gameObject->transform->Position(), ot = g->transform->Position();
+                float dx = ot.x - me.x, dy = ot.y - me.y;
+                if (op == "flee") { dx = -dx; dy = -dy; }
+                float d = Mathf::Sqrt(dx * dx + dy * dy);
+                float speed = Num(it, 1), dtF = Time::DeltaTime();
+                if (d > 1e-5f && speed > 0.0f) t->Translate({dx / d * speed * dtF, dy / d * speed * dtF, 0.0f});
+            }
+        }
+        else if (op == "spawn_wave") {                       // ring of prefabs around self
+            if (scene && t) {
+                int count = (int)Num(it, 1); if (count < 1) count = 1;
+                float radius = it.args.size() > 2 ? Num(it, 2) : 3.0f;
+                Vec3 c = t->Position();
+                for (int i = 0; i < count; ++i) {
+                    GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
+                    if (!g || !g->transform) continue;
+                    float ang = (6.2831853f * i) / count;
+                    g->transform->localPosition = {c.x + Mathf::Cos(ang) * radius, c.y + Mathf::Sin(ang) * radius, c.z};
+                }
+            }
         }
         // unknown ops are ignored, so files stay forward-compatible
     }

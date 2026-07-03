@@ -4307,7 +4307,7 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
 // the app. Opened from Help > Scripting Reference or the Script Editor's Docs.
 void DrawScriptDocs() {
     if (!g_showScriptDocs) return;
-    ImGui::SetNextWindowSize(ImVec2(560, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(680, 720), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Scripting Reference", &g_showScriptDocs)) { ImGui::End(); return; }
 
     auto header = [](const char* s) {
@@ -4315,9 +4315,21 @@ void DrawScriptDocs() {
         ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%s", s);
         ImGui::Separator();
     };
+    // Each API entry reads as a card: the signature in a code color, then its
+    // description wrapped on the line below (instead of cramped into a fixed column),
+    // with breathing room between entries — far easier to scan than one dense line.
     auto api = [](const char* sig, const char* desc) {
-        ImGui::BulletText("%s", sig);
-        ImGui::SameLine(230); ImGui::TextDisabled("%s", desc);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.90f, 0.74f, 1.0f));
+        ImGui::Bullet(); ImGui::SameLine(); ImGui::TextUnformatted(sig);
+        ImGui::PopStyleColor();
+        if (desc && desc[0]) {
+            ImGui::Indent(24.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.66f, 0.69f, 0.75f, 1.0f));
+            ImGui::TextWrapped("%s", desc);
+            ImGui::PopStyleColor();
+            ImGui::Unindent(24.0f);
+        }
+        ImGui::Spacing();
     };
     auto code = [](const char* c) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.74f, 0.88f, 0.70f, 1.0f));
@@ -4369,6 +4381,45 @@ void DrawScriptDocs() {
         ImGui::TextWrapped("That's the whole language. The rest is the built-in "
             "commands below (move, key, spawn, set/get, …). Hit Compile & Run in the "
             "Script Editor to try it live.");
+        ImGui::Spacing();
+    }
+
+    // ---- Visual scripting: the no-code path (Actions / Flow Graph) ----
+    if (ImGui::CollapsingHeader("Visual scripting (no code)")) {
+        ImGui::TextWrapped("Prefer no code? Add an Actions component (Add Component > "
+            "Scripts > Actions, or open the Flow Graph window). An Actions script is three "
+            "parts, read top to bottom:");
+        ImGui::Spacing();
+        ImGui::BulletText("Trigger");
+        ImGui::Indent();
+        ImGui::TextWrapped("WHEN it runs: On Start, On Update (every frame), On Key, On "
+            "Click, On Collision, On Trigger Enter/Exit, or the On Mouse events. Click the "
+            "trigger node in the Flow Graph (or the Trigger dropdown in the Inspector) to change it.");
+        ImGui::Unindent();
+        ImGui::BulletText("Conditions (optional gate)");
+        ImGui::Indent();
+        ImGui::TextWrapped("The instructions run only if EVERY condition passes (AND). "
+            "e.g. Variable In Range, Fewer Tagged Than, Is Moving, Raycast Hits, Chance.");
+        ImGui::Unindent();
+        ImGui::BulletText("Instructions");
+        ImGui::Indent();
+        ImGui::TextWrapped("WHAT happens, run in order (a Wait pauses between steps): Move, "
+            "Set Variable, Spawn, Play Sound, Win/Lose, Follow, Spawn Wave, and dozens more. "
+            "Add them from the searchable + Instruction palette.");
+        ImGui::Unindent();
+        ImGui::Spacing();
+        header("Tips");
+        api("Name each script", "Type a name at the top of the Actions component so several on "
+            "one object are tellable apart. It's saved in the project.");
+        api("Variables are shared", "Set Variable / Add To Variable use the same named values "
+            "your UI reads — a HUD Text Bind of \"Score: {score}\" follows Set Variable \"score\". "
+            "The variable fields auto-suggest names you've already used.");
+        api("Win / Lose / Quit", "Instructions that set the won/lost variable (and pause) or quit "
+            "the game — wire them to a Trigger Zone or an On Collision.");
+        api("Drop-in mechanics", "For the most common jobs there are add-and-go components under "
+            "Add Component > No-Code Mechanics: Collectible, Damage On Touch, Teleporter, Trigger Zone.");
+        api("Mouse events need bounds", "On Mouse* triggers fire when the cursor is over the "
+            "object: a 3D object needs a Collider; a 2D object needs a Sprite or Box Collider 2D.");
         ImGui::Spacing();
     }
 
@@ -8252,6 +8303,11 @@ static const ActionOpInfo kCondOps[] = {
     {"raycast",   "Raycast Hits",        "direction [distance]",       "Casts a ray in a direction; passes if it hits a collider. Pick the direction below.", "World"},
     {"raycast_tag","Raycast Hits Tag",   "tag direction [distance]",   "Like Raycast Hits, but only passes if the hit object has the given tag.", "World"},
     {"raycast_name","Raycast Hits Object","object direction [distance]","Like Raycast Hits, but only passes if it hits the named object.", "World"},
+    {"prefs_neq",  "Saved Value ≠",        "key value",                  "Passes if a saved (Prefs) value is not equal to the number.",   "Variables"},
+    {"var_between","Variable In Range",    "name min max",               "Passes if the variable is between min and max (inclusive).",    "Variables"},
+    {"is_moving",  "Is Moving",            "[min speed]",                "Passes if this object's Rigidbody is moving faster than the threshold.", "World"},
+    {"tag_count_lt","Fewer Tagged Than",   "tag count",                  "Passes if fewer than N active objects have this tag (e.g. wave cleared).", "World"},
+    {"tag_count_gt","More Tagged Than",    "tag count",                  "Passes if more than N active objects have this tag.",          "World"},
 };
 
 // Instructions — "do these, top to bottom".
@@ -8994,6 +9050,53 @@ static void ActionObjectPicker(ActionList::Item& it, std::size_t idx, const char
     }
 }
 
+// Does this op name a variable in an argument (so we can offer a picker)?
+static bool ActionOpUsesVar(const std::string& o) {
+    return o.rfind("var_", 0) == 0 || o == "set_var" || o == "add_var" || o == "mul_var" ||
+           o == "div_var" || o == "rand_var" || o == "clamp_var" || o == "lerp_var" ||
+           o == "copy_var" || o == "add_var_var" || o == "add_score";
+}
+
+// Gather every variable name already used by any Actions component in the scene, so
+// the editor can offer them instead of making the user re-type names by hand.
+static void CollectSceneVarNames(Scene* scene, std::vector<std::string>& out) {
+    out.clear();
+    if (!scene) return;
+    auto add = [&](const std::string& v) {
+        if (!v.empty() && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
+    };
+    auto scan = [&](const std::vector<ActionList::Item>& items) {
+        for (const auto& it : items) {
+            if (!ActionOpUsesVar(it.op) || it.args.empty()) continue;
+            add(it.args[0]);
+            if ((it.op == "copy_var" || it.op == "add_var_var") && it.args.size() > 1) add(it.args[1]);
+        }
+    };
+    for (ActionList* al : scene->FindObjectsOfType<ActionList>()) { scan(al->conditions); scan(al->instructions); }
+    std::sort(out.begin(), out.end());
+}
+
+// Editable variable-name field with a dropdown of auto-detected variables. Type a new
+// name or click ▼ to pick an existing one. Returns true if `value` changed.
+static bool VarNamePicker(const char* id, std::string& value, const std::vector<std::string>& vars) {
+    bool changed = false;
+    ImGui::PushID(id);
+    char buf[64]; std::strncpy(buf, value.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+    ImGui::SetNextItemWidth(96);
+    if (ImGui::InputTextWithHint("##vn", "variable", buf, sizeof(buf))) { value = buf; changed = true; }
+    ImGui::SameLine(0.0f, 2.0f);
+    if (ImGui::SmallButton("v")) ImGui::OpenPopup("##vnlist");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a variable already used in this scene");
+    if (ImGui::BeginPopup("##vnlist")) {
+        if (vars.empty()) ImGui::TextDisabled("(no variables yet — type a name)");
+        for (const auto& v : vars)
+            if (ImGui::Selectable(v.c_str(), v == value)) { value = v; changed = true; }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
                           int id, bool& dirty, Scene* scene = nullptr) {
     int action = 0;
@@ -9136,6 +9239,36 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable to store the value in.");
             ImGui::SameLine(); varField("= Saved", 1, "health");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The saved-value/stat name to read (e.g. health, published by the Health component).");
+        }
+    } else if (ActionOpUsesVar(it.op)) {
+        // Variable name(s) come from a picker (auto-detected from the scene), so you
+        // don't retype names; any remaining args stay a plain value box.
+        std::vector<std::string> vars; CollectSceneVarNames(scene, vars);
+        auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
+        auto setArg = [&](std::size_t i, const std::string& v) {
+            while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
+        };
+        bool twoVar = (it.op == "copy_var" || it.op == "add_var_var");
+        std::string v0 = getArg(0);
+        if (VarNamePicker("v0", v0, vars)) setArg(0, v0);
+        if (twoVar) {
+            ImGui::SameLine();
+            std::string v1 = getArg(1);
+            if (VarNamePicker("v1", v1, vars)) setArg(1, v1);
+        } else if (ops[cur].hint[0]) {   // value(s) after the variable name
+            ImGui::SameLine();
+            std::string joined;
+            for (std::size_t k = 1; k < it.args.size(); ++k) { if (!joined.empty()) joined += ' '; joined += it.args[k]; }
+            char buf[128]; std::strncpy(buf, joined.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+            ImGui::SetNextItemWidth(-78);
+            if (ImGui::InputTextWithHint("##vval", "value", buf, sizeof(buf))) {
+                std::string name = getArg(0);
+                it.args.clear(); it.args.push_back(name);
+                std::stringstream ss(buf); std::string tok;
+                while (ss >> tok) it.args.push_back(tok);
+                dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Values: %s", ops[cur].hint);
         }
     } else {
     std::string joined;

@@ -38,6 +38,9 @@ public:
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         bool running = sprintKey && Input::GetKey(sprintKey);
         float spd = running ? runSpeed : speed;
+        // Normalize diagonal input so W+D isn't ~41% faster than W alone (magnitude √2).
+        float alen = Mathf::Sqrt(axis.x * axis.x + axis.y * axis.y);
+        if (alen > 1.0f) { axis.x /= alen; axis.y /= alen; }
         float tx = axis.x * spd, tz = axis.y * spd;
         bool moving = (axis.x != 0.0f || axis.y != 0.0f);
 

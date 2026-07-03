@@ -10604,7 +10604,8 @@ void DrawInspector(EditorState& ed) {
                 std::vector<GameObject*> kill;
                 for (const auto& o : ed.scene().Objects())
                     if (o->name.rfind("Scatter_", 0) == 0) kill.push_back(o.get());
-                for (GameObject* k : kill) ed.scene().Destroy(k);
+                if (!kill.empty()) ed.PushUndo();
+                for (GameObject* k : kill) { ed.Deselect(k); ed.scene().Destroy(k); }  // drop selection so it can't dangle
                 ConsoleLog("Cleared " + std::to_string(kill.size()) + " scattered prop(s)");
                 ed.dirty = true;
             }

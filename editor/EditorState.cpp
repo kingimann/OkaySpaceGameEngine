@@ -79,7 +79,7 @@ bool EditorState::Undo() {
     std::string s = m_undo.back(); m_undo.pop_back();
     StopNetwork();
     SceneSerializer::Deserialize(m_scene, s);
-    m_selected = nullptr;
+    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
     dirty = true;
     return true;
 }
@@ -90,7 +90,7 @@ bool EditorState::Redo() {
     std::string s = m_redo.back(); m_redo.pop_back();
     StopNetwork();
     SceneSerializer::Deserialize(m_scene, s);
-    m_selected = nullptr;
+    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
     dirty = true;
     return true;
 }
@@ -233,7 +233,7 @@ void EditorState::NewScene() {
     cam->main = true;
     camObj->transform->localPosition = {0, 2, 10};
     m_scene.mainCamera = cam;
-    m_selected = nullptr;
+    Select(nullptr);   // Clear() freed every object; clear m_multi too (no dangling ptrs)
     m_path.clear();
     dirty = false;
 }
@@ -478,7 +478,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     StopNetwork();
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;
     m_path = path;
-    m_selected = nullptr;
+    Select(nullptr);   // load rebuilt the scene; clear m_multi too (no dangling ptrs)
     dirty = false;
     return true;
 }
@@ -486,7 +486,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
 void EditorState::Play() {
     if (m_playing) return;
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
-    m_selected = nullptr;
+    Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
     Game::Reset();             // clear stale pause/quit state from a prior session
     m_scene.Start();
@@ -502,7 +502,7 @@ void EditorState::Stop() {
     // never dereferences freed memory (a use-after-free crash).
     m_net = nullptr;
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
-    m_selected = nullptr;
+    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
 }
 
 void EditorState::Tick(float dt) {

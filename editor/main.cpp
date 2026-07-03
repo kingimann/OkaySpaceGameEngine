@@ -9090,6 +9090,7 @@ static bool  g_flowAddInsReq = false;   // canvas menu -> open the add-instructi
 static bool  g_flowAddCondReq = false;  // canvas menu -> open the add-condition palette
 static okay::ActionList::Item g_flowClip;   // copied node (works across scripts)
 static int   g_flowClipKind = 0;            // 0 none, 1 condition, 2 instruction
+static bool  g_flowMinimap = true;          // overview map in the corner
 
 // Searchable op picker shown as a popup: type to filter across an op table by
 // label / id / description, click to choose. Returns the chosen op id (or nullptr).
@@ -9439,6 +9440,48 @@ static void DrawFlowGraph(EditorState& ed) {
     if (al->instructions.empty())
         dl->AddText(ImVec2(cp.x + 30 * z + pan.x, cp.y + (startY + 12) * z + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions yet — use + Instruction)");
 
+    // Minimap: a scaled overview of every node with the current viewport, in the
+    // bottom-right. Click/drag it to fly the view around a large graph.
+    if (g_flowMinimap && !pos.empty()) {
+        char pfx[24]; std::snprintf(pfx, sizeof(pfx), "%p:", (void*)al);
+        float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f; int cnt = 0;
+        for (auto& kv : pos) if (kv.first.rfind(pfx, 0) == 0) {
+            minx = std::min(minx, kv.second.x); miny = std::min(miny, kv.second.y);
+            maxx = std::max(maxx, kv.second.x + 190.0f); maxy = std::max(maxy, kv.second.y + 46.0f); ++cnt;
+        }
+        if (cnt > 0) {
+            float bw = std::max(1.0f, maxx - minx), bh = std::max(1.0f, maxy - miny);
+            ImVec2 msz(170.0f, 120.0f);
+            ImVec2 mp(cp.x + cs.x - msz.x - 8.0f, cp.y + cs.y - msz.y - 8.0f);
+            float sc = std::min(msz.x / bw, msz.y / bh) * 0.92f;
+            float ox = mp.x + (msz.x - bw * sc) * 0.5f, oy = mp.y + (msz.y - bh * sc) * 0.5f;
+            auto toMap = [&](float gx, float gy) { return ImVec2(ox + (gx - minx) * sc, oy + (gy - miny) * sc); };
+            dl->AddRectFilled(mp, ImVec2(mp.x + msz.x, mp.y + msz.y), IM_COL32(16, 18, 24, 225), 4.0f);
+            dl->AddRect(mp, ImVec2(mp.x + msz.x, mp.y + msz.y), IM_COL32(255, 255, 255, 45), 4.0f);
+            for (auto& kv : pos) if (kv.first.rfind(pfx, 0) == 0) {
+                ImVec2 a = toMap(kv.second.x, kv.second.y), b = toMap(kv.second.x + 190.0f, kv.second.y + 46.0f);
+                std::string role = kv.first.substr(std::strlen(pfx));
+                ImU32 col = role.rfind("trig", 0) == 0 ? IM_COL32(150, 96, 44, 255)
+                          : role.rfind("cond", 0) == 0 ? IM_COL32(58, 112, 92, 255)
+                                                       : IM_COL32(70, 110, 170, 255);
+                dl->AddRectFilled(a, b, col, 1.0f);
+            }
+            // Current viewport rectangle (visible graph region given pan/zoom).
+            ImVec2 va = toMap((-pan.x) / z, (-pan.y) / z), vb = toMap((cs.x - pan.x) / z, (cs.y - pan.y) / z);
+            va.x = std::max(va.x, mp.x); va.y = std::max(va.y, mp.y);
+            vb.x = std::min(vb.x, mp.x + msz.x); vb.y = std::min(vb.y, mp.y + msz.y);
+            dl->AddRect(va, vb, IM_COL32(255, 210, 90, 230), 0.0f, 0, 1.5f);
+            // Click/drag to recenter the view on that point.
+            ImGui::SetCursorScreenPos(mp);
+            ImGui::InvisibleButton("flow_mm", msz);
+            if (ImGui::IsItemActive()) {
+                ImVec2 m = ImGui::GetIO().MousePos;
+                float gx = minx + (m.x - ox) / sc, gy = miny + (m.y - oy) / sc;
+                pan.x = cs.x * 0.5f - gx * z; pan.y = cs.y * 0.5f - gy * z;
+            }
+        }
+    }
+
     dl->PopClipRect();
 
     // In-place node editor: pick the op + fill the args right here (the SAME editor
@@ -9559,6 +9602,7 @@ static void DrawFlowGraph(EditorState& ed) {
             }
         }
         if (ImGui::MenuItem("Reset View")) { pan = ImVec2(0, 0); zoom = 1.0f; }
+        ImGui::MenuItem("Minimap", nullptr, &g_flowMinimap);
         ImGui::EndPopup();
     }
 

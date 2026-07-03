@@ -738,6 +738,7 @@ bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
 bool g_showFlowGraph = false;    // node/flow-graph view of the selected object's Actions
 bool g_showCustomActions = false;// manager for reusable custom instructions/conditions
+bool g_showVarWatch = false;     // live watch of visual-script variables + arrays
 
 // A reusable, user-named group of Actions instructions or conditions. Saved to a
 // global library file (okay_custom_actions.txt) so it's available in every project;
@@ -1131,6 +1132,65 @@ void DrawCustomActions() {
     };
     section("Custom Instructions", g_customInstr);
     section("Custom Conditions",  g_customCond);
+    ImGui::End();
+}
+
+// Live watch of the shared visual-script variables and arrays — updates in real
+// time during Play, and values are editable so you can poke at your logic (drop
+// health, bump score) to test branches on the fly.
+void DrawVarWatch() {
+    if (!g_showVarWatch) return;
+    ImGui::SetNextWindowSize(ImVec2(360, 480), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Variables", &g_showVarWatch)) { ImGui::End(); return; }
+    auto& vars = okay::ActionList::Vars();
+    auto& arrs = okay::ActionList::Arrays();
+    static char filter[48] = "";
+    ImGui::SetNextItemWidth(-120);
+    ImGui::InputTextWithHint("##vwf", "filter by name...", filter, sizeof(filter));
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear All")) { okay::ActionList::ResetVars(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wipe every variable and array");
+    ImGui::TextDisabled("Shared by Actions, scripts, stats & UI. Drag a value to change it live.");
+    auto lc = [](std::string s){ for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    std::string q = lc(filter);
+    auto matches = [&](const std::string& k){ return q.empty() || lc(k).find(q) != std::string::npos; };
+
+    ImGui::SeparatorText("Variables");
+    if (vars.empty()) ImGui::TextDisabled("(none yet — variables appear once the game runs)");
+    else {
+        std::vector<std::string> keys; keys.reserve(vars.size());
+        for (auto& kv : vars) if (matches(kv.first)) keys.push_back(kv.first);
+        std::sort(keys.begin(), keys.end());
+        for (const auto& k : keys) {
+            ImGui::PushID(k.c_str());
+            ImGui::TextUnformatted(k.c_str());
+            ImGui::SameLine(170);
+            ImGui::SetNextItemWidth(-1);
+            float v = vars[k];
+            if (ImGui::DragFloat("##v", &v, 0.1f)) vars[k] = v;
+            ImGui::PopID();
+        }
+    }
+
+    ImGui::SeparatorText("Arrays");
+    if (arrs.empty()) ImGui::TextDisabled("(no arrays yet)");
+    else {
+        std::vector<std::string> keys; keys.reserve(arrs.size());
+        for (auto& kv : arrs) if (matches(kv.first)) keys.push_back(kv.first);
+        std::sort(keys.begin(), keys.end());
+        for (const auto& k : keys) {
+            const auto& a = arrs[k];
+            std::string vals;
+            for (std::size_t i = 0; i < a.size() && i < 40; ++i) {
+                if (!vals.empty()) vals += ", ";
+                char nb[24]; std::snprintf(nb, sizeof(nb), "%g", a[i]); vals += nb;
+            }
+            if (a.size() > 40) vals += ", ...";
+            ImGui::Text("%s", k.c_str());
+            ImGui::SameLine(170); ImGui::TextDisabled("[%d]", (int)a.size());
+            ImGui::Indent(); ImGui::TextWrapped("%s", vals.empty() ? "(empty)" : vals.c_str()); ImGui::Unindent();
+        }
+    }
     ImGui::End();
 }
 
@@ -2346,6 +2406,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
         ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
         ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
+        ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
         ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
@@ -21521,6 +21582,7 @@ int main(int argc, char** argv) {
         if (g_showModeling)  DrawModeling(ed);
         DrawScriptDocs();
         DrawCustomActions();
+        DrawVarWatch();
         DrawFlowGraph(ed);
         DrawAnimationEditor(ed);
         if (g_showStats)     DrawStats(ed);

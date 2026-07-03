@@ -14629,6 +14629,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Min##usl", &sl->minValue, 0.1f)) ed.dirty = true;
             if (ImGui::DragFloat("Max##usl", &sl->maxValue, 0.1f)) ed.dirty = true;
             if (ImGui::SliderFloat("Value##usl", &sl->value, sl->minValue, sl->maxValue)) ed.dirty = true;
+            float slbg[4] = {sl->background.r, sl->background.g, sl->background.b, sl->background.a};
+            if (ImGui::ColorEdit4("Track##usl", slbg)) { sl->background = {slbg[0], slbg[1], slbg[2], slbg[3]}; ed.dirty = true; }
             float fc[4] = {sl->fill.r, sl->fill.g, sl->fill.b, sl->fill.a};
             if (ImGui::ColorEdit4("Fill##usl", fc)) { sl->fill = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
             float kc[4] = {sl->knob.r, sl->knob.g, sl->knob.b, sl->knob.a};
@@ -14715,8 +14717,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Pos (px)##utg", pos, 1.0f)) { tg->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {tg->size.x, tg->size.y};
             if (ImGui::DragFloat2("Size (px)##utg", sz, 1.0f, 1.0f, 4000.0f)) { tg->size = {sz[0], sz[1]}; ed.dirty = true; }
+            float tbx[4] = {tg->boxColor.r, tg->boxColor.g, tg->boxColor.b, tg->boxColor.a};
+            if (ImGui::ColorEdit4("Box##utg", tbx)) { tg->boxColor = {tbx[0], tbx[1], tbx[2], tbx[3]}; ed.dirty = true; }
             float cc[4] = {tg->checkColor.r, tg->checkColor.g, tg->checkColor.b, tg->checkColor.a};
             if (ImGui::ColorEdit4("Check##utg", cc)) { tg->checkColor = {cc[0], cc[1], cc[2], cc[3]}; ed.dirty = true; }
+            float ttc[4] = {tg->textColor.r, tg->textColor.g, tg->textColor.b, tg->textColor.a};
+            if (ImGui::ColorEdit4("Label Color##utg", ttc)) { tg->textColor = {ttc[0], ttc[1], ttc[2], ttc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("click in the built game; calls script on_toggle()");
             AnchorCombo("Anchor##utg", tg->anchor, ed);
             if (ImGui::DragFloat("Corner Radius##utg", &tg->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
@@ -17046,8 +17052,9 @@ static void DistributeUISelection(EditorState& ed, bool horiz, float W, float H)
 // the button, dragging it edits its pixel offset. Sets g_uiHandled so the 2D/3D
 // world pickers skip a click the UI already consumed.
 void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
-                   bool hovered, ImGuiIO& io) {
+                   bool hovered, ImGuiIO& io, bool uiOnly = false) {
     g_uiHandled = false;
+    if (!uiOnly) g_uiMarquee = false;   // marquee box-select is a UI-Only affordance; never in the 3D/2D Scene view
     g_lastUICanvas = {canvasSize.x, canvasSize.y};   // remembered for Hierarchy reparenting
 
     // UI authoring zoom/pan (Scene view): Ctrl+Wheel zooms toward the cursor, and
@@ -17465,10 +17472,11 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 g_uiResizeHandle = -1;
                 g_uiDragRawValid = false;                  // fresh drag: reseed accumulator
                 g_uiHandled = true;
-            } else if (!ImGui::IsKeyDown(ImGuiKey_Space)) {
-                // Clicked empty canvas: begin a marquee box-select (Ctrl/Shift adds to
-                // the current selection instead of replacing it). Space+drag is reserved
-                // for panning the canvas, so don't start a marquee then.
+            } else if (uiOnly && !ImGui::IsKeyDown(ImGuiKey_Space)) {
+                // Clicked empty canvas in the UI-Only view: begin a marquee box-select
+                // (Ctrl/Shift adds to the selection). NOT in the 3D/2D Scene view, where
+                // an empty click must fall through to object picking / the transform gizmo.
+                // Space+drag is reserved for panning the canvas, so skip the marquee then.
                 g_uiMarquee = true; g_uiMarqueeAdd = (io.KeyCtrl || io.KeyShift);
                 g_uiMarqueeA = g_uiMarqueeB = io.MousePos; g_uiHandled = true;
             }
@@ -19381,11 +19389,13 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     bool ownsUIInteraction = false;
     if (hovered && s_uiInteractClaimFrame != s_frameNow) { s_uiInteractClaimFrame = s_frameNow; ownsUIInteraction = true; }
 
-    // UI editing (pick/drag screen-space widgets) runs first and may consume the
-    // click so the world pickers below leave the selection alone.
+    // UI editing (pick/drag screen-space widgets) happens ONLY in UI-Only mode / the UI
+    // tab — never in the plain 3D/2D Scene view. UI isn't drawn there, so letting
+    // EditUIWidgets pick widgets by their (invisible) rects would hijack clicks and block
+    // object selection + the Move/Rotate/Scale gizmos. Edit UI in the UI view.
     OKAY_TRACE(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
-    if (ownsUIInteraction) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io);
-    else                   g_uiHandled = false;   // this viewport isn't the active one
+    if (ownsUIInteraction && uiOnly) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
+    else                             g_uiHandled = false;   // scene view (or not the active viewport): leave clicks for object pick / gizmos
 
     if (uiOnly) {
         // Clip EVERYTHING in the flat UI view to the canvas rect. A widget with a bad

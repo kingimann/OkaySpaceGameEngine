@@ -8557,6 +8557,8 @@ static const ActionOpInfo kCondOps[] = {
     {"str_neq",    "Text Not Equals",      "var text...",                "Passes if the text variable does not equal the words.",        "Text"},
     {"str_contains","Text Contains",       "var text...",                "Passes if the text variable contains the words.",              "Text"},
     {"str_empty",  "Text Is Empty",        "var",                        "Passes if the text variable is empty.",                        "Text"},
+    {"str_starts", "Text Starts With",     "var text...",                "Passes if the text variable starts with the words.",           "Text"},
+    {"str_ends",   "Text Ends With",       "var text...",                "Passes if the text variable ends with the words.",             "Text"},
 };
 
 // Instructions — "do these, top to bottom".
@@ -8692,6 +8694,12 @@ static const ActionOpInfo kInstrOps[] = {
     {"str_from_num","Text From Number",   "text-var number-var",   "Turn a number variable into text (nicely formatted).",                "Text"},
     {"str_to_num",  "Text To Number",     "number-var text-var",   "Parse a text variable into a number variable.",                       "Text"},
     {"str_set_text","Text To Object",     "object text-var",       "Put a text variable's value on a named Text object.",                 "Text"},
+    {"str_upper",   "Text Uppercase",     "var",                   "Make a text variable UPPERCASE.",                                    "Text"},
+    {"str_lower",   "Text Lowercase",     "var",                   "Make a text variable lowercase.",                                    "Text"},
+    {"str_len",     "Text Length",        "number-var text-var",   "Store a text variable's length in a number variable.",               "Text"},
+    {"str_sub",     "Text Substring",     "dest src start [count]","Copy part of a text variable (from `start`, `count` characters).",   "Text"},
+    {"str_trim",    "Text Trim",          "var",                   "Remove leading/trailing spaces from a text variable.",               "Text"},
+    {"str_replace", "Text Replace",       "var find replace",      "Replace every `find` with `replace` in a text variable.",            "Text"},
 };
 
 // The friendly label for an op string (falls back to the raw op if unknown).

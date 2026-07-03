@@ -262,6 +262,8 @@ bool ActionList::EvalConditions() {
         else if (op == "str_neq")      ok = StrVars()[Str(c, 0)] != Rest(c, 1);
         else if (op == "str_contains") ok = StrVars()[Str(c, 0)].find(Rest(c, 1)) != std::string::npos;
         else if (op == "str_empty")    ok = StrVars()[Str(c, 0)].empty();
+        else if (op == "str_starts")   { const std::string& s = StrVars()[Str(c, 0)]; std::string p = Rest(c, 1); ok = s.rfind(p, 0) == 0; }
+        else if (op == "str_ends")     { const std::string& s = StrVars()[Str(c, 0)]; std::string p = Rest(c, 1); ok = s.size() >= p.size() && s.compare(s.size() - p.size(), p.size(), p) == 0; }
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
@@ -455,6 +457,25 @@ void ActionList::Update(float dt) {
         else if (op == "str_set_text") {                                                    // put a string var on a Text object
             if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
                 if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = StrVars()[Str(it, 1)];
+        }
+        else if (op == "str_upper") { auto& s = StrVars()[Str(it, 0)]; for (char& ch : s) ch = (char)std::toupper((unsigned char)ch); }
+        else if (op == "str_lower") { auto& s = StrVars()[Str(it, 0)]; for (char& ch : s) ch = (char)std::tolower((unsigned char)ch); }
+        else if (op == "str_len")   { Vars()[Str(it, 0)] = (float)StrVars()[Str(it, 1)].size(); }   // length -> number var
+        else if (op == "str_sub")   {                                                       // dest = src[start .. start+count)
+            const std::string& src = StrVars()[Str(it, 1)];
+            int start = (int)Num(it, 2); if (start < 0) start = 0;
+            int count = it.args.size() > 3 ? (int)Num(it, 3) : (int)src.size();
+            StrVars()[Str(it, 0)] = (start < (int)src.size() && count > 0) ? src.substr(start, count) : std::string();
+        }
+        else if (op == "str_trim")  {
+            auto& s = StrVars()[Str(it, 0)];
+            std::size_t b = s.find_first_not_of(" \t\r\n"), e = s.find_last_not_of(" \t\r\n");
+            s = (b == std::string::npos) ? std::string() : s.substr(b, e - b + 1);
+        }
+        else if (op == "str_replace") {                                                     // replace all `find` with `repl`
+            auto& s = StrVars()[Str(it, 0)]; std::string find = Str(it, 1), repl = Str(it, 2);
+            if (!find.empty()) for (std::size_t p = s.find(find); p != std::string::npos; p = s.find(find, p + repl.size()))
+                s.replace(p, find.size(), repl);
         }
         else if (op == "spawn3") {
             if (scene) {

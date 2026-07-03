@@ -1025,7 +1025,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (t2->dashKey ? t2->dashKey : '-') << " " << t2->dashSpeed << " " << t2->dashDuration << " " << t2->dashCooldown
             << " " << t2->faceMode << " " << t2->spriteForward << " " << t2->turnSpeed << " " << (t2->driveAnimation ? 1 : 0)
             << " " << (t2->clampBounds ? 1 : 0) << " " << t2->boundsMin.x << " " << t2->boundsMin.y
-            << " " << t2->boundsMax.x << " " << t2->boundsMax.y << " " << (t2->screenWrap ? 1 : 0) << "\n";
+            << " " << t2->boundsMax.x << " " << t2->boundsMax.y << " " << (t2->screenWrap ? 1 : 0)
+            << " " << t2->knockbackTime << " " << (t2->fireKey ? t2->fireKey : '-') << " " << t2->fireButton
+            << " " << t2->projectileSpeed << " " << t2->fireRate << " " << Quote(t2->projectile) << "\n";
     }
     if (auto* fr = go->GetComponent<FreeRoamController>()) {
         out << "  frctrl " << fr->moveSpeed << " " << fr->boostMultiplier << " "
@@ -2868,6 +2870,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     t2->dashKey   = (dk == "-" || dk.empty()) ? 0 : dk[0];
                     t2->normalizeDiagonal = (nd != 0); t2->useGamepad = (ug != 0);
                     t2->driveAnimation = (da != 0); t2->clampBounds = (cb != 0); t2->screenWrap = (sw != 0);
+                    // Combat fields (appended later): only present if the next token is numeric.
+                    in >> std::ws; int pk = in.peek();
+                    if (pk == '-' || pk == '.' || std::isdigit(pk)) {
+                        std::string fk = "-";
+                        in >> t2->knockbackTime >> fk >> t2->fireButton >> t2->projectileSpeed >> t2->fireRate;
+                        t2->fireKey = (fk == "-" || fk.empty()) ? 0 : fk[0];
+                        in >> std::ws; if (in.peek() == '"') t2->projectile = ReadQuoted(in);
+                    }
                 } else if (field == "frctrl") {
                     auto* fr = go->AddComponent<FreeRoamController>();
                     int sk = (unsigned char)fr->sprintKey, uk = (unsigned char)fr->upKey,

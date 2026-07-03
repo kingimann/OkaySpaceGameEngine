@@ -6,7 +6,10 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/SpriteAnimator.hpp"   // directional sprite-sheet rows
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height for mouse->world
+#include "okay/Scene/SceneSerializer.hpp"   // spawn projectiles
+#include <string>
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -57,9 +60,36 @@ public:
     Vec2  boundsMax{ 100.0f,  100.0f};
     bool  screenWrap = false;     // wrap around the camera view edges instead
 
+    // ---- Combat ----
+    char  fireKey = 0;            // hold to shoot (0 = disabled)
+    int   fireButton = -1;        // mouse button to shoot (-1 = off; 0 = left)
+    std::string projectile;       // prefab spawned as a bullet (give it a Rigidbody2D + Lifetime)
+    float projectileSpeed = 12.0f;
+    float fireRate = 5.0f;        // shots per second
+    float knockbackTime = 0.22f;  // control lockout after a Knockback()
+
+    /// Shove the player: bullets, explosions, and enemy hits call this. Locks input
+    /// briefly while the impulse decays. Pass any direction (auto-normalized).
+    void Knockback(Vec2 dir, float force) {
+        float l = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+        Vec2 d = l > 1e-4f ? Vec2{dir.x / l, dir.y / l} : Vec2{-m_lastDir.x, -m_lastDir.y};
+        m_knockVel = {d.x * force, d.y * force};
+        m_knockTimer = knockbackTime;
+    }
+
     void Update(float dt) override {
         if (!transform) return;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+
+        // ---- Knockback: ride out the impulse, ignoring input ----
+        if (m_knockTimer > 0.0f) {
+            m_knockTimer -= dt;
+            float k = knockbackTime > 0.0f ? Mathf::Max(0.0f, m_knockTimer / knockbackTime) : 0.0f;
+            Vec2 v{m_knockVel.x * k, m_knockVel.y * k};
+            if (auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr) rb->velocity = v;
+            else transform->Translate({v.x * dt, v.y * dt, 0.0f});
+            return;
+        }
 
         // ---- Input ----
         Vec2 axis = Input::AxisWASD();
@@ -125,11 +155,36 @@ public:
         } else if (screenWrap) {
             WrapToView();
         }
+
+        // ---- Directional sprite-sheet row from the 4-way facing ----
+        if (driveAnimation) if (auto* sa = gameObject ? gameObject->GetComponent<SpriteAnimator>() : nullptr)
+            if (sa->atlasColumns > 0 && sa->atlasRows > 1) sa->rowOverride = facing;
+
+        // ---- Shooting ----
+        if (m_fireCd > 0.0f) m_fireCd -= dt;
+        bool wantFire = (fireKey && Input::GetKey(fireKey)) || (fireButton >= 0 && Input::GetMouseButton(fireButton));
+        if (wantFire && m_fireCd <= 0.0f && !projectile.empty()) {
+            Vec2 aim = ((FaceMode)faceMode == FaceMode::Mouse) ? MouseDir()
+                     : (moving ? Vec2{axis.x, axis.y} : m_lastDir);
+            Fire(aim);
+            m_fireCd = fireRate > 0.0f ? 1.0f / fireRate : 0.2f;
+        }
     }
 
 private:
-    Vec2 m_lastDir{0, -1}, m_dashDir{0, 0};
-    float m_dashTimer = 0.0f, m_dashCd = 0.0f;
+    Vec2 m_lastDir{0, -1}, m_dashDir{0, 0}, m_knockVel{0, 0};
+    float m_dashTimer = 0.0f, m_dashCd = 0.0f, m_fireCd = 0.0f, m_knockTimer = 0.0f;
+
+    void Fire(Vec2 aim) {
+        Scene* s = gameObject ? gameObject->scene() : nullptr;
+        if (!s || projectile.empty()) return;
+        GameObject* b = SceneSerializer::InstantiateFromFile(*s, projectile, nullptr);
+        if (!b || !b->transform) return;
+        b->transform->localPosition = transform->Position();
+        float l = std::sqrt(aim.x * aim.x + aim.y * aim.y);
+        Vec2 d = l > 1e-4f ? Vec2{aim.x / l, aim.y / l} : m_lastDir;
+        if (auto* rb = b->GetComponent<Rigidbody2D>()) rb->velocity = {d.x * projectileSpeed, d.y * projectileSpeed};
+    }
 
     float ForwardOffset() const {
         switch ((Forward)spriteForward) {

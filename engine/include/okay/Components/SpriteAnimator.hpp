@@ -23,6 +23,9 @@ public:
     int atlasColumns = 0;
     int atlasRows = 1;
     int atlasCount = 0;
+    // Force a specific atlas row (e.g. a facing direction) rather than auto-walking
+    // rows; -1 = automatic. A top-down controller sets this from its 4-way facing.
+    int rowOverride = -1;
 
     void Start() override { Apply(); }
 
@@ -58,7 +61,7 @@ private:
         if (atlasColumns > 0) {
             int rows = atlasRows > 0 ? atlasRows : 1;
             int col = m_frame % atlasColumns;
-            int row = (m_frame / atlasColumns) % rows;
+            int row = (rowOverride >= 0) ? (rowOverride % rows) : ((m_frame / atlasColumns) % rows);
             float uw = 1.0f / atlasColumns, vh = 1.0f / rows;
             sr->uvMin = {col * uw, row * vh};
             sr->uvMax = {(col + 1) * uw, (row + 1) * vh};

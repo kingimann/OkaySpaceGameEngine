@@ -14082,7 +14082,26 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::Checkbox("Screen Wrap##t2", &t2->screenWrap)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wrap around the camera view edges (asteroids-style).");
-            ImGui::TextDisabled("2D sprite top-down: WASD/arrows, sprint, dash, face move/mouse.");
+            SectionHeader("Shooting");
+            if (KeyBindCombo("Fire Key##t2", t2->fireKey)) ed.dirty = true;
+            const char* mb[] = {"(none)", "Left Mouse", "Right Mouse", "Middle Mouse"};
+            int fbi = (t2->fireButton < 0 || t2->fireButton > 2) ? 0 : t2->fireButton + 1;
+            if (ImGui::Combo("Fire Button##t2", &fbi, mb, 4)) { t2->fireButton = fbi - 1; ed.dirty = true; }
+            {
+                char pb[128]; std::strncpy(pb, t2->projectile.c_str(), sizeof(pb) - 1); pb[sizeof(pb) - 1] = '\0';
+                if (ImGui::InputTextWithHint("Projectile##t2", "bullet.okayprefab", pb, sizeof(pb))) { t2->projectile = pb; ed.dirty = true; }
+                if (AcceptAssetPathField(t2->projectile)) ed.dirty = true;   // drop a prefab from Project
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prefab spawned as a bullet — give it a Rigidbody2D (+ Lifetime).");
+            }
+            if (t2->fireKey || t2->fireButton >= 0) {
+                if (ImGui::DragFloat("Bullet Speed##t2", &t2->projectileSpeed, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Fire Rate##t2", &t2->fireRate, 0.1f, 0.1f, 40.0f, "%.1f/s")) ed.dirty = true;
+                ImGui::TextDisabled("Aims at the mouse when Face = Mouse, else the move direction.");
+            }
+            SectionHeader("Knockback");
+            if (ImGui::DragFloat("Knockback Time##t2", &t2->knockbackTime, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Input lockout after a hit. Call Knockback(dir, force) from a script/hazard.");
+            ImGui::TextDisabled("2D sprite top-down: move, sprint, dash, face, shoot, get knocked back.");
             if (ImGui::SmallButton("Remove##t2")) toRemove = t2;
         }
     }

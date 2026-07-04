@@ -254,6 +254,9 @@ std::string ActionList::ToText() const {
             out += '\n';
         }
     };
+    // Declared variables: "v <name> <type> <value...>" (value may contain spaces).
+    for (const VarDecl& v : variables)
+        out += "v " + quoteArg(v.name) + " " + std::to_string(v.type) + " " + quoteArg(v.value) + "\n";
     emit("c", conditions);
     emit("i", instructions);
     return out;
@@ -261,7 +264,7 @@ std::string ActionList::ToText() const {
 
 void ActionList::FromText(const std::string& text) {
     trigger = Trigger::OnStart; triggerKey = "e"; once = false; name.clear();
-    conditions.clear(); instructions.clear();
+    conditions.clear(); instructions.clear(); variables.clear();
     std::size_t pos = 0;
     while (pos < text.size()) {
         std::size_t nl = text.find('\n', pos);
@@ -299,6 +302,12 @@ void ActionList::FromText(const std::string& text) {
             if (tok.size() > 1) trigger = (Trigger)std::atoi(tok[1].c_str());
             if (tok.size() > 2) triggerKey = (tok[2] == "-") ? std::string{} : tok[2];
             if (tok.size() > 3) once = (tok[3] == "1");
+        } else if (tok[0] == "v") {                 // declared variable: v <name> <type> <value>
+            VarDecl vd;
+            if (tok.size() > 1) vd.name = tok[1];
+            if (tok.size() > 2) vd.type = std::atoi(tok[2].c_str());
+            if (tok.size() > 3) vd.value = tok[3];
+            if (!vd.name.empty()) variables.push_back(std::move(vd));
         } else if (tok[0] == "c" || tok[0] == "i") {
             Item it;
             if (tok.size() > 1) it.op = tok[1];
@@ -309,6 +318,13 @@ void ActionList::FromText(const std::string& text) {
 }
 
 void ActionList::Start() {
+    // Seed declared variables into the shared pools before anything runs, so they
+    // exist (with their starting values) for every list from frame one.
+    for (const VarDecl& v : variables) {
+        if (v.name.empty()) continue;
+        if (v.type == 1) StrVars()[v.name] = v.value;
+        else             Vars()[v.name] = (float)std::atof(v.value.c_str());
+    }
     if (trigger == Trigger::OnStart) Fire();
 }
 

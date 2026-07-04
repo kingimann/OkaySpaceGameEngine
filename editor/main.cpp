@@ -9203,9 +9203,20 @@ static void DrawFlowGraph(EditorState& ed) {
         ImGui::SameLine();
     }
     ActionList* al = als[pick];
-    if (!al->name.empty()) ImGui::Text("Flow: %s  (on '%s')", al->name.c_str(), go->name.c_str());
-    else                   ImGui::Text("Flow of '%s'", go->name.c_str());
-    ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty space to pan; scroll to zoom");
+    ActionList* removeAl = nullptr;   // deferred: remove this Actions script after drawing
+    // Editable script name + add/remove Actions scripts (parity with the Inspector).
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("on '%s'", go->name.c_str()); ImGui::SameLine();
+    { char nb[64]; std::strncpy(nb, al->name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+      ImGui::SetNextItemWidth(150);
+      if (ImGui::InputTextWithHint("##flowname", "Script name (e.g. \"Open Door\")", nb, sizeof(nb))) { al->name = nb; ed.dirty = true; } }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Script")) { go->AddComponent<ActionList>(); pick = (int)als.size(); ed.dirty = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another Actions script to this object.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Remove Script")) removeAl = al;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete this whole Actions script from the object.");
+    ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty to pan; scroll to zoom");
 
     // Keyboard: Ctrl+C copies the selected node, Ctrl+V pastes it (after the selection,
     // or at the end) — works across scripts since a node is just op + args.
@@ -9249,6 +9260,13 @@ static void DrawFlowGraph(EditorState& ed) {
         ed.dirty = true;
     }
     ImGui::SameLine(); CustomActionButton("flowinscustom", /*cond*/false, al->instructions, ed.dirty);
+    ImGui::SameLine(); SaveAsCustomButton("flowinssave", /*cond*/false, al->instructions);
+    ImGui::SameLine(); CustomActionButton("flowcondcustom", /*cond*/true, al->conditions, ed.dirty);
+    ImGui::SameLine(); SaveAsCustomButton("flowcondsave", /*cond*/true, al->conditions);
+    ImGui::SameLine();
+    { char vlbl[32]; std::snprintf(vlbl, sizeof(vlbl), "Variables (%d)", (int)al->variables.size());
+      if (ImGui::SmallButton(vlbl)) ImGui::OpenPopup("##flowvars"); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create variables with a starting value — usable in every action/condition.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset View")) { pan = ImVec2(0, 0); zoom = 1.0f; }
     ImGui::SameLine();
@@ -9307,6 +9325,12 @@ static void DrawFlowGraph(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip(msg ? "The message name that fires this." : "The key that fires this (e.g. space, e, w).");
         }
         ImGui::SameLine(); if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
+        // Guardrail (Inspector parity): OnMouse* triggers need pickable bounds.
+        if (al->trigger >= ActionList::Trigger::OnMouseEnter && al->trigger <= ActionList::Trigger::OnMouseOver) {
+            bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
+            bool has3D = go->GetComponent<Collider3D>();
+            if (!has2D && !has3D) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "needs a Collider/Sprite to be clickable"); }
+        }
         ImGui::Separator();
         bool haveSel = (g_flowSelAl == al && g_flowSelKind != 0);
         if (haveSel && g_flowSelKind == 1 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->conditions.size()) {
@@ -9366,14 +9390,16 @@ static void DrawFlowGraph(EditorState& ed) {
         char b[64]; std::snprintf(b, sizeof(b), "%p:%s:%d", (void*)al, role, i); return std::string(b);
     };
     const float NW = 190.0f * z, NH = 46.0f * z, GAPY = 72.0f;   // GAPY is graph-space (positions scale by z)
-    const float fs = ImGui::GetFontSize() * z;
+    const float fs = std::round(ImGui::GetFontSize() * z);   // whole-pixel size => crisper glyphs
     ImFont* fnt = ImGui::GetFont();
     // Draw a node; *del set true if its little ✕ was clicked (cond/instruction only).
     // Positions in `pos` are graph-space; screen = cp + r*z + pan, sizes scale by z.
     auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del, bool* clicked = nullptr, bool* rclicked = nullptr) -> ImVec2 {
         if (pos.find(k) == pos.end()) pos[k] = def;
         ImVec2 r = pos[k];
-        ImVec2 p{cp.x + r.x * z + pan.x, cp.y + r.y * z + pan.y};
+        // Snap the node's screen origin to whole pixels: unrounded positions make the
+        // scaled glyphs sample across texel boundaries, which is what reads as "blurry".
+        ImVec2 p{std::round(cp.x + r.x * z + pan.x), std::round(cp.y + r.y * z + pan.y)};
         ImGui::SetCursorScreenPos(p);
         ImGui::PushID(k.c_str());
         ImGui::InvisibleButton("nd", ImVec2(NW, NH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
@@ -9387,12 +9413,20 @@ static void DrawFlowGraph(EditorState& ed) {
         }
         if (clicked) *clicked = ndClick;
         ImGui::PopID();
-        dl->AddRectFilled(ImVec2(p.x + 3 * z, p.y + 4 * z), ImVec2(p.x + NW + 3 * z, p.y + NH + 4 * z), IM_COL32(0, 0, 0, 90), 6.0f * z);  // drop shadow
-        dl->AddRectFilled(p, ImVec2(p.x + NW, p.y + NH), col, 6.0f * z);
-        dl->AddRect(p, ImVec2(p.x + NW, p.y + NH), hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,40), 6.0f * z);
-        dl->AddText(fnt, fs, ImVec2(p.x + 9 * z, p.y + 6 * z), IM_COL32(236,239,246,255), title);
-        if (!sub.empty()) dl->AddText(fnt, fs * 0.92f, ImVec2(p.x + 9 * z, p.y + 25 * z), IM_COL32(172,178,192,255), sub.c_str());
-        if (del) dl->AddText(fnt, fs, ImVec2(p.x + NW - 15 * z, p.y + 3 * z), IM_COL32(235, 150, 150, 255), "x");
+        ImVec2 br{p.x + NW, p.y + NH};
+        float rad = 7.0f * z;
+        // Soft drop shadow, a slightly darkened body, a bright category stripe down the
+        // left edge, and a hover/edge outline — a cleaner, more "node editor" look.
+        dl->AddRectFilled(ImVec2(p.x + 3 * z, p.y + 5 * z), ImVec2(br.x + 3 * z, br.y + 5 * z), IM_COL32(0, 0, 0, 70), rad);
+        ImU32 top = IM_COL32(((col>>IM_COL32_R_SHIFT)&0xFF), ((col>>IM_COL32_G_SHIFT)&0xFF), ((col>>IM_COL32_B_SHIFT)&0xFF), 255);
+        dl->AddRectFilled(p, br, IM_COL32(38, 41, 50, 255), rad);
+        dl->AddRectFilledMultiColor(p, ImVec2(br.x, p.y + NH * 0.5f),
+            IM_COL32(255,255,255,14), IM_COL32(255,255,255,14), IM_COL32(255,255,255,0), IM_COL32(255,255,255,0));  // top sheen
+        dl->AddRectFilled(p, ImVec2(p.x + 5 * z, br.y), top, rad, ImDrawFlags_RoundCornersLeft);  // category stripe
+        dl->AddRect(p, br, hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,45), rad, 0, hov ? 2.0f : 1.0f);
+        dl->AddText(fnt, fs, ImVec2(std::round(p.x + 12 * z), std::round(p.y + 6 * z)), IM_COL32(236,239,246,255), title);
+        if (!sub.empty()) dl->AddText(fnt, std::round(fs * 0.9f), ImVec2(std::round(p.x + 12 * z), std::round(p.y + 25 * z)), IM_COL32(160,167,182,255), sub.c_str());
+        if (del) dl->AddText(fnt, fs, ImVec2(std::round(p.x + NW - 15 * z), std::round(p.y + 3 * z)), hov ? IM_COL32(240,140,140,255) : IM_COL32(150,110,110,255), "x");
         return ImVec2(p.x + NW * 0.5f, p.y + NH * 0.5f);
     };
     // Bright glow behind a node — marks the instruction currently executing in Play.
@@ -9542,6 +9576,41 @@ static void DrawFlowGraph(EditorState& ed) {
 
     dl->PopClipRect();
 
+    // Variables panel: create/edit/delete named variables with a starting value. They
+    // seed the shared pool at scene start, show up in every action's variable picker,
+    // and save with the scene.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(360, 0), ImVec2(560, 520));
+    if (ImGui::BeginPopup("##flowvars")) {
+        ImGui::TextColored(ImVec4(0.86f, 0.78f, 0.42f, 1.0f), "Variables");
+        ImGui::TextDisabled("Created here, set to their start value when the game begins.");
+        ImGui::Separator();
+        if (al->variables.empty()) ImGui::TextDisabled("No variables yet. Add one below.");
+        int delVar = -1;
+        for (std::size_t vi = 0; vi < al->variables.size(); ++vi) {
+            ImGui::PushID((int)vi);
+            auto& vd = al->variables[vi];
+            char nb[64]; std::strncpy(nb, vd.name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputTextWithHint("##vn", "name", nb, sizeof(nb))) { vd.name = nb; ed.dirty = true; }
+            ImGui::SameLine();
+            const char* types[] = {"Number", "Text"};
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::Combo("##vt", &vd.type, types, 2)) ed.dirty = true;
+            ImGui::SameLine();
+            char vb[96]; std::strncpy(vb, vd.value.c_str(), sizeof(vb) - 1); vb[sizeof(vb) - 1] = '\0';
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputTextWithHint("##vv", vd.type == 1 ? "text" : "0", vb, sizeof(vb),
+                                         vd.type == 1 ? 0 : ImGuiInputTextFlags_CharsDecimal)) { vd.value = vb; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X")) delVar = (int)vi;
+            ImGui::PopID();
+        }
+        if (delVar >= 0) { al->variables.erase(al->variables.begin() + delVar); ed.dirty = true; }
+        ImGui::Separator();
+        if (ImGui::SmallButton("+ Add Variable")) { al->variables.push_back({"newVar", 0, "0"}); ed.dirty = true; }
+        ImGui::EndPopup();
+    }
+
     // In-place node editor: pick the op + fill the args right here (the SAME editor
     // the Inspector uses, on the SAME live Action), so edits show in both places.
     ImGui::SetNextWindowSizeConstraints(ImVec2(300, 0), ImVec2(560, 600));
@@ -9672,6 +9741,12 @@ static void DrawFlowGraph(EditorState& ed) {
     }
     if (delIns >= 0 && delIns < (int)al->instructions.size()) { al->instructions.erase(al->instructions.begin() + delIns); ed.dirty = true; }
     if (delCond >= 0 && delCond < (int)al->conditions.size()) { al->conditions.erase(al->conditions.begin() + delCond); ed.dirty = true; }
+    // Deferred whole-script removal (done last: everything above still used `al`).
+    if (removeAl) {
+        ed.PushUndo();
+        if (g_flowSelAl == removeAl) { g_flowSelAl = nullptr; g_flowSelKind = 0; }
+        go->RemoveComponent(removeAl); ed.dirty = true;
+    }
     ImGui::End();
 }
 
@@ -9783,7 +9858,10 @@ static void CollectSceneVarNames(Scene* scene, std::vector<std::string>& out,
             if ((it.op == "copy_var" || it.op == "add_var_var") && it.args.size() > 1) add(it.args[1]);
         }
     };
-    for (ActionList* al : scene->FindObjectsOfType<ActionList>()) { scan(al->conditions); scan(al->instructions); }
+    for (ActionList* al : scene->FindObjectsOfType<ActionList>()) {
+        scan(al->conditions); scan(al->instructions);
+        for (const auto& vd : al->variables) add(vd.name);   // (5) explicitly declared variables
+    }
     std::sort(out.begin(), out.end());
 }
 

@@ -35,6 +35,17 @@ public:
     std::string triggerKey = "e";     // OnKey: which key starts the list
     bool once = false;                // fire at most once
 
+    /// A variable declared up-front (in the editor's Variables panel) with a starting
+    /// value, seeded into the shared pool when the scene starts. type 0 = Number
+    /// (into Vars), 1 = Text (into StrVars). Lets designers create variables without
+    /// first writing a Set Variable action.
+    struct VarDecl {
+        std::string name;
+        int         type = 0;         // 0 = number, 1 = text
+        std::string value;            // stringified initial value
+    };
+    std::vector<VarDecl> variables;
+
     std::vector<Item> conditions;
     std::vector<Item> instructions;
 

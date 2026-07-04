@@ -677,6 +677,12 @@ void ActionList::Update(float dt) {
                 t->localPosition = Vec3::MoveTowards(p, tg, Num(it, 3));
             }
         }
+        else if (op == "move_to") {   // frame-rate-independent: `speed` is units/second
+            if (t) {
+                Vec3 p = t->localPosition, tg{Num(it, 0), Num(it, 1), Num(it, 2)};
+                t->localPosition = Vec3::MoveTowards(p, tg, Num(it, 3) * Time::DeltaTime());
+            }
+        }
         else if (op == "look_at") {
             Scene* sc2 = GetScene();
             GameObject* g = sc2 ? sc2->Find(ObjName(it, 0)) : nullptr;

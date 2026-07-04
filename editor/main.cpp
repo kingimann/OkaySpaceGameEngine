@@ -8574,6 +8574,7 @@ static const ActionOpInfo kCondOps[] = {
 static const ActionOpInfo kInstrOps[] = {
     {"move",        "Move By",            "x y z",                "Move this object by an offset.",                          "Move"},
     {"move_toward", "Move Toward Object", "object speed",         "Move toward a named object at a speed.",                  "Move"},
+    {"move_to",     "Move To Point",      "x y z speed",          "Move toward a world point at `speed` units/second (use On Update).", "Move"},
     {"set_pos",     "Set Position",       "x y z",                "Teleport this object to a position.",                     "Move"},
     {"rotate",      "Rotate By",          "x y z degrees",        "Spin this object by the given degrees.",                  "Move"},
     {"set_rotation","Set Angle (2D)",     "degrees",              "Face a 2D angle (around Z).",                             "Move"},
@@ -10476,6 +10477,16 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
                 dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Values: %s", ops[cur].hint);
+        }
+    } else if (it.op == "move_to") {
+        // X/Y/Z target + a speed field.
+        VectorFields(it, 0, 3, dirty);
+        ImGui::SameLine(); ImGui::TextUnformatted("speed"); ImGui::SameLine();
+        float sp = it.args.size() > 3 ? (float)std::atof(it.args[3].c_str()) : 1.0f;
+        ImGui::SetNextItemWidth(70);
+        if (ImGui::DragFloat("##mtsp", &sp, 0.1f, 0.0f, 100000.0f, "%.3g")) {
+            while (it.args.size() <= 3) it.args.push_back("0");
+            char b[16]; std::snprintf(b, sizeof(b), "%g", sp); it.args[3] = b; dirty = true;
         }
     } else if (int _vs = 0, _vn = ActionOpVecComps(it.op, _vs); _vn && _vs == 0) {
         // Pure vector op (move, velocity, set_pos, rotate, ...): split X/Y/Z fields.

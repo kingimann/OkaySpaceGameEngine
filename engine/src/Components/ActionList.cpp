@@ -254,6 +254,9 @@ std::string ActionList::ToText() const {
             out += '\n';
         }
     };
+    // Extra triggers: "xt <type> <key>" (key '-' when none), one per line.
+    for (const TriggerDef& d : extraTriggers)
+        out += "xt " + std::to_string((int)d.type) + " " + (d.key.empty() ? std::string("-") : quoteArg(d.key)) + "\n";
     // Declared variables: "v <name> <type> <value...>" (value may contain spaces).
     for (const VarDecl& v : variables)
         out += "v " + quoteArg(v.name) + " " + std::to_string(v.type) + " " + quoteArg(v.value) + "\n";
@@ -264,7 +267,7 @@ std::string ActionList::ToText() const {
 
 void ActionList::FromText(const std::string& text) {
     trigger = Trigger::OnStart; triggerKey = "e"; once = false; name.clear();
-    conditions.clear(); instructions.clear(); variables.clear();
+    conditions.clear(); instructions.clear(); variables.clear(); extraTriggers.clear();
     std::size_t pos = 0;
     while (pos < text.size()) {
         std::size_t nl = text.find('\n', pos);
@@ -302,6 +305,11 @@ void ActionList::FromText(const std::string& text) {
             if (tok.size() > 1) trigger = (Trigger)std::atoi(tok[1].c_str());
             if (tok.size() > 2) triggerKey = (tok[2] == "-") ? std::string{} : tok[2];
             if (tok.size() > 3) once = (tok[3] == "1");
+        } else if (tok[0] == "xt") {                // extra trigger: xt <type> <key>
+            TriggerDef d;
+            if (tok.size() > 1) d.type = (Trigger)std::atoi(tok[1].c_str());
+            if (tok.size() > 2 && tok[2] != "-") d.key = tok[2];
+            extraTriggers.push_back(std::move(d));
         } else if (tok[0] == "v") {                 // declared variable: v <name> <type> <value>
             VarDecl vd;
             if (tok.size() > 1) vd.name = tok[1];
@@ -325,7 +333,7 @@ void ActionList::Start() {
         if (v.type == 1) StrVars()[v.name] = v.value;
         else             Vars()[v.name] = (float)std::atof(v.value.c_str());
     }
-    if (trigger == Trigger::OnStart) Fire();
+    if (HasTrigger(Trigger::OnStart)) Fire();
 }
 
 bool ActionList::EvalConditions() {
@@ -437,15 +445,20 @@ void ActionList::Fire() {
 void ActionList::Update(float dt) {
     // ---- Triggers ----
     if (!m_running) {
-        if (trigger == Trigger::OnUpdate) Fire();
-        else if (trigger == Trigger::OnKey && !triggerKey.empty() && Input::GetKeyDown(triggerKey[0])) Fire();
-        else if (trigger == Trigger::OnKeyUp && !triggerKey.empty() && Input::GetKeyUp(triggerKey[0])) Fire();
-        else if (trigger == Trigger::OnClick) {
-            // UI buttons report their own click; world objects arrive via m_pending
-            // (OnMouseClick). Either path fires the list.
-            if (auto* b = gameObject ? gameObject->GetComponent<UIButton>() : nullptr)
-                if (b->WasClicked()) Fire();
-        }
+        // Evaluate the primary trigger plus every extra trigger, so one script can run
+        // from several events. Each (type, key) is checked; the first that matches fires.
+        auto poll = [&](Trigger type, const std::string& key) {
+            if (m_running) return;
+            if (type == Trigger::OnUpdate) Fire();
+            else if (type == Trigger::OnKey && !key.empty() && Input::GetKeyDown(key[0])) Fire();
+            else if (type == Trigger::OnKeyUp && !key.empty() && Input::GetKeyUp(key[0])) Fire();
+            else if (type == Trigger::OnClick) {
+                if (auto* b = gameObject ? gameObject->GetComponent<UIButton>() : nullptr)
+                    if (b->WasClicked()) Fire();
+            }
+        };
+        poll(trigger, triggerKey);
+        for (const TriggerDef& d : extraTriggers) poll(d.type, d.key);
         // Collision / trigger / mouse triggers are latched by the event callbacks.
         if (!m_running && m_pending) { m_pending = false; Fire(); }
     }

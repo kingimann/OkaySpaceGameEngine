@@ -35,6 +35,20 @@ public:
     std::string triggerKey = "e";     // OnKey: which key starts the list
     bool once = false;                // fire at most once
 
+    /// Extra triggers beyond the primary one — so a single script can run from several
+    /// events (e.g. On Start AND On Key). Each carries its own key/message where the
+    /// trigger type needs one. The primary `trigger`/`triggerKey` above stay for
+    /// backward compatibility; these are additive.
+    struct TriggerDef { Trigger type = Trigger::OnStart; std::string key; };
+    std::vector<TriggerDef> extraTriggers;
+
+    /// True if this list responds to trigger `t` (as the primary or any extra trigger).
+    bool HasTrigger(Trigger t) const {
+        if (trigger == t) return true;
+        for (const TriggerDef& d : extraTriggers) if (d.type == t) return true;
+        return false;
+    }
+
     /// A variable declared up-front (in the editor's Variables panel) with a starting
     /// value, seeded into the shared pool when the scene starts. type 0 = Number
     /// (into Vars), 1 = Text (into StrVars). Lets designers create variables without
@@ -53,18 +67,18 @@ public:
     void Update(float dt) override;
 
     // Event-driven triggers latch a pending fire, run on the next Update tick.
-    void OnTriggerEnter2D(Collider2D*) override        { if (trigger == Trigger::OnCollision || trigger == Trigger::OnTriggerEnter) m_pending = true; }
-    void OnTriggerExit2D (Collider2D*) override        { if (trigger == Trigger::OnTriggerExit) m_pending = true; }
-    void OnCollisionEnter2D(const Collision2D&) override{ if (trigger == Trigger::OnCollision) m_pending = true; }
-    void OnTriggerEnter3D(Collider3D*) override        { if (trigger == Trigger::OnCollision || trigger == Trigger::OnTriggerEnter) m_pending = true; }
-    void OnTriggerExit3D (Collider3D*) override        { if (trigger == Trigger::OnTriggerExit) m_pending = true; }
-    void OnCollisionEnter3D(const Collision3D&) override{ if (trigger == Trigger::OnCollision) m_pending = true; }
-    void OnMouseEnter() override { if (trigger == Trigger::OnMouseEnter) m_pending = true; }
-    void OnMouseExit()  override { if (trigger == Trigger::OnMouseExit)  m_pending = true; }
-    void OnMouseOver()  override { if (trigger == Trigger::OnMouseOver)  m_pending = true; }
-    void OnMouseDown()  override { if (trigger == Trigger::OnMouseDown)  m_pending = true; }
-    void OnMouseUp()    override { if (trigger == Trigger::OnMouseUp)    m_pending = true; }
-    void OnMouseClick() override { if (trigger == Trigger::OnClick)      m_pending = true; }
+    void OnTriggerEnter2D(Collider2D*) override        { if (HasTrigger(Trigger::OnCollision) || HasTrigger(Trigger::OnTriggerEnter)) m_pending = true; }
+    void OnTriggerExit2D (Collider2D*) override        { if (HasTrigger(Trigger::OnTriggerExit)) m_pending = true; }
+    void OnCollisionEnter2D(const Collision2D&) override{ if (HasTrigger(Trigger::OnCollision)) m_pending = true; }
+    void OnTriggerEnter3D(Collider3D*) override        { if (HasTrigger(Trigger::OnCollision) || HasTrigger(Trigger::OnTriggerEnter)) m_pending = true; }
+    void OnTriggerExit3D (Collider3D*) override        { if (HasTrigger(Trigger::OnTriggerExit)) m_pending = true; }
+    void OnCollisionEnter3D(const Collision3D&) override{ if (HasTrigger(Trigger::OnCollision)) m_pending = true; }
+    void OnMouseEnter() override { if (HasTrigger(Trigger::OnMouseEnter)) m_pending = true; }
+    void OnMouseExit()  override { if (HasTrigger(Trigger::OnMouseExit))  m_pending = true; }
+    void OnMouseOver()  override { if (HasTrigger(Trigger::OnMouseOver))  m_pending = true; }
+    void OnMouseDown()  override { if (HasTrigger(Trigger::OnMouseDown))  m_pending = true; }
+    void OnMouseUp()    override { if (HasTrigger(Trigger::OnMouseUp))    m_pending = true; }
+    void OnMouseClick() override { if (HasTrigger(Trigger::OnClick))      m_pending = true; }
 
     bool IsRunning() const { return m_running; }
     // Index of the instruction about to run (or waiting) while running, else -1.
@@ -74,7 +88,9 @@ public:
     /// Deliver a named signal: fires this list if it's an OnMessage trigger
     /// listening for `msg`. Sent by the `send` instruction or send_message().
     void ReceiveMessage(const std::string& msg) {
-        if (trigger == Trigger::OnMessage && triggerKey == msg) Fire();
+        if (trigger == Trigger::OnMessage && triggerKey == msg) { Fire(); return; }
+        for (const TriggerDef& d : extraTriggers)
+            if (d.type == Trigger::OnMessage && d.key == msg) { Fire(); return; }
     }
 
     /// Compact text form (one line per trigger / condition / instruction), for

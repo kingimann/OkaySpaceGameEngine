@@ -9171,6 +9171,70 @@ static bool FlowIsEnder(const std::string& o) {
     return o == "end_repeat" || o == "end_while" || o == "end_for" || o == "end_for_tag";
 }
 
+// Human-readable trigger names (index matches ActionList::Trigger).
+static const char* kTriggerLabels[] = {"On Start","On Update","On Key","On Collision","On Click",
+    "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
+    "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over"};
+
+// Every pickable key as (label, stored-char). Keys are single characters — that's what
+// Input::GetKeyDown(char) matches — so the picker offers letters, digits and Space.
+static const std::vector<std::pair<std::string, std::string>>& AllKeys() {
+    static std::vector<std::pair<std::string, std::string>> v;
+    if (v.empty()) {
+        for (char c = 'A'; c <= 'Z'; ++c) v.push_back({std::string(1, c), std::string(1, (char)std::tolower(c))});
+        for (char c = '0'; c <= '9'; ++c) v.push_back({std::string(1, c), std::string(1, c)});
+        v.push_back({"Space", " "});
+    }
+    return v;
+}
+
+// A dropdown of all keys (no free-text) for choosing a trigger/condition key.
+static bool KeyPicker(const char* id, std::string& key, bool& dirty) {
+    bool changed = false;
+    ImGui::PushID(id);
+    const auto& keys = AllKeys();
+    const char* preview = "(key)";
+    for (const auto& k : keys) if (k.second == key) { preview = k.first.c_str(); break; }
+    ImGui::SetNextItemWidth(80);
+    if (ImGui::BeginCombo("##kp", preview)) {
+        for (const auto& k : keys)
+            if (ImGui::Selectable(k.first.c_str(), k.second == key)) { key = k.second; changed = true; dirty = true; }
+        ImGui::EndCombo();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+// Draw the extra-triggers list (+ an "Add trigger" button) so one script can run from
+// several events. Called right after the primary Trigger control in both the Inspector
+// and the Flow Graph. Compact: one row per extra trigger, with its own key/message.
+static void DrawExtraTriggers(okay::ActionList* al, bool& dirty) {
+    using T = okay::ActionList::Trigger;
+    auto needsKey = [](T t){ return t == T::OnKey || t == T::OnKeyUp; };
+    auto isMsg    = [](T t){ return t == T::OnMessage; };
+    int rm = -1;
+    for (std::size_t i = 0; i < al->extraTriggers.size(); ++i) {
+        ImGui::PushID((int)(9000 + i));
+        auto& d = al->extraTriggers[i];
+        ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("+ also"); ImGui::SameLine();
+        int dt = (int)d.type; ImGui::SetNextItemWidth(140);
+        if (ImGui::Combo("##et", &dt, kTriggerLabels, IM_ARRAYSIZE(kTriggerLabels))) { d.type = (T)dt; dirty = true; }
+        if (needsKey(d.type)) {
+            ImGui::SameLine(); KeyPicker("ek", d.key, dirty);
+        } else if (isMsg(d.type)) {
+            ImGui::SameLine();
+            char kb[64]; std::strncpy(kb, d.key.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::InputTextWithHint("##ek", "message", kb, sizeof(kb))) { d.key = kb; dirty = true; }
+        }
+        ImGui::SameLine(); if (ImGui::SmallButton("X")) rm = (int)i;
+        ImGui::PopID();
+    }
+    if (rm >= 0) { al->extraTriggers.erase(al->extraTriggers.begin() + rm); dirty = true; }
+    if (ImGui::SmallButton("+ Trigger")) { al->extraTriggers.push_back({}); dirty = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also run this script from another event (e.g. On Start AND On Key).");
+}
+
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
     g_pickerProjectDir = ed.projectDir();   // so in-place object/prefab pickers can list prefabs
@@ -9315,14 +9379,13 @@ static void DrawFlowGraph(EditorState& ed) {
         int ti2 = (int)al->trigger; ImGui::SetNextItemWidth(160);
         if (ImGui::Combo("##flowtrigInline", &ti2, trigs, IM_ARRAYSIZE(trigs))) { al->trigger = (ActionList::Trigger)ti2; ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("When these actions run.");
-        if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnKeyUp ||
-            al->trigger == ActionList::Trigger::OnMessage) {
-            bool msg = al->trigger == ActionList::Trigger::OnMessage;
+        if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnKeyUp) {
+            ImGui::SameLine(); KeyPicker("flowtrigkey", al->triggerKey, ed.dirty);
+        } else if (al->trigger == ActionList::Trigger::OnMessage) {
             ImGui::SameLine();
             char kb[64]; std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
             ImGui::SetNextItemWidth(130);
-            if (ImGui::InputTextWithHint("##flowtrigkeyInline", msg ? "message name" : "key", kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip(msg ? "The message name that fires this." : "The key that fires this (e.g. space, e, w).");
+            if (ImGui::InputTextWithHint("##flowtrigkeyInline", "message name", kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
         }
         ImGui::SameLine(); if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
         // Guardrail (Inspector parity): OnMouse* triggers need pickable bounds.
@@ -9331,6 +9394,7 @@ static void DrawFlowGraph(EditorState& ed) {
             bool has3D = go->GetComponent<Collider3D>();
             if (!has2D && !has3D) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "needs a Collider/Sprite to be clickable"); }
         }
+        DrawExtraTriggers(al, ed.dirty);   // run this script from more than one event
         ImGui::Separator();
         bool haveSel = (g_flowSelAl == al && g_flowSelKind != 0);
         if (haveSel && g_flowSelKind == 1 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->conditions.size()) {
@@ -9983,6 +10047,42 @@ static int ActionOpObjArg(const std::string& op, bool& prefab) {
     return -1;
 }
 
+// If this op takes a Vector2/Vector3 argument, return the component count (2 or 3) and
+// set `start` to the arg index it begins at (0, or 1 for spawn's prefab-then-position).
+// 0 = not a vector op.
+static int ActionOpVecComps(const std::string& op, int& start) {
+    start = 0;
+    if (op=="move"||op=="set_pos"||op=="set_scale3"||op=="velocity3"||op=="impulse3"||
+        op=="force3"||op=="set_light"||op=="rotate"||op=="set_rotation3") return 3;
+    if (op=="velocity"||op=="impulse"||op=="set_cam") return 2;
+    if (op=="spawn") { start = 1; return 2; }
+    if (op=="spawn3"||op=="net_spawn"||op=="net_spawn_owned") { start = 1; return 3; }
+    return 0;
+}
+
+// Draw N split X/Y/Z drag fields editing it.args[start .. start+N-1]. Color-coded like
+// the Transform inspector. Returns true if any component changed.
+static bool VectorFields(ActionList::Item& it, int start, int n, bool& dirty) {
+    static const char* labels[3] = {"X", "Y", "Z"};
+    static const ImU32 cols[3] = {IM_COL32(224,84,84,255), IM_COL32(122,196,122,255), IM_COL32(88,148,232,255)};
+    bool changed = false;
+    for (int k = 0; k < n; ++k) {
+        int ai = start + k;
+        float v = (ai < (int)it.args.size()) ? (float)std::atof(it.args[ai].c_str()) : 0.0f;
+        if (k) ImGui::SameLine(0.0f, 6.0f);
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(cols[k]), "%s", labels[k]);
+        ImGui::SameLine(0.0f, 3.0f);
+        ImGui::SetNextItemWidth(58);
+        char cid[16]; std::snprintf(cid, sizeof(cid), "##vec%d", k);
+        if (ImGui::DragFloat(cid, &v, 0.1f, 0.0f, 0.0f, "%.3g")) {
+            while ((int)it.args.size() <= ai) it.args.push_back("0");
+            char b[32]; std::snprintf(b, sizeof(b), "%g", v); it.args[ai] = b;
+            dirty = true; changed = true;
+        }
+    }
+    return changed;
+}
+
 static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
                           int id, bool& dirty, Scene* scene = nullptr) {
     int action = 0;
@@ -10170,6 +10270,14 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             ImGui::SameLine(); varField("= Saved", 1, "health");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The saved-value/stat name to read (e.g. health, published by the Health component).");
         }
+    } else if (it.op == "key" || it.op == "key_down" || it.op == "key_up") {
+        // Key conditions pick from a dropdown of all keys (no free text).
+        auto setArg = [&](std::size_t i, const std::string& v) {
+            while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
+        };
+        std::string k = it.args.empty() ? std::string() : it.args[0];
+        ImGui::TextUnformatted("Key"); ImGui::SameLine();
+        if (KeyPicker("condkey", k, dirty)) setArg(0, k);
     } else if (it.op == "while" || it.op == "if_goto" || it.op == "vars_cmp") {
         // Friendly comparison editor: variable picker + operator dropdown + value
         // (+ a jump target for if_goto), so nobody has to remember the "lt"/"gt" tokens.
@@ -10215,7 +10323,11 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         };
         std::string o0 = getArg(0);
         if (ObjNamePicker("o0", o0, scene, _pf)) setArg(0, o0);
-        if (ops[cur].hint[0]) {   // remaining value(s) after the object/prefab name
+        int vstart = 0, vn = ActionOpVecComps(it.op, vstart);
+        if (vn && vstart == 1) {          // spawn-style: prefab, then a position vector
+            ImGui::SameLine(); ImGui::TextDisabled("at"); ImGui::SameLine();
+            VectorFields(it, vstart, vn, dirty);
+        } else if (ops[cur].hint[0]) {    // remaining value(s) after the object/prefab name
             ImGui::SameLine();
             std::string joined;
             for (std::size_t k = 1; k < it.args.size(); ++k) { if (!joined.empty()) joined += ' '; joined += it.args[k]; }
@@ -10230,6 +10342,9 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Values: %s", ops[cur].hint);
         }
+    } else if (int _vs = 0, _vn = ActionOpVecComps(it.op, _vs); _vn && _vs == 0) {
+        // Pure vector op (move, velocity, set_pos, rotate, ...): split X/Y/Z fields.
+        VectorFields(it, 0, _vn, dirty);
     } else if (ActionOpUsesVar(it.op)) {
         // Variable name(s) come from a picker (auto-detected from the scene), so you
         // don't retype names; any remaining args stay a plain value box.
@@ -14576,11 +14691,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Trigger", &ti, trigs, IM_ARRAYSIZE(trigs))) { al->trigger = (ActionList::Trigger)ti; ed.dirty = true; }
             if (al->trigger == ActionList::Trigger::OnKey ||
                 al->trigger == ActionList::Trigger::OnKeyUp) {
-                ImGui::SameLine();
-                char kb[16];
-                std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
-                ImGui::SetNextItemWidth(50);
-                if (ImGui::InputText("Key##al", kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::TextUnformatted("Key"); ImGui::SameLine();
+                KeyPicker("alkey", al->triggerKey, ed.dirty);
             } else if (al->trigger == ActionList::Trigger::OnMessage) {
                 ImGui::SameLine();
                 char mb[64];
@@ -14590,6 +14702,7 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::SameLine();
             if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
+            DrawExtraTriggers(al, ed.dirty);   // run this script from more than one event
 
             // Guardrail: OnMouse* triggers need pickable bounds. 3D meshes are picked
             // by a camera ray vs a Collider3D; 2D objects by a sprite / 2D collider.

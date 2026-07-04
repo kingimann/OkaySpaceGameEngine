@@ -276,6 +276,18 @@ bool ActionList::EvalConditions() {
         else if (op == "str_ends")     { const std::string& s = StrVars()[Str(c, 0)]; std::string p = Rest(c, 1); ok = s.size() >= p.size() && s.compare(s.size() - p.size(), p.size(), p) == 0; }
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
+        else if (op == "obj_has_tag") {   // does a NAMED object have this tag?
+            Scene* s = GetScene(); GameObject* g = s ? s->Find(ObjName(c, 0)) : nullptr;
+            ok = g && g->tag == Str(c, 1);
+        }
+        else if (op == "obj_active") {    // is a named object active?
+            Scene* s = GetScene(); GameObject* g = s ? s->Find(ObjName(c, 0)) : nullptr;
+            ok = g && g->active;
+        }
+        else if (op == "any_with_tag") {  // does ANY active object have this tag?
+            Scene* s = GetScene(); ok = false;
+            if (s) for (const auto& up : s->Objects()) if (up && up->active && up->tag == Str(c, 0)) { ok = true; break; }
+        }
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
         else if (op == "dist_gt")  { float d; ok = distTo(Str(c, 0), d) && d > Num(c, 1); }
         else if (op == "exists")   { Scene* s = GetScene(); ok = s && s->Find(Str(c, 0)) != nullptr; }

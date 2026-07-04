@@ -8552,6 +8552,9 @@ static const ActionOpInfo kCondOps[] = {
     {"array_has",  "Array Contains",       "array value",                "Passes if the named array contains the value.",                "Arrays"},
     {"array_len_gt","Array Longer Than",   "array count",                "Passes if the array has more than N items.",                   "Arrays"},
     {"array_len_lt","Array Shorter Than",  "array count",                "Passes if the array has fewer than N items.",                  "Arrays"},
+    {"obj_has_tag","Object Has Tag",       "object tag",                 "Passes if the NAMED object has the given tag (or $textvar for a name).", "World"},
+    {"obj_active", "Object Is Active",      "object",                     "Passes if the named object is active.",                        "World"},
+    {"any_with_tag","Any Object With Tag",  "tag",                        "Passes if any active object in the scene has this tag.",        "World"},
     {"map_has",    "Map Has Key",          "map key",                    "Passes if the named map contains the key.",                    "Maps"},
     {"str_eq",     "Text Equals",          "var text...",                "Passes if the text variable exactly equals the words.",        "Text"},
     {"str_neq",    "Text Not Equals",      "var text...",                "Passes if the text variable does not equal the words.",        "Text"},
@@ -9082,6 +9085,10 @@ static void DrawAnimationEditor(EditorState& ed) {
 static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
                           int id, bool& dirty, Scene* scene);
 
+// Project root for the object/prefab pickers (set each frame from the editor so
+// DrawActionItem — used by both the Inspector and the flow graph — can list prefabs).
+static std::string g_pickerProjectDir;
+
 // Flow-graph node selection (which Action a clicked node edits), keyed per list.
 static void* g_flowSelAl = nullptr;
 static int   g_flowSelKind = 0;   // 0 none, 1 condition, 2 instruction
@@ -9160,6 +9167,7 @@ static bool FlowIsEnder(const std::string& o) {
 
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
+    g_pickerProjectDir = ed.projectDir();   // so in-place object/prefab pickers can list prefabs
     if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
     std::vector<ActionList*> als = go ? go->GetComponents<ActionList>() : std::vector<ActionList*>{};
@@ -9606,6 +9614,12 @@ static void DrawFlowGraph(EditorState& ed) {
         ImGui::EndPopup();
     }
 
+    // Delete / Backspace removes the selected node (when not typing in a field).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput
+        && g_flowSelAl == al && g_flowSelKind != 0
+        && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))) {
+        if (g_flowSelKind == 1) delCond = g_flowSelIdx; else delIns = g_flowSelIdx;
+    }
     if (delIns >= 0 && delIns < (int)al->instructions.size()) { al->instructions.erase(al->instructions.begin() + delIns); ed.dirty = true; }
     if (delCond >= 0 && delCond < (int)al->conditions.size()) { al->conditions.erase(al->conditions.begin() + delCond); ed.dirty = true; }
     ImGui::End();
@@ -9741,6 +9755,89 @@ static bool VarNamePicker(const char* id, std::string& value, const std::vector<
     return changed;
 }
 
+// Every object name currently in the scene hierarchy (for object-argument pickers).
+static void CollectSceneObjectNames(Scene* scene, std::vector<std::string>& out) {
+    out.clear();
+    if (scene) for (const auto& up : scene->Objects()) {
+        GameObject* g = up.get();
+        if (g && !g->name.empty() && std::find(out.begin(), out.end(), g->name) == out.end())
+            out.push_back(g->name);
+    }
+    std::sort(out.begin(), out.end());
+}
+
+// Every .okayprefab under the project's Assets folder (relative paths, so they can be
+// dropped straight into a spawn instruction). Cached per project dir — a directory
+// walk every frame would be wasteful.
+static const std::vector<std::string>& CollectProjectPrefabs() {
+    static std::string cachedFor = "\x01";   // sentinel so first call always rescans
+    static std::vector<std::string> cache;
+    if (cachedFor == g_pickerProjectDir) return cache;
+    cachedFor = g_pickerProjectDir;
+    cache.clear();
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path assets = g_pickerProjectDir.empty() ? fs::path("Assets")
+                                                 : fs::path(g_pickerProjectDir) / "Assets";
+    if (fs::is_directory(assets, ec)) {
+        for (auto it = fs::recursive_directory_iterator(assets, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (!it->is_regular_file(ec)) continue;
+            if (it->path().extension() == ".okayprefab") {
+                fs::path rel = fs::relative(it->path(), assets, ec);
+                cache.push_back((ec ? it->path() : rel).generic_string());
+            }
+        }
+    }
+    std::sort(cache.begin(), cache.end());
+    return cache;
+}
+
+// Object / prefab name field with a dropdown of everything in the scene (or every
+// prefab in the project). Type a literal name, pick from the list, or use "$var" to
+// mean "whatever object the variable names" (e.g. the For-Each-Tagged current object).
+// Returns true when `value` changed.
+static bool ObjNamePicker(const char* id, std::string& value, Scene* scene, bool prefab) {
+    bool changed = false;
+    ImGui::PushID(id);
+    char buf[128]; std::strncpy(buf, value.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+    ImGui::SetNextItemWidth(prefab ? 150 : 120);
+    if (ImGui::InputTextWithHint("##on", prefab ? "prefab" : "object", buf, sizeof(buf))) { value = buf; changed = true; }
+    ImGui::SameLine(0.0f, 2.0f);
+    if (ImGui::ArrowButton("##onpick", ImGuiDir_Down)) ImGui::OpenPopup("##onlist");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(prefab ? "Pick a prefab from the project" : "Pick an object from the scene (or use $var)");
+    if (ImGui::BeginPopup("##onlist")) {
+        if (prefab) {
+            const auto& pf = CollectProjectPrefabs();
+            if (pf.empty()) ImGui::TextDisabled("(no .okayprefab files in Assets)");
+            for (const auto& p : pf)
+                if (ImGui::Selectable(p.c_str(), p == value)) { value = p; changed = true; }
+        } else {
+            std::vector<std::string> names; CollectSceneObjectNames(scene, names);
+            if (names.empty()) ImGui::TextDisabled("(no objects in scene)");
+            for (const auto& n : names)
+                if (ImGui::Selectable(n.c_str(), n == value)) { value = n; changed = true; }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+// Which argument index (if any) names a scene object or a prefab file, so the editor
+// can offer a picker instead of a bare text box. Sets `prefab` for spawn-style ops.
+static int ActionOpObjArg(const std::string& op, bool& prefab) {
+    prefab = false;
+    if (op=="spawn"||op=="spawn3"||op=="spawn_at"||op=="spawn_wave"||op=="shoot_at") { prefab = true; return 0; }
+    if (op=="look_at"||op=="follow"||op=="flee"||op=="orbit"||op=="set_parent"||
+        op=="dist_lt"||op=="dist_gt"||op=="exists"||op=="destroy_obj"||op=="angle_to"||
+        op=="obj_has_tag"||op=="obj_active")
+        return 0;
+    return -1;
+}
+
 static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
                           int id, bool& dirty, Scene* scene = nullptr) {
     int action = 0;
@@ -9873,7 +9970,12 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         } else if (it.op == "set_bar") {
             ActionObjectPicker(it, 0, "Bar", scene, dirty, /*bar*/2);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which Progress Bar / Radial to fill.");
-            ImGui::SameLine(); varField("from", 1, "variable");
+            // The source variable is a real picker (auto-detected: health/stat scripts,
+            // UI binds, script vars, ...) so you don't have to know/retype the name.
+            ImGui::SameLine(); ImGui::TextUnformatted("from"); ImGui::SameLine();
+            std::vector<std::string> barVars; CollectSceneVarNames(scene, barVars);
+            std::string bv = getArg(1);
+            if (VarNamePicker("barfrom", bv, barVars)) setArg(1, bv);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable to read (its value / Max = the fill).");
             float mx = getArg(2).empty() ? 100.0f : (float)std::atof(getArg(2).c_str());
             ImGui::SameLine(); ImGui::SetNextItemWidth(60);
@@ -9883,6 +9985,31 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable to store the value in.");
             ImGui::SameLine(); varField("= Saved", 1, "health");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The saved-value/stat name to read (e.g. health, published by the Health component).");
+        }
+    } else if (bool _pf = false; ActionOpObjArg(it.op, _pf) == 0) {
+        // The first argument names a scene object (or a prefab file). Offer a dropdown
+        // of everything in the hierarchy / project so the user never has to type/guess
+        // a name; extra args (distance, speed, tag, ...) stay a plain value box.
+        auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
+        auto setArg = [&](std::size_t i, const std::string& v) {
+            while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
+        };
+        std::string o0 = getArg(0);
+        if (ObjNamePicker("o0", o0, scene, _pf)) setArg(0, o0);
+        if (ops[cur].hint[0]) {   // remaining value(s) after the object/prefab name
+            ImGui::SameLine();
+            std::string joined;
+            for (std::size_t k = 1; k < it.args.size(); ++k) { if (!joined.empty()) joined += ' '; joined += it.args[k]; }
+            char buf[128]; std::strncpy(buf, joined.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+            ImGui::SetNextItemWidth(-78);
+            if (ImGui::InputTextWithHint("##oval", ops[cur].hint, buf, sizeof(buf))) {
+                std::string name = getArg(0);
+                it.args.clear(); it.args.push_back(name);
+                std::stringstream ss(buf); std::string tok;
+                while (ss >> tok) it.args.push_back(tok);
+                dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Values: %s", ops[cur].hint);
         }
     } else if (ActionOpUsesVar(it.op)) {
         // Variable name(s) come from a picker (auto-detected from the scene), so you
@@ -14255,10 +14382,30 @@ void DrawInspector(EditorState& ed) {
                         "Mouse triggers need a Collider (3D) or Sprite/Collider (2D) to be clickable.");
             }
 
+            g_pickerProjectDir = ed.projectDir();   // so object/prefab pickers can list prefabs
+            // Draw one numbered "card" row (faint frame + index) around an action, so
+            // stacked conditions/instructions are easy to scan and reorder.
+            auto cardRow = [&](std::vector<ActionList::Item>& list, std::size_t i, const ActionOpInfo* ops, int nops, int idBase) -> int {
+                ImGui::PushID(idBase + (int)i);
+                ImDrawList* rdl = ImGui::GetWindowDrawList();
+                ImVec2 p0 = ImGui::GetCursorScreenPos();
+                float w = ImGui::GetContentRegionAvail().x;
+                ImGui::BeginGroup();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("%d", (int)i + 1); ImGui::SameLine(26.0f);
+                int act = DrawActionItem(list[i], ops, nops, idBase + (int)i, ed.dirty, &ed.scene());
+                ImGui::EndGroup();
+                ImVec2 p1 = ImGui::GetItemRectMax();
+                rdl->AddRect(ImVec2(p0.x - 3, p0.y - 2), ImVec2(p0.x + w, p1.y + 2), IM_COL32(255, 255, 255, 22), 4.0f);
+                ImGui::PopID();
+                ImGui::Spacing();
+                return act;
+            };
+
             SectionHeader("Conditions (all must pass)");
             if (al->conditions.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
             for (std::size_t i = 0; i < al->conditions.size();) {
-                int act = DrawActionItem(al->conditions[i], kCondOps, IM_ARRAYSIZE(kCondOps), (int)i, ed.dirty, &ed.scene());
+                int act = cardRow(al->conditions, i, kCondOps, IM_ARRAYSIZE(kCondOps), 0);
                 i = ApplyItemAction(al->conditions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
@@ -14268,7 +14415,7 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Instructions (run top to bottom)");
             if (al->instructions.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
             for (std::size_t i = 0; i < al->instructions.size();) {
-                int act = DrawActionItem(al->instructions[i], kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000 + (int)i, ed.dirty, &ed.scene());
+                int act = cardRow(al->instructions, i, kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000);
                 i = ApplyItemAction(al->instructions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({"move", {}}); ed.dirty = true; }

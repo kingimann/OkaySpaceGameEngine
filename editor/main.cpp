@@ -9223,6 +9223,38 @@ static bool TagPicker(const char* id, std::string& value, okay::Scene* scene) {
     return changed;
 }
 
+// Animation clip names: common state presets plus every clip authored on a Character
+// anywhere in the scene, for the Play Clip picker.
+static void CollectAnimClips(okay::Scene* scene, std::vector<std::string>& out) {
+    out.clear();
+    for (const char* c : {"idle", "walk", "run", "jump", "attack", "hit", "die"}) out.push_back(c);
+    if (scene) for (const auto& up : scene->Objects()) {
+        okay::GameObject* g = up.get(); if (!g) continue;
+        if (auto* ch = g->GetComponent<okay::Character>())
+            for (const auto& n : ch->ClipNames())
+                if (!n.empty() && std::find(out.begin(), out.end(), n) == out.end()) out.push_back(n);
+    }
+    std::sort(out.begin(), out.end());
+}
+
+// Clip-name field: type a clip or pick one (presets + authored clips) from the ▼ list.
+static bool ClipPicker(const char* id, std::string& value, okay::Scene* scene) {
+    bool changed = false;
+    ImGui::PushID(id);
+    char buf[64]; std::strncpy(buf, value.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputTextWithHint("##clip", "clip name", buf, sizeof(buf))) { value = buf; changed = true; }
+    ImGui::SameLine(0.0f, 2.0f);
+    if (ImGui::ArrowButton("##clipp", ImGuiDir_Down)) ImGui::OpenPopup("##cliplist");
+    if (ImGui::BeginPopup("##cliplist")) {
+        std::vector<std::string> clips; CollectAnimClips(scene, clips);
+        for (const auto& c : clips) if (ImGui::Selectable(c.c_str(), c == value)) { value = c; changed = true; }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 // A dropdown of all keys (no free-text) for choosing a trigger/condition key.
 static bool KeyPicker(const char* id, std::string& key, bool& dirty) {
     bool changed = false;
@@ -9341,7 +9373,12 @@ static void DrawFlowGraph(EditorState& ed) {
     static std::unordered_map<void*, float> zoomMap;
     float& zoom = zoomMap[(void*)al];
     if (zoom < 0.35f || zoom > 3.0f) zoom = 1.0f;   // init / sanitize
-    if (ImGui::SmallButton("+ Instruction") || g_flowAddInsReq) ImGui::OpenPopup("##addinspal");
+    // A small labelled group separator so the toolbar reads as tidy sections.
+    auto barSep = []() { ImGui::SameLine(0.0f, 10.0f); ImGui::TextDisabled("|"); ImGui::SameLine(0.0f, 10.0f); };
+
+    // ---- Row 1: build the script (add nodes / reusable actions / variables) ----
+    ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Add:"); ImGui::SameLine();
+    if (ImGui::Button("+ Instruction") || g_flowAddInsReq) ImGui::OpenPopup("##addinspal");
     g_flowAddInsReq = false;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run — pick it from a searchable list.");
     if (const char* op = FlowOpPalettePopup("##addinspal", kInstrOps, IM_ARRAYSIZE(kInstrOps))) {
@@ -9350,52 +9387,51 @@ static void DrawFlowGraph(EditorState& ed) {
         ed.dirty = true;
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("+ Condition") || g_flowAddCondReq) ImGui::OpenPopup("##addcondpal");
+    if (ImGui::Button("+ Condition") || g_flowAddCondReq) ImGui::OpenPopup("##addcondpal");
     g_flowAddCondReq = false;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a gate — the actions run only if every condition passes. Pick it from a searchable list.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a gate — the actions run only if every condition passes.");
     if (const char* op = FlowOpPalettePopup("##addcondpal", kCondOps, IM_ARRAYSIZE(kCondOps))) {
         al->conditions.push_back({op, {}});
         g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)al->conditions.size() - 1;
         ed.dirty = true;
     }
-    ImGui::SameLine(); CustomActionButton("flowinscustom", /*cond*/false, al->instructions, ed.dirty);
+    barSep(); ImGui::TextDisabled("Reusable:"); ImGui::SameLine();
+    CustomActionButton("flowinscustom", /*cond*/false, al->instructions, ed.dirty);
     ImGui::SameLine(); SaveAsCustomButton("flowinssave", /*cond*/false, al->instructions);
     ImGui::SameLine(); CustomActionButton("flowcondcustom", /*cond*/true, al->conditions, ed.dirty);
     ImGui::SameLine(); SaveAsCustomButton("flowcondsave", /*cond*/true, al->conditions);
-    ImGui::SameLine();
+    barSep();
     { char vlbl[32]; std::snprintf(vlbl, sizeof(vlbl), "Variables (%d)", (int)al->variables.size());
-      if (ImGui::SmallButton(vlbl)) ImGui::OpenPopup("##flowvars"); }
+      if (ImGui::Button(vlbl)) ImGui::OpenPopup("##flowvars"); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create variables with a starting value — usable in every action/condition.");
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Reset View")) { pan = ImVec2(0, 0); zoom = 1.0f; }
-    ImGui::SameLine();
-    ImGui::Text("%d%%", (int)(zoom * 100.0f + 0.5f));
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom (scroll to change, Reset View for 100%%)");
-    ImGui::SameLine();
-    ImGui::TextDisabled("(click a node to edit; click the trigger to change it)");
-    ImGui::SameLine();
+
+    // ---- Row 2: view + run/debug controls ----
+    ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("View:"); ImGui::SameLine();
+    if (ImGui::Button("Reset")) { pan = ImVec2(0, 0); zoom = 1.0f; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Recentre and reset zoom to 100%%.");
+    ImGui::SameLine(); ImGui::Text("%d%%", (int)(zoom * 100.0f + 0.5f));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom — scroll to change.");
+    barSep();
     if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "● running");
     else                 ImGui::TextDisabled("○ idle");
-
-    // Step debugger: pause running Actions and advance one instruction at a time,
-    // watching values change in the Variables panel. Shared across all lists.
+    barSep();
     bool& paused = ActionList::DebugPaused();
-    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     if (ImGui::Checkbox("Pause", &paused)) { if (paused) ActionList::StepBudget() = 0; }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause all Actions and step them one action at a time (for debugging).");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause all Actions and step them one at a time (debug).");
     if (paused) {
         ImGui::SameLine();
-        if (ImGui::SmallButton("Step")) ActionList::StepBudget() += 1;      // run exactly one action
+        if (ImGui::Button("Step")) ActionList::StepBudget() += 1;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run the next single action, then pause again.");
         ImGui::SameLine();
-        if (ImGui::SmallButton("Step 10")) ActionList::StepBudget() += 10;
+        if (ImGui::Button("Step 10")) ActionList::StepBudget() += 10;
         ImGui::SameLine();
-        if (ImGui::SmallButton("Continue")) paused = false;                 // resume normal speed
+        if (ImGui::Button("Continue")) paused = false;
         ImGui::SameLine();
         int cur = al->CurrentInstruction();
         if (al->IsRunning() && cur >= 0) ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "paused at #%d", cur);
         else ImGui::TextDisabled("paused");
     }
+    ImGui::SameLine(); ImGui::TextDisabled("   (click a node to edit its values below)");
     ImGui::Separator();
 
     static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",
@@ -9408,7 +9444,7 @@ static void DrawFlowGraph(EditorState& ed) {
     // Change the trigger and edit the currently-selected node right here, so editing
     // never depends on discovering the click-to-open popups. Clicking a node in the
     // canvas below selects it and its editor appears in this strip.
-    ImGui::BeginChild("##flowedit", ImVec2(0, 78), true, ImGuiWindowFlags_NoScrollbar);
+    ImGui::BeginChild("##flowedit", ImVec2(0, 118), true, ImGuiWindowFlags_None);
     {
         ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Trigger"); ImGui::SameLine();
         int ti2 = (int)al->trigger; ImGui::SetNextItemWidth(160);
@@ -10416,6 +10452,10 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         if (AssetPicker("img", s0, {".png", ".jpg", ".jpeg", ".bmp", ".tga"}, "image file")) {
             if (it.args.empty()) it.args.push_back(""); it.args[0] = s0; dirty = true;
         }
+    } else if (it.op == "play_clip") {
+        std::string s0 = it.args.empty() ? std::string() : it.args[0];
+        ImGui::TextUnformatted("Clip"); ImGui::SameLine();
+        if (ClipPicker("pclip", s0, scene)) { if (it.args.empty()) it.args.push_back(""); it.args[0] = s0; dirty = true; }
     } else if (it.op == "while" || it.op == "if_goto" || it.op == "vars_cmp") {
         // Friendly comparison editor: variable picker + operator dropdown + value
         // (+ a jump target for if_goto), so nobody has to remember the "lt"/"gt" tokens.

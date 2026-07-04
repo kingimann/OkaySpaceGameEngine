@@ -19,6 +19,7 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/Collider3D.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -154,51 +155,76 @@ bool RayDirFromToken(GameObject* go, const std::string& tok, Vec3& dir) {
     return false;
 }
 
+// Is this arg one of the optional trailing modifier tokens ("h:<n>" / "ig:<tag>")
+// rather than a positional value?
+bool IsRayMod(const std::string& a) { return a.rfind("h:", 0) == 0 || a.rfind("ig:", 0) == 0; }
+
 // Cast a ray for an action item. args[base] is a direction token (keyword or the
 // first of a raw "x y z" triple, kept for back-compat); the distance follows.
-// Returns the nearest hit (the object's own colliders are ignored).
+// Optional trailing modifiers (any order): "h:<offset>" raises/lowers the start point
+// along world-up (so it can leave the feet); "ig:<tag>" ignores objects with that tag.
+// Returns the nearest hit (the caster's own colliders are always ignored).
 RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size_t base) {
     RaycastHit3D miss;
     Scene* s = go ? go->scene() : nullptr;
     if (!s || !go || !go->transform) return miss;
+    float height = 0.0f; std::string ignoreTag, onlyTag;
+    for (const std::string& a : it.args) {
+        if (a.rfind("h:", 0) == 0)  height = (float)std::atof(a.c_str() + 2);
+        else if (a.rfind("ig:", 0) == 0) ignoreTag = a.substr(3);
+        else if (a.rfind("only:", 0) == 0) onlyTag = a.substr(5);
+    }
     Vec3 dir; float dist;
     if (RayDirFromToken(go, Str(it, base), dir)) {
-        dist = it.args.size() > base + 1 ? Num(it, base + 1) : 100.0f;
+        dist = (it.args.size() > base + 1 && !IsRayMod(Str(it, base + 1))) ? Num(it, base + 1) : 100.0f;
     } else {
         dir = {Num(it, base + 0), Num(it, base + 1), Num(it, base + 2)};
         if (dir.SqrMagnitude() < 1e-8f) dir = go->transform->Forward();
-        dist = it.args.size() > base + 3 ? Num(it, base + 3) : 100.0f;
+        dist = (it.args.size() > base + 3 && !IsRayMod(Str(it, base + 3))) ? Num(it, base + 3) : 100.0f;
     }
     if (dist <= 0.0f) dist = 1e9f;
-    Vec3 origin = go->transform->Position();
+    Vec3 origin = go->transform->Position() + Vec3{0.0f, height, 0.0f};
     Vec3 nd = dir.Normalized();
-    // Cast in 3D against Collider3D...
+
+    // Temporarily disable every collider the ray must NOT hit: the caster itself, any
+    // object with the ignore tag, and — when an "only" tag is set (a layer-mask-style
+    // include filter) — everything that isn't that tag. Both physics engines skip
+    // disabled colliders, so this filters in 2D and 3D alike; flags are restored after.
+    std::vector<Collider2D*> off2; std::vector<bool> was2;
+    std::vector<Collider3D*> off3; std::vector<bool> was3;
+    auto muteObj = [&](GameObject* g) {
+        if (!g) return;
+        for (Collider2D* c : g->GetComponents<Collider2D>()) { off2.push_back(c); was2.push_back(c->enabled); c->enabled = false; }
+        for (Collider3D* c : g->GetComponents<Collider3D>()) { off3.push_back(c); was3.push_back(c->enabled); c->enabled = false; }
+    };
+    for (const auto& up : s->Objects()) {
+        GameObject* g = up.get(); if (!g) continue;
+        bool mute = (g == go)
+                 || (!ignoreTag.empty() && g->tag == ignoreTag)
+                 || (!onlyTag.empty()   && g->tag != onlyTag);
+        if (mute) muteObj(g);
+    }
+
     RaycastHit3D h3 = s->physics3D().Raycast(*s, origin, nd, dist, go);
-    // ...and in 2D against Collider2D, so a raycast in a top-down / side-scroller game
-    // hits sprites too. Only when the ray has a real XY direction (a pure ±Z ray, e.g.
-    // 3D "forward", has no 2D meaning). Nudge the origin off the caster's own collider
-    // (the 2D query has no ignore-self), then keep whichever hit is nearer.
+    RaycastHit3D result = h3;
+    // Also cast in 2D against Collider2D, so a raycast in a top-down / side-scroller game
+    // hits sprites too — but only when the ray has a real XY direction (a pure ±Z ray,
+    // e.g. 3D "forward", has no 2D meaning). Keep whichever hit is nearer.
     Vec2 d2{nd.x, nd.y};
     if (d2.SqrMagnitude() > 1e-6f) {
         d2 = d2.Normalized();
-        // Temporarily disable the caster's own 2D colliders so the ray — which starts
-        // inside our own sprite — doesn't just "hit" ourselves and miss everything else.
-        // (The 2D query has no ignore-self parameter; Raycast skips disabled colliders.)
-        std::vector<Collider2D*> self = go->GetComponents<Collider2D>();
-        std::vector<bool> wasOn; wasOn.reserve(self.size());
-        for (Collider2D* c : self) { wasOn.push_back(c->enabled); c->enabled = false; }
         RaycastHit2D h2 = s->physics().Raycast(*s, Vec2{origin.x, origin.y}, d2, dist);
-        for (std::size_t k = 0; k < self.size(); ++k) self[k]->enabled = wasOn[k];
         if (h2.hit && (!h3.hit || h2.distance < h3.distance)) {
-            RaycastHit3D r;
-            r.hit = true; r.gameObject = h2.gameObject;
-            r.point = {h2.point.x, h2.point.y, origin.z};
-            r.normal = {h2.normal.x, h2.normal.y, 0.0f};
-            r.distance = h2.distance;
-            return r;
+            result.hit = true; result.gameObject = h2.gameObject;
+            result.point = {h2.point.x, h2.point.y, origin.z};
+            result.normal = {h2.normal.x, h2.normal.y, 0.0f};
+            result.distance = h2.distance;
         }
     }
-    return h3;
+
+    for (std::size_t k = 0; k < off2.size(); ++k) off2[k]->enabled = was2[k];
+    for (std::size_t k = 0; k < off3.size(); ++k) off3[k]->enabled = was3[k];
+    return result;
 }
 } // namespace
 
@@ -317,6 +343,7 @@ bool ActionList::EvalConditions() {
         else if (op == "prefs_lt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) < Num(c, 1);
         else if (op == "prefs_neq")ok = !Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
         else if (op == "var_between") { float v = GetVar(Str(c, 0)); ok = v >= Num(c, 1) && v <= Num(c, 2); }
+        else if (op == "vars_cmp") ok = CmpPass(Str(c, 1), GetVar(Str(c, 0)), GetVar(Str(c, 2)));  // var <op> var
         else if (op == "is_moving") {   // any Rigidbody velocity above the threshold (default 0.01)
             float thr = c.args.size() > 0 ? Num(c, 0) : 0.01f, sp = 0.0f;
             if (auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr)
@@ -858,19 +885,26 @@ void ActionList::Update(float dt) {
                 for (ActionList* a : g->GetComponents<ActionList>()) a->ReceiveMessage(Str(it, 1));
         }
         else if (op == "raycast") {              // cast a ray, store the result in variables
-            // Args: <direction> [distance] [prefix].  direction = forward/back/up/
-            // down/left/right or toward:<object>. Writes <prefix>_hit (1/0),
-            // <prefix>_dist and <prefix>_x/_y/_z (the hit point) so later
-            // instructions can branch on them (if_goto) or use the position.
+            // Args: <direction> [distance] [prefix] [h:offset] [ig:tag]. Writes number
+            // vars <prefix>_hit (1/0), <prefix>_dist, <prefix>_x/_y/_z (the hit point)
+            // and text vars <prefix>_name / <prefix>_tag (what it hit) so later
+            // instructions can branch on them (if_goto) or compare the object (str_eq).
             if (scene && gameObject) {
                 RaycastHit3D h = ActionRaycast(gameObject, it, 0);
-                std::string pre = it.args.size() > 2 ? Str(it, 2) : std::string("ray");
+                std::string pre;                       // first non-modifier arg after distance
+                for (std::size_t k = 2; k < it.args.size(); ++k)
+                    if (!IsRayMod(Str(it, k))) { pre = Str(it, k); break; }
                 if (pre.empty()) pre = "ray";
                 Vars()[pre + "_hit"]  = h.hit ? 1.0f : 0.0f;
                 Vars()[pre + "_dist"] = h.distance;
                 Vars()[pre + "_x"] = h.point.x;
                 Vars()[pre + "_y"] = h.point.y;
                 Vars()[pre + "_z"] = h.point.z;
+                Vars()[pre + "_nx"] = h.normal.x;   // surface normal (Unity's hit.normal)
+                Vars()[pre + "_ny"] = h.normal.y;
+                Vars()[pre + "_nz"] = h.normal.z;
+                StrVars()[pre + "_name"] = h.gameObject ? h.gameObject->name : std::string();
+                StrVars()[pre + "_tag"]  = h.gameObject ? h.gameObject->tag  : std::string();
             }
         }
         else if (op == "if_goto") {              // conditional jump: var <op> value -> line or label

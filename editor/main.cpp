@@ -8551,6 +8551,7 @@ static const ActionOpInfo kCondOps[] = {
     {"raycast_name","Raycast Hits Object","object direction [distance]","Like Raycast Hits, but only passes if it hits the named object.", "World"},
     {"prefs_neq",  "Saved Value ≠",        "key value",                  "Passes if a saved (Prefs) value is not equal to the number.",   "Variables"},
     {"var_between","Variable In Range",    "name min max",               "Passes if the variable is between min and max (inclusive).",    "Variables"},
+    {"vars_cmp",  "Compare Two Variables","varA op varB",               "Passes if one variable compares to ANOTHER variable (a < b, a == b, ...).", "Variables"},
     {"is_moving",  "Is Moving",            "[min speed]",                "Passes if this object's Rigidbody is moving faster than the threshold.", "World"},
     {"tag_count_lt","Fewer Tagged Than",   "tag count",                  "Passes if fewer than N active objects have this tag (e.g. wave cleared).", "World"},
     {"tag_count_gt","More Tagged Than",    "tag count",                  "Passes if more than N active objects have this tag.",          "World"},
@@ -9998,8 +9999,40 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             char pb[64]; std::strncpy(pb, getArg(dirIdx+2).c_str(), sizeof(pb)-1); pb[sizeof(pb)-1]='\0';
             ImGui::SetNextItemWidth(70);
             if (ImGui::InputTextWithHint("##rpre", "prefix", pb, sizeof(pb))) setArg(dirIdx+2, pb);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stores <prefix>_hit, _dist, _x, _y, _z variables.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stores <prefix>_hit/_dist/_x/_y/_z, _nx/_ny/_nz (normal),\nand text _name/_tag (what it hit — compare with str_eq).");
         }
+        // Optional Unity-style filters, stored as trailing tokens (h: / ig: / only:)
+        // that always sit AFTER the positional args so setting the prefix never clobbers
+        // them (and vice-versa).
+        std::size_t baseCount = dirIdx + (isInstr ? 3 : 2);   // direction, distance[, prefix]
+        auto getMod = [&](const char* p) -> std::string {
+            std::size_t pl = std::strlen(p);
+            for (auto& a : it.args) if (a.rfind(p, 0) == 0) return a.substr(pl);
+            return std::string();
+        };
+        auto setMod = [&](const char* p, const std::string& v) {
+            it.args.erase(std::remove_if(it.args.begin(), it.args.end(),
+                          [&](const std::string& a){ return a.rfind(p, 0) == 0; }), it.args.end());
+            while (it.args.size() < baseCount) it.args.push_back("");   // keep positional slots intact
+            if (!v.empty()) it.args.push_back(std::string(p) + v);
+            dirty = true;
+        };
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        float startH = getMod("h:").empty() ? 0.0f : (float)std::atof(getMod("h:").c_str());
+        ImGui::SetNextItemWidth(64);
+        if (ImGui::DragFloat("start Y", &startH, 0.05f, -100.0f, 100.0f, "%.2f"))
+            setMod("h:", startH == 0.0f ? std::string() : std::to_string(startH));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Raise/lower where the ray starts (off the feet).");
+        ImGui::SameLine();
+        char igb[48]; std::strncpy(igb, getMod("ig:").c_str(), sizeof(igb)-1); igb[sizeof(igb)-1]='\0';
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::InputTextWithHint("ignore", "tag", igb, sizeof(igb))) setMod("ig:", igb);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ignore objects with this tag (pass through them).");
+        ImGui::SameLine();
+        char onb[48]; std::strncpy(onb, getMod("only:").c_str(), sizeof(onb)-1); onb[sizeof(onb)-1]='\0';
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::InputTextWithHint("only", "tag", onb, sizeof(onb))) setMod("only:", onb);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only hit objects with this tag (like a layer mask).");
     } else if (it.op == "set_text" || it.op == "set_text_on" || it.op == "set_bar" ||
                it.op == "get_prefs") {
         // Friendly, Unity-style fields so it's clear WHAT you're setting and WHAT
@@ -10059,9 +10092,10 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             ImGui::SameLine(); varField("= Saved", 1, "health");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The saved-value/stat name to read (e.g. health, published by the Health component).");
         }
-    } else if (it.op == "while" || it.op == "if_goto") {
+    } else if (it.op == "while" || it.op == "if_goto" || it.op == "vars_cmp") {
         // Friendly comparison editor: variable picker + operator dropdown + value
         // (+ a jump target for if_goto), so nobody has to remember the "lt"/"gt" tokens.
+        // For vars_cmp the right-hand side is ANOTHER variable picker, not a value.
         auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
         auto setArg = [&](std::size_t i, const std::string& v) {
             while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
@@ -10077,9 +10111,15 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         if (ImGui::Combo("##wop", &oi, opLabels, 6)) setArg(1, opTokens[oi]);
         else if (curOp.empty()) setArg(1, opTokens[oi]);
         ImGui::SameLine();
+        if (it.op == "vars_cmp") {          // right side is a second variable
+            std::string v2 = getArg(2);
+            if (VarNamePicker("wv2", v2, vars)) setArg(2, v2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The second variable to compare against.");
+        } else {
         char vb[64]; std::strncpy(vb, getArg(2).c_str(), sizeof(vb) - 1); vb[sizeof(vb) - 1] = '\0';
         ImGui::SetNextItemWidth(70);
         if (ImGui::InputTextWithHint("##wval", "value", vb, sizeof(vb))) setArg(2, vb);
+        }
         if (it.op == "if_goto") {
             ImGui::SameLine(); ImGui::TextUnformatted("goto"); ImGui::SameLine();
             char tb[64]; std::strncpy(tb, getArg(3).c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';

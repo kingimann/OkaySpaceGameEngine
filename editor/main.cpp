@@ -9188,6 +9188,38 @@ static const std::vector<std::pair<std::string, std::string>>& AllKeys() {
     return v;
 }
 
+// Distinct tags in the scene, plus the common presets, for the tag picker.
+static void CollectSceneTags(okay::Scene* scene, std::vector<std::string>& out) {
+    out.clear();
+    for (const char* t : {"Player", "Enemy", "MainCamera", "Respawn", "Finish", "GameController", "UI"})
+        out.push_back(t);
+    if (scene) for (const auto& up : scene->Objects()) {
+        okay::GameObject* g = up.get();
+        if (g && !g->tag.empty() && std::find(out.begin(), out.end(), g->tag) == out.end()) out.push_back(g->tag);
+    }
+    std::sort(out.begin(), out.end());
+}
+
+// Tag field: type a tag or pick an existing one from the ▼ list (tags are open-ended,
+// so unlike keys this still allows typing a brand-new tag).
+static bool TagPicker(const char* id, std::string& value, okay::Scene* scene) {
+    bool changed = false;
+    ImGui::PushID(id);
+    char buf[64]; std::strncpy(buf, value.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+    ImGui::SetNextItemWidth(100);
+    if (ImGui::InputTextWithHint("##tg", "tag", buf, sizeof(buf))) { value = buf; changed = true; }
+    ImGui::SameLine(0.0f, 2.0f);
+    if (ImGui::ArrowButton("##tgp", ImGuiDir_Down)) ImGui::OpenPopup("##tglist");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a tag used in the scene");
+    if (ImGui::BeginPopup("##tglist")) {
+        std::vector<std::string> tags; CollectSceneTags(scene, tags);
+        for (const auto& t : tags) if (ImGui::Selectable(t.c_str(), t == value)) { value = t; changed = true; }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 // A dropdown of all keys (no free-text) for choosing a trigger/condition key.
 static bool KeyPicker(const char* id, std::string& key, bool& dirty) {
     bool changed = false;
@@ -10278,6 +10310,37 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         std::string k = it.args.empty() ? std::string() : it.args[0];
         ImGui::TextUnformatted("Key"); ImGui::SameLine();
         if (KeyPicker("condkey", k, dirty)) setArg(0, k);
+    } else if (it.op == "has_tag" || it.op == "any_with_tag" || it.op == "tag_count_gt" ||
+               it.op == "tag_count_lt" || it.op == "for_each_tag") {
+        // Tag argument comes from a picker (scene tags + presets); second field varies.
+        auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
+        auto setArg = [&](std::size_t i, const std::string& v) {
+            while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
+        };
+        std::string t0 = getArg(0);
+        ImGui::TextUnformatted("Tag"); ImGui::SameLine();
+        if (TagPicker("tagp", t0, scene)) setArg(0, t0);
+        if (it.op == "tag_count_gt" || it.op == "tag_count_lt") {
+            ImGui::SameLine(); ImGui::TextUnformatted(it.op == "tag_count_gt" ? ">" : "<"); ImGui::SameLine();
+            int cnt = (int)std::atof(getArg(1).c_str()); ImGui::SetNextItemWidth(70);
+            if (ImGui::DragInt("##tcnt", &cnt, 0.1f, 0, 100000)) setArg(1, std::to_string(cnt));
+        } else if (it.op == "for_each_tag") {
+            ImGui::SameLine(); ImGui::TextUnformatted("into"); ImGui::SameLine();
+            char nb[64]; std::strncpy(nb, getArg(1).c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputTextWithHint("##fetn", "name-var", nb, sizeof(nb))) setArg(1, nb);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The current object's name goes in this variable — use it as $name in object fields.");
+        }
+    } else if (it.op == "set_color") {
+        // A real color swatch/picker instead of typing r g b [a].
+        auto argF = [&](std::size_t i, float d) { return i < it.args.size() && !it.args[i].empty() ? (float)std::atof(it.args[i].c_str()) : d; };
+        float col[4] = { argF(0, 1.0f), argF(1, 1.0f), argF(2, 1.0f), argF(3, 1.0f) };
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::ColorEdit4("##setcol", col, ImGuiColorEditFlags_AlphaBar)) {
+            it.args.clear();
+            for (int k = 0; k < 4; ++k) { char b[16]; std::snprintf(b, sizeof(b), "%g", col[k]); it.args.push_back(b); }
+            dirty = true;
+        }
     } else if (it.op == "while" || it.op == "if_goto" || it.op == "vars_cmp") {
         // Friendly comparison editor: variable picker + operator dropdown + value
         // (+ a jump target for if_goto), so nobody has to remember the "lt"/"gt" tokens.
@@ -10327,6 +10390,10 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         if (vn && vstart == 1) {          // spawn-style: prefab, then a position vector
             ImGui::SameLine(); ImGui::TextDisabled("at"); ImGui::SameLine();
             VectorFields(it, vstart, vn, dirty);
+        } else if (it.op == "obj_has_tag") {   // object + a tag picker
+            ImGui::SameLine(); ImGui::TextUnformatted("has tag"); ImGui::SameLine();
+            std::string t1 = getArg(1);
+            if (TagPicker("ohttag", t1, scene)) setArg(1, t1);
         } else if (ops[cur].hint[0]) {    // remaining value(s) after the object/prefab name
             ImGui::SameLine();
             std::string joined;

@@ -169,7 +169,30 @@ RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size
         dist = it.args.size() > base + 3 ? Num(it, base + 3) : 100.0f;
     }
     if (dist <= 0.0f) dist = 1e9f;
-    return s->physics3D().Raycast(*s, go->transform->Position(), dir.Normalized(), dist, go);
+    Vec3 origin = go->transform->Position();
+    Vec3 nd = dir.Normalized();
+    // Cast in 3D against Collider3D...
+    RaycastHit3D h3 = s->physics3D().Raycast(*s, origin, nd, dist, go);
+    // ...and in 2D against Collider2D, so a raycast in a top-down / side-scroller game
+    // hits sprites too. Only when the ray has a real XY direction (a pure ±Z ray, e.g.
+    // 3D "forward", has no 2D meaning). Nudge the origin off the caster's own collider
+    // (the 2D query has no ignore-self), then keep whichever hit is nearer.
+    Vec2 d2{nd.x, nd.y};
+    if (d2.SqrMagnitude() > 1e-6f) {
+        d2 = d2.Normalized();
+        Vec2 o2{origin.x + d2.x * 0.01f, origin.y + d2.y * 0.01f};
+        RaycastHit2D h2 = s->physics().Raycast(*s, o2, d2, dist);
+        if (h2.gameObject == go) h2.hit = false;   // never report a hit on ourselves
+        if (h2.hit && (!h3.hit || h2.distance < h3.distance)) {
+            RaycastHit3D r;
+            r.hit = true; r.gameObject = h2.gameObject;
+            r.point = {h2.point.x, h2.point.y, origin.z};
+            r.normal = {h2.normal.x, h2.normal.y, 0.0f};
+            r.distance = h2.distance;
+            return r;
+        }
+    }
+    return h3;
 }
 } // namespace
 

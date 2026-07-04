@@ -8744,7 +8744,7 @@ static const char* ActionOpRequires(const std::string& op) {
         return "the named target object to exist in the scene";
     if (op.rfind("net_",0)==0) return "an active network session (Host / Join)";
     if (op.rfind("steam_",0)==0) return "Steam running (built with Steamworks)";
-    if (op.rfind("raycast",0)==0) return "a Collider in the ray's path";
+    if (op.rfind("raycast",0)==0) return "a Collider (2D or 3D) in the ray's path";
     if (op=="load_scene"||op=="load_scene_index") return "the target scene file in the project";
     return nullptr;
 }
@@ -9281,6 +9281,48 @@ static void DrawFlowGraph(EditorState& ed) {
     int ti = (int)al->trigger;
     const char* trigLabel = (ti >= 0 && ti < (int)IM_ARRAYSIZE(trigs)) ? trigs[ti] : "Trigger";
 
+    // ---- Always-visible editor strip -------------------------------------------
+    // Change the trigger and edit the currently-selected node right here, so editing
+    // never depends on discovering the click-to-open popups. Clicking a node in the
+    // canvas below selects it and its editor appears in this strip.
+    ImGui::BeginChild("##flowedit", ImVec2(0, 78), true, ImGuiWindowFlags_NoScrollbar);
+    {
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Trigger"); ImGui::SameLine();
+        int ti2 = (int)al->trigger; ImGui::SetNextItemWidth(160);
+        if (ImGui::Combo("##flowtrigInline", &ti2, trigs, IM_ARRAYSIZE(trigs))) { al->trigger = (ActionList::Trigger)ti2; ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("When these actions run.");
+        if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnKeyUp ||
+            al->trigger == ActionList::Trigger::OnMessage) {
+            bool msg = al->trigger == ActionList::Trigger::OnMessage;
+            ImGui::SameLine();
+            char kb[64]; std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
+            ImGui::SetNextItemWidth(130);
+            if (ImGui::InputTextWithHint("##flowtrigkeyInline", msg ? "message name" : "key", kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(msg ? "The message name that fires this." : "The key that fires this (e.g. space, e, w).");
+        }
+        ImGui::SameLine(); if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
+        ImGui::Separator();
+        bool haveSel = (g_flowSelAl == al && g_flowSelKind != 0);
+        if (haveSel && g_flowSelKind == 1 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->conditions.size()) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ImVec4(0.42f, 0.78f, 0.62f, 1.0f), "Condition %d", g_flowSelIdx + 1); ImGui::SameLine();
+            bool nd = false; DrawActionItem(al->conditions[g_flowSelIdx], kCondOps, IM_ARRAYSIZE(kCondOps), 73000 + g_flowSelIdx, nd, &ed.scene());
+            if (nd) ed.dirty = true;
+            ImGui::SameLine(); if (ImGui::SmallButton("Delete##fseC")) delCond = g_flowSelIdx;
+        } else if (haveSel && g_flowSelKind == 2 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->instructions.size()) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ImVec4(0.5f, 0.64f, 0.86f, 1.0f), "Instruction %d", g_flowSelIdx + 1); ImGui::SameLine();
+            bool nd = false; DrawActionItem(al->instructions[g_flowSelIdx], kInstrOps, IM_ARRAYSIZE(kInstrOps), 74000 + g_flowSelIdx, nd, &ed.scene());
+            if (nd) ed.dirty = true;
+            ImGui::SameLine(); if (ImGui::SmallButton("Up##fseU") && g_flowSelIdx > 0) { std::swap(al->instructions[g_flowSelIdx], al->instructions[g_flowSelIdx - 1]); g_flowSelIdx--; ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("Down##fseD") && g_flowSelIdx + 1 < (int)al->instructions.size()) { std::swap(al->instructions[g_flowSelIdx], al->instructions[g_flowSelIdx + 1]); g_flowSelIdx++; ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("Delete##fseI")) delIns = g_flowSelIdx;
+        } else {
+            ImGui::TextDisabled("Click a node below to edit it here — or use + Instruction / + Condition to add one.");
+        }
+    }
+    ImGui::EndChild();
+
     ImVec2 cp = ImGui::GetCursorScreenPos();
     ImVec2 cs = ImGui::GetContentRegionAvail();
     if (cs.x < 80) cs.x = 80; if (cs.y < 80) cs.y = 80;
@@ -9362,7 +9404,9 @@ static void DrawFlowGraph(EditorState& ed) {
     ImU32 trigCol = al->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
     bool trigClicked = false;
     ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, trigCol, nullptr, &trigClicked);
-    if (trigClicked) ImGui::OpenPopup("##flowtrigedit");
+    // The trigger is edited in the always-visible strip above; a click just nudges focus
+    // there. (Popup kept for the right-click menu's "Edit" path.)
+    (void)trigClicked;
 
     for (std::size_t i = 0; i < al->conditions.size(); ++i) {
         bool d = false, clk = false, rc = false;
@@ -9374,7 +9418,7 @@ static void DrawFlowGraph(EditorState& ed) {
             dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
                         ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
         if (d) delCond = (int)i;
-        if (clk) { g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodeedit"); }
+        if (clk) { g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)i; }   // select -> edits in the strip above
         if (rc)  { g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
         wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
     }
@@ -9423,7 +9467,7 @@ static void DrawFlowGraph(EditorState& ed) {
             dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
                         ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
         if (d) delIns = (int)i;
-        if (clk) { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodeedit"); }
+        if (clk) { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; }   // select -> edits in the strip above
         if (rc)  { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
         wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
         prev = c;

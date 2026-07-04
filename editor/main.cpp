@@ -10067,6 +10067,47 @@ static bool ObjNamePicker(const char* id, std::string& value, Scene* scene, bool
     return changed;
 }
 
+// Project files matching any of `exts` (scanned on demand — only while a popup is open).
+static std::vector<std::string> ScanProjectFiles(std::initializer_list<const char*> exts) {
+    std::vector<std::string> out;
+    namespace fs = std::filesystem; std::error_code ec;
+    fs::path root = g_pickerProjectDir.empty() ? fs::absolute(".", ec)
+                                               : fs::path(g_pickerProjectDir) / "Assets";
+    if (fs::is_directory(root, ec))
+        for (auto it = fs::recursive_directory_iterator(root, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (!it->is_regular_file(ec)) continue;
+            std::string e = it->path().extension().string();
+            for (const char* x : exts) if (e == x) {
+                fs::path rel = fs::relative(it->path(), root, ec);
+                out.push_back((ec ? it->path() : rel).generic_string()); break;
+            }
+        }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// Asset-path field with a ▼ dropdown of matching project files. Type a path or pick one.
+static bool AssetPicker(const char* id, std::string& value, std::initializer_list<const char*> exts, const char* hint) {
+    bool changed = false;
+    ImGui::PushID(id);
+    char buf[128]; std::strncpy(buf, value.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::InputTextWithHint("##ap", hint, buf, sizeof(buf))) { value = buf; changed = true; }
+    ImGui::SameLine(0.0f, 2.0f);
+    if (ImGui::ArrowButton("##app", ImGuiDir_Down)) ImGui::OpenPopup("##aplist");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a file from the project");
+    if (ImGui::BeginPopup("##aplist")) {
+        auto files = ScanProjectFiles(exts);
+        if (files.empty()) ImGui::TextDisabled("(none in Assets)");
+        for (const auto& f : files) if (ImGui::Selectable(f.c_str(), f == value)) { value = f; changed = true; }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 // Which argument index (if any) names a scene object or a prefab file, so the editor
 // can offer a picker instead of a bare text box. Sets `prefab` for spawn-style ops.
 static int ActionOpObjArg(const std::string& op, bool& prefab) {
@@ -10355,6 +10396,18 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             it.args.clear();
             for (int k = 0; k < 4; ++k) { char b[16]; std::snprintf(b, sizeof(b), "%g", col[k]); it.args.push_back(b); }
             dirty = true;
+        }
+    } else if (it.op == "load_scene") {
+        std::string s0 = it.args.empty() ? std::string() : it.args[0];
+        ImGui::TextUnformatted("Scene"); ImGui::SameLine();
+        if (AssetPicker("scn", s0, {".okayscene"}, "scene file")) {
+            if (it.args.empty()) it.args.push_back(""); it.args[0] = s0; dirty = true;
+        }
+    } else if (it.op == "set_sprite" || it.op == "set_texture") {
+        std::string s0 = it.args.empty() ? std::string() : it.args[0];
+        ImGui::TextUnformatted("Image"); ImGui::SameLine();
+        if (AssetPicker("img", s0, {".png", ".jpg", ".jpeg", ".bmp", ".tga"}, "image file")) {
+            if (it.args.empty()) it.args.push_back(""); it.args[0] = s0; dirty = true;
         }
     } else if (it.op == "while" || it.op == "if_goto" || it.op == "vars_cmp") {
         // Friendly comparison editor: variable picker + operator dropdown + value

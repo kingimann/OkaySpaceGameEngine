@@ -179,10 +179,23 @@ std::string ActionList::ToText() const {
     out += "trigger " + std::to_string((int)trigger) + " " +
            (triggerKey.empty() ? std::string("-") : triggerKey) + " " +
            (once ? "1" : "0") + "\n";
+    // Quote an argument only when it needs it — it contains whitespace, is empty, or
+    // holds a quote/backslash — so a value with a space (an object name like
+    // "Main Camera") survives the round-trip instead of being split into two args.
+    // Backward compatible: plain single-word args are still written bare.
+    auto quoteArg = [](const std::string& a) -> std::string {
+        bool need = a.empty();
+        for (char c : a) if (std::isspace((unsigned char)c) || c == '"' || c == '\\') { need = true; break; }
+        if (!need) return a;
+        std::string q = "\"";
+        for (char c : a) { if (c == '"' || c == '\\') q += '\\'; q += c; }
+        q += '"';
+        return q;
+    };
     auto emit = [&](const char* tag, const std::vector<Item>& list) {
         for (const Item& it : list) {
             out += tag; out += ' '; out += it.op;
-            for (const std::string& a : it.args) { out += ' '; out += a; }
+            for (const std::string& a : it.args) { out += ' '; out += quoteArg(a); }
             out += '\n';
         }
     };
@@ -199,14 +212,28 @@ void ActionList::FromText(const std::string& text) {
         std::size_t nl = text.find('\n', pos);
         std::string line = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
         pos = (nl == std::string::npos) ? text.size() : nl + 1;
-        // tokenize on whitespace
+        // tokenize on whitespace, honouring "quoted tokens" (with \" / \\ escapes) so
+        // an arg containing spaces comes back as one token. Old unquoted saves parse
+        // exactly as before.
         std::vector<std::string> tok;
         std::size_t i = 0;
         while (i < line.size()) {
             while (i < line.size() && std::isspace((unsigned char)line[i])) ++i;
-            std::size_t b = i;
-            while (i < line.size() && !std::isspace((unsigned char)line[i])) ++i;
-            if (i > b) tok.push_back(line.substr(b, i - b));
+            if (i >= line.size()) break;
+            std::string t;
+            if (line[i] == '"') {                       // quoted token
+                ++i;
+                while (i < line.size() && line[i] != '"') {
+                    if (line[i] == '\\' && i + 1 < line.size()) ++i;   // unescape
+                    t += line[i++];
+                }
+                if (i < line.size()) ++i;               // skip closing quote
+                tok.push_back(t);
+            } else {                                    // bare token
+                std::size_t b = i;
+                while (i < line.size() && !std::isspace((unsigned char)line[i])) ++i;
+                tok.push_back(line.substr(b, i - b));
+            }
         }
         if (tok.empty()) continue;
         if (tok[0] == "name") {

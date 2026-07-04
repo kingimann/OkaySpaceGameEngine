@@ -8575,6 +8575,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"move",        "Move By",            "x y z",                "Move this object by an offset.",                          "Move"},
     {"move_toward", "Move Toward Object", "object speed",         "Move toward a named object at a speed.",                  "Move"},
     {"move_to",     "Move To Point",      "x y z speed",          "Move toward a world point at `speed` units/second (use On Update).", "Move"},
+    {"rotate_to",   "Rotate To Angle",    "x y z speed",          "Turn toward these X/Y/Z degrees at `speed` deg/second (use On Update).", "Move"},
+    {"scale_to",    "Scale To",           "x y z speed",          "Grow/shrink toward this scale at `speed` units/second (use On Update).", "Move"},
     {"set_pos",     "Set Position",       "x y z",                "Teleport this object to a position.",                     "Move"},
     {"rotate",      "Rotate By",          "x y z degrees",        "Spin this object by the given degrees.",                  "Move"},
     {"set_rotation","Set Angle (2D)",     "degrees",              "Face a 2D angle (around Z).",                             "Move"},
@@ -9548,8 +9550,12 @@ static void DrawFlowGraph(EditorState& ed) {
     for (std::size_t i = 0; i < al->conditions.size(); ++i) {
         bool d = false, clk = false, rc = false;
         bool selHere = (g_flowSelAl == al && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
+        std::string csub;   // show the condition's actual arguments, not a bare "if"
+        for (const auto& a : al->conditions[i].args) { if (!csub.empty()) csub += " "; csub += a; }
+        if (csub.size() > 26) csub = csub.substr(0, 24) + "..";
+        if (csub.empty()) csub = "if";
         ImVec2 c = node(key("cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + i * GAPY),   // graph-space default
-                        ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), "if",
+                        ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), csub,
                         IM_COL32(58, 112, 92, 255), &d, &clk, &rc);
         if (selHere)   // selected node gets a bright accent frame
             dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
@@ -10478,7 +10484,7 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Values: %s", ops[cur].hint);
         }
-    } else if (it.op == "move_to") {
+    } else if (it.op == "move_to" || it.op == "rotate_to" || it.op == "scale_to") {
         // X/Y/Z target + a speed field.
         VectorFields(it, 0, 3, dirty);
         ImGui::SameLine(); ImGui::TextUnformatted("speed"); ImGui::SameLine();

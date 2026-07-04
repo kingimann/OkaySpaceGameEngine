@@ -683,6 +683,22 @@ void ActionList::Update(float dt) {
                 t->localPosition = Vec3::MoveTowards(p, tg, Num(it, 3) * Time::DeltaTime());
             }
         }
+        else if (op == "rotate_to") {  // rotate toward euler angles at `speed` deg/second
+            if (t) {
+                Vec3 e = t->localRotation.ToEuler();
+                float md = Num(it, 3) * Time::DeltaTime();
+                e.x = Mathf::MoveTowardsAngle(e.x, Num(it, 0), md);
+                e.y = Mathf::MoveTowardsAngle(e.y, Num(it, 1), md);
+                e.z = Mathf::MoveTowardsAngle(e.z, Num(it, 2), md);
+                t->localRotation = Quat::Euler(e);
+            }
+        }
+        else if (op == "scale_to") {   // scale toward a target at `speed` units/second
+            if (t) {
+                Vec3 sc = t->localScale, tg{Num(it, 0), Num(it, 1), Num(it, 2)};
+                t->localScale = Vec3::MoveTowards(sc, tg, Num(it, 3) * Time::DeltaTime());
+            }
+        }
         else if (op == "look_at") {
             Scene* sc2 = GetScene();
             GameObject* g = sc2 ? sc2->Find(ObjName(it, 0)) : nullptr;

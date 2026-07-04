@@ -46,6 +46,16 @@ protected:
         if (publishPrefs) Prefs::SetFloat(key, v);
         ActionList::Vars()[key] = v;
     }
+    // Same, but also publish "<key>Max" (the cap) and "<key>Frac" (0..1) so a progress
+    // bar can be filled correctly without the designer having to know/type the max —
+    // "Set Progress Bar" from `health` auto-uses `healthMax` when its max is left blank.
+    void SaveValue(const char* key, float v, float mx) {
+        SaveValue(key, v);
+        std::string k(key);
+        ActionList::Vars()[k + "Max"]  = mx;
+        ActionList::Vars()[k + "Frac"] = Frac(v, mx);
+        if (publishPrefs) Prefs::SetFloat((k + "Frac").c_str(), Frac(v, mx));
+    }
     void Broadcast(const std::string& msg) {
         if (!sendMessages) return;
         Scene* s = gameObject ? gameObject->scene() : nullptr;
@@ -165,7 +175,7 @@ private:
         Broadcast("respawned");
         Publish();
     }
-    void Publish() { SaveValue("health", health); SetBar("HealthBar", Fraction()); }
+    void Publish() { SaveValue("health", health, maxHealth); SetBar("HealthBar", Fraction()); }
     float m_timer = 0.0f, m_iframes = 0.0f, m_respawnTimer = 0.0f;
     int   m_livesLeft = 0;
     Vec3  m_start{0, 0, 0};
@@ -211,7 +221,7 @@ public:
     void Eat(float a)          { hunger = Mathf::Min(maxHunger + Mathf::Max(0.0f, overeatMax), hunger + a); Publish(); }
     void SetSprinting(bool on) { sprinting = on; }
 private:
-    void Publish() { SaveValue("hunger", hunger); SetBar("HungerBar", Fraction()); }
+    void Publish() { SaveValue("hunger", hunger, maxHunger); SetBar("HungerBar", Fraction()); }
     bool  m_starv = false;
     float drainScale = 1.0f;
 };
@@ -250,7 +260,7 @@ public:
     void Drink(float a)        { thirst = Mathf::Min(maxThirst + Mathf::Max(0.0f, overdrinkMax), thirst + a); Publish(); }
     void SetSprinting(bool on) { sprinting = on; }
 private:
-    void Publish() { SaveValue("thirst", thirst); SetBar("ThirstBar", Fraction()); }
+    void Publish() { SaveValue("thirst", thirst, maxThirst); SetBar("ThirstBar", Fraction()); }
     bool  m_dehy = false;
     float drainScale = 1.0f;
 };
@@ -299,7 +309,7 @@ public:
     }
     void SetSprinting(bool on) { sprinting = on; }
 private:
-    void Publish() { SaveValue("stamina", stamina); SetBar("StaminaBar", Fraction()); }
+    void Publish() { SaveValue("stamina", stamina, maxStamina); SetBar("StaminaBar", Fraction()); }
     float m_timer = 0.0f;
     float drainScale = 1.0f;
 };
@@ -331,7 +341,7 @@ public:
     void Breathe(float a)      { oxygen = Mathf::Min(maxOxygen, oxygen + a); Publish(); }
     void SetSubmerged(bool on) { submerged = on; }
 private:
-    void Publish() { SaveValue("oxygen", oxygen); SetBar("OxygenBar", Fraction()); }
+    void Publish() { SaveValue("oxygen", oxygen, maxOxygen); SetBar("OxygenBar", Fraction()); }
     bool  m_drown = false;
     float drainScale = 1.0f;
 };
@@ -365,7 +375,7 @@ public:
     void SetCold(bool on)     { cold = on; }
     void SetNearFire(bool on) { nearFire = on; }
 private:
-    void Publish() { SaveValue("warmth", warmth); SetBar("TemperatureBar", Fraction()); }
+    void Publish() { SaveValue("warmth", warmth, maxWarmth); SetBar("TemperatureBar", Fraction()); }
     bool  m_freeze = false;
     float drainScale = 1.0f;
 };
@@ -401,7 +411,7 @@ public:
     void Rest(float a)       { energy = Mathf::Min(maxEnergy, energy + a); Publish(); }
     void SetResting(bool on) { resting = on; }
 private:
-    void Publish() { SaveValue("energy", energy); SetBar("EnergyBar", Fraction()); }
+    void Publish() { SaveValue("energy", energy, maxEnergy); SetBar("EnergyBar", Fraction()); }
     bool  m_exh = false;
     float drainScale = 1.0f;
 };
@@ -434,7 +444,7 @@ public:
     void Restore(float a)     { sanity = Mathf::Min(maxSanity, sanity + a); Publish(); }
     void SetInDanger(bool on) { inDanger = on; }
 private:
-    void Publish() { SaveValue("sanity", sanity); SetBar("SanityBar", Fraction()); }
+    void Publish() { SaveValue("sanity", sanity, maxSanity); SetBar("SanityBar", Fraction()); }
     bool  m_insane = false;
     float drainScale = 1.0f;
 };

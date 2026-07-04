@@ -656,10 +656,17 @@ void ActionList::Update(float dt) {
         }
         else if (op == "set_bar") {
             // Fill a named progress bar from a variable: set_bar <object> <var> [max].
-            // value = var / max (clamped 0..1); max defaults to 1.
+            // value = var / max (clamped 0..1). When [max] is left blank, auto-use the
+            // stat's published cap "<var>Max" (e.g. healthMax) so a health bar just works
+            // without the designer knowing the number; falls back to 1 if there's none.
             if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) {
-                float mx = Num(it, 2); if (mx == 0.0f) mx = 1.0f;
-                float frac = Mathf::Clamp01(GetVar(Str(it, 1)) / mx);
+                std::string var = Str(it, 1);
+                float mx;
+                bool explicitMax = it.args.size() > 2 && !Str(it, 2).empty();
+                if (explicitMax) mx = Num(it, 2);
+                else { auto& vs = Vars(); auto m = vs.find(var + "Max"); mx = (m != vs.end()) ? m->second : 1.0f; }
+                if (mx == 0.0f) mx = 1.0f;
+                float frac = Mathf::Clamp01(GetVar(var) / mx);
                 if (auto* pb = g->GetComponent<UIProgressBar>())    pb->SetValue(frac);
                 if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetValue(frac);
             }

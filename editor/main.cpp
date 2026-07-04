@@ -9666,15 +9666,18 @@ static bool ActionOpUsesVar(const std::string& o) {
 //   2. Names published by stat/health components present on any object.
 //   3. Variables referenced by scripts (set/get/set_var/save/prefs...) and UI binds.
 //   4. A curated set of common gameplay names (score, health, coins, ...).
-static void CollectSceneVarNames(Scene* scene, std::vector<std::string>& out) {
+static void CollectSceneVarNames(Scene* scene, std::vector<std::string>& out,
+                                 bool includeCommon = true) {
     out.clear();
     auto add = [&](const std::string& v) {
         if (!v.empty() && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
     };
-    // (4) Common names, always suggested.
-    for (const char* v : {"score", "health", "hp", "coins", "lives", "level", "xp",
-                          "mana", "ammo", "kills", "time", "highscore", "won", "lost"})
-        add(v);
+    // (4) Common names, suggested only when asked. Pickers pass includeCommon=false so
+    // they show ONLY variables that actually exist in the scene, not a curated list.
+    if (includeCommon)
+        for (const char* v : {"score", "health", "hp", "coins", "lives", "level", "xp",
+                              "mana", "ammo", "kills", "time", "highscore", "won", "lost"})
+            add(v);
     // Live variables during Play (whatever scripts/actions have actually created).
     for (const auto& kv : ActionList::Vars()) add(kv.first);
     if (!scene) { std::sort(out.begin(), out.end()); return; }
@@ -9777,15 +9780,18 @@ static const std::vector<std::string>& CollectProjectPrefabs() {
     cache.clear();
     namespace fs = std::filesystem;
     std::error_code ec;
-    fs::path assets = g_pickerProjectDir.empty() ? fs::path("Assets")
-                                                 : fs::path(g_pickerProjectDir) / "Assets";
-    if (fs::is_directory(assets, ec)) {
-        for (auto it = fs::recursive_directory_iterator(assets, ec);
+    // Scan the SAME root the Project panel shows, so any prefab visible there is offered
+    // here: <project>/Assets when a project is open, else the working directory (which is
+    // where the shipped build keeps its Assets next to the exe).
+    fs::path root = g_pickerProjectDir.empty() ? fs::absolute(".", ec)
+                                               : fs::path(g_pickerProjectDir) / "Assets";
+    if (fs::is_directory(root, ec)) {
+        for (auto it = fs::recursive_directory_iterator(root, ec);
              it != fs::recursive_directory_iterator(); it.increment(ec)) {
             if (ec) break;
             if (!it->is_regular_file(ec)) continue;
             if (it->path().extension() == ".okayprefab") {
-                fs::path rel = fs::relative(it->path(), assets, ec);
+                fs::path rel = fs::relative(it->path(), root, ec);
                 cache.push_back((ec ? it->path() : rel).generic_string());
             }
         }
@@ -9801,27 +9807,38 @@ static const std::vector<std::string>& CollectProjectPrefabs() {
 static bool ObjNamePicker(const char* id, std::string& value, Scene* scene, bool prefab) {
     bool changed = false;
     ImGui::PushID(id);
-    char buf[128]; std::strncpy(buf, value.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
-    ImGui::SetNextItemWidth(prefab ? 150 : 120);
-    if (ImGui::InputTextWithHint("##on", prefab ? "prefab" : "object", buf, sizeof(buf))) { value = buf; changed = true; }
-    ImGui::SameLine(0.0f, 2.0f);
-    if (ImGui::ArrowButton("##onpick", ImGuiDir_Down)) ImGui::OpenPopup("##onlist");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip(prefab ? "Pick a prefab from the project" : "Pick an object from the scene (or use $var)");
-    if (ImGui::BeginPopup("##onlist")) {
+    // A real dropdown (not a text box): the preview shows the current pick, the list
+    // shows every scene object / project prefab, and a "type a name..." field at the top
+    // still allows a literal name or "$var" (the For-Each current object).
+    const char* preview = value.empty() ? (prefab ? "(pick a prefab)" : "(pick an object)")
+                                        : value.c_str();
+    ImGui::SetNextItemWidth(prefab ? 170 : 150);
+    if (ImGui::BeginCombo("##on", preview)) {
+        char cbuf[128];
+        std::strncpy(cbuf, value.c_str(), sizeof(cbuf) - 1); cbuf[sizeof(cbuf) - 1] = '\0';
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputTextWithHint("##oncustom",
+                prefab ? "type a prefab path" : "type a name or $var", cbuf, sizeof(cbuf))) {
+            value = cbuf; changed = true;
+        }
+        ImGui::Separator();
         if (prefab) {
             const auto& pf = CollectProjectPrefabs();
-            if (pf.empty()) ImGui::TextDisabled("(no .okayprefab files in Assets)");
+            if (pf.empty()) ImGui::TextDisabled("(no .okayprefab files found)");
             for (const auto& p : pf)
-                if (ImGui::Selectable(p.c_str(), p == value)) { value = p; changed = true; }
+                if (ImGui::Selectable(p.c_str(), p == value)) { value = p; changed = true; ImGui::CloseCurrentPopup(); }
         } else {
             std::vector<std::string> names; CollectSceneObjectNames(scene, names);
             if (names.empty()) ImGui::TextDisabled("(no objects in scene)");
             for (const auto& n : names)
-                if (ImGui::Selectable(n.c_str(), n == value)) { value = n; changed = true; }
+                if (ImGui::Selectable(n.c_str(), n == value)) { value = n; changed = true; ImGui::CloseCurrentPopup(); }
         }
-        ImGui::EndPopup();
+        ImGui::EndCombo();
     }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(prefab ? "Pick a prefab from the project (or type a path)"
+                                 : "Pick an object from the scene (or type a name / $var)");
     ImGui::PopID();
     return changed;
 }
@@ -9973,13 +9990,20 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             // The source variable is a real picker (auto-detected: health/stat scripts,
             // UI binds, script vars, ...) so you don't have to know/retype the name.
             ImGui::SameLine(); ImGui::TextUnformatted("from"); ImGui::SameLine();
-            std::vector<std::string> barVars; CollectSceneVarNames(scene, barVars);
+            std::vector<std::string> barVars; CollectSceneVarNames(scene, barVars, /*includeCommon*/false);
             std::string bv = getArg(1);
             if (VarNamePicker("barfrom", bv, barVars)) setArg(1, bv);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable to read (its value / Max = the fill).");
-            float mx = getArg(2).empty() ? 100.0f : (float)std::atof(getArg(2).c_str());
-            ImGui::SameLine(); ImGui::SetNextItemWidth(60);
-            if (ImGui::DragFloat("max", &mx, 1.0f, 0.0f, 1e9f, "%.0f")) setArg(2, std::to_string(mx));
+            // Max is optional: blank = auto (use the stat's own cap, e.g. healthMax).
+            char mb[32]; std::strncpy(mb, getArg(2).c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
+            ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+            if (ImGui::InputTextWithHint("max", "auto", mb, sizeof(mb),
+                                         ImGuiInputTextFlags_CharsDecimal)) {
+                if (mb[0] == '\0') { if (it.args.size() > 2) it.args.resize(2); dirty = true; }
+                else setArg(2, mb);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Leave blank to auto-fill from the stat's own max\n(e.g. health uses healthMax). Or type a fixed max.");
         } else { // get_prefs: read a saved value into a variable
             varField("Into Var", 0, "hp");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable to store the value in.");
@@ -10014,7 +10038,7 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
     } else if (ActionOpUsesVar(it.op)) {
         // Variable name(s) come from a picker (auto-detected from the scene), so you
         // don't retype names; any remaining args stay a plain value box.
-        std::vector<std::string> vars; CollectSceneVarNames(scene, vars);
+        std::vector<std::string> vars; CollectSceneVarNames(scene, vars, /*includeCommon*/false);
         auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
         auto setArg = [&](std::size_t i, const std::string& v) {
             while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;

@@ -2551,10 +2551,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(okay::Templates::AddThirdPersonShooterPlayer(ed.scene()));
                 ConsoleLog("Added Third-Person Shooter player"); ed.dirty = true; created = true;
             }
-            if (ImGui::MenuItem("Top Down")) {
+            if (ImGui::MenuItem("Top Down (3D)")) {
                 ed.PushUndo();
                 ed.Select(okay::Templates::AddTopDownPlayer(ed.scene()));
                 ConsoleLog("Added Top-Down player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::MenuItem("Top Down (2D)")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddTopDown2DPlayer(ed.scene()));
+                ConsoleLog("Added Top-Down 2D player (sprite + TopDownController2D)"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Click To Move")) {
                 ed.PushUndo();

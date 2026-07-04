@@ -121,6 +121,38 @@ inline GameObject* AddTopDownPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     return player;
 }
 
+/// Add a 2D top-down player: a sprite driven by the native TopDownController2D
+/// (WASD/arrows, dash, optional shooting), on a gravity-free Rigidbody2D + box
+/// collider, with an orthographic camera that follows it. The 2D counterpart to
+/// AddTopDownPlayer — a ready-to-play twin-stick / ARPG player for 2D games.
+inline GameObject* AddTopDown2DPlayer(Scene& scene, const Vec3& pos = {0, 0, 0}) {
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = pos;
+    auto* sr = player->AddComponent<SpriteRenderer>();
+    sr->color = Color::FromBytes(90, 170, 240);
+    auto* rb = player->AddComponent<Rigidbody2D>();
+    rb->bodyType = Rigidbody2D::BodyType::Dynamic;
+    rb->gravityScale = 0.0f;                 // top-down: no falling
+    player->AddComponent<BoxCollider2D>();
+    player->AddComponent<TopDownController2D>();
+
+    // An orthographic camera that follows the player (2D view).
+    GameObject* camObj = scene.Find("MainCamera");
+    if (!camObj) camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->GetComponent<Camera>();
+    if (!cam) cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = 6.0f;
+    cam->main = true;
+    if (!camObj->GetComponent<CameraFollow>()) {
+        auto* follow = camObj->AddComponent<CameraFollow>();
+        follow->targetName = "Player";
+        follow->offset = {0, 0, 0};
+        follow->smoothing = 6.0f;
+    }
+    return player;
+}
+
 /// Add a third-person shooter player (over-the-shoulder aim; cursor locked).
 inline GameObject* AddThirdPersonShooterPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");

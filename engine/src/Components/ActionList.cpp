@@ -18,6 +18,7 @@
 #include "okay/Components/Consumables.hpp"       // UseIndex
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/Collider2D.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -180,9 +181,14 @@ RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size
     Vec2 d2{nd.x, nd.y};
     if (d2.SqrMagnitude() > 1e-6f) {
         d2 = d2.Normalized();
-        Vec2 o2{origin.x + d2.x * 0.01f, origin.y + d2.y * 0.01f};
-        RaycastHit2D h2 = s->physics().Raycast(*s, o2, d2, dist);
-        if (h2.gameObject == go) h2.hit = false;   // never report a hit on ourselves
+        // Temporarily disable the caster's own 2D colliders so the ray — which starts
+        // inside our own sprite — doesn't just "hit" ourselves and miss everything else.
+        // (The 2D query has no ignore-self parameter; Raycast skips disabled colliders.)
+        std::vector<Collider2D*> self = go->GetComponents<Collider2D>();
+        std::vector<bool> wasOn; wasOn.reserve(self.size());
+        for (Collider2D* c : self) { wasOn.push_back(c->enabled); c->enabled = false; }
+        RaycastHit2D h2 = s->physics().Raycast(*s, Vec2{origin.x, origin.y}, d2, dist);
+        for (std::size_t k = 0; k < self.size(); ++k) self[k]->enabled = wasOn[k];
         if (h2.hit && (!h3.hit || h2.distance < h3.distance)) {
             RaycastHit3D r;
             r.hit = true; r.gameObject = h2.gameObject;

@@ -77,6 +77,14 @@ public:
         m_knockTimer = knockbackTime;
     }
 
+    // A top-down player has no "down" — turn off the sibling Rigidbody2D's gravity so it
+    // doesn't slowly sink off the screen. (Respected only if you didn't want gravity;
+    // set gravityScale back on the Rigidbody after Start if you really do.)
+    void Start() override {
+        if (auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr)
+            rb->gravityScale = 0.0f;
+    }
+
     void Update(float dt) override {
         if (!transform) return;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it

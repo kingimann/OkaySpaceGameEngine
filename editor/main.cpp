@@ -10092,6 +10092,21 @@ static int ActionOpVecComps(const std::string& op, int& start) {
     return 0;
 }
 
+// If this op takes a single numeric argument, return a label for it (else nullptr) so
+// the editor can show one DragFloat instead of a bare text box.
+static const char* ActionOpScalarLabel(const std::string& op) {
+    if (op == "wait") return "seconds";
+    if (op == "heal" || op == "hurt" || op == "eat" || op == "drink") return "amount";
+    if (op == "jump") return "force";
+    if (op == "set_gravity") return "gravity";
+    if (op == "set_x" || op == "set_y" || op == "set_z") return "value";
+    if (op == "set_vx" || op == "set_vy" || op == "set_vz") return "velocity";
+    if (op == "set_volume") return "volume";
+    if (op == "clip_speed") return "speed";
+    if (op == "set_time_scale" || op == "time_scale") return "scale";
+    return nullptr;
+}
+
 // Draw N split X/Y/Z drag fields editing it.args[start .. start+N-1]. Color-coded like
 // the Transform inspector. Returns true if any component changed.
 static bool VectorFields(ActionList::Item& it, int start, int n, bool& dirty) {
@@ -10441,6 +10456,15 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
                 dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Values: %s", ops[cur].hint);
+        }
+    } else if (const char* slabel = ActionOpScalarLabel(it.op)) {
+        // Single number → one labelled DragFloat instead of a text box.
+        float v = it.args.empty() ? 0.0f : (float)std::atof(it.args[0].c_str());
+        ImGui::TextUnformatted(slabel); ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        if (ImGui::DragFloat("##scal", &v, 0.05f, 0.0f, 0.0f, "%.3g")) {
+            char b[32]; std::snprintf(b, sizeof(b), "%g", v);
+            it.args.clear(); it.args.push_back(b); dirty = true;
         }
     } else {
     std::string joined;

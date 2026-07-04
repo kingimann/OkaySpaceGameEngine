@@ -10010,6 +10010,34 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             ImGui::SameLine(); varField("= Saved", 1, "health");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The saved-value/stat name to read (e.g. health, published by the Health component).");
         }
+    } else if (it.op == "while" || it.op == "if_goto") {
+        // Friendly comparison editor: variable picker + operator dropdown + value
+        // (+ a jump target for if_goto), so nobody has to remember the "lt"/"gt" tokens.
+        auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
+        auto setArg = [&](std::size_t i, const std::string& v) {
+            while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
+        };
+        std::vector<std::string> vars; CollectSceneVarNames(scene, vars, /*includeCommon*/false);
+        std::string v0 = getArg(0);
+        if (VarNamePicker("wv", v0, vars)) setArg(0, v0);
+        static const char* opLabels[] = {"<", "<=", "==", "!=", ">=", ">"};
+        static const char* opTokens[] = {"lt", "le", "eq", "neq", "ge", "gt"};
+        std::string curOp = getArg(1); int oi = 0;
+        for (int k = 0; k < 6; ++k) if (curOp == opTokens[k] || curOp == opLabels[k]) oi = k;
+        ImGui::SameLine(); ImGui::SetNextItemWidth(52);
+        if (ImGui::Combo("##wop", &oi, opLabels, 6)) setArg(1, opTokens[oi]);
+        else if (curOp.empty()) setArg(1, opTokens[oi]);
+        ImGui::SameLine();
+        char vb[64]; std::strncpy(vb, getArg(2).c_str(), sizeof(vb) - 1); vb[sizeof(vb) - 1] = '\0';
+        ImGui::SetNextItemWidth(70);
+        if (ImGui::InputTextWithHint("##wval", "value", vb, sizeof(vb))) setArg(2, vb);
+        if (it.op == "if_goto") {
+            ImGui::SameLine(); ImGui::TextUnformatted("goto"); ImGui::SameLine();
+            char tb[64]; std::strncpy(tb, getArg(3).c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
+            ImGui::SetNextItemWidth(90);
+            if (ImGui::InputTextWithHint("##wtgt", "label / line", tb, sizeof(tb))) setArg(3, tb);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A label name or an instruction line number to jump to.");
+        }
     } else if (bool _pf = false; ActionOpObjArg(it.op, _pf) == 0) {
         // The first argument names a scene object (or a prefab file). Offer a dropdown
         // of everything in the hierarchy / project so the user never has to type/guess

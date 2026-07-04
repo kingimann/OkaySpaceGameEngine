@@ -115,6 +115,19 @@ std::string ObjName(const ActionList::Item& it, std::size_t i) {
     return s;
 }
 
+// Compare two numbers by a textual operator. Accepts both the word tokens the editor
+// writes (eq/neq/gt/lt/ge/le) AND the symbols a user is likely to type by hand
+// (==, =, !=, <>, >, <, >=, <=) so `while x < 4` works whichever form they use.
+bool CmpPass(const std::string& op, float lhs, float rhs) {
+    if (op == "eq"  || op == "==" || op == "=")  return Mathf::Approximately(lhs, rhs);
+    if (op == "neq" || op == "!=" || op == "<>") return !Mathf::Approximately(lhs, rhs);
+    if (op == "gt"  || op == ">")  return lhs > rhs;
+    if (op == "lt"  || op == "<")  return lhs < rhs;
+    if (op == "ge"  || op == ">=") return lhs >= rhs;
+    if (op == "le"  || op == "<=") return lhs <= rhs;
+    return false;
+}
+
 // Resolve a raycast direction token into a world-space direction for `go`.
 // Keywords are relative to the object's facing (forward/back/up/down/left/right);
 // "toward:<name>" aims at a named object. Returns false if the token isn't a known
@@ -378,12 +391,7 @@ void ActionList::Update(float dt) {
         }
         // ---- While loop: while <var> <op> <value> ... end_while ----
         else if (op == "while") {
-            const std::string& cmp = Str(it, 1);
-            float lhs = GetVar(Str(it, 0)), rhs = Num(it, 2);
-            bool pass = (cmp == "eq")  ? Mathf::Approximately(lhs, rhs)
-                      : (cmp == "neq") ? !Mathf::Approximately(lhs, rhs)
-                      : (cmp == "gt")  ? (lhs > rhs) : (cmp == "lt") ? (lhs < rhs)
-                      : (cmp == "ge")  ? (lhs >= rhs) : (cmp == "le") ? (lhs <= rhs) : false;
+            bool pass = CmpPass(Str(it, 1), GetVar(Str(it, 0)), Num(it, 2));
             int end = MatchingEnd(m_ip - 1, "while", "end_while");
             if (end < 0) { /* unmatched */ }
             else if (!pass) m_ip = (std::size_t)end + 1;           // condition false: exit
@@ -728,6 +736,19 @@ void ActionList::Update(float dt) {
         else if (op == "net_kick") {
             if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->Kick((std::uint32_t)Num(it, 0), Rest(it, 1));
         }
+        else if (op == "net_spawn_owned") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>())
+                n->SpawnOwned(Str(it, 0), {Num(it, 1), Num(it, 2), Num(it, 3)});
+        }
+        else if (op == "net_despawn") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->Despawn(Str(it, 0));
+        }
+        else if (op == "net_chat") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->Send("chat", Rest(it, 0));
+        }
+        else if (op == "net_rpc") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->Rpc(Str(it, 0), Rest(it, 1));
+        }
         else if (op == "steam_unlock")   { Steam::Get().UnlockAchievement(Str(it, 0)); Steam::Get().StoreStats(); }
         else if (op == "steam_set_stat") { Steam::Get().SetStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         else if (op == "steam_inc_stat") { Steam::Get().IncrementStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
@@ -797,14 +818,8 @@ void ActionList::Update(float dt) {
             }
         }
         else if (op == "if_goto") {              // conditional jump: var <op> value -> line or label
-            const std::string& cmp = Str(it, 1);
-            float lhs = GetVar(Str(it, 0)), rhs = Num(it, 2); int line = ResolveTarget(Str(it, 3));
-            bool pass = (cmp == "eq")  ? Mathf::Approximately(lhs, rhs)
-                      : (cmp == "neq") ? !Mathf::Approximately(lhs, rhs)
-                      : (cmp == "gt")  ? (lhs > rhs)
-                      : (cmp == "lt")  ? (lhs < rhs)
-                      : (cmp == "ge")  ? (lhs >= rhs)
-                      : (cmp == "le")  ? (lhs <= rhs) : false;
+            int line = ResolveTarget(Str(it, 3));
+            bool pass = CmpPass(Str(it, 1), GetVar(Str(it, 0)), Num(it, 2));
             if (pass && line >= 0 && line < (int)instructions.size()) m_ip = (std::size_t)line;
         }
         // ---- More general instructions ----

@@ -9282,6 +9282,8 @@ static bool KeyPicker(const char* id, std::string& key, bool& dirty) {
 }
 
 
+static bool ActionOpUsesVar(const std::string& o);   // defined below; used for live values
+
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
     g_pickerProjectDir = ed.projectDir();   // so in-place object/prefab pickers can list prefabs
@@ -9727,6 +9729,13 @@ static void DrawFlowGraph(EditorState& ed) {
             std::string sub;
             for (const auto& a : item.args) { if (!sub.empty()) sub += " "; sub += a; }
             if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
+            // While playing, append the live value of a variable this node touches, so
+            // you can watch the number change on the node itself.
+            if (ed.isPlaying() && ActionOpUsesVar(item.op) && !item.args.empty() && !item.args[0].empty()) {
+                auto& NV = ActionList::Vars();
+                auto lv = NV.find(item.args[0]);
+                if (lv != NV.end()) { char b[32]; std::snprintf(b, sizeof(b), "  = %g", lv->second); sub += b; }
+            }
             bool d = false, clk = false, rc = false;
             bool selHere = (g_flowSelAl == al && g_flowSelHandler == hv.hidx && g_flowSelKind == 2 && g_flowSelIdx == (int)i);
             ImU32 col = FlowNodeColor(ActionOpGroup(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op));
@@ -9890,12 +9899,28 @@ static void DrawFlowGraph(EditorState& ed) {
                 if (ImGui::InputTextWithHint("##vv", numeric ? "0" : "text", vb, sizeof(vb),
                                              numeric ? ImGuiInputTextFlags_CharsDecimal : 0)) { vd.value = vb; ed.dirty = true; }
             }
+            // Live value during Play: read the current value straight from the shared
+            // pools so you can watch your logic change variables in real time.
+            if (ed.isPlaying() && !vd.name.empty()) {
+                auto& NV = ActionList::Vars(); auto& SV = ActionList::StrVars();
+                char live[128] = "";
+                auto num = [&](const std::string& key) { auto it = NV.find(key); return it != NV.end() ? it->second : 0.0f; };
+                if (vd.type == 1 || vd.type == 8) { auto it = SV.find(vd.name); std::snprintf(live, sizeof(live), "= \"%s\"", it != SV.end() ? it->second.c_str() : ""); }
+                else if (vd.type == 2)            std::snprintf(live, sizeof(live), "= %s", num(vd.name) != 0.0f ? "true" : "false");
+                else if (vd.type == 3)            std::snprintf(live, sizeof(live), "= (%g, %g)", num(vd.name + ".x"), num(vd.name + ".y"));
+                else if (vd.type == 4)            std::snprintf(live, sizeof(live), "= (%g, %g, %g)", num(vd.name + ".x"), num(vd.name + ".y"), num(vd.name + ".z"));
+                else if (vd.type == 9)            std::snprintf(live, sizeof(live), "= (%g, %g, %g, %g)", num(vd.name + ".r"), num(vd.name + ".g"), num(vd.name + ".b"), num(vd.name + ".a"));
+                else if (vd.type == 5)            std::snprintf(live, sizeof(live), "= %d", (int)num(vd.name));
+                else                              std::snprintf(live, sizeof(live), "= %g", num(vd.name));
+                ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.62f, 1.0f), "%s", live);
+            }
             ImGui::SameLine();
             if (ImGui::SmallButton("X")) delVar = (int)vi;
             ImGui::PopID();
         }
         if (delVar >= 0) { al->variables.erase(al->variables.begin() + delVar); ed.dirty = true; }
         ImGui::Separator();
+        if (ed.isPlaying()) ImGui::TextDisabled("Green = live value while the game runs.");
         if (ImGui::SmallButton("+ Add Variable")) { al->variables.push_back({"newVar", 0, "0"}); ed.dirty = true; }
         ImGui::EndPopup();
     }

@@ -9326,14 +9326,18 @@ static void DrawFlowGraph(EditorState& ed) {
             for (int i = 0; i < (int)als.size(); ++i) {
                 std::string nm = nameOf(i);
                 if (als[i]->IsRunning()) nm += "  ●";
-                if (ImGui::Selectable(nm.c_str(), i == pick)) pick = i;
+                if (ImGui::Selectable(nm.c_str(), i == pick)) { pick = i; g_flowSelAl = als[i]; g_flowSelKind = 0; }
             }
             ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("This object has %d Actions scripts — choose which to view.", (int)als.size());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("This object has %d trigger rules — jump to one (all are shown together).", (int)als.size());
         ImGui::SameLine();
     }
+    // The flow graph shows EVERY rule (each ActionList = one trigger + its own conditions
+    // + instructions) at once. `al` is the FOCUSED rule the top strip/toolbar edit: the
+    // rule whose node is selected, else the picked one.
     ActionList* al = als[pick];
+    for (ActionList* a : als) if (a == g_flowSelAl) { al = a; break; }
     ActionList* removeAl = nullptr;   // deferred: remove this Actions script after drawing
     // Editable script name + add/remove Actions scripts (parity with the Inspector).
     ImGui::AlignTextToFramePadding();
@@ -9342,7 +9346,7 @@ static void DrawFlowGraph(EditorState& ed) {
       ImGui::SetNextItemWidth(150);
       if (ImGui::InputTextWithHint("##flowname", "Script name (e.g. \"Open Door\")", nb, sizeof(nb))) { al->name = nb; ed.dirty = true; } }
     ImGui::SameLine();
-    if (ImGui::SmallButton("+ Script")) { go->AddComponent<ActionList>(); pick = (int)als.size(); ed.dirty = true; }
+    if (ImGui::SmallButton("+ Script")) { auto* nl = go->AddComponent<ActionList>(); g_flowSelAl = nl; g_flowSelKind = 0; pick = (int)als.size(); ed.dirty = true; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another Actions script to this object.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Remove Script")) removeAl = al;
@@ -9367,7 +9371,8 @@ static void DrawFlowGraph(EditorState& ed) {
 
     // Toolbar: add/clear nodes (edits the live ActionList, mirrored in the Inspector)
     // and a running indicator that lights up while the list executes in Play.
-    int delIns = -1, delCond = -1;            // node-delete requests, applied after layout
+    int delIns = -1, delCond = -1;            // delete from the FOCUSED rule (strip/popup/key)
+    ActionList* gDelAl = nullptr; int gDelKind = 0, gDelIdx = -1;   // delete a canvas node from ANY rule
     static std::unordered_map<void*, ImVec2> panMap;
     ImVec2& pan = panMap[(void*)al];
     static std::unordered_map<void*, float> zoomMap;
@@ -9437,8 +9442,6 @@ static void DrawFlowGraph(EditorState& ed) {
     static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",
         "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
         "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over"};
-    int ti = (int)al->trigger;
-    const char* trigLabel = (ti >= 0 && ti < (int)IM_ARRAYSIZE(trigs)) ? trigs[ti] : "Trigger";
 
     // ---- Always-visible editor strip -------------------------------------------
     // Change the trigger and edit the currently-selected node right here, so editing
@@ -9465,7 +9468,11 @@ static void DrawFlowGraph(EditorState& ed) {
             bool has3D = go->GetComponent<Collider3D>();
             if (!has2D && !has3D) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "needs a Collider/Sprite to be clickable"); }
         }
-        DrawExtraTriggers(al, ed.dirty);   // run this script from more than one event
+        // Add another trigger as its OWN rule (a new ActionList) with its own conditions
+        // and instructions — it appears as a separate chain in the graph below.
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+ Trigger")) { auto* nl = go->AddComponent<ActionList>(); nl->trigger = ActionList::Trigger::OnUpdate; g_flowSelAl = nl; g_flowSelKind = 0; pick = (int)als.size(); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another trigger with its OWN conditions and instructions (a new rule).");
         ImGui::Separator();
         bool haveSel = (g_flowSelAl == al && g_flowSelKind != 0);
         if (haveSel && g_flowSelKind == 1 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->conditions.size()) {
@@ -9521,9 +9528,6 @@ static void DrawFlowGraph(EditorState& ed) {
     const float z = zoom;
 
     static std::unordered_map<std::string, ImVec2> pos;
-    auto key = [&](const char* role, int i) {
-        char b[64]; std::snprintf(b, sizeof(b), "%p:%s:%d", (void*)al, role, i); return std::string(b);
-    };
     const float NW = 190.0f * z, NH = 46.0f * z, GAPY = 72.0f;   // GAPY is graph-space (positions scale by z)
     const float fs = std::round(ImGui::GetFontSize() * z);   // whole-pixel size => crisper glyphs
     ImFont* fnt = ImGui::GetFont();
@@ -9573,110 +9577,119 @@ static void DrawFlowGraph(EditorState& ed) {
         dl->AddBezierCubic(a, ImVec2(a.x, (a.y + b.y) * 0.5f), ImVec2(b.x, (a.y + b.y) * 0.5f), b, col, 2.5f * z);
     };
 
-    std::string tsub;
-    if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnMessage)
-        tsub = "\"" + al->triggerKey + "\"";
-    ImU32 trigCol = al->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
-    bool trigClicked = false;
-    ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, trigCol, nullptr, &trigClicked);
-    // The trigger is edited in the always-visible strip above; a click just nudges focus
-    // there. (Popup kept for the right-click menu's "Edit" path.)
-    (void)trigClicked;
-
-    for (std::size_t i = 0; i < al->conditions.size(); ++i) {
-        bool d = false, clk = false, rc = false;
-        bool selHere = (g_flowSelAl == al && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
-        std::string csub;   // show the condition's actual arguments, not a bare "if"
-        for (const auto& a : al->conditions[i].args) { if (!csub.empty()) csub += " "; csub += a; }
-        if (csub.size() > 26) csub = csub.substr(0, 24) + "..";
-        if (csub.empty()) csub = "if";
-        ImVec2 c = node(key("cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + i * GAPY),   // graph-space default
-                        ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), csub,
-                        IM_COL32(58, 112, 92, 255), &d, &clk, &rc);
-        if (selHere)   // selected node gets a bright accent frame
-            dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
-                        ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
-        if (d) delCond = (int)i;
-        if (clk) { g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)i; }   // select -> edits in the strip above
-        if (rc)  { g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
-        wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
-    }
-
-    float startY = 18.0f + (al->conditions.empty() ? GAPY : (float)al->conditions.size() * GAPY);
-    const std::size_t nins = al->instructions.size();
-    // Indentation depth per instruction (loop/block bodies step in) + which opener
-    // each ender closes, so we can draw loop-back arrows.
-    std::vector<int> depth(nins, 0);
-    std::vector<int> openerOf(nins, -1);
-    {
-        std::vector<int> stack; int dcur = 0;
-        for (std::size_t i = 0; i < nins; ++i) {
-            const std::string& o = al->instructions[i].op;
-            if (FlowIsEnder(o)) { dcur = dcur > 0 ? dcur - 1 : 0; if (!stack.empty()) { openerOf[i] = stack.back(); stack.pop_back(); } }
-            depth[i] = dcur;
-            if (FlowIsOpener(o)) { stack.push_back((int)i); ++dcur; }
-        }
-    }
-    // Resolve a goto/if_goto/gosub target (line number or a label name) to an index.
-    auto targetIndex = [&](const std::string& t) -> int {
-        if (!t.empty() && (std::isdigit((unsigned char)t[0]) || t[0] == '-')) {
-            int n = std::atoi(t.c_str()); return (n >= 0 && n < (int)nins) ? n : -1;
-        }
-        for (std::size_t i = 0; i < nins; ++i)
-            if (al->instructions[i].op == "label" && !al->instructions[i].args.empty() && al->instructions[i].args[0] == t)
-                return (int)i;
-        return -1;
+    // Rule-aware node key (nodes for different rules never collide, and each rule keeps
+    // its own dragged layout).
+    auto keyR = [&](ActionList* ral, const char* role, int i) {
+        char b[64]; std::snprintf(b, sizeof(b), "%p:%s:%d", (void*)ral, role, i); return std::string(b);
     };
-    const float INDENT = 34.0f;              // graph-space step per nesting level
-    std::vector<ImVec2> insCenter(nins);     // node centres, for the jump wires below
-    ImVec2 prev = trigC;
-    for (std::size_t i = 0; i < nins; ++i) {
-        const auto& item = al->instructions[i];
-        std::string sub;
-        for (const auto& a : item.args) { if (!sub.empty()) sub += " "; sub += a; }
-        if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
-        bool d = false, clk = false, rc = false;
-        bool selHere = (g_flowSelAl == al && g_flowSelKind == 2 && g_flowSelIdx == (int)i);
-        ImU32 col = FlowNodeColor(ActionOpGroup(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op));
-        ImVec2 c = node(key("ins", (int)i), ImVec2(30 + depth[i] * INDENT, startY + i * GAPY),
-                        ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op), sub, col, &d, &clk, &rc);
-        insCenter[i] = c;
-        if (al->CurrentInstruction() == (int)i) glow(c);   // live node during Play
-        if (selHere)
-            dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
-                        ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
-        if (d) delIns = (int)i;
-        if (clk) { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; }   // select -> edits in the strip above
-        if (rc)  { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
-        wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
-        prev = c;
-    }
-    // Jump / loop-back wires: goto/if_goto/gosub -> target label (amber), and each
-    // loop ender -> its opener (green), drawn as side arcs so the flow is visible.
     auto jumpWire = [&](ImVec2 a, ImVec2 b, ImU32 col) {
-        float off = 60.0f * z + (a.y < b.y ? 0.0f : 40.0f * z);   // bow out to the right
+        float off = 60.0f * z + (a.y < b.y ? 0.0f : 40.0f * z);
         dl->AddBezierCubic(ImVec2(a.x + NW * 0.5f, a.y), ImVec2(a.x + NW * 0.5f + off, a.y),
                            ImVec2(b.x + NW * 0.5f + off, b.y), ImVec2(b.x + NW * 0.5f, b.y), col, 2.0f * z);
-        dl->AddCircleFilled(ImVec2(b.x + NW * 0.5f, b.y), 3.0f * z, col);   // arrow-ish dot at the target
+        dl->AddCircleFilled(ImVec2(b.x + NW * 0.5f, b.y), 3.0f * z, col);
     };
-    for (std::size_t i = 0; i < nins; ++i) {
-        const auto& item = al->instructions[i];
-        int tgt = -1;
-        if (item.op == "goto" || item.op == "gosub") tgt = item.args.size() > 0 ? targetIndex(item.args[0]) : -1;
-        else if (item.op == "if_goto")               tgt = item.args.size() > 3 ? targetIndex(item.args[3]) : -1;
-        if (tgt >= 0 && tgt < (int)nins) jumpWire(insCenter[i], insCenter[tgt], IM_COL32(240, 190, 90, 210));
-        if (FlowIsEnder(item.op) && openerOf[i] >= 0)
-            jumpWire(insCenter[i], insCenter[openerOf[i]], IM_COL32(120, 210, 140, 200));   // loop back
+    const float INDENT = 34.0f;
+    // Draw EVERY rule (ActionList) on this object, each as its own trigger→conditions→
+    // instructions chain, stacked in vertical bands so they all show at once.
+    float bandY = 0.0f;
+    for (ActionList* ral : als) {
+        int rti = (int)ral->trigger;
+        const char* rtl = (rti >= 0 && rti < (int)IM_ARRAYSIZE(kTriggerLabels)) ? kTriggerLabels[rti] : "Trigger";
+        std::string tsub;
+        if (ral->trigger == ActionList::Trigger::OnKey || ral->trigger == ActionList::Trigger::OnKeyUp ||
+            ral->trigger == ActionList::Trigger::OnMessage)
+            tsub = "\"" + ral->triggerKey + "\"";
+        if (!ral->name.empty()) tsub = ral->name + (tsub.empty() ? std::string() : " " + tsub);
+        ImU32 trigCol = ral->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
+        bool trigClicked = false;
+        ImVec2 trigC = node(keyR(ral, "trig", 0), ImVec2(30, 18 + bandY), rtl, tsub, trigCol, nullptr, &trigClicked);
+        if (trigClicked) { g_flowSelAl = ral; g_flowSelKind = 0; }   // focus this rule in the strip
+
+        for (std::size_t i = 0; i < ral->conditions.size(); ++i) {
+            bool d = false, clk = false, rc = false;
+            bool selHere = (g_flowSelAl == ral && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
+            std::string csub;
+            for (const auto& a : ral->conditions[i].args) { if (!csub.empty()) csub += " "; csub += a; }
+            if (csub.size() > 26) csub = csub.substr(0, 24) + "..";
+            if (csub.empty()) csub = "if";
+            ImVec2 c = node(keyR(ral, "cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + bandY + i * GAPY),
+                            ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), ral->conditions[i].op), csub,
+                            IM_COL32(58, 112, 92, 255), &d, &clk, &rc);
+            if (selHere)
+                dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
+                            ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
+            if (d) { gDelAl = ral; gDelKind = 1; gDelIdx = (int)i; }
+            if (clk) { g_flowSelAl = ral; g_flowSelKind = 1; g_flowSelIdx = (int)i; }
+            if (rc)  { g_flowSelAl = ral; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
+            wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
+        }
+
+        float startY = 18.0f + bandY + (ral->conditions.empty() ? GAPY : (float)ral->conditions.size() * GAPY);
+        const std::size_t nins = ral->instructions.size();
+        std::vector<int> depth(nins, 0), openerOf(nins, -1);
+        { std::vector<int> stack; int dcur = 0;
+          for (std::size_t i = 0; i < nins; ++i) {
+              const std::string& o = ral->instructions[i].op;
+              if (FlowIsEnder(o)) { dcur = dcur > 0 ? dcur - 1 : 0; if (!stack.empty()) { openerOf[i] = stack.back(); stack.pop_back(); } }
+              depth[i] = dcur;
+              if (FlowIsOpener(o)) { stack.push_back((int)i); ++dcur; }
+          } }
+        auto targetIndex = [&](const std::string& t) -> int {
+            if (!t.empty() && (std::isdigit((unsigned char)t[0]) || t[0] == '-')) { int n = std::atoi(t.c_str()); return (n >= 0 && n < (int)nins) ? n : -1; }
+            for (std::size_t i = 0; i < nins; ++i)
+                if (ral->instructions[i].op == "label" && !ral->instructions[i].args.empty() && ral->instructions[i].args[0] == t) return (int)i;
+            return -1;
+        };
+        std::vector<ImVec2> insCenter(nins);
+        ImVec2 prev = trigC;
+        for (std::size_t i = 0; i < nins; ++i) {
+            const auto& item = ral->instructions[i];
+            std::string sub;
+            for (const auto& a : item.args) { if (!sub.empty()) sub += " "; sub += a; }
+            if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
+            bool d = false, clk = false, rc = false;
+            bool selHere = (g_flowSelAl == ral && g_flowSelKind == 2 && g_flowSelIdx == (int)i);
+            ImU32 col = FlowNodeColor(ActionOpGroup(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op));
+            ImVec2 c = node(keyR(ral, "ins", (int)i), ImVec2(30 + depth[i] * INDENT, startY + i * GAPY),
+                            ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op), sub, col, &d, &clk, &rc);
+            insCenter[i] = c;
+            if (ral->CurrentInstruction() == (int)i) glow(c);
+            if (selHere)
+                dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
+                            ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
+            if (d) { gDelAl = ral; gDelKind = 2; gDelIdx = (int)i; }
+            if (clk) { g_flowSelAl = ral; g_flowSelKind = 2; g_flowSelIdx = (int)i; }
+            if (rc)  { g_flowSelAl = ral; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
+            wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
+            prev = c;
+        }
+        for (std::size_t i = 0; i < nins; ++i) {
+            const auto& item = ral->instructions[i];
+            int tgt = -1;
+            if (item.op == "goto" || item.op == "gosub") tgt = item.args.size() > 0 ? targetIndex(item.args[0]) : -1;
+            else if (item.op == "if_goto")               tgt = item.args.size() > 3 ? targetIndex(item.args[3]) : -1;
+            if (tgt >= 0 && tgt < (int)nins) jumpWire(insCenter[i], insCenter[tgt], IM_COL32(240, 190, 90, 210));
+            if (FlowIsEnder(item.op) && openerOf[i] >= 0)
+                jumpWire(insCenter[i], insCenter[openerOf[i]], IM_COL32(120, 210, 140, 200));
+        }
+        if (ral->instructions.empty())
+            dl->AddText(ImVec2(cp.x + 30 * z + pan.x, cp.y + (startY + 12) * z + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions — use + Instruction)");
+
+        // Advance to the next rule's band.
+        float rows = (float)std::max(ral->conditions.size(), nins + 1);
+        bandY += 18.0f + rows * GAPY + 44.0f;
     }
-    if (al->instructions.empty())
-        dl->AddText(ImVec2(cp.x + 30 * z + pan.x, cp.y + (startY + 12) * z + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions yet — use + Instruction)");
 
     // Minimap: a scaled overview of every node with the current viewport, in the
     // bottom-right. Click/drag it to fly the view around a large graph.
     if (g_flowMinimap && !pos.empty()) {
-        char pfx[24]; std::snprintf(pfx, sizeof(pfx), "%p:", (void*)al);
+        // Show every rule on this object (each ActionList's node keys are "%p:...").
+        auto belongs = [&](const std::string& k) {
+            for (ActionList* a : als) { char p[24]; std::snprintf(p, sizeof(p), "%p:", (void*)a); if (k.rfind(p, 0) == 0) return true; }
+            return false;
+        };
         float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f; int cnt = 0;
-        for (auto& kv : pos) if (kv.first.rfind(pfx, 0) == 0) {
+        for (auto& kv : pos) if (belongs(kv.first)) {
             minx = std::min(minx, kv.second.x); miny = std::min(miny, kv.second.y);
             maxx = std::max(maxx, kv.second.x + 190.0f); maxy = std::max(maxy, kv.second.y + 46.0f); ++cnt;
         }
@@ -9689,9 +9702,10 @@ static void DrawFlowGraph(EditorState& ed) {
             auto toMap = [&](float gx, float gy) { return ImVec2(ox + (gx - minx) * sc, oy + (gy - miny) * sc); };
             dl->AddRectFilled(mp, ImVec2(mp.x + msz.x, mp.y + msz.y), IM_COL32(16, 18, 24, 225), 4.0f);
             dl->AddRect(mp, ImVec2(mp.x + msz.x, mp.y + msz.y), IM_COL32(255, 255, 255, 45), 4.0f);
-            for (auto& kv : pos) if (kv.first.rfind(pfx, 0) == 0) {
+            for (auto& kv : pos) if (belongs(kv.first)) {
                 ImVec2 a = toMap(kv.second.x, kv.second.y), b = toMap(kv.second.x + 190.0f, kv.second.y + 46.0f);
-                std::string role = kv.first.substr(std::strlen(pfx));
+                std::size_t colon = kv.first.find(':');
+                std::string role = colon == std::string::npos ? std::string() : kv.first.substr(colon + 1);
                 ImU32 col = role.rfind("trig", 0) == 0 ? IM_COL32(150, 96, 44, 255)
                           : role.rfind("cond", 0) == 0 ? IM_COL32(58, 112, 92, 255)
                                                        : IM_COL32(70, 110, 170, 255);
@@ -9880,6 +9894,11 @@ static void DrawFlowGraph(EditorState& ed) {
     }
     if (delIns >= 0 && delIns < (int)al->instructions.size()) { al->instructions.erase(al->instructions.begin() + delIns); ed.dirty = true; }
     if (delCond >= 0 && delCond < (int)al->conditions.size()) { al->conditions.erase(al->conditions.begin() + delCond); ed.dirty = true; }
+    // A canvas node ✕ can delete from ANY rule, not just the focused one.
+    if (gDelAl) {
+        if (gDelKind == 1 && gDelIdx >= 0 && gDelIdx < (int)gDelAl->conditions.size()) { gDelAl->conditions.erase(gDelAl->conditions.begin() + gDelIdx); ed.dirty = true; }
+        else if (gDelKind == 2 && gDelIdx >= 0 && gDelIdx < (int)gDelAl->instructions.size()) { gDelAl->instructions.erase(gDelAl->instructions.begin() + gDelIdx); ed.dirty = true; }
+    }
     // Deferred whole-script removal (done last: everything above still used `al`).
     if (removeAl) {
         ed.PushUndo();

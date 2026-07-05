@@ -9298,8 +9298,8 @@ static void DrawExtraTriggers(okay::ActionList* al, bool& dirty) {
         ImGui::PopID();
     }
     if (rm >= 0) { al->extraTriggers.erase(al->extraTriggers.begin() + rm); dirty = true; }
-    if (ImGui::SmallButton("+ Trigger")) { al->extraTriggers.push_back({}); dirty = true; }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also run this script from another event (e.g. On Start AND On Key).");
+    if (ImGui::SmallButton("+ Also fires on")) { al->extraTriggers.push_back({}); dirty = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run THIS script's SAME actions from another event too (e.g. On Start AND On Key).\nFor a trigger with its OWN separate actions, add another Actions component / use the Flow Graph's + Trigger.");
 }
 
 static void DrawFlowGraph(EditorState& ed) {
@@ -9593,6 +9593,13 @@ static void DrawFlowGraph(EditorState& ed) {
     // instructions chain, stacked in vertical bands so they all show at once.
     float bandY = 0.0f;
     for (ActionList* ral : als) {
+        // Faint divider between stacked rules so each trigger's chain reads separately.
+        if (bandY > 0.5f) {
+            float sy = std::round(cp.y + (bandY - 12.0f) * z + pan.y);
+            dl->AddLine(ImVec2(cp.x + 4, sy), ImVec2(cp.x + cs.x - 4, sy), IM_COL32(255, 255, 255, 26));
+        }
+        // Highlight the focused rule's band with a soft tint so it's clear which one the
+        // top strip is editing.
         int rti = (int)ral->trigger;
         const char* rtl = (rti >= 0 && rti < (int)IM_ARRAYSIZE(kTriggerLabels)) ? kTriggerLabels[rti] : "Trigger";
         std::string tsub;

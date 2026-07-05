@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -69,6 +70,11 @@ public:
         std::string value;            // stringified initial value
     };
     std::vector<VarDecl> variables;
+
+    /// Saved Flow-Graph node positions so a hand-arranged layout survives save/load
+    /// (the editor writes these when you drag a block). Key = "<hidx>:<role>:<idx>"
+    /// (hidx -1 = the primary handler; role = trig/cond/ins). Ignored at runtime.
+    std::unordered_map<std::string, std::pair<float, float>> nodeLayout;
 
     void Start() override;
     void Update(float dt) override;

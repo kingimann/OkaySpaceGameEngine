@@ -8598,6 +8598,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"force3",      "Add Force (3D)",     "x y z",                "Continuously push a 3D physics body.",                    "Physics"},
     {"set_var",     "Set Variable",       "name value",           "Set a variable to a number.",                             "Variables"},
     {"add_var",     "Add To Variable",    "name amount",          "Add to a variable.",                                      "Variables"},
+    {"toggle_var",  "Toggle True/False",  "name",                 "Flip a variable between true (1) and false (0).",         "Variables"},
     {"mul_var",     "Multiply Variable",  "name factor",          "Multiply a variable.",                                    "Variables"},
     {"div_var",     "Divide Variable",    "name divisor",         "Divide a variable.",                                      "Variables"},
     {"copy_var",    "Copy Variable",      "dest source",          "Copy one variable's value into another.",                 "Variables"},
@@ -9563,8 +9564,15 @@ static void DrawFlowGraph(EditorState& ed) {
     ImFont* fnt = ImGui::GetFont();
     // Draw a node; *del set true if its little ✕ was clicked (cond/instruction only).
     // Positions in `pos` are graph-space; screen = cp + r*z + pan, sizes scale by z.
+    // Stable, pointer-free layout key: strip the leading "<ptr>:" so it survives reload.
+    auto stableKey = [](const std::string& k) { std::size_t c = k.find(':'); return c == std::string::npos ? k : k.substr(c + 1); };
     auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del, bool* clicked = nullptr, bool* rclicked = nullptr) -> ImVec2 {
-        if (pos.find(k) == pos.end()) pos[k] = def;
+        if (pos.find(k) == pos.end()) {
+            // Seed from the scene-saved layout if the user hand-arranged this node before,
+            // else from the auto-layout default.
+            auto sv = al->nodeLayout.find(stableKey(k));
+            pos[k] = (sv != al->nodeLayout.end()) ? ImVec2(sv->second.first, sv->second.second) : def;
+        }
         ImVec2 r = pos[k];
         // Snap the node's screen origin to whole pixels: unrounded positions make the
         // scaled glyphs sample across texel boundaries, which is what reads as "blurry".
@@ -9574,8 +9582,14 @@ static void DrawFlowGraph(EditorState& ed) {
         ImGui::InvisibleButton("nd", ImVec2(NW, NH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         bool ndClick = ImGui::IsItemClicked();        // a plain (left) click opens the node editor
         if (rclicked) *rclicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);   // right-click: context menu
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pos[k].x += ImGui::GetIO().MouseDelta.x / z; pos[k].y += ImGui::GetIO().MouseDelta.y / z; }
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) {
+            pos[k].x += ImGui::GetIO().MouseDelta.x / z; pos[k].y += ImGui::GetIO().MouseDelta.y / z;
+            al->nodeLayout[stableKey(k)] = {pos[k].x, pos[k].y};   // persist the hand-placed spot
+            ed.dirty = true;
+        }
         bool hov = ImGui::IsItemHovered();
+        // Move cursor + grip dots on hover make it obvious a block can be dragged around.
+        if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         if (del) {                                    // delete handle in the top-right corner
             ImGui::SetCursorScreenPos(ImVec2(p.x + NW - 18 * z, p.y + 3 * z));
             if (ImGui::InvisibleButton("x", ImVec2(15 * z, 15 * z))) { *del = true; ndClick = false; }
@@ -9596,6 +9610,12 @@ static void DrawFlowGraph(EditorState& ed) {
         dl->AddText(fnt, fs, ImVec2(std::round(p.x + 12 * z), std::round(p.y + 6 * z)), IM_COL32(236,239,246,255), title);
         if (!sub.empty()) dl->AddText(fnt, std::round(fs * 0.9f), ImVec2(std::round(p.x + 12 * z), std::round(p.y + 25 * z)), IM_COL32(160,167,182,255), sub.c_str());
         if (del) dl->AddText(fnt, fs, ImVec2(std::round(p.x + NW - 15 * z), std::round(p.y + 3 * z)), hov ? IM_COL32(240,140,140,255) : IM_COL32(150,110,110,255), "x");
+        // Drag-grip dots (2x3) at the node's right edge on hover — a clear "grab me" cue.
+        if (hov) {
+            float gxk = br.x - 12 * z, gyk = p.y + NH * 0.5f - 5 * z;
+            for (int gr = 0; gr < 3; ++gr) for (int gc = 0; gc < 2; ++gc)
+                dl->AddCircleFilled(ImVec2(gxk + gc * 4 * z, gyk + gr * 4 * z), 1.1f * z, IM_COL32(200,206,220,180));
+        }
         return ImVec2(p.x + NW * 0.5f, p.y + NH * 0.5f);
     };
     // Bright glow behind a node — marks the instruction currently executing in Play.
@@ -9799,26 +9819,32 @@ static void DrawFlowGraph(EditorState& ed) {
     if (ImGui::BeginPopup("##flowvars")) {
         ImGui::TextColored(ImVec4(0.86f, 0.78f, 0.42f, 1.0f), "Variables");
         ImGui::TextDisabled("Created here, set to their start value when the game begins.");
-        ImGui::TextDisabled("Vector components are usable as \"name.x\" / \"name.y\" / \"name.z\".");
+        ImGui::TextDisabled("Vector/Color components are usable as \"name.x\"/\"name.y\"/\"name.z\" (and .r/.g/.b/.a).");
         ImGui::Separator();
         if (al->variables.empty()) ImGui::TextDisabled("No variables yet. Add one below.");
         int delVar = -1;
+        // Index order is STABLE for serialization: 0 Number,1 Text,2 Bool,3 Vector2,
+        // 4 Vector3,5 Int,6 Float,7 Double,8 GameObject,9 Color.
+        static const char* kVarTypes[] = {"Number", "Text", "True/False", "Vector2", "Vector3",
+                                          "Int", "Float", "Double", "GameObject", "Color"};
+        auto defaultVal = [](int t) -> const char* {
+            switch (t) { case 1: case 8: return ""; case 3: return "0 0"; case 4: return "0 0 0";
+                         case 9: return "1 1 1 1"; default: return "0"; }
+        };
         for (std::size_t vi = 0; vi < al->variables.size(); ++vi) {
             ImGui::PushID((int)vi);
             auto& vd = al->variables[vi];
             char nb[64]; std::strncpy(nb, vd.name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
-            ImGui::SetNextItemWidth(110);
+            ImGui::SetNextItemWidth(104);
             if (ImGui::InputTextWithHint("##vn", "name", nb, sizeof(nb))) { vd.name = nb; ed.dirty = true; }
             ImGui::SameLine();
-            const char* types[] = {"Number", "Text", "True/False", "Vector2", "Vector3"};
-            ImGui::SetNextItemWidth(92);
-            if (ImGui::Combo("##vt", &vd.type, types, IM_ARRAYSIZE(types))) {
-                // Reset the start value to a sensible default for the new type.
-                vd.value = vd.type == 1 ? "" : vd.type == 2 ? "0" : vd.type == 3 ? "0 0" : vd.type == 4 ? "0 0 0" : "0";
+            ImGui::SetNextItemWidth(96);
+            if (ImGui::Combo("##vt", &vd.type, kVarTypes, IM_ARRAYSIZE(kVarTypes))) {
+                vd.value = defaultVal(vd.type);   // sensible default for the new type
                 ed.dirty = true;
             }
             ImGui::SameLine();
-            // Per-type value editor (checkbox for bool, X/Y[/Z] drags for vectors).
+            // Per-type value editor.
             if (vd.type == 2) {                                   // True/False
                 bool bv = (vd.value == "1" || vd.value == "true" || vd.value == "True");
                 if (ImGui::Checkbox("##vbool", &bv)) { vd.value = bv ? "1" : "0"; ed.dirty = true; }
@@ -9828,18 +9854,41 @@ static void DrawFlowGraph(EditorState& ed) {
                 std::sscanf(vd.value.c_str(), "%f %f %f", &xyz[0], &xyz[1], &xyz[2]);
                 int n = vd.type == 3 ? 2 : 3;
                 ImGui::SetNextItemWidth(vd.type == 3 ? 130.0f : 180.0f);
-                bool ch = ImGui::DragScalarN("##vvec", ImGuiDataType_Float, xyz, n, 0.05f);
-                if (ch) {
+                if (ImGui::DragScalarN("##vvec", ImGuiDataType_Float, xyz, n, 0.05f)) {
                     char buf[64];
                     if (n == 2) std::snprintf(buf, sizeof(buf), "%g %g", xyz[0], xyz[1]);
                     else        std::snprintf(buf, sizeof(buf), "%g %g %g", xyz[0], xyz[1], xyz[2]);
                     vd.value = buf; ed.dirty = true;
                 }
-            } else {                                              // Number / Text
+            } else if (vd.type == 5) {                            // Int
+                int iv = (int)std::atof(vd.value.c_str());
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::InputInt("##vint", &iv)) { vd.value = std::to_string(iv); ed.dirty = true; }
+            } else if (vd.type == 9) {                            // Color (RGBA 0..1)
+                float rgba[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+                std::sscanf(vd.value.c_str(), "%f %f %f %f", &rgba[0], &rgba[1], &rgba[2], &rgba[3]);
+                ImGui::SetNextItemWidth(200);
+                if (ImGui::ColorEdit4("##vcol", rgba, ImGuiColorEditFlags_AlphaBar)) {
+                    char buf[80]; std::snprintf(buf, sizeof(buf), "%g %g %g %g", rgba[0], rgba[1], rgba[2], rgba[3]);
+                    vd.value = buf; ed.dirty = true;
+                }
+            } else if (vd.type == 8) {                            // GameObject reference (by name)
+                const char* prev = vd.value.empty() ? "(pick object)" : vd.value.c_str();
+                ImGui::SetNextItemWidth(150);
+                if (ImGui::BeginCombo("##vobj", prev)) {
+                    for (const auto& up : ed.scene().Objects()) {
+                        GameObject* o = up.get();
+                        bool sel = (vd.value == o->name);
+                        if (ImGui::Selectable(o->name.c_str(), sel)) { vd.value = o->name; ed.dirty = true; }
+                    }
+                    ImGui::EndCombo();
+                }
+            } else {                                              // Number / Text / Float / Double
+                bool numeric = (vd.type != 1);
                 char vb[96]; std::strncpy(vb, vd.value.c_str(), sizeof(vb) - 1); vb[sizeof(vb) - 1] = '\0';
                 ImGui::SetNextItemWidth(120);
-                if (ImGui::InputTextWithHint("##vv", vd.type == 1 ? "text" : "0", vb, sizeof(vb),
-                                             vd.type == 1 ? 0 : ImGuiInputTextFlags_CharsDecimal)) { vd.value = vb; ed.dirty = true; }
+                if (ImGui::InputTextWithHint("##vv", numeric ? "0" : "text", vb, sizeof(vb),
+                                             numeric ? ImGuiInputTextFlags_CharsDecimal : 0)) { vd.value = vb; ed.dirty = true; }
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("X")) delVar = (int)vi;
@@ -9967,6 +10016,8 @@ static void DrawFlowGraph(EditorState& ed) {
             for (auto it2 = pos.begin(); it2 != pos.end();) {
                 if (it2->first.rfind(pfx, 0) == 0) it2 = pos.erase(it2); else ++it2;
             }
+            al->nodeLayout.clear();   // also forget the saved hand-arranged layout -> back to auto
+            ed.dirty = true;
         }
         if (ImGui::MenuItem("Reset View")) { pan = ImVec2(0, 0); zoom = 1.0f; }
         ImGui::MenuItem("Minimap", nullptr, &g_flowMinimap);
@@ -10030,7 +10081,7 @@ static void ActionObjectPicker(ActionList::Item& it, std::size_t idx, const char
 static bool ActionOpUsesVar(const std::string& o) {
     return o.rfind("var_", 0) == 0 || o == "set_var" || o == "add_var" || o == "mul_var" ||
            o == "div_var" || o == "rand_var" || o == "clamp_var" || o == "lerp_var" ||
-           o == "copy_var" || o == "add_var_var" || o == "add_score";
+           o == "toggle_var" || o == "copy_var" || o == "add_var_var" || o == "add_score";
 }
 
 // Gather every variable name the game is likely to use, so the editor can offer them
@@ -10114,7 +10165,9 @@ static void CollectSceneVarNames(Scene* scene, std::vector<std::string>& out,
             if (vd.type == 3 || vd.type == 4) {              // vectors expose numeric components
                 add(vd.name + ".x"); add(vd.name + ".y");
                 if (vd.type == 4) add(vd.name + ".z");
-            } else add(vd.name);
+            } else if (vd.type == 9) {                       // color exposes r/g/b/a components
+                add(vd.name + ".r"); add(vd.name + ".g"); add(vd.name + ".b"); add(vd.name + ".a");
+            } else add(vd.name);                             // number/text/bool/int/float/double/gameobject
         }
     }
     std::sort(out.begin(), out.end());

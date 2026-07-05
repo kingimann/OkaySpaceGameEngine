@@ -270,12 +270,17 @@ std::string ActionList::ToText() const {
         emit("hc", h.conditions);
         emit("hi", h.instructions);
     }
+    // Saved Flow-Graph layout: "pos <key> <x> <y>" (editor-only; runtime ignores it).
+    for (const auto& kv : nodeLayout)
+        out += "pos " + quoteArg(kv.first) + " " +
+               std::to_string(kv.second.first) + " " + std::to_string(kv.second.second) + "\n";
     return out;
 }
 
 void ActionList::FromText(const std::string& text) {
     trigger = Trigger::OnStart; triggerKey = "e"; once = false; name.clear();
     conditions.clear(); instructions.clear(); variables.clear(); extraHandlers.clear();
+    nodeLayout.clear();
     std::size_t pos = 0;
     while (pos < text.size()) {
         std::size_t nl = text.find('\n', pos);
@@ -324,6 +329,8 @@ void ActionList::FromText(const std::string& text) {
             if (tok.size() > 1) it.op = tok[1];
             for (std::size_t k = 2; k < tok.size(); ++k) it.args.push_back(tok[k]);
             (tok[0] == "hc" ? extraHandlers.back().conditions : extraHandlers.back().instructions).push_back(std::move(it));
+        } else if (tok[0] == "pos" && tok.size() > 3) {   // saved Flow-Graph node position
+            nodeLayout[tok[1]] = {(float)std::atof(tok[2].c_str()), (float)std::atof(tok[3].c_str())};
         } else if (tok[0] == "v") {                 // declared variable: v <name> <type> <value>
             VarDecl vd;
             if (tok.size() > 1) vd.name = tok[1];
@@ -344,8 +351,12 @@ void ActionList::Start() {
     // exist (with their starting values) for every list from frame one.
     for (const VarDecl& v : variables) {
         if (v.name.empty()) continue;
+        // Type indices are STABLE for serialization (never renumber; only append):
+        // 0 Number, 1 Text, 2 Bool, 3 Vector2, 4 Vector3, 5 Int, 6 Float, 7 Double,
+        // 8 GameObject (stores an object name in StrVars), 9 Color.
         switch (v.type) {
             case 1:  // Text
+            case 8:  // GameObject reference (the object's name, usable as a text var)
                 StrVars()[v.name] = v.value;
                 break;
             case 2:  // Bool -> 1/0 number (so var_eq/var_gt work)
@@ -360,7 +371,19 @@ void ActionList::Start() {
                 if (v.type == 4) Vars()[v.name + ".z"] = xyz[2];
                 break;
             }
-            default: // Number
+            case 5:  // Int -> whole number
+                Vars()[v.name] = std::round((float)std::atof(v.value.c_str()));
+                break;
+            case 9: { // Color -> four component numbers "<name>.r/.g/.b/.a" (0..1)
+                float rgba[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+                std::sscanf(v.value.c_str(), "%f %f %f %f", &rgba[0], &rgba[1], &rgba[2], &rgba[3]);
+                Vars()[v.name + ".r"] = rgba[0];
+                Vars()[v.name + ".g"] = rgba[1];
+                Vars()[v.name + ".b"] = rgba[2];
+                Vars()[v.name + ".a"] = rgba[3];
+                break;
+            }
+            default: // Number / Float / Double (all share the float variable pool)
                 Vars()[v.name] = (float)std::atof(v.value.c_str());
                 break;
         }
@@ -760,6 +783,7 @@ void ActionList::Update(float dt) {
         }
         else if (op == "set_var") { Vars()[Str(it, 0)] = Num(it, 1); }
         else if (op == "add_var") { Vars()[Str(it, 0)] += Num(it, 1); }
+        else if (op == "toggle_var") { float& v = Vars()[Str(it, 0)]; v = (v != 0.0f) ? 0.0f : 1.0f; }  // flip a bool flag
         else if (op == "set_active") {
             // set_active <1|0> [object] — no name => this object; a name => that one.
             bool on = Num(it, 0) != 0.0f;

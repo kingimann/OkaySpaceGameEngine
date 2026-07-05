@@ -8624,6 +8624,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"set_bar",     "Set Progress Bar",   "object  var  [max]",   "Fill a named Progress Bar/Radial from a variable (var/max).", "Look"},
     {"set_sprite",  "Set Sprite Image",   "path",                 "Change this object's sprite image.",                      "Look"},
     {"set_color",   "Set Color",          "r g b [a] (0..1)",     "Tint this object (each channel 0..1).",                   "Look"},
+    {"set_color_var","Set Color From Var","colorVar",             "Tint this object from a Color variable.",                 "Look"},
     {"emit",        "Burst Particles",    "count",                "Emit a burst from this object's particle system.",        "Look"},
     {"play_anim",   "Play Animation",     "name",                 "Play a named animation clip.",                            "Look"},
     {"set_anim",    "Set Character State","number",               "Set a Character's animation state (1 idle, 2 walk, 3 run, 6 crouch, 7 prone...).", "Character"},
@@ -10098,6 +10099,21 @@ static void ActionObjectPicker(ActionList::Item& it, std::size_t idx, const char
                 it.args[idx] = g->name; dirty = true;
             }
         }
+        // GameObject variables: choosing one stores "$var" so the engine resolves the
+        // object by the name held in that variable at runtime (dynamic targets).
+        if (scene && kind == 0) {
+            bool header = false;
+            for (ActionList* al : scene->FindObjectsOfType<ActionList>())
+                for (const auto& vd : al->variables) {
+                    if (vd.type != 8 || vd.name.empty()) continue;
+                    if (!header) { ImGui::Separator(); ImGui::TextDisabled("From a GameObject variable:"); header = true; }
+                    std::string ref = "$" + vd.name;
+                    if (ImGui::Selectable(ref.c_str(), ref == cur)) {
+                        while (it.args.size() <= idx) it.args.push_back("");
+                        it.args[idx] = ref; dirty = true;
+                    }
+                }
+        }
         ImGui::EndCombo();
     }
 }
@@ -10623,6 +10639,24 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             ImGui::SetNextItemWidth(100);
             if (ImGui::InputTextWithHint("##fetn", "name-var", nb, sizeof(nb))) setArg(1, nb);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The current object's name goes in this variable — use it as $name in object fields.");
+        }
+    } else if (it.op == "set_color_var") {
+        // Pick a Color-typed variable by its base name (engine reads .r/.g/.b/.a).
+        std::string cur0 = it.args.empty() ? std::string() : it.args[0];
+        const char* prev = cur0.empty() ? "(pick color var)" : cur0.c_str();
+        ImGui::SetNextItemWidth(160);
+        if (ImGui::BeginCombo("##colvar", prev)) {
+            bool any = false;
+            if (scene) for (ActionList* al : scene->FindObjectsOfType<ActionList>())
+                for (const auto& vd : al->variables) {
+                    if (vd.type != 9 || vd.name.empty()) continue;
+                    any = true;
+                    if (ImGui::Selectable(vd.name.c_str(), vd.name == cur0)) {
+                        if (it.args.empty()) it.args.push_back(""); it.args[0] = vd.name; dirty = true;
+                    }
+                }
+            if (!any) ImGui::TextDisabled("No Color variables yet — add one in Variables.");
+            ImGui::EndCombo();
         }
     } else if (it.op == "set_color") {
         // A real color swatch/picker instead of typing r g b [a].

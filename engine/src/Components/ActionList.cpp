@@ -463,9 +463,9 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
             Scene* s = GetScene(); ok = false;
             if (s) for (const auto& up : s->Objects()) if (up && up->active && up->tag == Str(c, 0)) { ok = true; break; }
         }
-        else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
-        else if (op == "dist_gt")  { float d; ok = distTo(Str(c, 0), d) && d > Num(c, 1); }
-        else if (op == "exists")   { Scene* s = GetScene(); ok = s && s->Find(Str(c, 0)) != nullptr; }
+        else if (op == "dist_lt")  { float d; ok = distTo(ObjName(c, 0), d) && d < Num(c, 1); }
+        else if (op == "dist_gt")  { float d; ok = distTo(ObjName(c, 0), d) && d > Num(c, 1); }
+        else if (op == "exists")   { Scene* s = GetScene(); ok = s && s->Find(ObjName(c, 0)) != nullptr; }
         else if (op == "raycast") {
             // Cast a ray in a chosen direction; pass if it hits any collider.
             // Args: <direction> [distance].  direction = forward/back/up/down/
@@ -787,12 +787,22 @@ void ActionList::Update(float dt) {
         else if (op == "set_active") {
             // set_active <1|0> [object] — no name => this object; a name => that one.
             bool on = Num(it, 0) != 0.0f;
-            const std::string& name = Str(it, 1);
+            std::string name = ObjName(it, 1);   // literal name or "$var"
             if (!name.empty()) { if (scene) if (GameObject* g = scene->Find(name)) g->active = on; }
             else if (gameObject) gameObject->active = on;
         }
         else if (op == "set_color") {
             Color col{Num(it, 0), Num(it, 1), Num(it, 2), it.args.size() > 3 ? Num(it, 3) : 1.0f};
+            if (gameObject) {
+                if (auto* sr = gameObject->GetComponent<SpriteRenderer>()) sr->color = col;
+                if (auto* tr = gameObject->GetComponent<TextRenderer>()) tr->color = col;
+                if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->color = col;
+            }
+        }
+        else if (op == "set_color_var") {
+            // Tint this object from a Color variable (its "<var>.r/.g/.b/.a" components).
+            const std::string& cv = Str(it, 0);
+            Color col{GetVar(cv + ".r"), GetVar(cv + ".g"), GetVar(cv + ".b"), GetVar(cv + ".a")};
             if (gameObject) {
                 if (auto* sr = gameObject->GetComponent<SpriteRenderer>()) sr->color = col;
                 if (auto* tr = gameObject->GetComponent<TextRenderer>()) tr->color = col;

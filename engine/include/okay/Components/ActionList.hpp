@@ -35,17 +35,27 @@ public:
     std::string triggerKey = "e";     // OnKey: which key starts the list
     bool once = false;                // fire at most once
 
-    /// Extra triggers beyond the primary one — so a single script can run from several
-    /// events (e.g. On Start AND On Key). Each carries its own key/message where the
-    /// trigger type needs one. The primary `trigger`/`triggerKey` above stay for
-    /// backward compatibility; these are additive.
-    struct TriggerDef { Trigger type = Trigger::OnStart; std::string key; };
-    std::vector<TriggerDef> extraTriggers;
+    std::vector<Item> conditions;     // handler 0's gate
+    std::vector<Item> instructions;   // handler 0's actions
 
-    /// True if this list responds to trigger `t` (as the primary or any extra trigger).
+    /// A whole extra event handler in the SAME script — its own trigger, gate and
+    /// actions, like adding another function to one script (OnStart + OnUpdate + OnKey,
+    /// each doing different things). The primary trigger/conditions/instructions above
+    /// are handler 0; these are the rest. One handler runs at a time.
+    struct Handler {
+        Trigger trigger = Trigger::OnUpdate;
+        std::string triggerKey = "e";
+        bool once = false;
+        std::vector<Item> conditions;
+        std::vector<Item> instructions;
+        bool m_fired = false;
+    };
+    std::vector<Handler> extraHandlers;
+
+    /// True if this list responds to trigger `t` (as the primary or any extra handler).
     bool HasTrigger(Trigger t) const {
         if (trigger == t) return true;
-        for (const TriggerDef& d : extraTriggers) if (d.type == t) return true;
+        for (const Handler& h : extraHandlers) if (h.trigger == t) return true;
         return false;
     }
 
@@ -60,25 +70,23 @@ public:
     };
     std::vector<VarDecl> variables;
 
-    std::vector<Item> conditions;
-    std::vector<Item> instructions;
-
     void Start() override;
     void Update(float dt) override;
 
-    // Event-driven triggers latch a pending fire, run on the next Update tick.
-    void OnTriggerEnter2D(Collider2D*) override        { if (HasTrigger(Trigger::OnCollision) || HasTrigger(Trigger::OnTriggerEnter)) m_pending = true; }
-    void OnTriggerExit2D (Collider2D*) override        { if (HasTrigger(Trigger::OnTriggerExit)) m_pending = true; }
-    void OnCollisionEnter2D(const Collision2D&) override{ if (HasTrigger(Trigger::OnCollision)) m_pending = true; }
-    void OnTriggerEnter3D(Collider3D*) override        { if (HasTrigger(Trigger::OnCollision) || HasTrigger(Trigger::OnTriggerEnter)) m_pending = true; }
-    void OnTriggerExit3D (Collider3D*) override        { if (HasTrigger(Trigger::OnTriggerExit)) m_pending = true; }
-    void OnCollisionEnter3D(const Collision3D&) override{ if (HasTrigger(Trigger::OnCollision)) m_pending = true; }
-    void OnMouseEnter() override { if (HasTrigger(Trigger::OnMouseEnter)) m_pending = true; }
-    void OnMouseExit()  override { if (HasTrigger(Trigger::OnMouseExit))  m_pending = true; }
-    void OnMouseOver()  override { if (HasTrigger(Trigger::OnMouseOver))  m_pending = true; }
-    void OnMouseDown()  override { if (HasTrigger(Trigger::OnMouseDown))  m_pending = true; }
-    void OnMouseUp()    override { if (HasTrigger(Trigger::OnMouseUp))    m_pending = true; }
-    void OnMouseClick() override { if (HasTrigger(Trigger::OnClick))      m_pending = true; }
+    // Event-driven triggers latch the event type; the next Update fires the handler(s)
+    // that listen for it.
+    void OnTriggerEnter2D(Collider2D*) override        { Latch(Trigger::OnTriggerEnter); }
+    void OnTriggerExit2D (Collider2D*) override        { Latch(Trigger::OnTriggerExit); }
+    void OnCollisionEnter2D(const Collision2D&) override{ Latch(Trigger::OnCollision); }
+    void OnTriggerEnter3D(Collider3D*) override        { Latch(Trigger::OnTriggerEnter); }
+    void OnTriggerExit3D (Collider3D*) override        { Latch(Trigger::OnTriggerExit); }
+    void OnCollisionEnter3D(const Collision3D&) override{ Latch(Trigger::OnCollision); }
+    void OnMouseEnter() override { Latch(Trigger::OnMouseEnter); }
+    void OnMouseExit()  override { Latch(Trigger::OnMouseExit); }
+    void OnMouseOver()  override { Latch(Trigger::OnMouseOver); }
+    void OnMouseDown()  override { Latch(Trigger::OnMouseDown); }
+    void OnMouseUp()    override { Latch(Trigger::OnMouseUp); }
+    void OnMouseClick() override { Latch(Trigger::OnClick); }
 
     bool IsRunning() const { return m_running; }
     // Index of the instruction about to run (or waiting) while running, else -1.
@@ -88,9 +96,9 @@ public:
     /// Deliver a named signal: fires this list if it's an OnMessage trigger
     /// listening for `msg`. Sent by the `send` instruction or send_message().
     void ReceiveMessage(const std::string& msg) {
-        if (trigger == Trigger::OnMessage && triggerKey == msg) { Fire(); return; }
-        for (const TriggerDef& d : extraTriggers)
-            if (d.type == Trigger::OnMessage && d.key == msg) { Fire(); return; }
+        if (trigger == Trigger::OnMessage && triggerKey == msg) { FireHandler(conditions, instructions, m_fired, once); return; }
+        for (Handler& h : extraHandlers)
+            if (h.trigger == Trigger::OnMessage && h.triggerKey == msg) { FireHandler(h.conditions, h.instructions, h.m_fired, h.once); return; }
     }
 
     /// Compact text form (one line per trigger / condition / instruction), for
@@ -121,8 +129,13 @@ public:
     static int&  StepBudget();
 
 private:
-    void Fire();
-    bool EvalConditions();
+    void Fire();   // fire handler 0 (used by Start for On Start)
+    // Start running one handler's instructions if idle and its gate passes.
+    bool FireHandler(std::vector<Item>& conds, std::vector<Item>& ins, bool& fired, bool once);
+    void Latch(Trigger t) { m_pending = true; m_pendingType = t; }
+    bool EvalConditions(const std::vector<Item>& conds);
+    // The instruction list currently running (or handler 0's when idle).
+    const std::vector<Item>& RunList() const { return m_run ? *m_run : instructions; }
     // Resolve a goto/if_goto target: a numeric line, or the index of a `label` op.
     int  ResolveTarget(const std::string& t) const;
     // Index of the matching `endOp` for a block opener at `openIp` (handles nesting).
@@ -132,7 +145,10 @@ private:
     std::size_t m_ip = 0;
     float m_wait = 0.0f;
     bool m_fired = false;
+    std::vector<Item>* m_run = nullptr;   // active instruction list while running
+    bool* m_runFired = nullptr;           // fired-flag of the running handler (set on completion)
     bool m_pending = false;    // latched by event callbacks (collision/trigger/mouse)
+    Trigger m_pendingType = Trigger::OnCollision;   // which event latched
     // Loop frames (repeat / while / for-each) and subroutine return addresses.
     struct LoopFrame {
         int kind = 0;              // 0 = repeat, 1 = while, 2 = for-each array, 3 = for-each tagged

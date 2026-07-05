@@ -1,6 +1,7 @@
 #include "okay/Components/ActionList.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
@@ -76,19 +77,21 @@ int&  ActionList::StepBudget()  { static int  b = 0;     return b; }
 
 // A goto/if_goto target: a plain line number, or the index of `label "<name>"`.
 int ActionList::ResolveTarget(const std::string& t) const {
+    const std::vector<Item>& ins = RunList();
     if (!t.empty() && (std::isdigit((unsigned char)t[0]) || t[0] == '-')) return std::atoi(t.c_str());
-    for (std::size_t i = 0; i < instructions.size(); ++i)
-        if (instructions[i].op == "label" && !instructions[i].args.empty() && instructions[i].args[0] == t)
+    for (std::size_t i = 0; i < ins.size(); ++i)
+        if (ins[i].op == "label" && !ins[i].args.empty() && ins[i].args[0] == t)
             return (int)i;
     return -1;
 }
 
 // Find the matching `endOp` for a block that opens at `openIp`, honoring nesting.
 int ActionList::MatchingEnd(std::size_t openIp, const char* openOp, const char* endOp) const {
+    const std::vector<Item>& ins = RunList();
     int depth = 0;
-    for (std::size_t i = openIp; i < instructions.size(); ++i) {
-        if (instructions[i].op == openOp) ++depth;
-        else if (instructions[i].op == endOp) { if (--depth == 0) return (int)i; }
+    for (std::size_t i = openIp; i < ins.size(); ++i) {
+        if (ins[i].op == openOp) ++depth;
+        else if (ins[i].op == endOp) { if (--depth == 0) return (int)i; }
     }
     return -1;
 }
@@ -254,20 +257,25 @@ std::string ActionList::ToText() const {
             out += '\n';
         }
     };
-    // Extra triggers: "xt <type> <key>" (key '-' when none), one per line.
-    for (const TriggerDef& d : extraTriggers)
-        out += "xt " + std::to_string((int)d.type) + " " + (d.key.empty() ? std::string("-") : quoteArg(d.key)) + "\n";
     // Declared variables: "v <name> <type> <value...>" (value may contain spaces).
     for (const VarDecl& v : variables)
         out += "v " + quoteArg(v.name) + " " + std::to_string(v.type) + " " + quoteArg(v.value) + "\n";
     emit("c", conditions);
     emit("i", instructions);
+    // Extra handlers: a "handler <type> <key> <once>" line then its own hc/hi lines.
+    for (const Handler& h : extraHandlers) {
+        out += "handler " + std::to_string((int)h.trigger) + " " +
+               (h.triggerKey.empty() ? std::string("-") : quoteArg(h.triggerKey)) + " " +
+               (h.once ? "1" : "0") + "\n";
+        emit("hc", h.conditions);
+        emit("hi", h.instructions);
+    }
     return out;
 }
 
 void ActionList::FromText(const std::string& text) {
     trigger = Trigger::OnStart; triggerKey = "e"; once = false; name.clear();
-    conditions.clear(); instructions.clear(); variables.clear(); extraTriggers.clear();
+    conditions.clear(); instructions.clear(); variables.clear(); extraHandlers.clear();
     std::size_t pos = 0;
     while (pos < text.size()) {
         std::size_t nl = text.find('\n', pos);
@@ -305,11 +313,17 @@ void ActionList::FromText(const std::string& text) {
             if (tok.size() > 1) trigger = (Trigger)std::atoi(tok[1].c_str());
             if (tok.size() > 2) triggerKey = (tok[2] == "-") ? std::string{} : tok[2];
             if (tok.size() > 3) once = (tok[3] == "1");
-        } else if (tok[0] == "xt") {                // extra trigger: xt <type> <key>
-            TriggerDef d;
-            if (tok.size() > 1) d.type = (Trigger)std::atoi(tok[1].c_str());
-            if (tok.size() > 2 && tok[2] != "-") d.key = tok[2];
-            extraTriggers.push_back(std::move(d));
+        } else if (tok[0] == "handler") {           // extra handler: handler <type> <key> <once>
+            Handler h;
+            if (tok.size() > 1) h.trigger = (Trigger)std::atoi(tok[1].c_str());
+            if (tok.size() > 2 && tok[2] != "-") h.triggerKey = tok[2];
+            if (tok.size() > 3) h.once = (tok[3] == "1");
+            extraHandlers.push_back(std::move(h));
+        } else if ((tok[0] == "hc" || tok[0] == "hi") && !extraHandlers.empty()) {
+            Item it;
+            if (tok.size() > 1) it.op = tok[1];
+            for (std::size_t k = 2; k < tok.size(); ++k) it.args.push_back(tok[k]);
+            (tok[0] == "hc" ? extraHandlers.back().conditions : extraHandlers.back().instructions).push_back(std::move(it));
         } else if (tok[0] == "v") {                 // declared variable: v <name> <type> <value>
             VarDecl vd;
             if (tok.size() > 1) vd.name = tok[1];
@@ -330,14 +344,32 @@ void ActionList::Start() {
     // exist (with their starting values) for every list from frame one.
     for (const VarDecl& v : variables) {
         if (v.name.empty()) continue;
-        if (v.type == 1) StrVars()[v.name] = v.value;
-        else             Vars()[v.name] = (float)std::atof(v.value.c_str());
+        switch (v.type) {
+            case 1:  // Text
+                StrVars()[v.name] = v.value;
+                break;
+            case 2:  // Bool -> 1/0 number (so var_eq/var_gt work)
+                Vars()[v.name] = (v.value == "1" || v.value == "true" || v.value == "True") ? 1.0f : 0.0f;
+                break;
+            case 3:  // Vector2 -> two component numbers "<name>.x" / ".y"
+            case 4: { // Vector3 -> three component numbers "<name>.x" / ".y" / ".z"
+                float xyz[3] = {0.0f, 0.0f, 0.0f};
+                std::sscanf(v.value.c_str(), "%f %f %f", &xyz[0], &xyz[1], &xyz[2]);
+                Vars()[v.name + ".x"] = xyz[0];
+                Vars()[v.name + ".y"] = xyz[1];
+                if (v.type == 4) Vars()[v.name + ".z"] = xyz[2];
+                break;
+            }
+            default: // Number
+                Vars()[v.name] = (float)std::atof(v.value.c_str());
+                break;
+        }
     }
     if (HasTrigger(Trigger::OnStart)) Fire();
 }
 
-bool ActionList::EvalConditions() {
-    for (const Item& c : conditions) {
+bool ActionList::EvalConditions(const std::vector<Item>& conds) {
+    for (const Item& c : conds) {
         const std::string& op = c.op;
         bool ok = true;
         auto distTo = [&](const std::string& name, float& out) -> bool {
@@ -434,33 +466,50 @@ bool ActionList::EvalConditions() {
     return true;
 }
 
-void ActionList::Fire() {
-    if (m_running) return;
-    if (once && m_fired) return;
-    if (!EvalConditions()) return;
+void ActionList::Fire() { FireHandler(conditions, instructions, m_fired, once); }
+
+// Begin running one handler's instructions (if idle and its gate passes). Only one
+// handler runs at a time; the others latch/poll again once it finishes.
+bool ActionList::FireHandler(std::vector<Item>& conds, std::vector<Item>& ins, bool& fired, bool onceFlag) {
+    if (m_running) return false;
+    if (onceFlag && fired) return false;
+    if (!EvalConditions(conds)) return false;
     m_running = true; m_ip = 0; m_wait = 0.0f;
     m_loops.clear(); m_callStack.clear();
+    m_run = &ins; m_runFired = &fired;
+    return true;
 }
 
 void ActionList::Update(float dt) {
     // ---- Triggers ----
     if (!m_running) {
-        // Evaluate the primary trigger plus every extra trigger, so one script can run
-        // from several events. Each (type, key) is checked; the first that matches fires.
-        auto poll = [&](Trigger type, const std::string& key) {
+        // Poll the primary handler and every extra handler; each has its OWN trigger,
+        // gate and actions (like separate functions in one script). First match runs.
+        auto pollH = [&](Trigger type, const std::string& key,
+                         std::vector<Item>& conds, std::vector<Item>& ins, bool& fired, bool onceFlag) {
             if (m_running) return;
-            if (type == Trigger::OnUpdate) Fire();
-            else if (type == Trigger::OnKey && !key.empty() && Input::GetKeyDown(key[0])) Fire();
-            else if (type == Trigger::OnKeyUp && !key.empty() && Input::GetKeyUp(key[0])) Fire();
+            bool go = false;
+            if (type == Trigger::OnUpdate) go = true;
+            else if (type == Trigger::OnKey && !key.empty() && Input::GetKeyDown(key[0])) go = true;
+            else if (type == Trigger::OnKeyUp && !key.empty() && Input::GetKeyUp(key[0])) go = true;
             else if (type == Trigger::OnClick) {
                 if (auto* b = gameObject ? gameObject->GetComponent<UIButton>() : nullptr)
-                    if (b->WasClicked()) Fire();
+                    if (b->WasClicked()) go = true;
             }
+            if (go) FireHandler(conds, ins, fired, onceFlag);
         };
-        poll(trigger, triggerKey);
-        for (const TriggerDef& d : extraTriggers) poll(d.type, d.key);
-        // Collision / trigger / mouse triggers are latched by the event callbacks.
-        if (!m_running && m_pending) { m_pending = false; Fire(); }
+        pollH(trigger, triggerKey, conditions, instructions, m_fired, once);
+        for (Handler& h : extraHandlers) pollH(h.trigger, h.triggerKey, h.conditions, h.instructions, h.m_fired, h.once);
+        // Latched collision / trigger / mouse events fire the handler listening for them.
+        if (!m_running && m_pending) {
+            m_pending = false;
+            auto matches = [&](Trigger ht) {
+                return ht == m_pendingType ||
+                       (m_pendingType == Trigger::OnTriggerEnter && ht == Trigger::OnCollision);  // legacy
+            };
+            if (matches(trigger)) FireHandler(conditions, instructions, m_fired, once);
+            else for (Handler& h : extraHandlers) if (!m_running && matches(h.trigger)) FireHandler(h.conditions, h.instructions, h.m_fired, h.once);
+        }
     }
     if (!m_running) return;
 
@@ -470,21 +519,22 @@ void ActionList::Update(float dt) {
     Scene* scene = GetScene();
     Transform* t = transform;
     int guard = 0;   // cap steps per frame so a goto-loop without a wait can't hang
-    while (m_ip < instructions.size()) {
+    const std::vector<Item>& ins = RunList();   // the running handler's instructions
+    while (m_ip < ins.size()) {
         if (++guard > 10000) break;
         // Step debugging: when paused, run only as many instructions as the editor
         // has granted, then hold here (return keeps the list running so it resumes).
         if (DebugPaused()) { if (StepBudget() <= 0) return; --StepBudget(); }
-        const Item& it = instructions[m_ip];
+        const Item& it = ins[m_ip];
         const std::string& op = it.op;
         ++m_ip;
 
         if (op == "wait") { m_wait = Num(it, 0); if (m_wait > 0.0f) return; }
-        else if (op == "stop") { m_ip = instructions.size(); }
+        else if (op == "stop") { m_ip = ins.size(); }
         else if (op == "label") { /* jump target marker — no-op */ }
         else if (op == "goto") {
             int target = ResolveTarget(Str(it, 0));   // a line number OR a label name
-            if (target >= 0 && target < (int)instructions.size()) m_ip = (std::size_t)target;
+            if (target >= 0 && target < (int)ins.size()) m_ip = (std::size_t)target;
         }
         // ---- Counted loops: repeat <count> ... end_repeat, with break/continue ----
         else if (op == "repeat") {
@@ -576,11 +626,11 @@ void ActionList::Update(float dt) {
         // ---- Subroutines (delegate-style): gosub <label> ... return_sub ----
         else if (op == "gosub") {
             int target = ResolveTarget(Str(it, 0));
-            if (target >= 0 && target < (int)instructions.size()) { m_callStack.push_back(m_ip); m_ip = (std::size_t)target; }
+            if (target >= 0 && target < (int)ins.size()) { m_callStack.push_back(m_ip); m_ip = (std::size_t)target; }
         }
         else if (op == "return_sub") {
             if (!m_callStack.empty()) { m_ip = m_callStack.back(); m_callStack.pop_back(); }
-            else m_ip = instructions.size();
+            else m_ip = ins.size();
         }
         // ---- Arrays (float lists) ----
         else if (op == "array_clear") { Arrays()[Str(it, 0)].clear(); }
@@ -961,7 +1011,7 @@ void ActionList::Update(float dt) {
         else if (op == "if_goto") {              // conditional jump: var <op> value -> line or label
             int line = ResolveTarget(Str(it, 3));
             bool pass = CmpPass(Str(it, 1), GetVar(Str(it, 0)), Num(it, 2));
-            if (pass && line >= 0 && line < (int)instructions.size()) m_ip = (std::size_t)line;
+            if (pass && line >= 0 && line < (int)ins.size()) m_ip = (std::size_t)line;
         }
         // ---- More general instructions ----
         else if (op == "toggle_active") { if (gameObject) gameObject->active = !gameObject->active; }
@@ -1039,9 +1089,10 @@ void ActionList::Update(float dt) {
         // unknown ops are ignored, so files stay forward-compatible
     }
 
-    // Reached the end of the list.
+    // Reached the end of the running handler.
     m_running = false;
-    m_fired = true;
+    if (m_runFired) *m_runFired = true;   // mark THIS handler fired (for `once`)
+    m_run = nullptr; m_runFired = nullptr;
 }
 
 } // namespace okay

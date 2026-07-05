@@ -7922,13 +7922,20 @@ void DrawHierarchy(EditorState& ed) {
         }
         ImGui::EndPopup();
     }
-    ImGui::SameLine();
+    // Keep the toolbar buttons on the same row only while they fit; otherwise wrap to
+    // a new line. Lets the Hierarchy panel narrow down without the buttons clipping.
+    float availR = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    auto sameLineIfRoom = [&](float w) {
+        float next = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + w;
+        if (next < availR) ImGui::SameLine(); // else: fall to the next line
+    };
+    sameLineIfRoom(ImGui::CalcTextSize("Expand").x + ImGui::GetStyle().FramePadding.x * 2);
     if (ImGui::SmallButton("Expand"))   g_hierExpand = 1;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Expand all");
-    ImGui::SameLine();
+    sameLineIfRoom(ImGui::CalcTextSize("Collapse").x + ImGui::GetStyle().FramePadding.x * 2);
     if (ImGui::SmallButton("Collapse")) g_hierExpand = 2;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse all");
-    ImGui::SameLine();
+    sameLineIfRoom(ImGui::CalcTextSize("Sort: None").x + ImGui::GetStyle().FramePadding.x * 2);
     if (ImGui::SmallButton(g_hierSort ? "Sort: A-Z" : "Sort: None")) g_hierSort = !g_hierSort;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle alphabetical sorting of siblings");
     ImGui::SetNextItemWidth(-1);
@@ -9102,6 +9109,7 @@ static std::string g_pickerProjectDir;
 static void* g_flowSelAl = nullptr;
 static int   g_flowSelKind = 0;   // 0 none, 1 condition, 2 instruction
 static int   g_flowSelIdx  = -1;
+static int   g_flowSelHandler = -1;  // which handler the selection is in (-1 = primary)
 static bool  g_flowAddInsReq = false;   // canvas menu -> open the add-instruction palette
 static bool  g_flowAddCondReq = false;  // canvas menu -> open the add-condition palette
 static okay::ActionList::Item g_flowClip;   // copied node (works across scripts)
@@ -9272,35 +9280,6 @@ static bool KeyPicker(const char* id, std::string& key, bool& dirty) {
     return changed;
 }
 
-// Draw the extra-triggers list (+ an "Add trigger" button) so one script can run from
-// several events. Called right after the primary Trigger control in both the Inspector
-// and the Flow Graph. Compact: one row per extra trigger, with its own key/message.
-static void DrawExtraTriggers(okay::ActionList* al, bool& dirty) {
-    using T = okay::ActionList::Trigger;
-    auto needsKey = [](T t){ return t == T::OnKey || t == T::OnKeyUp; };
-    auto isMsg    = [](T t){ return t == T::OnMessage; };
-    int rm = -1;
-    for (std::size_t i = 0; i < al->extraTriggers.size(); ++i) {
-        ImGui::PushID((int)(9000 + i));
-        auto& d = al->extraTriggers[i];
-        ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("+ also"); ImGui::SameLine();
-        int dt = (int)d.type; ImGui::SetNextItemWidth(140);
-        if (ImGui::Combo("##et", &dt, kTriggerLabels, IM_ARRAYSIZE(kTriggerLabels))) { d.type = (T)dt; dirty = true; }
-        if (needsKey(d.type)) {
-            ImGui::SameLine(); KeyPicker("ek", d.key, dirty);
-        } else if (isMsg(d.type)) {
-            ImGui::SameLine();
-            char kb[64]; std::strncpy(kb, d.key.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
-            ImGui::SetNextItemWidth(110);
-            if (ImGui::InputTextWithHint("##ek", "message", kb, sizeof(kb))) { d.key = kb; dirty = true; }
-        }
-        ImGui::SameLine(); if (ImGui::SmallButton("X")) rm = (int)i;
-        ImGui::PopID();
-    }
-    if (rm >= 0) { al->extraTriggers.erase(al->extraTriggers.begin() + rm); dirty = true; }
-    if (ImGui::SmallButton("+ Also fires on")) { al->extraTriggers.push_back({}); dirty = true; }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run THIS script's SAME actions from another event too (e.g. On Start AND On Key).\nFor a trigger with its OWN separate actions, add another Actions component / use the Flow Graph's + Trigger.");
-}
 
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
@@ -9356,12 +9335,16 @@ static void DrawFlowGraph(EditorState& ed) {
     // Keyboard: Ctrl+C copies the selected node, Ctrl+V pastes it (after the selection,
     // or at the end) — works across scripts since a node is just op + args.
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl) {
+        // Copy/paste act on the focused HANDLER's lists (primary handler = -1).
+        bool hx = (g_flowSelHandler >= 0 && g_flowSelHandler < (int)al->extraHandlers.size());
+        auto& fc = hx ? al->extraHandlers[g_flowSelHandler].conditions   : al->conditions;
+        auto& fi = hx ? al->extraHandlers[g_flowSelHandler].instructions : al->instructions;
         if (ImGui::IsKeyPressed(ImGuiKey_C) && g_flowSelAl == al && g_flowSelKind != 0) {
-            auto& list = g_flowSelKind == 1 ? al->conditions : al->instructions;
+            auto& list = g_flowSelKind == 1 ? fc : fi;
             if (g_flowSelIdx >= 0 && g_flowSelIdx < (int)list.size()) { g_flowClip = list[g_flowSelIdx]; g_flowClipKind = g_flowSelKind; }
         }
         if (ImGui::IsKeyPressed(ImGuiKey_V) && g_flowClipKind != 0) {
-            auto& list = g_flowClipKind == 1 ? al->conditions : al->instructions;
+            auto& list = g_flowClipKind == 1 ? fc : fi;
             int at = (g_flowSelAl == al && g_flowSelKind == g_flowClipKind && g_flowSelIdx >= 0 && g_flowSelIdx < (int)list.size())
                      ? g_flowSelIdx + 1 : (int)list.size();
             list.insert(list.begin() + at, g_flowClip); ed.dirty = true;
@@ -9372,7 +9355,20 @@ static void DrawFlowGraph(EditorState& ed) {
     // Toolbar: add/clear nodes (edits the live ActionList, mirrored in the Inspector)
     // and a running indicator that lights up while the list executes in Play.
     int delIns = -1, delCond = -1;            // delete from the FOCUSED rule (strip/popup/key)
-    ActionList* gDelAl = nullptr; int gDelKind = 0, gDelIdx = -1;   // delete a canvas node from ANY rule
+    ActionList* gDelAl = nullptr; int gDelKind = 0, gDelIdx = -1, gDelHandler = -1;  // delete a canvas node from any handler
+    // The conditions/instructions of the currently-focused handler (primary = -1).
+    auto focusConds = [&]() -> std::vector<ActionList::Item>& {
+        return (g_flowSelHandler >= 0 && g_flowSelHandler < (int)al->extraHandlers.size())
+             ? al->extraHandlers[g_flowSelHandler].conditions : al->conditions;
+    };
+    auto focusIns = [&]() -> std::vector<ActionList::Item>& {
+        return (g_flowSelHandler >= 0 && g_flowSelHandler < (int)al->extraHandlers.size())
+             ? al->extraHandlers[g_flowSelHandler].instructions : al->instructions;
+    };
+    bool fHasExtra = (g_flowSelHandler >= 0 && g_flowSelHandler < (int)al->extraHandlers.size());
+    ActionList::Trigger* fTrig = fHasExtra ? &al->extraHandlers[g_flowSelHandler].trigger    : &al->trigger;
+    std::string*         fKey  = fHasExtra ? &al->extraHandlers[g_flowSelHandler].triggerKey : &al->triggerKey;
+    bool*                fOnce = fHasExtra ? &al->extraHandlers[g_flowSelHandler].once        : &al->once;
     static std::unordered_map<void*, ImVec2> panMap;
     ImVec2& pan = panMap[(void*)al];
     static std::unordered_map<void*, float> zoomMap;
@@ -9387,8 +9383,8 @@ static void DrawFlowGraph(EditorState& ed) {
     g_flowAddInsReq = false;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run — pick it from a searchable list.");
     if (const char* op = FlowOpPalettePopup("##addinspal", kInstrOps, IM_ARRAYSIZE(kInstrOps))) {
-        al->instructions.push_back({op, {}});
-        g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)al->instructions.size() - 1;
+        focusIns().push_back({op, {}});
+        g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)focusIns().size() - 1;
         ed.dirty = true;
     }
     ImGui::SameLine();
@@ -9396,15 +9392,15 @@ static void DrawFlowGraph(EditorState& ed) {
     g_flowAddCondReq = false;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a gate — the actions run only if every condition passes.");
     if (const char* op = FlowOpPalettePopup("##addcondpal", kCondOps, IM_ARRAYSIZE(kCondOps))) {
-        al->conditions.push_back({op, {}});
-        g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)al->conditions.size() - 1;
+        focusConds().push_back({op, {}});
+        g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)focusConds().size() - 1;
         ed.dirty = true;
     }
     barSep(); ImGui::TextDisabled("Reusable:"); ImGui::SameLine();
-    CustomActionButton("flowinscustom", /*cond*/false, al->instructions, ed.dirty);
-    ImGui::SameLine(); SaveAsCustomButton("flowinssave", /*cond*/false, al->instructions);
-    ImGui::SameLine(); CustomActionButton("flowcondcustom", /*cond*/true, al->conditions, ed.dirty);
-    ImGui::SameLine(); SaveAsCustomButton("flowcondsave", /*cond*/true, al->conditions);
+    CustomActionButton("flowinscustom", /*cond*/false, focusIns(), ed.dirty);
+    ImGui::SameLine(); SaveAsCustomButton("flowinssave", /*cond*/false, focusIns());
+    ImGui::SameLine(); CustomActionButton("flowcondcustom", /*cond*/true, focusConds(), ed.dirty);
+    ImGui::SameLine(); SaveAsCustomButton("flowcondsave", /*cond*/true, focusConds());
     barSep();
     { char vlbl[32]; std::snprintf(vlbl, sizeof(vlbl), "Variables (%d)", (int)al->variables.size());
       if (ImGui::Button(vlbl)) ImGui::OpenPopup("##flowvars"); }
@@ -9449,45 +9445,79 @@ static void DrawFlowGraph(EditorState& ed) {
     // canvas below selects it and its editor appears in this strip.
     ImGui::BeginChild("##flowedit", ImVec2(0, 118), true, ImGuiWindowFlags_None);
     {
+        // Handler picker: choose WHICH event handler in this script the strip edits.
+        // Each handler is its own trigger + conditions + instructions (like adding
+        // another function to one script). "Trigger 1" is the primary; the rest are
+        // the extra handlers.
         ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Trigger"); ImGui::SameLine();
-        int ti2 = (int)al->trigger; ImGui::SetNextItemWidth(160);
-        if (ImGui::Combo("##flowtrigInline", &ti2, trigs, IM_ARRAYSIZE(trigs))) { al->trigger = (ActionList::Trigger)ti2; ed.dirty = true; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("When these actions run.");
-        if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnKeyUp) {
-            ImGui::SameLine(); KeyPicker("flowtrigkey", al->triggerKey, ed.dirty);
-        } else if (al->trigger == ActionList::Trigger::OnMessage) {
-            ImGui::SameLine();
-            char kb[64]; std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
-            ImGui::SetNextItemWidth(130);
-            if (ImGui::InputTextWithHint("##flowtrigkeyInline", "message name", kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
+        {
+            int nH = 1 + (int)al->extraHandlers.size();
+            int curH = (g_flowSelHandler < 0 || g_flowSelHandler >= (int)al->extraHandlers.size()) ? 0 : g_flowSelHandler + 1;
+            char prev[48]; std::snprintf(prev, sizeof(prev), "Trigger %d / %d", curH + 1, nH);
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::BeginCombo("##flowhandlersel", prev)) {
+                for (int hi = 0; hi < nH; ++hi) {
+                    ActionList::Trigger tg = hi == 0 ? al->trigger : al->extraHandlers[hi - 1].trigger;
+                    const char* tl = ((int)tg >= 0 && (int)tg < (int)IM_ARRAYSIZE(kTriggerLabels)) ? kTriggerLabels[(int)tg] : "Trigger";
+                    char lbl[64]; std::snprintf(lbl, sizeof(lbl), "Trigger %d — %s", hi + 1, tl);
+                    if (ImGui::Selectable(lbl, hi == curH)) { g_flowSelHandler = hi == 0 ? -1 : hi - 1; g_flowSelKind = 0; g_flowSelAl = al; }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("This script's event handlers — each one has its own trigger, conditions and instructions.");
         }
-        ImGui::SameLine(); if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
+        ImGui::SameLine();
+        int ti2 = (int)*fTrig; ImGui::SetNextItemWidth(150);
+        if (ImGui::Combo("##flowtrigInline", &ti2, trigs, IM_ARRAYSIZE(trigs))) { *fTrig = (ActionList::Trigger)ti2; ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("When this handler's actions run.");
+        if (*fTrig == ActionList::Trigger::OnKey || *fTrig == ActionList::Trigger::OnKeyUp) {
+            ImGui::SameLine(); KeyPicker("flowtrigkey", *fKey, ed.dirty);
+        } else if (*fTrig == ActionList::Trigger::OnMessage) {
+            ImGui::SameLine();
+            char kb[64]; std::strncpy(kb, fKey->c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
+            ImGui::SetNextItemWidth(130);
+            if (ImGui::InputTextWithHint("##flowtrigkeyInline", "message name", kb, sizeof(kb))) { *fKey = kb; ed.dirty = true; }
+        }
+        ImGui::SameLine(); if (ImGui::Checkbox("Once", fOnce)) ed.dirty = true;
         // Guardrail (Inspector parity): OnMouse* triggers need pickable bounds.
-        if (al->trigger >= ActionList::Trigger::OnMouseEnter && al->trigger <= ActionList::Trigger::OnMouseOver) {
+        if (*fTrig >= ActionList::Trigger::OnMouseEnter && *fTrig <= ActionList::Trigger::OnMouseOver) {
             bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
             bool has3D = go->GetComponent<Collider3D>();
             if (!has2D && !has3D) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "needs a Collider/Sprite to be clickable"); }
         }
-        // Add another trigger as its OWN rule (a new ActionList) with its own conditions
-        // and instructions — it appears as a separate chain in the graph below.
+        // Add another trigger as another HANDLER in THIS script — its own conditions and
+        // instructions, shown as its own band in the graph below (like adding a function).
         ImGui::SameLine();
-        if (ImGui::SmallButton("+ Trigger")) { auto* nl = go->AddComponent<ActionList>(); nl->trigger = ActionList::Trigger::OnUpdate; g_flowSelAl = nl; g_flowSelKind = 0; pick = (int)als.size(); ed.dirty = true; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another trigger with its OWN conditions and instructions (a new rule).");
+        if (ImGui::SmallButton("+ Trigger")) {
+            al->extraHandlers.push_back({});
+            g_flowSelHandler = (int)al->extraHandlers.size() - 1; g_flowSelKind = 0; g_flowSelAl = al; ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another trigger to THIS script with its own conditions and instructions.");
+        if (fHasExtra) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove Trigger")) {
+                al->extraHandlers.erase(al->extraHandlers.begin() + g_flowSelHandler);
+                g_flowSelHandler = -1; g_flowSelKind = 0; ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete this extra handler (trigger + its conditions + instructions).");
+        }
         ImGui::Separator();
-        bool haveSel = (g_flowSelAl == al && g_flowSelKind != 0);
-        if (haveSel && g_flowSelKind == 1 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->conditions.size()) {
+        // Nothing more to draw if the focused handler was just removed above.
+        bool stillValid = (g_flowSelHandler < 0) || (g_flowSelHandler < (int)al->extraHandlers.size());
+        bool haveSel = stillValid && (g_flowSelAl == al && g_flowSelKind != 0);
+        if (haveSel && g_flowSelKind == 1 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)focusConds().size()) {
             ImGui::AlignTextToFramePadding();
             ImGui::TextColored(ImVec4(0.42f, 0.78f, 0.62f, 1.0f), "Condition %d", g_flowSelIdx + 1); ImGui::SameLine();
-            bool nd = false; DrawActionItem(al->conditions[g_flowSelIdx], kCondOps, IM_ARRAYSIZE(kCondOps), 73000 + g_flowSelIdx, nd, &ed.scene());
+            bool nd = false; DrawActionItem(focusConds()[g_flowSelIdx], kCondOps, IM_ARRAYSIZE(kCondOps), 73000 + g_flowSelIdx, nd, &ed.scene());
             if (nd) ed.dirty = true;
             ImGui::SameLine(); if (ImGui::SmallButton("Delete##fseC")) delCond = g_flowSelIdx;
-        } else if (haveSel && g_flowSelKind == 2 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->instructions.size()) {
+        } else if (haveSel && g_flowSelKind == 2 && g_flowSelIdx >= 0 && g_flowSelIdx < (int)focusIns().size()) {
             ImGui::AlignTextToFramePadding();
             ImGui::TextColored(ImVec4(0.5f, 0.64f, 0.86f, 1.0f), "Instruction %d", g_flowSelIdx + 1); ImGui::SameLine();
-            bool nd = false; DrawActionItem(al->instructions[g_flowSelIdx], kInstrOps, IM_ARRAYSIZE(kInstrOps), 74000 + g_flowSelIdx, nd, &ed.scene());
+            bool nd = false; DrawActionItem(focusIns()[g_flowSelIdx], kInstrOps, IM_ARRAYSIZE(kInstrOps), 74000 + g_flowSelIdx, nd, &ed.scene());
             if (nd) ed.dirty = true;
-            ImGui::SameLine(); if (ImGui::SmallButton("Up##fseU") && g_flowSelIdx > 0) { std::swap(al->instructions[g_flowSelIdx], al->instructions[g_flowSelIdx - 1]); g_flowSelIdx--; ed.dirty = true; }
-            ImGui::SameLine(); if (ImGui::SmallButton("Down##fseD") && g_flowSelIdx + 1 < (int)al->instructions.size()) { std::swap(al->instructions[g_flowSelIdx], al->instructions[g_flowSelIdx + 1]); g_flowSelIdx++; ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("Up##fseU") && g_flowSelIdx > 0) { std::swap(focusIns()[g_flowSelIdx], focusIns()[g_flowSelIdx - 1]); g_flowSelIdx--; ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("Down##fseD") && g_flowSelIdx + 1 < (int)focusIns().size()) { std::swap(focusIns()[g_flowSelIdx], focusIns()[g_flowSelIdx + 1]); g_flowSelIdx++; ed.dirty = true; }
             ImGui::SameLine(); if (ImGui::SmallButton("Delete##fseI")) delIns = g_flowSelIdx;
         } else {
             ImGui::TextDisabled("Click a node below to edit it here — or use + Instruction / + Condition to add one.");
@@ -9577,10 +9607,9 @@ static void DrawFlowGraph(EditorState& ed) {
         dl->AddBezierCubic(a, ImVec2(a.x, (a.y + b.y) * 0.5f), ImVec2(b.x, (a.y + b.y) * 0.5f), b, col, 2.5f * z);
     };
 
-    // Rule-aware node key (nodes for different rules never collide, and each rule keeps
-    // its own dragged layout).
-    auto keyR = [&](ActionList* ral, const char* role, int i) {
-        char b[64]; std::snprintf(b, sizeof(b), "%p:%s:%d", (void*)ral, role, i); return std::string(b);
+    // Handler-aware node key (handler index keeps each event handler's nodes distinct).
+    auto keyR = [&](ActionList* ral, int hidx, const char* role, int i) {
+        char b[80]; std::snprintf(b, sizeof(b), "%p:%d:%s:%d", (void*)ral, hidx, role, i); return std::string(b);
     };
     auto jumpWire = [&](ImVec2 a, ImVec2 b, ImU32 col) {
         float off = 60.0f * z + (a.y < b.y ? 0.0f : 40.0f * z);
@@ -9589,54 +9618,78 @@ static void DrawFlowGraph(EditorState& ed) {
         dl->AddCircleFilled(ImVec2(b.x + NW * 0.5f, b.y), 3.0f * z, col);
     };
     const float INDENT = 34.0f;
-    // Draw EVERY rule (ActionList) on this object, each as its own trigger→conditions→
+    // Every EVENT HANDLER in this one script (handler 0 = primary trigger/conditions/
+    // instructions; the rest are the extra handlers) as its own trigger→conditions→
     // instructions chain, stacked in vertical bands so they all show at once.
+    struct HV { int hidx; ActionList::Trigger* trig; std::string* key; std::vector<ActionList::Item>* conds; std::vector<ActionList::Item>* ins; };
+    std::vector<HV> hvs;
+    hvs.push_back({-1, &al->trigger, &al->triggerKey, &al->conditions, &al->instructions});
+    for (std::size_t h = 0; h < al->extraHandlers.size(); ++h) {
+        auto& H = al->extraHandlers[h];
+        hvs.push_back({(int)h, &H.trigger, &H.triggerKey, &H.conditions, &H.instructions});
+    }
     float bandY = 0.0f;
-    for (ActionList* ral : als) {
-        // Faint divider between stacked rules so each trigger's chain reads separately.
+    for (const HV& hv : hvs) {
+        std::vector<ActionList::Item>& conds = *hv.conds;
+        std::vector<ActionList::Item>& insL = *hv.ins;
         if (bandY > 0.5f) {
             float sy = std::round(cp.y + (bandY - 12.0f) * z + pan.y);
             dl->AddLine(ImVec2(cp.x + 4, sy), ImVec2(cp.x + cs.x - 4, sy), IM_COL32(255, 255, 255, 26));
         }
-        // Highlight the focused rule's band with a soft tint so it's clear which one the
-        // top strip is editing.
-        int rti = (int)ral->trigger;
+        // The band this handler occupies (top..bottom in screen space). A faint tint +
+        // left accent stripe marks the FOCUSED handler so it's obvious which one the
+        // top strip / + Instruction edits. Also drop a small "Trigger N" label chip.
+        {
+            float rowsB = (float)std::max(conds.size(), insL.size() + 1);
+            float bandH = 18.0f + rowsB * GAPY + 44.0f;
+            float by0 = std::round(cp.y + (bandY - 8.0f) * z + pan.y);
+            float by1 = std::round(cp.y + (bandY + bandH - 16.0f) * z + pan.y);
+            bool focused = (g_flowSelAl == al && g_flowSelHandler == hv.hidx);
+            if (focused)
+                dl->AddRectFilled(ImVec2(cp.x + 2, by0), ImVec2(cp.x + cs.x - 2, by1), IM_COL32(255, 210, 90, 12), 4.0f);
+            dl->AddRectFilled(ImVec2(cp.x + 2, by0), ImVec2(cp.x + 5, by1),
+                              focused ? IM_COL32(255, 210, 90, 210) : IM_COL32(150, 160, 180, 70), 2.0f);
+            char chip[24]; std::snprintf(chip, sizeof(chip), "Trigger %d", hv.hidx < 0 ? 1 : hv.hidx + 2);
+            dl->AddText(ImVec2(cp.x + 10, by0 + 3),
+                        focused ? IM_COL32(255, 220, 120, 255) : IM_COL32(150, 160, 180, 150), chip);
+        }
+        int rti = (int)*hv.trig;
         const char* rtl = (rti >= 0 && rti < (int)IM_ARRAYSIZE(kTriggerLabels)) ? kTriggerLabels[rti] : "Trigger";
         std::string tsub;
-        if (ral->trigger == ActionList::Trigger::OnKey || ral->trigger == ActionList::Trigger::OnKeyUp ||
-            ral->trigger == ActionList::Trigger::OnMessage)
-            tsub = "\"" + ral->triggerKey + "\"";
-        if (!ral->name.empty()) tsub = ral->name + (tsub.empty() ? std::string() : " " + tsub);
-        ImU32 trigCol = ral->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
+        if (*hv.trig == ActionList::Trigger::OnKey || *hv.trig == ActionList::Trigger::OnKeyUp ||
+            *hv.trig == ActionList::Trigger::OnMessage)
+            tsub = "\"" + *hv.key + "\"";
+        if (hv.hidx < 0 && !al->name.empty()) tsub = al->name + (tsub.empty() ? std::string() : " " + tsub);
+        ImU32 trigCol = al->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
         bool trigClicked = false;
-        ImVec2 trigC = node(keyR(ral, "trig", 0), ImVec2(30, 18 + bandY), rtl, tsub, trigCol, nullptr, &trigClicked);
-        if (trigClicked) { g_flowSelAl = ral; g_flowSelKind = 0; }   // focus this rule in the strip
+        ImVec2 trigC = node(keyR(al, hv.hidx, "trig", 0), ImVec2(30, 18 + bandY), rtl, tsub, trigCol, nullptr, &trigClicked);
+        if (trigClicked) { g_flowSelAl = al; g_flowSelKind = 0; g_flowSelHandler = hv.hidx; }
 
-        for (std::size_t i = 0; i < ral->conditions.size(); ++i) {
+        for (std::size_t i = 0; i < conds.size(); ++i) {
             bool d = false, clk = false, rc = false;
-            bool selHere = (g_flowSelAl == ral && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
+            bool selHere = (g_flowSelAl == al && g_flowSelHandler == hv.hidx && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
             std::string csub;
-            for (const auto& a : ral->conditions[i].args) { if (!csub.empty()) csub += " "; csub += a; }
+            for (const auto& a : conds[i].args) { if (!csub.empty()) csub += " "; csub += a; }
             if (csub.size() > 26) csub = csub.substr(0, 24) + "..";
             if (csub.empty()) csub = "if";
-            ImVec2 c = node(keyR(ral, "cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + bandY + i * GAPY),
-                            ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), ral->conditions[i].op), csub,
+            ImVec2 c = node(keyR(al, hv.hidx, "cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + bandY + i * GAPY),
+                            ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), conds[i].op), csub,
                             IM_COL32(58, 112, 92, 255), &d, &clk, &rc);
             if (selHere)
                 dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
                             ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
-            if (d) { gDelAl = ral; gDelKind = 1; gDelIdx = (int)i; }
-            if (clk) { g_flowSelAl = ral; g_flowSelKind = 1; g_flowSelIdx = (int)i; }
-            if (rc)  { g_flowSelAl = ral; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
+            if (d) { gDelAl = al; gDelHandler = hv.hidx; gDelKind = 1; gDelIdx = (int)i; }
+            if (clk) { g_flowSelAl = al; g_flowSelHandler = hv.hidx; g_flowSelKind = 1; g_flowSelIdx = (int)i; }
+            if (rc)  { g_flowSelAl = al; g_flowSelHandler = hv.hidx; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
             wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
         }
 
-        float startY = 18.0f + bandY + (ral->conditions.empty() ? GAPY : (float)ral->conditions.size() * GAPY);
-        const std::size_t nins = ral->instructions.size();
+        float startY = 18.0f + bandY + (conds.empty() ? GAPY : (float)conds.size() * GAPY);
+        const std::size_t nins = insL.size();
         std::vector<int> depth(nins, 0), openerOf(nins, -1);
         { std::vector<int> stack; int dcur = 0;
           for (std::size_t i = 0; i < nins; ++i) {
-              const std::string& o = ral->instructions[i].op;
+              const std::string& o = insL[i].op;
               if (FlowIsEnder(o)) { dcur = dcur > 0 ? dcur - 1 : 0; if (!stack.empty()) { openerOf[i] = stack.back(); stack.pop_back(); } }
               depth[i] = dcur;
               if (FlowIsOpener(o)) { stack.push_back((int)i); ++dcur; }
@@ -9644,34 +9697,34 @@ static void DrawFlowGraph(EditorState& ed) {
         auto targetIndex = [&](const std::string& t) -> int {
             if (!t.empty() && (std::isdigit((unsigned char)t[0]) || t[0] == '-')) { int n = std::atoi(t.c_str()); return (n >= 0 && n < (int)nins) ? n : -1; }
             for (std::size_t i = 0; i < nins; ++i)
-                if (ral->instructions[i].op == "label" && !ral->instructions[i].args.empty() && ral->instructions[i].args[0] == t) return (int)i;
+                if (insL[i].op == "label" && !insL[i].args.empty() && insL[i].args[0] == t) return (int)i;
             return -1;
         };
         std::vector<ImVec2> insCenter(nins);
         ImVec2 prev = trigC;
         for (std::size_t i = 0; i < nins; ++i) {
-            const auto& item = ral->instructions[i];
+            const auto& item = insL[i];
             std::string sub;
             for (const auto& a : item.args) { if (!sub.empty()) sub += " "; sub += a; }
             if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
             bool d = false, clk = false, rc = false;
-            bool selHere = (g_flowSelAl == ral && g_flowSelKind == 2 && g_flowSelIdx == (int)i);
+            bool selHere = (g_flowSelAl == al && g_flowSelHandler == hv.hidx && g_flowSelKind == 2 && g_flowSelIdx == (int)i);
             ImU32 col = FlowNodeColor(ActionOpGroup(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op));
-            ImVec2 c = node(keyR(ral, "ins", (int)i), ImVec2(30 + depth[i] * INDENT, startY + i * GAPY),
+            ImVec2 c = node(keyR(al, hv.hidx, "ins", (int)i), ImVec2(30 + depth[i] * INDENT, startY + i * GAPY),
                             ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op), sub, col, &d, &clk, &rc);
             insCenter[i] = c;
-            if (ral->CurrentInstruction() == (int)i) glow(c);
+            if (hv.hidx < 0 && al->CurrentInstruction() == (int)i) glow(c);
             if (selHere)
                 dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
                             ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
-            if (d) { gDelAl = ral; gDelKind = 2; gDelIdx = (int)i; }
-            if (clk) { g_flowSelAl = ral; g_flowSelKind = 2; g_flowSelIdx = (int)i; }
-            if (rc)  { g_flowSelAl = ral; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
+            if (d) { gDelAl = al; gDelHandler = hv.hidx; gDelKind = 2; gDelIdx = (int)i; }
+            if (clk) { g_flowSelAl = al; g_flowSelHandler = hv.hidx; g_flowSelKind = 2; g_flowSelIdx = (int)i; }
+            if (rc)  { g_flowSelAl = al; g_flowSelHandler = hv.hidx; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodectx"); }
             wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
             prev = c;
         }
         for (std::size_t i = 0; i < nins; ++i) {
-            const auto& item = ral->instructions[i];
+            const auto& item = insL[i];
             int tgt = -1;
             if (item.op == "goto" || item.op == "gosub") tgt = item.args.size() > 0 ? targetIndex(item.args[0]) : -1;
             else if (item.op == "if_goto")               tgt = item.args.size() > 3 ? targetIndex(item.args[3]) : -1;
@@ -9679,11 +9732,10 @@ static void DrawFlowGraph(EditorState& ed) {
             if (FlowIsEnder(item.op) && openerOf[i] >= 0)
                 jumpWire(insCenter[i], insCenter[openerOf[i]], IM_COL32(120, 210, 140, 200));
         }
-        if (ral->instructions.empty())
+        if (insL.empty())
             dl->AddText(ImVec2(cp.x + 30 * z + pan.x, cp.y + (startY + 12) * z + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions — use + Instruction)");
 
-        // Advance to the next rule's band.
-        float rows = (float)std::max(ral->conditions.size(), nins + 1);
+        float rows = (float)std::max(conds.size(), nins + 1);
         bandY += 18.0f + rows * GAPY + 44.0f;
     }
 
@@ -9711,8 +9763,12 @@ static void DrawFlowGraph(EditorState& ed) {
             dl->AddRect(mp, ImVec2(mp.x + msz.x, mp.y + msz.y), IM_COL32(255, 255, 255, 45), 4.0f);
             for (auto& kv : pos) if (belongs(kv.first)) {
                 ImVec2 a = toMap(kv.second.x, kv.second.y), b = toMap(kv.second.x + 190.0f, kv.second.y + 46.0f);
-                std::size_t colon = kv.first.find(':');
-                std::string role = colon == std::string::npos ? std::string() : kv.first.substr(colon + 1);
+                // Key is "ptr:hidx:role:idx" — the role is the 3rd colon-separated field.
+                std::string role;
+                { std::size_t c1 = kv.first.find(':');
+                  std::size_t c2 = c1 == std::string::npos ? c1 : kv.first.find(':', c1 + 1);
+                  std::size_t c3 = c2 == std::string::npos ? c2 : kv.first.find(':', c2 + 1);
+                  if (c2 != std::string::npos) role = kv.first.substr(c2 + 1, (c3 == std::string::npos ? std::string::npos : c3 - c2 - 1)); }
                 ImU32 col = role.rfind("trig", 0) == 0 ? IM_COL32(150, 96, 44, 255)
                           : role.rfind("cond", 0) == 0 ? IM_COL32(58, 112, 92, 255)
                                                        : IM_COL32(70, 110, 170, 255);
@@ -9739,10 +9795,11 @@ static void DrawFlowGraph(EditorState& ed) {
     // Variables panel: create/edit/delete named variables with a starting value. They
     // seed the shared pool at scene start, show up in every action's variable picker,
     // and save with the scene.
-    ImGui::SetNextWindowSizeConstraints(ImVec2(360, 0), ImVec2(560, 520));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(400, 0), ImVec2(620, 520));
     if (ImGui::BeginPopup("##flowvars")) {
         ImGui::TextColored(ImVec4(0.86f, 0.78f, 0.42f, 1.0f), "Variables");
         ImGui::TextDisabled("Created here, set to their start value when the game begins.");
+        ImGui::TextDisabled("Vector components are usable as \"name.x\" / \"name.y\" / \"name.z\".");
         ImGui::Separator();
         if (al->variables.empty()) ImGui::TextDisabled("No variables yet. Add one below.");
         int delVar = -1;
@@ -9750,17 +9807,40 @@ static void DrawFlowGraph(EditorState& ed) {
             ImGui::PushID((int)vi);
             auto& vd = al->variables[vi];
             char nb[64]; std::strncpy(nb, vd.name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(110);
             if (ImGui::InputTextWithHint("##vn", "name", nb, sizeof(nb))) { vd.name = nb; ed.dirty = true; }
             ImGui::SameLine();
-            const char* types[] = {"Number", "Text"};
-            ImGui::SetNextItemWidth(80);
-            if (ImGui::Combo("##vt", &vd.type, types, 2)) ed.dirty = true;
+            const char* types[] = {"Number", "Text", "True/False", "Vector2", "Vector3"};
+            ImGui::SetNextItemWidth(92);
+            if (ImGui::Combo("##vt", &vd.type, types, IM_ARRAYSIZE(types))) {
+                // Reset the start value to a sensible default for the new type.
+                vd.value = vd.type == 1 ? "" : vd.type == 2 ? "0" : vd.type == 3 ? "0 0" : vd.type == 4 ? "0 0 0" : "0";
+                ed.dirty = true;
+            }
             ImGui::SameLine();
-            char vb[96]; std::strncpy(vb, vd.value.c_str(), sizeof(vb) - 1); vb[sizeof(vb) - 1] = '\0';
-            ImGui::SetNextItemWidth(120);
-            if (ImGui::InputTextWithHint("##vv", vd.type == 1 ? "text" : "0", vb, sizeof(vb),
-                                         vd.type == 1 ? 0 : ImGuiInputTextFlags_CharsDecimal)) { vd.value = vb; ed.dirty = true; }
+            // Per-type value editor (checkbox for bool, X/Y[/Z] drags for vectors).
+            if (vd.type == 2) {                                   // True/False
+                bool bv = (vd.value == "1" || vd.value == "true" || vd.value == "True");
+                if (ImGui::Checkbox("##vbool", &bv)) { vd.value = bv ? "1" : "0"; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::TextDisabled(bv ? "true" : "false");
+            } else if (vd.type == 3 || vd.type == 4) {            // Vector2 / Vector3
+                float xyz[3] = {0.0f, 0.0f, 0.0f};
+                std::sscanf(vd.value.c_str(), "%f %f %f", &xyz[0], &xyz[1], &xyz[2]);
+                int n = vd.type == 3 ? 2 : 3;
+                ImGui::SetNextItemWidth(vd.type == 3 ? 130.0f : 180.0f);
+                bool ch = ImGui::DragScalarN("##vvec", ImGuiDataType_Float, xyz, n, 0.05f);
+                if (ch) {
+                    char buf[64];
+                    if (n == 2) std::snprintf(buf, sizeof(buf), "%g %g", xyz[0], xyz[1]);
+                    else        std::snprintf(buf, sizeof(buf), "%g %g %g", xyz[0], xyz[1], xyz[2]);
+                    vd.value = buf; ed.dirty = true;
+                }
+            } else {                                              // Number / Text
+                char vb[96]; std::strncpy(vb, vd.value.c_str(), sizeof(vb) - 1); vb[sizeof(vb) - 1] = '\0';
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::InputTextWithHint("##vv", vd.type == 1 ? "text" : "0", vb, sizeof(vb),
+                                             vd.type == 1 ? 0 : ImGuiInputTextFlags_CharsDecimal)) { vd.value = vb; ed.dirty = true; }
+            }
             ImGui::SameLine();
             if (ImGui::SmallButton("X")) delVar = (int)vi;
             ImGui::PopID();
@@ -9777,35 +9857,35 @@ static void DrawFlowGraph(EditorState& ed) {
     if (ImGui::BeginPopup("##flownodeedit")) {
         bool nodeDirty = false;
         if (g_flowSelAl == al && g_flowSelKind == 1 &&
-            g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->conditions.size()) {
+            g_flowSelIdx >= 0 && g_flowSelIdx < (int)focusConds().size()) {
             ImGui::TextColored(ImVec4(0.42f, 0.78f, 0.62f, 1.0f), "Condition");
             ImGui::TextDisabled("The actions run only if this passes.");
             ImGui::Separator();
-            DrawActionItem(al->conditions[g_flowSelIdx], kCondOps, IM_ARRAYSIZE(kCondOps),
+            DrawActionItem(focusConds()[g_flowSelIdx], kCondOps, IM_ARRAYSIZE(kCondOps),
                            71000 + g_flowSelIdx, nodeDirty, &ed.scene());
             ImGui::Separator();
             if (ImGui::SmallButton("Delete node##flowdel")) { delCond = g_flowSelIdx; ImGui::CloseCurrentPopup(); }
         } else if (g_flowSelAl == al && g_flowSelKind == 2 &&
-                   g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->instructions.size()) {
+                   g_flowSelIdx >= 0 && g_flowSelIdx < (int)focusIns().size()) {
             ImGui::TextColored(ImVec4(0.5f, 0.64f, 0.86f, 1.0f), "Instruction");
             ImGui::TextDisabled("An action to run when the conditions pass.");
             ImGui::Separator();
-            DrawActionItem(al->instructions[g_flowSelIdx], kInstrOps, IM_ARRAYSIZE(kInstrOps),
+            DrawActionItem(focusIns()[g_flowSelIdx], kInstrOps, IM_ARRAYSIZE(kInstrOps),
                            72000 + g_flowSelIdx, nodeDirty, &ed.scene());
             ImGui::Separator();
             // Order matters for instructions — offer reorder + duplicate right here.
-            int n = (int)al->instructions.size();
+            int n = (int)focusIns().size();
             if (ImGui::SmallButton("Up##flowup") && g_flowSelIdx > 0) {
-                std::swap(al->instructions[g_flowSelIdx], al->instructions[g_flowSelIdx - 1]); g_flowSelIdx--; ed.dirty = true;
+                std::swap(focusIns()[g_flowSelIdx], focusIns()[g_flowSelIdx - 1]); g_flowSelIdx--; ed.dirty = true;
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Down##flowdn") && g_flowSelIdx + 1 < n) {
-                std::swap(al->instructions[g_flowSelIdx], al->instructions[g_flowSelIdx + 1]); g_flowSelIdx++; ed.dirty = true;
+                std::swap(focusIns()[g_flowSelIdx], focusIns()[g_flowSelIdx + 1]); g_flowSelIdx++; ed.dirty = true;
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Duplicate##flowdup")) {
-                ActionList::Item copy = al->instructions[g_flowSelIdx];
-                al->instructions.insert(al->instructions.begin() + g_flowSelIdx + 1, copy);
+                ActionList::Item copy = focusIns()[g_flowSelIdx];
+                focusIns().insert(focusIns().begin() + g_flowSelIdx + 1, copy);
                 g_flowSelIdx++; ed.dirty = true;
             }
             ImGui::SameLine();
@@ -9821,21 +9901,21 @@ static void DrawFlowGraph(EditorState& ed) {
     // key/message for On Key / On Message). Same live ActionList the Inspector edits.
     if (ImGui::BeginPopup("##flowtrigedit")) {
         ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), "Trigger");
-        ImGui::TextDisabled("When should these actions run?");
+        ImGui::TextDisabled("When should this handler's actions run?");
         ImGui::Separator();
-        int ti2 = (int)al->trigger;
+        int ti2 = (int)*fTrig;
         ImGui::SetNextItemWidth(220);
         if (ImGui::Combo("##flowtrigcombo", &ti2, trigs, IM_ARRAYSIZE(trigs))) {
-            al->trigger = (ActionList::Trigger)ti2; ed.dirty = true;
+            *fTrig = (ActionList::Trigger)ti2; ed.dirty = true;
         }
-        if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnMessage) {
-            char kb[64]; std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
+        if (*fTrig == ActionList::Trigger::OnKey || *fTrig == ActionList::Trigger::OnMessage) {
+            char kb[64]; std::strncpy(kb, fKey->c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
             ImGui::SetNextItemWidth(220);
-            const char* lbl = al->trigger == ActionList::Trigger::OnKey ? "Key" : "Message";
-            if (ImGui::InputText(lbl, kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
+            const char* lbl = *fTrig == ActionList::Trigger::OnKey ? "Key" : "Message";
+            if (ImGui::InputText(lbl, kb, sizeof(kb))) { *fKey = kb; ed.dirty = true; }
         }
         // Guardrail: the OnMouse* triggers need something pickable under the cursor.
-        if (al->trigger >= ActionList::Trigger::OnMouseEnter && al->trigger <= ActionList::Trigger::OnMouseOver) {
+        if (*fTrig >= ActionList::Trigger::OnMouseEnter && *fTrig <= ActionList::Trigger::OnMouseOver) {
             bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
             bool has3D = go->GetComponent<Collider3D>();
             if (!has2D && !has3D)
@@ -9851,7 +9931,7 @@ static void DrawFlowGraph(EditorState& ed) {
     // Right-click a node: quick actions without opening the full editor.
     if (ImGui::BeginPopup("##flownodectx")) {
         bool isCond = (g_flowSelKind == 1);
-        auto& list = isCond ? al->conditions : al->instructions;
+        auto& list = isCond ? focusConds() : focusIns();
         int idx = g_flowSelIdx;
         if (idx >= 0 && idx < (int)list.size()) {
             ImGui::TextDisabled("%s", isCond ? "Condition" : "Instruction");
@@ -9877,8 +9957,8 @@ static void DrawFlowGraph(EditorState& ed) {
         if (ImGui::MenuItem("Add Instruction...")) g_flowAddInsReq = true;
         if (ImGui::MenuItem("Add Condition..."))   g_flowAddCondReq = true;
         if (ImGui::MenuItem("Paste", nullptr, false, g_flowClipKind != 0)) {
-            if (g_flowClipKind == 1) al->conditions.push_back(g_flowClip);
-            else                     al->instructions.push_back(g_flowClip);
+            if (g_flowClipKind == 1) focusConds().push_back(g_flowClip);
+            else                     focusIns().push_back(g_flowClip);
             ed.dirty = true;
         }
         ImGui::Separator();
@@ -9899,12 +9979,16 @@ static void DrawFlowGraph(EditorState& ed) {
         && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))) {
         if (g_flowSelKind == 1) delCond = g_flowSelIdx; else delIns = g_flowSelIdx;
     }
-    if (delIns >= 0 && delIns < (int)al->instructions.size()) { al->instructions.erase(al->instructions.begin() + delIns); ed.dirty = true; }
-    if (delCond >= 0 && delCond < (int)al->conditions.size()) { al->conditions.erase(al->conditions.begin() + delCond); ed.dirty = true; }
-    // A canvas node ✕ can delete from ANY rule, not just the focused one.
+    if (delIns >= 0 && delIns < (int)focusIns().size()) { focusIns().erase(focusIns().begin() + delIns); ed.dirty = true; }
+    if (delCond >= 0 && delCond < (int)focusConds().size()) { focusConds().erase(focusConds().begin() + delCond); ed.dirty = true; }
+    // A canvas node ✕ can delete from ANY handler, not just the focused one.
     if (gDelAl) {
-        if (gDelKind == 1 && gDelIdx >= 0 && gDelIdx < (int)gDelAl->conditions.size()) { gDelAl->conditions.erase(gDelAl->conditions.begin() + gDelIdx); ed.dirty = true; }
-        else if (gDelKind == 2 && gDelIdx >= 0 && gDelIdx < (int)gDelAl->instructions.size()) { gDelAl->instructions.erase(gDelAl->instructions.begin() + gDelIdx); ed.dirty = true; }
+        std::vector<ActionList::Item>* gc = (gDelHandler >= 0 && gDelHandler < (int)gDelAl->extraHandlers.size())
+            ? &gDelAl->extraHandlers[gDelHandler].conditions : &gDelAl->conditions;
+        std::vector<ActionList::Item>* gi = (gDelHandler >= 0 && gDelHandler < (int)gDelAl->extraHandlers.size())
+            ? &gDelAl->extraHandlers[gDelHandler].instructions : &gDelAl->instructions;
+        if (gDelKind == 1 && gDelIdx >= 0 && gDelIdx < (int)gc->size()) { gc->erase(gc->begin() + gDelIdx); ed.dirty = true; }
+        else if (gDelKind == 2 && gDelIdx >= 0 && gDelIdx < (int)gi->size()) { gi->erase(gi->begin() + gDelIdx); ed.dirty = true; }
     }
     // Deferred whole-script removal (done last: everything above still used `al`).
     if (removeAl) {
@@ -10025,7 +10109,13 @@ static void CollectSceneVarNames(Scene* scene, std::vector<std::string>& out,
     };
     for (ActionList* al : scene->FindObjectsOfType<ActionList>()) {
         scan(al->conditions); scan(al->instructions);
-        for (const auto& vd : al->variables) add(vd.name);   // (5) explicitly declared variables
+        for (const auto& h : al->extraHandlers) { scan(h.conditions); scan(h.instructions); }
+        for (const auto& vd : al->variables) {               // (5) explicitly declared variables
+            if (vd.type == 3 || vd.type == 4) {              // vectors expose numeric components
+                add(vd.name + ".x"); add(vd.name + ".y");
+                if (vd.type == 4) add(vd.name + ".z");
+            } else add(vd.name);
+        }
     }
     std::sort(out.begin(), out.end());
 }
@@ -14913,37 +15003,8 @@ void DrawInspector(EditorState& ed) {
                                    "On Click", "On Key Up", "On Message",
                                    "On Trigger Enter", "On Trigger Exit", "On Mouse Enter",
                                    "On Mouse Exit", "On Mouse Down", "On Mouse Up", "On Mouse Over"};
-            int ti = (int)al->trigger;
-            ImGui::SetNextItemWidth(150);
-            if (ImGui::Combo("Trigger", &ti, trigs, IM_ARRAYSIZE(trigs))) { al->trigger = (ActionList::Trigger)ti; ed.dirty = true; }
-            if (al->trigger == ActionList::Trigger::OnKey ||
-                al->trigger == ActionList::Trigger::OnKeyUp) {
-                ImGui::SameLine(); ImGui::TextUnformatted("Key"); ImGui::SameLine();
-                KeyPicker("alkey", al->triggerKey, ed.dirty);
-            } else if (al->trigger == ActionList::Trigger::OnMessage) {
-                ImGui::SameLine();
-                char mb[64];
-                std::strncpy(mb, al->triggerKey.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
-                ImGui::SetNextItemWidth(110);
-                if (ImGui::InputText("Message##al", mb, sizeof(mb))) { al->triggerKey = mb; ed.dirty = true; }
-            }
-            ImGui::SameLine();
-            if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
-            DrawExtraTriggers(al, ed.dirty);   // run this script from more than one event
-
-            // Guardrail: OnMouse* triggers need pickable bounds. 3D meshes are picked
-            // by a camera ray vs a Collider3D; 2D objects by a sprite / 2D collider.
-            if (al->trigger >= ActionList::Trigger::OnMouseEnter && al->trigger <= ActionList::Trigger::OnMouseOver) {
-                bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
-                bool has3D = go->GetComponent<Collider3D>();
-                if (!has2D && !has3D)
-                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
-                        "Mouse triggers need a Collider (3D) or Sprite/Collider (2D) to be clickable.");
-            }
-
             g_pickerProjectDir = ed.projectDir();   // so object/prefab pickers can list prefabs
-            // Draw one numbered "card" row (faint frame + index) around an action, so
-            // stacked conditions/instructions are easy to scan and reorder.
+            // Draw one numbered "card" row (faint frame + index) around an action.
             auto cardRow = [&](std::vector<ActionList::Item>& list, std::size_t i, const ActionOpInfo* ops, int nops, int idBase) -> int {
                 ImGui::PushID(idBase + (int)i);
                 ImDrawList* rdl = ImGui::GetWindowDrawList();
@@ -14961,27 +15022,68 @@ void DrawInspector(EditorState& ed) {
                 return act;
             };
 
-            SectionHeader("Conditions (all must pass)");
-            if (al->conditions.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
-            for (std::size_t i = 0; i < al->conditions.size();) {
-                int act = cardRow(al->conditions, i, kCondOps, IM_ARRAYSIZE(kCondOps), 0);
-                i = ApplyItemAction(al->conditions, i, act, ed.dirty);
-            }
-            if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
-            ImGui::SameLine(); CustomActionButton("alcondcustom", /*cond*/true, al->conditions, ed.dirty);
-            ImGui::SameLine(); SaveAsCustomButton("alcondsave", /*cond*/true, al->conditions);
+            // One event handler = a trigger + its OWN conditions + instructions (like a
+            // separate function in the same script). Drawn for the primary and each extra.
+            int hRemove = -1;
+            auto drawHandler = [&](int hidx, ActionList::Trigger& trg, std::string& key, bool& once,
+                                   std::vector<ActionList::Item>& conds, std::vector<ActionList::Item>& ins, int idBase) {
+                ImGui::PushID(idBase);
+                ImGui::Spacing();
+                if (hidx >= 0) ImGui::Separator();
+                int ti = (int)trg;
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), hidx < 0 ? "When" : "When (also)"); ImGui::SameLine();
+                ImGui::SetNextItemWidth(150);
+                if (ImGui::Combo("##trg", &ti, trigs, IM_ARRAYSIZE(trigs))) { trg = (ActionList::Trigger)ti; ed.dirty = true; }
+                if (trg == ActionList::Trigger::OnKey || trg == ActionList::Trigger::OnKeyUp) {
+                    ImGui::SameLine(); ImGui::TextUnformatted("Key"); ImGui::SameLine();
+                    KeyPicker("k", key, ed.dirty);
+                } else if (trg == ActionList::Trigger::OnMessage) {
+                    ImGui::SameLine();
+                    char mb[64]; std::strncpy(mb, key.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::InputTextWithHint("##msg", "message", mb, sizeof(mb))) { key = mb; ed.dirty = true; }
+                }
+                ImGui::SameLine(); if (ImGui::Checkbox("Once", &once)) ed.dirty = true;
+                if (hidx >= 0) { ImGui::SameLine(); if (ImGui::SmallButton("Remove Trigger")) hRemove = hidx; }
+                if (trg >= ActionList::Trigger::OnMouseEnter && trg <= ActionList::Trigger::OnMouseOver) {
+                    bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
+                    bool has3D = go->GetComponent<Collider3D>();
+                    if (!has2D && !has3D)
+                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Mouse triggers need a Collider / Sprite to be clickable.");
+                }
+                SectionHeader("Conditions (all must pass)");
+                if (conds.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
+                for (std::size_t i = 0; i < conds.size();) {
+                    int act = cardRow(conds, i, kCondOps, IM_ARRAYSIZE(kCondOps), 0);
+                    i = ApplyItemAction(conds, i, act, ed.dirty);
+                }
+                if (ImGui::SmallButton("+ Condition")) { conds.push_back({"always", {}}); ed.dirty = true; }
+                ImGui::SameLine(); CustomActionButton("cc", /*cond*/true, conds, ed.dirty);
+                ImGui::SameLine(); SaveAsCustomButton("cs", /*cond*/true, conds);
+                SectionHeader("Instructions (run top to bottom)");
+                if (ins.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
+                for (std::size_t i = 0; i < ins.size();) {
+                    int act = cardRow(ins, i, kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000);
+                    i = ApplyItemAction(ins, i, act, ed.dirty);
+                }
+                if (ImGui::SmallButton("+ Instruction")) { ins.push_back({"move", {}}); ed.dirty = true; }
+                ImGui::SameLine(); CustomActionButton("ic", /*cond*/false, ins, ed.dirty);
+                ImGui::SameLine(); SaveAsCustomButton("is", /*cond*/false, ins);
+                ImGui::PopID();
+            };
 
-            SectionHeader("Instructions (run top to bottom)");
-            if (al->instructions.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
-            for (std::size_t i = 0; i < al->instructions.size();) {
-                int act = cardRow(al->instructions, i, kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000);
-                i = ApplyItemAction(al->instructions, i, act, ed.dirty);
+            drawHandler(-1, al->trigger, al->triggerKey, al->once, al->conditions, al->instructions, 1);
+            for (std::size_t h = 0; h < al->extraHandlers.size(); ++h) {
+                auto& H = al->extraHandlers[h];
+                drawHandler((int)h, H.trigger, H.triggerKey, H.once, H.conditions, H.instructions, 100 + (int)h);
             }
-            if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({"move", {}}); ed.dirty = true; }
-            ImGui::SameLine(); CustomActionButton("alinscustom", /*cond*/false, al->instructions, ed.dirty);
-            ImGui::SameLine(); SaveAsCustomButton("alinssave", /*cond*/false, al->instructions);
+            if (hRemove >= 0) { al->extraHandlers.erase(al->extraHandlers.begin() + hRemove); ed.dirty = true; }
 
-            ImGui::Spacing();
+            ImGui::Spacing(); ImGui::Separator();
+            if (ImGui::SmallButton("+ Trigger")) { al->extraHandlers.push_back({}); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another trigger to THIS script with its own conditions and instructions.");
+            ImGui::SameLine();
             if (ImGui::SmallButton("Remove##al")) toRemove = al;
         }
         ImGui::PopID();
@@ -20167,6 +20269,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         for (ActionList* al : sel->GetComponents<ActionList>()) {
             for (auto& c : al->conditions)   drawRay(c);
             for (auto& i : al->instructions) drawRay(i);
+            for (auto& h : al->extraHandlers) {
+                for (auto& c : h.conditions)   drawRay(c);
+                for (auto& i : h.instructions) drawRay(i);
+            }
         }
     }
 

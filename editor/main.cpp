@@ -8843,6 +8843,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnKey, "space", {}, {{"impulse", {"0", "7"}}}},
         {"Movement", "Patrol (ping-pong)", "Moves right for 1s, then left, forever.",
             T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}, {"wait", {"1"}}, {"move", {"-0.03", "0", "0"}}, {"wait", {"1"}}}},
+        {"Movement", "Move up while W held", "Slides up each frame the W key is held.",
+            T::OnUpdate, "", {{"key", {"w"}}}, {{"move", {"0", "0.05", "0"}}}},
         // Spawning
         {"Spawning", "Spawn every 2 seconds", "Creates a prefab on a repeating timer.",
             T::OnInterval, "2", {}, {{"spawn", {"enemy.okayprefab", "0", "0"}}}},
@@ -8853,6 +8855,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnCollision, "", {}, {{"destroy", {}}}},
         {"Combat", "Die when health hits 0", "Destroys this object once the 'health' variable reaches 0.",
             T::OnUpdate, "", {{"var_le", {"health", "0"}}}, {{"destroy", {}}}},
+        {"Combat", "Hurt while standing in it (fire)", "Damages whatever stays in contact, every frame.",
+            T::OnCollisionStay, "", {}, {{"hurt", {"1"}}}},
         // Pickups / score
         {"Pickups", "Collect coin (+1 score)", "Adds 1 to 'score' and disappears when touched.",
             T::OnTriggerEnter, "", {}, {{"add_var", {"score", "1"}}, {"destroy", {}}}},
@@ -8861,6 +8865,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnClick, "", {}, {{"move", {"0", "3", "0"}}}},
         {"Interaction", "Toggle a flag on E", "Flips a true/false variable named 'on' when E is pressed.",
             T::OnKey, "e", {}, {{"toggle_var", {"on"}}}},
+        {"Interaction", "Play a sound on click", "Plays a sound when this object is clicked (needs an Audio Source).",
+            T::OnClick, "", {}, {{"play_sound", {"click.wav"}}}},
         // HUD / feedback
         {"HUD", "Say hello on start", "Prints a message to the console when the game starts.",
             T::OnStart, "", {}, {{"log", {"Hello!"}}}},
@@ -8885,6 +8891,14 @@ static void ApplyScriptRecipe(ActionList* al, const ScriptRecipe& rc, bool& dirt
         h.trigger = rc.trigger; h.triggerKey = rc.key ? rc.key : "";
         h.conditions = rc.conditions; h.instructions = rc.instructions;
         al->extraHandlers.push_back(std::move(h));
+    }
+    // Convenience: if the recipe uses 2D physics but the object has no Rigidbody 2D,
+    // add one so a beginner's "Jump on Space" works right away without a manual step.
+    if (GameObject* go = al->gameObject) {
+        bool needsRb2d = false;
+        for (const auto& in : rc.instructions)
+            if (in.op == "impulse" || in.op == "velocity") needsRb2d = true;
+        if (needsRb2d && !go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>();
     }
     dirty = true;
 }

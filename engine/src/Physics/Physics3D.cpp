@@ -973,6 +973,68 @@ std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& cent
     return out;
 }
 
+namespace {
+// Does a sphere (centre c, radius r) touch collider `col`? If so, fill `n` (unit
+// normal from the surface toward c) and `point` (the struck surface point).
+bool SphereTouch(Collider3D* col, const Vec3& c, float r, Vec3& n, Vec3& point) {
+    if (IsBoxLike(col->shape())) {
+        auto* box = static_cast<BoxCollider3D*>(col);
+        Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+        Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+        Vec3 rel = c - bc;
+        Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
+        Vec3 cl{Mathf::Clamp(l.x, -h.x, h.x), Mathf::Clamp(l.y, -h.y, h.y), Mathf::Clamp(l.z, -h.z, h.z)};
+        Vec3 dl = l - cl; float dist = dl.Magnitude();
+        if (dist > 1e-6f) {
+            if (dist > r) return false;
+            Vec3 ln = dl * (1.0f / dist);
+            n = ax * ln.x + ay * ln.y + az * ln.z;
+            point = bc + ax * cl.x + ay * cl.y + az * cl.z;
+            return true;
+        }
+        // Centre inside the box: eject along the least-penetrating local axis.
+        float best = h.x - Mathf::Abs(l.x); Vec3 ln{l.x < 0 ? -1.f : 1.f, 0, 0};
+        float ty = h.y - Mathf::Abs(l.y); if (ty < best) { best = ty; ln = {0, l.y < 0 ? -1.f : 1.f, 0}; }
+        float tz = h.z - Mathf::Abs(l.z); if (tz < best) { best = tz; ln = {0, 0, l.z < 0 ? -1.f : 1.f}; }
+        n = ax * ln.x + ay * ln.y + az * ln.z;
+        point = c;
+        return true;
+    }
+    // Sphere / capsule / cylinder: reduce to a sphere near c.
+    Vec3 sc; float sr; AsSphere(col, c, sc, sr);
+    Vec3 d = c - sc; float dist = d.Magnitude();
+    if (dist > r + sr) return false;
+    n = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
+    point = sc + n * sr;
+    return true;
+}
+} // namespace
+
+RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
+                                   float radius, float maxDistance, GameObject* ignore) {
+    RaycastHit3D best;
+    Vec3 dir = direction.Normalized();
+    if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore);
+    auto colliders = scene.FindObjectsOfType<Collider3D>();
+    // March the sphere along the ray; the grid is fine enough (<= radius) that a
+    // thin wall can't slip between two samples.
+    float step = radius * 0.5f; if (step < 0.02f) step = 0.02f;
+    for (float t = 0.0f; t <= maxDistance; t += step) {
+        Vec3 c = origin + dir * t;
+        for (Collider3D* col : colliders) {
+            if (!Alive(col) || col->isTrigger) continue;
+            if (ignore && col->gameObject == ignore) continue;
+            Vec3 n, p;
+            if (SphereTouch(col, c, radius, n, p)) {
+                best.hit = true; best.collider = col; best.gameObject = col->gameObject;
+                best.distance = t; best.point = p; best.normal = n;
+                return best;   // first touch along the sweep = nearest
+            }
+        }
+    }
+    return best;
+}
+
 Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore, int iterations) {
     for (int it = 0; it < iterations; ++it) {
         bool moved = false;

@@ -779,4 +779,61 @@ std::vector<Collider2D*> Physics2D::OverlapBox(Scene& scene, const Vec2& center,
     return out;
 }
 
+namespace {
+// Does a circle (centre c, radius r) touch collider `col`? If so fill `n` (unit
+// normal from the surface toward c) and `point` (the struck surface point).
+bool CircleTouch(Collider2D* col, const Vec2& c, float r, Vec2& n, Vec2& point) {
+    if (col->shape() == Collider2D::Shape::Box) {
+        auto* box = static_cast<BoxCollider2D*>(col);
+        Vec2 bc = box->WorldCenter(), h = box->HalfExtents();
+        float a = box->WorldAngle(), ca = Mathf::Cos(a), sa = Mathf::Sin(a);
+        Vec2 ax{ca, sa}, ay{-sa, ca};
+        Vec2 rel = c - bc;
+        Vec2 l{Vec2::Dot(rel, ax), Vec2::Dot(rel, ay)};
+        Vec2 cl{Mathf::Clamp(l.x, -h.x, h.x), Mathf::Clamp(l.y, -h.y, h.y)};
+        Vec2 dl = l - cl; float dist = dl.Magnitude();
+        if (dist > 1e-6f) {
+            if (dist > r) return false;
+            Vec2 ln = dl / dist;
+            n = ax * ln.x + ay * ln.y;
+            point = bc + ax * cl.x + ay * cl.y;
+            return true;
+        }
+        float bx = h.x - Mathf::Abs(l.x); Vec2 ln{l.x < 0 ? -1.f : 1.f, 0};
+        float by = h.y - Mathf::Abs(l.y); if (by < bx) ln = {0, l.y < 0 ? -1.f : 1.f};
+        n = ax * ln.x + ay * ln.y; point = c;
+        return true;
+    }
+    // Circle / capsule / edge / polygon: reduce to a circle near c.
+    Vec2 sc; float sr; AsCircle(col, c, sc, sr);
+    Vec2 d = c - sc; float dist = d.Magnitude();
+    if (dist > r + sr) return false;
+    n = dist > 1e-6f ? d / dist : Vec2{0, 1};
+    point = sc + n * sr;
+    return true;
+}
+} // namespace
+
+RaycastHit2D Physics2D::CircleCast(Scene& scene, const Vec2& origin, const Vec2& direction,
+                                   float radius, float maxDistance) {
+    RaycastHit2D best;
+    Vec2 dir = direction.Normalized();
+    if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance);
+    auto colliders = scene.FindObjectsOfType<Collider2D>();
+    float step = radius * 0.5f; if (step < 0.02f) step = 0.02f;
+    for (float t = 0.0f; t <= maxDistance; t += step) {
+        Vec2 c = origin + dir * t;
+        for (Collider2D* col : colliders) {
+            if (!Alive(col) || col->isTrigger) continue;
+            Vec2 n, p;
+            if (CircleTouch(col, c, radius, n, p)) {
+                best.hit = true; best.collider = col; best.gameObject = col->gameObject;
+                best.distance = t; best.point = p; best.normal = n;
+                return best;
+            }
+        }
+    }
+    return best;
+}
+
 } // namespace okay

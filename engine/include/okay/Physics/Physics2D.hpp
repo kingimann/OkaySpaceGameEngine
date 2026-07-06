@@ -75,6 +75,13 @@ public:
     /// All colliders overlapping an axis-aligned box (center + half-extents).
     std::vector<Collider2D*> OverlapBox(Scene& scene, const Vec2& center, const Vec2& halfExtents);
 
+    /// Sweep a circle of `radius` from `origin` along `direction` and return the
+    /// first collider it touches (Unity's Physics2D.CircleCast) — a "thick ray"
+    /// that won't slip through gaps a zero-width ray would. The hit point is on the
+    /// struck surface; the normal points back toward origin.
+    RaycastHit2D CircleCast(Scene& scene, const Vec2& origin, const Vec2& direction,
+                            float radius, float maxDistance = 1e9f);
+
     void Clear() { m_contacts.clear(); }
 
 private:

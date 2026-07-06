@@ -47,23 +47,6 @@ Vec2 ClampVec(const Vec2& v, const Vec2& lo, const Vec2& hi) {
     return {Mathf::Clamp(v.x, lo.x, hi.x), Mathf::Clamp(v.y, lo.y, hi.y)};
 }
 
-Contact TestBoxBox(const Vec2& ca, const Vec2& ha, const Vec2& cb, const Vec2& hb) {
-    Contact c;
-    Vec2 d = cb - ca;
-    float ox = (ha.x + hb.x) - Mathf::Abs(d.x);
-    if (ox <= 0) return c;
-    float oy = (ha.y + hb.y) - Mathf::Abs(d.y);
-    if (oy <= 0) return c;
-    c.hit = true;
-    if (ox < oy) { c.normal = {d.x < 0 ? -1.0f : 1.0f, 0.0f}; c.penetration = ox; }
-    else         { c.normal = {0.0f, d.y < 0 ? -1.0f : 1.0f}; c.penetration = oy; }
-    // Contact point: clamp each center into the other box and split the difference.
-    Vec2 pA = ClampVec(cb, {ca.x - ha.x, ca.y - ha.y}, {ca.x + ha.x, ca.y + ha.y});
-    Vec2 pB = ClampVec(ca, {cb.x - hb.x, cb.y - hb.y}, {cb.x + hb.x, cb.y + hb.y});
-    c.point = (pA + pB) * 0.5f;
-    return c;
-}
-
 Contact TestCircleCircle(const Vec2& ca, float ra, const Vec2& cb, float rb) {
     Contact c;
     Vec2 d = cb - ca;
@@ -184,6 +167,58 @@ bool OneWayPassThrough(Collider2D* a, Collider2D* b) {
     return false;
 }
 
+// An oriented box: center, half-extents, and its two world-space unit axes.
+struct OBB2 {
+    Vec2 c, h, ax, ay;
+};
+OBB2 MakeOBB(BoxCollider2D* box) {
+    OBB2 o; o.c = box->WorldCenter(); o.h = box->HalfExtents();
+    float a = box->WorldAngle();
+    float ca = Mathf::Cos(a), sa = Mathf::Sin(a);
+    o.ax = {ca, sa};      // local +X in world
+    o.ay = {-sa, ca};     // local +Y in world
+    return o;
+}
+// Farthest point of the box in direction `dir` (a box vertex).
+Vec2 OBBSupport(const OBB2& o, const Vec2& dir) {
+    return o.c + o.ax * (Vec2::Dot(dir, o.ax) >= 0 ? o.h.x : -o.h.x)
+               + o.ay * (Vec2::Dot(dir, o.ay) >= 0 ? o.h.y : -o.h.y);
+}
+// Separating-axis test between two oriented boxes. Normal points A -> B.
+Contact TestOBBOBB(const OBB2& A, const OBB2& B) {
+    Contact c;
+    const Vec2 axes[4] = {A.ax, A.ay, B.ax, B.ay};
+    Vec2 d = B.c - A.c;
+    float minPen = 1e30f; Vec2 bestAxis{0, 1};
+    for (int i = 0; i < 4; ++i) {
+        Vec2 ax = axes[i];
+        float ra = A.h.x * Mathf::Abs(Vec2::Dot(A.ax, ax)) + A.h.y * Mathf::Abs(Vec2::Dot(A.ay, ax));
+        float rb = B.h.x * Mathf::Abs(Vec2::Dot(B.ax, ax)) + B.h.y * Mathf::Abs(Vec2::Dot(B.ay, ax));
+        float overlap = ra + rb - Mathf::Abs(Vec2::Dot(d, ax));
+        if (overlap <= 0.0f) return c;                 // found a separating axis
+        if (overlap < minPen) { minPen = overlap; bestAxis = ax; }
+    }
+    c.hit = true;
+    if (Vec2::Dot(d, bestAxis) < 0.0f) bestAxis = bestAxis * -1.0f;   // orient A -> B
+    c.normal = bestAxis;
+    c.penetration = minPen;
+    // Approx contact point: B's deepest vertex into A, nudged to the surface.
+    Vec2 pB = OBBSupport(B, bestAxis * -1.0f);
+    c.point = pB + bestAxis * (minPen * 0.5f);
+    return c;
+}
+// Oriented box vs circle: work in the box's local frame (unrotated), then map the
+// resulting normal/point back to world.
+Contact TestOBBCircle(const OBB2& box, const Vec2& cc, float r) {
+    Vec2 d = cc - box.c;
+    Vec2 local{Vec2::Dot(d, box.ax), Vec2::Dot(d, box.ay)};
+    Contact c = TestBoxCircle({0, 0}, box.h, local, r);
+    if (!c.hit) return c;
+    c.normal = box.ax * c.normal.x + box.ay * c.normal.y;
+    c.point  = box.c + box.ax * c.point.x + box.ay * c.point.y;
+    return c;
+}
+
 Contact TestColliders(Collider2D* a, Collider2D* b) {
     using S = Collider2D::Shape;
     S sa = a->shape(), sb = b->shape();
@@ -199,21 +234,19 @@ Contact TestColliders(Collider2D* a, Collider2D* b) {
 
     bool aBox = sa == S::Box, bBox = sb == S::Box;
     if (aBox && bBox) {
-        auto* ba = static_cast<BoxCollider2D*>(a);
-        auto* bb = static_cast<BoxCollider2D*>(b);
-        return TestBoxBox(ba->WorldCenter(), ba->HalfExtents(),
-                          bb->WorldCenter(), bb->HalfExtents());
+        return TestOBBOBB(MakeOBB(static_cast<BoxCollider2D*>(a)),
+                          MakeOBB(static_cast<BoxCollider2D*>(b)));
     }
     if (aBox) { // A box, B circle/capsule
         auto* box = static_cast<BoxCollider2D*>(a);
         Vec2 cc; float r; AsCircle(b, box->WorldCenter(), cc, r);
-        return TestBoxCircle(box->WorldCenter(), box->HalfExtents(), cc, r);
+        return TestOBBCircle(MakeOBB(box), cc, r);
     }
     if (bBox) { // A circle/capsule, B box
         auto* box = static_cast<BoxCollider2D*>(b);
         Vec2 cc; float r; AsCircle(a, box->WorldCenter(), cc, r);
-        Contact c = TestBoxCircle(box->WorldCenter(), box->HalfExtents(), cc, r);
-        c.normal = -c.normal; // flip to point from A toward B
+        Contact c = TestOBBCircle(MakeOBB(box), cc, r);
+        c.normal = c.normal * -1.0f; // flip to point from A toward B
         return c;
     }
     // Circle/capsule vs circle/capsule.
@@ -236,11 +269,28 @@ void DispatchTrigger(GameObject* go, void (Component::*fn)(Collider2D*), Collide
 void Physics2D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
 
+    // Sleeping thresholds: below these speeds for kSleepTime seconds, a dynamic
+    // body sleeps (skipped until woken). Mirrors Unity/Box2D's rest optimisation.
+    constexpr float kLinSleep = 0.05f;   // world units / second
+    constexpr float kAngSleep = 2.0f;    // degrees / second
+    constexpr float kSleepTime = 0.5f;   // seconds at rest before sleeping
+
     // 1) Integrate dynamic / kinematic bodies.
     auto bodies = scene.FindObjectsOfType<Rigidbody2D>();
     for (Rigidbody2D* rb : bodies) {
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
         Transform* t = rb->transform;
+        // A sleeping body stays put until something wakes it. If its velocity was
+        // set directly (script/teleport) it exceeds the threshold -> wake and run.
+        if (rb->bodyType == Rigidbody2D::BodyType::Dynamic && rb->sleeping) {
+            if (rb->velocity.SqrMagnitude() > kLinSleep * kLinSleep ||
+                Mathf::Abs(rb->angularVelocity) > kAngSleep) {
+                rb->WakeUp();
+            } else {
+                rb->ConsumeForce(); rb->ConsumeTorque();   // discard so nothing accrues
+                continue;
+            }
+        }
         if (rb->bodyType == Rigidbody2D::BodyType::Dynamic) {
             Vec2 accel = gravity * rb->gravityScale + rb->ConsumeForce() * rb->InvMass();
             rb->velocity += accel * dt;
@@ -304,6 +354,15 @@ void Physics2D::Step(Scene& scene, float dt) {
 
             // 3) Resolve solids (skip triggers and pairs without dynamics).
             if (!trigger && !OneWayPassThrough(a, b)) {
+                // Wake a sleeping body when a moving body (dynamic or kinematic)
+                // runs into it; two bodies both at rest stay asleep.
+                auto awakeMover = [](Rigidbody2D* r) {
+                    return r && !r->sleeping && r->bodyType != Rigidbody2D::BodyType::Static;
+                };
+                if (ra && ra->sleeping && awakeMover(rb)) ra->WakeUp();
+                if (rb && rb->sleeping && awakeMover(ra)) rb->WakeUp();
+                // Both still asleep -> nothing to resolve (resting stack).
+                if (!(ra && ra->sleeping) || !(rb && rb->sleeping)) {
                 float ima = ra ? ra->InvMass() : 0.0f;
                 float imb = rb ? rb->InvMass() : 0.0f;
                 float imSum = ima + imb;
@@ -338,6 +397,10 @@ void Physics2D::Step(Scene& scene, float dt) {
                     if (velAlongNormal < 0.0f && denom > 0.0f) {
                         float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
                                              rb ? rb->bounciness : 0.0f);
+                        // Below a small approach speed, drop restitution so bodies
+                        // settle (and then sleep) instead of buzzing with micro-bounces
+                        // (Box2D/Unity's velocity threshold).
+                        if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec2 impulse = c.normal * jImp;
                         if (ra) { ra->velocity -= impulse * ima; ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
@@ -373,6 +436,7 @@ void Physics2D::Step(Scene& scene, float dt) {
                         }
                     }
                 }
+                } // both-asleep guard
             }
 
             // 4) Fire enter/stay messages.
@@ -501,6 +565,27 @@ void Physics2D::Step(Scene& scene, float dt) {
         }
     }
 
+    // 4.75) Sleep bookkeeping: a dynamic body under the speed thresholds for
+    // kSleepTime seconds goes to sleep (zeroed and skipped next step). Any motion
+    // resets the timer. Bodies with allowSleep off never sleep.
+    for (Rigidbody2D* rb : bodies) {
+        if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+        if (rb->bodyType != Rigidbody2D::BodyType::Dynamic) continue;
+        if (!rb->allowSleep) { rb->WakeUp(); continue; }
+        if (rb->sleeping) continue;
+        if (rb->velocity.SqrMagnitude() < kLinSleep * kLinSleep &&
+            Mathf::Abs(rb->angularVelocity) < kAngSleep) {
+            rb->m_sleepTimer += dt;
+            if (rb->m_sleepTimer >= kSleepTime) {
+                rb->sleeping = true;
+                rb->velocity = Vec2::Zero;
+                rb->angularVelocity = 0.0f;
+            }
+        } else {
+            rb->m_sleepTimer = 0.0f;
+        }
+    }
+
     // 5) Fire exit messages for contacts that ended.
     for (const Pair& p : m_contacts) {
         if (current.count(p)) continue;
@@ -611,8 +696,15 @@ Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p) {
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
         if (!Alive(c)) continue;
         if (c->shape() == Collider2D::Shape::Box) {
-            Vec2 mn, mx; c->WorldAABB(mn, mx);
-            if (p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y) return c;
+            // Exact oriented-box test: bring the point into the box's local frame.
+            auto* box = static_cast<BoxCollider2D*>(c);
+            Vec2 bc = box->WorldCenter(), h = box->HalfExtents();
+            float a = box->WorldAngle();
+            float ca = Mathf::Cos(a), sa = Mathf::Sin(a);
+            Vec2 d = p - bc;
+            float lx = d.x * ca + d.y * sa;      // project onto local X (cos,sin)
+            float ly = -d.x * sa + d.y * ca;     // project onto local Y (-sin,cos)
+            if (Mathf::Abs(lx) <= h.x && Mathf::Abs(ly) <= h.y) return c;
         } else if (c->shape() == Collider2D::Shape::Circle) {
             auto* cc = static_cast<CircleCollider2D*>(c);
             if ((p - cc->WorldCenter()).Magnitude() <= cc->WorldRadius()) return c;

@@ -13970,6 +13970,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Freeze Rotation (Z)", &rb->freezeRotation)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = classic no-spin body. Off = torque and off-center hits rotate it (tipping, tumbling, wheels).");
             if (!rb->freezeRotation) ImGui::DragFloat("Angular Drag", &rb->angularDrag, 0.01f, 0.0f, 10.0f);
+            if (ImGui::Checkbox("Allow Sleep", &rb->allowSleep)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
@@ -14099,6 +14101,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Freeze Rotation##rb3", &rb->freezeRotation)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = classic no-spin body. Off = torque and off-center hits rotate it (tipping, tumbling).");
             if (!rb->freezeRotation) ImGui::DragFloat("Angular Drag##rb3", &rb->angularDrag, 0.01f, 0.0f, 10.0f);
+            if (ImGui::Checkbox("Allow Sleep##rb3", &rb->allowSleep)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
@@ -20641,19 +20645,30 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             auto* sr = go->GetComponent<SpriteRenderer>();
             Vec3 wp = go->transform->Position();
             Vec3 ls = go->transform->LossyScale();
-            float hx = sr->size.x * ls.x * 0.5f * scale;
-            float hy = sr->size.y * ls.y * 0.5f * scale;
+            float hxw = sr->size.x * ls.x * 0.5f;   // world half-extents
+            float hyw = sr->size.y * ls.y * 0.5f;
             ImVec2 c = worldToScreen(wp);
-            ImVec2 a(c.x - hx, c.y - hy), b(c.x + hx, c.y + hy);
-            // Draw the sprite's texture (tinted by its colour, alpha respected) so shapes
-            // and imported art actually show — falling back to a solid colour quad only
-            // when there's no (loadable) texture.
+            // Rotate the quad by the sprite's Z rotation (screen Y is down, so world
+            // CCW maps through the worldToScreen Y-flip automatically below).
+            float ang = go->transform->Rotation().ToEuler().z * Mathf::Deg2Rad;
+            float ca = Mathf::Cos(ang), sa = Mathf::Sin(ang);
+            auto corner = [&](float sx, float sy) {
+                float ox = sx * hxw, oy = sy * hyw;                 // world-space offset
+                float rx = ox * ca - oy * sa, ry = ox * sa + oy * ca; // rotate
+                return ImVec2(c.x + rx * scale, c.y - ry * scale);   // to screen (Y flip)
+            };
+            ImVec2 pTL = corner(-1, 1), pTR = corner(1, 1), pBR = corner(1, -1), pBL = corner(-1, -1);
+            // Atlas sub-rect + flips (so SpriteAnimator frames and facing preview live).
+            float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
+            if (sr->flipX) std::swap(u0, u1);
+            if (sr->flipY) std::swap(v0, v1);
             SDL_Texture* stex = sr->texture.empty() ? nullptr : GetThumb(sr->texture);
-            if (stex) dl->AddImage((ImTextureID)stex, a, b, ImVec2(0, 0), ImVec2(1, 1), ToColor(sr->color));
-            else      dl->AddRectFilled(a, b, ToColor(sr->color));
+            ImU32 col = ToColor(sr->color);
+            if (stex) dl->AddImageQuad((ImTextureID)stex, pTL, pTR, pBR, pBL,
+                                       ImVec2(u0, v0), ImVec2(u1, v0), ImVec2(u1, v1), ImVec2(u0, v1), col);
+            else      dl->AddQuadFilled(pTL, pTR, pBR, pBL, col);
             if (!gameView && go == ed.selected())
-                dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2),
-                            IM_COL32(255, 200, 0, 255), 0, 0, 2.0f);
+                dl->AddQuad(pTL, pTR, pBR, pBL, IM_COL32(255, 200, 0, 255), 2.0f);
         }
     }
 

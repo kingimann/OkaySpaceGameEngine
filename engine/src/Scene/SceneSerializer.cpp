@@ -461,7 +461,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness
             << " " << rb->friction                                    // trailing (back-compatible)
-            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0) << "\n";
+            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
+            << " " << (rb->allowSleep ? 1 : 0) << "\n";
     }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -500,7 +501,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (rb->freezeZ ? 1 : 0)
             << " " << rb->maxFallSpeed
             << " " << rb->friction                                    // trailing (back-compatible)
-            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0) << "\n";
+            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
+            << " " << (rb->allowSleep ? 1 : 0) << "\n";
     }
     if (auto* j = go->GetComponent<Joint3D>()) {
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
@@ -1976,6 +1978,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                 } else if (field == "boxcollider2d") {
                     Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
@@ -2028,6 +2031,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                 } else if (field == "joint3d") {
                     auto* j = go->AddComponent<Joint3D>();
                     int bk = 0, ac = 1;

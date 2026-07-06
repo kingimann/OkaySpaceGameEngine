@@ -42,6 +42,16 @@ public:
     /// until you opt in — uncheck it to let torque and off-center hits rotate the body.
     bool     freezeRotation = true;
 
+    // ---- Sleeping (rest optimisation, Unity/PhysX-style) ----
+    /// May this body fall asleep once at rest? A sleeping body is skipped by the
+    /// integrator/solver (no CPU, no jitter) until woken by a moving-body collision,
+    /// an applied force/impulse, or a directly set velocity. Off = always live.
+    bool     allowSleep = true;
+    /// Runtime: true while asleep. Not authored — set/cleared by Physics3D.
+    bool     sleeping   = false;
+    /// Force this body awake (call after teleporting or externally moving it).
+    void WakeUp() { sleeping = false; m_sleepTimer = 0.0f; }
+
     /// True for the frames this body is resting on heightmap Terrain. Set by
     /// Physics3D's terrain ground-follow (heightmap terrain has no polygon
     /// collider, so it produces no collision contacts). Controllers read it as a
@@ -56,7 +66,7 @@ public:
     bool     hasPrevPos = false;
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
-    void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; }
+    void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; WakeUp(); }
     /// Apply a force with an explicit Unity-style ForceMode.
     void AddForce(const Vec3& force, ForceMode mode) {
         switch (mode) {
@@ -65,12 +75,13 @@ public:
             case ForceMode::Impulse:        velocity = velocity + force * InvMass(); break;
             case ForceMode::VelocityChange: velocity = velocity + force; break;
         }
+        WakeUp();
     }
     /// Apply an instantaneous change in momentum (immediate velocity change).
-    void AddImpulse(const Vec3& impulse) { velocity = velocity + impulse * InvMass(); }
+    void AddImpulse(const Vec3& impulse) { velocity = velocity + impulse * InvMass(); WakeUp(); }
 
     /// Apply a torque (continuous, integrated next step, scaled by inverse inertia).
-    void AddTorque(const Vec3& torque) { m_torqueAccum = m_torqueAccum + torque; }
+    void AddTorque(const Vec3& torque) { m_torqueAccum = m_torqueAccum + torque; WakeUp(); }
 
     /// Apply a force at a world point, producing both linear force and a torque from
     /// the lever arm (Unity's AddForceAtPosition). Off-center hits spin the body.
@@ -78,6 +89,7 @@ public:
         m_forceAccum = m_forceAccum + force;
         Vec3 c = transform ? transform->Position() : Vec3::Zero;
         m_torqueAccum = m_torqueAccum + Vec3::Cross(point - c, force);
+        WakeUp();
     }
 
     /// Unity-style explosion: shove this body away from `center` with `force`, falling
@@ -103,8 +115,9 @@ public:
 
 private:
     friend class Physics3D;
-    Vec3 m_forceAccum  = Vec3::Zero;
-    Vec3 m_torqueAccum = Vec3::Zero;
+    Vec3  m_forceAccum  = Vec3::Zero;
+    Vec3  m_torqueAccum = Vec3::Zero;
+    float m_sleepTimer  = 0.0f;   // seconds spent under the sleep thresholds
     Vec3 ConsumeForce()  { Vec3 f = m_forceAccum; m_forceAccum = Vec3::Zero; return f; }
     Vec3 ConsumeTorque() { Vec3 t = m_torqueAccum; m_torqueAccum = Vec3::Zero; return t; }
 };

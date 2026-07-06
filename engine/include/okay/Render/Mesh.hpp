@@ -841,23 +841,41 @@ struct Mesh {
     int WeldVertices(float epsilon = 1e-5f) {
         std::vector<Vec3> unique;
         std::vector<int>  remap(vertices.size());
+        // Preserve the parallel per-vertex UVs so welding a textured mesh keeps its
+        // texture coordinates (previously the stale uvs array was silently dropped,
+        // un-texturing the mesh). The kept vertex's UV wins at a merged seam.
+        const bool hadUV = uvs.size() == vertices.size();
+        std::vector<Vec2> uniqueUV;
         float e2 = epsilon * epsilon;
         for (std::size_t i = 0; i < vertices.size(); ++i) {
             int found = -1;
             for (std::size_t j = 0; j < unique.size(); ++j)
                 if ((unique[j] - vertices[i]).SqrMagnitude() <= e2) { found = (int)j; break; }
-            if (found < 0) { found = (int)unique.size(); unique.push_back(vertices[i]); }
+            if (found < 0) {
+                found = (int)unique.size(); unique.push_back(vertices[i]);
+                if (hadUV) uniqueUV.push_back(uvs[i]);
+            }
             remap[i] = found;
         }
         int removed = (int)vertices.size() - (int)unique.size();
-        std::vector<int> tris;
+        // Rebuild triangles, dropping any face that collapsed, and keep the parallel
+        // per-triangle face colors aligned to the surviving faces.
+        const bool hadFC = HasFaceColors();
+        std::vector<int>   tris;
+        std::vector<Color> fc;
         for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
             int a = remap[triangles[i]], b = remap[triangles[i + 1]], c = remap[triangles[i + 2]];
-            if (a != b && b != c && a != c) tris.insert(tris.end(), {a, b, c}); // skip degenerate
+            if (a != b && b != c && a != c) {
+                tris.insert(tris.end(), {a, b, c}); // skip degenerate
+                if (hadFC) fc.push_back(triColors[i / 3]);
+            }
         }
         vertices = std::move(unique);
         triangles = std::move(tris);
+        if (hadUV) uvs = std::move(uniqueUV); else uvs.clear();
+        if (hadFC) triColors = std::move(fc); else triColors.clear();
         if (removed > 0) name = "";
+        RefreshNormals();   // rebuild smooth normals at the welded resolution (or stay flat)
         return removed;
     }
 
@@ -1247,6 +1265,7 @@ struct Mesh {
         name = "";
         ComputeSmoothNormals();
     }
+
 
     /// A sculpting brush in LOCAL mesh space. Vertices within `radius` of `center`
     /// are displaced with a smoothstep falloff `w`. mode: 0 = GRAB (push along

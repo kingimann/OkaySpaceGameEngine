@@ -45,10 +45,23 @@ public:
         Vec3 s = transform ? transform->LossyScale() : Vec3::One;
         return {size.x * s.x * 0.5f, size.y * s.y * 0.5f};
     }
+    /// Z rotation of the box in radians (2D boxes rotate about Z only). Drives
+    /// oriented-box (SAT) collision so rotated crates collide by their true edges,
+    /// not their axis-aligned bounds.
+    float WorldAngle() const {
+        Quat q = transform ? transform->Rotation() : Quat::Identity;
+        return q.ToEuler().z * Mathf::Deg2Rad;
+    }
     void WorldAABB(Vec2& outMin, Vec2& outMax) const override {
         Vec2 c = WorldCenter(), h = HalfExtents();
-        outMin = {c.x - h.x, c.y - h.y};
-        outMax = {c.x + h.x, c.y + h.y};
+        // Expand the broad-phase bounds to the rotated box's extent so a spun box
+        // isn't culled before the narrow-phase SAT test (unrotated -> exactly h).
+        float a = WorldAngle();
+        float ca = Mathf::Abs(Mathf::Cos(a)), sa = Mathf::Abs(Mathf::Sin(a));
+        float ex = h.x * ca + h.y * sa;
+        float ey = h.x * sa + h.y * ca;
+        outMin = {c.x - ex, c.y - ey};
+        outMax = {c.x + ex, c.y + ey};
     }
 };
 

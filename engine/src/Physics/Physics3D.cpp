@@ -252,10 +252,28 @@ bool Alive(Collider3D* c) { return c->enabled && c->gameObject && c->gameObject-
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
 
+    // Sleeping thresholds: under these speeds for kSleepTime seconds, a dynamic body
+    // sleeps (skipped until woken). Mirrors Unity/PhysX rest optimisation.
+    constexpr float kLinSleep = 0.05f;   // world units / second
+    constexpr float kAngSleep = 0.05f;   // radians / second
+    constexpr float kSleepTime = 0.5f;   // seconds at rest before sleeping
+
     // 1) Integrate dynamic / kinematic bodies.
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    auto bodies = scene.FindObjectsOfType<Rigidbody3D>();
+    for (Rigidbody3D* rb : bodies) {
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
         Transform* t = rb->transform;
+        // A sleeping body holds position until woken; a directly-set velocity above
+        // the threshold wakes it so scripted moves/teleports still take effect.
+        if (rb->bodyType == Rigidbody3D::BodyType::Dynamic && rb->sleeping) {
+            if (rb->velocity.SqrMagnitude() > kLinSleep * kLinSleep ||
+                rb->angularVelocity.SqrMagnitude() > kAngSleep * kAngSleep) {
+                rb->WakeUp();
+            } else {
+                rb->ConsumeForce(); rb->ConsumeTorque();
+                continue;
+            }
+        }
         if (rb->bodyType == Rigidbody3D::BodyType::Dynamic) {
             Vec3 accel = gravity * rb->gravityScale + rb->ConsumeForce() * rb->InvMass();
             rb->velocity = rb->velocity + accel * dt;
@@ -331,6 +349,14 @@ void Physics3D::Step(Scene& scene, float dt) {
 
             // 3) Resolve solids (skip triggers and pairs without dynamics).
             if (!trigger) {
+                // Wake a sleeping body when a moving body runs into it; two bodies
+                // both at rest stay asleep (resting stack).
+                auto awakeMover = [](Rigidbody3D* r) {
+                    return r && !r->sleeping && r->bodyType != Rigidbody3D::BodyType::Static;
+                };
+                if (ra && ra->sleeping && awakeMover(rb)) ra->WakeUp();
+                if (rb && rb->sleeping && awakeMover(ra)) rb->WakeUp();
+                if ((!(ra && ra->sleeping) || !(rb && rb->sleeping))) {
                 float ima = ra ? ra->InvMass() : 0.0f;
                 float imb = rb ? rb->InvMass() : 0.0f;
                 float imSum = ima + imb;
@@ -362,6 +388,10 @@ void Physics3D::Step(Scene& scene, float dt) {
                     if (velAlongNormal < 0.0f && denom > 0.0f) {
                         float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
                                              rb ? rb->bounciness : 0.0f);
+                        // Below a small approach speed, drop restitution so bodies
+                        // settle (and then sleep) instead of buzzing with micro-bounces
+                        // (Box2D/Unity/PhysX velocity threshold).
+                        if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec3 impulse = c.normal * jImp;
                         if (ra) { ra->velocity = ra->velocity - impulse * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
@@ -395,6 +425,7 @@ void Physics3D::Step(Scene& scene, float dt) {
                         }
                     }
                 }
+                } // both-asleep guard
             }
 
             // 4) Fire enter/stay messages.
@@ -758,6 +789,26 @@ void Physics3D::Step(Scene& scene, float dt) {
                 if (tb && rbB) tb->localPosition = tb->localPosition - corr * (imB / imSum);
             }
             if (j->breakable && std::fabs(C) > j->breakForce) j->broken = true;
+        }
+    }
+
+    // Sleep bookkeeping: a dynamic body under the speed thresholds for kSleepTime
+    // seconds sleeps (zeroed and skipped next step). Any motion resets the timer.
+    for (Rigidbody3D* rb : bodies) {
+        if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+        if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
+        if (!rb->allowSleep) { rb->WakeUp(); continue; }
+        if (rb->sleeping) continue;
+        if (rb->velocity.SqrMagnitude() < kLinSleep * kLinSleep &&
+            rb->angularVelocity.SqrMagnitude() < kAngSleep * kAngSleep) {
+            rb->m_sleepTimer += dt;
+            if (rb->m_sleepTimer >= kSleepTime) {
+                rb->sleeping = true;
+                rb->velocity = Vec3::Zero;
+                rb->angularVelocity = Vec3::Zero;
+            }
+        } else {
+            rb->m_sleepTimer = 0.0f;
         }
     }
 

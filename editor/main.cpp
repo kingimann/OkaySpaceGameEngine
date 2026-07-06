@@ -5417,6 +5417,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"explode","explode([count])"}, {"flash","flash(r, g, b [, dur])"}, {"shake","shake(intensity, dur)"}, {"face","face(\"name\")"},
         {"move_to","move_to(x, y, speed)"}, {"score","score()"}, {"add_score","add_score(n)"}, {"set_score","set_score(n)"},
         {"timer","timer(\"name\", seconds)"}, {"set_visible","set_visible(on)"}, {"show","show()"}, {"hide","hide()"}, {"blink","blink(rate)"},
+        {"keep_in_box","keep_in_box(minX, minY, maxX, maxY)"}, {"wrap_in_box","wrap_in_box(minX, minY, maxX, maxY)"}, {"bounce_in_box","bounce_in_box(minX, minY, maxX, maxY)"},
         {"follow","follow(\"name\", speed[, stopDist])"}, {"patrol","patrol(x1, y1, x2, y2, speed)"}, {"orbit","orbit(\"name\", radius, degPerSec)"},
         {"move3","move3(dx, dy, dz)"}, {"set_pos3","set_pos3(x, y, z)"}, {"set_z","set_z(v)"},
         {"rotate3","rotate3(x, y, z)"}, {"set_scale","set_scale(s)"}, {"set_scale3","set_scale3(x, y, z)"},
@@ -5576,6 +5577,9 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"show","Show this object's graphics."},
         {"hide","Hide this object's graphics (but keep the script running)."},
         {"blink","Flash this object's graphics on/off at `rate` (invincibility / pickups)."},
+        {"keep_in_box","Clamp this object inside a rectangle (stay on screen)."},
+        {"wrap_in_box","Teleport to the opposite edge when leaving a rectangle (asteroids-style)."},
+        {"bounce_in_box","Reverse the Rigidbody2D velocity at each wall of a rectangle (ball/pong)."},
         {"on_key_move","WASD/arrow keys move this object at `speed` (uses a Rigidbody2D if present)."},
         {"follow","Chase a named object on the XY plane at `speed`, stopping `stopDist` away."},
         {"follow3","Chase a named object in full 3D at `speed`, stopping `stopDist` away."},
@@ -6315,6 +6319,15 @@ void DrawScriptEditor(EditorState& ed) {
                 // ---- Platformer ----
                 {"Platformer", "Run + jump", "Move left/right and jump with Space (needs a Rigidbody).",
                     "function update(dt) {\n    move(axis_x() * 5 * dt, 0)\n    if (key_down(\"space\")) {\n        jump(9)\n    }\n}\n"},
+                // ---- Mini-games ----
+                {"Mini-games", "Pong paddle (W/S)", "Move a paddle up/down and clamp it on screen.",
+                    "function update(dt) {\n    if (key(\"w\")) { move(0, 5 * dt, 0) }\n    if (key(\"s\")) { move(0, -5 * dt, 0) }\n    keep_in_box(-8, -4, -8, 4)   // fixed x, clamp y\n}\n"},
+                {"Mini-games", "Bouncing ball", "Launch once, then bounce off the walls forever.",
+                    "function start() {\n    set_velocity(4, 3)\n}\n\nfunction update(dt) {\n    bounce_in_box(-8, -5, 8, 5)\n}\n"},
+                {"Mini-games", "Stay on screen", "One line: clamp this object to the play area.",
+                    "keep_in_box(-8, -5, 8, 5)\n"},
+                {"Mini-games", "Wrap around edges", "One line: leave one side, appear on the other (asteroids).",
+                    "wrap_in_box(-8, -5, 8, 5)\n"},
                 // ---- Juice (tweens) ----
                 {"Juice", "Pop in on start", "Scale up from nothing with an overshoot.",
                     "function start() {\n    set_scale(0)\n    tween_scale(1, 0.4, \"out_back\")\n}\n"},

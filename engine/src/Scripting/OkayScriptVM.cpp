@@ -2320,6 +2320,36 @@ struct OkayScriptVM::Impl {
                 rb->velocity.y = a.empty() ? 0.0f : a[0].AsFloat();
             return Value{};
         };
+        // ---- Stay-in-bounds helpers (rectangle minX,minY,maxX,maxY) ----
+        // keep_in_box: clamp inside. wrap_in_box: teleport to the opposite edge
+        // (asteroids). bounce_in_box: reverse the Rigidbody2D velocity at each wall.
+        b["keep_in_box"] = [tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || a.size() < 4) return Value{};
+            Vec3 p = t->localPosition;
+            p.x = Mathf::Clamp(p.x, a[0].AsFloat(), a[2].AsFloat());
+            p.y = Mathf::Clamp(p.y, a[1].AsFloat(), a[3].AsFloat());
+            t->localPosition = p;
+            return Value{};
+        };
+        b["wrap_in_box"] = [tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || a.size() < 4) return Value{};
+            float x0 = a[0].AsFloat(), y0 = a[1].AsFloat(), x1 = a[2].AsFloat(), y1 = a[3].AsFloat();
+            Vec3 p = t->localPosition;
+            if (p.x < x0) p.x = x1; else if (p.x > x1) p.x = x0;
+            if (p.y < y0) p.y = y1; else if (p.y > y1) p.y = y0;
+            t->localPosition = p;
+            return Value{};
+        };
+        b["bounce_in_box"] = [go, tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || a.size() < 4) return Value{};
+            GameObject* g = go(); auto* rb = g ? g->GetComponent<Rigidbody2D>() : nullptr;
+            if (!rb) return Value{};
+            Vec3 p = t->localPosition;
+            float x0 = a[0].AsFloat(), y0 = a[1].AsFloat(), x1 = a[2].AsFloat(), y1 = a[3].AsFloat();
+            if ((p.x <= x0 && rb->velocity.x < 0) || (p.x >= x1 && rb->velocity.x > 0)) rb->velocity.x = -rb->velocity.x;
+            if ((p.y <= y0 && rb->velocity.y < 0) || (p.y >= y1 && rb->velocity.y > 0)) rb->velocity.y = -rb->velocity.y;
+            return Value{};
+        };
         b["add_force"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
                 rb->AddForce({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f});

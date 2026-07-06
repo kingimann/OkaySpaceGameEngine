@@ -1048,11 +1048,23 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
     }
 
     float texel = (2.0f * R) / (float)S;
-    Vec3 csnap{std::floor(ctr.x / texel) * texel, std::floor(ctr.y / texel) * texel, std::floor(ctr.z / texel) * texel};
     Vec3 up = std::fabs(L.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
     float back = R * 2.0f + depthPad;
-    Vec3 leye = csnap - L * back;
-    outVP = Mat4::Ortho(-R, R, -R, R, 0.05f, back + R * 2.0f + depthPad) * Mat4::LookAt(leye, csnap, up);
+    Vec3 leye = ctr - L * back;
+    Mat4 lightView = Mat4::LookAt(leye, ctr, up);
+    Mat4 lightProj = Mat4::Ortho(-R, R, -R, R, 0.05f, back + R * 2.0f + depthPad);
+    // Texel-snap the shadow centre IN LIGHT SPACE, not world space. The shadow
+    // map's texel grid is aligned to the light's view axes, so snapping the centre
+    // to a world-axis grid (as before) let the grid drift under the shadow whenever
+    // the light — or the camera, for a camera-focused cascade — moved or rotated,
+    // making the shadows "swim"/shimmer/glitch. Rounding the centre's light-space
+    // X/Y to the texel grid and folding the sub-texel remainder back in as a
+    // post-view translation keeps the grid rock-steady frame to frame.
+    Vec4 lc = lightView * Vec4{ctr, 1.0f};
+    float sx = std::floor(lc.x / texel) * texel;
+    float sy = std::floor(lc.y / texel) * texel;
+    Mat4 snap = Mat4::Translate({sx - lc.x, sy - lc.y, 0.0f});
+    outVP = lightProj * snap * lightView;
     outTexelWorld = texel;
     return true;
 }

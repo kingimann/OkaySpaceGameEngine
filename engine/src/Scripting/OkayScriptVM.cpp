@@ -1681,6 +1681,19 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["cancel_timers"] = [this](std::vector<Value>&) { rt.timers.clear(); return Value{}; };
+        // timer("name", seconds): returns true about once every `seconds` — kills the
+        // manual `t = t + dt; if (t >= N)` boilerplate. e.g.
+        //   if (timer("spawn", 2)) { spawn("enemy.okayprefab", 0, 5) }
+        b["timer"] = [this](std::vector<Value>& a) -> Value {
+            if (!rt.host || a.size() < 2) return Value{false};
+            float period = a[1].AsFloat(); if (period <= 0.0f) return Value{true};
+            std::string key = "__timer_" + a[0].AsString();
+            float acc = rt.host->globals.count(key) ? rt.host->globals[key].AsFloat() : 0.0f;
+            acc += rt.host->deltaTime;
+            if (acc >= period) { rt.host->globals[key] = Value{acc - period}; return Value{true}; }
+            rt.host->globals[key] = Value{acc};
+            return Value{false};
+        };
         b["axis_x"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().x}; };
         b["axis_y"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().y}; };
         b["key"]    = [](std::vector<Value>& a) {
@@ -2347,6 +2360,23 @@ struct OkayScriptVM::Impl {
             if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>()) ps->Emit(n);
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->Destroy(rt.host->gameObject);
+            return Value{};
+        };
+        // Show/hide this object's graphics (sprite/mesh/text) without deactivating it, so
+        // its script keeps running. blink(rate) flashes visibility (invincibility/pickups).
+        auto setVis = [go](bool v) {
+            if (GameObject* g = go()) {
+                if (auto* sr = g->GetComponent<SpriteRenderer>()) sr->enabled = v;
+                if (auto* mr = g->GetComponent<MeshRenderer>())   mr->enabled = v;
+                if (auto* tr = g->GetComponent<TextRenderer>())   tr->enabled = v;
+            }
+        };
+        b["set_visible"] = [setVis](std::vector<Value>& a) { setVis(a.empty() || a[0].AsBool()); return Value{}; };
+        b["show"] = [setVis](std::vector<Value>&) { setVis(true);  return Value{}; };
+        b["hide"] = [setVis](std::vector<Value>&) { setVis(false); return Value{}; };
+        b["blink"] = [setVis](std::vector<Value>& a) {
+            float r = a.empty() ? 6.0f : a[0].AsFloat();
+            setVis(Mathf::Sin(Time::ElapsedTime() * r) > 0.0f);
             return Value{};
         };
         b["particles_alive"] = [go](std::vector<Value>&) -> Value {

@@ -220,7 +220,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << sr->uvMax.x << " " << sr->uvMax.y
             << " " << sr->sortOrder
             << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0)
-            << " " << sr->sortingLayer << "\n";   // trailing (back-compatible)
+            << " " << sr->sortingLayer
+            << " " << (int)sr->texFilter << "\n";   // trailing (back-compatible)
     }
     if (auto* cam = go->GetComponent<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -1736,6 +1737,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 in >> std::ws; // optional sortingLayer follows flips
                                 if (in.peek() == '-' || std::isdigit(in.peek()))
                                     in >> sr->sortingLayer;
+                                in >> std::ws; // optional texFilter follows sortingLayer
+                                if (std::isdigit(in.peek())) {
+                                    int tf = 0; in >> tf;
+                                    sr->texFilter = (SpriteRenderer::TexFilter)tf;
+                                }
                             }
                         }
                     }

@@ -12881,6 +12881,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Flip X##sprite", &sr->flipX)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Flip Y##sprite", &sr->flipY)) ed.dirty = true;
+            const char* sfilters[] = {"Smooth", "Pixel"};
+            int sfi = (int)sr->texFilter;
+            if (ImGui::Combo("Filter##sprite", &sfi, sfilters, 2)) { sr->texFilter = (SpriteRenderer::TexFilter)sfi; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth = bilinear (photos/hi-res). Pixel = nearest-neighbour (crisp pixel-art, no blur).");
             ImGui::TextDisabled("image file (PNG/JPG); higher Sorting Layer always on top, then Sort Order");
             if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }
@@ -20663,6 +20667,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (sr->flipX) std::swap(u0, u1);
             if (sr->flipY) std::swap(v0, v1);
             SDL_Texture* stex = sr->texture.empty() ? nullptr : GetThumb(sr->texture);
+            if (stex) SDL_SetTextureScaleMode(stex,
+                sr->texFilter == SpriteRenderer::TexFilter::Pixel ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
             ImU32 col = ToColor(sr->color);
             if (stex) dl->AddImageQuad((ImTextureID)stex, pTL, pTR, pBR, pBL,
                                        ImVec2(u0, v0), ImVec2(u1, v0), ImVec2(u1, v1), ImVec2(u0, v1), col);

@@ -1730,6 +1730,8 @@ int main(int argc, char** argv) {
                 // (corner 3 = top-left in world = texture uvMin). Honors the
                 // sprite's uv sub-region so sprite sheets / atlases work.
                 SDL_Texture* tex = GetTexture(renderer, sr->texture, baseDir, textureCache);
+                if (tex) SDL_SetTextureScaleMode(tex,
+                    sr->texFilter == SpriteRenderer::TexFilter::Pixel ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
                 float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
                 if (sr->flipX) std::swap(u0, u1);
                 if (sr->flipY) std::swap(v0, v1);

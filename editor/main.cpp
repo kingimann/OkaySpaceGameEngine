@@ -5962,7 +5962,7 @@ void DrawScriptEditor(EditorState& ed) {
             std::string disp = !t->Path().empty()
                 ? std::filesystem::path(t->Path()).filename().string()
                 : (tgo ? tgo->name : std::string("script")) + "." + extide::ExtFor(t->Language());
-            if (ScriptTabDirty(t)) disp = "\xe2\x97\x8f " + disp;   // modified marker
+            if (ScriptTabDirty(t)) disp = "* " + disp;   // modified marker
             char id[32]; std::snprintf(id, sizeof(id), "###sct%p", (void*)t);
             ImGuiTabItemFlags fl = (g_focusScriptTab == t) ? ImGuiTabItemFlags_SetSelected : 0;
             bool open = true;
@@ -6123,7 +6123,7 @@ void DrawScriptEditor(EditorState& ed) {
         // Float / Dock: pop the editor out into its own window, or dock it back as a
         // tab in the main area. (True separate OS windows need the GL backend; this
         // floats within the app, which the SDL_Renderer backend fully supports.)
-        if (ImGui::SmallButton(s_isDocked ? "\xe2\xa7\x89 Float" : "\xe2\x8a\x9e Dock"))
+        if (ImGui::SmallButton(s_isDocked ? "Float" : "Dock"))
             g_scriptDockReq = s_isDocked ? 1 : 2;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(s_isDocked ? "Pop the Script Editor out into its own window"
@@ -6599,7 +6599,7 @@ void DrawScriptEditor(EditorState& ed) {
         // here. Offer a clear choice instead of silently overwriting either side.
         if (s_extConflict.count(sc) && s_extConflict[sc]) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.78f, 0.35f, 1.0f));
-            ImGui::TextUnformatted("\xe2\x9a\xa0 This file changed in an external editor, but you have unsaved edits here.");
+            ImGui::TextUnformatted("(!) This file changed in an external editor, but you have unsaved edits here.");
             ImGui::PopStyleColor();
             if (ImGui::SmallButton("Load External##conflict")) {
                 std::string src = extide::ReadFile(sc->Path());
@@ -7192,12 +7192,12 @@ void DrawScriptEditor(EditorState& ed) {
             }
             if (!enclosing.empty()) {
                 ImGui::SameLine();
-                ImGui::TextColored(AccentCol(0.9f), "  \xe2\x9d\xaf %s()", enclosing.c_str());
+                ImGui::TextColored(AccentCol(0.9f), "  in %s()", enclosing.c_str());
             }
         }
         if (ScriptTabDirty(sc)) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "  \xe2\x97\x8f modified");
+            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "  * modified");
         }
         if (!s_error.empty()) {
             ImGui::SameLine();
@@ -7205,18 +7205,18 @@ void DrawScriptEditor(EditorState& ed) {
             if (nprob > 1) {
                 // Multiple problems: a clickable count that opens the Problems panel.
                 ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f),
-                                   "  \xe2\x9c\x97 %d problems", nprob);
+                                   "  x %d problems", nprob);
                 if (ImGui::IsItemClicked()) s_showProblems = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to open the Problems panel");
             } else {
-                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  \xe2\x9c\x97 %s", s_error.c_str());
+                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  x %s", s_error.c_str());
                 int eln = (s_error.rfind("line ", 0) == 0) ? std::atoi(s_error.c_str() + 5) : 0;
                 if (eln > 0 && ImGui::IsItemClicked()) { caret.gotoLine = eln; s_scrollToLine = eln; }
                 if (eln > 0 && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to go to line %d", eln);
             }
         } else if (sc->Language() == "okayscript") {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f), "  \xe2\x9c\x93 no syntax errors");
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f), "  OK - no syntax errors");
         }
 
         // Problems panel: a collapsible list of every syntax error, each row jumps
@@ -7237,10 +7237,10 @@ void DrawScriptEditor(EditorState& ed) {
                     const auto& d = s_diags[i];
                     char row[400];
                     if (d.line > 0)
-                        std::snprintf(row, sizeof(row), "\xe2\x9c\x97 line %d:  %s##p%zu",
+                        std::snprintf(row, sizeof(row), "x  line %d:  %s##p%zu",
                                       d.line, d.message.c_str(), i);
                     else
-                        std::snprintf(row, sizeof(row), "\xe2\x9c\x97 %s##p%zu", d.message.c_str(), i);
+                        std::snprintf(row, sizeof(row), "x  %s##p%zu", d.message.c_str(), i);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.55f, 1.0f));
                     bool clicked = ImGui::Selectable(row);
                     ImGui::PopStyleColor();

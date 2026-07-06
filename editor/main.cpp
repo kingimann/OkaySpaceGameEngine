@@ -8733,6 +8733,113 @@ static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::stri
     return op.c_str();
 }
 
+// ---- Ready-made script recipes -------------------------------------------------
+// One-click starter behaviours so a beginner never builds a common script from a
+// blank page. Each recipe fills a handler's trigger + conditions + instructions
+// with sensible defaults the user can then tweak. This is the biggest single
+// "make scripting easier" lever: pick "Jump on Space", get a working handler.
+struct ScriptRecipe {
+    const char* group;
+    const char* name;
+    const char* desc;
+    ActionList::Trigger trigger;
+    const char* key;   // OnKey/OnKeyUp key, OnMessage name, or OnInterval seconds ("" if unused)
+    std::vector<ActionList::Item> conditions;
+    std::vector<ActionList::Item> instructions;
+};
+static const std::vector<ScriptRecipe>& ScriptRecipes() {
+    using T = ActionList::Trigger;
+    static const std::vector<ScriptRecipe> r = {
+        // Movement
+        {"Movement", "Spin forever", "Rotates a little every frame.",
+            T::OnUpdate, "", {}, {{"rotate", {"0", "0", "3"}}}},
+        {"Movement", "Drift right", "Slides to the right every frame.",
+            T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}}},
+        {"Movement", "Follow the player", "Moves toward an object named Player.",
+            T::OnUpdate, "", {}, {{"move_toward", {"Player", "3"}}}},
+        {"Movement", "Jump on Space", "Pushes up when Space is pressed (needs a Rigidbody 2D).",
+            T::OnKey, "space", {}, {{"impulse", {"0", "7"}}}},
+        {"Movement", "Patrol (ping-pong)", "Moves right for 1s, then left, forever.",
+            T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}, {"wait", {"1"}}, {"move", {"-0.03", "0", "0"}}, {"wait", {"1"}}}},
+        // Spawning
+        {"Spawning", "Spawn every 2 seconds", "Creates a prefab on a repeating timer.",
+            T::OnInterval, "2", {}, {{"spawn", {"enemy.okayprefab", "0", "0"}}}},
+        // Combat / health
+        {"Combat", "Take 10 damage when hit", "Loses health on collision (needs a Health/Survival component).",
+            T::OnCollision, "", {}, {{"hurt", {"10"}}}},
+        {"Combat", "Destroy on collision", "Removes this object when it hits something.",
+            T::OnCollision, "", {}, {{"destroy", {}}}},
+        {"Combat", "Die when health hits 0", "Destroys this object once the 'health' variable reaches 0.",
+            T::OnUpdate, "", {{"var_le", {"health", "0"}}}, {{"destroy", {}}}},
+        // Pickups / score
+        {"Pickups", "Collect coin (+1 score)", "Adds 1 to 'score' and disappears when touched.",
+            T::OnTriggerEnter, "", {}, {{"add_var", {"score", "1"}}, {"destroy", {}}}},
+        // Interaction
+        {"Interaction", "Open on click (slide up)", "Moves up when this object is clicked.",
+            T::OnClick, "", {}, {{"move", {"0", "3", "0"}}}},
+        {"Interaction", "Toggle a flag on E", "Flips a true/false variable named 'on' when E is pressed.",
+            T::OnKey, "e", {}, {{"toggle_var", {"on"}}}},
+        // HUD / feedback
+        {"HUD", "Say hello on start", "Prints a message to the console when the game starts.",
+            T::OnStart, "", {}, {{"log", {"Hello!"}}}},
+        {"HUD", "Countdown timer", "Ticks a 'timer' variable down each second and shows it on this Text.",
+            T::OnInterval, "1", {}, {{"add_var", {"timer", "-1"}}, {"set_text", {"Time:", "{timer}"}}}},
+        // Scene
+        {"Scene", "Win on collision", "Loads the scene named 'Win' on collision.",
+            T::OnCollision, "", {}, {{"load_scene", {"Win"}}}},
+    };
+    return r;
+}
+// Apply a recipe: fill the primary handler if the script is still untouched, else add
+// it as a NEW extra handler so nothing the user made is overwritten.
+static void ApplyScriptRecipe(ActionList* al, const ScriptRecipe& rc, bool& dirty) {
+    bool primaryEmpty = al->conditions.empty() && al->instructions.empty()
+                     && al->extraHandlers.empty() && al->trigger == ActionList::Trigger::OnStart;
+    if (primaryEmpty) {
+        al->trigger = rc.trigger; al->triggerKey = rc.key ? rc.key : "";
+        al->conditions = rc.conditions; al->instructions = rc.instructions;
+    } else {
+        ActionList::Handler h;
+        h.trigger = rc.trigger; h.triggerKey = rc.key ? rc.key : "";
+        h.conditions = rc.conditions; h.instructions = rc.instructions;
+        al->extraHandlers.push_back(std::move(h));
+    }
+    dirty = true;
+}
+// A searchable popup of the recipes above. Returns true if one was applied to `al`.
+static bool ScriptRecipePicker(const char* popupId, ActionList* al, bool& dirty) {
+    bool applied = false;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(380, 0), ImVec2(480, 560));
+    if (ImGui::BeginPopup(popupId)) {
+        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "Starter Scripts");
+        ImGui::TextDisabled("Pick a ready-made behaviour — it's added as a trigger you can tweak.");
+        static char filter[64] = "";
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##recipefilter", "search behaviours...", filter, sizeof(filter));
+        ImGui::Separator();
+        std::string needle = filter; for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
+        ImGui::BeginChild("##recipelist", ImVec2(0, 400));
+        const char* curGroup = nullptr;
+        for (const auto& rc : ScriptRecipes()) {
+            std::string hay = std::string(rc.name) + " " + rc.desc + " " + rc.group;
+            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
+            if (!needle.empty() && hay.find(needle) == std::string::npos) continue;
+            if (!curGroup || std::strcmp(curGroup, rc.group) != 0) {
+                curGroup = rc.group;
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.86f, 0.78f, 0.42f, 1.0f), "%s", rc.group);
+            }
+            ImGui::PushID(&rc);
+            if (ImGui::Selectable(rc.name)) { ApplyScriptRecipe(al, rc, dirty); applied = true; ImGui::CloseCurrentPopup(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rc.desc);
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    return applied;
+}
+
 // What must exist for an action to actually do something — shown next to each op so
 // a beginner knows what to add first (e.g. a Rigidbody, an Audio Source, a prefab).
 // Derived from the op name; returns nullptr when nothing special is needed.
@@ -9382,8 +9489,13 @@ static void DrawFlowGraph(EditorState& ed) {
     // A small labelled group separator so the toolbar reads as tidy sections.
     auto barSep = []() { ImGui::SameLine(0.0f, 10.0f); ImGui::TextDisabled("|"); ImGui::SameLine(0.0f, 10.0f); };
 
-    // ---- Row 1: build the script (add nodes / reusable actions / variables) ----
-    ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Add:"); ImGui::SameLine();
+    // ---- Row 1: build the script (templates / add nodes / reusable actions / variables) ----
+    ImGui::AlignTextToFramePadding();
+    if (ImGui::Button("\xE2\x98\x85 Templates")) ImGui::OpenPopup("##flowrecipes");   // ★ Templates
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a ready-made behaviour (Jump, Follow, Spawn timer, ...) you can tweak.");
+    if (ScriptRecipePicker("##flowrecipes", al, ed.dirty)) { g_flowSelHandler = -1; g_flowSelKind = 0; }
+    barSep();
+    ImGui::TextDisabled("Add:"); ImGui::SameLine();
     if (ImGui::Button("+ Instruction") || g_flowAddInsReq) ImGui::OpenPopup("##addinspal");
     g_flowAddInsReq = false;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run — pick it from a searchable list.");
@@ -15206,6 +15318,10 @@ void DrawInspector(EditorState& ed) {
             if (hRemove >= 0) { al->extraHandlers.erase(al->extraHandlers.begin() + hRemove); ed.dirty = true; }
 
             ImGui::Spacing(); ImGui::Separator();
+            if (ImGui::SmallButton("\xE2\x98\x85 Template")) ImGui::OpenPopup("##insprecipes");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a ready-made behaviour (Jump, Follow, Spawn timer, ...) you can tweak.");
+            ScriptRecipePicker("##insprecipes", al, ed.dirty);
+            ImGui::SameLine();
             if (ImGui::SmallButton("+ Trigger")) { al->extraHandlers.push_back({}); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another trigger to THIS script with its own conditions and instructions.");
             ImGui::SameLine();

@@ -6211,6 +6211,8 @@ void DrawScriptEditor(EditorState& ed) {
             struct Snip { const char* group; const char* name; const char* desc; const char* text; };
             static const Snip snips[] = {
                 // ---- Basics ----
+                {"Basics", "One-line script (bare)", "No functions needed - a bare script runs every frame.",
+                    "spin(90)\n"},
                 {"Basics", "New script (start + update)", "The two lifecycle functions with comments.",
                     "// Runs once when this object wakes up.\nfunction start() {\n    \n}\n\n// Runs every frame. dt = seconds since the last frame.\nfunction update(dt) {\n    \n}\n"},
                 {"Basics", "start() - runs once", "Setup code that runs a single time.",
@@ -6220,14 +6222,14 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Basics", "on_collision(other) - when hit", "Runs when this object collides.",
                     "function on_collision(other) {\n    \n}\n"},
                 // ---- Movement ----
-                {"Movement", "Move with WASD / arrows", "One line — on_key_move handles the input + dt.",
-                    "function update(dt) {\n    on_key_move(5)   // WASD / arrows, speed 5\n}\n"},
+                {"Movement", "Move with WASD / arrows", "The WHOLE script is one line (runs every frame).",
+                    "on_key_move(5)   // WASD / arrows, speed 5\n"},
                 {"Movement", "Jump on Space", "Upward push when Space is pressed (needs a Rigidbody).",
-                    "function update(dt) {\n    if (key_down(\"space\")) {\n        jump(8)\n    }\n}\n"},
-                {"Movement", "Follow the player", "One-liner: walk toward the object named Player.",
-                    "function update(dt) {\n    follow(\"Player\", 3)\n}\n"},
-                {"Movement", "Spin forever", "Smoothly rotate at a degrees-per-second rate.",
-                    "function update(dt) {\n    spin(90)   // 90 degrees per second\n}\n"},
+                    "if (key_down(\"space\")) {\n    jump(8)\n}\n"},
+                {"Movement", "Follow the player", "One line: walk toward the object named Player.",
+                    "follow(\"Player\", 3)\n"},
+                {"Movement", "Spin forever", "One line: smooth rotation, degrees per second.",
+                    "spin(90)\n"},
                 {"Movement", "Shoot on click", "Spawn a bullet where we are when clicked.",
                     "function update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 // ---- Gameplay ----
@@ -6259,14 +6261,14 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Data", "Save & load to disk", "Persist a value between play sessions.",
                     "save(\"coins\", get(\"coins\"))\ncoins = load(\"coins\", 0)\n"},
                 // ---- Enemy AI ----
-                {"Enemy AI", "Chase, stop in range", "follow() with a stop distance - one line.",
-                    "function update(dt) {\n    follow(\"Player\", 2, 1)   // chase, stop 1 unit away\n}\n"},
-                {"Enemy AI", "Patrol between two points", "Walk back and forth automatically.",
-                    "function update(dt) {\n    patrol(-4, 0, 4, 0, 2)   // from (-4,0) to (4,0) at speed 2\n}\n"},
-                {"Enemy AI", "Orbit the player", "Circle around an object each frame.",
-                    "function update(dt) {\n    orbit(\"Player\", 3, 90)   // radius 3, 90 deg/sec\n}\n"},
-                {"Enemy AI", "Flee from the player", "Run directly away from a named object.",
-                    "function update(dt) {\n    flee(\"Player\", 3)\n}\n"},
+                {"Enemy AI", "Chase, stop in range", "One line: chase with a stop distance.",
+                    "follow(\"Player\", 2, 1)   // chase, stop 1 unit away\n"},
+                {"Enemy AI", "Patrol between two points", "One line: walk back and forth.",
+                    "patrol(-4, 0, 4, 0, 2)   // (-4,0) to (4,0) at speed 2\n"},
+                {"Enemy AI", "Orbit the player", "One line: circle a named object.",
+                    "orbit(\"Player\", 3, 90)   // radius 3, 90 deg/sec\n"},
+                {"Enemy AI", "Flee from the player", "One line: run away from a named object.",
+                    "flee(\"Player\", 3)\n"},
                 // ---- Abilities ----
                 {"Abilities", "Ability with cooldown", "Fire on Space, but only every 1.5s.",
                     "function start() {\n    cd = 0\n}\n\nfunction update(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
@@ -6280,8 +6282,8 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Effects", "Pulse forever (scale)", "Gently grow and shrink on a loop.",
                     "function start() {\n    tween_loop_scale(1.2, 0.6)\n}\n"},
                 // ---- Camera ----
-                {"Camera", "Camera follows me", "Keep the camera centered on this object.",
-                    "function update(dt) {\n    set_cam(pos_x(), pos_y())\n}\n"},
+                {"Camera", "Camera follows me", "One line: keep the camera centered on this object.",
+                    "set_cam(pos_x(), pos_y())\n"},
                 // ---- Input ----
                 {"Input", "Restart level on R", "Reload the current scene.",
                     "function update(dt) {\n    if (key_down(\"r\")) {\n        reload_scene()\n    }\n}\n"},
@@ -6309,10 +6311,10 @@ void DrawScriptEditor(EditorState& ed) {
                 // ---- Motion (math) ----
                 {"Motion", "Move in a circle", "Orbit the origin using sin/cos.",
                     "function start() {\n    ang = 0\n}\n\nfunction update(dt) {\n    ang = ang + dt\n    set_pos(cos(ang) * 3, sin(ang) * 3)\n}\n"},
-                {"Motion", "Bob up and down", "One-liner hover around the start height.",
-                    "function update(dt) {\n    bob(0.5, 2)\n}\n"},
-                {"Motion", "Pulse size (juice)", "Gently grow and shrink forever.",
-                    "function update(dt) {\n    pulse(0.2, 3)\n}\n"},
+                {"Motion", "Bob up and down", "One line: hover around the start height.",
+                    "bob(0.5, 2)\n"},
+                {"Motion", "Pulse size (juice)", "One line: gently grow and shrink forever.",
+                    "pulse(0.2, 3)\n"},
                 {"Motion", "Wander randomly", "Nudge in a random direction twice a second.",
                     "function start() {\n    t = 0\n}\n\nfunction update(dt) {\n    t = t + dt\n    if (t >= 0.5) {\n        t = 0\n        move(rand(-1, 1), rand(-1, 1))\n    }\n}\n"},
                 {"Motion", "Grow while Up held", "Scale up as long as the Up key is down.",
@@ -6332,6 +6334,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Gameplay", "Count a shared timer", "Add up elapsed time in a shared variable.",
                     "function update(dt) {\n    set(\"time\", get(\"time\") + dt)\n}\n"},
             };
+            ImGui::TextDisabled("Tip: a script with no functions runs every frame - so many are ONE line.");
             static char sf[48] = "";
             ImGui::SetNextItemWidth(280);
             ImGui::InputTextWithHint("##snipf", "search templates...", sf, sizeof(sf));

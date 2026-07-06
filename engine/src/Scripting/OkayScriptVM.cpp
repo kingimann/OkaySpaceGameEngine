@@ -1473,6 +1473,10 @@ struct OkayScriptVM::Impl {
     Runtime rt;
     std::vector<StmtPtr> topLevel;
     bool loaded = false;
+    // "Bare mode": a script with NO functions at all — its top-level statements ARE the
+    // per-frame loop. Lets a whole script be one line, e.g. `on_key_move(5)`. Setup-style
+    // top-level code (globals) still runs once at load whenever any function is defined.
+    bool bareMode = false;
 
     // Last network message popped by net_poll(), exposed via net_msg_* builtins.
     std::string netMsgChannel, netMsgData;
@@ -4688,8 +4692,12 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         Parser parser(lex.Scan());
         m_impl->rt.functions.clear();
         m_impl->topLevel = parser.ParseProgram(m_impl->rt.functions);
-        // Run top-level statements once so globals/setup execute.
-        for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt);
+        // Bare mode: no functions defined -> the top-level statements ARE the update
+        // loop (run every frame), so a whole script can be a single line. Otherwise run
+        // top-level once now for globals/setup.
+        m_impl->bareMode = m_impl->rt.functions.empty() && !m_impl->topLevel.empty();
+        if (!m_impl->bareMode)
+            for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt);
         m_impl->loaded = true;
         return true;
     } catch (const ReturnSignal&) {
@@ -4788,6 +4796,11 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
     if (!m_impl->loaded) return;
     if (m_impl->rt.host) m_impl->rt.host->deltaTime = deltaTime;
     std::vector<Value> args{Value{deltaTime}};
+    // Bare mode: re-run the top-level statements every frame (they ARE the loop).
+    if (m_impl->bareMode) {
+        try { for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt); }
+        catch (const std::exception& e) { Log::Error("OkayScript (bare): ", e.what()); }
+    }
     CallFirst(m_impl->rt, {"Update", "update"}, args, "Update");
     CallFirst(m_impl->rt, {"LateUpdate", "late_update"}, args, "LateUpdate");
     // Scheduled after()/every() callbacks tick even without an update().

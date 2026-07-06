@@ -8977,6 +8977,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}}},
         {"Movement", "Follow the player", "Moves toward an object named Player.",
             T::OnUpdate, "", {}, {{"move_toward", {"Player", "3"}}}},
+        {"Movement", "Chase, stop in range", "Chases Player, but only while farther than 1 unit.",
+            T::OnUpdate, "", {{"dist_gt", {"Player", "1"}}}, {{"move_toward", {"Player", "3"}}}},
         {"Movement", "Patrol (ping-pong)", "Moves right for 1s, then left, forever.",
             T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}, {"wait", {"1"}}, {"move", {"-0.03", "0", "0"}}, {"wait", {"1"}}}},
         {"Movement", "Move up while W held", "Slides up each frame the W key is held.",
@@ -9018,6 +9020,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnUpdate, "", {{"var_le", {"health", "0"}}}, {{"emit", {"30"}}, {"destroy", {}}}},
         {"Combat", "Hurt while standing in it (fire)", "Damages whatever stays in contact, every frame.",
             T::OnCollisionStay, "", {}, {{"hurt", {"1"}}}},
+        {"Combat", "Flash red when hit", "Turns this object red on collision.",
+            T::OnCollision, "", {}, {{"set_color", {"1", "0", "0"}}}},
         {"Combat", "Regenerate health", "Heals 2 health every second.",
             T::OnInterval, "1", {}, {{"heal", {"2"}}}},
         {"Combat", "Heal on H", "Restores 25 health when H is pressed.",
@@ -9038,6 +9042,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnClick, "", {}, {{"rotate", {"0", "90", "0"}}}},
         {"Interaction", "Change color on click", "Turns red when clicked.",
             T::OnClick, "", {}, {{"set_color", {"1", "0", "0"}}}},
+        {"Interaction", "Explode on click", "Bursts particles and disappears when clicked.",
+            T::OnClick, "", {}, {{"emit", {"30"}}, {"destroy", {}}}},
         {"Interaction", "Toggle a flag on E", "Flips a true/false variable named 'on' when E is pressed.",
             T::OnKey, "e", {}, {{"toggle_var", {"on"}}}},
         {"Interaction", "Play a sound on click", "Plays a sound when clicked (auto-adds an Audio Source).",
@@ -9077,6 +9083,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnCollision, "", {}, {{"send", {"hit"}}}},
         {"Messaging", "React to 'hit' message", "Loses 10 health whenever a 'hit' message is received.",
             T::OnMessage, "hit", {}, {{"hurt", {"10"}}}},
+        {"Messaging", "Tell the player on touch", "Sends a 'hit' message to the object named Player on collision.",
+            T::OnCollision, "", {}, {{"send_to", {"Player", "hit"}}}},
     };
     return r;
 }

@@ -1056,7 +1056,7 @@ void LoadCustomActions() {
 static void CustomActionButton(const char* id, bool cond, std::vector<okay::ActionList::Item>& target, bool& dirty) {
     auto& lib = cond ? g_customCond : g_customInstr;
     ImGui::PushID(id);
-    if (ImGui::SmallButton("\xe2\x98\x85 Custom")) ImGui::OpenPopup("##capick");
+    if (ImGui::SmallButton("Use Custom")) ImGui::OpenPopup("##capick");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Insert one of your reusable %s groups", cond ? "condition" : "instruction");
     if (ImGui::BeginPopup("##capick")) {
         if (lib.empty()) ImGui::TextDisabled("No custom %ss yet.\nBuild some steps, then 'Save as Custom'.", cond ? "condition" : "instruction");
@@ -1110,7 +1110,7 @@ void DrawCustomActions() {
     ImGui::SetNextWindowSize(ImVec2(420, 460), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Custom Actions", &g_showCustomActions)) { ImGui::End(); return; }
     ImGui::TextWrapped("Reusable groups of steps. Build them in an Actions component and "
-        "click 'Save as Custom'; then drop them into any Actions via the '\xe2\x98\x85 Custom' button.");
+        "click 'Save as Custom'; then drop them into any Actions via the 'Use Custom' button.");
     ImGui::Separator();
     auto section = [&](const char* title, std::vector<CustomAction>& lib) {
         ImGui::PushID(title);
@@ -8751,7 +8751,7 @@ static std::string ActionOpSummary(const ActionList::Item& it) {
     if (op == "toggle_var") return "flip " + a(0);
     if (op == "rand_var") return a(0) + " = random " + a(1) + ".." + a(2);
     if (op == "clamp_var") return a(0) + " in " + a(1) + ".." + a(2);
-    if (op == "lerp_var") return a(0) + " \xE2\x86\x92 " + a(1);          // ->
+    if (op == "lerp_var") return a(0) + " -> " + a(1);
     // ---- Movement ----
     if (op == "move") return "by " + vec(0);
     if (op == "move_to") return "to " + vec(0) + " @ " + a(3);
@@ -8788,10 +8788,10 @@ static std::string ActionOpSummary(const ActionList::Item& it) {
     // ---- Flow / messaging ----
     if (op == "wait") return a(0) + "s";
     if (op == "send" || op == "send_value" || op == "send_text") return "\"" + a(0) + "\"";
-    if (op == "send_to") return a(0) + " \xE2\x86\x90 \"" + a(1) + "\"";  // <-
+    if (op == "send_to") return a(0) + " <- \"" + a(1) + "\"";
     if (op == "load_scene") return a(0);
     if (op == "goto") return "line " + a(0);
-    if (op == "if_goto") return a(0) + " " + a(1) + " " + a(2) + " \xE2\x86\x92 " + a(3);
+    if (op == "if_goto") return a(0) + " " + a(1) + " " + a(2) + " -> " + a(3);
     if (op == "repeat") return a(0) + "x";
     if (op == "while") return a(0) + " " + a(1) + " " + a(2);
     // ---- Conditions ----
@@ -8850,11 +8850,11 @@ static std::string HandlerSentence(ActionList::Trigger t, const std::string& key
         s += ", if ";
         for (std::size_t i = 0; i < conds.size(); ++i) { if (i) s += " and "; s += ActionOpSummary(conds[i]); }
     }
-    s += "  \xE2\x86\x92  ";   // ->
+    s += "  ->  ";
     if (ins.empty()) { s += "(no actions yet)"; return s; }
     std::size_t show = ins.size() < 4 ? ins.size() : 4;
     for (std::size_t i = 0; i < show; ++i) { if (i) s += ", "; s += ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), ins[i].op); }
-    if (ins.size() > show) s += ", \xE2\x80\xA6";   // ...
+    if (ins.size() > show) s += ", ...";
     return s;
 }
 
@@ -9725,7 +9725,7 @@ static void DrawFlowGraph(EditorState& ed) {
 
     // ---- Row 1: build the script (templates / add nodes / reusable actions / variables) ----
     ImGui::AlignTextToFramePadding();
-    if (ImGui::Button("\xE2\x98\x85 Templates")) ImGui::OpenPopup("##flowrecipes");   // ★ Templates
+    if (ImGui::Button("+ Template")) ImGui::OpenPopup("##flowrecipes");   // ready-made behaviours
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a ready-made behaviour (Jump, Follow, Spawn timer, ...) you can tweak.");
     if (ScriptRecipePicker("##flowrecipes", al, ed.dirty)) { g_flowSelHandler = -1; g_flowSelKind = 0; }
     barSep();
@@ -10101,7 +10101,7 @@ static void DrawFlowGraph(EditorState& ed) {
             if (!ObjHasOpComponent(go, item.op)) {
                 const char* cn = OpComponentName(item.op);
                 if (cn) {
-                    char w[64]; std::snprintf(w, sizeof(w), "\xE2\x9A\xA0 needs %s \xE2\x80\x94 Fix", cn);   // ⚠ ... — Fix
+                    char w[64]; std::snprintf(w, sizeof(w), "(!) needs %s - Fix", cn);   // click to add it
                     float hfs = std::round(fs * 0.8f);
                     ImVec2 tp(std::round(c.x - NW * 0.5f + 8 * z), std::round(c.y + NH * 0.5f + 1 * z));
                     ImVec2 ts = fnt->CalcTextSizeA(hfs, 1e9f, 0.0f, w);
@@ -15478,6 +15478,10 @@ void DrawInspector(EditorState& ed) {
         std::string alHdr = al->name.empty() ? std::string("Actions (Visual Script)")
                                              : ("Actions: " + al->name);
         if (CompHeader(alHdr.c_str(), al, &toRemove)) {
+            // Compact spacing for the whole Actions block — the visual script gets dense
+            // (many rows), so it uses tighter rows than the rest of the roomy Inspector.
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(5, 3));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 3));
             // Editable label, saved in the project (serialized in ToText).
             char nb[64]; std::strncpy(nb, al->name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
             ImGui::SetNextItemWidth(-1);
@@ -15518,7 +15522,7 @@ void DrawInspector(EditorState& ed) {
                 // Title carries the number + a live plain-English summary; "###" keeps the
                 // fold state stable while that summary text changes as you edit.
                 std::string tnum = hidx < 0 ? std::string("Trigger 1") : ("Trigger " + std::to_string(hidx + 2));
-                std::string htitle = tnum + "   \xE2\x80\x94   " + HandlerSentence(trg, key, conds, ins) + "###handler";
+                std::string htitle = tnum + "  -  " + HandlerSentence(trg, key, conds, ins) + "###handler";
                 ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.22f, 0.25f, 0.31f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.28f, 0.32f, 0.40f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.30f, 0.35f, 0.44f, 1.0f));
@@ -15532,7 +15536,7 @@ void DrawInspector(EditorState& ed) {
                 if (open) {
                     // Framed body so the whole handler reads as a distinct card.
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.16f, 0.19f, 1.0f));
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(9, 8));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(7, 5));
                     ImGui::BeginChild("##hbody", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
                     // --- Trigger row (its own little block) ---
@@ -15564,10 +15568,10 @@ void DrawInspector(EditorState& ed) {
 
                     // --- Conditions block (foldable) ---
                     ImGui::Spacing();
-                    char cl[48]; std::snprintf(cl, sizeof(cl), "Conditions (%d)   \xE2\x80\x94 all must pass###conds", (int)conds.size());
+                    char cl[48]; std::snprintf(cl, sizeof(cl), "Conditions (%d)  -  all must pass###conds", (int)conds.size());
                     ImGuiTreeNodeFlags sflags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth;
                     if (ImGui::TreeNodeEx(cl, sflags)) {
-                        if (conds.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
+                        if (conds.empty()) ImGui::TextDisabled("No conditions - always runs. Add one to gate it.");
                         for (std::size_t i = 0; i < conds.size();) {
                             int act = cardRow(conds, i, kCondOps, IM_ARRAYSIZE(kCondOps), 0);
                             i = ApplyItemAction(conds, i, act, ed.dirty);
@@ -15580,9 +15584,9 @@ void DrawInspector(EditorState& ed) {
 
                     // --- Instructions block (foldable) ---
                     ImGui::Spacing();
-                    char il[56]; std::snprintf(il, sizeof(il), "Instructions (%d)   \xE2\x80\x94 top to bottom###ins", (int)ins.size());
+                    char il[56]; std::snprintf(il, sizeof(il), "Instructions (%d)  -  top to bottom###ins", (int)ins.size());
                     if (ImGui::TreeNodeEx(il, sflags)) {
-                        if (ins.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
+                        if (ins.empty()) ImGui::TextDisabled("Nothing happens yet - add an instruction below.");
                         for (std::size_t i = 0; i < ins.size();) {
                             int act = cardRow(ins, i, kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000);
                             i = ApplyItemAction(ins, i, act, ed.dirty);
@@ -15608,7 +15612,7 @@ void DrawInspector(EditorState& ed) {
             if (hRemove >= 0) { al->extraHandlers.erase(al->extraHandlers.begin() + hRemove); ed.dirty = true; }
 
             ImGui::Spacing(); ImGui::Separator();
-            if (ImGui::SmallButton("\xE2\x98\x85 Template")) ImGui::OpenPopup("##insprecipes");
+            if (ImGui::SmallButton("+ Template")) ImGui::OpenPopup("##insprecipes");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a ready-made behaviour (Jump, Follow, Spawn timer, ...) you can tweak.");
             ScriptRecipePicker("##insprecipes", al, ed.dirty);
             ImGui::SameLine();
@@ -15616,6 +15620,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another trigger to THIS script with its own conditions and instructions.");
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##al")) toRemove = al;
+            ImGui::PopStyleVar(2);   // compact ItemSpacing + FramePadding
         }
         ImGui::PopID();
     }

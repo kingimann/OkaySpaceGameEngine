@@ -1614,6 +1614,18 @@ struct OkayScriptVM::Impl {
             if (Transform* t = tf()) t->Rotate({0, 0, dps * dt});
             return Value{};
         };
+        // move_to(x, y, speed): walk toward a world POINT, stopping when it arrives.
+        // dt-scaled (no "* dt"); great for "go to a spot" without object lookups.
+        b["move_to"] = [this, tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || !rt.host || a.size() < 2) return Value{};
+            float tx = a[0].AsFloat(), ty = a[1].AsFloat(), sp = a.size() > 2 ? a[2].AsFloat() : 3.0f;
+            Vec3 me = t->Position();
+            float dx = tx - me.x, dy = ty - me.y, len = Mathf::Sqrt(dx * dx + dy * dy);
+            float step = sp * rt.host->deltaTime;
+            if (len <= step || len < 1e-5f) { t->Translate({dx, dy, 0.0f}); return Value{}; }
+            t->Translate({dx / len * step, dy / len * step, 0.0f});
+            return Value{};
+        };
         // bob(amount, speed): hover up/down around the start height (juice, one line).
         b["bob"] = [this, tf](std::vector<Value>& a) {
             Transform* t = tf(); if (!t || !rt.host) return Value{};
@@ -1714,6 +1726,25 @@ struct OkayScriptVM::Impl {
         };
         b["set"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2 && rt.host) rt.host->globals[a[0].AsString()] = a[1];
+            return Value{};
+        };
+        // score()/add_score(n): the shared "score" value in one call (less than
+        // set("score", get("score") + n)). set_score(n) overwrites it.
+        b["score"] = [this](std::vector<Value>&) -> Value {
+            if (!rt.host) return Value{0.0f};
+            auto it = rt.host->globals.find("score");
+            return it != rt.host->globals.end() ? it->second : Value{0.0f};
+        };
+        b["add_score"] = [this](std::vector<Value>& a) {
+            if (!rt.host) return Value{};
+            float n = a.empty() ? 1.0f : a[0].AsFloat();
+            auto it = rt.host->globals.find("score");
+            float cur = it != rt.host->globals.end() ? it->second.AsFloat() : 0.0f;
+            rt.host->globals["score"] = Value{cur + n};
+            return Value{cur + n};
+        };
+        b["set_score"] = [this](std::vector<Value>& a) {
+            if (rt.host) rt.host->globals["score"] = Value{a.empty() ? 0.0f : a[0].AsFloat()};
             return Value{};
         };
         // Spawn a prefab file at (x, y); returns true on success. New objects

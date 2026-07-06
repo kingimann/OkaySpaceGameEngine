@@ -6193,26 +6193,80 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
         }
-        // Snippets: insert a common template at the caret.
+        // Templates: insert a ready-made, plain-English behaviour at the caret — the
+        // code-side of the visual "Starter Scripts", so beginners never face a blank file.
         ImGui::SameLine();
-        if (ImGui::SmallButton("Snippet")) ImGui::OpenPopup("##snippets");
+        if (ImGui::SmallButton("Templates")) ImGui::OpenPopup("##snippets");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Insert a ready-made behaviour (Move, Jump, Follow, Spawn timer, ...) written in plain OkayScript.");
         if (ImGui::BeginPopup("##snippets")) {
-            struct Snip { const char* name; const char* text; };
+            struct Snip { const char* group; const char* name; const char* desc; const char* text; };
             static const Snip snips[] = {
-                {"start()",   "function start() {\n    \n}\n"},
-                {"update(dt)","function update(dt) {\n    \n}\n"},
-                {"class",     "public class NewScript : OkaySource {\n    void Start() {\n        \n    }\n    void Update() {\n        \n    }\n}\n"},
-                {"if",        "if () {\n    \n}\n"},
-                {"if/else",   "if () {\n    \n} else {\n    \n}\n"},
-                {"for",       "for (int i = 0; i < 10; i++) {\n    \n}\n"},
-                {"foreach",   "foreach (var item in list) {\n    \n}\n"},
-                {"try/catch", "try {\n    \n} catch (e) {\n    print(e);\n}\n"},
-                {"while",     "while () {\n    \n}\n"},
-                {"on_collision", "function on_collision(other) {\n    \n}\n"},
-                {"save/load", "save(\"key\", value);\nvar v = load(\"key\", 0);\n"},
+                // ---- Basics ----
+                {"Basics", "New script (start + update)", "The two lifecycle functions with comments.",
+                    "// Runs once when this object wakes up.\nfunction start() {\n    \n}\n\n// Runs every frame. dt = seconds since the last frame.\nfunction update(dt) {\n    \n}\n"},
+                {"Basics", "start() - runs once", "Setup code that runs a single time.",
+                    "function start() {\n    \n}\n"},
+                {"Basics", "update(dt) - every frame", "Code that runs each frame.",
+                    "function update(dt) {\n    \n}\n"},
+                {"Basics", "on_collision(other) - when hit", "Runs when this object collides.",
+                    "function on_collision(other) {\n    \n}\n"},
+                // ---- Movement ----
+                {"Movement", "Move with WASD / arrows", "Reads the -1..1 input axes each frame.",
+                    "function update(dt) {\n    // axis_x / axis_y are -1..1 from WASD / the arrow keys.\n    move(axis_x() * 5 * dt, axis_y() * 5 * dt)\n}\n"},
+                {"Movement", "Jump on Space", "Upward push when Space is pressed (needs a Rigidbody).",
+                    "function update(dt) {\n    if (key_down(\"space\")) {\n        jump(8)\n    }\n}\n"},
+                {"Movement", "Follow the player", "Walk toward the object named Player.",
+                    "function update(dt) {\n    // Move toward the object named \"Player\".\n    move_toward(obj_x(\"Player\"), obj_y(\"Player\"), 3 * dt)\n}\n"},
+                {"Movement", "Spin forever", "Rotate a fixed amount per second.",
+                    "function update(dt) {\n    rotate(90 * dt)   // 90 degrees per second\n}\n"},
+                {"Movement", "Shoot on click", "Spawn a bullet where we are when clicked.",
+                    "function update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                // ---- Gameplay ----
+                {"Gameplay", "Health + take damage", "A hp value that drops on collision and dies at 0.",
+                    "function start() {\n    hp = 100\n}\n\nfunction on_collision(other) {\n    hp = hp - 10\n    if (hp <= 0) {\n        destroy()\n    }\n}\n"},
+                {"Gameplay", "Collect coin (+score)", "Add to a shared score, then remove this object.",
+                    "function on_collision(other) {\n    set(\"score\", get(\"score\") + 1)\n    destroy()\n}\n"},
+                {"Gameplay", "Spawn on a timer", "Count seconds and spawn every 2s.",
+                    "function start() {\n    timer = 0\n}\n\nfunction update(dt) {\n    timer = timer + dt\n    if (timer >= 2) {\n        timer = 0\n        spawn(\"enemy.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                {"Gameplay", "Countdown to a scene", "Tick a timer down, then load a scene.",
+                    "function start() {\n    timeLeft = 10\n}\n\nfunction update(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        load_scene(\"GameOver\")\n    }\n}\n"},
+                {"Gameplay", "Do something near the player", "Act only when within a distance.",
+                    "function update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        // ... the player is close ...\n    }\n}\n"},
+                // ---- HUD (on-screen UI from script) ----
+                {"HUD", "Health bar + buttons", "A draggable window with a bar and two buttons.",
+                    "function start() {\n    hp = 100\n}\n\nfunction update(dt) {\n    ui_begin(\"HUD\", 24, 24, 240, 130)\n    ui_text(\"Health\")\n    ui_progress(hp / 100)\n    if (ui_button(\"Heal\")) { hp = 100 }\n    ui_sameline()\n    if (ui_button(\"Hurt\")) { hp = hp - 10 }\n    ui_end()\n}\n"},
+                // ---- Logic (building blocks) ----
+                {"Logic", "if / else", "A branch.",
+                    "if (/* condition */) {\n    \n} else {\n    \n}\n"},
+                {"Logic", "for loop", "Repeat a fixed number of times.",
+                    "for (i = 0; i < 10; i = i + 1) {\n    \n}\n"},
+                {"Logic", "while loop", "Repeat while a condition holds.",
+                    "while (/* condition */) {\n    \n}\n"},
+                // ---- Data (save / share) ----
+                {"Data", "Shared variable (set / get)", "Read/write a value any script can see.",
+                    "set(\"score\", get(\"score\") + 1)\n"},
+                {"Data", "Save & load to disk", "Persist a value between play sessions.",
+                    "save(\"coins\", get(\"coins\"))\ncoins = load(\"coins\", 0)\n"},
             };
-            for (const auto& s : snips)
-                if (ImGui::MenuItem(s.name)) caret.insert = s.text;
+            static char sf[48] = "";
+            ImGui::SetNextItemWidth(280);
+            ImGui::InputTextWithHint("##snipf", "search templates...", sf, sizeof(sf));
+            ImGui::Separator();
+            std::string needle = sf; for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
+            ImGui::BeginChild("##sniplist", ImVec2(300, 340));
+            const char* cur = nullptr;
+            for (const auto& s : snips) {
+                std::string hay = std::string(s.name) + " " + s.desc + " " + s.group;
+                for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
+                if (!needle.empty() && hay.find(needle) == std::string::npos) continue;
+                if (!cur || std::strcmp(cur, s.group) != 0) {
+                    cur = s.group; ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.86f, 0.78f, 0.42f, 1.0f), "%s", s.group);
+                }
+                if (ImGui::MenuItem(s.name)) { caret.insert = s.text; ImGui::CloseCurrentPopup(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.desc);
+            }
+            ImGui::EndChild();
             ImGui::EndPopup();
         }
 

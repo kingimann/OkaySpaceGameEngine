@@ -8878,6 +8878,40 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
     };
     return r;
 }
+// The single obvious component an instruction op needs to actually do anything, so the
+// editor can both warn ("needs X") and auto-add it. Returns nullptr for ops with no
+// special / no single-obvious requirement.
+static const char* OpComponentName(const std::string& op) {
+    if (op == "impulse" || op == "velocity") return "Rigidbody 2D";
+    if (op == "impulse3" || op == "velocity3" || op == "force3") return "Rigidbody 3D";
+    if (op == "play_sound") return "Audio Source";
+    if (op == "emit") return "Particle System";
+    if (op == "hurt" || op == "heal" || op == "eat" || op == "drink" || op == "survival") return "Health";
+    if (op == "set_text") return "Text";
+    return nullptr;
+}
+// True if `go` already carries the component that op needs (or the op needs nothing).
+static bool ObjHasOpComponent(GameObject* go, const std::string& op) {
+    if (!go) return true;
+    if (op == "impulse" || op == "velocity") return go->GetComponent<Rigidbody2D>() != nullptr;
+    if (op == "impulse3" || op == "velocity3" || op == "force3") return go->GetComponent<Rigidbody3D>() != nullptr;
+    if (op == "play_sound") return go->GetComponent<AudioSource>() != nullptr;
+    if (op == "emit") return go->GetComponent<ParticleSystem>() != nullptr;
+    if (op == "hurt" || op == "heal" || op == "eat" || op == "drink" || op == "survival") return go->GetComponent<SurvivalStats>() != nullptr;
+    if (op == "set_text") return go->GetComponent<TextRenderer>() != nullptr;
+    return true;
+}
+// Auto-add the unambiguous component an op needs (never Text — that may belong on a
+// child, so it stays a warning only).
+static void EnsureOpComponent(GameObject* go, const std::string& op) {
+    if (!go || ObjHasOpComponent(go, op)) return;
+    if (op == "impulse" || op == "velocity") go->AddComponent<Rigidbody2D>();
+    else if (op == "impulse3" || op == "velocity3" || op == "force3") go->AddComponent<Rigidbody3D>();
+    else if (op == "play_sound") go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.2f);
+    else if (op == "emit") go->AddComponent<ParticleSystem>();
+    else if (op == "hurt" || op == "heal" || op == "eat" || op == "drink" || op == "survival") go->AddComponent<SurvivalStats>();
+}
+
 // Apply a recipe: fill the primary handler if the script is still untouched, else add
 // it as a NEW extra handler so nothing the user made is overwritten.
 static void ApplyScriptRecipe(ActionList* al, const ScriptRecipe& rc, bool& dirty) {
@@ -8892,14 +8926,11 @@ static void ApplyScriptRecipe(ActionList* al, const ScriptRecipe& rc, bool& dirt
         h.conditions = rc.conditions; h.instructions = rc.instructions;
         al->extraHandlers.push_back(std::move(h));
     }
-    // Convenience: if the recipe uses 2D physics but the object has no Rigidbody 2D,
-    // add one so a beginner's "Jump on Space" works right away without a manual step.
-    if (GameObject* go = al->gameObject) {
-        bool needsRb2d = false;
-        for (const auto& in : rc.instructions)
-            if (in.op == "impulse" || in.op == "velocity") needsRb2d = true;
-        if (needsRb2d && !go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>();
-    }
+    // Convenience: auto-add the components the recipe's actions need (Rigidbody, Audio
+    // Source, Particle System, Health) so the behaviour works right away — no separate
+    // "why isn't this doing anything?" step for a beginner.
+    if (GameObject* go = al->gameObject)
+        for (const auto& in : rc.instructions) EnsureOpComponent(go, in.op);
     dirty = true;
 }
 // A searchable popup of the recipes above. Returns true if one was applied to `al`.
@@ -9957,6 +9988,15 @@ static void DrawFlowGraph(EditorState& ed) {
             ImVec2 c = node(keyR(al, hv.hidx, "ins", (int)i), ImVec2(30 + depth[i] * INDENT, startY + i * GAPY),
                             ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op), sub, col, &d, &clk, &rc);
             insCenter[i] = c;
+            // Inline "needs X" note when this action can't work because its object is
+            // missing the required component — the #1 beginner "why nothing happens".
+            if (!ObjHasOpComponent(go, item.op)) {
+                const char* cn = OpComponentName(item.op);
+                if (cn) { char w[48]; std::snprintf(w, sizeof(w), "\xE2\x9A\xA0 needs %s", cn);
+                    dl->AddText(fnt, std::round(fs * 0.8f),
+                                ImVec2(std::round(c.x - NW * 0.5f + 8 * z), std::round(c.y + NH * 0.5f + 1 * z)),
+                                IM_COL32(240, 180, 90, 255), w); }
+            }
             if (hv.hidx < 0 && al->CurrentInstruction() == (int)i) glow(c);
             if (selHere)
                 dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),

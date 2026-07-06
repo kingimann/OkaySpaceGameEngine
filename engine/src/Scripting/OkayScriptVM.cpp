@@ -1610,6 +1610,25 @@ struct OkayScriptVM::Impl {
             if (Transform* t = tf()) t->Rotate({0, 0, dps * dt});
             return Value{};
         };
+        // bob(amount, speed): hover up/down around the start height (juice, one line).
+        b["bob"] = [this, tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || !rt.host) return Value{};
+            float amt = a.size() > 0 ? a[0].AsFloat() : 0.5f, sp = a.size() > 1 ? a[1].AsFloat() : 2.0f;
+            auto& g = rt.host->globals;
+            auto it = g.find("__bob_y");
+            float baseY = it != g.end() ? it->second.AsFloat() : t->localPosition.y;
+            if (it == g.end()) g["__bob_y"] = Value{baseY};
+            t->localPosition.y = baseY + Mathf::Sin(Time::ElapsedTime() * sp) * amt;
+            return Value{};
+        };
+        // pulse(amount, speed): gently grow/shrink around normal size (juice).
+        b["pulse"] = [tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t) return Value{};
+            float amt = a.size() > 0 ? a[0].AsFloat() : 0.2f, sp = a.size() > 1 ? a[1].AsFloat() : 3.0f;
+            float s = 1.0f + Mathf::Sin(Time::ElapsedTime() * sp) * amt;
+            t->localScale = {s, s, s};
+            return Value{};
+        };
         b["pos_x"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.x : 0.0f}; };
         b["pos_y"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.y : 0.0f}; };
         b["time"]  = [](std::vector<Value>&) { return Value{Time::ElapsedTime()}; };

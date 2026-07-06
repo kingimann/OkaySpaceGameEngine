@@ -5413,6 +5413,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"rotate","rotate(deg)"}, {"move_toward","move_toward(x, y, step)"}, {"look_at","look_at(\"name\")"},
         // high-level one-liners (dt-scaled internally)
         {"walk","walk(dx, dy, speed)"}, {"spin","spin(degPerSec)"}, {"on_key_move","on_key_move(speed)"},
+        {"bob","bob(amount, speed)"}, {"pulse","pulse(amount, speed)"},
         {"follow","follow(\"name\", speed[, stopDist])"}, {"patrol","patrol(x1, y1, x2, y2, speed)"}, {"orbit","orbit(\"name\", radius, degPerSec)"},
         {"move3","move3(dx, dy, dz)"}, {"set_pos3","set_pos3(x, y, z)"}, {"set_z","set_z(v)"},
         {"rotate3","rotate3(x, y, z)"}, {"set_scale","set_scale(s)"}, {"set_scale3","set_scale3(x, y, z)"},
@@ -5556,6 +5557,8 @@ static const std::string* ScriptDoc(const std::string& name) {
         // high-level one-liners (call each frame from update)
         {"walk","Move in a direction (dx,dy) at `speed` — dt-scaled, so no `* dt` needed."},
         {"spin","Rotate `degPerSec` degrees each second — dt-scaled (smooth spinning)."},
+        {"bob","Hover up and down around the start height by `amount` at `speed` (juice)."},
+        {"pulse","Gently grow and shrink around normal size by `amount` at `speed` (juice)."},
         {"on_key_move","WASD/arrow keys move this object at `speed` (uses a Rigidbody2D if present)."},
         {"follow","Chase a named object on the XY plane at `speed`, stopping `stopDist` away."},
         {"follow3","Chase a named object in full 3D at `speed`, stopping `stopDist` away."},
@@ -6306,8 +6309,10 @@ void DrawScriptEditor(EditorState& ed) {
                 // ---- Motion (math) ----
                 {"Motion", "Move in a circle", "Orbit the origin using sin/cos.",
                     "function start() {\n    ang = 0\n}\n\nfunction update(dt) {\n    ang = ang + dt\n    set_pos(cos(ang) * 3, sin(ang) * 3)\n}\n"},
-                {"Motion", "Bob up and down", "Hover around the start height with a sine wave.",
-                    "function start() {\n    baseY = pos_y()\n}\n\nfunction update(dt) {\n    set_y(baseY + sin(time() * 2) * 0.5)\n}\n"},
+                {"Motion", "Bob up and down", "One-liner hover around the start height.",
+                    "function update(dt) {\n    bob(0.5, 2)\n}\n"},
+                {"Motion", "Pulse size (juice)", "Gently grow and shrink forever.",
+                    "function update(dt) {\n    pulse(0.2, 3)\n}\n"},
                 {"Motion", "Wander randomly", "Nudge in a random direction twice a second.",
                     "function start() {\n    t = 0\n}\n\nfunction update(dt) {\n    t = t + dt\n    if (t >= 0.5) {\n        t = 0\n        move(rand(-1, 1), rand(-1, 1))\n    }\n}\n"},
                 {"Motion", "Grow while Up held", "Scale up as long as the Up key is down.",

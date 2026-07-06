@@ -78,24 +78,6 @@ Contact TestSphereSphere(const Vec3& ca, float ra, const Vec3& cb, float rb) {
     return c;
 }
 
-Contact TestBoxBox(const Vec3& ca, const Vec3& ha, const Vec3& cb, const Vec3& hb) {
-    Contact c;
-    Vec3 d = cb - ca;
-    float ox = (ha.x + hb.x) - Mathf::Abs(d.x); if (ox <= 0) return c;
-    float oy = (ha.y + hb.y) - Mathf::Abs(d.y); if (oy <= 0) return c;
-    float oz = (ha.z + hb.z) - Mathf::Abs(d.z); if (oz <= 0) return c;
-    c.hit = true;
-    // Minimum translation axis.
-    if (ox <= oy && ox <= oz)      { c.normal = {d.x < 0 ? -1.0f : 1.0f, 0, 0}; c.penetration = ox; }
-    else if (oy <= ox && oy <= oz) { c.normal = {0, d.y < 0 ? -1.0f : 1.0f, 0}; c.penetration = oy; }
-    else                           { c.normal = {0, 0, d.z < 0 ? -1.0f : 1.0f}; c.penetration = oz; }
-    // Contact point: clamp each center into the other box and split the difference.
-    Vec3 pA = ClampVec(cb, ca - ha, ca + ha);
-    Vec3 pB = ClampVec(ca, cb - hb, cb + hb);
-    c.point = (pA + pB) * 0.5f;
-    return c;
-}
-
 // Box (A) vs sphere (B). Normal points from box toward sphere.
 Contact TestBoxSphere(const Vec3& cBox, const Vec3& hBox, const Vec3& cSph, float r) {
     Contact c;
@@ -170,6 +152,66 @@ inline Vec3 ClosestPointOnTri(const Vec3& p, const Vec3& a, const Vec3& b, const
     return a + ab * (vb * denom) + ac * (vc * denom);
 }
 
+// An oriented box: center, half-extents, and its three world-space unit axes.
+struct OBB3 { Vec3 c, h, ax, ay, az; };
+OBB3 MakeOBB3(BoxCollider3D* box) {
+    OBB3 o; o.c = box->WorldCenter(); o.h = box->HalfExtents();
+    box->WorldAxes(o.ax, o.ay, o.az);
+    return o;
+}
+float OBBProjRadius(const OBB3& o, const Vec3& L) {
+    return o.h.x * Mathf::Abs(Vec3::Dot(o.ax, L))
+         + o.h.y * Mathf::Abs(Vec3::Dot(o.ay, L))
+         + o.h.z * Mathf::Abs(Vec3::Dot(o.az, L));
+}
+Vec3 OBB3Support(const OBB3& o, const Vec3& dir) {
+    return o.c + o.ax * (Vec3::Dot(dir, o.ax) >= 0 ? o.h.x : -o.h.x)
+               + o.ay * (Vec3::Dot(dir, o.ay) >= 0 ? o.h.y : -o.h.y)
+               + o.az * (Vec3::Dot(dir, o.az) >= 0 ? o.h.z : -o.h.z);
+}
+// Separating-axis test between two oriented boxes (15 axes: 3+3 faces, 9 edge
+// cross-products). Normal points A -> B.
+Contact TestOBB3OBB3(const OBB3& A, const OBB3& B) {
+    Contact c;
+    Vec3 axes[15];
+    axes[0] = A.ax; axes[1] = A.ay; axes[2] = A.az;
+    axes[3] = B.ax; axes[4] = B.ay; axes[5] = B.az;
+    const Vec3 Aa[3] = {A.ax, A.ay, A.az}, Bb[3] = {B.ax, B.ay, B.az};
+    int n = 6;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) axes[n++] = Vec3::Cross(Aa[i], Bb[j]);
+    Vec3 d = B.c - A.c;
+    float bestMetric = 1e30f, bestOverlap = 0.0f; Vec3 bestAxis{0, 1, 0};
+    for (int i = 0; i < 15; ++i) {
+        float len2 = axes[i].SqrMagnitude();
+        if (len2 < 1e-8f) continue;                       // parallel edges -> skip
+        Vec3 L = axes[i] * (1.0f / Mathf::Sqrt(len2));
+        float overlap = OBBProjRadius(A, L) + OBBProjRadius(B, L) - Mathf::Abs(Vec3::Dot(d, L));
+        if (overlap <= 0.0f) return c;                    // separating axis found
+        // Bias face axes slightly under edge-cross axes so flat rests pick a clean
+        // face normal instead of chattering on a near-tie edge axis.
+        float metric = overlap + (i < 6 ? 0.0f : 1e-3f);
+        if (metric < bestMetric) { bestMetric = metric; bestOverlap = overlap; bestAxis = L; }
+    }
+    c.hit = true;
+    c.penetration = bestOverlap;
+    if (Vec3::Dot(d, bestAxis) < 0.0f) bestAxis = bestAxis * -1.0f;   // orient A -> B
+    c.normal = bestAxis;
+    Vec3 pB = OBB3Support(B, bestAxis * -1.0f);            // B's deepest vertex into A
+    c.point = pB + bestAxis * (bestOverlap * 0.5f);
+    return c;
+}
+// Oriented box vs sphere: solve in the box's local (unrotated) frame, map back.
+Contact TestOBB3Sphere(const OBB3& box, const Vec3& sc, float r) {
+    Vec3 d = sc - box.c;
+    Vec3 local{Vec3::Dot(d, box.ax), Vec3::Dot(d, box.ay), Vec3::Dot(d, box.az)};
+    Contact c = TestBoxSphere({0, 0, 0}, box.h, local, r);
+    if (!c.hit) return c;
+    c.normal = box.ax * c.normal.x + box.ay * c.normal.y + box.az * c.normal.z;
+    c.point  = box.c + box.ax * c.point.x + box.ay * c.point.y + box.az * c.point.z;
+    return c;
+}
+
 Contact TestColliders(Collider3D* a, Collider3D* b) {
     using S = Collider3D::Shape;
     S sa = a->shape(), sb = b->shape();
@@ -195,20 +237,18 @@ Contact TestColliders(Collider3D* a, Collider3D* b) {
 
     bool aBox = IsBoxLike(sa), bBox = IsBoxLike(sb);
     if (aBox && bBox) {
-        auto* ba = static_cast<BoxCollider3D*>(a);
-        auto* bb = static_cast<BoxCollider3D*>(b);
-        return TestBoxBox(ba->WorldCenter(), ba->HalfExtents(),
-                          bb->WorldCenter(), bb->HalfExtents());
+        return TestOBB3OBB3(MakeOBB3(static_cast<BoxCollider3D*>(a)),
+                            MakeOBB3(static_cast<BoxCollider3D*>(b)));
     }
     if (aBox) { // A box, B sphere/capsule
         auto* box = static_cast<BoxCollider3D*>(a);
         Vec3 sc; float sr; AsSphere(b, box->WorldCenter(), sc, sr);
-        return TestBoxSphere(box->WorldCenter(), box->HalfExtents(), sc, sr);
+        return TestOBB3Sphere(MakeOBB3(box), sc, sr);
     }
     if (bBox) { // A sphere/capsule, B box
         auto* box = static_cast<BoxCollider3D*>(b);
         Vec3 sc; float sr; AsSphere(a, box->WorldCenter(), sc, sr);
-        Contact c = TestBoxSphere(box->WorldCenter(), box->HalfExtents(), sc, sr);
+        Contact c = TestOBB3Sphere(MakeOBB3(box), sc, sr);
         c.normal = -c.normal; // flip to point from A toward B
         return c;
     }
@@ -852,6 +892,21 @@ bool RayAABB(const Vec3& o, const Vec3& d, const Vec3& mn, const Vec3& mx,
     tHit = tmin; n = nrm; return true;
 }
 
+// Ray vs oriented box: transform the ray into the box's local frame (where it's an
+// axis-aligned box centred at the origin), reuse RayAABB, rotate the normal back.
+bool RayOBB(const Vec3& o, const Vec3& d, BoxCollider3D* box,
+            float maxT, float& tHit, Vec3& n) {
+    Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+    Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+    Vec3 ro = o - bc;
+    Vec3 lo{Vec3::Dot(ro, ax), Vec3::Dot(ro, ay), Vec3::Dot(ro, az)};
+    Vec3 ld{Vec3::Dot(d, ax), Vec3::Dot(d, ay), Vec3::Dot(d, az)};  // d is unit -> ld is unit
+    Vec3 ln;
+    if (!RayAABB(lo, ld, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z}, maxT, tHit, ln)) return false;
+    n = ax * ln.x + ay * ln.y + az * ln.z;
+    return true;
+}
+
 bool RaySphere(const Vec3& o, const Vec3& d, const Vec3& c, float r,
                float maxT, float& tHit, Vec3& n) {
     Vec3 m = o - c;
@@ -881,7 +936,9 @@ RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& di
         if (c->shape() == Collider3D::Shape::Sphere) {
             auto* s = static_cast<SphereCollider3D*>(c);
             hit = RaySphere(origin, dir, s->WorldCenter(), s->WorldRadius(), best.distance, t, n);
-        } else { // Box, or capsule via its AABB
+        } else if (IsBoxLike(c->shape())) {   // exact oriented-box ray test
+            hit = RayOBB(origin, dir, static_cast<BoxCollider3D*>(c), best.distance, t, n);
+        } else { // capsule/cylinder via its AABB
             Vec3 mn, mx; c->WorldAABB(mn, mx);
             hit = RayAABB(origin, dir, mn, mx, best.distance, t, n);
         }
@@ -899,8 +956,14 @@ std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& cent
         if (!Alive(c)) continue;
         bool hit = false;
         if (IsBoxLike(c->shape())) {
-            Vec3 mn, mx; c->WorldAABB(mn, mx);
-            hit = (ClampVec(center, mn, mx) - center).Magnitude() <= radius;
+            // Exact oriented-box overlap: closest point in the box's local frame.
+            auto* box = static_cast<BoxCollider3D*>(c);
+            Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+            Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+            Vec3 rel = center - bc;
+            Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
+            Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
+            hit = (l - cl).Magnitude() <= radius;
         } else {
             Vec3 sc; float sr; AsSphere(c, center, sc, sr);
             hit = (sc - center).Magnitude() <= radius + sr;
@@ -926,7 +989,40 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
                 }
                 continue;
             }
-            // Box / capsule (via its world AABB): push out of the box surface.
+            if (IsBoxLike(col->shape())) {
+                // Oriented box: work in the box's local frame so a rotated platform
+                // pushes the sphere off its true faces, not its (larger) AABB.
+                auto* box = static_cast<BoxCollider3D*>(col);
+                Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+                Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+                Vec3 rel = c - bc;
+                Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
+                Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
+                Vec3 dl3 = l - cl; float dl = dl3.Magnitude();
+                Vec3 ln;                                   // push direction, local space
+                float push = 0.0f;
+                if (dl > 1e-5f) {
+                    if (dl < r) { ln = dl3 * (1.0f / dl); push = r - dl; }
+                } else {
+                    // Centre inside: eject along the least-penetrating local axis.
+                    float dxl = l.x + h.x, dxh = h.x - l.x;
+                    float dyl = l.y + h.y, dyh = h.y - l.y;
+                    float dzl = l.z + h.z, dzh = h.z - l.z;
+                    float m = dxl; ln = {-1, 0, 0};
+                    if (dxh < m) { m = dxh; ln = {1, 0, 0}; }
+                    if (dyl < m) { m = dyl; ln = {0, -1, 0}; }
+                    if (dyh < m) { m = dyh; ln = {0, 1, 0}; }
+                    if (dzl < m) { m = dzl; ln = {0, 0, -1}; }
+                    if (dzh < m) { m = dzh; ln = {0, 0, 1}; }
+                    push = m + r;
+                }
+                if (push > 0.0f) {
+                    Vec3 wn = ax * ln.x + ay * ln.y + az * ln.z;   // local -> world normal
+                    c = c + wn * push; moved = true;
+                }
+                continue;
+            }
+            // Capsule / cylinder (via its world AABB): push out of the box surface.
             Vec3 mn, mx; col->WorldAABB(mn, mx);
             Vec3 cp = ClampVec(c, mn, mx);
             Vec3 d = c - cp; float dl = d.Magnitude();

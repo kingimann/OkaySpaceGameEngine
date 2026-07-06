@@ -660,6 +660,23 @@ Vec2 ClosestOnBox(const Vec2& p, const Vec2& mn, const Vec2& mx) {
     return {Mathf::Clamp(p.x, mn.x, mx.x), Mathf::Clamp(p.y, mn.y, mx.y)};
 }
 
+// Ray vs oriented box: rotate the ray into the box's local frame (axis-aligned,
+// centred at origin), reuse RayAABB, rotate the normal back to world.
+bool RayOBB2(const Vec2& o, const Vec2& d, BoxCollider2D* box,
+             float maxT, float& tHit, Vec2& n) {
+    Vec2 bc = box->WorldCenter(), h = box->HalfExtents();
+    float a = box->WorldAngle();
+    float ca = Mathf::Cos(a), sa = Mathf::Sin(a);
+    Vec2 ax{ca, sa}, ay{-sa, ca};        // box local axes in world
+    Vec2 ro = o - bc;
+    Vec2 lo{Vec2::Dot(ro, ax), Vec2::Dot(ro, ay)};
+    Vec2 ld{Vec2::Dot(d, ax), Vec2::Dot(d, ay)};   // d unit -> ld unit
+    Vec2 ln;
+    if (!RayAABB(lo, ld, {-h.x, -h.y}, {h.x, h.y}, maxT, tHit, ln)) return false;
+    n = ax * ln.x + ay * ln.y;
+    return true;
+}
+
 bool Alive(Collider2D* c) { return c->enabled && c->gameObject && c->gameObject->active; }
 
 } // namespace
@@ -676,7 +693,9 @@ RaycastHit2D Physics2D::Raycast(Scene& scene, const Vec2& origin, const Vec2& di
         if (c->shape() == Collider2D::Shape::Circle) {
             auto* cc = static_cast<CircleCollider2D*>(c);
             hit = RayCircle(origin, dir, cc->WorldCenter(), cc->WorldRadius(), best.distance, t, n);
-        } else { // Box or capsule (via its AABB)
+        } else if (c->shape() == Collider2D::Shape::Box) {   // exact oriented-box ray test
+            hit = RayOBB2(origin, dir, static_cast<BoxCollider2D*>(c), best.distance, t, n);
+        } else { // capsule/edge/polygon (via its AABB)
             Vec2 mn, mx; c->WorldAABB(mn, mx);
             hit = RayAABB(origin, dir, mn, mx, best.distance, t, n);
         }
@@ -723,8 +742,14 @@ std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& cent
         if (!Alive(c)) continue;
         bool hit = false;
         if (c->shape() == Collider2D::Shape::Box) {
-            Vec2 mn, mx; c->WorldAABB(mn, mx);
-            hit = (ClosestOnBox(center, mn, mx) - center).Magnitude() <= radius;
+            // Exact oriented-box distance: closest point in the box's local frame.
+            auto* box = static_cast<BoxCollider2D*>(c);
+            Vec2 bc = box->WorldCenter(), h = box->HalfExtents();
+            float a = box->WorldAngle(), ca = Mathf::Cos(a), sa = Mathf::Sin(a);
+            Vec2 d = center - bc;
+            Vec2 l{d.x * ca + d.y * sa, -d.x * sa + d.y * ca};
+            Vec2 cl{Mathf::Clamp(l.x, -h.x, h.x), Mathf::Clamp(l.y, -h.y, h.y)};
+            hit = (l - cl).Magnitude() <= radius;
         } else { // circle or capsule, reduced to a circle near the query center
             Vec2 cc; float r; AsCircle(c, center, cc, r);
             hit = (cc - center).Magnitude() <= radius + r;

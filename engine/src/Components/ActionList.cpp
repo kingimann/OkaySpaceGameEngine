@@ -509,10 +509,14 @@ void ActionList::Update(float dt) {
         // Poll the primary handler and every extra handler; each has its OWN trigger,
         // gate and actions (like separate functions in one script). First match runs.
         auto pollH = [&](Trigger type, const std::string& key,
-                         std::vector<Item>& conds, std::vector<Item>& ins, bool& fired, bool onceFlag) {
+                         std::vector<Item>& conds, std::vector<Item>& ins, bool& fired, bool onceFlag, float& timer) {
             if (m_running) return;
             bool go = false;
             if (type == Trigger::OnUpdate) go = true;
+            else if (type == Trigger::OnInterval) {          // fire every <key> seconds
+                float iv = (float)std::atof(key.c_str());
+                if (iv > 0.0f) { timer += dt; if (timer >= iv) { timer -= iv; go = true; } }
+            }
             else if (type == Trigger::OnKey && !key.empty() && Input::GetKeyDown(key[0])) go = true;
             else if (type == Trigger::OnKeyUp && !key.empty() && Input::GetKeyUp(key[0])) go = true;
             else if (type == Trigger::OnClick) {
@@ -521,8 +525,8 @@ void ActionList::Update(float dt) {
             }
             if (go) FireHandler(conds, ins, fired, onceFlag);
         };
-        pollH(trigger, triggerKey, conditions, instructions, m_fired, once);
-        for (Handler& h : extraHandlers) pollH(h.trigger, h.triggerKey, h.conditions, h.instructions, h.m_fired, h.once);
+        pollH(trigger, triggerKey, conditions, instructions, m_fired, once, m_timer);
+        for (Handler& h : extraHandlers) pollH(h.trigger, h.triggerKey, h.conditions, h.instructions, h.m_fired, h.once, h.m_timer);
         // Latched collision / trigger / mouse events fire the handler listening for them.
         if (!m_running && m_pending) {
             m_pending = false;
@@ -1127,6 +1131,16 @@ void ActionList::Update(float dt) {
     m_running = false;
     if (m_runFired) *m_runFired = true;   // mark THIS handler fired (for `once`)
     m_run = nullptr; m_runFired = nullptr;
+}
+
+void ActionList::LateUpdate(float /*dt*/) {
+    // OnLateUpdate handlers start here (after every object's Update); their instructions
+    // then run on the next Update tick like any other started handler.
+    if (m_running) return;
+    if (trigger == Trigger::OnLateUpdate) FireHandler(conditions, instructions, m_fired, once);
+    for (Handler& h : extraHandlers)
+        if (!m_running && h.trigger == Trigger::OnLateUpdate)
+            FireHandler(h.conditions, h.instructions, h.m_fired, h.once);
 }
 
 } // namespace okay

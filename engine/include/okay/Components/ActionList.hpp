@@ -22,7 +22,12 @@ public:
     // (triggers serialize by integer index).
     enum class Trigger { OnStart, OnUpdate, OnKey, OnCollision, OnClick, OnKeyUp, OnMessage,
                          OnTriggerEnter, OnTriggerExit, OnMouseEnter, OnMouseExit,
-                         OnMouseDown, OnMouseUp, OnMouseOver };
+                         OnMouseDown, OnMouseUp, OnMouseOver,
+                         // Appended (keep order stable for serialization):
+                         OnCollisionExit,   // physics contact ended
+                         OnCollisionStay,   // every frame contact persists
+                         OnInterval,        // fire repeatedly every triggerKey seconds (a timer)
+                         OnLateUpdate };    // every frame, after all Update()s
 
     /// One condition or instruction: an op name + string args (numbers parsed
     /// on use, so the data stays uniform and easy to edit/serialize).
@@ -50,6 +55,7 @@ public:
         std::vector<Item> conditions;
         std::vector<Item> instructions;
         bool m_fired = false;
+        float m_timer = 0.0f;   // OnInterval accumulator
     };
     std::vector<Handler> extraHandlers;
 
@@ -84,9 +90,14 @@ public:
     void OnTriggerEnter2D(Collider2D*) override        { Latch(Trigger::OnTriggerEnter); }
     void OnTriggerExit2D (Collider2D*) override        { Latch(Trigger::OnTriggerExit); }
     void OnCollisionEnter2D(const Collision2D&) override{ Latch(Trigger::OnCollision); }
+    void OnCollisionExit2D (const Collision2D&) override{ Latch(Trigger::OnCollisionExit); }
+    void OnCollisionStay2D (const Collision2D&) override{ Latch(Trigger::OnCollisionStay); }
     void OnTriggerEnter3D(Collider3D*) override        { Latch(Trigger::OnTriggerEnter); }
     void OnTriggerExit3D (Collider3D*) override        { Latch(Trigger::OnTriggerExit); }
     void OnCollisionEnter3D(const Collision3D&) override{ Latch(Trigger::OnCollision); }
+    void OnCollisionExit3D (const Collision3D&) override{ Latch(Trigger::OnCollisionExit); }
+    void OnCollisionStay3D (const Collision3D&) override{ Latch(Trigger::OnCollisionStay); }
+    void LateUpdate(float dt) override;   // drives OnLateUpdate handlers
     void OnMouseEnter() override { Latch(Trigger::OnMouseEnter); }
     void OnMouseExit()  override { Latch(Trigger::OnMouseExit); }
     void OnMouseOver()  override { Latch(Trigger::OnMouseOver); }
@@ -151,6 +162,7 @@ private:
     std::size_t m_ip = 0;
     float m_wait = 0.0f;
     bool m_fired = false;
+    float m_timer = 0.0f;   // primary handler's OnInterval accumulator
     std::vector<Item>* m_run = nullptr;   // active instruction list while running
     bool* m_runFired = nullptr;           // fired-flag of the running handler (set on completion)
     bool m_pending = false;    // latched by event callbacks (collision/trigger/mouse)

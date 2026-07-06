@@ -9187,7 +9187,8 @@ static bool FlowIsEnder(const std::string& o) {
 // Human-readable trigger names (index matches ActionList::Trigger).
 static const char* kTriggerLabels[] = {"On Start","On Update","On Key","On Collision","On Click",
     "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
-    "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over"};
+    "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over",
+    "On Collision Exit","On Collision Stay","On Interval","On Late Update"};
 
 // Every pickable key as (label, stored-char). Keys are single characters — that's what
 // Input::GetKeyDown(char) matches — so the picker offers letters, digits and Space.
@@ -9441,7 +9442,8 @@ static void DrawFlowGraph(EditorState& ed) {
 
     static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",
         "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
-        "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over"};
+        "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over",
+        "On Collision Exit","On Collision Stay","On Interval","On Late Update"};
 
     // ---- Always-visible editor strip -------------------------------------------
     // Change the trigger and edit the currently-selected node right here, so editing
@@ -9481,6 +9483,10 @@ static void DrawFlowGraph(EditorState& ed) {
             char kb[64]; std::strncpy(kb, fKey->c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
             ImGui::SetNextItemWidth(130);
             if (ImGui::InputTextWithHint("##flowtrigkeyInline", "message name", kb, sizeof(kb))) { *fKey = kb; ed.dirty = true; }
+        } else if (*fTrig == ActionList::Trigger::OnInterval) {
+            ImGui::SameLine(); ImGui::TextUnformatted("Every"); ImGui::SameLine();
+            float sec = (float)std::atof(fKey->c_str()); ImGui::SetNextItemWidth(80);
+            if (ImGui::DragFloat("##flowiv", &sec, 0.05f, 0.0f, 3600.0f, "%.2f s")) { char b[32]; std::snprintf(b, sizeof(b), "%g", sec < 0.0f ? 0.0f : sec); *fKey = b; ed.dirty = true; }
         }
         ImGui::SameLine(); if (ImGui::Checkbox("Once", fOnce)) ed.dirty = true;
         // Guardrail (Inspector parity): OnMouse* triggers need pickable bounds.
@@ -9682,6 +9688,8 @@ static void DrawFlowGraph(EditorState& ed) {
         if (*hv.trig == ActionList::Trigger::OnKey || *hv.trig == ActionList::Trigger::OnKeyUp ||
             *hv.trig == ActionList::Trigger::OnMessage)
             tsub = "\"" + *hv.key + "\"";
+        else if (*hv.trig == ActionList::Trigger::OnInterval)
+            tsub = "every " + (hv.key->empty() ? std::string("0") : *hv.key) + "s";
         if (hv.hidx < 0 && !al->name.empty()) tsub = al->name + (tsub.empty() ? std::string() : " " + tsub);
         ImU32 trigCol = al->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
         bool trigClicked = false;
@@ -15114,7 +15122,8 @@ void DrawInspector(EditorState& ed) {
             const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision",
                                    "On Click", "On Key Up", "On Message",
                                    "On Trigger Enter", "On Trigger Exit", "On Mouse Enter",
-                                   "On Mouse Exit", "On Mouse Down", "On Mouse Up", "On Mouse Over"};
+                                   "On Mouse Exit", "On Mouse Down", "On Mouse Up", "On Mouse Over",
+                                   "On Collision Exit", "On Collision Stay", "On Interval", "On Late Update"};
             g_pickerProjectDir = ed.projectDir();   // so object/prefab pickers can list prefabs
             // Draw one numbered "card" row (faint frame + index) around an action.
             auto cardRow = [&](std::vector<ActionList::Item>& list, std::size_t i, const ActionOpInfo* ops, int nops, int idBase) -> int {
@@ -15155,6 +15164,10 @@ void DrawInspector(EditorState& ed) {
                     char mb[64]; std::strncpy(mb, key.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
                     ImGui::SetNextItemWidth(110);
                     if (ImGui::InputTextWithHint("##msg", "message", mb, sizeof(mb))) { key = mb; ed.dirty = true; }
+                } else if (trg == ActionList::Trigger::OnInterval) {
+                    ImGui::SameLine(); ImGui::TextUnformatted("Every"); ImGui::SameLine();
+                    float sec = (float)std::atof(key.c_str()); ImGui::SetNextItemWidth(80);
+                    if (ImGui::DragFloat("##iv", &sec, 0.05f, 0.0f, 3600.0f, "%.2f s")) { char b[32]; std::snprintf(b, sizeof(b), "%g", sec < 0.0f ? 0.0f : sec); key = b; ed.dirty = true; }
                 }
                 ImGui::SameLine(); if (ImGui::Checkbox("Once", &once)) ed.dirty = true;
                 if (hidx >= 0) { ImGui::SameLine(); if (ImGui::SmallButton("Remove Trigger")) hRemove = hidx; }

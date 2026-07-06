@@ -10152,8 +10152,13 @@ static void DrawFlowGraph(EditorState& ed) {
     static std::unordered_map<void*, float> zoomMap;
     float& zoom = zoomMap[(void*)al];
     if (zoom < 0.35f || zoom > 3.0f) zoom = 1.0f;   // init / sanitize
-    // A small labelled group separator so the toolbar reads as tidy sections.
-    auto barSep = []() { ImGui::SameLine(0.0f, 10.0f); ImGui::TextDisabled("|"); ImGui::SameLine(0.0f, 10.0f); };
+    // A small group separator that reads as tidy sections — but WRAPS to a new line
+    // when the toolbar is running out of room, so nothing clips on a narrow panel.
+    auto barSep = []() {
+        float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        if (ImGui::GetItemRectMax().x + 140.0f < right) { ImGui::SameLine(0.0f, 10.0f); ImGui::TextDisabled("|"); ImGui::SameLine(0.0f, 10.0f); }
+        // else: no SameLine — the next widget falls to the next row.
+    };
 
     // ---- Row 1: build the script (templates / add nodes / reusable actions / variables) ----
     ImGui::AlignTextToFramePadding();

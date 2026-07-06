@@ -6310,7 +6310,14 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::TextColored(ImVec4(0.86f, 0.78f, 0.42f, 1.0f), "%s", s.group);
                 }
                 if (ImGui::MenuItem(s.name)) { caret.insert = s.text; ImGui::CloseCurrentPopup(); }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.desc);
+                if (ImGui::IsItemHovered()) {
+                    // Preview the actual code before inserting it.
+                    ImGui::BeginTooltip();
+                    ImGui::TextDisabled("%s", s.desc);
+                    ImGui::Separator();
+                    ImGui::TextUnformatted(s.text);
+                    ImGui::EndTooltip();
+                }
             }
             ImGui::EndChild();
             ImGui::EndPopup();
@@ -9183,7 +9190,14 @@ static bool ScriptRecipePicker(const char* popupId, ActionList* al, bool& dirty)
             }
             ImGui::PushID(&rc);
             if (ImGui::Selectable(rc.name)) { ApplyScriptRecipe(al, rc, dirty); applied = true; ImGui::CloseCurrentPopup(); }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rc.desc);
+            if (ImGui::IsItemHovered()) {
+                // Preview what this recipe sets up, in plain English, before adding it.
+                ImGui::BeginTooltip();
+                ImGui::TextDisabled("%s", rc.desc);
+                ImGui::Separator();
+                ImGui::TextUnformatted(HandlerSentence(rc.trigger, rc.key ? rc.key : "", rc.conditions, rc.instructions).c_str());
+                ImGui::EndTooltip();
+            }
             ImGui::PopID();
         }
         ImGui::EndChild();

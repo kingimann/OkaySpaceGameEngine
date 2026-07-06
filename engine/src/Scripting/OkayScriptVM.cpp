@@ -1633,6 +1633,21 @@ struct OkayScriptVM::Impl {
             t->localScale = {s, s, s};
             return Value{};
         };
+        // wander(speed): roam in a random direction, picking a new one every ~1s.
+        b["wander"] = [this, tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || !rt.host) return Value{};
+            float sp = a.empty() ? 2.0f : a[0].AsFloat();
+            auto& g = rt.host->globals;
+            float dt = rt.host->deltaTime;
+            float tmr = g.count("__wander_t")  ? g["__wander_t"].AsFloat()  : 999.0f;
+            float dx  = g.count("__wander_dx") ? g["__wander_dx"].AsFloat() : 0.0f;
+            float dy  = g.count("__wander_dy") ? g["__wander_dy"].AsFloat() : 0.0f;
+            tmr += dt;
+            if (tmr > 1.0f) { tmr = 0.0f; float ang = Random::Shared().Range(0.0f, 6.2831853f); dx = Mathf::Cos(ang); dy = Mathf::Sin(ang); }
+            g["__wander_t"] = Value{tmr}; g["__wander_dx"] = Value{dx}; g["__wander_dy"] = Value{dy};
+            t->Translate({dx * sp * dt, dy * sp * dt, 0.0f});
+            return Value{};
+        };
         b["pos_x"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.x : 0.0f}; };
         b["pos_y"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.y : 0.0f}; };
         b["time"]  = [](std::vector<Value>&) { return Value{Time::ElapsedTime()}; };
@@ -2292,6 +2307,15 @@ struct OkayScriptVM::Impl {
         b["particles_on"] = [go](std::vector<Value>& a) {  // start/stop continuous emission
             if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>())
                 ps->playing = a.empty() || a[0].AsBool();
+            return Value{};
+        };
+        // explode([count]): burst particles AND remove this object — the classic death
+        // effect in one call (needs a Particle System for the burst).
+        b["explode"] = [this, go](std::vector<Value>& a) {
+            int n = a.empty() ? 20 : (int)a[0].AsFloat();
+            if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>()) ps->Emit(n);
+            if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                rt.host->gameObject->scene()->Destroy(rt.host->gameObject);
             return Value{};
         };
         b["particles_alive"] = [go](std::vector<Value>&) -> Value {
@@ -4271,6 +4295,22 @@ struct OkayScriptVM::Impl {
             }, onDoneFromArg(a, 5));
             return Value{};
         };
+        // flash(r, g, b[, dur]): snap to a color, then fade back to the current one.
+        // Hit-feedback in one line (e.g. flash(1,0,0) turns red then back).
+        b["flash"] = [this, sched, colorPtr](std::vector<Value>& a) {
+            Scheduler* s = sched(); Color* c = colorPtr();
+            if (!s || !c || a.size() < 3) return Value{};
+            float dur = a.size() > 3 ? a[3].AsFloat() : 0.2f;
+            Color orig = *c;
+            Color hit{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), orig.a};
+            *c = hit;
+            s->Tween(dur, [c, hit, orig](float u) {
+                c->r = hit.r + (orig.r - hit.r) * u;
+                c->g = hit.g + (orig.g - hit.g) * u;
+                c->b = hit.b + (orig.b - hit.b) * u;
+            });
+            return Value{};
+        };
         b["tween_fade"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {
             Scheduler* s = sched(); Color* c = colorPtr();
             if (!s || !c || a.size() < 2) return Value{};
@@ -4594,6 +4634,8 @@ struct OkayScriptVM::Impl {
         alias("mouse_position_y", "mouse_y");
         // Transform / movement
         alias("move_by", "move");
+        alias("shake", "tween_shake");   // shake(intensity, dur) — shorter name
+        alias("face", "look_at");        // face("Name") — turn to look at an object
         alias("place_at", "set_pos");
         alias("set_position_x", "set_x");
         alias("set_position_y", "set_y");

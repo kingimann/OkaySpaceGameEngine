@@ -4330,6 +4330,8 @@ void DrawStats(EditorState& ed) {
         // the scene; the shipped player draws the same effect. 0 = off.
         if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f)) ed.dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Darken the frame's edges/corners (focus/mood).\nA post overlay — identical on every renderer backend. 0 = off.");
+        if (ImGui::Checkbox("Filmic Tonemap (ACES)", &rs.tonemap)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roll bright, over-1.0 lighting smoothly toward white instead of hard-clipping.\nStops high light intensity from flat 'blowing out'. Off = classic linear look.");
     }
 
     // Global renderer pipeline switches (process-wide, not per-scene). These let

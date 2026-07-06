@@ -89,7 +89,7 @@ private:
         m_uAoTex = -1, m_uHasAo = -1, m_uAoStrength = -1,
         m_uMetallic = -1, m_uReflectivity = -1,
         m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1,
-        m_uFogOn = -1, m_uFogColor = -1, m_uFogStart = -1, m_uFogEnd = -1,
+        m_uFogOn = -1, m_uFogColor = -1, m_uFogStart = -1, m_uFogEnd = -1, m_uTonemap = -1,
         m_uShadowTex = -1, m_uLightVP = -1, m_uShadowOn = -1,
         m_uShadowTexel = -1, m_uShadowSize = -1, m_uDepthMVP = -1;
     std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch

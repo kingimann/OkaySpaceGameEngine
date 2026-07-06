@@ -128,6 +128,11 @@ public:
         // finished frame, so it looks identical on every renderer backend. Great for
         // focus/mood without touching the 3D shading path.
         float vignette   = 0.0f;
+        // Filmic (ACES) tonemapping: gracefully rolls bright, over-1.0 lighting off
+        // toward white instead of hard-clipping (which flattens / "blows out" when a
+        // light's intensity is pushed high). Off by default so existing scenes look
+        // identical; turn on for a filmic response and headroom on bright lights.
+        bool  tonemap    = false;
     };
     RenderSettings renderSettings;
 

@@ -203,6 +203,8 @@ const char* kFrag =
     "uniform float uLType[16]; uniform vec3 uLPos[16]; uniform vec3 uLDir[16];\n"
     "uniform vec3 uLCol[16]; uniform float uLRange[16]; uniform float uLCosOut[16]; uniform float uLCosIn[16];\n"
     "uniform float uFogOn; uniform vec3 uFogColor; uniform float uFogStart; uniform float uFogEnd;\n"  // distance fog
+    "uniform float uTonemap;\n"                                                                        // filmic ACES tonemap toggle
+    "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }\n"        // ACES filmic curve
     "uniform sampler2D uNormalTex; uniform float uHasNormal; uniform float uNormalStrength;\n"  // bump/normal map
     "uniform sampler2D uSpecTex; uniform float uHasSpecMap;\n"                  // gloss map (per-texel specular)
     "uniform sampler2D uAoTex; uniform float uHasAo; uniform float uAoStrength;\n"  // ambient-occlusion map
@@ -309,6 +311,7 @@ const char* kFrag =
     "    float ff = clamp((fd - uFogStart) / max(uFogEnd - uFogStart, 1e-3), 0.0, 1.0);\n"
     "    col = mix(col, uFogColor, ff);\n"
     "  }\n"
+    "  if (uTonemap > 0.5) col = aces(col);\n"                    // filmic roll-off (no hard clip to white)
     "  gl_FragColor = vec4(col, uAlpha);\n"
     "}\n";
 
@@ -476,6 +479,7 @@ bool GLRenderer::EnsureProgram() {
     m_uSkyBot = g.GetUniformLocation(m_prog, "uSkyBot");
     m_uEnvOn = g.GetUniformLocation(m_prog, "uEnvOn");
     m_uFogOn = g.GetUniformLocation(m_prog, "uFogOn");
+    m_uTonemap = g.GetUniformLocation(m_prog, "uTonemap");
     m_uFogColor = g.GetUniformLocation(m_prog, "uFogColor");
     m_uFogStart = g.GetUniformLocation(m_prog, "uFogStart");
     m_uFogEnd = g.GetUniformLocation(m_prog, "uFogEnd");
@@ -704,6 +708,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform3f(m_uFogColor, rs.fogColor.r, rs.fogColor.g, rs.fogColor.b);
         g.Uniform1f(m_uFogStart, rs.fogStart);
         g.Uniform1f(m_uFogEnd, rs.fogEnd);
+        g.Uniform1f(m_uTonemap, rs.tonemap ? 1.0f : 0.0f);
     }
 
     // Bind the directional shadow map (texture unit 4) so the main shader can do

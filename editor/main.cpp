@@ -5411,6 +5411,9 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         // transform / movement
         {"move","move(dx, dy)"}, {"set_pos","set_pos(x, y)"}, {"set_x","set_x(v)"}, {"set_y","set_y(v)"},
         {"rotate","rotate(deg)"}, {"move_toward","move_toward(x, y, step)"}, {"look_at","look_at(\"name\")"},
+        // high-level one-liners (dt-scaled internally)
+        {"walk","walk(dx, dy, speed)"}, {"spin","spin(degPerSec)"}, {"on_key_move","on_key_move(speed)"},
+        {"follow","follow(\"name\", speed[, stopDist])"}, {"patrol","patrol(x1, y1, x2, y2, speed)"}, {"orbit","orbit(\"name\", radius, degPerSec)"},
         {"move3","move3(dx, dy, dz)"}, {"set_pos3","set_pos3(x, y, z)"}, {"set_z","set_z(v)"},
         {"rotate3","rotate3(x, y, z)"}, {"set_scale","set_scale(s)"}, {"set_scale3","set_scale3(x, y, z)"},
         {"move_forward","move_forward(d)"}, {"move_right","move_right(d)"}, {"look_at3","look_at3(\"name\")"},
@@ -5551,6 +5554,9 @@ static const std::string* ScriptSignature(const std::string& name) {
 static const std::string* ScriptDoc(const std::string& name) {
     static const std::unordered_map<std::string, std::string> doc = {
         // high-level one-liners (call each frame from update)
+        {"walk","Move in a direction (dx,dy) at `speed` — dt-scaled, so no `* dt` needed."},
+        {"spin","Rotate `degPerSec` degrees each second — dt-scaled (smooth spinning)."},
+        {"on_key_move","WASD/arrow keys move this object at `speed` (uses a Rigidbody2D if present)."},
         {"follow","Chase a named object on the XY plane at `speed`, stopping `stopDist` away."},
         {"follow3","Chase a named object in full 3D at `speed`, stopping `stopDist` away."},
         {"chase","Chase a named object (alias of follow)."},
@@ -6211,14 +6217,14 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Basics", "on_collision(other) - when hit", "Runs when this object collides.",
                     "function on_collision(other) {\n    \n}\n"},
                 // ---- Movement ----
-                {"Movement", "Move with WASD / arrows", "Reads the -1..1 input axes each frame.",
-                    "function update(dt) {\n    // axis_x / axis_y are -1..1 from WASD / the arrow keys.\n    move(axis_x() * 5 * dt, axis_y() * 5 * dt)\n}\n"},
+                {"Movement", "Move with WASD / arrows", "One line — on_key_move handles the input + dt.",
+                    "function update(dt) {\n    on_key_move(5)   // WASD / arrows, speed 5\n}\n"},
                 {"Movement", "Jump on Space", "Upward push when Space is pressed (needs a Rigidbody).",
                     "function update(dt) {\n    if (key_down(\"space\")) {\n        jump(8)\n    }\n}\n"},
-                {"Movement", "Follow the player", "Walk toward the object named Player.",
-                    "function update(dt) {\n    // Move toward the object named \"Player\".\n    move_toward(obj_x(\"Player\"), obj_y(\"Player\"), 3 * dt)\n}\n"},
-                {"Movement", "Spin forever", "Rotate a fixed amount per second.",
-                    "function update(dt) {\n    rotate(90 * dt)   // 90 degrees per second\n}\n"},
+                {"Movement", "Follow the player", "One-liner: walk toward the object named Player.",
+                    "function update(dt) {\n    follow(\"Player\", 3)\n}\n"},
+                {"Movement", "Spin forever", "Smoothly rotate at a degrees-per-second rate.",
+                    "function update(dt) {\n    spin(90)   // 90 degrees per second\n}\n"},
                 {"Movement", "Shoot on click", "Spawn a bullet where we are when clicked.",
                     "function update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 // ---- Gameplay ----
@@ -6250,10 +6256,14 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Data", "Save & load to disk", "Persist a value between play sessions.",
                     "save(\"coins\", get(\"coins\"))\ncoins = load(\"coins\", 0)\n"},
                 // ---- Enemy AI ----
-                {"Enemy AI", "Chase, stop in range", "Walk toward the player until close.",
-                    "function update(dt) {\n    if (dist_to(\"Player\") > 1) {\n        move_toward(obj_x(\"Player\"), obj_y(\"Player\"), 2 * dt)\n    }\n}\n"},
-                {"Enemy AI", "Patrol left & right", "Bounce between two edges using a direction.",
-                    "function start() {\n    dir = 1\n}\n\nfunction update(dt) {\n    move(dir * 2 * dt, 0)\n    if (pos_x() > 4)  { dir = -1 }\n    if (pos_x() < -4) { dir = 1 }\n}\n"},
+                {"Enemy AI", "Chase, stop in range", "follow() with a stop distance - one line.",
+                    "function update(dt) {\n    follow(\"Player\", 2, 1)   // chase, stop 1 unit away\n}\n"},
+                {"Enemy AI", "Patrol between two points", "Walk back and forth automatically.",
+                    "function update(dt) {\n    patrol(-4, 0, 4, 0, 2)   // from (-4,0) to (4,0) at speed 2\n}\n"},
+                {"Enemy AI", "Orbit the player", "Circle around an object each frame.",
+                    "function update(dt) {\n    orbit(\"Player\", 3, 90)   // radius 3, 90 deg/sec\n}\n"},
+                {"Enemy AI", "Flee from the player", "Run directly away from a named object.",
+                    "function update(dt) {\n    flee(\"Player\", 3)\n}\n"},
                 // ---- Abilities ----
                 {"Abilities", "Ability with cooldown", "Fire on Space, but only every 1.5s.",
                     "function start() {\n    cd = 0\n}\n\nfunction update(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
@@ -6304,7 +6314,7 @@ void DrawScriptEditor(EditorState& ed) {
                     "function start() {\n    s = 1\n}\n\nfunction update(dt) {\n    if (key(\"up\")) {\n        s = s + dt\n        set_scale(s)\n    }\n}\n"},
                 // ---- Enemy AI (more) ----
                 {"Enemy AI", "Patrol or chase (state)", "Chase when close, otherwise walk right.",
-                    "function update(dt) {\n    if (dist_to(\"Player\") < 5) {\n        move_toward(obj_x(\"Player\"), obj_y(\"Player\"), 3 * dt)\n    } else {\n        move(2 * dt, 0)\n    }\n}\n"},
+                    "function update(dt) {\n    if (dist_to(\"Player\") < 5) {\n        follow(\"Player\", 3)\n    } else {\n        walk(1, 0, 2)\n    }\n}\n"},
                 {"Enemy AI", "Random chance spawner", "Every second, 50% chance to spawn from above.",
                     "function start() {\n    t = 0\n}\n\nfunction update(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"enemy.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
                 // ---- Gameplay (more) ----
@@ -9038,7 +9048,7 @@ static std::string VsStmt(const ActionList::Item& it) {
     if (op == "set_scale")   return "set_scale(" + a(0) + ")";
     if (op == "velocity")    return "set_velocity(" + a(0) + ", " + a(1) + ")";
     if (op == "impulse")     return "add_impulse(" + a(0) + ", " + a(1) + ")";
-    if (op == "move_toward") return "move_toward(obj_x(" + q(0) + "), obj_y(" + q(0) + "), " + a(1) + " * dt)";
+    if (op == "move_toward") return "follow(" + q(0) + ", " + a(1) + ")";
     if (op == "look_at")     return "look_at(" + q(0) + ")";
     if (op == "set_var")     return a(0) + " = " + a(1);
     if (op == "add_var")     return a(0) + " = " + a(0) + " + " + a(1);
@@ -9179,6 +9189,8 @@ static bool VsCodeLineToItem(const std::string& lineIn, ActionList::Item& out) {
     if (fn == "set_velocity") { out = {"velocity", {arg(0), arg(1)}}; return true; }
     if (fn == "add_impulse")  { out = {"impulse", {arg(0), arg(1)}}; return true; }
     if (fn == "jump")         { out = {"impulse", {"0", arg(0)}}; return true; }
+    if (fn == "follow")       { out = {"move_toward", {arg(0), arg(1)}}; return true; }
+    if (fn == "spin")         { out = {"rotate", {"0", "0", arg(0)}}; return true; }
     if (fn == "look_at")      { out = {"look_at", {arg(0)}}; return true; }
     if (fn == "destroy")      { out = {"destroy", {}}; return true; }
     if (fn == "destroy_obj")  { out = {"destroy_obj", {arg(0)}}; return true; }

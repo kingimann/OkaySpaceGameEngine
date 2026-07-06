@@ -1593,6 +1593,23 @@ struct OkayScriptVM::Impl {
             if (Transform* t = tf()) t->Rotate({0, 0, a.empty() ? 0.0f : a[0].AsFloat()});
             return Value{};
         };
+        // ---- High-level one-liners: dt-scaled INTERNALLY so beginners never write
+        // "* dt". walk(dx,dy,speed) heads in a direction; spin(degPerSec) rotates
+        // smoothly. (WASD control is the existing on_key_move(speed).) Much less code.
+        b["walk"] = [this, tf](std::vector<Value>& a) {
+            float dx = a.size() > 0 ? a[0].AsFloat() : 0.0f, dy = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            float sp = a.size() > 2 ? a[2].AsFloat() : 1.0f;
+            float dt = rt.host ? rt.host->deltaTime : 0.0f;
+            float len = Mathf::Sqrt(dx * dx + dy * dy); if (len > 0.0001f) { dx /= len; dy /= len; }
+            if (Transform* t = tf()) t->Translate({dx * sp * dt, dy * sp * dt, 0.0f});
+            return Value{};
+        };
+        b["spin"] = [this, tf](std::vector<Value>& a) {
+            float dps = a.empty() ? 90.0f : a[0].AsFloat();
+            float dt = rt.host ? rt.host->deltaTime : 0.0f;
+            if (Transform* t = tf()) t->Rotate({0, 0, dps * dt});
+            return Value{};
+        };
         b["pos_x"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.x : 0.0f}; };
         b["pos_y"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.y : 0.0f}; };
         b["time"]  = [](std::vector<Value>&) { return Value{Time::ElapsedTime()}; };

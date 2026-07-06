@@ -9990,12 +9990,23 @@ static void DrawFlowGraph(EditorState& ed) {
             insCenter[i] = c;
             // Inline "needs X" note when this action can't work because its object is
             // missing the required component — the #1 beginner "why nothing happens".
+            // Click it to add the component in one step (a Fix-it button).
             if (!ObjHasOpComponent(go, item.op)) {
                 const char* cn = OpComponentName(item.op);
-                if (cn) { char w[48]; std::snprintf(w, sizeof(w), "\xE2\x9A\xA0 needs %s", cn);
-                    dl->AddText(fnt, std::round(fs * 0.8f),
-                                ImVec2(std::round(c.x - NW * 0.5f + 8 * z), std::round(c.y + NH * 0.5f + 1 * z)),
-                                IM_COL32(240, 180, 90, 255), w); }
+                if (cn) {
+                    char w[64]; std::snprintf(w, sizeof(w), "\xE2\x9A\xA0 needs %s \xE2\x80\x94 Fix", cn);   // ⚠ ... — Fix
+                    float hfs = std::round(fs * 0.8f);
+                    ImVec2 tp(std::round(c.x - NW * 0.5f + 8 * z), std::round(c.y + NH * 0.5f + 1 * z));
+                    ImVec2 ts = fnt->CalcTextSizeA(hfs, 1e9f, 0.0f, w);
+                    ImGui::SetCursorScreenPos(tp);
+                    ImGui::PushID(keyR(al, hv.hidx, "fix", (int)i).c_str());
+                    bool fixClicked = ImGui::InvisibleButton("fixit", ImVec2(ts.x + 2, ts.y + 2));
+                    bool fixHov = ImGui::IsItemHovered();
+                    if (fixHov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Add a %s to this object so this action works.", cn); }
+                    if (fixClicked) { EnsureOpComponent(go, item.op); ed.dirty = true; }
+                    ImGui::PopID();
+                    dl->AddText(fnt, hfs, tp, fixHov ? IM_COL32(255, 210, 120, 255) : IM_COL32(240, 180, 90, 255), w);
+                }
             }
             if (hv.hidx < 0 && al->CurrentInstruction() == (int)i) glow(c);
             if (selHere)

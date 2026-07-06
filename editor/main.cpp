@@ -15514,56 +15514,89 @@ void DrawInspector(EditorState& ed) {
                                    std::vector<ActionList::Item>& conds, std::vector<ActionList::Item>& ins, int idBase) {
                 ImGui::PushID(idBase);
                 ImGui::Spacing();
-                if (hidx >= 0) ImGui::Separator();
-                int ti = (int)trg;
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), hidx < 0 ? "When" : "When (also)"); ImGui::SameLine();
-                ImGui::SetNextItemWidth(150);
-                if (ImGui::Combo("##trg", &ti, trigs, IM_ARRAYSIZE(trigs))) { trg = (ActionList::Trigger)ti; ed.dirty = true; }
-                if (trg == ActionList::Trigger::OnKey || trg == ActionList::Trigger::OnKeyUp) {
-                    ImGui::SameLine(); ImGui::TextUnformatted("Key"); ImGui::SameLine();
-                    KeyPicker("k", key, ed.dirty);
-                } else if (trg == ActionList::Trigger::OnMessage) {
-                    ImGui::SameLine();
-                    char mb[64]; std::strncpy(mb, key.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
-                    ImGui::SetNextItemWidth(110);
-                    if (ImGui::InputTextWithHint("##msg", "message", mb, sizeof(mb))) { key = mb; ed.dirty = true; }
-                } else if (trg == ActionList::Trigger::OnInterval) {
-                    ImGui::SameLine(); ImGui::TextUnformatted("Every"); ImGui::SameLine();
-                    float sec = (float)std::atof(key.c_str()); ImGui::SetNextItemWidth(80);
-                    if (ImGui::DragFloat("##iv", &sec, 0.05f, 0.0f, 3600.0f, "%.2f s")) { char b[32]; std::snprintf(b, sizeof(b), "%g", sec < 0.0f ? 0.0f : sec); key = b; ed.dirty = true; }
+                // ---- Handler = one foldable, framed BLOCK per trigger ----------------
+                // Title carries the number + a live plain-English summary; "###" keeps the
+                // fold state stable while that summary text changes as you edit.
+                std::string tnum = hidx < 0 ? std::string("Trigger 1") : ("Trigger " + std::to_string(hidx + 2));
+                std::string htitle = tnum + "   \xE2\x80\x94   " + HandlerSentence(trg, key, conds, ins) + "###handler";
+                ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.22f, 0.25f, 0.31f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.28f, 0.32f, 0.40f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.30f, 0.35f, 0.44f, 1.0f));
+                bool visible = true;
+                ImGuiTreeNodeFlags hflags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth;
+                // Extra handlers get an [x] on the header to remove the whole trigger.
+                bool open = (hidx >= 0) ? ImGui::CollapsingHeader(htitle.c_str(), &visible, hflags)
+                                        : ImGui::CollapsingHeader(htitle.c_str(), hflags);
+                ImGui::PopStyleColor(3);
+                if (hidx >= 0 && !visible) hRemove = hidx;
+                if (open) {
+                    // Framed body so the whole handler reads as a distinct card.
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.16f, 0.19f, 1.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(9, 8));
+                    ImGui::BeginChild("##hbody", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+
+                    // --- Trigger row (its own little block) ---
+                    int ti = (int)trg;
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), "When"); ImGui::SameLine();
+                    ImGui::SetNextItemWidth(150);
+                    if (ImGui::Combo("##trg", &ti, trigs, IM_ARRAYSIZE(trigs))) { trg = (ActionList::Trigger)ti; ed.dirty = true; }
+                    if (trg == ActionList::Trigger::OnKey || trg == ActionList::Trigger::OnKeyUp) {
+                        ImGui::SameLine(); ImGui::TextUnformatted("Key"); ImGui::SameLine();
+                        KeyPicker("k", key, ed.dirty);
+                    } else if (trg == ActionList::Trigger::OnMessage) {
+                        ImGui::SameLine();
+                        char mb[64]; std::strncpy(mb, key.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
+                        ImGui::SetNextItemWidth(110);
+                        if (ImGui::InputTextWithHint("##msg", "message", mb, sizeof(mb))) { key = mb; ed.dirty = true; }
+                    } else if (trg == ActionList::Trigger::OnInterval) {
+                        ImGui::SameLine(); ImGui::TextUnformatted("Every"); ImGui::SameLine();
+                        float sec = (float)std::atof(key.c_str()); ImGui::SetNextItemWidth(80);
+                        if (ImGui::DragFloat("##iv", &sec, 0.05f, 0.0f, 3600.0f, "%.2f s")) { char b[32]; std::snprintf(b, sizeof(b), "%g", sec < 0.0f ? 0.0f : sec); key = b; ed.dirty = true; }
+                    }
+                    ImGui::SameLine(); if (ImGui::Checkbox("Once", &once)) ed.dirty = true;
+                    if (trg >= ActionList::Trigger::OnMouseEnter && trg <= ActionList::Trigger::OnMouseOver) {
+                        bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
+                        bool has3D = go->GetComponent<Collider3D>();
+                        if (!has2D && !has3D)
+                            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Mouse triggers need a Collider / Sprite to be clickable.");
+                    }
+
+                    // --- Conditions block (foldable) ---
+                    ImGui::Spacing();
+                    char cl[48]; std::snprintf(cl, sizeof(cl), "Conditions (%d)   \xE2\x80\x94 all must pass###conds", (int)conds.size());
+                    ImGuiTreeNodeFlags sflags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth;
+                    if (ImGui::TreeNodeEx(cl, sflags)) {
+                        if (conds.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
+                        for (std::size_t i = 0; i < conds.size();) {
+                            int act = cardRow(conds, i, kCondOps, IM_ARRAYSIZE(kCondOps), 0);
+                            i = ApplyItemAction(conds, i, act, ed.dirty);
+                        }
+                        if (ImGui::SmallButton("+ Condition")) { conds.push_back({"always", {}}); ed.dirty = true; }
+                        ImGui::SameLine(); CustomActionButton("cc", /*cond*/true, conds, ed.dirty);
+                        ImGui::SameLine(); SaveAsCustomButton("cs", /*cond*/true, conds);
+                        ImGui::TreePop();
+                    }
+
+                    // --- Instructions block (foldable) ---
+                    ImGui::Spacing();
+                    char il[56]; std::snprintf(il, sizeof(il), "Instructions (%d)   \xE2\x80\x94 top to bottom###ins", (int)ins.size());
+                    if (ImGui::TreeNodeEx(il, sflags)) {
+                        if (ins.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
+                        for (std::size_t i = 0; i < ins.size();) {
+                            int act = cardRow(ins, i, kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000);
+                            i = ApplyItemAction(ins, i, act, ed.dirty);
+                        }
+                        if (ImGui::SmallButton("+ Instruction")) { ins.push_back({"move", {}}); ed.dirty = true; }
+                        ImGui::SameLine(); CustomActionButton("ic", /*cond*/false, ins, ed.dirty);
+                        ImGui::SameLine(); SaveAsCustomButton("is", /*cond*/false, ins);
+                        ImGui::TreePop();
+                    }
+
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
                 }
-                ImGui::SameLine(); if (ImGui::Checkbox("Once", &once)) ed.dirty = true;
-                if (hidx >= 0) { ImGui::SameLine(); if (ImGui::SmallButton("Remove Trigger")) hRemove = hidx; }
-                if (trg >= ActionList::Trigger::OnMouseEnter && trg <= ActionList::Trigger::OnMouseOver) {
-                    bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
-                    bool has3D = go->GetComponent<Collider3D>();
-                    if (!has2D && !has3D)
-                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Mouse triggers need a Collider / Sprite to be clickable.");
-                }
-                // Live plain-English summary of this whole handler, so a beginner can read
-                // what it does at a glance without decoding each row.
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.72f, 0.86f, 1.0f));
-                ImGui::TextWrapped("%s", HandlerSentence(trg, key, conds, ins).c_str());
-                ImGui::PopStyleColor();
-                SectionHeader("Conditions (all must pass)");
-                if (conds.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
-                for (std::size_t i = 0; i < conds.size();) {
-                    int act = cardRow(conds, i, kCondOps, IM_ARRAYSIZE(kCondOps), 0);
-                    i = ApplyItemAction(conds, i, act, ed.dirty);
-                }
-                if (ImGui::SmallButton("+ Condition")) { conds.push_back({"always", {}}); ed.dirty = true; }
-                ImGui::SameLine(); CustomActionButton("cc", /*cond*/true, conds, ed.dirty);
-                ImGui::SameLine(); SaveAsCustomButton("cs", /*cond*/true, conds);
-                SectionHeader("Instructions (run top to bottom)");
-                if (ins.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
-                for (std::size_t i = 0; i < ins.size();) {
-                    int act = cardRow(ins, i, kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000);
-                    i = ApplyItemAction(ins, i, act, ed.dirty);
-                }
-                if (ImGui::SmallButton("+ Instruction")) { ins.push_back({"move", {}}); ed.dirty = true; }
-                ImGui::SameLine(); CustomActionButton("ic", /*cond*/false, ins, ed.dirty);
-                ImGui::SameLine(); SaveAsCustomButton("is", /*cond*/false, ins);
                 ImGui::PopID();
             };
 

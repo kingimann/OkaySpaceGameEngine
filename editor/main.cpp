@@ -8815,6 +8815,49 @@ static std::string ActionOpSummary(const ActionList::Item& it) {
     return joinFrom(0);
 }
 
+// A friendly phrase for a trigger ("When Space is pressed", "Every 2s", ...).
+static std::string TriggerPhrase(ActionList::Trigger t, const std::string& key) {
+    using T = ActionList::Trigger;
+    switch (t) {
+        case T::OnStart:         return "When the game starts";
+        case T::OnUpdate:        return "Every frame";
+        case T::OnKey:           return "When [" + key + "] is pressed";
+        case T::OnKeyUp:         return "When [" + key + "] is released";
+        case T::OnCollision:     return "On collision";
+        case T::OnCollisionExit: return "When contact ends";
+        case T::OnCollisionStay: return "While touching";
+        case T::OnClick:         return "When clicked";
+        case T::OnMessage:       return "On message \"" + key + "\"";
+        case T::OnTriggerEnter:  return "When something enters";
+        case T::OnTriggerExit:   return "When something exits";
+        case T::OnMouseEnter:    return "When the mouse enters";
+        case T::OnMouseExit:     return "When the mouse leaves";
+        case T::OnMouseDown:     return "When pressed";
+        case T::OnMouseUp:       return "When released";
+        case T::OnMouseOver:     return "While hovered";
+        case T::OnInterval:      return "Every " + (key.empty() ? std::string("0") : key) + "s";
+        case T::OnLateUpdate:    return "Every frame (late)";
+    }
+    return "When triggered";
+}
+// A one-line plain-English description of a whole handler:
+// "When Space is pressed, if health > 0  ->  Push (2D), Wait".
+static std::string HandlerSentence(ActionList::Trigger t, const std::string& key,
+                                   const std::vector<ActionList::Item>& conds,
+                                   const std::vector<ActionList::Item>& ins) {
+    std::string s = TriggerPhrase(t, key);
+    if (!conds.empty()) {
+        s += ", if ";
+        for (std::size_t i = 0; i < conds.size(); ++i) { if (i) s += " and "; s += ActionOpSummary(conds[i]); }
+    }
+    s += "  \xE2\x86\x92  ";   // ->
+    if (ins.empty()) { s += "(no actions yet)"; return s; }
+    std::size_t show = ins.size() < 4 ? ins.size() : 4;
+    for (std::size_t i = 0; i < show; ++i) { if (i) s += ", "; s += ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), ins[i].op); }
+    if (ins.size() > show) s += ", \xE2\x80\xA6";   // ...
+    return s;
+}
+
 // ---- Ready-made script recipes -------------------------------------------------
 // One-click starter behaviours so a beginner never builds a common script from a
 // blank page. Each recipe fills a handler's trigger + conditions + instructions
@@ -8832,49 +8875,113 @@ struct ScriptRecipe {
 static const std::vector<ScriptRecipe>& ScriptRecipes() {
     using T = ActionList::Trigger;
     static const std::vector<ScriptRecipe> r = {
-        // Movement
+        // ---- Movement ----
         {"Movement", "Spin forever", "Rotates a little every frame.",
             T::OnUpdate, "", {}, {{"rotate", {"0", "0", "3"}}}},
         {"Movement", "Drift right", "Slides to the right every frame.",
             T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}}},
         {"Movement", "Follow the player", "Moves toward an object named Player.",
             T::OnUpdate, "", {}, {{"move_toward", {"Player", "3"}}}},
-        {"Movement", "Jump on Space", "Pushes up when Space is pressed (needs a Rigidbody 2D).",
-            T::OnKey, "space", {}, {{"impulse", {"0", "7"}}}},
         {"Movement", "Patrol (ping-pong)", "Moves right for 1s, then left, forever.",
             T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}, {"wait", {"1"}}, {"move", {"-0.03", "0", "0"}}, {"wait", {"1"}}}},
         {"Movement", "Move up while W held", "Slides up each frame the W key is held.",
             T::OnUpdate, "", {{"key", {"w"}}}, {{"move", {"0", "0.05", "0"}}}},
-        // Spawning
+        {"Movement", "Move down while S held", "Slides down each frame the S key is held.",
+            T::OnUpdate, "", {{"key", {"s"}}}, {{"move", {"0", "-0.05", "0"}}}},
+        {"Movement", "Move left while A held", "Slides left each frame the A key is held.",
+            T::OnUpdate, "", {{"key", {"a"}}}, {{"move", {"-0.05", "0", "0"}}}},
+        {"Movement", "Move right while D held", "Slides right each frame the D key is held.",
+            T::OnUpdate, "", {{"key", {"d"}}}, {{"move", {"0.05", "0", "0"}}}},
+        {"Movement", "Face the player", "Turns to look at an object named Player each frame.",
+            T::OnUpdate, "", {}, {{"look_at", {"Player"}}}},
+        {"Movement", "Teleport home on R", "Snaps back to the origin when R is pressed.",
+            T::OnKey, "r", {}, {{"set_pos", {"0", "0", "0"}}}},
+        // ---- Physics ----
+        {"Physics", "Jump on Space", "Pushes up when Space is pressed (auto-adds a Rigidbody 2D).",
+            T::OnKey, "space", {}, {{"impulse", {"0", "7"}}}},
+        {"Physics", "Dash right on Space", "A sudden rightward push on Space.",
+            T::OnKey, "space", {}, {{"impulse", {"8", "0"}}}},
+        {"Physics", "Bounce up every second", "Gives an upward push on a timer.",
+            T::OnInterval, "1", {}, {{"impulse", {"0", "6"}}}},
+        // ---- Spawning ----
         {"Spawning", "Spawn every 2 seconds", "Creates a prefab on a repeating timer.",
             T::OnInterval, "2", {}, {{"spawn", {"enemy.okayprefab", "0", "0"}}}},
-        // Combat / health
-        {"Combat", "Take 10 damage when hit", "Loses health on collision (needs a Health/Survival component).",
+        {"Spawning", "Spawn from above every 3s", "Drops a prefab in from y = 5 on a timer.",
+            T::OnInterval, "3", {}, {{"spawn", {"enemy.okayprefab", "0", "5"}}}},
+        {"Spawning", "Spawn on click", "Creates a prefab where this object is when clicked.",
+            T::OnClick, "", {}, {{"spawn", {"coin.okayprefab", "0", "0"}}}},
+        {"Spawning", "Self-destruct after 3s", "Waits 3 seconds, then removes this object.",
+            T::OnStart, "", {}, {{"wait", {"3"}}, {"destroy", {}}}},
+        // ---- Combat / health ----
+        {"Combat", "Take 10 damage when hit", "Loses health on collision (auto-adds Health).",
             T::OnCollision, "", {}, {{"hurt", {"10"}}}},
         {"Combat", "Destroy on collision", "Removes this object when it hits something.",
             T::OnCollision, "", {}, {{"destroy", {}}}},
         {"Combat", "Die when health hits 0", "Destroys this object once the 'health' variable reaches 0.",
             T::OnUpdate, "", {{"var_le", {"health", "0"}}}, {{"destroy", {}}}},
+        {"Combat", "Explode at 0 health", "Bursts particles and disappears when health runs out.",
+            T::OnUpdate, "", {{"var_le", {"health", "0"}}}, {{"emit", {"30"}}, {"destroy", {}}}},
         {"Combat", "Hurt while standing in it (fire)", "Damages whatever stays in contact, every frame.",
             T::OnCollisionStay, "", {}, {{"hurt", {"1"}}}},
-        // Pickups / score
+        {"Combat", "Regenerate health", "Heals 2 health every second.",
+            T::OnInterval, "1", {}, {{"heal", {"2"}}}},
+        {"Combat", "Heal on H", "Restores 25 health when H is pressed.",
+            T::OnKey, "h", {}, {{"heal", {"25"}}}},
+        // ---- Pickups / score ----
         {"Pickups", "Collect coin (+1 score)", "Adds 1 to 'score' and disappears when touched.",
             T::OnTriggerEnter, "", {}, {{"add_var", {"score", "1"}}, {"destroy", {}}}},
-        // Interaction
+        {"Pickups", "Power-up (+10 score)", "Adds 10 to 'score' and disappears when touched.",
+            T::OnTriggerEnter, "", {}, {{"add_var", {"score", "10"}}, {"destroy", {}}}},
+        {"Pickups", "Health pickup", "Heals 25 and disappears when touched.",
+            T::OnTriggerEnter, "", {}, {{"heal", {"25"}}, {"destroy", {}}}},
+        {"Pickups", "Key pickup (set flag)", "Sets 'hasKey' to 1 and disappears when touched.",
+            T::OnTriggerEnter, "", {}, {{"set_var", {"hasKey", "1"}}, {"destroy", {}}}},
+        // ---- Interaction ----
         {"Interaction", "Open on click (slide up)", "Moves up when this object is clicked.",
             T::OnClick, "", {}, {{"move", {"0", "3", "0"}}}},
+        {"Interaction", "Rotate door on click", "Swings 90 degrees when clicked.",
+            T::OnClick, "", {}, {{"rotate", {"0", "90", "0"}}}},
+        {"Interaction", "Change color on click", "Turns red when clicked.",
+            T::OnClick, "", {}, {{"set_color", {"1", "0", "0"}}}},
         {"Interaction", "Toggle a flag on E", "Flips a true/false variable named 'on' when E is pressed.",
             T::OnKey, "e", {}, {{"toggle_var", {"on"}}}},
-        {"Interaction", "Play a sound on click", "Plays a sound when this object is clicked (needs an Audio Source).",
+        {"Interaction", "Play a sound on click", "Plays a sound when clicked (auto-adds an Audio Source).",
             T::OnClick, "", {}, {{"play_sound", {"click.wav"}}}},
-        // HUD / feedback
+        // ---- Timers ----
+        {"Timers", "Countdown timer", "Ticks a 'timer' variable down each second and shows it on this Text.",
+            T::OnInterval, "1", {}, {{"add_var", {"timer", "-1"}}, {"set_text", {"Time:", "{timer}"}}}},
+        {"Timers", "Do something every 5s", "A blank timer that fires every 5 seconds — add your actions.",
+            T::OnInterval, "5", {}, {{"log", {"tick"}}}},
+        // ---- HUD / Text ----
         {"HUD", "Say hello on start", "Prints a message to the console when the game starts.",
             T::OnStart, "", {}, {{"log", {"Hello!"}}}},
-        {"HUD", "Countdown timer", "Ticks a 'timer' variable down each second and shows it on this Text.",
-            T::OnInterval, "1", {}, {{"add_var", {"timer", "-1"}}, {"set_text", {"Time:", "{timer}"}}}},
-        // Scene
+        {"HUD", "Show the score", "Keeps this Text showing 'Score: <score>' (needs a Text).",
+            T::OnUpdate, "", {}, {{"set_text", {"Score:", "{score}"}}}},
+        {"HUD", "Drive a health bar", "Fills a Progress Bar named HealthBar from the 'health' variable.",
+            T::OnUpdate, "", {}, {{"set_bar", {"HealthBar", "health"}}}},
+        {"HUD", "Flash 'Go!' then clear", "Shows 'Go!' for 2 seconds, then blanks this Text.",
+            T::OnStart, "", {}, {{"set_text", {"Go!"}}, {"wait", {"2"}}, {"set_text", {""}}}},
+        // ---- Audio ----
+        {"Audio", "Play music on start", "Plays a sound when the game begins (auto-adds an Audio Source).",
+            T::OnStart, "", {}, {{"play_sound", {"music.wav"}}}},
+        {"Audio", "Footstep while moving", "Plays a step sound whenever this object is moving.",
+            T::OnUpdate, "", {{"is_moving", {}}}, {{"play_sound", {"step.wav"}}}},
+        // ---- Camera / Scene ----
         {"Scene", "Win on collision", "Loads the scene named 'Win' on collision.",
             T::OnCollision, "", {}, {{"load_scene", {"Win"}}}},
+        {"Scene", "Next level on collision", "Loads the next scene in build order on collision.",
+            T::OnCollision, "", {}, {{"load_next_scene", {}}}},
+        {"Scene", "Pause on P", "Freezes the game when P is pressed.",
+            T::OnKey, "p", {}, {{"pause", {}}}},
+        {"Scene", "Slow-mo on click", "Drops the game to half speed when clicked.",
+            T::OnClick, "", {}, {{"set_timescale", {"0.5"}}}},
+        {"Scene", "Set sky color on start", "Paints the background blue when the game starts.",
+            T::OnStart, "", {}, {{"set_bg", {"0.2", "0.4", "0.8"}}}},
+        // ---- Messaging ----
+        {"Messaging", "Broadcast 'hit' on collision", "Sends a 'hit' message to every script on collision.",
+            T::OnCollision, "", {}, {{"send", {"hit"}}}},
+        {"Messaging", "React to 'hit' message", "Loses 10 health whenever a 'hit' message is received.",
+            T::OnMessage, "hit", {}, {{"hurt", {"10"}}}},
     };
     return r;
 }
@@ -15434,6 +15541,11 @@ void DrawInspector(EditorState& ed) {
                     if (!has2D && !has3D)
                         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Mouse triggers need a Collider / Sprite to be clickable.");
                 }
+                // Live plain-English summary of this whole handler, so a beginner can read
+                // what it does at a glance without decoding each row.
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.72f, 0.86f, 1.0f));
+                ImGui::TextWrapped("%s", HandlerSentence(trg, key, conds, ins).c_str());
+                ImGui::PopStyleColor();
                 SectionHeader("Conditions (all must pass)");
                 if (conds.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
                 for (std::size_t i = 0; i < conds.size();) {

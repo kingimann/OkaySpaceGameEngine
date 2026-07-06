@@ -6278,6 +6278,21 @@ void DrawScriptEditor(EditorState& ed) {
                     "function start() {\n    shown = 0\n}\n\nfunction update(dt) {\n    if (key_down(\"m\")) {\n        shown = 1 - shown\n        if (shown == 1) { activate(\"Menu\") } else { deactivate(\"Menu\") }\n    }\n}\n"},
                 {"Input", "Pause toggle on P", "Flip a shared 'paused' flag other scripts read.",
                     "function update(dt) {\n    if (key_down(\"p\")) {\n        set(\"paused\", 1 - get(\"paused\"))\n    }\n}\n"},
+                // ---- Platformer ----
+                {"Platformer", "Run + jump", "Move left/right and jump with Space (needs a Rigidbody).",
+                    "function update(dt) {\n    move(axis_x() * 5 * dt, 0)\n    if (key_down(\"space\")) {\n        jump(9)\n    }\n}\n"},
+                // ---- Juice (tweens) ----
+                {"Juice", "Pop in on start", "Scale up from nothing with an overshoot.",
+                    "function start() {\n    set_scale(0)\n    tween_scale(1, 0.4, \"out_back\")\n}\n"},
+                {"Juice", "Fade in on start", "Start invisible, fade to full over half a second.",
+                    "function start() {\n    set_color(1, 1, 1, 0)\n    tween_fade(1, 0.5)\n}\n"},
+                {"Juice", "Punch on click", "A quick squash-and-settle when clicked.",
+                    "function update(dt) {\n    if (mouse_down(0)) {\n        tween_punch_scale(0.3, 0.3)\n    }\n}\n"},
+                // ---- Multiplayer ----
+                {"Multiplayer", "Host (H) or Join (J)", "Start a server or connect to localhost.",
+                    "function update(dt) {\n    if (key_down(\"h\")) { net_host(7777) }\n    if (key_down(\"j\")) { net_join(\"127.0.0.1\", 7777) }\n}\n"},
+                {"Multiplayer", "Connection status HUD", "Show online / offline on screen.",
+                    "function update(dt) {\n    ui_begin(\"Net\", 20, 20, 200, 70)\n    if (net_connected()) {\n        ui_text(\"Connected\")\n    } else {\n        ui_text(\"Offline\")\n    }\n    ui_end()\n}\n"},
             };
             static char sf[48] = "";
             ImGui::SetNextItemWidth(280);

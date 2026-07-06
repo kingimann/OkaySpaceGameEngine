@@ -6986,8 +6986,18 @@ void DrawScriptEditor(EditorState& ed) {
                                 ImGui::TextDisabled("%s", paren ? paren : sg->c_str());
                             }
                         }
+                        // Plain-English description of the highlighted builtin, so you
+                        // learn what it does right in the popup (no trip to the docs).
+                        if (g_acIndex >= 0 && g_acIndex < (int)hits.size()) {
+                            if (const std::string* d = ScriptDoc(*hits[g_acIndex])) {
+                                ImGui::Separator();
+                                ImGui::PushTextWrapPos(320.0f);
+                                ImGui::TextColored(ImVec4(0.66f, 0.80f, 0.62f, 1.0f), "%s", d->c_str());
+                                ImGui::PopTextWrapPos();
+                            }
+                        }
                         ImGui::Separator();
-                        ImGui::TextDisabled("\xe2\x86\x91\xe2\x86\x93 select   Tab accept   F12 def");
+                        ImGui::TextDisabled("Up/Down select   Tab accept   F12 def");
                     }
                     ImGui::End();
                     ImGui::PopStyleColor();

@@ -8733,6 +8733,88 @@ static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::stri
     return op.c_str();
 }
 
+// A plain-English one-line summary of an action/condition and its arguments, so a
+// node reads like a sentence ("score += 1", "toward Player @ 3") instead of raw
+// tokens ("score 1", "Player 3"). Falls back to space-joined args for ops not
+// specially handled, so it's always safe to call.
+static std::string ActionOpSummary(const ActionList::Item& it) {
+    const std::string& op = it.op;
+    auto a = [&](std::size_t i) -> std::string { return i < it.args.size() ? it.args[i] : std::string(); };
+    auto joinFrom = [&](std::size_t i) { std::string s; for (; i < it.args.size(); ++i) { if (!s.empty()) s += ' '; s += it.args[i]; } return s; };
+    auto vec = [&](std::size_t i) { return "(" + a(i) + ", " + a(i + 1) + ", " + a(i + 2) + ")"; };
+    auto vec2 = [&](std::size_t i) { return "(" + a(i) + ", " + a(i + 1) + ")"; };
+    // ---- Variables ----
+    if (op == "set_var" || op == "copy_var") return a(0) + " = " + a(1);
+    if (op == "add_var" || op == "add_var_var") return a(0) + " += " + a(1);
+    if (op == "mul_var") return a(0) + " *= " + a(1);
+    if (op == "div_var") return a(0) + " /= " + a(1);
+    if (op == "toggle_var") return "flip " + a(0);
+    if (op == "rand_var") return a(0) + " = random " + a(1) + ".." + a(2);
+    if (op == "clamp_var") return a(0) + " in " + a(1) + ".." + a(2);
+    if (op == "lerp_var") return a(0) + " \xE2\x86\x92 " + a(1);          // ->
+    // ---- Movement ----
+    if (op == "move") return "by " + vec(0);
+    if (op == "move_to") return "to " + vec(0) + " @ " + a(3);
+    if (op == "move_toward") return "toward " + a(0) + " @ " + a(1);
+    if (op == "set_pos") return "to " + vec(0);
+    if (op == "rotate") return "spin " + vec(0);
+    if (op == "rotate_to") return "to " + vec(0) + " @ " + a(3);
+    if (op == "look_at") return "face " + a(0);
+    if (op == "set_scale") return "size " + a(0);
+    if (op == "scale_to") return "to " + vec(0) + " @ " + a(3);
+    if (op == "velocity" || op == "impulse") return vec2(0);
+    if (op == "velocity3" || op == "impulse3" || op == "force3") return vec(0);
+    // ---- Objects ----
+    if (op == "set_active") return (a(0) == "1" ? "show " : "hide ") + (a(1).empty() ? std::string("self") : a(1));
+    if (op == "set_visible") return a(0) == "1" ? "show graphics" : "hide graphics";
+    if (op == "destroy") return "this object";
+    if (op == "destroy_obj") return a(0);
+    if (op == "spawn") return a(0) + " @ " + vec2(1);
+    if (op == "spawn3") return a(0) + " @ " + vec(1);
+    if (op == "spawn_at") return a(0) + " @ " + a(1);
+    if (op == "set_parent") return "under " + a(0);
+    if (op == "set_tag") return "tag = " + a(0);
+    // ---- Look / feedback ----
+    if (op == "set_text" || op == "log") return "\"" + joinFrom(0) + "\"";
+    if (op == "set_text_on") return a(0) + ": \"" + joinFrom(1) + "\"";
+    if (op == "set_color") return "rgba " + a(0) + " " + a(1) + " " + a(2);
+    if (op == "set_color_var") return "from " + a(0);
+    if (op == "set_bar") return a(0) + " from " + a(1);
+    if (op == "play_sound") return a(0);
+    if (op == "emit") return a(0) + " particles";
+    // ---- Survival ----
+    if (op == "hurt") return "-" + a(0) + " health";
+    if (op == "heal") return "+" + a(0) + " health";
+    // ---- Flow / messaging ----
+    if (op == "wait") return a(0) + "s";
+    if (op == "send" || op == "send_value" || op == "send_text") return "\"" + a(0) + "\"";
+    if (op == "send_to") return a(0) + " \xE2\x86\x90 \"" + a(1) + "\"";  // <-
+    if (op == "load_scene") return a(0);
+    if (op == "goto") return "line " + a(0);
+    if (op == "if_goto") return a(0) + " " + a(1) + " " + a(2) + " \xE2\x86\x92 " + a(3);
+    if (op == "repeat") return a(0) + "x";
+    if (op == "while") return a(0) + " " + a(1) + " " + a(2);
+    // ---- Conditions ----
+    if (op == "always") return "always";
+    if (op == "key" || op == "key_down" || op == "key_up") return "[" + a(0) + "]";
+    if (op == "chance") return a(0);
+    if (op == "var_eq") return a(0) + " == " + a(1);
+    if (op == "var_neq") return a(0) + " != " + a(1);
+    if (op == "var_gt") return a(0) + " > " + a(1);
+    if (op == "var_lt") return a(0) + " < " + a(1);
+    if (op == "var_ge") return a(0) + " >= " + a(1);
+    if (op == "var_le") return a(0) + " <= " + a(1);
+    if (op == "var_between") return a(1) + " <= " + a(0) + " <= " + a(2);
+    if (op == "vars_cmp") return a(0) + " " + a(1) + " " + a(2);
+    if (op == "dist_lt") return a(0) + " closer than " + a(1);
+    if (op == "dist_gt") return a(0) + " farther than " + a(1);
+    if (op == "obj_has_tag") return a(0) + " is #" + a(1);
+    if (op == "has_tag") return "#" + a(0);
+    if (op == "exists") return a(0) + " exists";
+    // Fallback: raw args joined.
+    return joinFrom(0);
+}
+
 // ---- Ready-made script recipes -------------------------------------------------
 // One-click starter behaviours so a beginner never builds a common script from a
 // blank page. Each recipe fills a handler's trigger + conditions + instructions
@@ -9811,9 +9893,8 @@ static void DrawFlowGraph(EditorState& ed) {
         for (std::size_t i = 0; i < conds.size(); ++i) {
             bool d = false, clk = false, rc = false;
             bool selHere = (g_flowSelAl == al && g_flowSelHandler == hv.hidx && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
-            std::string csub;
-            for (const auto& a : conds[i].args) { if (!csub.empty()) csub += " "; csub += a; }
-            if (csub.size() > 26) csub = csub.substr(0, 24) + "..";
+            std::string csub = ActionOpSummary(conds[i]);
+            if (csub.size() > 28) csub = csub.substr(0, 26) + "..";
             if (csub.empty()) csub = "if";
             ImVec2 c = node(keyR(al, hv.hidx, "cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + bandY + i * GAPY),
                             ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), conds[i].op), csub,
@@ -9847,9 +9928,8 @@ static void DrawFlowGraph(EditorState& ed) {
         ImVec2 prev = trigC;
         for (std::size_t i = 0; i < nins; ++i) {
             const auto& item = insL[i];
-            std::string sub;
-            for (const auto& a : item.args) { if (!sub.empty()) sub += " "; sub += a; }
-            if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
+            std::string sub = ActionOpSummary(item);
+            if (sub.size() > 28) sub = sub.substr(0, 26) + "..";
             // While playing, append the live value of a variable this node touches, so
             // you can watch the number change on the node itself.
             if (ed.isPlaying() && ActionOpUsesVar(item.op) && !item.args.empty() && !item.args[0].empty()) {

@@ -6293,6 +6293,29 @@ void DrawScriptEditor(EditorState& ed) {
                     "function update(dt) {\n    if (key_down(\"h\")) { net_host(7777) }\n    if (key_down(\"j\")) { net_join(\"127.0.0.1\", 7777) }\n}\n"},
                 {"Multiplayer", "Connection status HUD", "Show online / offline on screen.",
                     "function update(dt) {\n    ui_begin(\"Net\", 20, 20, 200, 70)\n    if (net_connected()) {\n        ui_text(\"Connected\")\n    } else {\n        ui_text(\"Offline\")\n    }\n    ui_end()\n}\n"},
+                // ---- Motion (math) ----
+                {"Motion", "Move in a circle", "Orbit the origin using sin/cos.",
+                    "function start() {\n    ang = 0\n}\n\nfunction update(dt) {\n    ang = ang + dt\n    set_pos(cos(ang) * 3, sin(ang) * 3)\n}\n"},
+                {"Motion", "Bob up and down", "Hover around the start height with a sine wave.",
+                    "function start() {\n    baseY = pos_y()\n}\n\nfunction update(dt) {\n    set_y(baseY + sin(time() * 2) * 0.5)\n}\n"},
+                {"Motion", "Wander randomly", "Nudge in a random direction twice a second.",
+                    "function start() {\n    t = 0\n}\n\nfunction update(dt) {\n    t = t + dt\n    if (t >= 0.5) {\n        t = 0\n        move(rand(-1, 1), rand(-1, 1))\n    }\n}\n"},
+                {"Motion", "Grow while Up held", "Scale up as long as the Up key is down.",
+                    "function start() {\n    s = 1\n}\n\nfunction update(dt) {\n    if (key(\"up\")) {\n        s = s + dt\n        set_scale(s)\n    }\n}\n"},
+                // ---- Enemy AI (more) ----
+                {"Enemy AI", "Patrol or chase (state)", "Chase when close, otherwise walk right.",
+                    "function update(dt) {\n    if (dist_to(\"Player\") < 5) {\n        move_toward(obj_x(\"Player\"), obj_y(\"Player\"), 3 * dt)\n    } else {\n        move(2 * dt, 0)\n    }\n}\n"},
+                {"Enemy AI", "Random chance spawner", "Every second, 50% chance to spawn from above.",
+                    "function start() {\n    t = 0\n}\n\nfunction update(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"enemy.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
+                // ---- Gameplay (more) ----
+                {"Gameplay", "Regenerate health (capped)", "Heal over time up to 100.",
+                    "function start() {\n    hp = 100\n}\n\nfunction update(dt) {\n    if (hp < 100) {\n        hp = clamp(hp + 10 * dt, 0, 100)\n    }\n}\n"},
+                {"Gameplay", "Win at 10 points", "Load the Win scene once score reaches 10.",
+                    "function update(dt) {\n    if (get(\"score\") >= 10) {\n        load_scene(\"Win\")\n    }\n}\n"},
+                {"Gameplay", "Remember spawn, respawn on R", "Snap back to the start position.",
+                    "function start() {\n    sx = pos_x()\n    sy = pos_y()\n}\n\nfunction update(dt) {\n    if (key_down(\"r\")) {\n        set_pos(sx, sy)\n    }\n}\n"},
+                {"Gameplay", "Count a shared timer", "Add up elapsed time in a shared variable.",
+                    "function update(dt) {\n    set(\"time\", get(\"time\") + dt)\n}\n"},
             };
             static char sf[48] = "";
             ImGui::SetNextItemWidth(280);
@@ -6313,8 +6336,10 @@ void DrawScriptEditor(EditorState& ed) {
                 if (ImGui::IsItemHovered()) {
                     // Preview the actual code before inserting it.
                     ImGui::BeginTooltip();
+                    ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", s.name);
                     ImGui::TextDisabled("%s", s.desc);
                     ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "Inserts:");
                     ImGui::TextUnformatted(s.text);
                     ImGui::EndTooltip();
                 }
@@ -9091,6 +9116,142 @@ static std::string ActionListToCode(const ActionList& al) {
     return out;
 }
 
+// ---- OkayScript -> visual script (best-effort import) --------------------------
+// Parse a simple call "func(a, b, \"c d\")" -> name + args (quotes stripped, trimmed).
+// Returns false if the string isn't a call.
+static bool VsParseCall(const std::string& in, std::string& name, std::vector<std::string>& args) {
+    auto trim = [](std::string s) {
+        std::size_t a = s.find_first_not_of(" \t\r\n"); if (a == std::string::npos) return std::string();
+        std::size_t b = s.find_last_not_of(" \t\r\n"); return s.substr(a, b - a + 1);
+    };
+    std::string s = trim(in);
+    std::size_t lp = s.find('(');
+    if (lp == std::string::npos || s.empty() || s.back() != ')') return false;
+    name = trim(s.substr(0, lp));
+    if (name.empty()) return false;
+    for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) return false;
+    std::string inside = s.substr(lp + 1, s.size() - lp - 2);
+    args.clear();
+    std::string cur; bool inStr = false;
+    for (std::size_t i = 0; i < inside.size(); ++i) {
+        char c = inside[i];
+        if (c == '"') { inStr = !inStr; continue; }
+        if (c == ',' && !inStr) { args.push_back(trim(cur)); cur.clear(); }
+        else cur += c;
+    }
+    if (!trim(cur).empty() || !args.empty()) args.push_back(trim(cur));
+    return true;
+}
+// Map one code statement to a visual Item. Returns false if unrecognized.
+static bool VsCodeLineToItem(const std::string& lineIn, ActionList::Item& out) {
+    auto trim = [](std::string s) {
+        std::size_t a = s.find_first_not_of(" \t\r\n"); if (a == std::string::npos) return std::string();
+        std::size_t b = s.find_last_not_of(" \t\r\n"); return s.substr(a, b - a + 1);
+    };
+    std::string line = trim(lineIn);
+    if (line.empty() || line.rfind("//", 0) == 0) return false;
+    if (!line.empty() && line.back() == ';') line.pop_back();
+    // Assignment: name = expr  (but not ==, <=, >=, !=)
+    std::size_t eq = line.find('=');
+    if (eq != std::string::npos && eq > 0 &&
+        line[eq - 1] != '=' && line[eq - 1] != '<' && line[eq - 1] != '>' && line[eq - 1] != '!' &&
+        (eq + 1 >= line.size() || line[eq + 1] != '=')) {
+        std::string lhs = trim(line.substr(0, eq)), rhs = trim(line.substr(eq + 1));
+        bool ident = !lhs.empty();
+        for (char c : lhs) if (!(std::isalnum((unsigned char)c) || c == '_')) ident = false;
+        if (ident) {
+            // name = name +/- /* X  -> add_var / mul_var ; name = 1 - name -> toggle
+            if (rhs == "1 - " + lhs || rhs == "1-" + lhs) { out = {"toggle_var", {lhs}}; return true; }
+            std::size_t p = rhs.find(lhs + " + ");
+            if (p == 0) { out = {"add_var", {lhs, trim(rhs.substr(lhs.size() + 3))}}; return true; }
+            p = rhs.find(lhs + " * ");
+            if (p == 0) { out = {"mul_var", {lhs, trim(rhs.substr(lhs.size() + 3))}}; return true; }
+            out = {"set_var", {lhs, rhs}}; return true;
+        }
+    }
+    std::string fn; std::vector<std::string> a;
+    if (!VsParseCall(line, fn, a)) return false;
+    auto arg = [&](std::size_t i) { return i < a.size() ? a[i] : std::string("0"); };
+    if (fn == "move")         { out = {"move", {arg(0), arg(1), "0"}}; return true; }
+    if (fn == "set_pos")      { out = {"set_pos", {arg(0), arg(1), "0"}}; return true; }
+    if (fn == "rotate")       { out = {"rotate", {"0", "0", arg(0)}}; return true; }
+    if (fn == "set_scale")    { out = {"set_scale", {arg(0)}}; return true; }
+    if (fn == "set_velocity") { out = {"velocity", {arg(0), arg(1)}}; return true; }
+    if (fn == "add_impulse")  { out = {"impulse", {arg(0), arg(1)}}; return true; }
+    if (fn == "jump")         { out = {"impulse", {"0", arg(0)}}; return true; }
+    if (fn == "look_at")      { out = {"look_at", {arg(0)}}; return true; }
+    if (fn == "destroy")      { out = {"destroy", {}}; return true; }
+    if (fn == "destroy_obj")  { out = {"destroy_obj", {arg(0)}}; return true; }
+    if (fn == "spawn")        { out = {"spawn", {arg(0), arg(1), arg(2)}}; return true; }
+    if (fn == "spawn3")       { out = {"spawn3", {arg(0), arg(1), arg(2), arg(3)}}; return true; }
+    if (fn == "activate")     { out = {"activate", {arg(0)}}; return true; }
+    if (fn == "deactivate")   { out = {"deactivate", {arg(0)}}; return true; }
+    if (fn == "set_color")    { out = {"set_color", {arg(0), arg(1), arg(2)}}; return true; }
+    if (fn == "set_text")     { out = {"set_text", {arg(0)}}; return true; }
+    if (fn == "play_sound")   { out = {"play_sound", {arg(0)}}; return true; }
+    if (fn == "emit")         { out = {"emit", {arg(0)}}; return true; }
+    if (fn == "print" || fn == "log") { out = {"log", {arg(0)}}; return true; }
+    if (fn == "load_scene")   { out = {"load_scene", {arg(0)}}; return true; }
+    if (fn == "load_next_scene") { out = {"load_next_scene", {}}; return true; }
+    if (fn == "set_cam")      { out = {"set_cam", {arg(0), arg(1)}}; return true; }
+    if (fn == "set_bg")       { out = {"set_bg", {arg(0), arg(1), arg(2)}}; return true; }
+    if (fn == "heal")         { out = {"heal", {arg(0)}}; return true; }
+    if (fn == "hurt")         { out = {"hurt", {arg(0)}}; return true; }
+    if (fn == "reload_scene") { out = {"load_scene", {""}}; return true; }
+    return false;
+}
+// Import OkayScript into visual handlers (best-effort). `skipped` counts unmapped lines.
+static std::vector<ActionList::Handler> VsCodeToHandlers(const std::string& src, int& skipped) {
+    auto trim = [](std::string s) {
+        std::size_t a = s.find_first_not_of(" \t\r\n"); if (a == std::string::npos) return std::string();
+        std::size_t b = s.find_last_not_of(" \t\r\n"); return s.substr(a, b - a + 1);
+    };
+    std::vector<ActionList::Handler> hs;
+    skipped = 0;
+    ActionList::Handler cur; cur.trigger = ActionList::Trigger::OnStart; bool have = false;
+    auto flush = [&]() { if (have && !(cur.instructions.empty() && cur.conditions.empty())) hs.push_back(cur); cur = ActionList::Handler{}; have = false; };
+    // Split on lines.
+    std::size_t pos = 0;
+    while (pos < src.size()) {
+        std::size_t nl = src.find('\n', pos);
+        std::string line = trim(src.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos));
+        pos = (nl == std::string::npos) ? src.size() : nl + 1;
+        if (line.empty() || line.rfind("//", 0) == 0) continue;
+        // Lifecycle functions start a new handler.
+        if (line.rfind("function ", 0) == 0 || line.rfind("void ", 0) == 0) {
+            flush(); have = true;
+            if (line.find("start") != std::string::npos || line.find("Start") != std::string::npos) cur.trigger = ActionList::Trigger::OnStart;
+            else if (line.find("on_collision") != std::string::npos || line.find("OnCollision") != std::string::npos) cur.trigger = ActionList::Trigger::OnCollision;
+            else cur.trigger = ActionList::Trigger::OnUpdate;
+            continue;
+        }
+        if (line == "{" || line == "}") continue;
+        // if (key_down("k")) { ...  -> turn this handler into an On Key trigger.
+        if (line.rfind("if (", 0) == 0) {
+            std::size_t k1 = line.find("key_down(\"");
+            std::size_t k2 = line.find("key(\"");
+            std::size_t kd = line.find("key_up(\"");
+            std::size_t mc = line.find("mouse_down(");
+            if (k1 != std::string::npos || k2 != std::string::npos || kd != std::string::npos) {
+                std::size_t s = line.find('"'); std::size_t e = s == std::string::npos ? s : line.find('"', s + 1);
+                if (!have) { have = true; }
+                cur.trigger = (kd != std::string::npos) ? ActionList::Trigger::OnKeyUp : ActionList::Trigger::OnKey;
+                if (s != std::string::npos && e != std::string::npos) cur.triggerKey = line.substr(s + 1, e - s - 1);
+                continue;
+            }
+            if (mc != std::string::npos) { if (!have) have = true; cur.trigger = ActionList::Trigger::OnClick; continue; }
+            // Other if(...) -> can't gate cleanly; keep the inner statements, skip the if.
+            skipped++; continue;
+        }
+        if (line == "} else {" || line.rfind("else", 0) == 0) { skipped++; continue; }
+        ActionList::Item it;
+        if (VsCodeLineToItem(line, it)) { if (!have) have = true; cur.instructions.push_back(it); }
+        else skipped++;
+    }
+    flush();
+    return hs;
+}
+
 // ---- Ready-made script recipes -------------------------------------------------
 // One-click starter behaviours so a beginner never builds a common script from a
 // blank page. Each recipe fills a handler's trigger + conditions + instructions
@@ -9145,6 +9306,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnInterval, "3", {}, {{"spawn", {"enemy.okayprefab", "0", "5"}}}},
         {"Spawning", "Spawn on click", "Creates a prefab where this object is when clicked.",
             T::OnClick, "", {}, {{"spawn", {"coin.okayprefab", "0", "0"}}}},
+        {"Spawning", "Random chance spawn", "Every second, a 50% chance to spawn from above.",
+            T::OnInterval, "1", {{"chance", {"0.5"}}}, {{"spawn", {"enemy.okayprefab", "0", "5"}}}},
         {"Spawning", "Self-destruct after 3s", "Waits 3 seconds, then removes this object.",
             T::OnStart, "", {}, {{"wait", {"3"}}, {"destroy", {}}}},
         // ---- Combat / health ----
@@ -9162,6 +9325,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnCollision, "", {}, {{"set_color", {"1", "0", "0"}}}},
         {"Combat", "Regenerate health", "Heals 2 health every second.",
             T::OnInterval, "1", {}, {{"heal", {"2"}}}},
+        {"Combat", "Cap health at 100", "Clamps a 'health' variable so it never exceeds 100.",
+            T::OnUpdate, "", {{"var_gt", {"health", "100"}}}, {{"set_var", {"health", "100"}}}},
         {"Combat", "Heal on H", "Restores 25 health when H is pressed.",
             T::OnKey, "h", {}, {{"heal", {"25"}}}},
         // ---- Pickups / score ----
@@ -9182,6 +9347,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnClick, "", {}, {{"set_color", {"1", "0", "0"}}}},
         {"Interaction", "Explode on click", "Bursts particles and disappears when clicked.",
             T::OnClick, "", {}, {{"emit", {"30"}}, {"destroy", {}}}},
+        {"Interaction", "Grow on click", "Doubles this object's size when clicked.",
+            T::OnClick, "", {}, {{"set_scale", {"2"}}}},
         {"Interaction", "Toggle a flag on E", "Flips a true/false variable named 'on' when E is pressed.",
             T::OnKey, "e", {}, {{"toggle_var", {"on"}}}},
         {"Interaction", "Play a sound on click", "Plays a sound when clicked (auto-adds an Audio Source).",
@@ -9216,6 +9383,10 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnClick, "", {}, {{"set_timescale", {"0.5"}}}},
         {"Scene", "Set sky color on start", "Paints the background blue when the game starts.",
             T::OnStart, "", {}, {{"set_bg", {"0.2", "0.4", "0.8"}}}},
+        {"Scene", "Win at 10 points", "Loads the 'Win' scene once 'score' reaches 10.",
+            T::OnUpdate, "", {{"var_ge", {"score", "10"}}}, {{"load_scene", {"Win"}}}},
+        {"Scene", "Win when enemies cleared", "Loads 'Win' when no objects are tagged 'enemy'.",
+            T::OnUpdate, "", {{"tag_count_lt", {"enemy", "1"}}}, {{"load_scene", {"Win"}}}},
         // ---- Messaging ----
         {"Messaging", "Broadcast 'hit' on collision", "Sends a 'hit' message to every script on collision.",
             T::OnCollision, "", {}, {{"send", {"hit"}}}},
@@ -9223,6 +9394,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnMessage, "hit", {}, {{"hurt", {"10"}}}},
         {"Messaging", "Tell the player on touch", "Sends a 'hit' message to the object named Player on collision.",
             T::OnCollision, "", {}, {{"send_to", {"Player", "hit"}}}},
+        {"Messaging", "Count kills on 'kill'", "Adds 1 to a 'kills' variable whenever a 'kill' message arrives.",
+            T::OnMessage, "kill", {}, {{"add_var", {"kills", "1"}}}},
     };
     return r;
 }
@@ -9307,11 +9480,22 @@ static bool ScriptRecipePicker(const char* popupId, ActionList* al, bool& dirty)
             ImGui::PushID(&rc);
             if (ImGui::Selectable(rc.name)) { ApplyScriptRecipe(al, rc, dirty); applied = true; ImGui::CloseCurrentPopup(); }
             if (ImGui::IsItemHovered()) {
-                // Preview what this recipe sets up, in plain English, before adding it.
+                // A structured preview of exactly what the recipe sets up.
                 ImGui::BeginTooltip();
+                ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", rc.name);
                 ImGui::TextDisabled("%s", rc.desc);
                 ImGui::Separator();
-                ImGui::TextUnformatted(HandlerSentence(rc.trigger, rc.key ? rc.key : "", rc.conditions, rc.instructions).c_str());
+                ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), "When: %s",
+                                   TriggerPhrase(rc.trigger, rc.key ? rc.key : "").c_str());
+                if (!rc.conditions.empty()) {
+                    ImGui::TextColored(ImVec4(0.42f, 0.78f, 0.62f, 1.0f), "Only if:");
+                    for (const auto& c : rc.conditions)
+                        ImGui::BulletText("%s  %s", ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), c.op), ActionOpSummary(c).c_str());
+                }
+                ImGui::TextColored(ImVec4(0.5f, 0.64f, 0.86f, 1.0f), "Do:");
+                if (rc.instructions.empty()) ImGui::BulletText("(nothing yet)");
+                for (const auto& in : rc.instructions)
+                    ImGui::BulletText("%s  %s", ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), in.op), ActionOpSummary(in).c_str());
                 ImGui::EndTooltip();
             }
             ImGui::PopID();
@@ -9977,19 +10161,69 @@ static void DrawFlowGraph(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a ready-made behaviour (Jump, Follow, Spawn timer, ...) you can tweak.");
     if (ScriptRecipePicker("##flowrecipes", al, ed.dirty)) { g_flowSelHandler = -1; g_flowSelKind = 0; }
     ImGui::SameLine();
-    static std::string s_asCode;
-    if (ImGui::Button("View as Code")) { s_asCode = ActionListToCode(*al); ImGui::OpenPopup("##ascode"); }
+    static std::vector<char> s_asCode(1, '\0');   // stable, resizable read-only buffer
+    static bool s_asCopied = false;
+    if (ImGui::Button("View as Code")) {
+        std::string code = ActionListToCode(*al);
+        s_asCode.assign(code.begin(), code.end()); s_asCode.push_back('\0');
+        s_asCopied = false;
+        ImGui::OpenPopup("##ascode");
+    }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("See this visual script written as OkayScript code - copy it into a Script to learn / extend it.");
-    ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_Appearing);
-    if (ImGui::BeginPopup("##ascode")) {
+    ImGui::SetNextWindowSize(ImVec2(580, 480), ImGuiCond_Appearing);
+    // A modal so it's a clear dialog with a stable, scrollable, explicitly-sized text box.
+    if (ImGui::BeginPopupModal("##ascode", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "This script as OkayScript code");
         ImGui::TextDisabled("A starting point generated from the blocks. Ops that don't map become // comments.");
-        if (ImGui::Button("Copy to Clipboard")) ImGui::SetClipboardText(s_asCode.c_str());
-        ImGui::SameLine(); if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Copy to Clipboard")) { ImGui::SetClipboardText(s_asCode.data()); s_asCopied = true; }
+        ImGui::SameLine();
+        if (s_asCopied) ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "Copied!");
+        else ImGui::TextDisabled("(read-only preview)");
         ImGui::Separator();
-        ImGui::InputTextMultiline("##ascodetext", &s_asCode[0], s_asCode.size() + 1,
-                                  ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        float boxH = avail.y - ImGui::GetFrameHeightWithSpacing() - 4.0f;   // leave room for Close
+        if (boxH < 120.0f) boxH = 120.0f;
+        ImGui::InputTextMultiline("##ascodetext", s_asCode.data(), s_asCode.size(),
+                                  ImVec2(-1, boxH), ImGuiInputTextFlags_ReadOnly);
+        if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    // Import: paste OkayScript and turn recognizable lines into visual triggers/blocks.
+    static std::vector<char> s_impBuf(4096, '\0');
+    static std::string s_impMsg;
+    if (ImGui::Button("Paste Code")) { s_impMsg.clear(); ImGui::OpenPopup("##pastecode"); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paste OkayScript and convert it into visual blocks (best-effort; unmapped lines are skipped).");
+    ImGui::SetNextWindowSize(ImVec2(580, 420), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("##pastecode", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "Paste OkayScript to convert to blocks");
+        ImGui::TextDisabled("start/update/on_collision become triggers; recognized calls become instructions.");
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImGui::InputTextMultiline("##impbox", s_impBuf.data(), s_impBuf.size(),
+                                  ImVec2(-1, avail.y - ImGui::GetFrameHeightWithSpacing() * 2 - 6));
+        if (ImGui::Button("Convert", ImVec2(120, 0))) {
+            int skipped = 0;
+            std::vector<ActionList::Handler> hs = VsCodeToHandlers(std::string(s_impBuf.data()), skipped);
+            int added = 0;
+            for (const auto& h : hs) {
+                bool primaryEmpty = al->conditions.empty() && al->instructions.empty()
+                                 && al->extraHandlers.empty() && al->trigger == ActionList::Trigger::OnStart;
+                if (primaryEmpty) { al->trigger = h.trigger; al->triggerKey = h.triggerKey; al->conditions = h.conditions; al->instructions = h.instructions; }
+                else al->extraHandlers.push_back(h);
+                ++added;
+            }
+            ed.dirty = true;
+            char m[96]; std::snprintf(m, sizeof(m), "Added %d trigger%s. Skipped %d line%s that couldn't map.",
+                                      added, added == 1 ? "" : "s", skipped, skipped == 1 ? "" : "s");
+            s_impMsg = m;
+            if (added > 0) ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        if (!s_impMsg.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", s_impMsg.c_str()); }
+        ImGui::EndPopup();
+    }
+    if (!s_impMsg.empty() && !ImGui::IsPopupOpen("##pastecode")) {
+        ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "%s", s_impMsg.c_str());
     }
     barSep();
     ImGui::TextDisabled("Add:"); ImGui::SameLine();

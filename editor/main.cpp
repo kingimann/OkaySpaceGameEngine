@@ -6232,6 +6232,8 @@ void DrawScriptEditor(EditorState& ed) {
                     "function start() {\n    timeLeft = 10\n}\n\nfunction update(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        load_scene(\"GameOver\")\n    }\n}\n"},
                 {"Gameplay", "Do something near the player", "Act only when within a distance.",
                     "function update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        // ... the player is close ...\n    }\n}\n"},
+                {"Gameplay", "Spawn a wave (loop)", "Create a row of enemies at start.",
+                    "function start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"enemy.okayprefab\", i * 2, 0)\n    }\n}\n"},
                 // ---- HUD (on-screen UI from script) ----
                 {"HUD", "Health bar + buttons", "A draggable window with a bar and two buttons.",
                     "function start() {\n    hp = 100\n}\n\nfunction update(dt) {\n    ui_begin(\"HUD\", 24, 24, 240, 130)\n    ui_text(\"Health\")\n    ui_progress(hp / 100)\n    if (ui_button(\"Heal\")) { hp = 100 }\n    ui_sameline()\n    if (ui_button(\"Hurt\")) { hp = hp - 10 }\n    ui_end()\n}\n"},
@@ -6247,6 +6249,35 @@ void DrawScriptEditor(EditorState& ed) {
                     "set(\"score\", get(\"score\") + 1)\n"},
                 {"Data", "Save & load to disk", "Persist a value between play sessions.",
                     "save(\"coins\", get(\"coins\"))\ncoins = load(\"coins\", 0)\n"},
+                // ---- Enemy AI ----
+                {"Enemy AI", "Chase, stop in range", "Walk toward the player until close.",
+                    "function update(dt) {\n    if (dist_to(\"Player\") > 1) {\n        move_toward(obj_x(\"Player\"), obj_y(\"Player\"), 2 * dt)\n    }\n}\n"},
+                {"Enemy AI", "Patrol left & right", "Bounce between two edges using a direction.",
+                    "function start() {\n    dir = 1\n}\n\nfunction update(dt) {\n    move(dir * 2 * dt, 0)\n    if (pos_x() > 4)  { dir = -1 }\n    if (pos_x() < -4) { dir = 1 }\n}\n"},
+                // ---- Abilities ----
+                {"Abilities", "Ability with cooldown", "Fire on Space, but only every 1.5s.",
+                    "function start() {\n    cd = 0\n}\n\nfunction update(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                {"Abilities", "Delay then act (once)", "Wait 3 seconds after start, then do something.",
+                    "function start() {\n    t = 0\n    done = 0\n}\n\nfunction update(dt) {\n    if (done == 0) {\n        t = t + dt\n        if (t >= 3) {\n            done = 1\n            // ... runs once, 3 seconds in ...\n        }\n    }\n}\n"},
+                // ---- Effects ----
+                {"Effects", "Flash red when hit", "Turn red, then fade back to white.",
+                    "function on_collision(other) {\n    set_color(1, 0, 0, 1)      // turn red\n    tween_color(1, 1, 1, 0.3)  // fade back to white over 0.3s\n}\n"},
+                {"Effects", "Screen shake when hit", "A quick decaying camera shake.",
+                    "function on_collision(other) {\n    tween_shake(0.4, 0.3)\n}\n"},
+                {"Effects", "Pulse forever (scale)", "Gently grow and shrink on a loop.",
+                    "function start() {\n    tween_loop_scale(1.2, 0.6)\n}\n"},
+                // ---- Camera ----
+                {"Camera", "Camera follows me", "Keep the camera centered on this object.",
+                    "function update(dt) {\n    set_cam(pos_x(), pos_y())\n}\n"},
+                // ---- Input ----
+                {"Input", "Restart level on R", "Reload the current scene.",
+                    "function update(dt) {\n    if (key_down(\"r\")) {\n        reload_scene()\n    }\n}\n"},
+                {"Input", "Next scene on N", "Advance to the next scene in the build list.",
+                    "function update(dt) {\n    if (key_down(\"n\")) {\n        load_next_scene()\n    }\n}\n"},
+                {"Input", "Toggle a menu with M", "Show / hide an object named Menu.",
+                    "function start() {\n    shown = 0\n}\n\nfunction update(dt) {\n    if (key_down(\"m\")) {\n        shown = 1 - shown\n        if (shown == 1) { activate(\"Menu\") } else { deactivate(\"Menu\") }\n    }\n}\n"},
+                {"Input", "Pause toggle on P", "Flip a shared 'paused' flag other scripts read.",
+                    "function update(dt) {\n    if (key_down(\"p\")) {\n        set(\"paused\", 1 - get(\"paused\"))\n    }\n}\n"},
             };
             static char sf[48] = "";
             ImGui::SetNextItemWidth(280);

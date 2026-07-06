@@ -8975,6 +8975,122 @@ static std::string HandlerSentence(ActionList::Trigger t, const std::string& key
     return s;
 }
 
+// ---- Visual script -> OkayScript (best-effort code generation) ----------------
+// Turns an Actions graph into readable OkayScript so a user can graduate from the
+// visual editor to code. Ops that don't map 1:1 become "// TODO" comments (always
+// valid), so the generated file parses and the user fills the gaps in.
+static std::string VsCondExpr(const ActionList::Item& c) {
+    auto a = [&](std::size_t i) { return i < c.args.size() ? c.args[i] : std::string(); };
+    const std::string& op = c.op;
+    if (op == "always" || op.empty()) return "";
+    if (op == "var_gt")  return a(0) + " > " + a(1);
+    if (op == "var_lt")  return a(0) + " < " + a(1);
+    if (op == "var_ge")  return a(0) + " >= " + a(1);
+    if (op == "var_le")  return a(0) + " <= " + a(1);
+    if (op == "var_eq")  return a(0) + " == " + a(1);
+    if (op == "var_neq") return a(0) + " != " + a(1);
+    if (op == "key")       return "key(\"" + a(0) + "\")";
+    if (op == "key_down")  return "key_down(\"" + a(0) + "\")";
+    if (op == "key_up")    return "key_up(\"" + a(0) + "\")";
+    if (op == "mouse")     return "mouse(" + a(0) + ")";
+    if (op == "mouse_down")return "mouse_down(" + a(0) + ")";
+    if (op == "dist_lt")   return "dist_to(\"" + a(0) + "\") < " + a(1);
+    if (op == "dist_gt")   return "dist_to(\"" + a(0) + "\") > " + a(1);
+    if (op == "has_tag")   return "has_tag(\"" + a(0) + "\")";
+    if (op == "exists")    return "exists(\"" + a(0) + "\")";
+    if (op == "is_active") return "self_active()";
+    return "1 /* " + op + " */";
+}
+// A single instruction as one OkayScript statement (or a // comment if not mappable).
+static std::string VsStmt(const ActionList::Item& it) {
+    auto a = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string("0"); };
+    auto q = [&](std::size_t i) { return "\"" + (i < it.args.size() ? it.args[i] : std::string()) + "\""; };
+    auto join = [&](std::size_t i) { std::string s; for (; i < it.args.size(); ++i) { if (!s.empty()) s += ' '; s += it.args[i]; } return s; };
+    const std::string& op = it.op;
+    if (op == "move")        return "move(" + a(0) + ", " + a(1) + ")";
+    if (op == "set_pos")     return "set_pos(" + a(0) + ", " + a(1) + ")";
+    if (op == "rotate")      return "rotate(" + a(2) + ")";
+    if (op == "set_scale")   return "set_scale(" + a(0) + ")";
+    if (op == "velocity")    return "set_velocity(" + a(0) + ", " + a(1) + ")";
+    if (op == "impulse")     return "add_impulse(" + a(0) + ", " + a(1) + ")";
+    if (op == "move_toward") return "move_toward(obj_x(" + q(0) + "), obj_y(" + q(0) + "), " + a(1) + " * dt)";
+    if (op == "look_at")     return "look_at(" + q(0) + ")";
+    if (op == "set_var")     return a(0) + " = " + a(1);
+    if (op == "add_var")     return a(0) + " = " + a(0) + " + " + a(1);
+    if (op == "mul_var")     return a(0) + " = " + a(0) + " * " + a(1);
+    if (op == "toggle_var")  return a(0) + " = 1 - " + a(0);
+    if (op == "copy_var")    return a(0) + " = " + a(1);
+    if (op == "destroy")     return "destroy()";
+    if (op == "destroy_obj") return "destroy_obj(" + q(0) + ")";
+    if (op == "spawn")       return "spawn(" + q(0) + ", " + a(1) + ", " + a(2) + ")";
+    if (op == "spawn3")      return "spawn3(" + q(0) + ", " + a(1) + ", " + a(2) + ", " + a(3) + ")";
+    if (op == "activate")    return "activate(" + q(0) + ")";
+    if (op == "deactivate")  return "deactivate(" + q(0) + ")";
+    if (op == "set_active")  return it.args.size() > 1 && !it.args[1].empty()
+                                    ? std::string("// show/hide ") + it.args[1]
+                                    : (a(0) == "1" ? "set_active(1)" : "set_active(0)");
+    if (op == "set_color")   return "set_color(" + a(0) + ", " + a(1) + ", " + a(2) + ", 1)";
+    if (op == "set_text")    return "set_text(\"" + join(0) + "\")";
+    if (op == "play_sound")  return "play_sound(" + q(0) + ")";
+    if (op == "emit")        return "emit(" + a(0) + ")";
+    if (op == "log")         return "print(\"" + join(0) + "\")";
+    if (op == "load_scene")  return "load_scene(" + q(0) + ")";
+    if (op == "load_next_scene") return "load_next_scene()";
+    if (op == "set_cam")     return "set_cam(" + a(0) + ", " + a(1) + ")";
+    if (op == "set_bg")      return "set_bg(" + a(0) + ", " + a(1) + ", " + a(2) + ")";
+    if (op == "send")        return "// send message \"" + a(0) + "\"";
+    // Anything else (survival, waits, loops, flow) -> a comment so the file still parses.
+    std::string j = join(0);
+    return "// " + op + (j.empty() ? "" : (" " + j));
+}
+// Append a handler's gated body (indented one level inside a function) to `out`.
+static void VsEmitBody(std::string& out, const std::vector<ActionList::Item>& conds,
+                       const std::vector<ActionList::Item>& ins, const std::string& lead) {
+    std::string gate;
+    for (const auto& c : conds) { std::string e = VsCondExpr(c); if (!e.empty()) { if (!gate.empty()) gate += " && "; gate += e; } }
+    std::string inner = gate.empty() ? lead : lead + "    ";
+    std::string body;
+    if (ins.empty()) body += inner + "// (no actions)\n";
+    for (const auto& it : ins) body += inner + VsStmt(it) + "\n";
+    if (gate.empty()) out += body;
+    else out += lead + "if (" + gate + ") {\n" + body + lead + "}\n";
+}
+static std::string ActionListToCode(const ActionList& al) {
+    using T = ActionList::Trigger;
+    std::string startB, updateB, collB;
+    auto handle = [&](T trg, const std::string& key,
+                      const std::vector<ActionList::Item>& conds,
+                      const std::vector<ActionList::Item>& ins) {
+        const std::string lead = "    ";
+        if (trg == T::OnStart)  { VsEmitBody(startB, conds, ins, lead); }
+        else if (trg == T::OnUpdate || trg == T::OnLateUpdate) { VsEmitBody(updateB, conds, ins, lead); }
+        else if (trg == T::OnKey || trg == T::OnKeyUp) {
+            const char* fn = trg == T::OnKey ? "key_down" : "key_up";
+            updateB += lead + "if (" + fn + "(\"" + key + "\")) {\n";
+            VsEmitBody(updateB, conds, ins, lead + "    ");
+            updateB += lead + "}\n";
+        }
+        else if (trg == T::OnClick) {
+            updateB += lead + "if (mouse_down(0)) {   // was On Click\n";
+            VsEmitBody(updateB, conds, ins, lead + "    ");
+            updateB += lead + "}\n";
+        }
+        else if (trg == T::OnCollision || trg == T::OnCollisionStay || trg == T::OnCollisionExit
+              || trg == T::OnTriggerEnter || trg == T::OnTriggerExit) {
+            VsEmitBody(collB, conds, ins, lead);
+        }
+        else { updateB += lead + "// TODO: " + std::string(TriggerPhrase(trg, key)) + " (add your own trigger check)\n"; VsEmitBody(updateB, conds, ins, lead); }
+    };
+    handle(al.trigger, al.triggerKey, al.conditions, al.instructions);
+    for (const auto& h : al.extraHandlers) handle(h.trigger, h.triggerKey, h.conditions, h.instructions);
+    std::string out = "// Generated from the visual Actions script - a starting point, tweak freely.\n\n";
+    if (!startB.empty())  out += "function start() {\n" + startB + "}\n\n";
+    if (!updateB.empty()) out += "function update(dt) {\n" + updateB + "}\n\n";
+    if (!collB.empty())   out += "function on_collision(other) {\n" + collB + "}\n\n";
+    if (startB.empty() && updateB.empty() && collB.empty()) out += "// (this script has no actions yet)\n";
+    return out;
+}
+
 // ---- Ready-made script recipes -------------------------------------------------
 // One-click starter behaviours so a beginner never builds a common script from a
 // blank page. Each recipe fills a handler's trigger + conditions + instructions
@@ -9860,6 +9976,21 @@ static void DrawFlowGraph(EditorState& ed) {
     if (ImGui::Button("+ Template")) ImGui::OpenPopup("##flowrecipes");   // ready-made behaviours
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a ready-made behaviour (Jump, Follow, Spawn timer, ...) you can tweak.");
     if (ScriptRecipePicker("##flowrecipes", al, ed.dirty)) { g_flowSelHandler = -1; g_flowSelKind = 0; }
+    ImGui::SameLine();
+    static std::string s_asCode;
+    if (ImGui::Button("View as Code")) { s_asCode = ActionListToCode(*al); ImGui::OpenPopup("##ascode"); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("See this visual script written as OkayScript code - copy it into a Script to learn / extend it.");
+    ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_Appearing);
+    if (ImGui::BeginPopup("##ascode")) {
+        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "This script as OkayScript code");
+        ImGui::TextDisabled("A starting point generated from the blocks. Ops that don't map become // comments.");
+        if (ImGui::Button("Copy to Clipboard")) ImGui::SetClipboardText(s_asCode.c_str());
+        ImGui::SameLine(); if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
+        ImGui::Separator();
+        ImGui::InputTextMultiline("##ascodetext", &s_asCode[0], s_asCode.size() + 1,
+                                  ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
+        ImGui::EndPopup();
+    }
     barSep();
     ImGui::TextDisabled("Add:"); ImGui::SameLine();
     if (ImGui::Button("+ Instruction") || g_flowAddInsReq) ImGui::OpenPopup("##addinspal");

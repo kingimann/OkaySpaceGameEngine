@@ -261,6 +261,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (int t : mr->mesh.triangles) out << " " << t;
             out << "\n";
         }
+        // Per-face colors (vertex-painting / baked lightmap) — separate record so
+        // older scenes still load. Written whenever populated, for named primitives
+        // too (a baked cube carries its baked lighting).
+        if (mr->mesh.HasFaceColors()) {
+            out << "  meshcolors " << mr->mesh.triColors.size();
+            for (const Color& c : mr->mesh.triColors)
+                out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
         // Material (emissive rgb, specular, shininess, unlit) — separate record
         // so older scenes without it still load.
         out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
@@ -1820,6 +1829,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // force smooth normals, or an edited box/ground reloads looking like
                     // a soft rounded blob instead of clean flat faces.
                     mr->mesh.normals.clear();
+                } else if (field == "meshcolors") {
+                    // Per-face colors (vertex paint / baked lightmap). Follows the
+                    // `mesh`/`meshgeo` geometry so the counts line up.
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int cc = 0; in >> cc;
+                    mr->mesh.triColors.clear();
+                    mr->mesh.triColors.reserve(cc > 0 ? cc : 0);
+                    for (int i = 0; i < cc; ++i) {
+                        Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.triColors.push_back(c);
+                    }
                 } else if (field == "skinmesh") {
                     // Rebuild a SkinnedMesh from its bind geometry + weights + joint
                     // names + inverse-bind matrices. Joints are re-resolved by name at

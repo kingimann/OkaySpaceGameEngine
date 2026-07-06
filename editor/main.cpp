@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
@@ -4332,6 +4333,54 @@ void DrawStats(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Darken the frame's edges/corners (focus/mood).\nA post overlay — identical on every renderer backend. 0 = off.");
         if (ImGui::Checkbox("Filmic Tonemap (ACES)", &rs.tonemap)) ed.dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roll bright, over-1.0 lighting smoothly toward white instead of hard-clipping.\nStops high light intensity from flat 'blowing out'. Off = classic linear look.");
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Lightmap Baking");
+        // Bake the scene's lighting + cast shadows + AO into every mesh's per-face
+        // colors (Unity-style), then render them unlit for near-zero runtime cost.
+        if (ImGui::Button("Bake Lighting")) {
+            ed.PushUndo();
+            okay::ApplySceneLight(ed.scene());
+            struct BTri { Vec3 a, b, c; };
+            std::vector<BTri> soup;
+            for (const auto& up : ed.scene().Objects()) {
+                auto* mr = up->GetComponent<MeshRenderer>();
+                if (!mr || !up->active || !mr->enabled || mr->wireframe) continue;
+                Mat4 M = up->transform->LocalToWorldMatrix();
+                const auto& tr = mr->mesh.triangles; const auto& vs = mr->mesh.vertices;
+                for (std::size_t i = 0; i + 2 < tr.size(); i += 3) {
+                    if (tr[i] < 0 || tr[i+1] < 0 || tr[i+2] < 0) continue;
+                    if ((std::size_t)tr[i] >= vs.size() || (std::size_t)tr[i+1] >= vs.size() || (std::size_t)tr[i+2] >= vs.size()) continue;
+                    soup.push_back({M.MultiplyPoint(vs[tr[i]]), M.MultiplyPoint(vs[tr[i+1]]), M.MultiplyPoint(vs[tr[i+2]])});
+                }
+            }
+            auto occluded = [&soup](const Vec3& o, const Vec3& d, float maxD) {
+                float t; for (const auto& tr : soup) if (okay::RayTriangle(o, d, tr.a, tr.b, tr.c, maxD, t)) return true; return false;
+            };
+            int baked = 0;
+            for (const auto& up : ed.scene().Objects()) {
+                auto* mr = up->GetComponent<MeshRenderer>();
+                if (!mr || !mr->enabled || mr->wireframe || mr->mesh.triangles.empty()) continue;
+                okay::BakeFaceLighting(mr->mesh, up->transform->LocalToWorldMatrix(), mr->color, occluded);
+                mr->unlit = true; ++baked;
+            }
+            ed.dirty = true;
+            ConsoleLog("Baked lighting + shadows into " + std::to_string(baked) + " meshes");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pre-compute lighting, cast shadows and ambient occlusion into every mesh's\nface colors, then render them unlit (near-zero cost). Re-bake after moving lights.");
+        ImGui::SameLine();
+        if (ImGui::Button("Clear Bake")) {
+            ed.PushUndo();
+            int cleared = 0;
+            for (const auto& up : ed.scene().Objects()) {
+                auto* mr = up->GetComponent<MeshRenderer>();
+                if (!mr || !mr->mesh.HasFaceColors()) continue;
+                mr->mesh.triColors.clear(); mr->unlit = false; ++cleared;
+            }
+            ed.dirty = true;
+            ConsoleLog("Cleared baked lighting on " + std::to_string(cleared) + " meshes");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove baked face colors and return meshes to real-time lighting.");
     }
 
     // Global renderer pipeline switches (process-wide, not per-scene). These let

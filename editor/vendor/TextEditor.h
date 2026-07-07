@@ -241,6 +241,8 @@ public:
 	// content origin (scroll-adjusted top-left of line 0) — for host overlays.
 	float  TextStartX() const { return mLastContentOrigin.x + mTextStart; }
 	ImVec2 ContentOrigin() const { return mLastContentOrigin; }
+	// Map a screen position to text coordinates (for host Ctrl+Click navigation).
+	Coordinates ScreenToCoords(const ImVec2& aPos) const { return ScreenPosToCoordinates(aPos); }
 
 	inline void SetHandleMouseInputs    (bool aValue){ mHandleMouseInputs    = aValue;}
 	inline bool IsHandleMouseInputsEnabled() const { return mHandleKeyboardInputs; }

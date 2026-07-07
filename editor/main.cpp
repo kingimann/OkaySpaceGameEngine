@@ -5581,421 +5581,26 @@ void DrawScriptDocs() {
 
 // --- VS Code-style script editor helpers ---------------------------------
 
-// Carries cursor info OUT (line/col/pos) and pending edit commands IN (go-to-line,
-// comment toggle) so the InputText callback can act on the live, active buffer —
-// the only safe way to mutate/move the cursor while editing.
+// Pending editor commands, filled by the toolbar/popups and applied against the
+// code widget each frame; the widget reports the live caret back into it.
 struct ScriptCaret {
-    int  line = 1, col = 1, pos = 0;   // reported out each frame
+    int  line = 1, col = 1, pos = 0;   // out: caret position (1-based line/col)
     int  selLen = 0;                   // out: selected character count
     int  gotoLine = 0;                 // in: jump to this 1-based line (0 = none)
     int  gotoPos = -1;                 // in: move caret to this byte offset (find-next)
     int  gotoSelLen = 0;               // in: select this many chars from gotoPos
-    bool toggleComment = false;        // in: toggle "// " on the caret's line
-    bool toggleCase = false;           // in: swap case of the selection / word under caret
-    std::string surroundPre;           // in: wrap the selected lines — this opener above,
-    std::string surroundPost;          //     surroundPost below, body indented one level
+    bool toggleComment = false;        // in: toggle "// " on the selected lines
     std::string insert;                // in: insert this text at the caret (snippets)
-    int  insertReplaceLen = 0;         // in: delete this many chars before the caret first
-                                       // (fuzzy-completion click replaces the typed prefix)
-    std::string replaceAll;            // in: replace the WHOLE buffer (format/rename) —
-                                       // routed through the callback so ImGui undo stays intact
-    bool autoPairs = true;             // auto-close brackets + auto-indent on Enter
-    int  prevLen = -1;                 // buffer length last frame (to detect typing)
+    int  insertReplaceLen = 0;         // in: (unused since the widget migration)
+    std::string replaceAll;            // in: replace the WHOLE buffer (format/rename)
 };
-// The completion that pressing Tab will accept, recomputed each frame where the popup
-// is shown; empty = none. g_acReplaceLen chars before the caret are replaced by it —
-// 0 for a prefix match (just append the suffix), >0 for a fuzzy match (swap the whole
-// typed word for the picked candidate).
-static std::string g_acComplete;
-static int g_acReplaceLen = 0;
-// Accepted completion is a known function: also insert "()" and land the caret
-// inside (after, when the builtin takes no arguments) — Rider's completion behavior.
-static bool g_acCallable = false;
-static bool g_acZeroArg = false;
-// Autocomplete popup state: number of items shown this frame (0 = no popup) and the
-// keyboard-highlighted item. Up/Down move the highlight (handled in the callback so
-// the editor's caret doesn't move lines while the popup is open).
+// Autocomplete popup state: item count shown this frame (0 = no popup), the
+// keyboard-highlighted item, and Esc's hide-until-the-word-changes latch.
 static int g_acCount = 0;
 static int g_acIndex = 0;
-// Set by Esc in the editor to hide the popup until the typed word changes again.
 static bool g_acDismiss = false;
 
-static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
-    auto* c = (ScriptCaret*)d->UserData;
-    ImGuiIO& io = ImGui::GetIO();
-    auto lineBounds = [&](int p, int& ls, int& le) {
-        if (p > d->BufTextLen) p = d->BufTextLen;
-        ls = p; while (ls > 0 && d->Buf[ls - 1] != '\n') --ls;
-        le = p; while (le < d->BufTextLen && d->Buf[le] != '\n') ++le;
-    };
-    // Tab handling (via CallbackCompletion so Tab stays in the editor instead of
-    // moving focus): accept the pending autocomplete suggestion, else indent 4
-    // spaces. Shift+Tab dedents the line by up to 4 spaces.
-    if (d->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
-        // A multi-line selection: Tab indents every selected line, Shift+Tab outdents
-        // them (block indent, like Rider/VS Code), keeping the selection.
-        int selA = d->SelectionStart, selB = d->SelectionEnd;
-        if (selA > selB) { int t = selA; selA = selB; selB = t; }
-        bool multiLine = selB > selA && [&]{ for (int i = selA; i < selB; ++i) if (d->Buf[i] == '\n') return true; return false; }();
-        if (multiLine) {
-            int firstLs, tmp; lineBounds(selA, firstLs, tmp);
-            std::vector<int> starts;
-            for (int p = firstLs; p < selB; ) {
-                starts.push_back(p);
-                int e = p; while (e < d->BufTextLen && d->Buf[e] != '\n') ++e;
-                p = e + 1; if (e >= d->BufTextLen) break;
-            }
-            int delta = 0;
-            for (int i = (int)starts.size() - 1; i >= 0; --i) {   // bottom-up: offsets stay valid
-                int ls = starts[i];
-                if (io.KeyShift) {
-                    int rem = 0; while (rem < 4 && ls + rem < d->BufTextLen && d->Buf[ls + rem] == ' ') ++rem;
-                    if (rem > 0) { d->DeleteChars(ls, rem); delta -= rem; }
-                } else {
-                    if (d->Buf[ls] != '\n') { d->InsertChars(ls, "    "); delta += 4; }
-                }
-            }
-            (void)delta;
-            d->SelectionStart = firstLs; d->SelectionEnd = selB + delta;
-            d->CursorPos = d->SelectionEnd;
-            return 0;
-        }
-        if (io.KeyShift) {
-            int ls, le; lineBounds(d->CursorPos, ls, le);
-            int rem = 0; while (rem < 4 && ls + rem < d->BufTextLen && d->Buf[ls + rem] == ' ') ++rem;
-            if (rem > 0) {
-                int off = d->CursorPos - ls;
-                d->DeleteChars(ls, rem);
-                d->CursorPos = d->SelectionStart = d->SelectionEnd = ls + (off > rem ? off - rem : 0);
-            }
-        } else if (!g_acComplete.empty()) {
-            if (g_acReplaceLen > 0 && d->CursorPos >= g_acReplaceLen)   // fuzzy: swap typed word
-                d->DeleteChars(d->CursorPos - g_acReplaceLen, g_acReplaceLen);
-            d->InsertChars(d->CursorPos, g_acComplete.c_str());
-            // Completing a function also types its "()" — caret inside, ready for
-            // arguments (after, when it takes none). Skip if a '(' already follows.
-            if (g_acCallable && (d->CursorPos >= d->BufTextLen || d->Buf[d->CursorPos] != '(')) {
-                d->InsertChars(d->CursorPos, "()");
-                if (!g_acZeroArg) d->CursorPos -= 1;
-                d->SelectionStart = d->SelectionEnd = d->CursorPos;
-            }
-            g_acComplete.clear(); g_acReplaceLen = 0; g_acCallable = false;
-        } else {
-            d->InsertChars(d->CursorPos, "    ");
-        }
-        return 0;
-    }
-    // While the autocomplete popup is open, Up/Down move the highlight instead of the
-    // text caret. ImGui already moved the caret a line (multiline), so restore it to
-    // where it was (c->pos holds last frame's position) and adjust the selection.
-    if (g_acCount > 0) {
-        bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
-        bool dn = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
-        if (up || dn) {
-            d->CursorPos = d->SelectionStart = d->SelectionEnd = c->pos;
-            g_acIndex = up ? (g_acIndex - 1 + g_acCount) % g_acCount
-                           : (g_acIndex + 1) % g_acCount;
-        }
-        // Enter also accepts the highlighted completion (Rider-style). ImGui's
-        // multiline input already inserted a newline at the caret, so remove it first.
-        if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))
-            && !g_acComplete.empty()) {
-            if (d->CursorPos > 0 && d->Buf[d->CursorPos - 1] == '\n') d->DeleteChars(d->CursorPos - 1, 1);
-            if (g_acReplaceLen > 0 && d->CursorPos >= g_acReplaceLen)   // fuzzy: swap typed word
-                d->DeleteChars(d->CursorPos - g_acReplaceLen, g_acReplaceLen);
-            d->InsertChars(d->CursorPos, g_acComplete.c_str());
-            if (g_acCallable && (d->CursorPos >= d->BufTextLen || d->Buf[d->CursorPos] != '(')) {
-                d->InsertChars(d->CursorPos, "()");
-                if (!g_acZeroArg) d->CursorPos -= 1;
-                d->SelectionStart = d->SelectionEnd = d->CursorPos;
-            }
-            g_acComplete.clear(); g_acReplaceLen = 0; g_acCallable = false; g_acCount = 0;
-        }
-        // Esc dismisses the popup until the typed word changes.
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_acDismiss = true;
-    }
-    // Go to line: move the caret to the start of the requested line.
-    if (c->gotoLine > 0) {
-        int target = c->gotoLine; c->gotoLine = 0;
-        int line = 1, pos = 0;
-        for (; pos < d->BufTextLen && line < target; ++pos)
-            if (d->Buf[pos] == '\n') ++line;
-        d->CursorPos = d->SelectionStart = d->SelectionEnd = pos;
-    }
-    // Find Next/Prev: move the caret to a match and select it.
-    if (c->gotoPos >= 0) {
-        int p = c->gotoPos > d->BufTextLen ? d->BufTextLen : c->gotoPos;
-        int e = (c->gotoSelLen > 0) ? p + c->gotoSelLen : p;
-        if (e > d->BufTextLen) e = d->BufTextLen;
-        d->CursorPos = e; d->SelectionStart = p; d->SelectionEnd = e;
-        c->gotoPos = -1; c->gotoSelLen = 0;
-    }
-    // Smart Home: ImGui's Home jumps to column 0; if the line is indented and we
-    // weren't already at the first non-blank, land there instead (toggle) — Rider/VS Code.
-    if (!io.KeyShift && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Home, true)) {
-        int ls, le; lineBounds(d->CursorPos, ls, le);
-        int fnw = ls; while (fnw < le && (d->Buf[fnw] == ' ' || d->Buf[fnw] == '\t')) ++fnw;
-        if (fnw > ls && d->CursorPos == ls && c->pos != fnw)
-            d->CursorPos = d->SelectionStart = d->SelectionEnd = fnw;
-    }
-    // Replace the whole buffer (format / rename) through ImGui's own edit ops so the
-    // native undo/redo stack stays consistent (unlike an external buffer swap).
-    if (!c->replaceAll.empty()) {
-        d->DeleteChars(0, d->BufTextLen);
-        d->InsertChars(0, c->replaceAll.c_str());
-        c->replaceAll.clear();
-    }
-    // Insert a snippet/template at the caret (optionally replacing the typed prefix
-    // first, for a fuzzy-completion click).
-    if (!c->insert.empty()) {
-        if (c->insertReplaceLen > 0 && d->CursorPos >= c->insertReplaceLen)
-            d->DeleteChars(d->CursorPos - c->insertReplaceLen, c->insertReplaceLen);
-        d->InsertChars(d->CursorPos, c->insert.c_str());
-        c->insert.clear(); c->insertReplaceLen = 0;
-    }
-    // Toggle "// " on the caret's line, or on EVERY line spanned by the selection
-    // (Rider/VS Code). If any selected line is uncommented, all get commented; else
-    // all get uncommented.
-    if (c->toggleComment) {
-        c->toggleComment = false;
-        int selA = d->SelectionStart, selB = d->SelectionEnd;
-        if (selA > selB) { int t = selA; selA = selB; selB = t; }
-        int firstLs, tmp; lineBounds(selA, firstLs, tmp);
-        int lastLs, lastLe; lineBounds(selB > selA ? selB - 1 : selB, lastLs, lastLe);
-        // Collect the start of each line in the range.
-        std::vector<int> lineStarts;
-        for (int p = firstLs; p <= lastLs; ) {
-            lineStarts.push_back(p);
-            int e = p; while (e < d->BufTextLen && d->Buf[e] != '\n') ++e;
-            p = e + 1;
-            if (e >= d->BufTextLen) break;
-        }
-        auto isCommented = [&](int ls){
-            int f = ls; while (f < d->BufTextLen && (d->Buf[f]==' '||d->Buf[f]=='\t')) ++f;
-            return f + 1 < d->BufTextLen && d->Buf[f]=='/' && d->Buf[f+1]=='/';
-        };
-        bool allCommented = true;
-        for (int ls : lineStarts) { int f=ls; while (f<d->BufTextLen && (d->Buf[f]==' '||d->Buf[f]=='\t')) ++f;
-            if (f < d->BufTextLen && d->Buf[f] != '\n' && !isCommented(ls)) { allCommented = false; break; } }
-        // Apply bottom-up so earlier edits don't shift later line offsets.
-        for (int i = (int)lineStarts.size() - 1; i >= 0; --i) {
-            int ls = lineStarts[i];
-            int f = ls; while (f < d->BufTextLen && (d->Buf[f]==' '||d->Buf[f]=='\t')) ++f;
-            if (f < d->BufTextLen && d->Buf[f] == '\n') continue;   // skip blank lines
-            if (allCommented) {
-                if (isCommented(ls)) { int rem = (f+2 < d->BufTextLen && d->Buf[f+2]==' ') ? 3 : 2; d->DeleteChars(f, rem); }
-            } else {
-                d->InsertChars(f, "// ");
-            }
-        }
-    }
-    // Toggle case (Ctrl+Shift+U): swap the case of the selection, or the word under the
-    // caret if nothing is selected. If the text has any lowercase it goes UPPER, else lower.
-    if (c->toggleCase) {
-        c->toggleCase = false;
-        auto isWc = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
-        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
-        if (a == b) {
-            int ws = a; while (ws > 0 && isWc(d->Buf[ws - 1])) --ws;
-            int we = a; while (we < d->BufTextLen && isWc(d->Buf[we])) ++we;
-            a = ws; b = we;
-        }
-        if (b > a) {
-            std::string s(d->Buf + a, d->Buf + b);
-            bool anyLower = false;
-            for (char ch : s) if (std::islower((unsigned char)ch)) { anyLower = true; break; }
-            for (char& ch : s) ch = anyLower ? (char)std::toupper((unsigned char)ch)
-                                             : (char)std::tolower((unsigned char)ch);
-            d->DeleteChars(a, b - a); d->InsertChars(a, s.c_str());
-            d->SelectionStart = a; d->SelectionEnd = a + (int)s.size(); d->CursorPos = d->SelectionEnd;
-        }
-    }
-    // Surround With (Ctrl+Alt+T): wrap the selected lines (or the caret line) in a
-    // control block — surroundPre above, surroundPost below, the body indented a level.
-    if (!c->surroundPre.empty()) {
-        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
-        int fs, feTmp; lineBounds(a, fs, feTmp);                 // first selected line start
-        int refB = (b > a && d->Buf[b - 1] == '\n') ? b - 1 : b; // don't spill onto the next line
-        int lastLs, le; lineBounds(refB, lastLs, le);            // last selected line end
-        std::string base;                                        // indentation of the first line
-        for (int i = fs; i < le && (d->Buf[i] == ' ' || d->Buf[i] == '\t'); ++i) base += d->Buf[i];
-        std::string block(d->Buf + fs, d->Buf + le);
-        std::string body;                                        // block, each line indented +4
-        { std::size_t ls = 0; for (;;) {
-            std::size_t nl = block.find('\n', ls);
-            std::string ln = block.substr(ls, nl == std::string::npos ? std::string::npos : nl - ls);
-            body += "    " + ln;
-            if (nl == std::string::npos) break;
-            body += "\n"; ls = nl + 1;
-        } }
-        std::string out = base + c->surroundPre + "\n" + body + "\n" + base + c->surroundPost;
-        d->DeleteChars(fs, le - fs);
-        d->InsertChars(fs, out.c_str());
-        // Put the caret on the opener line so you can fill in the condition.
-        int caretAt = fs + (int)base.size() + (int)c->surroundPre.size();
-        d->CursorPos = d->SelectionStart = d->SelectionEnd = caretAt;
-        c->surroundPre.clear(); c->surroundPost.clear();
-    }
-    // Ctrl+D: duplicate the selection (if any), else the caret's line below it.
-    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false)) {
-        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
-        if (b > a) {                                    // duplicate the selected text
-            std::string sel(d->Buf + a, d->Buf + b);
-            d->InsertChars(b, sel.c_str());
-            d->SelectionStart = b; d->SelectionEnd = b + (int)sel.size(); d->CursorPos = d->SelectionEnd;
-        } else {
-            int ls, le; lineBounds(d->CursorPos, ls, le);
-            std::string dup = "\n" + std::string(d->Buf + ls, d->Buf + le);
-            d->InsertChars(le, dup.c_str());
-            d->CursorPos = d->SelectionStart = d->SelectionEnd = d->CursorPos + (int)dup.size();
-        }
-    }
-    // Ctrl+W / Ctrl+Shift+W: expand / shrink the selection (Rider/IntelliJ "extend
-    // selection"). Expand grows word -> line(s) -> whole file, pushing each prior
-    // selection so Shrink walks back down exactly. The stack resets whenever the live
-    // selection isn't the one Expand last produced (i.e. the user moved on).
-    static std::vector<std::pair<int,int>> s_selHist;
-    static std::pair<int,int> s_selTop = {-1, -1};
-    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_W, false)) {
-        auto isWc = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
-        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
-        int pa = a, pb = b;                             // pre-expand state
-        if (std::make_pair(a, b) != s_selTop) s_selHist.clear();   // user moved on: fresh chain
-        if (a == b) {                                   // no selection -> select the word
-            int ws = a; while (ws > 0 && isWc(d->Buf[ws - 1])) --ws;
-            int we = a; while (we < d->BufTextLen && isWc(d->Buf[we])) ++we;
-            if (we > ws) { a = ws; b = we; }
-        } else {
-            int ls, le; lineBounds(a, ls, le);
-            int ls2, le2; lineBounds(b, ls2, le2);
-            if (a > ls || b < le2) { a = ls; b = le2; } // not yet full line(s) -> expand to lines
-            else { a = 0; b = d->BufTextLen; }           // already lines -> whole file
-        }
-        // Only record + apply when the selection actually grew — at a terminal state
-        // (whole file / no word) this is a no-op, so the stack never balloons.
-        if (a != pa || b != pb) {
-            s_selHist.push_back({pa, pb});
-            d->SelectionStart = a; d->SelectionEnd = b; d->CursorPos = b;
-            s_selTop = {a, b};
-        }
-    }
-    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_W, false)) {
-        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
-        // Liveness: if the live selection isn't the one Expand last produced (the user
-        // clicked away, or switched scripts — these statics are shared), the history is
-        // stale; drop it rather than yank the caret to an old/foreign range.
-        if (std::make_pair(a, b) != s_selTop) { s_selHist.clear(); s_selTop = {-1, -1}; }
-        else if (!s_selHist.empty()) {
-            auto prev = s_selHist.back(); s_selHist.pop_back();
-            int lo = prev.first < 0 ? 0 : (prev.first > d->BufTextLen ? d->BufTextLen : prev.first);
-            int hi = prev.second < 0 ? 0 : (prev.second > d->BufTextLen ? d->BufTextLen : prev.second);
-            d->SelectionStart = lo; d->SelectionEnd = hi; d->CursorPos = hi;
-            s_selTop = {lo, hi};
-        }
-    }
-    // Ctrl+Shift+J: join the caret's line with the next (Rider "Join Lines") —
-    // the newline and the next line's indentation collapse into one space.
-    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_J, false)) {
-        int ls, le; lineBounds(d->CursorPos, ls, le);
-        if (le < d->BufTextLen) {                       // there IS a next line
-            int j = le + 1;
-            while (j < d->BufTextLen && (d->Buf[j] == ' ' || d->Buf[j] == '\t')) ++j;
-            d->DeleteChars(le, j - le);
-            bool atEnd = le >= d->BufTextLen || d->Buf[le] == '\n';
-            if (!atEnd) d->InsertChars(le, " ");
-            d->CursorPos = d->SelectionStart = d->SelectionEnd = le;
-        }
-    }
-    // Ctrl+Shift+K: delete the caret's whole line (Rider/VS Code "delete line").
-    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_K, false)) {
-        int ls, le; lineBounds(d->CursorPos, ls, le);
-        int from = ls, to = le;
-        if (to < d->BufTextLen && d->Buf[to] == '\n') ++to;       // take the trailing newline
-        else if (from > 0 && d->Buf[from - 1] == '\n') --from;    // last line: take the leading one
-        d->DeleteChars(from, to - from);
-        d->CursorPos = d->SelectionStart = d->SelectionEnd = from > d->BufTextLen ? d->BufTextLen : from;
-    }
-    // Alt+Up / Alt+Down: move the caret's line up or down (swap with neighbor).
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) {
-        int ls, le; lineBounds(d->CursorPos, ls, le);
-        if (ls > 0) {
-            int pls = ls - 1; while (pls > 0 && d->Buf[pls - 1] != '\n') --pls;
-            std::string prev(d->Buf + pls, d->Buf + (ls - 1));
-            std::string cur(d->Buf + ls, d->Buf + le);
-            int off = d->CursorPos - ls;
-            d->DeleteChars(pls, le - pls);
-            std::string repl = cur + "\n" + prev;
-            d->InsertChars(pls, repl.c_str());
-            d->CursorPos = d->SelectionStart = d->SelectionEnd = pls + off;
-        }
-    }
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) {
-        int ls, le; lineBounds(d->CursorPos, ls, le);
-        if (le < d->BufTextLen) {
-            int nls = le + 1, nle = nls; while (nle < d->BufTextLen && d->Buf[nle] != '\n') ++nle;
-            std::string cur(d->Buf + ls, d->Buf + le);
-            std::string next(d->Buf + nls, d->Buf + nle);
-            int off = d->CursorPos - ls;
-            d->DeleteChars(ls, nle - ls);
-            std::string repl = next + "\n" + cur;
-            d->InsertChars(ls, repl.c_str());
-            d->CursorPos = d->SelectionStart = d->SelectionEnd = ls + (int)next.size() + 1 + off;
-        }
-    }
-    // Auto-pairing + auto-indent: only when exactly one char was just typed.
-    if (c->autoPairs && c->prevLen >= 0 && d->BufTextLen == c->prevLen + 1 &&
-        d->CursorPos > 0 && d->CursorPos <= d->BufTextLen) {
-        char ch = d->Buf[d->CursorPos - 1];
-        char next = d->CursorPos < d->BufTextLen ? d->Buf[d->CursorPos] : '\0';
-        auto isWord = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
-        if (ch == '\n') {
-            // Copy the broken line's leading whitespace; add a level after '{'.
-            int nl = d->CursorPos - 1;
-            int pls = nl; while (pls > 0 && d->Buf[pls - 1] != '\n') --pls;
-            std::string baseIndent;
-            for (int i = pls; i < nl && (d->Buf[i] == ' ' || d->Buf[i] == '\t'); ++i) baseIndent += d->Buf[i];
-            int last = nl - 1; while (last >= pls && (d->Buf[last] == ' ' || d->Buf[last] == '\t')) --last;
-            bool afterOpen = (last >= pls && d->Buf[last] == '{');
-            std::string indent = baseIndent + (afterOpen ? "    " : "");
-            // Block expansion: pressing Enter with the caret between "{|}" pushes the
-            // closer onto its own line and leaves the caret on an indented middle line.
-            bool beforeClose = afterOpen && d->CursorPos < d->BufTextLen && d->Buf[d->CursorPos] == '}';
-            if (!indent.empty() || beforeClose) {
-                int c0 = d->CursorPos;
-                if (!indent.empty()) d->InsertChars(c0, indent.c_str());
-                int mid = c0 + (int)indent.size();
-                if (beforeClose) {
-                    std::string tail = "\n" + baseIndent;
-                    d->InsertChars(mid, tail.c_str());   // '}' drops to its own line
-                }
-                d->CursorPos = d->SelectionStart = d->SelectionEnd = mid;
-            }
-        } else if ((ch == '(' || ch == '[' || ch == '{' || ch == '"') &&
-                   (next == '\0' || next == ' ' || next == ')' || next == ']' ||
-                    next == '}' || next == '\n' || !isWord(next))) {
-            const char* close = ch == '(' ? ")" : ch == '[' ? "]" : ch == '{' ? "}" : "\"";
-            int c0 = d->CursorPos; d->InsertChars(c0, close);
-            d->CursorPos = d->SelectionStart = d->SelectionEnd = c0;   // sit between the pair
-        } else if ((ch == ')' || ch == ']' || ch == '}' || ch == '"') && next == ch) {
-            // Typed a closer right before the auto-inserted one: skip over it.
-            d->DeleteChars(d->CursorPos - 1, 1);
-            d->CursorPos = d->SelectionStart = d->SelectionEnd = d->CursorPos + 1;
-        }
-    }
-    c->prevLen = d->BufTextLen;
-    int ln = 1, col = 1;
-    for (int k = 0; k < d->CursorPos && k < d->BufTextLen; ++k) {
-        if (d->Buf[k] == '\n') { ++ln; col = 1; } else ++col;
-    }
-    c->line = ln; c->col = col; c->pos = d->CursorPos;
-    c->selLen = d->SelectionEnd - d->SelectionStart;
-    if (c->selLen < 0) c->selLen = -c->selLen;
-    return 0;
-}
 
-// Draw the code text with VS Code "Dark+" syntax colors on top of the editor.
-// ProggyClean is monospace, so glyphs advance by a fixed width and the colored
-// overlay lines up exactly with the InputText beneath it.
 // Words the editor offers for autocomplete: keywords, types, and common builtins
 // (a curated subset of the OkayScript API — see docs/scripting.md).
 static const std::vector<std::string>& ScriptCompletions() {
@@ -6542,81 +6147,6 @@ static TextEditor& CodeEditorFor(okay::ScriptComponent* sc) {
     return *it->second;
 }
 
-static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
-                              float charW, float lineH) {
-    // Rider / IntelliJ "Darcula" palette: orange keywords, blue numbers, green
-    // strings, gray comments, yellow function calls, teal types, soft-gray default.
-    const ImU32 cDefault = IM_COL32(169, 183, 198, 255);  // default identifier
-    const ImU32 cKeyword = IM_COL32(204, 120,  50, 255);  // orange
-    const ImU32 cType    = IM_COL32(102, 197, 204, 255);  // teal
-    const ImU32 cFunc    = IM_COL32(255, 198, 109, 255);  // yellow (function calls)
-    const ImU32 cString  = IM_COL32(106, 135,  89, 255);  // green
-    const ImU32 cComment = IM_COL32(128, 138, 128, 255);  // gray-green
-    const ImU32 cNumber  = IM_COL32(104, 151, 187, 255);  // blue
-    static const char* kw[] = {
-        "if","else","for","while","do","return","break","continue","switch","case",
-        "var","let","const","function","func","def","class","struct","new","public",
-        "private","protected","static","void","int","float","bool","string","true",
-        "false","null","this","import","using","namespace","foreach","in","and","or","not",
-        "try","catch","throw"};
-    static const char* types[] = {
-        "Vector2","Vector3","Vec2","Vec3","Color","Quaternion","Transform","GameObject",
-        "Mathf","Input","Time","Okay","OkaySource","Debug","Random","Physics"};
-    // Bracket-pair colorization: rotate through these by nesting depth (VS Code).
-    static const ImU32 cBracket[] = {
-        IM_COL32(255, 214, 110, 255),  // gold
-        IM_COL32(214, 130, 230, 255),  // magenta
-        IM_COL32(90, 178, 240, 255),   // blue
-    };
-    int bracketDepth = 0;
-    auto isWord = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
-    auto inList = [](const std::string& s, const char* const* arr, int n) {
-        for (int i = 0; i < n; ++i) if (s == arr[i]) return true; return false; };
-
-    float x = origin.x, y = origin.y;
-    for (int i = 0; text[i];) {
-        char c = text[i];
-        if (c == '\n') { x = origin.x; y += lineH; ++i; continue; }
-        if (c == '/' && text[i + 1] == '/') {                          // line comment
-            int j = i; while (text[j] && text[j] != '\n') ++j;
-            std::string s(text + i, text + j);
-            dl->AddText(ImVec2(x, y), cComment, s.c_str()); x += (j - i) * charW; i = j; continue;
-        }
-        if (c == '"' || c == '\'') {                                   // string literal
-            char q = c; int j = i + 1;
-            while (text[j] && text[j] != q && text[j] != '\n') { if (text[j] == '\\' && text[j + 1]) ++j; ++j; }
-            if (text[j] == q) ++j;
-            std::string s(text + i, text + j);
-            dl->AddText(ImVec2(x, y), cString, s.c_str()); x += (j - i) * charW; i = j; continue;
-        }
-        if (std::isdigit((unsigned char)c)) {                          // number
-            int j = i; while (text[j] && (std::isalnum((unsigned char)text[j]) || text[j] == '.')) ++j;
-            std::string s(text + i, text + j);
-            dl->AddText(ImVec2(x, y), cNumber, s.c_str()); x += (j - i) * charW; i = j; continue;
-        }
-        if (isWord(c)) {                                               // identifier / keyword / call
-            int j = i; while (text[j] && isWord(text[j])) ++j;
-            std::string s(text + i, text + j);
-            int k = j; while (text[k] == ' ' || text[k] == '\t') ++k;  // a call is  name(
-            bool isCall = (text[k] == '(');
-            ImU32 col = inList(s, kw, (int)(sizeof(kw) / sizeof(*kw))) ? cKeyword
-                      : inList(s, types, (int)(sizeof(types) / sizeof(*types))) ? cType
-                      : isCall ? cFunc : cDefault;
-            dl->AddText(ImVec2(x, y), col, s.c_str()); x += (j - i) * charW; i = j; continue;
-        }
-        if (c == '(' || c == '[' || c == '{') {                        // opening bracket
-            ImU32 bc = cBracket[bracketDepth % 3]; ++bracketDepth;
-            char b[2] = {c, 0}; dl->AddText(ImVec2(x, y), bc, b); x += charW; ++i; continue;
-        }
-        if (c == ')' || c == ']' || c == '}') {                        // closing bracket
-            if (bracketDepth > 0) --bracketDepth;
-            ImU32 bc = cBracket[bracketDepth % 3];
-            char b[2] = {c, 0}; dl->AddText(ImVec2(x, y), bc, b); x += charW; ++i; continue;
-        }
-        if (c != ' ' && c != '\t') { char b[2] = {c, 0}; dl->AddText(ImVec2(x, y), cDefault, b); }
-        x += (c == '\t' ? 4 * charW : charW); ++i;
-    }
-}
 
 // Per-script "last saved" text so tabs can show a modified (●) marker like VS
 // Code. A tab is dirty when its live edit buffer differs from this baseline.
@@ -7441,11 +6971,7 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::EndPopup();
         }
 
-        if (s_moreTools) {
-            ImGui::SameLine();
-            ImGui::Checkbox("Auto", &caret.autoPairs);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-close brackets/quotes and auto-indent on Enter");
-        }
+        // (Auto-indent on Enter is built into the code widget now — no toggle needed.)
 
         // Rename: change the identifier under the caret everywhere in the file.
         static char s_renameTo[64] = ""; static std::string s_renameFrom;
@@ -7704,6 +7230,7 @@ void DrawScriptEditor(EditorState& ed) {
         ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 8.0f; if (av.y < 80) av.y = 80;
 
         TextEditor& te = CodeEditorFor(sc);
+        te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
 
         // Pending whole-buffer replace (Format / Rename / quick-fix): apply to the
         // shared buffer first so the sync below pushes it into the widget.
@@ -7751,7 +7278,13 @@ void DrawScriptEditor(EditorState& ed) {
             const char* t = buf.data(); int ln = 0, col = 0;
             for (int i = 0; i < caret.gotoPos && t[i]; ++i) { if (t[i] == '\n') { ++ln; col = 0; } else ++col; }
             te.SetCursorPosition(TextEditor::Coordinates(ln, col));
-            caret.gotoPos = -1;
+            // Find-next selects the match it landed on (matches are single-line).
+            if (caret.gotoSelLen > 0) {
+                te.SetSelection(TextEditor::Coordinates(ln, col),
+                                TextEditor::Coordinates(ln, col + caret.gotoSelLen));
+                te.SetCursorPosition(TextEditor::Coordinates(ln, col + caret.gotoSelLen));
+            }
+            caret.gotoPos = -1; caret.gotoSelLen = 0;
         }
 
         // While the autocomplete popup is open, Tab/Enter accept, Up/Down move the
@@ -7848,7 +7381,101 @@ void DrawScriptEditor(EditorState& ed) {
             ImDrawList* fdl = ImGui::GetForegroundDrawList();
             fdl->PushClipRect(teMin, teMax, true);
             float rowH = te.RowHeight() > 1.0f ? te.RowHeight() : 1.0f;
+            float chW = te.CharWidth() > 0.5f ? te.CharWidth() : 8.0f;
             ImVec2 corg = te.ContentOrigin();
+            float textX = te.TextStartX();
+            // Hard-wrap margin: a faint rule at column 120 (Rider's right margin).
+            {
+                float rx = textX + 120.0f * chW;
+                if (rx < teMax.x) fdl->AddLine(ImVec2(rx, teMin.y), ImVec2(rx, teMax.y), IM_COL32(255, 255, 255, 12));
+            }
+            // Highlight every find match while the bar is open (translucent tint over
+            // the glyphs; the current selection is drawn by the widget itself).
+            if (s_showFind && s_find[0]) {
+                std::string needle = s_find;
+                std::size_t nlen = needle.size();
+                auto lower = [](char c2) { return (char)std::tolower((unsigned char)c2); };
+                const char* t = buf.data();
+                int ln = 0, col = 0;
+                for (int i = 0; t[i]; ) {
+                    if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
+                    bool match = true;
+                    for (std::size_t k = 0; k < nlen; ++k)
+                        if (!t[i + k] || lower(t[i + k]) != lower(needle[k])) { match = false; break; }
+                    if (match) {
+                        ImVec2 a(textX + col * chW, corg.y + ln * rowH);
+                        fdl->AddRectFilled(a, ImVec2(a.x + nlen * chW, a.y + rowH), IM_COL32(180, 160, 60, 55));
+                        fdl->AddRect(a, ImVec2(a.x + nlen * chW, a.y + rowH), IM_COL32(200, 180, 80, 120));
+                    }
+                    ++i; ++col;
+                }
+            }
+            // Highlight every whole-word occurrence of the identifier under the caret
+            // (Rider's "highlight usages in file") when it appears more than once.
+            {
+                const char* t = buf.data(); int len = (int)std::strlen(t);
+                int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
+                auto isW = [](char c2){ return std::isalnum((unsigned char)c2) || c2 == '_'; };
+                int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
+                int we = cp; while (we < len && isW(t[we])) ++we;
+                if (we - ws >= 2 && !std::isdigit((unsigned char)t[ws])) {
+                    std::string word(t + ws, t + we);
+                    std::size_t wl = word.size();
+                    auto matchAt = [&](int i){
+                        return (i == 0 || !isW(t[i - 1])) &&
+                               std::strncmp(t + i, word.c_str(), wl) == 0 && !isW(t[i + wl]);
+                    };
+                    int count = 0;
+                    for (int i = 0; t[i]; ++i) if (matchAt(i)) { ++count; if (count > 1) break; }
+                    if (count > 1) {
+                        int ln = 0, col = 0;
+                        for (int i = 0; t[i]; ) {
+                            if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
+                            if (matchAt(i)) {
+                                ImVec2 a(textX + col * chW, corg.y + ln * rowH);
+                                fdl->AddRect(a, ImVec2(a.x + wl * chW, a.y + rowH), IM_COL32(120, 150, 200, 110));
+                                i += (int)wl; col += (int)wl; continue;
+                            }
+                            ++i; ++col;
+                        }
+                    }
+                }
+            }
+            // Ctrl+hover over a symbol defined in this file: underline + hand cursor;
+            // click jumps to the definition (Rider's Ctrl+Click; F12 works too).
+            if (ImGui::GetIO().KeyCtrl && ImGui::IsMouseHoveringRect(teMin, teMax)) {
+                TextEditor::Coordinates mc = te.ScreenToCoords(ImGui::GetIO().MousePos);
+                const char* t = buf.data(); int len = (int)std::strlen(t);
+                int off = 0, ln = 0;
+                for (; t[off] && ln < mc.mLine; ++off) if (t[off] == '\n') ++ln;
+                int idx = off + mc.mColumn; if (idx > len) idx = len;
+                auto isW = [](char c2){ return std::isalnum((unsigned char)c2) || c2 == '_'; };
+                int ws = idx; while (ws > off && isW(t[ws - 1])) --ws;
+                int we = idx; while (we < len && t[we] != '\n' && isW(t[we])) ++we;
+                if (we > ws) {
+                    std::string word(t + ws, t + we);
+                    static std::uint64_t s_ccHash = 0;
+                    static std::vector<std::pair<int, std::string>> s_ccOutl;
+                    {
+                        std::uint64_t hh = 1469598103934665603ull;
+                        for (const char* pc = t; *pc; ++pc) { hh ^= (unsigned char)*pc; hh *= 1099511628211ull; }
+                        if (hh != s_ccHash) { s_ccHash = hh; s_ccOutl = ScriptOutline(buf.data()); }
+                    }
+                    int defLine = 0;
+                    for (const auto& s2 : s_ccOutl) {
+                        std::string nm = s2.second.size() > 3 ? s2.second.substr(3) : s2.second;
+                        if (nm == word) { defLine = s2.first; break; }
+                    }
+                    if (defLine > 0 && defLine != mc.mLine + 1) {
+                        float ux0 = textX + (ws - off) * chW;
+                        float uy = corg.y + (mc.mLine + 1) * rowH - 1.0f;
+                        fdl->AddLine(ImVec2(ux0, uy), ImVec2(ux0 + (we - ws) * chW, uy),
+                                     IM_COL32(110, 168, 255, 255), 1.0f);
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) jumpTo(defLine);
+                    }
+                }
+            }
             // Inline diagnostics: the line's first problem, dimmed after the code.
             {
                 std::set<int> inlined;

@@ -1557,18 +1557,39 @@ int main(int argc, char** argv) {
                              a.b + (b.b - a.b) * t, 1.0f};
             };
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            float hp = rs.skyHorizonPos < 0.05f ? 0.05f : (rs.skyHorizonPos > 0.95f ? 0.95f : rs.skyHorizonPos);
             const int strips = h < 128 ? h : 128;     // smooth enough, cheap
             for (int s = 0; s < strips; ++s) {
                 float t = (float)s / (float)(strips - 1);   // 0 (top) .. 1 (bottom)
-                // Two-stop gradient: top->horizon for the upper half, horizon->bottom below.
-                Color c = (t < 0.5f) ? lerp(rs.skyTop, rs.skyHorizon, t * 2.0f)
-                                     : lerp(rs.skyHorizon, rs.skyBottom, (t - 0.5f) * 2.0f);
+                // Two-stop gradient with the horizon band at `hp` (top->horizon above
+                // it, horizon->bottom below it).
+                Color c = (t < hp) ? lerp(rs.skyTop, rs.skyHorizon, t / hp)
+                                   : lerp(rs.skyHorizon, rs.skyBottom, (t - hp) / (1.0f - hp));
                 SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
                                        (Uint8)(c.b * 255), 255);
                 int y0 = (int)((float)s / strips * h);
                 int y1 = (int)((float)(s + 1) / strips * h);
                 SDL_Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
                 SDL_RenderFillRect(renderer, &rrect);
+            }
+            // Optional sun disc: a filled circle + soft glow at a screen-space position.
+            if (rs.skySun) {
+                int cx = (int)(rs.skySunX * w), cy = (int)(rs.skySunY * h);
+                int rad = (int)((rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * h);
+                const Color& sk = rs.skySunColor;
+                Uint8 sr = (Uint8)(sk.r * 255), sg = (Uint8)(sk.g * 255), sb = (Uint8)(sk.b * 255);
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                auto fillDisc = [&](int r, Uint8 a) {
+                    SDL_SetRenderDrawColor(renderer, sr, sg, sb, a);
+                    for (int dy = -r; dy <= r; ++dy) {
+                        int dx = (int)std::sqrt((double)(r * r - dy * dy));
+                        SDL_Rect row{cx - dx, cy + dy, 2 * dx + 1, 1};
+                        SDL_RenderFillRect(renderer, &row);
+                    }
+                };
+                for (int g = 4; g >= 1; --g) fillDisc((int)(rad * (1.0f + g * 0.7f)), (Uint8)(22 - g * 3));
+                fillDisc(rad, 255);
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             }
         }
 

@@ -2600,6 +2600,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Disc"))      { ed.CreateMesh("Disc");      ConsoleLog("Created Disc"); created = true; }
             if (ImGui::MenuItem("Tetrahedron")){ ed.CreateMesh("Tetrahedron");ConsoleLog("Created Tetrahedron"); created = true; }
             if (ImGui::MenuItem("Bipyramid")) { ed.CreateMesh("Bipyramid"); ConsoleLog("Created Bipyramid"); created = true; }
+            if (ImGui::MenuItem("Rounded Box")){ ed.CreateMesh("RoundedBox");ConsoleLog("Created Rounded Box"); created = true; }
             if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
             ImGui::Separator();
             if (ImGui::MenuItem("Tree"))      { ed.CreateMesh("Tree");      ConsoleLog("Created Tree"); created = true; }
@@ -4344,6 +4345,16 @@ void DrawStats(EditorState& ed) {
         if (ImGui::ColorEdit3("Horizon", hz)) { rs.skyHorizon = {hz[0], hz[1], hz[2], 1}; ed.dirty = true; }
         float bo[3] = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
         if (ImGui::ColorEdit3("Sky Bottom", bo)) { rs.skyBottom = {bo[0], bo[1], bo[2], 1}; ed.dirty = true; }
+        if (ImGui::SliderFloat("Horizon", &rs.skyHorizonPos, 0.05f, 0.95f, "%.2f")) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where the horizon band sits (lower = high horizon / more sky).");
+        if (ImGui::Checkbox("Sun", &rs.skySun)) ed.dirty = true;
+        if (rs.skySun) {
+            if (ImGui::SliderFloat2("Sun Pos", &rs.skySunX, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sun position across the sky (x, y as a fraction of the view).");
+            if (ImGui::SliderFloat("Sun Size", &rs.skySunSize, 0.01f, 0.25f, "%.3f")) ed.dirty = true;
+            float sun[3] = {rs.skySunColor.r, rs.skySunColor.g, rs.skySunColor.b};
+            if (ImGui::ColorEdit3("Sun Color", sun)) { rs.skySunColor = {sun[0], sun[1], sun[2], 1}; ed.dirty = true; }
+        }
         if (ImGui::SliderFloat("Ambient", &rs.ambient, 0.0f, 1.0f)) ed.dirty = true;
         ImGui::Spacing();
         if (ImGui::Checkbox("Distance Fog", &rs.fog)) ed.dirty = true;
@@ -12295,8 +12306,8 @@ void DrawModeling(EditorState& ed) {
     SectionHeader("Create");
     const char* prims[] = {"Cube", "Sphere", "Cylinder", "Cone", "Pyramid",
                            "Wedge", "Quad", "Plane", "Tube", "Torus", "Capsule",
-                           "Icosphere", "Grid", "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc", "Tetrahedron", "Bipyramid"};
-    const int kPrims = 21;
+                           "Icosphere", "Grid", "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc", "Tetrahedron", "Bipyramid", "RoundedBox"};
+    const int kPrims = 22;
     int perRow = 0;
     for (int i = 0; i < kPrims; ++i) {
         if (perRow++ % 4 != 0) ImGui::SameLine();
@@ -12339,8 +12350,8 @@ void DrawModeling(EditorState& ed) {
         // Swap the primitive shape.
         const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
                                 "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid",
-                                "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc", "Tetrahedron", "Bipyramid"};
-        const int kShapeCount = 21;
+                                "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc", "Tetrahedron", "Bipyramid", "RoundedBox"};
+        const int kShapeCount = 22;
         int shapeIdx = -1;
         for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
         if (ImGui::Combo("Primitive##model", &shapeIdx, shapes, kShapeCount)) {
@@ -13178,8 +13189,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SliderFloat("Shininess##mesh", &mr->shininess, 1.0f, 128.0f)) ed.dirty = true;
             const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
                                     "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid",
-                                    "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc", "Tetrahedron", "Bipyramid"};
-            const int kShapeCount = 21;
+                                    "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc", "Tetrahedron", "Bipyramid", "RoundedBox"};
+            const int kShapeCount = 22;
             int shapeIdx = -1;
             for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
             if (ImGui::Combo("Primitive", &shapeIdx, shapes, kShapeCount)) {
@@ -21147,9 +21158,21 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImU32 top = ToColor(rs.skyTop);
         ImU32 mid = ToColor(rs.skyHorizon);
         ImU32 bot = ToColor(rs.skyBottom);
-        ImVec2 cmid(canvasEnd.x, (canvasPos.y + canvasEnd.y) * 0.5f);
+        float hp = rs.skyHorizonPos < 0.05f ? 0.05f : (rs.skyHorizonPos > 0.95f ? 0.95f : rs.skyHorizonPos);
+        float midY = canvasPos.y + (canvasEnd.y - canvasPos.y) * hp;   // horizon band position
+        ImVec2 cmid(canvasEnd.x, midY);
         dl->AddRectFilledMultiColor(canvasPos, cmid, top, top, mid, mid);
         dl->AddRectFilledMultiColor(ImVec2(canvasPos.x, cmid.y), canvasEnd, mid, mid, bot, bot);
+        if (rs.skySun) {
+            float H = canvasEnd.y - canvasPos.y, W = canvasEnd.x - canvasPos.x;
+            ImVec2 sc(canvasPos.x + rs.skySunX * W, canvasPos.y + rs.skySunY * H);
+            float r = (rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * H;
+            const Color& sk = rs.skySunColor;
+            int sr = (int)(sk.r * 255), sg = (int)(sk.g * 255), sb = (int)(sk.b * 255);
+            for (int g = 4; g >= 1; --g)   // soft glow halo (fading outer rings)
+                dl->AddCircleFilled(sc, r * (1.0f + g * 0.7f), IM_COL32(sr, sg, sb, 22 - g * 3), 40);
+            dl->AddCircleFilled(sc, r, IM_COL32(sr, sg, sb, 255), 40);
+        }
     }
 
     // Ground grid on the XZ plane (Scene view only; the Game view is clean).

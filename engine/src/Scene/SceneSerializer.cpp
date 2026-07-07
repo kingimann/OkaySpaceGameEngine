@@ -1625,6 +1625,11 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             << rs.fogStart << " " << rs.fogEnd << "\n";
         if (rs.vignette > 0.0f) out << "vignette " << rs.vignette << "\n";
         if (rs.tonemap) out << "tonemap 1\n";
+        // Skybox extras (horizon position + optional sun disc). Written when non-default.
+        if (rs.skyHorizonPos != 0.5f || rs.skySun)
+            out << "sky " << rs.skyHorizonPos << " " << (rs.skySun ? 1 : 0) << " "
+                << rs.skySunX << " " << rs.skySunY << " " << rs.skySunSize << " "
+                << rs.skySunColor.r << " " << rs.skySunColor.g << " " << rs.skySunColor.b << "\n";
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
@@ -1703,6 +1708,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
         } else if (token == "tonemap") {
             int v = 0; in >> v;
             if (clear) scene.renderSettings.tonemap = (v != 0);
+        } else if (token == "sky") {
+            float hp = 0.5f; int sun = 0; float sx = 0.5f, sy = 0.3f, ss = 0.05f;
+            Color sc = Color::FromBytes(255, 245, 214);
+            in >> hp >> sun >> sx >> sy >> ss >> sc.r >> sc.g >> sc.b;
+            if (clear) {
+                auto& rs = scene.renderSettings;
+                rs.skyHorizonPos = hp; rs.skySun = (sun != 0);
+                rs.skySunX = sx; rs.skySunY = sy; rs.skySunSize = ss; rs.skySunColor = sc;
+            }
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;

@@ -133,6 +133,19 @@ public:
         // light's intensity is pushed high). Off by default so existing scenes look
         // identical; turn on for a filmic response and headroom on bright lights.
         bool  tonemap    = false;
+        // ---- Skybox customization ----
+        // Where the horizon band sits in the sky gradient, as a fraction of the view
+        // height (0 = top, 0.5 = middle, 1 = bottom). Raise it for more sky, lower it
+        // for a high horizon.
+        float skyHorizonPos = 0.5f;
+        // An optional sun disc painted into the sky (screen-space): position (0..1 of
+        // the view), size (radius as a fraction of view height), color, and a soft
+        // glow halo. Cheap and backend-independent, like the vignette.
+        bool  skySun      = false;
+        float skySunX     = 0.5f;
+        float skySunY     = 0.30f;
+        float skySunSize  = 0.05f;
+        Color skySunColor = Color::FromBytes(255, 245, 214);
     };
     RenderSettings renderSettings;
 

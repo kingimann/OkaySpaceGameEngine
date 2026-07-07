@@ -202,6 +202,37 @@ struct Mesh {
         return m;
     }
 
+    /// A rounded box (superellipsoid): flat faces with softly rounded edges and
+    /// corners — the go-to shape for UI-ish props, buttons, dice, soft crates.
+    /// `roundness` 0.05 = nearly a sharp cube .. 1.0 = a full sphere.
+    static Mesh RoundedBox(float size = 1.0f, float roundness = 0.3f, int rings = 14, int sectors = 20) {
+        Mesh m; m.name = "RoundedBox";
+        const float kPi = 3.14159265358979323846f;
+        float e = roundness < 0.05f ? 0.05f : (roundness > 1.0f ? 1.0f : roundness);
+        float h = size * 0.5f;
+        auto sp = [](float v, float p) { float s = v < 0 ? -1.0f : 1.0f; return s * std::pow(std::fabs(v), p); };
+        for (int r = 0; r <= rings; ++r) {
+            float phi = kPi * (float)r / rings;                 // 0..pi (top to bottom)
+            float cphi = std::cos(phi), sphi = std::sin(phi);
+            for (int s = 0; s <= sectors; ++s) {
+                float th = 2.0f * kPi * (float)s / sectors;
+                float cth = std::cos(th), sth = std::sin(th);
+                m.vertices.push_back({h * sp(sphi, e) * sp(cth, e),
+                                      h * sp(cphi, e),
+                                      h * sp(sphi, e) * sp(sth, e)});
+                m.uvs.push_back({(float)s / sectors, 1.0f - (float)r / rings});
+            }
+        }
+        int stride = sectors + 1;
+        for (int r = 0; r < rings; ++r)
+            for (int s = 0; s < sectors; ++s) {
+                int a = r * stride + s, b = a + stride;
+                m.triangles.insert(m.triangles.end(), {a, a + 1, b, a + 1, b + 1, b});
+            }
+        m.ComputeSmoothNormals();
+        return m;
+    }
+
     /// A capped cylinder along Y.
     static Mesh Cylinder(float radius = 0.5f, float height = 1.0f, int sectors = 12) {
         Mesh m;
@@ -571,6 +602,7 @@ struct Mesh {
         if (n == "Disc")      return Disc();
         if (n == "Tetrahedron") return Tetrahedron();
         if (n == "Bipyramid") return Bipyramid();
+        if (n == "RoundedBox") return RoundedBox();
         return Cube();
     }
 

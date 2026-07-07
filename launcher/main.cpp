@@ -12,6 +12,7 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — shared with the editor
 
 #include <algorithm>
 #include <cctype>
@@ -627,6 +628,15 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr; // the launcher has a fixed layout
     ImGui::GetIO().ConfigDebugHighlightIdConflicts = false; // hide dev-only ID warnings
+    // Same embedded Roboto Medium font as the editor, so the launcher and editor
+    // read as one product (crisp, modern text instead of the tiny bitmap default).
+    {
+        ImFontConfig fc;
+        fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
+        if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(
+                RobotoMedium_compressed_data_base85, 17.0f, &fc))
+            ImGui::GetIO().Fonts->AddFontDefault();
+    }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);

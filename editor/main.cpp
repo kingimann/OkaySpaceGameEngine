@@ -2988,9 +2988,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
                   mode, ImGui::GetIO().Framerate);
     ImVec4 dotCol = !ed.isPlaying() ? ImVec4(0.55f, 0.57f, 0.60f, 1.0f)
                   : (g_paused ? ImVec4(0.95f, 0.70f, 0.20f, 1.0f) : ImVec4(0.35f, 0.85f, 0.42f, 1.0f));
-    float dotW = ImGui::CalcTextSize("\xE2\x97\x8F").x + 6.0f;
+    // Draw the state dot as a real filled circle (the UI font has no ● glyph, which
+    // would otherwise render as tofu).
+    float dotR = ImGui::GetFontSize() * 0.28f;
+    float dotW = dotR * 2.0f + 8.0f;
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - dotW - 16);
-    ImGui::TextColored(dotCol, "\xE2\x97\x8F");         // ● live state indicator
+    ImVec2 dp = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddCircleFilled(
+        ImVec2(dp.x + dotR + 1.0f, dp.y + ImGui::GetTextLineHeight() * 0.5f),
+        dotR, ImGui::GetColorU32(dotCol));
+    ImGui::Dummy(ImVec2(dotW - 6.0f, ImGui::GetTextLineHeight()));
     ImGui::SameLine(0, 6);
     ImGui::TextColored(ed.isPlaying() ? ImVec4(0.75f, 0.9f, 0.78f, 1) : ImVec4(0.70f, 0.70f, 0.70f, 1),
                        "%s", status);
@@ -6139,12 +6146,15 @@ static const std::vector<std::string>& ScriptMembers(const std::string& receiver
 
 static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
                               float charW, float lineH) {
-    const ImU32 cDefault = IM_COL32(212, 212, 212, 255);
-    const ImU32 cKeyword = IM_COL32( 86, 156, 214, 255);  // blue
-    const ImU32 cType    = IM_COL32( 78, 201, 176, 255);  // teal
-    const ImU32 cString  = IM_COL32(206, 145, 120, 255);  // orange
-    const ImU32 cComment = IM_COL32(106, 153,  85, 255);  // green
-    const ImU32 cNumber  = IM_COL32(181, 206, 168, 255);  // light green
+    // Rider / IntelliJ "Darcula" palette: orange keywords, blue numbers, green
+    // strings, gray comments, yellow function calls, teal types, soft-gray default.
+    const ImU32 cDefault = IM_COL32(169, 183, 198, 255);  // default identifier
+    const ImU32 cKeyword = IM_COL32(204, 120,  50, 255);  // orange
+    const ImU32 cType    = IM_COL32(102, 197, 204, 255);  // teal
+    const ImU32 cFunc    = IM_COL32(255, 198, 109, 255);  // yellow (function calls)
+    const ImU32 cString  = IM_COL32(106, 135,  89, 255);  // green
+    const ImU32 cComment = IM_COL32(128, 138, 128, 255);  // gray-green
+    const ImU32 cNumber  = IM_COL32(104, 151, 187, 255);  // blue
     static const char* kw[] = {
         "if","else","for","while","do","return","break","continue","switch","case",
         "var","let","const","function","func","def","class","struct","new","public",
@@ -6186,11 +6196,14 @@ static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
             std::string s(text + i, text + j);
             dl->AddText(ImVec2(x, y), cNumber, s.c_str()); x += (j - i) * charW; i = j; continue;
         }
-        if (isWord(c)) {                                               // identifier / keyword
+        if (isWord(c)) {                                               // identifier / keyword / call
             int j = i; while (text[j] && isWord(text[j])) ++j;
             std::string s(text + i, text + j);
+            int k = j; while (text[k] == ' ' || text[k] == '\t') ++k;  // a call is  name(
+            bool isCall = (text[k] == '(');
             ImU32 col = inList(s, kw, (int)(sizeof(kw) / sizeof(*kw))) ? cKeyword
-                      : inList(s, types, (int)(sizeof(types) / sizeof(*types))) ? cType : cDefault;
+                      : inList(s, types, (int)(sizeof(types) / sizeof(*types))) ? cType
+                      : isCall ? cFunc : cDefault;
             dl->AddText(ImVec2(x, y), col, s.c_str()); x += (j - i) * charW; i = j; continue;
         }
         if (c == '(' || c == '[' || c == '{') {                        // opening bracket
@@ -6559,7 +6572,7 @@ void DrawScriptEditor(EditorState& ed) {
         // click away instead of always crowding the row.
         static bool s_moreTools = false;
         ImGui::SameLine();
-        if (ImGui::SmallButton(s_moreTools ? "Less \xe2\x97\x82" : "More \xe2\x96\xbe")) s_moreTools = !s_moreTools;
+        if (ImGui::SmallButton(s_moreTools ? "Less \xc2\xab" : "More \xc2\xbb")) s_moreTools = !s_moreTools;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reload, Open in IDE, zoom, minimap, outline, comment, go-to-line, ...");
         if (s_moreTools) {
             ImGui::SameLine();
@@ -10701,7 +10714,7 @@ static void DrawFlowGraph(EditorState& ed) {
         if (ImGui::BeginCombo("##flowpick", nameOf(pick).c_str())) {
             for (int i = 0; i < (int)als.size(); ++i) {
                 std::string nm = nameOf(i);
-                if (als[i]->IsRunning()) nm += "  ●";
+                if (als[i]->IsRunning()) nm += "  \xc2\xb7";   // middot (Latin-1; ● is tofu in the UI font)
                 if (ImGui::Selectable(nm.c_str(), i == pick)) { pick = i; g_flowSelAl = als[i]; g_flowSelKind = 0; }
             }
             ImGui::EndCombo();
@@ -10885,8 +10898,8 @@ static void DrawFlowGraph(EditorState& ed) {
     ImGui::SameLine(); ImGui::Text("%d%%", (int)(zoom * 100.0f + 0.5f));
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom — scroll to change.");
     barSep();
-    if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "● running");
-    else                 ImGui::TextDisabled("○ idle");
+    if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "\xc2\xb7 running");
+    else                 ImGui::TextDisabled("idle");
     barSep();
     bool& paused = ActionList::DebugPaused();
     if (ImGui::Checkbox("Pause", &paused)) { if (paused) ActionList::StepBudget() = 0; }
@@ -18554,7 +18567,7 @@ void DrawInspector(EditorState& ed) {
     float acW = ImGui::GetContentRegionAvail().x;
     float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
     if (acPad > 0.0f) ImGui::Indent(acPad);
-    if (ImGui::Button("＋  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) { acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent"); }
+    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) { acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent"); }
     if (acPad > 0.0f) ImGui::Unindent(acPad);
     ImGui::PopStyleColor(4);
     if (ImGui::BeginPopup("AddComponent")) {

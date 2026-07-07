@@ -47,7 +47,13 @@
 // and calls passing more arguments than the signature allows. Conservative by
 // design: anything ambiguous is NOT flagged.
 // ----------------------------------------------------------------------------
-struct ScriptLint { int line; std::string msg; };
+struct ScriptLint {
+    int line;
+    std::string msg;
+    // Machine-applicable quick-fix (empty = none): replace whole-word `bad` with
+    // `fix` on `line` — powers the editor's click-to-fix gutter action.
+    std::string bad, fix;
+};
 
 static std::vector<ScriptLint> AnalyzeScriptWarnings(
         const std::string& src,
@@ -186,7 +192,7 @@ static std::vector<ScriptLint> AnalyzeScriptWarnings(
             { int d = editDist(call.name, cand); if (d < bestD) { bestD = d; best = cand; } }
         std::string msg = "Unknown function '" + call.name + "'";
         if (!best.empty()) msg += " - did you mean '" + best + "'?";
-        out.push_back({call.line, msg});
+        out.push_back({call.line, msg, best.empty() ? std::string() : call.name, best});
     }
     return out;
 }
@@ -283,6 +289,10 @@ static int RunSelfTest() {
         // C#-style attributes are accepted-and-ignored by the VM, not calls.
         check(AnalyzeScriptWarnings("[Header(\"Stats\")]\npublic float speed = 5;\n", known, maxA).empty(),
               "lint: attributes skipped");
+        // "Did you mean" warnings carry a machine-applicable quick-fix.
+        auto w6 = AnalyzeScriptWarnings("spinn(90)\n", known, maxA);
+        check(w6.size() == 1 && w6[0].bad == "spinn" && w6[0].fix == "spin",
+              "lint: quick-fix payload");
     }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
@@ -5594,6 +5604,10 @@ struct ScriptCaret {
 // typed word for the picked candidate).
 static std::string g_acComplete;
 static int g_acReplaceLen = 0;
+// Accepted completion is a known function: also insert "()" and land the caret
+// inside (after, when the builtin takes no arguments) — Rider's completion behavior.
+static bool g_acCallable = false;
+static bool g_acZeroArg = false;
 // Autocomplete popup state: number of items shown this frame (0 = no popup) and the
 // keyboard-highlighted item. Up/Down move the highlight (handled in the callback so
 // the editor's caret doesn't move lines while the popup is open).
@@ -5654,7 +5668,14 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             if (g_acReplaceLen > 0 && d->CursorPos >= g_acReplaceLen)   // fuzzy: swap typed word
                 d->DeleteChars(d->CursorPos - g_acReplaceLen, g_acReplaceLen);
             d->InsertChars(d->CursorPos, g_acComplete.c_str());
-            g_acComplete.clear(); g_acReplaceLen = 0;
+            // Completing a function also types its "()" — caret inside, ready for
+            // arguments (after, when it takes none). Skip if a '(' already follows.
+            if (g_acCallable && (d->CursorPos >= d->BufTextLen || d->Buf[d->CursorPos] != '(')) {
+                d->InsertChars(d->CursorPos, "()");
+                if (!g_acZeroArg) d->CursorPos -= 1;
+                d->SelectionStart = d->SelectionEnd = d->CursorPos;
+            }
+            g_acComplete.clear(); g_acReplaceLen = 0; g_acCallable = false;
         } else {
             d->InsertChars(d->CursorPos, "    ");
         }
@@ -5679,7 +5700,12 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             if (g_acReplaceLen > 0 && d->CursorPos >= g_acReplaceLen)   // fuzzy: swap typed word
                 d->DeleteChars(d->CursorPos - g_acReplaceLen, g_acReplaceLen);
             d->InsertChars(d->CursorPos, g_acComplete.c_str());
-            g_acComplete.clear(); g_acReplaceLen = 0; g_acCount = 0;
+            if (g_acCallable && (d->CursorPos >= d->BufTextLen || d->Buf[d->CursorPos] != '(')) {
+                d->InsertChars(d->CursorPos, "()");
+                if (!g_acZeroArg) d->CursorPos -= 1;
+                d->SelectionStart = d->SelectionEnd = d->CursorPos;
+            }
+            g_acComplete.clear(); g_acReplaceLen = 0; g_acCallable = false; g_acCount = 0;
         }
         // Esc dismisses the popup until the typed word changes.
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_acDismiss = true;
@@ -5789,6 +5815,19 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             else { a = 0; b = d->BufTextLen; }           // already lines -> whole file
         }
         d->SelectionStart = a; d->SelectionEnd = b; d->CursorPos = b;
+    }
+    // Ctrl+Shift+J: join the caret's line with the next (Rider "Join Lines") —
+    // the newline and the next line's indentation collapse into one space.
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_J, false)) {
+        int ls, le; lineBounds(d->CursorPos, ls, le);
+        if (le < d->BufTextLen) {                       // there IS a next line
+            int j = le + 1;
+            while (j < d->BufTextLen && (d->Buf[j] == ' ' || d->Buf[j] == '\t')) ++j;
+            d->DeleteChars(le, j - le);
+            bool atEnd = le >= d->BufTextLen || d->Buf[le] == '\n';
+            if (!atEnd) d->InsertChars(le, " ");
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = le;
+        }
     }
     // Ctrl+Shift+K: delete the caret's whole line (Rider/VS Code "delete line").
     if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_K, false)) {
@@ -7483,15 +7522,92 @@ void DrawScriptEditor(EditorState& ed) {
         }
         gdl->AddLine(ImVec2(gTop.x + gutterW - 0.5f, gTop.y),
                      ImVec2(gTop.x + gutterW - 0.5f, gTop.y + gutterH), IM_COL32(58, 60, 70, 255));
+        // Changed-line markers (the IDE gutter diff): a blue bar beside every line
+        // that differs from the last SAVED version, a red wedge where lines were
+        // deleted. Cheap common-prefix/suffix diff over per-line hashes, cached
+        // against the buffer content, cleared automatically on save.
+        if (ScriptTabDirty(sc)) {
+            static const void* s_dfKey = nullptr; static std::uint64_t s_dfHash = 0;
+            static int s_dfA = 1, s_dfB = 0; static bool s_dfDel = false;
+            std::uint64_t bh = 1469598103934665603ull;
+            for (const char* pc = buf.data(); *pc; ++pc) { bh ^= (unsigned char)*pc; bh *= 1099511628211ull; }
+            if (s_dfKey != (const void*)sc || s_dfHash != bh) {
+                s_dfKey = sc; s_dfHash = bh;
+                auto lineHashes = [](const char* s) {
+                    std::vector<std::uint64_t> hs; std::uint64_t h = 1469598103934665603ull;
+                    for (;; ++s) {
+                        if (*s == '\n' || *s == '\0') {
+                            hs.push_back(h); h = 1469598103934665603ull;
+                            if (*s == '\0') break;
+                        } else { h ^= (unsigned char)*s; h *= 1099511628211ull; }
+                    }
+                    return hs;
+                };
+                std::vector<std::uint64_t> cur = lineHashes(buf.data());
+                std::vector<std::uint64_t> base = lineHashes(g_scriptSaved[sc].c_str());
+                std::size_t pre = 0;
+                while (pre < cur.size() && pre < base.size() && cur[pre] == base[pre]) ++pre;
+                std::size_t suf = 0;
+                while (suf < cur.size() - pre && suf < base.size() - pre &&
+                       cur[cur.size() - 1 - suf] == base[base.size() - 1 - suf]) ++suf;
+                s_dfA = (int)pre + 1;
+                s_dfB = (int)(cur.size() - suf);
+                s_dfDel = s_dfB < s_dfA && base.size() > cur.size();
+            }
+            if (s_dfB >= s_dfA) {
+                float y0 = gTop.y + padY + (s_dfA - 1) * lineH;
+                float y1 = gTop.y + padY + s_dfB * lineH;
+                gdl->AddRectFilled(ImVec2(gTop.x + 0.5f, y0), ImVec2(gTop.x + 2.5f, y1),
+                                   IM_COL32(90, 150, 220, 220));
+            } else if (s_dfDel) {
+                float y0 = gTop.y + padY + (s_dfA - 1) * lineH;
+                gdl->AddTriangleFilled(ImVec2(gTop.x + 0.5f, y0 - 3.0f), ImVec2(gTop.x + 5.5f, y0),
+                                       ImVec2(gTop.x + 0.5f, y0 + 3.0f), IM_COL32(220, 120, 110, 230));
+            }
+        }
         {   // Problem dots in the gutter (Rider): red = error line, amber = warning.
+            // A warning that carries a quick-fix ("did you mean 'spin'?") is clickable:
+            // hovering brightens it and shows the fix, clicking applies it.
             float pr = lineH * 0.14f; if (pr < 2.0f) pr = 2.0f; if (pr > 3.5f) pr = 3.5f;
-            auto dot = [&](int probLine, ImU32 col) {
-                if (probLine <= 0 || probLine > lines) return;
-                gdl->AddCircleFilled(ImVec2(gTop.x + pr + 2.0f,
-                                            gTop.y + padY + (probLine - 0.5f) * lineH), pr, col);
+            auto dotCenter = [&](int probLine) {
+                return ImVec2(gTop.x + pr + 2.0f, gTop.y + padY + (probLine - 0.5f) * lineH);
             };
-            for (const auto& w : s_warns) dot(w.line, IM_COL32(230, 190, 70, 255));
-            for (const auto& d : s_diags) dot(d.line, IM_COL32(240, 80, 80, 255));   // errors on top
+            for (const auto& w : s_warns) {
+                if (w.line <= 0 || w.line > lines) continue;
+                ImVec2 cpos = dotCenter(w.line);
+                bool fixable = !w.fix.empty() && !w.bad.empty();
+                bool hot = fixable && ImGui::IsMouseHoveringRect(
+                               ImVec2(cpos.x - pr - 2, cpos.y - pr - 2),
+                               ImVec2(cpos.x + pr + 2, cpos.y + pr + 2));
+                gdl->AddCircleFilled(cpos, hot ? pr + 1.0f : pr,
+                                     hot ? IM_COL32(255, 220, 110, 255) : IM_COL32(230, 190, 70, 255));
+                if (hot) {
+                    ImGui::SetTooltip("Quick-fix: replace '%s' with '%s'", w.bad.c_str(), w.fix.c_str());
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        // Whole-word replace of `bad` with `fix`, on that line only.
+                        std::string text = buf.data();
+                        std::size_t ls2 = 0; int ln2 = 1;
+                        while (ln2 < w.line && ls2 < text.size()) { if (text[ls2] == '\n') ++ln2; ++ls2; }
+                        std::size_t le2 = text.find('\n', ls2); if (le2 == std::string::npos) le2 = text.size();
+                        auto isWc = [](char ch){ return std::isalnum((unsigned char)ch) || ch == '_'; };
+                        for (std::size_t pp = ls2; pp + w.bad.size() <= le2; ++pp) {
+                            if (text.compare(pp, w.bad.size(), w.bad) != 0) continue;
+                            if (pp > ls2 && isWc(text[pp - 1])) continue;
+                            std::size_t pe = pp + w.bad.size();
+                            if (pe < le2 && isWc(text[pe])) continue;
+                            text.replace(pp, w.bad.size(), w.fix);
+                            caret.replaceAll = text; ed.dirty = true;
+                            ConsoleLog("Quick-fix: '" + w.bad + "' -> '" + w.fix + "'");
+                            break;
+                        }
+                    }
+                }
+            }
+            for (const auto& d : s_diags) {   // errors on top
+                if (d.line <= 0 || d.line > lines) continue;
+                gdl->AddCircleFilled(dotCenter(d.line), pr, IM_COL32(240, 80, 80, 255));
+            }
         }
         ImGui::BeginGroup();
         ImGui::Dummy(ImVec2(0, padY));
@@ -7772,6 +7888,19 @@ void DrawScriptEditor(EditorState& ed) {
             for (const auto& d : s_diags) { squiggle(d.line, IM_COL32(240, 80, 80, 230)); errLines.insert(d.line); }
             for (const auto& w : s_warns)
                 if (!errLines.count(w.line)) squiggle(w.line, IM_COL32(230, 190, 70, 210));
+            // Inline message after the line's code (Rider shows the inspection right in
+            // the editor): the line's FIRST problem, dimmed, so the cause is readable
+            // without hovering. Kept short so it never dominates the view.
+            std::set<int> inlined;
+            auto inlineMsg = [&](int probLine, const std::string& message, ImU32 col) {
+                if (probLine <= 0 || probLine > (int)lineLen.size()) return;
+                if (!inlined.insert(probLine).second) return;   // one message per line
+                std::string txt = "  <  " + (message.size() > 90 ? message.substr(0, 87) + "..." : message);
+                float x = origin.x + (lineLen[probLine - 1] + 2) * charW;
+                edl->AddText(ImVec2(x, origin.y + (probLine - 1) * lineH), col, txt.c_str());
+            };
+            for (const auto& d : s_diags) inlineMsg(d.line, d.message, IM_COL32(240, 110, 110, 150));
+            for (const auto& w : s_warns) inlineMsg(w.line, w.msg, IM_COL32(230, 195, 90, 140));
         }
 
         // Bracket matching: when the caret sits next to a ()[]{} bracket, box it
@@ -7799,6 +7928,55 @@ void DrawScriptEditor(EditorState& ed) {
                 };
                 box(bpos);
                 if (other >= 0) box(other);
+            }
+        }
+        // Sticky header (Rider): when the top of the view sits inside a function's
+        // body, pin that function's signature line to the top edge; click it to jump
+        // back to the definition. Skipped at top-level (brace depth 0).
+        {
+            float sy = ImGui::GetScrollY();
+            int firstVis = (int)(sy / lineH) + 1;
+            if (firstVis > 1) {
+                static std::uint64_t s_stHash = 0;
+                static std::vector<std::pair<int, std::string>> s_stOutl;
+                {
+                    std::uint64_t hh = 1469598103934665603ull;
+                    for (const char* pc = buf.data(); *pc; ++pc) { hh ^= (unsigned char)*pc; hh *= 1099511628211ull; }
+                    if (hh != s_stHash) { s_stHash = hh; s_stOutl = ScriptOutline(buf.data()); }
+                }
+                int hdr = 0;
+                for (const auto& s : s_stOutl) { if (s.first < firstVis) hdr = s.first; else break; }
+                if (hdr > 0) {
+                    // Brace depth at the first visible line (raw count — comments and
+                    // strings with braces are rare enough): 0 means we're between
+                    // functions, so nothing should pin.
+                    const char* t = buf.data();
+                    int depth = 0, ln2 = 1, i2 = 0, hs = -1, he = -1;
+                    for (; t[i2] && ln2 < firstVis; ++i2) {
+                        if (t[i2] == '\n') { ++ln2; if (ln2 == hdr) hs = i2 + 1; }
+                        else if (t[i2] == '{') ++depth;
+                        else if (t[i2] == '}') --depth;
+                    }
+                    if (hdr == 1) hs = 0;
+                    if (hs >= 0) { he = hs; while (t[he] && t[he] != '\n') ++he; }
+                    if (depth > 0 && hs >= 0) {
+                        int hb = hs; while (hb < he && (t[hb] == ' ' || t[hb] == '\t')) ++hb;
+                        std::string head(t + hb, t + he);
+                        if (head.size() > 120) head = head.substr(0, 117) + "...";
+                        ImVec2 wp = ImGui::GetWindowPos();
+                        float ww = ImGui::GetWindowSize().x;
+                        float hh2 = lineH + 4.0f;
+                        ImDrawList* sdl = ImGui::GetWindowDrawList();
+                        sdl->AddRectFilled(ImVec2(wp.x, wp.y), ImVec2(wp.x + ww, wp.y + hh2), IM_COL32(43, 45, 52, 245));
+                        sdl->AddLine(ImVec2(wp.x, wp.y + hh2), ImVec2(wp.x + ww, wp.y + hh2), IM_COL32(70, 74, 86, 255));
+                        sdl->AddText(ImVec2(wp.x + gutterW + charW, wp.y + 2.0f),
+                                     IM_COL32(255, 198, 109, 235), head.c_str());
+                        if (ImGui::IsWindowHovered() &&
+                            ImGui::IsMouseHoveringRect(wp, ImVec2(wp.x + ww, wp.y + hh2)) &&
+                            ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                            s_scrollToLine = hdr;
+                    }
+                }
             }
         }
         // Caret screen position (for the autocomplete popup, drawn after the child).
@@ -7895,7 +8073,7 @@ void DrawScriptEditor(EditorState& ed) {
             }
             const std::vector<std::string>& members = ScriptMembers(receiver);
             bool memberMode = !receiver.empty() && !members.empty();
-            g_acComplete.clear(); g_acReplaceLen = 0; g_acCount = 0;   // no popup unless shown below
+            g_acComplete.clear(); g_acReplaceLen = 0; g_acCallable = false; g_acCount = 0;   // no popup unless shown below
             // Reset the highlight to the best match whenever the typed word changes.
             static std::string s_acKey;
             std::string acKey = receiver + "|" + prefix;
@@ -7937,6 +8115,10 @@ void DrawScriptEditor(EditorState& ed) {
                     auto setAccept = [&](const Hit& h) {
                         if (h.fuzzy) { g_acComplete = *h.w; g_acReplaceLen = (int)prefix.size(); }
                         else         { g_acComplete = h.w->substr(prefix.size()); g_acReplaceLen = 0; }
+                        // Known function (not member mode): accepting also types "()".
+                        const std::string* sg = memberMode ? nullptr : ScriptSignature(*h.w);
+                        g_acCallable = sg != nullptr;
+                        g_acZeroArg = sg && sg->find("()") != std::string::npos;
                     };
                     setAccept(hits[g_acIndex]);
                     ImGui::SetNextWindowPos(ImVec2(caretScreen.x, caretScreen.y + 2));

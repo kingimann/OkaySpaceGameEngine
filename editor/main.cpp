@@ -883,6 +883,7 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
 // A titled section rule with an accent tick to its left — a cleaner, more scannable
 // section break than a bare SeparatorText, keyed to the theme accent.
 static ImFont* g_headingFont = nullptr;   // larger Roboto face for section titles
+static ImFont* g_codeFont    = nullptr;   // monospace face for the Script Editor
 static void SectionHeader(const char* label) {
     ImGui::Spacing();
     if (g_headingFont) ImGui::PushFont(g_headingFont);   // larger heading face
@@ -1643,19 +1644,18 @@ const char* StarterScript(const std::string& lang) {
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    // OkayScript, written Unity-style but with OkaySpace's own base class,
-    // OkaySource — this is the syntax most users expect. The classic
-    // function start()/update(dt) style still works.
-    return "public class NewScript : OkaySource {\n"
-           "    float speed = 2f;\n\n"
-           "    void Start() {\n"
-           "        transform.position = new Vector3(0, 0, 0);\n"
-           "    }\n\n"
-           "    void Update() {\n"
-           "        transform.position.x += Input.GetAxis(\"Horizontal\") * speed * Time.deltaTime;\n"
-           "        transform.position.y += Input.GetAxis(\"Vertical\") * speed * Time.deltaTime;\n"
-           "    }\n"
-           "}\n";
+    // OkayScript is its own tiny language — not C#. No class, no types, no
+    // semicolons, no boilerplate: the whole file just runs every frame, and one
+    // powerful builtin per line IS a full behaviour. Write almost nothing, do a lot.
+    return "// The whole file runs every frame. Move with the arrow keys / WASD:\n"
+           "on_key_move(5)\n"
+           "\n"
+           "// More one-liners to try (each is a complete behaviour):\n"
+           "//   spin(90)                        turn forever\n"
+           "//   follow(\"Player\", 3)             chase an object\n"
+           "//   if (key_down(\"space\")) jump(8)  jump on Space\n"
+           "//\n"
+           "// Need setup or events? Add functions: start()  update(dt)  on_collision(other)\n";
 }
 
 // A filename stem -> a valid class identifier (letters/digits/_, no leading digit).
@@ -3528,7 +3528,8 @@ void DrawProject(EditorState& ed) {
     namespace fs = std::filesystem;
     static char dirBuf[512] = ".";
     static char search[96] = "";
-    static std::string selected;        // currently selected asset path
+    static std::string selected;        // currently selected asset path (the "active" one)
+    static std::set<std::string> s_multi;  // extra Ctrl-clicked items (multi-select)
     static std::string lastProject;     // re-home the browser when a project opens
     if (!ImGui::Begin("Project", &g_showProject)) { ImGui::End(); return; }
     // Roomier spacing for the Project panel (it was too compact).
@@ -3648,6 +3649,7 @@ void DrawProject(EditorState& ed) {
         std::strncpy(renameBuf, fn.c_str(), sizeof(renameBuf) - 1);
         renameBuf[sizeof(renameBuf) - 1] = '\0';
         selected = p.string();
+        s_multi.clear(); s_multi.insert(p.string());
     };
     // The asset-creation actions, shared by the toolbar's Create menu and the
     // empty-space right-click menu (Unity-style "Create ▸ ...").
@@ -3789,13 +3791,35 @@ void DrawProject(EditorState& ed) {
         ImGui::Separator();
     }
 
+    // Selection with modifier keys: Ctrl-click toggles an item in the multi-select
+    // set (keeping the others), a plain click selects just that one. `selected` is
+    // always the last-touched "active" item (drives the details strip).
+    auto pickItem = [&](const std::string& full) {
+        if (ImGui::GetIO().KeyCtrl) {
+            auto it = s_multi.find(full);
+            if (it != s_multi.end()) s_multi.erase(it); else s_multi.insert(full);
+        } else {
+            s_multi.clear(); s_multi.insert(full);   // plain click = a single-item selection
+        }
+        selected = full;                             // the "active" item (drives the details strip)
+    };
+    // Whether an item shows as selected (the active one, or in the multi-set).
+    auto isSelected = [&](const std::string& full) {
+        return selected == full || s_multi.count(full) != 0;
+    };
+
     // The per-item right-click menu, shared by the grid and list views. Returns
     // true if "Open" was chosen (so the caller runs the same open action).
     auto assetContext = [&](const std::string& full, const std::string& name,
                             const std::string& ext, bool isDir) -> bool {
         bool wantOpen = false;
         if (ImGui::BeginPopupContextItem("itemctx")) {
+            // Right-clicking an item outside the current multi-selection collapses to
+            // just it; right-clicking one that's already selected keeps the group.
+            if (!s_multi.count(full)) { s_multi.clear(); s_multi.insert(full); }
             selected = full;
+            if (s_multi.size() > 1)
+                ImGui::TextDisabled("%d selected", (int)s_multi.size());
             if (ImGui::MenuItem("Open")) wantOpen = true;
             // A direct "edit in Script Editor" for code files (in case a
             // double-click was missed).
@@ -3876,7 +3900,7 @@ void DrawProject(EditorState& ed) {
         if (!passFilter(ext, isDir)) continue;
         AssetKind k = KindOf(ext, isDir);
         std::string full = e.path().string();
-        const bool isSel = (selected == full);
+        const bool isSel = isSelected(full);
 
         ImGui::PushID(shown);
         bool hov = false, dbl = false;
@@ -3887,8 +3911,7 @@ void DrawProject(EditorState& ed) {
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
             SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
             if (thumb) {
-                if (ImGui::ImageButton("##thumb", (ImTextureID)thumb, ImVec2(cell, cell)))
-                    selected = full;
+                ImGui::ImageButton("##thumb", (ImTextureID)thumb, ImVec2(cell, cell));  // click handled below
             } else {
                 // Neutral cell background; the drawn icon carries the category color.
                 ImVec4 bg = isSel ? ImVec4(cv.x * 0.28f, cv.y * 0.28f, cv.z * 0.28f, 1.0f)
@@ -3907,7 +3930,7 @@ void DrawProject(EditorState& ed) {
                 ImGui::GetWindowDrawList()->AddRect(mn, mx, ImGui::GetColorU32(AccentCol(1.0f)),
                                                     4.0f, 0, 2.5f);
             }
-            if (ImGui::IsItemClicked()) selected = full;
+            if (ImGui::IsItemClicked()) pickItem(full);
             // Drag from the tile (which has an ID) so the payload attaches cleanly.
             if (ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload("ASSET_PATH", full.c_str(), full.size() + 1);
@@ -3930,7 +3953,7 @@ void DrawProject(EditorState& ed) {
             // ---- List row: icon chip + name, with right-aligned type & size ----
             float rowH = ImGui::GetTextLineHeight() + 6.0f;
             if (ImGui::Selectable("##row", isSel, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, rowH)))
-                selected = full;
+                pickItem(full);
             hov = ImGui::IsItemHovered();
             if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) dbl = true;
             if (ImGui::BeginDragDropSource()) {
@@ -4063,6 +4086,11 @@ void DrawProject(EditorState& ed) {
             for (const auto& up : ed.scene().Objects()) if (ObjectUsesAsset(up.get(), fn)) ++uses;
             if (uses) ImGui::TextDisabled("Used by %d object%s in scene", uses, uses == 1 ? "" : "s");
         }
+        if (s_multi.size() > 1) {
+            ImGui::PushStyleColor(ImGuiCol_Text, AccentCol(1.0f));
+            ImGui::Text("%d items selected  (Delete removes all)", (int)s_multi.size());
+            ImGui::PopStyleColor();
+        }
         if (ImGui::SmallButton("Show in Explorer"))
             extide::RevealInFiles((selDir ? sp : sp.parent_path()).string());
         ImGui::SameLine();
@@ -4122,19 +4150,33 @@ void DrawProject(EditorState& ed) {
     // never do it on a single menu click). Opened by the item menu / Delete key.
     if (!deleteTarget.empty() && !ImGui::IsPopupOpen("Delete Asset")) ImGui::OpenPopup("Delete Asset");
     if (ImGui::BeginPopupModal("Delete Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        // The delete set: the whole multi-selection if the target is part of it,
+        // otherwise just the target.
+        std::vector<std::string> victims;
+        if (s_multi.size() > 1 && s_multi.count(deleteTarget)) victims.assign(s_multi.begin(), s_multi.end());
+        else victims.push_back(deleteTarget);
         std::error_code de2; bool isDir = fs::is_directory(deleteTarget, de2);
-        ImGui::Text("Delete %s", fs::path(deleteTarget).filename().string().c_str());
-        ImGui::TextDisabled("%s", isDir ? "This folder and everything in it will be removed from disk."
-                                        : "This file will be removed from disk. This cannot be undone.");
+        if (victims.size() > 1)
+            ImGui::Text("Delete %d selected assets", (int)victims.size());
+        else
+            ImGui::Text("Delete %s", fs::path(deleteTarget).filename().string().c_str());
+        ImGui::TextDisabled("%s", victims.size() > 1
+                                      ? "These items will be removed from disk. This cannot be undone."
+                                      : (isDir ? "This folder and everything in it will be removed from disk."
+                                               : "This file will be removed from disk. This cannot be undone."));
         ImGui::Spacing();
         bool del = ImGui::Button("Delete", ImVec2(110, 0));
         ImGui::SameLine();
         bool cancel = ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape);
         if (del) {
-            std::error_code re; fs::remove_all(deleteTarget, re);
-            ConsoleLog((re ? "Delete failed: " : "Deleted ") + deleteTarget);
-            if (selected == deleteTarget) selected.clear();
-            if (s_assetClip == deleteTarget) s_assetClip.clear();
+            int okCount = 0;
+            for (const std::string& v : victims) {
+                std::error_code re; fs::remove_all(v, re);
+                if (re) ConsoleLog("Delete failed: " + v, 2);
+                else { ++okCount; if (s_assetClip == v) s_assetClip.clear(); }
+            }
+            ConsoleLog("Deleted " + std::to_string(okCount) + " item" + (okCount == 1 ? "" : "s"));
+            selected.clear(); s_multi.clear();
             deleteTarget.clear(); ImGui::CloseCurrentPopup();
         } else if (cancel) { deleteTarget.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
@@ -6407,84 +6449,93 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::IsKeyPressed(ImGuiKey_S, false))
             doSave();
         ImGui::SameLine();
-        if (ImGui::SmallButton("Reload")) {
-            if (!sc->Path().empty()) {
-                std::string src = extide::ReadFile(sc->Path());
-                SetCodeBuffer(sc, src);
-                std::string e; sc->LoadSource(src, &e);
-                g_scriptSaved[sc] = src;
-                std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(sc->Path(), mec);
-                s_extConflict[sc] = false;
-                ConsoleLog("Reloaded " + sc->Path());
-            } else ConsoleLog("No file to reload (Save first)");
-        }
-        ImGui::SameLine();
         if (ImGui::SmallButton("Format")) {          // re-indent by brace depth
             caret.replaceAll = FormatOkayScript(buf.data());   // applied via callback / leftover path
             ed.dirty = true; ConsoleLog("Formatted script");
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-indent the whole document (4 spaces / level)");
         ImGui::SameLine();
-        if (ImGui::SmallButton("Open in IDE")) {
-            std::string p = filePath();
-            extide::WriteFile(p, buf.data()); sc->SetPath(p);
-            std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(p, mec);
-            s_liveSync = true;                 // seamless: adopt saves from the outside editor
-            extide::OpenExternal(p);
-            ConsoleLog("Opened " + p + " in external IDE (live-sync on)");
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Edit this script in your own editor (VS Code / OS default).\n"
-                              "With Live Sync on, every save out there reloads here automatically.");
-        ImGui::SameLine();
-        ImGui::Checkbox("Live Sync", &s_liveSync);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Auto-reload this script whenever its file changes on disk\n"
-                              "(edits from an external editor). Off = reload manually.");
-        ImGui::SameLine();
-        // Float / Dock: pop the editor out into its own window, or dock it back as a
-        // tab in the main area. (True separate OS windows need the GL backend; this
-        // floats within the app, which the SDL_Renderer backend fully supports.)
-        if (ImGui::SmallButton(s_isDocked ? "Float" : "Dock"))
-            g_scriptDockReq = s_isDocked ? 1 : 2;
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(s_isDocked ? "Pop the Script Editor out into its own window"
-                                         : "Dock the Script Editor back as a tab");
-        ImGui::SameLine();
         if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Cmds")) s_palReq = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Command palette (Ctrl+Shift+P)");
-        ImGui::SameLine();
-        ImGui::Checkbox("Syntax", &s_highlight);
-        ImGui::SameLine();
-        static bool s_minimap = true;
-        ImGui::Checkbox("Map", &s_minimap);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the code minimap (click it to scroll)");
-        ImGui::SameLine();
-        static float s_zoom = 1.0f;
-        if (ImGui::SmallButton("A-")) s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("A+")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom code (Ctrl+scroll in the editor)");
 
+        // Statics that outlive the toolbar (used by the editor body further below).
+        static bool  s_minimap = true;
+        static float s_zoom = 1.0f;
+        static int   s_gotoLine = 1;
+        static int   s_scrollToLine = 0;
+
+        // Everything past Run / Save / Format / Docs / Templates lives behind ONE
+        // "More" toggle, so the toolbar stays clean and the power tools are a single
+        // click away instead of always crowding the row.
+        static bool s_moreTools = false;
         ImGui::SameLine();
-        if (ImGui::SmallButton("//")) caret.toggleComment = true;   // comment/uncomment line
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle // comment on the current line (Ctrl+/)");
-        ImGui::SameLine(); ImGui::TextDisabled("Go");
-        ImGui::SameLine(); ImGui::SetNextItemWidth(54);
-        static int s_gotoLine = 1;
-        static int s_scrollToLine = 0;
-        bool goEnter = ImGui::InputInt("##goto", &s_gotoLine, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("->") || goEnter) {
-            caret.gotoLine = s_gotoLine < 1 ? 1 : s_gotoLine;
-            s_scrollToLine = caret.gotoLine;
+        if (ImGui::SmallButton(s_moreTools ? "Less \xe2\x97\x82" : "More \xe2\x96\xbe")) s_moreTools = !s_moreTools;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reload, Open in IDE, zoom, minimap, outline, comment, go-to-line, ...");
+        if (s_moreTools) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reload")) {
+                if (!sc->Path().empty()) {
+                    std::string src = extide::ReadFile(sc->Path());
+                    SetCodeBuffer(sc, src);
+                    std::string e; sc->LoadSource(src, &e);
+                    g_scriptSaved[sc] = src;
+                    std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(sc->Path(), mec);
+                    s_extConflict[sc] = false;
+                    ConsoleLog("Reloaded " + sc->Path());
+                } else ConsoleLog("No file to reload (Save first)");
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Open in IDE")) {
+                std::string p = filePath();
+                extide::WriteFile(p, buf.data()); sc->SetPath(p);
+                std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(p, mec);
+                s_liveSync = true;                 // seamless: adopt saves from the outside editor
+                extide::OpenExternal(p);
+                ConsoleLog("Opened " + p + " in external IDE (live-sync on)");
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Edit this script in your own editor (VS Code / OS default).\n"
+                                  "With Live Sync on, every save out there reloads here automatically.");
+            ImGui::SameLine();
+            ImGui::Checkbox("Live Sync", &s_liveSync);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Auto-reload this script whenever its file changes on disk\n"
+                                  "(edits from an external editor). Off = reload manually.");
+            ImGui::SameLine();
+            // Float / Dock: pop the editor out into its own window, or dock it back.
+            if (ImGui::SmallButton(s_isDocked ? "Float" : "Dock"))
+                g_scriptDockReq = s_isDocked ? 1 : 2;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(s_isDocked ? "Pop the Script Editor out into its own window"
+                                             : "Dock the Script Editor back as a tab");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Cmds")) s_palReq = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Command palette (Ctrl+Shift+P)");
+            ImGui::SameLine();
+            ImGui::Checkbox("Syntax", &s_highlight);
+            ImGui::SameLine();
+            ImGui::Checkbox("Map", &s_minimap);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the code minimap (click it to scroll)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("A-")) s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("A+")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom code (Ctrl+scroll in the editor)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("//")) caret.toggleComment = true;   // comment/uncomment line
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle // comment on the current line (Ctrl+/)");
+            ImGui::SameLine(); ImGui::TextDisabled("Go");
+            ImGui::SameLine(); ImGui::SetNextItemWidth(54);
+            bool goEnter = ImGui::InputInt("##goto", &s_gotoLine, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("->") || goEnter) {
+                caret.gotoLine = s_gotoLine < 1 ? 1 : s_gotoLine;
+                s_scrollToLine = caret.gotoLine;
+            }
+            // Outline: jump to any function/class in the file (VS Code's symbol list).
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Outline")) ImGui::OpenPopup("##outline");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to a function or class");
         }
-        // Outline: jump to any function/class in the file (VS Code's symbol list).
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Outline")) ImGui::OpenPopup("##outline");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to a function or class");
         if (ImGui::BeginPopup("##outline")) {
             auto syms = ScriptOutline(buf.data());
             if (syms.empty()) ImGui::TextDisabled("No functions or classes found.");
@@ -6703,10 +6754,12 @@ void DrawScriptEditor(EditorState& ed) {
         // Insert browser: a searchable list of the ENTIRE scripting API (every
         // builtin's signature + one-line description), click to splice a call at the
         // caret. The fast way to discover "how do I do X" without leaving the editor.
-        ImGui::SameLine();
         static char s_insQuery[64] = ""; static bool s_insFocus = false;
-        if (ImGui::SmallButton("Insert...")) { s_insQuery[0] = '\0'; s_insFocus = true; ImGui::OpenPopup("##insertbrowser"); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Browse & insert any script command (searchable API)");
+        if (s_moreTools) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Insert...")) { s_insQuery[0] = '\0'; s_insFocus = true; ImGui::OpenPopup("##insertbrowser"); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Browse & insert any script command (searchable API)");
+        }
         ImGui::SetNextWindowSize(ImVec2(480, 440), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("##insertbrowser")) {
             ImGui::TextDisabled("Insert command  —  type to search names, params, or descriptions");
@@ -6756,26 +6809,30 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::EndPopup();
         }
 
-        ImGui::SameLine();
-        ImGui::Checkbox("Auto", &caret.autoPairs);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-close brackets/quotes and auto-indent on Enter");
+        if (s_moreTools) {
+            ImGui::SameLine();
+            ImGui::Checkbox("Auto", &caret.autoPairs);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-close brackets/quotes and auto-indent on Enter");
+        }
 
         // Rename: change the identifier under the caret everywhere in the file.
-        ImGui::SameLine();
         static char s_renameTo[64] = ""; static std::string s_renameFrom;
-        if (ImGui::SmallButton("Rename")) {
-            const char* t = buf.data(); int len = (int)std::strlen(t);
-            int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
-            auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
-            int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
-            int we = cp; while (we < len && isW(t[we])) ++we;
-            s_renameFrom.assign(t + ws, t + we);
-            if (!s_renameFrom.empty() && !std::isdigit((unsigned char)s_renameFrom[0])) {
-                std::snprintf(s_renameTo, sizeof(s_renameTo), "%s", s_renameFrom.c_str());
-                ImGui::OpenPopup("##rename");
+        if (s_moreTools) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Rename")) {
+                const char* t = buf.data(); int len = (int)std::strlen(t);
+                int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
+                auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+                int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
+                int we = cp; while (we < len && isW(t[we])) ++we;
+                s_renameFrom.assign(t + ws, t + we);
+                if (!s_renameFrom.empty() && !std::isdigit((unsigned char)s_renameFrom[0])) {
+                    std::snprintf(s_renameTo, sizeof(s_renameTo), "%s", s_renameFrom.c_str());
+                    ImGui::OpenPopup("##rename");
+                }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rename the symbol under the caret everywhere in this file");
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rename the symbol under the caret everywhere in this file");
         if (ImGui::BeginPopup("##rename")) {
             ImGui::Text("Rename '%s' to:", s_renameFrom.c_str());
             ImGui::SetNextItemWidth(180);
@@ -6791,22 +6848,24 @@ void DrawScriptEditor(EditorState& ed) {
         }
 
         // Find All References: list every whole-word use of the symbol under the caret.
-        ImGui::SameLine();
         static std::string s_refsSym;
         static std::vector<std::pair<int, std::string>> s_refs;
-        if (ImGui::SmallButton("Refs")) {
-            const char* t = buf.data(); int len = (int)std::strlen(t);
-            int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
-            auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
-            int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
-            int we = cp; while (we < len && isW(t[we])) ++we;
-            s_refsSym.assign(t + ws, t + we);
-            if (!s_refsSym.empty() && !std::isdigit((unsigned char)s_refsSym[0])) {
-                s_refs = FindReferences(buf.data(), s_refsSym);
-                ImGui::OpenPopup("##refs");
+        if (s_moreTools) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Refs")) {
+                const char* t = buf.data(); int len = (int)std::strlen(t);
+                int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
+                auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+                int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
+                int we = cp; while (we < len && isW(t[we])) ++we;
+                s_refsSym.assign(t + ws, t + we);
+                if (!s_refsSym.empty() && !std::isdigit((unsigned char)s_refsSym[0])) {
+                    s_refs = FindReferences(buf.data(), s_refsSym);
+                    ImGui::OpenPopup("##refs");
+                }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find all references to the symbol under the caret");
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find all references to the symbol under the caret");
         if (ImGui::BeginPopup("##refs")) {
             ImGui::TextColored(AccentCol(), "%d reference%s to '%s'",
                                (int)s_refs.size(), s_refs.size() == 1 ? "" : "s", s_refsSym.c_str());
@@ -6997,6 +7056,7 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Text, s_highlight ? IM_COL32(0, 0, 0, 0) : IM_COL32(212, 212, 212, 255));
         ImGui::BeginChild("editorscroll", ImVec2(editW, av.y), true,
                           ImGuiWindowFlags_HorizontalScrollbar);
+        if (g_codeFont) ImGui::PushFont(g_codeFont);   // monospace: glyphs/overlay/caret line up
 
         // Zoom: scale the editor font, then recompute glyph metrics so the gutter
         // and the syntax overlay stay aligned at any zoom (Ctrl+wheel or A-/A+).
@@ -7285,6 +7345,7 @@ void DrawScriptEditor(EditorState& ed) {
         // Caret screen position (for the autocomplete popup, drawn after the child).
         ImVec2 caretScreen(origin.x + (caret.col - 1) * charW, origin.y + caret.line * lineH);
         mmScrollY = ImGui::GetScrollY();
+        if (g_codeFont) ImGui::PopFont();
         ImGui::EndChild();
         ImGui::PopStyleColor(3);
 
@@ -23738,6 +23799,12 @@ int main(int argc, char** argv) {
         // A slightly larger heading face for section titles (visual hierarchy).
         g_headingFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
                 RobotoMedium_compressed_data_base85, 18.5f, &fc);
+        // A monospace face for the Script Editor. Code needs fixed-width glyphs so the
+        // syntax overlay, caret and columns line up (a proportional font left visible
+        // gaps between characters). Dear ImGui's built-in ProggyClean is a crisp 13px
+        // pixel font — perfect for code and free (no external file to embed).
+        ImFontConfig mc; mc.SizePixels = 13.0f;
+        g_codeFont = io.Fonts->AddFontDefault(&mc);
     }
     LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
     ApplyTheme();

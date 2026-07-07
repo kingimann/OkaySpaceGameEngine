@@ -1,21 +1,33 @@
 # OkayScript
 
 OkayScript is the engine's built-in scripting language — a small, dependency-free
-language that ships in every build (no Lua/C# toolchain required). Attach a
-`ScriptComponent` to a GameObject, write a script, and the engine calls your
-`start()` and `update(dt)` functions as part of the normal scene lifecycle.
+language that ships in every build (no Lua/C# toolchain required). It's its own
+tiny language, designed so you write almost nothing and still do a lot.
 
-```c
-function start() {
-    set_pos(0, 0);
-}
+The whole point is minimal code:
 
-function update(dt) {
-    // Move with WASD at 5 units/second.
-    move(axis_x() * 5 * dt, axis_y() * 5 * dt);
-    if (key_down("space")) { print("jump!"); }
-}
-```
+- **No boilerplate** — the whole file runs every frame, so a complete behaviour
+  can be a single line:
+
+  ```c
+  on_key_move(5)     // WASD / arrows — the entire script
+  ```
+
+- **`function` is optional, and so are braces on one-line bodies:**
+
+  ```c
+  // start() runs once, update(dt) runs every frame — no 'function' keyword.
+  start()      { set_pos(0, 0) }
+  update(dt)   { if (key_down("space")) jump(8) }   // no braces for one line
+  ```
+
+- **Movement one-liners are dt-scaled for you** — you never write `* dt`.
+  `walk(1, 0, 5)` moves 5 units/second regardless of frame rate; so do `spin`,
+  `follow`, `patrol`, `orbit`, `platformer`, `smooth_follow`, `spring_to`, …
+
+Attach a `ScriptComponent` to a GameObject and the engine calls your `start()`
+and `update(dt)` (plus event handlers like `on_collision(other)`) as part of the
+normal scene lifecycle.
 
 ## Unity-style syntax
 
@@ -163,6 +175,27 @@ as the *enter* handlers.
 | `set_x(x)` / `set_y(y)` | Set one axis |
 | `pos_x()` / `pos_y()` | Read local position |
 | `rotate(deg)` | Rotate about Z by degrees |
+
+### Movement one-liners (dt-scaled — never write `* dt`)
+Each is a whole behaviour meant to be called every frame from `update()`. Speeds
+are in units/second (or degrees/second), independent of frame rate.
+
+| Function | Effect |
+| --- | --- |
+| `walk(dx, dy, speed)` | Head in a direction at `speed` |
+| `spin(degPerSec)` | Rotate smoothly forever |
+| `on_key_move(speed)` | WASD / arrows (drives a Rigidbody2D if present) |
+| `platformer(speed[, jump])` | Full 2D side-scroller: A/D move, W/Up jumps (Rigidbody2D) |
+| `move_to(x, y, speed)` | Walk to a point, stop on arrival |
+| `spring_to(x, y[, speed])` | Ease to a point, slowing as it arrives |
+| `follow("name", speed[, stop])` | Chase an object, stopping `stop` away |
+| `smooth_follow("name", speed)` | Chase with easing so it glides in |
+| `flee("name", speed)` | Run away from an object |
+| `patrol(x1, y1, x2, y2, speed)` | Walk back and forth between two points |
+| `orbit("name", radius, degPerSec)` | Circle a target |
+| `wander(speed)` | Roam, changing direction ~once a second |
+| `bob(amount, speed)` / `pulse(amount, speed)` | Hover / breathe (juice) |
+| `on_key("key", "fn")` | Call your function `fn` the frame `key` is pressed |
 
 ### Input
 | Function | Returns |

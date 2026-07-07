@@ -1968,6 +1968,62 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // platformer(speed[, jump]): a whole 2D side-scroller controller in one line.
+        // A/D or Left/Right set horizontal velocity; W / Up jumps (edge-triggered).
+        // Drives a Rigidbody2D if present (so gravity/ground work), else slides the
+        // Transform horizontally. dt-scaled — no `* dt` needed.
+        b["platformer"] = [this, tf](std::vector<Value>& a) {
+            if (!rt.host || !rt.host->gameObject) return Value{};
+            float speed = a.size() > 0 ? a[0].AsFloat() : 5.0f;
+            float jump  = a.size() > 1 ? a[1].AsFloat() : 9.0f;
+            Vec2 ax = Input::AxisWASD();
+            bool upNow = ax.y > 0.5f;
+            auto& g = rt.host->globals;
+            bool upWas = g.count("__plat_up") && g["__plat_up"].AsFloat() != 0.0f;
+            g["__plat_up"] = Value{upNow ? 1.0f : 0.0f};
+            if (auto* rb = rt.host->gameObject->GetComponent<Rigidbody2D>()) {
+                rb->velocity.x = ax.x * speed;
+                if (upNow && !upWas) rb->velocity.y = jump;      // rising edge = one jump
+            } else if (Transform* t = tf()) {
+                t->Translate({ax.x * speed * rt.host->deltaTime, 0.0f, 0.0f});
+            }
+            return Value{};
+        };
+        // on_key("key", "fn"): call this script's function `fn` once, the frame `key`
+        // is pressed. Event-style input with no if/edge bookkeeping.
+        b["on_key"] = [this](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{};
+            std::string k = a[0].AsString();
+            if (!k.empty() && Input::GetKeyDown(k[0])) {
+                std::string fn = a[1].AsString();
+                if (rt.functions.count(fn) || rt.builtins.count(fn)) { std::vector<Value> none; rt.Call(fn, none); }
+            }
+            return Value{};
+        };
+        // smooth_follow("name", speed): chase a named object, but ease in (exponential
+        // smoothing) so it glides instead of tracking rigidly. dt-scaled.
+        b["smooth_follow"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float speed = a.size() > 1 ? a[1].AsFloat() : 4.0f;
+            float k = 1.0f - std::exp(-speed * rt.host->deltaTime);   // 0..1 ease factor
+            Vec3 me = t->Position(), ot = g->transform->Position();
+            t->Translate({(ot.x - me.x) * k, (ot.y - me.y) * k, 0.0f});
+            return Value{};
+        };
+        // spring_to(x, y[, speed]): ease toward a world POINT with the same smoothing,
+        // slowing as it arrives. Great for cameras, cursors, snapping. dt-scaled.
+        b["spring_to"] = [this, tf](std::vector<Value>& a) {
+            if (a.size() < 2 || !rt.host) return Value{};
+            Transform* t = tf(); if (!t) return Value{};
+            float tx = a[0].AsFloat(), ty = a[1].AsFloat(), sp = a.size() > 2 ? a[2].AsFloat() : 6.0f;
+            float k = 1.0f - std::exp(-sp * rt.host->deltaTime);
+            Vec3 me = t->Position();
+            t->Translate({(tx - me.x) * k, (ty - me.y) * k, 0.0f});
+            return Value{};
+        };
         b["patrol"] = [this, tf](std::vector<Value>& a) {
             // patrol(x1, y1, x2, y2, speed): walk back and forth between two points.
             // Uses a per-script time accumulator so it advances with update()'s dt.

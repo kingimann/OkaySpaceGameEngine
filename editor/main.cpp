@@ -4947,10 +4947,10 @@ void DrawScriptDocs() {
 
         SectionHeader("5. The two lifecycle functions");
         ImGui::TextWrapped("start() sets things up once; update(dt) drives behaviour "
-            "every frame. Multiply movement by dt so it's the same speed on any PC.");
+            "every frame. The movement one-liners (walk, spin, follow, platformer, ...) "
+            "are already dt-scaled, so you never write '* dt'.");
         code("start() {\n    set_pos(0, 0);\n    set(\"score\", 0);\n}\n\n"
-             "update(dt) {\n    // move with the WASD / arrow keys\n"
-             "    move(axis_x() * 5 * dt, axis_y() * 5 * dt);\n}");
+             "update(dt) {\n    on_key_move(5);   // WASD / arrows, 5 units/sec\n}");
 
         SectionHeader("6. Your own functions");
         ImGui::TextWrapped("Group steps into a function and call it by name (or with "
@@ -5796,6 +5796,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"follow","follow(\"name\", speed[, stopDist])"}, {"follow3","follow3(\"name\", speed[, stopDist])"},
         {"flee","flee(\"name\", speed)"}, {"patrol","patrol(x1, y1, x2, y2, speed)"},
         {"orbit","orbit(\"name\", radius, degPerSec)"}, {"on_key_move","on_key_move(speed)"},
+        {"platformer","platformer(speed[, jump])"}, {"on_key","on_key(\"key\", \"fn\")"},
+        {"smooth_follow","smooth_follow(\"name\", speed)"}, {"spring_to","spring_to(x, y[, speed])"},
         {"on_key_move3","on_key_move3(speed)"}, {"shoot_at","shoot_at(\"target\", \"prefab\", speed)"},
         {"spawn_wave","spawn_wave(\"prefab\", count[, radius])"}, {"chase","chase(\"name\", speed[, stopDist])"},
         // velocity axes
@@ -5922,6 +5924,10 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"flee","Run directly away from a named object at `speed`."},
         {"patrol","Walk back and forth between (x1,y1) and (x2,y2) at `speed`."},
         {"orbit","Circle a named target at `radius`, turning `degPerSec` each second."},
+        {"platformer","A whole 2D side-scroller controller: A/D or Left/Right move at `speed`, W/Up jumps by `jump` (uses a Rigidbody2D). dt-scaled."},
+        {"on_key","Call this script's function `fn` the frame `key` is pressed — event-style input, no if/edge bookkeeping."},
+        {"smooth_follow","Chase a named object with easing (exponential smoothing) so it glides in at `speed` — dt-scaled."},
+        {"spring_to","Ease toward a world point (x,y) at `speed`, slowing as it arrives (cameras, cursors, snapping) — dt-scaled."},
         {"on_key_move","WASD/arrow keys move this object on the XY plane (uses a Rigidbody2D if present)."},
         {"on_key_move3","WASD/arrow keys move this object on the XZ ground plane (uses a Rigidbody3D if present)."},
         {"shoot_at","Spawn a prefab projectile at self, flying toward a named target at `speed`."},
@@ -6593,8 +6599,14 @@ void DrawScriptEditor(EditorState& ed) {
                     "if (key_down(\"space\")) jump(8)   // no braces needed for one line\n"},
                 {"Movement", "Follow the player", "One line: walk toward the object named Player.",
                     "follow(\"Player\", 3)\n"},
+                {"Movement", "Smooth follow", "Glides toward Player with easing (softer than follow).",
+                    "smooth_follow(\"Player\", 4)\n"},
+                {"Movement", "Platformer controller", "A whole side-scroller in one line: A/D move, W/Up jump (needs a Rigidbody2D).",
+                    "platformer(6, 10)\n"},
                 {"Movement", "Spin forever", "One line: smooth rotation, degrees per second.",
                     "spin(90)\n"},
+                {"Movement", "Key event -> function", "Call your own function the frame a key is pressed.",
+                    "on_key(\"space\", \"shoot\")\n\nshoot() {\n    spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n}\n"},
                 {"Movement", "Shoot on click", "Spawn a bullet where we are when clicked.",
                     "update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 // ---- Gameplay ----

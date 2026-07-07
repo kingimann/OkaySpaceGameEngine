@@ -2592,6 +2592,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Wedge"))     { ed.CreateMesh("Wedge");     ConsoleLog("Created Wedge"); created = true; }
             if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
             if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
+            if (ImGui::MenuItem("Hemisphere")){ ed.CreateMesh("Hemisphere");ConsoleLog("Created Hemisphere"); created = true; }
+            if (ImGui::MenuItem("Stairs"))    { ed.CreateMesh("Stairs");    ConsoleLog("Created Stairs"); created = true; }
+            if (ImGui::MenuItem("Gear"))      { ed.CreateMesh("Gear");      ConsoleLog("Created Gear"); created = true; }
             if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
             ImGui::Separator();
             if (ImGui::MenuItem("Tree"))      { ed.CreateMesh("Tree");      ConsoleLog("Created Tree"); created = true; }
@@ -12287,8 +12290,8 @@ void DrawModeling(EditorState& ed) {
     SectionHeader("Create");
     const char* prims[] = {"Cube", "Sphere", "Cylinder", "Cone", "Pyramid",
                            "Wedge", "Quad", "Plane", "Tube", "Torus", "Capsule",
-                           "Icosphere", "Grid"};
-    const int kPrims = 13;
+                           "Icosphere", "Grid", "Hemisphere", "Stairs", "Gear"};
+    const int kPrims = 16;
     int perRow = 0;
     for (int i = 0; i < kPrims; ++i) {
         if (perRow++ % 4 != 0) ImGui::SameLine();
@@ -12330,8 +12333,9 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::BeginTabItem("Shape")) {
         // Swap the primitive shape.
         const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
-                                "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid"};
-        const int kShapeCount = 13;
+                                "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid",
+                                "Hemisphere", "Stairs", "Gear"};
+        const int kShapeCount = 16;
         int shapeIdx = -1;
         for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
         if (ImGui::Combo("Primitive##model", &shapeIdx, shapes, kShapeCount)) {
@@ -13168,8 +13172,9 @@ void DrawInspector(EditorState& ed) {
             if (mr->specular > 0.0f)
                 if (ImGui::SliderFloat("Shininess##mesh", &mr->shininess, 1.0f, 128.0f)) ed.dirty = true;
             const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
-                                    "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid"};
-            const int kShapeCount = 13;
+                                    "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid",
+                                    "Hemisphere", "Stairs", "Gear"};
+            const int kShapeCount = 16;
             int shapeIdx = -1;
             for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
             if (ImGui::Combo("Primitive", &shapeIdx, shapes, kShapeCount)) {

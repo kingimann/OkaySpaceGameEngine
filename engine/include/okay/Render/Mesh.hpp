@@ -302,6 +302,85 @@ struct Mesh {
         return m;
     }
 
+    /// Append an axis-aligned box spanning [mn, mx] (8 verts, 12 tris, outward
+    /// winding) to an existing mesh — a building block for compound primitives.
+    static void AppendBox(Mesh& m, const Vec3& mn, const Vec3& mx) {
+        int b = (int)m.vertices.size();
+        m.vertices.push_back({mn.x, mn.y, mn.z}); m.vertices.push_back({mx.x, mn.y, mn.z});
+        m.vertices.push_back({mx.x, mx.y, mn.z}); m.vertices.push_back({mn.x, mx.y, mn.z});
+        m.vertices.push_back({mn.x, mn.y, mx.z}); m.vertices.push_back({mx.x, mn.y, mx.z});
+        m.vertices.push_back({mx.x, mx.y, mx.z}); m.vertices.push_back({mn.x, mx.y, mx.z});
+        const int f[36] = {0,2,1, 0,3,2,  4,5,6, 4,6,7,  0,1,5, 0,5,4,
+                           3,7,6, 3,6,2,  1,2,6, 1,6,5,  0,4,7, 0,7,3};
+        for (int i = 0; i < 36; ++i) m.triangles.push_back(b + f[i]);
+    }
+
+    /// A dome: the top half of a sphere with a flat base cap on the XZ plane.
+    static Mesh Hemisphere(float radius = 0.5f, int rings = 6, int sectors = 16) {
+        Mesh m; m.name = "Hemisphere";
+        if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+        const float kPi = 3.14159265358979323846f;
+        const int stride = sectors + 1;
+        for (int r = 0; r <= rings; ++r) {
+            float phi = (kPi * 0.5f) * (float)r / rings;       // 0 = top .. pi/2 = equator
+            float y = radius * std::cos(phi), rr = radius * std::sin(phi);
+            for (int s = 0; s <= sectors; ++s) {
+                float th = 2.0f * kPi * (float)s / sectors;
+                m.vertices.push_back({rr * std::cos(th), y, rr * std::sin(th)});
+                m.uvs.push_back({(float)s / sectors, 1.0f - (float)r / rings});
+            }
+        }
+        for (int r = 0; r < rings; ++r)
+            for (int s = 0; s < sectors; ++s) {
+                int a = r * stride + s, b = a + stride;
+                m.triangles.insert(m.triangles.end(), {a, a + 1, b, a + 1, b + 1, b});
+            }
+        int base = (int)m.vertices.size(); m.vertices.push_back({0, 0, 0}); m.uvs.push_back({0.5f, 0.5f});
+        int ring0 = rings * stride;                            // the equator ring
+        for (int s = 0; s < sectors; ++s)
+            m.triangles.insert(m.triangles.end(), {base, ring0 + s, ring0 + s + 1});
+        return m;
+    }
+
+    /// A staircase of `steps` boxes climbing +Y and marching +Z (great for level
+    /// blockout). Sits with its base at y=0, front at z=0.
+    static Mesh Stairs(int steps = 5, float width = 1.0f, float totalHeight = 1.0f, float totalDepth = 1.0f) {
+        Mesh m; m.name = "Stairs";
+        if (steps < 1) steps = 1;
+        float sh = totalHeight / steps, sd = totalDepth / steps, hw = width * 0.5f;
+        for (int i = 0; i < steps; ++i)
+            AppendBox(m, {-hw, 0.0f, i * sd}, {hw, (i + 1) * sh, totalDepth});
+        return m;
+    }
+
+    /// A cog/gear: a short cylinder with `teeth` square teeth around the rim,
+    /// extruded `thickness` along Y. Spin it with a script for machinery.
+    static Mesh Gear(int teeth = 10, float radius = 0.5f, float toothDepth = 0.12f, float thickness = 0.25f) {
+        Mesh m; m.name = "Gear";
+        if (teeth < 3) teeth = 3;
+        const float kPi = 3.14159265358979323846f;
+        const int seg = teeth * 4;                             // 4 rim segments per tooth
+        float h = thickness * 0.5f;
+        for (int s = 0; s < seg; ++s) {
+            float th = 2.0f * kPi * (float)s / seg;
+            int phase = s % 4;
+            float rr = (phase == 1 || phase == 2) ? radius + toothDepth : radius;   // crest vs valley
+            float x = rr * std::cos(th), z = rr * std::sin(th);
+            m.vertices.push_back({x, h, z}); m.vertices.push_back({x, -h, z});
+        }
+        for (int s = 0; s < seg; ++s) {
+            int t0 = s * 2, b0 = s * 2 + 1, t1 = ((s + 1) % seg) * 2, b1 = ((s + 1) % seg) * 2 + 1;
+            m.triangles.insert(m.triangles.end(), {t0, t1, b0, t1, b1, b0});   // outward side quads
+        }
+        int topC = (int)m.vertices.size(); m.vertices.push_back({0, h, 0});
+        int botC = (int)m.vertices.size(); m.vertices.push_back({0, -h, 0});
+        for (int s = 0; s < seg; ++s) {
+            m.triangles.insert(m.triangles.end(), {topC, ((s + 1) % seg) * 2, s * 2});       // top cap (up)
+            m.triangles.insert(m.triangles.end(), {botC, s * 2 + 1, ((s + 1) % seg) * 2 + 1}); // bottom cap (down)
+        }
+        return m;
+    }
+
     /// A geodesic sphere: an icosahedron subdivided `subdivisions` times and
     /// projected to the radius. Triangles are near-uniform (no pinching at the
     /// poles like the UV Sphere), so it shades and tessellates evenly.
@@ -400,6 +479,9 @@ struct Mesh {
         if (n == "Grid")      return Grid();
         if (n == "Wedge")     return Wedge();
         if (n == "Tube")      return Tube();
+        if (n == "Hemisphere") return Hemisphere();
+        if (n == "Stairs")    return Stairs();
+        if (n == "Gear")      return Gear();
         return Cube();
     }
 

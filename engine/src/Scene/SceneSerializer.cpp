@@ -1630,6 +1630,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             out << "sky " << rs.skyHorizonPos << " " << (rs.skySun ? 1 : 0) << " "
                 << rs.skySunX << " " << rs.skySunY << " " << rs.skySunSize << " "
                 << rs.skySunColor.r << " " << rs.skySunColor.g << " " << rs.skySunColor.b << "\n";
+        // Star field (separate append-only record so older engines still load the scene).
+        if (rs.skyStars)
+            out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
@@ -1716,6 +1719,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 auto& rs = scene.renderSettings;
                 rs.skyHorizonPos = hp; rs.skySun = (sun != 0);
                 rs.skySunX = sx; rs.skySunY = sy; rs.skySunSize = ss; rs.skySunColor = sc;
+            }
+        } else if (token == "skystars") {
+            int on = 0; float density = 0.5f, bright = 0.9f;
+            in >> on >> density >> bright;
+            if (clear) {
+                auto& rs = scene.renderSettings;
+                rs.skyStars = (on != 0); rs.skyStarDensity = density; rs.skyStarBright = bright;
             }
         } else if (token == "gameobject") {
             int idx = -1;

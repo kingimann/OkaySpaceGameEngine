@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
+#include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
@@ -4550,6 +4551,12 @@ void DrawStats(EditorState& ed) {
             if (ImGui::SliderFloat("Sun Size", &rs.skySunSize, 0.01f, 0.25f, "%.3f")) ed.dirty = true;
             float sun[3] = {rs.skySunColor.r, rs.skySunColor.g, rs.skySunColor.b};
             if (ImGui::ColorEdit3("Sun Color", sun)) { rs.skySunColor = {sun[0], sun[1], sun[2], 1}; ed.dirty = true; }
+        }
+        if (ImGui::Checkbox("Stars", &rs.skyStars)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A star field in the upper sky — great for night / space skies.");
+        if (rs.skyStars) {
+            if (ImGui::SliderFloat("Star Density",   &rs.skyStarDensity, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Star Brightness", &rs.skyStarBright,  0.0f, 1.0f, "%.2f")) ed.dirty = true;
         }
         if (ImGui::SliderFloat("Ambient", &rs.ambient, 0.0f, 1.0f)) ed.dirty = true;
         ImGui::Spacing();
@@ -21359,6 +21366,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImVec2 cmid(canvasEnd.x, midY);
         dl->AddRectFilledMultiColor(canvasPos, cmid, top, top, mid, mid);
         dl->AddRectFilledMultiColor(ImVec2(canvasPos.x, cmid.y), canvasEnd, mid, mid, bot, bot);
+        if (rs.skyStars) {
+            float H = canvasEnd.y - canvasPos.y, W = canvasEnd.x - canvasPos.x;
+            for (const auto& st : okay::SkyStars(W, H, midY - canvasPos.y, rs.skyStarDensity, rs.skyStarBright))
+                dl->AddCircleFilled(ImVec2(canvasPos.x + st.x, canvasPos.y + st.y),
+                                    st.r, IM_COL32(255, 255, 255, st.a), 6);
+        }
         if (rs.skySun) {
             float H = canvasEnd.y - canvasPos.y, W = canvasEnd.x - canvasPos.x;
             ImVec2 sc(canvasPos.x + rs.skySunX * W, canvasPos.y + rs.skySunY * H);

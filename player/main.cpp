@@ -9,6 +9,7 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
@@ -1571,6 +1572,19 @@ int main(int argc, char** argv) {
                 int y1 = (int)((float)(s + 1) / strips * h);
                 SDL_Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
                 SDL_RenderFillRect(renderer, &rrect);
+            }
+            // Optional star field in the upper sky (above the horizon band).
+            if (rs.skyStars) {
+                int horizonPx = (int)(hp * h);
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                for (const auto& st : okay::SkyStars((float)w, (float)h, (float)horizonPx,
+                                                     rs.skyStarDensity, rs.skyStarBright)) {
+                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, st.a);
+                    int r = (int)(st.r + 0.5f); if (r < 1) r = 1;
+                    SDL_Rect sq{(int)st.x - r / 2, (int)st.y - r / 2, r, r};
+                    SDL_RenderFillRect(renderer, &sq);
+                }
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             }
             // Optional sun disc: a filled circle + soft glow at a screen-space position.
             if (rs.skySun) {

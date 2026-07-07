@@ -146,6 +146,13 @@ public:
         float skySunY     = 0.30f;
         float skySunSize  = 0.05f;
         Color skySunColor = Color::FromBytes(255, 245, 214);
+        // An optional star field painted in the upper sky (above the horizon band) —
+        // great for night / space skies. Stars are placed deterministically from a
+        // seed (so they don't flicker) via SkyStars(); density scales the count and
+        // brightness scales their alpha. Cheap and backend-independent.
+        bool  skyStars      = false;
+        float skyStarDensity = 0.5f;    // 0..1 -> up to ~kSkyStarMax stars
+        float skyStarBright  = 0.9f;    // 0..1 star alpha
     };
     RenderSettings renderSettings;
 

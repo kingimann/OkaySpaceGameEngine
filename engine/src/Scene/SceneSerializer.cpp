@@ -465,7 +465,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << li->color.a << " " << li->ambient << " " << li->intensity
             << " " << (int)li->type << " " << li->range << " " << li->spotAngle
             << " " << li->spotSoftness << " " << (li->useTemperature ? 1 : 0) << " " << li->temperature
-            << " " << li->ambientColor.r << " " << li->ambientColor.g << " " << li->ambientColor.b << "\n";
+            << " " << li->ambientColor.r << " " << li->ambientColor.g << " " << li->ambientColor.b
+            << " " << (int)li->falloff << "\n";   // trailing (back-compatible)
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -1998,6 +1999,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> li->spotSoftness >> useT >> li->temperature
                            >> li->ambientColor.r >> li->ambientColor.g >> li->ambientColor.b;
                         li->useTemperature = (useT != 0);
+                        in >> std::ws; // optional falloff mode (added later)
+                        if (std::isdigit(in.peek())) { int fo = 0; in >> fo; li->falloff = (Light::Falloff)fo; }
                     }
                 } else if (field == "rigidbody2d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;

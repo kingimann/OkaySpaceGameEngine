@@ -69,14 +69,14 @@ inline void BakeFaceLighting(Mesh& mesh, const Mat4& model, const Color& base,
                 ld = dist > 1e-5f ? toL * (1.0f / dist) : Vec3{0, 1, 0};
             }
             float ndl = Vec3::Dot(n, ld);
+            if (L.type == 3) ndl = AreaWrap(ndl);                      // area: soft wrap fill
             if (ndl <= 0.0f) continue;
             if (occluded && occluded(origin, ld, dist)) continue;      // in shadow
 
             float atten = 1.0f;
             if (L.type != 0) {
-                atten = (L.range > 0.0f) ? (1.0f - dist / L.range) : 0.0f;
+                atten = LightAttenuation(dist, L.range, L.falloff);
                 if (atten <= 0.0f) continue;
-                atten *= atten;
                 if (L.type == 2) {
                     float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
                     float denom = L.cosInner - L.cosOuter;

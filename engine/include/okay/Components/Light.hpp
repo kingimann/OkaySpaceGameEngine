@@ -15,8 +15,16 @@ namespace okay {
 /// first light's `ambient` sets the global unlit floor (0..1).
 class Light : public Component {
 public:
-    enum class Type { Directional, Point, Spot };
+    // Area shines like a point but with a soft "wrap" diffuse (light seems to come
+    // from a broad panel, not a pinpoint) — good for windows, screens, soft studio
+    // fill. Keep values stable for serialization (append only).
+    enum class Type { Directional, Point, Spot, Area };
     Type  type      = Type::Directional;
+    // How a point/spot/area light dims with distance. Linear = the classic
+    // (1 - d/range)^2 rolloff (predictable, gamey). InverseSquare = physically based
+    // 1/d^2 with a smooth cutoff at `range` (realistic, punchier near the source).
+    enum class Falloff { Linear, InverseSquare };
+    Falloff falloff = Falloff::Linear;
     Color color     = Color::White;
     float intensity = 1.0f;
     float ambient   = 0.30f;        // unlit floor (taken from the first light)
@@ -60,6 +68,7 @@ inline void ApplySceneLight(const Scene& scene) {
         LightSample s;
         Color ec = l->EffectiveColor();
         s.type  = (int)l->type;
+        s.falloff = (int)l->falloff;
         s.dir   = go->transform->Forward();
         s.pos   = go->transform->Position();
         s.color = Vec3{ec.r, ec.g, ec.b} * l->intensity;

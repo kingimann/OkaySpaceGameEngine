@@ -202,6 +202,7 @@ const char* kFrag =
     "uniform int uLightCount;\n"      // multi-light: directional + point + spot from the scene
     "uniform float uLType[16]; uniform vec3 uLPos[16]; uniform vec3 uLDir[16];\n"
     "uniform vec3 uLCol[16]; uniform float uLRange[16]; uniform float uLCosOut[16]; uniform float uLCosIn[16];\n"
+    "uniform float uLFalloff[16];\n"   // 0 = linear (1-d/r)^2, 1 = physical inverse-square
     "uniform float uFogOn; uniform vec3 uFogColor; uniform float uFogStart; uniform float uFogEnd;\n"  // distance fog
     "uniform float uTonemap;\n"                                                                        // filmic ACES tonemap toggle
     "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }\n"        // ACES filmic curve
@@ -267,15 +268,20 @@ const char* kFrag =
     "  } else {\n"
     "    for (int i = 0; i < 16; i++) { if (i >= uLightCount) break;\n"   // directional + point + spot
     "      vec3 ld; float at = 1.0;\n"
+    "      float wrap = 0.0;\n"
     "      if (uLType[i] < 0.5) { ld = normalize(-uLDir[i]); }\n"        // directional
     "      else { vec3 toL = uLPos[i] - vWorld; float d = length(toL); ld = toL / max(d, 1e-4);\n"
-    "        at = max(1.0 - d / max(uLRange[i], 1e-4), 0.0); at *= at;\n"
-    "        if (uLType[i] > 1.5) { float cs = dot(normalize(uLDir[i]), -ld);\n"   // spot cone
+    "        float rng = max(uLRange[i], 1e-4);\n"
+    "        if (uLFalloff[i] > 0.5) { float dr = d/rng; float win = max(1.0 - dr*dr*dr*dr, 0.0); win*=win;\n"  // physical inverse-square, windowed
+    "          at = win / (1.0 + 8.0*d*d/(rng*rng)); }\n"
+    "        else { at = max(1.0 - d / rng, 0.0); at *= at; }\n"                                                // linear rolloff
+    "        if (uLType[i] > 2.5) { wrap = 0.5; }\n"                                                            // area: soft wrap fill
+    "        else if (uLType[i] > 1.5) { float cs = dot(normalize(uLDir[i]), -ld);\n"   // spot cone
     "          float dn = uLCosIn[i] - uLCosOut[i];\n"
     "          float sp = dn > 1e-4 ? clamp((cs - uLCosOut[i]) / dn, 0.0, 1.0) : (cs >= uLCosOut[i] ? 1.0 : 0.0);\n"
     "          at *= sp * sp; } }\n"
     "      float lsh = (uLType[i] < 0.5) ? sh : 1.0;\n"            // cast shadows apply to the directional sun only
-    "      float ndl = max(dot(N, ld), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "      lit += uLCol[i] * ndl * at * lsh;\n"
     "      if (uSpecular > 0.0) { vec3 H = normalize(ld + Vv);\n"
     "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh; }\n"
@@ -461,6 +467,7 @@ bool GLRenderer::EnsureProgram() {
     m_uLDir    = g.GetUniformLocation(m_prog, "uLDir");
     m_uLCol    = g.GetUniformLocation(m_prog, "uLCol");
     m_uLRange  = g.GetUniformLocation(m_prog, "uLRange");
+    m_uLFalloff = g.GetUniformLocation(m_prog, "uLFalloff");
     m_uLCosOut = g.GetUniformLocation(m_prog, "uLCosOut");
     m_uLCosIn  = g.GetUniformLocation(m_prog, "uLCosIn");
     m_uNormalTex = g.GetUniformLocation(m_prog, "uNormalTex");
@@ -729,11 +736,12 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     {
         const auto& L = SceneLights::List();
         int n = (int)L.size(); if (n > 16) n = 16;
-        float lt[16] = {0}, lr[16] = {0}, lco[16] = {0}, lci[16] = {0};
+        float lt[16] = {0}, lr[16] = {0}, lco[16] = {0}, lci[16] = {0}, lfo[16] = {0};
         float lp[48] = {0}, ld[48] = {0}, lc[48] = {0};
         for (int i = 0; i < n; ++i) {
             const LightSample& s = L[i];
             lt[i] = (float)s.type;
+            lfo[i] = (float)s.falloff;
             lp[i*3+0] = s.pos.x; lp[i*3+1] = s.pos.y; lp[i*3+2] = s.pos.z;
             Vec3 d = s.dir.Normalized();
             ld[i*3+0] = d.x; ld[i*3+1] = d.y; ld[i*3+2] = d.z;
@@ -749,6 +757,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Uniform1fv(m_uLRange, n, lr);
             g.Uniform1fv(m_uLCosOut, n, lco);
             g.Uniform1fv(m_uLCosIn, n, lci);
+            if (m_uLFalloff >= 0) g.Uniform1fv(m_uLFalloff, n, lfo);
         }
     }
 

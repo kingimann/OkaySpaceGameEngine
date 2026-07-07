@@ -83,7 +83,7 @@ private:
         m_uShaderMode = -1, m_uToonBands = -1, m_uRimStr = -1,
         m_uRimColor = -1, m_uGradTop = -1, m_uGradBot = -1, m_uShadowAlpha = -1, m_uAlpha = -1,
         m_uLightCount = -1, m_uLType = -1, m_uLPos = -1, m_uLDir = -1,
-        m_uLCol = -1, m_uLRange = -1, m_uLCosOut = -1, m_uLCosIn = -1,
+        m_uLCol = -1, m_uLRange = -1, m_uLCosOut = -1, m_uLCosIn = -1, m_uLFalloff = -1,
         m_uNormalTex = -1, m_uHasNormal = -1, m_uNormalStrength = -1,
         m_uTexOffset = -1, m_uSpecTex = -1, m_uHasSpecMap = -1,
         m_uAoTex = -1, m_uHasAo = -1, m_uAoStrength = -1,

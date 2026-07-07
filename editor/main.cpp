@@ -13946,9 +13946,10 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* li = dynamic_cast<Light*>(curComp)) {
         if (CompHeader("Light", li, &toRemove)) {
-            const char* types[] = {"Directional", "Point", "Spot"};
+            const char* types[] = {"Directional", "Point", "Spot", "Area"};
             int ty = (int)li->type;
-            if (ImGui::Combo("Type##light", &ty, types, 3)) { li->type = (Light::Type)ty; ed.dirty = true; }
+            if (ImGui::Combo("Type##light", &ty, types, 4)) { li->type = (Light::Type)ty; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Directional = sun (parallel).\nPoint = bulb (all directions).\nSpot = cone.\nArea = soft broad panel (windows, screens, studio fill).");
 
             // Color mode: an RGB swatch, or a Kelvin temperature like a real bulb.
             if (ImGui::Checkbox("Use Temperature##light", &li->useTemperature)) ed.dirty = true;
@@ -13971,16 +13972,21 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit3("Ambient Tint##light", ac)) { li->ambientColor = {ac[0], ac[1], ac[2], 1.0f}; ed.dirty = true; }
 
             if (li->type != Light::Type::Directional) {
-                SectionHeader(li->type == Light::Type::Spot ? "Spot" : "Point");
+                SectionHeader(li->type == Light::Type::Spot ? "Spot"
+                            : li->type == Light::Type::Area ? "Area" : "Point");
                 if (ImGui::DragFloat("Range##light", &li->range, 0.2f, 0.1f, 500.0f)) ed.dirty = true;
+                const char* falls[] = {"Linear", "Inverse Square"};
+                int fo = (int)li->falloff;
+                if (ImGui::Combo("Falloff##light", &fo, falls, 2)) { li->falloff = (Light::Falloff)fo; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Linear = predictable (1-d/range)^2 rolloff.\nInverse Square = physically-based 1/d^2, brighter near the source.");
             }
             if (li->type == Light::Type::Spot) {
                 if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
                 if (ImGui::SliderFloat("Softness##light", &li->spotSoftness, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp cone edge, 1 = very feathered");
             }
-            ImGui::TextDisabled(li->type == Light::Type::Point
-                ? "Radiates from this object's position out to Range."
+            ImGui::TextDisabled(li->type == Light::Type::Point ? "Radiates from this object's position out to Range."
+                : li->type == Light::Type::Area ? "Soft broad fill from this position out to Range (wrap-lit)."
                 : "Rotate this object to aim the light (its +Z is the direction).");
             if (ImGui::SmallButton("Remove##light")) toRemove = li;
         }

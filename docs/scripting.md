@@ -29,39 +29,31 @@ Attach a `ScriptComponent` to a GameObject and the engine calls your `start()`
 and `update(dt)` (plus event handlers like `on_collision(other)`) as part of the
 normal scene lifecycle.
 
-## Unity-style syntax
+## Compatibility: C-style syntax also parses
 
-OkayScript can be written to look almost exactly like a Unity C# script, except
-the base class is OkaySpace's own `OkaySource` (Unity's `MonoBehaviour` still
-parses too). Unity habits — and most code — carry over. All of this is optional
-— the classic style below still works — but you can write:
+OkayScript's native style is the minimal one above — but if you're pasting code
+from elsewhere, a fuller C-style form with dot-properties and typed declarations
+also parses, so familiar snippets tend to just work. This is optional; prefer the
+short native form for new code.
 
-```cs
-public class Player : OkaySource {
-    float speed = 5f;
+```c
+speed = 5
 
-    void Start() {
-        transform.position = new Vector3(0, 0, 0);
-    }
-
-    void Update() {
-        // Move with the arrow/WASD axes, scaled by deltaTime.
-        transform.position.x += Input.GetAxis("Horizontal") * speed * Time.deltaTime;
-        transform.position.y += Input.GetAxis("Vertical")   * speed * Time.deltaTime;
-
-        if (Input.GetKeyDown("space")) { Debug.Log("jump!"); }
-
-        for (int i = 0; i < 3; i++) { /* ... */ }
-    }
+update(dt) {
+    // Move with the arrow/WASD axes.
+    transform.position.x += axis_x() * speed * dt
+    transform.position.y += axis_y() * speed * dt
+    if (key_down("space")) log("jump!")
+    for (i = 0; i < 3; i = i + 1) { /* ... */ }
 }
 ```
 
 What's supported:
 
-- **Lifecycle methods** `Awake()`, `Start()`, `Update()`, `LateUpdate()` (and the
-  classic `start`/`update`). `void`/typed return + a `class : OkaySource`
-  wrapper are accepted and the methods are hoisted out, so a real Unity script
-  often pastes in unchanged.
+- **Lifecycle functions** `start()`, `update(dt)`, `late_update()` (and `Awake()`
+  / `Start()` / `Update()` / `LateUpdate()`). A typed/`void` return and a
+  `class { ... }` wrapper are accepted and their methods are hoisted out, so
+  familiar code often pastes in unchanged.
 - **Dot properties**: `transform.position` / `.localPosition` / `.localScale`
   (and `.x/.y/.z`), `transform.eulerAngles.z`, `Time.deltaTime` / `Time.time` /
   `Time.timeScale`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
@@ -119,7 +111,7 @@ What's supported:
   `transform.rotation` (the Z angle drives 2D rotation).
 - **C# attributes** like `[SerializeField]` and `[Header("Stats")]` are accepted
   (and ignored) before fields and methods.
-- **Event handlers** the Unity way: `OnCollisionEnter()`, `OnTriggerEnter()`,
+- **Event handlers**, PascalCase form: `OnCollisionEnter()`, `OnTriggerEnter()`,
   `OnClick()`, `OnValueChanged()` (alongside the classic `on_collision` etc).
 
 ## Language
@@ -296,7 +288,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 The standalone player auto-loads `game.okayprefs` on launch and saves it on
 exit, so values set with `prefs_set` persist between play sessions.
 
-### Save system (Easy-Save-style)
+### Save system
 
 For richer save games — many files (slots/profiles), typed values, and
 write-through to disk — use the `save`/`load` family. Each value keeps its type
@@ -352,7 +344,7 @@ split(s, sep) join(arr, sep)` — plus `+` concatenation.
 `map() map_set(m, k, v) map_get(m, k[, default]) map_has(m, k) map_remove(m, k)
 map_keys(m) map_count(m)` — shared by reference, like arrays.
 
-### Tweening (DOTween-style)
+### Tweening
 Smoothly animate this object over time via the scene scheduler. Every tween
 takes an optional easing name and an optional **on-complete** function name as
 its last argument(s).

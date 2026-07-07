@@ -1,8 +1,8 @@
 # OkaySpaceGameEngine
 
-A small, **Unity-inspired game engine written in modern C++ (C++17)**. It
-borrows Unity's core mental model — a scene full of `GameObject`s, each composed
-of `Component`s, with scripts that hook into an `Awake` / `Start` / `Update`
+A small, **modern C++ (C++17) game engine**. It uses a familiar
+entity–component model — a scene full of `GameObject`s, each composed of
+`Component`s, with scripts that hook into an `Awake` / `Start` / `Update`
 lifecycle — and implements it from scratch with zero third-party dependencies.
 
 It ships with a **console (ASCII) renderer**, so the whole engine builds and
@@ -22,29 +22,29 @@ behind an interface so a real GPU backend (OpenGL/Vulkan) can be dropped in.
 *(The sandbox: `@` sun, `O` orbiting planet with a parented `o` moon, `*` inner
 planet, `A` player ship.)*
 
-## Why it feels like Unity
+## Core concepts
 
-| Unity concept        | OkaySpace equivalent                                 |
+| Concept              | OkaySpace type                                      |
 |----------------------|-----------------------------------------------------|
-| `GameObject`         | `okay::GameObject`                                  |
-| `Component`          | `okay::Component`                                   |
-| `MonoBehaviour`      | `okay::OkaySource` / `okay::Behaviour` (Component aliases) |
-| `Transform`          | `okay::Transform` (full parent/child hierarchy)    |
-| `Scene`              | `okay::Scene`                                       |
-| `Camera`             | `okay::Camera` (orthographic + perspective)         |
-| `SpriteRenderer` / `MeshRenderer` | `okay::SpriteRenderer` / `okay::MeshRenderer` |
-| `PlayerPrefs`        | `okay::Prefs`                                       |
-| Prefab `.prefab`     | `okay::SceneSerializer` `.okayprefab`               |
-| `Vector2/3`, `Quaternion`, `Matrix4x4` | `okay::Vec2/Vec3/Quat/Mat4`      |
-| `Mathf`, `Time`, `Input`, `Color` | same names, same spirit               |
-| `AddComponent<T>()`, `GetComponent<T>()` | identical templated API       |
-| `Awake/Start/Update/LateUpdate/OnDestroy` | same message order           |
+| Game object          | `okay::GameObject`                                  |
+| Component            | `okay::Component`                                   |
+| Script base class    | `okay::OkaySource` / `okay::Behaviour` (Component aliases) |
+| Transform            | `okay::Transform` (full parent/child hierarchy)     |
+| Scene                | `okay::Scene`                                        |
+| Camera               | `okay::Camera` (orthographic + perspective)         |
+| Renderers            | `okay::SpriteRenderer` / `okay::MeshRenderer`        |
+| Player prefs         | `okay::Prefs`                                        |
+| Prefab               | `okay::SceneSerializer` `.okayprefab`               |
+| Math types           | `okay::Vec2/Vec3/Quat/Mat4`                         |
+| Statics              | `Mathf`, `Time`, `Input`, `Color`                  |
+| Templated components | `AddComponent<T>()`, `GetComponent<T>()`            |
+| Lifecycle            | `Awake/Start/Update/LateUpdate/OnDestroy`           |
 
 ## Features
 
 - **Entity–Component model** with templated `AddComponent<T>()` / `GetComponent<T>()`.
 - **Lifecycle** driven by the scene: `Awake` → `Start` → `Update` → `LateUpdate`
-  → `OnRender` → `OnDestroy`, matching Unity's ordering.
+  → `OnRender` → `OnDestroy` in a fixed, predictable order.
 - **Transform hierarchy** with local/world position, rotation, scale, and
   correct world-matrix composition (TRS) through parents.
 - **Math library**: `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`, `Mathf` — vectors,
@@ -58,7 +58,7 @@ planet, `A` player ship.)*
   (gravity, drag, impulse resolution) and `OnCollision2D` / `OnTrigger2D`
   callbacks, stepped automatically by the scene.
 - **Scheduler** — `Invoke`, `InvokeRepeating`, and value `Tween`s per scene
-  (Unity-style timed callbacks).
+  (timed callbacks).
 - **Sprites, textures & text** — `SpriteRenderer` with optional **image
   textures** (`okay::Image`, PNG/JPG/BMP via stb_image), **sprite-sheet/atlas**
   sub-regions + **`sortOrder`** layering, `SpriteAnimator` flip-book/atlas
@@ -79,14 +79,14 @@ planet, `A` player ship.)*
 - **Easing & Tween** — the classic easing curve set (`Ease`) plus a one-shot
   `Tween` for game-feel animation.
 - **Persistent save data** — `Prefs` (PlayerPrefs-style key/value) for high
-  scores and settings, plus an **Easy-Save-style save system** (`okay::Save` /
+  scores and settings, plus a **built-in save system** (`okay::Save` /
   `SaveFile`): typed values (number/string/`Vector3`), many named files
   (slots/profiles), write-through to disk, and key management. Scripts use
   `save()` / `load()` / `save_has` / `save_delete` / `save_exists`, and the
   editor's **Save Manager** window browses and edits `.okaysave` files.
 - **Keyframe animation** — an `Animator` plays an `AnimationClip` of
-  `AnimationCurve` tracks (`position.*`, `rotation.z`, `scale.*`), like Unity's
-  Animator. The inspector has play/pause, a time scrubber, and **Record** to
+  animation-curve tracks (`position.*`, `rotation.z`, `scale.*`).
+  The inspector has play/pause, a time scrubber, and **Record** to
   capture the object's transform into keys at the current time. Clips save with
   the scene.
 - **Starter templates** — `Platformer` / `TopDown` / **`CoinCollector`** (a
@@ -106,32 +106,31 @@ planet, `A` player ship.)*
   Trigger → Conditions → Instructions) with ~60 ops including variables/math,
   transform/physics, prefs, scene loading, **and networking** (`net_host`,
   `net_join`, `net_send`), plus a node-graph runtime you build in code or text.
-- **Text scripting (OkayScript), Unity-style** — write scripts that look almost
-  exactly like a Unity C# script (base class `OkaySource`): `void Start()` / `void Update()`,
-  `transform.position = new Vector3(...)`, `Input.GetKeyDown("space")`,
-  `Time.deltaTime`, `Mathf.Sin(t)`, `Debug.Log(...)`, typed vars (`float speed = 5f;`),
-  `i++` loops, and a `public class Foo : OkaySource { }` wrapper (Unity's
-  `: MonoBehaviour` still parses, so pasted scripts work too).
-  The classic lowercase style still works too. A built-in language (works
-  everywhere; an optional **C#** backend sits behind the same `IScriptVM`). Has
-  `if`/`while`/`for`/**foreach**/`break`/`continue`, functions, the **ternary**
-  `?:`, **arrays** and **maps**, a full **string** library, and a deep builtin
-  set: input (keyboard+mouse), 2D/3D transform control, `spawn`/`destroy`,
-  `load_scene` + **Scene Manager** (`load_scene_index`/`load_next_scene`),
-  **networking** (`net_*`), physics `raycast_hit`/`overlap`, component control
-  (`set_text`/`set_color`/`set_texture`/`play_sound`/`set_progress`),
-  audio/gravity/time-scale, `prefs_*` and **`save()`/`load()`** save data, and
-  `on_trigger()`/`on_collision()`/`on_click()` handlers.
-  See [`docs/scripting.md`](docs/scripting.md). Scripts are written in a
-  built-in **VS Code-style editor** (line-number gutter, syntax highlighting,
-  Find, inline errors, comment-toggle, go-to-line, duplicate/move-line, zoom and
-  snippets).
-- **Terrain** — a Unity-style heightmap terrain you sculpt with brushes (Raise/
+- **Text scripting (OkayScript)** — a tiny language of its own, built for minimal
+  code. No class wrapper, no type declarations, no semicolons: the whole file runs
+  every frame, so a complete behaviour can be one line — `on_key_move(5)`. Define
+  `update(dt)` / `start()` (the `function` keyword is optional) and single-line
+  `if`/`while`/`for` need no braces. High-level, **dt-scaled** one-liners mean you
+  never write `* dt` — `walk`, `spin`, `follow`, `platformer`, `aim`, `cooldown`,
+  `spring_to`, and more. Full language underneath: `if`/`while`/`for`/**foreach**,
+  functions, the **ternary** `?:`, **arrays** and **maps**, a **string** library,
+  and a deep builtin set — input (keyboard+mouse), 2D/3D transform control,
+  `spawn`/`destroy`, `load_scene` + **Scene Manager**, **networking** (`net_*`),
+  physics `raycast_hit`/`overlap`, component control
+  (`set_text`/`set_color`/`set_texture`/`play_sound`), audio/gravity/time-scale,
+  `prefs_*` and **`save()`/`load()`** save data, and
+  `on_collision()`/`on_click()` handlers. (A fuller C-style form also parses so
+  pasted code works, and an optional **C#/Lua** backend sits behind the same
+  `IScriptVM`.) See [`docs/scripting.md`](docs/scripting.md). Scripts are written
+  in a built-in IDE-style editor (a crisp monospace font, syntax highlighting, minimap,
+  autocomplete, outline, inline errors, rename, find references, go-to-line, zoom
+  and snippets).
+- **Terrain** — a heightmap terrain you sculpt with brushes (Raise/
   Lower, Smooth, Flatten, Set Height, Noise, Erode — each with a Hardness control)
   or generate (Mountains, Hills, Plains, Plateau, Islands, Ridged Mountains,
   Canyons). **Erosion** weathers generated terrain into believable landscape
   (hydraulic droplet sim carves valleys; thermal slumps cliffs), and heightmaps
-  **import/export as PNG** (round-trip with World Machine / Gaea / Photoshop).
+  **import/export as PNG** (round-trip with common heightmap and image tools).
   Bodies walk on it with slope-aware collision (slide / bounce / friction), and a
   runtime **Terrain Digger** carves it live in Play with an on-ground brush marker.
   Try the **Terrain Sandbox** template. The heightmap saves with the scene. Size
@@ -163,7 +162,7 @@ planet, `A` player ship.)*
 - **Materials** — reusable surface presets (albedo, emissive, specular, texture,
   tiling, unlit, double-sided) saved as `.okaymat` assets and applied to any
   Mesh Renderer (Save/Load in the inspector, or drag a `.okaymat` from Project).
-- **In-game UI like Unity** — a **Canvas** (CanvasScaler: constant-pixel or
+- **In-game UI** — a **Canvas** (CanvasScaler: constant-pixel or
   scale-with-screen) parents the widgets, with one **Event System** routing
   pointer input. Widgets: `UIButton` (`on_click()`), `UIPanel`, `UIImage`,
   `UISlider`, `UIStepper` and `UIRating` (`on_change()`), `UIToggle`,
@@ -177,7 +176,7 @@ planet, `A` player ship.)*
   the click hit-test. A **Scroll View** (wheel-scrollable, clipped) and **Layout
   Group** make scrollable, auto-arranged lists — all rendered identically in
   built games.
-- **Unity-style UI editing** — select, drag and resize any widget in the Scene
+- **UI editing** — select, drag and resize any widget in the Scene
   view with anchor-correct handles; **snapping** to a pixel grid plus smart
   edge/center **alignment guides** to the canvas and siblings; arrow-key
   nudging; a **3×3 anchor preset** grid (re-anchors without moving the widget);
@@ -193,7 +192,7 @@ planet, `A` player ship.)*
   addressable), reusable `style` classes, parameterized `define` custom widgets,
   live data **binding** (`bind="Score: {score}"`), and inline validation with
   line numbers.
-- **Tweening (DOTween-style) & saves** — animate from OkayScript with
+- **Tweening & saves** — animate from OkayScript with
   `tween_move`/`tween_move3`/`tween_scale`/`tween_rotate`/`tween_color`/
   `tween_fade` (any easing), each with an optional **on-complete callback**;
   plus **`tween_loop_move`** (ping-pong floaters/patrols), **`tween_punch_scale`**
@@ -209,7 +208,7 @@ planet, `A` player ship.)*
   hover highlight + `on_hover_enter/exit()`. The **Inventory** starter template
   is a working drag-and-drop bag.
 - **Scriptable Objects (Data Assets)** — reusable `.okaydata` files of named
-  fields for item/enemy/level definitions and config (Unity's ScriptableObject).
+  fields for item/enemy/level definitions and config (a scriptable data asset).
   Create via **Project → New Data Asset**, edit fields in the editor, read from
   OkayScript with `data_num`/`data_str`/`data_has` and write with
   `data_set`/`data_save`.
@@ -228,7 +227,7 @@ planet, `A` player ship.)*
 - **Graphical launcher** (account sign-in, searchable game library with
   favorites, theme modes, New Project templates) that self-updates by pulling
   the latest prebuilt build from GitHub and swapping it in — no console windows.
-- **Desktop GUI editor** (Dear ImGui docking + SDL2) — Unity-style **docked**
+- **Desktop GUI editor** (Dear ImGui docking + SDL2) — **docked**
   Hierarchy / Scene / Inspector / Console / **Services** / **Script Editor**
   panels, a Play·Stop·Step·Build toolbar, a polished dark theme, a **New Project**
   flow with 2D / 3D and **playable templates**, a **2D/3D scene viewport** (orbit
@@ -237,7 +236,7 @@ planet, `A` player ship.)*
   Add Component / Inspector for every component, scene save/load, **Build Game**,
   and an in-app self-updater. Ships as a single self-contained `.exe`
   (`dist/OkayEngine.exe`). See [`docs/editor.md`](docs/editor.md).
-- **Unity-parity editor polish** — a Unity-style **Add Component** (centered
+- **editor polish** — a **Add Component** (centered
   title + Search, categories that drill into submenus; the Scripts category lists
   your `.okay` files and "New Script…"); component headers with **enable
   checkboxes** + right-click **Remove**; a **Tag** dropdown and **Static** flag;
@@ -258,13 +257,13 @@ planet, `A` player ship.)*
   the editor's **Services** panel. Ship on Steam via
   [`docs/steam_release.md`](docs/steam_release.md).
 - **Scene Manager + Scenes panel** — a build list of the project's scenes with
-  by-index / by-name loading, Load Next and Reload (Unity's SceneManager +
+  by-index / by-name loading, Load Next and Reload (a Scene Manager (
   Build Settings).
 - **Prefabs** — save any GameObject (and children) as a `.okayprefab` from the
   Hierarchy right-click, drag it back in to instantiate.
 - **Scene serialization** — save/load scenes (and the hierarchy, plus per-scene
   sky/ambient render settings) to readable `.okayscene` text files.
-- **Unity-like Build Settings** — the editor's **Build Game** (Ctrl+B) dialog
+- **Build Settings** — the editor's **Build Game** (Ctrl+B) dialog
   has product/company names, window size (+ presets), fullscreen/resizable/
   vsync, "include all project scenes", and a development-build flag. It writes
   your scene(s) + a `game.okayconfig` next to a tiny SDL2 **player runtime**,
@@ -361,7 +360,7 @@ Clang 18). The core build needs nothing else.
 
 ### The visual editor
 
-Want a Unity-style editor window (hierarchy, inspector, scene view, Play button)?
+Want a editor window (hierarchy, inspector, scene view, Play button)?
 
 ```bash
 # Debian/Ubuntu: sudo apt-get install libsdl2-dev libgl1-mesa-dev
@@ -429,7 +428,7 @@ Steam/PlayFab APIs via built-in/simulation backends.
 #include <Okay.hpp>
 using namespace okay;
 
-// A script, just like a MonoBehaviour. (There's also a built-in okay::Spinner.)
+// A component script. (There's also a built-in okay::Spinner.)
 class MySpin : public Behaviour {
 public:
     float speed = 90.0f; // degrees/second
@@ -460,9 +459,9 @@ a server on a port; others join by IP. From OkayScript:
 
 ```c
 // Press H to host, J to join the machine at 127.0.0.1.
-function update(d) {
-  if (key_down("h")) net_host(45000);            // start a server on this PC
-  if (key_down("j")) net_join("127.0.0.1", 45000); // connect to a host
+update(dt) {
+  if (key_down("h")) net_host(45000)              // start a server on this PC
+  if (key_down("j")) net_join("127.0.0.1", 45000) // connect to a host
 
   // Send your position to everyone, ~10x/sec.
   net_send("pos", x() + "," + y());

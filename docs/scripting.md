@@ -202,6 +202,14 @@ are in units/second (or degrees/second), independent of frame rate.
 | --- | --- |
 | `key("a")` | true while the key is held |
 | `key_down("a")` | true on the frame the key is pressed |
+| `key_up("a")` | true on the frame the key is released |
+
+Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`,
+`"left"`, `"right"`, `"enter"`, `"escape"`, `"backspace"`, `"tab"`, `"shift"`,
+`"ctrl"`. (Arrow keys and WASD are interchangeable.)
+
+| Function | Returns |
+| --- | --- |
 | `axis_x()` / `axis_y()` | -1..1 from A/D and S/W |
 | `mouse_x()` / `mouse_y()` | cursor position in pixels |
 | `mouse(btn)` | true while a mouse button is held (0=left, 1=right, 2=middle) |

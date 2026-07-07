@@ -63,6 +63,31 @@ namespace {
 
 using Value = vs::VsValue;
 
+// Map a friendly key NAME to the char code the Input layer uses, so scripts can
+// write key("space") / key_down("up") instead of guessing the internal char. A
+// single character is taken as-is (lowercased); named keys map to their code
+// (arrows fold onto WASD exactly as the runtime feeds them). Unknown multi-char
+// names fall back to their first letter.
+static char KeyCharFromName(const std::string& s) {
+    if (s.empty()) return 0;
+    auto lower1 = [](char c) { return (char)std::tolower((unsigned char)c); };
+    if (s.size() == 1) return lower1(s[0]);
+    std::string k; k.reserve(s.size());
+    for (char c : s) k += lower1(c);
+    if (k == "space")                    return ' ';
+    if (k == "up")                       return 'w';   // arrows are fed as WASD
+    if (k == "down")                     return 's';
+    if (k == "left")                     return 'a';
+    if (k == "right")                    return 'd';
+    if (k == "enter" || k == "return")   return '\r';
+    if (k == "escape" || k == "esc")     return (char)27;
+    if (k == "backspace")                return (char)8;
+    if (k == "tab")                      return '\t';
+    if (k == "shift")                    return Input::KeyShift;
+    if (k == "ctrl" || k == "control")   return Input::KeyCtrl;
+    return lower1(s[0]);
+}
+
 // ===================== JSON (for to_json / from_json builtins) =====================
 // A compact, dependency-free JSON writer/reader over VsValue. Numbers, bools,
 // strings, arrays and maps round-trip; vec3 is written as a [x,y,z] array.
@@ -1726,13 +1751,13 @@ struct OkayScriptVM::Impl {
         b["axis_y"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().y}; };
         b["key"]    = [](std::vector<Value>& a) {
             if (a.empty()) return Value{false};
-            std::string s = a[0].AsString();
-            return Value{!s.empty() && Input::GetKey(s[0])};
+            char c = KeyCharFromName(a[0].AsString());
+            return Value{c != 0 && Input::GetKey(c)};
         };
         b["key_down"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{false};
-            std::string s = a[0].AsString();
-            return Value{!s.empty() && Input::GetKeyDown(s[0])};
+            char c = KeyCharFromName(a[0].AsString());
+            return Value{c != 0 && Input::GetKeyDown(c)};
         };
         b["mouse_x"] = [](std::vector<Value>&) { return Value{Input::MousePosition().x}; };
         b["mouse_y"] = [](std::vector<Value>&) { return Value{Input::MousePosition().y}; };
@@ -1993,8 +2018,8 @@ struct OkayScriptVM::Impl {
         // is pressed. Event-style input with no if/edge bookkeeping.
         b["on_key"] = [this](std::vector<Value>& a) {
             if (a.size() < 2) return Value{};
-            std::string k = a[0].AsString();
-            if (!k.empty() && Input::GetKeyDown(k[0])) {
+            char c = KeyCharFromName(a[0].AsString());
+            if (c != 0 && Input::GetKeyDown(c)) {
                 std::string fn = a[1].AsString();
                 if (rt.functions.count(fn) || rt.builtins.count(fn)) { std::vector<Value> none; rt.Call(fn, none); }
             }
@@ -4019,8 +4044,8 @@ struct OkayScriptVM::Impl {
         // --- More input ---
         b["key_up"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{false};
-            std::string s = a[0].AsString();
-            return Value{!s.empty() && Input::GetKeyUp(s[0])};
+            char c = KeyCharFromName(a[0].AsString());
+            return Value{c != 0 && Input::GetKeyUp(c)};
         };
         b["mouse_up"] = [](std::vector<Value>& a) {
             return Value{Input::GetMouseButtonUp(a.empty() ? 0 : (int)a[0].AsFloat())};

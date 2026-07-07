@@ -12,9 +12,10 @@
 // normal-map textures to file paths (external images referenced in place, embedded
 // `data:`/.glb images extracted to a sidecar PNG/JPEG next to the model), plus the
 // base-color / emissive factors and a metallic-roughness -> Blinn-Phong glint.
-// (ImportModelScene rebuilds the node graph with per-node transforms; the merged
-// LoadGLTF() path does not bake them.) Skinned/animated import and the packed
-// metallic-roughness *texture* are planned follow-ups.
+// (ImportModelScene rebuilds the node graph with per-node transforms, splits
+// multi-material meshes into sub-objects, and imports skins + animation clips; the
+// merged LoadGLTF() path stays a single static Mesh.) Not yet: the packed
+// metallic-roughness *texture* and the emissive *texture*.
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Vec3.hpp"

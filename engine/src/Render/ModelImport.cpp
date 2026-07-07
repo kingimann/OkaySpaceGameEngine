@@ -281,6 +281,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
 
         auto* mr = go[ni]->AddComponent<MeshRenderer>();
         mr->mesh = bind; mr->doubleSided = true;
+        ApplyGltfMaterial(*mr, ResolveMeshMaterial(doc, meshIdx, path));   // texture animated characters too
         auto* sm = go[ni]->AddComponent<SkinnedMesh>();
         sm->bind = bind; sm->jointIdx = jIdx; sm->jointWt = jWt;
 
@@ -327,28 +328,33 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                         int tc = 0, tn = 0; auto times = ReadAccessor(doc, inAcc, tc, tn);
                         int oc = 0, on = 0; auto vals = ReadAccessor(doc, outAcc, oc, on);
                         if (times.empty() || vals.empty()) continue;
+                        // CUBICSPLINE stores 3 blocks per key (in-tangent, value, out-tangent);
+                        // take the middle (value) block. LINEAR/STEP store one block per key.
+                        std::string interp = s.Find("interpolation") ? s.Find("interpolation")->Text() : "LINEAR";
+                        bool cubic = (interp == "CUBICSPLINE");
 
                         const std::string& nodeName = go[node]->name;
                         ModelAnimator::NodeClip* ncp = nullptr;
                         for (auto& ncx : clip.nodes) if (ncx.node == nodeName) { ncp = &ncx; break; }
                         if (!ncp) { clip.nodes.push_back({nodeName, AnimationClip{}}); ncp = &clip.nodes.back(); }
                         AnimationClip& ac = ncp->clip;
-                        int keys = tn < on ? tn : on;
-                        for (int k = 0; k < keys; ++k) {
+                        for (int k = 0; k < tn; ++k) {
                             float t = times[k];
+                            int vbase = (cubic ? (k * 3 + 1) : k) * oc;   // value block for this key
+                            if (vbase + oc > on * oc) break;              // guard against short data
                             if (tpath == "translation" && oc >= 3) {
-                                ac.AddKey("position.x", t, vals[k*oc+0]);
-                                ac.AddKey("position.y", t, vals[k*oc+1]);
-                                ac.AddKey("position.z", t, vals[k*oc+2]);
+                                ac.AddKey("position.x", t, vals[vbase+0]);
+                                ac.AddKey("position.y", t, vals[vbase+1]);
+                                ac.AddKey("position.z", t, vals[vbase+2]);
                             } else if (tpath == "scale" && oc >= 3) {
-                                ac.AddKey("scale.x", t, vals[k*oc+0]);
-                                ac.AddKey("scale.y", t, vals[k*oc+1]);
-                                ac.AddKey("scale.z", t, vals[k*oc+2]);
+                                ac.AddKey("scale.x", t, vals[vbase+0]);
+                                ac.AddKey("scale.y", t, vals[vbase+1]);
+                                ac.AddKey("scale.z", t, vals[vbase+2]);
                             } else if (tpath == "rotation" && oc >= 4) {
-                                ac.AddKey("rotation.qx", t, vals[k*oc+0]);
-                                ac.AddKey("rotation.qy", t, vals[k*oc+1]);
-                                ac.AddKey("rotation.qz", t, vals[k*oc+2]);
-                                ac.AddKey("rotation.qw", t, vals[k*oc+3]);
+                                ac.AddKey("rotation.qx", t, vals[vbase+0]);
+                                ac.AddKey("rotation.qy", t, vals[vbase+1]);
+                                ac.AddKey("rotation.qz", t, vals[vbase+2]);
+                                ac.AddKey("rotation.qw", t, vals[vbase+3]);
                             }
                         }
                     }

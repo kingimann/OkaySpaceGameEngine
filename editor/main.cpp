@@ -5799,11 +5799,17 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             d->CursorPos = d->SelectionStart = d->SelectionEnd = d->CursorPos + (int)dup.size();
         }
     }
-    // Ctrl+W: expand the selection — first to the word under the caret, then to the
-    // whole line, then to the whole file (Rider/IntelliJ "extend selection").
+    // Ctrl+W / Ctrl+Shift+W: expand / shrink the selection (Rider/IntelliJ "extend
+    // selection"). Expand grows word -> line(s) -> whole file, pushing each prior
+    // selection so Shrink walks back down exactly. The stack resets whenever the live
+    // selection isn't the one Expand last produced (i.e. the user moved on).
+    static std::vector<std::pair<int,int>> s_selHist;
+    static std::pair<int,int> s_selTop = {-1, -1};
     if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_W, false)) {
         auto isWc = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
         int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
+        int pa = a, pb = b;                             // pre-expand state
+        if (std::make_pair(a, b) != s_selTop) s_selHist.clear();   // user moved on: fresh chain
         if (a == b) {                                   // no selection -> select the word
             int ws = a; while (ws > 0 && isWc(d->Buf[ws - 1])) --ws;
             int we = a; while (we < d->BufTextLen && isWc(d->Buf[we])) ++we;
@@ -5814,7 +5820,27 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             if (a > ls || b < le2) { a = ls; b = le2; } // not yet full line(s) -> expand to lines
             else { a = 0; b = d->BufTextLen; }           // already lines -> whole file
         }
-        d->SelectionStart = a; d->SelectionEnd = b; d->CursorPos = b;
+        // Only record + apply when the selection actually grew — at a terminal state
+        // (whole file / no word) this is a no-op, so the stack never balloons.
+        if (a != pa || b != pb) {
+            s_selHist.push_back({pa, pb});
+            d->SelectionStart = a; d->SelectionEnd = b; d->CursorPos = b;
+            s_selTop = {a, b};
+        }
+    }
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_W, false)) {
+        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
+        // Liveness: if the live selection isn't the one Expand last produced (the user
+        // clicked away, or switched scripts — these statics are shared), the history is
+        // stale; drop it rather than yank the caret to an old/foreign range.
+        if (std::make_pair(a, b) != s_selTop) { s_selHist.clear(); s_selTop = {-1, -1}; }
+        else if (!s_selHist.empty()) {
+            auto prev = s_selHist.back(); s_selHist.pop_back();
+            int lo = prev.first < 0 ? 0 : (prev.first > d->BufTextLen ? d->BufTextLen : prev.first);
+            int hi = prev.second < 0 ? 0 : (prev.second > d->BufTextLen ? d->BufTextLen : prev.second);
+            d->SelectionStart = lo; d->SelectionEnd = hi; d->CursorPos = hi;
+            s_selTop = {lo, hi};
+        }
     }
     // Ctrl+Shift+J: join the caret's line with the next (Rider "Join Lines") —
     // the newline and the next line's indentation collapse into one space.
@@ -6735,6 +6761,36 @@ void DrawScriptEditor(EditorState& ed) {
         // they act on the live buffer). Declared before the toolbar so its buttons
         // (Format/Rename/comment/...) can drive it; the callback reports line/col back.
         static ScriptCaret caret;
+        static int s_scrollToLine = 0;   // pending "center this 1-based line" request
+
+        // `caret` is one shared instance across all tabs, but it only updates while the
+        // active editor runs its callback. On a tab switch it still holds the OLD
+        // script's line — invalidate it so nav history / find-anchor don't record a
+        // departure line that belongs to a different file. (line 0 fails the >=1 guards.)
+        static ScriptComponent* s_caretOwner = nullptr;
+        if (s_caretOwner != sc) { s_caretOwner = sc; caret.line = 0; caret.pos = 0; caret.col = 1; }
+
+        // Navigation history (Rider's Back/Forward, Alt+Left / Alt+Right): every jump
+        // (go-to-def, outline, find, Problems...) records the departure line so you can
+        // step back through where you've been, and forward again. Keyed per script.
+        static std::unordered_map<ScriptComponent*, std::vector<int>> s_navBack, s_navFwd;
+        std::vector<int>& navBack = s_navBack[sc];
+        std::vector<int>& navFwd  = s_navFwd[sc];
+        // A jump that should be undoable via Back: records the current line, clears the
+        // forward stack (a new branch), then moves the caret.
+        auto jumpTo = [&](int line) {
+            if (line < 1) line = 1;
+            if (caret.line >= 1 && caret.line != line) {
+                if (navBack.empty() || navBack.back() != caret.line) navBack.push_back(caret.line);
+                if (navBack.size() > 100) navBack.erase(navBack.begin());
+                navFwd.clear();
+            }
+            caret.gotoLine = line; s_scrollToLine = line;
+        };
+        // Bookmarks (Rider): toggle by clicking the line-number gutter; markers show in
+        // the gutter + minimap; the "Marks" list jumps between them. Keyed per script.
+        static std::unordered_map<ScriptComponent*, std::set<int>> s_bookmarks;
+        std::set<int>& bookmarks = s_bookmarks[sc];
 
         // --- Toolbar (VS Code-style title row): file + Run / Save / Reload ----
         std::string fname = sc->Path().empty() ? (go->name + "." + extide::ExtFor(sc->Language()))
@@ -6801,7 +6857,6 @@ void DrawScriptEditor(EditorState& ed) {
         static bool  s_minimap = true;
         static float s_zoom = 1.0f;
         static int   s_gotoLine = 1;
-        static int   s_scrollToLine = 0;
 
         // Everything past Run / Save / Format / Docs / Templates lives behind ONE
         // "More" toggle, so the toolbar stays clean and the power tools are a single
@@ -6868,21 +6923,44 @@ void DrawScriptEditor(EditorState& ed) {
             bool goEnter = ImGui::InputInt("##goto", &s_gotoLine, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
             if (ImGui::SmallButton("->") || goEnter) {
-                caret.gotoLine = s_gotoLine < 1 ? 1 : s_gotoLine;
+                jumpTo(s_gotoLine < 1 ? 1 : s_gotoLine);
                 s_scrollToLine = caret.gotoLine;
             }
             // Outline: jump to any function/class in the file (VS Code's symbol list).
             ImGui::SameLine();
             if (ImGui::SmallButton("Outline")) ImGui::OpenPopup("##outline");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to a function or class");
+            // Marks: list of bookmarked lines (F11 toggles; click the number gutter).
+            if (!bookmarks.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Marks")) ImGui::OpenPopup("##bookmarks");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to a bookmark (F11 toggles one on the caret line)");
+            }
         }
         if (ImGui::BeginPopup("##outline")) {
             auto syms = ScriptOutline(buf.data());
             if (syms.empty()) ImGui::TextDisabled("No functions or classes found.");
             for (const auto& s : syms) {
                 char lbl[160]; std::snprintf(lbl, sizeof(lbl), "%-28s :%d", s.second.c_str(), s.first);
-                if (ImGui::MenuItem(lbl)) { caret.gotoLine = s.first; s_scrollToLine = s.first; }
+                if (ImGui::MenuItem(lbl)) { jumpTo(s.first); }
             }
+            ImGui::EndPopup();
+        }
+        if (ImGui::BeginPopup("##bookmarks")) {
+            ImGui::TextDisabled("Bookmarks"); ImGui::Separator();
+            const char* t = buf.data();
+            for (int bm : bookmarks) {
+                // Preview the line's text so the list reads like Rider's bookmark panel.
+                int ls = 0, ln = 1; while (t[ls] && ln < bm) { if (t[ls] == '\n') ++ln; ++ls; }
+                int le = ls; while (t[le] && t[le] != '\n') ++le;
+                std::string txt(t + ls, t + le);
+                std::size_t a = txt.find_first_not_of(" \t"); if (a != std::string::npos) txt = txt.substr(a);
+                if (txt.size() > 48) txt = txt.substr(0, 45) + "...";
+                char lbl[128]; std::snprintf(lbl, sizeof(lbl), "%4d  %s##bm%d", bm, txt.c_str(), bm);
+                if (ImGui::MenuItem(lbl)) { jumpTo(bm); }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Clear all bookmarks")) bookmarks.clear();
             ImGui::EndPopup();
         }
         // Rider-style keyboard chords (active while the Script Editor is focused):
@@ -6902,6 +6980,26 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::IsKeyPressed(ImGuiKey_L, false)) {
                 caret.replaceAll = FormatOkayScript(buf.data());
                 ed.dirty = true;
+            }
+        }
+        // Navigation history (Alt+Left = Back, Alt+Right = Forward). Held separate from
+        // the Ctrl chords above so Alt+Arrow doesn't require Ctrl. Stepping back records
+        // the current line on the forward stack (and vice-versa) without re-recording it
+        // as a new Back entry — so Back/Forward are true inverses.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            ImGui::GetIO().KeyAlt && !ImGui::GetIO().KeyCtrl) {
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) && !navBack.empty()) {
+                int target = navBack.back(); navBack.pop_back();
+                // Only push the current line onto Forward when it differs from the
+                // target — otherwise a Back to where we already are is a dead press
+                // that would still shuffle the stacks.
+                if (caret.line >= 1 && caret.line != target) navFwd.push_back(caret.line);
+                caret.gotoLine = target; s_scrollToLine = target;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) && !navFwd.empty()) {
+                int target = navFwd.back(); navFwd.pop_back();
+                if (caret.line >= 1 && caret.line != target) navBack.push_back(caret.line);
+                caret.gotoLine = target; s_scrollToLine = target;
             }
         }
         // Ctrl+E: jump between open script tabs (Rider's "Recent Files").
@@ -6930,7 +7028,7 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::SetNextItemWidth(120);
             if (ImGui::InputInt("##gotopopin", &s_gotoPop, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue)) {
                 if (s_gotoPop < 1) s_gotoPop = 1;
-                caret.gotoLine = s_gotoPop; s_scrollToLine = s_gotoPop;
+                jumpTo(s_gotoPop);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
@@ -6947,7 +7045,7 @@ void DrawScriptEditor(EditorState& ed) {
             if (!word.empty()) {
                 for (const auto& s : ScriptOutline(buf.data())) {
                     std::string nm = s.second.size() > 3 ? s.second.substr(3) : s.second;  // strip "f  "/"C  "
-                    if (nm == word) { caret.gotoLine = s.first; s_scrollToLine = s.first;
+                    if (nm == word) { jumpTo(s.first);
                                       ConsoleLog("Go to " + nm + " (line " + std::to_string(s.first) + ")"); break; }
                 }
             }
@@ -7271,7 +7369,7 @@ void DrawScriptEditor(EditorState& ed) {
                     char lbl[320];
                     std::snprintf(lbl, sizeof(lbl), "%4d  %s", r.first, r.second.c_str());
                     if (ImGui::MenuItem(lbl)) {
-                        caret.gotoLine = r.first; s_scrollToLine = r.first;
+                        jumpTo(r.first);
                         ImGui::CloseCurrentPopup();
                     }
                 }
@@ -7427,7 +7525,7 @@ void DrawScriptEditor(EditorState& ed) {
             for (const auto& s : ScriptOutline(buf.data())) {
                 std::string label = "Go to  " + s.second;
                 if (matches(label) && ImGui::Selectable(label.c_str())) {
-                    caret.gotoLine = s.first; s_scrollToLine = s.first; ImGui::CloseCurrentPopup();
+                    jumpTo(s.first); ImGui::CloseCurrentPopup();
                 }
             }
             ImGui::EndChild();
@@ -7522,6 +7620,29 @@ void DrawScriptEditor(EditorState& ed) {
         }
         gdl->AddLine(ImVec2(gTop.x + gutterW - 0.5f, gTop.y),
                      ImVec2(gTop.x + gutterW - 0.5f, gTop.y + gutterH), IM_COL32(58, 60, 70, 255));
+        // Bookmarks: a blue tab on the right edge of the gutter for each marked line;
+        // clicking the line-number column toggles one (Rider's gutter click).
+        {
+            for (int bm : bookmarks) {
+                if (bm < 1 || bm > lines) continue;
+                float by = gTop.y + padY + (bm - 0.5f) * lineH;
+                gdl->AddRectFilled(ImVec2(gTop.x + gutterW - 6.0f, by - 3.5f),
+                                   ImVec2(gTop.x + gutterW - 1.0f, by + 3.5f), IM_COL32(92, 162, 236, 255));
+            }
+            if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                ImVec2 mpb = ImGui::GetMousePos();
+                // Start past the quick-fix dots' clickable rect so one click can't both
+                // toggle a bookmark and apply a fix. Dots are centred at gTop.x+pr+2 with
+                // a +2 hover margin, so their right edge is gTop.x + 2*pr + 4.
+                float prb = lineH * 0.14f; if (prb < 2.0f) prb = 2.0f; if (prb > 3.5f) prb = 3.5f;
+                float bmMinX = gTop.x + 2.0f * prb + 6.0f;
+                if (mpb.x > bmMinX && mpb.x < gTop.x + gutterW &&
+                    mpb.y > gTop.y + padY && mpb.y < gTop.y + padY + lines * lineH) {
+                    int bl = (int)((mpb.y - (gTop.y + padY)) / lineH) + 1;
+                    if (bl >= 1 && bl <= lines) { if (!bookmarks.erase(bl)) bookmarks.insert(bl); }
+                }
+            }
+        }
         // Changed-line markers (the IDE gutter diff): a blue bar beside every line
         // that differs from the last SAVED version, a red wedge where lines were
         // deleted. Cheap common-prefix/suffix diff over per-line hashes, cached
@@ -7631,6 +7752,12 @@ void DrawScriptEditor(EditorState& ed) {
         bool editorActive = ImGui::IsItemActive();   // for the custom caret (text is hidden when highlighting)
         bool codeHovered = ImGui::IsItemHovered();    // for the hover-doc tooltip below
         if (editorActive) s_findCursor = caret.pos;   // typing/clicking re-anchors find-next
+        // Bookmarks: F11 toggles one on the caret's line (Rider). Gated on the code
+        // editor being ACTIVE so F11 typed in the go-to/find toolbar boxes (which keep
+        // the Script Editor window focused) can't flip a bookmark on a stale line.
+        if (editorActive && ImGui::IsKeyPressed(ImGuiKey_F11, false) && caret.line >= 1) {
+            if (!bookmarks.erase(caret.line)) bookmarks.insert(caret.line);
+        }
         // Toolbar buttons (Format/Snippet/Rename) steal focus from the editor, so its
         // CallbackAlways won't run this frame — apply any pending edit to the buffer
         // directly here (ImGui re-reads buf while the item is inactive).
@@ -7646,6 +7773,19 @@ void DrawScriptEditor(EditorState& ed) {
             }
             s.insert((std::size_t)p, caret.insert);
             SetCodeBuffer(sc, s); caret.insert.clear(); caret.insertReplaceLen = 0; ed.dirty = true;
+        }
+        // A go-to jump issued from a popup/panel (Outline, Marks, Problems, ...) leaves
+        // the editor inactive, so its CallbackAlways never consumes caret.gotoLine — the
+        // view scrolls but the caret model would stay stale, desyncing Back/Forward.
+        // Resolve it here: move our tracked caret to the target line's start so nav
+        // history records the right departure. (The InputText's own cursor can't move
+        // while inactive, but nothing draws it then either.)
+        if (!editorActive && caret.gotoLine > 0) {
+            const char* t = buf.data();
+            int line = 1, pos = 0;
+            for (; t[pos] && line < caret.gotoLine; ++pos) if (t[pos] == '\n') ++line;
+            caret.pos = pos; caret.line = line; caret.col = 1;
+            caret.gotoLine = 0;
         }
         ImVec2 mn = ImGui::GetItemRectMin();
         ImVec2 origin(mn.x + padX, mn.y + padY);
@@ -8033,6 +8173,13 @@ void DrawScriptEditor(EditorState& ed) {
             };
             for (const auto& w : s_warns) probTick(w.line, IM_COL32(230, 190, 70, 235));
             for (const auto& d : s_diags) probTick(d.line, IM_COL32(240, 80, 80, 235));
+            // Bookmark ticks on the LEFT edge of the minimap (problems are on the right).
+            for (int bm : bookmarks) {
+                if (bm <= 0 || bm > lines) continue;
+                float y = mp.y + 4.0f + (bm - 1) * step;
+                if (y > mp.y + mh - 3.0f) y = mp.y + mh - 3.0f;
+                mdl->AddRectFilled(ImVec2(mp.x + 1.0f, y), ImVec2(mp.x + 5.0f, y + 2.5f), IM_COL32(92, 162, 236, 235));
+            }
             // Visible-region box.
             float total = (float)lines;
             if (total > 0) {
@@ -8318,7 +8465,7 @@ void DrawScriptEditor(EditorState& ed) {
                                 fdl->PopClipRect();
                                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                                 if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                                    caret.gotoLine = defLine; s_scrollToLine = defLine;
+                                    jumpTo(defLine);
                                 }
                             }
                         }
@@ -8395,7 +8542,7 @@ void DrawScriptEditor(EditorState& ed) {
             } else {
                 ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  x %s", s_error.c_str());
                 int eln = (s_error.rfind("line ", 0) == 0) ? std::atoi(s_error.c_str() + 5) : 0;
-                if (eln > 0 && ImGui::IsItemClicked()) { caret.gotoLine = eln; s_scrollToLine = eln; }
+                if (eln > 0 && ImGui::IsItemClicked()) { jumpTo(eln); }
                 if (eln > 0 && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to go to line %d", eln);
             }
         } else if (sc->Language() == "okayscript" && s_warns.empty()) {
@@ -8437,7 +8584,7 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.55f, 1.0f));
                     bool clicked = ImGui::Selectable(row);
                     ImGui::PopStyleColor();
-                    if (clicked && d.line > 0) { caret.gotoLine = d.line; s_scrollToLine = d.line; }
+                    if (clicked && d.line > 0) { jumpTo(d.line); }
                 }
                 for (std::size_t i = 0; i < s_warns.size(); ++i) {
                     const auto& w = s_warns[i];
@@ -8447,7 +8594,7 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.78f, 0.35f, 1.0f));
                     bool clicked = ImGui::Selectable(row);
                     ImGui::PopStyleColor();
-                    if (clicked && w.line > 0) { caret.gotoLine = w.line; s_scrollToLine = w.line; }
+                    if (clicked && w.line > 0) { jumpTo(w.line); }
                 }
             }
             ImGui::EndChild();

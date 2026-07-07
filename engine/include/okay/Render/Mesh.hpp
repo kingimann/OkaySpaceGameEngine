@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <fstream>
 #include <map>
@@ -14,6 +15,7 @@
 #include <tuple>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -789,36 +791,80 @@ struct Mesh {
     /// model (e.g. a MakeHuman/Mixamo export) renders with its skin/clothing.
     static Mesh LoadOBJ(const std::string& path, bool* ok = nullptr, std::string* outTexture = nullptr) {
         Mesh m;
-        std::ifstream f(path);
-        if (!f) { if (ok) *ok = false; return m; }
+        // Read the whole file once and parse it with a pointer walk. The previous
+        // getline + istringstream version spent 10-100x longer in stream tokenizing
+        // (a multi-second freeze on real exported models).
+        std::string data;
+        {
+            std::FILE* fp = std::fopen(path.c_str(), "rb");
+            if (!fp) { if (ok) *ok = false; return m; }
+            std::fseek(fp, 0, SEEK_END); long sz = std::ftell(fp); std::fseek(fp, 0, SEEK_SET);
+            if (sz > 0) {
+                data.resize((std::size_t)sz);
+                if (std::fread(&data[0], 1, (std::size_t)sz, fp) != (std::size_t)sz) {
+                    std::fclose(fp); if (ok) *ok = false; return m;
+                }
+            }
+            std::fclose(fp);
+        }
         std::string dir;
         { std::size_t s = path.find_last_of("/\\"); if (s != std::string::npos) dir = path.substr(0, s + 1); }
         std::vector<Vec3> pos, nrm; std::vector<Vec2> uv;
         struct Corner { int p, t, n; };                        // 0-based pos / uv / normal (-1 = none)
         std::vector<std::vector<Corner>> faces;
-        std::string mtllib, line;
-        while (std::getline(f, line)) {
-            std::istringstream ss(line); std::string tag; ss >> tag;
-            if (tag == "v") { Vec3 v; ss >> v.x >> v.y >> v.z; pos.push_back(v); }
-            else if (tag == "vt") { Vec2 t; ss >> t.x >> t.y; uv.push_back(t); }
-            else if (tag == "vn") { Vec3 n; ss >> n.x >> n.y >> n.z; nrm.push_back(n); }
-            else if (tag == "mtllib") { ss >> mtllib; }
-            else if (tag == "f") {
-                std::vector<Corner> face; std::string tok;
-                while (ss >> tok) {
-                    // Accept v, v/vt, v//vn and v/vt/vn (the OBJ corner forms).
-                    int vi = 0, ti = 0, ni = 0;
-                    if (std::sscanf(tok.c_str(), "%d/%d/%d", &vi, &ti, &ni) == 3) {}
-                    else if (std::sscanf(tok.c_str(), "%d//%d", &vi, &ni) == 2) ti = 0;
-                    else if (std::sscanf(tok.c_str(), "%d/%d", &vi, &ti) == 2) ni = 0;
-                    else { std::sscanf(tok.c_str(), "%d", &vi); ti = ni = 0; }
-                    if (vi < 0) vi = (int)pos.size() + vi + 1;
-                    if (ti < 0) ti = (int)uv.size() + ti + 1;
-                    if (ni < 0) ni = (int)nrm.size() + ni + 1;
-                    face.push_back({vi - 1, ti - 1, ni - 1});
+        std::string mtllib;
+        const char* p = data.c_str();
+        const char* end = p + data.size();
+        // Bounded number readers: skip spaces/tabs only — NEVER a newline, so a short
+        // line can't consume the next line's numbers (strtof alone would).
+        auto readF = [&](const char*& c) -> float {
+            while (c < end && (*c == ' ' || *c == '\t' || *c == '\r')) ++c;
+            if (c >= end || *c == '\n') return 0.0f;
+            char* q = nullptr; float v = std::strtof(c, &q); c = q; return v;
+        };
+        while (p < end) {
+            while (p < end && (*p == ' ' || *p == '\t' || *p == '\r')) ++p;
+            if (p < end) {
+                if (p[0] == 'v' && p + 1 < end && (p[1] == ' ' || p[1] == '\t')) {
+                    p += 2; Vec3 v; v.x = readF(p); v.y = readF(p); v.z = readF(p); pos.push_back(v);
+                } else if (p[0] == 'v' && p + 2 < end && p[1] == 't' && (p[2] == ' ' || p[2] == '\t')) {
+                    p += 3; Vec2 t; t.x = readF(p); t.y = readF(p); uv.push_back(t);
+                } else if (p[0] == 'v' && p + 2 < end && p[1] == 'n' && (p[2] == ' ' || p[2] == '\t')) {
+                    p += 3; Vec3 n; n.x = readF(p); n.y = readF(p); n.z = readF(p); nrm.push_back(n);
+                } else if (p[0] == 'f' && p + 1 < end && (p[1] == ' ' || p[1] == '\t')) {
+                    p += 2;
+                    std::vector<Corner> face; face.reserve(4);
+                    for (;;) {
+                        while (p < end && (*p == ' ' || *p == '\t' || *p == '\r')) ++p;
+                        if (p >= end || *p == '\n') break;
+                        char* q = nullptr;
+                        long vi = std::strtol(p, &q, 10); if (q == p) break; p = q;
+                        long ti = 0, ni = 0;
+                        if (p < end && *p == '/') {                 // v/vt, v//vn or v/vt/vn
+                            ++p;
+                            if (p < end && *p == '/') { ++p; ni = std::strtol(p, &q, 10); p = q; }
+                            else {
+                                ti = std::strtol(p, &q, 10); p = q;
+                                if (p < end && *p == '/') { ++p; ni = std::strtol(p, &q, 10); p = q; }
+                            }
+                        }
+                        if (vi < 0) vi = (long)pos.size() + vi + 1;
+                        if (ti < 0) ti = (long)uv.size() + ti + 1;
+                        if (ni < 0) ni = (long)nrm.size() + ni + 1;
+                        face.push_back({(int)vi - 1, (int)ti - 1, (int)ni - 1});
+                    }
+                    if (face.size() >= 3) faces.push_back(std::move(face));
+                } else if (end - p >= 7 && std::strncmp(p, "mtllib", 6) == 0 &&
+                           (p[6] == ' ' || p[6] == '\t')) {
+                    p += 7;
+                    while (p < end && (*p == ' ' || *p == '\t')) ++p;
+                    const char* s = p;
+                    while (p < end && *p != '\n' && *p != '\r') ++p;
+                    mtllib.assign(s, p);
                 }
-                if (face.size() >= 3) faces.push_back(std::move(face));
             }
+            while (p < end && *p != '\n') ++p;                    // to end of line
+            if (p < end) ++p;
         }
         auto tri = [&](int a, int b, int cc) { m.triangles.insert(m.triangles.end(), {a, b, cc}); };
         if (uv.empty() && nrm.empty()) {               // simplest case: 1:1 with v lines
@@ -827,9 +873,20 @@ struct Mesh {
                 for (std::size_t i = 2; i < fc.size(); ++i) tri(fc[0].p, fc[i - 1].p, fc[i].p);
         } else {                                       // de-index per (pos,uv,normal) so attributes map right
             const bool haveUV = !uv.empty(), haveN = !nrm.empty();
-            std::map<std::tuple<int, int, int>, int> remap;
+            // Hash map keyed on the packed corner: the ordered std::map<tuple> this
+            // replaces was the second big import cost (log-n rebalancing per corner).
+            struct CKey { int p, t, n; bool operator==(const CKey& o) const { return p == o.p && t == o.t && n == o.n; } };
+            struct CKeyHash {
+                std::size_t operator()(const CKey& k) const {
+                    std::size_t h = 1469598103934665603ull;
+                    auto mix = [&](long v) { h ^= (std::size_t)(v + 1); h *= 1099511628211ull; };
+                    mix(k.p); mix(k.t); mix(k.n); return h;
+                }
+            };
+            std::unordered_map<CKey, int, CKeyHash> remap;
+            remap.reserve(pos.size() * 2 + 16);
             auto corner = [&](const Corner& c) {
-                auto key = std::make_tuple(c.p, c.t, c.n);
+                CKey key{c.p, c.t, c.n};
                 auto it = remap.find(key); if (it != remap.end()) return it->second;
                 int ni = (int)m.vertices.size();
                 m.vertices.push_back((c.p >= 0 && c.p < (int)pos.size()) ? pos[c.p] : Vec3{0, 0, 0});
@@ -837,8 +894,9 @@ struct Mesh {
                 if (haveN)  m.normals.push_back((c.n >= 0 && c.n < (int)nrm.size()) ? nrm[c.n] : Vec3{0, 1, 0});
                 remap[key] = ni; return ni;
             };
+            std::vector<int> idx;
             for (auto& fc : faces) {
-                std::vector<int> idx; for (auto& c : fc) idx.push_back(corner(c));
+                idx.clear(); for (auto& c : fc) idx.push_back(corner(c));
                 for (std::size_t i = 2; i < idx.size(); ++i) tri(idx[0], idx[i - 1], idx[i]);
             }
         }

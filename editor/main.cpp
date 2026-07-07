@@ -551,7 +551,11 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // repeated failures so the viewport is never stuck.
     const std::uint32_t* px = nullptr;
     Uint64 g_renderT0 = SDL_GetPerformanceCounter();   // GPU/software render time (read-back is synchronous)
-    if (g_gpuRender) {
+    // After repeated GPU failures, rest on the software renderer briefly and then
+    // RETRY — previously one bad spell disabled the GPU for the whole session,
+    // silently leaving big scenes to the CPU rasterizer at 1 FPS.
+    static Uint32 s_gpuRetryAt = 0;
+    if (g_gpuRender && SDL_GetTicks() >= s_gpuRetryAt) {
 #if defined(_WIN32)
         if (!px && g_d3dReady && g_d3dRenderer) {
             OKAY_TRACE("Render3D:d3d11");   // crash breadcrumb: which backend faulted
@@ -571,8 +575,9 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         static int s_gpuFails = 0;
         if (!px) {
             if (++s_gpuFails >= 3) {
-                g_gpuRender = false; SaveSettings();
-                ConsoleLog("GPU renderer failed repeatedly; switched back to the software renderer.", 1);
+                s_gpuFails = 0;
+                s_gpuRetryAt = SDL_GetTicks() + 5000;   // rest 5s on software, then retry
+                ConsoleLog("GPU renderer failing; using the software renderer briefly, will retry.", 1);
             }
         } else s_gpuFails = 0;
     }
@@ -581,6 +586,17 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     okay::SceneOcclusionDepth().valid = false;
     if (!px) {
         OKAY_TRACE("Render3D:software");
+        // The CPU rasterizer can't push a big imported model at full panel
+        // resolution — auto-drop the render scale with triangle load so the
+        // editor stays interactive (the texture upscales linearly for free).
+        if (g_autoPerf) {
+            long tl = SceneTriangleLoad(scene);
+            float cap = tl > 400000 ? 0.35f : tl > 150000 ? 0.5f : tl > 60000 ? 0.7f : 1.0f;
+            if (cap < 1.0f) {
+                rw = (int)(rw * cap); if (rw < 1) rw = 1;
+                rh = (int)(rh * cap); if (rh < 1) rh = 1;
+            }
+        }
         px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
                             scene, vp, eye, rw, rh, ss, ignore);
     }

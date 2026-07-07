@@ -28,4 +28,5 @@ compile_commands.json
 
 # Packaged distribution archives (release artifacts, not source)
 OkaySpace-*.zip
+OkaySpacev*.zip
 winbuild.log

@@ -1639,8 +1639,8 @@ std::string ExtFor(const std::string& lang) {
 // (braces + semicolons); Lua uses function...end; C# is class-based.
 const char* StarterScript(const std::string& lang) {
     if (lang == "lua")
-        return "function start()\n    set_pos(0, 0)\nend\n\n"
-               "function update(dt)\n    move(2 * dt, 0)\nend\n";
+        return "start()\n    set_pos(0, 0)\nend\n\n"
+               "update(dt)\n    move(2 * dt, 0)\nend\n";
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
@@ -4948,15 +4948,16 @@ void DrawScriptDocs() {
         SectionHeader("5. The two lifecycle functions");
         ImGui::TextWrapped("start() sets things up once; update(dt) drives behaviour "
             "every frame. Multiply movement by dt so it's the same speed on any PC.");
-        code("function start() {\n    set_pos(0, 0);\n    set(\"score\", 0);\n}\n\n"
-             "function update(dt) {\n    // move with the WASD / arrow keys\n"
+        code("start() {\n    set_pos(0, 0);\n    set(\"score\", 0);\n}\n\n"
+             "update(dt) {\n    // move with the WASD / arrow keys\n"
              "    move(axis_x() * 5 * dt, axis_y() * 5 * dt);\n}");
 
         SectionHeader("6. Your own functions");
         ImGui::TextWrapped("Group steps into a function and call it by name (or with "
-            "call(\"name\") for state machines).");
-        code("function hurt() {\n    set(\"score\", get(\"score\") - 1);\n}\n\n"
-             "function update(dt) {\n    if (key_down(\"x\")) { hurt(); }\n}");
+            "call(\"name\") for state machines). No 'function' keyword needed, and a "
+            "single-line if/for/while needs no braces.");
+        code("hurt() {\n    set(\"score\", get(\"score\") - 1);\n}\n\n"
+             "update(dt) {\n    if (key_down(\"x\")) hurt();\n}");
 
         ImGui::TextWrapped("That's the whole language. The rest is the built-in "
             "commands below (move, key, spawn, set/get, …). Hit Compile & Run in the "
@@ -6578,40 +6579,40 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Basics", "One-line script (bare)", "No functions needed - a bare script runs every frame.",
                     "spin(90)\n"},
                 {"Basics", "New script (start + update)", "The two lifecycle functions with comments.",
-                    "// Runs once when this object wakes up.\nfunction start() {\n    \n}\n\n// Runs every frame. dt = seconds since the last frame.\nfunction update(dt) {\n    \n}\n"},
+                    "// Runs once when this object wakes up.\nstart() {\n    \n}\n\n// Runs every frame. dt = seconds since the last frame.\nupdate(dt) {\n    \n}\n"},
                 {"Basics", "start() - runs once", "Setup code that runs a single time.",
-                    "function start() {\n    \n}\n"},
+                    "start() {\n    \n}\n"},
                 {"Basics", "update(dt) - every frame", "Code that runs each frame.",
-                    "function update(dt) {\n    \n}\n"},
+                    "update(dt) {\n    \n}\n"},
                 {"Basics", "on_collision(other) - when hit", "Runs when this object collides.",
-                    "function on_collision(other) {\n    \n}\n"},
+                    "on_collision(other) {\n    \n}\n"},
                 // ---- Movement ----
                 {"Movement", "Move with WASD / arrows", "The WHOLE script is one line (runs every frame).",
                     "on_key_move(5)   // WASD / arrows, speed 5\n"},
                 {"Movement", "Jump on Space", "Upward push when Space is pressed (needs a Rigidbody).",
-                    "if (key_down(\"space\")) {\n    jump(8)\n}\n"},
+                    "if (key_down(\"space\")) jump(8)   // no braces needed for one line\n"},
                 {"Movement", "Follow the player", "One line: walk toward the object named Player.",
                     "follow(\"Player\", 3)\n"},
                 {"Movement", "Spin forever", "One line: smooth rotation, degrees per second.",
                     "spin(90)\n"},
                 {"Movement", "Shoot on click", "Spawn a bullet where we are when clicked.",
-                    "function update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                    "update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 // ---- Gameplay ----
                 {"Gameplay", "Health + take damage", "A hp value that drops on collision and dies at 0.",
-                    "function start() {\n    hp = 100\n}\n\nfunction on_collision(other) {\n    hp = hp - 10\n    if (hp <= 0) {\n        destroy()\n    }\n}\n"},
+                    "start() {\n    hp = 100\n}\n\non_collision(other) {\n    hp = hp - 10\n    if (hp <= 0) {\n        destroy()\n    }\n}\n"},
                 {"Gameplay", "Collect coin (+score)", "One line + remove: add_score does the shared score.",
-                    "function on_collision(other) {\n    add_score(1)\n    destroy()\n}\n"},
+                    "on_collision(other) {\n    add_score(1)\n    destroy()\n}\n"},
                 {"Gameplay", "Spawn on a timer", "One line with timer() - no accumulator needed.",
                     "if (timer(\"spawn\", 2)) {\n    spawn(\"enemy.okayprefab\", pos_x(), pos_y())\n}\n"},
                 {"Gameplay", "Countdown to a scene", "Tick a timer down, then load a scene.",
-                    "function start() {\n    timeLeft = 10\n}\n\nfunction update(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        load_scene(\"GameOver\")\n    }\n}\n"},
+                    "start() {\n    timeLeft = 10\n}\n\nupdate(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        load_scene(\"GameOver\")\n    }\n}\n"},
                 {"Gameplay", "Do something near the player", "Act only when within a distance.",
-                    "function update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        // ... the player is close ...\n    }\n}\n"},
+                    "update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        // ... the player is close ...\n    }\n}\n"},
                 {"Gameplay", "Spawn a wave (loop)", "Create a row of enemies at start.",
-                    "function start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"enemy.okayprefab\", i * 2, 0)\n    }\n}\n"},
+                    "start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"enemy.okayprefab\", i * 2, 0)\n    }\n}\n"},
                 // ---- HUD (on-screen UI from script) ----
                 {"HUD", "Health bar + buttons", "A draggable window with a bar and two buttons.",
-                    "function start() {\n    hp = 100\n}\n\nfunction update(dt) {\n    ui_begin(\"HUD\", 24, 24, 240, 130)\n    ui_text(\"Health\")\n    ui_progress(hp / 100)\n    if (ui_button(\"Heal\")) { hp = 100 }\n    ui_sameline()\n    if (ui_button(\"Hurt\")) { hp = hp - 10 }\n    ui_end()\n}\n"},
+                    "start() {\n    hp = 100\n}\n\nupdate(dt) {\n    ui_begin(\"HUD\", 24, 24, 240, 130)\n    ui_text(\"Health\")\n    ui_progress(hp / 100)\n    if (ui_button(\"Heal\")) { hp = 100 }\n    ui_sameline()\n    if (ui_button(\"Hurt\")) { hp = hp - 10 }\n    ui_end()\n}\n"},
                 // ---- Logic (building blocks) ----
                 {"Logic", "if / else", "A branch.",
                     "if (/* condition */) {\n    \n} else {\n    \n}\n"},
@@ -6635,16 +6636,16 @@ void DrawScriptEditor(EditorState& ed) {
                     "flee(\"Player\", 3)\n"},
                 // ---- Abilities ----
                 {"Abilities", "Ability with cooldown", "Fire on Space, but only every 1.5s.",
-                    "function start() {\n    cd = 0\n}\n\nfunction update(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                    "start() {\n    cd = 0\n}\n\nupdate(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 {"Abilities", "Delay then act (once)", "Wait 3 seconds after start, then do something.",
-                    "function start() {\n    t = 0\n    done = 0\n}\n\nfunction update(dt) {\n    if (done == 0) {\n        t = t + dt\n        if (t >= 3) {\n            done = 1\n            // ... runs once, 3 seconds in ...\n        }\n    }\n}\n"},
+                    "start() {\n    t = 0\n    done = 0\n}\n\nupdate(dt) {\n    if (done == 0) {\n        t = t + dt\n        if (t >= 3) {\n            done = 1\n            // ... runs once, 3 seconds in ...\n        }\n    }\n}\n"},
                 // ---- Effects ----
                 {"Effects", "Flash red when hit", "One call: turn red then fade back.",
-                    "function on_collision(other) {\n    flash(1, 0, 0)\n}\n"},
+                    "on_collision(other) {\n    flash(1, 0, 0)\n}\n"},
                 {"Effects", "Shake when hit", "One call: a quick decaying shake.",
-                    "function on_collision(other) {\n    shake(0.4, 0.3)\n}\n"},
+                    "on_collision(other) {\n    shake(0.4, 0.3)\n}\n"},
                 {"Effects", "Explode when hit", "One call: burst particles + remove this object.",
-                    "function on_collision(other) {\n    explode(30)\n}\n"},
+                    "on_collision(other) {\n    explode(30)\n}\n"},
                 {"Effects", "Pulse forever (scale)", "One-line juice (bare script).",
                     "pulse(0.2, 3)\n"},
                 // ---- Camera ----
@@ -6652,40 +6653,40 @@ void DrawScriptEditor(EditorState& ed) {
                     "set_cam(pos_x(), pos_y())\n"},
                 // ---- Input ----
                 {"Input", "Restart level on R", "Reload the current scene.",
-                    "function update(dt) {\n    if (key_down(\"r\")) {\n        reload_scene()\n    }\n}\n"},
+                    "update(dt) {\n    if (key_down(\"r\")) {\n        reload_scene()\n    }\n}\n"},
                 {"Input", "Next scene on N", "Advance to the next scene in the build list.",
-                    "function update(dt) {\n    if (key_down(\"n\")) {\n        load_next_scene()\n    }\n}\n"},
+                    "update(dt) {\n    if (key_down(\"n\")) {\n        load_next_scene()\n    }\n}\n"},
                 {"Input", "Toggle a menu with M", "Show / hide an object named Menu.",
-                    "function start() {\n    shown = 0\n}\n\nfunction update(dt) {\n    if (key_down(\"m\")) {\n        shown = 1 - shown\n        if (shown == 1) { activate(\"Menu\") } else { deactivate(\"Menu\") }\n    }\n}\n"},
+                    "start() {\n    shown = 0\n}\n\nupdate(dt) {\n    if (key_down(\"m\")) {\n        shown = 1 - shown\n        if (shown == 1) { activate(\"Menu\") } else { deactivate(\"Menu\") }\n    }\n}\n"},
                 {"Input", "Pause toggle on P", "Flip a shared 'paused' flag other scripts read.",
-                    "function update(dt) {\n    if (key_down(\"p\")) {\n        set(\"paused\", 1 - get(\"paused\"))\n    }\n}\n"},
+                    "update(dt) {\n    if (key_down(\"p\")) {\n        set(\"paused\", 1 - get(\"paused\"))\n    }\n}\n"},
                 // ---- Platformer ----
                 {"Platformer", "Run + jump", "Move left/right and jump with Space (needs a Rigidbody).",
-                    "function update(dt) {\n    move(axis_x() * 5 * dt, 0)\n    if (key_down(\"space\")) {\n        jump(9)\n    }\n}\n"},
+                    "update(dt) {\n    move(axis_x() * 5 * dt, 0)\n    if (key_down(\"space\")) {\n        jump(9)\n    }\n}\n"},
                 // ---- Mini-games ----
                 {"Mini-games", "Pong paddle (W/S)", "Move a paddle up/down and clamp it on screen.",
-                    "function update(dt) {\n    if (key(\"w\")) { move(0, 5 * dt, 0) }\n    if (key(\"s\")) { move(0, -5 * dt, 0) }\n    keep_in_box(-8, -4, -8, 4)   // fixed x, clamp y\n}\n"},
+                    "update(dt) {\n    if (key(\"w\")) { move(0, 5 * dt, 0) }\n    if (key(\"s\")) { move(0, -5 * dt, 0) }\n    keep_in_box(-8, -4, -8, 4)   // fixed x, clamp y\n}\n"},
                 {"Mini-games", "Bouncing ball", "Launch once, then bounce off the walls forever.",
-                    "function start() {\n    set_velocity(4, 3)\n}\n\nfunction update(dt) {\n    bounce_in_box(-8, -5, 8, 5)\n}\n"},
+                    "start() {\n    set_velocity(4, 3)\n}\n\nupdate(dt) {\n    bounce_in_box(-8, -5, 8, 5)\n}\n"},
                 {"Mini-games", "Stay on screen", "One line: clamp this object to the play area.",
                     "keep_in_box(-8, -5, 8, 5)\n"},
                 {"Mini-games", "Wrap around edges", "One line: leave one side, appear on the other (asteroids).",
                     "wrap_in_box(-8, -5, 8, 5)\n"},
                 // ---- Juice (tweens) ----
                 {"Juice", "Pop in on start", "Scale up from nothing with an overshoot.",
-                    "function start() {\n    set_scale(0)\n    tween_scale(1, 0.4, \"out_back\")\n}\n"},
+                    "start() {\n    set_scale(0)\n    tween_scale(1, 0.4, \"out_back\")\n}\n"},
                 {"Juice", "Fade in on start", "Start invisible, fade to full over half a second.",
-                    "function start() {\n    set_color(1, 1, 1, 0)\n    tween_fade(1, 0.5)\n}\n"},
+                    "start() {\n    set_color(1, 1, 1, 0)\n    tween_fade(1, 0.5)\n}\n"},
                 {"Juice", "Punch on click", "A quick squash-and-settle when clicked.",
-                    "function update(dt) {\n    if (mouse_down(0)) {\n        tween_punch_scale(0.3, 0.3)\n    }\n}\n"},
+                    "update(dt) {\n    if (mouse_down(0)) {\n        tween_punch_scale(0.3, 0.3)\n    }\n}\n"},
                 // ---- Multiplayer ----
                 {"Multiplayer", "Host (H) or Join (J)", "Start a server or connect to localhost.",
-                    "function update(dt) {\n    if (key_down(\"h\")) { net_host(7777) }\n    if (key_down(\"j\")) { net_join(\"127.0.0.1\", 7777) }\n}\n"},
+                    "update(dt) {\n    if (key_down(\"h\")) { net_host(7777) }\n    if (key_down(\"j\")) { net_join(\"127.0.0.1\", 7777) }\n}\n"},
                 {"Multiplayer", "Connection status HUD", "Show online / offline on screen.",
-                    "function update(dt) {\n    ui_begin(\"Net\", 20, 20, 200, 70)\n    if (net_connected()) {\n        ui_text(\"Connected\")\n    } else {\n        ui_text(\"Offline\")\n    }\n    ui_end()\n}\n"},
+                    "update(dt) {\n    ui_begin(\"Net\", 20, 20, 200, 70)\n    if (net_connected()) {\n        ui_text(\"Connected\")\n    } else {\n        ui_text(\"Offline\")\n    }\n    ui_end()\n}\n"},
                 // ---- Motion (math) ----
                 {"Motion", "Move in a circle", "Orbit the origin using sin/cos.",
-                    "function start() {\n    ang = 0\n}\n\nfunction update(dt) {\n    ang = ang + dt\n    set_pos(cos(ang) * 3, sin(ang) * 3)\n}\n"},
+                    "start() {\n    ang = 0\n}\n\nupdate(dt) {\n    ang = ang + dt\n    set_pos(cos(ang) * 3, sin(ang) * 3)\n}\n"},
                 {"Motion", "Bob up and down", "One line: hover around the start height.",
                     "bob(0.5, 2)\n"},
                 {"Motion", "Pulse size (juice)", "One line: gently grow and shrink forever.",
@@ -6699,25 +6700,25 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Movement", "Move to a spot", "One line: walk to a point and stop there.",
                     "move_to(0, 5, 3)   // go to (0,5) at speed 3\n"},
                 {"Spawning", "Spawn a ring (wave)", "Spawn N enemies in a ring around you, once.",
-                    "function start() {\n    spawn_wave(\"enemy.okayprefab\", 8, 3)\n}\n"},
+                    "start() {\n    spawn_wave(\"enemy.okayprefab\", 8, 3)\n}\n"},
                 {"Abilities", "Auto-fire at the player", "Fire a bullet at the player twice a second.",
-                    "function start() {\n    every(0.5, \"fire\")\n}\n\nfunction fire() {\n    shoot_at(\"Player\", \"bullet.okayprefab\", 6)\n}\n"},
+                    "start() {\n    every(0.5, \"fire\")\n}\n\nfunction fire() {\n    shoot_at(\"Player\", \"bullet.okayprefab\", 6)\n}\n"},
                 {"Motion", "Grow while Up held", "Scale up as long as the Up key is down.",
-                    "function start() {\n    s = 1\n}\n\nfunction update(dt) {\n    if (key(\"up\")) {\n        s = s + dt\n        set_scale(s)\n    }\n}\n"},
+                    "start() {\n    s = 1\n}\n\nupdate(dt) {\n    if (key(\"up\")) {\n        s = s + dt\n        set_scale(s)\n    }\n}\n"},
                 // ---- Enemy AI (more) ----
                 {"Enemy AI", "Patrol or chase (state)", "Chase when close, otherwise walk right.",
-                    "function update(dt) {\n    if (dist_to(\"Player\") < 5) {\n        follow(\"Player\", 3)\n    } else {\n        walk(1, 0, 2)\n    }\n}\n"},
+                    "update(dt) {\n    if (dist_to(\"Player\") < 5) {\n        follow(\"Player\", 3)\n    } else {\n        walk(1, 0, 2)\n    }\n}\n"},
                 {"Enemy AI", "Random chance spawner", "Every second, 50% chance to spawn from above.",
-                    "function start() {\n    t = 0\n}\n\nfunction update(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"enemy.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
+                    "start() {\n    t = 0\n}\n\nupdate(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"enemy.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
                 // ---- Gameplay (more) ----
                 {"Gameplay", "Regenerate health (capped)", "Heal over time up to 100.",
-                    "function start() {\n    hp = 100\n}\n\nfunction update(dt) {\n    if (hp < 100) {\n        hp = clamp(hp + 10 * dt, 0, 100)\n    }\n}\n"},
+                    "start() {\n    hp = 100\n}\n\nupdate(dt) {\n    if (hp < 100) {\n        hp = clamp(hp + 10 * dt, 0, 100)\n    }\n}\n"},
                 {"Gameplay", "Win at 10 points", "Load the Win scene once score reaches 10.",
-                    "function update(dt) {\n    if (get(\"score\") >= 10) {\n        load_scene(\"Win\")\n    }\n}\n"},
+                    "update(dt) {\n    if (get(\"score\") >= 10) {\n        load_scene(\"Win\")\n    }\n}\n"},
                 {"Gameplay", "Remember spawn, respawn on R", "Snap back to the start position.",
-                    "function start() {\n    sx = pos_x()\n    sy = pos_y()\n}\n\nfunction update(dt) {\n    if (key_down(\"r\")) {\n        set_pos(sx, sy)\n    }\n}\n"},
+                    "start() {\n    sx = pos_x()\n    sy = pos_y()\n}\n\nupdate(dt) {\n    if (key_down(\"r\")) {\n        set_pos(sx, sy)\n    }\n}\n"},
                 {"Gameplay", "Count a shared timer", "Add up elapsed time in a shared variable.",
-                    "function update(dt) {\n    set(\"time\", get(\"time\") + dt)\n}\n"},
+                    "update(dt) {\n    set(\"time\", get(\"time\") + dt)\n}\n"},
             };
             ImGui::TextDisabled("Tip: a script with no functions runs every frame - so many are ONE line.");
             static char sf[48] = "";
@@ -9561,9 +9562,9 @@ static std::string ActionListToCode(const ActionList& al) {
     handle(al.trigger, al.triggerKey, al.conditions, al.instructions);
     for (const auto& h : al.extraHandlers) handle(h.trigger, h.triggerKey, h.conditions, h.instructions);
     std::string out = "// Generated from the visual Actions script - a starting point, tweak freely.\n\n";
-    if (!startB.empty())  out += "function start() {\n" + startB + "}\n\n";
-    if (!updateB.empty()) out += "function update(dt) {\n" + updateB + "}\n\n";
-    if (!collB.empty())   out += "function on_collision(other) {\n" + collB + "}\n\n";
+    if (!startB.empty())  out += "start() {\n" + startB + "}\n\n";
+    if (!updateB.empty()) out += "update(dt) {\n" + updateB + "}\n\n";
+    if (!collB.empty())   out += "on_collision(other) {\n" + collB + "}\n\n";
     if (startB.empty() && updateB.empty() && collB.empty()) out += "// (this script has no actions yet)\n";
     return out;
 }

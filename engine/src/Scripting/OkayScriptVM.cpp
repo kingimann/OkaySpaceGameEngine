@@ -980,9 +980,29 @@ public:
         } else if (IsTypedFunctionAhead()) {            // C#-style: void Start() { }
             std::string name; FunctionDecl decl = ParseTypedFunction(name);
             funcs[name] = std::move(decl);
+        } else if (IsBareFunctionAhead()) {             // OkayScript: update(dt) { }
+            std::string name = Expect(Tok::Ident, "function name").text;
+            FunctionDecl decl = ParseParamsAndBody();
+            funcs[name] = std::move(decl);
         } else {
             top.push_back(ParseStatement());
         }
+    }
+
+    // A brace-less OkayScript function: `name(params) { ... }` — a single
+    // identifier, then a parenthesised list, then a '{'. That last '{' is what
+    // tells it apart from an ordinary call statement like `on_key_move(5)` (which
+    // is followed by a newline/';'), so the `function` keyword is optional.
+    bool IsBareFunctionAhead() const {
+        std::size_t i = m_pos;
+        if (m_toks[i].type != Tok::Ident) return false;
+        if (m_toks[i + 1].type != Tok::LParen) return false;
+        int depth = 0;
+        for (i += 1; m_toks[i].type != Tok::End; ++i) {
+            if (m_toks[i].type == Tok::LParen) ++depth;
+            else if (m_toks[i].type == Tok::RParen && --depth == 0) { ++i; break; }
+        }
+        return m_toks[i].type == Tok::LBrace;
     }
 
     // Skip C# attributes like [SerializeField] or [Header("Stats")] that may

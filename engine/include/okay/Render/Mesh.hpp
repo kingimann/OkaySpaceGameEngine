@@ -435,6 +435,36 @@ struct Mesh {
         return m;
     }
 
+    /// A regular tetrahedron — the simplest solid (4 vertices, 4 triangular faces).
+    static Mesh Tetrahedron(float radius = 0.5f) {
+        Mesh m; m.name = "Tetrahedron";
+        float a = radius;
+        m.vertices = {{a, a, a}, {a, -a, -a}, {-a, a, -a}, {-a, -a, a}};
+        m.triangles = {0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 3, 2};   // outward-facing
+        return m;
+    }
+
+    /// A bipyramid — a faceted crystal/gem: an n-gon equator with an apex above and
+    /// below. `sides` picks the cut (6 = a classic hex crystal).
+    static Mesh Bipyramid(int sides = 6, float radius = 0.5f, float height = 1.0f) {
+        Mesh m; m.name = "Bipyramid";
+        if (sides < 3) sides = 3;
+        const float kPi = 3.14159265358979323846f;
+        float h = height * 0.5f;
+        for (int s = 0; s < sides; ++s) {
+            float th = 2.0f * kPi * (float)s / sides;
+            m.vertices.push_back({radius * std::cos(th), 0, radius * std::sin(th)});
+        }
+        int top = (int)m.vertices.size(); m.vertices.push_back({0, h, 0});
+        int bot = (int)m.vertices.size(); m.vertices.push_back({0, -h, 0});
+        for (int s = 0; s < sides; ++s) {
+            int n = (s + 1) % sides;
+            m.triangles.insert(m.triangles.end(), {top, n, s});   // upper faces
+            m.triangles.insert(m.triangles.end(), {bot, s, n});   // lower faces
+        }
+        return m;
+    }
+
     /// A geodesic sphere: an icosahedron subdivided `subdivisions` times and
     /// projected to the radius. Triangles are near-uniform (no pinching at the
     /// poles like the UV Sphere), so it shades and tessellates evenly.
@@ -539,6 +569,8 @@ struct Mesh {
         if (n == "Prism")     return Prism();
         if (n == "Octahedron") return Octahedron();
         if (n == "Disc")      return Disc();
+        if (n == "Tetrahedron") return Tetrahedron();
+        if (n == "Bipyramid") return Bipyramid();
         return Cube();
     }
 

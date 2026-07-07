@@ -229,6 +229,14 @@ public:
 	float RowHeight() const { return mCharAdvance.y; }
 	float CharWidth() const { return mCharAdvance.x; }
 	int   FirstVisibleLine() const { return mLastFirstVisibleLine; }
+	// Selection coordinates (start <= end), for host line operations (comment
+	// toggle, duplicate/delete/move lines) that act on the selected line range.
+	Coordinates SelStart() const { return mState.mSelectionStart; }
+	Coordinates SelEnd()   const { return mState.mSelectionEnd; }
+	// Length (in sanitized column units) of a line — bounds for SetSelection.
+	int LineLength(int aLine) const {
+		return (aLine >= 0 && aLine < (int)mLines.size()) ? GetLineMaxColumn(aLine) : 0;
+	}
 
 	inline void SetHandleMouseInputs    (bool aValue){ mHandleMouseInputs    = aValue;}
 	inline bool IsHandleMouseInputsEnabled() const { return mHandleKeyboardInputs; }

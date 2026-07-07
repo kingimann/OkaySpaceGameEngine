@@ -7754,11 +7754,26 @@ void DrawScriptEditor(EditorState& ed) {
             caret.gotoPos = -1;
         }
 
+        // While the autocomplete popup is open, Tab/Enter accept, Up/Down move the
+        // highlight, and Esc dismisses — the widget must not also act on those keys
+        // (insert a tab/newline, move the caret). g_acCount is last frame's popup
+        // size; suppression frames are never typing frames.
+        bool acWasOpen = g_acCount > 0;
+        bool acKeyTab   = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_Tab, false);
+        bool acKeyEnter = acWasOpen && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                                        ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
+        bool acKeyUp    = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+        bool acKeyDown  = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+        bool acKeyEsc   = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        if (acKeyTab || acKeyEnter || acKeyUp || acKeyDown || acKeyEsc)
+            te.SetHandleKeyboardInputs(false);
+
         // Render. ImGui 1.92 dynamic fonts rasterise on demand, so the code font is
         // crisp at any zoom straight from PushFont(size) — no atlas-bake trick needed.
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
         te.Render("##code", ImVec2(0.0f, av.y), true);
         if (g_codeFont) ImGui::PopFont();
+        te.SetHandleKeyboardInputs(true);
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
 
@@ -7781,6 +7796,300 @@ void DrawScriptEditor(EditorState& ed) {
             int blen = (int)std::strlen(buf.data());
             off += cp.mColumn; caret.pos = off > blen ? blen : off;
             caret.selLen = (int)te.GetSelectedText().size();
+        }
+        // Pull a host-driven edit (completion accept, line op) back into the buffer
+        // right away, so the hash sync above doesn't undo it next frame.
+        auto syncFromWidget = [&]() {
+            std::string t2 = te.GetText();
+            if (!t2.empty() && t2.back() == '\n') t2.pop_back();
+            SetCodeBuffer(sc, t2);
+            g_teHash[sc] = std::hash<std::string>{}(std::string(buf.data()));
+            ed.dirty = true;
+        };
+
+        // --- Autocomplete: fuzzy suggestions at the caret ----------------------
+        {
+            const char* t = buf.data(); int blen = (int)std::strlen(t);
+            int p = caret.pos > blen ? blen : caret.pos, ws = p;
+            auto isWord = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
+            while (ws > 0 && isWord(t[ws - 1])) --ws;
+            std::string prefix(t + ws, t + p);
+            std::string receiver;
+            if (ws > 0 && t[ws - 1] == '.') {
+                int rs = ws - 1; while (rs > 0 && isWord(t[rs - 1])) --rs;
+                receiver.assign(t + rs, t + (ws - 1));
+            }
+            const std::vector<std::string>& members = ScriptMembers(receiver);
+            bool memberMode = !receiver.empty() && !members.empty();
+            static std::string s_acKey;
+            std::string acKey = receiver + "|" + prefix;
+            if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; g_acDismiss = false; }
+            if (acKeyEsc) g_acDismiss = true;
+            g_acCount = 0;
+            if (!g_acDismiss && (memberMode || prefix.size() >= 2)) {
+                std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
+                struct Hit { const std::string* w; bool fuzzy; int score; };
+                std::vector<Hit> exact, ci, fuzz;
+                std::vector<std::string> combined;
+                if (!memberMode) { combined = ScriptCompletions(); AddBufferIdentifiers(buf.data(), combined); }
+                const std::vector<std::string>& pool = memberMode ? members : combined;
+                for (const auto& w : pool) {
+                    if (w.size() < prefix.size()) continue;
+                    if (!memberMode && w == prefix) continue;
+                    if (w.compare(0, prefix.size(), prefix) == 0) { exact.push_back({&w, false, 0}); continue; }
+                    std::string lw = w; for (auto& ch : lw) ch = (char)std::tolower((unsigned char)ch);
+                    if (lw.compare(0, lp.size(), lp) == 0) { ci.push_back({&w, false, 0}); continue; }
+                    int sc2 = FuzzyScore(prefix, w);
+                    if (sc2 >= 0) fuzz.push_back({&w, true, sc2});
+                }
+                std::sort(fuzz.begin(), fuzz.end(), [](const Hit& a, const Hit& b) {
+                    return a.score != b.score ? a.score > b.score : a.w->size() < b.w->size(); });
+                std::vector<Hit> hits = exact;
+                for (auto& h : ci)   { if (hits.size() >= 12) break; hits.push_back(h); }
+                for (auto& h : fuzz) { if (hits.size() >= 12) break; hits.push_back(h); }
+                if (hits.size() > 12) hits.resize(12);
+                if (!hits.empty()) {
+                    g_acCount = (int)hits.size();
+                    if (acKeyUp)   g_acIndex = (g_acIndex - 1 + g_acCount) % g_acCount;
+                    if (acKeyDown) g_acIndex = (g_acIndex + 1) % g_acCount;
+                    if (g_acIndex >= g_acCount) g_acIndex = 0;
+                    // Accept: replace the typed prefix with the full word; known
+                    // functions also get "()" with the caret inside (after, if 0-arg).
+                    auto accept = [&](const std::string& word) {
+                        int l0 = caret.line - 1;
+                        int cEnd = caret.col - 1, cStart = cEnd - (int)prefix.size();
+                        if (cStart < 0) cStart = 0;
+                        if (cEnd > cStart) {
+                            te.SetSelection(TextEditor::Coordinates(l0, cStart), TextEditor::Coordinates(l0, cEnd));
+                            te.Delete();
+                        }
+                        te.SetCursorPosition(TextEditor::Coordinates(l0, cStart));
+                        const std::string* sg = memberMode ? nullptr : ScriptSignature(word);
+                        bool zeroArg = sg && sg->find("()") != std::string::npos;
+                        te.InsertText(sg ? word + "()" : word);
+                        if (sg && !zeroArg)
+                            te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)word.size() + 1));
+                        syncFromWidget();
+                        g_acDismiss = true; g_acCount = 0;
+                    };
+                    if (acKeyTab || acKeyEnter) {
+                        accept(*hits[g_acIndex].w);
+                    } else {
+                        ImVec2 acPos = te.CaretScreenPosBelow();
+                        ImGui::SetNextWindowPos(ImVec2(acPos.x, acPos.y + 2));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 46, 245));
+                        if (ImGui::Begin("##autocomplete", nullptr,
+                                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                ImGuiWindowFlags_NoSavedSettings)) {
+                            for (std::size_t i = 0; i < hits.size(); ++i) {
+                                const std::string& nm = *hits[i].w;
+                                char letter; ImU32 tcol; AcKindTag(ClassifyCompletion(nm), letter, tcol);
+                                ImGui::TextColored(ImColor(tcol), "%c", letter);
+                                ImGui::SameLine(0, 6);
+                                float nameW = ImGui::CalcTextSize(nm.c_str()).x;
+                                char sid[24]; std::snprintf(sid, sizeof(sid), "##ac%d", (int)i);
+                                if (ImGui::Selectable((nm + sid).c_str(), (int)i == g_acIndex,
+                                                      ImGuiSelectableFlags_None, ImVec2(nameW, 0)))
+                                    accept(nm);
+                                if (const std::string* sg = ScriptSignature(nm)) {
+                                    const char* paren = std::strchr(sg->c_str(), '(');
+                                    ImGui::SameLine(0, 12);
+                                    ImGui::TextDisabled("%s", paren ? paren : sg->c_str());
+                                }
+                            }
+                            if (g_acCount > 0 && g_acIndex >= 0 && g_acIndex < (int)hits.size()) {
+                                if (const std::string* dsc = ScriptDoc(*hits[g_acIndex].w)) {
+                                    ImGui::Separator();
+                                    ImGui::PushTextWrapPos(320.0f);
+                                    ImGui::TextColored(ImVec4(0.66f, 0.80f, 0.62f, 1.0f), "%s", dsc->c_str());
+                                    ImGui::PopTextWrapPos();
+                                }
+                                ImGui::Separator();
+                                ImGui::TextDisabled("Up/Down select   Tab/Enter accept   Esc dismiss");
+                            }
+                        }
+                        ImGui::End();
+                        ImGui::PopStyleColor();
+                    }
+                }
+            }
+        }
+
+        // --- Signature hint: parameters floated while typing inside a call -----
+        {
+            const char* tx = buf.data();
+            auto isW = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
+            int p2 = caret.pos, depth = 0, op = -1;
+            for (int i = p2 - 1; i >= 0; --i) {
+                char ch = tx[i];
+                if (ch == ')') ++depth;
+                else if (ch == '(') { if (depth == 0) { op = i; break; } --depth; }
+                else if (ch == '\n' && depth == 0) break;
+            }
+            if (op > 0 && g_acCount == 0) {
+                int e = op; while (e > 0 && (tx[e-1] == ' ' || tx[e-1] == '\t')) --e;
+                int s2 = e; while (s2 > 0 && isW(tx[s2-1])) --s2;
+                if (e > s2) {
+                    std::string name(tx + s2, tx + e);
+                    int activeArg = 0;
+                    { int d2 = 0;
+                      for (int i = op + 1; i < p2 && tx[i]; ++i) {
+                          char ch = tx[i];
+                          if (ch=='('||ch=='['||ch=='{') ++d2;
+                          else if (ch==')'||ch==']'||ch=='}') { if (d2>0) --d2; }
+                          else if (ch==',' && d2==0) ++activeArg;
+                      } }
+                    if (const std::string* sgn = ScriptSignature(name)) {
+                        ImVec2 cp2 = te.CaretScreenPosBelow();
+                        float y = cp2.y - te.RowHeight() * 2.0f - 6.0f;
+                        ImGui::SetNextWindowPos(ImVec2(cp2.x, y < 0 ? cp2.y + 2.0f : y));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(48, 44, 60, 245));
+                        if (ImGui::Begin("##sighint", nullptr,
+                                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs)) {
+                            const ImVec4 dim(0.62f, 0.62f, 0.72f, 1.0f), hot(1.0f, 0.86f, 0.45f, 1.0f);
+                            const std::string& sig = *sgn;
+                            std::size_t lpar = sig.find('('), rpar = sig.rfind(')');
+                            bool simple = lpar != std::string::npos && rpar != std::string::npos &&
+                                          rpar > lpar && sig.find('|') == std::string::npos;
+                            if (simple) {
+                                std::string inner = sig.substr(lpar + 1, rpar - lpar - 1);
+                                std::vector<std::string> params; { std::string cur; int d3 = 0;
+                                    for (char ch : inner) {
+                                        if (ch=='('||ch=='['||ch=='{') { ++d3; cur+=ch; }
+                                        else if (ch==')'||ch==']'||ch=='}') { --d3; cur+=ch; }
+                                        else if (ch==',' && d3==0) { params.push_back(cur); cur.clear(); }
+                                        else cur+=ch;
+                                    }
+                                    if (!cur.empty() || !params.empty()) params.push_back(cur); }
+                                ImGui::TextColored(dim, "%s(", sig.substr(0, lpar).c_str());
+                                for (std::size_t i = 0; i < params.size(); ++i) {
+                                    std::string pr = params[i];
+                                    std::size_t a = pr.find_first_not_of(' '); if (a!=std::string::npos) pr=pr.substr(a);
+                                    if (i) { ImGui::SameLine(0,0); ImGui::TextColored(dim, ", "); }
+                                    ImGui::SameLine(0,0);
+                                    ImGui::TextColored((int)i==activeArg ? hot : dim, "%s", pr.c_str());
+                                }
+                                ImGui::SameLine(0,0); ImGui::TextColored(dim, ")");
+                            } else {
+                                ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sig.c_str());
+                            }
+                            if (const std::string* dc = ScriptDoc(name)) {
+                                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                                ImGui::TextColored(ImVec4(0.72f, 0.76f, 0.72f, 1.0f), "%s", dc->c_str());
+                                ImGui::PopTextWrapPos();
+                            }
+                        }
+                        ImGui::End();
+                        ImGui::PopStyleColor();
+                    }
+                }
+            }
+        }
+
+        // --- Line-op chords the widget doesn't provide (Rider set) -------------
+        // Active when the Script Editor window is focused and no ImGui text field is
+        // active (the widget itself never activates an item, so typing in the code is
+        // fine; typing in the find/goto boxes blocks these).
+        {
+            bool chordOK = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                           !ImGui::IsAnyItemActive();
+            ImGuiIO& cio = ImGui::GetIO();
+            int selL0 = te.SelStart().mLine, selL1 = te.SelEnd().mLine;
+            if (selL1 < selL0) std::swap(selL0, selL1);
+            // Replace whole lines [l0..l1] with `repl` (no trailing newline), as an
+            // undoable select+delete+insert; returns caret to (curL, curC).
+            auto replaceLines = [&](int l0, int l1, const std::string& repl, int curL, int curC) {
+                te.SetSelection(TextEditor::Coordinates(l0, 0),
+                                TextEditor::Coordinates(l1, te.LineLength(l1)));
+                if (l0 != l1 || te.LineLength(l1) > 0) te.Delete();
+                te.SetCursorPosition(TextEditor::Coordinates(l0, 0));
+                te.InsertText(repl);
+                te.SetCursorPosition(TextEditor::Coordinates(curL, curC));
+                syncFromWidget();
+            };
+            auto linesText = [&](int l0, int l1) {
+                std::vector<std::string> ls = te.GetTextLines();
+                std::vector<std::string> out;
+                for (int i = l0; i <= l1 && i < (int)ls.size(); ++i) out.push_back(ls[i]);
+                return out;
+            };
+            // Ctrl+/ — toggle "// " on the selected lines (also the toolbar button).
+            bool wantComment = caret.toggleComment;
+            caret.toggleComment = false;
+            if ((chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+                 ImGui::IsKeyPressed(ImGuiKey_Slash, false)) || wantComment) {
+                std::vector<std::string> ls = linesText(selL0, selL1);
+                bool allCommented = true;
+                for (const auto& l : ls) {
+                    std::size_t f = l.find_first_not_of(" \t");
+                    if (f != std::string::npos && l.compare(f, 2, "//") != 0) { allCommented = false; break; }
+                }
+                std::string repl;
+                for (std::size_t i = 0; i < ls.size(); ++i) {
+                    std::string l = ls[i];
+                    std::size_t f = l.find_first_not_of(" \t");
+                    if (f != std::string::npos) {
+                        if (allCommented) { if (l.compare(f, 2, "//") == 0) l.erase(f, (f + 2 < l.size() && l[f + 2] == ' ') ? 3 : 2); }
+                        else l.insert(f, "// ");
+                    }
+                    repl += l; if (i + 1 < ls.size()) repl += "\n";
+                }
+                if (!ls.empty()) replaceLines(selL0, selL1, repl, caret.line - 1, 0);
+            }
+            // Ctrl+D — duplicate the selected line(s) below themselves.
+            if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+                ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+                std::vector<std::string> ls = linesText(selL0, selL1);
+                if (!ls.empty()) {
+                    std::string block; for (std::size_t i = 0; i < ls.size(); ++i) { block += ls[i]; if (i + 1 < ls.size()) block += "\n"; }
+                    replaceLines(selL0, selL1, block + "\n" + block, selL1 + 1 + (caret.line - 1 - selL0), caret.col - 1);
+                }
+            }
+            // Ctrl+Shift+K — delete the selected line(s).
+            if (chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
+                ImGui::IsKeyPressed(ImGuiKey_K, false)) {
+                int total = te.GetTotalLines();
+                te.SetSelection(TextEditor::Coordinates(selL0, 0),
+                                selL1 + 1 < total ? TextEditor::Coordinates(selL1 + 1, 0)
+                                                  : TextEditor::Coordinates(selL1, te.LineLength(selL1)));
+                te.Delete();
+                syncFromWidget();
+            }
+            // Ctrl+Shift+J — join the caret line with the next (single space between).
+            if (chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
+                ImGui::IsKeyPressed(ImGuiKey_J, false)) {
+                int l0 = caret.line - 1;
+                std::vector<std::string> ls = linesText(l0, l0 + 1);
+                if (ls.size() == 2) {
+                    std::string a = ls[0], b = ls[1];
+                    std::size_t f = b.find_first_not_of(" \t"); b = f == std::string::npos ? "" : b.substr(f);
+                    std::string joined = a; if (!a.empty() && !b.empty()) joined += " ";
+                    joined += b;
+                    replaceLines(l0, l0 + 1, joined, l0, (int)a.size());
+                }
+            }
+            // Alt+Up / Alt+Down — move the selected line(s) up/down one row.
+            bool mvUp = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+            bool mvDn = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+            if (mvUp || mvDn) {
+                int total = te.GetTotalLines();
+                if ((mvUp && selL0 > 0) || (mvDn && selL1 + 1 < total)) {
+                    int nb = mvUp ? selL0 - 1 : selL1 + 1;              // neighbour row
+                    std::vector<std::string> blk = linesText(selL0, selL1);
+                    std::vector<std::string> nbl = linesText(nb, nb);
+                    std::string repl;
+                    if (mvUp) { for (auto& l : blk) repl += l + "\n"; repl += nbl[0]; }
+                    else      { repl = nbl[0] + "\n"; for (std::size_t i = 0; i < blk.size(); ++i) { repl += blk[i]; if (i + 1 < blk.size()) repl += "\n"; } }
+                    int lo = mvUp ? nb : selL0, hi = mvUp ? selL1 : nb;
+                    int newLine = caret.line - 1 + (mvUp ? -1 : 1);
+                    replaceLines(lo, hi, repl, newLine, caret.col - 1);
+                }
+            }
         }
 
         // --- Status bar (VS Code-style) --------------------------------------

@@ -193,6 +193,8 @@ are in units/second (or degrees/second), independent of frame rate.
 | `flee("name", speed)` | Run away from an object |
 | `patrol(x1, y1, x2, y2, speed)` | Walk back and forth between two points |
 | `orbit("name", radius, degPerSec)` | Circle a target |
+| `aim(x, y)` | Rotate to face a world point (turrets, arrows) |
+| `grid_snap(size)` | Snap position to a grid (tile / building games) |
 | `wander(speed)` | Roam, changing direction ~once a second |
 | `bob(amount, speed)` / `pulse(amount, speed)` | Hover / breathe (juice) |
 | `on_key("key", "fn")` | Call your function `fn` the frame `key` is pressed |

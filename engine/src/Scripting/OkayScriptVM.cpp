@@ -1939,6 +1939,26 @@ struct OkayScriptVM::Impl {
             t->localRotation = Quat::Euler({0, 0, deg});
             return Value{};
         };
+        // aim(x, y): rotate (Z) to face a world POINT — turrets, arrows, "look where
+        // I'm going". Like look_at but toward coordinates instead of a named object.
+        b["aim"] = [this, tf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{};
+            Transform* t = tf(); if (!t || !rt.host || !rt.host->gameObject) return Value{};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            float deg = std::atan2(a[1].AsFloat() - me.y, a[0].AsFloat() - me.x) * 57.2957795f;
+            t->localRotation = Quat::Euler({0, 0, deg});
+            return Value{};
+        };
+        // grid_snap(size): snap this object's position to the nearest multiple of
+        // `size` on X and Y — tile placement, building games, chunky movement.
+        b["grid_snap"] = [tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t) return Value{};
+            float g = a.empty() ? 1.0f : a[0].AsFloat();
+            if (g <= 1e-6f) return Value{};
+            t->localPosition.x = std::round(t->localPosition.x / g) * g;
+            t->localPosition.y = std::round(t->localPosition.y / g) * g;
+            return Value{};
+        };
 
         // ---- High-level one-liners -----------------------------------------
         // Each is a whole behaviour in a single call, meant to be invoked every

@@ -5803,6 +5803,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"orbit","orbit(\"name\", radius, degPerSec)"}, {"on_key_move","on_key_move(speed)"},
         {"platformer","platformer(speed[, jump])"}, {"on_key","on_key(\"key\", \"fn\")"},
         {"smooth_follow","smooth_follow(\"name\", speed)"}, {"spring_to","spring_to(x, y[, speed])"},
+        {"aim","aim(x, y)"}, {"grid_snap","grid_snap(size)"},
         {"on_key_move3","on_key_move3(speed)"}, {"shoot_at","shoot_at(\"target\", \"prefab\", speed)"},
         {"spawn_wave","spawn_wave(\"prefab\", count[, radius])"}, {"chase","chase(\"name\", speed[, stopDist])"},
         // velocity axes
@@ -5933,6 +5934,8 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"on_key","Call this script's function `fn` the frame `key` is pressed — event-style input, no if/edge bookkeeping."},
         {"smooth_follow","Chase a named object with easing (exponential smoothing) so it glides in at `speed` — dt-scaled."},
         {"spring_to","Ease toward a world point (x,y) at `speed`, slowing as it arrives (cameras, cursors, snapping) — dt-scaled."},
+        {"aim","Rotate (Z) to face a world point (x,y) — turrets, arrows, look-where-you-move."},
+        {"grid_snap","Snap this object's position to the nearest multiple of `size` on X and Y (tile / building games)."},
         {"on_key_move","WASD/arrow keys move this object on the XY plane (uses a Rigidbody2D if present)."},
         {"on_key_move3","WASD/arrow keys move this object on the XZ ground plane (uses a Rigidbody3D if present)."},
         {"shoot_at","Spawn a prefab projectile at self, flying toward a named target at `speed`."},

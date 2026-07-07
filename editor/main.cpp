@@ -346,11 +346,14 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     Uint64 g_renderT0 = SDL_GetPerformanceCounter();   // GPU/software render time (read-back is synchronous)
     if (g_gpuRender) {
 #if defined(_WIN32)
-        if (!px && g_d3dReady && g_d3dRenderer)
+        if (!px && g_d3dReady && g_d3dRenderer) {
+            OKAY_TRACE("Render3D:d3d11");   // crash breadcrumb: which backend faulted
             px = g_d3dRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
                                                0.0f, 0.0f, 0.0f, 0.0f, ignore);
+        }
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
+            OKAY_TRACE("Render3D:gl");
             SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
             SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
             if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
@@ -369,9 +372,11 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // GPU renderers don't read back depth, so particle occlusion is off for them;
     // the software path (next) fills + validates the shared depth for occlusion.
     okay::SceneOcclusionDepth().valid = false;
-    if (!px)
+    if (!px) {
+        OKAY_TRACE("Render3D:software");
         px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
                             scene, vp, eye, rw, rh, ss, ignore);
+    }
     if (!px) return nullptr;   // every renderer failed — don't feed SDL a null buffer
     {   // Record the (synchronous) render time as the profiler's GPU proxy.
         Uint64 r1 = SDL_GetPerformanceCounter();

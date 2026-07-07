@@ -36,7 +36,160 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <cctype>
 #include <vector>
+
+// ----------------------------------------------------------------------------
+// OkayScript semantic lint — Rider-style "yellow" inspections, no execution.
+// Pure text analysis (unit-tested in --selftest): flags calls to functions that
+// exist neither in this file nor in `known` (with a did-you-mean suggestion),
+// and calls passing more arguments than the signature allows. Conservative by
+// design: anything ambiguous is NOT flagged.
+// ----------------------------------------------------------------------------
+struct ScriptLint { int line; std::string msg; };
+
+static std::vector<ScriptLint> AnalyzeScriptWarnings(
+        const std::string& src,
+        const std::unordered_set<std::string>& known,
+        const std::unordered_map<std::string, int>& maxArgs) {
+    std::vector<ScriptLint> out;
+    auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+    // Words that legitimately precede '(' but are never function calls.
+    static const std::unordered_set<std::string> kws = {
+        "if","else","while","for","do","switch","case","return","break","continue",
+        "try","catch","throw","foreach","in","function","var","new","not","and","or",
+        "true","false","null","this",
+    };
+    // One scan collects BOTH definitions (`name(params) {` / `function name(...)`)
+    // and call sites (`name(args)` not followed by '{'), so use-before-definition
+    // works. Strings and // comments are skipped; member calls (`obj.foo(...)`)
+    // are ignored — we know nothing about receivers.
+    struct Call { std::string name; int argc; int line; };
+    std::vector<Call> calls;
+    std::unordered_set<std::string> defined;
+    std::unordered_map<std::string, int> defArgs;   // declared param count (max, if redefined)
+    const std::size_t n = src.size();
+    int line = 1;
+    for (std::size_t i = 0; i < n;) {
+        char c = src[i];
+        if (c == '\n') { ++line; ++i; continue; }
+        if ((c == '/' && i + 1 < n && src[i + 1] == '/') || c == '#') {   // line comment (// or #)
+            while (i < n && src[i] != '\n') ++i;
+            continue;
+        }
+        if (c == '"') {   // string literal (OkayScript strings are double-quoted ONLY —
+                          // treating ' as a quote would let an apostrophe in a comment
+                          // swallow the rest of the file)
+            ++i;
+            while (i < n && src[i] != '"') { if (src[i] == '\\') ++i; if (i < n && src[i] == '\n') ++line; ++i; }
+            if (i < n) ++i;
+            continue;
+        }
+        if (!isW(c) || std::isdigit((unsigned char)c)) { ++i; continue; }
+        std::size_t ws = i; while (i < n && isW(src[i])) ++i;       // read the identifier
+        std::string name = src.substr(ws, i - ws);
+        bool member = ws > 0 && src[ws - 1] == '.';
+        // C#-style attributes ([Header("Stats")], [Range(0,1)]) are accepted-and-
+        // ignored by the VM — the bracketed identifier is not a call; skip it.
+        {
+            std::size_t pb = ws;
+            while (pb > 0 && (src[pb - 1] == ' ' || src[pb - 1] == '\t')) --pb;
+            if (pb > 0 && src[pb - 1] == '[') member = true;
+        }
+        std::size_t j = i; while (j < n && (src[j] == ' ' || src[j] == '\t')) ++j;
+        if (j >= n || src[j] != '(' || member || kws.count(name)) continue;
+        // Walk to the matching ')' counting top-level commas (skip strings, nesting,
+        // and comments — a ',' or ')' inside a comment must not affect the count).
+        int callLine = line, depth = 0, commas = 0;
+        bool any = false, closed = false;
+        std::size_t k = j, limit = j + 4000 < n ? j + 4000 : n;
+        for (; k < limit; ++k) {
+            char d = src[k];
+            if (d == '\n') continue;
+            if ((d == '/' && k + 1 < limit && src[k + 1] == '/') || d == '#') {
+                while (k < limit && src[k] != '\n') ++k;            // comment inside the call
+                if (k >= limit) break;
+                continue;
+            }
+            if (d == '"') {                                          // double-quoted strings only
+                ++k;
+                while (k < limit && src[k] != '"') { if (src[k] == '\\') ++k; ++k; }
+                any = true; continue;
+            }
+            if (d == '(' || d == '[' || d == '{') { if (depth > 0) any = true; ++depth; continue; }
+            if (d == ')' || d == ']' || d == '}') { --depth; if (depth == 0) { closed = true; break; } any = true; continue; }
+            if (depth == 1 && d == ',') { ++commas; continue; }
+            if (!std::isspace((unsigned char)d)) any = true;
+        }
+        if (!closed) { i = j + 1; continue; }                       // unterminated: parser's problem
+        int argc = any ? commas + 1 : 0;
+        // Definition vs call: skip whitespace AND comments after the ')' — a doc
+        // comment between the params and the '{' must not demote a definition.
+        std::size_t after = k + 1;
+        for (;;) {
+            while (after < n && (src[after] == ' ' || src[after] == '\t' ||
+                                 src[after] == '\r' || src[after] == '\n')) ++after;
+            if (after + 1 < n && src[after] == '/' && src[after + 1] == '/') {
+                while (after < n && src[after] != '\n') ++after;
+            } else if (after < n && src[after] == '#') {
+                while (after < n && src[after] != '\n') ++after;
+            } else break;
+        }
+        if (after < n && src[after] == '{') {                       // definition, not a call
+            defined.insert(name);
+            auto it = defArgs.find(name);
+            if (it == defArgs.end() || it->second < argc) defArgs[name] = argc;
+        } else {
+            calls.push_back({name, argc, callLine});
+        }
+        // Resume after the identifier (the paren contents get scanned normally so
+        // nested calls inside arguments are still analyzed).
+    }
+    // Nearest-name suggestion: edit distance <= 2 over known + file-defined.
+    auto editDist = [](const std::string& a, const std::string& b) {
+        if (a.size() > b.size() + 2 || b.size() > a.size() + 2) return 99;
+        std::vector<int> prev(b.size() + 1), cur(b.size() + 1);
+        for (std::size_t jj = 0; jj <= b.size(); ++jj) prev[jj] = (int)jj;
+        for (std::size_t ii = 1; ii <= a.size(); ++ii) {
+            cur[0] = (int)ii;
+            for (std::size_t jj = 1; jj <= b.size(); ++jj)
+                cur[jj] = std::min({ prev[jj] + 1, cur[jj - 1] + 1,
+                                     prev[jj - 1] + (a[ii - 1] == b[jj - 1] ? 0 : 1) });
+            std::swap(prev, cur);
+        }
+        return prev[b.size()];
+    };
+    for (const auto& call : calls) {
+        if (out.size() >= 50) break;                                 // don't drown the UI
+        if (defined.count(call.name)) {
+            auto it = defArgs.find(call.name);
+            if (it != defArgs.end() && call.argc > it->second)
+                out.push_back({call.line, "'" + call.name + "' takes " + std::to_string(it->second) +
+                               " argument" + (it->second == 1 ? "" : "s") + " - got " +
+                               std::to_string(call.argc)});
+            continue;
+        }
+        if (known.count(call.name)) {
+            auto it = maxArgs.find(call.name);
+            if (it != maxArgs.end() && call.argc > it->second)
+                out.push_back({call.line, "'" + call.name + "' takes at most " + std::to_string(it->second) +
+                               " argument" + (it->second == 1 ? "" : "s") + " - got " +
+                               std::to_string(call.argc)});
+            continue;
+        }
+        if (call.name.size() < 2) continue;
+        std::string best; int bestD = 3;
+        for (const auto& cand : known)
+            { int d = editDist(call.name, cand); if (d < bestD) { bestD = d; best = cand; } }
+        for (const auto& cand : defined)
+            { int d = editDist(call.name, cand); if (d < bestD) { bestD = d; best = cand; } }
+        std::string msg = "Unknown function '" + call.name + "'";
+        if (!best.empty()) msg += " - did you mean '" + best + "'?";
+        out.push_back({call.line, msg});
+    }
+    return out;
+}
 
 // ----------------------------------------------------------------------------
 // Headless self-test: verifies the editor's model logic with no GUI.
@@ -91,6 +244,46 @@ static int RunSelfTest() {
     check(ue.CanRedo(), "can redo");
     ue.Redo();
     check(ue.scene().Objects().size() == base + 1, "redo restores object");
+
+    // Script lint (the editor's semantic warnings) — pure text analysis.
+    {
+        std::unordered_set<std::string> known = {"spin", "jump", "move", "print"};
+        std::unordered_map<std::string, int> maxA = {{"spin", 1}, {"move", 3}, {"jump", 1}};
+        auto w1 = AnalyzeScriptWarnings("spinn(90)\n", known, maxA);
+        check(w1.size() == 1 && w1[0].line == 1 &&
+              w1[0].msg.find("spinn") != std::string::npos &&
+              w1[0].msg.find("'spin'") != std::string::npos, "lint: unknown fn + suggestion");
+        check(AnalyzeScriptWarnings("spin(90)\n", known, maxA).empty(), "lint: known call ok");
+        auto w2 = AnalyzeScriptWarnings("move(1, 2, 3, 4)\n", known, maxA);
+        check(w2.size() == 1 && w2[0].msg.find("argument") != std::string::npos, "lint: too many args");
+        check(AnalyzeScriptWarnings("// spinn(90)\nx = \"spinn(1)\"\n", known, maxA).empty(),
+              "lint: comments/strings skipped");
+        check(AnalyzeScriptWarnings("greet(\"bob\")\ngreet(name) {\n    print(name)\n}\n", known, maxA).empty(),
+              "lint: file-defined fn ok (use before def)");
+        auto w3 = AnalyzeScriptWarnings("greet(a) { }\ngreet(1, 2)\n", known, maxA);
+        check(w3.size() == 1 && w3[0].line == 2, "lint: file fn arity");
+        check(AnalyzeScriptWarnings("obj.foo(1)\n", known, maxA).empty(), "lint: member calls skipped");
+        check(AnalyzeScriptWarnings("if (x) { spin(90) }\n", known, maxA).empty(), "lint: keywords skipped");
+        check(AnalyzeScriptWarnings("update(dt) {\n    move(1, 2)\n}\n", known, maxA).empty(),
+              "lint: bare event definition ok");
+        // '#' is a line comment too, and an apostrophe in a comment must not open a
+        // phantom string that swallows the rest of the file.
+        check(AnalyzeScriptWarnings("# spinn(90) old version\nspin(90)\n", known, maxA).empty(),
+              "lint: # comments skipped");
+        auto w4 = AnalyzeScriptWarnings("# don't move yet\nmove(1, 2, 3, 4)\n", known, maxA);
+        check(w4.size() == 1 && w4[0].line == 2, "lint: apostrophe in comment doesn't hide code");
+        // A trailing comment between ')' and '{' is still a definition.
+        check(AnalyzeScriptWarnings("respawn(x) // resets\n{\n    print(x)\n}\nrespawn(3)\n", known, maxA).empty(),
+              "lint: def with trailing comment before brace");
+        // Comments inside a call's argument list: commas/parens there don't count.
+        check(AnalyzeScriptWarnings("move(1,   // dx, in units\n     2)\n", known, maxA).empty(),
+              "lint: comment comma inside args not counted");
+        auto w5 = AnalyzeScriptWarnings("move(1, // 2)\n     3, 4, 5, 6)\n", known, maxA);
+        check(w5.size() == 1, "lint: comment paren doesn't truncate the call");
+        // C#-style attributes are accepted-and-ignored by the VM, not calls.
+        check(AnalyzeScriptWarnings("[Header(\"Stats\")]\npublic float speed = 5;\n", known, maxA).empty(),
+              "lint: attributes skipped");
+    }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
     return failures == 0 ? 0 : 1;
@@ -6512,9 +6705,13 @@ void DrawScriptEditor(EditorState& ed) {
         static bool s_highlight = true;
         static std::string s_error;     // last compile error (shown red in status)
         static std::vector<ScriptDiagnostic> s_diags;   // all live syntax problems (Problems panel)
+        static std::vector<ScriptLint> s_warns;         // semantic warnings (unknown fn, arity)
         static bool s_showProblems = false;             // Problems panel visibility
         static bool s_palReq = false;   // request to open the command palette
-        static char s_find[128] = "";   // Find query (Ctrl+F highlights matches)
+        static char s_find[128] = "";   // Find query (Ctrl+F opens the bar + highlights matches)
+        static bool s_showFind = false; // Rider-style: the find bar is hidden until Ctrl+F
+        static int  s_findCursor = -1;  // search position — advances on each Enter/F3 even
+                                        // while the editor is unfocused (its caret is frozen)
         if (ImGui::SmallButton("Run")) {           // compile + run
             bool ok = sc->LoadSource(buf.data(), &s_error);
             if (ok) s_error.clear();
@@ -6649,9 +6846,55 @@ void DrawScriptEditor(EditorState& ed) {
             }
             ImGui::EndPopup();
         }
-        // Ctrl+/ toggles the comment, Ctrl+G focuses the line box.
+        // Rider-style keyboard chords (active while the Script Editor is focused):
+        //   Ctrl+/       toggle comment          Ctrl+E   switch between open scripts
+        //   Ctrl+G       go to line              Ctrl+Alt+L  reformat the file
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
+            ImGuiIO& kio = ImGui::GetIO();
             if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;
+            if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E, false))
+                ImGui::OpenPopup("##tabswitcher");
+            if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false))
+                ImGui::OpenPopup("##gotolinepop");
+            // Reformat (Ctrl+Alt+L). Guards: no Shift, and no text character queued
+            // this frame — on Windows AltGr reports as Ctrl+Alt, so without the queue
+            // check typing AltGr characters (ł, @, {…) would silently reformat.
+            if (kio.KeyAlt && !kio.KeyShift && kio.InputQueueCharacters.Size == 0 &&
+                ImGui::IsKeyPressed(ImGuiKey_L, false)) {
+                caret.replaceAll = FormatOkayScript(buf.data());
+                ed.dirty = true;
+            }
+        }
+        // Ctrl+E: jump between open script tabs (Rider's "Recent Files").
+        if (ImGui::BeginPopup("##tabswitcher")) {
+            ImGui::TextDisabled("Open scripts");
+            ImGui::Separator();
+            for (ScriptComponent* t : g_scriptTabs) {
+                GameObject* tgo = owner.count(t) ? owner[t] : nullptr;
+                std::string disp = !t->Path().empty()
+                    ? std::filesystem::path(t->Path()).filename().string()
+                    : (tgo ? tgo->name : std::string("script")) + "." + extide::ExtFor(t->Language());
+                if (ScriptTabDirty(t)) disp += " *";
+                char sid[32]; std::snprintf(sid, sizeof(sid), "##sw%p", (void*)t);
+                if (ImGui::Selectable((disp + sid).c_str(), t == g_activeScriptTab)) {
+                    g_activeScriptTab = t; g_focusScriptTab = t;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::EndPopup();
+        }
+        // Ctrl+G: go-to-line popup (type the line, Enter jumps).
+        if (ImGui::BeginPopup("##gotolinepop")) {
+            static int s_gotoPop = 1;
+            if (ImGui::IsWindowAppearing()) { s_gotoPop = caret.line; ImGui::SetKeyboardFocusHere(); }
+            ImGui::TextDisabled("Go to line");
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputInt("##gotopopin", &s_gotoPop, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue)) {
+                if (s_gotoPop < 1) s_gotoPop = 1;
+                caret.gotoLine = s_gotoPop; s_scrollToLine = s_gotoPop;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
         // Go to Definition (F12): jump to the function/class under the caret.
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
@@ -7014,62 +7257,96 @@ void DrawScriptEditor(EditorState& ed) {
             }
         }
 
-        // Find bar: Ctrl+F focuses it; matches are highlighted in the editor.
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-            ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
-            ImGui::SetKeyboardFocusHere();
-        ImGui::SetNextItemWidth(150);
-        ImGui::InputTextWithHint("##find", "Find (Ctrl+F)", s_find, sizeof(s_find));
-        // Find Next / Prev: scroll to (and select) the next match around the caret.
-        // F3 / Shift+F3 do the same while typing in the editor.
-        auto jumpMatch = [&](bool fwd) {
-            if (!s_find[0]) return;
+        // Find/Replace bar (Rider-style): hidden until Ctrl+F opens it; Esc closes it.
+        // Enter in the field jumps to the next match, Shift+Enter to the previous;
+        // F3 / Shift+F3 work any time (even with the bar closed).
+        bool sfWinFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        bool sfFocusField = false;
+        if (sfWinFocused && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+            s_showFind = true; sfFocusField = true;
+        }
+        // All case-insensitive match positions (shared by jump, the n/m indicator,
+        // and the highlight pass below).
+        auto findMatches = [&]() {
+            std::vector<int> at;
+            if (!s_find[0]) return at;
             std::string hay = buf.data(), needle = s_find;
             for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
             for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
-            std::vector<int> at;
             for (std::size_t p = hay.find(needle); p != std::string::npos; p = hay.find(needle, p + needle.size()))
                 at.push_back((int)p);
+            return at;
+        };
+        auto jumpMatch = [&](bool fwd) {
+            std::vector<int> at = findMatches();
             if (at.empty()) return;
-            int cur = caret.pos, target = -1;
+            // Search from s_findCursor, NOT caret.pos: the editor's caret only updates
+            // while its InputText is active, so with focus in the find field repeated
+            // Enter/F3 would re-target the same match forever.
+            int cur = s_findCursor >= 0 ? s_findCursor : caret.pos, target = -1;
             if (fwd) { for (int p : at) if (p > cur) { target = p; break; } if (target < 0) target = at.front(); }
             else     { for (int p : at) if (p < cur) target = p; if (target < 0) target = at.back(); }
-            caret.gotoPos = target; caret.gotoSelLen = (int)needle.size();
-            int ln = 1; for (int k = 0; k < target && hay[k]; ++k) if (hay[k] == '\n') ++ln;
+            s_findCursor = target;
+            caret.gotoPos = target; caret.gotoSelLen = (int)std::strlen(s_find);
+            const char* tb = buf.data();
+            int ln = 1; for (int k = 0; k < target && tb[k]; ++k) if (tb[k] == '\n') ++ln;
             s_scrollToLine = ln;
         };
-        ImGui::SameLine();
-        if (ImGui::SmallButton("<")) jumpMatch(false);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find previous (Shift+F3)");
-        ImGui::SameLine();
-        if (ImGui::SmallButton(">")) jumpMatch(true);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find next (F3)");
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-            ImGui::IsKeyPressed(ImGuiKey_F3, false))
+        if (sfWinFocused && ImGui::IsKeyPressed(ImGuiKey_F3, false))
             jumpMatch(!ImGui::GetIO().KeyShift);
-        // Replace field + Replace All (case-sensitive). Clicking here deactivates
-        // the editor, so editing the buffer directly takes effect.
-        static char s_replace[128] = "";
-        ImGui::SameLine(); ImGui::SetNextItemWidth(150);
-        ImGui::InputTextWithHint("##replace", "Replace", s_replace, sizeof(s_replace));
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Replace All") && s_find[0]) {
-            std::string text = buf.data(), from = s_find, to = s_replace;
-            int n = 0;
-            for (std::size_t p = text.find(from); p != std::string::npos && !from.empty();
-                 p = text.find(from, p + to.size())) { text.replace(p, from.size(), to); ++n; }
-            if (n > 0) { SetCodeBuffer(sc, text); ed.dirty = true; }
-            ConsoleLog("Replaced " + std::to_string(n) + " occurrence" + (n == 1 ? "" : "s"));
+        // Esc: first dismiss the autocomplete popup (the editor's callback can't do it
+        // when the editor isn't active), then close the find bar. The Ctrl+G / Ctrl+E
+        // popups take priority — their Esc must not also close the bar.
+        if (sfWinFocused && ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+            !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+            if (g_acCount > 0) g_acDismiss = true;
+            else if (s_showFind) s_showFind = false;
         }
-        // Count matches (case-insensitive) for the status bar.
-        int findCount = 0;
-        if (s_find[0]) {
-            std::string hay = buf.data(), needle = s_find;
-            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
-            for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
-            for (std::size_t pos = hay.find(needle); pos != std::string::npos;
-                 pos = hay.find(needle, pos + needle.size())) ++findCount;
-            ImGui::SameLine(); ImGui::TextDisabled("%d match%s", findCount, findCount == 1 ? "" : "es");
+        if (s_showFind) {
+            if (sfFocusField) { ImGui::SetKeyboardFocusHere(); s_findCursor = caret.pos; }
+            ImGui::SetNextItemWidth(180);
+            if (ImGui::InputTextWithHint("##find", "Find", s_find, sizeof(s_find),
+                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+                jumpMatch(!ImGui::GetIO().KeyShift);
+                ImGui::SetKeyboardFocusHere(-1);   // stay in the field for repeated Enter
+            }
+            if (ImGui::IsItemEdited()) s_findCursor = caret.pos;   // new query: search from the caret
+            // Rider's "current/total" match indicator.
+            {
+                std::vector<int> at = findMatches();
+                ImGui::SameLine();
+                if (!s_find[0])          ImGui::TextDisabled("     ");
+                else if (at.empty())     ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.5f, 1.0f), "0 results");
+                else {
+                    int ref = s_findCursor >= 0 ? s_findCursor : caret.pos;
+                    int cur = 0; for (int p : at) if (p < ref) ++cur;
+                    if (cur >= (int)at.size()) cur = (int)at.size() - 1;
+                    ImGui::TextDisabled("%d/%d", cur + 1, (int)at.size());
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("<")) jumpMatch(false);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find previous (Shift+F3 / Shift+Enter)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton(">")) jumpMatch(true);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find next (F3 / Enter)");
+            // Replace field + Replace All (case-sensitive). Clicking here deactivates
+            // the editor, so editing the buffer directly takes effect.
+            static char s_replace[128] = "";
+            ImGui::SameLine(); ImGui::SetNextItemWidth(150);
+            ImGui::InputTextWithHint("##replace", "Replace", s_replace, sizeof(s_replace));
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Replace All") && s_find[0]) {
+                std::string text = buf.data(), from = s_find, to = s_replace;
+                int n = 0;
+                for (std::size_t p = text.find(from); p != std::string::npos && !from.empty();
+                     p = text.find(from, p + to.size())) { text.replace(p, from.size(), to); ++n; }
+                if (n > 0) { SetCodeBuffer(sc, text); ed.dirty = true; }
+                ConsoleLog("Replaced " + std::to_string(n) + " occurrence" + (n == 1 ? "" : "s"));
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x##closefind")) s_showFind = false;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close (Esc)");
         }
 
         // --- Command Palette (Ctrl+Shift+P): searchable editor actions + go-to ---
@@ -7206,6 +7483,16 @@ void DrawScriptEditor(EditorState& ed) {
         }
         gdl->AddLine(ImVec2(gTop.x + gutterW - 0.5f, gTop.y),
                      ImVec2(gTop.x + gutterW - 0.5f, gTop.y + gutterH), IM_COL32(58, 60, 70, 255));
+        {   // Problem dots in the gutter (Rider): red = error line, amber = warning.
+            float pr = lineH * 0.14f; if (pr < 2.0f) pr = 2.0f; if (pr > 3.5f) pr = 3.5f;
+            auto dot = [&](int probLine, ImU32 col) {
+                if (probLine <= 0 || probLine > lines) return;
+                gdl->AddCircleFilled(ImVec2(gTop.x + pr + 2.0f,
+                                            gTop.y + padY + (probLine - 0.5f) * lineH), pr, col);
+            };
+            for (const auto& w : s_warns) dot(w.line, IM_COL32(230, 190, 70, 255));
+            for (const auto& d : s_diags) dot(d.line, IM_COL32(240, 80, 80, 255));   // errors on top
+        }
         ImGui::BeginGroup();
         ImGui::Dummy(ImVec2(0, padY));
         for (int i = 1; i <= lines; ++i)
@@ -7227,6 +7514,7 @@ void DrawScriptEditor(EditorState& ed) {
             ScriptCaretCallback, &caret);
         bool editorActive = ImGui::IsItemActive();   // for the custom caret (text is hidden when highlighting)
         bool codeHovered = ImGui::IsItemHovered();    // for the hover-doc tooltip below
+        if (editorActive) s_findCursor = caret.pos;   // typing/clicking re-anchors find-next
         // Toolbar buttons (Format/Snippet/Rename) steal focus from the editor, so its
         // CallbackAlways won't run this frame — apply any pending edit to the buffer
         // directly here (ImGui re-reads buf while the item is inactive).
@@ -7252,6 +7540,12 @@ void DrawScriptEditor(EditorState& ed) {
             edl->AddRectFilled(ImVec2(mn.x, ly), ImVec2(mn.x + contentW, ly + lineH),
                                IM_COL32(255, 255, 255, 16));
         }
+        // Hard-wrap margin: a faint rule at column 120 (Rider's right margin).
+        {
+            float rx = origin.x + 120.0f * charW;
+            if (rx < mn.x + contentW)
+                edl->AddLine(ImVec2(rx, mn.y), ImVec2(rx, mn.y + contentH), IM_COL32(255, 255, 255, 14));
+        }
         // Indent guides: faint vertical lines at each 4-space level (VS Code).
         {
             const char* t = buf.data();
@@ -7273,8 +7567,9 @@ void DrawScriptEditor(EditorState& ed) {
         }
         // (Occurrences of the identifier under the caret are highlighted below, in
         // the count>1 "highlight usages" pass — one place, no double-shading.)
-        // Highlight every Find match (drawn under the text overlay).
-        if (s_find[0]) {
+        // Highlight every Find match (drawn under the text overlay). Only while the
+        // find bar is open — closing it clears the highlights, like Rider.
+        if (s_showFind && s_find[0]) {
             std::string needle = s_find;
             std::size_t nlen = needle.size();
             int ln = 0, col = 0;
@@ -7401,31 +7696,82 @@ void DrawScriptEditor(EditorState& ed) {
                     else s_error = (s_diags[0].line > 0
                                     ? "line " + std::to_string(s_diags[0].line) + ": " : std::string())
                                    + s_diags[0].message;
+                    // Semantic lint (yellow warnings) from the same settled snapshot:
+                    // unknown functions + argument-count mismatches. The known-name set
+                    // and per-builtin max arity are built once from the completion pool
+                    // (curated API + every VM builtin) and the signature map.
+                    static const std::unordered_set<std::string> lintKnown = [] {
+                        std::unordered_set<std::string> s;
+                        for (const auto& w : ScriptCompletions()) s.insert(w);
+                        for (const auto& kv : ScriptSignatureMap()) s.insert(kv.first);
+                        return s;
+                    }();
+                    static const std::unordered_map<std::string, int> lintMax = [] {
+                        // Builtins that accept ANY number of args (the VM joins/ignores
+                        // extras) — never arity-checked, whatever their signature says.
+                        static const std::unordered_set<std::string> variadic = {
+                            "print", "log", "debug_log", "log_info", "log_warn", "log_error",
+                            "trace", "concat", "format", "str",
+                        };
+                        std::unordered_map<std::string, int> m;
+                        for (const auto& kv : ScriptSignatureMap()) {
+                            const std::string& nm = kv.first; const std::string& sg = kv.second;
+                            if (variadic.count(nm)) continue;
+                            if (sg.rfind(nm + "(", 0) != 0 || sg.back() != ')') continue;
+                            if (sg.find('|') != std::string::npos || sg.find("...") != std::string::npos ||
+                                sg.find("->") != std::string::npos ||
+                                sg.find('"') != std::string::npos) continue;    // variants/variadic/examples: skip
+                            std::string inner = sg.substr(nm.size() + 1, sg.size() - nm.size() - 2);
+                            // Optional args are written "name(a, b[, c])" — the bracketed
+                            // params count toward the MAX arity, so strip the brackets
+                            // (leaving their commas at top level) before counting.
+                            inner.erase(std::remove_if(inner.begin(), inner.end(),
+                                        [](char pc){ return pc == '[' || pc == ']'; }), inner.end());
+                            int depth = 0, commas = 0; bool any = false;
+                            for (char pc : inner) {
+                                if (pc=='('||pc=='{') ++depth;
+                                else if (pc==')'||pc=='}') --depth;
+                                else if (pc == ',' && depth == 0) ++commas;
+                                if (!std::isspace((unsigned char)pc)) any = true;
+                            }
+                            m[nm] = any ? commas + 1 : 0;
+                        }
+                        return m;
+                    }();
+                    s_warns = AnalyzeScriptWarnings(buf.data(), lintKnown, lintMax);
                 }
             }
         }
 
-        // Inline diagnostics: a red wavy underline under every reported error line
-        // (ValidateAll recovers past each error, so there can be several at once).
-        for (const auto& d : s_diags) {
-            int errLine = d.line;
-            if (errLine <= 0 || errLine > lines) continue;
-            const char* t = buf.data();
-            int cur = 1, len = 0;
-            for (int i = 0; t[i]; ++i) {
-                if (t[i] == '\n') { if (cur == errLine) break; ++cur; len = 0; }
-                else if (cur == errLine) ++len;
-            }
-            if (len < 1) len = 1;
-            float y = origin.y + errLine * lineH - 1.5f;
-            float x1 = origin.x + len * charW;
-            ImU32 red = IM_COL32(240, 80, 80, 230);
-            bool up = true;
-            for (float x = origin.x; x < x1; x += 3.0f, up = !up) {
-                float xe = x + 3.0f > x1 ? x1 : x + 3.0f;
-                edl->AddLine(ImVec2(x, y + (up ? 2.0f : 0.0f)),
-                             ImVec2(xe, y + (up ? 0.0f : 2.0f)), red, 1.3f);
-            }
+        // Inline diagnostics: a red wavy underline under every error line, an amber
+        // one under every lint warning (errors win when a line has both). ValidateAll
+        // recovers past each error, so there can be several at once.
+        if (!s_diags.empty() || !s_warns.empty()) {
+            // One pass over the buffer collects every line's length — the per-problem
+            // work is then O(1) instead of rescanning the whole buffer per problem.
+            std::vector<int> lineLen;
+            lineLen.reserve((std::size_t)lines + 1);
+            { const char* t = buf.data(); int len = 0;
+              for (int i = 0; t[i]; ++i) {
+                  if (t[i] == '\n') { lineLen.push_back(len); len = 0; } else ++len;
+              }
+              lineLen.push_back(len); }
+            auto squiggle = [&](int probLine, ImU32 col) {
+                if (probLine <= 0 || probLine > (int)lineLen.size()) return;
+                int len = lineLen[probLine - 1]; if (len < 1) len = 1;
+                float y = origin.y + probLine * lineH - 1.5f;
+                float x1 = origin.x + len * charW;
+                bool up = true;
+                for (float x = origin.x; x < x1; x += 3.0f, up = !up) {
+                    float xe = x + 3.0f > x1 ? x1 : x + 3.0f;
+                    edl->AddLine(ImVec2(x, y + (up ? 2.0f : 0.0f)),
+                                 ImVec2(xe, y + (up ? 0.0f : 2.0f)), col, 1.3f);
+                }
+            };
+            std::set<int> errLines;
+            for (const auto& d : s_diags) { squiggle(d.line, IM_COL32(240, 80, 80, 230)); errLines.insert(d.line); }
+            for (const auto& w : s_warns)
+                if (!errLines.count(w.line)) squiggle(w.line, IM_COL32(230, 190, 70, 210));
         }
 
         // Bracket matching: when the caret sits next to a ()[]{} bracket, box it
@@ -7461,6 +7807,10 @@ void DrawScriptEditor(EditorState& ed) {
         if (g_codeFont) ImGui::PopFont();
         ImGui::EndChild();
         ImGui::PopStyleColor(4);
+        // Screen rect of the editor child, for overlays drawn after it (the Ctrl+Click
+        // underline uses the foreground list clipped to this — the child's own draw
+        // list must not be written to once the child has ended).
+        ImVec2 edRectMin = ImGui::GetItemRectMin(), edRectMax = ImGui::GetItemRectMax();
 
         // --- Minimap: a scaled overview of the file pinned beside the editor.
         // Each line is a bar (length ~ its content); a box marks the visible
@@ -7495,15 +7845,16 @@ void DrawScriptEditor(EditorState& ed) {
             for (const char* p = t;; ++p) {
                 if (*p == '\n' || *p == '\0') { drawLine(ls, p, ln); ++ln; ls = p + 1; if (*p == '\0') break; }
             }
-            // Problem markers: a red tick on the right edge at each error line, so you
-            // can see (and jump to) every syntax problem at a glance (IDE scrollbar-style).
-            for (const auto& d : s_diags) {
-                if (d.line <= 0 || d.line > lines) continue;
-                float y = mp.y + 4.0f + (d.line - 1) * step;
+            // Problem markers on the right edge: red tick = error line, amber = warning
+            // (IDE scrollbar-style; errors drawn after warnings so they win overlaps).
+            auto probTick = [&](int probLine, ImU32 col) {
+                if (probLine <= 0 || probLine > lines) return;
+                float y = mp.y + 4.0f + (probLine - 1) * step;
                 if (y > mp.y + mh - 3.0f) y = mp.y + mh - 3.0f;
-                mdl->AddRectFilled(ImVec2(mp.x + mmW - 6.0f, y), ImVec2(mp.x + mmW - 2.0f, y + 2.5f),
-                                   IM_COL32(240, 80, 80, 235));
-            }
+                mdl->AddRectFilled(ImVec2(mp.x + mmW - 6.0f, y), ImVec2(mp.x + mmW - 2.0f, y + 2.5f), col);
+            };
+            for (const auto& w : s_warns) probTick(w.line, IM_COL32(230, 190, 70, 235));
+            for (const auto& d : s_diags) probTick(d.line, IM_COL32(240, 80, 80, 235));
             // Visible-region box.
             float total = (float)lines;
             if (total > 0) {
@@ -7714,12 +8065,33 @@ void DrawScriptEditor(EditorState& ed) {
             }
         }
 
-        // --- Hover docs: hovering a known builtin shows its signature ----------
+        // --- Hover: problem tooltips, Ctrl+Click navigation, builtin docs ------
         if (codeHovered) {
             const char* t = buf.data(); int len = (int)std::strlen(t);
             ImVec2 mp = ImGui::GetMousePos();
             int hcol = (int)((mp.x - origin.x) / charW);
             int hline = (int)((mp.y - origin.y) / lineH);   // 0-based
+            // Hovering an error/warning line explains the problem right there
+            // (Rider's inspection tooltip) — takes priority over the doc tooltip.
+            bool problemTip = false;
+            if (hcol >= 0 && hline >= 0) {
+                bool onLine = false;
+                for (const auto& d : s_diags) if (d.line == hline + 1) onLine = true;
+                for (const auto& w : s_warns) if (w.line == hline + 1) onLine = true;
+                if (onLine) {
+                    problemTip = true;
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
+                    for (const auto& d : s_diags)
+                        if (d.line == hline + 1)
+                            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", d.message.c_str());
+                    for (const auto& w : s_warns)
+                        if (w.line == hline + 1)
+                            ImGui::TextColored(ImVec4(0.92f, 0.78f, 0.35f, 1.0f), "%s", w.msg.c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+            }
             if (hcol >= 0 && hline >= 0) {
                 int ls = 0, ln = 0;
                 while (ls < len && ln < hline) { if (t[ls] == '\n') ++ln; ++ls; }
@@ -7731,16 +8103,55 @@ void DrawScriptEditor(EditorState& ed) {
                     int we = idx; while (we < le && isW(t[we])) ++we;
                     if (we > ws) {
                         std::string word(t + ws, t + we);
-                        if (const std::string* sg = ScriptSignature(word)) {
-                            ImGui::BeginTooltip();
-                            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sg->c_str());
-                            if (const std::string* dc = ScriptDoc(word)) {
-                                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
-                                ImGui::TextColored(ImVec4(0.78f, 0.82f, 0.78f, 1.0f), "%s", dc->c_str());
-                                ImGui::PopTextWrapPos();
+                        // Ctrl held over a symbol defined in this file: underline it,
+                        // show a hand cursor, and jump to the definition on click
+                        // (Rider/IDE Ctrl+Click navigation; F12 still works too).
+                        if (ImGui::GetIO().KeyCtrl) {
+                            // The outline is cached against a cheap content hash —
+                            // re-PARSING the whole buffer every hovered frame is wasteful.
+                            static std::uint64_t s_outlHash = 0;
+                            static std::vector<std::pair<int, std::string>> s_outl;
+                            {
+                                std::uint64_t hh = 1469598103934665603ull;
+                                for (const char* pc = t; *pc; ++pc) { hh ^= (unsigned char)*pc; hh *= 1099511628211ull; }
+                                if (hh != s_outlHash) { s_outlHash = hh; s_outl = ScriptOutline(buf.data()); }
                             }
-                            ImGui::TextDisabled("built-in function");
-                            ImGui::EndTooltip();
+                            int defLine = 0;
+                            for (const auto& s : s_outl) {
+                                std::string nm = s.second.size() > 3 ? s.second.substr(3) : s.second;
+                                if (nm == word) { defLine = s.first; break; }
+                            }
+                            if (defLine > 0 && defLine != hline + 1) {
+                                float vis = 0.0f;   // visual column of the word start (tabs = 4)
+                                for (int k2 = ls; k2 < ws; ++k2) vis += (t[k2] == '\t') ? 4.0f : 1.0f;
+                                float ux0 = origin.x + vis * charW;
+                                float uy  = origin.y + (hline + 1) * lineH - 1.0f;
+                                // The editor child has ended — draw on the foreground
+                                // list, clipped to the child rect so the underline can't
+                                // spill over the minimap or toolbar.
+                                ImDrawList* fdl = ImGui::GetForegroundDrawList();
+                                fdl->PushClipRect(edRectMin, edRectMax, true);
+                                fdl->AddLine(ImVec2(ux0, uy), ImVec2(ux0 + (we - ws) * charW, uy),
+                                             IM_COL32(110, 168, 255, 255), 1.0f);
+                                fdl->PopClipRect();
+                                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                    caret.gotoLine = defLine; s_scrollToLine = defLine;
+                                }
+                            }
+                        }
+                        if (!problemTip) {
+                            if (const std::string* sg = ScriptSignature(word)) {
+                                ImGui::BeginTooltip();
+                                ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sg->c_str());
+                                if (const std::string* dc = ScriptDoc(word)) {
+                                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                                    ImGui::TextColored(ImVec4(0.78f, 0.82f, 0.78f, 1.0f), "%s", dc->c_str());
+                                    ImGui::PopTextWrapPos();
+                                }
+                                ImGui::TextDisabled("built-in function");
+                                ImGui::EndTooltip();
+                            }
                         }
                     }
                 }
@@ -7805,24 +8216,33 @@ void DrawScriptEditor(EditorState& ed) {
                 if (eln > 0 && ImGui::IsItemClicked()) { caret.gotoLine = eln; s_scrollToLine = eln; }
                 if (eln > 0 && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to go to line %d", eln);
             }
-        } else if (sc->Language() == "okayscript") {
+        } else if (sc->Language() == "okayscript" && s_warns.empty()) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f), "  OK - no syntax errors");
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f), "  OK - no problems");
+        }
+        // Lint warnings count (amber) beside the error state; click opens Problems.
+        if (!s_warns.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.92f, 0.78f, 0.35f, 1.0f), "  ! %d warning%s",
+                               (int)s_warns.size(), s_warns.size() == 1 ? "" : "s");
+            if (ImGui::IsItemClicked()) s_showProblems = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to open the Problems panel");
         }
 
-        // Problems panel: a collapsible list of every syntax error, each row jumps
-        // to its line. Auto-hides when the source is clean.
-        if (!s_diags.empty()) {
+        // Problems panel: a collapsible list of every error and warning; each row
+        // jumps to its line. Auto-hides when the source is clean.
+        if (!s_diags.empty() || !s_warns.empty()) {
             ImGui::SameLine();
             if (ImGui::SmallButton(s_showProblems ? "Hide Problems" : "Problems"))
                 s_showProblems = !s_showProblems;
         } else {
             s_showProblems = false;
         }
-        if (s_showProblems && !s_diags.empty()) {
+        if (s_showProblems && (!s_diags.empty() || !s_warns.empty())) {
             ImGui::Spacing();
             SectionHeader("Problems");
-            float ph = ImClamp((float)s_diags.size(), 1.0f, 6.0f) * ImGui::GetTextLineHeightWithSpacing() + 8.0f;
+            float ph = ImClamp((float)(s_diags.size() + s_warns.size()), 1.0f, 6.0f)
+                       * ImGui::GetTextLineHeightWithSpacing() + 8.0f;
             if (ImGui::BeginChild("##problems", ImVec2(0, ph), true)) {
                 for (std::size_t i = 0; i < s_diags.size(); ++i) {
                     const auto& d = s_diags[i];
@@ -7836,6 +8256,16 @@ void DrawScriptEditor(EditorState& ed) {
                     bool clicked = ImGui::Selectable(row);
                     ImGui::PopStyleColor();
                     if (clicked && d.line > 0) { caret.gotoLine = d.line; s_scrollToLine = d.line; }
+                }
+                for (std::size_t i = 0; i < s_warns.size(); ++i) {
+                    const auto& w = s_warns[i];
+                    char row[400];
+                    std::snprintf(row, sizeof(row), "!  line %d:  %s##w%zu",
+                                  w.line, w.msg.c_str(), i);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.78f, 0.35f, 1.0f));
+                    bool clicked = ImGui::Selectable(row);
+                    ImGui::PopStyleColor();
+                    if (clicked && w.line > 0) { caret.gotoLine = w.line; s_scrollToLine = w.line; }
                 }
             }
             ImGui::EndChild();
@@ -18776,7 +19206,7 @@ void DrawInspector(EditorState& ed) {
                     else           { auto* c = go->AddComponent<BoxCollider2D>(); c->isTrigger = asTrigger; }
                 }
             };
-            if (item(!go->GetComponent<Collectible>(), "Collectible (pickup → score)")) { go->AddComponent<Collectible>(); ensureCollider(true); ed.dirty = true; }
+            if (item(!go->GetComponent<Collectible>(), "Collectible (pickup -> score)")) { go->AddComponent<Collectible>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<DamageOnTouch>(), "Damage On Touch (hazard)")) { go->AddComponent<DamageOnTouch>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<Teleporter>(), "Teleporter")) { go->AddComponent<Teleporter>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<TriggerZone>(), "Trigger Zone (event)")) { go->AddComponent<TriggerZone>(); ensureCollider(true); ed.dirty = true; }
@@ -23971,6 +24401,9 @@ int main(int argc, char** argv) {
     {
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
+        // (Dear ImGui 1.92 loads glyphs on demand from the TTF, so punctuation like
+        // "—", "•", "…" renders without an explicit range. Geometric shapes ●▶★ are
+        // simply absent from Roboto, so those are drawn or swapped in the code.)
         if (!io.Fonts->AddFontFromMemoryCompressedBase85TTF(
                 RobotoMedium_compressed_data_base85, 16.0f, &fc))
             io.Fonts->AddFontDefault();

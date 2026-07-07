@@ -237,6 +237,10 @@ public:
 	int LineLength(int aLine) const {
 		return (aLine >= 0 && aLine < (int)mLines.size()) ? GetLineMaxColumn(aLine) : 0;
 	}
+	// Screen X where code text begins (right of the line-number gutter), and the
+	// content origin (scroll-adjusted top-left of line 0) — for host overlays.
+	float  TextStartX() const { return mLastContentOrigin.x + mTextStart; }
+	ImVec2 ContentOrigin() const { return mLastContentOrigin; }
 
 	inline void SetHandleMouseInputs    (bool aValue){ mHandleMouseInputs    = aValue;}
 	inline bool IsHandleMouseInputsEnabled() const { return mHandleKeyboardInputs; }

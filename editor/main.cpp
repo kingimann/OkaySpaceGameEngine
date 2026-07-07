@@ -7770,12 +7770,176 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Render. ImGui 1.92 dynamic fonts rasterise on demand, so the code font is
         // crisp at any zoom straight from PushFont(size) — no atlas-bake trick needed.
+        // A negative width reserves the minimap column on the right.
+        const float mmW = 92.0f;
+        bool showMap = s_minimap && av.x > 300.0f;
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
-        te.Render("##code", ImVec2(0.0f, av.y), true);
+        te.Render("##code", ImVec2(showMap ? -(mmW + 6.0f) : 0.0f, av.y), true);
         if (g_codeFont) ImGui::PopFont();
         te.SetHandleKeyboardInputs(true);
+        ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
+
+        // --- Minimap: scaled overview beside the editor; click to scroll -------
+        if (showMap) {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(24, 24, 24, 255));
+            ImGui::BeginChild("##minimap", ImVec2(mmW, av.y), true,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImDrawList* mdl = ImGui::GetWindowDrawList();
+            ImVec2 mp = ImGui::GetWindowPos();
+            float mh = av.y, innerW = mmW - 8.0f;
+            float step = lines > 0 ? mh / lines : mh;
+            if (step > 3.0f) step = 3.0f;
+            float usedH = step * lines; if (usedH > mh) usedH = mh;
+            const char* t = buf.data();
+            int ln = 0; const char* ls = t;
+            auto drawLine = [&](const char* s, const char* e, int idx) {
+                int lead = 0; const char* p = s;
+                while (p < e && (*p == ' ' || *p == '\t')) { lead += (*p == '\t' ? 4 : 1); ++p; }
+                int len = (int)(e - p); if (len <= 0) return;
+                ImU32 col = IM_COL32(150, 152, 160, 200);
+                if (len >= 2 && p[0] == '/' && p[1] == '/') col = IM_COL32(106, 153, 85, 200);
+                float y = mp.y + 4.0f + idx * step;
+                if (y > mp.y + mh - 2.0f) return;
+                float x0 = mp.x + 4.0f + (lead * 0.5f);
+                float w = len * 0.5f; if (x0 - mp.x + w > innerW) w = innerW - (x0 - mp.x);
+                if (w < 1.0f) w = 1.0f;
+                mdl->AddRectFilled(ImVec2(x0, y), ImVec2(x0 + w, y + (step > 1.5f ? 1.5f : step * 0.8f)), col);
+            };
+            for (const char* p = t;; ++p) {
+                if (*p == '\n' || *p == '\0') { drawLine(ls, p, ln); ++ln; ls = p + 1; if (*p == '\0') break; }
+            }
+            auto tick = [&](int probLine, ImU32 col, bool left) {
+                if (probLine <= 0 || probLine > lines) return;
+                float y = mp.y + 4.0f + (probLine - 1) * step;
+                if (y > mp.y + mh - 3.0f) y = mp.y + mh - 3.0f;
+                if (left) mdl->AddRectFilled(ImVec2(mp.x + 1.0f, y), ImVec2(mp.x + 5.0f, y + 2.5f), col);
+                else      mdl->AddRectFilled(ImVec2(mp.x + mmW - 6.0f, y), ImVec2(mp.x + mmW - 2.0f, y + 2.5f), col);
+            };
+            for (int bm : bookmarks)       tick(bm, IM_COL32(92, 162, 236, 235), true);
+            for (const auto& w : s_warns)  tick(w.line, IM_COL32(230, 190, 70, 235), false);
+            for (const auto& d : s_diags)  tick(d.line, IM_COL32(240, 80, 80, 235), false);
+            // Visible-region box from the widget's scroll state.
+            if (lines > 0) {
+                float rows = av.y / (te.RowHeight() > 1.0f ? te.RowHeight() : 1.0f);
+                float top = (float)te.FirstVisibleLine() / lines;
+                float vis = rows / lines;
+                float y0 = mp.y + 4.0f + top * usedH;
+                float y1 = y0 + vis * usedH;
+                if (y1 > mp.y + mh - 2.0f) y1 = mp.y + mh - 2.0f;
+                mdl->AddRectFilled(ImVec2(mp.x + 1, y0), ImVec2(mp.x + mmW - 1, y1), IM_COL32(255, 255, 255, 24));
+                mdl->AddRect(ImVec2(mp.x + 1, y0), ImVec2(mp.x + mmW - 1, y1), IM_COL32(255, 255, 255, 70));
+            }
+            if (ImGui::IsWindowHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                float fy = (ImGui::GetIO().MousePos.y - (mp.y + 4.0f)) / (usedH > 1 ? usedH : 1);
+                int target = (int)(fy * lines);
+                if (target < 0) target = 0; if (target >= lines) target = lines - 1;
+                te.SetCursorPosition(TextEditor::Coordinates(target, 0));
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
+
+        // --- Overlays on the code widget (foreground list, clipped to its rect):
+        // sticky function header, inline diagnostic text, changed-line diff bars.
+        {
+            ImDrawList* fdl = ImGui::GetForegroundDrawList();
+            fdl->PushClipRect(teMin, teMax, true);
+            float rowH = te.RowHeight() > 1.0f ? te.RowHeight() : 1.0f;
+            ImVec2 corg = te.ContentOrigin();
+            // Inline diagnostics: the line's first problem, dimmed after the code.
+            {
+                std::set<int> inlined;
+                auto inlineMsg = [&](int probLine, const std::string& message, ImU32 col, bool fixable) {
+                    if (probLine <= 0 || probLine > lines) return;
+                    if (!inlined.insert(probLine).second) return;
+                    std::string txt = "  <  " + (message.size() > 90 ? message.substr(0, 87) + "..." : message);
+                    if (fixable) txt += "   (Alt+Enter to fix)";
+                    float x = te.TextStartX() + (te.LineLength(probLine - 1) + 2) * te.CharWidth();
+                    fdl->AddText(ImVec2(x, corg.y + (probLine - 1) * rowH), col, txt.c_str());
+                };
+                for (const auto& d : s_diags) inlineMsg(d.line, d.message, IM_COL32(240, 110, 110, 165), false);
+                for (const auto& w : s_warns) inlineMsg(w.line, w.msg, IM_COL32(230, 195, 90, 150), !w.fix.empty());
+            }
+            // Changed-line bars vs the last saved version (blue bar, red deletion wedge).
+            if (ScriptTabDirty(sc)) {
+                static const void* s_dfKey = nullptr; static std::uint64_t s_dfHash = 0;
+                static int s_dfA = 1, s_dfB = 0; static bool s_dfDel = false;
+                std::uint64_t bh = 1469598103934665603ull;
+                for (const char* pc = buf.data(); *pc; ++pc) { bh ^= (unsigned char)*pc; bh *= 1099511628211ull; }
+                if (s_dfKey != (const void*)sc || s_dfHash != bh) {
+                    s_dfKey = sc; s_dfHash = bh;
+                    auto lineHashes = [](const char* s) {
+                        std::vector<std::uint64_t> hs; std::uint64_t h = 1469598103934665603ull;
+                        for (;; ++s) {
+                            if (*s == '\n' || *s == '\0') { hs.push_back(h); h = 1469598103934665603ull; if (*s == '\0') break; }
+                            else { h ^= (unsigned char)*s; h *= 1099511628211ull; }
+                        }
+                        return hs;
+                    };
+                    std::vector<std::uint64_t> cur = lineHashes(buf.data());
+                    std::vector<std::uint64_t> base = lineHashes(g_scriptSaved[sc].c_str());
+                    std::size_t pre = 0;
+                    while (pre < cur.size() && pre < base.size() && cur[pre] == base[pre]) ++pre;
+                    std::size_t suf = 0;
+                    while (suf < cur.size() - pre && suf < base.size() - pre &&
+                           cur[cur.size() - 1 - suf] == base[base.size() - 1 - suf]) ++suf;
+                    s_dfA = (int)pre + 1; s_dfB = (int)(cur.size() - suf);
+                    s_dfDel = s_dfB < s_dfA && base.size() > cur.size();
+                }
+                if (s_dfB >= s_dfA) {
+                    float y0 = corg.y + (s_dfA - 1) * rowH, y1 = corg.y + s_dfB * rowH;
+                    fdl->AddRectFilled(ImVec2(teMin.x + 1.0f, y0), ImVec2(teMin.x + 3.5f, y1),
+                                       IM_COL32(90, 150, 220, 220));
+                } else if (s_dfDel) {
+                    float y0 = corg.y + (s_dfA - 1) * rowH;
+                    fdl->AddTriangleFilled(ImVec2(teMin.x + 1.0f, y0 - 3.0f), ImVec2(teMin.x + 6.0f, y0),
+                                           ImVec2(teMin.x + 1.0f, y0 + 3.0f), IM_COL32(220, 120, 110, 230));
+                }
+            }
+            // Sticky function header: pinned while the top of the view is inside a body.
+            {
+                int firstVis = te.FirstVisibleLine() + 1;   // 1-based
+                if (firstVis > 1) {
+                    static std::uint64_t s_stHash = 0;
+                    static std::vector<std::pair<int, std::string>> s_stOutl;
+                    {
+                        std::uint64_t hh = 1469598103934665603ull;
+                        for (const char* pc = buf.data(); *pc; ++pc) { hh ^= (unsigned char)*pc; hh *= 1099511628211ull; }
+                        if (hh != s_stHash) { s_stHash = hh; s_stOutl = ScriptOutline(buf.data()); }
+                    }
+                    int hdr = 0;
+                    for (const auto& s2 : s_stOutl) { if (s2.first < firstVis) hdr = s2.first; else break; }
+                    if (hdr > 0) {
+                        const char* t = buf.data();
+                        int depth = 0, ln2 = 1, i2 = 0, hs = hdr == 1 ? 0 : -1, he = -1;
+                        for (; t[i2] && ln2 < firstVis; ++i2) {
+                            if (t[i2] == '\n') { ++ln2; if (ln2 == hdr) hs = i2 + 1; }
+                            else if (t[i2] == '{') ++depth;
+                            else if (t[i2] == '}') --depth;
+                        }
+                        if (hs >= 0) { he = hs; while (t[he] && t[he] != '\n') ++he; }
+                        if (depth > 0 && hs >= 0) {
+                            int hb = hs; while (hb < he && (t[hb] == ' ' || t[hb] == '\t')) ++hb;
+                            std::string head(t + hb, t + he);
+                            if (head.size() > 120) head = head.substr(0, 117) + "...";
+                            float hh2 = rowH + 4.0f;
+                            fdl->AddRectFilled(teMin, ImVec2(teMax.x, teMin.y + hh2), IM_COL32(43, 45, 52, 245));
+                            fdl->AddLine(ImVec2(teMin.x, teMin.y + hh2), ImVec2(teMax.x, teMin.y + hh2),
+                                         IM_COL32(70, 74, 86, 255));
+                            fdl->AddText(ImVec2(te.TextStartX(), teMin.y + 2.0f),
+                                         IM_COL32(255, 198, 109, 235), head.c_str());
+                            if (ImGui::IsMouseHoveringRect(teMin, ImVec2(teMax.x, teMin.y + hh2)) &&
+                                ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                                jumpTo(hdr);
+                        }
+                    }
+                }
+            }
+            fdl->PopClipRect();
+        }
 
         // Pull the widget's edits back into the shared buffer (GetText appends a
         // trailing newline for the virtual last line; drop one so it round-trips).
@@ -8089,6 +8253,43 @@ void DrawScriptEditor(EditorState& ed) {
                     int newLine = caret.line - 1 + (mvUp ? -1 : 1);
                     replaceLines(lo, hi, repl, newLine, caret.col - 1);
                 }
+            }
+            // F11 — toggle a bookmark on the caret line (markers via breakpoints).
+            if (chordOK && ImGui::IsKeyPressed(ImGuiKey_F11, false) && caret.line >= 1) {
+                if (!bookmarks.erase(caret.line)) bookmarks.insert(caret.line);
+            }
+            // Alt+Enter — apply the caret line's quick-fix (Rider's intention action):
+            // replaces the misspelled call with the lint's "did you mean" suggestion.
+            if (chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+                for (const auto& w : s_warns) {
+                    if (w.line != caret.line || w.fix.empty() || w.bad.empty()) continue;
+                    std::vector<std::string> ls = linesText(caret.line - 1, caret.line - 1);
+                    if (ls.empty()) break;
+                    std::string l = ls[0];
+                    auto isWc = [](char ch){ return std::isalnum((unsigned char)ch) || ch == '_'; };
+                    for (std::size_t pp = 0; pp + w.bad.size() <= l.size(); ++pp) {
+                        if (l.compare(pp, w.bad.size(), w.bad) != 0) continue;
+                        if (pp > 0 && isWc(l[pp - 1])) continue;
+                        std::size_t pe = pp + w.bad.size();
+                        if (pe < l.size() && isWc(l[pe])) continue;
+                        l.replace(pp, w.bad.size(), w.fix);
+                        replaceLines(caret.line - 1, caret.line - 1, l, caret.line - 1, (int)(pp + w.fix.size()));
+                        ConsoleLog("Quick-fix: '" + w.bad + "' -> '" + w.fix + "'");
+                        break;
+                    }
+                    break;
+                }
+            }
+            // Ctrl+W — expand selection: word -> whole line(s) -> whole file.
+            if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+                ImGui::IsKeyPressed(ImGuiKey_W, false)) {
+                TextEditor::Coordinates a = te.SelStart(), b = te.SelEnd();
+                bool none = a == b;
+                bool fullLines = !none && a.mColumn == 0 && b.mColumn >= te.LineLength(b.mLine);
+                if (none)           te.SelectWordUnderCursor();
+                else if (!fullLines) te.SetSelection(TextEditor::Coordinates(a.mLine, 0),
+                                                     TextEditor::Coordinates(b.mLine, te.LineLength(b.mLine)));
+                else                 te.SelectAll();
             }
         }
 

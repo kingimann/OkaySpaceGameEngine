@@ -115,6 +115,7 @@ int main(int argc, char** argv) {
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
+#include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 
 #include <vector>
 
@@ -884,6 +885,10 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
 // section break than a bare SeparatorText, keyed to the theme accent.
 static ImFont* g_headingFont = nullptr;   // larger Roboto face for section titles
 static ImFont* g_codeFont    = nullptr;   // monospace face for the Script Editor
+// The code font is baked at a large size and drawn downscaled, so it stays crisp at
+// any zoom (downscaling a high-res glyph beats upscaling a small one).
+static constexpr float kCodeFontBakePx = 30.0f;   // atlas size the glyphs are rasterised at
+static constexpr float kCodeFontDispPx = 15.0f;   // on-screen size at 1.0x zoom
 static void SectionHeader(const char* label) {
     ImGui::Spacing();
     if (g_headingFont) ImGui::PushFont(g_headingFont);   // larger heading face
@@ -7073,7 +7078,9 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Zoom: scale the editor font, then recompute glyph metrics so the gutter
         // and the syntax overlay stay aligned at any zoom (Ctrl+wheel or A-/A+).
-        ImGui::SetWindowFontScale(s_zoom);
+        // The code font is baked at kCodeFontBakePx and shown at kCodeFontDispPx, so
+        // the scale renders it downscaled (sharp) rather than upscaling a small atlas.
+        ImGui::SetWindowFontScale(g_codeFont ? (kCodeFontDispPx * s_zoom / kCodeFontBakePx) : s_zoom);
         if (ImGui::IsWindowHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
         charW = ImGui::CalcTextSize("0").x;
@@ -23813,11 +23820,15 @@ int main(int argc, char** argv) {
         g_headingFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
                 RobotoMedium_compressed_data_base85, 18.5f, &fc);
         // A monospace face for the Script Editor. Code needs fixed-width glyphs so the
-        // syntax overlay, caret and columns line up (a proportional font left visible
-        // gaps between characters). Dear ImGui's built-in ProggyClean is a crisp 13px
-        // pixel font — perfect for code and free (no external file to embed).
-        ImFontConfig mc; mc.SizePixels = 13.0f;
-        g_codeFont = io.Fonts->AddFontDefault(&mc);
+        // syntax overlay, caret and columns line up. JetBrains Mono (the JetBrains IDE
+        // font) is a scalable TTF, so it can't fall out of alignment like a proportional
+        // font — and, crucially, it's baked LARGE (30px) and shown downscaled to the
+        // ~15px code size. Downscaling a high-res glyph stays sharp at every zoom level,
+        // where a small bitmap font (the old ProggyClean) blurred as soon as you zoomed.
+        ImFontConfig mc; mc.OversampleH = 2; mc.OversampleV = 2; mc.PixelSnapH = true;
+        g_codeFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
+                JetBrainsMono_compressed_data_base85, kCodeFontBakePx, &mc);
+        if (!g_codeFont) { ImFontConfig fb; fb.SizePixels = 13.0f; g_codeFont = io.Fonts->AddFontDefault(&fb); }
     }
     LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
     ApplyTheme();

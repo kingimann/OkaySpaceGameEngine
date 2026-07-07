@@ -304,6 +304,61 @@ struct Mesh {
         return m;
     }
 
+    /// A (p,q) torus knot: a circular tube swept along the knot curve
+    ///   r = cos(q·t) + 2,  (x,z) = r·(cos,sin)(p·t),  y = -sin(q·t)
+    /// The cross-section frame is built by parallel transport of an initial normal
+    /// (no per-sample curvature needed), which keeps the tube from flipping. A
+    /// Blender staple; nice for stress-testing shading and wireframes.
+    static Mesh TorusKnot(int p = 2, int q = 3, float scale = 0.32f, float tube = 0.10f,
+                          int rings = 160, int sides = 12) {
+        Mesh m;
+        m.name = "TorusKnot";
+        if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+        const float kPi = 3.14159265358979323846f;
+        auto curve = [&](float t) {
+            float r = std::cos(q * t) + 2.0f;
+            return Vec3{ r * std::cos(p * t) * scale, -std::sin(q * t) * scale, r * std::sin(p * t) * scale };
+        };
+        std::vector<Vec3> C(rings), T(rings), N(rings), B(rings);
+        for (int i = 0; i < rings; ++i) {
+            float t = 2.0f * kPi * (float)i / rings, dt = 1e-3f;
+            C[i] = curve(t);
+            Vec3 tg = curve(t + dt) - curve(t - dt);
+            float mg = tg.Magnitude(); T[i] = mg > 1e-6f ? tg * (1.0f / mg) : Vec3{0, 0, 1};
+        }
+        // Initial frame, then parallel-transport the normal around the loop.
+        Vec3 up = std::fabs(T[0].y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+        N[0] = Vec3::Cross(up, T[0]);
+        { float mg = N[0].Magnitude(); N[0] = mg > 1e-6f ? N[0] * (1.0f / mg) : Vec3{1, 0, 0}; }
+        B[0] = Vec3::Cross(T[0], N[0]);
+        for (int i = 1; i < rings; ++i) {
+            Vec3 v = Vec3::Cross(T[i - 1], T[i]);
+            float s = v.Magnitude(), c = Vec3::Dot(T[i - 1], T[i]);
+            Vec3 n = N[i - 1];
+            if (s > 1e-6f) {                       // rotate n from T[i-1] onto T[i] (Rodrigues)
+                Vec3 axis = v * (1.0f / s);
+                float ang = std::atan2(s, c), ca = std::cos(ang), sa = std::sin(ang);
+                n = n * ca + Vec3::Cross(axis, n) * sa + axis * (Vec3::Dot(axis, n) * (1.0f - ca));
+            }
+            n = n - T[i] * Vec3::Dot(T[i], n);     // re-orthogonalise against the new tangent
+            float mg = n.Magnitude(); N[i] = mg > 1e-6f ? n * (1.0f / mg) : N[i - 1];
+            B[i] = Vec3::Cross(T[i], N[i]);
+        }
+        for (int i = 0; i < rings; ++i)
+            for (int s = 0; s < sides; ++s) {
+                float a = 2.0f * kPi * (float)s / sides;
+                m.vertices.push_back(C[i] + N[i] * (std::cos(a) * tube) + B[i] * (std::sin(a) * tube));
+            }
+        for (int i = 0; i < rings; ++i)
+            for (int s = 0; s < sides; ++s) {
+                int i1 = (i + 1) % rings, s1 = (s + 1) % sides;
+                int a = i * sides + s, b = i1 * sides + s, c = i1 * sides + s1, d = i * sides + s1;
+                m.triangles.insert(m.triangles.end(), {a, b, d, d, b, c});
+            }
+        m.ComputeSmoothNormals();
+        return m;
+    }
+
     /// A hollow tube / pipe / ring along Y: an outer and inner wall joined by top
     /// and bottom annulus caps. `inner` < `outer`. Good for rings, portals, pipes.
     static Mesh Tube(float outer = 0.5f, float inner = 0.3f, float height = 1.0f, int sectors = 24) {
@@ -589,6 +644,7 @@ struct Mesh {
         if (n == "Cylinder")  return Cylinder();
         if (n == "Cone")      return Cone();
         if (n == "Torus")     return Torus();
+        if (n == "TorusKnot") return TorusKnot();
         if (n == "Capsule")   return Capsule();
         if (n == "Icosphere") return Icosphere();
         if (n == "Grid")      return Grid();

@@ -3378,6 +3378,19 @@ static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind&
 // imported file lands in the folder you're looking at. Empty until a project opens.
 std::string g_assetImportDir;
 
+// Favorite (pinned) folders shown at the top of the Project panel's tree pane —
+// Unity's "Favorites" for one-click jumps to folders you use a lot. Session-lived
+// (reset on restart), keyed by absolute path.
+std::vector<std::string> g_favFolders;
+static bool IsFavFolder(const std::string& p) {
+    return std::find(g_favFolders.begin(), g_favFolders.end(), p) != g_favFolders.end();
+}
+static void ToggleFavFolder(const std::string& p) {
+    auto it = std::find(g_favFolders.begin(), g_favFolders.end(), p);
+    if (it != g_favFolders.end()) g_favFolders.erase(it);
+    else                          g_favFolders.push_back(p);
+}
+
 // A friendly category for a file extension, for import logging / quick validation.
 // "etc" types (anything not recognized) still import — this is just for the message.
 static const char* ImportKindLabel(const std::string& extLower) {
@@ -3475,6 +3488,14 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
         bool open = ImGui::TreeNodeEx(s.filename().string().c_str(), f);
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
             std::strncpy(dirBuf, s.string().c_str(), bufsz - 1);
+        // Right-click a folder to pin it to Favorites (or reveal it on disk).
+        if (ImGui::BeginPopupContextItem()) {
+            bool fav = IsFavFolder(s.string());
+            if (ImGui::MenuItem(fav ? "Remove from Favorites" : "Add to Favorites"))
+                ToggleFavFolder(s.string());
+            if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(s.string());
+            ImGui::EndPopup();
+        }
         AssetDropTarget(s);   // drop assets onto a folder to move them in
         if (open) { DrawFolderTree(s, dirBuf, bufsz); ImGui::TreePop(); }
     }
@@ -3546,6 +3567,28 @@ void DrawProject(EditorState& ed) {
 
     // ---- Two panes: folder tree (left) + asset grid (right) ----------
     ImGui::BeginChild("tree", ImVec2(180, 0), true);
+    // Favorites: pinned folders for one-click navigation (right-click a folder to
+    // pin). Stale entries (deleted folders) are pruned as they're encountered.
+    if (!g_favFolders.empty()) {
+        ImGui::TextDisabled("FAVORITES");
+        for (std::size_t i = 0; i < g_favFolders.size(); ) {
+            const std::string fp = g_favFolders[i];
+            if (!fs::is_directory(fp, ec)) { g_favFolders.erase(g_favFolders.begin() + i); continue; }
+            ImGui::PushID((int)i);
+            std::string nm = "\xe2\x98\x85 " + fs::path(fp).filename().string();  // star + name
+            if (ImGui::Selectable(nm.c_str(), fs::path(dirBuf) == fs::path(fp)))
+                std::strncpy(dirBuf, fp.c_str(), sizeof(dirBuf) - 1);
+            AssetDropTarget(fs::path(fp));
+            if (ImGui::BeginPopupContextItem("favctx")) {
+                if (ImGui::MenuItem("Remove from Favorites")) { ToggleFavFolder(fp); ImGui::EndPopup(); ImGui::PopID(); continue; }
+                if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(fp);
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+            ++i;
+        }
+        ImGui::Separator();
+    }
     ImGuiTreeNodeFlags rootF = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow |
                                ImGuiTreeNodeFlags_SpanAvailWidth;
     if (fs::path(dirBuf) == root) rootF |= ImGuiTreeNodeFlags_Selected;
@@ -3722,6 +3765,27 @@ void DrawProject(EditorState& ed) {
     float availW = ImGui::GetContentRegionAvail().x;
     int cols = (int)(availW / (cell + ImGui::GetStyle().ItemSpacing.x));
     if (cols < 1) cols = 1;
+    // List-view column geometry (Type + Size right-aligned), shared by the header
+    // row and each entry row so they line up.
+    const float kSizeCol = 66.0f, kTypeCol = 90.0f;
+    const float typeOff = availW - kSizeCol - kTypeCol;   // x from a row's left edge
+    const float sizeOff = availW - kSizeCol;
+
+    // Clickable column headers for the list view — click Name / Type / Size to sort
+    // by that column (a small "v" marks the active sort).
+    if (s_view == 1) {
+        float hx0 = ImGui::GetCursorPosX();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.06f));
+        auto arrow = [&](int id) { return s_sort == id ? " v" : ""; };
+        if (ImGui::SmallButton((std::string("Name") + arrow(0) + "##hName").c_str())) s_sort = 0;
+        ImGui::SameLine(hx0 + typeOff);
+        if (ImGui::SmallButton((std::string("Type") + arrow(1) + "##hType").c_str())) s_sort = 1;
+        ImGui::SameLine(hx0 + sizeOff);
+        if (ImGui::SmallButton((std::string("Size") + arrow(2) + "##hSize").c_str())) s_sort = 2;
+        ImGui::PopStyleColor(2);
+        ImGui::Separator();
+    }
 
     // The per-item right-click menu, shared by the grid and list views. Returns
     // true if "Open" was chosen (so the caller runs the same open action).
@@ -3891,7 +3955,7 @@ void DrawProject(EditorState& ed) {
                               : z < 1024 * 1024 ? std::to_string(z / 1024) + " KB"
                               : std::to_string(z / (1024 * 1024)) + " MB";
             }
-            float sizeX = mx.x - 66.0f, typeX = mx.x - 150.0f;
+            float sizeX = mn.x + sizeOff, typeX = mn.x + typeOff;
             // Clip the name so a long filename never runs into the Type column.
             dl->PushClipRect(ImVec2(c1.x + 7.0f, mn.y), ImVec2(typeX - 6.0f, mx.y), true);
             dl->AddText(ImVec2(c1.x + 7.0f, ty), tcol, name.c_str());

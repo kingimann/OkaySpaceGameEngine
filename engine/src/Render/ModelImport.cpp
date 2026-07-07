@@ -1,3 +1,4 @@
+#include <set>
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -218,10 +219,28 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                 skinnedNodes.push_back(i);   // deformed in the skin pass below
             } else {
                 int meshIdx = M->Int(-1);
-                Mesh mm = BuildMeshAt(doc, meshIdx);
-                if (!mm.vertices.empty()) {
-                    auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = mm; mr->doubleSided = true;
-                    ApplyGltfMaterial(*mr, ResolveMeshMaterial(doc, meshIdx, path));
+                // Count distinct materials across this mesh's primitives.
+                int pc = MeshPrimitiveCount(doc, meshIdx);
+                std::set<int> matset;
+                for (int pi = 0; pi < pc; ++pi) matset.insert(PrimitiveMaterial(doc, meshIdx, pi));
+                if (pc <= 1 || matset.size() <= 1) {
+                    // Single material: merge all primitives onto this node (as before).
+                    Mesh mm = BuildMeshAt(doc, meshIdx);
+                    if (!mm.vertices.empty()) {
+                        auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = mm; mr->doubleSided = true;
+                        ApplyGltfMaterial(*mr, ResolveMeshMaterial(doc, meshIdx, path));
+                    }
+                } else {
+                    // Multi-material: one child object per primitive, each with its
+                    // own sub-mesh + material, so every texture comes through.
+                    for (int pi = 0; pi < pc; ++pi) {
+                        Mesh pm = BuildPrimitiveMesh(doc, meshIdx, pi);
+                        if (pm.vertices.empty()) continue;
+                        GameObject* part = scene.CreateGameObject(g->name + "_mat" + std::to_string(pi));
+                        auto* mr = part->AddComponent<MeshRenderer>(); mr->mesh = pm; mr->doubleSided = true;
+                        ApplyGltfMaterial(*mr, ResolveMaterial(doc, PrimitiveMaterial(doc, meshIdx, pi), path));
+                        part->transform->SetParent(g->transform, false);
+                    }
                 }
             }
         }

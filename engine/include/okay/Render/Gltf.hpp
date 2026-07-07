@@ -425,12 +425,11 @@ inline int MeshMaterialIndex(const GltfDoc& doc, int meshIndex) {
     return -1;
 }
 
-// Resolve a mesh's material into a GltfMat (texture paths + factors).
-inline GltfMat ResolveMeshMaterial(const GltfDoc& doc, int meshIndex, const std::string& modelPath) {
+// Resolve a material (by index) into a GltfMat (texture paths + factors).
+inline GltfMat ResolveMaterial(const GltfDoc& doc, int matI, const std::string& modelPath) {
     GltfMat out;
     const JVal* mats = doc.root.Find("materials");
     const JVal* texs = doc.root.Find("textures");
-    int matI = MeshMaterialIndex(doc, meshIndex);
     if (!mats || matI < 0 || matI >= (int)mats->arr.size()) return out;
     const JVal& mat = mats->arr[matI];
     auto texImage = [&](const JVal* ref) -> int {          // a {index:..} texture ref -> image index
@@ -455,6 +454,37 @@ inline GltfMat ResolveMeshMaterial(const GltfDoc& doc, int meshIndex, const std:
         out.hasEmissiveFactor = true;
     }
     return out;
+}
+inline GltfMat ResolveMeshMaterial(const GltfDoc& doc, int meshIndex, const std::string& modelPath) {
+    return ResolveMaterial(doc, MeshMaterialIndex(doc, meshIndex), modelPath);
+}
+
+// ---- Per-primitive access (for splitting a multi-material mesh) ----
+inline int MeshPrimitiveCount(const GltfDoc& doc, int meshIndex) {
+    const JVal* meshes = doc.root.Find("meshes");
+    if (!meshes || meshIndex < 0 || meshIndex >= (int)meshes->arr.size()) return 0;
+    const JVal* prims = meshes->arr[meshIndex].Find("primitives");
+    return prims ? (int)prims->arr.size() : 0;
+}
+inline int PrimitiveMaterial(const GltfDoc& doc, int meshIndex, int primIndex) {
+    const JVal* meshes = doc.root.Find("meshes");
+    if (!meshes || meshIndex < 0 || meshIndex >= (int)meshes->arr.size()) return -1;
+    const JVal* prims = meshes->arr[meshIndex].Find("primitives");
+    if (!prims || primIndex < 0 || primIndex >= (int)prims->arr.size()) return -1;
+    const JVal* mi = prims->arr[primIndex].Find("material");
+    return mi ? mi->Int(-1) : -1;
+}
+// Build the geometry of a SINGLE primitive into its own Mesh (for material splitting).
+inline Mesh BuildPrimitiveMesh(const GltfDoc& doc, int meshIndex, int primIndex) {
+    Mesh mesh;
+    const JVal* meshes = doc.root.Find("meshes");
+    if (!meshes || meshIndex < 0 || meshIndex >= (int)meshes->arr.size()) return mesh;
+    const JVal* prims = meshes->arr[meshIndex].Find("primitives");
+    if (!prims || primIndex < 0 || primIndex >= (int)prims->arr.size()) return mesh;
+    AppendPrimitive(doc, prims->arr[primIndex], mesh);
+    if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
+    if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
+    return mesh;
 }
 
 // Base-color texture path for the whole model (first textured mesh) — used by the

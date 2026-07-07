@@ -881,15 +881,18 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
 }
 // A titled section rule with an accent tick to its left — a cleaner, more scannable
 // section break than a bare SeparatorText, keyed to the theme accent.
+static ImFont* g_headingFont = nullptr;   // larger Roboto face for section titles
 static void SectionHeader(const char* label) {
     ImGui::Spacing();
+    if (g_headingFont) ImGui::PushFont(g_headingFont);   // larger heading face
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = ImGui::GetTextLineHeight();
     ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1.0f), ImVec2(p.x + 3.0f, p.y + h),
                                               ImGui::GetColorU32(AccentCol(1.0f)), 1.5f);
     ImGui::Indent(9.0f);
-    ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", label);
+    ImGui::TextColored(ImVec4(0.90f, 0.92f, 0.97f, 1.0f), "%s", label);
     ImGui::Unindent(9.0f);
+    if (g_headingFont) ImGui::PopFont();
     ImGui::Separator();
 }
 // A tidy, centered empty-state for a panel with nothing to show — a big muted
@@ -23526,6 +23529,9 @@ int main(int argc, char** argv) {
         if (!io.Fonts->AddFontFromMemoryCompressedBase85TTF(
                 RobotoMedium_compressed_data_base85, 16.0f, &fc))
             io.Fonts->AddFontDefault();
+        // A slightly larger heading face for section titles (visual hierarchy).
+        g_headingFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
+                RobotoMedium_compressed_data_base85, 18.5f, &fc);
     }
     LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
     ApplyTheme();

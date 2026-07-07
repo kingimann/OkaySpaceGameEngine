@@ -377,7 +377,56 @@ std::vector<fs::path> FindScenes() {
     scan(base);
     scan(base / "games");
     scan(base / "Projects");
+    scan(base / "community");     // installed/shared community content
     return out;
+}
+
+// The local library where downloaded/shared community content lands. Games dropped
+// here (a folder or a loose .okayscene) show up in Play and the Community tab.
+fs::path CommunityDir() {
+    fs::path d = fs::path(g_exeDir) / "community";
+    std::error_code ec; fs::create_directories(d, ec);
+    return d;
+}
+
+// Copy a shared item (a game folder, or a loose .okayscene / script / model file)
+// into the community library. Returns "" on failure, else the installed path.
+std::string InstallToCommunity(const std::string& src) {
+    namespace fsy = std::filesystem;
+    std::error_code ec;
+    fsy::path s(src);
+    if (src.empty() || !fsy::exists(s, ec)) return {};
+    fsy::path dest = CommunityDir() / s.filename();
+    if (fsy::is_directory(s, ec)) {
+        for (int n = 2; fsy::exists(dest, ec); ++n) dest = CommunityDir() / (s.filename().string() + " " + std::to_string(n));
+        fsy::copy(s, dest, fsy::copy_options::recursive | fsy::copy_options::overwrite_existing, ec);
+    } else {
+        // Loose file: give it its own subfolder so it reads as a self-contained item.
+        fsy::path sub = CommunityDir() / s.stem();
+        for (int n = 2; fsy::exists(sub, ec); ++n) sub = CommunityDir() / (s.stem().string() + " " + std::to_string(n));
+        fsy::create_directories(sub, ec);
+        dest = sub / s.filename();
+        fsy::copy_file(s, dest, fsy::copy_options::overwrite_existing, ec);
+    }
+    return ec ? std::string{} : dest.string();
+}
+
+// The community sub-folder a given scene path belongs to (the item to reveal/remove).
+// Empty if the path isn't under the community library.
+fs::path CommunityItemRoot(const fs::path& scenePath) {
+    std::error_code ec;
+    fs::path comm = fs::weakly_canonical(CommunityDir(), ec);
+    fs::path p = fs::weakly_canonical(scenePath, ec);
+    fs::path acc;
+    for (auto it = p.begin(); it != p.end(); ++it) {
+        acc /= *it;
+        if (fs::weakly_canonical(acc, ec) == comm) {
+            ++it;
+            if (it != p.end()) return acc / *it;   // community/<item>
+            break;
+        }
+    }
+    return {};
 }
 
 // Shared accent so UI code can match the theme.
@@ -756,20 +805,29 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) running = false;
-            // Drag & drop a .okayscene onto the launcher to play it instantly.
+            // Drag & drop onto the launcher: a .okayscene plays instantly (no
+            // download); a shared game FOLDER (or loose script/model) installs into
+            // your community library.
             else if (e.type == SDL_DROPFILE && e.drop.file) {
                 std::string dropped = e.drop.file;
                 SDL_free(e.drop.file);
                 std::string ext;
                 auto dot = dropped.rfind('.');
                 if (dot != std::string::npos) for (char ch : dropped.substr(dot)) ext += (char)std::tolower((unsigned char)ch);
-                if (ext == ".okayscene" && !player.empty()) {
+                std::error_code dec;
+                bool isDir = fs::is_directory(dropped, dec);
+                if (ext == ".okayscene" && !isDir && !player.empty()) {
                     Launch(player, dropped);
                     RecordPlayed(dropped); SavePrefs();
                     Toast("Playing dropped game");
                     tab = 1;
+                } else if (isDir || ext == ".okay" || ext == ".okayvs" || ext == ".obj" ||
+                           ext == ".png" || ext == ".jpg" || ext == ".okayscene") {
+                    std::string out = InstallToCommunity(dropped);
+                    if (!out.empty()) { scenes = FindScenes(); Toast("Added to your community library"); tab = 2; }
+                    else Toast("Couldn't install that item");
                 } else {
-                    Toast("Drop a .okayscene game file to play it");
+                    Toast("Drop a game folder or .okayscene to add or play it");
                 }
             }
         }
@@ -821,7 +879,7 @@ int main(int argc, char** argv) {
         ImGui::Dummy(ImVec2(0, 18));
         ImGui::TextDisabled("  MENU");
         ImGui::Dummy(ImVec2(0, 2));
-        const char* navs[]  = {"Create", "Play", "Marketplace", "Account", "Settings"};
+        const char* navs[]  = {"Create", "Play", "Community", "Account", "Settings"};
         const char* navIco[] = {"+", ">", "*", "@", "="};
         for (int i = 0; i < 5; ++i) {
             char lbl[48];
@@ -1019,10 +1077,75 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
                                         needle.empty() ? "" : " matching");
             }
-        } else if (tab == 2) {                            // ---- Marketplace ----
-            sectionHeader("Marketplace", nullptr);
-            ImGui::TextDisabled("Starter templates — open one in the editor (New Project) to begin.");
-            ImGui::Spacing();
+        } else if (tab == 2) {                            // ---- Community ----
+            sectionHeader("Community",
+                "Play and share games, levels, scripts and models with other creators.");
+
+            // Play a shared game in place — no install, no copy into your projects.
+            ImGui::TextWrapped("Got a game from a friend? Drag its game folder or .okayscene "
+                "onto this window to play it instantly — nothing is downloaded or copied. "
+                "Or keep it in your library below.");
+            ImGui::Dummy(ImVec2(0, 8));
+            if (ImGui::Button("Open community folder", ImVec2(200, 0))) OpenExternal(CommunityDir().string());
+            ImGui::SameLine();
+            if (ImGui::Button("Refresh", ImVec2(110, 0))) scenes = FindScenes();
+            ImGui::SameLine();
+            ImGui::TextDisabled("Drop shared game folders here, then Refresh.");
+            ImGui::Dummy(ImVec2(0, 12));
+
+            // Installed community content (scenes living under community/).
+            ImGui::SeparatorText("Your community library");
+            int cShown = 0;
+            for (std::size_t i = 0; i < scenes.size(); ++i) {
+                fs::path croot = CommunityItemRoot(scenes[i]);
+                if (croot.empty()) continue;
+                ++cShown;
+                std::string cpath = scenes[i].string();
+                ImGui::PushID((int)(i + 5000));
+                ImGui::BeginChild("citem", ImVec2(0, 62), true);
+                if (ImGui::IsWindowHovered()) {
+                    ImVec2 mn = ImGui::GetWindowPos();
+                    ImGui::GetWindowDrawList()->AddRect(mn,
+                        ImVec2(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y),
+                        ImGui::GetColorU32(kAccent), 12.0f, 0, 2.0f);
+                }
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+                ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", scenes[i].filename().string().c_str());
+                ImGui::TextDisabled("%s", croot.filename().string().c_str());
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x - (80 + 82 + 82 + 24));
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
+                ImGui::BeginDisabled(player.empty());
+                if (ImGui::Button("Play", ImVec2(80, 40))) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(croot.string());
+                ImGui::SameLine();
+                if (ImGui::Button("Remove", ImVec2(82, 40))) {
+                    std::error_code rec; fs::remove_all(croot, rec);
+                    Toast(rec ? "Remove failed" : "Removed from library");
+                    scenes = FindScenes();
+                }
+                ImGui::EndChild();
+                ImGui::PopID();
+            }
+            if (cShown == 0) {
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::TextDisabled("Nothing here yet. Drop a shared game into the community folder "
+                                    "(button above) and hit Refresh, or drag a .okayscene onto the window to play it.");
+            }
+
+            // Share your own creations.
+            ImGui::Dummy(ImVec2(0, 14));
+            ImGui::SeparatorText("Share your creation");
+            ImGui::TextWrapped("Build your game in the editor (File > Build Game), then share the whole "
+                "game folder (zip it) so friends can drop it in their community folder and play. "
+                "One-click online publishing is coming soon.");
+            ImGui::Dummy(ImVec2(0, 4));
+            if (ImGui::Button("Reveal my games folder", ImVec2(220, 0))) OpenExternal(g_exeDir);
+
+            // Starter templates — quick starting points, opened in the editor.
+            ImGui::Dummy(ImVec2(0, 16));
+            ImGui::SeparatorText("Starter templates");
             ImGui::PushItemWidth(-1);
             ImGui::InputTextWithHint("##marketFilter", "Search templates...", marketFilter, sizeof(marketFilter));
             ImGui::PopItemWidth();
@@ -1059,8 +1182,7 @@ int main(int argc, char** argv) {
             }
             if (mShown == 0) ImGui::TextDisabled("No templates match \"%s\".", marketFilter);
             ImGui::Dummy(ImVec2(0, 8));
-            ImGui::TextDisabled("Opens the editor's New Project on the chosen template. "
-                                "Community content marketplace coming soon.");
+            ImGui::TextDisabled("Opens the editor's New Project on the chosen template.");
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 

@@ -51,11 +51,15 @@ target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
 add_executable(okay-editor main.cpp EditorState.cpp
+    vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)  # native file dialogs
 target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor
     ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd)
 set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
     PROPERTIES COMPILE_OPTIONS "-w")
+# The vendored widget isn't -Wall/-Wextra clean; silence its warnings only.
+set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
 if(WIN32)
     target_link_libraries(okay-editor PRIVATE comdlg32 ole32 shell32 user32)

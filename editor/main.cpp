@@ -319,6 +319,7 @@ int main(int argc, char** argv) {
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
+#include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
 
 #include <vector>
 
@@ -5590,6 +5591,9 @@ struct ScriptCaret {
     int  gotoPos = -1;                 // in: move caret to this byte offset (find-next)
     int  gotoSelLen = 0;               // in: select this many chars from gotoPos
     bool toggleComment = false;        // in: toggle "// " on the caret's line
+    bool toggleCase = false;           // in: swap case of the selection / word under caret
+    std::string surroundPre;           // in: wrap the selected lines — this opener above,
+    std::string surroundPost;          //     surroundPost below, body indented one level
     std::string insert;                // in: insert this text at the caret (snippets)
     int  insertReplaceLen = 0;         // in: delete this many chars before the caret first
                                        // (fuzzy-completion click replaces the typed prefix)
@@ -5784,6 +5788,53 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
                 d->InsertChars(f, "// ");
             }
         }
+    }
+    // Toggle case (Ctrl+Shift+U): swap the case of the selection, or the word under the
+    // caret if nothing is selected. If the text has any lowercase it goes UPPER, else lower.
+    if (c->toggleCase) {
+        c->toggleCase = false;
+        auto isWc = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
+        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
+        if (a == b) {
+            int ws = a; while (ws > 0 && isWc(d->Buf[ws - 1])) --ws;
+            int we = a; while (we < d->BufTextLen && isWc(d->Buf[we])) ++we;
+            a = ws; b = we;
+        }
+        if (b > a) {
+            std::string s(d->Buf + a, d->Buf + b);
+            bool anyLower = false;
+            for (char ch : s) if (std::islower((unsigned char)ch)) { anyLower = true; break; }
+            for (char& ch : s) ch = anyLower ? (char)std::toupper((unsigned char)ch)
+                                             : (char)std::tolower((unsigned char)ch);
+            d->DeleteChars(a, b - a); d->InsertChars(a, s.c_str());
+            d->SelectionStart = a; d->SelectionEnd = a + (int)s.size(); d->CursorPos = d->SelectionEnd;
+        }
+    }
+    // Surround With (Ctrl+Alt+T): wrap the selected lines (or the caret line) in a
+    // control block — surroundPre above, surroundPost below, the body indented a level.
+    if (!c->surroundPre.empty()) {
+        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
+        int fs, feTmp; lineBounds(a, fs, feTmp);                 // first selected line start
+        int refB = (b > a && d->Buf[b - 1] == '\n') ? b - 1 : b; // don't spill onto the next line
+        int lastLs, le; lineBounds(refB, lastLs, le);            // last selected line end
+        std::string base;                                        // indentation of the first line
+        for (int i = fs; i < le && (d->Buf[i] == ' ' || d->Buf[i] == '\t'); ++i) base += d->Buf[i];
+        std::string block(d->Buf + fs, d->Buf + le);
+        std::string body;                                        // block, each line indented +4
+        { std::size_t ls = 0; for (;;) {
+            std::size_t nl = block.find('\n', ls);
+            std::string ln = block.substr(ls, nl == std::string::npos ? std::string::npos : nl - ls);
+            body += "    " + ln;
+            if (nl == std::string::npos) break;
+            body += "\n"; ls = nl + 1;
+        } }
+        std::string out = base + c->surroundPre + "\n" + body + "\n" + base + c->surroundPost;
+        d->DeleteChars(fs, le - fs);
+        d->InsertChars(fs, out.c_str());
+        // Put the caret on the opener line so you can fill in the condition.
+        int caretAt = fs + (int)base.size() + (int)c->surroundPre.size();
+        d->CursorPos = d->SelectionStart = d->SelectionEnd = caretAt;
+        c->surroundPre.clear(); c->surroundPost.clear();
     }
     // Ctrl+D: duplicate the selection (if any), else the caret's line below it.
     if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false)) {
@@ -6400,6 +6451,95 @@ static const std::vector<std::string>& ScriptMembers(const std::string& receiver
     static const std::vector<std::string> empty;
     auto it = M.find(receiver);
     return it == M.end() ? empty : it->second;
+}
+
+// ---- ImGuiColorTextEdit integration ----------------------------------------
+// A Darcula-flavoured palette matching the old hand-drawn highlighter (ABGR, so
+// 0xAABBGGRR). Known identifiers (our builtins) render yellow like function calls.
+static const TextEditor::Palette& OkayScriptPalette() {
+    static const TextEditor::Palette p = { {
+        0xffc6b7a9,  // Default            (169,183,198) soft gray
+        0xff3278cc,  // Keyword            (204,120,50)  orange
+        0xffbb9768,  // Number             (104,151,187) blue
+        0xff59876a,  // String             (106,135,89)  green
+        0xff59876a,  // CharLiteral        green
+        0xffc8c8c8,  // Punctuation        light gray
+        0xff808080,  // Preprocessor
+        0xffc6b7a9,  // Identifier         default text
+        0xff6dc6ff,  // KnownIdentifier    (255,198,109) yellow — builtins/functions
+        0xffaa7698,  // PreprocIdentifier  purple
+        0xff808a80,  // Comment            (128,138,128) gray
+        0xff808a80,  // MultiLineComment   gray
+        0xff1e1e1e,  // Background         (30,30,30)
+        0xffe0e0e0,  // Cursor
+        0x8c915c3a,  // Selection          Rider blue, translucent
+        0x60303df0,  // ErrorMarker        red wash
+        0x40eca25c,  // Breakpoint         bookmark blue (92,162,236)
+        0xff807876,  // LineNumber         muted
+        0x14ffffff,  // CurrentLineFill
+        0x0affffff,  // CurrentLineFillInactive
+        0x18ffffff,  // CurrentLineEdge
+    } };
+    return p;
+}
+
+// OkayScript language definition: our keywords + every VM builtin as a "known
+// identifier" (yellow, with its signature/doc as the hover tooltip). Regex tokens
+// (double-quoted strings only, numbers, identifiers, punctuation); "//" line
+// comments. Built once.
+static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
+    static bool inited = false;
+    static TextEditor::LanguageDefinition d;
+    if (!inited) {
+        static const char* kw[] = {
+            "if","else","for","while","do","return","break","continue","switch","case",
+            "var","let","const","function","func","def","class","new","public","private",
+            "true","false","null","this","foreach","in","and","or","not","try","catch","throw",
+        };
+        for (auto* k : kw) d.mKeywords.insert(k);
+        // Every completion name (curated API + all VM builtins) becomes a known
+        // identifier; attach the signature + doc so hovering shows it (widget tooltip).
+        for (const auto& name : ScriptCompletions()) {
+            TextEditor::Identifier id;
+            std::string decl;
+            if (const std::string* sg = ScriptSignature(name)) decl = *sg;
+            if (const std::string* dc = ScriptDoc(name)) decl += (decl.empty() ? "" : "\n") + *dc;
+            if (decl.empty()) decl = "OkayScript builtin";
+            id.mDeclaration = decl;
+            d.mIdentifiers.insert(std::make_pair(name, id));
+        }
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "\\\"(\\\\.|[^\\\"])*\\\"", TextEditor::PaletteIndex::String));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[fF]?", TextEditor::PaletteIndex::Number));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "[a-zA-Z_][a-zA-Z0-9_]*", TextEditor::PaletteIndex::Identifier));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "[\\[\\]\\{\\}\\!\\%\\^\\&\\*\\(\\)\\-\\+\\=\\~\\|\\<\\>\\?\\/\\;\\,\\.]", TextEditor::PaletteIndex::Punctuation));
+        d.mCommentStart = "/*";       // OkayScript has no block comments, but the widget
+        d.mCommentEnd = "*/";          // needs a non-empty pair (empty matches everything).
+        d.mSingleLineComment = "//";
+        d.mCaseSensitive = true;
+        d.mAutoIndentation = true;
+        d.mName = "OkayScript";
+        inited = true;
+    }
+    return d;
+}
+
+// One TextEditor widget per open script, lazily created and configured.
+static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<TextEditor>> g_codeEditors;
+static TextEditor& CodeEditorFor(okay::ScriptComponent* sc) {
+    auto it = g_codeEditors.find(sc);
+    if (it == g_codeEditors.end()) {
+        auto te = std::make_unique<TextEditor>();
+        te->SetLanguageDefinition(OkayScriptLangDef());
+        te->SetPalette(OkayScriptPalette());
+        te->SetShowWhitespaces(false);
+        te->SetTabSize(4);
+        it = g_codeEditors.emplace(sc, std::move(te)).first;
+    }
+    return *it->second;
 }
 
 static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,

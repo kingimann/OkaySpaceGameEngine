@@ -407,6 +407,7 @@ inline std::string ResolveMeshTexture(const GltfDoc& doc, int meshIndex, const s
 struct GltfMat {
     std::string baseColorTex;                // albedo image path ("" if none)
     std::string normalTex;                   // tangent-space normal map path ("" if none)
+    std::string aoTex;                       // ambient-occlusion map path ("" if none)
     float baseColor[4] = {1, 1, 1, 1};
     float emissive[3]  = {0, 0, 0};
     float metallic  = 1.0f, roughness = 1.0f;
@@ -449,6 +450,7 @@ inline GltfMat ResolveMaterial(const GltfDoc& doc, int matI, const std::string& 
         if (const JVal* rf = pbr->Find("roughnessFactor")) { out.roughness = (float)rf->Number(1.0); out.hasMetalRough = true; }
     }
     if (int im = texImage(mat.Find("normalTexture")); im >= 0) out.normalTex = ImageFilePath(doc, im, modelPath);
+    if (int im = texImage(mat.Find("occlusionTexture")); im >= 0) out.aoTex = ImageFilePath(doc, im, modelPath);
     if (const JVal* ef = mat.Find("emissiveFactor"); ef && ef->type == JVal::Arr) {
         for (int i = 0; i < 3 && i < (int)ef->arr.size(); ++i) out.emissive[i] = (float)ef->arr[i].Number(0.0);
         out.hasEmissiveFactor = true;

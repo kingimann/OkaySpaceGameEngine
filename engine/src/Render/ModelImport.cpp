@@ -153,11 +153,18 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
 static void ApplyGltfMaterial(MeshRenderer& mr, const gltf_detail::GltfMat& gm) {
     if (!gm.baseColorTex.empty()) mr.texture   = gm.baseColorTex;
     if (!gm.normalTex.empty())    mr.normalMap = gm.normalTex;
+    if (!gm.aoTex.empty())        mr.aoMap     = gm.aoTex;
     if (gm.hasBaseColorFactor)    mr.color     = Color(gm.baseColor[0], gm.baseColor[1], gm.baseColor[2], gm.baseColor[3]);
     if (gm.hasEmissiveFactor)     mr.emissive  = Color(gm.emissive[0], gm.emissive[1], gm.emissive[2], 1.0f);
     if (gm.hasMetalRough) {
-        mr.specular  = gm.metallic;
-        mr.shininess = 4.0f + (1.0f - gm.roughness) * 120.0f;
+        // Map PBR metallic-roughness onto this renderer's fields: metallic is a real
+        // field; roughness drives highlight tightness/strength; metals reflect the
+        // environment more the smoother they are.
+        float smooth = 1.0f - gm.roughness;
+        mr.metallic     = gm.metallic;
+        mr.shininess    = 4.0f + smooth * 124.0f;
+        mr.specular     = 0.15f + smooth * 0.85f;
+        mr.reflectivity = gm.metallic * smooth;
     }
 }
 

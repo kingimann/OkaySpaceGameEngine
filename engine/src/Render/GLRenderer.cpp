@@ -2,6 +2,8 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/SkinnedMesh.hpp"    // per-frame CPU-deformed meshes bypass the VB cache
+#include "okay/Components/Character.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <GL/gl.h>          // GL 1.1 types + enums only
@@ -611,6 +613,127 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
     return tex;
 }
 
+// ---- Per-mesh vertex-buffer cache -------------------------------------------
+// FNV-1a over raw bytes; `seed` chains multiple arrays into one hash.
+static std::uint64_t FnvBytes(const void* data, std::size_t nbytes,
+                              std::uint64_t seed = 1469598103934665603ull) {
+    const unsigned char* p = (const unsigned char*)data;
+    std::uint64_t h = seed;
+    for (std::size_t i = 0; i < nbytes; ++i) { h ^= p[i]; h *= 1099511628211ull; }
+    return h;
+}
+// Cheap per-frame change sniff: sizes + <=2048 sampled vertices/indices. Catches
+// whole-mesh edits (skinning, inflate, import-over) instantly; a lone-vertex edit
+// is caught by the periodic full hash below.
+static std::uint64_t MeshSampleHash(const Mesh& m) {
+    std::size_t sizes[5] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
+                             m.uvs.size(), m.triColors.size() };
+    std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
+    const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
+    for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
+    const std::size_t tn = m.triangles.size(), tstep = tn / 2048 + 1;
+    for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
+    return h;
+}
+// Exact content hash over every array the expanded buffer derives from.
+static std::uint64_t MeshFullHash(const Mesh& m) {
+    std::uint64_t h = 1469598103934665603ull;
+    if (!m.vertices.empty())  h = FnvBytes(m.vertices.data(),  m.vertices.size()  * sizeof(Vec3),  h);
+    if (!m.normals.empty())   h = FnvBytes(m.normals.data(),   m.normals.size()   * sizeof(Vec3),  h);
+    if (!m.uvs.empty())       h = FnvBytes(m.uvs.data(),       m.uvs.size()       * sizeof(Vec2),  h);
+    if (!m.triangles.empty()) h = FnvBytes(m.triangles.data(), m.triangles.size() * sizeof(int),   h);
+    if (!m.triColors.empty()) h = FnvBytes(m.triColors.data(), m.triColors.size() * sizeof(Color), h);
+    return h;
+}
+
+// Expand indexed triangles into the interleaved non-indexed layout the shader
+// consumes: pos(3)+normal(3)+uv(2)+color(3)+tangent(3) = 14 floats per vertex.
+// Flat shading via the face normal when the mesh has none; box-projected UVs when
+// it has no UVs; per-triangle face colors honored (matches the software renderer).
+void GLRenderer::BuildExpandedVerts(const Mesh& mesh) {
+    const auto& V = mesh.vertices; const auto& T = mesh.triangles;
+    const bool hasN = mesh.HasNormals();
+    const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
+    const bool faceCols = mesh.HasFaceColors();
+    const int nv = (int)V.size();
+    m_verts.clear(); m_verts.reserve(T.size() * 14);
+    for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+        int a = T[i], b = T[i + 1], c = T[i + 2];
+        if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue; // skip bad tris
+        // Face normal: used for flat shading AND for box-projecting UVs.
+        Vec3 fn = Vec3::Cross(V[b] - V[a], V[c] - V[a]);
+        { float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
+        const float ax = std::fabs(fn.x), ay = std::fabs(fn.y), az = std::fabs(fn.z);
+        float cr = 1.0f, cg = 1.0f, cb = 1.0f;  // white = no-op when there are no face colors
+        if (faceCols) { const Color& fc = mesh.triColors[i / 3]; cr = fc.r; cg = fc.g; cb = fc.b; }
+        const int idx[3] = {a, b, c};
+        // Per-vertex UVs (mesh or box-projected) first, so we can derive the face tangent.
+        float uu[3], vv[3];
+        for (int k = 0; k < 3; ++k) {
+            const Vec3& p = V[idx[k]];
+            if (hasUV) { uu[k] = mesh.uvs[idx[k]].x; vv[k] = mesh.uvs[idx[k]].y; }
+            else if (ax >= ay && ax >= az) { uu[k] = p.z + 0.5f; vv[k] = p.y + 0.5f; }
+            else if (ay >= ax && ay >= az) { uu[k] = p.x + 0.5f; vv[k] = p.z + 0.5f; }
+            else                           { uu[k] = p.x + 0.5f; vv[k] = p.y + 0.5f; }
+        }
+        // Local-space per-face tangent (edges + UV deltas); transformed to world by
+        // mat3(uModel) in the vertex shader. Mirrors the software renderer's TBN.
+        Vec3 e1 = V[b] - V[a], e2 = V[c] - V[a];
+        float du1 = uu[1] - uu[0], dv1 = vv[1] - vv[0];
+        float du2 = uu[2] - uu[0], dv2 = vv[2] - vv[0];
+        float det = du1 * dv2 - du2 * dv1;
+        Vec3 tan = std::fabs(det) > 1e-8f ? (e1 * dv2 - e2 * dv1) * (1.0f / det) : e1;
+        { float m = tan.Magnitude(); tan = m > 1e-6f ? tan * (1.0f / m) : Vec3{1, 0, 0}; }
+        for (int k = 0; k < 3; ++k) {
+            const Vec3& p = V[idx[k]];
+            Vec3 n = hasN ? mesh.normals[idx[k]] : fn;
+            m_verts.push_back(p.x); m_verts.push_back(p.y); m_verts.push_back(p.z);
+            m_verts.push_back(n.x); m_verts.push_back(n.y); m_verts.push_back(n.z);
+            m_verts.push_back(uu[k]); m_verts.push_back(vv[k]);
+            m_verts.push_back(cr);  m_verts.push_back(cg);  m_verts.push_back(cb);
+            m_verts.push_back(tan.x); m_verts.push_back(tan.y); m_verts.push_back(tan.z);
+        }
+    }
+}
+
+// Return the (up-to-date) cached GPU buffer for a mesh, expanding + uploading only
+// when the mesh actually changed. nullptr = mesh has no drawable triangles.
+GLRenderer::MeshVB* GLRenderer::EnsureMeshVB(const Mesh& mesh) {
+    MeshVB& e = m_meshVB[&mesh];
+    e.lastUse = m_frame;
+    bool same = e.vbo != 0 &&
+        e.vp  == (const void*)mesh.vertices.data()  && e.vn  == mesh.vertices.size()  &&
+        e.tp  == (const void*)mesh.triangles.data() && e.tn  == mesh.triangles.size() &&
+        e.np  == (const void*)mesh.normals.data()   && e.nn  == mesh.normals.size()   &&
+        e.uvp == (const void*)mesh.uvs.data()       && e.uvn == mesh.uvs.size()       &&
+        e.fcp == (const void*)mesh.triColors.data() && e.fcn == mesh.triColors.size();
+    std::uint64_t sh = 0;
+    if (same) { sh = MeshSampleHash(mesh); if (sh != e.sampleHash) same = false; }
+    if (same && m_frame - e.lastFullHash >= 60) {   // exact check ~once a second
+        std::uint64_t fh = MeshFullHash(mesh);
+        e.lastFullHash = m_frame;
+        if (fh != e.fullHash) same = false; else e.fullHash = fh;
+    }
+    if (same) return e.vertCount > 0 ? &e : nullptr;
+    BuildExpandedVerts(mesh);
+    e.vp  = mesh.vertices.data();  e.vn  = mesh.vertices.size();
+    e.tp  = mesh.triangles.data(); e.tn  = mesh.triangles.size();
+    e.np  = mesh.normals.data();   e.nn  = mesh.normals.size();
+    e.uvp = mesh.uvs.data();       e.uvn = mesh.uvs.size();
+    e.fcp = mesh.triColors.data(); e.fcn = mesh.triColors.size();
+    e.sampleHash = sh ? sh : MeshSampleHash(mesh);
+    e.fullHash = MeshFullHash(mesh);
+    e.lastFullHash = m_frame;
+    e.vertCount = (int)(m_verts.size() / 14);
+    if (e.vertCount == 0) return nullptr;
+    if (!e.vbo) g.GenBuffers(1, &e.vbo);
+    if (!e.vbo) { e.vertCount = 0; return nullptr; }
+    g.BindBuffer(GL_ARRAY_BUFFER, e.vbo);
+    g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)),
+                 m_verts.data(), GL_STATIC_DRAW);
+    return &e;
+}
+
 const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& vp, const Vec3& eye,
                                                 int w, int h, int samples,
                                                 float clearR, float clearG, float clearB, float clearA,
@@ -618,6 +741,18 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     if (!g.ok || w < 1 || h < 1) return nullptr;
     if (!EnsureProgram() || !EnsureTargets(w, h, samples)) return nullptr;
     while (g.GetError() != 0) {}   // drain any stale GL error state before we render
+
+    // Advance the mesh-VB cache clock and evict buffers unused for ~5s of frames
+    // (deleted objects, replaced meshes), so GPU memory doesn't grow unbounded.
+    ++m_frame;
+    if ((m_frame % 300u) == 0u) {
+        for (auto it = m_meshVB.begin(); it != m_meshVB.end();) {
+            if (m_frame - it->second.lastUse > 300u) {
+                if (it->second.vbo) g.DeleteBuffers(1, &it->second.vbo);
+                it = m_meshVB.erase(it);
+            } else ++it;
+        }
+    }
 
     // ---- Shadow-map depth pre-pass (directional cast shadows) -----------------
     // Render the scene depth from the sun's point of view into a depth texture the
@@ -638,7 +773,6 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             // arrays from a previous frame get fetched against the position buffer.
             g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
             g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
-            g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
             for (const auto& up : scene.Objects()) {
                 GameObject* go = up.get();
                 if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
@@ -648,6 +782,21 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                 const Mesh& mesh = mr->mesh;
                 const auto& V = mesh.vertices; const auto& T = mesh.triangles;
                 if (V.empty() || T.size() < 3) continue;
+                Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
+                g.UniformMatrix4fv(m_uDepthMVP, 1, GL_FALSE, dmvp.m);
+                // Static meshes: draw positions straight from the cached interleaved
+                // buffer (stride 14). Per-frame-deformed meshes rebuild dynamically.
+                const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
+                                      go->GetComponent<Character>() != nullptr;
+                if (!deformed) {
+                    MeshVB* mv = EnsureMeshVB(mesh);
+                    if (!mv) continue;
+                    g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
+                    g.EnableVertexAttribArray(0);
+                    g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), (const void*)0);
+                    g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
+                    continue;
+                }
                 const int nv = (int)V.size();
                 m_verts.clear(); m_verts.reserve(T.size() * 3);
                 for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
@@ -659,8 +808,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                     m_verts.push_back(pc.x); m_verts.push_back(pc.y); m_verts.push_back(pc.z);
                 }
                 if (m_verts.empty()) continue;
-                Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
-                g.UniformMatrix4fv(m_uDepthMVP, 1, GL_FALSE, dmvp.m);
+                g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
                 g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
                 g.EnableVertexAttribArray(0);
                 g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
@@ -770,59 +918,21 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         const Mesh& mesh = mr->mesh;
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
-        const bool hasN = mesh.HasNormals();
-        // Texture the mesh whenever the material has one. UVs come from the mesh; if it
-        // has none we box-project (dominant face axis), matching the software renderer
-        // so e.g. an untextured-UV player model still shows its texture on the GPU path.
-        const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
-        // Per-triangle face colors color UV-less meshes in the software renderer (the
-        // Character's skin/clothing, foliage tints, ...). Honor them here so those models
-        // don't collapse to one flat uColor on the GPU path.
-        const bool faceCols = mesh.HasFaceColors();
         unsigned int tex = TextureFor(mr->texture);
 
-        // Expand triangles (non-indexed) into pos(3)+normal(3)+uv(2)+color(3): flat shading via
-        // per-face normal when the mesh has none, smooth via per-vertex normals when it does.
-        const int nv = (int)V.size();
-        m_verts.clear(); m_verts.reserve(T.size() * 14);
-        for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
-            int a = T[i], b = T[i + 1], c = T[i + 2];
-            if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue; // skip bad tris
-            // Face normal: used for flat shading AND for box-projecting UVs.
-            Vec3 fn = Vec3::Cross(V[b] - V[a], V[c] - V[a]);
-            { float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
-            const float ax = std::fabs(fn.x), ay = std::fabs(fn.y), az = std::fabs(fn.z);
-            float cr = 1.0f, cg = 1.0f, cb = 1.0f;  // white = no-op when there are no face colors
-            if (faceCols) { const Color& fc = mesh.triColors[i / 3]; cr = fc.r; cg = fc.g; cb = fc.b; }
-            const int idx[3] = {a, b, c};
-            // Per-vertex UVs (mesh or box-projected) first, so we can derive the face tangent.
-            float uu[3], vv[3];
-            for (int k = 0; k < 3; ++k) {
-                const Vec3& p = V[idx[k]];
-                if (hasUV) { uu[k] = mesh.uvs[idx[k]].x; vv[k] = mesh.uvs[idx[k]].y; }
-                else if (ax >= ay && ax >= az) { uu[k] = p.z + 0.5f; vv[k] = p.y + 0.5f; }
-                else if (ay >= ax && ay >= az) { uu[k] = p.x + 0.5f; vv[k] = p.z + 0.5f; }
-                else                           { uu[k] = p.x + 0.5f; vv[k] = p.y + 0.5f; }
-            }
-            // Local-space per-face tangent (edges + UV deltas); transformed to world by
-            // mat3(uModel) in the vertex shader. Mirrors the software renderer's TBN.
-            Vec3 e1 = V[b] - V[a], e2 = V[c] - V[a];
-            float du1 = uu[1] - uu[0], dv1 = vv[1] - vv[0];
-            float du2 = uu[2] - uu[0], dv2 = vv[2] - vv[0];
-            float det = du1 * dv2 - du2 * dv1;
-            Vec3 tan = std::fabs(det) > 1e-8f ? (e1 * dv2 - e2 * dv1) * (1.0f / det) : e1;
-            { float m = tan.Magnitude(); tan = m > 1e-6f ? tan * (1.0f / m) : Vec3{1, 0, 0}; }
-            for (int k = 0; k < 3; ++k) {
-                const Vec3& p = V[idx[k]];
-                Vec3 n = hasN ? mesh.normals[idx[k]] : fn;
-                m_verts.push_back(p.x); m_verts.push_back(p.y); m_verts.push_back(p.z);
-                m_verts.push_back(n.x); m_verts.push_back(n.y); m_verts.push_back(n.z);
-                m_verts.push_back(uu[k]); m_verts.push_back(vv[k]);
-                m_verts.push_back(cr);  m_verts.push_back(cg);  m_verts.push_back(cb);
-                m_verts.push_back(tan.x); m_verts.push_back(tan.y); m_verts.push_back(tan.z);
-            }
+        // Geometry source: static meshes draw from the per-mesh cached GPU buffer
+        // (expanded + uploaded once — see EnsureMeshVB); meshes deformed on the CPU
+        // every frame (SkinnedMesh / Character) rebuild + re-upload dynamically.
+        const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
+                              go->GetComponent<Character>() != nullptr;
+        MeshVB* mvb = nullptr;
+        if (!deformed) {
+            mvb = EnsureMeshVB(mesh);
+            if (!mvb) continue;                    // no drawable triangles
+        } else {
+            BuildExpandedVerts(mesh);
+            if (m_verts.empty()) continue;
         }
-        if (m_verts.empty()) continue;
 
         Mat4 model = go->transform->LocalToWorldMatrix();
         Mat4 mvp = vp * model;
@@ -901,8 +1011,15 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform1f(m_uReflectivity, unlit ? 0.0f : mr->reflectivity);
         g.Uniform2f(m_uTexOffset, mr->texOffset.x, mr->texOffset.y);
 
-        g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
-        g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
+        GLsizei drawCount;
+        if (mvb) {                                  // cached static buffer: just bind
+            g.BindBuffer(GL_ARRAY_BUFFER, mvb->vbo);
+            drawCount = (GLsizei)mvb->vertCount;
+        } else {                                    // deformed: stream this frame's verts
+            g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
+            g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
+            drawCount = (GLsizei)(m_verts.size() / 14);
+        }
         const GLsizei stride = 14 * sizeof(float);
         g.EnableVertexAttribArray(0);
         g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (const void*)0);
@@ -925,7 +1042,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             g.DepthMask(GL_FALSE);
         }
-        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 14));
+        g.DrawArrays(GL_TRIANGLES, 0, drawCount);
         if (transparent) {
             g.DepthMask(GL_TRUE);
             g.Disable(GL_BLEND);
@@ -943,7 +1060,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Enable(GL_BLEND);
             g.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             g.DepthMask(GL_FALSE);
-            g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 14));
+            g.DrawArrays(GL_TRIANGLES, 0, drawCount);
             g.DepthMask(GL_TRUE);
             g.Disable(GL_BLEND);
             g.Uniform1f(m_uShadowAlpha, -1.0f);
@@ -990,6 +1107,8 @@ void GLRenderer::Destroy() {
     DestroyShadow();
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
+    for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);
+    m_meshVB.clear();
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }
     if (m_vao && g.DeleteVertexArrays) { g.DeleteVertexArrays(1, &m_vao); m_vao = 0; }
     if (m_depthProg) { g.DeleteProgram(m_depthProg); m_depthProg = 0; }

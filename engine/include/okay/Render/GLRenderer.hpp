@@ -100,6 +100,30 @@ private:
     // the software renderer's cache so the same material textures appear.
     std::unordered_map<std::string, unsigned int> m_texCache;
     unsigned int TextureFor(const std::string& name);   // upload-on-first-use
+
+    // Per-mesh vertex-buffer cache: static geometry (imported OBJ/glTF models,
+    // primitives) is expanded + uploaded ONCE and redrawn from GPU memory, instead
+    // of being rebuilt on the CPU and re-uploaded every frame — which made large
+    // imports crawl at a few FPS. Entries revalidate per frame via an allocation
+    // fingerprint (data pointers + sizes) and a sampled content hash, plus an exact
+    // full hash about once a second, so in-place edits still show up. Meshes that
+    // deform every frame (SkinnedMesh / Character) bypass this cache entirely.
+    struct MeshVB {
+        unsigned int vbo = 0;
+        int vertCount = 0;                                // vertices in the expanded buffer
+        const void* vp = nullptr;  std::size_t vn = 0;    // vertices identity
+        const void* tp = nullptr;  std::size_t tn = 0;    // triangles identity
+        const void* np = nullptr;  std::size_t nn = 0;    // normals identity
+        const void* uvp = nullptr; std::size_t uvn = 0;   // uvs identity
+        const void* fcp = nullptr; std::size_t fcn = 0;   // face-colors identity
+        std::uint64_t sampleHash = 0;                     // cheap, checked every frame
+        std::uint64_t fullHash = 0;                       // exact, refreshed periodically
+        unsigned lastUse = 0, lastFullHash = 0;           // frame stamps
+    };
+    std::unordered_map<const void*, MeshVB> m_meshVB;     // key: &MeshRenderer::mesh
+    unsigned m_frame = 0;
+    MeshVB* EnsureMeshVB(const Mesh& mesh);               // expand + upload on miss
+    void BuildExpandedVerts(const Mesh& mesh);            // fill m_verts (14 floats/vertex)
 };
 
 } // namespace okay

@@ -48,13 +48,51 @@ static bool EndsWith(const std::string& s, const char* suf) {
 }
 
 #ifdef OKAY_HAVE_ASSIMP
-static Mesh ViaAssimp(const std::string& path, bool* ok) {
+// Resolve the scene's first diffuse texture to a file the renderer can load:
+// an external reference resolves next to the model; an embedded texture (the
+// common case for FBX) is written out as a "<model>_tex.<ext>" sidecar — the
+// same convention the glTF importer uses.
+static std::string AssimpDiffuseTexture(const aiScene* sc, const std::string& modelPath) {
+    std::string dir;
+    { std::size_t s = modelPath.find_last_of("/\\"); if (s != std::string::npos) dir = modelPath.substr(0, s + 1); }
+    for (unsigned mi = 0; mi < sc->mNumMaterials; ++mi) {
+        aiString texPath;
+        if (sc->mMaterials[mi]->GetTexture(aiTextureType_DIFFUSE, 0, &texPath) != AI_SUCCESS)
+            continue;
+        std::string tp = texPath.C_Str();
+        if (tp.empty()) continue;
+        if (const aiTexture* emb = sc->GetEmbeddedTexture(tp.c_str())) {
+            // mHeight == 0 -> compressed blob (png/jpg per achFormatHint); mWidth is
+            // then the byte size. Raw-BGRA embeds (mHeight > 0) are rare; skipped.
+            if (emb->mHeight == 0 && emb->pcData && emb->mWidth > 0) {
+                std::string ext = emb->achFormatHint[0] ? emb->achFormatHint : "png";
+                std::string base = modelPath;
+                std::size_t dot = base.find_last_of('.');
+                if (dot != std::string::npos) base = base.substr(0, dot);
+                std::string out = base + "_tex." + ext;
+                if (std::FILE* f = std::fopen(out.c_str(), "wb")) {
+                    std::fwrite(emb->pcData, 1, emb->mWidth, f);
+                    std::fclose(f);
+                    return out;
+                }
+            }
+            continue;
+        }
+        for (char& c : tp) if (c == '\\') c = '/';
+        bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
+        return abs ? tp : dir + tp;
+    }
+    return std::string();
+}
+
+static Mesh ViaAssimp(const std::string& path, bool* ok, std::string* outTexture = nullptr) {
     Assimp::Importer imp;
     const aiScene* sc = imp.ReadFile(path,
         aiProcess_Triangulate | aiProcess_GenSmoothNormals |
         aiProcess_JoinIdenticalVertices | aiProcess_FlipUVs | aiProcess_PreTransformVertices);
     Mesh m;
     if (!sc || !sc->mRootNode || sc->mNumMeshes == 0) { if (ok) *ok = false; return m; }
+    if (outTexture) *outTexture = AssimpDiffuseTexture(sc, path);
     for (unsigned mi = 0; mi < sc->mNumMeshes; ++mi) {
         const aiMesh* am = sc->mMeshes[mi];
         int base = (int)m.vertices.size();
@@ -83,7 +121,7 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     if (EndsWith(p, ".obj"))                          return Mesh::LoadOBJ(path, ok, outTexture);
     if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok, outTexture);
 #ifdef OKAY_HAVE_ASSIMP
-    return ViaAssimp(path, ok);
+    return ViaAssimp(path, ok, outTexture);
 #else
     if (ok) *ok = false;
     return Mesh{};   // format needs Assimp, which this build wasn't compiled with
@@ -168,6 +206,32 @@ static void ApplyGltfMaterial(MeshRenderer& mr, const gltf_detail::GltfMat& gm) 
     }
 }
 
+// Auto-normalize an imported model's size. Exporters disagree on units — Meshy AI /
+// FBX assets often arrive in centimeters, making a character 180 "meters" tall in
+// the scene. When the imported hierarchy's largest mesh dimension is implausibly
+// big (or microscopically small), scale the ROOT transform so it lands at a usable
+// size; the mesh data itself is untouched, and the user can still adjust Scale.
+static void AutoNormalizeImportScale(Scene& scene, GameObject* root) {
+    if (!root || !root->transform) return;
+    float maxDim = 0.0f;
+    for (const auto& up : scene.Objects()) {
+        GameObject* go = up.get();
+        if (!go || !go->IsSelfOrDescendantOf(root)) continue;
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (!mr || mr->mesh.vertices.empty()) continue;
+        Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+        Vec3 sz = hi - lo;
+        float d = sz.x > sz.y ? (sz.x > sz.z ? sz.x : sz.z) : (sz.y > sz.z ? sz.y : sz.z);
+        if (d > maxDim) maxDim = d;
+    }
+    if (maxDim <= 0.0f) return;
+    float s = 1.0f;
+    if (maxDim > 20.0f)        s = 2.0f / maxDim;      // cm-style export: bring to ~2 units
+    else if (maxDim < 0.02f)   s = 2.0f / maxDim;      // mm/tiny export: scale up
+    if (s != 1.0f)
+        root->transform->localScale = root->transform->localScale * s;
+}
+
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
@@ -182,6 +246,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
         auto* mr = go->AddComponent<MeshRenderer>();
         mr->mesh = m; mr->doubleSided = true;
         if (!tex.empty()) mr->texture = tex;
+        AutoNormalizeImportScale(scene, go);
         if (ok) *ok = true;
         return go;
     }
@@ -198,6 +263,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
             auto* mr = root->AddComponent<MeshRenderer>(); mr->mesh = m; mr->doubleSided = true;
             if (!tex.empty()) mr->texture = tex;
         }
+        AutoNormalizeImportScale(scene, root);
         if (ok) *ok = okm;
         return root;
     }
@@ -365,6 +431,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
             ma->active = 0; ma->autoPlay = true;
         }
     }
+    AutoNormalizeImportScale(scene, root);
     if (ok) *ok = true;
     return root;
 }

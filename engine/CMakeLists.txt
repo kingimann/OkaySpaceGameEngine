@@ -203,7 +203,10 @@ endif()
 # on with -DOKAY_USE_ASSIMP=ON; ModelImport.cpp then routes those formats through it.
 if(OKAY_USE_ASSIMP)
     include(FetchContent)
-    # Build only what we need — keep it lean and quiet.
+    # Build only what we need — keep it lean and quiet. Static, so shipped builds
+    # don't need an extra assimp DLL beside the exes; assimp builds its own zlib.
+    set(BUILD_SHARED_LIBS                        OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ZLIB                        ON  CACHE BOOL "" FORCE)
     set(ASSIMP_BUILD_TESTS                       OFF CACHE BOOL "" FORCE)
     set(ASSIMP_INSTALL                           OFF CACHE BOOL "" FORCE)
     set(ASSIMP_BUILD_ASSIMP_TOOLS                OFF CACHE BOOL "" FORCE)

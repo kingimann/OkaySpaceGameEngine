@@ -8,12 +8,13 @@
 //   * .gltf with an external .bin next to it.
 // No external dependency — a tiny JSON parser + base64 decoder live here.
 //
-// Also resolves each material's base-color (albedo) texture to a file path: external
-// images are referenced in place, embedded images (`data:` URIs or .glb bufferViews)
-// are extracted to a sidecar PNG/JPEG next to the model. (ImportModelScene rebuilds
-// the node graph with per-node transforms; the merged LoadGLTF() path does not bake
-// them.) Skinned/animated import is a planned follow-up feeding the Character/Animator
-// systems; other PBR maps (normal/metallic-roughness/emissive) are not imported yet.
+// Also resolves each material for the MeshRenderer: the base-color (albedo) and
+// normal-map textures to file paths (external images referenced in place, embedded
+// `data:`/.glb images extracted to a sidecar PNG/JPEG next to the model), plus the
+// base-color / emissive factors and a metallic-roughness -> Blinn-Phong glint.
+// (ImportModelScene rebuilds the node graph with per-node transforms; the merged
+// LoadGLTF() path does not bake them.) Skinned/animated import and the packed
+// metallic-roughness *texture* are planned follow-ups.
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -399,6 +400,61 @@ inline std::string ImageFilePath(const GltfDoc& doc, int imageIdx, const std::st
 inline std::string ResolveMeshTexture(const GltfDoc& doc, int meshIndex, const std::string& modelPath) {
     int im = MeshBaseColorImage(doc, meshIndex);
     return im < 0 ? std::string{} : ImageFilePath(doc, im, modelPath);
+}
+
+// A mesh's material distilled to what the engine's MeshRenderer can use: albedo +
+// normal-map file paths, and base-color / emissive / metallic-roughness factors.
+struct GltfMat {
+    std::string baseColorTex;                // albedo image path ("" if none)
+    std::string normalTex;                   // tangent-space normal map path ("" if none)
+    float baseColor[4] = {1, 1, 1, 1};
+    float emissive[3]  = {0, 0, 0};
+    float metallic  = 1.0f, roughness = 1.0f;
+    bool  hasBaseColorFactor = false, hasEmissiveFactor = false, hasMetalRough = false;
+};
+
+// The material index a mesh uses (its first primitive with a material), or -1.
+inline int MeshMaterialIndex(const GltfDoc& doc, int meshIndex) {
+    const JVal* meshes = doc.root.Find("meshes");
+    if (!meshes || meshIndex < 0 || meshIndex >= (int)meshes->arr.size()) return -1;
+    const JVal* prims = meshes->arr[meshIndex].Find("primitives"); if (!prims) return -1;
+    for (const JVal& prim : prims->arr) {
+        const JVal* mi = prim.Find("material");
+        if (mi) { int m = mi->Int(-1); if (m >= 0) return m; }
+    }
+    return -1;
+}
+
+// Resolve a mesh's material into a GltfMat (texture paths + factors).
+inline GltfMat ResolveMeshMaterial(const GltfDoc& doc, int meshIndex, const std::string& modelPath) {
+    GltfMat out;
+    const JVal* mats = doc.root.Find("materials");
+    const JVal* texs = doc.root.Find("textures");
+    int matI = MeshMaterialIndex(doc, meshIndex);
+    if (!mats || matI < 0 || matI >= (int)mats->arr.size()) return out;
+    const JVal& mat = mats->arr[matI];
+    auto texImage = [&](const JVal* ref) -> int {          // a {index:..} texture ref -> image index
+        if (!ref || !texs) return -1;
+        int ti = ref->Find("index") ? ref->Find("index")->Int(-1) : -1;
+        if (ti < 0 || ti >= (int)texs->arr.size()) return -1;
+        const JVal* src = texs->arr[ti].Find("source");
+        return src ? src->Int(-1) : -1;
+    };
+    if (const JVal* pbr = mat.Find("pbrMetallicRoughness")) {
+        if (const JVal* bcf = pbr->Find("baseColorFactor"); bcf && bcf->type == JVal::Arr) {
+            for (int i = 0; i < 4 && i < (int)bcf->arr.size(); ++i) out.baseColor[i] = (float)bcf->arr[i].Number(out.baseColor[i]);
+            out.hasBaseColorFactor = true;
+        }
+        if (int im = texImage(pbr->Find("baseColorTexture")); im >= 0) out.baseColorTex = ImageFilePath(doc, im, modelPath);
+        if (const JVal* mf = pbr->Find("metallicFactor"))  { out.metallic  = (float)mf->Number(1.0); out.hasMetalRough = true; }
+        if (const JVal* rf = pbr->Find("roughnessFactor")) { out.roughness = (float)rf->Number(1.0); out.hasMetalRough = true; }
+    }
+    if (int im = texImage(mat.Find("normalTexture")); im >= 0) out.normalTex = ImageFilePath(doc, im, modelPath);
+    if (const JVal* ef = mat.Find("emissiveFactor"); ef && ef->type == JVal::Arr) {
+        for (int i = 0; i < 3 && i < (int)ef->arr.size(); ++i) out.emissive[i] = (float)ef->arr[i].Number(0.0);
+        out.hasEmissiveFactor = true;
+    }
+    return out;
 }
 
 // Base-color texture path for the whole model (first textured mesh) — used by the

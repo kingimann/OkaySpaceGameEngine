@@ -146,6 +146,20 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
     return mesh;
 }
 
+// Apply a resolved glTF material to a MeshRenderer: albedo + normal-map textures,
+// base-color tint and emissive color, and a metallic-roughness -> Blinn-Phong
+// approximation (metallic drives the specular strength; smoother = tighter highlight).
+static void ApplyGltfMaterial(MeshRenderer& mr, const gltf_detail::GltfMat& gm) {
+    if (!gm.baseColorTex.empty()) mr.texture   = gm.baseColorTex;
+    if (!gm.normalTex.empty())    mr.normalMap = gm.normalTex;
+    if (gm.hasBaseColorFactor)    mr.color     = Color(gm.baseColor[0], gm.baseColor[1], gm.baseColor[2], gm.baseColor[3]);
+    if (gm.hasEmissiveFactor)     mr.emissive  = Color(gm.emissive[0], gm.emissive[1], gm.emissive[2], 1.0f);
+    if (gm.hasMetalRough) {
+        mr.specular  = gm.metallic;
+        mr.shininess = 4.0f + (1.0f - gm.roughness) * 120.0f;
+    }
+}
+
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
@@ -207,8 +221,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                 Mesh mm = BuildMeshAt(doc, meshIdx);
                 if (!mm.vertices.empty()) {
                     auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = mm; mr->doubleSided = true;
-                    std::string tx = ResolveMeshTexture(doc, meshIdx, path);
-                    if (!tx.empty()) mr->texture = tx;
+                    ApplyGltfMaterial(*mr, ResolveMeshMaterial(doc, meshIdx, path));
                 }
             }
         }

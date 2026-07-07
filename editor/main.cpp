@@ -1295,6 +1295,10 @@ static void OpenScriptFileInEditor(const std::string& path) {
 }
 bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
+bool  g_showArrayDup   = false;     // "Array Duplicate" tool popup
+int   g_arrCount       = 5;         // total copies (including the original)
+float g_arrOffset[3]   = {2.0f, 0.0f, 0.0f};   // per-step translation
+float g_arrRot[3]      = {0.0f, 0.0f, 0.0f};    // per-step rotation (euler degrees)
 char  g_prefabBuf[256] = "Prefab.okayprefab";
 bool  g_showBuildGame = false;
 char  g_buildDirBuf[256] = "build/MyGame";
@@ -2865,6 +2869,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Instantiate Prefab...")) g_showInstPrefab = true;
         if (ImGui::MenuItem("Duplicate Selected", "Ctrl+D", false, ed.selected() != nullptr)) {
             ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
+        }
+        if (ImGui::MenuItem("Array Duplicate...", nullptr, false, ed.selected() != nullptr))
+            g_showArrayDup = true;
+        if (ImGui::MenuItem("Snap Position to Grid", nullptr, false, ed.selected() != nullptr)) {
+            ed.PushUndo();
+            float g = g_snapSize > 1e-4f ? g_snapSize : 1.0f;
+            Vec3& p = ed.selected()->transform->localPosition;
+            p = {std::round(p.x / g) * g, std::round(p.y / g) * g, std::round(p.z / g) * g};
+            ed.dirty = true; ConsoleLog("Snapped to grid");
         }
         if (ImGui::MenuItem("Copy", "Ctrl+C", false, ed.selected() != nullptr)) {
             g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
@@ -7531,6 +7544,45 @@ void DrawFileDialogs(EditorState& ed) {
             GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), g_prefabBuf, &err);
             if (r) { ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + std::string(g_prefabBuf)); }
             else ConsoleLog("Prefab load failed: " + err);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    // Array Duplicate: clone the selection N times along a repeating offset (and
+    // optional rotation step) — fences, columns, stairs, pickups in a row, grids.
+    if (g_showArrayDup) { ImGui::OpenPopup("Array Duplicate"); g_showArrayDup = false; }
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Array Duplicate", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("Clone the selected object in a repeating row/grid.");
+        ImGui::Spacing();
+        if (g_arrCount < 2) g_arrCount = 2; if (g_arrCount > 512) g_arrCount = 512;
+        ImGui::SetNextItemWidth(160); ImGui::InputInt("Count (incl. original)", &g_arrCount);
+        ImGui::SetNextItemWidth(300); ImGui::DragFloat3("Offset / step", g_arrOffset, 0.05f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("World-space translation added for each successive copy.");
+        ImGui::SetNextItemWidth(300); ImGui::DragFloat3("Rotate / step (deg)", g_arrRot, 0.5f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Euler rotation added for each successive copy (e.g. spokes of a wheel).");
+        ImGui::Spacing();
+        GameObject* src = ed.selected();
+        if (ImGui::Button("Create", ImVec2(120, 0)) && src) {
+            ed.PushUndo();
+            std::string blob = SceneSerializer::SerializeObject(*src);
+            Vec3 base = src->transform->localPosition;
+            Vec3 baseRot = src->transform->localRotation.ToEuler();
+            int made = 0;
+            GameObject* last = nullptr;
+            for (int i = 1; i < g_arrCount; ++i) {
+                GameObject* cp = SceneSerializer::InstantiateFromText(ed.scene(), blob);
+                if (!cp) continue;
+                cp->transform->localPosition = base + Vec3{g_arrOffset[0] * i, g_arrOffset[1] * i, g_arrOffset[2] * i};
+                cp->transform->localRotation = Quat::Euler(baseRot + Vec3{g_arrRot[0] * i, g_arrRot[1] * i, g_arrRot[2] * i});
+                last = cp; ++made;
+            }
+            if (last) ed.Select(last);
+            ed.dirty = true;
+            ConsoleLog("Array duplicated " + std::to_string(made) + " copies");
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();

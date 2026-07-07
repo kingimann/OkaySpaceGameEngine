@@ -381,6 +381,60 @@ struct Mesh {
         return m;
     }
 
+    /// An n-sided prism (flat-capped): a regular polygon extruded along Y. `sides`
+    /// picks the shape — 3 = triangular prism, 6 = hexagonal column, etc. Distinct
+    /// from Cylinder (which is high-poly/round) — this stays crisply faceted.
+    static Mesh Prism(int sides = 6, float radius = 0.5f, float height = 1.0f) {
+        Mesh m; m.name = "Prism";
+        if (sides < 3) sides = 3;
+        const float kPi = 3.14159265358979323846f;
+        float h = height * 0.5f;
+        for (int s = 0; s < sides; ++s) {
+            float th = 2.0f * kPi * ((float)s + 0.5f) / sides;   // flat face toward +Z
+            float x = radius * std::cos(th), z = radius * std::sin(th);
+            m.vertices.push_back({x, h, z}); m.vertices.push_back({x, -h, z});
+        }
+        for (int s = 0; s < sides; ++s) {
+            int t0 = s * 2, b0 = s * 2 + 1, t1 = ((s + 1) % sides) * 2, b1 = ((s + 1) % sides) * 2 + 1;
+            m.triangles.insert(m.triangles.end(), {t0, t1, b0, t1, b1, b0});
+        }
+        int topC = (int)m.vertices.size(); m.vertices.push_back({0, h, 0});
+        int botC = (int)m.vertices.size(); m.vertices.push_back({0, -h, 0});
+        for (int s = 0; s < sides; ++s) {
+            m.triangles.insert(m.triangles.end(), {topC, ((s + 1) % sides) * 2, s * 2});
+            m.triangles.insert(m.triangles.end(), {botC, s * 2 + 1, ((s + 1) % sides) * 2 + 1});
+        }
+        return m;
+    }
+
+    /// A flat filled circle on the XZ plane (Blender's Circle, filled) — a round
+    /// disc facing +Y. Handy for tabletops, coins, platforms, decals.
+    static Mesh Disc(float radius = 0.5f, int sectors = 24) {
+        Mesh m; m.name = "Disc";
+        if (sectors < 3) sectors = 3;
+        const float kPi = 3.14159265358979323846f;
+        m.vertices.push_back({0, 0, 0}); m.uvs.push_back({0.5f, 0.5f});   // center
+        for (int s = 0; s <= sectors; ++s) {
+            float th = 2.0f * kPi * (float)s / sectors;
+            float cx = std::cos(th), cz = std::sin(th);
+            m.vertices.push_back({radius * cx, 0, radius * cz});
+            m.uvs.push_back({0.5f + 0.5f * cx, 0.5f + 0.5f * cz});
+        }
+        for (int s = 0; s < sectors; ++s)
+            m.triangles.insert(m.triangles.end(), {0, s + 2, s + 1});    // faces +Y
+        return m;
+    }
+
+    /// An octahedron — a faceted gem/diamond (6 vertices, 8 triangular faces).
+    static Mesh Octahedron(float radius = 0.5f) {
+        Mesh m; m.name = "Octahedron";
+        float r = radius;
+        m.vertices = {{r,0,0}, {-r,0,0}, {0,r,0}, {0,-r,0}, {0,0,r}, {0,0,-r}};  // px nx py ny pz nz
+        m.triangles = {4,0,2, 4,2,1, 4,1,3, 4,3,0,     // top fan around +Z
+                       5,2,0, 5,1,2, 5,3,1, 5,0,3};    // bottom fan around -Z
+        return m;
+    }
+
     /// A geodesic sphere: an icosahedron subdivided `subdivisions` times and
     /// projected to the radius. Triangles are near-uniform (no pinching at the
     /// poles like the UV Sphere), so it shades and tessellates evenly.
@@ -482,6 +536,9 @@ struct Mesh {
         if (n == "Hemisphere") return Hemisphere();
         if (n == "Stairs")    return Stairs();
         if (n == "Gear")      return Gear();
+        if (n == "Prism")     return Prism();
+        if (n == "Octahedron") return Octahedron();
+        if (n == "Disc")      return Disc();
         return Cube();
     }
 

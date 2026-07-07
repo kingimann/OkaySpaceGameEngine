@@ -7104,12 +7104,15 @@ void DrawScriptEditor(EditorState& ed) {
             s_scrollToLine = 0;
         }
 
-        // Line-number gutter (tight line spacing so rows match the editor).
+        // Line-number gutter (tight line spacing so rows match the editor). The
+        // caret's current line is brightened, like a real IDE, so your place is easy
+        // to find while scanning.
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
         ImGui::BeginGroup();
         ImGui::Dummy(ImVec2(0, padY));
         for (int i = 1; i <= lines; ++i)
-            ImGui::TextColored(ImVec4(0.42f, 0.44f, 0.5f, 1.0f), "%4d", i);
+            ImGui::TextColored(i == caret.line ? ImVec4(0.86f, 0.88f, 0.94f, 1.0f)
+                                               : ImVec4(0.42f, 0.44f, 0.5f, 1.0f), "%4d", i);
         ImGui::EndGroup();
         ImGui::PopStyleVar();
         ImGui::SameLine();
@@ -7166,32 +7169,8 @@ void DrawScriptEditor(EditorState& ed) {
                 ++i; ++ln;
             }
         }
-        // Highlight all occurrences of the identifier under the caret (VS Code).
-        {
-            const char* t = buf.data();
-            int tlen = (int)std::strlen(t);
-            auto isW = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
-            int p = caret.pos < 0 ? 0 : (caret.pos > tlen ? tlen : caret.pos);
-            int ws = p, we = p;
-            while (ws > 0 && isW(t[ws - 1])) --ws;
-            while (we < tlen && isW(t[we])) ++we;
-            std::string word(t + ws, t + we);
-            if (word.size() >= 2 && (std::isalpha((unsigned char)word[0]) || word[0] == '_')) {
-                int ln = 0, col = 0;
-                for (int i = 0; i < tlen;) {
-                    if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
-                    bool wb = (i == 0 || !isW(t[i - 1]));
-                    if (wb && std::strncmp(t + i, word.c_str(), word.size()) == 0 &&
-                        !isW(t[i + word.size()])) {
-                        ImVec2 a(origin.x + col * charW, origin.y + ln * lineH);
-                        edl->AddRectFilled(a, ImVec2(a.x + word.size() * charW, a.y + lineH),
-                                           IM_COL32(120, 145, 175, 55));
-                        i += (int)word.size(); col += (int)word.size(); continue;
-                    }
-                    ++i; ++col;
-                }
-            }
-        }
+        // (Occurrences of the identifier under the caret are highlighted below, in
+        // the count>1 "highlight usages" pass — one place, no double-shading.)
         // Highlight every Find match (drawn under the text overlay).
         if (s_find[0]) {
             std::string needle = s_find;
@@ -7413,6 +7392,15 @@ void DrawScriptEditor(EditorState& ed) {
             };
             for (const char* p = t;; ++p) {
                 if (*p == '\n' || *p == '\0') { drawLine(ls, p, ln); ++ln; ls = p + 1; if (*p == '\0') break; }
+            }
+            // Problem markers: a red tick on the right edge at each error line, so you
+            // can see (and jump to) every syntax problem at a glance (IDE scrollbar-style).
+            for (const auto& d : s_diags) {
+                if (d.line <= 0 || d.line > lines) continue;
+                float y = mp.y + 4.0f + (d.line - 1) * step;
+                if (y > mp.y + mh - 3.0f) y = mp.y + mh - 3.0f;
+                mdl->AddRectFilled(ImVec2(mp.x + mmW - 6.0f, y), ImVec2(mp.x + mmW - 2.0f, y + 2.5f),
+                                   IM_COL32(240, 80, 80, 235));
             }
             // Visible-region box.
             float total = (float)lines;

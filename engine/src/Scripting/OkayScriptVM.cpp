@@ -1081,6 +1081,14 @@ private:
         return stmts;
     }
 
+    // A control-flow body: either a `{ ... }` block, or — to keep simple code short —
+    // a single statement with no braces (C/JS style). So `if (hit) jump(8)` and
+    // `while (alive) step()` both work without the ceremony of braces.
+    std::vector<StmtPtr> ParseBlockOrStmt() {
+        if (Check(Tok::LBrace)) return ParseBlock();
+        return SingleStmt();
+    }
+
     // A C#-style typed local/field: a run of >= 2 identifiers (type + modifiers
     // + name) ending in '=' or ';' (e.g. `int score = 0;`, `Vector3 v;`).
     bool IsTypedVarDeclAhead() const {
@@ -1187,8 +1195,8 @@ private:
             Expect(Tok::RParen, "')'");
             auto st = std::make_unique<IfStmt>();
             st->cond = std::move(cond);
-            st->thenB = ParseBlock();
-            if (Match(Tok::Else)) st->elseB = Check(Tok::If) ? SingleStmt() : ParseBlock();
+            st->thenB = ParseBlockOrStmt();
+            if (Match(Tok::Else)) st->elseB = Check(Tok::If) ? SingleStmt() : ParseBlockOrStmt();
             return st;
         }
         if (Match(Tok::While)) {
@@ -1197,7 +1205,7 @@ private:
             Expect(Tok::RParen, "')'");
             auto st = std::make_unique<WhileStmt>();
             st->cond = std::move(cond);
-            st->body = ParseBlock();
+            st->body = ParseBlockOrStmt();
             return st;
         }
         if (Match(Tok::For)) {
@@ -1209,7 +1217,7 @@ private:
                     auto fe = std::make_unique<ForEachStmt>();
                     fe->var = var;
                     fe->iterable = ParseExpression();
-                    fe->body = ParseBlock();
+                    fe->body = ParseBlockOrStmt();
                     return fe;
                 }
                 m_pos = save; // not foreach; fall back to C-style for
@@ -1235,7 +1243,7 @@ private:
             // step (optional).
             if (!Check(Tok::RParen)) st->step = ParseExpression();
             Expect(Tok::RParen, "')'");
-            st->body = ParseBlock();
+            st->body = ParseBlockOrStmt();
             return st;
         }
         if (Match(Tok::Return)) {

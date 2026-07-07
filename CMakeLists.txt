@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.538.0
-    DESCRIPTION "A Unity-inspired C++ game engine"
+    VERSION 2.539.0
+    DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (e.g. tinyfiledialogs)
 
 # Stamp the version into binaries (used by the editor's self-updater).

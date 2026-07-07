@@ -886,8 +886,11 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
 static ImFont* g_headingFont = nullptr;   // larger Roboto face for section titles
 static ImFont* g_codeFont    = nullptr;   // monospace face for the Script Editor
 // The code font is baked at a large size and drawn downscaled, so it stays crisp at
-// any zoom (downscaling a high-res glyph beats upscaling a small one).
-static constexpr float kCodeFontBakePx = 30.0f;   // atlas size the glyphs are rasterised at
+// any zoom (downscaling a high-res glyph beats upscaling a small one). The atlas size
+// must cover the *largest* on-screen size we ever show — kCodeFontDispPx * maxZoom
+// (15 * 3.0 = 45) — or the glyphs upscale and blur past 2x zoom. Baked at 48 so the
+// entire zoom range (0.7x .. 3.0x) is a downscale, never an upscale.
+static constexpr float kCodeFontBakePx = 48.0f;   // atlas size the glyphs are rasterised at
 static constexpr float kCodeFontDispPx = 15.0f;   // on-screen size at 1.0x zoom
 static void SectionHeader(const char* label) {
     ImGui::Spacing();
@@ -5378,14 +5381,19 @@ struct ScriptCaret {
     int  gotoSelLen = 0;               // in: select this many chars from gotoPos
     bool toggleComment = false;        // in: toggle "// " on the caret's line
     std::string insert;                // in: insert this text at the caret (snippets)
+    int  insertReplaceLen = 0;         // in: delete this many chars before the caret first
+                                       // (fuzzy-completion click replaces the typed prefix)
     std::string replaceAll;            // in: replace the WHOLE buffer (format/rename) —
                                        // routed through the callback so ImGui undo stays intact
     bool autoPairs = true;             // auto-close brackets + auto-indent on Enter
     int  prevLen = -1;                 // buffer length last frame (to detect typing)
 };
-// The completion that pressing Tab will accept (the suffix after the typed prefix),
-// recomputed each frame where the autocomplete popup is shown; empty = none.
+// The completion that pressing Tab will accept, recomputed each frame where the popup
+// is shown; empty = none. g_acReplaceLen chars before the caret are replaced by it —
+// 0 for a prefix match (just append the suffix), >0 for a fuzzy match (swap the whole
+// typed word for the picked candidate).
 static std::string g_acComplete;
+static int g_acReplaceLen = 0;
 // Autocomplete popup state: number of items shown this frame (0 = no popup) and the
 // keyboard-highlighted item. Up/Down move the highlight (handled in the callback so
 // the editor's caret doesn't move lines while the popup is open).
@@ -5443,8 +5451,10 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
                 d->CursorPos = d->SelectionStart = d->SelectionEnd = ls + (off > rem ? off - rem : 0);
             }
         } else if (!g_acComplete.empty()) {
+            if (g_acReplaceLen > 0 && d->CursorPos >= g_acReplaceLen)   // fuzzy: swap typed word
+                d->DeleteChars(d->CursorPos - g_acReplaceLen, g_acReplaceLen);
             d->InsertChars(d->CursorPos, g_acComplete.c_str());
-            g_acComplete.clear();
+            g_acComplete.clear(); g_acReplaceLen = 0;
         } else {
             d->InsertChars(d->CursorPos, "    ");
         }
@@ -5466,8 +5476,10 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))
             && !g_acComplete.empty()) {
             if (d->CursorPos > 0 && d->Buf[d->CursorPos - 1] == '\n') d->DeleteChars(d->CursorPos - 1, 1);
+            if (g_acReplaceLen > 0 && d->CursorPos >= g_acReplaceLen)   // fuzzy: swap typed word
+                d->DeleteChars(d->CursorPos - g_acReplaceLen, g_acReplaceLen);
             d->InsertChars(d->CursorPos, g_acComplete.c_str());
-            g_acComplete.clear(); g_acCount = 0;
+            g_acComplete.clear(); g_acReplaceLen = 0; g_acCount = 0;
         }
         // Esc dismisses the popup until the typed word changes.
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_acDismiss = true;
@@ -5503,10 +5515,13 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         d->InsertChars(0, c->replaceAll.c_str());
         c->replaceAll.clear();
     }
-    // Insert a snippet/template at the caret.
+    // Insert a snippet/template at the caret (optionally replacing the typed prefix
+    // first, for a fuzzy-completion click).
     if (!c->insert.empty()) {
+        if (c->insertReplaceLen > 0 && d->CursorPos >= c->insertReplaceLen)
+            d->DeleteChars(d->CursorPos - c->insertReplaceLen, c->insertReplaceLen);
         d->InsertChars(d->CursorPos, c->insert.c_str());
-        c->insert.clear();
+        c->insert.clear(); c->insertReplaceLen = 0;
     }
     // Toggle "// " on the caret's line, or on EVERY line spanned by the selection
     // (Rider/VS Code). If any selected line is uncommented, all get commented; else
@@ -5896,6 +5911,60 @@ static const std::string* ScriptSignature(const std::string& name) {
     const auto& sig = ScriptSignatureMap();
     auto it = sig.find(name);
     return it == sig.end() ? nullptr : &it->second;
+}
+
+// Completion "kind" — drives the little colored tag the popup shows before each item,
+// so the list reads at a glance the way a real IDE's does (keyword / type / function /
+// local). The tag letter + color are returned together.
+enum class AcKind { Keyword, Type, Function, Variable };
+static AcKind ClassifyCompletion(const std::string& name) {
+    static const std::unordered_set<std::string> kw = {
+        "if","else","for","while","do","return","break","continue","switch","case",
+        "var","function","class","new","public","private","true","false","foreach","in",
+        "try","catch","throw","and","or","not","null","this","const","let","then","end"
+    };
+    static const std::unordered_set<std::string> types = {
+        "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
+        "SceneManager","Quaternion","transform","gameObject","OkaySource"
+    };
+    if (kw.count(name))    return AcKind::Keyword;
+    if (types.count(name)) return AcKind::Type;
+    if (ScriptSignature(name)) return AcKind::Function;
+    return AcKind::Variable;
+}
+static void AcKindTag(AcKind k, char& letter, ImU32& col) {
+    switch (k) {
+        case AcKind::Keyword:  letter = 'k'; col = IM_COL32(204, 120, 50, 255);  break; // orange
+        case AcKind::Type:     letter = 'T'; col = IM_COL32(102, 197, 204, 255); break; // teal
+        case AcKind::Function: letter = 'f'; col = IM_COL32(220, 200, 120, 255); break; // yellow
+        default:               letter = 'v'; col = IM_COL32(140, 175, 220, 255); break; // blue
+    }
+}
+
+// Fuzzy subsequence match: are all of `pat`'s chars found in `cand`, in order, case-
+// insensitively? Returns a score (higher = better: contiguous runs, a match at a word
+// start, and an early first-match all score higher) or -1 for no match. This is what
+// lets "mvfwd" find "move_forward" the way Rider/IntelliJ do.
+static int FuzzyScore(const std::string& pat, const std::string& cand) {
+    if (pat.empty()) return 0;
+    int score = 0, ci = 0, run = 0, firstAt = -1;
+    for (std::size_t pi = 0; pi < pat.size(); ) {
+        char pc = (char)std::tolower((unsigned char)pat[pi]);
+        bool found = false;
+        for (; ci < (int)cand.size(); ++ci) {
+            if ((char)std::tolower((unsigned char)cand[ci]) == pc) {
+                if (firstAt < 0) firstAt = ci;
+                bool wordStart = (ci == 0) || cand[ci-1] == '_' ||
+                                 (std::islower((unsigned char)cand[ci-1]) && std::isupper((unsigned char)cand[ci]));
+                score += 1 + run * 2 + (wordStart ? 4 : 0);
+                ++run; ++ci; ++pi; found = true; break;
+            } else run = 0;
+        }
+        if (!found) return -1;
+    }
+    if (firstAt == 0) score += 6;               // matched from the very start
+    score -= firstAt > 0 ? firstAt : 0;         // prefer earlier first-hit
+    return score;
 }
 
 // A one-line human description for a builtin, shown under its signature in the
@@ -7084,6 +7153,9 @@ void DrawScriptEditor(EditorState& ed) {
         // ONLY the crisp colored overlay shows — otherwise the two render on top of each
         // other and the colors look washed out / doubled. We draw our own caret below.
         ImGui::PushStyleColor(ImGuiCol_Text, s_highlight ? IM_COL32(0, 0, 0, 0) : IM_COL32(212, 212, 212, 255));
+        // A muted, Rider-like blue behind selected text (the default ImGui accent reads
+        // muddy on the dark code bg). Drawn under the colored overlay glyphs.
+        ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, IM_COL32(58, 92, 145, 140));
         ImGui::BeginChild("editorscroll", ImVec2(editW, av.y), true,
                           ImGuiWindowFlags_HorizontalScrollbar);
         if (g_codeFont) ImGui::PushFont(g_codeFont);   // monospace: glyphs/overlay/caret line up
@@ -7104,18 +7176,31 @@ void DrawScriptEditor(EditorState& ed) {
             s_scrollToLine = 0;
         }
 
-        // Line-number gutter (tight line spacing so rows match the editor). The
-        // caret's current line is brightened, like a real IDE, so your place is easy
-        // to find while scanning.
+        // Line-number gutter (tight line spacing so rows match the editor). Rider-style:
+        // the gutter sits on its own slightly-lighter panel, the caret's current line
+        // number gets a highlight bar, and a thin rule separates it from the code so the
+        // eye reads "numbers | code" the way a real IDE does.
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+        ImVec2 gTop = ImGui::GetCursorScreenPos();
+        float gutterW = ImGui::CalcTextSize("0000").x + charW;   // 4 digits + breathing room
+        float gutterH = lines * lineH + padY * 2 + 2;
+        ImDrawList* gdl = ImGui::GetWindowDrawList();
+        gdl->AddRectFilled(gTop, ImVec2(gTop.x + gutterW, gTop.y + gutterH), IM_COL32(37, 38, 44, 255));
+        {   // current-line highlight bar across the gutter
+            float ly = gTop.y + padY + (caret.line - 1) * lineH;
+            gdl->AddRectFilled(ImVec2(gTop.x, ly), ImVec2(gTop.x + gutterW, ly + lineH),
+                               IM_COL32(46, 48, 58, 255));
+        }
+        gdl->AddLine(ImVec2(gTop.x + gutterW - 0.5f, gTop.y),
+                     ImVec2(gTop.x + gutterW - 0.5f, gTop.y + gutterH), IM_COL32(58, 60, 70, 255));
         ImGui::BeginGroup();
         ImGui::Dummy(ImVec2(0, padY));
         for (int i = 1; i <= lines; ++i)
-            ImGui::TextColored(i == caret.line ? ImVec4(0.86f, 0.88f, 0.94f, 1.0f)
-                                               : ImVec4(0.42f, 0.44f, 0.5f, 1.0f), "%4d", i);
+            ImGui::TextColored(i == caret.line ? ImVec4(0.90f, 0.92f, 0.98f, 1.0f)
+                                               : ImVec4(0.46f, 0.48f, 0.55f, 1.0f), "%4d", i);
         ImGui::EndGroup();
         ImGui::PopStyleVar();
-        ImGui::SameLine();
+        ImGui::SameLine(0.0f, charW);   // gap so code doesn't hug the gutter rule
 
         // The editable text, sized to fit all content so the outer child does the
         // scrolling and the colored overlay (drawn after) stays aligned.
@@ -7138,8 +7223,12 @@ void DrawScriptEditor(EditorState& ed) {
         if (!caret.insert.empty() && !editorActive) {
             std::string s(buf.data());
             int p = caret.pos < 0 ? 0 : (caret.pos > (int)s.size() ? (int)s.size() : caret.pos);
+            if (caret.insertReplaceLen > 0 && p >= caret.insertReplaceLen) {
+                s.erase((std::size_t)(p - caret.insertReplaceLen), (std::size_t)caret.insertReplaceLen);
+                p -= caret.insertReplaceLen;
+            }
             s.insert((std::size_t)p, caret.insert);
-            SetCodeBuffer(sc, s); caret.insert.clear(); ed.dirty = true;
+            SetCodeBuffer(sc, s); caret.insert.clear(); caret.insertReplaceLen = 0; ed.dirty = true;
         }
         ImVec2 mn = ImGui::GetItemRectMin();
         ImVec2 origin(mn.x + padX, mn.y + padY);
@@ -7358,7 +7447,7 @@ void DrawScriptEditor(EditorState& ed) {
         mmScrollY = ImGui::GetScrollY();
         if (g_codeFont) ImGui::PopFont();
         ImGui::EndChild();
-        ImGui::PopStyleColor(3);
+        ImGui::PopStyleColor(4);
 
         // --- Minimap: a scaled overview of the file pinned beside the editor.
         // Each line is a bar (length ~ its content); a box marks the visible
@@ -7442,7 +7531,7 @@ void DrawScriptEditor(EditorState& ed) {
             }
             const std::vector<std::string>& members = ScriptMembers(receiver);
             bool memberMode = !receiver.empty() && !members.empty();
-            g_acComplete.clear(); g_acCount = 0;   // no popup unless we show one below
+            g_acComplete.clear(); g_acReplaceLen = 0; g_acCount = 0;   // no popup unless shown below
             // Reset the highlight to the best match whenever the typed word changes.
             static std::string s_acKey;
             std::string acKey = receiver + "|" + prefix;
@@ -7451,9 +7540,11 @@ void DrawScriptEditor(EditorState& ed) {
             // words still need 2+ chars so the popup doesn't fire constantly.
             if (!g_acDismiss && (memberMode || prefix.size() >= 2)) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
-                // Rank prefix matches (case-sensitive first, then case-insensitive)
-                // ahead of looser ones so the top item is the best Tab target.
-                std::vector<const std::string*> exact, ci;
+                // Rank in three tiers so the top item is always the best Tab target:
+                // (1) case-sensitive prefix, (2) case-insensitive prefix, (3) fuzzy
+                // subsequence (Rider-style: "mvfwd" -> "move_forward"), ordered by score.
+                struct Hit { const std::string* w; bool fuzzy; int score; };
+                std::vector<Hit> exact, ci, fuzz;
                 // Non-member pool = curated API + identifiers from THIS document, so
                 // your own vars/functions complete too (rebuilt per frame; buffers are small).
                 std::vector<std::string> combined;
@@ -7461,19 +7552,29 @@ void DrawScriptEditor(EditorState& ed) {
                 const std::vector<std::string>& pool = memberMode ? members : combined;
                 for (const auto& w : pool) {
                     if (w.size() < prefix.size()) continue;
-                    if (!memberMode && w.size() == prefix.size()) continue;  // exact word: nothing to add
-                    if (w.compare(0, prefix.size(), prefix) == 0) { exact.push_back(&w); continue; }
+                    if (!memberMode && w == prefix) continue;               // exact word: nothing to add
+                    if (w.compare(0, prefix.size(), prefix) == 0) { exact.push_back({&w, false, 0}); continue; }
                     std::string lw = w; for (auto& ch : lw) ch = (char)std::tolower((unsigned char)ch);
-                    if (lw.compare(0, lp.size(), lp) == 0) ci.push_back(&w);
+                    if (lw.compare(0, lp.size(), lp) == 0) { ci.push_back({&w, false, 0}); continue; }
+                    int sc = FuzzyScore(prefix, w);                          // loose subsequence fallback
+                    if (sc >= 0) fuzz.push_back({&w, true, sc});
                 }
-                std::vector<const std::string*> hits = exact;
-                for (auto* w : ci) { if (hits.size() >= 12) break; hits.push_back(w); }
+                std::sort(fuzz.begin(), fuzz.end(), [](const Hit& a, const Hit& b) {
+                    return a.score != b.score ? a.score > b.score : a.w->size() < b.w->size(); });
+                std::vector<Hit> hits = exact;
+                for (auto& h : ci)   { if (hits.size() >= 12) break; hits.push_back(h); }
+                for (auto& h : fuzz) { if (hits.size() >= 12) break; hits.push_back(h); }
                 if (hits.size() > 12) hits.resize(12);
                 if (!hits.empty()) {
                     g_acCount = (int)hits.size();
                     if (g_acIndex >= g_acCount) g_acIndex = 0;   // keep selection in range
-                    // The highlighted item is what Tab accepts (insert the missing suffix).
-                    g_acComplete = hits[g_acIndex]->substr(prefix.size());
+                    // The highlighted item is what Tab/Enter accepts. Prefix hits append
+                    // the missing suffix; fuzzy hits replace the whole typed word.
+                    auto setAccept = [&](const Hit& h) {
+                        if (h.fuzzy) { g_acComplete = *h.w; g_acReplaceLen = (int)prefix.size(); }
+                        else         { g_acComplete = h.w->substr(prefix.size()); g_acReplaceLen = 0; }
+                    };
+                    setAccept(hits[g_acIndex]);
                     ImGui::SetNextWindowPos(ImVec2(caretScreen.x, caretScreen.y + 2));
                     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 46, 245));
                     if (ImGui::Begin("##autocomplete", nullptr,
@@ -7482,16 +7583,22 @@ void DrawScriptEditor(EditorState& ed) {
                             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                             ImGuiWindowFlags_NoSavedSettings)) {
                         for (std::size_t i = 0; i < hits.size(); ++i) {
+                            const std::string& nm = *hits[i].w;
+                            // Kind tag (k/T/f/v, colored) so the list reads like an IDE's.
+                            char letter; ImU32 tcol; AcKindTag(ClassifyCompletion(nm), letter, tcol);
+                            ImGui::TextColored(ImColor(tcol), "%c", letter);
+                            ImGui::SameLine(0, 6);
                             // Name (clickable) + its signature params dimmed alongside,
                             // so you see what a builtin takes without opening the docs.
-                            float nameW = ImGui::CalcTextSize(hits[i]->c_str()).x;
+                            float nameW = ImGui::CalcTextSize(nm.c_str()).x;
                             char sid[24]; std::snprintf(sid, sizeof(sid), "##ac%zu", i);
-                            if (ImGui::Selectable((std::string(*hits[i]) + sid).c_str(),
+                            if (ImGui::Selectable((nm + sid).c_str(),
                                                   (int)i == g_acIndex, ImGuiSelectableFlags_None, ImVec2(nameW, 0))) {
                                 g_acIndex = (int)i;
-                                caret.insert = hits[i]->substr(prefix.size());  // spliced when editor inactive
+                                if (hits[i].fuzzy) { caret.insert = nm; caret.insertReplaceLen = (int)prefix.size(); }
+                                else { caret.insert = hits[i].w->substr(prefix.size()); caret.insertReplaceLen = 0; }
                             }
-                            if (const std::string* sg = ScriptSignature(*hits[i])) {
+                            if (const std::string* sg = ScriptSignature(nm)) {
                                 const char* paren = std::strchr(sg->c_str(), '(');   // show just "(args)"
                                 ImGui::SameLine(0, 12);
                                 ImGui::TextDisabled("%s", paren ? paren : sg->c_str());
@@ -7500,7 +7607,7 @@ void DrawScriptEditor(EditorState& ed) {
                         // Plain-English description of the highlighted builtin, so you
                         // learn what it does right in the popup (no trip to the docs).
                         if (g_acIndex >= 0 && g_acIndex < (int)hits.size()) {
-                            if (const std::string* d = ScriptDoc(*hits[g_acIndex])) {
+                            if (const std::string* d = ScriptDoc(*hits[g_acIndex].w)) {
                                 ImGui::Separator();
                                 ImGui::PushTextWrapPos(320.0f);
                                 ImGui::TextColored(ImVec4(0.66f, 0.80f, 0.62f, 1.0f), "%s", d->c_str());
@@ -7508,7 +7615,7 @@ void DrawScriptEditor(EditorState& ed) {
                             }
                         }
                         ImGui::Separator();
-                        ImGui::TextDisabled("Up/Down select   Tab accept   F12 def");
+                        ImGui::TextDisabled("Up/Down select   Tab/Enter accept   F12 def   Esc dismiss");
                     }
                     ImGui::End();
                     ImGui::PopStyleColor();
@@ -7532,6 +7639,15 @@ void DrawScriptEditor(EditorState& ed) {
                 int s = e; while (s > 0 && isW(tx[s-1])) --s;
                 if (e > s) {
                     std::string name(tx + s, tx + e);
+                    // Which argument is the caret on? Count depth-0 commas since the '('.
+                    int activeArg = 0;
+                    { int d2 = 0;
+                      for (int i = op + 1; i < p && tx[i]; ++i) {
+                          char ch = tx[i];
+                          if (ch=='('||ch=='['||ch=='{') ++d2;
+                          else if (ch==')'||ch==']'||ch=='}') { if (d2>0) --d2; }
+                          else if (ch==',' && d2==0) ++activeArg;
+                      } }
                     if (const std::string* sgn = ScriptSignature(name)) {
                         float y = caretScreen.y - lineH - 4.0f;
                         if (y < 0) y = caretScreen.y + lineH + 2.0f;   // flip below if off-screen
@@ -7542,7 +7658,36 @@ void DrawScriptEditor(EditorState& ed) {
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs)) {
-                            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sgn->c_str());
+                            // Render "name(a, b, c)" with the active parameter brightened,
+                            // the rest dimmed — Rider's parameter-info popup. Fall back to
+                            // a flat render for union/variadic signatures ('|', '...').
+                            const ImVec4 dim(0.62f, 0.62f, 0.72f, 1.0f), hot(1.0f, 0.86f, 0.45f, 1.0f);
+                            const std::string& sig = *sgn;
+                            std::size_t lpar = sig.find('('), rpar = sig.rfind(')');
+                            bool simple = lpar != std::string::npos && rpar != std::string::npos &&
+                                          rpar > lpar && sig.find('|') == std::string::npos;
+                            if (simple) {
+                                std::string inner = sig.substr(lpar + 1, rpar - lpar - 1);
+                                std::vector<std::string> params; { std::string cur; int d3 = 0;
+                                    for (char ch : inner) {
+                                        if (ch=='('||ch=='['||ch=='{') { ++d3; cur+=ch; }
+                                        else if (ch==')'||ch==']'||ch=='}') { --d3; cur+=ch; }
+                                        else if (ch==',' && d3==0) { params.push_back(cur); cur.clear(); }
+                                        else cur+=ch;
+                                    }
+                                    if (!cur.empty() || !params.empty()) params.push_back(cur); }
+                                ImGui::TextColored(dim, "%s(", sig.substr(0, lpar).c_str());
+                                for (std::size_t i = 0; i < params.size(); ++i) {
+                                    std::string pr = params[i];
+                                    std::size_t a = pr.find_first_not_of(' '); if (a!=std::string::npos) pr=pr.substr(a);
+                                    if (i) { ImGui::SameLine(0,0); ImGui::TextColored(dim, ", "); }
+                                    ImGui::SameLine(0,0);
+                                    ImGui::TextColored((int)i==activeArg ? hot : dim, "%s", pr.c_str());
+                                }
+                                ImGui::SameLine(0,0); ImGui::TextColored(dim, ")");
+                            } else {
+                                ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sig.c_str());
+                            }
                             if (const std::string* dc = ScriptDoc(name)) {
                                 ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
                                 ImGui::TextColored(ImVec4(0.72f, 0.76f, 0.72f, 1.0f), "%s", dc->c_str());

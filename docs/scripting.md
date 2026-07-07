@@ -227,6 +227,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `after(secs, "fn")` | call a function once after a delay (respawns, cooldowns) |
 | `every(secs, "fn")` | call a function repeatedly at an interval (spawn waves, blinking) |
 | `cancel_timers()` | clear this script's scheduled after()/every() callbacks |
+| `cooldown("name", secs)` | true (and restarts) only once every `secs` — shooting, dashes, abilities |
+| `once("name")` | true exactly the first time it's reached — one-time events, no flag |
+| `stop()` | zero this object's Rigidbody velocity |
+| `is_moving()` / `face_velocity()` | is the Rigidbody2D moving / turn to its heading |
 | `set_timescale(x)` / `timescale()` | global speed (0 = pause, 0.5 = slow-mo) |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |

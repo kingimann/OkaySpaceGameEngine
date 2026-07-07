@@ -4011,6 +4011,53 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // stop(): zero this object's Rigidbody velocity (halt in place).
+        b["stop"] = [go](std::vector<Value>&) {
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->velocity = {0.0f, 0.0f};
+                if (auto* rb3 = g->GetComponent<Rigidbody3D>()) rb3->velocity = {0.0f, 0.0f, 0.0f};
+            }
+            return Value{};
+        };
+        // is_moving(): true when the Rigidbody2D is moving (for anim/state).
+        b["is_moving"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go())
+                if (auto* rb = g->GetComponent<Rigidbody2D>())
+                    return Value{(rb->velocity.x * rb->velocity.x + rb->velocity.y * rb->velocity.y) > 1e-4f};
+            return Value{false};
+        };
+        // face_velocity(): rotate (Z) to point the way the Rigidbody2D is moving.
+        b["face_velocity"] = [go, tf](std::vector<Value>&) {
+            GameObject* g = go(); Transform* t = tf(); if (!g || !t) return Value{};
+            if (auto* rb = g->GetComponent<Rigidbody2D>()) {
+                float vx = rb->velocity.x, vy = rb->velocity.y;
+                if (vx * vx + vy * vy > 1e-6f)
+                    t->localRotation = Quat::Euler({0, 0, std::atan2(vy, vx) * 57.2957795f});
+            }
+            return Value{};
+        };
+        // cooldown("name", secs): true (and starts the timer) only when at least
+        // `secs` have passed since it last returned true — shooting, dashes, abilities.
+        //   if (cooldown("shoot", 0.3)) spawn("bullet.okayprefab", pos_x(), pos_y())
+        b["cooldown"] = [this](std::vector<Value>& a) -> Value {
+            if (!rt.host || a.size() < 2) return Value{false};
+            std::string key = "__cd_" + a[0].AsString();
+            float now = Time::ElapsedTime(), secs = a[1].AsFloat();
+            auto& g = rt.host->globals;
+            float last = g.count(key) ? g[key].AsFloat() : -1e9f;
+            if (now - last >= secs) { g[key] = Value{now}; return Value{true}; }
+            return Value{false};
+        };
+        // once("name"): true exactly the first time it's reached, false ever after
+        // (per name) — fire one-time events without a manual "did I already?" flag.
+        b["once"] = [this](std::vector<Value>& a) -> Value {
+            if (!rt.host || a.empty()) return Value{false};
+            std::string key = "__once_" + a[0].AsString();
+            auto& g = rt.host->globals;
+            if (g.count(key)) return Value{false};
+            g[key] = Value{1.0f};
+            return Value{true};
+        };
 
         // --- This object's identity / state ---
         b["name"] = [go](std::vector<Value>&) -> Value {

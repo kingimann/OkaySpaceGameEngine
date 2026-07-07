@@ -8,9 +8,12 @@
 //   * .gltf with an external .bin next to it.
 // No external dependency — a tiny JSON parser + base64 decoder live here.
 //
-// Scope (v1): geometry only (no skin/animation yet); node transforms are not baked,
-// so a model authored at the origin imports 1:1. Skinned/animated import is a planned
-// follow-up that will feed the Character/Animator systems.
+// Also resolves each material's base-color (albedo) texture to a file path: external
+// images are referenced in place, embedded images (`data:` URIs or .glb bufferViews)
+// are extracted to a sidecar PNG/JPEG next to the model. (ImportModelScene rebuilds
+// the node graph with per-node transforms; the merged LoadGLTF() path does not bake
+// them.) Skinned/animated import is a planned follow-up feeding the Character/Animator
+// systems; other PBR maps (normal/metallic-roughness/emissive) are not imported yet.
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -291,10 +294,130 @@ inline Mesh BuildMeshAt(const GltfDoc& doc, int meshIndex) {
     return mesh;
 }
 
+// Decode %20-style percent escapes in a glTF URI (Blender writes spaces as %20).
+inline std::string UriDecode(const std::string& s) {
+    std::string out; out.reserve(s.size());
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            int h = hex(s[i + 1]), l = hex(s[i + 2]);
+            if (h >= 0 && l >= 0) { out += (char)((h << 4) | l); i += 2; continue; }
+        }
+        out += s[i];
+    }
+    return out;
+}
+
+// Write already-encoded image bytes (PNG/JPEG, as glTF stores them) to a sidecar
+// file next to the model, named "<model>_texN.<ext>". Returns "" on failure.
+inline std::string WriteImageSidecar(const GltfDoc& doc, const std::string& modelPath,
+                                     int imageIdx, const std::string& mime,
+                                     const std::vector<std::uint8_t>& data) {
+    if (data.empty()) return {};
+    std::string ext = (mime.find("jpeg") != std::string::npos || mime.find("jpg") != std::string::npos)
+                          ? ".jpg" : ".png";
+    std::string stem = modelPath;
+    if (std::size_t sl = stem.find_last_of("/\\"); sl != std::string::npos) stem = stem.substr(sl + 1);
+    if (std::size_t dot = stem.find_last_of('.'); dot != std::string::npos) stem = stem.substr(0, dot);
+    std::string out = doc.dir + stem + "_tex" + std::to_string(imageIdx) + ext;
+    std::ofstream of(out, std::ios::binary);
+    if (!of) return {};
+    of.write((const char*)data.data(), (std::streamsize)data.size());
+    return of ? out : std::string{};
+}
+
+// The image index of a mesh's base-color texture (its first primitive's material),
+// or -1 if that mesh has none.
+inline int MeshBaseColorImage(const GltfDoc& doc, int meshIndex) {
+    const JVal* meshes = doc.root.Find("meshes");
+    const JVal* mats   = doc.root.Find("materials");
+    const JVal* texs   = doc.root.Find("textures");
+    if (!meshes || !mats || !texs || meshIndex < 0 || meshIndex >= (int)meshes->arr.size()) return -1;
+    const JVal* prims = meshes->arr[meshIndex].Find("primitives"); if (!prims) return -1;
+    for (const JVal& prim : prims->arr) {
+        const JVal* mi = prim.Find("material"); if (!mi) continue;
+        int matI = mi->Int(-1); if (matI < 0 || matI >= (int)mats->arr.size()) continue;
+        const JVal* pbr = mats->arr[matI].Find("pbrMetallicRoughness"); if (!pbr) continue;
+        const JVal* bct = pbr->Find("baseColorTexture"); if (!bct) continue;
+        int texI = bct->Find("index") ? bct->Find("index")->Int(-1) : -1;
+        if (texI < 0 || texI >= (int)texs->arr.size()) continue;
+        const JVal* src = texs->arr[texI].Find("source"); if (!src) continue;
+        int im = src->Int(-1); if (im >= 0) return im;
+    }
+    return -1;
+}
+
+// Resolve an image index to a file path on disk. External images are referenced in
+// place (resolved next to the model, percent-decoded); embedded images (`data:`
+// URIs or `.glb` bufferViews) are extracted to a sidecar file. "" if unavailable.
+inline std::string ImageFilePath(const GltfDoc& doc, int imageIdx, const std::string& modelPath) {
+    const JVal* imgs = doc.root.Find("images");
+    if (!imgs || imageIdx < 0 || imageIdx >= (int)imgs->arr.size()) return {};
+    const JVal& img = imgs->arr[imageIdx];
+
+    if (const JVal* uri = img.Find("uri"); uri && uri->type == JVal::Str) {
+        const std::string& u = uri->str;
+        if (u.rfind("data:", 0) != 0) {                       // external image file
+            std::string du = UriDecode(u);
+            bool absolute = (!du.empty() && (du[0] == '/' || du[0] == '\\')) ||
+                            (du.size() > 1 && du[1] == ':');
+            return absolute ? du : doc.dir + du;
+        }
+        std::string mime = "image/png";                       // data: base64 payload
+        std::size_t colon = u.find(':'), semi = u.find(';');
+        if (colon != std::string::npos && semi != std::string::npos && semi > colon)
+            mime = u.substr(colon + 1, semi - colon - 1);
+        const std::string mark = "base64,"; std::size_t bp = u.find(mark);
+        if (bp == std::string::npos) return {};
+        std::vector<std::uint8_t> data; Base64Decode(u.substr(bp + mark.size()), data);
+        return WriteImageSidecar(doc, modelPath, imageIdx, mime, data);
+    }
+    if (const JVal* bv = img.Find("bufferView")) {            // embedded in a .glb
+        int bvi = bv->Int(-1);
+        const JVal* views = doc.root.Find("bufferViews");
+        if (!views || bvi < 0 || bvi >= (int)views->arr.size()) return {};
+        const JVal& v = views->arr[bvi];
+        int buf = v.Find("buffer") ? v.Find("buffer")->Int(-1) : -1;
+        int off = v.Find("byteOffset") ? v.Find("byteOffset")->Int(0) : 0;
+        int len = v.Find("byteLength") ? v.Find("byteLength")->Int(0) : 0;
+        if (buf < 0 || buf >= (int)doc.buffers.size() || len <= 0) return {};
+        const auto& s = doc.buffers[buf];
+        if ((std::size_t)off + (std::size_t)len > s.size()) return {};
+        std::vector<std::uint8_t> data(s.begin() + off, s.begin() + off + len);
+        std::string mime = img.Find("mimeType") ? img.Find("mimeType")->Text() : "image/png";
+        return WriteImageSidecar(doc, modelPath, imageIdx, mime, data);
+    }
+    return {};
+}
+
+// Base-color texture path for a single mesh (per-node import). "" if none.
+inline std::string ResolveMeshTexture(const GltfDoc& doc, int meshIndex, const std::string& modelPath) {
+    int im = MeshBaseColorImage(doc, meshIndex);
+    return im < 0 ? std::string{} : ImageFilePath(doc, im, modelPath);
+}
+
+// Base-color texture path for the whole model (first textured mesh) — used by the
+// merged LoadGLTF path where all primitives collapse into one Mesh.
+inline std::string ResolveBaseColorTexture(const GltfDoc& doc, const std::string& modelPath) {
+    const JVal* meshes = doc.root.Find("meshes"); if (!meshes) return {};
+    for (int i = 0; i < (int)meshes->arr.size(); ++i) {
+        std::string p = ResolveMeshTexture(doc, i, modelPath);
+        if (!p.empty()) return p;
+    }
+    return {};
+}
+
 } // namespace gltf_detail
 
-// Load a glTF/GLB file into one merged Mesh. `ok` (optional) reports success.
-inline Mesh LoadGLTF(const std::string& path, bool* ok = nullptr) {
+// Load a glTF/GLB file into one merged Mesh. `ok` (optional) reports success;
+// `outTexture` (optional) receives the base-color texture's file path (external
+// images are referenced in place, embedded ones extracted next to the model).
+inline Mesh LoadGLTF(const std::string& path, bool* ok = nullptr, std::string* outTexture = nullptr) {
     using namespace gltf_detail;
     Mesh mesh;
     GltfDoc doc = LoadDoc(path);
@@ -305,6 +428,7 @@ inline Mesh LoadGLTF(const std::string& path, bool* ok = nullptr) {
             for (const JVal& prim : prims->arr) AppendPrimitive(doc, prim, mesh);
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
+    if (outTexture) { std::string t = ResolveBaseColorTexture(doc, path); if (!t.empty()) *outTexture = t; }
     if (ok) *ok = !mesh.vertices.empty();
     return mesh;
 }

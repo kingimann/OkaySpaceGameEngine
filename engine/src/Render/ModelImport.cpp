@@ -80,7 +80,7 @@ static Mesh ViaAssimp(const std::string& path, bool* ok) {
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     std::string p = Lower(path);
     if (EndsWith(p, ".obj"))                          return Mesh::LoadOBJ(path, ok, outTexture);
-    if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok);
+    if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok, outTexture);
 #ifdef OKAY_HAVE_ASSIMP
     return ViaAssimp(path, ok);
 #else
@@ -171,8 +171,11 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
 
     GameObject* root = scene.CreateGameObject(BaseName(path));
     if (nodeCount == 0) {   // no scene graph: just merge the meshes onto the root
-        bool okm = false; Mesh m = LoadGLTF(path, &okm);
-        if (okm && !m.vertices.empty()) { auto* mr = root->AddComponent<MeshRenderer>(); mr->mesh = m; mr->doubleSided = true; }
+        bool okm = false; std::string tex; Mesh m = LoadGLTF(path, &okm, &tex);
+        if (okm && !m.vertices.empty()) {
+            auto* mr = root->AddComponent<MeshRenderer>(); mr->mesh = m; mr->doubleSided = true;
+            if (!tex.empty()) mr->texture = tex;
+        }
         if (ok) *ok = okm;
         return root;
     }
@@ -200,8 +203,13 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
             if (n.Find("skin")) {
                 skinnedNodes.push_back(i);   // deformed in the skin pass below
             } else {
-                Mesh mm = BuildMeshAt(doc, M->Int(-1));
-                if (!mm.vertices.empty()) { auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = mm; mr->doubleSided = true; }
+                int meshIdx = M->Int(-1);
+                Mesh mm = BuildMeshAt(doc, meshIdx);
+                if (!mm.vertices.empty()) {
+                    auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = mm; mr->doubleSided = true;
+                    std::string tx = ResolveMeshTexture(doc, meshIdx, path);
+                    if (!tx.empty()) mr->texture = tx;
+                }
             }
         }
     }

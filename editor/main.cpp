@@ -3647,6 +3647,13 @@ void DrawProject(EditorState& ed) {
     ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
     ImGui::Separator();
 
+    // Reserve room at the bottom for the selected-asset details strip and scroll
+    // only the tile grid, so the "inspector" footer stays pinned in view even when
+    // the folder has more assets than fit (Unity keeps the preview always visible).
+    const float detailsH = selected.empty() ? ImGui::GetFrameHeightWithSpacing() + 4.0f
+                                            : 112.0f;
+    ImGui::BeginChild("gridscroll", ImVec2(0, -detailsH), false);
+
     // Map the filter to a set of extensions ("" = always show, dirs always show).
     auto passFilter = [&](const std::string& ext, bool isDir) -> bool {
         if (isDir || s_filter == 0) return true;
@@ -3827,20 +3834,8 @@ void DrawProject(EditorState& ed) {
             ? "No project open — File > New Project to create one."
             : (s_filter == 0 && needle.empty() ? "Empty folder." : "No matching assets."));
     }
-    // Footer: item count + the selected asset's name and size.
-    ImGui::Separator();
-    if (!selected.empty()) {
-        std::error_code se; std::uintmax_t sz = fs::is_regular_file(selected, se) ? fs::file_size(selected, se) : 0;
-        ImGui::TextDisabled("%d item%s   |   %s%s", shown, shown == 1 ? "" : "s",
-                            fs::path(selected).filename().string().c_str(),
-                            sz ? ("  (" + (sz < 1024 ? std::to_string(sz) + " B"
-                                  : sz < 1024 * 1024 ? std::to_string(sz / 1024) + " KB"
-                                  : std::to_string(sz / (1024 * 1024)) + " MB") + ")").c_str() : "");
-    } else {
-        ImGui::TextDisabled("%d item%s", shown, shown == 1 ? "" : "s");
-    }
-
-    // Right-click empty space: create assets here / reveal the folder.
+    // Right-click empty space: create assets here / reveal the folder. Inside the
+    // scroll child so it opens over the grid's empty area, not the details strip.
     if (ImGui::BeginPopupContextWindow("bgctx",
             ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if (canEdit) {
@@ -3873,6 +3868,97 @@ void DrawProject(EditorState& ed) {
         }
         if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(dir.string());
         ImGui::EndPopup();
+    }
+    ImGui::EndChild();   // gridscroll
+
+    // ---- Details / preview strip (pinned footer) ---------------------------
+    // Unity's Project panel shows a preview + metadata for the highlighted asset;
+    // do the same so this is an inspector, not just a bare file list. Nothing
+    // selected -> just the item count and clipboard hint.
+    ImGui::Separator();
+    if (selected.empty()) {
+        ImGui::TextDisabled("%d item%s", shown, shown == 1 ? "" : "s");
+        if (!s_assetClip.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("   |   %s: %s  (Ctrl+V to paste here)",
+                                s_assetClipCut ? "Cut" : "Copied",
+                                fs::path(s_assetClip).filename().string().c_str());
+        }
+    } else {
+        std::error_code se;
+        fs::path sp(selected);
+        bool selDir = fs::is_directory(sp, se);
+        std::string sext = Lower(sp.extension().string());
+        AssetKind sk = KindOf(sext, selDir);
+        auto typeName = [&]() -> const char* {
+            switch (sk.icon) {
+                case AssetIcon::Folder:   return "Folder";
+                case AssetIcon::Script:   return "Script";
+                case AssetIcon::Material: return "Material";
+                case AssetIcon::Scene:    return "Scene";
+                case AssetIcon::Prefab:   return "Prefab";
+                case AssetIcon::Image:    return "Texture";
+                case AssetIcon::Audio:    return "Audio Clip";
+                case AssetIcon::Mesh:     return "Model";
+                case AssetIcon::Data:     return "Data Asset";
+                case AssetIcon::Visual:   return "Visual Script";
+                default:                  return "File";
+            }
+        };
+        // Left: a larger preview — the real image for textures, else the type icon.
+        const float pv = 68.0f;
+        SDL_Texture* pthumb = (!selDir && sk.icon == AssetIcon::Image) ? GetThumb(selected) : nullptr;
+        ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + pv, p0.y + pv);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, p1, IM_COL32(28, 30, 34, 255), 4.0f);
+        if (pthumb) dl->AddImage((ImTextureID)pthumb, ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2));
+        else        DrawAssetIcon(dl, p0, p1, sk);
+        dl->AddRect(p0, p1, IM_COL32(70, 74, 82, 255), 4.0f);
+        ImGui::Dummy(ImVec2(pv, pv));
+        ImGui::SameLine();
+        // Right: metadata (name heading, type/size/dimensions, path, scene usage, actions).
+        ImGui::BeginGroup();
+        if (g_headingFont) ImGui::PushFont(g_headingFont);
+        ImGui::TextUnformatted(sp.filename().string().c_str());
+        if (g_headingFont) ImGui::PopFont();
+        std::string meta = typeName();
+        auto humanSize = [](std::uintmax_t z) {
+            return z < 1024 ? std::to_string(z) + " B"
+                 : z < 1024 * 1024 ? std::to_string(z / 1024) + " KB"
+                 : std::to_string(z / (1024 * 1024)) + " MB";
+        };
+        if (selDir) {
+            int nItems = 0; std::error_code ce;
+            for (auto& c : fs::directory_iterator(sp, ce)) { (void)c; ++nItems; }
+            meta += "   \xe2\x80\xa2   " + std::to_string(nItems) + (nItems == 1 ? " item" : " items");
+        } else {
+            std::uintmax_t sz = fs::is_regular_file(sp, se) ? fs::file_size(sp, se) : 0;
+            if (sz) meta += "   \xe2\x80\xa2   " + humanSize(sz);
+            if (pthumb) { int tw = 0, th = 0; SDL_QueryTexture(pthumb, nullptr, nullptr, &tw, &th);
+                          if (tw > 0) meta += "   \xe2\x80\xa2   " + std::to_string(tw) + " x " + std::to_string(th); }
+        }
+        ImGui::TextDisabled("%s", meta.c_str());
+        std::error_code re2; fs::path rel = fs::relative(sp, root, re2);
+        ImGui::TextDisabled("%s", (re2 || rel.empty() || rel.native()[0] == '.')
+                                      ? sp.string().c_str()
+                                      : ("Assets/" + rel.generic_string()).c_str());
+        // Scene usage for referenceable assets (Unity's "used in scene").
+        if (!selDir && (sk.icon == AssetIcon::Image || sk.icon == AssetIcon::Mesh ||
+                        sk.icon == AssetIcon::Script || sk.icon == AssetIcon::Material)) {
+            std::string fn = sp.filename().string(); int uses = 0;
+            for (const auto& up : ed.scene().Objects()) if (ObjectUsesAsset(up.get(), fn)) ++uses;
+            if (uses) ImGui::TextDisabled("Used by %d object%s in scene", uses, uses == 1 ? "" : "s");
+        }
+        if (ImGui::SmallButton("Show in Explorer"))
+            extide::RevealInFiles((selDir ? sp : sp.parent_path()).string());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy Path")) ImGui::SetClipboardText(selected.c_str());
+        if (!s_assetClip.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%s: %s)", s_assetClipCut ? "Cut" : "Copied",
+                                fs::path(s_assetClip).filename().string().c_str());
+        }
+        ImGui::EndGroup();
     }
 
     // F2 renames the selected asset (Explorer/Unity-style) when the Project
@@ -3951,12 +4037,6 @@ void DrawProject(EditorState& ed) {
         if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_X, false)) { s_assetClip = selected; s_assetClipCut = true; }
         if (kio.KeyCtrl && !s_assetClip.empty() && canEdit && ImGui::IsKeyPressed(ImGuiKey_V, false)) pasteInto(dir);
     }
-    // Clipboard status hint in the footer area so Cut/Copy is discoverable.
-    if (!s_assetClip.empty()) {
-        ImGui::TextDisabled("%s: %s  (Ctrl+V to paste here)", s_assetClipCut ? "Cut" : "Copied",
-                            fs::path(s_assetClip).filename().string().c_str());
-    }
-
     // Whole-grid drop: drag a GameObject from the Hierarchy anywhere onto the asset
     // area to save it here as a prefab (Unity-style "drag to Project to make a prefab").
     if (ImGuiWindow* gw = ImGui::GetCurrentWindow()) {

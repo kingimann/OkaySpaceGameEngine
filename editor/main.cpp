@@ -113,6 +113,7 @@ int main(int argc, char** argv) {
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
+#include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 
 #include <vector>
 
@@ -23482,6 +23483,17 @@ int main(int argc, char** argv) {
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
     // button labels like "Load" in a panel) at end users.
     io.ConfigDebugHighlightIdConflicts = false;
+    // A clean, modern proportional UI font (Roboto Medium, embedded — Unity's
+    // runtime/Material typeface) instead of Dear ImGui's tiny built-in bitmap font.
+    // Crisper at any zoom and far more legible across the whole editor. Falls back
+    // to the default font if the atlas build ever fails.
+    {
+        ImFontConfig fc;
+        fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
+        if (!io.Fonts->AddFontFromMemoryCompressedBase85TTF(
+                RobotoMedium_compressed_data_base85, 16.0f, &fc))
+            io.Fonts->AddFontDefault();
+    }
     LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);

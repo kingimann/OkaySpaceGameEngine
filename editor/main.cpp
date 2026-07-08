@@ -11182,6 +11182,27 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             t = 0.0f; ed.dirty = true;
         }
 
+        // Copy/Paste a clip BETWEEN models (same-skeleton retarget: node names must
+        // match; unmatched nodes just stay still on the target).
+        static ModelAnimator::Clip s_clipClipboard;
+        static bool s_clipCopied = false;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy##maed")) { s_clipClipboard = ma->clips[ma->active]; s_clipCopied = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy this clip — paste it on another model with the same bone names");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!s_clipCopied);
+        if (ImGui::SmallButton("Paste##maed")) {
+            ed.PushUndo();
+            int matched = 0;
+            for (const auto& nc : s_clipClipboard.nodes)
+                if (ed.scene().Find(nc.node)) ++matched;
+            ma->clips.push_back(s_clipClipboard);
+            ma->active = (int)ma->clips.size() - 1; t = 0.0f; ed.dirty = true;
+            ConsoleLog("Pasted clip '" + s_clipClipboard.name + "' (" + std::to_string(matched) + "/" +
+                       std::to_string(s_clipClipboard.nodes.size()) + " bones matched in scene)");
+        }
+        ImGui::EndDisabled();
+
         // Split: carve a time range out of the active clip into a NEW named clip —
         // how a single-take file (Mixamo/Meshy "one long animation") becomes
         // separate idle/walk/attack clips. Keys are re-timed to start at 0, with
@@ -15179,6 +15200,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Blend##ma", &ma->blendTime, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Crossfade when switching clips: the pose eases into the new clip\nover this many seconds instead of snapping. 0 = instant.");
+            if (ImGui::Checkbox("Root Motion##ma", &ma->rootMotion)) { ed.dirty = true; if (ed.isPlaying()) ma->PlayIndex(ma->active); }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Move the OBJECT by the clip's root-bone ground translation instead of\nletting the bone slide inside the model — a walk clip really walks forward.");
+            if (ma->rootMotion && ma->active >= 0 && ma->active < (int)ma->clips.size()) {
+                // Bone picker: nodes of the active clip that carry position tracks.
+                const char* curLbl = ma->rootMotionNode.empty() ? "(auto)" : ma->rootMotionNode.c_str();
+                ImGui::SetNextItemWidth(220);
+                if (ImGui::BeginCombo("Root Bone##ma", curLbl)) {
+                    if (ImGui::Selectable("(auto)", ma->rootMotionNode.empty())) { ma->rootMotionNode.clear(); ed.dirty = true; }
+                    for (const auto& nc : ma->clips[ma->active].nodes) {
+                        if (!nc.clip.HasTrack("position.x") && !nc.clip.HasTrack("position.z")) continue;
+                        if (ImGui::Selectable(nc.node.c_str(), ma->rootMotionNode == nc.node)) {
+                            ma->rootMotionNode = nc.node; ed.dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
 
             SectionHeader("Locomotion (auto idle/walk/run)");
             if (ImGui::Checkbox("Drive by movement##ma", &ma->driveByMovement)) ed.dirty = true;

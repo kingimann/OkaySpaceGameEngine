@@ -39,6 +39,14 @@ public:
     /// was into the new clip instead of snapping. 0 = instant switch.
     float blendTime = 0.25f;
 
+    /// Root motion: move the OBJECT by the clip's root-bone ground translation
+    /// instead of letting the bone slide inside the model — a walk clip then
+    /// really walks the character forward. The root bone's X/Z position tracks
+    /// are stripped from playback (Y bounce stays on the bone) and their per-frame
+    /// delta is applied to this GameObject in world space.
+    bool        rootMotion = false;
+    std::string rootMotionNode;   ///< bone to read ("" = auto: first node with position tracks)
+
     /// Push callback for fired clip events; or poll with Consume/NextAnimEvent.
     std::function<void(const std::string&)> onAnimEvent;   // not serialized
     std::vector<std::string> ConsumeAnimEvents() { auto q = std::move(m_firedEvents); m_firedEvents.clear(); return q; }
@@ -84,6 +92,35 @@ public:
                 };
                 if (loop && t1 > len) { fire(t0, len); fire(0.0f, std::fmod(t1, len)); }
                 else                  fire(t0, t1);
+            }
+            // Root motion: the ground translation the root bone would have made
+            // this frame becomes movement of the whole object (world space, so it
+            // respects the model's rotation and import scale).
+            if (rootMotion && transform && len > 0.0f) {
+                if (const NodeClip* rn = RootMotionClip()) {
+                    auto posAt = [&](float tm) {
+                        // Sample just INSIDE the end: looping curves wrap t==len back
+                        // to t==0, which would cancel each loop's translation in the
+                        // wrap delta below.
+                        float cap = len - std::fmax(1e-5f, len * 1e-6f);
+                        if (tm > cap) tm = cap;
+                        bool f; Vec3 p{0, 0, 0};
+                        float v = rn->clip.Evaluate("position.x", tm, f); if (f) p.x = v;
+                        v = rn->clip.Evaluate("position.z", tm, f);       if (f) p.z = v;
+                        return p;
+                    };
+                    float e0 = loop ? std::fmod(std::fmod(t0, len) + len, len) : std::fmin(t0, len);
+                    float e1 = loop ? std::fmod(std::fmod(t1, len) + len, len) : std::fmin(t1, len);
+                    Vec3 d;
+                    if (loop && e1 < e0)   // wrapped: end-of-clip stretch + start stretch
+                        d = (posAt(len) - posAt(e0)) + (posAt(e1) - posAt(0.0f));
+                    else
+                        d = posAt(e1) - posAt(e0);
+                    if (d.x != 0.0f || d.z != 0.0f) {
+                        Vec3 wd = transform->LocalToWorldMatrix().MultiplyVector(d);
+                        transform->SetPosition(transform->Position() + wd);
+                    }
+                }
             }
             m_clock = len > 0.0f ? (loop ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
         }
@@ -161,6 +198,7 @@ public:
                                        g->transform->localRotation, g->transform->localScale});
         }
         m_clock = 0.0f;   // the event clock restarts with the node Animators
+        const NodeClip* rootNC = rootMotion ? RootMotionClip() : nullptr;
         for (NodeClip& nc : clips[i].nodes) {
             GameObject* g = sc->Find(nc.node);
             if (!g) continue;
@@ -168,10 +206,30 @@ public:
             if (!an) an = g->AddComponent<Animator>();
             nc.clip.loop = loop;
             an->clip = nc.clip;
+            // Root motion: the object moves instead of the bone — strip the bone's
+            // ground translation from what the Animator plays (Y bounce stays).
+            if (rootNC == &nc) {
+                an->clip.RemoveTrack("position.x");
+                an->clip.RemoveTrack("position.z");
+            }
             an->speed = speed;
             an->playing = true;
             an->Restart();
         }
+    }
+
+    /// The active clip's root-motion source: the named node, else the first node
+    /// with a ground-translation track. Null when the clip has none.
+    const NodeClip* RootMotionClip() const {
+        if (active < 0 || active >= (int)clips.size()) return nullptr;
+        const NodeClip* first = nullptr;
+        for (const NodeClip& nc : clips[active].nodes) {
+            bool hasPos = nc.clip.HasTrack("position.x") || nc.clip.HasTrack("position.z");
+            if (!hasPos) continue;
+            if (!rootMotionNode.empty()) { if (nc.node == rootMotionNode) return &nc; }
+            else if (!first) first = &nc;
+        }
+        return rootMotionNode.empty() ? first : nullptr;
     }
 
 private:

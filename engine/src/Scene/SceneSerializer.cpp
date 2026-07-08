@@ -364,6 +364,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip) << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
+        if (ma->rootMotion || !ma->rootMotionNode.empty())
+            out << "  modelanimroot " << (ma->rootMotion ? 1 : 0) << " " << Quote(ma->rootMotionNode) << "\n";
         for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {
             if (ma->clips[ci].events.empty()) continue;
             out << "  modelanimevents " << ci << " " << ma->clips[ci].events.size();
@@ -1946,6 +1948,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     in >> ma->blendTime;
+                } else if (field == "modelanimroot") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int rm = 0; in >> rm;
+                    ma->rootMotion = (rm != 0);
+                    ma->rootMotionNode = ReadQuoted(in);
                 } else if (field == "modelanimevents") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();

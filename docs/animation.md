@@ -62,3 +62,50 @@ ch->StopClip();                            // back to the built-in `anim`
 You can also build a clip in code (`AnimClip` + `AddClip`) if you'd rather
 generate it. A playing clip drives the whole body and overrides the built-in
 `anim`; `animSpeed` scales clip playback too.
+
+# Imported model animations (FBX / GLB)
+
+Importing an animated model (drag-drop, double-click in Project, or the
+Import dialog) brings in its skeleton as objects, a `SkinnedMesh` that
+deforms with the bones, and a **Model Animator** on the import root holding
+every animation in the file as a named clip.
+
+## In the editor
+
+Select the model with the **Animation tab** open:
+
+- **Clip picker + transport** — play, pause, and scrub any clip in EDIT mode
+  (the scene pose isn't modified; press the toolbar Play to run it for real).
+- **Rename / Duplicate / Delete / Copy / Paste** — manage the clip library.
+  Paste targets another model with the same bone names (Mixamo-style rigs).
+- **Split…** — carve a time range into a new named clip, so a single-take
+  file becomes separate idle / walk / attack clips.
+- **Events** — named markers on the timeline (footsteps, hit windows).
+- **Dope Sheet** — per-node keys, event markers, click to seek.
+
+The Inspector's **Model Animator** section holds playback settings:
+
+- **Blend** — crossfade seconds when switching clips (0 = snap).
+- **Root Motion** — move the OBJECT by the clip's root-bone ground
+  translation instead of letting the bone slide inside the model; pick the
+  root bone or leave it on auto.
+- **Locomotion** — auto-switch idle/walk/run clips from how fast the object
+  moves (switches crossfade with the Blend time).
+
+## From a script
+
+The Character clip builtins also work on an object with a Model Animator on
+itself or an ancestor:
+
+```
+play_clip("walk")          # switch clips (crossfades over Blend seconds)
+name = playing_clip()      # current clip name
+ev = anim_event()          # next fired event name ("" if none)
+```
+
+## Tips
+
+- **Meshy / Mixamo FBX**: animations import via Assimp. For the richest
+  results (full skins + all takes) prefer the **GLB** export when available.
+- Multi-take files import one clip per take; single-take files can be cut
+  apart with **Split…**.

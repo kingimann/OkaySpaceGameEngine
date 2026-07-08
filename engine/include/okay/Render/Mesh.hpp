@@ -582,54 +582,300 @@ struct Mesh {
     /// the ground (base at y=0), ~2 units tall. Per-face colored + smooth-shaded
     /// so it drops onto terrain and looks right immediately.
     static Mesh Tree() {
-        Mesh m; m.name = "Tree";
-        Color bark = Color::FromBytes(102, 72, 46);
-        Color leaf = Color::FromBytes(60, 122, 56);
-        m.Add(Cylinder(0.5f, 1.0f, 8), {0.0f, 0.45f, 0.0f}, {0.16f, 0.9f, 0.16f}, &bark);  // trunk
-        m.Add(Sphere(0.5f, 8, 10), {0.0f, 1.30f, 0.0f},  {1.05f, 1.10f, 1.05f}, &leaf);    // canopy
-        m.Add(Sphere(0.5f, 7, 9),  {-0.35f, 1.05f, 0.18f}, {0.7f, 0.7f, 0.7f}, &leaf);
-        m.Add(Sphere(0.5f, 7, 9),  {0.34f, 1.12f, -0.2f}, {0.66f, 0.66f, 0.66f}, &leaf);
+        Mesh m;
+        Color bark  = Color::FromBytes(96, 68, 44);
+        Color leafA = Color::FromBytes(56, 118, 52);
+        Color leafB = Color::FromBytes(76, 138, 60);
+        Color leafC = Color::FromBytes(46, 102, 48);
+        // Curved, tapered trunk + two branches reaching into the canopy.
+        m.Add(SweepPath({{0,0,0}, {0.02f,0.35f,0.01f}, {0.06f,0.70f,0.03f}, {0.12f,1.05f,0.05f}},
+                        0.14f, 8, true, 0.07f), {0,0,0}, {1,1,1}, &bark);
+        m.Add(SweepPath({{0.06f,0.80f,0.02f}, {0.35f,1.00f,0.15f}, {0.55f,1.25f,0.28f}},
+                        0.05f, 6, true, 0.02f), {0,0,0}, {1,1,1}, &bark);
+        m.Add(SweepPath({{0.03f,0.65f,0.00f}, {-0.30f,0.90f,-0.12f}, {-0.50f,1.10f,-0.25f}},
+                        0.05f, 6, true, 0.02f), {0,0,0}, {1,1,1}, &bark);
+        // Canopy: irregular jittered blobs in three greens for a natural silhouette.
+        auto blob = [&](Vec3 at, float s, const Color& c, int seed) {
+            Mesh b = Icosphere(0.5f, 1);
+            b.JitterVertices({}, 0.055f, seed);
+            m.Add(b, at, {s, s * 0.88f, s}, &c);
+        };
+        blob({0.10f, 1.55f, 0.05f}, 1.45f, leafA, 1);
+        blob({0.55f, 1.30f, 0.30f}, 0.90f, leafB, 2);
+        blob({-0.50f, 1.16f, -0.28f}, 0.85f, leafC, 3);
+        blob({-0.05f, 1.82f, -0.10f}, 0.95f, leafB, 4);
+        blob({0.32f, 1.60f, -0.34f}, 0.78f, leafC, 5);
+        m.MottleFaceColors(0.09f, 7);
+        m.name = "Tree";
         m.ComputeSmoothNormals();
         return m;
     }
-    /// A conifer / pine: a trunk under stacked cones. Base at y=0, ~2.3 tall.
+    /// A conifer / pine: tapered trunk under overlapping shaded skirts. ~2.4 tall.
     static Mesh Pine() {
-        Mesh m; m.name = "Pine";
-        Color bark = Color::FromBytes(96, 66, 42);
-        Color leaf = Color::FromBytes(42, 104, 64);
-        m.Add(Cylinder(0.5f, 1.0f, 8), {0.0f, 0.35f, 0.0f}, {0.13f, 0.7f, 0.13f}, &bark);  // trunk
-        m.Add(Cone(0.5f, 1.0f, 10), {0.0f, 1.05f, 0.0f}, {1.10f, 1.0f, 1.10f}, &leaf);
-        m.Add(Cone(0.5f, 1.0f, 10), {0.0f, 1.55f, 0.0f}, {0.85f, 0.9f, 0.85f}, &leaf);
-        m.Add(Cone(0.5f, 1.0f, 10), {0.0f, 2.00f, 0.0f}, {0.55f, 0.8f, 0.55f}, &leaf);
+        Mesh m;
+        Color bark  = Color::FromBytes(88, 60, 40);
+        Color leafA = Color::FromBytes(38, 96, 58);
+        Color leafB = Color::FromBytes(52, 116, 66);
+        m.Add(SweepPath({{0,0,0}, {0.01f,0.45f,0.0f}, {0.02f,0.9f,0.0f}},
+                        0.11f, 8, true, 0.05f), {0,0,0}, {1,1,1}, &bark);
+        m.Add(Cone(0.5f, 1.0f, 12), {0.00f, 0.95f, 0.0f}, {1.25f, 0.85f, 1.25f}, &leafA);
+        m.Add(Cone(0.5f, 1.0f, 12), {0.01f, 1.35f, 0.0f}, {1.00f, 0.85f, 1.00f}, &leafB);
+        m.Add(Cone(0.5f, 1.0f, 12), {0.00f, 1.75f, 0.0f}, {0.75f, 0.85f, 0.75f}, &leafA);
+        m.Add(Cone(0.5f, 1.0f, 10), {-0.01f, 2.12f, 0.0f}, {0.48f, 0.80f, 0.48f}, &leafB);
+        m.MottleFaceColors(0.08f, 3);
+        m.name = "Pine";
         m.ComputeSmoothNormals();
         return m;
     }
-    /// A boulder: a low, irregularly-lumped dome. Base near y=0, ~0.8 tall.
+    /// A boulder: faceted low-poly lump, mottled stone, flat-shaded. ~0.8 tall.
     static Mesh Rock() {
         Mesh m = Icosphere(0.5f, 2);
-        Color stone = Color::FromBytes(124, 118, 110);
-        // Lump it: push each vertex by a smooth pseudo-random amount, then squash.
+        // Lump it: a smooth pseudo-random field plus per-vertex jitter, squashed.
         for (Vec3& v : m.vertices) {
             float n = std::sin(v.x * 7.3f + 1.1f) * std::cos(v.z * 6.1f + 2.7f)
                     + std::sin(v.y * 5.7f + 0.5f) * 0.5f;
             float s = 1.0f + 0.22f * n;
-            v = {v.x * s, v.y * s * 0.62f, v.z * s};   // squashed boulder
+            v = {v.x * s, v.y * s * 0.62f, v.z * s};
         }
+        m.JitterVertices({}, 0.035f, 11);
+        m.Decimate(0.14f);                              // collapse to chunky facets
         Vec3 lo, hi; m.Bounds(lo, hi);
-        for (Vec3& v : m.vertices) v.y -= lo.y;        // rest on the ground
-        m.triColors.assign(m.TriangleCount(), stone);
+        for (Vec3& v : m.vertices) v.y -= lo.y;         // rest on the ground
+        m.triColors.assign(m.TriangleCount(), Color::FromBytes(124, 118, 110));
+        m.MottleFaceColors(0.14f, 5);                   // mottled granite shades
         m.name = "Rock";
+        m.normals.clear();                              // flat facets, not a soft blob
+        return m;
+    }
+    /// A small shrub: a two-tone cluster of jittered leafy blobs, ~0.7 tall.
+    static Mesh Bush() {
+        Mesh m;
+        Color leafA = Color::FromBytes(64, 124, 56);
+        Color leafB = Color::FromBytes(84, 142, 64);
+        auto blob = [&](Vec3 at, Vec3 s, const Color& c, int seed) {
+            Mesh b = Icosphere(0.5f, 1);
+            b.JitterVertices({}, 0.05f, seed);
+            m.Add(b, at, s, &c);
+        };
+        blob({0.00f, 0.28f, 0.00f},  {0.92f, 0.78f, 0.92f}, leafA, 1);
+        blob({-0.30f, 0.20f, 0.12f}, {0.62f, 0.52f, 0.62f}, leafB, 2);
+        blob({0.28f, 0.22f, -0.14f}, {0.64f, 0.56f, 0.64f}, leafB, 3);
+        blob({0.10f, 0.30f, 0.24f},  {0.50f, 0.44f, 0.50f}, leafA, 4);
+        blob({-0.12f, 0.32f, -0.22f},{0.46f, 0.42f, 0.46f}, leafA, 5);
+        m.MottleFaceColors(0.09f, 9);
+        m.name = "Bush";
         m.ComputeSmoothNormals();
         return m;
     }
-    /// A small shrub: a cluster of leafy spheres at ground level, ~0.7 tall.
-    static Mesh Bush() {
-        Mesh m; m.name = "Bush";
-        Color leaf = Color::FromBytes(70, 128, 62);
-        m.Add(Sphere(0.5f, 6, 8), {0.0f, 0.28f, 0.0f},   {0.9f, 0.8f, 0.9f}, &leaf);
-        m.Add(Sphere(0.5f, 6, 8), {-0.28f, 0.22f, 0.1f}, {0.6f, 0.55f, 0.6f}, &leaf);
-        m.Add(Sphere(0.5f, 6, 8), {0.26f, 0.24f, -0.12f},{0.62f, 0.6f, 0.62f}, &leaf);
+
+    // ---- Prop library (compound models built from the primitives + modeling ops).
+    // Every prop bakes per-face colors, rests on y=0, and keeps its name so it
+    // serializes compactly and regenerates on load.
+
+    /// A leaning palm: curved trunk, drooping fronds, coconuts. ~2.6 tall.
+    static Mesh PalmTree() {
+        Mesh m;
+        Color bark = Color::FromBytes(126, 96, 62);
+        Color leaf = Color::FromBytes(62, 138, 66);
+        Color coco = Color::FromBytes(92, 70, 46);
+        m.Add(SweepPath({{0,0,0}, {0.10f,0.7f,0.0f}, {0.28f,1.5f,0.0f}, {0.50f,2.2f,0.0f}},
+                        0.12f, 8, true, 0.06f), {0,0,0}, {1,1,1}, &bark);
+        Vec3 top{0.50f, 2.25f, 0.0f};
+        for (int i = 0; i < 7; ++i) {                    // drooping fronds, fanned around
+            float a = (float)i * (360.0f / 7.0f);
+            Mesh frond = Sphere(0.5f, 5, 8);
+            frond.JitterVertices({}, 0.03f, i + 1);
+            m.AddPosed(frond, {top.x + 0.55f, top.y + 0.02f, top.z},
+                       {1.35f, 0.05f, 0.28f}, {0.0f, a, -16.0f}, top, &leaf);
+        }
+        m.Add(Sphere(0.5f, 6, 8), {top.x - 0.10f, top.y - 0.10f, top.z + 0.08f}, {0.18f, 0.18f, 0.18f}, &coco);
+        m.Add(Sphere(0.5f, 6, 8), {top.x + 0.08f, top.y - 0.12f, top.z - 0.09f}, {0.16f, 0.16f, 0.16f}, &coco);
+        m.MottleFaceColors(0.08f, 4);
+        m.name = "PalmTree";
         m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A bare, weathered dead tree: gnarled trunk + reaching branches. ~2 tall.
+    static Mesh DeadTree() {
+        Mesh m;
+        Color wood = Color::FromBytes(92, 82, 70);
+        m.Add(SweepPath({{0,0,0}, {0.05f,0.5f,0.03f}, {-0.03f,1.0f,-0.02f}, {0.08f,1.6f,0.04f}},
+                        0.13f, 7, true, 0.04f), {0,0,0}, {1,1,1}, &wood);
+        m.Add(SweepPath({{0.02f,0.9f,0.0f}, {0.35f,1.25f,0.15f}, {0.60f,1.65f,0.30f}},
+                        0.05f, 6, true, 0.015f), {0,0,0}, {1,1,1}, &wood);
+        m.Add(SweepPath({{-0.02f,1.15f,0.0f}, {-0.30f,1.45f,-0.12f}, {-0.55f,1.85f,-0.20f}},
+                        0.045f, 6, true, 0.015f), {0,0,0}, {1,1,1}, &wood);
+        m.Add(SweepPath({{0.05f,1.45f,0.02f}, {0.18f,1.80f,-0.15f}, {0.25f,2.05f,-0.28f}},
+                        0.035f, 5, true, 0.012f), {0,0,0}, {1,1,1}, &wood);
+        m.MottleFaceColors(0.10f, 6);
+        m.name = "DeadTree";
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A toadstool: pale stem, red spotted cap. ~0.55 tall.
+    static Mesh Mushroom() {
+        Mesh m;
+        Color stem = Color::FromBytes(228, 218, 196);
+        Color cap  = Color::FromBytes(188, 52, 44);
+        m.Add(SweepPath({{0,0,0}, {0.01f,0.18f,0.0f}, {0.0f,0.34f,0.0f}},
+                        0.09f, 10, true, 0.06f), {0,0,0}, {1,1,1}, &stem);
+        int capStart = m.TriangleCount();
+        m.Add(Hemisphere(0.5f, 6, 14), {0.0f, 0.32f, 0.0f}, {0.62f, 0.42f, 0.62f}, &cap);
+        // White spots: hash-pick some cap faces.
+        for (int f = capStart; f < m.TriangleCount(); ++f) {
+            unsigned x = (unsigned)(f * 2654435761u);
+            if (((x >> 7) & 7) == 0) m.triColors[f] = Color::FromBytes(240, 234, 222);
+        }
+        m.MottleFaceColors(0.05f, 2);
+        m.name = "Mushroom";
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A saguaro cactus: ribbed body + two elbow arms. ~1.6 tall.
+    static Mesh Cactus() {
+        Mesh m;
+        Color green = Color::FromBytes(74, 128, 58);
+        m.Add(SweepPath({{0,0,0}, {0,0.6f,0}, {0,1.2f,0}}, 0.18f, 10, true, 0.14f),
+              {0,0,0}, {1,1,1}, &green);
+        m.Add(Sphere(0.5f, 6, 10), {0.0f, 1.22f, 0.0f}, {0.29f, 0.29f, 0.29f}, &green);
+        m.Add(SweepPath({{0.12f,0.55f,0.0f}, {0.38f,0.60f,0.0f}, {0.42f,0.95f,0.0f}},
+                        0.10f, 8, true, 0.08f), {0,0,0}, {1,1,1}, &green);
+        m.Add(SweepPath({{-0.12f,0.75f,0.0f}, {-0.36f,0.80f,0.0f}, {-0.40f,1.10f,0.0f}},
+                        0.09f, 8, true, 0.075f), {0,0,0}, {1,1,1}, &green);
+        m.MottleFaceColors(0.07f, 8);
+        m.name = "Cactus";
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A wooden barrel with iron bands. ~0.9 tall.
+    static Mesh Barrel() {
+        Mesh m;
+        Color wood = Color::FromBytes(140, 100, 62);
+        Color iron = Color::FromBytes(70, 72, 78);
+        m.Add(Lathe({{0.001f,0.0f}, {0.30f,0.02f}, {0.36f,0.25f}, {0.38f,0.45f},
+                     {0.36f,0.65f}, {0.30f,0.88f}, {0.001f,0.90f}}, 14),
+              {0,0,0}, {1,1,1}, &wood);
+        m.Add(Tube(0.5f, 0.46f, 1.0f, 14), {0.0f, 0.18f, 0.0f}, {0.76f, 0.05f, 0.76f}, &iron);
+        m.Add(Tube(0.5f, 0.46f, 1.0f, 14), {0.0f, 0.72f, 0.0f}, {0.76f, 0.05f, 0.76f}, &iron);
+        m.MottleFaceColors(0.08f, 3);
+        m.name = "Barrel";
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A slatted shipping crate with corner braces. 0.8 cube.
+    static Mesh Crate() {
+        Mesh m;
+        Color plank = Color::FromBytes(160, 122, 76);
+        Color brace = Color::FromBytes(112, 82, 50);
+        m.Add(Cube(1.0f), {0.0f, 0.40f, 0.0f}, {0.76f, 0.76f, 0.76f}, &plank);
+        const float h = 0.40f, e = 0.40f, t = 0.05f;     // centre height, half-extent, beam thickness
+        for (int sx = -1; sx <= 1; sx += 2)              // 4 vertical corner beams
+            for (int sz = -1; sz <= 1; sz += 2)
+                m.Add(Cube(1.0f), {e * sx, h, e * sz}, {t, 0.82f, t}, &brace);
+        for (int sy = -1; sy <= 1; sy += 2)              // top + bottom frames
+            for (int sz = -1; sz <= 1; sz += 2)
+                m.Add(Cube(1.0f), {0.0f, h + e * sy, e * sz}, {0.82f, t, t}, &brace);
+        for (int sy = -1; sy <= 1; sy += 2)
+            for (int sx = -1; sx <= 1; sx += 2)
+                m.Add(Cube(1.0f), {e * sx, h + e * sy, 0.0f}, {t, t, 0.82f}, &brace);
+        m.MottleFaceColors(0.09f, 12);
+        m.name = "Crate";
+        m.normals.clear();                               // crisp flat planks
+        return m;
+    }
+    /// A two-rail wooden fence segment, ~2 wide, ~1 tall. Array X to extend.
+    static Mesh Fence() {
+        Mesh m;
+        Color wood = Color::FromBytes(134, 100, 64);
+        for (int i = -1; i <= 1; ++i)                    // 3 posts
+            m.Add(Cube(1.0f), {(float)i * 0.9f, 0.5f, 0.0f}, {0.10f, 1.0f, 0.10f}, &wood);
+        m.Add(Cube(1.0f), {0.0f, 0.78f, 0.0f}, {2.0f, 0.08f, 0.06f}, &wood);   // rails
+        m.Add(Cube(1.0f), {0.0f, 0.42f, 0.0f}, {2.0f, 0.08f, 0.06f}, &wood);
+        m.MottleFaceColors(0.10f, 4);
+        m.name = "Fence";
+        m.normals.clear();
+        return m;
+    }
+    /// A stone well: mottled ring, posts, and a little pitched roof. ~1.5 tall.
+    static Mesh Well() {
+        Mesh m;
+        Color stone = Color::FromBytes(136, 132, 126);
+        Color wood  = Color::FromBytes(110, 82, 54);
+        Color roofC = Color::FromBytes(150, 66, 48);
+        m.Add(Tube(0.5f, 0.38f, 1.0f, 14), {0.0f, 0.25f, 0.0f}, {1.2f, 0.5f, 1.2f}, &stone);
+        m.Add(Cube(1.0f), {-0.52f, 0.85f, 0.0f}, {0.09f, 1.2f, 0.09f}, &wood);   // posts
+        m.Add(Cube(1.0f), {0.52f, 0.85f, 0.0f}, {0.09f, 1.2f, 0.09f}, &wood);
+        m.Add(Cube(1.0f), {0.0f, 1.02f, 0.0f}, {1.1f, 0.05f, 0.05f}, &wood);     // axle bar
+        m.Add(Pyramid(1.0f), {0.0f, 1.62f, 0.0f}, {1.5f, 0.55f, 1.5f}, &roofC);  // roof
+        m.MottleFaceColors(0.11f, 15);
+        m.name = "Well";
+        m.normals.clear();
+        return m;
+    }
+    /// A street lamp: curved post with a warm glowing head. ~2.6 tall.
+    static Mesh StreetLamp() {
+        Mesh m;
+        Color iron = Color::FromBytes(52, 54, 60);
+        Color glow = Color::FromBytes(255, 226, 150);
+        m.Add(Cylinder(0.5f, 1.0f, 10), {0.0f, 0.05f, 0.0f}, {0.34f, 0.1f, 0.34f}, &iron); // base
+        m.Add(SweepPath({{0,0.05f,0}, {0,1.2f,0}, {0,2.2f,0}, {0.12f,2.45f,0}, {0.35f,2.55f,0}},
+                        0.05f, 8, true, 0.035f), {0,0,0}, {1,1,1}, &iron);
+        m.Add(Cube(1.0f), {0.38f, 2.38f, 0.0f}, {0.16f, 0.22f, 0.16f}, &glow);   // lamp head
+        m.Add(Pyramid(1.0f), {0.38f, 2.52f, 0.0f}, {0.24f, 0.10f, 0.24f}, &iron);
+        m.name = "StreetLamp";
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A crystal cluster: tilted shards in two tones, flat-shaded. ~0.9 tall.
+    static Mesh Crystal() {
+        Mesh m;
+        Color a = Color::FromBytes(120, 190, 230);
+        Color b = Color::FromBytes(150, 130, 224);
+        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {0.0f, 0.42f, 0.0f}, {0.34f, 0.9f, 0.34f},
+                   {4.0f, 0.0f, -6.0f}, {0.0f, 0.0f, 0.0f}, &a);
+        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {0.24f, 0.28f, 0.10f}, {0.22f, 0.6f, 0.22f},
+                   {8.0f, 30.0f, 22.0f}, {0.24f, 0.0f, 0.10f}, &b);
+        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {-0.22f, 0.24f, -0.06f}, {0.18f, 0.5f, 0.18f},
+                   {-10.0f, 70.0f, -24.0f}, {-0.22f, 0.0f, -0.06f}, &a);
+        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {0.05f, 0.20f, -0.24f}, {0.15f, 0.4f, 0.15f},
+                   {-18.0f, 130.0f, 10.0f}, {0.05f, 0.0f, -0.24f}, &b);
+        m.MottleFaceColors(0.10f, 21);
+        m.name = "Crystal";
+        m.normals.clear();                               // gem facets
+        return m;
+    }
+    /// A cottage: walls, hipped roof, door, windows, chimney. ~2.2 tall, 3 wide.
+    static Mesh House() {
+        Mesh m;
+        Color wall = Color::FromBytes(214, 202, 178);
+        Color roofC = Color::FromBytes(148, 74, 56);
+        Color door = Color::FromBytes(96, 66, 40);
+        Color win  = Color::FromBytes(150, 196, 220);
+        Color chim = Color::FromBytes(120, 110, 104);
+        m.Add(Cube(1.0f), {0.0f, 0.65f, 0.0f}, {3.0f, 1.3f, 2.2f}, &wall);
+        m.Add(Pyramid(1.0f), {0.0f, 1.72f, 0.0f}, {3.4f, 0.85f, 2.6f}, &roofC);
+        m.Add(Cube(1.0f), {0.0f, 0.42f, 1.11f}, {0.55f, 0.85f, 0.06f}, &door);
+        m.Add(Cube(1.0f), {-0.95f, 0.72f, 1.11f}, {0.5f, 0.45f, 0.05f}, &win);
+        m.Add(Cube(1.0f), {0.95f, 0.72f, 1.11f}, {0.5f, 0.45f, 0.05f}, &win);
+        m.Add(Cube(1.0f), {0.9f, 2.0f, -0.4f}, {0.28f, 0.7f, 0.28f}, &chim);
+        m.MottleFaceColors(0.06f, 18);
+        m.name = "House";
+        m.normals.clear();
+        return m;
+    }
+    /// A stone watchtower with a conical roof. ~3.4 tall.
+    static Mesh Tower() {
+        Mesh m;
+        Color stone = Color::FromBytes(140, 136, 128);
+        Color roofC = Color::FromBytes(90, 100, 140);
+        Color door  = Color::FromBytes(88, 62, 40);
+        m.Add(Cylinder(0.5f, 1.0f, 14), {0.0f, 1.25f, 0.0f}, {1.5f, 2.5f, 1.5f}, &stone);
+        m.Add(Cylinder(0.5f, 1.0f, 14), {0.0f, 2.60f, 0.0f}, {1.7f, 0.25f, 1.7f}, &stone); // parapet lip
+        m.Add(Cone(0.5f, 1.0f, 14), {0.0f, 3.10f, 0.0f}, {1.75f, 0.9f, 1.75f}, &roofC);
+        m.Add(Cube(1.0f), {0.0f, 0.5f, 0.74f}, {0.5f, 1.0f, 0.1f}, &door);
+        m.MottleFaceColors(0.10f, 23);
+        m.name = "Tower";
+        m.normals.clear();
         return m;
     }
 
@@ -639,6 +885,18 @@ struct Mesh {
         if (n == "Pine")      return Pine();
         if (n == "Rock")      return Rock();
         if (n == "Bush")      return Bush();
+        if (n == "PalmTree")  return PalmTree();
+        if (n == "DeadTree")  return DeadTree();
+        if (n == "Mushroom")  return Mushroom();
+        if (n == "Cactus")    return Cactus();
+        if (n == "Barrel")    return Barrel();
+        if (n == "Crate")     return Crate();
+        if (n == "Fence")     return Fence();
+        if (n == "Well")      return Well();
+        if (n == "StreetLamp") return StreetLamp();
+        if (n == "Crystal")   return Crystal();
+        if (n == "House")     return House();
+        if (n == "Tower")     return Tower();
         if (n == "Pyramid")   return Pyramid();
         if (n == "Quad")      return Quad();
         if (n == "Plane")     return Plane();
@@ -2244,9 +2502,10 @@ struct Mesh {
 
     /// Sweep a circular cross-section along a 3D polyline — pipes, rails, cables,
     /// tree branches. Frames are parallel-transported so the tube doesn't twist at
-    /// bends. `caps` closes the ends with fans.
+    /// bends. `caps` closes the ends with fans. `radiusEnd` >= 0 tapers the tube
+    /// linearly from `radius` at the start to `radiusEnd` at the end (trunks, tails).
     static Mesh SweepPath(const std::vector<Vec3>& path, float radius = 0.25f,
-                          int segments = 12, bool caps = true) {
+                          int segments = 12, bool caps = true, float radiusEnd = -1.0f) {
         Mesh m;
         const int n = (int)path.size();
         if (n < 2 || segments < 3 || radius <= 1e-6f) return m;
@@ -2271,9 +2530,13 @@ struct Mesh {
                 }
             }
             Vec3 B = Vec3::Cross(T[i], N);
+            float r = radius;
+            if (radiusEnd >= 0.0f && n > 1)
+                r = radius + (radiusEnd - radius) * ((float)i / (float)(n - 1));
+            if (r < 1e-4f) r = 1e-4f;
             for (int s = 0; s < segments; ++s) {
                 float th = 2.0f * kPi * (float)s / segments;
-                m.vertices.push_back(path[i] + (N * std::cos(th) + B * std::sin(th)) * radius);
+                m.vertices.push_back(path[i] + (N * std::cos(th) + B * std::sin(th)) * r);
             }
         }
         for (int i = 0; i + 1 < n; ++i)
@@ -2678,6 +2941,22 @@ struct Mesh {
             o.g += (c.g - o.g) * w;
             o.b += (c.b - o.b) * w;
             o.a += (c.a - o.a) * w;
+        }
+    }
+
+    /// Vary each face color's brightness by up to ±`amt` (deterministic per seed)
+    /// — breaks up flat prop colors so wood/stone/foliage reads as a material
+    /// instead of plastic. Keeps the primitive name (used by the prop builders).
+    void MottleFaceColors(float amt, int seed = 0) {
+        if (!HasFaceColors() || amt <= 0.0f) return;
+        for (int f = 0; f < (int)triColors.size(); ++f) {
+            unsigned x = (unsigned)(f * 73856093 ^ seed * 19349663);
+            x = (x ^ (x >> 13)) * 1274126177u;
+            float k = 1.0f + amt * (((float)((x ^ (x >> 16)) & 0xffffu) / 65535.0f) * 2.0f - 1.0f);
+            Color& c = triColors[f];
+            c.r = std::fmin(c.r * k, 1.0f);
+            c.g = std::fmin(c.g * k, 1.0f);
+            c.b = std::fmin(c.b * k, 1.0f);
         }
     }
 

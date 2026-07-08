@@ -2855,10 +2855,18 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Rounded Box")){ ed.CreateMesh("RoundedBox");ConsoleLog("Created Rounded Box"); created = true; }
             if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
             ImGui::Separator();
-            if (ImGui::MenuItem("Tree"))      { ed.CreateMesh("Tree");      ConsoleLog("Created Tree"); created = true; }
-            if (ImGui::MenuItem("Pine"))      { ed.CreateMesh("Pine");      ConsoleLog("Created Pine"); created = true; }
-            if (ImGui::MenuItem("Rock"))      { ed.CreateMesh("Rock");      ConsoleLog("Created Rock"); created = true; }
-            if (ImGui::MenuItem("Bush"))      { ed.CreateMesh("Bush");      ConsoleLog("Created Bush"); created = true; }
+            if (ImGui::BeginMenu("Nature")) {
+                const char* nat[] = {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock", "Mushroom", "Cactus", "Crystal"};
+                for (const char* n : nat)
+                    if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Props")) {
+                const char* pr[] = {"Barrel", "Crate", "Fence", "Well", "StreetLamp", "House", "Tower"};
+                for (const char* n : pr)
+                    if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+                ImGui::EndMenu();
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Terrain")) {
                 GameObject* go = ed.CreateEmpty("Terrain");
@@ -13789,19 +13797,49 @@ static std::vector<std::string> ScriptPublicFunctions(GameObject* go) {
 void DrawModeling(EditorState& ed) {
     if (!ImGui::Begin("Modeling", &g_showModeling)) { ImGui::End(); return; }
 
-    // --- Create a new primitive object (drops it into the scene, selects it) ---
-    SectionHeader("Create");
-    const char* prims[] = {"Cube", "Sphere", "Cylinder", "Cone", "Pyramid",
-                           "Wedge", "Quad", "Plane", "Tube", "Torus", "TorusKnot", "Capsule",
-                           "Icosphere", "Grid", "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc", "Tetrahedron", "Bipyramid", "RoundedBox"};
-    const int kPrims = 23;
-    int perRow = 0;
-    for (int i = 0; i < kPrims; ++i) {
-        if (perRow++ % 4 != 0) ImGui::SameLine();
-        if (ImGui::Button(prims[i], ImVec2(72, 0))) {
-            ed.CreateMesh(prims[i]);              // mesh object + selects it
-            ed.view3D = true; ed.dirty = true;
-            ConsoleLog(std::string("Created ") + prims[i]);
+    // --- Create a new object (drops it into the scene, selects it) ---
+    // Organized Blender-style into an "Add" library: Primitives / Nature / Props /
+    // Structures, each a collapsible category, with a quick text filter (Blender's
+    // F3 search). A button spawns that mesh by name via FromName().
+    SectionHeader("Add");
+    struct Cat { const char* name; std::vector<const char*> items; };
+    static const std::vector<Cat> kCats = {
+        {"Primitives", {"Cube", "Sphere", "Cylinder", "Cone", "Pyramid", "Wedge", "Quad",
+                        "Plane", "Tube", "Torus", "TorusKnot", "Capsule", "Icosphere", "Grid",
+                        "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc",
+                        "Tetrahedron", "Bipyramid", "RoundedBox"}},
+        {"Nature",     {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock", "Mushroom",
+                        "Cactus", "Crystal"}},
+        {"Props",      {"Barrel", "Crate", "Fence", "Well", "StreetLamp"}},
+        {"Structures", {"House", "Tower"}},
+    };
+    static char s_addFilter[48] = "";
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##addfilter", "filter (e.g. tree, barrel)...", s_addFilter, sizeof(s_addFilter));
+    std::string flt = s_addFilter;
+    for (char& c : flt) c = (char)std::tolower((unsigned char)c);
+    auto spawn = [&](const char* nm) {
+        ed.CreateMesh(nm); ed.view3D = true; ed.dirty = true;
+        ConsoleLog(std::string("Created ") + nm);
+    };
+    const bool filtering = !flt.empty();
+    for (const Cat& cat : kCats) {
+        // Which items in this category match the filter?
+        std::vector<const char*> shown;
+        for (const char* it : cat.items) {
+            if (!filtering) { shown.push_back(it); continue; }
+            std::string low = it; for (char& c : low) c = (char)std::tolower((unsigned char)c);
+            if (low.find(flt) != std::string::npos) shown.push_back(it);
+        }
+        if (shown.empty()) continue;
+        // While filtering, force categories open so matches are always visible.
+        if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        else           ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
+        if (!ImGui::CollapsingHeader(cat.name)) continue;
+        int perRow = 0;
+        for (const char* it : shown) {
+            if (perRow++ % 4 != 0) ImGui::SameLine();
+            if (ImGui::Button(it, ImVec2(72, 0))) spawn(it);
         }
     }
 
@@ -15455,9 +15493,12 @@ void DrawInspector(EditorState& ed) {
             }
 
             SectionHeader("Scatter props (trees, rocks, bushes)");
-            const char* props[] = {"Tree", "Pine", "Rock", "Bush"};
+            const char* props[] = {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock",
+                                   "Mushroom", "Cactus", "Crystal"};
+            const int kScatterProps = 9;
+            if (g_scatterProp >= kScatterProps) g_scatterProp = 0;
             ImGui::SetNextItemWidth(160);
-            ImGui::Combo("Prop##scat", &g_scatterProp, props, 4);
+            ImGui::Combo("Prop##scat", &g_scatterProp, props, kScatterProps);
             ImGui::SliderInt("Count##scat", &g_scatterCount, 1, 500);
             ImGui::DragFloatRange2("Scale##scat", &g_scatterMinScale, &g_scatterMaxScale, 0.02f, 0.1f, 6.0f, "%.2f");
             ImGui::SliderFloat("Max Slope##scat", &g_scatterMaxSlope, 0.0f, 1.0f);

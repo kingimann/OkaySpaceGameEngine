@@ -6,9 +6,26 @@ operates on the selected object's Mesh Renderer, every destructive op is
 undoable (Ctrl+Z), and edited geometry is saved with the scene (including
 its texture coordinates).
 
-Create a primitive with the buttons at the top (23 shapes: Cube, Sphere,
-Stairs, Gear, Torus Knot, Rounded Box, ...), or select any mesh object —
-imported OBJs included. The toolset is grouped into tabs:
+## Add library
+
+The **Add** section at the top is an organized object library (Blender's Add
+menu + F3 search). Type in the filter box to narrow it, or expand a category:
+
+- **Primitives** — 23 shapes: Cube, Sphere, Cylinder, Cone, Pyramid, Wedge,
+  Quad, Plane, Tube, Torus, Torus Knot, Capsule, Icosphere, Grid,
+  Hemisphere, Stairs, Gear, Prism, Octahedron, Disc, Tetrahedron,
+  Bipyramid, Rounded Box.
+- **Nature** — ready-made, pre-colored props: Tree, Pine, Palm Tree, Dead
+  Tree, Bush, Rock, Mushroom, Cactus, Crystal. Built from the primitives +
+  path-sweeping + color mottling, so they read as real materials, not flat
+  plastic, and they scatter over terrain (Terrain tab → Scatter).
+- **Props** — Barrel, Crate, Fence, Well, Street Lamp.
+- **Structures** — House, Tower.
+
+Everything in Nature / Props / Structures is a normal editable mesh: tick
+**Edit Mesh** and reshape it, or **Export OBJ** to reuse it. Or select any
+existing mesh object — imported models included. The editing toolset is
+grouped into tabs:
 
 ## Shape
 

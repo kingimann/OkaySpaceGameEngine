@@ -825,8 +825,8 @@ inline bool& PerPixelLighting() { static bool v = false; return v; }  // default
 // the light (i.e. it's occluded), giving real cast shadows. (ShadowMap struct is
 // declared above the Raster class so shading can consult it.)
 inline ShadowMap& Shadows()      { static ShadowMap s; return s; }
-inline bool& ShadowsEnabled()    { static bool v = false; return v; }  // off by default (perf); opt-in
-inline int&  ShadowMapResolution(){ static int s = 1024; return s; }   // per-cascade texels
+inline bool& ShadowsEnabled()    { static bool v = true; return v; }   // on by default (modern look); opt-out
+inline int&  ShadowMapResolution(){ static int s = 2048; return s; }   // per-cascade texels
 
 /// How far (world units) cascaded shadows reach in front of the camera. The near
 /// cascade hugs a small slice of this so its shadows stay crisp no matter how big

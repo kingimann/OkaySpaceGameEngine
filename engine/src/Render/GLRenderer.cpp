@@ -216,18 +216,28 @@ const char* kFrag =
     "uniform sampler2D uShadowTex; uniform mat4 uLightVP;\n"                                   // directional cast shadows
     "uniform float uShadowOn; uniform float uShadowTexel; uniform float uShadowSize;\n"
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
-    "float shadowFactor(vec3 wpos, vec3 n){\n"                                                 // 0=shadowed .. 1=lit (4-tap PCF)
+    "float shadowFactor(vec3 wpos, vec3 n){\n"                                                 // 0=shadowed .. 1=lit (12-tap Poisson PCF)
     "  vec3 wp = wpos + n * uShadowTexel * 2.0;\n"                                             // normal-offset bias (anti-acne)
     "  vec4 sc = uLightVP * vec4(wp, 1.0);\n"
     "  if (sc.w <= 0.0) return 1.0;\n"
     "  vec3 p = sc.xyz / sc.w * 0.5 + 0.5;\n"
     "  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;\n"       // outside the map = lit
-    "  float bias = 0.0015; float t = 1.0 / max(uShadowSize, 1.0); float s = 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.5,-0.5)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.5,-0.5)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.5, 0.5)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.5, 0.5)*t).r) ? 1.0 : 0.0;\n"
-    "  return s * 0.25;\n"
+    "  float ndl = clamp(dot(n, uLightDir), 0.0, 1.0);\n"
+    "  float bias = 0.0008 + 0.0022 * (1.0 - ndl);\n"                                          // slope-scaled: grazing faces need more
+    "  float t = 1.8 / max(uShadowSize, 1.0); float s = 0.0;\n"                                // ~1.8-texel Poisson disk = soft edge
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.326,-0.406)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.840,-0.074)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.696, 0.457)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.203, 0.621)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.962,-0.195)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.473,-0.480)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.519, 0.767)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.185,-0.893)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.507, 0.064)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.896, 0.412)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.322,-0.933)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.792,-0.598)*t).r) ? 1.0 : 0.0;\n"
+    "  return s / 12.0;\n"
     "}\n"
     "void main(){\n"
     "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
@@ -257,7 +267,18 @@ const char* kFrag =
     "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"     // Hologram
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(vWorld.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
-    "  if (uUnlit > 0.5) { gl_FragColor = vec4(base + uEmissive, uAlpha); return; }\n"
+    // Filmic mode = a gamma-correct pipeline: albedo/emissive are authored in
+    // sRGB, so decode to LINEAR before lighting and re-encode at the end.
+    // Lighting math done directly in sRGB space (the old path, kept when the
+    // toggle is off) is what makes shading look flat and washed-out.
+    "  bool lin = uTonemap > 0.5;\n"
+    "  if (lin) base = pow(max(base, vec3(0.0)), vec3(2.2));\n"
+    "  vec3 emis = uEmissive;\n"
+    "  if (lin) emis = pow(max(emis, vec3(0.0)), vec3(2.2));\n"
+    // Unlit: decode+encode cancel, so unlit colors look identical either way.
+    "  if (uUnlit > 0.5) { vec3 uc = base + emis;\n"
+    "    if (lin) uc = pow(max(uc, vec3(0.0)), vec3(1.0/2.2));\n"
+    "    gl_FragColor = vec4(uc, uAlpha); return; }\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  vec3 amb = uAmbient * mix(0.55, 1.15, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // hemisphere ambient
     "  vec3 lit = amb; float spec = 0.0;\n"
@@ -303,13 +324,14 @@ const char* kFrag =
     "  vec3 rim = vec3(0.0);\n"                                   // rim glow (Fresnel/Hologram or rimStr>0)
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
     "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
-    "  vec3 col = diff + (spec * gloss) * f0 + rim + uEmissive;\n"
+    "  vec3 col = diff + (spec * gloss) * f0 + rim + emis;\n"
     "  float reflAmt = max(uReflectivity, metal);\n"              // env reflection of the sky gradient
     "  float reflK = reflAmt * gloss;\n"
     "  if (reflK > 0.0 && uEnvOn > 0.5) {\n"
     "    float ndv = max(dot(N, Vv), 0.0);\n"
     "    vec3 R = reflect(-Vv, N); float ry = clamp(R.y, -1.0, 1.0);\n"
     "    vec3 env = mix(uSkyHor, ry >= 0.0 ? uSkyTop : uSkyBot, abs(ry));\n"
+    "    if (lin) env = pow(max(env, vec3(0.0)), vec3(2.2));\n"
     "    float fr2 = 1.0 - ndv; fr2 = fr2*fr2*fr2*fr2*fr2;\n"     // Schlick (1-n·v)^5
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
@@ -317,9 +339,14 @@ const char* kFrag =
     "  if (uFogOn > 0.5) {\n"                                      // distance fog (matches the software path)
     "    float fd = length(uEye - vWorld);\n"
     "    float ff = clamp((fd - uFogStart) / max(uFogEnd - uFogStart, 1e-3), 0.0, 1.0);\n"
-    "    col = mix(col, uFogColor, ff);\n"
+    "    vec3 fc = uFogColor;\n"
+    "    if (lin) fc = pow(max(fc, vec3(0.0)), vec3(2.2));\n"      // fog is authored sRGB too
+    "    col = mix(col, fc, ff);\n"
     "  }\n"
-    "  if (uTonemap > 0.5) col = aces(col);\n"                    // filmic roll-off (no hard clip to white)
+    // Filmic output: ACES roll-off in linear light, then encode back to sRGB.
+    // The gamma encode is what was missing before — without it linear results
+    // were displayed raw, crushing mid-tones.
+    "  if (lin) { col = aces(col); col = pow(max(col, vec3(0.0)), vec3(1.0/2.2)); }\n"
     "  gl_FragColor = vec4(col, uAlpha);\n"
     "}\n";
 

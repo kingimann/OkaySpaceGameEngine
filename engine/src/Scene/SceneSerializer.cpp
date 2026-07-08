@@ -1661,7 +1661,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             << rs.fogColor.r << " " << rs.fogColor.g << " " << rs.fogColor.b << " "
             << rs.fogStart << " " << rs.fogEnd << "\n";
         if (rs.vignette > 0.0f) out << "vignette " << rs.vignette << "\n";
-        if (rs.tonemap) out << "tonemap 1\n";
+        // Always write the value (not just when true): the default is ON, so a
+        // scene that turned filmic OFF must record that or it re-enables on load.
+        out << "tonemap " << (rs.tonemap ? 1 : 0) << "\n";
         // Skybox extras (horizon position + optional sun disc). Written when non-default.
         if (rs.skyHorizonPos != 0.5f || rs.skySun)
             out << "sky " << rs.skyHorizonPos << " " << (rs.skySun ? 1 : 0) << " "

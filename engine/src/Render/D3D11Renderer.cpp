@@ -67,12 +67,26 @@ const char* kHLSL =
     "  float2 uv = float2(q.x*0.5+0.5, -q.y*0.5+0.5);\n"          // D3D texture v is top-down
     "  float pz = q.z*0.5+0.5;\n"                                  // GL clip z [-1,1] -> [0,1]
     "  if (uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0||pz>1.0) return 1.0;\n"
-    "  float bias=0.0015; float t=1.0/max(uShadow.z,1.0); float s=0.0;\n"
-    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.5,-0.5)*t).r)?1.0:0.0;\n"
-    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.5,-0.5)*t).r)?1.0:0.0;\n"
-    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.5, 0.5)*t).r)?1.0:0.0;\n"
-    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.5, 0.5)*t).r)?1.0:0.0;\n"
-    "  return s*0.25;\n"
+    "  float ndl = saturate(dot(n, uLightDir));\n"
+    "  float bias = 0.0008 + 0.0022 * (1.0 - ndl);\n"              // slope-scaled: grazing faces need more
+    "  float t = 1.8/max(uShadow.z,1.0); float s=0.0;\n"           // ~1.8-texel Poisson disk = soft edge
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.326,-0.406)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.840,-0.074)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.696, 0.457)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.203, 0.621)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.962,-0.195)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.473,-0.480)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.519, 0.767)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.185,-0.893)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.507, 0.064)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.896, 0.412)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.322,-0.933)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.792,-0.598)*t).r)?1.0:0.0;\n"
+    "  return s/12.0;\n"
+    "}\n"
+    // ACES filmic curve (matches the GL renderer) for the linear/filmic pipeline.
+    "float3 aces(float3 x){\n"
+    "  return saturate((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14));\n"
     "}\n"
     "float4 VSDepth(float3 pos:POSITION):SV_POSITION {\n"          // depth-only shadow pass
     "  float4 cp = mul(uMVP, float4(pos,1.0)); cp.z = (cp.z + cp.w) * 0.5; return cp;\n"
@@ -119,7 +133,15 @@ const char* kHLSL =
     "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"   // Hologram
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(i.world.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
-    "  if (uUnlit > 0.5) return float4(base + uEmissive, uAlpha);\n"
+    // Filmic mode (uFogCol.w): gamma-correct pipeline — decode sRGB albedo/emissive
+    // to linear, light in linear, ACES + sRGB-encode at the end (matches GL).
+    "  bool lin = uFogCol.w > 0.5;\n"
+    "  if (lin) base = pow(max(base, 0.0), 2.2);\n"
+    "  float3 emis = uEmissive;\n"
+    "  if (lin) emis = pow(max(emis, 0.0), 2.2);\n"
+    "  if (uUnlit > 0.5) { float3 uc = base + emis;\n"            // decode+encode cancel: unlit unchanged
+    "    if (lin) uc = pow(max(uc, 0.0), 1.0/2.2);\n"
+    "    return float4(uc, uAlpha); }\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"  // hemisphere ambient
     "  float3 lit = amb; float spec = 0.0;\n"
@@ -162,13 +184,14 @@ const char* kHLSL =
     "  float3 rim = float3(0,0,0);\n"
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
     "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
-    "  float3 col = diff + (spec * gloss) * f0 + rim + uEmissive;\n"
+    "  float3 col = diff + (spec * gloss) * f0 + rim + emis;\n"
     "  float reflAmt = max(uPbr.y, metal);\n"                     // env reflection of the sky gradient
     "  float reflK = reflAmt * gloss;\n"
     "  if (reflK > 0.0 && uPbr2.y > 0.5) {\n"
     "    float ndv = max(dot(N, Vv), 0.0);\n"
     "    float3 R = reflect(-Vv, N); float ry = clamp(R.y, -1.0, 1.0);\n"
     "    float3 env = lerp(uSky[1].xyz, ry >= 0.0 ? uSky[0].xyz : uSky[2].xyz, abs(ry));\n"
+    "    if (lin) env = pow(max(env, 0.0), 2.2);\n"
     "    float fr2 = 1.0 - ndv; fr2 = fr2*fr2*fr2*fr2*fr2;\n"     // Schlick
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
@@ -176,8 +199,12 @@ const char* kHLSL =
     "  if (uFog.x > 0.5) {\n"                                    // distance fog
     "    float fd = length(uEye - i.world);\n"
     "    float ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"
-    "    col = lerp(col, uFogCol.xyz, ff);\n"
+    "    float3 fc = uFogCol.xyz;\n"
+    "    if (lin) fc = pow(max(fc, 0.0), 2.2);\n"                 // fog is authored sRGB too
+    "    col = lerp(col, fc, ff);\n"
     "  }\n"
+    // Filmic output: ACES roll-off in linear light, then encode back to sRGB.
+    "  if (lin) { col = aces(col); col = pow(max(col, 0.0), 1.0/2.2); }\n"
     "  return float4(col, uAlpha);\n"
     "}\n";
 
@@ -202,7 +229,7 @@ struct CB {
     float lightCount[4];       // .x = number of scene lights
     float lights[256];         // 64 float4: 16 lights x 4 rows
     float fog[4];              // x=on y=start z=end
-    float fogCol[4];           // xyz = fog colour
+    float fogCol[4];           // xyz = fog colour, w = filmic pipeline flag (linear + ACES + gamma)
     float lightVP[16];         // directional shadow-map view-projection
     float shadowP[4];          // x=on y=texelWorld z=mapSize w=unused
 };
@@ -825,7 +852,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             const auto& rs = scene.renderSettings;
             bool fogOn = rs.fog && rs.fogEnd > rs.fogStart;
             cb.fog[0] = fogOn ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd; cb.fog[3] = 0.0f;
-            cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b; cb.fogCol[3] = 1.0f;
+            // fogCol.w carries the filmic (linear + ACES + gamma) pipeline flag.
+            cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b;
+            cb.fogCol[3] = rs.tonemap ? 1.0f : 0.0f;
         }
         std::memcpy(cb.lightVP, lightVP.m, sizeof(cb.lightVP));
         cb.shadowP[0] = shadowOn ? 1.0f : 0.0f; cb.shadowP[1] = shadowTexel;

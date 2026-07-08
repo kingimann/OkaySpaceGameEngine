@@ -128,11 +128,12 @@ public:
         // finished frame, so it looks identical on every renderer backend. Great for
         // focus/mood without touching the 3D shading path.
         float vignette   = 0.0f;
-        // Filmic (ACES) tonemapping: gracefully rolls bright, over-1.0 lighting off
-        // toward white instead of hard-clipping (which flattens / "blows out" when a
-        // light's intensity is pushed high). Off by default so existing scenes look
-        // identical; turn on for a filmic response and headroom on bright lights.
-        bool  tonemap    = false;
+        // Filmic rendering: a gamma-correct pipeline (albedo decoded to linear,
+        // lighting in linear space, sRGB-encoded output) plus ACES tonemapping,
+        // which rolls bright over-1.0 lighting off toward white instead of
+        // hard-clipping. ON by default — this is what gives shading its depth;
+        // turn off to get the legacy flat response back.
+        bool  tonemap    = true;
         // ---- Skybox customization ----
         // Where the horizon band sits in the sky gradient, as a fraction of the view
         // height (0 = top, 0.5 = middle, 1 = bottom). Raise it for more sky, lower it

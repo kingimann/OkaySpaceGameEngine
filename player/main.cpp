@@ -1024,9 +1024,9 @@ int main(int argc, char** argv) {
         bool showCursor = true, quitOnEscape = true, showFps = false;
         int  fpsCap = 0;
         float volume = 1.0f;
-        bool lockCursor = false, perPixel = false, shadows = false, bloom = false, ssao = false, fxaa = true;
+        bool lockCursor = false, perPixel = false, shadows = true, bloom = false, ssao = false, fxaa = true;
         float shadowDistance = 80.0f, shadowSoftness = 2.5f;
-        int  shadowCascades = 3, shadowResolution = 1024;
+        int  shadowCascades = 3, shadowResolution = 2048;
         int  antialias = 1;
         bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
         bool d3d12 = false; // opt-in: prefer the Direct3D 12 backend (Windows) over D3D11

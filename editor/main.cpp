@@ -1591,11 +1591,11 @@ struct BuildSettings {
     // ---- Graphics / quality (applied by the player at startup) ----
     bool  lockCursor = false;              // hide + lock the cursor on launch
     bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
-    bool  shadows = false;                 // directional cast shadows
+    bool  shadows = true;                  // directional cast shadows (on = modern look)
     float shadowDistance = 80.0f;          // cascaded shadow reach (0 = legacy whole-scene)
     float shadowSoftness = 2.5f;           // PCF penumbra width (texels)
     int   shadowCascades = 3;              // number of cascades
-    int   shadowResolution = 1024;         // texels per cascade
+    int   shadowResolution = 2048;         // texels per cascade
     bool  bloom = false;                   // glow on bright/emissive areas
     bool  ssao = false;                    // ambient occlusion
     bool  fxaa = true;                     // cheap edge anti-aliasing
@@ -2006,10 +2006,10 @@ struct Options {
     float masterVolume = 1.0f;
     bool showFps = false;
     bool includeAllProjectScenes = false, developmentBuild = false;
-    bool lockCursor = false, perPixelLighting = false, shadows = false,
+    bool lockCursor = false, perPixelLighting = false, shadows = true,
          bloom = false, ssao = false, fxaa = true;
     float shadowDistance = 80.0f, shadowSoftness = 2.5f;
-    int  shadowCascades = 3, shadowResolution = 1024;
+    int  shadowCascades = 3, shadowResolution = 2048;
     int  antialias = 1;
     bool gpuRenderer = true;
     bool preferD3D12 = false;
@@ -5095,8 +5095,8 @@ void DrawStats(EditorState& ed) {
         // the scene; the shipped player draws the same effect. 0 = off.
         if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f)) ed.dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Darken the frame's edges/corners (focus/mood).\nA post overlay — identical on every renderer backend. 0 = off.");
-        if (ImGui::Checkbox("Filmic Tonemap (ACES)", &rs.tonemap)) ed.dirty = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roll bright, over-1.0 lighting smoothly toward white instead of hard-clipping.\nStops high light intensity from flat 'blowing out'. Off = classic linear look.");
+        if (ImGui::Checkbox("Filmic Rendering (linear + ACES)", &rs.tonemap)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamma-correct pipeline: lighting computed in linear space with an ACES filmic\nroll-off and proper sRGB output — richer shading, natural highlights.\nOn by default; turn off for the legacy flat response.");
 
         ImGui::Spacing();
         ImGui::SeparatorText("Lightmap Baking");

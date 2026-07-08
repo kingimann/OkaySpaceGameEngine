@@ -1726,9 +1726,10 @@ float g_scatterMinH = -100.0f, g_scatterMaxH = 100.0f; // local height band to f
 // in the 3D viewport — select vertices/faces, move them, extrude/inset/subdivide, sculpt.
 bool  g_meshEdit = false;             // edit mode active
 GameObject* g_meshEditObj = nullptr;  // the object being edited
-int   g_meshSelMode = 0;              // 0 = Vertex, 1 = Face
+int   g_meshSelMode = 0;              // 0 = Vertex, 1 = Face, 2 = Edge
 std::vector<int> g_meshSelVerts;      // selected vertex indices
 std::vector<int> g_meshSelFaces;      // selected triangle (face) indices
+std::vector<std::pair<int,int>> g_meshSelEdges; // selected edges (vertex index pairs)
 float g_extrudeDist = 0.5f;
 float g_insetAmt    = 0.2f;
 int   g_meEditAxis  = -1;             // axis being dragged: 0=X 1=Y 2=Z, -1 = none
@@ -13911,6 +13912,34 @@ void DrawModeling(EditorState& ed) {
             ed.dirty = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap every open boundary (e.g. after Delete Faces) so the mesh is watertight again.");
+        ImGui::SameLine();
+        if (ImGui::Button("Bridge##model")) {
+            ed.PushUndo();
+            bool ok = mr->mesh.BridgeLoops();
+            ConsoleLog(ok ? std::string("Bridged the two openings")
+                          : std::string("[warn] Bridge needs exactly two open boundaries (delete two facing faces first)"));
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Connect two open boundaries with a wall — delete two facing faces (even on a Combined mesh) and bridge them into a tunnel.");
+        ImGui::TextDisabled("Symmetrize (keep + half, mirror):");
+        ImGui::SameLine();
+        auto symAxis = [&](const char* lbl, int axis) {
+            if (!ImGui::SmallButton(lbl)) return;
+            ed.PushUndo();
+            Vec3 n{axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f};
+            mr->mesh.Bisect({0, 0, 0}, n, false, true);   // keep + half, seam open
+            mr->mesh.Mirror(axis);                         // reflect + weld the seam
+            ed.dirty = true;
+        };
+        symAxis("X##sym", 0); ImGui::SameLine();
+        symAxis("Y##sym", 1); ImGui::SameLine();
+        symAxis("Z##sym", 2);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the mesh perfectly symmetric: keep the positive half (about the pivot) and mirror it over the other side.");
+        static float s_snapAll = 0.25f;
+        ImGui::SetNextItemWidth(90); ImGui::DragFloat("##snapall", &s_snapAll, 0.01f, 0.01f, 5.0f, "%.2f");
+        ImGui::SameLine();
+        if (ImGui::Button("Snap Grid##model")) { ed.PushUndo(); mr->mesh.SnapToGrid(s_snapAll); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize every vertex to this grid step — crisp low-poly look, modular kit alignment.");
         static float s_jitter = 0.05f; static int s_jitterSeed = 1;
         ImGui::SetNextItemWidth(90); ImGui::DragFloat("##jit", &s_jitter, 0.005f, 0.0f, 2.0f, "%.3f");
         ImGui::SameLine();
@@ -14263,29 +14292,32 @@ void DrawModeling(EditorState& ed) {
                 // topology (8 verts), then moving a vertex moves the whole corner.
                 mr->mesh.WeldVertices();
                 g_meshEdit = true; g_meshEditObj = go;
-                g_meshSelVerts.clear(); g_meshSelFaces.clear();
+                g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
                 g_meshSculpt = false; ed.dirty = true;
             } else {
                 g_meshEdit = false; g_meshEditObj = nullptr;
-                g_meshSelVerts.clear(); g_meshSelFaces.clear();
+                g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
             }
         }
         if (g_meshEdit && g_meshEditObj == go) {
             ImGui::TextDisabled("Click in the 3D view to select; drag an axis to move.");
             ImGui::RadioButton("Vertices##me", &g_meshSelMode, 0); ImGui::SameLine();
+            ImGui::RadioButton("Edges##me", &g_meshSelMode, 2); ImGui::SameLine();
             ImGui::RadioButton("Faces##me", &g_meshSelMode, 1);
             ImGui::SameLine();
             if (ImGui::SmallButton("Select All##me")) {
-                g_meshSelVerts.clear(); g_meshSelFaces.clear();
+                g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
                 if (g_meshSelMode == 0)
                     for (int i = 0; i < (int)mr->mesh.vertices.size(); ++i) g_meshSelVerts.push_back(i);
+                else if (g_meshSelMode == 2)
+                    for (const auto& e : mr->mesh.VisibleEdges()) g_meshSelEdges.push_back(e);
                 else
                     for (int i = 0; i < mr->mesh.TriangleCount(); ++i) g_meshSelFaces.push_back(i);
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Deselect##me")) { g_meshSelVerts.clear(); g_meshSelFaces.clear(); }
-            ImGui::Text("Selected: %d verts, %d faces",
-                        (int)g_meshSelVerts.size(), (int)g_meshSelFaces.size());
+            if (ImGui::SmallButton("Deselect##me")) { g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); }
+            ImGui::Text("Selected: %d verts, %d edges, %d faces",
+                        (int)g_meshSelVerts.size(), (int)g_meshSelEdges.size(), (int)g_meshSelFaces.size());
 
             ImGui::Checkbox("Symmetry X##me", &g_meshSymX);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror every move and sculpt stroke across the local X = 0 plane (edit half, get both).");
@@ -14320,7 +14352,8 @@ void DrawModeling(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Flip Normals##me")) { ed.PushUndo(); mr->mesh.FlipNormals(); ed.dirty = true; }
             if (ImGui::Button("Merge by Distance##me")) {
-                ed.PushUndo(); int n = mr->mesh.WeldVertices(); g_meshSelVerts.clear(); g_meshSelFaces.clear();
+                ed.PushUndo(); int n = mr->mesh.WeldVertices();
+                g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
                 ConsoleLog("Merged " + std::to_string(n) + " verts"); ed.dirty = true;
             }
             static float s_bevelAmt = 0.15f;
@@ -14351,6 +14384,35 @@ void DrawModeling(EditorState& ed) {
                 ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 2); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap the selected vertices to their shared average on one axis — level a rim, square a wall.");
+            if (ImGui::Button("Collapse Edges##me") && !g_meshSelEdges.empty()) {
+                ed.PushUndo(); mr->mesh.CollapseEdges(g_meshSelEdges);
+                g_meshSelEdges.clear(); g_meshSelVerts.clear(); g_meshSelFaces.clear();
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge each selected edge's endpoints into one vertex — remove loops, simplify dense spots.");
+            ImGui::SameLine();
+            if (ImGui::Button("Split Edges##me") && !g_meshSelEdges.empty()) {
+                ed.PushUndo(); mr->mesh.SplitEdges(g_meshSelEdges);
+                g_meshSelEdges.clear();
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Insert a midpoint on each selected edge (both neighbour faces are cut) — add detail exactly where you need it.");
+            ImGui::SameLine();
+            if (ImGui::Button("Duplicate Sel##me") && !g_meshSelFaces.empty()) {
+                ed.PushUndo();
+                g_meshSelFaces = mr->mesh.DuplicateFaces(g_meshSelFaces);
+                g_meshSelVerts.clear(); g_meshSelEdges.clear();
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy the selected faces in place as detached geometry — the copies stay selected, so just drag them away.");
+            static float s_snapSel = 0.25f;
+            ImGui::SetNextItemWidth(110);
+            ImGui::DragFloat("##snapsel", &s_snapSel, 0.01f, 0.01f, 5.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("Snap Sel##me") && !g_meshSelVerts.empty()) {
+                ed.PushUndo(); mr->mesh.SnapToGrid(s_snapSel, g_meshSelVerts); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize the selected vertices to this grid step — line up modular pieces exactly.");
             if (ImGui::Button("Separate##me") && !g_meshSelFaces.empty()) {
                 ed.PushUndo();
                 Mesh part = mr->mesh.SeparateFaces(g_meshSelFaces);
@@ -23724,6 +23786,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         // the unique verts of the selected faces.
         std::set<int> affSet;
         if (g_meshSelMode == 0) affSet.insert(g_meshSelVerts.begin(), g_meshSelVerts.end());
+        else if (g_meshSelMode == 2)
+            for (const auto& e : g_meshSelEdges) {
+                if (e.first >= 0 && e.first < (int)mesh.vertices.size()) affSet.insert(e.first);
+                if (e.second >= 0 && e.second < (int)mesh.vertices.size()) affSet.insert(e.second);
+            }
         else for (int f : g_meshSelFaces) for (int k = 0; k < 3; ++k)
                  if (f >= 0 && f < mesh.TriangleCount()) affSet.insert(mesh.triangles[f * 3 + k]);
         std::vector<int> affected(affSet.begin(), affSet.end());
@@ -23741,6 +23808,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
         if (g_meshSelMode == 0) {
             for (int vi : g_meshSelVerts) { ImVec2 sp; if (vi >= 0 && vi < (int)mesh.vertices.size() && vScreen(vi, sp)) dl->AddCircleFilled(sp, 4.5f, IM_COL32(255, 170, 40, 255)); }
+        } else if (g_meshSelMode == 2) {
+            for (const auto& e : g_meshSelEdges) {
+                if (e.first < 0 || e.first >= (int)mesh.vertices.size() ||
+                    e.second < 0 || e.second >= (int)mesh.vertices.size()) continue;
+                ImVec2 a, b;
+                if (vScreen(e.first, a) && vScreen(e.second, b))
+                    dl->AddLine(a, b, IM_COL32(255, 170, 40, 255), 4.0f);
+            }
         } else {
             // Highlight selected faces as a translucent fill only — no per-triangle
             // outline, which would draw the diagonal across a quad and make it look
@@ -23849,6 +23924,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         auto it = std::find(g_meshSelVerts.begin(), g_meshSelVerts.end(), pv);
                         if (it != g_meshSelVerts.end()) { if (add) g_meshSelVerts.erase(it); }
                         else g_meshSelVerts.push_back(pv);
+                    }
+                } else if (g_meshSelMode == 2) {
+                    // Pick the nearest visible edge by screen distance to its segment.
+                    float best = 10.0f; std::pair<int,int> pe{-1, -1};
+                    for (const auto& e : mesh.VisibleEdges()) {
+                        ImVec2 a, b;
+                        if (!vScreen(e.first, a) || !vScreen(e.second, b)) continue;
+                        float d = SegDistPx(io.MousePos, a, b);
+                        if (d < best) { best = d; pe = e; }
+                    }
+                    if (!add) g_meshSelEdges.clear();
+                    if (pe.first >= 0) {
+                        auto same = [&](const std::pair<int,int>& x) {
+                            return (x.first == pe.first && x.second == pe.second)
+                                || (x.first == pe.second && x.second == pe.first);
+                        };
+                        auto it = std::find_if(g_meshSelEdges.begin(), g_meshSelEdges.end(), same);
+                        if (it != g_meshSelEdges.end()) { if (add) g_meshSelEdges.erase(it); }
+                        else g_meshSelEdges.push_back(pe);
                     }
                 } else {
                     // Pick the front-most triangle whose projected area contains the cursor.

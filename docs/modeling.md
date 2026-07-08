@@ -24,9 +24,15 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   spherify), **Relax** (Laplacian smoothing — evens out lumpy sculpts and
   imports without adding triangles; drag the slider for strength).
 - **Fill Holes** caps every open boundary (e.g. after Delete Faces) so the
-  mesh is watertight again. **Jitter** nudges every vertex randomly for an
-  instant hand-made / rocky look. **Shear X/Z** slants the mesh with height
+  mesh is watertight again. **Bridge** connects exactly two open boundaries
+  with a wall — delete two facing faces on a Combined mesh and bridge them
+  into a tunnel. **Jitter** nudges every vertex randomly for an instant
+  hand-made / rocky look. **Shear X/Z** slants the mesh with height
   (leaning towers, italic props).
+- **Symmetrize X/Y/Z** makes the mesh perfectly symmetric: the positive
+  half (about the pivot) is kept and mirrored over the other side.
+  **Snap Grid** quantizes every vertex to a step — crisp low-poly look,
+  modular kit alignment.
 - **Weld** duplicates, **Recenter** the pivot, **Ground** the pivot to the
   base, **Fit 1u** to scale into a unit cube. **Export OBJ** writes the mesh
   (with UVs) to `Assets/<name>.obj`.
@@ -76,9 +82,9 @@ or **Column** preset, then:
 ## Edit Mesh — vertex/face editing in the viewport
 
 Tick **Edit Mesh** to enter edit mode (the mesh is auto-welded so shared
-corners move together). Click in the 3D view to select **Vertices** or
-**Faces** (Shift-click to add), drag the axis handles to move, hold **V**
-to snap to nearby vertices.
+corners move together). Click in the 3D view to select **Vertices**,
+**Edges**, or **Faces** (Shift-click to add), drag the axis handles to
+move, hold **V** to snap to nearby vertices.
 
 - **Symmetry X** mirrors every move and sculpt stroke across the local
   X = 0 plane — edit half, get both.
@@ -86,7 +92,11 @@ to snap to nearby vertices.
   selection follow with a smooth falloff (set the radius).
 - Face tools: **Extrude Faces** (with distance), **Inset Faces**,
   **Subdivide Sel**, **Delete Faces**, **Flip Normals**,
-  **Merge by Distance**.
+  **Merge by Distance**, **Duplicate Sel** (copy the selected faces in
+  place, copies stay selected — drag them away).
+- Edge tools: **Collapse Edges** (merge each selected edge's endpoints),
+  **Split Edges** (insert a midpoint, cutting both neighbour faces).
+- **Snap Sel** quantizes the selected vertices to a grid step.
 - Selection tools: **Bevel Sel** chamfers the selected corners (cut back and
   capped flat — knock the sharp corners off a box), **Relax Sel** smooths
   just the selected vertices, **Flatten X/Y/Z** snaps them to their shared

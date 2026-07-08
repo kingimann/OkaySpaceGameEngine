@@ -2361,6 +2361,179 @@ struct Mesh {
         return holes;
     }
 
+    /// Bridge: if the mesh has EXACTLY two open boundary loops (e.g. two facing
+    /// faces deleted), connect them with a wall of triangles — tunnels, necks,
+    /// tube joins. Loops of different sizes are paired proportionally. Returns
+    /// true when a bridge was built.
+    bool BridgeLoops() {
+        if (triangles.size() < 3 || vertices.empty()) return false;
+        // Boundary loops, coincident-vertex aware (same approach as FillHoles).
+        std::map<std::tuple<int, int, int>, int> grid;
+        std::vector<int> rep(vertices.size());
+        auto key = [](const Vec3& v) {
+            return std::make_tuple((int)std::lround(v.x * 4096.0f),
+                                   (int)std::lround(v.y * 4096.0f),
+                                   (int)std::lround(v.z * 4096.0f));
+        };
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            auto k = key(vertices[i]);
+            auto it = grid.find(k);
+            if (it == grid.end()) { grid[k] = (int)i; rep[i] = (int)i; }
+            else rep[i] = it->second;
+        }
+        std::set<std::pair<int, int>> edges;
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int a = rep[triangles[t]], b = rep[triangles[t + 1]], c = rep[triangles[t + 2]];
+            if (a == b || b == c || a == c) continue;
+            edges.insert({a, b}); edges.insert({b, c}); edges.insert({c, a});
+        }
+        std::map<int, int> next;
+        for (const auto& e : edges)
+            if (!edges.count({e.second, e.first}) && !next.count(e.first))
+                next[e.first] = e.second;
+        std::vector<std::vector<int>> loops;
+        std::set<int> used;
+        for (const auto& start : next) {
+            if (used.count(start.first)) continue;
+            std::vector<int> loop;
+            int v = start.first;
+            while (next.count(v) && !used.count(v)) { used.insert(v); loop.push_back(v); v = next[v]; }
+            if (loop.size() >= 3 && v == start.first) loops.push_back(std::move(loop));
+        }
+        if (loops.size() != 2) return false;
+        std::vector<int>& A = loops[0];
+        std::vector<int>  B = loops[1];
+        // Two rims of one surface wind opposite each other when facing; walking A
+        // forward pairs with walking B REVERSED. Then rotate B so its start is the
+        // vertex nearest A's start.
+        std::reverse(B.begin(), B.end());
+        {
+            float best = 1e30f; std::size_t bi = 0;
+            for (std::size_t i = 0; i < B.size(); ++i) {
+                float d = (vertices[B[i]] - vertices[A[0]]).SqrMagnitude();
+                if (d < best) { best = d; bi = i; }
+            }
+            std::rotate(B.begin(), B.begin() + bi, B.end());
+        }
+        const int nA = (int)A.size(), nB = (int)B.size();
+        const int steps = std::max(nA, nB);
+        auto ai = [&](int i) { return A[((long long)i * nA / steps) % nA]; };
+        auto bi = [&](int i) { return B[((long long)i * nB / steps) % nB]; };
+        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        (void)hadUV;                     // bridge reuses existing vertices only
+        for (int i = 0; i < steps; ++i) {
+            int a0 = ai(i), a1 = ai(i + 1);
+            int b0 = bi(i), b1 = bi(i + 1);
+            // The surface already contains the rim's directed edges, so the wall
+            // must supply their REVERSES: (a1->a0) and, on the reversed-B rim,
+            // (b0->b1). Quad (a1, a0, b0, b1) split into two triangles does both.
+            if (a0 != a1) triangles.insert(triangles.end(), {a1, a0, b0});
+            if (b0 != b1) triangles.insert(triangles.end(), {a1, b0, b1});
+        }
+        triColors.clear();
+        name = "";
+        RefreshNormals();
+        return true;
+    }
+
+    /// Collapse each listed edge to its midpoint (both endpoints merge into one
+    /// vertex) — remove edge loops, simplify dense areas. Degenerate triangles
+    /// are dropped by the weld pass.
+    void CollapseEdges(const std::vector<std::pair<int, int>>& es) {
+        if (es.empty()) return;
+        for (const auto& e : es) {
+            if (e.first < 0 || e.first >= (int)vertices.size() ||
+                e.second < 0 || e.second >= (int)vertices.size()) continue;
+            Vec3 mid = (vertices[e.first] + vertices[e.second]) * 0.5f;
+            vertices[e.first] = mid;
+            vertices[e.second] = mid;
+        }
+        WeldVertices();                  // merges the pairs + drops collapsed tris
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Split each listed edge at its midpoint: a new vertex is inserted and every
+    /// triangle sharing that edge is cut in two — add local detail exactly where
+    /// you need it without subdividing whole faces.
+    void SplitEdges(const std::vector<std::pair<int, int>>& es) {
+        if (es.empty()) return;
+        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        for (const auto& e : es) {
+            int a = e.first, b = e.second;
+            if (a < 0 || a >= (int)vertices.size() || b < 0 || b >= (int)vertices.size() || a == b)
+                continue;
+            int mid = (int)vertices.size();
+            vertices.push_back((vertices[a] + vertices[b]) * 0.5f);
+            if (hadUV) uvs.push_back({(uvs[a].x + uvs[b].x) * 0.5f, (uvs[a].y + uvs[b].y) * 0.5f});
+            std::vector<int> out;
+            out.reserve(triangles.size() + 6);
+            for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+                int v[3] = {triangles[t], triangles[t + 1], triangles[t + 2]};
+                int hit = -1;                            // which cyclic edge is (a,b)?
+                for (int k = 0; k < 3; ++k) {
+                    int p = v[k], q = v[(k + 1) % 3];
+                    if ((p == a && q == b) || (p == b && q == a)) { hit = k; break; }
+                }
+                if (hit < 0) { out.insert(out.end(), {v[0], v[1], v[2]}); continue; }
+                int p = v[hit], q = v[(hit + 1) % 3], r = v[(hit + 2) % 3];
+                out.insert(out.end(), {p, mid, r,  mid, q, r});   // same orientation
+            }
+            triangles = std::move(out);
+        }
+        triColors.clear();
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Append a detached copy of the listed triangles (new vertices, UVs carried)
+    /// and return the indices of the NEW faces — duplicate-and-drag workflows.
+    std::vector<int> DuplicateFaces(const std::vector<int>& faces) {
+        std::vector<int> newFaces;
+        if (faces.empty()) return newFaces;
+        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        const bool hadColors = HasFaceColors();
+        std::map<int, int> remap;
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            newFaces.push_back((int)(triangles.size() / 3));
+            for (int k = 0; k < 3; ++k) {
+                int v = triangles[i + k];
+                auto it = remap.find(v);
+                int nv;
+                if (it == remap.end()) {
+                    nv = (int)vertices.size(); remap[v] = nv;
+                    vertices.push_back(vertices[v]);
+                    if (hadUV) uvs.push_back(uvs[v]);
+                } else nv = it->second;
+                triangles.push_back(nv);
+            }
+            if (hadColors && f < (int)triColors.size()) triColors.push_back(triColors[f]);
+        }
+        name = "";
+        RefreshNormals();
+        return newFaces;
+    }
+
+    /// Quantize vertices to a grid of `step` (empty `verts` = whole mesh) — clean
+    /// up hand-moved points, make modular kit pieces line up exactly.
+    void SnapToGrid(float step, const std::vector<int>& verts = {}) {
+        if (step <= 1e-6f || vertices.empty()) return;
+        auto snap = [&](int v) {
+            vertices[v] = {std::lround(vertices[v].x / step) * step,
+                           std::lround(vertices[v].y / step) * step,
+                           std::lround(vertices[v].z / step) * step};
+        };
+        if (verts.empty())
+            for (int i = 0; i < (int)vertices.size(); ++i) snap(i);
+        else
+            for (int v : verts)
+                if (v >= 0 && v < (int)vertices.size()) snap(v);
+        name = "";
+        RefreshNormals();
+    }
+
     /// Chamfer the listed vertices: each selected corner is cut back by `amount`
     /// along every edge that meets it and the opening is capped with a flat facet —
     /// Blender's vertex bevel. Great for knocking the sharp corners off boxes.

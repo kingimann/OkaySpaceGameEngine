@@ -5694,6 +5694,7 @@ void DrawScriptDocs() {
     if (sec("Character animation (Character on this object)")) {
         fapi("load_clips(\"text\")", "load keyframe clips from OkayVS-anim text; returns count");
         fapi("play_clip(\"name\") / stop_clip()", "play a loaded clip / return to built-in");
+        fapi("play_clip_once(\"name\")", "play a clip once (attack/jump), then return to the previous one");
         fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
         fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
     }
@@ -6013,7 +6014,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"set_unlit","set_unlit(on)"}, {"set_emissive","set_emissive(r, g, b)"}, {"set_text","set_text(\"s\")"},
         // animation (Character clips + layers)
         {"play_anim","play_anim(\"clip\")"}, {"stop_anim","stop_anim()"}, {"set_anim","set_anim(\"clip\")"},
-        {"play_clip","play_clip(\"clip\")"}, {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
+        {"play_clip","play_clip(\"clip\")"}, {"play_clip_once","play_clip_once(\"clip\")"},
+        {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
         {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
         {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
         // particles

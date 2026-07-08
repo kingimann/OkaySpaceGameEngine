@@ -20,6 +20,7 @@
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Mat4.hpp"
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -53,19 +54,35 @@ public:
     /// True once it has joints + a bind mesh to deform.
     bool Ready() const { return !joints.empty() && !bind.vertices.empty(); }
 
-    /// Recompute the deformed mesh from the current joint poses.
+    /// Recompute the deformed mesh from the current joint poses. Skips the whole
+    /// deform when nothing moved since the last call (byte-exact hash of the mesh
+    /// node's and every joint's world matrix) — idle rigs then cost ~nothing.
     void Skin() {
         if (!gameObject || !Ready()) return;
         auto* mr = gameObject->GetComponent<MeshRenderer>();
         if (!mr) return;
 
         // skinMatrixⱼ = meshNode⁻¹ · jointWorldⱼ · inverseBindⱼ
-        Mat4 meshInv = transform ? transform->LocalToWorldMatrix().Inverse() : Mat4::Identity();
+        Mat4 meshWorld = transform ? transform->LocalToWorldMatrix() : Mat4::Identity();
+        std::uint64_t h = 1469598103934665603ull;   // FNV-1a over the raw matrix bytes
+        auto mix = [&h](const Mat4& m) {
+            const unsigned char* b = reinterpret_cast<const unsigned char*>(m.m);
+            for (std::size_t i = 0; i < sizeof(m.m); ++i) { h ^= b[i]; h *= 1099511628211ull; }
+        };
+        mix(meshWorld);
         std::vector<Mat4> sk(joints.size());
         for (std::size_t j = 0; j < joints.size(); ++j) {
             Mat4 jw = joints[j] ? joints[j]->LocalToWorldMatrix() : Mat4::Identity();
+            mix(jw);
+            sk[j] = jw;   // finished below once we know we're not skipping
+        }
+        if (m_haveHash && h == m_lastHash && !mr->mesh.vertices.empty()) return;
+        m_lastHash = h; m_haveHash = true;
+
+        Mat4 meshInv = meshWorld.Inverse();
+        for (std::size_t j = 0; j < joints.size(); ++j) {
             Mat4 ib = j < inverseBind.size() ? inverseBind[j] : Mat4::Identity();
-            sk[j] = meshInv * jw * ib;
+            sk[j] = meshInv * sk[j] * ib;
         }
 
         Mesh out = bind;   // keeps triangles + uvs; positions/normals get overwritten
@@ -98,6 +115,10 @@ public:
         }
         mr->mesh = std::move(out);
     }
+
+private:
+    std::uint64_t m_lastHash = 0;    ///< pose hash of the last deform (skip when equal)
+    bool          m_haveHash = false;
 };
 
 } // namespace okay

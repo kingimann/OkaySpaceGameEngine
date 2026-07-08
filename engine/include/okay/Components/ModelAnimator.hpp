@@ -96,7 +96,8 @@ public:
 
         // Continuous 1D blend (idle<->walk<->run by speed): drives the bones
         // directly and replaces the discrete machinery below while it's active.
-        if (spd >= 0.0f && smoothLocomotion && SmoothBlendStep(dt, spd)) return;
+        // A one-shot (attack etc.) suspends locomotion until it finishes.
+        if (spd >= 0.0f && smoothLocomotion && !m_once && SmoothBlendStep(dt, spd)) return;
 
         // Fire clip events crossed by this frame's playback window. The clock
         // mirrors the node Animators' time (reset together in PlayIndex).
@@ -111,8 +112,8 @@ public:
                             if (onAnimEvent) onAnimEvent(ev.name);
                         }
                 };
-                if (loop && t1 > len) { fire(t0, len); fire(0.0f, std::fmod(t1, len)); }
-                else                  fire(t0, t1);
+                if (loop && !m_once && t1 > len) { fire(t0, len); fire(0.0f, std::fmod(t1, len)); }
+                else                             fire(t0, t1);
             }
             // Root motion: the ground translation the root bone would have made
             // this frame becomes movement of the whole object (world space, so it
@@ -143,12 +144,19 @@ public:
                     }
                 }
             }
-            m_clock = len > 0.0f ? (loop ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
+            m_clock = len > 0.0f ? ((loop && !m_once) ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
+            // A finished one-shot returns to the clip that was playing before it
+            // (crossfaded like any switch).
+            if (m_once && len > 0.0f && m_clock >= len) {
+                m_once = false;
+                int rt = m_onceReturnTo; m_onceReturnTo = -1;
+                if (rt >= 0 && rt < (int)clips.size() && rt != active) PlayIndex(rt);
+            }
         }
 
         // Discrete locomotion: switch to the clip for this speed band (crossfaded
-        // by blendTime, since Play goes through PlayIndex).
-        if (spd < 0.0f) return;
+        // by blendTime, since Play goes through PlayIndex). Suspended by a one-shot.
+        if (spd < 0.0f || m_once) return;
         const std::string* want = &idleClip;
         if (spd >= runThreshold && !runClip.empty())        want = &runClip;
         else if (spd > walkThreshold && !walkClip.empty())  want = &walkClip;
@@ -198,11 +206,36 @@ public:
         return false;
     }
 
+    /// Play a clip ONCE (attack / jump / hit reaction), then automatically return
+    /// to whatever was playing — both switches crossfade by blendTime. Locomotion
+    /// stands down until the one-shot finishes.
+    bool PlayOnce(const std::string& name) {
+        int i = FindClip(name);
+        if (i < 0) return false;
+        if (!m_once) m_onceReturnTo = active;   // don't chain-return into another one-shot
+        PlayIndex(i, /*once=*/true);
+        return true;
+    }
+
+    /// True when a non-looping playback (a one-shot, or loop=false) has reached
+    /// the end of its clip.
+    bool ClipFinished() const {
+        if (active < 0 || active >= (int)clips.size()) return false;
+        if (!m_once && loop) return false;
+        float len = ClipLength(active);
+        return len > 0.0f && m_clock >= len;
+    }
+
+    /// Playback time (seconds) into the current clip.
+    float Time() const { return m_clock; }
+
     /// Switch to a clip by index: push each node's tracks onto that node's Animator.
     /// With blendTime > 0 the current pose is captured first and eased into the new
-    /// clip over that many seconds (see LateUpdate).
-    void PlayIndex(int i) {
+    /// clip over that many seconds (see LateUpdate). `once` plays it exactly one
+    /// time and then returns to the previous clip (see PlayOnce).
+    void PlayIndex(int i, bool once = false) {
         if (i < 0 || i >= (int)clips.size() || !gameObject) return;
+        m_once = once;
         active = i;
         Scene* sc = gameObject->scene();
         if (!sc) return;
@@ -224,6 +257,7 @@ public:
             if (!an) an = g->AddComponent<Animator>();
             nc.clip.loop = loop;
             an->clip = nc.clip;
+            if (once) an->clip.loop = false;   // a one-shot holds its final pose
             // Root motion: the object moves instead of the bone — strip the bone's
             // ground translation from what the Animator plays (Y bounce stays).
             if (rootNC == &nc) {
@@ -414,6 +448,8 @@ private:
     std::vector<std::string> m_firedEvents;   ///< event names fired since the last consume
     float                    m_clock = 0.0f;  ///< playback clock for event firing
     float                    m_phase = 0.0f;  ///< shared normalized cycle for smooth locomotion
+    bool                     m_once = false;        ///< current playback is a one-shot
+    int                      m_onceReturnTo = -1;   ///< clip to return to after the one-shot
     Vec3 m_lastPos{0, 0, 0};
     bool m_haveLast = false;
 };

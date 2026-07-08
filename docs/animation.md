@@ -99,8 +99,11 @@ itself or an ancestor:
 
 ```
 play_clip("walk")          # switch clips (crossfades over Blend seconds)
+play_clip_once("attack")   # play once, then return to the previous clip
 name = playing_clip()      # current clip name
 ev = anim_event()          # next fired event name ("" if none)
+if clip_finished() { ... } # a one-shot / non-looping clip reached its end
+d = clip_duration("walk")  # clip length in seconds
 ```
 
 ## Tips

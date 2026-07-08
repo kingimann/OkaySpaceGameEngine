@@ -2762,22 +2762,44 @@ struct OkayScriptVM::Impl {
             Character* c = charSelf(); return Value{c ? (float)c->anim : 0.0f};
         };
         // Clip queries: timing + existence, so scripts can react to where a clip is.
-        b["clip_time"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{c ? c->ClipTime() : 0.0f};
+        b["clip_time"] = [charSelf, modelSelf](std::vector<Value>&) {
+            Character* c = charSelf();
+            if (c) return Value{c->ClipTime()};
+            ModelAnimator* m = modelSelf();
+            return Value{m ? m->Time() : 0.0f};
         };
         b["clip_normalized"] = [charSelf](std::vector<Value>&) {
             Character* c = charSelf(); return Value{c ? c->ClipNormalizedTime() : 0.0f};
         };
-        b["clip_finished"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{(c && c->ClipFinished()) ? 1.0f : 0.0f};
-        };
-        b["clip_duration"] = [charSelf](std::vector<Value>& a) {
+        b["clip_finished"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();
-            return Value{(c && !a.empty()) ? c->ClipDuration(a[0].AsString()) : 0.0f};
+            if (c) return Value{c->ClipFinished() ? 1.0f : 0.0f};
+            ModelAnimator* m = modelSelf();
+            return Value{(m && m->ClipFinished()) ? 1.0f : 0.0f};
         };
-        b["has_clip"] = [charSelf](std::vector<Value>& a) {
+        b["clip_duration"] = [charSelf, modelSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
             Character* c = charSelf();
-            return Value{(c && !a.empty() && c->HasClip(a[0].AsString())) ? 1.0f : 0.0f};
+            if (c) return Value{c->ClipDuration(a[0].AsString())};
+            ModelAnimator* m = modelSelf();
+            return Value{m ? m->ClipLength(m->FindClip(a[0].AsString())) : 0.0f};
+        };
+        b["has_clip"] = [charSelf, modelSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            Character* c = charSelf();
+            if (c) return Value{c->HasClip(a[0].AsString()) ? 1.0f : 0.0f};
+            ModelAnimator* m = modelSelf();
+            return Value{(m && m->FindClip(a[0].AsString()) >= 0) ? 1.0f : 0.0f};
+        };
+        // Play a clip ONCE (attack / jump / hit reaction) and automatically return
+        // to the previous clip — imported models via ModelAnimator; a Character
+        // falls back to PlayClip (its clips carry their own once/loop mode).
+        b["play_clip_once"] = [charSelf, modelSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            ModelAnimator* m = modelSelf();
+            if (m && m->PlayOnce(a[0].AsString())) return Value{1.0f};
+            Character* c = charSelf();
+            return Value{(c && c->PlayClip(a[0].AsString())) ? 1.0f : 0.0f};
         };
         // Pop the next fired animation event name ("" if none) — footsteps, hit windows.
         b["anim_event"] = [charSelf, modelSelf](std::vector<Value>&) {

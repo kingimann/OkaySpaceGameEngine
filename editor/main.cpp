@@ -10579,7 +10579,18 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go) {
     float h = w * 0.6f;
     Mat4 view = Mat4::LookAt(eye, center, Vec3::Up);
     Mat4 proj = Mat4::Perspective(45.0f, w / h, 0.05f, 4000.0f);
+    // Show ONLY the object being animated: temporarily hide everything outside its
+    // subtree (lights stay on so the shading matches the scene), render, restore.
+    std::vector<GameObject*> hidden;
+    for (const auto& up : ed.scene().Objects()) {
+        GameObject* g = up.get();
+        if (!g || !g->active || g->IsSelfOrDescendantOf(go)) continue;
+        if (g->GetComponent<Light>()) continue;
+        hidden.push_back(g);
+        g->active = false;
+    }
     SDL_Texture* tex = Render3DTexture(ed.scene(), proj * view, eye, (int)w, (int)h, /*slot=*/3);
+    for (GameObject* g : hidden) g->active = true;
     if (tex) {
         ImGui::Image((ImTextureID)tex, ImVec2(w, h));
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {

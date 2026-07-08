@@ -12,12 +12,16 @@
 #include "okay/Math/Mat4.hpp"
 #include <array>
 #include <cctype>
+#include <cmath>
+#include <functional>
+#include <unordered_map>
 #include <vector>
 
 #ifdef OKAY_HAVE_ASSIMP
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/config.h>
 #endif
 
 namespace okay {
@@ -52,35 +56,41 @@ static bool EndsWith(const std::string& s, const char* suf) {
 // an external reference resolves next to the model; an embedded texture (the
 // common case for FBX) is written out as a "<model>_tex.<ext>" sidecar — the
 // same convention the glTF importer uses.
-static std::string AssimpDiffuseTexture(const aiScene* sc, const std::string& modelPath) {
+static std::string AssimpMaterialTexture(const aiScene* sc, unsigned mi, const std::string& modelPath) {
+    if (mi >= sc->mNumMaterials) return std::string();
+    aiString texPath;
+    if (sc->mMaterials[mi]->GetTexture(aiTextureType_DIFFUSE, 0, &texPath) != AI_SUCCESS)
+        return std::string();
+    std::string tp = texPath.C_Str();
+    if (tp.empty()) return std::string();
+    if (const aiTexture* emb = sc->GetEmbeddedTexture(tp.c_str())) {
+        // mHeight == 0 -> compressed blob (png/jpg per achFormatHint); mWidth is
+        // then the byte size. Raw-BGRA embeds (mHeight > 0) are rare; skipped.
+        if (emb->mHeight == 0 && emb->pcData && emb->mWidth > 0) {
+            std::string ext = emb->achFormatHint[0] ? emb->achFormatHint : "png";
+            std::string base = modelPath;
+            std::size_t dot = base.find_last_of('.');
+            if (dot != std::string::npos) base = base.substr(0, dot);
+            std::string out = base + "_tex" + std::to_string(mi) + "." + ext;
+            if (std::FILE* f = std::fopen(out.c_str(), "wb")) {
+                std::fwrite(emb->pcData, 1, emb->mWidth, f);
+                std::fclose(f);
+                return out;
+            }
+        }
+        return std::string();
+    }
+    for (char& c : tp) if (c == '\\') c = '/';
+    bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
     std::string dir;
     { std::size_t s = modelPath.find_last_of("/\\"); if (s != std::string::npos) dir = modelPath.substr(0, s + 1); }
+    return abs ? tp : dir + tp;
+}
+
+static std::string AssimpDiffuseTexture(const aiScene* sc, const std::string& modelPath) {
     for (unsigned mi = 0; mi < sc->mNumMaterials; ++mi) {
-        aiString texPath;
-        if (sc->mMaterials[mi]->GetTexture(aiTextureType_DIFFUSE, 0, &texPath) != AI_SUCCESS)
-            continue;
-        std::string tp = texPath.C_Str();
-        if (tp.empty()) continue;
-        if (const aiTexture* emb = sc->GetEmbeddedTexture(tp.c_str())) {
-            // mHeight == 0 -> compressed blob (png/jpg per achFormatHint); mWidth is
-            // then the byte size. Raw-BGRA embeds (mHeight > 0) are rare; skipped.
-            if (emb->mHeight == 0 && emb->pcData && emb->mWidth > 0) {
-                std::string ext = emb->achFormatHint[0] ? emb->achFormatHint : "png";
-                std::string base = modelPath;
-                std::size_t dot = base.find_last_of('.');
-                if (dot != std::string::npos) base = base.substr(0, dot);
-                std::string out = base + "_tex." + ext;
-                if (std::FILE* f = std::fopen(out.c_str(), "wb")) {
-                    std::fwrite(emb->pcData, 1, emb->mWidth, f);
-                    std::fclose(f);
-                    return out;
-                }
-            }
-            continue;
-        }
-        for (char& c : tp) if (c == '\\') c = '/';
-        bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
-        return abs ? tp : dir + tp;
+        std::string t = AssimpMaterialTexture(sc, mi, modelPath);
+        if (!t.empty()) return t;
     }
     return std::string();
 }
@@ -215,15 +225,31 @@ static void ApplyGltfMaterial(MeshRenderer& mr, const gltf_detail::GltfMat& gm) 
 static void AutoNormalizeImportScale(Scene& scene, GameObject* root) {
     if (!root || !root->transform) return;
     float maxDim = 0.0f;
+    Vec3 wlo{0, 0, 0}, whi{0, 0, 0}; bool any = false;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (!go || !go->IsSelfOrDescendantOf(root)) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->mesh.vertices.empty()) continue;
+        // Measure in WORLD space: importers often park unit conversions in node
+        // scales (e.g. Collada's 0.01 cm->m node), so raw mesh bounds alone would
+        // mis-size the model and this correction would compound the error.
         Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
-        Vec3 sz = hi - lo;
-        float d = sz.x > sz.y ? (sz.x > sz.z ? sz.x : sz.z) : (sz.y > sz.z ? sz.y : sz.z);
-        if (d > maxDim) maxDim = d;
+        Mat4 l2w = go->transform->LocalToWorldMatrix();
+        for (int c = 0; c < 8; ++c) {
+            Vec3 corner{c & 1 ? hi.x : lo.x, c & 2 ? hi.y : lo.y, c & 4 ? hi.z : lo.z};
+            Vec3 w = l2w.MultiplyPoint(corner);
+            if (!any) { wlo = whi = w; any = true; }
+            else {
+                wlo.x = std::fmin(wlo.x, w.x); whi.x = std::fmax(whi.x, w.x);
+                wlo.y = std::fmin(wlo.y, w.y); whi.y = std::fmax(whi.y, w.y);
+                wlo.z = std::fmin(wlo.z, w.z); whi.z = std::fmax(whi.z, w.z);
+            }
+        }
+    }
+    if (any) {
+        Vec3 sz = whi - wlo;
+        maxDim = sz.x > sz.y ? (sz.x > sz.z ? sz.x : sz.z) : (sz.y > sz.z ? sz.y : sz.z);
     }
     if (maxDim <= 0.0f) return;
     float s = 1.0f;
@@ -233,6 +259,170 @@ static void AutoNormalizeImportScale(Scene& scene, GameObject* root) {
         root->transform->localScale = root->transform->localScale * s;
 }
 
+#ifdef OKAY_HAVE_ASSIMP
+// Convert assimp's row-major matrix to the engine's column-major Mat4.
+static Mat4 AiToMat4(const aiMatrix4x4& a) {
+    Mat4 r;
+    for (int row = 0; row < 4; ++row)
+        for (int col = 0; col < 4; ++col)
+            r.at(col, row) = a[row][col];
+    return r;
+}
+
+// Geometry of one aiMesh, untransformed (the node hierarchy carries the transforms).
+static Mesh MeshFromAi(const aiMesh* am) {
+    Mesh m;
+    for (unsigned v = 0; v < am->mNumVertices; ++v) {
+        m.vertices.push_back(Vec3{am->mVertices[v].x, am->mVertices[v].y, am->mVertices[v].z});
+        if (am->HasNormals())
+            m.normals.push_back(Vec3{am->mNormals[v].x, am->mNormals[v].y, am->mNormals[v].z});
+        if (am->HasTextureCoords(0))
+            m.uvs.push_back(Vec2{am->mTextureCoords[0][v].x, am->mTextureCoords[0][v].y});
+    }
+    for (unsigned fi = 0; fi < am->mNumFaces; ++fi) {
+        const aiFace& f = am->mFaces[fi];
+        if (f.mNumIndices == 3)
+            for (int k = 0; k < 3; ++k) m.triangles.push_back((int)f.mIndices[k]);
+    }
+    if (m.normals.size() != m.vertices.size()) m.normals.clear();
+    if (m.uvs.size()     != m.vertices.size()) m.uvs.clear();
+    return m;
+}
+
+// Import via Assimp PRESERVING the node hierarchy, skins and animations — so FBX
+// (Mixamo / Meshy AI rigs), Collada etc. come in animated, mirroring the glTF branch:
+// one GameObject per node, SkinnedMesh from bones, ModelAnimator clips from channels.
+// Returns nullptr when the file can't be loaded (caller falls back / reports).
+static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path, bool* ok) {
+    Assimp::Importer imp;
+    // Fold FBX pivot helper nodes into the real nodes — otherwise every joint
+    // explodes into $AssimpFbx$_Translation/_Rotation/... chains.
+    imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+    const aiScene* sc = imp.ReadFile(path,
+        aiProcess_Triangulate | aiProcess_GenSmoothNormals |
+        aiProcess_JoinIdenticalVertices | aiProcess_FlipUVs |
+        aiProcess_LimitBoneWeights);   // ≤4 weights per vertex (SkinnedMesh blends 4)
+    if (!sc || !sc->mRootNode || sc->mNumMeshes == 0) { if (ok) *ok = false; return nullptr; }
+
+    GameObject* root = scene.CreateGameObject(BaseName(path));
+    std::unordered_map<std::string, GameObject*> byName;
+    struct MeshSite { GameObject* go; const aiMesh* am; };
+    std::vector<MeshSite> sites;
+
+    std::function<void(const aiNode*, Transform*)> build = [&](const aiNode* n, Transform* parent) {
+        std::string nm = n->mName.C_Str();
+        GameObject* g = scene.CreateGameObject(nm.empty() ? "node" : nm);
+        aiVector3D s, t; aiQuaternion r;
+        n->mTransformation.Decompose(s, r, t);
+        g->transform->localPosition = Vec3{t.x, t.y, t.z};
+        g->transform->localRotation = Quat{r.x, r.y, r.z, r.w};
+        g->transform->localScale    = Vec3{s.x, s.y, s.z};
+        g->transform->SetParent(parent, false);
+        if (!nm.empty() && !byName.count(nm)) byName[nm] = g;
+        for (unsigned i = 0; i < n->mNumMeshes; ++i) {
+            GameObject* host = g;
+            if (i > 0) {   // extra meshes on this node get child objects
+                host = scene.CreateGameObject(g->name + "_m" + std::to_string(i));
+                host->transform->SetParent(g->transform, false);
+            }
+            sites.push_back({host, sc->mMeshes[n->mMeshes[i]]});
+        }
+        for (unsigned c = 0; c < n->mNumChildren; ++c) build(n->mChildren[c], g->transform);
+    };
+    build(sc->mRootNode, root->transform);
+
+    for (const MeshSite& site : sites) {
+        Mesh bind = MeshFromAi(site.am);
+        if (bind.vertices.empty()) continue;
+        auto* mr = site.go->AddComponent<MeshRenderer>();
+        mr->mesh = bind; mr->doubleSided = true;
+        std::string tex = AssimpMaterialTexture(sc, site.am->mMaterialIndex, path);
+        if (!tex.empty()) mr->texture = tex;
+
+        if (site.am->mNumBones == 0) continue;
+        auto* sm = site.go->AddComponent<SkinnedMesh>();
+        sm->bind = bind;
+        sm->jointIdx.assign(bind.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
+        sm->jointWt.assign(bind.vertices.size(), std::array<float, 4>{0, 0, 0, 0});
+        for (unsigned b = 0; b < site.am->mNumBones; ++b) {
+            const aiBone* bone = site.am->mBones[b];
+            std::string bn = bone->mName.C_Str();
+            auto it = byName.find(bn);
+            sm->joints.push_back(it != byName.end() ? it->second->transform : nullptr);
+            sm->jointNames.push_back(bn);
+            sm->inverseBind.push_back(AiToMat4(bone->mOffsetMatrix));
+            for (unsigned w = 0; w < bone->mNumWeights; ++w) {
+                unsigned v = bone->mWeights[w].mVertexId;
+                float   wt = bone->mWeights[w].mWeight;
+                if (v >= sm->jointWt.size() || wt <= 0.0f) continue;
+                // Keep the 4 strongest influences (assimp already limits to 4).
+                auto& ws = sm->jointWt[v]; auto& is = sm->jointIdx[v];
+                int slot = 0;
+                for (int k = 1; k < 4; ++k) if (ws[k] < ws[slot]) slot = k;
+                if (wt > ws[slot]) { ws[slot] = wt; is[slot] = (int)b; }
+            }
+        }
+    }
+
+    // Animations -> a ModelAnimator clip library on the root (same as the glTF path).
+    if (sc->mNumAnimations > 0) {
+        auto* ma = root->AddComponent<ModelAnimator>();
+        for (unsigned a = 0; a < sc->mNumAnimations; ++a) {
+            const aiAnimation* an = sc->mAnimations[a];
+            double tps = an->mTicksPerSecond > 0.0 ? an->mTicksPerSecond : 25.0;
+            ModelAnimator::Clip clip;
+            std::string cn = an->mName.C_Str();
+            // FBX tools often emit "Armature|Walk" style names — keep the last segment.
+            { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
+            clip.name = cn.empty() ? ("clip" + std::to_string(a)) : cn;
+            for (unsigned c = 0; c < an->mNumChannels; ++c) {
+                const aiNodeAnim* ch = an->mChannels[c];
+                std::string nodeName = ch->mNodeName.C_Str();
+                if (nodeName.empty() || !byName.count(nodeName)) continue;
+                clip.nodes.push_back({nodeName, AnimationClip{}});
+                AnimationClip& ac = clip.nodes.back().clip;
+                for (unsigned k = 0; k < ch->mNumPositionKeys; ++k) {
+                    float t = (float)(ch->mPositionKeys[k].mTime / tps);
+                    const aiVector3D& v = ch->mPositionKeys[k].mValue;
+                    ac.AddKey("position.x", t, v.x);
+                    ac.AddKey("position.y", t, v.y);
+                    ac.AddKey("position.z", t, v.z);
+                }
+                // Keep quaternion keys on one hemisphere: the Animator lerps the raw
+                // components, and a sign flip between neighbours reads as a wild spin.
+                aiQuaternion prev; bool hasPrev = false;
+                for (unsigned k = 0; k < ch->mNumRotationKeys; ++k) {
+                    float t = (float)(ch->mRotationKeys[k].mTime / tps);
+                    aiQuaternion q = ch->mRotationKeys[k].mValue;
+                    if (hasPrev && (q.x*prev.x + q.y*prev.y + q.z*prev.z + q.w*prev.w) < 0.0f) {
+                        q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w;
+                    }
+                    prev = q; hasPrev = true;
+                    ac.AddKey("rotation.qx", t, q.x);
+                    ac.AddKey("rotation.qy", t, q.y);
+                    ac.AddKey("rotation.qz", t, q.z);
+                    ac.AddKey("rotation.qw", t, q.w);
+                }
+                for (unsigned k = 0; k < ch->mNumScalingKeys; ++k) {
+                    float t = (float)(ch->mScalingKeys[k].mTime / tps);
+                    const aiVector3D& v = ch->mScalingKeys[k].mValue;
+                    ac.AddKey("scale.x", t, v.x);
+                    ac.AddKey("scale.y", t, v.y);
+                    ac.AddKey("scale.z", t, v.z);
+                }
+                if (ac.Tracks().empty()) clip.nodes.pop_back();
+            }
+            if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
+        }
+        if (!ma->clips.empty()) { ma->active = 0; ma->autoPlay = true; }
+    }
+
+    AutoNormalizeImportScale(scene, root);
+    if (ok) *ok = true;
+    return root;
+}
+#endif // OKAY_HAVE_ASSIMP
+
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
@@ -240,6 +430,13 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
 
     // Non-glTF (OBJ / Assimp): bring it in as one mesh object.
     if (!isGltf) {
+#ifdef OKAY_HAVE_ASSIMP
+        // Assimp formats: import as a node hierarchy with skins + animations (FBX
+        // rigs etc.). Falls through to the flattened single-mesh path on failure.
+        if (!EndsWith(p, ".obj"))
+            if (GameObject* r = ImportAssimpSceneGraph(scene, path, ok))
+                return r;
+#endif
         bool okm = false; std::string tex;
         Mesh m = ImportModel(path, &okm, &tex);
         if (!okm || m.vertices.empty()) { if (ok) *ok = false; return nullptr; }

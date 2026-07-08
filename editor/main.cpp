@@ -1532,6 +1532,16 @@ static void OpenScriptFileInEditor(const std::string& path) {
     g_activeScriptTab = raw; g_focusScriptTab = raw;
     g_showScriptEditor = true;
 }
+
+// Jump request from outside the Script Editor (the Console's "Open Script" on an
+// error): opens/focuses the file's tab; the editor consumes the line once active.
+static std::string g_scriptPendingPath;
+static int         g_scriptPendingLine = 0;
+static void OpenScriptFileInEditorAt(const std::string& path, int line) {
+    OpenScriptFileInEditor(path);
+    g_scriptPendingPath = path;
+    g_scriptPendingLine = line > 0 ? line : 1;
+}
 bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
 bool  g_showArrayDup   = false;     // "Array Duplicate" tool popup
@@ -3538,6 +3548,28 @@ void DrawConsole() {
             ImGui::TextDisabled("%s at %s", e.level == 2 ? "Error" : e.level == 1 ? "Warning" : "Info", e.time.c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton("Copy##cdet")) ImGui::SetClipboardText(e.text.c_str());
+            // If the message references a script file, offer to jump straight to it
+            // (and to "line N" when the message carries one).
+            {
+                std::string spath; int sline = 0;
+                for (const char* ex : {".okay", ".lua", ".cs"}) {
+                    std::size_t p = e.text.find(ex);
+                    if (p == std::string::npos) continue;
+                    // Walk back to the start of the path token.
+                    std::size_t start = e.text.find_last_of(" \t'\"(,;", p);
+                    start = start == std::string::npos ? 0 : start + 1;
+                    spath = e.text.substr(start, p + std::strlen(ex) - start);
+                    break;
+                }
+                if (std::size_t lp = e.text.find("line "); lp != std::string::npos)
+                    sline = std::atoi(e.text.c_str() + lp + 5);
+                if (!spath.empty()) {
+                    ImGui::SameLine();
+                    char ob[48];
+                    std::snprintf(ob, sizeof(ob), sline > 0 ? "Open Script (line %d)##cdet" : "Open Script##cdet", sline);
+                    if (ImGui::SmallButton(ob)) OpenScriptFileInEditorAt(spath, sline);
+                }
+            }
         } else {
             ImGui::TextDisabled("Select a log entry to see details.");
         }
@@ -3671,6 +3703,10 @@ std::string g_assetImportDir;
 // Unity's "Favorites" for one-click jumps to folders you use a lot. Session-lived
 // (reset on restart), keyed by absolute path.
 std::vector<std::string> g_favFolders;
+
+// "Ping" an asset in the Project panel (Unity-style): navigate to its folder and
+// highlight it. Set by Inspector fields' "Show in Project"; consumed by DrawProject.
+std::string g_pingAsset;
 
 // Project-panel view preferences + favorites, persisted beside the working dir
 // (same convention as okay_recent.txt) so they survive editor restarts.
@@ -3857,6 +3893,17 @@ void DrawProject(EditorState& ed) {
     // Persisted view prefs + favorites — load once, before anything reads them.
     static bool s_prefsLoaded = false;
     if (!s_prefsLoaded) { LoadProjectViewPrefs(); s_prefsLoaded = true; }
+    // A pending "ping": jump to the asset's folder, filter to its name, select it.
+    if (!g_pingAsset.empty()) {
+        std::error_code pec;
+        fs::path pp(g_pingAsset);
+        if (fs::exists(pp, pec)) {
+            std::strncpy(dirBuf, pp.parent_path().string().c_str(), sizeof(dirBuf) - 1);
+            std::snprintf(search, sizeof(search), "%s", pp.filename().string().c_str());
+            selected = pp.string(); s_multi.clear();
+        } else ConsoleLog("Can't find asset: " + g_pingAsset, 1);
+        g_pingAsset.clear();
+    }
     // Roomier spacing for the Project panel (it was too compact).
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(8, 8));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 5));
@@ -6628,6 +6675,14 @@ void DrawScriptEditor(EditorState& ed) {
         static std::unordered_map<ScriptComponent*, std::set<int>> s_bookmarks;
         std::set<int>& bookmarks = s_bookmarks[sc];
 
+        // A jump requested from outside (Console "Open Script" on an error line):
+        // apply it once this file's tab is the active one.
+        if (g_scriptPendingLine > 0 && sc->Path() == g_scriptPendingPath) {
+            jumpTo(g_scriptPendingLine);
+            g_scriptPendingLine = 0;
+            g_scriptPendingPath.clear();
+        }
+
         // --- Toolbar (VS Code-style title row): file + Run / Save / Reload ----
         std::string fname = sc->Path().empty() ? (go->name + "." + extide::ExtFor(sc->Language()))
                                                : std::filesystem::path(sc->Path()).filename().string();
@@ -9354,6 +9409,7 @@ void DrawHierarchy(EditorState& ed) {
                         ed.PushUndo();
                         auto* nsc = node->AddComponent<ScriptComponent>("okayscript");
                         std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                        if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
                         ed.dirty = true; ConsoleLog("Attached script to " + node->name);
                     } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
                         ed.PushUndo();
@@ -13065,18 +13121,29 @@ static std::size_t ApplyItemAction(std::vector<ActionList::Item>& list, std::siz
     return i + 1;
 }
 
-// A small inline preview under an image-path field; hovering zooms it in a tooltip.
+// A small inline preview under an image-path field; hovering zooms it in a
+// tooltip; right-click offers "Show in Project" (Unity's ping).
 static void TexFieldThumb(const std::string& path) {
     if (path.empty()) return;
     SDL_Texture* t = GetThumb(path);
     if (!t) return;
+    ImGui::PushID(path.c_str());
     ImGui::Image((ImTextureID)t, ImVec2(40, 40));
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::Image((ImTextureID)t, ImVec2(180, 180));
-        ImGui::TextDisabled("%s", path.c_str());
+        ImGui::TextDisabled("%s  (right-click to find in Project)", path.c_str());
         ImGui::EndTooltip();
     }
+    if (ImGui::BeginPopupContextItem("##thumbctx")) {
+        if (ImGui::MenuItem("Show in Project")) {
+            g_pingAsset = path;
+            g_showProject = true;
+            ImGui::SetWindowFocus("Project");
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
 }
 
 // If an asset is dropped on the previous widget, set `field` to its path.
@@ -14036,6 +14103,7 @@ void DrawInspector(EditorState& ed) {
                 // multiple instances of the same one — like Unity).
                 auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
                 std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
                 SetCodeBuffer(nsc, nsc->Source());   // fresh editor buffer for it
                 ConsoleLog("Attached script " + path); ed.dirty = true;
             } else if (ext == ".okaymat") {
@@ -19510,6 +19578,7 @@ void DrawInspector(EditorState& ed) {
                     if (F(rel.c_str()) && ImGui::MenuItem(rel.c_str())) {
                         auto* sc = go->AddComponent<ScriptComponent>("okayscript");
                         std::string err; sc->LoadFile(full, &err); sc->SetPath(full);
+                        if (!err.empty()) ConsoleLog("Script error in " + full + ": " + err, 2);
                         ConsoleLog("Attached script " + full);
                         ed.dirty = true;
                     }
@@ -19704,6 +19773,7 @@ void DrawInspector(EditorState& ed) {
                     // multiple instances of the same script) — like Unity.
                     auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
                     std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                    if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
                     SetCodeBuffer(nsc, nsc->Source());   // fresh editor buffer for it
                     ConsoleLog("Attached script " + path); ed.dirty = true;
                 } else if (ext == ".okaymat") {

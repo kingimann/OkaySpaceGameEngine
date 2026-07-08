@@ -2653,6 +2653,86 @@ struct Mesh {
         return out;
     }
 
+    // ---- Face painting (per-face vertex colors, saved via the meshcolors record) ----
+
+    /// Make sure the per-face color array exists (one entry per triangle),
+    /// seeding it with `base` — call before painting.
+    void EnsureFaceColors(const Color& base = {1, 1, 1, 1}) {
+        if (!HasFaceColors()) triColors.assign(TriangleCount(), base);
+    }
+
+    /// Paint brush: blend the faces whose centroid lies within `radius` of
+    /// `center` toward color `c`, with a smoothstep falloff scaled by `blend`.
+    /// Painting keeps the primitive name — a painted cube is still a Cube.
+    void PaintFaces(const Vec3& center, float radius, const Color& c, float blend = 1.0f) {
+        if (radius <= 1e-6f || triangles.empty() || blend <= 0.0f) return;
+        EnsureFaceColors();
+        for (int f = 0; f < TriangleCount(); ++f) {
+            float d = (FaceCenter(f) - center).Magnitude();
+            if (d >= radius) continue;
+            float w = 1.0f - d / radius;
+            w = w * w * (3.0f - 2.0f * w) * blend;
+            if (w > 1.0f) w = 1.0f;
+            Color& o = triColors[f];
+            o.r += (c.r - o.r) * w;
+            o.g += (c.g - o.g) * w;
+            o.b += (c.b - o.b) * w;
+            o.a += (c.a - o.a) * w;
+        }
+    }
+
+    /// Set the listed faces to exactly `c` (bucket fill on a selection).
+    void FillFacesColor(const std::vector<int>& faces, const Color& c) {
+        if (faces.empty()) return;
+        EnsureFaceColors();
+        for (int f : faces)
+            if (f >= 0 && f < (int)triColors.size()) triColors[f] = c;
+    }
+
+    /// Extrude the listed edges: each gets a wall quad pushed `dist` along its
+    /// adjacent face's normal — pull walls up from a floor plate's rim, extend a
+    /// ribbon strip. Returns the NEW outer edges so the caller can keep extruding
+    /// or move them. Winding is chosen from how the edge appears in its face, so
+    /// boundary-edge walls face outward.
+    std::vector<std::pair<int, int>> ExtrudeEdges(const std::vector<std::pair<int, int>>& es,
+                                                  float dist) {
+        std::vector<std::pair<int, int>> newEdges;
+        if (es.empty() || std::fabs(dist) < 1e-8f) return newEdges;
+        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        for (const auto& e : es) {
+            int a = e.first, b = e.second;
+            if (a < 0 || a >= (int)vertices.size() || b < 0 || b >= (int)vertices.size() || a == b)
+                continue;
+            // Find a triangle owning this edge to get its direction + normal.
+            int p = -1, q = -1; Vec3 n{0, 1, 0}; bool found = false;
+            for (std::size_t t = 0; t + 2 < triangles.size() && !found; t += 3) {
+                int v[3] = {triangles[t], triangles[t + 1], triangles[t + 2]};
+                for (int k = 0; k < 3; ++k) {
+                    int i0 = v[k], i1 = v[(k + 1) % 3];
+                    if ((i0 == a && i1 == b) || (i0 == b && i1 == a)) {
+                        p = i0; q = i1; n = FaceNormal((int)(t / 3)); found = true; break;
+                    }
+                }
+            }
+            if (!found) continue;
+            int p2 = (int)vertices.size();
+            vertices.push_back(vertices[p] + n * dist);
+            if (hadUV) uvs.push_back(uvs[p]);
+            int q2 = (int)vertices.size();
+            vertices.push_back(vertices[q] + n * dist);
+            if (hadUV) uvs.push_back(uvs[q]);
+            // The face already has directed edge p->q; the wall supplies q->p.
+            triangles.insert(triangles.end(), {q, p, p2,  q, p2, q2});
+            newEdges.push_back({p2, q2});
+        }
+        if (!newEdges.empty()) {
+            triColors.clear();
+            name = "";
+            RefreshNormals();
+        }
+        return newEdges;
+    }
+
     /// Quantize vertices to a grid of `step` (empty `verts` = whole mesh) — clean
     /// up hand-moved points, make modular kit pieces line up exactly.
     void SnapToGrid(float step, const std::vector<int>& verts = {}) {

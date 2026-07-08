@@ -1741,6 +1741,9 @@ float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
 bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
 bool  g_meshSoftSel = false;          // proportional editing: moves fall off around selection
 float g_meshSoftRadius = 0.5f;        // falloff radius for soft selection
+bool  g_meshPaint   = false;          // face-paint brush active (instead of select/sculpt)
+float g_paintColor[4] = {0.9f, 0.25f, 0.2f, 1.0f};
+float g_paintRadius = 0.5f, g_paintBlend = 0.8f;
 // Interactive collider editing: drag the 6 face handles of the selected Box
 // collider in the 3D view to hand-fit it to the model (Unity's "Edit Collider").
 bool  g_colliderEdit = false;         // collider edit mode active
@@ -14445,6 +14448,18 @@ void DrawModeling(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Insert a midpoint on each selected edge (both neighbour faces are cut) — add detail exactly where you need it.");
+            static float s_exEdge = 0.5f;
+            ImGui::SetNextItemWidth(110);
+            ImGui::DragFloat("##exed", &s_exEdge, 0.01f, -10.0f, 10.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("Extrude Edges##me") && !g_meshSelEdges.empty()) {
+                ed.PushUndo();
+                auto ne = mr->mesh.ExtrudeEdges(g_meshSelEdges, s_exEdge);
+                if (!ne.empty()) g_meshSelEdges = ne;     // keep the new rim selected
+                g_meshSelVerts.clear(); g_meshSelFaces.clear();
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull a wall out of each selected edge along its face's normal — raise walls from a floor plate's rim. The new outer edges stay selected, so click again to keep going.");
             ImGui::SameLine();
             if (ImGui::Button("Duplicate Sel##me") && !g_meshSelFaces.empty()) {
                 ed.PushUndo();
@@ -14488,7 +14503,8 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split the selected faces off into their own object (Blender's P > Selection).");
 
             SectionHeader("Sculpt");
-            ImGui::Checkbox("Sculpt Brush (drag on mesh)##me", &g_meshSculpt);
+            if (ImGui::Checkbox("Sculpt Brush (drag on mesh)##me", &g_meshSculpt) && g_meshSculpt)
+                g_meshPaint = false;                     // one brush at a time
             if (g_meshSculpt) {
                 const char* modes[] = {"Grab", "Inflate", "Smooth", "Flatten", "Pinch"};
                 ImGui::Combo("Brush##me", &g_sculptMode, modes, 5);
@@ -14496,6 +14512,28 @@ void DrawModeling(EditorState& ed) {
                 ImGui::DragFloat("Strength##me", &g_sculptStrength, 0.005f, 0.0f, 5.0f, "%.3f");
                 ImGui::TextDisabled("Drag over the mesh in the 3D view to sculpt.");
             }
+
+            SectionHeader("Paint");
+            if (ImGui::Checkbox("Paint Brush (drag on mesh)##me", &g_meshPaint) && g_meshPaint)
+                g_meshSculpt = false;
+            if (g_meshPaint) {
+                ImGui::ColorEdit4("Color##paint", g_paintColor);
+                ImGui::DragFloat("Radius##paint", &g_paintRadius, 0.01f, 0.02f, 20.0f, "%.2f");
+                ImGui::DragFloat("Blend##paint", &g_paintBlend, 0.01f, 0.05f, 1.0f, "%.2f");
+                ImGui::TextDisabled("Drag over the mesh to color its faces.");
+            }
+            if (ImGui::Button("Fill Sel##paint") && !g_meshSelFaces.empty()) {
+                ed.PushUndo();
+                mr->mesh.FillFacesColor(g_meshSelFaces,
+                    {g_paintColor[0], g_paintColor[1], g_paintColor[2], g_paintColor[3]});
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Set the selected faces to exactly the brush color.");
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Paint##paint") && mr->mesh.HasFaceColors()) {
+                ed.PushUndo(); mr->mesh.triColors.clear(); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove all face colors (back to the plain material color).");
         }
 
         ImGui::EndTabItem(); }
@@ -23895,6 +23933,26 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     if (g_meshSymX)
                         mesh.SculptBrush(Vec3{-c.x, c.y, c.z}, Vec3{-dirL.x, dirL.y, dirL.z},
                                          g_sculptRadius, g_sculptStrength, g_sculptMode);
+                    ed.dirty = true;
+                }
+                g_uiHandled = true;     // consume so the object isn't orbited/moved
+            }
+        } else if (g_meshPaint) {
+            // Paint: drag over the mesh; faces near the vertex under the cursor
+            // blend toward the brush color.
+            if (hovered && !g_uiHandled && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                float best = 1e9f; int bv = -1;
+                for (int i = 0; i < (int)mesh.vertices.size(); ++i) {
+                    ImVec2 sp; if (!vScreen(i, sp)) continue;
+                    float dx = sp.x - io.MousePos.x, dy = sp.y - io.MousePos.y, d = dx*dx + dy*dy;
+                    if (d < best) { best = d; bv = i; }
+                }
+                if (bv >= 0 && best < 80.0f * 80.0f) {
+                    Color pc{g_paintColor[0], g_paintColor[1], g_paintColor[2], g_paintColor[3]};
+                    Vec3 c = mesh.vertices[bv];
+                    mesh.PaintFaces(c, g_paintRadius, pc, g_paintBlend);
+                    if (g_meshSymX)
+                        mesh.PaintFaces(Vec3{-c.x, c.y, c.z}, g_paintRadius, pc, g_paintBlend);
                     ed.dirty = true;
                 }
                 g_uiHandled = true;     // consume so the object isn't orbited/moved

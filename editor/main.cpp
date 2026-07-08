@@ -976,6 +976,7 @@ struct CustomAction { std::string name; std::vector<okay::ActionList::Item> item
 std::vector<CustomAction> g_customInstr;   // reusable instruction groups
 std::vector<CustomAction> g_customCond;    // reusable condition groups
 bool g_showAnimation = false;    // keyframe animation timeline for the selected object
+bool g_showHistory   = false;    // undo/redo history panel (click a step to jump)
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
 bool g_showGrid = true;          // draw the XZ ground grid in the Scene view
@@ -2698,6 +2699,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
         ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
         ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
+        ImGui::MenuItem("History", nullptr, &g_showHistory);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
         ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
@@ -3575,6 +3577,46 @@ void DrawConsole() {
         }
         ImGui::EndChild();
     }
+    ImGui::End();
+}
+
+// Undo/redo history (View > History): the snapshot stacks as a clickable list —
+// click any step to jump straight there (applies that many undos/redos).
+void DrawHistory(EditorState& ed) {
+    if (!g_showHistory) return;
+    if (!ImGui::Begin("History", &g_showHistory)) { ImGui::End(); return; }
+    ImGui::BeginDisabled(!ed.CanUndo());
+    if (ImGui::Button("Undo##hist")) { ed.Undo(); ed.dirty = true; }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!ed.CanRedo());
+    if (ImGui::Button("Redo##hist")) { ed.Redo(); ed.dirty = true; }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d behind  \xE2\x80\xA2  %d ahead", ed.UndoDepth(), ed.RedoDepth());
+    ImGui::Separator();
+    ImGui::BeginChild("##histlist");
+    // Future (redo) states first, newest-forward at the top; then the current
+    // state; then the past, most recent first. Click any row to jump there.
+    bool jumped = false;
+    for (int i = ed.RedoDepth(); i >= 1 && !jumped; --i) {
+        char lbl[48]; std::snprintf(lbl, sizeof(lbl), "\xE2\x86\xB7 %d step%s ahead##hr%d", i, i == 1 ? "" : "s", i);
+        if (ImGui::Selectable(lbl)) {
+            for (int k = 0; k < i && ed.CanRedo(); ++k) ed.Redo();
+            ed.dirty = true; jumped = true;
+        }
+    }
+    if (!jumped) {
+        ImGui::Selectable("\xE2\x97\x8F Current state", true);
+        for (int i = 1; i <= ed.UndoDepth() && !jumped; ++i) {
+            char lbl[48]; std::snprintf(lbl, sizeof(lbl), "\xE2\x86\xB6 %d step%s back##hu%d", i, i == 1 ? "" : "s", i);
+            if (ImGui::Selectable(lbl)) {
+                for (int k = 0; k < i && ed.CanUndo(); ++k) ed.Undo();
+                ed.dirty = true; jumped = true;
+            }
+        }
+    }
+    ImGui::EndChild();
     ImGui::End();
 }
 
@@ -11138,6 +11180,53 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             ma->clips.erase(ma->clips.begin() + del);
             if (ma->active >= (int)ma->clips.size()) ma->active = (int)ma->clips.size() - 1;
             t = 0.0f; ed.dirty = true;
+        }
+
+        // Split: carve a time range out of the active clip into a NEW named clip —
+        // how a single-take file (Mixamo/Meshy "one long animation") becomes
+        // separate idle/walk/attack clips. Keys are re-timed to start at 0, with
+        // sampled boundary keys so the cut plays exactly like that range did.
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Split...##maed")) ImGui::OpenPopup("SplitClip");
+        if (ImGui::BeginPopupModal("SplitClip", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            static char  s_name[48] = "part";
+            static float s_a = 0.0f, s_b = 0.0f;
+            if (ImGui::IsWindowAppearing()) { s_a = 0.0f; s_b = len; }
+            ImGui::TextDisabled("New clip from a range of '%s' (%.2fs long)",
+                                ma->clips[ma->active].name.c_str(), len);
+            ImGui::InputText("Name##split", s_name, sizeof(s_name));
+            ImGui::DragFloatRange2("Range (s)##split", &s_a, &s_b, 0.01f, 0.0f, len > 0.0f ? len : 1.0f, "%.2f");
+            ImGui::BeginDisabled(s_b - s_a < 0.01f || !s_name[0]);
+            if (ImGui::Button("Create Clip##split", ImVec2(130, 0))) {
+                ed.PushUndo();
+                const ModelAnimator::Clip& src = ma->clips[ma->active];
+                ModelAnimator::Clip cut;
+                cut.name = s_name;
+                for (const auto& nc : src.nodes) {
+                    ModelAnimator::NodeClip nn; nn.node = nc.node;
+                    for (const auto& kv : nc.clip.Tracks()) {
+                        bool f = false;
+                        float va = nc.clip.Evaluate(kv.first, s_a, f);
+                        if (f) nn.clip.AddKey(kv.first, 0.0f, va);
+                        for (const auto& k : kv.second.Keys())
+                            if (k.time > s_a && k.time < s_b)
+                                nn.clip.AddKey(kv.first, k.time - s_a, k.value);
+                        float vb = nc.clip.Evaluate(kv.first, s_b, f);
+                        if (f) nn.clip.AddKey(kv.first, s_b - s_a, vb);
+                    }
+                    if (!nn.clip.Tracks().empty()) cut.nodes.push_back(std::move(nn));
+                }
+                if (!cut.nodes.empty()) {
+                    ma->clips.insert(ma->clips.begin() + ma->active + 1, std::move(cut));
+                    ma->active = ma->active + 1; t = 0.0f; ed.dirty = true;
+                    ConsoleLog(std::string("Created clip '") + s_name + "'");
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel##split", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
     }
     ImGui::TextDisabled("Edit-mode preview — the scene pose isn't touched. Press Play (toolbar) to run it for real.");
@@ -23387,7 +23476,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
 
         // Grab the closest handle (ring for Rotate, arm for Move/Scale) on press.
-        if (hovered && oOk && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // (Not while V is held — that's a vertex-snap drag, handled below.)
+        if (hovered && oOk && !g_uiHandled && !ImGui::IsKeyDown(ImGuiKey_V) &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             int pick = -1; float pickAng = 0.0f;
             if (tool == Tool::Rotate) {
                 float best = 8.0f, a;
@@ -23471,9 +23562,70 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // ---- Vertex snapping (Unity's V): hold V and drag the selected mesh — the
+    // vertex of it nearest the cursor glues to the nearest vertex of any OTHER
+    // mesh under the cursor. Large meshes are stride-sampled to stay responsive.
+    static bool s_vSnapDragging = false;
+    bool vHeld = !gameView && ImGui::IsKeyDown(ImGuiKey_V) && !io.WantTextInput;
+    if (vHeld && hovered && ed.selected() && ed.selected()->GetComponent<MeshRenderer>()) {
+        GameObject* selGo = ed.selected();
+        // Nearest-to-cursor vertex of a mesh, in world space + screen distance.
+        auto nearestVert = [&](GameObject* g, Vec3& outWorld, float& outD2) -> bool {
+            auto* mr = g->GetComponent<MeshRenderer>();
+            if (!mr || mr->mesh.vertices.empty()) return false;
+            Mat4 model = g->transform->LocalToWorldMatrix();
+            const auto& vs = mr->mesh.vertices;
+            std::size_t stride = vs.size() > 20000 ? vs.size() / 20000 : 1;
+            bool found = false;
+            for (std::size_t vi = 0; vi < vs.size(); vi += stride) {
+                Vec3 w = model.MultiplyPoint(vs[vi]);
+                ImVec2 sp;
+                if (!toScreen(vp * Vec4{w, 1}, sp)) continue;
+                float dx = io.MousePos.x - sp.x, dy = io.MousePos.y - sp.y;
+                float d2 = dx * dx + dy * dy;
+                if (!found || d2 < outD2) { outD2 = d2; outWorld = w; found = true; }
+            }
+            return found;
+        };
+        Vec3 srcW; float srcD2 = 0.0f;
+        if (nearestVert(selGo, srcW, srcD2)) {
+            // Mark the source vertex so the user sees what will be glued.
+            ImVec2 sp;
+            if (toScreen(vp * Vec4{srcW, 1}, sp))
+                dl->AddCircle(sp, 6.0f, IM_COL32(120, 220, 255, 255), 0, 2.0f);
+            // Nearest target vertex across every other visible mesh.
+            Vec3 tgtW{}; float tgtD2 = 0.0f; bool tgtOk = false;
+            for (const auto& up : objs) {
+                GameObject* g = up.get();
+                if (g == selGo || !g->active || g->IsSelfOrDescendantOf(selGo)) continue;
+                Vec3 w; float d2;
+                if (nearestVert(g, w, d2) && (!tgtOk || d2 < tgtD2)) { tgtW = w; tgtD2 = d2; tgtOk = true; }
+            }
+            if (tgtOk && tgtD2 < 30.0f * 30.0f) {
+                ImVec2 tp;
+                if (toScreen(vp * Vec4{tgtW, 1}, tp))
+                    dl->AddCircle(tp, 6.0f, IM_COL32(255, 210, 90, 255), 0, 2.0f);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { ed.PushUndo(); s_vSnapDragging = true; }
+                if (s_vSnapDragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    Vec3 delta = tgtW - srcW;
+                    selGo->transform->SetPosition(selGo->transform->Position() + delta);
+                    ed.dirty = true;
+                }
+            } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                s_vSnapDragging = true;   // started a V-drag with no target yet
+                ed.PushUndo();
+            }
+            dl->AddText(ImVec2(canvasPos.x + 10, canvasEnd.y - 24),
+                        IM_COL32(180, 220, 255, 220),
+                        "Vertex snap: drag near another mesh's vertex to glue");
+        }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || !vHeld) s_vSnapDragging = false;
+
     // Click-select (skipped when a gizmo handle was just grabbed): pick the
     // nearest mesh whose projected bounding box contains the cursor.
-    if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && !s_vSnapDragging && !vHeld &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = nullptr;
         float bestDepth = 1e30f;
         for (const auto& up : objs) {
@@ -25355,6 +25507,7 @@ int main(int argc, char** argv) {
         DrawVarWatch();
         DrawFlowGraph(ed);
         DrawAnimationEditor(ed);
+        DrawHistory(ed);
         if (g_showStats)     DrawStats(ed);
         if (g_showSaveManager) DrawSaveManager(ed);
         if (g_showScenes)    DrawScenes(ed);

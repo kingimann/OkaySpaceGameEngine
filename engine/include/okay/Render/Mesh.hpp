@@ -1423,6 +1423,33 @@ struct Mesh {
         RefreshNormals();
     }
 
+    /// Move a vertex set with a proportional (soft-selection) falloff: every
+    /// vertex within `radius` of the selection also moves, scaled by a smoothstep
+    /// of its distance to the nearest selected vertex — Blender's proportional
+    /// editing. radius <= 0 behaves exactly like MoveVertices.
+    void MoveVerticesSoft(const std::vector<int>& verts, const Vec3& delta, float radius) {
+        if (radius <= 1e-6f) { MoveVertices(verts, delta); return; }
+        std::vector<Vec3> anchors;
+        anchors.reserve(verts.size());
+        for (int v : verts)
+            if (v >= 0 && v < (int)vertices.size()) anchors.push_back(vertices[v]);
+        if (anchors.empty()) return;
+        for (Vec3& p : vertices) {
+            float d2min = 1e30f;
+            for (const Vec3& a : anchors) {
+                Vec3 d = p - a;
+                float d2 = d.x*d.x + d.y*d.y + d.z*d.z;
+                if (d2 < d2min) d2min = d2;
+            }
+            float dist = std::sqrt(d2min);
+            if (dist >= radius) continue;
+            float t = 1.0f - dist / radius;
+            p += delta * (t * t * (3.0f - 2.0f * t));   // smoothstep falloff
+        }
+        name = "";
+        RefreshNormals();
+    }
+
     /// Region-extrude the selected set of triangles along their averaged normal:
     /// the selected faces are detached and pushed out by `dist`, and the boundary
     /// of the region is bridged with side walls so the cap stays connected. The

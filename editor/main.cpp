@@ -1737,6 +1737,9 @@ Vec3  g_meEditRaw{0, 0, 0};           // accumulated drag in LOCAL space (pre-ap
 bool  g_meshSculpt  = false;          // sculpt brush active (instead of select/move)
 int   g_sculptMode  = 0;              // 0 Grab, 1 Inflate, 2 Smooth
 float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
+bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
+bool  g_meshSoftSel = false;          // proportional editing: moves fall off around selection
+float g_meshSoftRadius = 0.5f;        // falloff radius for soft selection
 // Interactive collider editing: drag the 6 face handles of the selected Box
 // collider in the 3D view to hand-fit it to the model (Unity's "Edit Collider").
 bool  g_colliderEdit = false;         // collider edit mode active
@@ -13896,6 +13899,11 @@ void DrawModeling(EditorState& ed) {
             mr->mesh.ProjectToSphere(0.5f * std::fmax(sz.x, std::fmax(sz.y, sz.z)));
             ed.dirty = true;
         }
+        static float s_relax = 0.5f;
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##rlx", &s_relax, 0.05f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        if (ImGui::Button("Relax##model")) { ed.PushUndo(); mr->mesh.Smooth(s_relax); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian smooth: relax every vertex toward its neighbours without adding triangles (evens out sculpts and lumpy imports).");
         if (ImGui::Button("Weld##model")) {
             int n = mr->mesh.WeldVertices();
             ConsoleLog("Welded " + std::to_string(n) + " duplicate verts"); ed.dirty = true;
@@ -13906,6 +13914,20 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::Button("Ground##model")) { mr->mesh.GroundPivot(); ed.dirty = true; }
         ImGui::SameLine();
         if (ImGui::Button("Fit 1u##model")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Export OBJ##model")) {
+            // Save into the project's Assets folder under the object's name.
+            std::string base = go->name.empty() ? std::string("mesh") : go->name;
+            for (char& ch : base) if (ch == '/' || ch == '\\' || ch == ':') ch = '_';
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
+                                                      : fs::path(ed.projectDir()) / "Assets";
+            std::error_code ec; fs::create_directories(assets, ec);
+            std::string out = (assets / (base + ".obj")).string();
+            if (mr->mesh.SaveOBJ(out)) ConsoleLog("Exported " + out);
+            else ConsoleLog("[error] OBJ export failed: " + out);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this mesh to Assets/<name>.obj — use it in other objects, projects, or Blender.");
 
         // Whole-mesh modeling ops (symmetry / deform / shell).
         if (ImGui::Button("Mirror X##model")) { ed.PushUndo(); mr->mesh.Mirror(0); ed.dirty = true; }
@@ -14049,6 +14071,72 @@ void DrawModeling(EditorState& ed) {
 
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
         ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Generate")) {
+        // Profile-driven surfaces: edit a 2D (radius, height) point list, then revolve
+        // it (Lathe), sweep it into a helix (Screw), or extrude it as a flat outline.
+        static std::vector<Vec2> s_profile = {
+            {0.05f, 0.0f}, {0.45f, 0.05f}, {0.30f, 0.45f}, {0.20f, 0.75f}, {0.35f, 1.0f}};
+        ImGui::TextDisabled("Profile points (radius, height), bottom to top:");
+        int removeAt = -1;
+        for (int i = 0; i < (int)s_profile.size(); ++i) {
+            ImGui::PushID(i);
+            ImGui::SetNextItemWidth(150);
+            ImGui::DragFloat2("##pp", &s_profile[i].x, 0.01f, -10.0f, 10.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X##pp") && s_profile.size() > 2) removeAt = i;
+            ImGui::PopID();
+        }
+        if (removeAt >= 0) s_profile.erase(s_profile.begin() + removeAt);
+        if (ImGui::SmallButton("+ Point##gen")) {
+            Vec2 last = s_profile.empty() ? Vec2{0.3f, 0.0f} : s_profile.back();
+            s_profile.push_back({last.x, last.y + 0.25f});
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Vase##gen"))
+            s_profile = {{0.05f, 0.0f}, {0.45f, 0.05f}, {0.30f, 0.45f}, {0.20f, 0.75f}, {0.35f, 1.0f}};
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Goblet##gen"))
+            s_profile = {{0.30f, 0.0f}, {0.08f, 0.05f}, {0.06f, 0.55f}, {0.32f, 0.70f}, {0.35f, 1.0f}, {0.30f, 0.95f}};
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Column##gen"))
+            s_profile = {{0.40f, 0.0f}, {0.40f, 0.08f}, {0.25f, 0.15f}, {0.25f, 1.85f}, {0.40f, 1.92f}, {0.40f, 2.0f}};
+
+        ImGui::Spacing();
+        static int s_latheSegs = 24;
+        ImGui::SetNextItemWidth(90); ImGui::DragInt("##lsegs", &s_latheSegs, 0.1f, 3, 128, "%d segs");
+        ImGui::SameLine();
+        if (ImGui::Button("Lathe##gen") && s_profile.size() >= 2) {
+            ed.PushUndo(); mr->mesh = Mesh::Lathe(s_profile, s_latheSegs);
+            mr->mesh.ComputeSmoothNormals(); mr->meshPath.clear();
+            ConsoleLog("Lathe: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Revolve the profile around Y — vases, bottles, goblets, columns.");
+
+        static float s_screwTurns = 3.0f, s_screwPitch = 0.4f; static int s_screwSegs = 48;
+        ImGui::SetNextItemWidth(70); ImGui::DragFloat("##sctn", &s_screwTurns, 0.05f, 0.25f, 32.0f, "%.1f turns");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::DragFloat("##scpt", &s_screwPitch, 0.01f, -5.0f, 5.0f, "pitch %.2f");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::DragInt("##scsg", &s_screwSegs, 0.2f, 4, 256, "%d segs");
+        ImGui::SameLine();
+        if (ImGui::Button("Screw##gen") && s_profile.size() >= 2) {
+            ed.PushUndo(); mr->mesh = Mesh::Screw(s_profile, s_screwTurns, s_screwPitch, s_screwSegs);
+            mr->meshPath.clear();
+            ConsoleLog("Screw: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sweep the profile in a helix around Y — springs, screw threads, spiral ramps.");
+
+        static float s_outDepth = 0.5f;
+        ImGui::SetNextItemWidth(90); ImGui::DragFloat("##odep", &s_outDepth, 0.01f, 0.01f, 20.0f, "depth %.2f");
+        ImGui::SameLine();
+        if (ImGui::Button("Extrude Outline##gen") && s_profile.size() >= 3) {
+            ed.PushUndo(); mr->mesh = Mesh::Extrude(s_profile, s_outDepth);
+            mr->mesh.RefreshNormals(); mr->meshPath.clear();
+            ConsoleLog("Extruded outline: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Treat the points as a flat 2D outline (x, y) and give it thickness along Z — logos, arrows, flat props. Convex outlines cap cleanly.");
+        ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Edit Mesh")) {
         bool editing = g_meshEdit && g_meshEditObj == go;
         if (ImGui::Checkbox("Edit Mesh##model", &editing)) {
@@ -14080,6 +14168,16 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::SmallButton("Deselect##me")) { g_meshSelVerts.clear(); g_meshSelFaces.clear(); }
             ImGui::Text("Selected: %d verts, %d faces",
                         (int)g_meshSelVerts.size(), (int)g_meshSelFaces.size());
+
+            ImGui::Checkbox("Symmetry X##me", &g_meshSymX);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror every move and sculpt stroke across the local X = 0 plane (edit half, get both).");
+            ImGui::SameLine();
+            ImGui::Checkbox("Soft Select##me", &g_meshSoftSel);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Proportional editing: nearby unselected vertices follow the move with a smooth falloff.");
+            if (g_meshSoftSel) {
+                ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                ImGui::DragFloat("##softr", &g_meshSoftRadius, 0.01f, 0.02f, 20.0f, "r %.2f");
+            }
 
             ImGui::Spacing();
             ImGui::SetNextItemWidth(110);
@@ -23497,7 +23595,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (bv >= 0 && best < 80.0f * 80.0f) {
                     Vec3 dirW = (eye - vWorld(bv)).Normalized();    // toward camera
                     Vec3 dirL = Minv.MultiplyVector(dirW);
-                    mesh.SculptBrush(mesh.vertices[bv], dirL, g_sculptRadius, g_sculptStrength, g_sculptMode);
+                    Vec3 c = mesh.vertices[bv];                     // before the brush moves it
+                    mesh.SculptBrush(c, dirL, g_sculptRadius, g_sculptStrength, g_sculptMode);
+                    // Live X symmetry: repeat the stroke mirrored across the YZ plane.
+                    if (g_meshSymX)
+                        mesh.SculptBrush(Vec3{-c.x, c.y, c.z}, Vec3{-dirL.x, dirL.y, dirL.z},
+                                         g_sculptRadius, g_sculptStrength, g_sculptMode);
                     ed.dirty = true;
                 }
                 g_uiHandled = true;     // consume so the object isn't orbited/moved
@@ -23533,7 +23636,28 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
                     float amt = along * (L / slen);             // screen px -> world units
                     Vec3 localDelta = Minv.MultiplyVector(axisW[i] * amt);
-                    mesh.MoveVertices(affected, localDelta);
+                    // Live X symmetry: find the -X counterparts BEFORE moving (matched
+                    // against the pre-move positions), then give them the mirrored delta.
+                    std::vector<int> mirror;
+                    if (g_meshSymX) {
+                        for (int v : affected) {
+                            if (v < 0 || v >= (int)mesh.vertices.size()) continue;
+                            Vec3 want{-mesh.vertices[v].x, mesh.vertices[v].y, mesh.vertices[v].z};
+                            for (int w = 0; w < (int)mesh.vertices.size(); ++w) {
+                                Vec3 d = mesh.vertices[w] - want;
+                                if (d.x*d.x + d.y*d.y + d.z*d.z < 1e-6f && w != v &&
+                                    std::find(affected.begin(), affected.end(), w) == affected.end())
+                                    mirror.push_back(w);
+                            }
+                        }
+                    }
+                    if (g_meshSoftSel) mesh.MoveVerticesSoft(affected, localDelta, g_meshSoftRadius);
+                    else               mesh.MoveVertices(affected, localDelta);
+                    if (!mirror.empty()) {
+                        Vec3 md{-localDelta.x, localDelta.y, localDelta.z};
+                        if (g_meshSoftSel) mesh.MoveVerticesSoft(mirror, md, g_meshSoftRadius);
+                        else               mesh.MoveVertices(mirror, md);
+                    }
                     mesh.normals.clear();        // keep flat (faceted) shading while editing
                     ed.dirty = true;
                 }

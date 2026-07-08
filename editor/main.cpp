@@ -13929,6 +13929,25 @@ void DrawModeling(EditorState& ed) {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this mesh to Assets/<name>.obj — use it in other objects, projects, or Blender.");
 
+        SectionHeader("UV Unwrap");
+        ImGui::TextDisabled("Project texture coordinates onto the mesh:");
+        static float s_uvTile = 1.0f;
+        ImGui::SetNextItemWidth(90); ImGui::DragFloat("##uvt", &s_uvTile, 0.05f, 0.1f, 32.0f, "tile %.1f");
+        ImGui::SameLine();
+        if (ImGui::Button("Box##uv")) { ed.PushUndo(); mr->mesh.ProjectUVBox(s_uvTile); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tri-planar: each face projects along its dominant axis. The go-to for buildings and edited geometry.");
+        ImGui::SameLine();
+        if (ImGui::Button("Planar Y##uv")) { ed.PushUndo(); mr->mesh.ProjectUVPlanar(1, s_uvTile); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Straight-down projection — floors, terrain, tabletops.");
+        ImGui::SameLine();
+        if (ImGui::Button("Cylinder##uv")) { ed.PushUndo(); mr->mesh.ProjectUVCylinder(s_uvTile); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wrap around Y — columns, cans, tree trunks, lathe results.");
+        ImGui::SameLine();
+        if (ImGui::Button("Sphere##uv")) { ed.PushUndo(); mr->mesh.ProjectUVSphere(s_uvTile); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Project from the centre outward — planets, rocks, heads.");
+        if (mr->mesh.uvs.empty())
+            ImGui::TextDisabled("No UVs yet — textures use a default mapping.");
+
         // Whole-mesh modeling ops (symmetry / deform / shell).
         if (ImGui::Button("Mirror X##model")) { ed.PushUndo(); mr->mesh.Mirror(0); ed.dirty = true; }
         ImGui::SameLine(); if (ImGui::Button("Mirror Y##model")) { ed.PushUndo(); mr->mesh.Mirror(1); ed.dirty = true; }
@@ -14205,12 +14224,55 @@ void DrawModeling(EditorState& ed) {
                 ed.PushUndo(); int n = mr->mesh.WeldVertices(); g_meshSelVerts.clear(); g_meshSelFaces.clear();
                 ConsoleLog("Merged " + std::to_string(n) + " verts"); ed.dirty = true;
             }
+            if (ImGui::Button("Relax Sel##me") && !g_meshSelVerts.empty()) {
+                ed.PushUndo(); mr->mesh.SmoothVertices(g_meshSelVerts, 0.5f); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian-smooth only the selected vertices (click repeatedly for more).");
+            ImGui::SameLine(); ImGui::TextDisabled("Flatten:");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X##fl") && !g_meshSelVerts.empty()) {
+                ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 0); ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Y##fl") && !g_meshSelVerts.empty()) {
+                ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 1); ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Z##fl") && !g_meshSelVerts.empty()) {
+                ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 2); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap the selected vertices to their shared average on one axis — level a rim, square a wall.");
+            if (ImGui::Button("Separate##me") && !g_meshSelFaces.empty()) {
+                ed.PushUndo();
+                Mesh part = mr->mesh.SeparateFaces(g_meshSelFaces);
+                g_meshSelFaces.clear(); g_meshSelVerts.clear();
+                if (!part.vertices.empty()) {
+                    GameObject* no = ed.scene().CreateGameObject(go->name + " Part");
+                    // Same parent + same local transform = same world placement,
+                    // so the split-off part doesn't visibly move.
+                    if (go->transform->Parent()) no->transform->SetParent(go->transform->Parent(), false);
+                    no->transform->localPosition = go->transform->localPosition;
+                    no->transform->localRotation = go->transform->localRotation;
+                    no->transform->localScale    = go->transform->localScale;
+                    auto* nmr = no->AddComponent<MeshRenderer>();
+                    nmr->mesh = part;
+                    nmr->color = mr->color;         nmr->texture = mr->texture;
+                    nmr->tiling = mr->tiling;       nmr->emissive = mr->emissive;
+                    nmr->specular = mr->specular;   nmr->shininess = mr->shininess;
+                    nmr->unlit = mr->unlit;         nmr->doubleSided = mr->doubleSided;
+                    nmr->texFilter = mr->texFilter; nmr->texOffset = mr->texOffset;
+                    ed.Select(no);
+                    ConsoleLog("Separated " + std::to_string(part.TriangleCount()) + " faces into '" + no->name + "'");
+                }
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split the selected faces off into their own object (Blender's P > Selection).");
 
             SectionHeader("Sculpt");
             ImGui::Checkbox("Sculpt Brush (drag on mesh)##me", &g_meshSculpt);
             if (g_meshSculpt) {
-                const char* modes[] = {"Grab", "Inflate", "Smooth"};
-                ImGui::Combo("Brush##me", &g_sculptMode, modes, 3);
+                const char* modes[] = {"Grab", "Inflate", "Smooth", "Flatten", "Pinch"};
+                ImGui::Combo("Brush##me", &g_sculptMode, modes, 5);
                 ImGui::DragFloat("Radius##me", &g_sculptRadius, 0.01f, 0.02f, 20.0f, "%.2f");
                 ImGui::DragFloat("Strength##me", &g_sculptStrength, 0.005f, 0.0f, 5.0f, "%.3f");
                 ImGui::TextDisabled("Drag over the mesh in the 3D view to sculpt.");

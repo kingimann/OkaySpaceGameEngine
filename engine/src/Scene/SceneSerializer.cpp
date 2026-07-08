@@ -261,6 +261,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << mr->mesh.triangles.size();
             for (int t : mr->mesh.triangles) out << " " << t;
             out << "\n";
+            // Per-vertex UVs for the edited geometry (separate optional record so
+            // older scenes still load). Written after meshgeo because the meshgeo
+            // reader clears the uvs array.
+            if (mr->mesh.uvs.size() == mr->mesh.vertices.size() && !mr->mesh.uvs.empty()) {
+                out << "  meshuv " << mr->mesh.uvs.size();
+                for (const Vec2& t : mr->mesh.uvs) out << " " << t.x << " " << t.y;
+                out << "\n";
+            }
         }
         // Per-face colors (vertex-painting / baked lightmap) — separate record so
         // older scenes still load. Written whenever populated, for named primitives
@@ -1881,6 +1889,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // force smooth normals, or an edited box/ground reloads looking like
                     // a soft rounded blob instead of clean flat faces.
                     mr->mesh.normals.clear();
+                } else if (field == "meshuv") {
+                    // Per-vertex UVs for meshgeo geometry (optional record that
+                    // follows meshgeo, which cleared the uvs array).
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int uc = 0; in >> uc;
+                    mr->mesh.uvs.clear();
+                    mr->mesh.uvs.reserve(uc > 0 ? uc : 0);
+                    for (int i = 0; i < uc; ++i) {
+                        Vec2 t; in >> t.x >> t.y; mr->mesh.uvs.push_back(t);
+                    }
                 } else if (field == "meshcolors") {
                     // Per-face colors (vertex paint / baked lightmap). Follows the
                     // `mesh`/`meshgeo` geometry so the counts line up.

@@ -938,10 +938,95 @@ struct Mesh {
         if (!f) return false;
         f << "# OkaySpace mesh\n";
         for (const Vec3& v : vertices) f << "v " << v.x << " " << v.y << " " << v.z << "\n";
-        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3)
-            f << "f " << triangles[i] + 1 << " " << triangles[i + 1] + 1 << " "
-              << triangles[i + 2] + 1 << "\n";
+        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        if (hadUV)
+            for (const Vec2& t : uvs) f << "vt " << t.x << " " << t.y << "\n";
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
+            int a = triangles[i] + 1, b = triangles[i + 1] + 1, c = triangles[i + 2] + 1;
+            if (hadUV)   // per-vertex UVs share the position index
+                f << "f " << a << "/" << a << " " << b << "/" << b << " " << c << "/" << c << "\n";
+            else
+                f << "f " << a << " " << b << " " << c << "\n";
+        }
         return static_cast<bool>(f);
+    }
+
+    // ---- UV projection (quick unwraps for texturing edited meshes) -----------
+    // All of these fill the per-vertex `uvs` array and mark the mesh custom
+    // (clear `name`) so the projected UVs are what gets saved, not a primitive's
+    // regenerated defaults. `tile` = how many texture repeats across the bounds.
+
+    /// Planar projection along one axis (0=X 1=Y 2=Z): the other two coordinates
+    /// map straight to (u, v). Ideal for floors/walls/flat props.
+    void ProjectUVPlanar(int axis, float tile = 1.0f) {
+        if (vertices.empty() || axis < 0 || axis > 2) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        Vec3 size = hi - lo;
+        auto span = [&](int a) { float s = (&size.x)[a]; return s > 1e-6f ? s : 1.0f; };
+        int ua = (axis == 0) ? 2 : 0, va = (axis == 1) ? 2 : 1;
+        uvs.resize(vertices.size());
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            const Vec3& p = vertices[i];
+            uvs[i] = {((&p.x)[ua] - (&lo.x)[ua]) / span(ua) * tile,
+                      ((&p.x)[va] - (&lo.x)[va]) / span(va) * tile};
+        }
+        name = "";
+    }
+
+    /// Box (tri-planar) projection: each vertex projects along its dominant
+    /// normal axis, so every side of a blocky shape gets sensible UVs. The go-to
+    /// unwrap for buildings and hand-edited geometry.
+    void ProjectUVBox(float tile = 1.0f) {
+        if (vertices.empty()) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        Vec3 size = hi - lo;
+        auto span = [&](int a) { float s = (&size.x)[a]; return s > 1e-6f ? s : 1.0f; };
+        std::vector<Vec3> vn = Normals();
+        uvs.resize(vertices.size());
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            const Vec3& nrm = vn[i]; const Vec3& p = vertices[i];
+            float ax = std::fabs(nrm.x), ay = std::fabs(nrm.y), az = std::fabs(nrm.z);
+            int axis = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+            int ua = (axis == 0) ? 2 : 0, va = (axis == 1) ? 2 : 1;
+            uvs[i] = {((&p.x)[ua] - (&lo.x)[ua]) / span(ua) * tile,
+                      ((&p.x)[va] - (&lo.x)[va]) / span(va) * tile};
+        }
+        name = "";
+    }
+
+    /// Cylindrical projection around Y: u wraps around the side, v runs bottom
+    /// to top. For columns, cans, tree trunks, lathe/screw results.
+    void ProjectUVCylinder(float tile = 1.0f) {
+        if (vertices.empty()) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        Vec3 c = (lo + hi) * 0.5f;
+        float h = (hi.y - lo.y) > 1e-6f ? (hi.y - lo.y) : 1.0f;
+        const float kPi = 3.14159265358979323846f;
+        uvs.resize(vertices.size());
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            const Vec3& p = vertices[i];
+            float u = (std::atan2(p.z - c.z, p.x - c.x) / (2.0f * kPi) + 0.5f) * tile;
+            uvs[i] = {u, (p.y - lo.y) / h * tile};
+        }
+        name = "";
+    }
+
+    /// Spherical projection from the bounds centre — planets, rocks, heads.
+    void ProjectUVSphere(float tile = 1.0f) {
+        if (vertices.empty()) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        Vec3 c = (lo + hi) * 0.5f;
+        const float kPi = 3.14159265358979323846f;
+        uvs.resize(vertices.size());
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            Vec3 d = vertices[i] - c;
+            float m = d.Magnitude();
+            if (m < 1e-8f) { uvs[i] = {0.5f, 0.5f}; continue; }
+            d = d * (1.0f / m);
+            uvs[i] = {(std::atan2(d.z, d.x) / (2.0f * kPi) + 0.5f) * tile,
+                      (std::asin(d.y < -1.0f ? -1.0f : (d.y > 1.0f ? 1.0f : d.y)) / kPi + 0.5f) * tile};
+        }
+        name = "";
     }
 
     /// A copy with each vertex scaled (per-axis) then offset — the basic modeling
@@ -1450,6 +1535,71 @@ struct Mesh {
         RefreshNormals();
     }
 
+    /// Laplacian-relax ONLY the listed vertices (the rest stay put) — evens out
+    /// a lumpy patch without melting the whole mesh like Smooth() would.
+    void SmoothVertices(const std::vector<int>& verts, float amount = 0.5f) {
+        if (verts.empty() || amount == 0.0f || vertices.empty()) return;
+        std::vector<Vec3> sum(vertices.size(), Vec3{0, 0, 0});
+        std::vector<int>  cnt(vertices.size(), 0);
+        auto link = [&](int a, int b) { sum[a] += vertices[b]; ++cnt[a]; };
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int i0 = triangles[t], i1 = triangles[t + 1], i2 = triangles[t + 2];
+            link(i0, i1); link(i1, i0); link(i1, i2); link(i2, i1); link(i2, i0); link(i0, i2);
+        }
+        std::vector<Vec3> moved = vertices;
+        for (int v : verts)
+            if (v >= 0 && v < (int)vertices.size() && cnt[v] > 0)
+                moved[v] = vertices[v] * (1.0f - amount) + sum[v] * (amount / cnt[v]);
+        vertices = std::move(moved);
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Snap the listed vertices to their shared average coordinate on one axis
+    /// (0=X 1=Y 2=Z) — Blender's "flatten" (S+axis+0): level a rim, square a wall.
+    void FlattenVertices(const std::vector<int>& verts, int axis) {
+        if (verts.empty() || axis < 0 || axis > 2) return;
+        float avg = 0.0f; int n = 0;
+        for (int v : verts)
+            if (v >= 0 && v < (int)vertices.size()) { avg += (&vertices[v].x)[axis]; ++n; }
+        if (n == 0) return;
+        avg /= (float)n;
+        for (int v : verts)
+            if (v >= 0 && v < (int)vertices.size()) (&vertices[v].x)[axis] = avg;
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Split the listed triangles off into a NEW mesh (returned) and delete them
+    /// from this one — Blender's "separate selection". The new mesh gets compacted
+    /// vertices with their UVs and face colors carried over.
+    Mesh SeparateFaces(const std::vector<int>& faces) {
+        Mesh out;
+        if (faces.empty()) return out;
+        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        const bool hadColors = HasFaceColors();
+        std::map<int, int> remap;
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            for (int k = 0; k < 3; ++k) {
+                int v = triangles[i + k];
+                auto it = remap.find(v);
+                int nv;
+                if (it == remap.end()) {
+                    nv = (int)out.vertices.size(); remap[v] = nv;
+                    out.vertices.push_back(vertices[v]);
+                    if (hadUV) out.uvs.push_back(uvs[v]);
+                } else nv = it->second;
+                out.triangles.push_back(nv);
+            }
+            if (hadColors && f < (int)triColors.size()) out.triColors.push_back(triColors[f]);
+        }
+        out.RefreshNormals();
+        DeleteFaces(faces);
+        return out;
+    }
+
     /// Region-extrude the selected set of triangles along their averaged normal:
     /// the selected faces are detached and pushed out by `dist`, and the boundary
     /// of the region is bridged with side walls so the cap stays connected. The
@@ -1608,11 +1758,14 @@ struct Mesh {
     /// descending so earlier erases don't shift later indices. Orphan vertices are
     /// left in place (harmless).
     void DeleteFaces(std::vector<int> faces) {
+        const bool hadColors = HasFaceColors();
         std::sort(faces.begin(), faces.end(), std::greater<int>());
         for (int f : faces) {
             int i = f * 3;
             if (i < 0 || i + 2 >= (int)triangles.size()) continue;
             triangles.erase(triangles.begin() + i, triangles.begin() + i + 3);
+            if (hadColors && f < (int)triColors.size())   // keep per-face colors aligned
+                triColors.erase(triColors.begin() + f);
         }
         name = "";
     }
@@ -1630,14 +1783,30 @@ struct Mesh {
     /// A sculpting brush in LOCAL mesh space. Vertices within `radius` of `center`
     /// are displaced with a smoothstep falloff `w`. mode: 0 = GRAB (push along
     /// `dir`), 1 = INFLATE (push along each vertex's own normal), 2 = SMOOTH (pull
-    /// toward the local average of nearby vertices). SMOOTH reads a snapshot so the
+    /// toward the local average of nearby vertices), 3 = FLATTEN (press the region
+    /// onto its own average plane), 4 = PINCH (draw vertices toward the brush
+    /// centre, sharpening creases). SMOOTH/FLATTEN read a snapshot so the
     /// relaxation doesn't feed back within one call.
     void SculptBrush(const Vec3& center, const Vec3& dir, float radius, float strength, int mode) {
         if (radius <= 1e-6f || vertices.empty()) return;
         std::vector<Vec3> vn;
-        if (mode == 1) vn = Normals();                 // per-vertex normals for INFLATE
+        if (mode == 1 || mode == 3) vn = Normals();    // vertex normals for INFLATE/FLATTEN
         std::vector<Vec3> snapshot = vertices;         // SMOOTH reads positions pre-edit
         float inv = 1.0f / radius;
+        // FLATTEN presses toward the best-fit plane of the brush region: its
+        // centroid with the averaged vertex normal.
+        Vec3 planeC{0, 0, 0}, planeN{0, 1, 0};
+        if (mode == 3) {
+            Vec3 nsum{0, 0, 0}; int cnt = 0;
+            for (std::size_t i = 0; i < snapshot.size(); ++i)
+                if ((snapshot[i] - center).Magnitude() < radius) {
+                    planeC += snapshot[i]; nsum += vn[i]; ++cnt;
+                }
+            if (cnt == 0) return;
+            planeC = planeC * (1.0f / cnt);
+            float m = nsum.Magnitude();
+            if (m > 1e-6f) planeN = nsum * (1.0f / m);
+        }
         for (std::size_t i = 0; i < vertices.size(); ++i) {
             float d = (snapshot[i] - center).Magnitude();
             if (d >= radius) continue;
@@ -1652,6 +1821,13 @@ struct Mesh {
                     if ((snapshot[j] - center).Magnitude() < radius) { avg += snapshot[j]; ++cnt; }
                 if (cnt > 0) { avg = avg * (1.0f / cnt);
                     vertices[i] += (avg - snapshot[i]) * (strength * w); }
+            } else if (mode == 3) {                     // FLATTEN: press onto the plane
+                float off = Vec3::Dot(snapshot[i] - planeC, planeN);
+                float k = strength * w; if (k > 1.0f) k = 1.0f;
+                vertices[i] += planeN * (-off * k);
+            } else if (mode == 4) {                     // PINCH: gather toward centre
+                float k = strength * w; if (k > 1.0f) k = 1.0f;
+                vertices[i] += (center - snapshot[i]) * k;
             } else {                                    // GRAB: along `dir`
                 vertices[i] += dir * (strength * w);
             }

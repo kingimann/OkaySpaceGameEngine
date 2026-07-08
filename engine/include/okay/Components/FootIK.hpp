@@ -60,7 +60,11 @@ public:
         R(pelvis, pelvisName);
     }
 
-    void Update(float) override {
+    // Solve in LateUpdate so it corrects the pose AFTER every animation driver has
+    // written it. Imported rigs create their per-node Animators lazily (at Play
+    // start), which lands them after FootIK in the Update order — solving in
+    // Update let those Animators clobber the correction the same frame.
+    void LateUpdate(float) override {
         if (weight <= 0.0f) return;
         if (!m_init) { Learn(); m_init = true; }
         Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;

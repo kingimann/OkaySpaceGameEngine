@@ -129,6 +129,17 @@ A typical setup: `Idle -> Run` (speed > 2), `Run -> Idle` (speed < 1),
 (On Clip End). The machine drives the Model Animator, so blending, root
 motion and events all keep working.
 
+## Foot IK on imported rigs
+
+Add a **Foot IK** component to the import root (Add Component > Animation)
+and press **Auto-Detect Bones** — it maps the usual leg-bone names (Mixamo
+"LeftUpLeg / LeftLeg / LeftFoot", thigh/shin/calf variants, `_l`/`_r`
+suffixes) automatically. In Play mode each foot raycasts the ground and a
+two-bone solve plants it on slopes and steps; turn on **Adjust Pelvis** so
+the body lowers to reach lower ground, and **Align To Slope** to tilt the
+sole. The solve runs after all animation (including the state machine and
+locomotion blending), so it corrects the final pose.
+
 ## Tips
 
 - **Meshy / Mixamo FBX**: animations import via Assimp. For the richest

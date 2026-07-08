@@ -16012,6 +16012,52 @@ void DrawInspector(EditorState& ed) {
         if (auto* f = dynamic_cast<FootIK*>(curComp)) {
             if (CompHeader("Foot IK", f, &toRemove)) {
                 ImGui::TextDisabled("Plant a biped's feet on the ground. Name the leg bones.");
+                // One-click bone mapping for imported skeletons: scan this object's
+                // descendants for the usual leg-bone naming (Mixamo "LeftUpLeg" /
+                // "LeftLeg" / "LeftFoot", thigh/shin/calf variants, _l/_r suffixes).
+                if (ImGui::SmallButton("Auto-Detect Bones##fik")) {
+                    ed.PushUndo();
+                    auto lower = [](std::string s2) { for (auto& c2 : s2) c2 = (char)std::tolower((unsigned char)c2); return s2; };
+                    std::string hipL, kneeL, footL, hipR, kneeR, footR, pelvis;
+                    for (const auto& up2 : ed.scene().Objects()) {
+                        GameObject* g2 = up2.get();
+                        if (!g2 || !g2->IsSelfOrDescendantOf(go)) continue;
+                        std::string nm = lower(g2->name);
+                        auto has = [&](const char* k) { return nm.find(k) != std::string::npos; };
+                        auto endsW = [&](const char* k) {
+                            std::size_t kl = std::strlen(k);
+                            return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
+                        };
+                        bool isLeft  = has("left")  || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l");
+                        bool isRight = has("right") || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r");
+                        if (!isLeft && !isRight) {
+                            if (pelvis.empty() && (has("hips") || has("pelvis"))) pelvis = g2->name;
+                            continue;
+                        }
+                        int part = -1;
+                        if (has("foot") || has("ankle")) part = 2;
+                        else if (has("upleg") || has("upperleg") || has("thigh") || has("hip")) part = 0;
+                        else if (has("knee") || has("calf") || has("shin") || has("lowerleg") || has("leg")) part = 1;
+                        if (part < 0) continue;
+                        std::string& slot = isLeft ? (part == 0 ? hipL : part == 1 ? kneeL : footL)
+                                                   : (part == 0 ? hipR : part == 1 ? kneeR : footR);
+                        if (slot.empty()) slot = g2->name;
+                    }
+                    int found = (int)(!hipL.empty()) + (int)(!kneeL.empty()) + (int)(!footL.empty()) +
+                                (int)(!hipR.empty()) + (int)(!kneeR.empty()) + (int)(!footR.empty());
+                    if (found > 0) {
+                        f->leftHipName = hipL;   f->leftKneeName = kneeL;   f->leftFootName = footL;
+                        f->rightHipName = hipR;  f->rightKneeName = kneeR;  f->rightFootName = footR;
+                        if (!pelvis.empty()) f->pelvisName = pelvis;
+                        // Drop stale pointers so the new names resolve on Start.
+                        f->leftHip = f->leftKnee = f->leftFoot = nullptr;
+                        f->rightHip = f->rightKnee = f->rightFoot = nullptr;
+                        f->pelvis = nullptr;
+                        ed.dirty = true;
+                        ConsoleLog("Foot IK: mapped " + std::to_string(found) + "/6 leg bones" +
+                                   (pelvis.empty() ? "" : " + pelvis '" + pelvis + "'"));
+                    } else ConsoleLog("Foot IK: no leg bones recognized under " + go->name, 1);
+                }
                 NameField("L Hip##fik", f->leftHipName);   NameField("L Knee##fik", f->leftKneeName);   NameField("L Foot##fik", f->leftFootName);
                 NameField("R Hip##fik", f->rightHipName);  NameField("R Knee##fik", f->rightKneeName);  NameField("R Foot##fik", f->rightFootName);
                 NameField("Pelvis##fik", f->pelvisName);

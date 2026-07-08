@@ -8914,6 +8914,7 @@ static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
 
 // The eye (active) toggle hotspot at a Hierarchy row's right edge. Width of the
 // zone the row-click handler treats as "toggle active" instead of "select".
+// The lock hotspot sits immediately left of it, same width.
 static constexpr float kHierEyeW = 20.0f;
 
 // Unity-style visibility eye at the row's far right: open when active, struck
@@ -8926,6 +8927,26 @@ static void HierEye(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
     dl->AddCircleFilled(ImVec2(cx, cy), 1.8f, col);
     if (!go->active)
         dl->AddLine(ImVec2(cx - 6.0f, cy + 5.0f), ImVec2(cx + 6.0f, cy - 5.0f), col, 1.5f);
+}
+
+// Padlock next to the eye: locked objects can't be click-picked in the Scene view.
+// Amber when locked; a faint hint appears on row hover so the hotspot is findable.
+static void HierLock(GameObject* go, bool rowHovered, ImVec2 rowMin, ImVec2 rowMax) {
+    if (!go->editorLocked && !rowHovered) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float cx = rowMax.x - kHierEyeW * 1.5f, cy = (rowMin.y + rowMax.y) * 0.5f;
+    ImU32 col = go->editorLocked ? IM_COL32(235, 190, 90, 230) : IM_COL32(140, 144, 152, 110);
+    dl->AddCircle(ImVec2(cx, cy - 2.0f), 2.8f, col, 12, 1.4f);           // shackle
+    dl->AddRectFilled(ImVec2(cx - 3.5f, cy - 0.5f), ImVec2(cx + 3.5f, cy + 5.0f), col, 1.0f);  // body
+}
+
+// Lock/unlock an object and its whole subtree (mirrors SetActiveRecursive).
+static void SetLockedRecursive(GameObject* go, bool on) {
+    if (!go) return;
+    go->editorLocked = on;
+    if (go->transform)
+        for (Transform* c : go->transform->Children())
+            if (c) SetLockedRecursive(c->gameObject, on);
 }
 
 // Set a GameObject and its whole subtree active/inactive, so toggling a parent in
@@ -9088,17 +9109,27 @@ void DrawHierarchy(EditorState& ed) {
             if (ed.IsSelected(node))
                 ImGui::GetWindowDrawList()->AddRectFilled(
                     rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
-            HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW, rowMax.y));
+            HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y));
             HierEye(node, rowMin, rowMax);
-            bool inEye = ImGui::GetIO().MousePos.x >= rowMax.x - kHierEyeW &&
-                         ImGui::GetIO().MousePos.x <= rowMax.x;
+            HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
+            float mx = ImGui::GetIO().MousePos.x;
+            bool inEye  = mx >= rowMax.x - kHierEyeW && mx <= rowMax.x;
+            bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
             if (ImGui::IsItemHovered() && inEye)
                 ImGui::SetTooltip(node->active ? "Hide (deactivate) this object and its children"
                                                : "Show (activate) this object and its children");
+            if (ImGui::IsItemHovered() && inLock)
+                ImGui::SetTooltip(node->editorLocked
+                    ? "Unlock: allow selecting this object in the Scene view again"
+                    : "Lock: this object (and children) can't be click-selected in the Scene view");
             if (ImGui::IsItemClicked()) {
                 if (inEye) {   // the eye hotspot toggles active instead of selecting
                     ed.PushUndo();
                     SetActiveRecursive(node, !node->active);
+                    ed.dirty = true;
+                } else if (inLock) {   // the padlock hotspot toggles scene-view lock
+                    ed.PushUndo();
+                    SetLockedRecursive(node, !node->editorLocked);
                     ed.dirty = true;
                 } else if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
                 else ed.Select(node);                                       // single select
@@ -9187,8 +9218,8 @@ void DrawHierarchy(EditorState& ed) {
                 }
                 ImGui::EndDragDropTarget();
             }
-            // Double-click a row to rename it inline (not on the eye toggle).
-            if (ImGui::IsItemHovered() && !inEye && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            // Double-click a row to rename it inline (not on the eye/lock toggles).
+            if (ImGui::IsItemHovered() && !inEye && !inLock && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 g_hierRename = node; g_hierRenameOpen = true;
                 std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                 g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
@@ -9205,6 +9236,12 @@ void DrawHierarchy(EditorState& ed) {
                     bool on = !node->active;
                     // Take the whole subtree (and the whole selection) with it.
                     for (GameObject* g : HierTargets(ed, node)) SetActiveRecursive(g, on);
+                    ed.dirty = true;
+                }
+                if (ImGui::MenuItem(node->editorLocked ? "Unlock in Scene View" : "Lock in Scene View")) {
+                    ed.PushUndo();
+                    bool on = !node->editorLocked;
+                    for (GameObject* g : HierTargets(ed, node)) SetLockedRecursive(g, on);
                     ed.dirty = true;
                 }
                 ImGui::Separator();
@@ -10841,6 +10878,43 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     ImGui::SameLine(); ImGui::SetNextItemWidth(90);
     ch |= ImGui::DragFloat("Speed##maed", &ma->speed, 0.02f, 0.05f, 5.0f);
     if (ch) ed.dirty = true;
+
+    // ---- Manage the clip library: rename / duplicate / delete ----
+    ImGui::Separator();
+    {
+        char nb[64];
+        std::snprintf(nb, sizeof(nb), "%s", ma->clips[ma->active].name.c_str());
+        ImGui::SetNextItemWidth(230);
+        if (ImGui::InputText("Rename##maed", nb, sizeof(nb))) {
+            std::string oldName = ma->clips[ma->active].name;
+            ma->clips[ma->active].name = nb;
+            // Keep locomotion (idle/walk/run) references pointing at the same clip.
+            if (ma->idleClip == oldName) ma->idleClip = nb;
+            if (ma->walkClip == oldName) ma->walkClip = nb;
+            if (ma->runClip  == oldName) ma->runClip  = nb;
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemActivated()) ed.PushUndo();
+        ImGui::SameLine();
+        int dup = -1, del = -1;   // mutate AFTER the UI so no reference goes stale
+        if (ImGui::SmallButton("Duplicate##maed")) dup = ma->active;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(ma->ClipCount() <= 1);
+        if (ImGui::SmallButton("Delete##maed")) del = ma->active;
+        ImGui::EndDisabled();
+        if (dup >= 0) {
+            ed.PushUndo();
+            ModelAnimator::Clip copy = ma->clips[dup];
+            copy.name += " copy";
+            ma->clips.insert(ma->clips.begin() + dup + 1, std::move(copy));
+            ma->active = dup + 1; t = 0.0f; ed.dirty = true;
+        } else if (del >= 0) {
+            ed.PushUndo();
+            ma->clips.erase(ma->clips.begin() + del);
+            if (ma->active >= (int)ma->clips.size()) ma->active = (int)ma->clips.size() - 1;
+            t = 0.0f; ed.dirty = true;
+        }
+    }
     ImGui::TextDisabled("Edit-mode preview — the scene pose isn't touched. Press Play (toolbar) to run it for real.");
 }
 
@@ -13884,7 +13958,30 @@ void DrawInspector(EditorState& ed) {
         ImGui::Spacing();
     }
 
-    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+    bool tfOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
+    // Right-click the Transform header: copy the whole TRS, paste it onto another
+    // object (Unity's Copy/Paste Component Values for the common case).
+    {
+        static bool s_tcopyValid = false;
+        static Vec3 s_tcopyPos, s_tcopyScl;
+        static Quat s_tcopyRot;
+        if (ImGui::BeginPopupContextItem("##tfctx")) {
+            Transform* t = go->transform;
+            if (ImGui::MenuItem("Copy Transform Values")) {
+                s_tcopyPos = t->localPosition; s_tcopyRot = t->localRotation;
+                s_tcopyScl = t->localScale;    s_tcopyValid = true;
+            }
+            if (ImGui::MenuItem("Paste Transform Values", nullptr, false, s_tcopyValid)) {
+                ed.PushUndo();
+                t->localPosition = s_tcopyPos;
+                t->localRotation = s_tcopyRot;
+                t->localScale    = s_tcopyScl;
+                ed.dirty = true;
+            }
+            ImGui::EndPopup();
+        }
+    }
+    if (tfOpen) {
         Transform* t = go->transform;
         bool act = false;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};
@@ -21621,6 +21718,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 if (area < bestArea) { bestArea = area; hit = g; }
             }
             if (!hit) hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
+            if (hit && hit->editorLocked) hit = nullptr;   // locked: Hierarchy-only selection
             if (hit) {
                 // Clicking a button's label text selects the BUTTON so you always grab and
                 // move the button (and its text) as one. DOUBLE-click drills into the text
@@ -21914,7 +22012,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (const auto& up : objs) {
                 GameObject* go = up.get();
                 auto* sr = go->GetComponent<SpriteRenderer>();
-                if (!sr || !go->active) continue;
+                if (!sr || !go->active || go->editorLocked) continue;   // locked: Hierarchy-only selection
                 Vec3 wp = go->transform->Position();
                 Vec3 ls = go->transform->LossyScale();
                 float hx = sr->size.x * ls.x * 0.5f, hy = sr->size.y * ls.y * 0.5f;
@@ -23099,7 +23197,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         for (const auto& up : objs) {
             GameObject* go = up.get();
             auto* mr = go->GetComponent<MeshRenderer>();
-            if (!mr || !go->active) continue;
+            if (!mr || !go->active || go->editorLocked) continue;   // locked: Hierarchy-only selection
             Mat4 model = go->transform->LocalToWorldMatrix();
             Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
             float minx = 1e30f, miny = 1e30f, maxx = -1e30f, maxy = -1e30f;
@@ -23126,7 +23224,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float best = 16.0f * 16.0f;
             for (const auto& up : objs) {
                 GameObject* go = up.get();
-                if (!go->active || go->GetComponent<MeshRenderer>()) continue;
+                if (!go->active || go->editorLocked || go->GetComponent<MeshRenderer>()) continue;
                 ImVec2 sp;
                 if (!toScreen(vp * Vec4{go->transform->Position(), 1}, sp)) continue;
                 float dx = io.MousePos.x - sp.x, dy = io.MousePos.y - sp.y, d2 = dx * dx + dy * dy;

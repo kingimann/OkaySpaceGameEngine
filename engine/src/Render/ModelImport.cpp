@@ -52,14 +52,15 @@ static bool EndsWith(const std::string& s, const char* suf) {
 }
 
 #ifdef OKAY_HAVE_ASSIMP
-// Resolve the scene's first diffuse texture to a file the renderer can load:
+// Resolve a material texture of the given TYPE to a file the renderer can load:
 // an external reference resolves next to the model; an embedded texture (the
-// common case for FBX) is written out as a "<model>_tex.<ext>" sidecar — the
-// same convention the glTF importer uses.
-static std::string AssimpMaterialTexture(const aiScene* sc, unsigned mi, const std::string& modelPath) {
+// common case for FBX) is written out as a "<model>_<tag><mi>.<ext>" sidecar —
+// the same convention the glTF importer uses ("tex" keeps the legacy name).
+static std::string AssimpTexByType(const aiScene* sc, unsigned mi, const std::string& modelPath,
+                                   aiTextureType type, const char* tag) {
     if (mi >= sc->mNumMaterials) return std::string();
     aiString texPath;
-    if (sc->mMaterials[mi]->GetTexture(aiTextureType_DIFFUSE, 0, &texPath) != AI_SUCCESS)
+    if (sc->mMaterials[mi]->GetTexture(type, 0, &texPath) != AI_SUCCESS)
         return std::string();
     std::string tp = texPath.C_Str();
     if (tp.empty()) return std::string();
@@ -71,7 +72,7 @@ static std::string AssimpMaterialTexture(const aiScene* sc, unsigned mi, const s
             std::string base = modelPath;
             std::size_t dot = base.find_last_of('.');
             if (dot != std::string::npos) base = base.substr(0, dot);
-            std::string out = base + "_tex" + std::to_string(mi) + "." + ext;
+            std::string out = base + "_" + tag + std::to_string(mi) + "." + ext;
             if (std::FILE* f = std::fopen(out.c_str(), "wb")) {
                 std::fwrite(emb->pcData, 1, emb->mWidth, f);
                 std::fclose(f);
@@ -85,6 +86,58 @@ static std::string AssimpMaterialTexture(const aiScene* sc, unsigned mi, const s
     std::string dir;
     { std::size_t s = modelPath.find_last_of("/\\"); if (s != std::string::npos) dir = modelPath.substr(0, s + 1); }
     return abs ? tp : dir + tp;
+}
+
+static std::string AssimpMaterialTexture(const aiScene* sc, unsigned mi, const std::string& modelPath) {
+    std::string t = AssimpTexByType(sc, mi, modelPath, aiTextureType_DIFFUSE, "tex");
+    if (t.empty()) t = AssimpTexByType(sc, mi, modelPath, aiTextureType_BASE_COLOR, "tex");  // PBR exports
+    return t;
+}
+
+// Pull the WHOLE material onto a MeshRenderer — albedo, normal, specular/gloss
+// and AO maps, plus diffuse/emissive colors and shininess/metallic/roughness
+// factors — so a downloaded FBX lights like it does in other engines instead of
+// arriving as flat white. Mirrors ApplyGltfMaterial for the Assimp formats.
+static void ApplyAssimpMaterial(const aiScene* sc, unsigned mi, const std::string& modelPath,
+                                MeshRenderer* mr) {
+    if (!sc || mi >= sc->mNumMaterials || !mr) return;
+    const aiMaterial* mat = sc->mMaterials[mi];
+    std::string t = AssimpMaterialTexture(sc, mi, modelPath);
+    if (!t.empty()) mr->texture = t;
+    std::string n = AssimpTexByType(sc, mi, modelPath, aiTextureType_NORMALS, "nrm");
+    if (n.empty()) n = AssimpTexByType(sc, mi, modelPath, aiTextureType_HEIGHT, "nrm");   // OBJ/FBX "bump" slot
+    if (!n.empty()) mr->normalMap = n;
+    std::string s = AssimpTexByType(sc, mi, modelPath, aiTextureType_SPECULAR, "spec");
+    if (s.empty()) s = AssimpTexByType(sc, mi, modelPath, aiTextureType_SHININESS, "spec");
+    if (!s.empty()) mr->specularMap = s;
+    std::string a = AssimpTexByType(sc, mi, modelPath, aiTextureType_LIGHTMAP, "ao");     // assimp's AO slot
+    if (a.empty()) a = AssimpTexByType(sc, mi, modelPath, aiTextureType_AMBIENT_OCCLUSION, "ao");
+    if (!a.empty()) mr->aoMap = a;
+    // Scalar factors. The diffuse COLOR only applies when there's no albedo texture
+    // (textured FBX materials often carry a black/grey diffuse that would tint the
+    // texture to mud).
+    aiColor4D dc;
+    if (mr->texture.empty() && mat->Get(AI_MATKEY_COLOR_DIFFUSE, dc) == AI_SUCCESS)
+        if (dc.r + dc.g + dc.b > 0.02f)
+            mr->color = Color(dc.r, dc.g, dc.b, mr->color.a);
+    aiColor4D ec;
+    if (mat->Get(AI_MATKEY_COLOR_EMISSIVE, ec) == AI_SUCCESS)
+        if (ec.r + ec.g + ec.b > 0.02f)
+            mr->emissive = Color(ec.r, ec.g, ec.b, 1.0f);
+    float shin = 0.0f;
+    if (mat->Get(AI_MATKEY_SHININESS, shin) == AI_SUCCESS && shin > 1.0f) {
+        mr->shininess = shin > 128.0f ? 128.0f : shin;
+        if (mr->specular <= 0.0f) mr->specular = 0.4f;
+    }
+    float metal = 0.0f;
+    if (mat->Get(AI_MATKEY_METALLIC_FACTOR, metal) == AI_SUCCESS && metal > 0.0f)
+        mr->metallic = metal > 1.0f ? 1.0f : metal;
+    float rough = -1.0f;
+    if (mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, rough) == AI_SUCCESS && rough >= 0.0f) {
+        float smooth = 1.0f - (rough > 1.0f ? 1.0f : rough);   // same mapping as glTF
+        mr->shininess = 4.0f + smooth * 124.0f;
+        mr->specular  = 0.15f + smooth * 0.85f;
+    }
 }
 
 static std::string AssimpDiffuseTexture(const aiScene* sc, const std::string& modelPath) {
@@ -336,8 +389,7 @@ static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path,
         if (bind.vertices.empty()) continue;
         auto* mr = site.go->AddComponent<MeshRenderer>();
         mr->mesh = bind; mr->doubleSided = true;
-        std::string tex = AssimpMaterialTexture(sc, site.am->mMaterialIndex, path);
-        if (!tex.empty()) mr->texture = tex;
+        ApplyAssimpMaterial(sc, site.am->mMaterialIndex, path, mr);   // full material, not just albedo
 
         if (site.am->mNumBones == 0) continue;
         auto* sm = site.go->AddComponent<SkinnedMesh>();

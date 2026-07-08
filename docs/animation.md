@@ -158,5 +158,10 @@ locomotion blending), so it corrects the final pose.
 
 - **Meshy / Mixamo FBX**: animations import via Assimp. For the richest
   results (full skins + all takes) prefer the **GLB** export when available.
+- **Materials import too**: albedo, normal, specular/gloss and AO maps
+  (external files or FBX-embedded), plus diffuse/emissive colors and
+  shininess/metallic/roughness factors, land on each mesh's renderer
+  automatically — a downloaded model lights the way it did in the store
+  preview.
 - Multi-take files import one clip per take; single-take files can be cut
   apart with **Split…**.

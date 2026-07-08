@@ -13904,6 +13904,28 @@ void DrawModeling(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::Button("Relax##model")) { ed.PushUndo(); mr->mesh.Smooth(s_relax); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian smooth: relax every vertex toward its neighbours without adding triangles (evens out sculpts and lumpy imports).");
+        ImGui::SameLine();
+        if (ImGui::Button("Fill Holes##model")) {
+            ed.PushUndo(); int nH = mr->mesh.FillHoles();
+            ConsoleLog(nH > 0 ? ("Filled " + std::to_string(nH) + " hole(s)") : std::string("No holes found"));
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap every open boundary (e.g. after Delete Faces) so the mesh is watertight again.");
+        static float s_jitter = 0.05f; static int s_jitterSeed = 1;
+        ImGui::SetNextItemWidth(90); ImGui::DragFloat("##jit", &s_jitter, 0.005f, 0.0f, 2.0f, "%.3f");
+        ImGui::SameLine();
+        if (ImGui::Button("Jitter##model")) {
+            ed.PushUndo(); mr->mesh.JitterVertices({}, s_jitter, s_jitterSeed++); ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nudge every vertex by a random offset — instant hand-made / rocky look (each click varies).");
+        static float s_shear = 0.3f;
+        ImGui::SameLine(); ImGui::SetNextItemWidth(80);
+        ImGui::DragFloat("##shr", &s_shear, 0.01f, -3.0f, 3.0f, "%.2f");
+        ImGui::SameLine();
+        if (ImGui::Button("Shear X##model")) { ed.PushUndo(); mr->mesh.Shear(0, 1, s_shear); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Z##shear")) { ed.PushUndo(); mr->mesh.Shear(2, 1, s_shear); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slant the mesh: slide along the axis proportionally to height — leaning towers, italic props.");
         if (ImGui::Button("Weld##model")) {
             int n = mr->mesh.WeldVertices();
             ConsoleLog("Welded " + std::to_string(n) + " duplicate verts"); ed.dirty = true;
@@ -14056,6 +14078,36 @@ void DrawModeling(EditorState& ed) {
         biAxis("+Y##bi", {0,1,0});  ImGui::SameLine(); biAxis("-Y##bi", {0,-1,0}); ImGui::SameLine();
         biAxis("+Z##bi", {0,0,1});  ImGui::SameLine(); biAxis("-Z##bi", {0,0,-1});
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slice through the centre along an axis and keep the half on that side (the cut face is capped).");
+        ImGui::TextDisabled("Split in two objects:");
+        auto splitAxis = [&](const char* lbl, Vec3 nrm) {
+            if (!ImGui::Button(lbl)) return;
+            ed.PushUndo();
+            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            Vec3 c = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+            Mesh other = mr->mesh;
+            mr->mesh.Bisect(c, nrm, true, true);          // this object keeps the + half
+            other.Bisect(c, nrm, true, false);            // the new one gets the - half
+            if (!other.vertices.empty()) {
+                GameObject* no = ed.scene().CreateGameObject(go->name + " Half");
+                if (go->transform->Parent()) no->transform->SetParent(go->transform->Parent(), false);
+                no->transform->localPosition = go->transform->localPosition;
+                no->transform->localRotation = go->transform->localRotation;
+                no->transform->localScale    = go->transform->localScale;
+                auto* nmr = no->AddComponent<MeshRenderer>();
+                nmr->mesh = other;
+                nmr->color = mr->color;         nmr->texture = mr->texture;
+                nmr->tiling = mr->tiling;       nmr->emissive = mr->emissive;
+                nmr->specular = mr->specular;   nmr->shininess = mr->shininess;
+                nmr->unlit = mr->unlit;         nmr->doubleSided = mr->doubleSided;
+                nmr->texFilter = mr->texFilter; nmr->texOffset = mr->texOffset;
+                ConsoleLog("Split '" + go->name + "' into two objects");
+            }
+            ed.dirty = true;
+        };
+        splitAxis("X##sp2", {1,0,0}); ImGui::SameLine();
+        splitAxis("Y##sp2", {0,1,0}); ImGui::SameLine();
+        splitAxis("Z##sp2", {0,0,1});
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut through the centre and keep BOTH capped halves as separate objects — break a rock apart, make doors from a wall.");
 
         static float s_fatten = 0.1f, s_wire = 0.08f;
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##fat", &s_fatten, -1.0f, 1.0f, "%.2f");
@@ -14155,6 +14207,53 @@ void DrawModeling(EditorState& ed) {
             ed.dirty = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Treat the points as a flat 2D outline (x, y) and give it thickness along Z — logos, arrows, flat props. Convex outlines cap cleanly.");
+
+        SectionHeader("Pipe (sweep along path)");
+        static int   s_pipePreset = 1;
+        static float s_pipeR = 0.2f;
+        static int   s_pipeSegs = 12;
+        const char* pipePresets[] = {"Straight", "Arc", "Helix", "S-Curve", "Zigzag"};
+        ImGui::SetNextItemWidth(110); ImGui::Combo("##pipep", &s_pipePreset, pipePresets, 5);
+        ImGui::SameLine(); ImGui::SetNextItemWidth(80);
+        ImGui::DragFloat("##piper", &s_pipeR, 0.01f, 0.02f, 5.0f, "r %.2f");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+        ImGui::DragInt("##pipes", &s_pipeSegs, 0.1f, 3, 64, "%d segs");
+        ImGui::SameLine();
+        if (ImGui::Button("Pipe##gen")) {
+            std::vector<Vec3> path;
+            const float kPi = 3.14159265f;
+            switch (s_pipePreset) {
+                case 0:                                          // Straight
+                    for (int i = 0; i <= 8; ++i) path.push_back({0, 2.0f * i / 8.0f, 0});
+                    break;
+                case 1:                                          // Arc (half circle in XY)
+                    for (int i = 0; i <= 24; ++i) {
+                        float t = kPi * i / 24.0f;
+                        path.push_back({std::cos(t), std::sin(t), 0});
+                    }
+                    break;
+                case 2:                                          // Helix
+                    for (int i = 0; i <= 64; ++i) {
+                        float t = 2.0f * kPi * 2.0f * i / 64.0f;  // 2 turns
+                        path.push_back({0.8f * std::cos(t), 1.5f * i / 64.0f, 0.8f * std::sin(t)});
+                    }
+                    break;
+                case 3:                                          // S-Curve
+                    for (int i = 0; i <= 32; ++i) {
+                        float t = (float)i / 32.0f;
+                        path.push_back({0.6f * std::sin(t * 2.0f * kPi), 2.0f * t, 0});
+                    }
+                    break;
+                default:                                         // Zigzag
+                    path = {{0,0,0},{0.8f,0.5f,0},{0,1.0f,0},{0.8f,1.5f,0},{0,2.0f,0}};
+                    break;
+            }
+            ed.PushUndo(); mr->mesh = Mesh::SweepPath(path, s_pipeR, s_pipeSegs, true);
+            mr->meshPath.clear();
+            ConsoleLog("Pipe: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sweep a round cross-section along a path — pipes, rails, cables, springs. Frames are twist-free at bends.");
         ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Edit Mesh")) {
         bool editing = g_meshEdit && g_meshEditObj == go;
@@ -14224,6 +14323,16 @@ void DrawModeling(EditorState& ed) {
                 ed.PushUndo(); int n = mr->mesh.WeldVertices(); g_meshSelVerts.clear(); g_meshSelFaces.clear();
                 ConsoleLog("Merged " + std::to_string(n) + " verts"); ed.dirty = true;
             }
+            static float s_bevelAmt = 0.15f;
+            ImGui::SetNextItemWidth(110);
+            ImGui::DragFloat("##bevamt", &s_bevelAmt, 0.005f, 0.01f, 2.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("Bevel Sel##me") && !g_meshSelVerts.empty()) {
+                ed.PushUndo(); mr->mesh.BevelVertices(g_meshSelVerts, s_bevelAmt);
+                g_meshSelVerts.clear(); g_meshSelFaces.clear();   // topology changed
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Chamfer the selected corners: cut each back by this amount and cap the opening flat (knock the sharp corners off a box).");
             if (ImGui::Button("Relax Sel##me") && !g_meshSelVerts.empty()) {
                 ed.PushUndo(); mr->mesh.SmoothVertices(g_meshSelVerts, 0.5f); ed.dirty = true;
             }

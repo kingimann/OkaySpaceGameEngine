@@ -23,6 +23,10 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   **Subdiv + Smooth** (rounds without shrinking), **Smooth** (subdivide +
   spherify), **Relax** (Laplacian smoothing — evens out lumpy sculpts and
   imports without adding triangles; drag the slider for strength).
+- **Fill Holes** caps every open boundary (e.g. after Delete Faces) so the
+  mesh is watertight again. **Jitter** nudges every vertex randomly for an
+  instant hand-made / rocky look. **Shear X/Z** slants the mesh with height
+  (leaning towers, italic props).
 - **Weld** duplicates, **Recenter** the pivot, **Ground** the pivot to the
   base, **Fit 1u** to scale into a unit cube. **Export OBJ** writes the mesh
   (with UVs) to `Assets/<name>.obj`.
@@ -49,8 +53,10 @@ Blender-style one-shot modifiers: **Array X** (repeat with offset),
 **Remesh** (watertight voxel rebuild), **Decimate** (cut triangle count),
 **Boolean** Union / Subtract / Intersect against any other mesh object in
 the scene, **Convex Hull**, **Bisect** (slice through the centre and keep a
-capped half), **Shrink/Fatten**, **Wireframe** (turn edges into beams),
-**Displace** (noise roughen), **Cast Cyl Y**, and **Stretch X/Y/Z**.
+capped half), **Split in two objects** (keep BOTH capped halves — break a
+rock apart, cut doors from a wall), **Shrink/Fatten**, **Wireframe** (turn
+edges into beams), **Displace** (noise roughen), **Cast Cyl Y**, and
+**Stretch X/Y/Z**.
 
 ## Generate
 
@@ -63,6 +69,9 @@ or **Column** preset, then:
   segments for springs, screw threads, and spiral ramps.
 - **Extrude Outline** — treat the points as a flat outline and give it
   depth along Z for logos, arrows, and flat props.
+- **Pipe** — sweep a round cross-section along a path (Straight, Arc,
+  Helix, S-Curve, Zigzag presets) with twist-free frames at bends: pipes,
+  rails, cables, springs. Set the radius and ring segments.
 
 ## Edit Mesh — vertex/face editing in the viewport
 
@@ -78,10 +87,11 @@ to snap to nearby vertices.
 - Face tools: **Extrude Faces** (with distance), **Inset Faces**,
   **Subdivide Sel**, **Delete Faces**, **Flip Normals**,
   **Merge by Distance**.
-- Selection tools: **Relax Sel** smooths just the selected vertices,
-  **Flatten X/Y/Z** snaps them to their shared average (level a rim, square
-  a wall), and **Separate** splits the selected faces off into a new object
-  with the material carried over.
+- Selection tools: **Bevel Sel** chamfers the selected corners (cut back and
+  capped flat — knock the sharp corners off a box), **Relax Sel** smooths
+  just the selected vertices, **Flatten X/Y/Z** snaps them to their shared
+  average (level a rim, square a wall), and **Separate** splits the selected
+  faces off into a new object with the material carried over.
 
 ### Sculpt
 

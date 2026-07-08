@@ -2242,6 +2242,228 @@ struct Mesh {
         return m;
     }
 
+    /// Sweep a circular cross-section along a 3D polyline — pipes, rails, cables,
+    /// tree branches. Frames are parallel-transported so the tube doesn't twist at
+    /// bends. `caps` closes the ends with fans.
+    static Mesh SweepPath(const std::vector<Vec3>& path, float radius = 0.25f,
+                          int segments = 12, bool caps = true) {
+        Mesh m;
+        const int n = (int)path.size();
+        if (n < 2 || segments < 3 || radius <= 1e-6f) return m;
+        const float kPi = 3.14159265358979323846f;
+        std::vector<Vec3> T(n);                        // tangents (central differences)
+        for (int i = 0; i < n; ++i) {
+            Vec3 d = path[std::min(i + 1, n - 1)] - path[std::max(i - 1, 0)];
+            float md = d.Magnitude();
+            T[i] = md > 1e-8f ? d * (1.0f / md) : Vec3{0, 1, 0};
+        }
+        Vec3 up = std::fabs(T[0].y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+        Vec3 N = Vec3::Cross(up, T[0]);
+        { float mn = N.Magnitude(); N = mn > 1e-8f ? N * (1.0f / mn) : Vec3{0, 0, 1}; }
+        for (int i = 0; i < n; ++i) {
+            if (i > 0) {                                // transport the frame
+                N = N - T[i] * Vec3::Dot(N, T[i]);
+                float mn = N.Magnitude();
+                if (mn > 1e-8f) N = N * (1.0f / mn);
+                else {                                  // degenerate (sharp reversal)
+                    Vec3 u2 = std::fabs(T[i].y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+                    N = Vec3::Cross(u2, T[i]).Normalized();
+                }
+            }
+            Vec3 B = Vec3::Cross(T[i], N);
+            for (int s = 0; s < segments; ++s) {
+                float th = 2.0f * kPi * (float)s / segments;
+                m.vertices.push_back(path[i] + (N * std::cos(th) + B * std::sin(th)) * radius);
+            }
+        }
+        for (int i = 0; i + 1 < n; ++i)
+            for (int s = 0; s < segments; ++s) {
+                int s1 = (s + 1) % segments;
+                int a = i * segments + s,        b = i * segments + s1;
+                int c = (i + 1) * segments + s,  d = (i + 1) * segments + s1;
+                m.triangles.insert(m.triangles.end(), {a, b, c,  b, d, c});
+            }
+        if (caps) {
+            int c0 = (int)m.vertices.size(); m.vertices.push_back(path[0]);
+            int c1 = (int)m.vertices.size(); m.vertices.push_back(path[n - 1]);
+            for (int s = 0; s < segments; ++s) {
+                int s1 = (s + 1) % segments;
+                m.triangles.insert(m.triangles.end(), {c0, s1, s});                     // start cap (faces -T)
+                int base = (n - 1) * segments;
+                m.triangles.insert(m.triangles.end(), {c1, base + s, base + s1});       // end cap (faces +T)
+            }
+        }
+        m.ComputeSmoothNormals();
+        return m;
+    }
+
+    /// Cap every hole: boundary edges (edges used by only one triangle) are chained
+    /// into loops and each loop is fan-filled from its centroid. Coincident vertices
+    /// are treated as one so unwelded seams don't read as boundaries. Returns the
+    /// number of holes closed.
+    int FillHoles() {
+        if (triangles.size() < 3 || vertices.empty()) return 0;
+        // Representative index per coincident-vertex group.
+        std::map<std::tuple<int, int, int>, int> grid;
+        std::vector<int> rep(vertices.size());
+        auto key = [](const Vec3& v) {
+            return std::make_tuple((int)std::lround(v.x * 4096.0f),
+                                   (int)std::lround(v.y * 4096.0f),
+                                   (int)std::lround(v.z * 4096.0f));
+        };
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            auto k = key(vertices[i]);
+            auto it = grid.find(k);
+            if (it == grid.end()) { grid[k] = (int)i; rep[i] = (int)i; }
+            else rep[i] = it->second;
+        }
+        std::set<std::pair<int, int>> edges;            // directed, on representatives
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int a = rep[triangles[t]], b = rep[triangles[t + 1]], c = rep[triangles[t + 2]];
+            if (a == b || b == c || a == c) continue;
+            edges.insert({a, b}); edges.insert({b, c}); edges.insert({c, a});
+        }
+        // Boundary edges: no reverse partner. A hole rim chains head-to-tail.
+        std::map<int, int> next;
+        for (const auto& e : edges)
+            if (!edges.count({e.second, e.first}) && !next.count(e.first))
+                next[e.first] = e.second;
+        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        int holes = 0;
+        std::set<int> used;
+        for (const auto& start : next) {
+            if (used.count(start.first)) continue;
+            std::vector<int> loop;                      // walk the rim
+            int v = start.first;
+            while (next.count(v) && !used.count(v)) {
+                used.insert(v); loop.push_back(v);
+                v = next[v];
+            }
+            if (loop.size() < 3 || v != start.first) continue;   // open chain — not a loop
+            Vec3 c{0, 0, 0};
+            for (int i : loop) c += vertices[i];
+            c = c * (1.0f / (float)loop.size());
+            int ci = (int)vertices.size();
+            vertices.push_back(c);
+            if (hadUV) uvs.push_back({0.5f, 0.5f});
+            // Rim edges wind with the surrounding faces; (b, a, centre) faces outward.
+            for (std::size_t i = 0; i < loop.size(); ++i) {
+                int a = loop[i], b = loop[(i + 1) % loop.size()];
+                triangles.insert(triangles.end(), {b, a, ci});
+            }
+            ++holes;
+        }
+        if (holes > 0) {
+            triColors.clear();                           // face records changed
+            name = "";
+            RefreshNormals();
+        }
+        return holes;
+    }
+
+    /// Chamfer the listed vertices: each selected corner is cut back by `amount`
+    /// along every edge that meets it and the opening is capped with a flat facet —
+    /// Blender's vertex bevel. Great for knocking the sharp corners off boxes.
+    void BevelVertices(const std::vector<int>& sel, float amount) {
+        if (sel.empty() || amount <= 1e-6f || triangles.empty()) return;
+        std::set<int> S;
+        for (int v : sel) if (v >= 0 && v < (int)vertices.size()) S.insert(v);
+        if (S.empty()) return;
+        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        std::vector<Vec3> vn = Normals();                // cap orientation
+        std::map<std::pair<int, int>, int> splitIdx;     // (corner, neighbour) -> new vert
+        std::map<int, std::vector<int>> ringOf;          // corner -> its new ring verts
+        auto splitPoint = [&](int v, int o) {
+            auto k = std::make_pair(v, o);
+            auto it = splitIdx.find(k);
+            if (it != splitIdx.end()) return it->second;
+            Vec3 d = vertices[o] - vertices[v];
+            float len = d.Magnitude();
+            float t = len > 1e-8f ? std::min(amount, len * 0.45f) / len : 0.0f;
+            int idx = (int)vertices.size();
+            vertices.push_back(vertices[v] + d * t);
+            if (hadUV) uvs.push_back(uvs[v]);
+            splitIdx[k] = idx;
+            ringOf[v].push_back(idx);
+            return idx;
+        };
+        std::vector<int> out;
+        out.reserve(triangles.size() * 2);
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int a = triangles[t], b = triangles[t + 1], c = triangles[t + 2];
+            int poly[6]; int pn = 0;
+            // Walk the perimeter a->b->c; a chamfered corner contributes its two
+            // edge split points in walk order (arrive-edge first, leave-edge second).
+            auto corner = [&](int v, int prev, int nxt) {
+                if (!S.count(v)) { poly[pn++] = v; return; }
+                poly[pn++] = splitPoint(v, prev);
+                poly[pn++] = splitPoint(v, nxt);
+            };
+            corner(a, c, b); corner(b, a, c); corner(c, b, a);
+            for (int i = 1; i + 1 < pn; ++i)
+                out.insert(out.end(), {poly[0], poly[i], poly[i + 1]});
+        }
+        triangles = std::move(out);
+        // Cap each chamfered corner with a facet over its ring, ordered by angle
+        // around the old vertex normal so the fan faces outward.
+        for (auto& kv : ringOf) {
+            std::vector<int>& ring = kv.second;
+            if (ring.size() < 3) continue;
+            Vec3 nrm = vn[kv.first];
+            if (nrm.Magnitude() < 1e-6f) nrm = {0, 1, 0};
+            Vec3 u = Vec3::Cross(nrm, std::fabs(nrm.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0});
+            { float mu = u.Magnitude(); u = mu > 1e-8f ? u * (1.0f / mu) : Vec3{1, 0, 0}; }
+            Vec3 w = Vec3::Cross(nrm, u);
+            Vec3 c{0, 0, 0};
+            for (int i : ring) c += vertices[i];
+            c = c * (1.0f / (float)ring.size());
+            std::sort(ring.begin(), ring.end(), [&](int i, int j) {
+                Vec3 di = vertices[i] - c, dj = vertices[j] - c;
+                return std::atan2(Vec3::Dot(di, w), Vec3::Dot(di, u))
+                     < std::atan2(Vec3::Dot(dj, w), Vec3::Dot(dj, u));
+            });
+            for (std::size_t i = 1; i + 1 < ring.size(); ++i)
+                triangles.insert(triangles.end(), {ring[0], (int)ring[i], (int)ring[i + 1]});
+        }
+        triColors.clear();                               // face records changed shape
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Displace vertices by a deterministic random offset up to `amount` — quick
+    /// organic roughness (rocks, rubble, hand-made look). Empty `verts` = whole mesh.
+    void JitterVertices(const std::vector<int>& verts, float amount, int seed = 0) {
+        if (amount == 0.0f || vertices.empty()) return;
+        auto h = [&](int i, int c) {
+            unsigned x = (unsigned)(i * 73856093 ^ c * 19349663 ^ seed * 83492791);
+            x = (x ^ (x >> 13)) * 1274126177u;
+            return ((float)((x ^ (x >> 16)) & 0xffffu) / 65535.0f) * 2.0f - 1.0f;
+        };
+        auto apply = [&](int v) {
+            vertices[v] += Vec3{h(v, 1), h(v, 2), h(v, 3)} * amount;
+        };
+        if (verts.empty())
+            for (int i = 0; i < (int)vertices.size(); ++i) apply(i);
+        else
+            for (int v : verts)
+                if (v >= 0 && v < (int)vertices.size()) apply(v);
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Shear: slide the mesh along `axis` proportionally to the coordinate on
+    /// `along` (about the centre) — slanted walls, italic text blocks, leaning towers.
+    void Shear(int axis, int along, float amount) {
+        if (axis < 0 || axis > 2 || along < 0 || along > 2 || axis == along
+            || amount == 0.0f || vertices.empty()) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        float c = ((&lo.x)[along] + (&hi.x)[along]) * 0.5f;
+        for (Vec3& v : vertices)
+            (&v.x)[axis] += ((&v.x)[along] - c) * amount;
+        name = "";
+        RefreshNormals();
+    }
+
 private:
     /// Deterministic hash of an integer lattice point → [-1,1] (for value noise).
     static float Hash3(int x, int y, int z, int seed) {

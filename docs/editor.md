@@ -282,6 +282,9 @@ Rendering defaults to the modern look — tweak everything in the
 - **Bloom** — bright pixels glow: threshold + intensity sliders; drive it
   with emissive materials (a lamp, neon strip, laser). Works on the GPU
   renderer and the software fallback.
+- **Ambient occlusion (SSAO)** — corners, creases and contact points
+  darken naturally (radius + strength sliders). Runs on the GPU renderer
+  and the software fallback.
 - **Fog, vignette, sky sun/stars** — mood/depth layers, saved per scene so
   the shipped game matches the editor preview.
 

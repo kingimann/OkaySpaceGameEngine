@@ -679,6 +679,137 @@ void GLRenderer::DestroyBloom() {
     m_bloomW = m_bloomH = 0;
 }
 
+// ---- SSAO (screen-space ambient occlusion) ----------------------------------
+// Corners, crevices and contact points darken: the scene's opaque geometry is
+// re-rendered at half resolution as PACKED LINEAR DEPTH (camera distance / far,
+// 16 bits across the R+G channels of an RGBA8 target — GL2-safe, no float
+// textures needed), a spiral of depth-difference taps estimates occlusion, one
+// gaussian round smooths the noise, and the result multiplies the frame.
+// Driven by the same SSAOEnabled()/SSAORadius()/SSAOStrength() globals as the
+// software renderer, so the editor's existing AO controls work unchanged.
+namespace {
+const float kSsaoFar = 150.0f;   // linear-depth range; AO fades out beyond this
+const char* kSsaoDepthVert =
+    "#version 120\n"
+    "attribute vec3 aPos; uniform mat4 uMVP; uniform mat4 uModel; varying vec3 vWorld;\n"
+    "void main(){ vWorld = (uModel * vec4(aPos, 1.0)).xyz; gl_Position = uMVP * vec4(aPos, 1.0); }\n";
+const char* kSsaoDepthFrag =
+    "#version 120\n"
+    "uniform vec3 uEye; uniform float uFar; varying vec3 vWorld;\n"
+    "void main(){\n"
+    "  float d = clamp(length(uEye - vWorld) / uFar, 0.0, 1.0);\n"
+    "  float hi = floor(d * 255.0) / 255.0;\n"                     // 16-bit pack in R+G
+    "  gl_FragColor = vec4(hi, fract(d * 255.0), 0.0, 1.0);\n"
+    "}\n";
+const char* kSsaoFrag =
+    "#version 120\n"
+    "uniform sampler2D uDepth; uniform vec2 uTexel; uniform float uRadius; uniform float uFar;\n"
+    "varying vec2 vUV;\n"
+    "float depthAt(vec2 uv){ vec4 t = texture2D(uDepth, uv); return t.r + t.g / 255.0; }\n"
+    "void main(){\n"
+    "  float d = depthAt(vUV);\n"
+    "  if (d >= 0.995) { gl_FragColor = vec4(1.0); return; }\n"    // background/sky
+    "  float dist = max(d * uFar, 0.5);\n"
+    "  float sr = clamp(uRadius / dist, 0.004, 0.12);\n"           // world radius -> screen UV (approx)
+    "  float occ = 0.0;\n"
+    "  float range = uRadius * 1.6;\n"
+    "  for (int i = 0; i < 12; i++) {\n"
+    "    float a = float(i) * 2.618034;\n"                          // golden-angle spiral
+    "    float rr = sr * (0.25 + 0.75 * float(i) / 11.0);\n"
+    "    vec2 o = vec2(cos(a), sin(a)) * rr;\n"
+    "    o.x *= uTexel.x / uTexel.y;\n"                             // keep the disc round
+    "    float ds = depthAt(vUV + o);\n"
+    "    float diffW = (d - ds) * uFar;\n"                          // + = sample nearer (occluder)
+    "    if (diffW > 0.03 && diffW < range) occ += 1.0 - diffW / range;\n"
+    "  }\n"
+    "  float ao = 1.0 - occ / 12.0;\n"
+    "  gl_FragColor = vec4(ao, ao, ao, 1.0);\n"
+    "}\n";
+const char* kMulFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform float uStrength; varying vec2 vUV;\n"
+    "void main(){\n"
+    "  vec3 ao = texture2D(uSrc, vUV).rgb;\n"
+    "  gl_FragColor = vec4(mix(vec3(1.0), ao, uStrength), 1.0);\n"  // blended DST_COLOR*src
+    "}\n";
+} // namespace
+
+bool GLRenderer::EnsureSsaoProgs() {
+    if (m_ssaoDepthProg && m_ssaoProg && m_mulProg) return true;
+    auto build = [&](const char* vsrc, const char* fsrc, unsigned int& prog) -> bool {
+        if (prog) return true;
+        GLuint vs = compile(GL_VERTEX_SHADER, vsrc), fs = compile(GL_FRAGMENT_SHADER, fsrc);
+        if (!vs || !fs) return false;
+        prog = g.CreateProgram();
+        g.AttachShader(prog, vs); g.AttachShader(prog, fs);
+        g.BindAttribLocation(prog, 0, "aPos");
+        g.LinkProgram(prog);
+        GLint ok = 0; g.GetProgramiv(prog, GL_LINK_STATUS, &ok);
+        g.DeleteShader(vs); g.DeleteShader(fs);
+        if (!ok) { g.DeleteProgram(prog); prog = 0; return false; }
+        return true;
+    };
+    if (!build(kSsaoDepthVert, kSsaoDepthFrag, m_ssaoDepthProg)) return false;
+    if (!build(kQuadVert, kSsaoFrag, m_ssaoProg)) return false;
+    if (!build(kQuadVert, kMulFrag, m_mulProg)) return false;
+    m_usdMVP = g.GetUniformLocation(m_ssaoDepthProg, "uMVP");
+    m_usdModel = g.GetUniformLocation(m_ssaoDepthProg, "uModel");
+    m_usdEye = g.GetUniformLocation(m_ssaoDepthProg, "uEye");
+    m_usdFar = g.GetUniformLocation(m_ssaoDepthProg, "uFar");
+    m_usDepth = g.GetUniformLocation(m_ssaoProg, "uDepth");
+    m_usTexel = g.GetUniformLocation(m_ssaoProg, "uTexel");
+    m_usRadius = g.GetUniformLocation(m_ssaoProg, "uRadius");
+    m_usFar = g.GetUniformLocation(m_ssaoProg, "uFar");
+    m_umSrc = g.GetUniformLocation(m_mulProg, "uSrc");
+    m_umStrength = g.GetUniformLocation(m_mulProg, "uStrength");
+    return true;
+}
+
+bool GLRenderer::EnsureSsaoTargets(int w, int h) {
+    if (m_ssaoDepthFbo && m_ssaoW == w && m_ssaoH == h) return true;
+    DestroySsao();
+    m_ssaoW = w; m_ssaoH = h;
+    auto makeColorTarget = [&](unsigned int& fbo, unsigned int& tex, bool withDepth) -> bool {
+        g.GenTextures(1, &tex);
+        g.BindTexture(GL_TEXTURE_2D, tex);
+        g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        g.GenFramebuffers(1, &fbo);
+        g.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+        g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        if (withDepth) {                                  // z-test the geometry pass
+            g.GenRenderbuffers(1, &m_ssaoDepthRb);
+            g.BindRenderbuffer(GL_RENDERBUFFER, m_ssaoDepthRb);
+            g.RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+            g.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_ssaoDepthRb);
+        }
+        bool ok = g.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        g.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        return ok;
+    };
+    if (!makeColorTarget(m_ssaoDepthFbo, m_ssaoDepthTex, true) ||
+        !makeColorTarget(m_ssaoFboA, m_ssaoTexA, false) ||
+        !makeColorTarget(m_ssaoFboB, m_ssaoTexB, false)) {
+        DestroySsao();
+        return false;
+    }
+    return true;
+}
+
+void GLRenderer::DestroySsao() {
+    if (m_ssaoDepthTex) { g.DeleteTextures(1, &m_ssaoDepthTex); m_ssaoDepthTex = 0; }
+    if (m_ssaoTexA) { g.DeleteTextures(1, &m_ssaoTexA); m_ssaoTexA = 0; }
+    if (m_ssaoTexB) { g.DeleteTextures(1, &m_ssaoTexB); m_ssaoTexB = 0; }
+    if (m_ssaoDepthRb) { g.DeleteRenderbuffers(1, &m_ssaoDepthRb); m_ssaoDepthRb = 0; }
+    if (m_ssaoDepthFbo) { g.DeleteFramebuffers(1, &m_ssaoDepthFbo); m_ssaoDepthFbo = 0; }
+    if (m_ssaoFboA) { g.DeleteFramebuffers(1, &m_ssaoFboA); m_ssaoFboA = 0; }
+    if (m_ssaoFboB) { g.DeleteFramebuffers(1, &m_ssaoFboB); m_ssaoFboB = 0; }
+    m_ssaoW = m_ssaoH = 0;
+}
+
 bool GLRenderer::EnsureTargets(int w, int h, int samples) {
     if (m_fbo && m_w == w && m_h == h && m_samples == samples) return true;
     DestroyTargets();   // size/sample change -> rebuild ONLY the render targets
@@ -1199,6 +1330,105 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.BindFramebuffer(GL_DRAW_FRAMEBUFFER, m_resolveFbo);
     g.BlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
+    // SSAO: darken corners/creases/contact points. Re-render opaque geometry at
+    // half res as packed linear depth, estimate occlusion from depth differences,
+    // blur once, multiply onto the frame. Runs BEFORE bloom (darken, then glow).
+    if (SSAOEnabled() && EnsurePostProgs() && EnsureSsaoProgs() &&
+        EnsureSsaoTargets(w / 2 > 0 ? w / 2 : 1, h / 2 > 0 ? h / 2 : 1)) {
+        // 1) linear-depth geometry pass
+        g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoDepthFbo);
+        g.Viewport(0, 0, m_ssaoW, m_ssaoH);
+        g.ClearColor(1.0f, 1.0f, 0.0f, 1.0f);            // far plane = no occlusion
+        g.Enable(GL_DEPTH_TEST); g.DepthFunc(GL_LEQUAL); g.DepthMask(GL_TRUE);
+        g.Disable(GL_BLEND);
+        g.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        g.UseProgram(m_ssaoDepthProg);
+        g.Uniform3f(m_usdEye, eye.x, eye.y, eye.z);
+        g.Uniform1f(m_usdFar, kSsaoFar);
+        g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
+        g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
+        for (const auto& up : scene.Objects()) {
+            GameObject* go = up.get();
+            if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
+            auto* mr = go->GetComponent<MeshRenderer>();
+            if (!mr || mr->wireframe || !mr->enabled) continue;
+            if (mr->color.a < 0.999f) continue;           // transparents don't occlude
+            const Mesh& mesh = mr->mesh;
+            if (mesh.vertices.empty() || mesh.triangles.size() < 3) continue;
+            Mat4 model = go->transform->LocalToWorldMatrix();
+            Mat4 mvp = vp * model;
+            g.UniformMatrix4fv(m_usdMVP, 1, GL_FALSE, mvp.m);
+            g.UniformMatrix4fv(m_usdModel, 1, GL_FALSE, model.m);
+            const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
+                                  go->GetComponent<Character>() != nullptr;
+            if (!deformed) {
+                MeshVB* mv = EnsureMeshVB(mesh);
+                if (!mv) continue;
+                g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
+                g.EnableVertexAttribArray(0);
+                g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), (const void*)0);
+                g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
+                continue;
+            }
+            const auto& V = mesh.vertices; const auto& T = mesh.triangles;
+            const int nv = (int)V.size();
+            m_verts.clear(); m_verts.reserve(T.size() * 3);
+            for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+                int a = T[i], b = T[i + 1], c = T[i + 2];
+                if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
+                const Vec3& pa = V[a]; const Vec3& pb = V[b]; const Vec3& pc = V[c];
+                m_verts.push_back(pa.x); m_verts.push_back(pa.y); m_verts.push_back(pa.z);
+                m_verts.push_back(pb.x); m_verts.push_back(pb.y); m_verts.push_back(pb.z);
+                m_verts.push_back(pc.x); m_verts.push_back(pc.y); m_verts.push_back(pc.z);
+            }
+            if (m_verts.empty()) continue;
+            g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
+            g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
+            g.EnableVertexAttribArray(0);
+            g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
+            g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 3));
+        }
+        // 2) AO estimate from the depth texture (fullscreen quad)
+        g.Disable(GL_DEPTH_TEST);
+        g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
+        g.EnableVertexAttribArray(0);
+        g.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (const void*)0);
+        g.ActiveTexture(GL_TEXTURE0);
+        g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoFboA);
+        g.UseProgram(m_ssaoProg);
+        g.BindTexture(GL_TEXTURE_2D, m_ssaoDepthTex);
+        g.Uniform1i(m_usDepth, 0);
+        g.Uniform2f(m_usTexel, 1.0f / (float)m_ssaoW, 1.0f / (float)m_ssaoH);
+        g.Uniform1f(m_usRadius, SSAORadius());
+        g.Uniform1f(m_usFar, kSsaoFar);
+        g.DrawArrays(GL_TRIANGLES, 0, 6);
+        // 3) one gaussian round to smooth the sampling noise
+        g.UseProgram(m_blurProg);
+        g.Uniform1i(m_ublSrc, 0);
+        g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoFboB);
+        g.BindTexture(GL_TEXTURE_2D, m_ssaoTexA);
+        g.Uniform2f(m_ublDir, 1.0f / (float)m_ssaoW, 0.0f);
+        g.DrawArrays(GL_TRIANGLES, 0, 6);
+        g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoFboA);
+        g.BindTexture(GL_TEXTURE_2D, m_ssaoTexB);
+        g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_ssaoH);
+        g.DrawArrays(GL_TRIANGLES, 0, 6);
+        // 4) multiply the AO onto the resolved frame
+        g.BindFramebuffer(GL_FRAMEBUFFER, m_resolveFbo);
+        g.Viewport(0, 0, w, h);
+        g.UseProgram(m_mulProg);
+        g.BindTexture(GL_TEXTURE_2D, m_ssaoTexA);
+        g.Uniform1i(m_umSrc, 0);
+        g.Uniform1f(m_umStrength, SSAOStrength() > 1.0f ? 1.0f : SSAOStrength());
+        g.Enable(GL_BLEND);
+        g.BlendFunc(GL_DST_COLOR, GL_ZERO);               // dst *= src
+        g.DrawArrays(GL_TRIANGLES, 0, 6);
+        g.Disable(GL_BLEND);
+        g.Enable(GL_DEPTH_TEST);
+        g.BindTexture(GL_TEXTURE_2D, 0);
+        g.ClearColor(clearR, clearG, clearB, clearA);     // restore the caller's clear
+    }
+
     // Bloom: bright-pass the resolved frame at half res, blur, add back on top.
     // Any failure just skips the effect (the frame is already complete without it).
     if (BloomEnabled() && EnsurePostProgs() &&
@@ -1282,6 +1512,7 @@ void GLRenderer::Destroy() {
     DestroyTargets();
     DestroyShadow();
     DestroyBloom();
+    DestroySsao();
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
     for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);

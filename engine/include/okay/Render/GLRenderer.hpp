@@ -70,6 +70,9 @@ private:
     bool EnsurePostProgs();               // fullscreen-quad programs (bloom chain)
     bool EnsureBloomTargets(int w, int h);
     void DestroyBloom();
+    bool EnsureSsaoProgs();               // linear-depth + AO + multiply programs
+    bool EnsureSsaoTargets(int w, int h);
+    void DestroySsao();
 
     unsigned int m_prog = 0;
     unsigned int m_depthProg = 0;                             // shadow-map depth pass
@@ -88,6 +91,16 @@ private:
     int m_ubSrc = -1, m_ubThresh = -1;                        // bright-pass uniforms
     int m_ublSrc = -1, m_ublDir = -1;                         // blur uniforms
     int m_uaSrc = -1, m_uaStrength = -1;                      // composite uniforms
+    // SSAO: geometry re-rendered at half res as packed linear depth, a spiral
+    // depth-difference AO pass, one blur round, multiplicative composite.
+    unsigned int m_ssaoDepthProg = 0, m_ssaoProg = 0, m_mulProg = 0;
+    unsigned int m_ssaoDepthFbo = 0, m_ssaoDepthTex = 0, m_ssaoDepthRb = 0;
+    unsigned int m_ssaoFboA = 0, m_ssaoTexA = 0;
+    unsigned int m_ssaoFboB = 0, m_ssaoTexB = 0;
+    int m_ssaoW = 0, m_ssaoH = 0;
+    int m_usdMVP = -1, m_usdModel = -1, m_usdEye = -1, m_usdFar = -1;   // depth pass
+    int m_usDepth = -1, m_usTexel = -1, m_usRadius = -1, m_usFar = -1;  // AO pass
+    int m_umSrc = -1, m_umStrength = -1;                                // multiply
     int m_w = 0, m_h = 0, m_samples = 0;
     int m_uMVP = -1, m_uModel = -1, m_uColor = -1, m_uLightDir = -1,
         m_uLightColor = -1, m_uAmbient = -1, m_uEmissive = -1, m_uEye = -1,

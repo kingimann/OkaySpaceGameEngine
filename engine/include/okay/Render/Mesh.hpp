@@ -779,6 +779,21 @@ struct Mesh {
         for (Vec3& v : vertices) v = v * k;
     }
 
+    /// Normalize an imported mesh's size in place. Exporters disagree on units —
+    /// Meshy AI / FBX / CAD tools often emit centimeters or millimeters, making a
+    /// character 180 "meters" tall. If the largest dimension is implausibly big
+    /// (> 20 units) or microscopic (< 0.02), scale the VERTICES so it lands at
+    /// ~2 units. Deterministic per file, so re-loading a scene can't compound it.
+    static void NormalizeImportScale(Mesh& m) {
+        if (m.vertices.empty()) return;
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        Vec3 sz = hi - lo;
+        float d = sz.x > sz.y ? (sz.x > sz.z ? sz.x : sz.z) : (sz.y > sz.z ? sz.y : sz.z);
+        if (d <= 0.0f || (d <= 20.0f && d >= 0.02f)) return;
+        float s = 2.0f / d;
+        for (Vec3& v : m.vertices) v = v * s;
+    }
+
     // ---- Modeling: import/export and mesh operations -------------------
 
     /// Load a Wavefront .OBJ (v positions + f faces; polygons are fan-triangulated,
@@ -900,6 +915,7 @@ struct Mesh {
                 for (std::size_t i = 2; i < idx.size(); ++i) tri(idx[0], idx[i - 1], idx[i]);
             }
         }
+        NormalizeImportScale(m);   // cm/mm exports (Meshy AI etc.) land at a usable size
         if (outTexture && !mtllib.empty()) {                    // read .mtl for map_Kd
             std::ifstream mf(dir + mtllib); std::string ml;
             while (mf && std::getline(mf, ml)) {

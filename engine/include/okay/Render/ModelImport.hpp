@@ -4,7 +4,8 @@
 //
 //   * .obj                -> built-in Mesh::LoadOBJ (always available)
 //   * .gltf / .glb        -> built-in okay::LoadGLTF (always available)
-//   * .fbx .dae .stl .ply -> Assimp, IF the engine was built with -DOKAY_USE_ASSIMP=ON
+//   * .fbx .dae .stl .ply .3ds .blend .x .md5mesh .smd .ms3d .lwo .dxf .off .ac .b3d
+//                         -> Assimp, IF the engine was built with -DOKAY_USE_ASSIMP=ON
 //                            (FetchContent pulls Assimp). Without it these return ok=false.
 //
 // This keeps the DEFAULT build fully self-contained (no downloads) while letting a

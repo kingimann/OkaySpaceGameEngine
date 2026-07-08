@@ -3634,7 +3634,10 @@ static const char* ImportKindLabel(const std::string& extLower) {
     if (extLower==".png"||extLower==".jpg"||extLower==".jpeg"||extLower==".bmp"||extLower==".tga"||extLower==".gif") return "texture";
     if (extLower==".ttf"||extLower==".otf"||extLower==".fnt") return "font";
     if (extLower==".wav"||extLower==".ogg"||extLower==".mp3"||extLower==".flac") return "audio";
-    if (extLower==".obj"||extLower==".gltf"||extLower==".glb"||extLower==".fbx") return "model";
+    if (extLower==".obj"||extLower==".gltf"||extLower==".glb"||extLower==".fbx"||extLower==".dae"||
+        extLower==".stl"||extLower==".ply"||extLower==".3ds"||extLower==".blend"||extLower==".x"||
+        extLower==".md5mesh"||extLower==".smd"||extLower==".ms3d"||extLower==".lwo"||extLower==".dxf"||
+        extLower==".off"||extLower==".ac"||extLower==".b3d") return "model";
     if (extLower==".okay"||extLower==".lua"||extLower==".cs"||extLower==".okayvs") return "script";
     return nullptr;
 }
@@ -23240,16 +23243,15 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 std::filesystem::path fp(path);
                 placed = ed.CreateSprite(fp.stem().string());
                 if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = path;
-            } else if (ext == ".obj") {
+            } else if (const char* kind = ImportKindLabel(ext); kind && std::strcmp(kind, "model") == 0) {
+                // Any importable model format (.obj/.fbx/.gltf/.dae/...): full scene
+                // import — multi-node hierarchies, textures, auto size normalization.
                 ed.PushUndo();
-                std::filesystem::path fp(path);
-                placed = ed.CreateMesh("Cube");
-                if (auto* mr = placed->GetComponent<MeshRenderer>()) {
-                    bool ok = false;
-                    Mesh m = Mesh::LoadOBJ(path, &ok);
-                    if (ok && !m.vertices.empty()) { mr->mesh = m; mr->meshPath = path; }
-                    placed->name = fp.stem().string();
-                }
+                bool ok = false;
+                placed = okay::ImportModelScene(ed.scene(), path, &ok);
+                if (!ok || !placed)
+                    ConsoleLog("Model import failed: " + path +
+                               (okay::AssimpAvailable() ? "" : " (this build lacks Assimp; use .obj/.gltf/.glb)"), 2);
             }
             if (placed) {
                 placed->transform->SetPosition(drop);

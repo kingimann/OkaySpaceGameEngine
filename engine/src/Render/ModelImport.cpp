@@ -32,7 +32,7 @@ bool AssimpAvailable() {
 
 std::string ImportableExtensions() {
 #ifdef OKAY_HAVE_ASSIMP
-    return ".obj .gltf .glb .fbx .dae .stl .ply .3ds .blend";
+    return ".obj .gltf .glb .fbx .dae .stl .ply .3ds .blend .x .md5mesh .smd .ms3d .lwo .dxf .off .ac .b3d";
 #else
     return ".obj .gltf .glb";
 #endif
@@ -111,6 +111,7 @@ static Mesh ViaAssimp(const std::string& path, bool* ok, std::string* outTexture
     }
     if (m.normals.size() != m.vertices.size()) m.normals.clear();
     if (m.uvs.size()     != m.vertices.size()) m.uvs.clear();
+    Mesh::NormalizeImportScale(m);   // cm/mm exports (Meshy FBX etc.) land at a usable size
     if (ok) *ok = !m.vertices.empty();
     return m;
 }

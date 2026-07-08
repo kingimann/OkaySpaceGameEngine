@@ -518,6 +518,7 @@ inline Mesh LoadGLTF(const std::string& path, bool* ok = nullptr, std::string* o
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
     if (outTexture) { std::string t = ResolveBaseColorTexture(doc, path); if (!t.empty()) *outTexture = t; }
+    Mesh::NormalizeImportScale(mesh);   // cm/mm exports land at a usable size
     if (ok) *ok = !mesh.vertices.empty();
     return mesh;
 }

@@ -366,6 +366,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || !ma->rootMotionNode.empty())
             out << "  modelanimroot " << (ma->rootMotion ? 1 : 0) << " " << Quote(ma->rootMotionNode) << "\n";
+        if (ma->smoothLocomotion)
+            out << "  modelanimsmooth 1\n";
         for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {
             if (ma->clips[ci].events.empty()) continue;
             out << "  modelanimevents " << ci << " " << ma->clips[ci].events.size();
@@ -1954,6 +1956,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int rm = 0; in >> rm;
                     ma->rootMotion = (rm != 0);
                     ma->rootMotionNode = ReadQuoted(in);
+                } else if (field == "modelanimsmooth") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int sm = 0; in >> sm;
+                    ma->smoothLocomotion = (sm != 0);
                 } else if (field == "modelanimevents") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();

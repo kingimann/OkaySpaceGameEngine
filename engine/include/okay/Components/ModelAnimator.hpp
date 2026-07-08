@@ -47,6 +47,12 @@ public:
     bool        rootMotion = false;
     std::string rootMotionNode;   ///< bone to read ("" = auto: first node with position tracks)
 
+    /// Continuous locomotion (used with driveByMovement): instead of switching
+    /// idle/walk/run discretely, the two clips around the current speed are
+    /// evaluated at a shared normalized phase (foot cycles stay aligned) and
+    /// blended per bone every frame — a Unity 1D blend tree.
+    bool smoothLocomotion = false;
+
     /// Push callback for fired clip events; or poll with Consume/NextAnimEvent.
     std::function<void(const std::string&)> onAnimEvent;   // not serialized
     std::vector<std::string> ConsumeAnimEvents() { auto q = std::move(m_firedEvents); m_firedEvents.clear(); return q; }
@@ -77,6 +83,21 @@ public:
     }
 
     void Update(float dt) override {
+        // Locomotion speed (world XZ units/sec), measured from how the object moved.
+        float spd = -1.0f;
+        if (driveByMovement && dt > 0.0f && transform) {
+            Vec3 p = transform->Position();
+            if (m_haveLast) {
+                float dx = p.x - m_lastPos.x, dz = p.z - m_lastPos.z;
+                spd = std::sqrt(dx*dx + dz*dz) / dt;
+            }
+            m_lastPos = p; m_haveLast = true;
+        }
+
+        // Continuous 1D blend (idle<->walk<->run by speed): drives the bones
+        // directly and replaces the discrete machinery below while it's active.
+        if (spd >= 0.0f && smoothLocomotion && SmoothBlendStep(dt, spd)) return;
+
         // Fire clip events crossed by this frame's playback window. The clock
         // mirrors the node Animators' time (reset together in PlayIndex).
         if (dt > 0.0f && active >= 0 && active < (int)clips.size()) {
@@ -125,12 +146,9 @@ public:
             m_clock = len > 0.0f ? (loop ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
         }
 
-        if (!driveByMovement || dt <= 0.0f || !transform) return;
-        Vec3 p = transform->Position();
-        if (!m_haveLast) { m_lastPos = p; m_haveLast = true; return; }
-        float dx = p.x - m_lastPos.x, dz = p.z - m_lastPos.z;
-        m_lastPos = p;
-        float spd = std::sqrt(dx*dx + dz*dz) / dt;
+        // Discrete locomotion: switch to the clip for this speed band (crossfaded
+        // by blendTime, since Play goes through PlayIndex).
+        if (spd < 0.0f) return;
         const std::string* want = &idleClip;
         if (spd >= runThreshold && !runClip.empty())        want = &runClip;
         else if (spd > walkThreshold && !walkClip.empty())  want = &walkClip;
@@ -218,6 +236,163 @@ public:
         }
     }
 
+    /// Sample a clip's ground translation (X/Z position tracks) at `tm`, capped
+    /// just inside `len` — looping curves wrap t==len back to t==0, which would
+    /// cancel a loop's translation in wrap deltas.
+    static Vec3 GroundPosAt(const NodeClip& rn, float tm, float len) {
+        float cap = len - std::fmax(1e-5f, len * 1e-6f);
+        if (tm > cap) tm = cap;
+        bool f; Vec3 p{0, 0, 0};
+        float v = rn.clip.Evaluate("position.x", tm, f); if (f) p.x = v;
+        v = rn.clip.Evaluate("position.z", tm, f);       if (f) p.z = v;
+        return p;
+    }
+
+    /// Ground translation between two clip times, handling a loop wrap (e1 < e0).
+    static Vec3 GroundDelta(const NodeClip& rn, float e0, float e1, float len) {
+        if (len <= 0.0f) return Vec3{0, 0, 0};
+        if (e1 < e0)
+            return (GroundPosAt(rn, len, len) - GroundPosAt(rn, e0, len)) +
+                   (GroundPosAt(rn, e1, len) - GroundPosAt(rn, 0.0f, len));
+        return GroundPosAt(rn, e1, len) - GroundPosAt(rn, e0, len);
+    }
+
+    /// Evaluate a clip's TRS tracks at `t` into pos/rot/scl (untouched components
+    /// keep their incoming values). Mirrors Animator::ApplyAt — keep in sync.
+    static void EvalClipInto(const AnimationClip& c, float t, Vec3& pos, Quat& rot, Vec3& scl) {
+        bool f; float v;
+        v = c.Evaluate("position.x", t, f); if (f) pos.x = v;
+        v = c.Evaluate("position.y", t, f); if (f) pos.y = v;
+        v = c.Evaluate("position.z", t, f); if (f) pos.z = v;
+        v = c.Evaluate("scale.x", t, f);    if (f) scl.x = v;
+        v = c.Evaluate("scale.y", t, f);    if (f) scl.y = v;
+        v = c.Evaluate("scale.z", t, f);    if (f) scl.z = v;
+        bool qx, qy, qz, qw;
+        float vqx = c.Evaluate("rotation.qx", t, qx);
+        float vqy = c.Evaluate("rotation.qy", t, qy);
+        float vqz = c.Evaluate("rotation.qz", t, qz);
+        float vqw = c.Evaluate("rotation.qw", t, qw);
+        if (qx || qy || qz || qw) {
+            float ln = std::sqrt(vqx*vqx + vqy*vqy + vqz*vqz + vqw*vqw);
+            if (ln < 1e-8f) { vqw = 1.0f; ln = 1.0f; }
+            rot = Quat{vqx/ln, vqy/ln, vqz/ln, vqw/ln};
+        } else {
+            bool fx, fy, fz;
+            float rx = c.Evaluate("rotation.x", t, fx);
+            float ry = c.Evaluate("rotation.y", t, fy);
+            float rz = c.Evaluate("rotation.z", t, fz);
+            if (fx || fy || fz) rot = Quat::Euler(fx ? rx : 0.0f, fy ? ry : 0.0f, fz ? rz : 0.0f);
+        }
+    }
+
+    /// Index of a clip by name (-1 = none).
+    int FindClip(const std::string& name) const {
+        if (name.empty()) return -1;
+        for (int i = 0; i < (int)clips.size(); ++i) if (clips[i].name == name) return i;
+        return -1;
+    }
+
+    /// One frame of continuous locomotion blending. Returns false when it can't
+    /// run (no scene / no usable clips) so the caller falls back to discrete mode.
+    bool SmoothBlendStep(float dt, float spd) {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc) return false;
+        // The two clips around this speed + the blend weight between them.
+        int A, B; float w;
+        if (spd <= walkThreshold) {
+            A = FindClip(idleClip); B = FindClip(walkClip);
+            w = walkThreshold > 1e-4f ? spd / walkThreshold : 1.0f;
+        } else {
+            A = FindClip(walkClip); B = FindClip(runClip);
+            w = (spd - walkThreshold) / std::fmax(runThreshold - walkThreshold, 1e-4f);
+        }
+        if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+        if (A < 0 && B < 0) return false;
+        if (A < 0) { A = B; w = 1.0f; }
+        if (B < 0) { B = A; w = 0.0f; }
+        float lenA = ClipLength(A), lenB = ClipLength(B);
+        if (lenA <= 0.0f && lenB <= 0.0f) return false;
+        if (lenA <= 0.0f) lenA = lenB;
+        if (lenB <= 0.0f) lenB = lenA;
+
+        // Shared normalized phase: both clips sample the same fraction of their
+        // cycle, so left/right footfalls stay aligned through the blend.
+        float prevPhase = m_phase;
+        float cycle = lenA + (lenB - lenA) * w;
+        m_phase = std::fmod(m_phase + dt * speed / std::fmax(cycle, 1e-4f), 1.0f);
+        float tA = m_phase * lenA, tB = m_phase * lenB;
+        active = w < 0.5f ? A : B;   // the dominant clip (UI + events)
+
+        // Root-motion source bone of each blended clip (fetched once; also pins
+        // that bone's X/Z during the drive pass below).
+        const NodeClip* rmA = nullptr;
+        const NodeClip* rmB = nullptr;
+        if (rootMotion) {
+            int keep = active;
+            active = A; rmA = RootMotionClip();
+            active = B; rmB = RootMotionClip();
+            active = keep;
+        }
+        // Root motion: blend both clips' ground deltas by the same weight.
+        if (rootMotion && transform) {
+            Vec3 d{0, 0, 0};
+            if (rmA) d = d + GroundDelta(*rmA, prevPhase * lenA, tA, lenA) * (1.0f - w);
+            if (rmB) d = d + GroundDelta(*rmB, prevPhase * lenB, tB, lenB) * w;
+            if (d.x != 0.0f || d.z != 0.0f)
+                transform->SetPosition(transform->Position() +
+                                       transform->LocalToWorldMatrix().MultiplyVector(d));
+        }
+
+        // Events: the dominant clip's markers, over this frame's phase window.
+        {
+            const Clip& dom = clips[active];
+            float len = active == A ? lenA : lenB;
+            float e0 = prevPhase * len, e1 = m_phase * len;
+            auto fire = [&](float a2, float b2) {
+                for (const ClipEvent& ev : dom.events)
+                    if (ev.time > a2 && ev.time <= b2 && !ev.name.empty()) {
+                        m_firedEvents.push_back(ev.name);
+                        if (onAnimEvent) onAnimEvent(ev.name);
+                    }
+            };
+            if (e1 < e0) { fire(e0, len); fire(0.0f, e1); }
+            else fire(e0, e1);
+        }
+
+        // Drive the union of both clips' nodes directly (their Animators pause so
+        // nothing fights the blend). Nodes in only one clip use it unblended.
+        auto findIn = [](const Clip& c, const std::string& n) -> const NodeClip* {
+            for (const auto& nc : c.nodes) if (nc.node == n) return &nc;
+            return nullptr;
+        };
+        auto drive = [&](const std::string& name, const NodeClip* a, const NodeClip* b) {
+            GameObject* g = sc->Find(name);
+            if (!g || !g->transform) return;
+            if (Animator* an = g->GetComponent<Animator>()) an->playing = false;
+            Transform* t = g->transform;
+            Vec3 pA = t->localPosition, sA = t->localScale; Quat rA = t->localRotation;
+            Vec3 pB = pA, sB = sA; Quat rB = rA;
+            if (a) EvalClipInto(a->clip, tA, pA, rA, sA);
+            if (b) EvalClipInto(b->clip, tB, pB, rB, sB);
+            float bw = (a && b) ? w : (b ? 1.0f : 0.0f);
+            Vec3 p = pA + (pB - pA) * bw;
+            Vec3 s = sA + (sB - sA) * bw;
+            float dq = rA.x*rB.x + rA.y*rB.y + rA.z*rB.z + rA.w*rB.w;
+            if (dq < 0.0f) { rB.x = -rB.x; rB.y = -rB.y; rB.z = -rB.z; rB.w = -rB.w; }
+            Quat r{rA.x + (rB.x - rA.x) * bw, rA.y + (rB.y - rA.y) * bw,
+                   rA.z + (rB.z - rA.z) * bw, rA.w + (rB.w - rA.w) * bw};
+            if (rootMotion && ((a && a == rmA) || (b && b == rmB))) { p.x = t->localPosition.x; p.z = t->localPosition.z; }
+            t->localPosition = p;
+            t->localScale    = s;
+            t->localRotation = r.Normalized();
+        };
+        for (const auto& nc : clips[A].nodes) drive(nc.node, &nc, findIn(clips[B], nc.node));
+        if (A != B)
+            for (const auto& nc : clips[B].nodes)
+                if (!findIn(clips[A], nc.node)) drive(nc.node, nullptr, &nc);
+        return true;
+    }
+
     /// The active clip's root-motion source: the named node, else the first node
     /// with a ground-translation track. Null when the clip has none.
     const NodeClip* RootMotionClip() const {
@@ -238,6 +413,7 @@ private:
     float                    m_blendW = 1.0f; ///< crossfade progress (1 = done)
     std::vector<std::string> m_firedEvents;   ///< event names fired since the last consume
     float                    m_clock = 0.0f;  ///< playback clock for event firing
+    float                    m_phase = 0.0f;  ///< shared normalized cycle for smooth locomotion
     Vec3 m_lastPos{0, 0, 0};
     bool m_haveLast = false;
 };

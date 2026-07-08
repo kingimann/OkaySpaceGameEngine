@@ -15223,6 +15223,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Drive by movement##ma", &ma->driveByMovement)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-switch clips based on how fast this object moves.");
             if (ma->driveByMovement) {
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Smooth blend##ma", &ma->smoothLocomotion)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Blend the two clips around the current speed every frame (1D blend\ntree) instead of switching discretely — half-walking half-running looks\nlike a jog, and foot cycles stay aligned through the blend.");
+            }
+            if (ma->driveByMovement) {
                 auto clipCombo = [&](const char* label, std::string& target) {
                     std::vector<std::string> nm = ma->ClipNames();
                     int cur = 0; for (int i = 0; i < (int)nm.size(); ++i) if (nm[i] == target) cur = i + 1;

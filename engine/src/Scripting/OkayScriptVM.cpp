@@ -15,6 +15,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -2688,13 +2689,31 @@ struct OkayScriptVM::Impl {
         auto charSelf = [this]() -> Character* {
             return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<Character>() : nullptr;
         };
-        b["play_clip"] = [charSelf](std::vector<Value>& a) {
+        // Imported models keep their clips on a ModelAnimator on the import ROOT, so
+        // look on this object first, then up the parents (a script often sits on the
+        // root, but can also live on a mesh part).
+        auto modelSelf = [this]() -> ModelAnimator* {
+            GameObject* g = (rt.host ? rt.host->gameObject : nullptr);
+            if (!g) return nullptr;
+            if (auto* m = g->GetComponent<ModelAnimator>()) return m;
+            for (Transform* t = g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
+                if (t->gameObject)
+                    if (auto* m = t->gameObject->GetComponent<ModelAnimator>()) return m;
+            return nullptr;
+        };
+        b["play_clip"] = [charSelf, modelSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
             Character* c = charSelf();
-            return Value{(c && !a.empty() && c->PlayClip(a[0].AsString())) ? 1.0f : 0.0f};
+            if (c && c->PlayClip(a[0].AsString())) return Value{1.0f};
+            ModelAnimator* m = modelSelf();       // imported model fallback
+            return Value{(m && m->Play(a[0].AsString())) ? 1.0f : 0.0f};
         };
         b["stop_clip"] = [charSelf](std::vector<Value>&) { if (Character* c = charSelf()) c->StopClip(); return Value{}; };
-        b["playing_clip"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{c ? c->PlayingClip() : std::string{}};
+        b["playing_clip"] = [charSelf, modelSelf](std::vector<Value>&) {
+            Character* c = charSelf();
+            if (c) return Value{c->PlayingClip()};
+            ModelAnimator* m = modelSelf();
+            return Value{m ? m->CurrentName() : std::string{}};
         };
         b["is_playing_clip"] = [charSelf](std::vector<Value>&) {
             Character* c = charSelf(); return Value{(c && c->IsPlayingClip()) ? 1.0f : 0.0f};
@@ -2761,8 +2780,13 @@ struct OkayScriptVM::Impl {
             return Value{(c && !a.empty() && c->HasClip(a[0].AsString())) ? 1.0f : 0.0f};
         };
         // Pop the next fired animation event name ("" if none) — footsteps, hit windows.
-        b["anim_event"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{c ? c->NextAnimEvent() : std::string{}};
+        b["anim_event"] = [charSelf, modelSelf](std::vector<Value>&) {
+            if (Character* c = charSelf()) {
+                std::string n = c->NextAnimEvent();
+                if (!n.empty()) return Value{n};
+            }
+            ModelAnimator* m = modelSelf();       // imported-model clip events
+            return Value{m ? m->NextAnimEvent() : std::string{}};
         };
 
         b["net_host"] = [this](std::vector<Value>& a) {

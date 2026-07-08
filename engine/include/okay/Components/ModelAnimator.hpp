@@ -15,6 +15,7 @@
 #include "okay/Components/Animator.hpp"
 #include "okay/Animation/AnimationClip.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <functional>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -23,14 +24,38 @@ namespace okay {
 
 class ModelAnimator : public Behaviour {
 public:
-    struct NodeClip { std::string node; AnimationClip clip; };  ///< one node's tracks for a clip
-    struct Clip     { std::string name; std::vector<NodeClip> nodes; };
+    struct NodeClip  { std::string node; AnimationClip clip; };  ///< one node's tracks for a clip
+    /// A named marker on a clip's timeline; fires as playback crosses it
+    /// (footstep sounds, hit windows) — same idea as Character's AnimEvents.
+    struct ClipEvent { float time = 0.0f; std::string name; };
+    struct Clip      { std::string name; std::vector<NodeClip> nodes; std::vector<ClipEvent> events; };
 
     std::vector<Clip> clips;
     int   active   = 0;      ///< index of the clip to play
     bool  autoPlay = true;   ///< play `active` on Start
     float speed    = 1.0f;
     bool  loop     = true;
+    /// Crossfade time (seconds) when switching clips: the pose eases from where it
+    /// was into the new clip instead of snapping. 0 = instant switch.
+    float blendTime = 0.25f;
+
+    /// Push callback for fired clip events; or poll with Consume/NextAnimEvent.
+    std::function<void(const std::string&)> onAnimEvent;   // not serialized
+    std::vector<std::string> ConsumeAnimEvents() { auto q = std::move(m_firedEvents); m_firedEvents.clear(); return q; }
+    std::string NextAnimEvent() {
+        if (m_firedEvents.empty()) return {};
+        std::string n = m_firedEvents.front();
+        m_firedEvents.erase(m_firedEvents.begin());
+        return n;
+    }
+
+    /// Length (seconds) of a clip = its longest node track.
+    float ClipLength(int i) const {
+        if (i < 0 || i >= (int)clips.size()) return 0.0f;
+        float len = 0.0f;
+        for (const auto& nc : clips[i].nodes) len = std::fmax(len, nc.clip.Length());
+        return len;
+    }
 
     // ---- Locomotion: auto-switch idle/walk/run from how fast this object moves ----
     bool        driveByMovement = false;
@@ -44,6 +69,25 @@ public:
     }
 
     void Update(float dt) override {
+        // Fire clip events crossed by this frame's playback window. The clock
+        // mirrors the node Animators' time (reset together in PlayIndex).
+        if (dt > 0.0f && active >= 0 && active < (int)clips.size()) {
+            float len = ClipLength(active);
+            float t0 = m_clock, t1 = m_clock + dt * speed;
+            if (!clips[active].events.empty() && len > 0.0f) {
+                auto fire = [&](float a, float b) {
+                    for (const ClipEvent& ev : clips[active].events)
+                        if (ev.time > a && ev.time <= b && !ev.name.empty()) {
+                            m_firedEvents.push_back(ev.name);
+                            if (onAnimEvent) onAnimEvent(ev.name);
+                        }
+                };
+                if (loop && t1 > len) { fire(t0, len); fire(0.0f, std::fmod(t1, len)); }
+                else                  fire(t0, t1);
+            }
+            m_clock = len > 0.0f ? (loop ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
+        }
+
         if (!driveByMovement || dt <= 0.0f || !transform) return;
         Vec3 p = transform->Position();
         if (!m_haveLast) { m_lastPos = p; m_haveLast = true; return; }
@@ -54,6 +98,31 @@ public:
         if (spd >= runThreshold && !runClip.empty())        want = &runClip;
         else if (spd > walkThreshold && !walkClip.empty())  want = &walkClip;
         if (!want->empty() && *want != CurrentName()) Play(*want);   // switch only on change
+    }
+
+    /// Crossfade: eases the pose captured at the moment of a clip switch into the
+    /// new clip's pose. Runs in LateUpdate so it blends what the node Animators
+    /// just wrote this frame (Update order between objects doesn't matter).
+    void LateUpdate(float dt) override {
+        if (m_blend.empty() || !gameObject) return;
+        Scene* sc = gameObject->scene();
+        if (!sc) { m_blend.clear(); return; }
+        m_blendW = blendTime > 0.001f ? std::fmin(1.0f, m_blendW + dt / blendTime) : 1.0f;
+        float w = m_blendW * m_blendW * (3.0f - 2.0f * m_blendW);   // smoothstep ease
+        for (const BlendFrom& s : m_blend) {
+            GameObject* g = sc->Find(s.node);
+            if (!g || !g->transform) continue;
+            Transform* t = g->transform;
+            t->localPosition = s.pos + (t->localPosition - s.pos) * w;
+            t->localScale    = s.scl + (t->localScale    - s.scl) * w;
+            Quat b = t->localRotation;
+            float d = s.rot.x*b.x + s.rot.y*b.y + s.rot.z*b.z + s.rot.w*b.w;
+            if (d < 0.0f) { b.x = -b.x; b.y = -b.y; b.z = -b.z; b.w = -b.w; }
+            Quat r{s.rot.x + (b.x - s.rot.x) * w, s.rot.y + (b.y - s.rot.y) * w,
+                   s.rot.z + (b.z - s.rot.z) * w, s.rot.w + (b.w - s.rot.w) * w};
+            t->localRotation = r.Normalized();
+        }
+        if (m_blendW >= 1.0f) m_blend.clear();
     }
 
     int ClipCount() const { return (int)clips.size(); }
@@ -75,11 +144,23 @@ public:
     }
 
     /// Switch to a clip by index: push each node's tracks onto that node's Animator.
+    /// With blendTime > 0 the current pose is captured first and eased into the new
+    /// clip over that many seconds (see LateUpdate).
     void PlayIndex(int i) {
         if (i < 0 || i >= (int)clips.size() || !gameObject) return;
         active = i;
         Scene* sc = gameObject->scene();
         if (!sc) return;
+        // Capture the CURRENT pose of every node the new clip animates, by name
+        // (names survive object churn; a missing node just stops blending).
+        m_blend.clear(); m_blendW = 0.0f;
+        if (blendTime > 0.001f) {
+            for (const NodeClip& nc : clips[i].nodes)
+                if (GameObject* g = sc->Find(nc.node); g && g->transform)
+                    m_blend.push_back({nc.node, g->transform->localPosition,
+                                       g->transform->localRotation, g->transform->localScale});
+        }
+        m_clock = 0.0f;   // the event clock restarts with the node Animators
         for (NodeClip& nc : clips[i].nodes) {
             GameObject* g = sc->Find(nc.node);
             if (!g) continue;
@@ -94,6 +175,11 @@ public:
     }
 
 private:
+    struct BlendFrom { std::string node; Vec3 pos; Quat rot; Vec3 scl; };
+    std::vector<BlendFrom>   m_blend;         ///< pose at the last clip switch (crossfade source)
+    float                    m_blendW = 1.0f; ///< crossfade progress (1 = done)
+    std::vector<std::string> m_firedEvents;   ///< event names fired since the last consume
+    float                    m_clock = 0.0f;  ///< playback clock for event firing
     Vec3 m_lastPos{0, 0, 0};
     bool m_haveLast = false;
 };

@@ -362,6 +362,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << "  modelanimdrive " << (ma->driveByMovement ? 1 : 0)
                 << " " << ma->walkThreshold << " " << ma->runThreshold
                 << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip) << "\n";
+        // Crossfade + clip events — separate optional records (older scenes lack them).
+        out << "  modelanimblend " << ma->blendTime << "\n";
+        for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {
+            if (ma->clips[ci].events.empty()) continue;
+            out << "  modelanimevents " << ci << " " << ma->clips[ci].events.size();
+            for (const auto& ev : ma->clips[ci].events)
+                out << " " << ev.time << " " << Quote(ev.name);
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -1933,6 +1942,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->idleClip = ReadQuoted(in);
                     ma->walkClip = ReadQuoted(in);
                     ma->runClip  = ReadQuoted(in);
+                } else if (field == "modelanimblend") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    in >> ma->blendTime;
+                } else if (field == "modelanimevents") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    long ci = -1, cnt = 0; in >> ci >> cnt;
+                    for (long k = 0; k < cnt; ++k) {
+                        ModelAnimator::ClipEvent ev;
+                        in >> ev.time; ev.name = ReadQuoted(in);
+                        if (ci >= 0 && ci < (long)ma->clips.size())
+                            ma->clips[ci].events.push_back(std::move(ev));
+                    }
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;

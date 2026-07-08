@@ -11229,6 +11229,91 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             ImGui::EndPopup();
         }
     }
+
+    // ---- Events: named markers fired as the clip plays (footsteps, hit windows).
+    // Scripts read them with anim_event(); Blend in the Inspector crossfades switches.
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Events##maed")) {
+        ModelAnimator::Clip& cur = ma->clips[ma->active];
+        static char s_evName[48] = "";
+        ImGui::SetNextItemWidth(160);
+        ImGui::InputTextWithHint("##maevname", "event name...", s_evName, sizeof(s_evName));
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!s_evName[0]);
+        if (ImGui::SmallButton("Add at Time##maev")) {
+            ed.PushUndo();
+            std::string nm = s_evName;
+            for (char& c2 : nm) if (c2 == ' ') c2 = '_';
+            cur.events.push_back({t, nm});
+            std::sort(cur.events.begin(), cur.events.end(),
+                      [](const ModelAnimator::ClipEvent& a, const ModelAnimator::ClipEvent& b) { return a.time < b.time; });
+            ed.dirty = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("read them in a script with anim_event()");
+        int evDel = -1;
+        for (int i = 0; i < (int)cur.events.size(); ++i) {
+            ImGui::PushID(2000 + i);
+            char lbl[80];
+            std::snprintf(lbl, sizeof(lbl), "%.2fs  %s", cur.events[i].time, cur.events[i].name.c_str());
+            if (ImGui::Button(lbl)) { t = cur.events[i].time; run = false; }   // jump the playhead
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) evDel = i;
+            ImGui::PopID();
+        }
+        if (evDel >= 0) { ed.PushUndo(); cur.events.erase(cur.events.begin() + evDel); ed.dirty = true; }
+        if (cur.events.empty()) ImGui::TextDisabled("No events — scrub the Time, name one, press Add.");
+    }
+
+    // ---- Dope sheet: per-node key diamonds for the active clip + the shared
+    // playhead. Click anywhere on a row to seek there. Read-only.
+    if (ImGui::CollapsingHeader("Dope Sheet##maed")) {
+        const ModelAnimator::Clip& cur = ma->clips[ma->active];
+        float span = len > 0.05f ? len : 1.0f;
+        ImDrawList* ddl = ImGui::GetWindowDrawList();
+        int shown = 0;
+        for (const auto& nc : cur.nodes) {
+            if (++shown > 40) { ImGui::TextDisabled("... %d more node(s)", (int)cur.nodes.size() - 40); break; }
+            ImGui::PushID(3000 + shown);
+            ImGui::TextDisabled("%s", nc.node.c_str());
+            ImVec2 p0 = ImGui::GetCursorScreenPos();
+            float w = ImGui::GetContentRegionAvail().x - 8.0f; if (w < 60.0f) w = 60.0f;
+            const float h = 12.0f;
+            ddl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(40, 44, 54, 255), 3.0f);
+            // Diamonds: the union of this node's track keys (quantized so a TRS key
+            // authored across 10 tracks draws once).
+            float lastQ = -1.0f;
+            std::vector<float> times;
+            for (const auto& kv : nc.clip.Tracks())
+                for (const auto& k : kv.second.Keys()) times.push_back(k.time);
+            std::sort(times.begin(), times.end());
+            for (float kt : times) {
+                float q = std::round(kt * 200.0f) / 200.0f;   // 5ms bucket
+                if (q == lastQ) continue;
+                lastQ = q;
+                float kx = p0.x + (q / span) * w;
+                ddl->AddCircleFilled(ImVec2(kx, p0.y + h * 0.5f), 3.0f, IM_COL32(120, 200, 255, 255));
+            }
+            // Event markers on every row (they're clip-wide).
+            for (const auto& ev : cur.events) {
+                float ex = p0.x + (ev.time / span) * w;
+                ddl->AddTriangleFilled(ImVec2(ex - 3.5f, p0.y), ImVec2(ex + 3.5f, p0.y),
+                                       ImVec2(ex, p0.y + 5.0f), IM_COL32(255, 210, 90, 230));
+            }
+            // Playhead + click-to-seek.
+            float px = p0.x + (t / span) * w;
+            ddl->AddLine(ImVec2(px, p0.y), ImVec2(px, p0.y + h), IM_COL32(255, 210, 0, 255), 1.5f);
+            ImGui::InvisibleButton("##dsrow", ImVec2(w, h + 3.0f));
+            if (ImGui::IsItemActive() || ImGui::IsItemClicked()) {
+                float mx2 = ImGui::GetIO().MousePos.x;
+                t = Mathf::Clamp((mx2 - p0.x) / w, 0.0f, 1.0f) * span;
+                run = false;
+            }
+            ImGui::PopID();
+        }
+        if (cur.nodes.empty()) ImGui::TextDisabled("This clip animates no nodes.");
+    }
     ImGui::TextDisabled("Edit-mode preview — the scene pose isn't touched. Press Play (toolbar) to run it for real.");
 }
 
@@ -15091,6 +15176,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto-play on start##ma", &ma->autoPlay)) ed.dirty = true;
             if (ImGui::Checkbox("Loop##ma", &ma->loop)) ed.dirty = true;
             if (ImGui::DragFloat("Speed##ma", &ma->speed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Blend##ma", &ma->blendTime, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Crossfade when switching clips: the pose eases into the new clip\nover this many seconds instead of snapping. 0 = instant.");
 
             SectionHeader("Locomotion (auto idle/walk/run)");
             if (ImGui::Checkbox("Drive by movement##ma", &ma->driveByMovement)) ed.dirty = true;

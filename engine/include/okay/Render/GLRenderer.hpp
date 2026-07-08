@@ -67,6 +67,9 @@ private:
     bool EnsureTargets(int w, int h, int samples);
     void DestroyTargets();   // free ONLY the size-dependent FBO/renderbuffers/resolve
     void DestroyShadow();
+    bool EnsurePostProgs();               // fullscreen-quad programs (bloom chain)
+    bool EnsureBloomTargets(int w, int h);
+    void DestroyBloom();
 
     unsigned int m_prog = 0;
     unsigned int m_depthProg = 0;                             // shadow-map depth pass
@@ -75,6 +78,16 @@ private:
     unsigned int m_resolveFbo = 0, m_resolveTex = 0;          // single-sample resolve
     unsigned int m_shadowFbo = 0, m_shadowTex = 0;            // directional shadow map
     int m_shadowSize = 0;
+    // Bloom post chain: bright-pass into a half-res ping-pong pair, separable
+    // gaussian blur, then additive composite back onto the resolve target.
+    unsigned int m_quadVbo = 0;                               // fullscreen quad (2 tris)
+    unsigned int m_brightProg = 0, m_blurProg = 0, m_addProg = 0;
+    unsigned int m_bloomFboA = 0, m_bloomTexA = 0;
+    unsigned int m_bloomFboB = 0, m_bloomTexB = 0;
+    int m_bloomW = 0, m_bloomH = 0;
+    int m_ubSrc = -1, m_ubThresh = -1;                        // bright-pass uniforms
+    int m_ublSrc = -1, m_ublDir = -1;                         // blur uniforms
+    int m_uaSrc = -1, m_uaStrength = -1;                      // composite uniforms
     int m_w = 0, m_h = 0, m_samples = 0;
     int m_uMVP = -1, m_uModel = -1, m_uColor = -1, m_uLightDir = -1,
         m_uLightColor = -1, m_uAmbient = -1, m_uEmissive = -1, m_uEye = -1,

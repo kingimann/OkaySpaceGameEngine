@@ -267,6 +267,24 @@ Recent additions (v2.12–2.14):
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
   **Step** advances a single frame.
 
+### Graphics quality
+
+Rendering defaults to the modern look — tweak everything in the
+**Environment / Render Settings** panel:
+
+- **Filmic Rendering (linear + ACES)** — the gamma-correct pipeline: albedo
+  is decoded to linear, lighting runs in linear space, and the output gets
+  an ACES filmic roll-off plus proper sRGB encoding. On by default (this is
+  most of the "modern engine" look); untick for the legacy flat response.
+- **Shadows** — on by default: 2048-texel maps filtered with a 12-tap
+  Poisson disk and slope-scaled bias (soft edges, no acne on slopes). Tune
+  distance/cascades/resolution, or bake lighting for zero runtime cost.
+- **Bloom** — bright pixels glow: threshold + intensity sliders; drive it
+  with emissive materials (a lamp, neon strip, laser). Works on the GPU
+  renderer and the software fallback.
+- **Fog, vignette, sky sun/stars** — mood/depth layers, saved per scene so
+  the shipped game matches the editor preview.
+
 ### Building a standalone game
 
 **File → Build Game…** (Ctrl+B) exports the current scene as a self-contained

@@ -579,6 +579,106 @@ void GLRenderer::DestroyShadow() {
     m_shadowSize = 0;
 }
 
+// ---- Bloom post chain -------------------------------------------------------
+// Bright pixels glow: threshold the finished frame at half resolution, blur the
+// result with two separable gaussian passes, then add it back over the frame.
+// Uses the same BloomEnabled()/BloomThreshold()/BloomIntensity() globals as the
+// software renderer, so the editor's existing Bloom controls drive both paths.
+namespace {
+const char* kQuadVert =
+    "#version 120\n"
+    "attribute vec2 aPos; varying vec2 vUV;\n"
+    "void main(){ vUV = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }\n";
+const char* kBrightFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform float uThresh; varying vec2 vUV;\n"
+    "void main(){\n"
+    "  vec3 c = texture2D(uSrc, vUV).rgb;\n"
+    "  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
+    "  float k = max(l - uThresh, 0.0) / max(l, 1e-4);\n"   // keep only the over-threshold part
+    "  gl_FragColor = vec4(c * k, 1.0);\n"
+    "}\n";
+const char* kBlurFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform vec2 uDir; varying vec2 vUV;\n"   // uDir = one texel H or V
+    "void main(){\n"                                                   // 9-tap gaussian (linear-sampled 5-tap)
+    "  vec3 s = texture2D(uSrc, vUV).rgb * 0.227027;\n"
+    "  s += (texture2D(uSrc, vUV + uDir * 1.384615).rgb + texture2D(uSrc, vUV - uDir * 1.384615).rgb) * 0.316216;\n"
+    "  s += (texture2D(uSrc, vUV + uDir * 3.230769).rgb + texture2D(uSrc, vUV - uDir * 3.230769).rgb) * 0.070270;\n"
+    "  gl_FragColor = vec4(s, 1.0);\n"
+    "}\n";
+const char* kAddFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform float uStrength; varying vec2 vUV;\n"
+    "void main(){ gl_FragColor = vec4(texture2D(uSrc, vUV).rgb * uStrength, 1.0); }\n";
+} // namespace
+
+bool GLRenderer::EnsurePostProgs() {
+    if (m_brightProg && m_blurProg && m_addProg) return true;
+    auto build = [&](const char* fragSrc, unsigned int& prog) -> bool {
+        if (prog) return true;
+        GLuint vs = compile(GL_VERTEX_SHADER, kQuadVert), fs = compile(GL_FRAGMENT_SHADER, fragSrc);
+        if (!vs || !fs) return false;
+        prog = g.CreateProgram();
+        g.AttachShader(prog, vs); g.AttachShader(prog, fs);
+        g.BindAttribLocation(prog, 0, "aPos");
+        g.LinkProgram(prog);
+        GLint ok = 0; g.GetProgramiv(prog, GL_LINK_STATUS, &ok);
+        g.DeleteShader(vs); g.DeleteShader(fs);
+        if (!ok) { g.DeleteProgram(prog); prog = 0; return false; }
+        return true;
+    };
+    if (!build(kBrightFrag, m_brightProg) || !build(kBlurFrag, m_blurProg) || !build(kAddFrag, m_addProg))
+        return false;
+    m_ubSrc = g.GetUniformLocation(m_brightProg, "uSrc");
+    m_ubThresh = g.GetUniformLocation(m_brightProg, "uThresh");
+    m_ublSrc = g.GetUniformLocation(m_blurProg, "uSrc");
+    m_ublDir = g.GetUniformLocation(m_blurProg, "uDir");
+    m_uaSrc = g.GetUniformLocation(m_addProg, "uSrc");
+    m_uaStrength = g.GetUniformLocation(m_addProg, "uStrength");
+    if (!m_quadVbo) {
+        static const float quad[12] = {-1,-1,  1,-1,  1,1,  -1,-1,  1,1,  -1,1};
+        g.GenBuffers(1, &m_quadVbo);
+        g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
+        g.BufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+    }
+    return true;
+}
+
+bool GLRenderer::EnsureBloomTargets(int w, int h) {
+    if (m_bloomFboA && m_bloomW == w && m_bloomH == h) return true;
+    DestroyBloom();
+    m_bloomW = w; m_bloomH = h;
+    auto makeTarget = [&](unsigned int& fbo, unsigned int& tex) -> bool {
+        g.GenTextures(1, &tex);
+        g.BindTexture(GL_TEXTURE_2D, tex);
+        g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        g.GenFramebuffers(1, &fbo);
+        g.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+        g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        bool ok = g.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        g.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        return ok;
+    };
+    if (!makeTarget(m_bloomFboA, m_bloomTexA) || !makeTarget(m_bloomFboB, m_bloomTexB)) {
+        DestroyBloom();
+        return false;
+    }
+    return true;
+}
+
+void GLRenderer::DestroyBloom() {
+    if (m_bloomTexA) { g.DeleteTextures(1, &m_bloomTexA); m_bloomTexA = 0; }
+    if (m_bloomTexB) { g.DeleteTextures(1, &m_bloomTexB); m_bloomTexB = 0; }
+    if (m_bloomFboA) { g.DeleteFramebuffers(1, &m_bloomFboA); m_bloomFboA = 0; }
+    if (m_bloomFboB) { g.DeleteFramebuffers(1, &m_bloomFboB); m_bloomFboB = 0; }
+    m_bloomW = m_bloomH = 0;
+}
+
 bool GLRenderer::EnsureTargets(int w, int h, int samples) {
     if (m_fbo && m_w == w && m_h == h && m_samples == samples) return true;
     DestroyTargets();   // size/sample change -> rebuild ONLY the render targets
@@ -1098,6 +1198,55 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.BindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo);
     g.BindFramebuffer(GL_DRAW_FRAMEBUFFER, m_resolveFbo);
     g.BlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
+    // Bloom: bright-pass the resolved frame at half res, blur, add back on top.
+    // Any failure just skips the effect (the frame is already complete without it).
+    if (BloomEnabled() && EnsurePostProgs() &&
+        EnsureBloomTargets(w / 2 > 0 ? w / 2 : 1, h / 2 > 0 ? h / 2 : 1)) {
+        g.Disable(GL_DEPTH_TEST);
+        g.Disable(GL_BLEND);
+        g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
+        g.EnableVertexAttribArray(0);
+        g.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (const void*)0);
+        g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
+        g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
+        g.ActiveTexture(GL_TEXTURE0);
+        // 1) bright-pass: resolve texture -> half-res A
+        g.BindFramebuffer(GL_FRAMEBUFFER, m_bloomFboA);
+        g.Viewport(0, 0, m_bloomW, m_bloomH);
+        g.UseProgram(m_brightProg);
+        g.BindTexture(GL_TEXTURE_2D, m_resolveTex);
+        g.Uniform1i(m_ubSrc, 0);
+        g.Uniform1f(m_ubThresh, BloomThreshold());
+        g.DrawArrays(GL_TRIANGLES, 0, 6);
+        // 2) two separable gaussian rounds: A -> B (horizontal), B -> A (vertical)
+        g.UseProgram(m_blurProg);
+        g.Uniform1i(m_ublSrc, 0);
+        for (int it = 0; it < 2; ++it) {
+            g.BindFramebuffer(GL_FRAMEBUFFER, m_bloomFboB);
+            g.BindTexture(GL_TEXTURE_2D, m_bloomTexA);
+            g.Uniform2f(m_ublDir, 1.0f / (float)m_bloomW, 0.0f);
+            g.DrawArrays(GL_TRIANGLES, 0, 6);
+            g.BindFramebuffer(GL_FRAMEBUFFER, m_bloomFboA);
+            g.BindTexture(GL_TEXTURE_2D, m_bloomTexB);
+            g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
+            g.DrawArrays(GL_TRIANGLES, 0, 6);
+        }
+        // 3) additive composite onto the resolved frame
+        g.BindFramebuffer(GL_FRAMEBUFFER, m_resolveFbo);
+        g.Viewport(0, 0, w, h);
+        g.UseProgram(m_addProg);
+        g.BindTexture(GL_TEXTURE_2D, m_bloomTexA);
+        g.Uniform1i(m_uaSrc, 0);
+        g.Uniform1f(m_uaStrength, BloomIntensity());
+        g.Enable(GL_BLEND);
+        g.BlendFunc(GL_ONE, GL_ONE);
+        g.DrawArrays(GL_TRIANGLES, 0, 6);
+        g.Disable(GL_BLEND);
+        g.Enable(GL_DEPTH_TEST);
+        g.BindTexture(GL_TEXTURE_2D, 0);
+    }
+
     g.BindFramebuffer(GL_READ_FRAMEBUFFER, m_resolveFbo);
     m_pixels.assign((std::size_t)w * h, 0u);
     g.ReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, m_pixels.data());
@@ -1132,13 +1281,18 @@ void GLRenderer::DestroyTargets() {
 void GLRenderer::Destroy() {
     DestroyTargets();
     DestroyShadow();
+    DestroyBloom();
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
     for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);
     m_meshVB.clear();
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }
+    if (m_quadVbo) { g.DeleteBuffers(1, &m_quadVbo); m_quadVbo = 0; }
     if (m_vao && g.DeleteVertexArrays) { g.DeleteVertexArrays(1, &m_vao); m_vao = 0; }
     if (m_depthProg) { g.DeleteProgram(m_depthProg); m_depthProg = 0; }
+    if (m_brightProg) { g.DeleteProgram(m_brightProg); m_brightProg = 0; }
+    if (m_blurProg) { g.DeleteProgram(m_blurProg); m_blurProg = 0; }
+    if (m_addProg) { g.DeleteProgram(m_addProg); m_addProg = 0; }
     if (m_prog) { g.DeleteProgram(m_prog); m_prog = 0; }
 }
 

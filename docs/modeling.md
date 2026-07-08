@@ -104,7 +104,10 @@ to the first selected vertex (grab one island of a combined mesh), and
   **Merge by Distance**, **Duplicate Sel** (copy the selected faces in
   place, copies stay selected — drag them away).
 - Edge tools: **Collapse Edges** (merge each selected edge's endpoints),
-  **Split Edges** (insert a midpoint, cutting both neighbour faces).
+  **Split Edges** (insert a midpoint, cutting both neighbour faces),
+  **Extrude Edges** (pull a wall out of each selected edge along its face's
+  normal — build walls up from a floor plate's rim; the new outer edges
+  stay selected so you can keep going).
 - **Snap Sel** quantizes the selected vertices to a grid step.
 - Selection tools: **Bevel Sel** chamfers the selected corners (cut back and
   capped flat — knock the sharp corners off a box), **Relax Sel** smooths
@@ -125,6 +128,15 @@ Tick **Sculpt Brush** and drag directly on the mesh:
 
 Radius and strength are adjustable; Symmetry X applies to sculpting too.
 Subdivide first if the mesh is too coarse for the detail you want.
+
+### Paint
+
+Tick **Paint Brush** to color faces directly in the viewport — pick a
+color, radius, and blend, then drag over the mesh. **Fill Sel** bucket-fills
+the selected faces, **Clear Paint** removes all face colors. Painted colors
+multiply with the material color, save with the scene, and work on
+primitives without turning them into custom geometry (Symmetry X mirrors
+paint strokes too).
 
 ## Import
 

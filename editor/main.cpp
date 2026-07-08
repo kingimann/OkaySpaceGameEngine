@@ -9126,25 +9126,44 @@ void DrawHierarchy(EditorState& ed) {
     if (ImGui::SmallButton(g_hierSort ? "Sort: A-Z" : "Sort: None")) g_hierSort = !g_hierSort;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle alphabetical sorting of siblings");
     ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##hfilter", "search objects...", g_hierFilter, sizeof(g_hierFilter));
+    ImGui::InputTextWithHint("##hfilter", "search objects... (or a type: camera, light, script)", g_hierFilter, sizeof(g_hierFilter));
     ImGui::Separator();
 
-    // When searching, show a flat list of every matching object.
+    // When searching, show a flat list of every matching object. The search also
+    // matches TYPE words ("camera", "light", "mesh", "sprite", "script", ...), so
+    // typing "light" lists every light even if none is named that.
     if (g_hierFilter[0] != '\0') {
         std::string needle = g_hierFilter;
         for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
+        int hits = 0;
         for (const auto& up : ed.scene().Objects()) {
             GameObject* go = up.get();
-            std::string low = go->name;
-            for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
-            if (low.find(needle) == std::string::npos) continue;
+            std::string hay = go->name;
+            if (go->GetComponent<Camera>())          hay += " camera";
+            if (go->GetComponent<MeshRenderer>())    hay += " mesh 3d";
+            if (go->GetComponent<SpriteRenderer>())  hay += " sprite 2d";
+            if (go->GetComponent<Light>())           hay += " light";
+            if (go->GetComponent<TextRenderer>())    hay += " text ui";
+            if (go->GetComponent<ParticleSystem>())  hay += " particles fx";
+            if (go->GetComponent<AudioSource>())     hay += " sound audio";
+            if (!go->GetComponents<ScriptComponent>().empty()) hay += " script";
+            for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
+            if (hay.find(needle) == std::string::npos) continue;
+            ++hits;
             bool sel = (go == ed.selected());
             ImGui::PushID(go);
             if (ImGui::Selectable((std::string(ObjectKind(go)) + go->name).c_str(), sel))
                 ed.Select(go);
+            // Double-click a result: also frame it in the viewport.
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                Vec3 p = go->transform->Position();
+                ed.camTarget = p; ed.cameraPos = {p.x, p.y};
+            }
             HierComponentBadges(go, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             ImGui::PopID();
         }
+        if (hits == 0) ImGui::TextDisabled("No objects match '%s'.", g_hierFilter);
+        else           ImGui::TextDisabled("%d match(es)", hits);
         ImGui::End();
         return;
     }
@@ -13046,6 +13065,20 @@ static std::size_t ApplyItemAction(std::vector<ActionList::Item>& list, std::siz
     return i + 1;
 }
 
+// A small inline preview under an image-path field; hovering zooms it in a tooltip.
+static void TexFieldThumb(const std::string& path) {
+    if (path.empty()) return;
+    SDL_Texture* t = GetThumb(path);
+    if (!t) return;
+    ImGui::Image((ImTextureID)t, ImVec2(40, 40));
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Image((ImTextureID)t, ImVec2(180, 180));
+        ImGui::TextDisabled("%s", path.c_str());
+        ImGui::EndTooltip();
+    }
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = false;
@@ -14211,6 +14244,7 @@ void DrawInspector(EditorState& ed) {
             tex[sizeof(tex) - 1] = '\0';
             if (ImGui::InputText("Texture##sprite", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
             if (AcceptAssetPathField(sr->texture)) ed.dirty = true;   // drop from Project
+            TexFieldThumb(sr->texture);
             if (ImGui::DragInt("Sorting Layer##sprite", &sr->sortingLayer, 0.05f, -100, 100)) ed.dirty = true;
             if (ImGui::DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000)) ed.dirty = true;
             if (ImGui::Checkbox("Flip X##sprite", &sr->flipX)) ed.dirty = true;
@@ -14431,6 +14465,7 @@ void DrawInspector(EditorState& ed) {
             if (!mr->texture.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##tex")) { mr->texture.clear(); ed.dirty = true; }
+                TexFieldThumb(mr->texture);
                 float til[2] = {mr->tiling.x, mr->tiling.y};
                 if (ImGui::DragFloat2("Tiling##mesh", til, 0.05f, 0.01f, 64.0f)) {
                     mr->tiling = {til[0], til[1]}; ed.dirty = true;
@@ -14456,6 +14491,7 @@ void DrawInspector(EditorState& ed) {
             if (!mr->normalMap.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##nmap")) { mr->normalMap.clear(); ed.dirty = true; }
+                TexFieldThumb(mr->normalMap);
                 if (ImGui::SliderFloat("Bump Strength##mesh", &mr->normalStrength, 0.0f, 2.0f)) ed.dirty = true;
             }
             if (ImGui::SliderFloat("Reflectivity##mesh", &mr->reflectivity, 0.0f, 1.0f)) ed.dirty = true;
@@ -18983,6 +19019,7 @@ void DrawInspector(EditorState& ed) {
             tx[sizeof(tx) - 1] = '\0';
             if (ImGui::InputText("Texture##uim", tx, sizeof(tx))) { im->texture = tx; ed.dirty = true; }
             if (AcceptAssetPathField(im->texture)) ed.dirty = true;   // drop an image from Project
+            TexFieldThumb(im->texture);
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");

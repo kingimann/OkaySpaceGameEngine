@@ -13343,6 +13343,34 @@ static void TexFieldThumb(const std::string& path) {
     ImGui::PopID();
 }
 
+// Find a descendant bone of `root` whose lowercase name contains one of `keys`,
+// on the requested side (-1 left, +1 right, 0 = side-less), skipping names that
+// contain an `exclude` substring. Used by the IK inspectors' Auto-Detect buttons.
+static GameObject* FindBone(EditorState& ed, GameObject* root,
+                            std::initializer_list<const char*> keys, int side,
+                            std::initializer_list<const char*> exclude = {}) {
+    for (const auto& up : ed.scene().Objects()) {
+        GameObject* g = up.get();
+        if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+        std::string nm = g->name;
+        for (auto& c : nm) c = (char)std::tolower((unsigned char)c);
+        auto endsW = [&](const char* k) {
+            std::size_t kl = std::strlen(k);
+            return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
+        };
+        bool isLeft  = nm.find("left")  != std::string::npos || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l");
+        bool isRight = nm.find("right") != std::string::npos || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r");
+        if (side < 0 && !isLeft) continue;
+        if (side > 0 && !isRight) continue;
+        if (side == 0 && (isLeft || isRight)) continue;
+        bool skip = false;
+        for (const char* e : exclude) if (nm.find(e) != std::string::npos) { skip = true; break; }
+        if (skip) continue;
+        for (const char* k : keys) if (nm.find(k) != std::string::npos) return g;
+    }
+    return nullptr;
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = false;
@@ -15962,6 +15990,13 @@ void DrawInspector(EditorState& ed) {
     if (auto* a = dynamic_cast<AimIK*>(curComp)) {
         if (CompHeader("Aim IK", a, &toRemove)) {
             ImGui::TextDisabled("Point a bone's aim axis at a target (turret, weapon, head).");
+            if (ImGui::SmallButton("Auto: Head##aim")) {
+                if (GameObject* head = FindBone(ed, go, {"head"}, 0)) {
+                    ed.PushUndo();
+                    a->boneName = head->name; a->bone = nullptr; ed.dirty = true;
+                    ConsoleLog("Aim IK: bone set to '" + head->name + "'");
+                } else ConsoleLog("Aim IK: no head bone found under " + go->name, 1);
+            }
             char bn[64]; std::strncpy(bn, a->boneName.c_str(), sizeof(bn) - 1); bn[sizeof(bn) - 1] = '\0';
             if (ImGui::InputText("Bone (blank = self)##aim", bn, sizeof(bn))) { a->boneName = bn; ed.dirty = true; }
             char tn[64]; std::strncpy(tn, a->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
@@ -15981,6 +16016,26 @@ void DrawInspector(EditorState& ed) {
     if (auto* l = dynamic_cast<LookAtIK*>(curComp)) {
         if (CompHeader("Look-At IK", l, &toRemove)) {
             ImGui::TextDisabled("Aim a spine/neck/head chain at a target (head tracking).");
+            // One click on an imported skeleton: head bone + up to two spine/neck
+            // ancestors become the chain (root -> tip).
+            if (ImGui::SmallButton("Auto-Detect Chain##look")) {
+                if (GameObject* head = FindBone(ed, go, {"head"}, 0)) {
+                    ed.PushUndo();
+                    std::vector<std::string> chain{head->name};   // tip first, reversed below
+                    int added = 0;
+                    for (Transform* p = head->transform->Parent(); p && p->gameObject && added < 2; p = p->Parent()) {
+                        std::string nm = p->gameObject->name;
+                        for (auto& c : nm) c = (char)std::tolower((unsigned char)c);
+                        if (nm.find("neck") != std::string::npos || nm.find("spine") != std::string::npos ||
+                            nm.find("chest") != std::string::npos) {
+                            chain.push_back(p->gameObject->name); ++added;
+                        }
+                    }
+                    std::reverse(chain.begin(), chain.end());
+                    l->chainNames = chain; l->chain.clear(); ed.dirty = true;
+                    ConsoleLog("Look-At IK: chain of " + std::to_string((int)chain.size()) + " bone(s), tip '" + head->name + "'");
+                } else ConsoleLog("Look-At IK: no head bone found under " + go->name, 1);
+            }
             char tn[64]; std::strncpy(tn, l->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target object##look", tn, sizeof(tn))) { l->targetName = tn; ed.dirty = true; }
             float t[3] = {l->target.x, l->target.y, l->target.z};
@@ -16075,6 +16130,25 @@ void DrawInspector(EditorState& ed) {
         if (auto* lb = dynamic_cast<LimbIK*>(curComp)) {
             if (CompHeader("Limb IK", lb, &toRemove)) {
                 ImGui::TextDisabled("Two-bone arm/leg reach (grab). Name the three bones.");
+                // Map an imported arm chain in one click (Mixamo LeftArm/LeftForeArm/
+                // LeftHand, upperarm/forearm variants; fingers excluded).
+                auto autoArm = [&](int side, const char* label) {
+                    GameObject* hand = FindBone(ed, go, {"hand", "wrist"}, side,
+                                                {"finger", "thumb", "index", "middle", "ring", "pinky"});
+                    GameObject* fore = FindBone(ed, go, {"forearm", "lowerarm", "elbow"}, side);
+                    GameObject* up2  = FindBone(ed, go, {"upperarm", "uparm"}, side);
+                    if (!up2) up2 = FindBone(ed, go, {"arm"}, side, {"forearm", "lowerarm"});
+                    if (hand && fore && up2) {
+                        ed.PushUndo();
+                        lb->upperName = up2->name; lb->lowerName = fore->name; lb->endName = hand->name;
+                        lb->upper = lb->lower = lb->end = nullptr;
+                        ed.dirty = true;
+                        ConsoleLog(std::string("Limb IK: ") + label + " = " + up2->name + " > " + fore->name + " > " + hand->name);
+                    } else ConsoleLog(std::string("Limb IK: couldn't find a full ") + label + " chain under " + go->name, 1);
+                };
+                if (ImGui::SmallButton("Auto: L Arm##lik")) autoArm(-1, "left arm");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Auto: R Arm##lik")) autoArm(+1, "right arm");
                 NameField("Upper##lik", lb->upperName); NameField("Lower##lik", lb->lowerName); NameField("End##lik", lb->endName);
                 NameField("Target##lik", lb->targetName); NameField("Pole##lik", lb->poleName);
                 float t[3] = {lb->target.x, lb->target.y, lb->target.z};

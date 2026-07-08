@@ -40,7 +40,10 @@ public:
             if (GameObject* g = s->Find(targetName)) targetObject = g->transform;
     }
 
-    void Update(float) override {
+    // Solve in LateUpdate so the correction lands AFTER every animation driver
+    // has posed the bones this frame (imported rigs create their per-node
+    // Animators lazily, which puts them late in the Update order).
+    void LateUpdate(float) override {
         if (weight <= 0.0f || chain.empty()) return;
         Vec3 tgt = targetObject ? targetObject->Position() : target;
         // Root-to-tip: each bone aims its forward at the target. Processing in order

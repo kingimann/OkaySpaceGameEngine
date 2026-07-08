@@ -129,6 +129,20 @@ A typical setup: `Idle -> Run` (speed > 2), `Run -> Idle` (speed < 1),
 (On Clip End). The machine drives the Model Animator, so blending, root
 motion and events all keep working.
 
+## IK on imported rigs
+
+The whole IK suite works on imported skeletons, and every solve runs AFTER
+animation (state machine, blending, crossfades), correcting the final pose:
+
+- **Look-At IK** — head tracking. **Auto-Detect Chain** maps spine → neck →
+  head from the bone names; set a target object (the player, the camera).
+- **Aim IK** — point one bone at a target (weapon, turret, head). **Auto:
+  Head** finds the head bone.
+- **Limb IK** — arm reach/grab. **Auto: L Arm / R Arm** map
+  shoulder → forearm → hand (fingers excluded).
+- **Chain IK** — long chains (tails, tentacles), FABRIK/CCD.
+- **Foot IK** — see below.
+
 ## Foot IK on imported rigs
 
 Add a **Foot IK** component to the import root (Add Component > Animation)

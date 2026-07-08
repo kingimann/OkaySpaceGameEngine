@@ -13940,6 +13940,12 @@ void DrawModeling(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::Button("Snap Grid##model")) { ed.PushUndo(); mr->mesh.SnapToGrid(s_snapAll); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize every vertex to this grid step — crisp low-poly look, modular kit alignment.");
+        ImGui::SameLine();
+        if (ImGui::Button("Shade Smooth##model")) { mr->mesh.ComputeSmoothNormals(); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blend lighting across faces (organic shapes). Saved with the scene.");
+        ImGui::SameLine();
+        if (ImGui::Button("Flat##shade")) { mr->mesh.normals.clear(); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faceted lighting per face (crisp low-poly look).");
         static float s_jitter = 0.05f; static int s_jitterSeed = 1;
         ImGui::SetNextItemWidth(90); ImGui::DragFloat("##jit", &s_jitter, 0.005f, 0.0f, 2.0f, "%.3f");
         ImGui::SameLine();
@@ -14318,6 +14324,48 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::SmallButton("Deselect##me")) { g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); }
             ImGui::Text("Selected: %d verts, %d edges, %d faces",
                         (int)g_meshSelVerts.size(), (int)g_meshSelEdges.size(), (int)g_meshSelFaces.size());
+            // Selection intelligence: grow/shrink a vertex selection along edges,
+            // flood-fill a connected island, or invert what's picked.
+            if (ImGui::SmallButton("Grow##mesel") && !g_meshSelVerts.empty())
+                g_meshSelVerts = mr->mesh.GrownVertexSelection(g_meshSelVerts);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add every vertex touching the selection (vertex mode).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Shrink##mesel") && !g_meshSelVerts.empty())
+                g_meshSelVerts = mr->mesh.ShrunkVertexSelection(g_meshSelVerts);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Peel the selection's rim off (vertex mode).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Linked##mesel") && !g_meshSelVerts.empty())
+                g_meshSelVerts = mr->mesh.LinkedVertices(g_meshSelVerts[0]);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select everything connected to the first selected vertex — grab one island of a combined mesh.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Invert##mesel")) {
+                if (g_meshSelMode == 0) {
+                    std::set<int> cur(g_meshSelVerts.begin(), g_meshSelVerts.end());
+                    g_meshSelVerts.clear();
+                    for (int i = 0; i < (int)mr->mesh.vertices.size(); ++i)
+                        if (!cur.count(i)) g_meshSelVerts.push_back(i);
+                } else if (g_meshSelMode == 1) {
+                    std::set<int> cur(g_meshSelFaces.begin(), g_meshSelFaces.end());
+                    g_meshSelFaces.clear();
+                    for (int i = 0; i < mr->mesh.TriangleCount(); ++i)
+                        if (!cur.count(i)) g_meshSelFaces.push_back(i);
+                } else {
+                    auto same = [&](const std::pair<int,int>& a, const std::pair<int,int>& b) {
+                        return (a.first == b.first && a.second == b.second)
+                            || (a.first == b.second && a.second == b.first);
+                    };
+                    std::vector<std::pair<int,int>> inv;
+                    for (const auto& e : mr->mesh.VisibleEdges()) {
+                        bool sel = false;
+                        for (const auto& s : g_meshSelEdges) if (same(e, s)) { sel = true; break; }
+                        if (!sel) inv.push_back(e);
+                    }
+                    g_meshSelEdges = std::move(inv);
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select everything that ISN'T selected (works in all three modes).");
+            if (g_meshSelMode == 2)
+                ImGui::TextDisabled("Alt+Click an edge to select its whole loop.");
 
             ImGui::Checkbox("Symmetry X##me", &g_meshSymX);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror every move and sculpt stroke across the local X = 0 plane (edit half, get both).");
@@ -23936,13 +23984,24 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     }
                     if (!add) g_meshSelEdges.clear();
                     if (pe.first >= 0) {
-                        auto same = [&](const std::pair<int,int>& x) {
-                            return (x.first == pe.first && x.second == pe.second)
-                                || (x.first == pe.second && x.second == pe.first);
-                        };
-                        auto it = std::find_if(g_meshSelEdges.begin(), g_meshSelEdges.end(), same);
-                        if (it != g_meshSelEdges.end()) { if (add) g_meshSelEdges.erase(it); }
-                        else g_meshSelEdges.push_back(pe);
+                        if (io.KeyAlt) {
+                            // Alt+Click: select the whole edge loop through this edge.
+                            for (const auto& le : mesh.EdgeLoop(pe.first, pe.second)) {
+                                bool dup = false;
+                                for (const auto& s : g_meshSelEdges)
+                                    if ((s.first == le.first && s.second == le.second) ||
+                                        (s.first == le.second && s.second == le.first)) { dup = true; break; }
+                                if (!dup) g_meshSelEdges.push_back(le);
+                            }
+                        } else {
+                            auto same = [&](const std::pair<int,int>& x) {
+                                return (x.first == pe.first && x.second == pe.second)
+                                    || (x.first == pe.second && x.second == pe.first);
+                            };
+                            auto it = std::find_if(g_meshSelEdges.begin(), g_meshSelEdges.end(), same);
+                            if (it != g_meshSelEdges.end()) { if (add) g_meshSelEdges.erase(it); }
+                            else g_meshSelEdges.push_back(pe);
+                        }
                     }
                 } else {
                     // Pick the front-most triangle whose projected area contains the cursor.

@@ -269,6 +269,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 for (const Vec2& t : mr->mesh.uvs) out << " " << t.x << " " << t.y;
                 out << "\n";
             }
+            // Shading mode: meshgeo loads flat by default; remember when the user
+            // chose Shade Smooth so it survives save/load (optional record).
+            if (mr->mesh.HasNormals())
+                out << "  meshshade 1\n";
         }
         // Per-face colors (vertex-painting / baked lightmap) — separate record so
         // older scenes still load. Written whenever populated, for named primitives
@@ -1900,6 +1904,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (int i = 0; i < uc; ++i) {
                         Vec2 t; in >> t.x >> t.y; mr->mesh.uvs.push_back(t);
                     }
+                } else if (field == "meshshade") {
+                    // Optional: restore smooth shading on meshgeo geometry (the
+                    // meshgeo reader cleared normals for flat shading).
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int s = 0; in >> s;
+                    if (s) mr->mesh.ComputeSmoothNormals();
                 } else if (field == "meshcolors") {
                     // Per-face colors (vertex paint / baked lightmap). Follows the
                     // `mesh`/`meshgeo` geometry so the counts line up.

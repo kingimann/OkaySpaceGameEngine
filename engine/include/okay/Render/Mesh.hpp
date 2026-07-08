@@ -2516,6 +2516,143 @@ struct Mesh {
         return newFaces;
     }
 
+    // ---- Selection helpers (index sets in/out; the editor owns the selection) ----
+
+    /// Representative index per coincident-vertex group, so selection ops flow
+    /// across unwelded seams the same way Smooth() does.
+    std::vector<int> CoincidentReps() const {
+        std::map<std::tuple<int, int, int>, int> grid;
+        std::vector<int> rep(vertices.size());
+        auto key = [](const Vec3& v) {
+            return std::make_tuple((int)std::lround(v.x * 4096.0f),
+                                   (int)std::lround(v.y * 4096.0f),
+                                   (int)std::lround(v.z * 4096.0f));
+        };
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            auto k = key(vertices[i]);
+            auto it = grid.find(k);
+            if (it == grid.end()) { grid[k] = (int)i; rep[i] = (int)i; }
+            else rep[i] = it->second;
+        }
+        return rep;
+    }
+
+    /// One step of selection GROW: every vertex sharing an edge with the selection
+    /// joins it (coincident-vertex aware).
+    std::vector<int> GrownVertexSelection(const std::vector<int>& sel) const {
+        if (sel.empty() || vertices.empty()) return sel;
+        std::vector<int> rep = CoincidentReps();
+        std::set<int> inSel;                              // rep space
+        for (int v : sel) if (v >= 0 && v < (int)vertices.size()) inSel.insert(rep[v]);
+        std::set<int> grown = inSel;
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int r[3] = {rep[triangles[t]], rep[triangles[t + 1]], rep[triangles[t + 2]]};
+            for (int k = 0; k < 3; ++k)
+                for (int j = 0; j < 3; ++j)
+                    if (j != k && inSel.count(r[k])) grown.insert(r[j]);
+        }
+        std::vector<int> out;
+        for (std::size_t i = 0; i < vertices.size(); ++i)
+            if (grown.count(rep[i])) out.push_back((int)i);
+        return out;
+    }
+
+    /// One step of selection SHRINK: only vertices whose every edge-neighbour is
+    /// also selected stay — peels the selection's rim off.
+    std::vector<int> ShrunkVertexSelection(const std::vector<int>& sel) const {
+        if (sel.empty() || vertices.empty()) return sel;
+        std::vector<int> rep = CoincidentReps();
+        std::set<int> inSel;
+        for (int v : sel) if (v >= 0 && v < (int)vertices.size()) inSel.insert(rep[v]);
+        std::set<int> rim;                                // selected verts touching outside
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int r[3] = {rep[triangles[t]], rep[triangles[t + 1]], rep[triangles[t + 2]]};
+            for (int k = 0; k < 3; ++k)
+                for (int j = 0; j < 3; ++j)
+                    if (j != k && inSel.count(r[k]) && !inSel.count(r[j])) rim.insert(r[k]);
+        }
+        std::vector<int> out;
+        for (std::size_t i = 0; i < vertices.size(); ++i)
+            if (inSel.count(rep[i]) && !rim.count(rep[i])) out.push_back((int)i);
+        return out;
+    }
+
+    /// Everything connected to `seed` through shared edges (coincident-vertex
+    /// aware) — Select Linked: grab one island of a combined mesh.
+    std::vector<int> LinkedVertices(int seed) const {
+        std::vector<int> out;
+        if (seed < 0 || seed >= (int)vertices.size()) return out;
+        std::vector<int> rep = CoincidentReps();
+        std::map<int, std::vector<int>> adj;              // rep-space adjacency
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int r[3] = {rep[triangles[t]], rep[triangles[t + 1]], rep[triangles[t + 2]]};
+            for (int k = 0; k < 3; ++k)
+                for (int j = 0; j < 3; ++j)
+                    if (j != k) adj[r[k]].push_back(r[j]);
+        }
+        std::set<int> seen;
+        std::vector<int> stack = {rep[seed]};
+        seen.insert(rep[seed]);
+        while (!stack.empty()) {
+            int v = stack.back(); stack.pop_back();
+            auto it = adj.find(v);
+            if (it == adj.end()) continue;
+            for (int n : it->second)
+                if (!seen.count(n)) { seen.insert(n); stack.push_back(n); }
+        }
+        for (std::size_t i = 0; i < vertices.size(); ++i)
+            if (seen.count(rep[i])) out.push_back((int)i);
+        return out;
+    }
+
+    /// Extend one edge into its LOOP: at each endpoint keep stepping onto the
+    /// straightest continuation (quad-aware via VisibleEdges) until the loop
+    /// closes or turns sharper than `minDot`. Returns vertex-index pairs
+    /// including the seed edge — Blender's Alt+Click edge loop.
+    std::vector<std::pair<int, int>> EdgeLoop(int va, int vb, float minDot = 0.5f) const {
+        std::vector<std::pair<int, int>> out;
+        if (va < 0 || vb < 0 || va >= (int)vertices.size() || vb >= (int)vertices.size())
+            return out;
+        std::vector<int> rep = CoincidentReps();
+        std::map<int, std::vector<int>> adj;              // quad-wireframe adjacency
+        for (const auto& e : VisibleEdges()) {
+            int a = rep[e.first], b = rep[e.second];
+            if (a == b) continue;
+            adj[a].push_back(b);
+            adj[b].push_back(a);
+        }
+        auto dir = [&](int a, int b) { return (vertices[b] - vertices[a]).Normalized(); };
+        std::set<std::pair<int, int>> seen;
+        auto addEdge = [&](int a, int b) {
+            auto k = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+            if (seen.count(k)) return false;
+            seen.insert(k);
+            out.push_back({a, b});
+            return true;
+        };
+        int A = rep[va], B = rep[vb];
+        if (!addEdge(A, B)) return out;
+        for (int pass = 0; pass < 2; ++pass) {            // walk both directions
+            int prev = pass == 0 ? A : B;
+            int cur  = pass == 0 ? B : A;
+            for (int guard = 0; guard < 4096; ++guard) {
+                Vec3 d = dir(prev, cur);
+                float best = minDot; int nxt = -1;
+                auto it = adj.find(cur);
+                if (it == adj.end()) break;
+                for (int n : it->second) {
+                    if (n == prev) continue;
+                    float dot = Vec3::Dot(d, dir(cur, n));
+                    if (dot > best) { best = dot; nxt = n; }
+                }
+                if (nxt < 0) break;
+                if (!addEdge(cur, nxt)) break;            // loop closed
+                prev = cur; cur = nxt;
+            }
+        }
+        return out;
+    }
+
     /// Quantize vertices to a grid of `step` (empty `verts` = whole mesh) — clean
     /// up hand-moved points, make modular kit pieces line up exactly.
     void SnapToGrid(float step, const std::vector<int>& verts = {}) {

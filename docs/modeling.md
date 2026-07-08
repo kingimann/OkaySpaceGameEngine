@@ -33,6 +33,9 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   half (about the pivot) is kept and mirrored over the other side.
   **Snap Grid** quantizes every vertex to a step — crisp low-poly look,
   modular kit alignment.
+- **Shade Smooth / Flat** switches between blended lighting (organic
+  shapes) and faceted lighting (low-poly look); the choice is saved with
+  the scene.
 - **Weld** duplicates, **Recenter** the pivot, **Ground** the pivot to the
   base, **Fit 1u** to scale into a unit cube. **Export OBJ** writes the mesh
   (with UVs) to `Assets/<name>.obj`.
@@ -83,8 +86,14 @@ or **Column** preset, then:
 
 Tick **Edit Mesh** to enter edit mode (the mesh is auto-welded so shared
 corners move together). Click in the 3D view to select **Vertices**,
-**Edges**, or **Faces** (Shift-click to add), drag the axis handles to
-move, hold **V** to snap to nearby vertices.
+**Edges**, or **Faces** (Shift-click to add, **Alt+Click** an edge to grab
+its whole loop), drag the axis handles to move, hold **V** to snap to
+nearby vertices.
+
+Selection tools: **Grow** adds every vertex touching the selection,
+**Shrink** peels its rim off, **Linked** flood-fills everything connected
+to the first selected vertex (grab one island of a combined mesh), and
+**Invert** flips the selection in any mode.
 
 - **Symmetry X** mirrors every move and sculpt stroke across the local
   X = 0 plane — edit half, get both.

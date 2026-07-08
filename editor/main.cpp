@@ -15250,6 +15250,108 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
         }
     }
+    if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
+        if (CompHeader("Anim State Machine", sm, &toRemove)) {
+            auto* ma = go->GetComponent<ModelAnimator>();
+            if (!ma)
+                ImGui::TextColored(ImVec4(0.95f, 0.7f, 0.4f, 1.0f),
+                                   "Needs a Model Animator on this object (import a model here).");
+            if (ed.isPlaying())
+                ImGui::TextColored(AccentCol(1.0f), "Current state: %s",
+                                   sm->Current().empty() ? "(entering)" : sm->Current().c_str());
+            // Entry state picker.
+            {
+                const char* cur = sm->entry.empty() ? "(first state)" : sm->entry.c_str();
+                ImGui::SetNextItemWidth(200);
+                if (ImGui::BeginCombo("Entry##asm", cur)) {
+                    if (ImGui::Selectable("(first state)", sm->entry.empty())) { sm->entry.clear(); ed.dirty = true; }
+                    for (const auto& st : sm->states)
+                        if (ImGui::Selectable(st.name.c_str(), sm->entry == st.name)) { sm->entry = st.name; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+            }
+            static const char* kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
+            int delState = -1;
+            for (int si = 0; si < (int)sm->states.size(); ++si) {
+                AnimStateMachine::State& st = sm->states[si];
+                ImGui::PushID(4000 + si);
+                ImGui::Separator();
+                char nb[48]; std::snprintf(nb, sizeof(nb), "%s", st.name.c_str());
+                ImGui::SetNextItemWidth(140);
+                if (ImGui::InputText("State##asm", nb, sizeof(nb))) { st.name = nb; ed.dirty = true; }
+                ImGui::SameLine();
+                // Clip picker (from the ModelAnimator's library, or free text without one).
+                ImGui::SetNextItemWidth(150);
+                if (ma && ImGui::BeginCombo("##asmclip", st.clip.empty() ? "(clip)" : st.clip.c_str())) {
+                    for (const auto& cn : ma->ClipNames())
+                        if (ImGui::Selectable(cn.c_str(), st.clip == cn)) { st.clip = cn; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(70);
+                if (ImGui::DragFloat("##asmspd", &st.speed, 0.02f, 0.05f, 5.0f, "x%.2f")) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("loop##asm", &st.loop)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x##asmst")) delState = si;
+
+                int delTr = -1;
+                for (int ti = 0; ti < (int)st.transitions.size(); ++ti) {
+                    AnimStateMachine::Transition& tr = st.transitions[ti];
+                    ImGui::PushID(5000 + ti);
+                    ImGui::TextDisabled("  \xE2\x86\x92"); ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120);
+                    if (ImGui::BeginCombo("##trto", tr.to.empty() ? "(state)" : tr.to.c_str())) {
+                        for (const auto& st2 : sm->states)
+                            if (ImGui::Selectable(st2.name.c_str(), tr.to == st2.name)) { tr.to = st2.name; ed.dirty = true; }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::SameLine();
+                    int cd = (int)tr.cond;
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::Combo("##trcond", &cd, kCondNames, 6)) { tr.cond = (okay::AnimStateMachine::Cond)cd; ed.dirty = true; }
+                    if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
+                        ImGui::SameLine();
+                        char pb[32]; std::snprintf(pb, sizeof(pb), "%s", tr.param.c_str());
+                        ImGui::SetNextItemWidth(90);
+                        if (ImGui::InputTextWithHint("##trparam", "param", pb, sizeof(pb))) { tr.param = pb; ed.dirty = true; }
+                    }
+                    if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess) {
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(60);
+                        if (ImGui::DragFloat("##trval", &tr.value, 0.05f)) ed.dirty = true;
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragFloat("##trblend", &tr.blend, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x##tr")) delTr = ti;
+                    ImGui::PopID();
+                }
+                if (delTr >= 0) { ed.PushUndo(); st.transitions.erase(st.transitions.begin() + delTr); ed.dirty = true; }
+                ImGui::TextDisabled("  ");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("+ Transition##asm")) {
+                    ed.PushUndo();
+                    st.transitions.push_back({});
+                    ed.dirty = true;
+                }
+                ImGui::PopID();
+            }
+            if (delState >= 0) { ed.PushUndo(); sm->states.erase(sm->states.begin() + delState); ed.dirty = true; }
+            ImGui::Separator();
+            if (ImGui::SmallButton("+ Add State##asm")) {
+                ed.PushUndo();
+                AnimStateMachine::State st;
+                st.name = "State " + std::to_string((int)sm->states.size() + 1);
+                if (ma && ma->ClipCount() > 0) st.clip = ma->clips[0].name;
+                sm->states.push_back(std::move(st));
+                ed.dirty = true;
+            }
+            ImGui::TextDisabled("Set parameters from a script: anim_set_float(\"speed\", v),\n"
+                                "anim_set_bool(\"armed\", 1), anim_trigger(\"attack\"); anim_state() reads back.");
+        }
+    }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
         if (CompHeader("First Person Hand", fh, &toRemove)) {
             ImGui::TextDisabled("Shows your character's OWN arm in first person. Your body is\n"
@@ -19734,6 +19836,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Animation");
           if (o) {
             if (item(!go->GetComponent<Animator>(), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
+            if (item(!go->GetComponent<AnimStateMachine>(), "Anim State Machine (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<LookAtIK>(), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }

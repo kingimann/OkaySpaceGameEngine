@@ -16,6 +16,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -2802,6 +2803,35 @@ struct OkayScriptVM::Impl {
             return Value{(c && c->PlayClip(a[0].AsString())) ? 1.0f : 0.0f};
         };
         // Pop the next fired animation event name ("" if none) — footsteps, hit windows.
+        // ---- Animation state machine (AnimStateMachine on self or an ancestor) ----
+        auto smSelf = [this]() -> AnimStateMachine* {
+            GameObject* g = (rt.host ? rt.host->gameObject : nullptr);
+            if (!g) return nullptr;
+            if (auto* m = g->GetComponent<AnimStateMachine>()) return m;
+            for (Transform* t = g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
+                if (t->gameObject)
+                    if (auto* m = t->gameObject->GetComponent<AnimStateMachine>()) return m;
+            return nullptr;
+        };
+        b["anim_set_float"] = [smSelf](std::vector<Value>& a) {
+            if (AnimStateMachine* m = smSelf(); m && a.size() >= 2) m->SetFloat(a[0].AsString(), a[1].AsFloat());
+            return Value{};
+        };
+        b["anim_set_bool"] = [smSelf](std::vector<Value>& a) {
+            if (AnimStateMachine* m = smSelf(); m && a.size() >= 2) m->SetBool(a[0].AsString(), a[1].AsFloat() != 0.0f);
+            return Value{};
+        };
+        b["anim_trigger"] = [smSelf](std::vector<Value>& a) {
+            if (AnimStateMachine* m = smSelf(); m && !a.empty()) m->SetTrigger(a[0].AsString());
+            return Value{};
+        };
+        b["anim_state"] = [smSelf](std::vector<Value>&) {
+            AnimStateMachine* m = smSelf(); return Value{m ? m->Current() : std::string{}};
+        };
+        b["anim_goto"] = [smSelf](std::vector<Value>& a) {
+            AnimStateMachine* m = smSelf();
+            return Value{(m && !a.empty() && m->GoTo(a[0].AsString())) ? 1.0f : 0.0f};
+        };
         b["anim_event"] = [charSelf, modelSelf](std::vector<Value>&) {
             if (Character* c = charSelf()) {
                 std::string n = c->NextAnimEvent();

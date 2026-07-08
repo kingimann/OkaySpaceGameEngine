@@ -94,6 +94,7 @@
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/AimIK.hpp"
@@ -375,6 +376,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 out << " " << ev.time << " " << Quote(ev.name);
             out << "\n";
         }
+    }
+    if (auto* asm2 = go->GetComponent<AnimStateMachine>()) {
+        out << "  animsm " << Quote(asm2->entry) << " " << asm2->states.size();
+        for (const auto& st : asm2->states) {
+            out << " " << Quote(st.name) << " " << Quote(st.clip) << " " << st.speed
+                << " " << (st.loop ? 1 : 0) << " " << st.transitions.size();
+            for (const auto& tr : st.transitions)
+                out << " " << Quote(tr.to) << " " << (int)tr.cond << " " << Quote(tr.param)
+                    << " " << tr.value << " " << tr.blend;
+        }
+        out << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -1970,6 +1982,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> ev.time; ev.name = ReadQuoted(in);
                         if (ci >= 0 && ci < (long)ma->clips.size())
                             ma->clips[ci].events.push_back(std::move(ev));
+                    }
+                } else if (field == "animsm") {
+                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    if (!sm2) sm2 = go->AddComponent<AnimStateMachine>();
+                    sm2->entry = ReadQuoted(in);
+                    long stCnt = 0; in >> stCnt;
+                    sm2->states.clear();
+                    for (long si = 0; si < stCnt; ++si) {
+                        AnimStateMachine::State st;
+                        st.name = ReadQuoted(in);
+                        st.clip = ReadQuoted(in);
+                        int lp = 1; long trCnt = 0;
+                        in >> st.speed >> lp >> trCnt;
+                        st.loop = (lp != 0);
+                        for (long ti = 0; ti < trCnt; ++ti) {
+                            AnimStateMachine::Transition tr;
+                            tr.to = ReadQuoted(in);
+                            int cd = 0; in >> cd;
+                            tr.cond = (AnimStateMachine::Cond)cd;
+                            tr.param = ReadQuoted(in);
+                            in >> tr.value >> tr.blend;
+                            st.transitions.push_back(std::move(tr));
+                        }
+                        sm2->states.push_back(std::move(st));
                     }
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {

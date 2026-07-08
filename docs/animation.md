@@ -106,6 +106,29 @@ if clip_finished() { ... } # a one-shot / non-looping clip reached its end
 d = clip_duration("walk")  # clip length in seconds
 ```
 
+## Animation state machine
+
+For anything beyond locomotion, add an **Anim State Machine** component next
+to the Model Animator (Add Component > Animation). Each **state** names a
+clip (with speed/loop overrides); **transitions** move between states when
+their condition passes — a clip finishing, a float parameter compared to a
+value, a bool, or a one-frame trigger — each with its own crossfade time.
+
+Gameplay sets the parameters:
+
+```
+anim_set_float("speed", velocity)   # feeds Float > / Float < conditions
+anim_set_bool("armed", 1)           # feeds Bool true / Bool false
+anim_trigger("attack")              # fires Trigger transitions (consumed once)
+s = anim_state()                    # current state name
+anim_goto("Dead")                   # force a state directly
+```
+
+A typical setup: `Idle -> Run` (speed > 2), `Run -> Idle` (speed < 1),
+`Idle/Run -> Attack` (trigger "attack", loop off), `Attack -> Idle`
+(On Clip End). The machine drives the Model Animator, so blending, root
+motion and events all keep working.
+
 ## Tips
 
 - **Meshy / Mixamo FBX**: animations import via Assimp. For the richest

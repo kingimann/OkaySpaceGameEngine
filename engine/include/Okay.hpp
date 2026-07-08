@@ -33,6 +33,7 @@
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Components/Light.hpp"

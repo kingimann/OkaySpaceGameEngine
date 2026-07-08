@@ -246,6 +246,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
             << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
+        // Procedural variant of a named nature prop (compact: one int regenerates
+        // the exact varied shape on load, instead of baking meshgeo/meshcolors).
+        if (mr->meshVariant != 0 && Mesh::NameHasVariants(mr->mesh.name))
+            out << "  meshvar " << mr->meshVariant << "\n";
         // Persist edited/custom geometry: a mesh with no primitive name and no
         // .OBJ path is hand-edited, so its vertices/triangles can't be regenerated
         // from a name — write them verbatim. This record follows the `mesh` line
@@ -1895,6 +1899,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // force smooth normals, or an edited box/ground reloads looking like
                     // a soft rounded blob instead of clean flat faces.
                     mr->mesh.normals.clear();
+                } else if (field == "meshvar") {
+                    // Procedural variant of a named prop: regenerate the varied
+                    // shape (its face colors come from the later meshcolors record,
+                    // or from this regeneration if that record is absent).
+                    int v = 0; in >> v;
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    mr->meshVariant = v;
+                    if (v != 0 && Mesh::NameHasVariants(mr->mesh.name))
+                        mr->mesh = Mesh::FromNameSeeded(mr->mesh.name, v);
                 } else if (field == "meshuv") {
                     // Per-vertex UVs for meshgeo geometry (optional record that
                     // follows meshgeo, which cleared the uvs array).

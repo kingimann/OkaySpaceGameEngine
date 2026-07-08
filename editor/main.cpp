@@ -13880,7 +13880,25 @@ void DrawModeling(EditorState& ed) {
         int shapeIdx = -1;
         for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
         if (ImGui::Combo("Primitive##model", &shapeIdx, shapes, kShapeCount)) {
-            mr->mesh = Mesh::FromName(shapes[shapeIdx]); mr->meshPath.clear(); ed.dirty = true;
+            mr->mesh = Mesh::FromName(shapes[shapeIdx]); mr->meshPath.clear();
+            mr->meshVariant = 0; ed.dirty = true;
+        }
+        // Procedural variant picker for nature props (Tree/Pine/Rock/Bush): step
+        // or randomize a deterministic variation of the shape. Stored per object.
+        if (Mesh::NameHasVariants(mr->mesh.name)) {
+            int v = mr->meshVariant;
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputInt("Variant##model", &v)) {
+                if (v < 0) v = 0;
+                mr->meshVariant = v;
+                mr->mesh = Mesh::FromNameSeeded(mr->mesh.name, v); ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Randomize##variant")) {
+                mr->meshVariant = 1 + (int)(ImGui::GetTime() * 977.0) % 9999;
+                mr->mesh = Mesh::FromNameSeeded(mr->mesh.name, mr->meshVariant); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deterministic procedural variation (0 = the base model).\nEach scattered instance already gets its own variant.");
         }
         float col[4] = {mr->color.r, mr->color.g, mr->color.b, mr->color.a};
         if (ImGui::ColorEdit4("Color##model", col)) { mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true; }
@@ -15516,7 +15534,13 @@ void DrawInspector(EditorState& ed) {
                     Vec3 n = Vec3{-hx, 2.0f * e, -hz}.Normalized();
                     if (1.0f - n.y > g_scatterMaxSlope) continue;       // too steep
                     GameObject* o = ed.scene().CreateGameObject(std::string("Scatter_") + props[g_scatterProp]);
-                    o->AddComponent<MeshRenderer>()->mesh = Mesh::FromName(props[g_scatterProp]);
+                    auto* smr = o->AddComponent<MeshRenderer>();
+                    // A distinct procedural variant per instance so nature props
+                    // (tree/pine/rock/bush) don't read as identical clones; other
+                    // props ignore the seed and use their canonical mesh.
+                    int variant = Mesh::NameHasVariants(props[g_scatterProp]) ? (placed + 1) : 0;
+                    smr->meshVariant = variant;
+                    smr->mesh = Mesh::FromNameSeeded(props[g_scatterProp], variant);
                     o->transform->SetParent(tr->gameObject->transform, false);
                     o->transform->localPosition = {lx, h, lz};
                     float sc = rng.Range(g_scatterMinScale, g_scatterMaxScale);

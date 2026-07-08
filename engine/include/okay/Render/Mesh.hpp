@@ -581,23 +581,40 @@ struct Mesh {
     /// A broadleaf tree: a tapered trunk under a rounded leafy canopy. Sits on
     /// the ground (base at y=0), ~2 units tall. Per-face colored + smooth-shaded
     /// so it drops onto terrain and looks right immediately.
-    static Mesh Tree() {
+    // Deterministic per-(variant,key) value in [lo,hi] for procedural prop
+    // variation. variant 0 always returns the midpoint, so the "base" model is
+    // unchanged and backward-compatible; any other variant perturbs it.
+    static float PropRand(int variant, int key, float lo, float hi) {
+        if (variant == 0) return (lo + hi) * 0.5f;
+        unsigned x = (unsigned)(variant * 374761393 + key * 668265263);
+        x = (x ^ (x >> 13)) * 1274126177u;
+        float t = (float)((x ^ (x >> 16)) & 0xffffu) / 65535.0f;
+        return lo + (hi - lo) * t;
+    }
+
+    static Mesh Tree(int variant = 0) {
         Mesh m;
         Color bark  = Color::FromBytes(96, 68, 44);
         Color leafA = Color::FromBytes(56, 118, 52);
         Color leafB = Color::FromBytes(76, 138, 60);
         Color leafC = Color::FromBytes(46, 102, 48);
-        // Curved, tapered trunk + two branches reaching into the canopy.
-        m.Add(SweepPath({{0,0,0}, {0.02f,0.35f,0.01f}, {0.06f,0.70f,0.03f}, {0.12f,1.05f,0.05f}},
-                        0.14f, 8, true, 0.07f), {0,0,0}, {1,1,1}, &bark);
-        m.Add(SweepPath({{0.06f,0.80f,0.02f}, {0.35f,1.00f,0.15f}, {0.55f,1.25f,0.28f}},
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        float lean = R(1, -0.10f, 0.14f), leanZ = R(2, -0.08f, 0.08f);
+        float ht   = R(3, 0.92f, 1.18f);                // trunk-height multiplier
+        // Curved, tapered trunk (lean + height vary per variant) + two branches.
+        m.Add(SweepPath({{0,0,0}, {0.02f,0.35f*ht,0.01f}, {0.06f,0.70f*ht,0.03f},
+                         {0.12f+lean,1.05f*ht,0.05f+leanZ}}, 0.14f, 8, true, 0.07f), {0,0,0}, {1,1,1}, &bark);
+        m.Add(SweepPath({{0.06f,0.80f*ht,0.02f}, {0.35f,1.00f*ht,0.15f}, {0.55f,1.25f*ht,0.28f}},
                         0.05f, 6, true, 0.02f), {0,0,0}, {1,1,1}, &bark);
-        m.Add(SweepPath({{0.03f,0.65f,0.00f}, {-0.30f,0.90f,-0.12f}, {-0.50f,1.10f,-0.25f}},
+        m.Add(SweepPath({{0.03f,0.65f*ht,0.00f}, {-0.30f,0.90f*ht,-0.12f}, {-0.50f,1.10f*ht,-0.25f}},
                         0.05f, 6, true, 0.02f), {0,0,0}, {1,1,1}, &bark);
-        // Canopy: irregular jittered blobs in three greens for a natural silhouette.
-        auto blob = [&](Vec3 at, float s, const Color& c, int seed) {
+        // Canopy: jittered blobs, each nudged in position/size by the variant.
+        int js = variant * 100 + 1;
+        auto blob = [&](Vec3 at, float s, const Color& c, int k) {
+            at.x += R(k*3+10, -0.12f, 0.12f); at.y += R(k*3+11, -0.06f, 0.10f) + (ht-1.0f)*0.5f;
+            at.z += R(k*3+12, -0.12f, 0.12f); s *= R(k+20, 0.86f, 1.14f);
             Mesh b = Icosphere(0.5f, 1);
-            b.JitterVertices({}, 0.055f, seed);
+            b.JitterVertices({}, 0.055f, js + k);
             m.Add(b, at, {s, s * 0.88f, s}, &c);
         };
         blob({0.10f, 1.55f, 0.05f}, 1.45f, leafA, 1);
@@ -605,56 +622,66 @@ struct Mesh {
         blob({-0.50f, 1.16f, -0.28f}, 0.85f, leafC, 3);
         blob({-0.05f, 1.82f, -0.10f}, 0.95f, leafB, 4);
         blob({0.32f, 1.60f, -0.34f}, 0.78f, leafC, 5);
-        m.MottleFaceColors(0.09f, 7);
+        m.MottleFaceColors(0.09f, 7 + variant);
         m.name = "Tree";
         m.ComputeSmoothNormals();
         return m;
     }
     /// A conifer / pine: tapered trunk under overlapping shaded skirts. ~2.4 tall.
-    static Mesh Pine() {
+    static Mesh Pine(int variant = 0) {
         Mesh m;
         Color bark  = Color::FromBytes(88, 60, 40);
         Color leafA = Color::FromBytes(38, 96, 58);
         Color leafB = Color::FromBytes(52, 116, 66);
-        m.Add(SweepPath({{0,0,0}, {0.01f,0.45f,0.0f}, {0.02f,0.9f,0.0f}},
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        float ht = R(1, 0.90f, 1.20f), wid = R(2, 0.88f, 1.14f);
+        m.Add(SweepPath({{0,0,0}, {0.01f,0.45f*ht,0.0f}, {0.02f,0.9f*ht,0.0f}},
                         0.11f, 8, true, 0.05f), {0,0,0}, {1,1,1}, &bark);
-        m.Add(Cone(0.5f, 1.0f, 12), {0.00f, 0.95f, 0.0f}, {1.25f, 0.85f, 1.25f}, &leafA);
-        m.Add(Cone(0.5f, 1.0f, 12), {0.01f, 1.35f, 0.0f}, {1.00f, 0.85f, 1.00f}, &leafB);
-        m.Add(Cone(0.5f, 1.0f, 12), {0.00f, 1.75f, 0.0f}, {0.75f, 0.85f, 0.75f}, &leafA);
-        m.Add(Cone(0.5f, 1.0f, 10), {-0.01f, 2.12f, 0.0f}, {0.48f, 0.80f, 0.48f}, &leafB);
-        m.MottleFaceColors(0.08f, 3);
+        float y = 0.95f * ht;
+        m.Add(Cone(0.5f, 1.0f, 12), {0.00f, y,        0.0f}, {1.25f*wid, 0.85f*ht, 1.25f*wid}, &leafA);
+        m.Add(Cone(0.5f, 1.0f, 12), {0.01f, y+0.40f*ht, 0.0f}, {1.00f*wid, 0.85f*ht, 1.00f*wid}, &leafB);
+        m.Add(Cone(0.5f, 1.0f, 12), {0.00f, y+0.80f*ht, 0.0f}, {0.75f*wid, 0.85f*ht, 0.75f*wid}, &leafA);
+        m.Add(Cone(0.5f, 1.0f, 10), {-0.01f, y+1.17f*ht, 0.0f}, {0.48f*wid, 0.80f*ht, 0.48f*wid}, &leafB);
+        m.MottleFaceColors(0.08f, 3 + variant);
         m.name = "Pine";
         m.ComputeSmoothNormals();
         return m;
     }
     /// A boulder: faceted low-poly lump, mottled stone, flat-shaded. ~0.8 tall.
-    static Mesh Rock() {
+    static Mesh Rock(int variant = 0) {
         Mesh m = Icosphere(0.5f, 2);
-        // Lump it: a smooth pseudo-random field plus per-vertex jitter, squashed.
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        // Lump it: a smooth pseudo-random field (phase-shifted per variant) plus
+        // per-vertex jitter, squashed by a varying amount.
+        float px = R(1, 0.0f, 6.28f), pz = R(2, 0.0f, 6.28f), squash = R(3, 0.54f, 0.72f);
         for (Vec3& v : m.vertices) {
-            float n = std::sin(v.x * 7.3f + 1.1f) * std::cos(v.z * 6.1f + 2.7f)
+            float n = std::sin(v.x * 7.3f + 1.1f + px) * std::cos(v.z * 6.1f + 2.7f + pz)
                     + std::sin(v.y * 5.7f + 0.5f) * 0.5f;
             float s = 1.0f + 0.22f * n;
-            v = {v.x * s, v.y * s * 0.62f, v.z * s};
+            v = {v.x * s, v.y * s * squash, v.z * s};
         }
-        m.JitterVertices({}, 0.035f, 11);
+        m.JitterVertices({}, 0.035f, 11 + variant);
         m.Decimate(0.14f);                              // collapse to chunky facets
         Vec3 lo, hi; m.Bounds(lo, hi);
         for (Vec3& v : m.vertices) v.y -= lo.y;         // rest on the ground
         m.triColors.assign(m.TriangleCount(), Color::FromBytes(124, 118, 110));
-        m.MottleFaceColors(0.14f, 5);                   // mottled granite shades
+        m.MottleFaceColors(0.14f, 5 + variant);         // mottled granite shades
         m.name = "Rock";
         m.normals.clear();                              // flat facets, not a soft blob
         return m;
     }
     /// A small shrub: a two-tone cluster of jittered leafy blobs, ~0.7 tall.
-    static Mesh Bush() {
+    static Mesh Bush(int variant = 0) {
         Mesh m;
         Color leafA = Color::FromBytes(64, 124, 56);
         Color leafB = Color::FromBytes(84, 142, 64);
-        auto blob = [&](Vec3 at, Vec3 s, const Color& c, int seed) {
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        int js = variant * 100 + 1;
+        auto blob = [&](Vec3 at, Vec3 s, const Color& c, int k) {
+            at.x += R(k*3+10, -0.10f, 0.10f); at.z += R(k*3+12, -0.10f, 0.10f);
+            float sm = R(k+20, 0.85f, 1.18f); s = {s.x*sm, s.y*sm, s.z*sm};
             Mesh b = Icosphere(0.5f, 1);
-            b.JitterVertices({}, 0.05f, seed);
+            b.JitterVertices({}, 0.05f, js + k);
             m.Add(b, at, s, &c);
         };
         blob({0.00f, 0.28f, 0.00f},  {0.92f, 0.78f, 0.92f}, leafA, 1);
@@ -662,7 +689,7 @@ struct Mesh {
         blob({0.28f, 0.22f, -0.14f}, {0.64f, 0.56f, 0.64f}, leafB, 3);
         blob({0.10f, 0.30f, 0.24f},  {0.50f, 0.44f, 0.50f}, leafA, 4);
         blob({-0.12f, 0.32f, -0.22f},{0.46f, 0.42f, 0.46f}, leafA, 5);
-        m.MottleFaceColors(0.09f, 9);
+        m.MottleFaceColors(0.09f, 9 + variant);
         m.name = "Bush";
         m.ComputeSmoothNormals();
         return m;
@@ -877,6 +904,25 @@ struct Mesh {
         m.name = "Tower";
         m.normals.clear();
         return m;
+    }
+
+    /// True if this named prop supports procedural variants (FromNameSeeded).
+    static bool NameHasVariants(const std::string& n) {
+        return n == "Tree" || n == "Pine" || n == "Rock" || n == "Bush";
+    }
+
+    /// Like FromName, but for the nature props that support it, `variant` picks a
+    /// procedurally-varied version (0 = the canonical base model). Used so a
+    /// scattered forest isn't hundreds of identical clones; the variant is stored
+    /// per object and regenerates the exact same shape on load.
+    static Mesh FromNameSeeded(const std::string& n, int variant) {
+        if (variant != 0) {
+            if (n == "Tree") return Tree(variant);
+            if (n == "Pine") return Pine(variant);
+            if (n == "Rock") return Rock(variant);
+            if (n == "Bush") return Bush(variant);
+        }
+        return FromName(n);
     }
 
     /// Recreate a primitive mesh from its name.

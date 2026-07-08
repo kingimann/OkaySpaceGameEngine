@@ -18,7 +18,12 @@ menu + F3 search). Type in the filter box to narrow it, or expand a category:
 - **Nature** — ready-made, pre-colored props: Tree, Pine, Palm Tree, Dead
   Tree, Bush, Rock, Mushroom, Cactus, Crystal. Built from the primitives +
   path-sweeping + color mottling, so they read as real materials, not flat
-  plastic, and they scatter over terrain (Terrain tab → Scatter).
+  plastic, and they scatter over terrain (Terrain tab → Scatter). Tree,
+  Pine, Rock and Bush support **procedural variants**: the Shape tab shows a
+  **Variant** stepper + **Randomize** (0 = the base model), and the terrain
+  Scatter tool gives every instance its own variant, so a forest is a crowd
+  of distinct shapes rather than identical clones. A variant is stored as a
+  single number per object and regenerates the exact shape on load.
 - **Props** — Barrel, Crate, Fence, Well, Street Lamp.
 - **Structures** — House, Tower.
 

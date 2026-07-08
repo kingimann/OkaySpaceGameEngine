@@ -3259,18 +3259,37 @@ void DrawStatusBar(EditorState& ed) {
     } else {
         ImGui::TextDisabled("No selection");
     }
-    // Right cluster: object count · tool (click to cycle) · mode · FPS, right-aligned.
+    // Right cluster: warnings/errors · object count · tool (click to cycle) · mode ·
+    // FPS, right-aligned. The console badges only appear when there's something to see.
     ImGuiStyle& st = ImGui::GetStyle();
-    char c1[32], c3[24];
+    char c1[32], c3[24], cw[16] = "", ce[16] = "";
     std::snprintf(c1, sizeof(c1), "%d objects", (int)ed.scene().Objects().size());
     std::snprintf(c3, sizeof(c3), "%.0f FPS", ImGui::GetIO().Framerate);
+    if (g_consoleCounts[1] > 0) std::snprintf(cw, sizeof(cw), "! %d", g_consoleCounts[1]);
+    if (g_consoleCounts[2] > 0) std::snprintf(ce, sizeof(ce), "x %d", g_consoleCounts[2]);
     const char* toolName = g_tool == Tool::Move ? "Move" : g_tool == Tool::Rotate ? "Rotate" : "Scale";
     const char* mode = ed.isPlaying() ? "PLAY" : "EDIT";
     const float gap = 16.0f;
     float wTool = ImGui::CalcTextSize(toolName).x + st.FramePadding.x * 2.0f;
     float total = ImGui::CalcTextSize(c1).x + gap + wTool + gap +
                   ImGui::CalcTextSize(mode).x + gap + ImGui::CalcTextSize(c3).x;
+    if (cw[0]) total += ImGui::CalcTextSize(cw).x + st.FramePadding.x * 2.0f + gap;
+    if (ce[0]) total += ImGui::CalcTextSize(ce).x + st.FramePadding.x * 2.0f + gap;
     ImGui::SameLine(ImGui::GetWindowWidth() - total - 14.0f);
+    if (cw[0]) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1.0f));
+        if (flatBtn(cw)) { g_showConsole = true; ImGui::SetWindowFocus("Console"); }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Warnings in the Console — click to open");
+        ImGui::SameLine(0, gap);
+    }
+    if (ce[0]) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.45f, 0.42f, 1.0f));
+        if (flatBtn(ce)) { g_showConsole = true; ImGui::SetWindowFocus("Console"); }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Errors in the Console — click to open");
+        ImGui::SameLine(0, gap);
+    }
     ImGui::TextDisabled("%s", c1);
     ImGui::SameLine(0, gap);
     if (flatBtn(toolName)) g_tool = (Tool)(((int)g_tool + 1) % 3);   // cycle Move→Rotate→Scale
@@ -3395,6 +3414,15 @@ void DrawConsole() {
     if (ImGui::Begin("Console", &g_showConsole)) {
         if (ImGui::Button("Clear")) { ConsoleClear(); selected = -1; }
         ImGui::SameLine();
+        if (ImGui::Button("Save")) {   // dump the whole log to a file beside the exe
+            std::ofstream lf("console_log.txt");
+            for (const auto& e : g_console)
+                lf << (e.level == 2 ? "[x] " : e.level == 1 ? "[!] " : "[i] ")
+                   << e.time << "  " << e.text << "\n";
+            ConsoleLog("Console saved to console_log.txt");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the full log to console_log.txt");
+        ImGui::SameLine();
         ImGui::Checkbox("Collapse", &collapse);
         ImGui::SameLine();
         ImGui::Checkbox("Clear on Play", &g_clearConsoleOnPlay);
@@ -3463,6 +3491,28 @@ void DrawConsole() {
             if (mergedCount[row] > 1) label += "  (" + std::to_string(mergedCount[row]) + ")";
             label += "##c" + std::to_string(i);
             if (ImGui::Selectable(label.c_str(), selected == i)) selected = i;
+            // Right-click an entry: copy it (or everything currently visible).
+            if (ImGui::BeginPopupContextItem()) {
+                selected = i;
+                if (ImGui::MenuItem("Copy Entry"))
+                    ImGui::SetClipboardText((e.time + "  " + e.text).c_str());
+                if (ImGui::MenuItem("Copy All Visible")) {
+                    std::string all;
+                    for (std::size_t r2 = 0; r2 < order.size(); ++r2) {
+                        const ConsoleEntry& e2 = g_console[order[r2]];
+                        if (!levelShow[e2.level]) continue;
+                        if (!needle.empty()) {
+                            std::string lo = e2.text;
+                            for (auto& ch : lo) ch = (char)std::tolower((unsigned char)ch);
+                            if (lo.find(needle) == std::string::npos) continue;
+                        }
+                        all += (e2.level == 2 ? "[x] " : e2.level == 1 ? "[!] " : "[i] ");
+                        all += e2.time + "  " + e2.text + "\n";
+                    }
+                    ImGui::SetClipboardText(all.c_str());
+                }
+                ImGui::EndPopup();
+            }
             // A severity color-bar down the left edge, plus a faint row wash for
             // warnings/errors so they stand out when scanning a busy log.
             ImVec2 rmn = ImGui::GetItemRectMin(), rmx = ImGui::GetItemRectMax();
@@ -3486,6 +3536,8 @@ void DrawConsole() {
             ImGui::TextWrapped("%s", e.text.c_str());
             ImGui::PopStyleColor();
             ImGui::TextDisabled("%s at %s", e.level == 2 ? "Error" : e.level == 1 ? "Warning" : "Info", e.time.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Copy##cdet")) ImGui::SetClipboardText(e.text.c_str());
         } else {
             ImGui::TextDisabled("Select a log entry to see details.");
         }
@@ -3622,7 +3674,7 @@ std::vector<std::string> g_favFolders;
 
 // Project-panel view preferences + favorites, persisted beside the working dir
 // (same convention as okay_recent.txt) so they survive editor restarts.
-static int   g_projFilter = 0;      // 0 All,1 Scripts,2 Images,3 Scenes,4 Materials,5 Prefabs,6 Data,7 Audio
+static int   g_projFilter = 0;      // 0 All,1 Scripts,2 Images,3 Scenes,4 Materials,5 Prefabs,6 Data,7 Audio,8 Models
 static int   g_projSort   = 0;      // 0 Name, 1 Type, 2 Size, 3 Date
 static int   g_projView   = 0;      // 0 grid (tiles), 1 list (rows)
 static float g_projCell   = 76.0f;  // grid tile size
@@ -3642,7 +3694,7 @@ static void LoadProjectViewPrefs() {
                 g_favFolders.push_back(p);
         } else {
             int v = 0; if (!(f >> v)) break;
-            if      (k == "filter") g_projFilter = v < 0 ? 0 : (v > 7 ? 0 : v);
+            if      (k == "filter") g_projFilter = v < 0 ? 0 : (v > 8 ? 0 : v);
             else if (k == "sort")   g_projSort   = v < 0 ? 0 : (v > 3 ? 0 : v);
             else if (k == "view")   g_projView   = v != 0 ? 1 : 0;
             else if (k == "cell")   g_projCell   = v < 48 ? 48.0f : (v > 128 ? 128.0f : (float)v);
@@ -3820,7 +3872,41 @@ void DrawProject(EditorState& ed) {
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
-    // ---- Top bar: breadcrumb + search --------------------------------
+    // ---- Top bar: back/forward + breadcrumb + search ------------------
+    // Folder history (browser-style): every navigation pushes the previous folder
+    // onto the back stack; Back/Forward walk it without creating new history.
+    static std::vector<std::string> s_navBack, s_navFwd;
+    static std::string s_navLast;          // dirBuf as of last frame
+    static bool s_navSuppress = false;     // this frame's change came from Back/Forward
+    {
+        std::string cur(dirBuf);
+        if (s_navLast.empty()) s_navLast = cur;
+        if (cur != s_navLast) {
+            if (!s_navSuppress) { s_navBack.push_back(s_navLast); s_navFwd.clear(); }
+            s_navLast = cur;
+        }
+        s_navSuppress = false;
+    }
+    ImGui::BeginDisabled(s_navBack.empty());
+    if (ImGui::SmallButton("<##navb")) {
+        s_navFwd.push_back(dirBuf);
+        std::strncpy(dirBuf, s_navBack.back().c_str(), sizeof(dirBuf) - 1);
+        s_navBack.pop_back();
+        s_navSuppress = true; s_navLast = dirBuf;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back");
+    ImGui::SameLine(0, 2);
+    ImGui::BeginDisabled(s_navFwd.empty());
+    if (ImGui::SmallButton(">##navf")) {
+        s_navBack.push_back(dirBuf);
+        std::strncpy(dirBuf, s_navFwd.back().c_str(), sizeof(dirBuf) - 1);
+        s_navFwd.pop_back();
+        s_navSuppress = true; s_navLast = dirBuf;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forward");
+    ImGui::SameLine();
     if (ImGui::SmallButton("Assets")) std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
     {   // breadcrumb of folders between root and the current dir
         fs::path rel = fs::relative(dir, root, ec);
@@ -3984,7 +4070,7 @@ void DrawProject(EditorState& ed) {
     float& s_cell   = g_projCell;
     bool prefsChanged = false;
     ImGui::SetNextItemWidth(110);
-    prefsChanged |= ImGui::Combo("##filter", &s_filter, "All\0Scripts\0Images\0Scenes\0Materials\0Prefabs\0Data\0Audio\0");
+    prefsChanged |= ImGui::Combo("##filter", &s_filter, "All\0Scripts\0Images\0Scenes\0Materials\0Prefabs\0Data\0Audio\0Models\0");
     ImGui::SameLine(); ImGui::SetNextItemWidth(110);
     prefsChanged |= ImGui::Combo("##sort", &s_sort, "Name\0Type\0Size\0Date\0");
     ImGui::SameLine();
@@ -4016,13 +4102,25 @@ void DrawProject(EditorState& ed) {
             case 5: return ext==".okayprefab";
             case 6: return ext==".okaydata";
             case 7: return ext==".wav";
+            case 8: { const char* k = ImportKindLabel(ext); return k && std::strcmp(k, "model") == 0; }
         }
         return true;
     };
 
     std::vector<fs::directory_entry> entries;
-    if (fs::is_directory(dir, ec))
-        for (auto& e : fs::directory_iterator(dir, ec)) entries.push_back(e);
+    if (fs::is_directory(dir, ec)) {
+        if (search[0] == '\0') {
+            for (auto& e : fs::directory_iterator(dir, ec)) entries.push_back(e);
+        } else {
+            // A search term looks through THIS FOLDER AND EVERYTHING BELOW it
+            // (Unity-style), capped so a giant tree can't stall the frame.
+            for (auto& e : fs::recursive_directory_iterator(
+                     dir, fs::directory_options::skip_permission_denied, ec)) {
+                entries.push_back(e);
+                if (entries.size() >= 4000) break;
+            }
+        }
+    }
     std::sort(entries.begin(), entries.end(), [&](const fs::directory_entry& a, const fs::directory_entry& b) {
         bool da = a.is_directory(), db = b.is_directory();
         if (da != db) return da;     // folders first
@@ -4164,6 +4262,16 @@ void DrawProject(EditorState& ed) {
             OpenScriptFileInEditor(full);    // edit in the in-app Script Editor
         } else if (ext == ".okayvs") {
             extide::OpenExternal(full);
+        } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
+            // Double-click a model: import it into the scene (hierarchy, textures,
+            // rig + clips, size normalization — same path as drag-drop).
+            ed.PushUndo();
+            bool okm = false;
+            if (GameObject* r = okay::ImportModelScene(ed.scene(), full, &okm); r && okm) {
+                r->transform->SetPosition(ed.camTarget);
+                ed.Select(r); ed.dirty = true;
+                ConsoleLog("Imported " + full);
+            } else ConsoleLog("Model import failed: " + full, 2);
         }
     };
 
@@ -9059,6 +9167,8 @@ void DrawHierarchy(EditorState& ed) {
         std::stable_sort(roots.begin(), roots.end(), [](GameObject* a, GameObject* b) {
             return a->sourceScene < b->sourceScene;   // "" (main) sorts first; groups stay contiguous
         });
+    int hierRow = 0;                        // visible-row counter for the zebra striping
+    std::vector<GameObject*> visRows;       // visible rows in draw order (arrow-key nav)
     std::string curSceneSection = "\x01";   // sentinel distinct from any real value (incl. "")
     for (GameObject* go : roots) {
         if (anyMerged && go->sourceScene != curSceneSection) {
@@ -9075,7 +9185,6 @@ void DrawHierarchy(EditorState& ed) {
             ImGui::PopStyleColor();
             ImGui::Separator();
         }
-        int hierRow = 0;   // visible-row counter for the zebra striping
         std::function<void(GameObject*)> drawNode = [&](GameObject* node) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                                        ImGuiTreeNodeFlags_DefaultOpen |
@@ -9088,6 +9197,7 @@ void DrawHierarchy(EditorState& ed) {
             // Unity dims inactive objects; grey the whole row (and its subtree label).
             bool dim = !node->active;
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+            visRows.push_back(node);   // for arrow-key navigation, in draw order
             // Zebra striping: a whisper-faint band on every other row keeps deep
             // hierarchies scannable (the count is per visible row, top to bottom).
             {
@@ -9138,7 +9248,12 @@ void DrawHierarchy(EditorState& ed) {
             // it as a sibling (above/below), or onto the middle to RE-PARENT it.
             if (ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload("GO_PTR", &node, sizeof(GameObject*));
-                ImGui::TextUnformatted(node->name.c_str());
+                // Dragging a row that's part of a multi-selection carries the whole
+                // group (the drop handler expands it) — say so on the drag label.
+                if (ed.IsSelected(node) && ed.MultiSelection().size() > 1)
+                    ImGui::Text("%s  (+%d more)", node->name.c_str(), (int)ed.MultiSelection().size() - 1);
+                else
+                    ImGui::TextUnformatted(node->name.c_str());
                 ImGui::EndDragDropSource();
             }
             if (ImGui::BeginDragDropTarget()) {
@@ -9151,13 +9266,27 @@ void DrawHierarchy(EditorState& ed) {
                 }
                 if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
                     GameObject* dragged = *(GameObject**)p->Data;
-                    bool cycle = false;
-                    for (Transform* t = node->transform; t; t = t->Parent())
-                        if (dragged && t == dragged->transform) { cycle = true; break; }
-                    if (dragged && dragged != node && !cycle) {
-                        ed.PushUndo();
-                        if (ty < 0.30f)      ed.scene().ReorderSibling(dragged, node, /*after=*/false);
-                        else if (ty > 0.70f) ed.scene().ReorderSibling(dragged, node, /*after=*/true);
+                    // Dragging a member of a multi-selection moves the WHOLE selection
+                    // (skipping any whose ancestor is also selected — the parent brings
+                    // its subtree along anyway).
+                    std::vector<GameObject*> moved;
+                    if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) {
+                        for (GameObject* g : ed.MultiSelection()) {
+                            bool covered = false;
+                            for (Transform* t = g && g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
+                                if (t->gameObject && ed.IsSelected(t->gameObject)) { covered = true; break; }
+                            if (g && !covered) moved.push_back(g);
+                        }
+                    } else if (dragged) moved.push_back(dragged);
+                    bool pushed = false;
+                    for (GameObject* mv : moved) {
+                        bool cycle = false;
+                        for (Transform* t = node->transform; t; t = t->Parent())
+                            if (t == mv->transform) { cycle = true; break; }
+                        if (mv == node || cycle) continue;
+                        if (!pushed) { ed.PushUndo(); pushed = true; }
+                        if (ty < 0.30f)      ed.scene().ReorderSibling(mv, node, /*after=*/false);
+                        else if (ty > 0.70f) ed.scene().ReorderSibling(mv, node, /*after=*/true);
                         else {
                             // Re-parent. For a UI widget, its pixel offset is resolved
                             // WITHIN its parent, so a plain re-parent makes it jump on
@@ -9166,13 +9295,13 @@ void DrawHierarchy(EditorState& ed) {
                             float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
                             float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
                             Vec2 oldO, oldSz;
-                            bool wasUI = cw > 1.0f && GetUIScreenRect(dragged, cw, ch, oldO, oldSz);
-                            dragged->transform->SetParent(node->transform, true);
+                            bool wasUI = cw > 1.0f && GetUIScreenRect(mv, cw, ch, oldO, oldSz);
+                            mv->transform->SetParent(node->transform, true);
                             if (wasUI) {
-                                UIRect rr = GetUIRect(dragged);
+                                UIRect rr = GetUIRect(mv);
                                 Vec2 newO, newSz;
-                                if (rr.valid && rr.position && GetUIScreenRect(dragged, cw, ch, newO, newSz)) {
-                                    float sc = UIScaleFor(dragged, cw, ch); if (sc < 1e-3f) sc = 1.0f;
+                                if (rr.valid && rr.position && GetUIScreenRect(mv, cw, ch, newO, newSz)) {
+                                    float sc = UIScaleFor(mv, cw, ch); if (sc < 1e-3f) sc = 1.0f;
                                     rr.position->x += (oldO.x - newO.x) / sc;
                                     rr.position->y += (oldO.y - newO.y) / sc;
                                 }
@@ -9348,6 +9477,27 @@ void DrawHierarchy(EditorState& ed) {
             }
         };
         drawNode(go);
+    }
+    // Up/Down arrows walk the visible rows (Unity-style keyboard navigation).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
+        !ImGui::GetIO().WantTextInput && !visRows.empty() && ed.selected()) {
+        int cur = -1;
+        for (int i = 0; i < (int)visRows.size(); ++i)
+            if (visRows[i] == ed.selected()) { cur = i; break; }
+        if (cur >= 0) {
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && cur + 1 < (int)visRows.size())
+                ed.Select(visRows[cur + 1]);
+            else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && cur > 0)
+                ed.Select(visRows[cur - 1]);
+        }
+    }
+    // Ctrl+A: select every visible object.
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
+        !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl &&
+        ImGui::IsKeyPressed(ImGuiKey_A, false) && !visRows.empty()) {
+        ed.Select(visRows[0]);
+        for (std::size_t i = 1; i < visRows.size(); ++i)
+            if (!ed.IsSelected(visRows[i])) ed.ToggleSelect(visRows[i]);
     }
     // Drop a .okayscene from the Project window onto the empty hierarchy area to MERGE
     // it into the current scene (combine scenes). The Dummy fills the leftover space so
@@ -13746,14 +13896,22 @@ void DrawInspector(EditorState& ed) {
     char nameBuf[128];
     std::strncpy(nameBuf, go->name.c_str(), sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
-    // Leave room on the right for the Static toggle (Unity places it here).
-    float staticW = ImGui::CalcTextSize("Static").x + ImGui::GetFrameHeight() +
-                    ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x;
+    // Leave room on the right for the Static + Lock toggles (Unity places them here).
+    float staticW = ImGui::CalcTextSize("Static").x + ImGui::CalcTextSize("Lock").x +
+                    ImGui::GetFrameHeight() * 2.0f +
+                    (ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x) * 2.0f;
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - staticW);
     if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
     ImGui::SameLine();
     if (ImGui::Checkbox("Static", &go->isStatic)) ed.dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Marks the object as non-moving (saved with the scene)");
+    ImGui::SameLine();
+    {
+        bool lk = go->editorLocked;
+        if (ImGui::Checkbox("Lock", &lk)) { ed.PushUndo(); SetLockedRecursive(go, lk); ed.dirty = true; }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Locked objects (and children) can't be click-selected in the Scene view");
+    }
 
     // Row 2: Tag dropdown (Unity-style presets + your own custom tags) + Save-as-Prefab.
     // Built-in presets, then any project-wide custom tags (persisted in project.okayproj),
@@ -13983,10 +14141,20 @@ void DrawInspector(EditorState& ed) {
     }
     if (tfOpen) {
         Transform* t = go->transform;
+        // With several objects selected, edits apply the same value to ALL of them
+        // (Unity's multi-object editing for the common case).
+        const bool multi = ed.MultiSelection().size() > 1;
+        auto others = [&](auto&& apply) {
+            if (!multi) return;
+            for (GameObject* g : ed.MultiSelection())
+                if (g && g != go && g->transform) apply(g);
+        };
+        if (multi) ImGui::TextDisabled("(editing %d selected objects)", (int)ed.MultiSelection().size());
         bool act = false;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};
         if (DragVec3Axis("Position", pos, 0.05f, "%.3f", &act)) {
             t->localPosition = {pos[0], pos[1], pos[2]}; ed.dirty = true;
+            others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
         }
         if (act) ed.PushUndo();
         Vec3& e = g_euler[go];
@@ -14002,6 +14170,7 @@ void DrawInspector(EditorState& ed) {
         if (DragVec3Axis("Rotation", rot, 1.0f, "%.2f", &act)) {
             e = {rot[0], rot[1], rot[2]};
             t->localRotation = Quat::Euler(e); ed.dirty = true;
+            others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
         }
         if (act) ed.PushUndo();
         // Cameras aren't scalable (scaling warps the view); show it read-only.
@@ -14010,6 +14179,7 @@ void DrawInspector(EditorState& ed) {
         if (isCam) ImGui::BeginDisabled();
         if (DragVec3Axis("Scale", scl, 0.05f, "%.3f", &act)) {
             t->localScale = {scl[0], scl[1], scl[2]}; ed.dirty = true;
+            others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
         }
         if (act) ed.PushUndo();
         if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
@@ -14166,6 +14336,11 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* mr = dynamic_cast<MeshRenderer*>(curComp)) {
         if (CompHeader("Mesh Renderer", mr, &toRemove)) {
+            if (!mr->mesh.vertices.empty())
+                ImGui::TextDisabled("%d verts  \xE2\x80\xA2  %d tris%s",
+                                    (int)mr->mesh.vertices.size(),
+                                    (int)mr->mesh.triangles.size() / 3,
+                                    mr->mesh.uvs.empty() ? "" : "  \xE2\x80\xA2  UVs");
             float col[4] = {mr->color.r, mr->color.g, mr->color.b, mr->color.a};
             if (ImGui::ColorEdit4("Color##mesh", col)) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;

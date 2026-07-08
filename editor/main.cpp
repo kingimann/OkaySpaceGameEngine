@@ -3619,6 +3619,37 @@ std::string g_assetImportDir;
 // Unity's "Favorites" for one-click jumps to folders you use a lot. Session-lived
 // (reset on restart), keyed by absolute path.
 std::vector<std::string> g_favFolders;
+
+// Project-panel view preferences + favorites, persisted beside the working dir
+// (same convention as okay_recent.txt) so they survive editor restarts.
+static int   g_projFilter = 0;      // 0 All,1 Scripts,2 Images,3 Scenes,4 Materials,5 Prefabs,6 Data,7 Audio
+static int   g_projSort   = 0;      // 0 Name, 1 Type, 2 Size, 3 Date
+static int   g_projView   = 0;      // 0 grid (tiles), 1 list (rows)
+static float g_projCell   = 76.0f;  // grid tile size
+static void SaveProjectViewPrefs() {
+    std::ofstream f("okay_projectview.txt");
+    f << "filter " << g_projFilter << "\nsort " << g_projSort
+      << "\nview " << g_projView << "\ncell " << (int)g_projCell << "\n";
+    for (const auto& p : g_favFolders) f << "fav " << p << "\n";
+}
+static void LoadProjectViewPrefs() {
+    std::ifstream f("okay_projectview.txt");
+    std::string k;
+    while (f >> k) {
+        if (k == "fav") {   // rest of the line: a path (may contain spaces)
+            std::string p; std::getline(f >> std::ws, p);
+            if (!p.empty() && std::find(g_favFolders.begin(), g_favFolders.end(), p) == g_favFolders.end())
+                g_favFolders.push_back(p);
+        } else {
+            int v = 0; if (!(f >> v)) break;
+            if      (k == "filter") g_projFilter = v < 0 ? 0 : (v > 7 ? 0 : v);
+            else if (k == "sort")   g_projSort   = v < 0 ? 0 : (v > 3 ? 0 : v);
+            else if (k == "view")   g_projView   = v != 0 ? 1 : 0;
+            else if (k == "cell")   g_projCell   = v < 48 ? 48.0f : (v > 128 ? 128.0f : (float)v);
+        }
+    }
+}
+
 static bool IsFavFolder(const std::string& p) {
     return std::find(g_favFolders.begin(), g_favFolders.end(), p) != g_favFolders.end();
 }
@@ -3626,6 +3657,7 @@ static void ToggleFavFolder(const std::string& p) {
     auto it = std::find(g_favFolders.begin(), g_favFolders.end(), p);
     if (it != g_favFolders.end()) g_favFolders.erase(it);
     else                          g_favFolders.push_back(p);
+    SaveProjectViewPrefs();
 }
 
 // A friendly category for a file extension, for import logging / quick validation.
@@ -3770,6 +3802,9 @@ void DrawProject(EditorState& ed) {
     static std::set<std::string> s_multi;  // extra Ctrl-clicked items (multi-select)
     static std::string lastProject;     // re-home the browser when a project opens
     if (!ImGui::Begin("Project", &g_showProject)) { ImGui::End(); return; }
+    // Persisted view prefs + favorites — load once, before anything reads them.
+    static bool s_prefsLoaded = false;
+    if (!s_prefsLoaded) { LoadProjectViewPrefs(); s_prefsLoaded = true; }
     // Roomier spacing for the Project panel (it was too compact).
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(8, 8));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 5));
@@ -3942,21 +3977,25 @@ void DrawProject(EditorState& ed) {
     ImGui::TextDisabled("(F2 or right-click to Rename)");
 
     // ---- View options: type filter, sort, view mode, thumbnail size ----------
-    static int   s_filter = 0;   // 0 All,1 Scripts,2 Images,3 Scenes,4 Materials,5 Prefabs,6 Data,7 Audio
-    static int   s_sort   = 0;   // 0 Name, 1 Type, 2 Size, 3 Date
-    static int   s_view   = 0;   // 0 grid (tiles), 1 list (rows)
-    static float s_cell   = 76.0f;
+    // Persisted across restarts (with the favorites) in okay_projectview.txt.
+    int&   s_filter = g_projFilter;
+    int&   s_sort   = g_projSort;
+    int&   s_view   = g_projView;
+    float& s_cell   = g_projCell;
+    bool prefsChanged = false;
     ImGui::SetNextItemWidth(110);
-    ImGui::Combo("##filter", &s_filter, "All\0Scripts\0Images\0Scenes\0Materials\0Prefabs\0Data\0Audio\0");
+    prefsChanged |= ImGui::Combo("##filter", &s_filter, "All\0Scripts\0Images\0Scenes\0Materials\0Prefabs\0Data\0Audio\0");
     ImGui::SameLine(); ImGui::SetNextItemWidth(110);
-    ImGui::Combo("##sort", &s_sort, "Name\0Type\0Size\0Date\0");
+    prefsChanged |= ImGui::Combo("##sort", &s_sort, "Name\0Type\0Size\0Date\0");
     ImGui::SameLine();
-    if (ImGui::SmallButton(s_view == 0 ? "List view" : "Grid view")) s_view ^= 1;
+    if (ImGui::SmallButton(s_view == 0 ? "List view" : "Grid view")) { s_view ^= 1; prefsChanged = true; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch between tile grid and detail list");
     if (s_view == 0) {   // tile size only matters for the grid
         ImGui::SameLine(); ImGui::SetNextItemWidth(100);
         ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
+        prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();   // save once, after the drag
     }
+    if (prefsChanged) SaveProjectViewPrefs();
     ImGui::Separator();
 
     // Reserve room at the bottom for the selected-asset details strip and scroll
@@ -4020,11 +4059,11 @@ void DrawProject(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.06f));
         auto arrow = [&](int id) { return s_sort == id ? " v" : ""; };
-        if (ImGui::SmallButton((std::string("Name") + arrow(0) + "##hName").c_str())) s_sort = 0;
+        if (ImGui::SmallButton((std::string("Name") + arrow(0) + "##hName").c_str())) { s_sort = 0; SaveProjectViewPrefs(); }
         ImGui::SameLine(hx0 + typeOff);
-        if (ImGui::SmallButton((std::string("Type") + arrow(1) + "##hType").c_str())) s_sort = 1;
+        if (ImGui::SmallButton((std::string("Type") + arrow(1) + "##hType").c_str())) { s_sort = 1; SaveProjectViewPrefs(); }
         ImGui::SameLine(hx0 + sizeOff);
-        if (ImGui::SmallButton((std::string("Size") + arrow(2) + "##hSize").c_str())) s_sort = 2;
+        if (ImGui::SmallButton((std::string("Size") + arrow(2) + "##hSize").c_str())) { s_sort = 2; SaveProjectViewPrefs(); }
         ImGui::PopStyleColor(2);
         ImGui::Separator();
     }
@@ -8636,12 +8675,32 @@ void DrawNewProjectPopup(EditorState& ed) {
         auto finishProject = [&]() {
             namespace fs = std::filesystem;
             std::string name = nameBuf[0] ? nameBuf : "MyGame";
-            fs::path root = fs::path(locBuf[0] ? locBuf : ".") / name;
             std::error_code ec;
+            // Every project gets its OWN folder. The default name is always
+            // "MyGame", so blindly reusing <Location>/<Name> would silently adopt
+            // a previous project's whole Assets tree — pick a fresh sibling
+            // (MyGame-2, MyGame-3, ...) when the folder is already a used project.
+            fs::path base = fs::path(locBuf[0] ? locBuf : ".");
+            fs::path root = base / name;
+            auto looksUsed = [&](const fs::path& r) {
+                if (!fs::exists(r, ec)) return false;
+                if (!fs::is_directory(r, ec)) return true;              // a file is in the way
+                fs::path assets = r / "Assets";
+                if (!fs::exists(assets, ec)) return !fs::is_empty(r, ec); // non-project clutter
+                return !fs::is_empty(assets, ec);                        // a project with files
+            };
+            std::string finalName = name;
+            for (int n = 2; looksUsed(root) && n < 1000; ++n) {
+                finalName = name + "-" + std::to_string(n);
+                root = base / finalName;
+            }
             fs::create_directories(root / "Assets", ec);
             if (ec) { ConsoleLog("Could not create project folder: " + ec.message()); return; }
+            if (finalName != name)
+                ConsoleLog("'" + name + "' already has a project in it — created '" + finalName + "' instead.");
             ed.setProjectDir(root.string());
-            std::string sp = (root / "Assets" / (name + ".okayscene")).string();
+            g_project = ProjectSettings{};   // per-project settings must not leak across projects
+            std::string sp = (root / "Assets" / (finalName + ".okayscene")).string();
             if (ed.Save(sp)) ConsoleLog("Created project at " + root.string());
             else ConsoleLog("Project folder made, but saving the scene failed.");
             ImGui::CloseCurrentPopup();
@@ -8853,6 +8912,22 @@ static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
     }
 }
 
+// The eye (active) toggle hotspot at a Hierarchy row's right edge. Width of the
+// zone the row-click handler treats as "toggle active" instead of "select".
+static constexpr float kHierEyeW = 20.0f;
+
+// Unity-style visibility eye at the row's far right: open when active, struck
+// through when off. Draw-list only — the row's own click handler owns the input.
+static void HierEye(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float cx = rowMax.x - kHierEyeW * 0.5f, cy = (rowMin.y + rowMax.y) * 0.5f;
+    ImU32 col = go->active ? IM_COL32(190, 195, 205, 200) : IM_COL32(120, 124, 132, 160);
+    dl->AddCircle(ImVec2(cx, cy), 4.5f, col, 0, 1.5f);
+    dl->AddCircleFilled(ImVec2(cx, cy), 1.8f, col);
+    if (!go->active)
+        dl->AddLine(ImVec2(cx - 6.0f, cy + 5.0f), ImVec2(cx + 6.0f, cy - 5.0f), col, 1.5f);
+}
+
 // Set a GameObject and its whole subtree active/inactive, so toggling a parent in
 // the Hierarchy takes its children with it (Unity's active-in-hierarchy feel).
 static void SetActiveRecursive(GameObject* go, bool on) {
@@ -8979,6 +9054,7 @@ void DrawHierarchy(EditorState& ed) {
             ImGui::PopStyleColor();
             ImGui::Separator();
         }
+        int hierRow = 0;   // visible-row counter for the zebra striping
         std::function<void(GameObject*)> drawNode = [&](GameObject* node) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                                        ImGuiTreeNodeFlags_DefaultOpen |
@@ -8991,6 +9067,16 @@ void DrawHierarchy(EditorState& ed) {
             // Unity dims inactive objects; grey the whole row (and its subtree label).
             bool dim = !node->active;
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+            // Zebra striping: a whisper-faint band on every other row keeps deep
+            // hierarchies scannable (the count is per visible row, top to bottom).
+            {
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                if ((hierRow++ & 1) != 0)
+                    ImGui::GetWindowDrawList()->AddRectFilled(
+                        ImVec2(ImGui::GetWindowPos().x, p.y),
+                        ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), p.y + ImGui::GetFrameHeight()),
+                        IM_COL32(255, 255, 255, 5));
+            }
             // Show a child count on parents (Unity-style), plus an (off) marker.
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
             bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s%s", ObjectKind(node),
@@ -9002,10 +9088,20 @@ void DrawHierarchy(EditorState& ed) {
             if (ed.IsSelected(node))
                 ImGui::GetWindowDrawList()->AddRectFilled(
                     rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
-            HierComponentBadges(node, rowMin, rowMax);
+            HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW, rowMax.y));
+            HierEye(node, rowMin, rowMax);
+            bool inEye = ImGui::GetIO().MousePos.x >= rowMax.x - kHierEyeW &&
+                         ImGui::GetIO().MousePos.x <= rowMax.x;
+            if (ImGui::IsItemHovered() && inEye)
+                ImGui::SetTooltip(node->active ? "Hide (deactivate) this object and its children"
+                                               : "Show (activate) this object and its children");
             if (ImGui::IsItemClicked()) {
-                if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
-                else ed.Select(node);                                // single select
+                if (inEye) {   // the eye hotspot toggles active instead of selecting
+                    ed.PushUndo();
+                    SetActiveRecursive(node, !node->active);
+                    ed.dirty = true;
+                } else if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
+                else ed.Select(node);                                       // single select
             }
             // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
             // it as a sibling (above/below), or onto the middle to RE-PARENT it.
@@ -9091,8 +9187,8 @@ void DrawHierarchy(EditorState& ed) {
                 }
                 ImGui::EndDragDropTarget();
             }
-            // Double-click a row to rename it inline.
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            // Double-click a row to rename it inline (not on the eye toggle).
+            if (ImGui::IsItemHovered() && !inEye && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 g_hierRename = node; g_hierRenameOpen = true;
                 std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                 g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
@@ -9332,6 +9428,14 @@ void DrawHierarchy(EditorState& ed) {
             }
         }
         ImGui::EndDragDropTarget();
+    }
+
+    // F2 renames the selected object (the context menu has advertised this all along).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
+        ImGui::IsKeyPressed(ImGuiKey_F2, false) && ed.selected()) {
+        g_hierRename = ed.selected(); g_hierRenameOpen = true;
+        std::strncpy(g_hierRenameBuf, ed.selected()->name.c_str(), sizeof(g_hierRenameBuf) - 1);
+        g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
     }
 
     // Inline rename modal (double-click a row or context-menu Rename).
@@ -10607,6 +10711,139 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go) {
     ImGui::Separator();
 }
 
+// Evaluate a clip at `time` and write the pose onto a Transform. Mirrors
+// Animator::ApplyAt (keep in sync) so the edit-mode preview matches what the
+// runtime plays: quaternion tracks first, euler fallback, loop wrapping.
+static void ApplyClipToTransform(const AnimationClip& clip, Transform* tr, float time, bool loop) {
+    float len = clip.Length();
+    float t = time;
+    if ((loop || clip.loop) && len > 0.0f) t = std::fmod(std::fmod(time, len) + len, len);
+    else if (len > 0.0f) t = Mathf::Clamp(time, 0.0f, len);
+    Vec3 pos = tr->localPosition, scl = tr->localScale;
+    bool f; float v;
+    v = clip.Evaluate("position.x", t, f); if (f) pos.x = v;
+    v = clip.Evaluate("position.y", t, f); if (f) pos.y = v;
+    v = clip.Evaluate("position.z", t, f); if (f) pos.z = v;
+    v = clip.Evaluate("scale.x", t, f);    if (f) scl.x = v;
+    v = clip.Evaluate("scale.y", t, f);    if (f) scl.y = v;
+    v = clip.Evaluate("scale.z", t, f);    if (f) scl.z = v;
+    tr->localPosition = pos;
+    tr->localScale = scl;
+    bool qx, qy, qz, qw;
+    float vqx = clip.Evaluate("rotation.qx", t, qx);
+    float vqy = clip.Evaluate("rotation.qy", t, qy);
+    float vqz = clip.Evaluate("rotation.qz", t, qz);
+    float vqw = clip.Evaluate("rotation.qw", t, qw);
+    if (qx || qy || qz || qw) {
+        float ln = std::sqrt(vqx*vqx + vqy*vqy + vqz*vqz + vqw*vqw);
+        if (ln < 1e-8f) { vqw = 1.0f; ln = 1.0f; }
+        tr->localRotation = Quat{vqx/ln, vqy/ln, vqz/ln, vqw/ln};
+    } else {
+        bool fx, fy, fz;
+        float rx = clip.Evaluate("rotation.x", t, fx);
+        float ry = clip.Evaluate("rotation.y", t, fy);
+        float rz = clip.Evaluate("rotation.z", t, fz);
+        if (fx || fy || fz) tr->localRotation = Quat::Euler(fx ? rx : 0.0f, fy ? ry : 0.0f, fz ? rz : 0.0f);
+    }
+}
+
+// ---- Imported-model clips (ModelAnimator) in the Animation tab -----------------
+// Play/pause/scrub that works in EDIT mode: each frame the model's nodes are posed
+// from the clip, the focused preview renders, then every touched transform is
+// RESTORED — the scene itself is never left mid-pose (nothing to dirty, nothing to
+// fight Play mode or saving). In Play mode the clips run live instead.
+static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
+    static std::unordered_map<void*, float> s_time;
+    static std::unordered_map<void*, bool>  s_run;
+    float& t   = s_time[(void*)ma];
+    bool&  run = s_run[(void*)ma];
+
+    std::vector<std::string> names = ma->ClipNames();
+    if (ma->active < 0 || ma->active >= (int)names.size()) ma->active = 0;
+    const ModelAnimator::Clip& clip = ma->clips[ma->active];
+    float len = 0.0f;
+    for (const auto& nc : clip.nodes) len = std::max(len, nc.clip.Length());
+
+    if (ed.isPlaying()) {
+        // The scene is live: drive the real component, no preview machinery.
+        ImGui::SetNextItemWidth(230);
+        if (ImGui::BeginCombo("Clip##maed", names[ma->active].c_str())) {
+            for (int i = 0; i < (int)names.size(); ++i)
+                if (ImGui::Selectable(names[i].c_str(), i == ma->active)) ma->PlayIndex(i);
+            ImGui::EndCombo();
+        }
+        if (ImGui::Button("Play##maedlive")) ma->PlayIndex(ma->active);
+        ImGui::SameLine(); ImGui::TextDisabled("Play mode — clips run live on the scene.");
+        return;
+    }
+
+    // Advance the preview clock.
+    if (run) {
+        t += ImGui::GetIO().DeltaTime * (ma->speed <= 0.0f ? 1.0f : ma->speed);
+        if (len > 0.0f) {
+            if (ma->loop) t = std::fmod(t, len);
+            else if (t >= len) { t = len; run = false; }
+        }
+    }
+
+    // Resolve the clip's nodes WITHIN this model only (names can repeat across the
+    // scene), and find its skinned meshes so the deform follows the posed skeleton.
+    std::unordered_map<std::string, GameObject*> byName;
+    std::vector<SkinnedMesh*> skins;
+    for (const auto& up : ed.scene().Objects()) {
+        GameObject* g = up.get();
+        if (!g || !g->IsSelfOrDescendantOf(go)) continue;
+        byName.emplace(g->name, g);   // keeps the first on duplicates
+        if (auto* sm = g->GetComponent<SkinnedMesh>()) skins.push_back(sm);
+    }
+
+    // Pose -> skin -> render the preview -> restore.
+    struct SavedTRS { Transform* tr; Vec3 p, s; Quat r; };
+    std::vector<SavedTRS> saved;
+    saved.reserve(clip.nodes.size());
+    for (const auto& nc : clip.nodes) {
+        auto it = byName.find(nc.node);
+        if (it == byName.end() || !it->second->transform) continue;
+        Transform* tr = it->second->transform;
+        saved.push_back({tr, tr->localPosition, tr->localScale, tr->localRotation});
+        ApplyClipToTransform(nc.clip, tr, t, ma->loop);
+    }
+    for (SkinnedMesh* sm : skins) { sm->ResolveJoints(); sm->Skin(); }
+    DrawAnimPreview(ed, go);
+    for (const SavedTRS& s2 : saved) {
+        s2.tr->localPosition = s2.p;
+        s2.tr->localScale    = s2.s;
+        s2.tr->localRotation = s2.r;
+    }
+    for (SkinnedMesh* sm : skins) sm->Skin();   // deform back to the scene pose
+
+    // Clip picker + transport.
+    ImGui::SetNextItemWidth(230);
+    if (ImGui::BeginCombo("Clip##maed", names[ma->active].c_str())) {
+        for (int i = 0; i < (int)names.size(); ++i)
+            if (ImGui::Selectable(names[i].c_str(), i == ma->active)) { ma->active = i; t = 0.0f; ed.dirty = true; }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine(); ImGui::TextDisabled("%d of %d", ma->active + 1, ma->ClipCount());
+
+    if (ImGui::Button(run ? "Pause##maed" : "Play##maed")) run = !run;
+    ImGui::SameLine();
+    if (ImGui::Button("Stop##maed")) { run = false; t = 0.0f; }
+    ImGui::SameLine(); ImGui::Text("len %.2fs", len);
+    ImGui::SameLine(); ImGui::TextDisabled("%d animated node(s)", (int)clip.nodes.size());
+    float tmax = len > 0.05f ? len : 1.0f;
+    if (ImGui::SliderFloat("Time##maed", &t, 0.0f, tmax, "%.2fs")) run = false;
+
+    bool ch = false;
+    ch |= ImGui::Checkbox("Loop##maed", &ma->loop);
+    ImGui::SameLine();
+    ch |= ImGui::Checkbox("Auto-play on start##maed", &ma->autoPlay);
+    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+    ch |= ImGui::DragFloat("Speed##maed", &ma->speed, 0.02f, 0.05f, 5.0f);
+    if (ch) ed.dirty = true;
+    ImGui::TextDisabled("Edit-mode preview — the scene pose isn't touched. Press Play (toolbar) to run it for real.");
+}
+
 static void DrawAnimationEditor(EditorState& ed) {
     if (!g_showAnimation) { StopAnimPreview(); return; }
     if (!ImGui::Begin("Animation", &g_showAnimation)) { ImGui::End(); return; }
@@ -10638,6 +10875,24 @@ static void DrawAnimationEditor(EditorState& ed) {
         ImGui::End(); return;
     }
     StopAnimPreview();
+    // An imported model (FBX/GLB): its clips live on a ModelAnimator on the import
+    // root — resolve it from the selection or any ancestor, so clicking a bone or a
+    // mesh part still lands on the model's animation panel.
+    {
+        ModelAnimator* ma = go->GetComponent<ModelAnimator>();
+        GameObject* maObj = ma ? go : nullptr;
+        if (!ma) {
+            for (Transform* pt = go->transform->Parent(); pt; pt = pt->Parent())
+                if (pt->gameObject)
+                    if (auto* m = pt->gameObject->GetComponent<ModelAnimator>()) {
+                        ma = m; maObj = pt->gameObject; break;
+                    }
+        }
+        if (ma && ma->ClipCount() > 0) {
+            DrawModelAnim(ed, maObj, ma);
+            ImGui::End(); return;
+        }
+    }
     Animator* an = go->GetComponent<Animator>();
     if (!an) {
         ImGui::TextDisabled("'%s' has no Animator.", go->name.c_str());
@@ -12590,6 +12845,13 @@ static bool AcceptAssetPathField(std::string& field) {
 // components (new pointers), which would otherwise reset the headers to open.
 static std::unordered_map<std::string, bool> sCompOpen;
 
+// "Set every component open/closed" request (from the header context menu):
+// -1 = none, 0 = collapse all, 1 = expand all. The request is latched and applied
+// across the NEXT inspector frame so every header gets it exactly once (a menu
+// click lands mid-loop, after some headers have already drawn).
+static int sCompForceRequest = -1;
+static int sCompForceOpen    = -1;
+
 // Deferred component reorder request, applied after the inspector finishes drawing
 // so the component vector isn't mutated mid-iteration.
 static okay::Component* sMoveComp = nullptr;
@@ -12614,7 +12876,9 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     // collapse/expand together. Default open the first time we see an instance.
     char okey[32]; std::snprintf(okey, sizeof(okey), "%p", (void*)comp);
     auto it = sCompOpen.find(okey);
-    ImGui::SetNextItemOpen(it == sCompOpen.end() ? true : it->second, ImGuiCond_Always);
+    bool want = it == sCompOpen.end() ? true : it->second;
+    if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
+    ImGui::SetNextItemOpen(want, ImGuiCond_Always);
     // A disabled component reads dimmed so it's obvious at a glance.
     if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
     bool open = ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_AllowOverlap);
@@ -12633,6 +12897,9 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     if (ImGui::BeginPopupContextItem("##compctx")) {
         if (ImGui::MenuItem("Move Up"))   { sMoveComp = comp; sMoveDelta = -1; }
         if (ImGui::MenuItem("Move Down")) { sMoveComp = comp; sMoveDelta = +1; }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Expand All Components"))   sCompForceRequest = 1;
+        if (ImGui::MenuItem("Collapse All Components")) sCompForceRequest = 0;
         ImGui::Separator();
         if (removable && ImGui::MenuItem("Remove Component")) *toRemove = comp;
         if (!removable) ImGui::TextDisabled("(required component)");
@@ -13626,6 +13893,14 @@ void DrawInspector(EditorState& ed) {
         }
         if (act) ed.PushUndo();
         Vec3& e = g_euler[go];
+        // Keep the displayed euler in sync with the ACTUAL rotation: when the
+        // quaternion changed outside this field (gizmo drag, script, scene load,
+        // undo), reseed the euler from it — otherwise a rotated object reads 0,0,0.
+        {
+            Quat cur = t->localRotation, mine = Quat::Euler(e);
+            float dot = cur.x*mine.x + cur.y*mine.y + cur.z*mine.z + cur.w*mine.w;
+            if (std::fabs(dot) < 0.999999f) e = cur.ToEuler();   // q and -q are the same rotation
+        }
         float rot[3] = {e.x, e.y, e.z};
         if (DragVec3Axis("Rotation", rot, 1.0f, "%.2f", &act)) {
             e = {rot[0], rot[1], rot[2]};
@@ -18775,6 +19050,9 @@ void DrawInspector(EditorState& ed) {
         ed.dirty = true;
     }
     sMoveComp = nullptr;
+    // Promote a pending Expand/Collapse All so it drives every header next frame.
+    sCompForceOpen = sCompForceRequest;
+    sCompForceRequest = -1;
 
     ImGui::Spacing();
     ImGui::Separator();

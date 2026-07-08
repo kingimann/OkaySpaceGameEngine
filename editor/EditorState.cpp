@@ -1,6 +1,7 @@
 #include "EditorState.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
+#include <filesystem>
 
 namespace {
 // Every new 3D primitive ships with a collider fitted to its mesh (Unity-style), so
@@ -478,6 +479,16 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     StopNetwork();
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;
     m_path = path;
+    // Re-home the project to the scene's own project folder (the parent of its
+    // Assets/ dir), so opening another project's scene switches the Project panel
+    // and asset paths over instead of keeping the previous project's files around.
+    {
+        namespace fs = std::filesystem;
+        for (fs::path p = fs::absolute(fs::path(path)).parent_path(); !p.empty(); p = p.parent_path()) {
+            if (p.filename() == "Assets") { m_projectDir = p.parent_path().string(); break; }
+            if (p == p.parent_path()) break;   // reached the filesystem root
+        }
+    }
     Select(nullptr);   // load rebuilt the scene; clear m_multi too (no dangling ptrs)
     dirty = false;
     return true;

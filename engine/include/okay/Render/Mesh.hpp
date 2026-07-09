@@ -2059,6 +2059,44 @@ struct Mesh {
         RefreshNormals();
     }
 
+    /// Move the listed vertices along their own normals by `dist` — Blender's
+    /// Shrink/Fatten (Alt+S): inflate or carve a selected patch without dragging
+    /// an axis. Uses smooth per-vertex normals so the offset follows curvature.
+    void ShrinkFattenVertices(const std::vector<int>& verts, float dist) {
+        if (verts.empty() || std::fabs(dist) < 1e-8f || vertices.empty()) return;
+        std::vector<Vec3> n = Normals();
+        for (int v : verts)
+            if (v >= 0 && v < (int)vertices.size()) vertices[v] += n[v] * dist;
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Reshape the listed vertices toward a sphere around their centroid by
+    /// `amount` in [0,1] (0 = unchanged, 1 = perfectly spherical) — Blender's
+    /// To Sphere (Shift+Alt+S). The sphere radius is the selection's mean distance
+    /// from its centre, so the patch rounds without ballooning.
+    void SphereizeVertices(const std::vector<int>& verts, float amount) {
+        if (verts.empty() || amount <= 0.0f || vertices.empty()) return;
+        float t = amount > 1.0f ? 1.0f : amount;
+        Vec3 c{0, 0, 0}; int n = 0;
+        for (int v : verts) if (v >= 0 && v < (int)vertices.size()) { c += vertices[v]; ++n; }
+        if (n == 0) return;
+        c = c * (1.0f / n);
+        float r = 0.0f;
+        for (int v : verts) if (v >= 0 && v < (int)vertices.size()) r += (vertices[v] - c).Magnitude();
+        r /= (float)n;
+        for (int v : verts) {
+            if (v < 0 || v >= (int)vertices.size()) continue;
+            Vec3 d = vertices[v] - c;
+            float m = d.Magnitude();
+            if (m < 1e-6f) continue;
+            Vec3 onSphere = c + d * (r / m);
+            vertices[v] = vertices[v] + (onSphere - vertices[v]) * t;
+        }
+        name = "";
+        RefreshNormals();
+    }
+
     /// Snap the listed vertices to their shared average coordinate on one axis
     /// (0=X 1=Y 2=Z) — Blender's "flatten" (S+axis+0): level a rim, square a wall.
     void FlattenVertices(const std::vector<int>& verts, int axis) {

@@ -138,6 +138,10 @@ to the first selected vertex (grab one island of a combined mesh), and
   normal — build walls up from a floor plate's rim; the new outer edges
   stay selected so you can keep going).
 - **Snap Sel** quantizes the selected vertices to a grid step.
+- **Shrink/Fatten** moves the selected vertices along their own normals —
+  inflate (+) or carve (-) a patch without dragging an axis (Blender's
+  Alt+S). **To Sphere** rounds the selection toward a sphere around its
+  centre (Blender's Shift+Alt+S; 0 = off, 1 = fully round).
 - Selection tools: **Bevel Sel** chamfers the selected corners (cut back and
   capped flat — knock the sharp corners off a box), **Relax Sel** smooths
   just the selected vertices, **Flatten X/Y/Z** snaps them to their shared

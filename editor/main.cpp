@@ -14508,6 +14508,22 @@ void DrawModeling(EditorState& ed) {
                 ed.PushUndo(); mr->mesh.SmoothVertices(g_meshSelVerts, 0.5f); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian-smooth only the selected vertices (click repeatedly for more).");
+            // Shrink/Fatten along normals (Alt+S) + To Sphere (Shift+Alt+S).
+            static float s_sfDist = 0.1f, s_toSphere = 0.5f;
+            ImGui::SetNextItemWidth(90);
+            ImGui::DragFloat("##sfdist", &s_sfDist, 0.005f, -5.0f, 5.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("Shrink/Fatten##me") && !g_meshSelVerts.empty()) {
+                ed.PushUndo(); mr->mesh.ShrinkFattenVertices(g_meshSelVerts, s_sfDist); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the selected vertices along their own normals — inflate (+) or carve (-) a patch without dragging an axis.");
+            ImGui::SetNextItemWidth(90);
+            ImGui::DragFloat("##tosph", &s_toSphere, 0.01f, 0.0f, 1.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("To Sphere##me") && !g_meshSelVerts.empty()) {
+                ed.PushUndo(); mr->mesh.SphereizeVertices(g_meshSelVerts, s_toSphere); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round the selected vertices toward a sphere around their centre (0 = off, 1 = fully round).");
             ImGui::SameLine(); ImGui::TextDisabled("Flatten:");
             ImGui::SameLine();
             if (ImGui::SmallButton("X##fl") && !g_meshSelVerts.empty()) {

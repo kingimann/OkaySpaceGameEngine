@@ -2621,6 +2621,7 @@ GameObject* MakeButtonTextChild(EditorState& ed, GameObject* button) {
 // editor pose previews or they override the real animations every frame.
 static void StopAnimPreview();
 static void StopModelScenePreview(EditorState& ed);
+static void StopLivePreview(EditorState& ed);
 
 void DrawMenuAndToolbar(EditorState& ed) {
     if (!ImGui::BeginMenuBar()) return;
@@ -3212,7 +3213,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         if (ImGui::Button(">  Play", ImVec2(btnW, 0))) {
             if (g_clearConsoleOnPlay) ConsoleClear();
-            StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
+            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -8520,7 +8521,7 @@ void HandleShortcuts(EditorState& ed) {
         if (ed.isPlaying()) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         else {
             if (g_clearConsoleOnPlay) ConsoleClear();
-            StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
+            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -10946,6 +10947,48 @@ static const char* ActionOpRequires(const std::string& op) {
 static Character* g_animPreview = nullptr;
 static void StopAnimPreview() { if (g_animPreview) { g_animPreview->StopPreview(); g_animPreview = nullptr; } }
 
+// ---- Live built-in animation preview (edit mode) ---------------------------
+// One click on a Character-panel button plays a BUILT-IN animation live in the
+// Scene view while the editor is stopped — on the blocky body, a rigged custom
+// mesh, or (through the HumanoidRetarget) a swapped imported model. Stopping
+// restores the Character's start-animation id and, for retargeted rigs, every
+// bone transform captured when the preview began.
+static Character* g_livePrevCh   = nullptr;
+static int        g_livePrevAnim = 1;
+static float      g_livePrevT    = 0.0f;
+static float      g_livePrevSpeed = 1.0f;
+static int        g_livePrevKeepAnim = 1;   // ch->anim restored on stop
+struct LivePrevBase { GameObject* go; Vec3 p; Quat r; Vec3 s; };
+static std::vector<LivePrevBase> g_livePrevBase;   // retargeted rig bind snapshot
+
+static void StopLivePreview(EditorState& ed) {
+    if (!g_livePrevCh) return;
+    Character* ch = g_livePrevCh;
+    g_livePrevCh = nullptr;
+    bool alive = false;
+    for (const auto& up : ed.scene().Objects())
+        if (up && up->GetComponent<Character>() == ch) { alive = true; break; }
+    if (alive) {
+        ch->anim = g_livePrevKeepAnim;
+        ch->StopPreview();
+        if (g_animPreview == ch) g_animPreview = nullptr;
+        if (!ch->driveExternal) ch->Apply();   // back to the rest/start pose
+    }
+    if (!g_livePrevBase.empty()) {
+        std::set<GameObject*> aliveGo;
+        for (const auto& up : ed.scene().Objects()) aliveGo.insert(up.get());
+        for (const LivePrevBase& b : g_livePrevBase)
+            if (aliveGo.count(b.go) && b.go->transform) {
+                b.go->transform->localPosition = b.p;
+                b.go->transform->localRotation = b.r;
+                b.go->transform->localScale    = b.s;
+            }
+        for (const auto& up : ed.scene().Objects())
+            if (auto* sm = up->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
+        g_livePrevBase.clear();
+    }
+}
+
 // Character animation: pose each bone, Key the whole pose at the playhead to build a
 // clip of keyframes, scrub to preview, Apply to play it (saved with the scene).
 static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, int focusBone = -1) {
@@ -10970,6 +11013,59 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     }
     if (focusBone < 0) lastFocus[(void*)ch] = -1;   // reset when the Character itself is selected
     if (clip.name.empty()) clip.name = "MyAnim";
+
+    // ---- One-click built-in animation preview (live, in the Scene view) ----
+    static const struct { int id; const char* name; } kLiveAnims[] = {
+        {1, "Idle"},   {2, "Walk"},       {3, "Run"},     {5, "Jump"},
+        {6, "Crouch"}, {7, "Prone"},      {4, "Wave"},    {8, "Point"},
+        {9, "Clap"},   {10, "Thumbs Up"}, {11, "Salute"}, {12, "Wave Both"},
+        {13, "Cheer"}, {14, "Sad"},       {15, "Angry"},  {16, "Think"},
+    };
+    if (!ed.isPlaying()) {
+        ImGui::TextDisabled("Built-in animations - click one to watch it live in the Scene view:");
+        for (int i = 0; i < (int)(sizeof(kLiveAnims) / sizeof(kLiveAnims[0])); ++i) {
+            if (i % 4) ImGui::SameLine();
+            bool on = (g_livePrevCh == ch && g_livePrevAnim == kLiveAnims[i].id);
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+            char bl[32]; std::snprintf(bl, sizeof(bl), "%s##lp%d", kLiveAnims[i].name, kLiveAnims[i].id);
+            if (ImGui::Button(bl, ImVec2(88, 0))) {
+                if (g_livePrevCh != ch) {
+                    StopLivePreview(ed);
+                    g_livePrevKeepAnim = ch->anim;
+                    // A retargeted rig gets posed for real — snapshot the model
+                    // subtree so Stop restores the bind pose exactly.
+                    g_livePrevBase.clear();
+                    if (ch->driveExternal && ch->gameObject && ch->gameObject->transform)
+                        for (const auto& up2 : ed.scene().Objects()) {
+                            GameObject* g2 = up2.get();
+                            if (g2 && g2 != ch->gameObject && g2->transform &&
+                                g2->IsSelfOrDescendantOf(ch->gameObject))
+                                g_livePrevBase.push_back({g2, g2->transform->localPosition,
+                                                          g2->transform->localRotation,
+                                                          g2->transform->localScale});
+                        }
+                }
+                g_livePrevCh = ch; g_livePrevAnim = kLiveAnims[i].id; g_livePrevT = 0.0f;
+            }
+            if (on) ImGui::PopStyleColor();
+        }
+        if (g_livePrevCh == ch) {
+            if (ImGui::Button("Stop Preview##lp")) StopLivePreview(ed);
+            else {
+                ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+                ImGui::SliderFloat("Speed##lp", &g_livePrevSpeed, 0.25f, 2.0f);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Set as start animation##lp")) {
+                    g_livePrevKeepAnim = g_livePrevAnim; ed.dirty = true;
+                    const char* nm = "?";
+                    for (const auto& a : kLiveAnims) if (a.id == g_livePrevAnim) { nm = a.name; break; }
+                    ConsoleLog(std::string("Start animation set to ") + nm);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The animation this character starts with in Play mode\n(controllers switch idle/walk/run/jump automatically).");
+            }
+        }
+        ImGui::Separator();
+    }
 
     if (!ch->separateParts) {
         ImGui::TextWrapped("This character is one object — separate it into parts to pose and "
@@ -11000,12 +11096,13 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     // While the window's transport plays, show the sampled pose; otherwise show
     // the pose being authored. NEVER during Play mode — the forced preview pose
     // would override the character's real animations every frame ("I pressed
-    // Play and nothing happens" with the Animation window open).
-    if (!ed.isPlaying()) {
+    // Play and nothing happens" with the Animation window open). The live
+    // built-in preview (buttons above) owns the pose while it runs.
+    if (!ed.isPlaying() && g_livePrevCh != ch) {
         g_animPreview = ch;
         if (playing && !clip.keys.empty()) ch->PreviewPose(clip.Sample(t));
         else ch->PreviewPose(pose);
-    } else if (g_animPreview == ch) {
+    } else if (ed.isPlaying() && g_animPreview == ch) {
         StopAnimPreview();
     }
     if (ed.isPlaying())
@@ -11579,7 +11676,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
 }
 
 static void DrawAnimationEditor(EditorState& ed) {
-    if (!g_showAnimation) { StopAnimPreview(); StopModelScenePreview(ed); return; }
+    if (!g_showAnimation) { StopAnimPreview(); StopModelScenePreview(ed); StopLivePreview(ed); return; }
     if (!ImGui::Begin("Animation", &g_showAnimation)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
     if (!go || !go->transform) {
@@ -11604,9 +11701,40 @@ static void DrawAnimationEditor(EditorState& ed) {
     }
     if (ch) {
         if (g_animPreview && g_animPreview != ch) StopAnimPreview();
+        if (g_livePrevCh && g_livePrevCh != ch) StopLivePreview(ed);
+        // A swapped/rigged model's imported clips live on a ModelAnimator on (or
+        // UNDER) this character — offer BOTH panels with tabs, instead of the
+        // Character hiding the imported clips entirely.
+        ModelAnimator* subMa = nullptr; GameObject* subMaObj = nullptr;
+        GameObject* chGo = charObj ? charObj : go;
+        for (const auto& up : ed.scene().Objects()) {
+            GameObject* g2 = up.get();
+            if (!g2 || !g2->IsSelfOrDescendantOf(chGo)) continue;
+            if (auto* m = g2->GetComponent<ModelAnimator>())
+                if (m->ClipCount() > 0) { subMa = m; subMaObj = g2; break; }
+        }
+        if (subMa) {
+            if (ImGui::BeginTabBar("##animtabs")) {
+                if (ImGui::BeginTabItem("Character")) {
+                    StopModelScenePreview(ed);
+                    DrawAnimPreview(ed, chGo);
+                    DrawCharacterAnim(ed, chGo, ch, focusBone);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Imported Clips")) {
+                    StopAnimPreview();
+                    StopLivePreview(ed);
+                    if (g_maScenePrev && g_maScenePrev != subMa) StopModelScenePreview(ed);
+                    DrawModelAnim(ed, subMaObj, subMa);
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
+            ImGui::End(); return;
+        }
         StopModelScenePreview(ed);
-        DrawAnimPreview(ed, charObj ? charObj : go);
-        DrawCharacterAnim(ed, charObj ? charObj : go, ch, focusBone);
+        DrawAnimPreview(ed, chGo);
+        DrawCharacterAnim(ed, chGo, ch, focusBone);
         ImGui::End(); return;
     }
     StopAnimPreview();
@@ -26553,6 +26681,35 @@ int main(int argc, char** argv) {
                     if (auto* ch = up->GetComponent<okay::Character>()) chars.push_back(ch);
                     if (auto* pm = up->GetComponent<okay::PauseMenu>()) pauseMenus.push_back(pm);
                 }
+            // Live built-in animation preview: sample the chosen built-in each
+            // frame and pose the character — blocky body, custom-rigged mesh, or
+            // (through the HumanoidRetarget) a swapped imported model — right in
+            // the Scene view, no Play needed.
+            if (g_livePrevCh) {
+                bool alive = false;
+                for (okay::Character* c2 : chars) if (c2 == g_livePrevCh) { alive = true; break; }
+                if (!alive) { g_livePrevCh = nullptr; g_livePrevBase.clear(); }
+                else {
+                    okay::Character* ch = g_livePrevCh;
+                    g_livePrevT += pdt * g_livePrevSpeed;
+                    int keep = ch->anim;
+                    ch->anim = g_livePrevAnim;
+                    ch->PreviewPose(ch->PoseAt(g_livePrevT));
+                    if (ch->driveExternal && ch->gameObject) {
+                        // Pose the imported rig from the preview (LateUpdate reads
+                        // CurrentPose + StanceOffset), then re-deform its skins.
+                        if (auto* rt = ch->gameObject->GetComponent<okay::HumanoidRetarget>())
+                            rt->LateUpdate(pdt);
+                        for (const auto& up : ed.scene().Objects())
+                            if (up && up->IsSelfOrDescendantOf(ch->gameObject))
+                                if (auto* sm = up->GetComponent<okay::SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
+                        ch->anim = keep;
+                    } else {
+                        ch->anim = keep;
+                        g_animPreview = ch;   // the loop below pushes the pose onto the body
+                    }
+                }
+            }
             // Materialize each separated Character's part rig in the EDITOR (so the
             // parts are real, selectable objects, not spawned at Play) and drive the
             // Animation window's preview pose onto the rig (Update() doesn't run while

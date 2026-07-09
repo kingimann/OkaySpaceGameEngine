@@ -199,6 +199,22 @@ For models that ALREADY have a skeleton + clips (Mixamo, Meshy GLB/FBX),
 you don't need this — import keeps their real rig and animations; drop
 them on a player (below) or drive them with the Model Animator.
 
+## One-click animation preview (edit mode)
+
+Select any character with the **Animation window** open and click a
+built-in animation button — **Idle, Walk, Run, Jump, Crouch, Prone, Wave,
+Point, Clap, Thumbs Up, Salute, Wave Both, Cheer, Sad, Angry, Think** —
+to watch it play **live in the Scene view without pressing Play**. Works
+on the blocky character, an auto-rigged model, and a retargeted imported
+model (the swapped Mixamo character waves right in the scene). A **Speed**
+slider and **Stop Preview** sit under the grid, and **Set as start
+animation** makes the previewed state the one the character starts with
+in Play mode. Stopping restores the exact pose you had.
+
+When a character also has imported clips (a swapped model), the Animation
+window shows **two tabs — Character and Imported Clips** — so both the
+built-in system and the file's own takes are always reachable.
+
 ## Previewing & editing imported clips (Unity-style)
 
 Select any imported model (or any of its bones) with the **Animation

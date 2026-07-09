@@ -23479,14 +23479,38 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 dl->AddCircleFilled(ImVec2(canvasPos.x + st.x, canvasPos.y + st.y),
                                     st.r, IM_COL32(255, 255, 255, st.a), 6);
         }
+        // Atmospheric horizon haze: the sky pales/warms toward the horizon line
+        // (aerial scattering). A soft bright band centered on the horizon.
+        {
+            float H = canvasEnd.y - canvasPos.y;
+            ImU32 haze = ToColor(Color{
+                std::fmin(rs.skyHorizon.r * 1.15f + 0.12f, 1.0f),
+                std::fmin(rs.skyHorizon.g * 1.15f + 0.12f, 1.0f),
+                std::fmin(rs.skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f});
+            ImU32 haze0 = (haze & 0x00FFFFFF);              // same color, alpha 0
+            float band = H * 0.10f;
+            ImVec2 a0(canvasPos.x, midY - band), a1(canvasEnd.x, midY);
+            ImVec2 b0(canvasPos.x, midY), b1(canvasEnd.x, midY + band);
+            dl->AddRectFilledMultiColor(a0, a1, haze0, haze0, haze, haze);   // fade up into haze
+            dl->AddRectFilledMultiColor(b0, b1, haze, haze, haze0, haze0);   // fade down out of haze
+        }
         if (rs.skySun) {
             float H = canvasEnd.y - canvasPos.y, W = canvasEnd.x - canvasPos.x;
             ImVec2 sc(canvasPos.x + rs.skySunX * W, canvasPos.y + rs.skySunY * H);
             float r = (rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * H;
             const Color& sk = rs.skySunColor;
             int sr = (int)(sk.r * 255), sg = (int)(sk.g * 255), sb = (int)(sk.b * 255);
-            for (int g = 4; g >= 1; --g)   // soft glow halo (fading outer rings)
-                dl->AddCircleFilled(sc, r * (1.0f + g * 0.7f), IM_COL32(sr, sg, sb, 22 - g * 3), 40);
+            // Broad sun-scattering glow: many faint warm rings brightening the sky
+            // around the sun (largest drawn first so the centre accumulates).
+            float glowR = H * 0.45f;
+            for (int i = 12; i >= 1; --i) {
+                float fr = (float)i / 12.0f;
+                float rr = glowR * fr;
+                int a = (int)(34.0f * (1.0f - fr) * (1.0f - fr));   // stronger toward the sun
+                if (a > 0) dl->AddCircleFilled(sc, rr, IM_COL32(sr, sg, sb, a), 56);
+            }
+            for (int g = 4; g >= 1; --g)   // tight inner halo
+                dl->AddCircleFilled(sc, r * (1.0f + g * 0.7f), IM_COL32(sr, sg, sb, 40 - g * 6), 40);
             dl->AddCircleFilled(sc, r, IM_COL32(sr, sg, sb, 255), 40);
         }
     }

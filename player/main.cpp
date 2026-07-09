@@ -1566,6 +1566,15 @@ int main(int argc, char** argv) {
                 // it, horizon->bottom below it).
                 Color c = (t < hp) ? lerp(rs.skyTop, rs.skyHorizon, t / hp)
                                    : lerp(rs.skyHorizon, rs.skyBottom, (t - hp) / (1.0f - hp));
+                // Atmospheric horizon haze: pale/warm brightening centered on the
+                // horizon line (matches the editor preview).
+                float hz = 1.0f - std::fabs(t - hp) / 0.10f;
+                if (hz > 0.0f) {
+                    Color haze{std::fmin(rs.skyHorizon.r * 1.15f + 0.12f, 1.0f),
+                               std::fmin(rs.skyHorizon.g * 1.15f + 0.12f, 1.0f),
+                               std::fmin(rs.skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f};
+                    c = lerp(c, haze, hz * 0.5f);
+                }
                 SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
                                        (Uint8)(c.b * 255), 255);
                 int y0 = (int)((float)s / strips * h);
@@ -1601,7 +1610,15 @@ int main(int argc, char** argv) {
                         SDL_RenderFillRect(renderer, &row);
                     }
                 };
-                for (int g = 4; g >= 1; --g) fillDisc((int)(rad * (1.0f + g * 0.7f)), (Uint8)(22 - g * 3));
+                // Broad sun-scattering glow: faint warm discs brightening the sky
+                // around the sun (largest first so the centre accumulates).
+                int glowR = (int)(h * 0.45f);
+                for (int i = 12; i >= 1; --i) {
+                    float fr = (float)i / 12.0f;
+                    int a = (int)(34.0f * (1.0f - fr) * (1.0f - fr));
+                    if (a > 0) fillDisc((int)(glowR * fr), (Uint8)a);
+                }
+                for (int g = 4; g >= 1; --g) fillDisc((int)(rad * (1.0f + g * 0.7f)), (Uint8)(40 - g * 6));
                 fillDisc(rad, 255);
                 SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             }

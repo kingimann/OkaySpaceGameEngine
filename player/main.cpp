@@ -35,21 +35,6 @@
 
 using namespace okay;
 
-#if defined(_WIN32)
-// Call a GPU (D3D11/D3D12) renderer behind a Structured-Exception guard so a driver
-// access violation is caught and turned into a clean software fallback instead of
-// crashing the shipped game. Isolated (and templated per renderer type) because SEH
-// __try/__except can't share a scope with C++ objects that need stack unwinding.
-template <class R>
-static const std::uint32_t* GpuRenderSEH(R* r, const Scene& scene, const Mat4& vp,
-                                         const Vec3& eye, int w, int h,
-                                         const GameObject* ignore, bool& faulted) {
-    faulted = false;
-    __try { return r->RenderToPixels(scene, vp, eye, w, h, 4, 0.0f, 0.0f, 0.0f, 0.0f, ignore); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { faulted = true; return nullptr; }
-}
-#endif
-
 static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int h) {
     return SDL_Point{(int)(w * 0.5f + (p.x - camPos.x) * scale),
                      (int)(h * 0.5f - (p.y - camPos.y) * scale)};
@@ -1654,15 +1639,12 @@ int main(int argc, char** argv) {
                 // the GPU path after repeated failures so the game is never stuck.
                 if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
 #if defined(_WIN32)
-                    bool gpuFaulted = false;
-                    if (!px && d3d12Ready && d3d12Renderer) {
-                        px = GpuRenderSEH(d3d12Renderer, scene, vp, camPos, w, h, ignore, gpuFaulted);
-                        if (gpuFaulted) d3d12Ready = false;   // disable the faulting backend
-                    }
-                    if (!px && d3dReady && d3dRenderer) {
-                        px = GpuRenderSEH(d3dRenderer, scene, vp, camPos, w, h, ignore, gpuFaulted);
-                        if (gpuFaulted) d3dReady = false;
-                    }
+                    if (!px && d3d12Ready && d3d12Renderer)
+                        px = d3d12Renderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                                                           0.0f, 0.0f, 0.0f, 0.0f, ignore);
+                    if (!px && d3dReady && d3dRenderer)
+                        px = d3dRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                                                         0.0f, 0.0f, 0.0f, 0.0f, ignore);
 #endif
                     if (!px && glReady && glRenderer && glWindow && glCtx) {
                         if (SDL_GL_MakeCurrent(glWindow, glCtx) == 0) {

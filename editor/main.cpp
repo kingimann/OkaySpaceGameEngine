@@ -627,7 +627,9 @@ SDL_Texture* GetThumb(const std::string& path) {
     if (it != cache.end()) return it->second;
     SDL_Texture* tex = nullptr;
     okay::Image img;
-    if (g_sdlRenderer && img.Load(path) && img.Width() > 0) {
+    if (path.rfind("proc:", 0) == 0) img = okay::GenerateProcTexture(path);   // built-in procedural
+    else img.Load(path);
+    if (g_sdlRenderer && img.Width() > 0) {
         tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
                                 SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
         if (tex) {
@@ -15334,6 +15336,29 @@ void DrawInspector(EditorState& ed) {
             tex[sizeof(tex) - 1] = '\0';
             if (ImGui::InputText("Texture##mesh", tex, sizeof(tex))) { mr->texture = tex; ed.dirty = true; }
             if (AcceptAssetPathField(mr->texture)) ed.dirty = true;   // drop from Project
+            // Built-in procedural textures: generated in code (no files), tileable,
+            // and they ship with the game — pick one to texture instantly.
+            {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Procedural##tex")) ImGui::OpenPopup("##procpick");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Built-in tileable textures (brick, wood, stone, grass...)\ngenerated in code — no image files needed.");
+                if (ImGui::BeginPopup("##procpick")) {
+                    int col = 0;
+                    for (const std::string& pn : okay::ProcTextureNames()) {
+                        std::string id = "proc:" + pn;
+                        if (SDL_Texture* th = GetThumb(id)) {
+                            if (ImGui::ImageButton(("##pt" + pn).c_str(), (ImTextureID)th, ImVec2(48, 48))) {
+                                ed.PushUndo(); mr->texture = id; ed.dirty = true; ImGui::CloseCurrentPopup();
+                            }
+                        } else if (ImGui::Button((pn + "##pt").c_str(), ImVec2(54, 54))) {
+                            ed.PushUndo(); mr->texture = id; ed.dirty = true; ImGui::CloseCurrentPopup();
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", id.c_str());
+                        if (++col % 4 != 0) ImGui::SameLine();
+                    }
+                    ImGui::EndPopup();
+                }
+            }
             if (!mr->texture.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##tex")) { mr->texture.clear(); ed.dirty = true; }

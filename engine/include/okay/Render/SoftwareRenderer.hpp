@@ -8,6 +8,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
+#include "okay/Render/ProcTexture.hpp"
 #include "okay/Core/Time.hpp"
 #include <algorithm>
 #include <cmath>
@@ -763,7 +764,10 @@ inline Image* GetCachedTexture(const std::string& path) {
     auto it = cache.find(path);
     if (it == cache.end()) {
         Image img;
-        img.Load(path);   // leaves the image empty on failure
+        if (path.rfind("proc:", 0) == 0)
+            img = GenerateProcTexture(path);   // built-in procedural (no file)
+        else
+            img.Load(path);                    // leaves the image empty on failure
         it = cache.emplace(path, std::move(img)).first;
     }
     return it->second.Width() > 0 ? &it->second : nullptr;

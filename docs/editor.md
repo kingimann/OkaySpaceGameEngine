@@ -297,6 +297,17 @@ Rendering defaults to the modern look — tweak everything in the
 - **Fog, vignette** — mood/depth layers, saved per scene so the shipped
   game matches the editor preview.
 
+### Built-in procedural textures
+
+Texture anything without image files: the Mesh Renderer's **Procedural**
+button (next to the Texture field) opens a swatch picker with 12 tileable
+textures generated in code — `checker`, `grid`, `brick`, `wood`, `stone`,
+`tiles`, `marble`, `metal`, `noise`, `grass`, `sand`, `lava`. They're plain
+texture names (`proc:brick`), so they work in every renderer, tile with the
+Tiling controls, save with the scene, and ship inside the game — nothing to
+copy. You can also type a `proc:` name into any texture field (terrain,
+sprites, UI images).
+
 ### Building a standalone game
 
 **File → Build Game…** (Ctrl+B) exports the current scene as a self-contained

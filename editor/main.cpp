@@ -3826,6 +3826,34 @@ static const char* ImportKindLabel(const std::string& extLower) {
     return nullptr;
 }
 
+// ---- Drag-drop character model swap -----------------------------------------
+// True when this object is something a character model can be dropped onto: a
+// player/NPC controller or a Character body.
+static bool ObjectIsCharacterTarget(GameObject* go) {
+    return go && (go->GetComponent<FirstPersonController>() ||
+                  go->GetComponent<ThirdPersonController>() ||
+                  go->GetComponent<ThirdPersonShooterController>() ||
+                  go->GetComponent<TopDownController>() ||
+                  go->GetComponent<ClickToMoveController>() ||
+                  go->GetComponent<CharacterController3D>() ||
+                  go->GetComponent<NPCController>() ||
+                  go->GetComponent<Character>());
+}
+// Editor wrapper over okay::AttachCharacterModel: undo, selection, console log.
+static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, const std::string& path) {
+    if (!target) return;
+    ed.PushUndo();
+    std::string log;
+    GameObject* root = okay::AttachCharacterModel(ed.scene(), target, path, &log);
+    if (!root) {
+        ConsoleLog("Character model import failed: " + path +
+                   (okay::AssimpAvailable() ? "" : " (this build lacks Assimp; use .obj/.gltf/.glb)"), 2);
+        return;
+    }
+    ed.Select(target); ed.dirty = true;
+    ConsoleLog(log + " — press Play to try it");
+}
+
 // Copy an external file into the project's Assets (into destDir, or its current import
 // dir). Picks a non-clashing name and returns the destination path (empty on failure).
 static std::string ImportAssetFile(const std::string& srcPath, std::filesystem::path destDir) {
@@ -9484,6 +9512,12 @@ void DrawHierarchy(EditorState& ed) {
                         ed.dirty = true; ConsoleLog("Set font on " + node->name);
                     } else if (ext == ".okayscene") {      // MERGE the scene into this one
                         MergeSceneIntoCurrent(ed, path);
+                    } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
+                        // Drop a model onto a player/NPC: it becomes THE character —
+                        // imported as a child, sized/grounded/faced, locomotion clips
+                        // wired, and the blocky body hidden.
+                        if (ObjectIsCharacterTarget(node)) EditorAttachCharacterModel(ed, node, path);
+                        else ConsoleLog(node->name + " has no controller/Character — dropping the model into the scene instead adds it standalone (drag to the viewport).", 1);
                     }
                 }
                 ImGui::EndDragDropTarget();
@@ -16085,6 +16119,18 @@ void DrawInspector(EditorState& ed) {
             bool c = false;
             auto coledit = [&](const char* lbl, Color& col){ float v[3]={col.r,col.g,col.b}; if (ImGui::ColorEdit3(lbl, v)) { col={v[0],v[1],v[2],1.0f}; c=true; } };
 
+            // One-click custom character: import a model file and make it THE body
+            // (sized, grounded, faced, locomotion wired; blocky body hidden). Same
+            // as dropping a model asset onto this object in the Hierarchy.
+            if (ImGui::Button("Set Character Model...##char")) {
+                const char* filt[3] = {"*.gltf", "*.glb", "*.fbx"};
+                if (const char* p = tinyfd_openFileDialog("Set character model", "", 3, filt,
+                                                          "3D model (glTF/GLB/FBX...)", 0))
+                    EditorAttachCharacterModel(ed, go, p);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this character's body:\nauto-sized to the capsule, feet grounded, facing matched, and its\nidle/walk/run clips wired to movement. You can also just DROP a model\nasset onto this object in the Hierarchy.");
+            if (!ch->enabled) ImGui::TextDisabled("(default body hidden - a custom model is the character)");
+
             c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
 
             SectionHeader("Rig");
@@ -18239,6 +18285,13 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
         if (CompHeader("Third Person Controller", tp, &toRemove)) {
+            if (ImGui::Button("Set Character Model...##tp")) {
+                const char* filt[3] = {"*.gltf", "*.glb", "*.fbx"};
+                if (const char* p = tinyfd_openFileDialog("Set character model", "", 3, filt,
+                                                          "3D model (glTF/GLB/FBX...)", 0))
+                    EditorAttachCharacterModel(ed, go, p);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body (auto-sized,\ngrounded, locomotion clips wired). Or drop a model asset onto this\nobject in the Hierarchy.");
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tp", &tp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;

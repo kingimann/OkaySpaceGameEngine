@@ -505,7 +505,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << de->maxDebris << " " << de->breakButton
             << " " << de->breakRadius << " " << de->reach << "\n";
     }
-    if (auto* ch = go->GetComponent<Character>()) out << "  character " << ch->ToText() << "\n";
+    if (auto* ch = go->GetComponent<Character>()) {
+        out << "  character " << ch->ToText() << "\n";
+        // Disabled = a custom model replaced the blocky body (AttachCharacterModel):
+        // remember it so the default character stays hidden after a load.
+        if (!ch->enabled) out << "  charenabled 0\n";
+    }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
             << li->color.a << " " << li->ambient << " " << li->intensity
@@ -3602,6 +3607,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* ch = go->AddComponent<Character>();
                     ch->FromText(rest);
                     ch->Apply();    // rebuild the mesh into a MeshRenderer
+                } else if (field == "charenabled") {
+                    // A custom model replaced the blocky body: keep the default
+                    // Character (and the mesh Apply() just rebuilt) hidden.
+                    int en = 1; in >> en;
+                    if (auto* ch = go->GetComponent<Character>()) ch->enabled = (en != 0);
+                    if (!en) if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = false;
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();
                     int as = 0, port = 45000;

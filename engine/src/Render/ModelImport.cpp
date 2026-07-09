@@ -8,6 +8,7 @@
 #include "okay/Components/Animator.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
 #include <array>
@@ -683,6 +684,89 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     }
     AutoNormalizeImportScale(scene, root);
     if (ok) *ok = true;
+    return root;
+}
+
+GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
+                                 const std::string& path, std::string* outLog) {
+    if (!player || !player->transform) return nullptr;
+    bool ok = false;
+    GameObject* root = ImportModelScene(scene, path, &ok);
+    if (!ok || !root || !root->transform) return nullptr;
+
+    // World bounds of the imported subtree (the import root sits at the origin).
+    Vec3 lo{0, 0, 0}, hi{0, 0, 0}; bool any = false;
+    for (const auto& up : scene.Objects()) {
+        GameObject* go = up.get();
+        if (!go || !go->IsSelfOrDescendantOf(root)) continue;
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (!mr || mr->mesh.vertices.empty()) continue;
+        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        Mat4 l2w = go->transform->LocalToWorldMatrix();
+        for (int c = 0; c < 8; ++c) {
+            Vec3 w = l2w.MultiplyPoint({c & 1 ? bhi.x : blo.x, c & 2 ? bhi.y : blo.y, c & 4 ? bhi.z : blo.z});
+            if (!any) { lo = hi = w; any = true; }
+            else {
+                lo.x = std::fmin(lo.x, w.x); hi.x = std::fmax(hi.x, w.x);
+                lo.y = std::fmin(lo.y, w.y); hi.y = std::fmax(hi.y, w.y);
+                lo.z = std::fmin(lo.z, w.z); hi.z = std::fmax(hi.z, w.z);
+            }
+        }
+    }
+
+    // Size the model to the character's height and stand its feet on the player's
+    // origin (the controllers/capsules all treat the origin as ground level).
+    float want = 1.8f;
+    if (auto* ch = player->GetComponent<Character>())
+        want = 1.8f * (ch->height > 0.1f ? ch->height : 1.0f);
+    float h = any ? (hi.y - lo.y) : 0.0f;
+    float s = h > 1e-4f ? want / h : 1.0f;
+    root->transform->localScale = root->transform->localScale * s;
+    root->transform->SetParent(player->transform, /*worldPositionStays=*/false);
+    root->transform->localPosition = {0.0f, any ? -lo.y * s : 0.0f, 0.0f};
+    // The engine's character bodies face LOCAL -Z; most exported models face +Z.
+    root->transform->localRotation = Quat::Euler({0.0f, 180.0f, 0.0f});
+
+    // Locomotion: auto-switch idle/walk/run from how fast the player moves, with
+    // the clips mapped by name (idle/stand, walk, run/sprint/jog).
+    ModelAnimator* ma = root->GetComponent<ModelAnimator>();
+    if (!ma)
+        for (const auto& up : scene.Objects())
+            if (up->IsSelfOrDescendantOf(root))
+                if ((ma = up->GetComponent<ModelAnimator>())) break;
+    std::string mapped;
+    if (ma && !ma->clips.empty()) {
+        auto low = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
+        for (const auto& c : ma->clips) {
+            std::string n = low(c.name);
+            auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
+            if (ma->idleClip.empty() && (has("idle") || has("stand") || has("breath"))) ma->idleClip = c.name;
+            else if (ma->walkClip.empty() && has("walk")) ma->walkClip = c.name;
+            else if (ma->runClip.empty() && (has("run") || has("sprint") || has("jog"))) ma->runClip = c.name;
+        }
+        if (ma->idleClip.empty()) ma->idleClip = ma->clips.front().name;  // something is better than T-pose
+        if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
+        ma->driveByMovement = true;
+        ma->smoothLocomotion = true;
+        mapped = "idle='" + ma->idleClip + "' walk='" + ma->walkClip + "'" +
+                 (ma->runClip.empty() ? "" : " run='" + ma->runClip + "'");
+    }
+
+    // Hide the default blocky body: the Character stops animating and its mesh +
+    // part rig stop rendering — the imported model IS the character now.
+    if (auto* ch = player->GetComponent<Character>()) {
+        ch->enabled = false;
+        if (auto* mr = player->GetComponent<MeshRenderer>()) mr->enabled = false;
+        for (const auto& up : scene.Objects())
+            if (up->name == "Rig" && up->transform && up->transform->Parent() == player->transform)
+                up->active = false;
+    }
+
+    if (outLog) {
+        *outLog = "Character model '" + root->name + "' on " + player->name +
+                  " (height " + std::to_string(want).substr(0, 4) + "u" +
+                  (mapped.empty() ? ", no animation clips" : ", " + mapped) + ")";
+    }
     return root;
 }
 

@@ -179,6 +179,25 @@ head/bone swings smoothly onto a new target instead of snapping the frame
 it changes (Look-At defaults to a natural head-turn speed; Aim defaults to
 instant for turrets — raise it for organic tracking).
 
+## Custom character models (drag & drop)
+
+Any imported model can BE your playable character — no rigging setup:
+
+- **Drop a model asset** (.glb/.gltf/.fbx/.obj...) from the Project panel
+  **onto a player in the Hierarchy** (any object with a controller or a
+  Character), or press **Set Character Model...** on the Character /
+  Third-Person Controller in the Inspector.
+- The model imports as a child of the player, auto-sized to the
+  character's height, feet grounded on the capsule's origin, and turned
+  to face the way the body faces.
+- Its animation clips are wired to locomotion automatically: clips named
+  *idle/stand*, *walk*, and *run/sprint/jog* map to the auto
+  idle/walk/run switching (smooth 1D blend), driven by how fast the
+  player actually moves.
+- The default blocky body is hidden (the Character component is disabled
+  — re-enable it in the Inspector to get it back). All of it saves with
+  the scene.
+
 ## Tips
 
 - **Meshy / Mixamo FBX**: animations import via Assimp. For the richest

@@ -37,4 +37,14 @@ Mesh ImportModel(const std::string& path, bool* ok = nullptr, std::string* outTe
 /// import so a rigged glTF brings its parts + animation in, not just one static mesh.
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok = nullptr);
 
+/// Make an imported model THE playable character of `player` (a controller
+/// object): import `path` as a child, scale it to the character's height,
+/// ground its feet on the player's origin, face it the way the body faces,
+/// wire its ModelAnimator locomotion (idle/walk/run auto-switch from movement,
+/// mapped from the clip names), and hide the default blocky Character body.
+/// Returns the imported model root (or nullptr on failure). `outLog`, when
+/// given, receives a one-line human-readable summary of what was wired.
+GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
+                                 const std::string& path, std::string* outLog = nullptr);
+
 } // namespace okay

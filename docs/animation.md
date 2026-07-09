@@ -228,6 +228,32 @@ idle/walk/run resumes. It works with every controller, no wiring. In
 in-place mode the jump clip's own root rise is stripped too, so the
 controller's jump arc isn't doubled.
 
+## Built-in animations on imported rigs (retargeting)
+
+A model you drop on a player often ships with few or NO usable clips — a
+Mixamo download with a single dance take, a store model with just a
+T-pose. When that happens the engine now **retargets its built-in
+animation system onto the imported skeleton** automatically: the model
+walks, runs, jumps, lands, crouches, plays the gestures/emotions and your
+authored `.okayanim` clips — everything the blocky character can do —
+with its bones matched by name (Mixamo and common humanoid naming) and
+its rest stance aligned, so a T-pose rig stands and moves naturally.
+
+- Works out of the box on **Set Character Model** / drag-drop: if the
+  file has no clips named *idle* and *walk*, retargeting switches on
+  (the import log tells you: "built-in animations retargeted (15/15
+  bones)").
+- The **Humanoid Retarget** component (on the player, next to the
+  Character) has a **Weight** slider (blend against the model's bind
+  pose) and a **Re-Detect Bones** button after a model change. Add it
+  manually (Add Component > Animation) to prefer built-ins even when the
+  model has its own clips.
+- The model's own imported clips stay in the Model Animator's library —
+  play one as a one-shot from a script (`play_clip_once("dance")`) and
+  the retarget yields until it finishes.
+- Files that DO carry idle+walk clips keep the previous behavior (their
+  own clips drive locomotion).
+
 ## Custom character models (drag & drop)
 
 Any imported model can BE your playable character — no rigging setup:

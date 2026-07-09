@@ -16351,9 +16351,11 @@ void DrawInspector(EditorState& ed) {
             c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
 
             SectionHeader("Rig");
+            if (ch->driveExternal)
+                ImGui::TextDisabled("Driving an imported rig (Humanoid Retarget): this character\nrenders nothing itself - its animations play on the model.");
             // A custom model owns this character (swap or auto-rig): building the
             // blocky part rig would spawn the old default body on top of it.
-            bool rigLocked = !ch->enabled || ch->HasCustomBind();
+            bool rigLocked = !ch->enabled || ch->HasCustomBind() || ch->driveExternal;
             if (rigLocked) {
                 ImGui::BeginDisabled();
                 bool off = false;
@@ -16361,6 +16363,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::EndDisabled();
                 ImGui::TextDisabled(ch->HasCustomBind()
                     ? "(unavailable: a rigged model drives this character - Unrig first)"
+                    : ch->driveExternal
+                    ? "(unavailable: the animations retarget onto an imported model)"
                     : "(unavailable: a custom model replaced this body - re-enable the Character first)");
             } else if (ImGui::Checkbox("Separate Into Parts (editable rig)##char", &ch->separateParts)) {
                 // Build/tear down the rig NOW (in the editor) so the parts are real,
@@ -16959,6 +16963,39 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Smoothing##fik", &f->smoothing, 0.5f, 0.0f, 40.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast corrections ease in/out (per second).\nStops feet popping at step edges. 0 = instant.");
                 if (ImGui::SmallButton("Remove##fik")) toRemove = f;
+            }
+        }
+        if (auto* hr = dynamic_cast<HumanoidRetarget*>(curComp)) {
+            if (CompHeader("Humanoid Retarget", hr, &toRemove)) {
+                ImGui::TextDisabled("Plays the BUILT-IN animations (walk/run/jump/crouch,\ngestures, .okayanim clips) on an imported humanoid rig.");
+                if (ImGui::DragFloat("Weight##hrt", &hr->weight, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the model's own pose, 1 = full built-in animation.");
+                if (hr->Wired())
+                    ImGui::Text("Mapped %d/15 humanoid bones", hr->MappedBones());
+                else
+                    ImGui::TextDisabled("Bones map automatically on Play (or Re-Detect).");
+                if (ImGui::SmallButton("Re-Detect Bones##hrt")) {
+                    ed.PushUndo();
+                    hr->Rewire();
+                    // Try each child subtree as the rig root right now for feedback.
+                    int best = 0;
+                    if (go->transform)
+                        for (Transform* c : go->transform->Children()) {
+                            GameObject* g2 = c ? c->gameObject : nullptr;
+                            if (!g2 || g2->name == "Rig") continue;
+                            int n2 = hr->DetectAndWire(ed.scene(), g2);
+                            if (n2 > best) best = n2;
+                            if (n2 >= 8) break;
+                            hr->Rewire();
+                        }
+                    ed.dirty = true;
+                    if (best >= 8) ConsoleLog("Humanoid Retarget: mapped " + std::to_string(best) + "/15 bones");
+                    else ConsoleLog("Humanoid Retarget: only " + std::to_string(best) +
+                                    " humanoid bones recognized under " + go->name +
+                                    " — needs a child model with Mixamo-style bone names", 1);
+                }
+                ImGui::TextDisabled("Needs an enabled Character on this object;\nthe model's own clips still play via play_clip_once.");
+                if (ImGui::SmallButton("Remove##hrt")) toRemove = hr;
             }
         }
         if (auto* lb = dynamic_cast<LimbIK*>(curComp)) {
@@ -20802,6 +20839,11 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<LookAtIK>(), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<FootIK>(), "Foot IK (plant feet on ground)")) { go->AddComponent<FootIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<HumanoidRetarget>(), "Humanoid Retarget (built-in anims on an imported rig)")) {
+                go->AddComponent<HumanoidRetarget>();
+                if (auto* rch = go->GetComponent<Character>()) { rch->enabled = true; rch->driveExternal = true; }
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<RootMotion>(), "Root Motion (anim drives the body)")) { go->AddComponent<RootMotion>(); ed.dirty = true; }

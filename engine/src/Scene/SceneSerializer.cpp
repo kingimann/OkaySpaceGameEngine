@@ -100,6 +100,7 @@
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
+#include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/RootMotion.hpp"
@@ -516,6 +517,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Disabled = a custom model replaced the blocky body (AttachCharacterModel):
         // remember it so the default character stays hidden after a load.
         if (!ch->enabled) out << "  charenabled 0\n";
+        // External-rig mode: a HumanoidRetarget next to this Character drives an
+        // imported skeleton from its pose (renders nothing itself).
+        if (ch->driveExternal) out << "  charext 1\n";
         // Auto-rigged custom mesh (BindCustomMesh): store the bind geometry so the
         // rigged model survives save/load (verts + tris + optional uvs).
         if (ch->HasCustomBind()) {
@@ -626,6 +630,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << l->chainNames.size();
         for (const std::string& n : l->chainNames) out << " " << Quote(n);
         out << " " << l->smoothing << "\n";
+    }
+    // Written BEFORE footik on purpose: components load in record order, and
+    // the retarget must pose the rig before FootIK plants the feet on it.
+    if (auto* hr = go->GetComponent<HumanoidRetarget>()) {
+        out << "  humretarget " << hr->weight << "\n";
     }
     if (auto* f = go->GetComponent<FootIK>()) {
         out << "  footik " << Quote(f->leftHipName) << " " << Quote(f->leftKneeName) << " " << Quote(f->leftFootName)
@@ -3654,6 +3663,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int en = 1; in >> en;
                     if (auto* ch = go->GetComponent<Character>()) ch->enabled = (en != 0);
                     if (!en) if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = false;
+                } else if (field == "charext") {
+                    // External-rig mode: the Character computes the pose for a
+                    // HumanoidRetarget and renders nothing itself.
+                    int ex = 0; in >> ex;
+                    if (auto* ch = go->GetComponent<Character>()) ch->driveExternal = (ex != 0);
+                    if (ex) if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = false;
+                } else if (field == "humretarget") {
+                    auto* hr = go->AddComponent<HumanoidRetarget>();
+                    in >> hr->weight;   // bones re-detect + rest re-captures on first play frame
                 } else if (field == "charbind") {
                     // Auto-rigged custom mesh: restore the bind geometry and re-rig.
                     Mesh bm;

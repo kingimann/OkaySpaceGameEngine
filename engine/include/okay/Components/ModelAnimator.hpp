@@ -265,6 +265,10 @@ public:
         return true;
     }
 
+    /// True while a PlayOnce one-shot is in flight (HumanoidRetarget yields to
+    /// the model's own clip until it finishes).
+    bool OneShotActive() const { return m_once; }
+
     /// True when a non-looping playback (a one-shot, or loop=false) has reached
     /// the end of its clip.
     bool ClipFinished() const {

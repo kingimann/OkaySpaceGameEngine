@@ -100,6 +100,13 @@ public:
     /// arm stays put in view no matter what the body does. Set by FirstPersonHand.
     bool  fpSteady = false;
 
+    // ---- External rig (retargeting) ----
+    /// Compute the animation pose but render NOTHING — no baked mesh, no part
+    /// rig. A HumanoidRetarget component next to this Character reads
+    /// CurrentPose() each frame and transfers it onto an imported humanoid
+    /// skeleton, so a swapped model plays every built-in animation. Serialized.
+    bool driveExternal = false;
+
     // ---- Separate body parts (a real, editable rig) ----
     // Instead of one baked mesh, build the character as a HIERARCHY of part
     // GameObjects (one per bone: Hips, Torso, Head, arms, legs) you can select,

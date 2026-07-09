@@ -92,6 +92,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/FootIK.hpp"
+#include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/AimIK.hpp"

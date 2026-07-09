@@ -10,6 +10,7 @@
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FootIK.hpp"
+#include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
 #include <array>
@@ -736,6 +737,7 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             if (up->IsSelfOrDescendantOf(root))
                 if ((ma = up->GetComponent<ModelAnimator>())) break;
     std::string mapped;
+    bool genuineIdle = false, genuineWalk = false;
     if (ma && !ma->clips.empty()) {
         auto low = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
         for (const auto& c : ma->clips) {
@@ -748,6 +750,26 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             else if (ma->fallClip.empty() && (has("fall") || has("air") || has("drop"))) ma->fallClip = c.name;
             else if (ma->landClip.empty() && has("land")) ma->landClip = c.name;
         }
+        genuineIdle = !ma->idleClip.empty();
+        genuineWalk = !ma->walkClip.empty();
+    }
+    // Retarget instead of clips when the file doesn't carry a usable locomotion
+    // set (a single Mixamo dance, a rigged model with no takes at all...): the
+    // Character stays ON in drive-external mode and a HumanoidRetarget plays
+    // the BUILT-IN animations on the imported skeleton — so the model walks,
+    // runs, jumps, crouches and gestures out of the box. Only when enough
+    // humanoid bones are recognizable (decided HERE so the clip path below —
+    // including its animated re-grounding — runs whenever retarget doesn't).
+    bool wantRetarget = !(ma && !ma->clips.empty() && genuineIdle && genuineWalk);
+    if (wantRetarget) {
+        wantRetarget = false;
+        if (player->GetComponent<Character>()) {
+            HumanoidRetarget probe;
+            probe.gameObject = player;
+            wantRetarget = probe.DetectAndWire(scene, root) >= 8;
+        }
+    }
+    if (ma && !ma->clips.empty() && !wantRetarget) {
         if (ma->idleClip.empty()) ma->idleClip = ma->clips.front().name;  // something is better than T-pose
         if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
         ma->driveByMovement = true;
@@ -822,6 +844,27 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         }
     }
 
+    // Retarget path: the built-in animation system drives the imported
+    // skeleton. Added BEFORE FootIK so its LateUpdate writes the pose first
+    // and the feet plant on top of it.
+    bool retargeted = false;
+    if (wantRetarget) {
+        if (auto* ch = player->GetComponent<Character>()) {
+            HumanoidRetarget* rt = player->GetComponent<HumanoidRetarget>();
+            if (!rt) rt = player->AddComponent<HumanoidRetarget>();
+            rt->Rewire();
+            int found = rt->DetectAndWire(scene, root);
+            retargeted = true;
+            ch->driveExternal = true;
+            // The retarget owns the pose: no locomotion switching and no
+            // auto-play (the import turns clip 0 on for the T-pose fix; here
+            // it would fight the retarget every frame). One-shots still work.
+            if (ma) { ma->driveByMovement = false; ma->inPlace = true; ma->autoPlay = false; }
+            mapped += (mapped.empty() ? "" : ", ") + std::string("built-in animations retargeted (") +
+                      std::to_string(found) + "/15 bones)";
+        }
+    }
+
     // Foot IK, wired automatically: detect the model's leg bones by name (Mixamo
     // etc.) and plant the feet on slopes/steps with the full setup — the same
     // out-of-the-box treatment the Humanoid template gets.
@@ -841,10 +884,12 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         }
     }
 
-    // Hide the default blocky body: the Character stops animating and its mesh +
-    // part rig stop rendering — the imported model IS the character now.
+    // Hide the default blocky body — the imported model IS the character now.
+    // Clip path: the Character stops animating entirely. Retarget path: it stays
+    // ON (drive-external computes the pose for the HumanoidRetarget) but renders
+    // nothing. Both hide the baked mesh and any part rig.
     if (auto* ch = player->GetComponent<Character>()) {
-        ch->enabled = false;
+        ch->enabled = retargeted;
         if (auto* mr = player->GetComponent<MeshRenderer>()) mr->enabled = false;
         for (const auto& up : scene.Objects())
             if (up->name == "Rig" && up->transform && up->transform->Parent() == player->transform)

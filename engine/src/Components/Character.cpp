@@ -475,6 +475,12 @@ void Character::Skin(Mesh& m, const std::vector<int>& bone, const std::vector<Ve
 
 void Character::Apply() {
     if (!gameObject) return;
+    // External-rig mode renders nothing of its own — keep the baked mesh off
+    // (Start() calls Apply, which would otherwise flash the blocky body).
+    if (driveExternal) {
+        if (auto* emr = gameObject->GetComponent<MeshRenderer>()) emr->enabled = false;
+        return;
+    }
     auto* mr = gameObject->GetComponent<MeshRenderer>();
     if (!mr) mr = gameObject->AddComponent<MeshRenderer>();
     m_built = false; EnsureRest();
@@ -615,6 +621,24 @@ void Character::Update(float dt) {
     }
     AdvanceLayer(dt);   // tick the partial-body layer clip (if any), every path below uses it
     AdvanceBlendTree(dt);   // tick the locomotion blend tree's shared clock
+    // External-rig mode: a HumanoidRetarget next to us transfers CurrentPose()
+    // onto an imported skeleton each frame — advance every animation clock and
+    // state here but render nothing ourselves (no baked mesh, no part rig).
+    if (driveExternal) {
+        if (auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr)
+            mr->enabled = false;
+        if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+            m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
+            if (m_punchT > 1.0f) m_punchT = 1.0f;
+        }
+        if (m_activeClip) AdvanceClip(dt);
+        else animTime += dt * animSpeed;
+        float ek = headTurnSpeed > 0.0f ? (1.0f - std::exp(-headTurnSpeed * dt)) : 1.0f;
+        m_headYaw   += (lookYaw   - m_headYaw)   * ek;
+        m_headPitch += (lookPitch - m_headPitch) * ek;
+        m_bodyLean  += (bodyLean  - m_bodyLean)  * ek;
+        return;
+    }
     // Separate-parts rig: animate the part transforms instead of baking one mesh.
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();

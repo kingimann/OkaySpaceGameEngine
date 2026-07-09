@@ -3856,6 +3856,58 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
     ConsoleLog(log + " — press Play to try it");
 }
 
+// ---- In-editor auto-rig: bind a model to the humanoid skeleton --------------
+// Merge every mesh under `go` (baked into go's local space), bind it to the
+// Character's humanoid skeleton (nearest-bone auto-weights) and hide the source
+// node renderers — the model then plays EVERY built-in animation, authored clip,
+// movement state and controller, and previews in the Animation window.
+static void RigModelHumanoid(EditorState& ed, GameObject* go) {
+    if (!go || !go->transform) return;
+    Mesh merged;
+    std::string tex;
+    Mat4 rootInv = go->transform->LocalToWorldMatrix().Inverse();
+    std::vector<GameObject*> srcNodes;
+    for (const auto& up : ed.scene().Objects()) {
+        GameObject* g = up.get();
+        if (!g || !g->IsSelfOrDescendantOf(go)) continue;
+        auto* mr = g->GetComponent<MeshRenderer>();
+        if (!mr || mr->mesh.vertices.empty()) continue;
+        if (tex.empty()) tex = mr->texture;
+        Mat4 l2r = rootInv * g->transform->LocalToWorldMatrix();
+        int base = (int)merged.vertices.size();
+        bool srcUV = mr->mesh.uvs.size() == mr->mesh.vertices.size();
+        if (srcUV && merged.uvs.size() < merged.vertices.size())
+            merged.uvs.resize(merged.vertices.size(), Vec2{0.0f, 0.0f});
+        for (const Vec3& v : mr->mesh.vertices) merged.vertices.push_back(l2r.MultiplyPoint(v));
+        if (srcUV) for (const Vec2& t : mr->mesh.uvs) merged.uvs.push_back(t);
+        else if (!merged.uvs.empty()) merged.uvs.resize(merged.vertices.size(), Vec2{0.0f, 0.0f});
+        for (int t : mr->mesh.triangles) merged.triangles.push_back(t + base);
+        if (g != go) srcNodes.push_back(g);
+    }
+    if (merged.vertices.empty()) {
+        ConsoleLog(go->name + " has no mesh to rig (import a model first).", 1);
+        return;
+    }
+    ed.PushUndo();
+    // The skinned copy on the root replaces the source nodes — hide them (kept,
+    // inactive, in case the user wants the original back).
+    for (GameObject* g : srcNodes)
+        if (g->transform && g->transform->Parent() == go->transform) g->active = false;
+    auto* ch = go->GetComponent<Character>();
+    if (!ch) ch = go->AddComponent<Character>();
+    ch->BindCustomMesh(merged);
+    ch->Apply();
+    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+        if (!tex.empty()) mr->texture = tex;
+        mr->enabled = true;
+        mr->doubleSided = true;
+    }
+    ed.Select(go); ed.view3D = true; ed.dirty = true;
+    ConsoleLog("Rigged '" + go->name + "' to the humanoid skeleton (" +
+               std::to_string(merged.vertices.size()) + " verts). Preview poses/clips in the "
+               "Animation window; add a controller (or use it as an NPC) to drive it.");
+}
+
 // Copy an external file into the project's Assets (into destDir, or its current import
 // dir). Picks a non-clashing name and returns the destination path (empty on failure).
 static std::string ImportAssetFile(const std::string& srcPath, std::filesystem::path destDir) {
@@ -9571,6 +9623,11 @@ void DrawHierarchy(EditorState& ed) {
                 if (ImGui::MenuItem("Group Selected", "Ctrl+Shift+G")) { ed.GroupSelected(); ConsoleLog("Grouped selection"); }
                 if (ImGui::MenuItem("Focus", "F")) FocusSelected(ed);
                 if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                if (!node->GetComponent<Character>()) {
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Move Up", "Ctrl+Up"))     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
                 if (ImGui::MenuItem("Move Down", "Ctrl+Down")) { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
@@ -16157,6 +16214,15 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this character's body:\nauto-sized to the capsule, feet grounded, facing matched, and its\nidle/walk/run clips wired to movement. You can also just DROP a model\nasset onto this object in the Hierarchy.");
             if (!ch->enabled) ImGui::TextDisabled("(default body hidden - a custom model is the character)");
+            if (ch->HasCustomBind()) {
+                ImGui::TextDisabled("(rigged model: %d verts bound to the skeleton)",
+                                    (int)ch->CustomBindMesh().vertices.size());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Unrig##char")) {
+                    ed.PushUndo(); ch->ClearCustomBind(); ch->Apply(); ed.dirty = true;
+                    ConsoleLog("Removed the rigged model; blocky body restored");
+                }
+            }
 
             c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
 

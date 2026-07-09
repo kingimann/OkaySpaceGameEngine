@@ -511,6 +511,26 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Disabled = a custom model replaced the blocky body (AttachCharacterModel):
         // remember it so the default character stays hidden after a load.
         if (!ch->enabled) out << "  charenabled 0\n";
+        // Auto-rigged custom mesh (BindCustomMesh): store the bind geometry so the
+        // rigged model survives save/load (verts + tris + optional uvs).
+        if (ch->HasCustomBind()) {
+            const Mesh& bm = ch->CustomBindMesh();
+            out << "  charbind " << bm.vertices.size();
+            for (const Vec3& v : bm.vertices) out << " " << v.x << " " << v.y << " " << v.z;
+            out << " " << bm.triangles.size();
+            for (int t : bm.triangles) out << " " << t;
+            out << " " << (bm.uvs.size() == bm.vertices.size() ? bm.uvs.size() : 0);
+            if (bm.uvs.size() == bm.vertices.size())
+                for (const Vec2& t : bm.uvs) out << " " << t.x << " " << t.y;
+            out << "\n";
+            // A rigged model keeps its material/texture — Character objects skip
+            // the normal mesh/material records, so write one here (same format).
+            if (auto* mr = go->GetComponent<MeshRenderer>())
+                out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
+                    << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
+                    << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
+                    << mr->tiling.x << " " << mr->tiling.y << "\n";
+        }
     }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
@@ -3618,6 +3638,22 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int en = 1; in >> en;
                     if (auto* ch = go->GetComponent<Character>()) ch->enabled = (en != 0);
                     if (!en) if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = false;
+                } else if (field == "charbind") {
+                    // Auto-rigged custom mesh: restore the bind geometry and re-rig.
+                    Mesh bm;
+                    std::size_t nv = 0; in >> nv;
+                    bm.vertices.reserve(nv);
+                    for (std::size_t k = 0; k < nv; ++k) { Vec3 v; in >> v.x >> v.y >> v.z; bm.vertices.push_back(v); }
+                    std::size_t nt = 0; in >> nt;
+                    bm.triangles.reserve(nt);
+                    for (std::size_t k = 0; k < nt; ++k) { int t = 0; in >> t; bm.triangles.push_back(t); }
+                    std::size_t nu = 0; in >> nu;
+                    bm.uvs.reserve(nu);
+                    for (std::size_t k = 0; k < nu; ++k) { Vec2 t; in >> t.x >> t.y; bm.uvs.push_back(t); }
+                    auto* ch = go->GetComponent<Character>();
+                    if (!ch) ch = go->AddComponent<Character>();
+                    ch->BindCustomMesh(bm);
+                    ch->Apply();
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();
                     int as = 0, port = 45000;

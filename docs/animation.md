@@ -179,6 +179,23 @@ head/bone swings smoothly onto a new target instead of snapping the frame
 it changes (Look-At defaults to a natural head-turn speed; Aim defaults to
 instant for turrets — raise it for organic tracking).
 
+## Rig any model in the editor (auto-rig)
+
+A model with NO rig and NO animations can be rigged right in the editor:
+right-click it in the Hierarchy and choose **Rig Model (Humanoid)**. Its
+meshes are merged and every vertex is bound to the engine's humanoid
+skeleton automatically (nearest-bone weights) — and from that moment the
+model plays **everything the built-in character can**: idle/walk/run
+cycles, crouch, jump, the emotions and gestures, your authored keyframe
+clips, movement states from any controller, and live preview in the
+**Animation window**. The model should stand upright, facing +Z, in a
+T/A/rest pose; texture and UVs are kept, and the bind saves with the
+scene. **Unrig** on the Character component restores the blocky body.
+
+For models that ALREADY have a skeleton + clips (Mixamo, Meshy GLB/FBX),
+you don't need this — import keeps their real rig and animations; drop
+them on a player (below) or drive them with the Model Animator.
+
 ## Custom character models (drag & drop)
 
 Any imported model can BE your playable character — no rigging setup:

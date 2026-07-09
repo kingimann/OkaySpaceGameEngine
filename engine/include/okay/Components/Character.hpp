@@ -318,6 +318,19 @@ public:
     Mesh BuildRig(std::vector<int>& bone) const;
     Mesh Build() const { std::vector<int> b; return BuildRig(b); }
 
+    // ---- Custom mesh rig (auto-rig an imported model) ----
+    /// Bind an arbitrary mesh to this character's humanoid skeleton: each vertex
+    /// attaches to its nearest bone segment, and every built-in animation, authored
+    /// clip, movement state and controller then drives the model — in-editor
+    /// auto-rigging. The mesh is normalized into the bind frame automatically
+    /// (feet at y=0, height 1.8, centered); it should FACE +Z in its own space
+    /// (the body flips 180° at display time, like the built-in mesh). Replaces
+    /// the blocky body until ClearCustomBind().
+    void BindCustomMesh(const Mesh& m);
+    void ClearCustomBind();
+    bool HasCustomBind() const { return m_hasCustomBind; }
+    const Mesh& CustomBindMesh() const { return m_customBind; }
+
     std::vector<Vec3> PoseAt(float t) const;
     /// World-space body offset for the current anim (e.g. lowering the whole body
     /// for crouch / prone, since the rig's root is otherwise pinned at hip height).
@@ -340,6 +353,9 @@ private:
     mutable std::vector<int> m_bone;
     mutable std::vector<Vec3> m_restPos;
     mutable bool m_built = false;
+    Mesh m_customBind;               // custom rigged mesh (bind pose, normalized)
+    bool m_hasCustomBind = false;
+    void AssignBonesForMesh(const Mesh& m, std::vector<int>& bone) const;
     float m_headYaw = 0.0f;        // eased head turn (toward lookYaw)
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)

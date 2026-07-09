@@ -274,9 +274,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 out << "\n";
             }
             // Shading mode: meshgeo loads flat by default; remember when the user
-            // chose Shade Smooth so it survives save/load (optional record).
-            if (mr->mesh.HasNormals())
-                out << "  meshshade 1\n";
+            // chose Shade Smooth (1) or Auto Smooth by angle (2 <angle>) so it
+            // survives save/load (optional record).
+            if (mr->mesh.HasNormals()) {
+                if (mr->mesh.autoSmoothAngle > 0.0f)
+                    out << "  meshshade 2 " << mr->mesh.autoSmoothAngle << "\n";
+                else
+                    out << "  meshshade 1\n";
+            }
         }
         // Per-face colors (vertex-painting / baked lightmap) — separate record so
         // older scenes still load. Written whenever populated, for named primitives
@@ -579,7 +584,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << a->aimAxis.x << " " << a->aimAxis.y << " " << a->aimAxis.z
             << " " << a->upAxis.x << " " << a->upAxis.y << " " << a->upAxis.z
             << " " << a->weight << " " << a->maxAngle
-            << " " << a->target.x << " " << a->target.y << " " << a->target.z << "\n";
+            << " " << a->target.x << " " << a->target.y << " " << a->target.z
+            << " " << a->smoothing << "\n";
     }
     if (auto* l = go->GetComponent<LookAtIK>()) {
         out << "  lookatik " << Quote(l->targetName)
@@ -588,7 +594,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << l->target.x << " " << l->target.y << " " << l->target.z
             << " " << l->chainNames.size();
         for (const std::string& n : l->chainNames) out << " " << Quote(n);
-        out << "\n";
+        out << " " << l->smoothing << "\n";
     }
     if (auto* f = go->GetComponent<FootIK>()) {
         out << "  footik " << Quote(f->leftHipName) << " " << Quote(f->leftKneeName) << " " << Quote(f->leftFootName)
@@ -1921,12 +1927,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         Vec2 t; in >> t.x >> t.y; mr->mesh.uvs.push_back(t);
                     }
                 } else if (field == "meshshade") {
-                    // Optional: restore smooth shading on meshgeo geometry (the
-                    // meshgeo reader cleared normals for flat shading).
+                    // Optional: restore smooth (1) or angle-based auto-smooth (2)
+                    // shading on meshgeo geometry (the meshgeo reader cleared
+                    // normals for flat shading).
                     auto* mr = go->GetComponent<MeshRenderer>();
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int s = 0; in >> s;
-                    if (s) mr->mesh.ComputeSmoothNormals();
+                    if (s == 2) { float a = 30.0f; in >> a; mr->mesh.ComputeAutoSmoothNormals(a); }
+                    else if (s) mr->mesh.ComputeSmoothNormals();
                 } else if (field == "meshcolors") {
                     // Per-face colors (vertex paint / baked lightmap). Follows the
                     // `mesh`/`meshgeo` geometry so the counts line up.
@@ -2246,6 +2254,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> a->upAxis.x >> a->upAxis.y >> a->upAxis.z
                        >> a->weight >> a->maxAngle
                        >> a->target.x >> a->target.y >> a->target.z;
+                    // Optional trailing fields (newer files): rest-of-line parse so
+                    // older records still load cleanly.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); float sm;
+                      if (rs >> sm) a->smoothing = sm; }
                 } else if (field == "lookatik") {
                     auto* l = go->AddComponent<LookAtIK>();
                     l->targetName = ReadQuoted(in);
@@ -2254,6 +2267,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> l->target.x >> l->target.y >> l->target.z;
                     std::size_t n = 0; in >> n;
                     for (std::size_t k = 0; k < n; ++k) l->chainNames.push_back(ReadQuoted(in));
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); float sm;
+                      if (rs >> sm) l->smoothing = sm; }
                 } else if (field == "footik") {
                     auto* f = go->AddComponent<FootIK>();
                     f->leftHipName = ReadQuoted(in); f->leftKneeName = ReadQuoted(in); f->leftFootName = ReadQuoted(in);

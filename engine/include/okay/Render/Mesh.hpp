@@ -34,6 +34,8 @@ struct Mesh {
                                   // used by the renderer only when fully populated.
     std::vector<Vec3> normals;    // optional per-vertex normals (parallel to vertices);
                                   // when present the renderer smooth (Gouraud) shades.
+    float autoSmoothAngle = 0.0f; // >0: normals came from ComputeAutoSmoothNormals(angle)
+                                  // (serialized so the shading survives save/load)
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
     bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
@@ -45,6 +47,7 @@ struct Mesh {
     /// joins between assembled body parts. Area-weighted (uses un-normalized face
     /// normals) for a natural result.
     void ComputeSmoothNormals() {
+        autoSmoothAngle = 0.0f;               // fully smooth supersedes auto-smooth
         normals.assign(vertices.size(), Vec3{0, 0, 0});
         std::map<std::tuple<int, int, int>, int> rep;
         std::vector<int> grp(vertices.size());
@@ -68,6 +71,99 @@ struct Mesh {
             float m = n.Magnitude();
             normals[i] = m > 1e-8f ? n * (1.0f / m) : Vec3{0, 1, 0};
         }
+    }
+
+    /// Angle-based shading (Blender's Auto Smooth): smooth normals across edges
+    /// where adjacent faces meet at less than `angleDeg`, hard splits where they
+    /// meet sharper — a cylinder gets a smooth barrel with crisp cap rims in one
+    /// click, no manual smooth/flat juggling. Rebuilds the vertex list (corners in
+    /// different smoothing groups get their own vertex copies); keeps UVs (split
+    /// per seam) and per-face colors. Remembered in `autoSmoothAngle` so the scene
+    /// serializer can restore the same shading on load.
+    void ComputeAutoSmoothNormals(float angleDeg = 30.0f) {
+        const int nt = (int)triangles.size() / 3;
+        if (nt == 0 || vertices.empty()) return;
+        const float cosT = std::cos(angleDeg * 0.01745329252f);
+        const bool hasUV = uvs.size() == vertices.size();
+        // Area-weighted face normals (+ unit copies for the angle tests). Zero-area
+        // triangles carry no orientation: they join whatever group is available
+        // without contributing to (or being tested against) its normal.
+        std::vector<Vec3> fn(nt), fu(nt);
+        std::vector<char> fdeg(nt, 0);
+        for (int t = 0; t < nt; ++t) {
+            const Vec3& a = vertices[triangles[t * 3]];
+            fn[t] = Vec3::Cross(vertices[triangles[t * 3 + 1]] - a,
+                                vertices[triangles[t * 3 + 2]] - a);
+            float m = fn[t].Magnitude();
+            if (m > 1e-12f) fu[t] = fn[t] * (1.0f / m);
+            else { fu[t] = Vec3{0, 1, 0}; fdeg[t] = 1; }
+        }
+        // Corners around each coincident-position vertex.
+        std::vector<int> rep = CoincidentReps();
+        std::map<int, std::vector<std::pair<int, int>>> corners;   // rep -> (tri, slot)
+        for (int t = 0; t < nt; ++t)
+            for (int k = 0; k < 3; ++k)
+                corners[rep[triangles[t * 3 + k]]].push_back({t, k});
+        Mesh out;
+        out.triangles.assign(triangles.size(), 0);
+        for (auto& cv : corners) {
+            // Greedy smoothing groups at this vertex: a corner joins the first group
+            // whose average normal is within the angle of its face's normal.
+            std::vector<Vec3> gSum;
+            std::vector<std::vector<std::pair<int, int>>> gMembers;
+            for (auto& tk : cv.second) {
+                int t = tk.first, gi = -1;
+                float sign = 1.0f;
+                if (fdeg[t]) {
+                    // No orientation of its own: ride along with the first group.
+                    if (gSum.empty()) { gSum.push_back({0, 0, 0}); gMembers.emplace_back(); }
+                    gMembers[0].push_back(tk);
+                    continue;
+                }
+                for (int g = 0; g < (int)gSum.size(); ++g) {
+                    Vec3 gn = gSum[g]; float m = gn.Magnitude();
+                    if (m < 1e-12f) continue;
+                    // Sign-tolerant: several built-in generators (and hand edits)
+                    // carry mixed winding, so a flipped-but-parallel neighbor still
+                    // belongs to the group — accumulate it sign-aligned instead of
+                    // letting it cancel the average to zero.
+                    float d = Vec3::Dot(gn * (1.0f / m), fu[t]);
+                    if (d >= cosT)       { gi = g; sign =  1.0f; break; }
+                    else if (-d >= cosT) { gi = g; sign = -1.0f; break; }
+                }
+                if (gi < 0) { gSum.push_back({0, 0, 0}); gMembers.emplace_back(); gi = (int)gSum.size() - 1; }
+                gSum[gi] += fn[t] * sign;
+                gMembers[gi].push_back(tk);
+            }
+            for (int g = 0; g < (int)gSum.size(); ++g) {
+                Vec3 n = gSum[g]; float m = n.Magnitude();
+                n = m > 1e-12f ? n * (1.0f / m) : Vec3{0, 1, 0};
+                // One output vertex per (group, uv) so texture seams keep their UVs.
+                std::map<std::pair<long, long>, int> byUV;
+                for (auto& tk : gMembers[g]) {
+                    int src = triangles[tk.first * 3 + tk.second];
+                    std::pair<long, long> uk{0, 0};
+                    if (hasUV) uk = {std::lround(uvs[src].x * 4096.0f),
+                                     std::lround(uvs[src].y * 4096.0f)};
+                    auto it = byUV.find(uk);
+                    int vi;
+                    if (it == byUV.end()) {
+                        vi = (int)out.vertices.size();
+                        out.vertices.push_back(vertices[src]);
+                        out.normals.push_back(n);
+                        if (hasUV) out.uvs.push_back(uvs[src]);
+                        byUV[uk] = vi;
+                    } else vi = it->second;
+                    out.triangles[tk.first * 3 + tk.second] = vi;
+                }
+            }
+        }
+        vertices = std::move(out.vertices);
+        normals  = std::move(out.normals);
+        triangles = std::move(out.triangles);
+        if (hasUV) uvs = std::move(out.uvs); else uvs.clear();
+        autoSmoothAngle = angleDeg;   // triColors are per-face and index-stable: keep
+        name = "";
     }
 
     /// Keep normals valid after an edit WITHOUT changing the mesh's shading mode:
@@ -2419,14 +2515,25 @@ struct Mesh {
         const int nt = (int)triangles.size() / 3;
         if (nt == 0) return 0;
         std::vector<int> rep = CoincidentReps();
+        // Zero-area triangles (collapsed pole fans etc.) have no orientation of
+        // their own and corrupt the winding walk — leave them out entirely.
+        std::vector<char> degen(nt, 0);
+        for (int t = 0; t < nt; ++t) {
+            const Vec3& a = vertices[triangles[t * 3]];
+            Vec3 n = Vec3::Cross(vertices[triangles[t * 3 + 1]] - a,
+                                 vertices[triangles[t * 3 + 2]] - a);
+            if (n.SqrMagnitude() < 1e-16f) degen[t] = 1;
+        }
         // Directed edge -> owning tri list (a tri owns edges a->b, b->c, c->a).
         std::map<std::pair<int, int>, std::vector<int>> edgeTris;   // undirected key
-        for (int t = 0; t < nt; ++t)
+        for (int t = 0; t < nt; ++t) {
+            if (degen[t]) continue;
             for (int k = 0; k < 3; ++k) {
                 int a = rep[triangles[t * 3 + k]], b = rep[triangles[t * 3 + (k + 1) % 3]];
                 if (a == b) continue;
                 edgeTris[{a < b ? a : b, a < b ? b : a}].push_back(t);
             }
+        }
         // Directed edge of tri t at slot k AFTER any flip recorded in `flip`.
         auto dirEdge = [&](int t, int k, bool flipped, int& a, int& b) {
             int i0 = rep[triangles[t * 3 + k]], i1 = rep[triangles[t * 3 + (k + 1) % 3]];
@@ -2436,7 +2543,7 @@ struct Mesh {
         std::vector<int> shell; shell.reserve(64);
         int flipped = 0;
         for (int seed = 0; seed < nt; ++seed) {
-            if (seen[seed]) continue;
+            if (seen[seed] || degen[seed]) continue;
             shell.clear();
             std::vector<int> stack{seed};
             seen[seed] = 1;

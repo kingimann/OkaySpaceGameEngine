@@ -14,6 +14,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <cmath>
 #include <vector>
 #include <string>
 
@@ -29,6 +30,10 @@ public:
     Vec3  forwardAxis = Vec3::Forward; ///< the bones' local "forward"
     float weight   = 1.0f;             ///< 0 = off, 1 = full look
     float maxAngle = 80.0f;            ///< max turn per bone (degrees), keeps it natural
+    /// Ease speed (per second) toward the look target: heads swing smoothly to a
+    /// new target instead of snapping the frame it changes. 0 = instant (old
+    /// behavior). ~10 reads like a natural head turn.
+    float smoothing = 10.0f;
 
     void Start() override {
         Scene* s = GetScene();
@@ -43,9 +48,13 @@ public:
     // Solve in LateUpdate so the correction lands AFTER every animation driver
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
-    void LateUpdate(float) override {
+    void LateUpdate(float dt) override {
         if (weight <= 0.0f || chain.empty()) return;
         Vec3 tgt = targetObject ? targetObject->Position() : target;
+        // Bone rotations persist between frames, so applying `ease` of the way per
+        // frame converges on the target — a smooth swing instead of a snap when
+        // the target (or targetObject) jumps.
+        float ease = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
         // Root-to-tip: each bone aims its forward at the target. Processing in order
         // means later bones see the positions their parents just moved them to.
         for (Transform* b : chain) {
@@ -56,7 +65,7 @@ public:
             Vec3 fwd = (b->Rotation() * forwardAxis).Normalized();
             Quat desired = (Quat::FromToRotation(fwd, dir) * b->Rotation()).Normalized();
             float ang = Quat::Angle(b->Rotation(), desired);
-            float t = weight;
+            float t = weight * ease;
             if (ang > maxAngle && ang > 1e-4f) t *= maxAngle / ang;   // clamp the turn
             b->SetRotation(Quat::Slerp(b->Rotation(), desired, t));
         }

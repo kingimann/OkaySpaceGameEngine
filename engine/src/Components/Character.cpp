@@ -217,6 +217,20 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_TORSO] = {1.5f * s, 0, 0};
         r[B_LUPARM] = {0, 0, 4 + 1.5f * s};
         r[B_RUPARM] = {0, 0, -4 - 1.5f * s};
+        // Idle fidgets: a slow side-to-side weight shift (hips roll one way, the
+        // torso counter-rolls to stay balanced) plus an occasional glance to one
+        // side — alternating sides each ~9s cycle — so a standing character reads
+        // as alive rather than a breathing statue.
+        float sway = std::sin(t * 0.45f);
+        r[B_HIPS].z  += 2.2f * sway;
+        r[B_TORSO].z -= 1.4f * sway;
+        float cyc = std::fmod(t, 9.0f);
+        if (cyc > 6.0f && cyc < 8.0f) {
+            float e = std::sin((cyc - 6.0f) * 0.5f * 3.14159265f);   // ease 0..1..0
+            float side = std::fmod(t / 9.0f, 2.0f) < 1.0f ? 1.0f : -1.0f;
+            r[B_HEAD].y += side * 22.0f * e;
+            r[B_HEAD].x += 2.0f * e;                                 // slight tilt with it
+        }
     } else if (anim == 2 || anim == 3) {   // walk / run
         float amp = (anim == 3) ? 42.0f : 26.0f;
         float w = t * (anim == 3 ? 9.0f : 6.5f);

@@ -14023,8 +14023,14 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::Button("Shade Smooth##model")) { mr->mesh.ComputeSmoothNormals(); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blend lighting across faces (organic shapes). Saved with the scene.");
         ImGui::SameLine();
-        if (ImGui::Button("Flat##shade")) { mr->mesh.normals.clear(); ed.dirty = true; }
+        if (ImGui::Button("Flat##shade")) { mr->mesh.normals.clear(); mr->mesh.autoSmoothAngle = 0.0f; ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faceted lighting per face (crisp low-poly look).");
+        static float s_autoSmooth = 30.0f;
+        ImGui::SetNextItemWidth(70);
+        ImGui::DragFloat("##asang", &s_autoSmooth, 1.0f, 5.0f, 89.0f, "%.0f\xC2\xB0");
+        ImGui::SameLine();
+        if (ImGui::Button("Auto Smooth##model")) { ed.PushUndo(); mr->mesh.ComputeAutoSmoothNormals(s_autoSmooth); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blender's Auto Smooth: smooth across shallow edges, crisp across sharp ones\n(above this angle). A cylinder gets a smooth barrel + hard cap rims in one click.\nSaved with the scene.");
         static float s_jitter = 0.05f; static int s_jitterSeed = 1;
         ImGui::SetNextItemWidth(90); ImGui::DragFloat("##jit", &s_jitter, 0.005f, 0.0f, 2.0f, "%.3f");
         ImGui::SameLine();
@@ -16558,6 +16564,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat3("Up Axis##aim", up, 0.05f)) { a->upAxis = {up[0], up[1], up[2]}; ed.dirty = true; }
             ImGui::DragFloat("Weight##aim", &a->weight, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Max Angle##aim", &a->maxAngle, 1.0f, 0.0f, 180.0f);
+            ImGui::DragFloat("Smoothing##aim", &a->smoothing, 0.5f, 0.0f, 40.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease speed toward a moved target (per second). 0 = exact/instant (turrets).");
             if (ImGui::SmallButton("Remove##aim")) toRemove = a;
         }
     }
@@ -16592,6 +16600,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat3("Forward Axis##look", fa, 0.05f)) { l->forwardAxis = {fa[0], fa[1], fa[2]}; ed.dirty = true; }
             ImGui::DragFloat("Weight##look", &l->weight, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Max Angle / bone##look", &l->maxAngle, 1.0f, 0.0f, 180.0f);
+            ImGui::DragFloat("Smoothing##look", &l->smoothing, 0.5f, 0.0f, 40.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Head-turn ease speed (per second): swings smoothly onto a new target. 0 = snap.");
             ImGui::Separator();
             ImGui::Text("Chain bones root->tip (%d)", (int)l->chainNames.size());
             for (std::size_t i = 0; i < l->chainNames.size(); ++i) {

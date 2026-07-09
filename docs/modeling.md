@@ -63,6 +63,10 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
 - **Shade Smooth / Flat** switches between blended lighting (organic
   shapes) and faceted lighting (low-poly look); the choice is saved with
   the scene.
+- **Auto Smooth** (with an angle) is Blender's angle-based shading: edges
+  meeting shallower than the angle shade smooth, sharper ones stay crisp —
+  a cylinder gets a smooth barrel with hard cap rims in one click. The
+  angle is saved with the scene and restored on load.
 - **Weld** duplicates, **Recenter** the pivot, **Ground** the pivot to the
   base, **Fit 1u** to scale into a unit cube. **Export OBJ** writes the mesh
   (with UVs) to `Assets/<name>.obj`.

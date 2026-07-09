@@ -170,8 +170,14 @@ automatically (and re-hook after save/load).
 The procedural walk/run cycles roll each **foot** heel-to-toe through the
 stride and counter-sway the **shoulders** against the hips, and any
 jump that lands into idle/walk/run plays a short **landing recovery** —
-knees flex, the body dips, then springs back over ~0.3s. All automatic,
-on every Character.
+knees flex, the body dips, then springs back over ~0.3s. Standing still,
+the character **fidgets**: a slow side-to-side weight shift plus an
+occasional glance to one side. All automatic, on every Character.
+
+**Look-At IK** and **Aim IK** also have a **Smoothing** field now: the
+head/bone swings smoothly onto a new target instead of snapping the frame
+it changes (Look-At defaults to a natural head-turn speed; Aim defaults to
+instant for turrets — raise it for organic tracking).
 
 ## Tips
 

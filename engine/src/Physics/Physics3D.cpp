@@ -538,11 +538,17 @@ void Physics3D::Step(Scene& scene, float dt) {
             }
             for (Terrain* terr : terrains) {
                 if (!terr->gameObject || !terr->gameObject->transform) continue;
-                Vec3 tp = terr->gameObject->transform->Position();
-                float lx = pos.x - tp.x, lz = pos.z - tp.z;
+                // Work in the terrain's LOCAL space so a scaled (or rotated)
+                // terrain supports bodies across its whole VISIBLE footprint —
+                // the old world-offset math ignored the transform, so scaling a
+                // terrain up let players walk past the unscaled square and fall
+                // through ground that looked perfectly solid.
+                Mat4 l2w = terr->gameObject->transform->LocalToWorldMatrix();
+                Vec3 lp = l2w.Inverse().MultiplyPoint(pos);
+                float lx = lp.x, lz = lp.z;
                 float half = terr->size * 0.5f;
                 if (lx < -half || lx > half || lz < -half || lz > half) continue;
-                float targetY = tp.y + terr->SampleHeight(lx, lz) + foot;
+                float targetY = l2w.MultiplyPoint({lx, terr->SampleHeight(lx, lz), lz}).y + foot;
                 // Resting on (or just above) the surface counts as grounded, so a
                 // player standing on terrain can jump repeatedly. A small skin
                 // tolerance avoids flicker from the per-frame gravity nudge.
@@ -555,7 +561,7 @@ void Physics3D::Step(Scene& scene, float dt) {
                     // slide down hills, bounce off (restitution) and lose tangential
                     // speed to friction — so debris tumbles and rolls realistically
                     // instead of sticking flat where it lands.
-                    Vec3 n = terr->NormalAt(lx, lz);        // unit surface normal (Y up)
+                    Vec3 n = l2w.MultiplyVector(terr->NormalAt(lx, lz)).Normalized();   // surface normal, world space
                     Vec3& v = rb->velocity;
                     float vn = v.x * n.x + v.y * n.y + v.z * n.z;   // into-surface component
                     if (vn < 0.0f) {
@@ -945,6 +951,74 @@ RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& di
         if (hit && t <= best.distance) {
             best.hit = true; best.collider = c; best.gameObject = c->gameObject;
             best.distance = t; best.point = origin + dir * t; best.normal = n;
+        }
+    }
+    // Heightmap terrain: not a polygon collider, so march the ray against the
+    // height field (transform-aware — scaled/rotated terrains work). Lets Foot
+    // IK plant feet on hills, aim/mouse rays strike the ground, etc. Coarse
+    // steps sized to the heightmap cell, then a short bisection refine.
+    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+        GameObject* tg = terr->gameObject;
+        if (!tg || !tg->active || !tg->transform) continue;
+        if (ignore && tg == ignore) continue;
+        Mat4 l2w = tg->transform->LocalToWorldMatrix();
+        Mat4 w2l = l2w.Inverse();
+        float half = terr->size * 0.5f;
+        auto below = [&](float t) {   // is the ray point at t under the surface?
+            Vec3 lp = w2l.MultiplyPoint(origin + dir * t);
+            if (lp.x < -half || lp.x > half || lp.z < -half || lp.z > half) return false;
+            return lp.y <= terr->SampleHeight(lp.x, lp.z);
+        };
+        // Bound the march to the ray's overlap with the terrain's (generous)
+        // world AABB — callers raycast with huge max distances (camera rays),
+        // and stepping all the way out would stall the frame.
+        Vec3 bmn, bmx; bool bAny = false;
+        for (int cix = 0; cix < 8; ++cix) {
+            Vec3 c2 = l2w.MultiplyPoint({cix & 1 ? half : -half,
+                                         cix & 2 ? 1000.0f : -1000.0f,
+                                         cix & 4 ? half : -half});
+            if (!bAny) { bmn = bmx = c2; bAny = true; }
+            else {
+                bmn.x = Mathf::Min(bmn.x, c2.x); bmx.x = Mathf::Max(bmx.x, c2.x);
+                bmn.y = Mathf::Min(bmn.y, c2.y); bmx.y = Mathf::Max(bmx.y, c2.y);
+                bmn.z = Mathf::Min(bmn.z, c2.z); bmx.z = Mathf::Max(bmx.z, c2.z);
+            }
+        }
+        float tEnter = 0.0f, tExit = best.distance;
+        bool miss = false;
+        for (int ax = 0; ax < 3 && !miss; ++ax) {
+            float o = ax == 0 ? origin.x : ax == 1 ? origin.y : origin.z;
+            float d = ax == 0 ? dir.x : ax == 1 ? dir.y : dir.z;
+            float lo = ax == 0 ? bmn.x : ax == 1 ? bmn.y : bmn.z;
+            float hi = ax == 0 ? bmx.x : ax == 1 ? bmx.y : bmx.z;
+            if (Mathf::Abs(d) < 1e-8f) { if (o < lo || o > hi) miss = true; continue; }
+            float t0 = (lo - o) / d, t1 = (hi - o) / d;
+            if (t0 > t1) { float tmp = t0; t0 = t1; t1 = tmp; }
+            tEnter = Mathf::Max(tEnter, t0);
+            tExit  = Mathf::Min(tExit, t1);
+            if (tEnter > tExit) miss = true;
+        }
+        if (miss) continue;
+        float step = terr->size / (float)(terr->resolution > 1 ? terr->resolution : 64);
+        if (step < 0.05f) step = 0.05f;
+        if (below(tEnter)) continue;   // started under the terrain — no forward hit
+        float prev = tEnter;
+        int guard = 0;
+        for (float t = tEnter + step; t <= tExit && guard < 4096; t += step, ++guard) {
+            if (!below(t)) { prev = t; continue; }
+            float lo = prev, hi = t;                    // crossed: refine the crossing
+            for (int it = 0; it < 10; ++it) {
+                float mid = (lo + hi) * 0.5f;
+                if (below(mid)) hi = mid; else lo = mid;
+            }
+            float tHit = (lo + hi) * 0.5f;
+            if (tHit <= best.distance) {
+                Vec3 lp = w2l.MultiplyPoint(origin + dir * tHit);
+                best.hit = true; best.collider = nullptr; best.gameObject = tg;
+                best.distance = tHit; best.point = origin + dir * tHit;
+                best.normal = l2w.MultiplyVector(terr->NormalAt(lp.x, lp.z)).Normalized();
+            }
+            break;
         }
     }
     return best;

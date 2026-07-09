@@ -196,6 +196,21 @@ For models that ALREADY have a skeleton + clips (Mixamo, Meshy GLB/FBX),
 you don't need this — import keeps their real rig and animations; drop
 them on a player (below) or drive them with the Model Animator.
 
+## Previewing & editing imported clips (Unity-style)
+
+Select any imported model (or any of its bones) with the **Animation
+window** open: pick a clip, press **Play** or scrub the timeline, and the
+model animates in the inset preview. Tick **Preview in Scene view** to see
+it animate on the model in the Scene view itself while you scrub — the
+original pose is restored when you untick it or close the window.
+
+Clip tools: **Rename**, **Duplicate**, **Delete**, **Copy/Paste** (moves a
+clip to another model with the same bone names), **Split...** (cut a long
+take into idle/walk/attack pieces), **Reverse** (play backwards) and
+**Scale Time** (bake slow-motion / speed-up — keys and event markers are
+re-timed). **Events** adds named markers that fire during play (footsteps,
+hit windows) — read them in scripts with `anim_event()`.
+
 ## Custom character models (drag & drop)
 
 Any imported model can BE your playable character — no rigging setup:

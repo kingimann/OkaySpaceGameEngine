@@ -325,6 +325,48 @@ public:
         }
     }
 
+    // ---- Clip surgery (the editor's animation tools) ----
+    /// Reverse a clip in time (plays backwards); event times flip with it.
+    void ReverseClip(int i) {
+        if (i < 0 || i >= (int)clips.size()) return;
+        float len = ClipLength(i);
+        for (auto& nc : clips[i].nodes) nc.clip.Reverse();
+        for (auto& ev : clips[i].events) ev.time = len - ev.time;
+    }
+    /// Cut a clip down to [t0, t1] (boundaries sampled exactly); events outside
+    /// the window drop, the rest shift to the new zero.
+    void TrimClip(int i, float t0, float t1) {
+        if (i < 0 || i >= (int)clips.size() || t1 <= t0) return;
+        for (auto& nc : clips[i].nodes) nc.clip.Trim(t0, t1);
+        std::vector<ClipEvent> kept;
+        for (auto& ev : clips[i].events)
+            if (ev.time >= t0 && ev.time <= t1) kept.push_back({ev.time - t0, ev.name});
+        clips[i].events = std::move(kept);
+    }
+    /// Stretch/compress a clip in time (2 = twice as long / half speed).
+    void ScaleClipTime(int i, float factor) {
+        if (i < 0 || i >= (int)clips.size() || factor <= 1e-4f) return;
+        for (auto& nc : clips[i].nodes) nc.clip.ScaleTime(factor);
+        for (auto& ev : clips[i].events) ev.time *= factor;
+    }
+    /// Duplicate a clip (returns the new index, -1 on failure) — trim the copy
+    /// to cut a long take into pieces without losing the original.
+    int DuplicateClip(int i) {
+        if (i < 0 || i >= (int)clips.size()) return -1;
+        Clip copy = clips[i];
+        copy.name += " copy";
+        clips.push_back(std::move(copy));
+        return (int)clips.size() - 1;
+    }
+    /// Remove a clip entirely (locomotion mappings by that name go stale — the
+    /// editor clears them).
+    void RemoveClip(int i) {
+        if (i < 0 || i >= (int)clips.size()) return;
+        clips.erase(clips.begin() + i);
+        if (active >= (int)clips.size()) active = (int)clips.size() - 1;
+        if (active < 0) active = 0;
+    }
+
     /// Index of a clip by name (-1 = none).
     int FindClip(const std::string& name) const {
         if (name.empty()) return -1;

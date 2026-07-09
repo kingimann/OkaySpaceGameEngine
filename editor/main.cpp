@@ -11190,6 +11190,30 @@ static void ApplyClipToTransform(const AnimationClip& clip, Transform* tr, float
 // from the clip, the focused preview renders, then every touched transform is
 // RESTORED — the scene itself is never left mid-pose (nothing to dirty, nothing to
 // fight Play mode or saving). In Play mode the clips run live instead.
+// ---- "Preview in Scene view" (Unity-style): while on, the clip preview pose is
+// LEFT applied to the scene each frame instead of being restored after the inset
+// render — the model animates right in the Scene/Game view while you scrub. The
+// pre-preview pose is captured at toggle-on and restored at toggle-off/close.
+static ModelAnimator* g_maScenePrev = nullptr;
+struct MaSceneBase { GameObject* go; Vec3 p; Quat r; Vec3 s; };
+static std::vector<MaSceneBase> g_maScenePrevBase;
+static void StopModelScenePreview(EditorState& ed) {
+    if (!g_maScenePrev) return;
+    std::set<GameObject*> alive;
+    for (const auto& up : ed.scene().Objects()) alive.insert(up.get());
+    for (const MaSceneBase& b : g_maScenePrevBase)
+        if (alive.count(b.go) && b.go->transform) {
+            b.go->transform->localPosition = b.p;
+            b.go->transform->localRotation = b.r;
+            b.go->transform->localScale    = b.s;
+        }
+    // Re-deform any skinned meshes back onto the restored skeleton.
+    for (const auto& up : ed.scene().Objects())
+        if (auto* sm = up->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
+    g_maScenePrev = nullptr;
+    g_maScenePrevBase.clear();
+}
+
 static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     static std::unordered_map<void*, float> s_time;
     static std::unordered_map<void*, bool>  s_run;
@@ -11248,12 +11272,16 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     }
     for (SkinnedMesh* sm : skins) { sm->ResolveJoints(); sm->Skin(); }
     DrawAnimPreview(ed, go);
-    for (const SavedTRS& s2 : saved) {
-        s2.tr->localPosition = s2.p;
-        s2.tr->localScale    = s2.s;
-        s2.tr->localRotation = s2.r;
+    // "Preview in Scene view": leave the pose applied so the model animates in
+    // the Scene/Game view too; otherwise restore the scene pose (inset only).
+    if (g_maScenePrev != ma) {
+        for (const SavedTRS& s2 : saved) {
+            s2.tr->localPosition = s2.p;
+            s2.tr->localScale    = s2.s;
+            s2.tr->localRotation = s2.r;
+        }
+        for (SkinnedMesh* sm : skins) sm->Skin();   // deform back to the scene pose
     }
-    for (SkinnedMesh* sm : skins) sm->Skin();   // deform back to the scene pose
 
     // Clip picker + transport.
     ImGui::SetNextItemWidth(230);
@@ -11279,6 +11307,29 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     ImGui::SameLine(); ImGui::SetNextItemWidth(90);
     ch |= ImGui::DragFloat("Speed##maed", &ma->speed, 0.02f, 0.05f, 5.0f);
     if (ch) ed.dirty = true;
+
+    // Unity-style scene preview: the playing/scrubbed pose shows on the model in
+    // the Scene view itself, not just the inset above.
+    bool scenePrev = (g_maScenePrev == ma);
+    if (ImGui::Checkbox("Preview in Scene view##maed", &scenePrev)) {
+        StopModelScenePreview(ed);              // restore whatever was previewing
+        if (scenePrev) {
+            // Capture the pre-preview pose of every node any clip animates.
+            std::set<GameObject*> caught;
+            for (const auto& cl : ma->clips)
+                for (const auto& nc : cl.nodes) {
+                    auto it = byName.find(nc.node);
+                    if (it == byName.end() || !it->second->transform || caught.count(it->second)) continue;
+                    caught.insert(it->second);
+                    g_maScenePrevBase.push_back({it->second,
+                                                 it->second->transform->localPosition,
+                                                 it->second->transform->localRotation,
+                                                 it->second->transform->localScale});
+                }
+            g_maScenePrev = ma;
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Animate the model in the Scene view while you play/scrub here\n(like Unity's animation preview). The original pose is restored when\nyou untick this or close the window — turn it OFF before saving.");
 
     // ---- Manage the clip library: rename / duplicate / delete ----
     ImGui::Separator();
@@ -11336,6 +11387,25 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
                        std::to_string(s_clipClipboard.nodes.size()) + " bones matched in scene)");
         }
         ImGui::EndDisabled();
+
+        // Reverse + time-stretch: play a clip backwards (stand-up from a fall,
+        // rewind a door), or bake it slower/faster than 1x (events follow).
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reverse##maed")) {
+            ed.PushUndo(); ma->ReverseClip(ma->active); t = 0.0f; ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip this clip in time so it plays backwards (events move with it).");
+        {
+            static float s_stretch = 1.0f;
+            ImGui::SetNextItemWidth(80);
+            ImGui::DragFloat("##mastretch", &s_stretch, 0.05f, 0.1f, 10.0f, "x%.2f");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Scale Time##maed") && s_stretch > 0.01f) {
+                ed.PushUndo(); ma->ScaleClipTime(ma->active, s_stretch); t = 0.0f; ed.dirty = true;
+                ConsoleLog("Clip '" + ma->clips[ma->active].name + "' rescaled x" + std::to_string(s_stretch).substr(0, 4));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake the clip slower/faster: x2 = twice as long (slow motion),\nx0.5 = twice as fast. Keys and events are re-timed permanently\n(the Speed slider above changes playback only).");
+        }
 
         // Split: carve a time range out of the active clip into a NEW named clip —
         // how a single-take file (Mixamo/Meshy "one long animation") becomes
@@ -11469,11 +11539,14 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
         }
         if (cur.nodes.empty()) ImGui::TextDisabled("This clip animates no nodes.");
     }
-    ImGui::TextDisabled("Edit-mode preview — the scene pose isn't touched. Press Play (toolbar) to run it for real.");
+    if (g_maScenePrev == ma)
+        ImGui::TextDisabled("Previewing IN the Scene view — untick 'Preview in Scene view' to restore the pose.");
+    else
+        ImGui::TextDisabled("Edit-mode preview — the scene pose isn't touched. Press Play (toolbar) to run it for real.");
 }
 
 static void DrawAnimationEditor(EditorState& ed) {
-    if (!g_showAnimation) { StopAnimPreview(); return; }
+    if (!g_showAnimation) { StopAnimPreview(); StopModelScenePreview(ed); return; }
     if (!ImGui::Begin("Animation", &g_showAnimation)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
     if (!go || !go->transform) {
@@ -11498,6 +11571,7 @@ static void DrawAnimationEditor(EditorState& ed) {
     }
     if (ch) {
         if (g_animPreview && g_animPreview != ch) StopAnimPreview();
+        StopModelScenePreview(ed);
         DrawAnimPreview(ed, charObj ? charObj : go);
         DrawCharacterAnim(ed, charObj ? charObj : go, ch, focusBone);
         ImGui::End(); return;
@@ -11517,10 +11591,12 @@ static void DrawAnimationEditor(EditorState& ed) {
                     }
         }
         if (ma && ma->ClipCount() > 0) {
+            if (g_maScenePrev && g_maScenePrev != ma) StopModelScenePreview(ed);
             DrawModelAnim(ed, maObj, ma);
             ImGui::End(); return;
         }
     }
+    StopModelScenePreview(ed);
     Animator* an = go->GetComponent<Animator>();
     if (!an) {
         ImGui::TextDisabled("'%s' has no Animator.", go->name.c_str());

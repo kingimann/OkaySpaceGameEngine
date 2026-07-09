@@ -3853,7 +3853,12 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
         return;
     }
     ed.Select(target); ed.dirty = true;
-    ConsoleLog(log + " — press Play to try it");
+    if (log.find("no animation clips") != std::string::npos)
+        ConsoleLog(log + " — the model has NO clips, so it will hold its pose while moving. "
+                   "Mixamo: pick an animation and download WITH skin; or right-click the model "
+                   "and Rig Model (Humanoid) to use the built-in animations.", 1);
+    else
+        ConsoleLog(log + " — press Play to try it");
 }
 
 // ---- In-editor auto-rig: bind a model to the humanoid skeleton --------------
@@ -3889,10 +3894,19 @@ static void RigModelHumanoid(EditorState& ed, GameObject* go) {
         return;
     }
     ed.PushUndo();
-    // The skinned copy on the root replaces the source nodes — hide them (kept,
-    // inactive, in case the user wants the original back).
-    for (GameObject* g : srcNodes)
-        if (g->transform && g->transform->Parent() == go->transform) g->active = false;
+    // The skinned copy on the root replaces the source nodes — hide their WHOLE
+    // top-level subtrees (imported hierarchies bury meshes/armatures several
+    // levels deep; hiding only the mesh node left the T-posed original — and its
+    // SkinnedMesh/Animators — rendering on top of the rigged copy, which read as
+    // "rigging did nothing"). Kept inactive so Unrig can restore them.
+    for (GameObject* g : srcNodes) {
+        GameObject* top = g;
+        while (top->transform && top->transform->Parent() &&
+               top->transform->Parent() != go->transform &&
+               top->transform->Parent()->gameObject)
+            top = top->transform->Parent()->gameObject;
+        if (top != go) top->active = false;
+    }
     auto* ch = go->GetComponent<Character>();
     if (!ch) ch = go->AddComponent<Character>();
     ch->BindCustomMesh(merged);
@@ -3903,9 +3917,12 @@ static void RigModelHumanoid(EditorState& ed, GameObject* go) {
         mr->doubleSided = true;
     }
     ed.Select(go); ed.view3D = true; ed.dirty = true;
+    // Show it working immediately: open the Animation window on the fresh rig —
+    // it live-previews the pose/clips in edit mode (Update only runs in Play).
+    g_showAnimation = true;
     ConsoleLog("Rigged '" + go->name + "' to the humanoid skeleton (" +
-               std::to_string(merged.vertices.size()) + " verts). Preview poses/clips in the "
-               "Animation window; add a controller (or use it as an NPC) to drive it.");
+               std::to_string(merged.vertices.size()) + " verts). The Animation window previews "
+               "poses/clips on it; press Play for the idle animation, or add a controller to drive it.");
 }
 
 // Copy an external file into the project's Assets (into destDir, or its current import
@@ -15947,6 +15964,11 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strip the clips' baked forward travel so the CONTROLLER moves the\nbody and the clip only cycles the limbs. Fixes a walking model sliding\naway from its collider and snapping back every loop. On automatically\nfor models set as a player's character.");
             }
             ImGui::TextDisabled("%d clip(s)", ma->ClipCount());
+            if (ma->ClipCount() == 0) {
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f),
+                                   "This model has NO animation clips - it will hold its pose.");
+                ImGui::TextDisabled("Mixamo: pick an animation and download WITH skin.\nOr right-click the model > Rig Model (Humanoid) to use built-in animations.");
+            }
             if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
         }
     }

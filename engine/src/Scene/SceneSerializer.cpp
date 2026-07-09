@@ -380,10 +380,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         }
         out << "\n";
         // Locomotion (auto idle/walk/run) — separate record so it's optional.
-        if (ma->driveByMovement || !ma->idleClip.empty() || !ma->walkClip.empty() || !ma->runClip.empty())
+        if (ma->driveByMovement || ma->inPlace || !ma->idleClip.empty() || !ma->walkClip.empty() || !ma->runClip.empty())
             out << "  modelanimdrive " << (ma->driveByMovement ? 1 : 0)
                 << " " << ma->walkThreshold << " " << ma->runThreshold
-                << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip) << "\n";
+                << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip)
+                << " " << (ma->inPlace ? 1 : 0) << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || !ma->rootMotionNode.empty())
@@ -2017,6 +2018,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->idleClip = ReadQuoted(in);
                     ma->walkClip = ReadQuoted(in);
                     ma->runClip  = ReadQuoted(in);
+                    // Optional trailing fields (newer files): in-place playback.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); int ip;
+                      if (rs >> ip) ma->inPlace = (ip != 0); }
                 } else if (field == "modelanimblend") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();

@@ -46,6 +46,12 @@ public:
     /// delta is applied to this GameObject in world space.
     bool        rootMotion = false;
     std::string rootMotionNode;   ///< bone to read ("" = auto: first node with position tracks)
+    /// Animate IN PLACE: strip the root bone's ground translation WITHOUT moving
+    /// the object — for models driven by a controller (the controller moves the
+    /// capsule; the clip should only cycle the limbs). Without this, a walk/run
+    /// clip's baked forward travel slides the model away from its collider and
+    /// snaps it back every loop. Ignored when rootMotion is on (that strips too).
+    bool        inPlace = false;
 
     /// Continuous locomotion (used with driveByMovement): instead of switching
     /// idle/walk/run discretely, the two clips around the current speed are
@@ -249,7 +255,7 @@ public:
                                        g->transform->localRotation, g->transform->localScale});
         }
         m_clock = 0.0f;   // the event clock restarts with the node Animators
-        const NodeClip* rootNC = rootMotion ? RootMotionClip() : nullptr;
+        const NodeClip* rootNC = (rootMotion || inPlace) ? RootMotionClip() : nullptr;
         for (NodeClip& nc : clips[i].nodes) {
             GameObject* g = sc->Find(nc.node);
             if (!g) continue;
@@ -361,7 +367,7 @@ public:
         // that bone's X/Z during the drive pass below).
         const NodeClip* rmA = nullptr;
         const NodeClip* rmB = nullptr;
-        if (rootMotion) {
+        if (rootMotion || inPlace) {
             int keep = active;
             active = A; rmA = RootMotionClip();
             active = B; rmB = RootMotionClip();
@@ -415,7 +421,7 @@ public:
             if (dq < 0.0f) { rB.x = -rB.x; rB.y = -rB.y; rB.z = -rB.z; rB.w = -rB.w; }
             Quat r{rA.x + (rB.x - rA.x) * bw, rA.y + (rB.y - rA.y) * bw,
                    rA.z + (rB.z - rA.z) * bw, rA.w + (rB.w - rA.w) * bw};
-            if (rootMotion && ((a && a == rmA) || (b && b == rmB))) { p.x = t->localPosition.x; p.z = t->localPosition.z; }
+            if ((rootMotion || inPlace) && ((a && a == rmA) || (b && b == rmB))) { p.x = t->localPosition.x; p.z = t->localPosition.z; }
             t->localPosition = p;
             t->localScale    = s;
             t->localRotation = r.Normalized();

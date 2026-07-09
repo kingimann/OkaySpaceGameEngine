@@ -748,6 +748,9 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
         ma->driveByMovement = true;
         ma->smoothLocomotion = true;
+        // The controller moves the capsule — the clips must animate in place, or
+        // their baked forward travel slides the model out of the collider.
+        ma->inPlace = true;
         mapped = "idle='" + ma->idleClip + "' walk='" + ma->walkClip + "'" +
                  (ma->runClip.empty() ? "" : " run='" + ma->runClip + "'");
     }

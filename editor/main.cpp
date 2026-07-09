@@ -15886,6 +15886,8 @@ void DrawInspector(EditorState& ed) {
                 clipCombo("Run clip##ma",  ma->runClip);
                 if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Animate in place##ma", &ma->inPlace)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strip the clips' baked forward travel so the CONTROLLER moves the\nbody and the clip only cycles the limbs. Fixes a walking model sliding\naway from its collider and snapping back every loop. On automatically\nfor models set as a player's character.");
             }
             ImGui::TextDisabled("%d clip(s)", ma->ClipCount());
             if (ImGui::SmallButton("Remove##ma")) toRemove = ma;

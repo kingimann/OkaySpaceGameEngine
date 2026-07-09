@@ -16,6 +16,7 @@
 #include "okay/Math/TwoBoneIK.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Components/Character.hpp"
 #include <string>
 
 namespace okay {
@@ -58,6 +59,26 @@ public:
         R(leftHip, leftHipName);   R(leftKnee, leftKneeName);   R(leftFoot, leftFootName);
         R(rightHip, rightHipName); R(rightKnee, rightKneeName); R(rightFoot, rightFootName);
         R(pelvis, pelvisName);
+        // Self-heal: if the leg chain is still unwired, pull the bones straight from a
+        // Character on this object. The editor's "Humanoid" setup wires FootIK by raw
+        // pointer, which the serializer DOESN'T persist (only the *Name fields are) — so
+        // after a save/reload the pointers were null and foot IK silently did nothing.
+        // Rebuilding from the Character every Start makes it survive save/reload and also
+        // "just work" when you drop FootIK onto a Character by hand.
+        if (!leftFoot || !rightFoot) WireFromCharacter();
+    }
+
+    // Wire the six leg bones (+ pelvis) from a Character's part rig by bone index.
+    void WireFromCharacter() {
+        if (!gameObject) return;
+        Character* pc = gameObject->GetComponent<Character>();
+        if (!pc) return;
+        if (!pc->PartsBuilt()) { pc->separateParts = true; pc->BuildParts(); }
+        auto T = [&](int b) -> Transform* { GameObject* g = pc->Part(b); return g ? g->transform : nullptr; };
+        // Bone indices (Character.cpp): hips=0; L thigh/shin/foot=9/10/11; R=12/13/14.
+        if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+        if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+        if (!pelvis)   pelvis   = T(0);
     }
 
     // Solve in LateUpdate so it corrects the pose AFTER every animation driver has

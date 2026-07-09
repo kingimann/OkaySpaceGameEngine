@@ -13960,6 +13960,18 @@ void DrawModeling(EditorState& ed) {
             mr->mesh.SubdivideSmooth(1, 0.5f); ed.dirty = true;
             ConsoleLog("Subdivided + smoothed: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
         }
+        // Loop Cut (Blender Ctrl+R): insert N editable edge loops across an axis.
+        static int s_loopCount = 1;
+        ImGui::SetNextItemWidth(70);
+        ImGui::DragInt("##loopn", &s_loopCount, 0.1f, 1, 32, "%d loops");
+        ImGui::SameLine(); ImGui::TextDisabled("Loop Cut:");
+        ImGui::SameLine();
+        if (ImGui::Button("X##loop")) { ed.PushUndo(); mr->mesh.LoopCut(0, s_loopCount); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Y##loop")) { ed.PushUndo(); mr->mesh.LoopCut(1, s_loopCount); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Z##loop")) { ed.PushUndo(); mr->mesh.LoopCut(2, s_loopCount); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Insert evenly-spaced edge loops across the mesh on an axis (Blender's Ctrl+R) — add editable divisions to a wall/box/cylinder.");
         ImGui::SameLine();
         if (ImGui::Button("Smooth##model")) {
             Vec3 sz = mr->mesh.Size();

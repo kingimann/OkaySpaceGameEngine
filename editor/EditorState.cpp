@@ -258,19 +258,78 @@ void EditorState::NewScene3D() {
     m_scene.SetName("Untitled 3D");
     // NewScene already made a perspective Main Camera at {0,2,10}; reuse it.
 
-    // A single cube on the grid (clean, Unity-like default — neutral gray). Add a
-    // ground/other objects from the GameObject menu as needed.
-    GameObject* cube = CreateCube("Cube");
-    cube->transform->localPosition = {0, 0, 0};
+    // A polished, populated default (like Unreal's default level, not an empty
+    // void): a ground plane, a warm sun with soft sky fill, and a couple of hero
+    // shapes — so lighting, shadows, sky and reflections all read immediately.
 
-    // An angled directional light so the cube is shaded out of the box.
-    GameObject* light = CreateEmpty("Directional Light");
-    light->AddComponent<Light>();
-    light->transform->localRotation = Quat::Euler({50, -30, 0});
+    // ---- Ground plane: large, receives shadows, matte neutral ----
+    GameObject* ground = m_scene.CreateGameObject("Ground");
+    {
+        auto* mr = ground->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Plane(60.0f);
+        mr->color = Color::FromBytes(150, 154, 150);   // soft neutral, not pure gray
+        mr->specular = 0.05f; mr->shininess = 16.0f;
+        mr->groundShadow = false;                       // it IS the ground
+        ground->AddComponent<MeshCollider3D>();         // things rest on it
+    }
 
-    // Frame the editor orbit camera on the cube.
-    camTarget = {0, 0, 0};
-    camDist = 6.0f;
+    // ---- Hero shapes on the ground ----
+    GameObject* cube = m_scene.CreateGameObject("Cube");
+    {
+        auto* mr = cube->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::RoundedBox();
+        mr->color = Color::FromBytes(196, 128, 96);     // warm terracotta
+        mr->specular = 0.3f; mr->shininess = 40.0f;
+        cube->transform->localPosition = {-1.1f, 0.5f, 0.0f};
+        AddFittedBoxCollider(cube);
+    }
+    GameObject* ball = m_scene.CreateGameObject("Sphere");
+    {
+        auto* mr = ball->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Sphere(0.5f, 24, 32);
+        mr->color = Color::FromBytes(150, 165, 190);    // cool bluish, slightly glossy/metal
+        mr->specular = 0.7f; mr->shininess = 90.0f;
+        mr->metallic = 0.35f; mr->reflectivity = 0.25f;
+        ball->transform->localPosition = {0.9f, 0.55f, 0.4f};
+        ball->transform->localScale = {1.1f, 1.1f, 1.1f};
+        AddFittedBoxCollider(ball);
+    }
+
+    // ---- Sun: warm directional key light at a cinematic angle ----
+    GameObject* light = m_scene.CreateGameObject("Sun");
+    {
+        auto* L = light->AddComponent<Light>();
+        L->type = Light::Type::Directional;
+        L->useTemperature = true; L->temperature = 5600.0f;   // warm daylight
+        L->color = Light::KelvinToColor(5600.0f);
+        L->intensity = 1.15f;
+        L->ambient = 0.30f;
+        L->ambientColor = Color::FromBytes(150, 175, 210);    // sky-blue fill in shadow
+        light->transform->localRotation = Quat::Euler({48, -35, 0});
+    }
+
+    // ---- Scene lighting/atmosphere: rich sky, aligned sun disc, gentle fog ----
+    auto& rs = m_scene.renderSettings;
+    rs.skybox     = true;
+    rs.skyTop     = Color::FromBytes(74, 128, 208);     // deeper zenith blue
+    rs.skyHorizon = Color::FromBytes(196, 214, 232);    // pale haze at the horizon
+    rs.skyBottom  = Color::FromBytes(150, 150, 152);    // ground-ish under the horizon
+    rs.skyHorizonPos = 0.52f;
+    rs.ambient    = 0.22f;
+    rs.skySun     = true;                               // a soft sun disc + glow in the sky
+    rs.skySunX = 0.34f; rs.skySunY = 0.24f; rs.skySunSize = 0.045f;
+    rs.skySunColor = Color::FromBytes(255, 244, 214);
+    rs.fog = true;                                      // subtle depth haze (hides the far edge)
+    rs.fogColor = Color::FromBytes(200, 216, 230);
+    rs.fogStart = 35.0f; rs.fogEnd = 110.0f;
+    rs.tonemap = true;                                 // filmic (already the default)
+    rs.vignette = 0.12f;                               // gentle focus
+
+    // Shadows + sky reflections look best on; leave them at their global on-defaults.
+
+    // Frame the editor orbit camera on the shapes.
+    camTarget = {0, 0.5f, 0.0f};
+    camDist = 7.0f;
 
     m_suppressUndo = false;
     view3D = true;

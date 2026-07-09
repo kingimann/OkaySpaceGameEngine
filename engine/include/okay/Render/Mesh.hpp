@@ -3400,6 +3400,63 @@ struct Mesh {
         RefreshNormals();
     }
 
+    /// Split every triangle that straddles the plane `axis == coord` (0=X 1=Y
+    /// 2=Z), inserting vertices on the crossing edges and keeping BOTH sides — an
+    /// edge loop across the mesh. The surface stays watertight and its volume is
+    /// unchanged (this only adds cuts). Face colors carry to the split pieces.
+    void SplitByPlane(int axis, float coord, float eps = 1e-5f) {
+        if (axis < 0 || axis > 2 || triangles.size() < 3) return;
+        const bool hadColors = HasFaceColors();
+        std::vector<int> out; out.reserve(triangles.size() * 2);
+        std::vector<Color> outC; if (hadColors) outC.reserve(triColors.size() * 2);
+        auto sd = [&](int v) { return (&vertices[v].x)[axis] - coord; };
+        auto lerpV = [&](int a, int b) {
+            float sa = sd(a), sb = sd(b), t = sa / (sa - sb);
+            int idx = (int)vertices.size();
+            vertices.push_back(vertices[a] + (vertices[b] - vertices[a]) * t);
+            if (uvs.size() == vertices.size() - 1)
+                uvs.clear();   // (keep it simple: slicing drops per-vertex UVs)
+            return idx;
+        };
+        for (int f = 0, n = TriangleCount(); f < n; ++f) {
+            int i = f * 3, a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            Color fc = (hadColors && f < (int)triColors.size()) ? triColors[f] : Color{1,1,1,1};
+            float s[3] = {sd(a), sd(b), sd(c)};
+            float mn = std::fmin(s[0], std::fmin(s[1], s[2]));
+            float mx = std::fmax(s[0], std::fmax(s[1], s[2]));
+            if (!(mn < -eps && mx > eps)) {                     // no genuine crossing
+                out.insert(out.end(), {a, b, c}); if (hadColors) outC.push_back(fc); continue;
+            }
+            int v[3] = {a, b, c};
+            int lone = (s[0] * s[1] >= 0.0f) ? 2 : ((s[0] * s[2] >= 0.0f) ? 1 : 0);
+            int L = v[lone], M = v[(lone + 1) % 3], N = v[(lone + 2) % 3];
+            int iLM = lerpV(L, M), iNL = lerpV(N, L);
+            out.insert(out.end(), {L, iLM, iNL});               // lone-side triangle
+            out.insert(out.end(), {M, N, iNL,  M, iNL, iLM});   // other-side quad
+            if (hadColors) { outC.push_back(fc); outC.push_back(fc); outC.push_back(fc); }
+        }
+        triangles = std::move(out);
+        if (hadColors) triColors = std::move(outC);
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Loop Cut: insert `count` evenly-spaced edge loops across the mesh
+    /// perpendicular to `axis` (0=X 1=Y 2=Z) — Blender's Ctrl+R. Robust on any
+    /// topology (it slices, not quad-walks): great for adding editable divisions
+    /// to a wall/box/extruded shape. Welds the new cut vertices into clean loops.
+    void LoopCut(int axis, int count) {
+        if (axis < 0 || axis > 2 || count < 1 || vertices.empty()) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis];
+        if (a1 - a0 < 1e-5f) return;
+        for (int k = 1; k <= count; ++k)
+            SplitByPlane(axis, a0 + (a1 - a0) * (float)k / (float)(count + 1));
+        WeldVertices();                                         // merge coincident cut verts into loops
+        name = "";
+        RefreshNormals();
+    }
+
     /// Chamfer the listed vertices: each selected corner is cut back by `amount`
     /// along every edge that meets it and the opening is capped with a flat facet —
     /// Blender's vertex bevel. Great for knocking the sharp corners off boxes.

@@ -47,6 +47,9 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   **Subdiv + Smooth** (rounds without shrinking), **Smooth** (subdivide +
   spherify), **Relax** (Laplacian smoothing — evens out lumpy sculpts and
   imports without adding triangles; drag the slider for strength).
+- **Loop Cut X/Y/Z** inserts N evenly-spaced edge loops across the mesh on
+  an axis (Blender's Ctrl+R) — add editable divisions to a wall/box/cylinder
+  before pushing or pulling them.
 - **Fill Holes** caps every open boundary (e.g. after Delete Faces) so the
   mesh is watertight again. **Bridge** connects exactly two open boundaries
   with a wall — delete two facing faces on a Combined mesh and bridge them

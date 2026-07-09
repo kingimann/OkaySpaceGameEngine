@@ -269,6 +269,12 @@ Recent additions (v2.12–2.14):
 
 ### Graphics quality
 
+A **New 3D Scene** opens populated and lit like a modern engine's default
+level — a ground plane, a warm sun with sky-blue fill, a graded sky with a
+sun disc, gentle fog and vignette, and a couple of hero shapes — instead of
+an empty void. Everything is a normal object/setting you can change or
+delete.
+
 Rendering defaults to the modern look — tweak everything in the
 **Environment / Render Settings** panel:
 

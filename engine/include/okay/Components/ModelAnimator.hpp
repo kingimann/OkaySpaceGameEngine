@@ -45,7 +45,10 @@ public:
     /// are stripped from playback (Y bounce stays on the bone) and their per-frame
     /// delta is applied to this GameObject in world space.
     bool        rootMotion = false;
-    std::string rootMotionNode;   ///< bone to read ("" = auto: first node with position tracks)
+    std::string rootMotionNode;   ///< bone to read ("" = auto: the node whose ground track travels)
+    /// With rootMotion: also move the object VERTICALLY by the root's Y track
+    /// (jump/climb/vault clips really lift the object, not just the bone).
+    bool        rootMotionY = false;
     /// Animate IN PLACE: strip the root bone's ground translation WITHOUT moving
     /// the object — for models driven by a controller (the controller moves the
     /// capsule; the clip should only cycle the limbs). Without this, a walk/run
@@ -172,6 +175,7 @@ public:
                         bool f; Vec3 p{0, 0, 0};
                         float v = rn->clip.Evaluate("position.x", tm, f); if (f) p.x = v;
                         v = rn->clip.Evaluate("position.z", tm, f);       if (f) p.z = v;
+                        if (rootMotionY) { v = rn->clip.Evaluate("position.y", tm, f); if (f) p.y = v; }
                         return p;
                     };
                     float e0 = loop ? std::fmod(std::fmod(t0, len) + len, len) : std::fmin(t0, len);
@@ -181,7 +185,7 @@ public:
                         d = (posAt(len) - posAt(e0)) + (posAt(e1) - posAt(0.0f));
                     else
                         d = posAt(e1) - posAt(e0);
-                    if (d.x != 0.0f || d.z != 0.0f) {
+                    if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f) {
                         Vec3 wd = transform->LocalToWorldMatrix().MultiplyVector(d);
                         transform->SetPosition(transform->Position() + wd);
                     }
@@ -310,8 +314,9 @@ public:
             if (rootNC == &nc) {
                 an->clip.RemoveTrack("position.x");
                 an->clip.RemoveTrack("position.z");
-                if (inPlace && !clips[i].name.empty() &&
-                    (clips[i].name == jumpClip || clips[i].name == fallClip))
+                if ((rootMotion && rootMotionY) ||
+                    (inPlace && !clips[i].name.empty() &&
+                     (clips[i].name == jumpClip || clips[i].name == fallClip)))
                     an->clip.RemoveTrack("position.y");
             }
             an->speed = speed;
@@ -393,6 +398,26 @@ public:
         for (auto& nc : clips[i].nodes) nc.clip.ScaleTime(factor);
         for (auto& ev : clips[i].events) ev.time *= factor;
     }
+    /// Bake a clip IN PLACE permanently: strip its root node's ground translation
+    /// (and optionally the Y rise) out of the library copy — turns a downloaded
+    /// travelling clip into an in-place one for controller-driven characters.
+    /// Returns true if a travelling root was found and stripped.
+    bool BakeClipInPlace(int i, bool stripY = false) {
+        if (i < 0 || i >= (int)clips.size()) return false;
+        int keep = active; active = i;
+        const NodeClip* rn = RootMotionClip();
+        active = keep;
+        if (!rn) return false;
+        for (auto& nc : clips[i].nodes)
+            if (&nc == rn) {
+                nc.clip.RemoveTrack("position.x");
+                nc.clip.RemoveTrack("position.z");
+                if (stripY) nc.clip.RemoveTrack("position.y");
+                return true;
+            }
+        return false;
+    }
+
     /// Duplicate a clip (returns the new index, -1 on failure) — trim the copy
     /// to cut a long take into pieces without losing the original.
     int DuplicateClip(int i) {

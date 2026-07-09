@@ -11413,6 +11413,15 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake the clip slower/faster: x2 = twice as long (slow motion),\nx0.5 = twice as fast. Keys and events are re-timed permanently\n(the Speed slider above changes playback only).");
         }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Bake In-Place##maed")) {
+            ed.PushUndo();
+            if (ma->BakeClipInPlace(ma->active)) {
+                ed.dirty = true;
+                ConsoleLog("Stripped the travelling root translation out of '" + ma->clips[ma->active].name + "' — it now plays in place.");
+            } else ConsoleLog("'" + ma->clips[ma->active].name + "' has no travelling root translation to strip.", 1);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("PERMANENTLY strip this clip's travelling root translation (a downloaded\nwalk that moves forward becomes an in-place walk). For controller-driven\ncharacters the 'Animate in place' toggle does this non-destructively.");
 
         // Split: carve a time range out of the active clip into a NEW named clip —
         // how a single-take file (Mixamo/Meshy "one long animation") becomes
@@ -16003,6 +16012,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Root Motion##ma", &ma->rootMotion)) { ed.dirty = true; if (ed.isPlaying()) ma->PlayIndex(ma->active); }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Move the OBJECT by the clip's root-bone ground translation instead of\nletting the bone slide inside the model — a walk clip really walks forward.");
+            if (ma->rootMotion) {
+                ImGui::SameLine();
+                if (ImGui::Checkbox("+ Vertical##ma", &ma->rootMotionY)) { ed.dirty = true; if (ed.isPlaying()) ma->PlayIndex(ma->active); }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Also move the object UP/DOWN with the root's Y track — jump, climb\nand vault clips really lift the character, not just its bones.");
+            }
             if (ma->rootMotion && ma->active >= 0 && ma->active < (int)ma->clips.size()) {
                 // Bone picker: nodes of the active clip that carry position tracks.
                 const char* curLbl = ma->rootMotionNode.empty() ? "(auto)" : ma->rootMotionNode.c_str();

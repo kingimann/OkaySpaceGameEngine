@@ -391,8 +391,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << Quote(ma->landClip) << " " << ma->airUpVel << " " << ma->airDownVel << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
-        if (ma->rootMotion || !ma->rootMotionNode.empty())
-            out << "  modelanimroot " << (ma->rootMotion ? 1 : 0) << " " << Quote(ma->rootMotionNode) << "\n";
+        if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty())
+            out << "  modelanimroot " << (ma->rootMotion ? 1 : 0) << " " << Quote(ma->rootMotionNode)
+                << " " << (ma->rootMotionY ? 1 : 0) << "\n";
         if (ma->smoothLocomotion)
             out << "  modelanimsmooth 1\n";
         for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {
@@ -2063,6 +2064,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int rm = 0; in >> rm;
                     ma->rootMotion = (rm != 0);
                     ma->rootMotionNode = ReadQuoted(in);
+                    // Optional trailing field (newer files): vertical root motion.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); int ry;
+                      if (rs >> ry) ma->rootMotionY = (ry != 0); }
                 } else if (field == "modelanimsmooth") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();

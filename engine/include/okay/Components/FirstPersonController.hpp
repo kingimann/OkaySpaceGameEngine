@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/Log.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -124,6 +125,9 @@ public:
             transform->SetPosition(m_spawn);
             if (auto* frb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr)
                 frb->velocity = Vec3{0, 0, 0};
+            OKAY_WARN("Player fell below Fall Reset Y and was returned to spawn. "
+                      "If this keeps happening, the floor is probably missing a collider "
+                      "(select it and Add Component > Mesh Collider 3D).");
         }
         if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it

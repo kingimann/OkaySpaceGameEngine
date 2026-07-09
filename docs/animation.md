@@ -88,7 +88,10 @@ The Inspector's **Model Animator** section holds playback settings:
 - **Blend** — crossfade seconds when switching clips (0 = snap).
 - **Root Motion** — move the OBJECT by the clip's root-bone ground
   translation instead of letting the bone slide inside the model; pick the
-  root bone or leave it on auto.
+  root bone or leave it on auto. Tick **+ Vertical** to also apply the
+  root's Y motion to the object — for authored jumps, climbs and vaults
+  where the clip itself carries the rise (leave it off for ordinary
+  locomotion so the capsule/physics keeps owning height).
 - **Locomotion** — auto-switch idle/walk/run clips from how fast the object
   moves (switches crossfade with the Blend time).
 
@@ -208,7 +211,11 @@ Clip tools: **Rename**, **Duplicate**, **Delete**, **Copy/Paste** (moves a
 clip to another model with the same bone names), **Split...** (cut a long
 take into idle/walk/attack pieces), **Reverse** (play backwards) and
 **Scale Time** (bake slow-motion / speed-up — keys and event markers are
-re-timed). **Events** adds named markers that fire during play (footsteps,
+re-timed) and **Bake In-Place** (permanently strip the root bone's ground
+travel out of the clip — turns a downloaded travelling walk into an
+in-place one for controller-driven characters; the non-destructive
+alternative is the **Animate in place** toggle on the Model Animator).
+**Events** adds named markers that fire during play (footsteps,
 hit windows) — read them in scripts with `anim_event()`.
 
 ## Air states for imported characters (jump / fall / land)
@@ -246,7 +253,9 @@ Any imported model can BE your playable character — no rigging setup:
 
 Controllers also carry a **Fall Reset Y** safety net (default -100): fall
 off the map or through a floor with no collider and the player teleports
-back to its spawn point instead of falling forever.
+back to its spawn point instead of falling forever — and a console
+warning explains the usual cause (the floor is missing a collider —
+select it and Add Component > Mesh Collider 3D).
 
 ## Tips
 

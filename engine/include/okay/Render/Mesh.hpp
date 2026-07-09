@@ -2407,6 +2407,78 @@ struct Mesh {
         ComputeSmoothNormals();
     }
 
+    /// Make every face's winding coherent with its neighbors and point each closed
+    /// shell OUTWARD (Blender's "Recalculate Normals Outside"). Welds, bridges,
+    /// booleans, mirrored halves and imports routinely leave a few faces inside-out
+    /// — they shade dark and leak shadows. This walks each connected shell flipping
+    /// inconsistent triangles (two coherent neighbors traverse their shared edge in
+    /// OPPOSITE directions), then flips whole shells whose signed volume is negative.
+    /// Returns how many triangles were flipped. Coincident-vertex aware, so seams
+    /// from Separate/Weld/hard-shading still count as connected.
+    int OrientFacesOutward() {
+        const int nt = (int)triangles.size() / 3;
+        if (nt == 0) return 0;
+        std::vector<int> rep = CoincidentReps();
+        // Directed edge -> owning tri list (a tri owns edges a->b, b->c, c->a).
+        std::map<std::pair<int, int>, std::vector<int>> edgeTris;   // undirected key
+        for (int t = 0; t < nt; ++t)
+            for (int k = 0; k < 3; ++k) {
+                int a = rep[triangles[t * 3 + k]], b = rep[triangles[t * 3 + (k + 1) % 3]];
+                if (a == b) continue;
+                edgeTris[{a < b ? a : b, a < b ? b : a}].push_back(t);
+            }
+        // Directed edge of tri t at slot k AFTER any flip recorded in `flip`.
+        auto dirEdge = [&](int t, int k, bool flipped, int& a, int& b) {
+            int i0 = rep[triangles[t * 3 + k]], i1 = rep[triangles[t * 3 + (k + 1) % 3]];
+            if (flipped) { a = i1; b = i0; } else { a = i0; b = i1; }
+        };
+        std::vector<char> flip(nt, 0), seen(nt, 0);
+        std::vector<int> shell; shell.reserve(64);
+        int flipped = 0;
+        for (int seed = 0; seed < nt; ++seed) {
+            if (seen[seed]) continue;
+            shell.clear();
+            std::vector<int> stack{seed};
+            seen[seed] = 1;
+            while (!stack.empty()) {                    // BFS: propagate coherent winding
+                int t = stack.back(); stack.pop_back();
+                shell.push_back(t);
+                for (int k = 0; k < 3; ++k) {
+                    int a, b; dirEdge(t, k, flip[t] != 0, a, b);
+                    if (a == b) continue;
+                    auto it = edgeTris.find({a < b ? a : b, a < b ? b : a});
+                    if (it == edgeTris.end()) continue;
+                    for (int n : it->second) {
+                        if (n == t || seen[n]) continue;
+                        // Find the shared edge's direction in the neighbor: coherent
+                        // neighbors traverse it OPPOSITE to (a -> b).
+                        for (int j = 0; j < 3; ++j) {
+                            int na, nb; dirEdge(n, j, false, na, nb);
+                            if (na == a && nb == b) { flip[n] = 1; break; }   // same dir = wrong
+                            if (na == b && nb == a) { flip[n] = 0; break; }
+                        }
+                        seen[n] = 1;
+                        stack.push_back(n);
+                    }
+                }
+            }
+            // Outward test: the shell's signed volume (divergence theorem). Negative
+            // = the coherent winding faces inward, so flip the whole shell.
+            double vol = 0.0;
+            for (int t : shell) {
+                Vec3 va = vertices[triangles[t * 3]], vb = vertices[triangles[t * 3 + 1]],
+                     vc = vertices[triangles[t * 3 + 2]];
+                if (flip[t]) std::swap(vb, vc);
+                vol += (double)Vec3::Dot(va, Vec3::Cross(vb, vc));
+            }
+            if (vol < 0.0) for (int t : shell) flip[t] = !flip[t];
+        }
+        for (int t = 0; t < nt; ++t)
+            if (flip[t]) { std::swap(triangles[t * 3 + 1], triangles[t * 3 + 2]); ++flipped; }
+        if (flipped) { name = ""; if (HasNormals()) ComputeSmoothNormals(); }
+        return flipped;
+    }
+
 
     /// A sculpting brush in LOCAL mesh space. Vertices within `radius` of `center`
     /// are displaced with a smoothstep falloff `w`. mode: 0 = GRAB (push along

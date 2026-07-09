@@ -343,6 +343,9 @@ private:
     float m_headYaw = 0.0f;        // eased head turn (toward lookYaw)
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
+    int   m_prevAnim = 1;          // last frame's anim state (detects jump -> ground)
+    float m_landT = -1.0f;         // landing-recovery progress 0..1 (<0 = idle)
+    float m_landK = 0.0f;          // landing knee-bend envelope 0..1 (sin arc)
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
     Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)
     bool m_fpArmReady = false;

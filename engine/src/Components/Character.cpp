@@ -226,7 +226,13 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_RSHIN]  = {std::fmax(0.0f,  1.2f * amp * s), 0, 0};
         r[B_LUPARM] = {-0.8f * amp * s, 0, 5};   r[B_RUPARM] = {0.8f * amp * s, 0, -5};
         r[B_LFORE]  = {18, 0, 0};   r[B_RFORE] = {18, 0, 0};
-        r[B_TORSO]  = {(anim == 3 ? 12.0f : 4.0f) + 2.0f * std::fabs(s), 0, 0};
+        // Feet counter-rotate against the thigh swing so the sole rolls heel->toe
+        // through the stride instead of staying rigidly welded to the shin.
+        r[B_LFOOT]  = {-0.30f * amp * s, 0, 0};   r[B_RFOOT] = {0.30f * amp * s, 0, 0};
+        // Shoulder counter-sway: the torso twists slightly against the hips with the
+        // stride (real gait), which reads as much more alive than a stiff spine.
+        r[B_TORSO]  = {(anim == 3 ? 12.0f : 4.0f) + 2.0f * std::fabs(s),
+                       (anim == 3 ? 7.0f : 4.0f) * s, 0};
     } else if (anim == 4) {                // wave
         r[B_RUPARM] = {0, 0, -150};
         r[B_RFORE]  = {0, 0, -15 + 28 * std::sin(t * 8.0f)};
@@ -330,6 +336,18 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LUPARM] = {6, 0, 6};
     }
 
+    // Landing recovery: layer a brief knee-bend absorb over the grounded states
+    // (idle/walk/run) right after a jump lands — legs flex, torso dips forward,
+    // arms swing out a touch for balance, then it springs back over ~0.3s.
+    if (m_landK > 0.0f && (anim == 1 || anim == 2 || anim == 3)) {
+        float lk = m_landK;
+        r[B_LTHIGH].x += 26.0f * lk;   r[B_RTHIGH].x += 26.0f * lk;
+        r[B_LSHIN].x  -= 34.0f * lk;   r[B_RSHIN].x  -= 34.0f * lk;
+        r[B_LFOOT].x  += 10.0f * lk;   r[B_RFOOT].x  += 10.0f * lk;
+        r[B_TORSO].x  += 10.0f * lk;
+        r[B_LUPARM].z += 12.0f * lk;   r[B_RUPARM].z -= 12.0f * lk;   // arms out for balance
+    }
+
     // Head look: layer the (eased) gaze on top of whatever the animation set, so the
     // head turns and tilts toward where the player is looking. Clamped so the neck
     // never breaks. (The body is flipped 180° about Y in Apply(), which negates the
@@ -351,6 +369,9 @@ std::vector<Vec3> Character::PoseAt(float t) const {
 Vec3 Character::StanceOffset() const {
     if (anim == 6 || anim == 17) return {0.0f, -0.12f, 0.0f};   // crouch / crouch-walk: light knee bend
     if (anim == 7) return {0.0f, -0.78f, 0.0f};   // prone: lay the body on the ground
+    // Landing recovery: the flexed knees momentarily lower the whole body.
+    if (m_landK > 0.0f && (anim == 1 || anim == 2 || anim == 3))
+        return {0.0f, -0.10f * m_landK, 0.0f};
     return {0.0f, 0.0f, 0.0f};
 }
 
@@ -493,6 +514,18 @@ void Character::SyncStateClips() {
 }
 
 void Character::Update(float dt) {
+    // Landing recovery: coming out of the jump pose into any grounded state plays a
+    // brief knee-bend "absorb" (sin arc in PoseAt/StanceOffset) so a landing has
+    // weight to it instead of the legs snapping straight the frame you touch down.
+    if (anim != m_prevAnim) {
+        if (m_prevAnim == 5 && (anim == 1 || anim == 2 || anim == 3)) m_landT = 0.0f;
+        m_prevAnim = anim;
+    }
+    if (m_landT >= 0.0f) {
+        m_landT += dt / 0.28f;                       // ~0.28s dip-and-spring
+        if (m_landT >= 1.0f) { m_landT = -1.0f; m_landK = 0.0f; }
+        else m_landK = std::sin(3.14159265f * m_landT);
+    }
     SyncStateClips();
     // Advance any in-progress crossfade (covers every render path below).
     if (m_blendT < 1.0f) {

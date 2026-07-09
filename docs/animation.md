@@ -154,6 +154,25 @@ the body lowers to reach lower ground, and **Align To Slope** to tilt the
 sole. The solve runs after all animation (including the state machine and
 locomotion blending), so it corrects the final pose.
 
+Corrections are **smoothed**: each frame moves the foot a fraction of the
+way to its planted target (the **Smoothing** field, per second — 0 =
+instant), so stepping over a ledge or stair edge eases the foot down
+instead of popping it. The pelvis shift is smoothed the same way. The
+one-click **Humanoid (foot IK)** player ships with the full plant setup on:
+pelvis adjust, plant-down, slope align and smoothing.
+
+On the built-in blocky Character, Foot IK **wires itself**: drop the
+component next to a Character and the leg bones and pelvis hook up
+automatically (and re-hook after save/load).
+
+## Built-in animation polish
+
+The procedural walk/run cycles roll each **foot** heel-to-toe through the
+stride and counter-sway the **shoulders** against the hips, and any
+jump that lands into idle/walk/run plays a short **landing recovery** —
+knees flex, the body dips, then springs back over ~0.3s. All automatic,
+on every Character.
+
 ## Tips
 
 - **Meshy / Mixamo FBX**: animations import via Assimp. For the richest

@@ -596,7 +596,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << Quote(f->pelvisName)
             << " " << f->weight << " " << f->footOffset << " " << (f->useRaycast ? 1 : 0) << " " << f->groundY
             << " " << (f->adjustPelvis ? 1 : 0) << " " << (f->plantDown ? 1 : 0) << " " << (f->alignToGround ? 1 : 0)
-            << " " << f->minKneeBend << " " << f->maxKneeBend << "\n";
+            << " " << f->minKneeBend << " " << f->maxKneeBend << " " << f->smoothing << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
         out << "  limbik " << Quote(lb->upperName) << " " << Quote(lb->lowerName) << " " << Quote(lb->endName)
@@ -2263,6 +2263,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> f->weight >> f->footOffset >> ur >> f->groundY >> ap >> pd >> ag
                        >> f->minKneeBend >> f->maxKneeBend;
                     f->useRaycast = (ur != 0); f->adjustPelvis = (ap != 0); f->plantDown = (pd != 0); f->alignToGround = (ag != 0);
+                    // Optional trailing fields (newer files): parse from the rest of
+                    // the line so older records still load cleanly.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); float sm;
+                      if (rs >> sm) f->smoothing = sm; }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);

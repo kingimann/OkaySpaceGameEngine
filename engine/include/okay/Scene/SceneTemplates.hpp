@@ -175,7 +175,13 @@ inline void WireCharacterIK(GameObject* player, Character* pc) {
     auto* fik = player->AddComponent<FootIK>();
     fik->leftHip  = T(9);  fik->leftKnee  = T(10); fik->leftFoot  = T(11);
     fik->rightHip = T(12); fik->rightKnee = T(13); fik->rightFoot = T(14);
+    fik->pelvis = T(0);
     fik->useRaycast = true; fik->weight = 1.0f;
+    // Full plant setup out of the box: sink the pelvis so a downhill foot reaches,
+    // press feet onto lower ground, and tilt soles to the slope — this is what makes
+    // foot IK VISIBLE on stairs and slopes (lift-only barely reads on flat ground).
+    fik->adjustPelvis = true; fik->plantDown = true; fik->alignToGround = true;
+    fik->maxPelvisShift = 0.35f;
     auto* rm = player->AddComponent<RootMotion>();
     rm->rootNode = T(0);
     rm->mode = (int)RootMotion::Mode::Disabled;

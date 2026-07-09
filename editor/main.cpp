@@ -14501,6 +14501,13 @@ void DrawModeling(EditorState& ed) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Flip Normals##me")) { ed.PushUndo(); mr->mesh.FlipNormals(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::Button("Recalc Outside##me")) {
+                ed.PushUndo(); int n = mr->mesh.OrientFacesOutward();
+                ConsoleLog(n ? "Recalculated normals: flipped " + std::to_string(n) + " inside-out faces"
+                             : "Normals already consistent"); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blender's Recalculate Normals Outside: make all face windings\nconsistent and point closed shells outward (fixes dark/inside-out faces).");
             if (ImGui::Button("Merge by Distance##me")) {
                 ed.PushUndo(); int n = mr->mesh.WeldVertices();
                 g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
@@ -16665,6 +16672,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Checkbox("Plant Down##fik", &f->plantDown);
                 ImGui::Checkbox("Align To Slope##fik", &f->alignToGround);
                 ImGui::DragFloat("Max Knee Bend##fik", &f->maxKneeBend, 1.0f, 0.0f, 180.0f);
+                ImGui::DragFloat("Smoothing##fik", &f->smoothing, 0.5f, 0.0f, 40.0f);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast corrections ease in/out (per second).\nStops feet popping at step edges. 0 = instant.");
                 if (ImGui::SmallButton("Remove##fik")) toRemove = f;
             }
         }

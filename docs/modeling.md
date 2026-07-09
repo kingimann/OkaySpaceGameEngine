@@ -128,6 +128,10 @@ to the first selected vertex (grab one island of a combined mesh), and
   selection follow with a smooth falloff (set the radius).
 - Face tools: **Extrude Faces** (with distance), **Inset Faces**,
   **Subdivide Sel**, **Delete Faces**, **Flip Normals**,
+  **Recalc Outside** (Blender's Recalculate Normals Outside: makes every
+  face's winding consistent with its neighbours and points closed shells
+  outward — the one-click fix for dark/inside-out faces after welds,
+  bridges, booleans, mirrored halves or imports),
   **Merge by Distance**, **Duplicate Sel** (copy the selected faces in
   place, copies stay selected — drag them away).
 - Per-face detailing (Blender's Individual ops): **Poke** fans each face

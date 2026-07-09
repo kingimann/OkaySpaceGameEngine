@@ -17,6 +17,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/Character.hpp"
+#include <cmath>
 #include <string>
 
 namespace okay {
@@ -33,6 +34,11 @@ public:
 
     float weight     = 1.0f;   ///< 0 = off (pure animation), 1 = fully planted
     float footOffset = 0.05f;  ///< ankle height to keep above the ground surface
+    /// Correction ease speed (per second). The foot lift fades in/out toward its
+    /// target instead of snapping the frame the ground appears/disappears under a
+    /// foot — that snap was the visible "pop" on stairs and ledge edges. Higher =
+    /// snappier; 0 = instant (the old behavior).
+    float smoothing  = 12.0f;
     bool  useRaycast = true;   ///< raycast the scene for ground; else use groundY
     float groundY    = 0.0f;   ///< fallback ground height when not raycasting
     float maxRayUp   = 0.6f;   ///< how far above the foot to start the ray
@@ -85,14 +91,19 @@ public:
     // written it. Imported rigs create their per-node Animators lazily (at Play
     // start), which lands them after FootIK in the Update order — solving in
     // Update let those Animators clobber the correction the same frame.
-    void LateUpdate(float) override {
+    void LateUpdate(float dt) override {
         if (weight <= 0.0f) return;
         if (!m_init) { Learn(); m_init = true; }
         Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;
         Scene* s = GetScene();
-        if (adjustPelvis && pelvis) AdjustPelvis(s);
-        SolveLeg(leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s);
-        SolveLeg(rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s);
+        // Frame-rate-independent ease factor: each frame applies this fraction of
+        // the REMAINING correction (exponential approach). The bone offsets persist
+        // in the rig between frames, so the correction converges over a few frames
+        // and then holds — smooth engage with no pop, no accumulation.
+        float k = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
+        if (adjustPelvis && pelvis) AdjustPelvis(s, k);
+        SolveLeg(leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k);
+        SolveLeg(rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k);
     }
 
 private:
@@ -120,8 +131,11 @@ private:
     }
 
     // Lower the pelvis so the foot wanting to go lowest can still reach the ground;
-    // the other foot drops with the body and the per-leg IK re-plants it.
-    void AdjustPelvis(Scene* s) {
+    // the other foot drops with the body and the per-leg IK re-plants it. Applies
+    // `ease` of the remaining shift per frame so stepping onto a ledge sinks the
+    // body over a few frames instead of teleporting it (the shift persists in the
+    // rig, so the fractional steps converge on the full correction and hold).
+    void AdjustPelvis(Scene* s, float ease) {
         float off = 0.0f; bool any = false;
         auto consider = [&](Transform* foot) {
             if (!foot) return;
@@ -133,13 +147,14 @@ private:
         };
         consider(leftFoot); consider(rightFoot);
         if (!any) return;
-        off = Mathf::Clamp(off, -maxPelvisShift, maxPelvisShift) * weight;
+        off = Mathf::Clamp(off, -maxPelvisShift, maxPelvisShift) * weight * ease;
         if (Mathf::Abs(off) < 1e-5f) return;
         pelvis->SetPosition(pelvis->Position() + Vec3{0, off, 0});
     }
 
     void SolveLeg(Transform* hip, Transform* knee, Transform* foot,
-                  float upLen, float loLen, const Vec3& pole, Scene* s) {
+                  float upLen, float loLen, const Vec3& pole, Scene* s,
+                  float ease) {
         if (!hip || !knee || !foot || upLen <= 0.0f || loLen <= 0.0f) return;
         Vec3 animFoot = foot->Position();
         Vec3 normal;
@@ -148,17 +163,24 @@ private:
         // Lift the foot UP to meet ground (and, when plantDown/pelvis adjust is on,
         // also press it DOWN onto lower ground). Ignore ground out of reach below.
         bool down = plantDown || adjustPelvis;
-        if ((!down && targetY <= animFoot.y) || g < animFoot.y - maxRayDown) return;
+        bool apply = !((!down && targetY <= animFoot.y) || g < animFoot.y - maxRayDown);
+        // Smoothing: place the foot `ease` of the way toward the plant target. The
+        // offset persists in the rig, so repeating this each frame converges on the
+        // planted pose — a smooth engage instead of the old one-frame pop at step
+        // edges — and holds there (the remaining correction shrinks to zero).
+        float remaining = apply ? (targetY - animFoot.y) * ease : 0.0f;
+        if (Mathf::Abs(remaining) < 1e-4f) return;
 
-        Vec3 target{animFoot.x, targetY, animFoot.z};
+        Vec3 target{animFoot.x, animFoot.y + remaining, animFoot.z};
         Vec3 mid, end;
         SolveTwoBoneIK(hip->Position(), upLen, loLen, target, pole, mid, end,
                        minKneeBend, maxKneeBend);
         knee->SetPosition(Vec3::Lerp(knee->Position(), mid, weight));
         foot->SetPosition(Vec3::Lerp(foot->Position(), end, weight));
 
-        // Tilt the foot so its sole follows the ground slope.
-        if (alignToGround && normal.SqrMagnitude() > 1e-6f) {
+        // Tilt the foot so its sole follows the ground slope (only while a
+        // correction is actually in play — never tilt a mid-air swing foot).
+        if (alignToGround && apply && normal.SqrMagnitude() > 1e-6f) {
             Vec3 up = (foot->Rotation() * footUpAxis).Normalized();
             Quat tilt = Quat::FromToRotation(up, normal.Normalized());
             Quat desired = (tilt * foot->Rotation()).Normalized();

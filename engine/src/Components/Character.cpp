@@ -809,6 +809,9 @@ void Character::EditorPreviewTick() {
 void Character::BuildParts() {
     Scene* s = GetScene();
     if (!s || !gameObject || !gameObject->transform) return;
+    // A custom-rigged model owns this character: the blocky part rig would just
+    // spawn the old default body on top of it. (Unrig to get the rig back.)
+    if (m_hasCustomBind) { separateParts = false; return; }
     // Collapse to a SINGLE rig: adopt the first existing "Rig" child and destroy any
     // extras, so clicking "Separate Into Parts" (or replaying) never stacks up rigs.
     std::vector<GameObject*> rigs;

@@ -83,27 +83,64 @@ public:
     float       walkThreshold = 0.3f;          ///< speed above which it's "walking"
     float       runThreshold  = 3.0f;          ///< speed at/above which it's "running"
 
+    // ---- Air states: jump / fall / land from the object's VERTICAL motion ----
+    // Works with any controller (they move the capsule; this watches it move):
+    // launching upward plays `jumpClip`, past the apex it switches to `fallClip`,
+    // and touching down plays `landClip` once before locomotion resumes. All
+    // optional ("" = skip); active only with driveByMovement.
+    std::string jumpClip, fallClip, landClip;
+    float       airUpVel   = 3.0f;   ///< upward speed that reads as a jump launch
+    float       airDownVel = 3.5f;   ///< sustained downward speed that reads as falling
+    /// True while the air heuristic says we're off the ground (for gameplay checks).
+    bool InAir() const { return m_inAir; }
+
     void Start() override {
         if (transform) { m_lastPos = transform->Position(); m_haveLast = true; }
         if (autoPlay && !clips.empty()) PlayIndex(active);
     }
 
     void Update(float dt) override {
-        // Locomotion speed (world XZ units/sec), measured from how the object moved.
-        float spd = -1.0f;
+        // Locomotion speed (world XZ units/sec) + vertical speed, measured from
+        // how the object moved.
+        float spd = -1.0f, vy = 0.0f;
         if (driveByMovement && dt > 0.0f && transform) {
             Vec3 p = transform->Position();
             if (m_haveLast) {
                 float dx = p.x - m_lastPos.x, dz = p.z - m_lastPos.z;
                 spd = std::sqrt(dx*dx + dz*dz) / dt;
+                vy = (p.y - m_lastPos.y) / dt;
             }
             m_lastPos = p; m_haveLast = true;
         }
 
+        // Air states: launch -> jump clip, past the apex -> fall clip, touchdown
+        // -> land one-shot; locomotion stands down while airborne. Driven purely
+        // by the capsule's vertical motion, so every controller "just works".
+        if (spd >= 0.0f && (!jumpClip.empty() || !fallClip.empty())) {
+            if (!m_inAir) {
+                bool launch = vy > airUpVel;
+                if (vy < -airDownVel) m_airT += dt; else m_airT = 0.0f;
+                if (launch || m_airT > 0.12f) {          // brief drops (steps) don't count
+                    m_inAir = true; m_airT = 0.0f;
+                    const std::string& c = (launch && !jumpClip.empty()) ? jumpClip : fallClip;
+                    if (!c.empty()) Play(c);
+                }
+            } else {
+                // Apex: a jump turns into a fall once we're heading down.
+                if (vy < -1.0f && !fallClip.empty() && CurrentName() == jumpClip) Play(fallClip);
+                // Touchdown: vertical motion dies out (the ground stops us).
+                if (std::fabs(vy) < 0.4f) m_airT += dt; else m_airT = 0.0f;
+                if (m_airT > 0.06f) {
+                    m_inAir = false; m_airT = 0.0f;
+                    if (!landClip.empty()) PlayOnce(landClip);   // locomotion resumes after
+                }
+            }
+        }
+
         // Continuous 1D blend (idle<->walk<->run by speed): drives the bones
         // directly and replaces the discrete machinery below while it's active.
-        // A one-shot (attack etc.) suspends locomotion until it finishes.
-        if (spd >= 0.0f && smoothLocomotion && !m_once && SmoothBlendStep(dt, spd)) return;
+        // A one-shot (attack etc.) or an air state suspends locomotion.
+        if (spd >= 0.0f && smoothLocomotion && !m_once && !m_inAir && SmoothBlendStep(dt, spd)) return;
 
         // Fire clip events crossed by this frame's playback window. The clock
         // mirrors the node Animators' time (reset together in PlayIndex).
@@ -161,8 +198,9 @@ public:
         }
 
         // Discrete locomotion: switch to the clip for this speed band (crossfaded
-        // by blendTime, since Play goes through PlayIndex). Suspended by a one-shot.
-        if (spd < 0.0f || m_once) return;
+        // by blendTime, since Play goes through PlayIndex). Suspended by a
+        // one-shot or while airborne (the jump/fall clip owns the body).
+        if (spd < 0.0f || m_once || m_inAir) return;
         const std::string* want = &idleClip;
         if (spd >= runThreshold && !runClip.empty())        want = &runClip;
         else if (spd > walkThreshold && !walkClip.empty())  want = &walkClip;
@@ -266,9 +304,15 @@ public:
             if (once) an->clip.loop = false;   // a one-shot holds its final pose
             // Root motion: the object moves instead of the bone — strip the bone's
             // ground translation from what the Animator plays (Y bounce stays).
+            // For jump/fall clips in in-place mode the Y track goes too: the
+            // CONTROLLER's capsule already flies the jump arc, and the clip's own
+            // root rise would stack on top of it (a double-height jump).
             if (rootNC == &nc) {
                 an->clip.RemoveTrack("position.x");
                 an->clip.RemoveTrack("position.z");
+                if (inPlace && !clips[i].name.empty() &&
+                    (clips[i].name == jumpClip || clips[i].name == fallClip))
+                    an->clip.RemoveTrack("position.y");
             }
             an->speed = speed;
             an->playing = true;
@@ -519,6 +563,8 @@ private:
     int                      m_onceReturnTo = -1;   ///< clip to return to after the one-shot
     Vec3 m_lastPos{0, 0, 0};
     bool m_haveLast = false;
+    bool  m_inAir = false;   // air-state machine (jump/fall/land by vertical motion)
+    float m_airT  = 0.0f;    // hysteresis timer for takeoff/touchdown detection
 };
 
 } // namespace okay

@@ -9,6 +9,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/FootIK.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
 #include <array>
@@ -743,6 +744,9 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             if (ma->idleClip.empty() && (has("idle") || has("stand") || has("breath"))) ma->idleClip = c.name;
             else if (ma->walkClip.empty() && has("walk")) ma->walkClip = c.name;
             else if (ma->runClip.empty() && (has("run") || has("sprint") || has("jog"))) ma->runClip = c.name;
+            else if (ma->jumpClip.empty() && (has("jump") || has("leap"))) ma->jumpClip = c.name;
+            else if (ma->fallClip.empty() && (has("fall") || has("air") || has("drop"))) ma->fallClip = c.name;
+            else if (ma->landClip.empty() && has("land")) ma->landClip = c.name;
         }
         if (ma->idleClip.empty()) ma->idleClip = ma->clips.front().name;  // something is better than T-pose
         if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
@@ -815,6 +819,25 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             for (const auto& up : scene.Objects())   // deform back to the bind pose
                 if (up->IsSelfOrDescendantOf(root))
                     if (auto* sm = up->GetComponent<SkinnedMesh>()) sm->Skin();
+        }
+    }
+
+    // Foot IK, wired automatically: detect the model's leg bones by name (Mixamo
+    // etc.) and plant the feet on slopes/steps with the full setup — the same
+    // out-of-the-box treatment the Humanoid template gets.
+    if (!player->GetComponent<FootIK>()) {
+        FootIK probe;
+        if (probe.DetectHumanoidBones(scene, root) >= 6) {
+            auto* fik = player->AddComponent<FootIK>();
+            fik->leftHipName = probe.leftHipName;   fik->leftKneeName = probe.leftKneeName;
+            fik->leftFootName = probe.leftFootName;
+            fik->rightHipName = probe.rightHipName; fik->rightKneeName = probe.rightKneeName;
+            fik->rightFootName = probe.rightFootName;
+            fik->pelvisName = probe.pelvisName;
+            fik->useRaycast = true; fik->weight = 1.0f;
+            fik->adjustPelvis = true; fik->plantDown = true; fik->alignToGround = true;
+            fik->maxPelvisShift = 0.35f;
+            mapped += mapped.empty() ? "foot IK wired" : ", foot IK wired";
         }
     }
 

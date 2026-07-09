@@ -11089,10 +11089,17 @@ static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius) {
         Vec3 p = g->transform->Position();
         float r = 0.3f;
         if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) {
+            // Measure in WORLD space (transform the bounds corners): imported
+            // meshes are often authored in cm with the unit fix parked on an
+            // ANCESTOR's scale — using the raw mesh size framed the camera ~100x
+            // too far away and the preview showed nothing but fog/void.
             Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
-            Vec3 sz = hi - lo, sc = g->transform->localScale;
-            float ms = std::max({std::fabs(sc.x), std::fabs(sc.y), std::fabs(sc.z)});
-            r = 0.5f * std::sqrt(sz.x * sz.x + sz.y * sz.y + sz.z * sz.z) * ms;
+            Mat4 l2w = g->transform->LocalToWorldMatrix();
+            for (int c = 0; c < 8; ++c) {
+                Vec3 wpt = l2w.MultiplyPoint({c & 1 ? hi.x : lo.x, c & 2 ? hi.y : lo.y, c & 4 ? hi.z : lo.z});
+                Vec3 dd = wpt - p;
+                r = std::max(r, std::sqrt(Vec3::Dot(dd, dd)));
+            }
         }
         Vec3 d = p - center;
         radius = std::max(radius, std::sqrt(Vec3::Dot(d, d)) + r);
@@ -16036,6 +16043,10 @@ void DrawInspector(EditorState& ed) {
                 clipCombo("Run clip##ma",  ma->runClip);
                 if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) ed.dirty = true;
+                clipCombo("Jump clip##ma", ma->jumpClip);
+                clipCombo("Fall clip##ma", ma->fallClip);
+                clipCombo("Land clip##ma", ma->landClip);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Air states from the capsule's vertical motion: launching plays Jump,\npast the apex Fall loops, touchdown plays Land once. Works with any\ncontroller; leave a slot on (none) to skip that state.");
                 if (ImGui::Checkbox("Animate in place##ma", &ma->inPlace)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strip the clips' baked forward travel so the CONTROLLER moves the\nbody and the clip only cycles the limbs. Fixes a walking model sliding\naway from its collider and snapping back every loop. On automatically\nfor models set as a player's character.");
             }
@@ -16325,7 +16336,18 @@ void DrawInspector(EditorState& ed) {
             c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
 
             SectionHeader("Rig");
-            if (ImGui::Checkbox("Separate Into Parts (editable rig)##char", &ch->separateParts)) {
+            // A custom model owns this character (swap or auto-rig): building the
+            // blocky part rig would spawn the old default body on top of it.
+            bool rigLocked = !ch->enabled || ch->HasCustomBind();
+            if (rigLocked) {
+                ImGui::BeginDisabled();
+                bool off = false;
+                ImGui::Checkbox("Separate Into Parts (editable rig)##char", &off);
+                ImGui::EndDisabled();
+                ImGui::TextDisabled(ch->HasCustomBind()
+                    ? "(unavailable: a rigged model drives this character - Unrig first)"
+                    : "(unavailable: a custom model replaced this body - re-enable the Character first)");
+            } else if (ImGui::Checkbox("Separate Into Parts (editable rig)##char", &ch->separateParts)) {
                 // Build/tear down the rig NOW (in the editor) so the parts are real,
                 // selectable objects in the scene — not spawned when you press Play.
                 if (ch->separateParts) ch->BuildParts(); else ch->RemoveParts();

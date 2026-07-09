@@ -211,6 +211,16 @@ take into idle/walk/attack pieces), **Reverse** (play backwards) and
 re-timed). **Events** adds named markers that fire during play (footsteps,
 hit windows) — read them in scripts with `anim_event()`.
 
+## Air states for imported characters (jump / fall / land)
+
+Locomotion on the Model Animator also handles the air: map **Jump**,
+**Fall** and **Land** clips (auto-mapped by name when you set a character
+model) and the machine watches the capsule's VERTICAL motion — launching
+plays Jump, past the apex Fall loops, and touchdown plays Land once before
+idle/walk/run resumes. It works with every controller, no wiring. In
+in-place mode the jump clip's own root rise is stripped too, so the
+controller's jump arc isn't doubled.
+
 ## Custom character models (drag & drop)
 
 Any imported model can BE your playable character — no rigging setup:
@@ -229,6 +239,14 @@ Any imported model can BE your playable character — no rigging setup:
 - The default blocky body is hidden (the Character component is disabled
   — re-enable it in the Inspector to get it back). All of it saves with
   the scene.
+- **Foot IK is wired automatically** when the model's leg bones are
+  recognizable (Mixamo and common naming): full plant setup — pelvis
+  adjust, plant-down, slope align, smoothing — with zero clicks.
+- Jump/Fall/Land clips are mapped by name into the air states (above).
+
+Controllers also carry a **Fall Reset Y** safety net (default -100): fall
+off the map or through a floor with no collider and the player teleports
+back to its spawn point instead of falling forever.
 
 ## Tips
 

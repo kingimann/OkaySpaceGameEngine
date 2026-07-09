@@ -64,18 +64,18 @@ public:
                 case Wrap::PingPong: t = start + Mathf::PingPong(t - start, span); break;
             }
         }
-        // Locate the segment.
-        for (std::size_t i = 0; i + 1 < m_keys.size(); ++i) {
-            const Keyframe& a = m_keys[i];
-            const Keyframe& b = m_keys[i + 1];
-            if (t <= b.time) {
-                float seg = b.time - a.time;
-                float u = seg > Mathf::Epsilon ? (t - a.time) / seg : 0.0f;
-                if (smooth) u = u * u * (3.0f - 2.0f * u);
-                return a.value + (b.value - a.value) * u;
-            }
-        }
-        return m_keys.back().value;
+        // Locate the segment by binary search — baked tracks (Mixamo etc.) carry
+        // hundreds of keys and get evaluated hundreds of times per frame, so the
+        // old linear scan was a real chunk of the frame on animated characters.
+        auto it = std::lower_bound(m_keys.begin() + 1, m_keys.end(), t,
+                                   [](const Keyframe& k, float tv) { return k.time < tv; });
+        if (it == m_keys.end()) return m_keys.back().value;
+        const Keyframe& a = *(it - 1);
+        const Keyframe& b = *it;
+        float seg = b.time - a.time;
+        float u = seg > Mathf::Epsilon ? (t - a.time) / seg : 0.0f;
+        if (smooth) u = u * u * (3.0f - 2.0f * u);
+        return a.value + (b.value - a.value) * u;
     }
 
     /// Convenience: a curve from a to b over `duration` seconds.

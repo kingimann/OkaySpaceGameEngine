@@ -29,10 +29,25 @@ public:
     bool  driveAnimation = true;// set a Character's walk/run/idle anim from movement
     bool  footIK = false;       // plant the Character's feet on the ground
 
-    void Start() override { if (footIK) AttachCharacterFootIK(gameObject); }
+    /// Safety net: falling below this world Y teleports the player back to its
+    /// spawn point (fell off the map / through a floor with no collider).
+    /// Set to 0 to disable.
+    float fallResetY = -100.0f;
+
+    void Start() override {
+        if (footIK) AttachCharacterFootIK(gameObject);
+        if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
+    }
 
     void Update(float dt) override {
         if (!transform) return;
+        // Fell out of the world? Teleport home instead of falling forever (a
+        // floor without a collider, a hole in the map). fallResetY = 0 disables.
+        if (m_haveSpawn && fallResetY != 0.0f && transform->Position().y < fallResetY) {
+            transform->SetPosition(m_spawn);
+            if (auto* frb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr)
+                frb->velocity = Vec3{0, 0, 0};
+        }
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         Vec2 axis = Input::AxisWASD();               // x = strafe, y = forward
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
@@ -59,6 +74,9 @@ public:
             if (Character* ch = FindCharacterIn(gameObject))
                 ch->anim = !moving ? 1 : (running ? 3 : 2);   // idle / run / walk
     }
+
+private:
+    Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
 };
 
 } // namespace okay

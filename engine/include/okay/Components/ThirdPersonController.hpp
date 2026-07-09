@@ -104,10 +104,25 @@ public:
 
     float yaw = 0.0f, pitch = 18.0f;    // camera orbit angles (degrees)
 
-    void Start() override { if (footIK) AttachCharacterFootIK(gameObject); }
+
+    /// Safety net: falling below this world Y teleports the player back to its
+    /// spawn point (fell off the map / through a floor with no collider).
+    /// Set to 0 to disable.
+    float fallResetY = -100.0f;
+    void Start() override {
+        if (footIK) AttachCharacterFootIK(gameObject);
+        if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
+    }
 
     void Update(float dt) override {
         if (!transform) return;
+        // Fell out of the world? Teleport home instead of falling forever (a
+        // floor without a collider, a hole in the map). fallResetY = 0 disables.
+        if (m_haveSpawn && fallResetY != 0.0f && transform->Position().y < fallResetY) {
+            transform->SetPosition(m_spawn);
+            if (auto* frb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr)
+                frb->velocity = Vec3{0, 0, 0};
+        }
         if (Game::Paused()) return;   // frozen while the pause menu is up
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         // Optionally hide + lock the cursor while playing (re-assert if freed).
@@ -347,6 +362,8 @@ public:
     void OnCollisionStay3D(const Collision3D& c)  override { NoteGround(c); }
 
 private:
+    Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
+
     void NoteGround(const Collision3D& c) {
         bool vertical = Mathf::Abs(c.normal.y) > 0.5f;
         bool below = c.gameObject && c.gameObject->transform && transform &&

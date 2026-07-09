@@ -74,6 +74,52 @@ public:
         if (!leftFoot || !rightFoot) WireFromCharacter();
     }
 
+    /// Detect humanoid leg bones by NAME among `root`'s descendants (Mixamo
+    /// "LeftUpLeg/LeftLeg/LeftFoot", thigh/shin/calf variants, l_/_l suffixes)
+    /// and fill the *Name fields. Returns how many of the six leg bones matched
+    /// (Start() resolves the names to transforms). Mirrors the editor's
+    /// Auto-Detect so the character-swap can wire foot IK with no clicks.
+    int DetectHumanoidBones(Scene& s, GameObject* root) {
+        if (!root) return 0;
+        auto lower = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
+        std::string hipL, kneeL, footL, hipR, kneeR, footR, pel;
+        for (const auto& up : s.Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+            std::string nm = lower(g->name);
+            auto has = [&](const char* k) { return nm.find(k) != std::string::npos; };
+            auto endsW = [&](const char* k) {
+                std::size_t kl = std::char_traits<char>::length(k);
+                return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
+            };
+            bool isLeft  = has("left")  || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l");
+            bool isRight = has("right") || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r");
+            if (!isLeft && !isRight) {
+                if (pel.empty() && (has("hips") || has("pelvis"))) pel = g->name;
+                continue;
+            }
+            int part = -1;
+            if (has("foot") || has("ankle")) part = 2;
+            else if (has("upleg") || has("upperleg") || has("thigh") || has("hip")) part = 0;
+            else if (has("knee") || has("calf") || has("shin") || has("lowerleg") || has("leg")) part = 1;
+            if (part < 0) continue;
+            std::string& slot = isLeft ? (part == 0 ? hipL : part == 1 ? kneeL : footL)
+                                       : (part == 0 ? hipR : part == 1 ? kneeR : footR);
+            if (slot.empty()) slot = g->name;
+        }
+        int found = (int)(!hipL.empty()) + (int)(!kneeL.empty()) + (int)(!footL.empty()) +
+                    (int)(!hipR.empty()) + (int)(!kneeR.empty()) + (int)(!footR.empty());
+        if (found > 0) {
+            leftHipName = hipL;   leftKneeName = kneeL;   leftFootName = footL;
+            rightHipName = hipR;  rightKneeName = kneeR;  rightFootName = footR;
+            if (!pel.empty()) pelvisName = pel;
+            leftHip = leftKnee = leftFoot = nullptr;    // resolve the names on Start
+            rightHip = rightKnee = rightFoot = nullptr;
+            pelvis = nullptr;
+        }
+        return found;
+    }
+
     // Wire the six leg bones (+ pelvis) from a Character's part rig by bone index.
     void WireFromCharacter() {
         if (!gameObject) return;

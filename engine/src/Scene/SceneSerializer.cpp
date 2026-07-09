@@ -385,6 +385,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << ma->walkThreshold << " " << ma->runThreshold
                 << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip)
                 << " " << (ma->inPlace ? 1 : 0) << "\n";
+        // Air states (jump/fall/land by vertical motion) — optional record.
+        if (!ma->jumpClip.empty() || !ma->fallClip.empty() || !ma->landClip.empty())
+            out << "  modelanimair " << Quote(ma->jumpClip) << " " << Quote(ma->fallClip)
+                << " " << Quote(ma->landClip) << " " << ma->airUpVel << " " << ma->airDownVel << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || !ma->rootMotionNode.empty())
@@ -2042,6 +2046,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     { std::string rest; std::getline(in, rest);
                       std::istringstream rs(rest); int ip;
                       if (rs >> ip) ma->inPlace = (ip != 0); }
+                } else if (field == "modelanimair") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    ma->jumpClip = ReadQuoted(in);
+                    ma->fallClip = ReadQuoted(in);
+                    ma->landClip = ReadQuoted(in);
+                    in >> ma->airUpVel >> ma->airDownVel;
                 } else if (field == "modelanimblend") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();

@@ -475,18 +475,37 @@ public:
         return true;
     }
 
-    /// The active clip's root-motion source: the named node, else the first node
-    /// with a ground-translation track. Null when the clip has none.
+    /// The active clip's root-motion source: the named node, else — auto — the
+    /// node whose ground translation actually TRAVELS over the clip. glTF rigs
+    /// carry (static) position tracks on every joint, so "first node with a
+    /// position track" used to pick a random joint and leave the real root
+    /// sliding the model out of its collider. Null when nothing travels.
     const NodeClip* RootMotionClip() const {
         if (active < 0 || active >= (int)clips.size()) return nullptr;
-        const NodeClip* first = nullptr;
-        for (const NodeClip& nc : clips[active].nodes) {
-            bool hasPos = nc.clip.HasTrack("position.x") || nc.clip.HasTrack("position.z");
-            if (!hasPos) continue;
-            if (!rootMotionNode.empty()) { if (nc.node == rootMotionNode) return &nc; }
-            else if (!first) first = &nc;
+        if (!rootMotionNode.empty()) {
+            for (const NodeClip& nc : clips[active].nodes)
+                if (nc.node == rootMotionNode &&
+                    (nc.clip.HasTrack("position.x") || nc.clip.HasTrack("position.z")))
+                    return &nc;
+            return nullptr;
         }
-        return rootMotionNode.empty() ? first : nullptr;
+        const NodeClip* best = nullptr;
+        float bestRange = 0.0f;
+        for (const NodeClip& nc : clips[active].nodes) {
+            float range = 0.0f;
+            for (const char* tr : {"position.x", "position.z"}) {
+                auto it = nc.clip.Tracks().find(tr);
+                if (it == nc.clip.Tracks().end() || it->second.Empty()) continue;
+                float mn = 1e30f, mx = -1e30f;
+                for (const auto& k : it->second.Keys()) {
+                    mn = std::fmin(mn, k.value);
+                    mx = std::fmax(mx, k.value);
+                }
+                range += mx - mn;
+            }
+            if (range > bestRange) { bestRange = range; best = &nc; }
+        }
+        return bestRange > 1e-5f ? best : nullptr;   // nothing travels = nothing to strip
     }
 
 private:

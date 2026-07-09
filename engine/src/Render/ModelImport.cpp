@@ -753,6 +753,69 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         ma->inPlace = true;
         mapped = "idle='" + ma->idleClip + "' walk='" + ma->walkClip + "'" +
                  (ma->runClip.empty() ? "" : " run='" + ma->runClip + "'");
+
+        // Re-ground and re-center on the ANIMATED pose. Some rigs' clips sit at
+        // a constant offset from the bind pose (glTF CesiumMan-style skeleton
+        // roots), so grounding on the bind pose parked the playing model a metre
+        // outside its capsule with its feet in the air — the "glitchy character"
+        // report. Pose the mapped idle clip's first frame, measure, fold the
+        // offset into the root, then restore the bind pose.
+        int ci = ma->FindClip(ma->idleClip); if (ci < 0) ci = 0;
+        struct SavedTRS { Transform* tr; Vec3 p, s; Quat r; };
+        std::vector<SavedTRS> savedPose;
+        for (const auto& nc : ma->clips[ci].nodes)
+            for (const auto& up : scene.Objects()) {
+                GameObject* g = up.get();
+                if (!g || g->name != nc.node || !g->IsSelfOrDescendantOf(root) || !g->transform) continue;
+                Transform* tr = g->transform;
+                savedPose.push_back({tr, tr->localPosition, tr->localScale, tr->localRotation});
+                Vec3 p = tr->localPosition, sc = tr->localScale; Quat rq = tr->localRotation;
+                ModelAnimator::EvalClipInto(nc.clip, 0.0f, p, rq, sc);
+                tr->localPosition = p; tr->localScale = sc; tr->localRotation = rq;
+                break;
+            }
+        if (!savedPose.empty()) {
+            // Deform skinned meshes onto the posed joints, so the measurement sees
+            // the pose (the renderer mesh is otherwise still the bind mesh).
+            for (const auto& up : scene.Objects())
+                if (up->IsSelfOrDescendantOf(root))
+                    if (auto* sm = up->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
+            Vec3 alo{0, 0, 0}, ahi{0, 0, 0}; bool aany = false;
+            for (const auto& up : scene.Objects()) {
+                GameObject* g = up.get();
+                if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+                auto* mr = g->GetComponent<MeshRenderer>();
+                if (!mr || mr->mesh.vertices.empty()) continue;
+                Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+                Mat4 l2w = g->transform->LocalToWorldMatrix();
+                for (int c = 0; c < 8; ++c) {
+                    Vec3 w = l2w.MultiplyPoint({c & 1 ? bhi.x : blo.x, c & 2 ? bhi.y : blo.y, c & 4 ? bhi.z : blo.z});
+                    if (!aany) { alo = ahi = w; aany = true; }
+                    else {
+                        alo.x = std::fmin(alo.x, w.x); ahi.x = std::fmax(ahi.x, w.x);
+                        alo.y = std::fmin(alo.y, w.y); ahi.y = std::fmax(ahi.y, w.y);
+                        alo.z = std::fmin(alo.z, w.z); ahi.z = std::fmax(ahi.z, w.z);
+                    }
+                }
+            }
+            if (aany) {
+                Vec3 pw = player->transform->Position();
+                Vec3 dWorld{pw.x - (alo.x + ahi.x) * 0.5f, pw.y - alo.y, pw.z - (alo.z + ahi.z) * 0.5f};
+                // Fold the world-space correction into the root's local position
+                // (the root's parent is the player — rotate the delta into its space).
+                Mat4 pInv = player->transform->LocalToWorldMatrix().Inverse();
+                Vec3 dLocal = pInv.MultiplyVector(dWorld);
+                root->transform->localPosition = root->transform->localPosition + dLocal;
+            }
+            for (const SavedTRS& sp : savedPose) {
+                sp.tr->localPosition = sp.p;
+                sp.tr->localScale    = sp.s;
+                sp.tr->localRotation = sp.r;
+            }
+            for (const auto& up : scene.Objects())   // deform back to the bind pose
+                if (up->IsSelfOrDescendantOf(root))
+                    if (auto* sm = up->GetComponent<SkinnedMesh>()) sm->Skin();
+        }
     }
 
     // Hide the default blocky body: the Character stops animating and its mesh +

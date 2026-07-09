@@ -14460,7 +14460,30 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::Button("Subdivide Sel##me") && !g_meshSelFaces.empty()) {
                 ed.PushUndo(); mr->mesh.SubdivideFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }
+            // Per-face detailing (Blender's Individual ops): each selected face is
+            // poked / extruded / inset on its own — studs, spikes, panels, greebles.
+            static float s_indivExt = 0.2f, s_indivInset = 0.3f, s_poke = 0.15f;
+            ImGui::SetNextItemWidth(90);
+            ImGui::DragFloat("##pokeh", &s_poke, 0.01f, -2.0f, 2.0f, "%.2f");
             ImGui::SameLine();
+            if (ImGui::Button("Poke##me") && !g_meshSelFaces.empty()) {
+                ed.PushUndo(); mr->mesh.PokeFaces(g_meshSelFaces, s_poke); g_meshSelFaces.clear(); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fan each selected face from a centre point raised by this height — spikes, pyramids, dimples.");
+            ImGui::SetNextItemWidth(90);
+            ImGui::DragFloat("##indext", &s_indivExt, 0.01f, -5.0f, 5.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("Extrude Indiv##me") && !g_meshSelFaces.empty()) {
+                ed.PushUndo(); mr->mesh.ExtrudeFacesIndividual(g_meshSelFaces, s_indivExt); g_meshSelFaces.clear(); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push each selected face out along ITS OWN normal as a separate stud (greebles, rivets, spikes).");
+            ImGui::SetNextItemWidth(90);
+            ImGui::DragFloat("##indins", &s_indivInset, 0.01f, 0.0f, 1.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("Inset Indiv##me") && !g_meshSelFaces.empty()) {
+                ed.PushUndo(); mr->mesh.InsetFacesIndividual(g_meshSelFaces, s_indivInset); g_meshSelFaces.clear(); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inset each selected face independently (panels/frames) — pair with Extrude Indiv.");
             if (ImGui::Button("Delete Faces##me") && !g_meshSelFaces.empty()) {
                 ed.PushUndo(); mr->mesh.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }

@@ -18,8 +18,8 @@ menu + F3 search). Type in the filter box to narrow it, or expand a category:
 - **Nature** — ready-made, pre-colored props: Tree, Pine, Palm Tree, Dead
   Tree, Bush, Rock, Mushroom, Cactus, Crystal. Built from the primitives +
   path-sweeping + color mottling, so they read as real materials, not flat
-  plastic, and they scatter over terrain (Terrain tab → Scatter). Tree,
-  Pine, Rock and Bush support **procedural variants**: the Shape tab shows a
+  plastic, and they scatter over terrain (Terrain tab → Scatter). All nine
+  nature props support **procedural variants**: the Shape tab shows a
   **Variant** stepper + **Randomize** (0 = the base model), and the terrain
   Scatter tool gives every instance its own variant, so a forest is a crowd
   of distinct shapes rather than identical clones. A variant is stored as a
@@ -127,6 +127,11 @@ to the first selected vertex (grab one island of a combined mesh), and
   **Subdivide Sel**, **Delete Faces**, **Flip Normals**,
   **Merge by Distance**, **Duplicate Sel** (copy the selected faces in
   place, copies stay selected — drag them away).
+- Per-face detailing (Blender's Individual ops): **Poke** fans each face
+  from a raised centre (spikes, pyramids, dimples); **Extrude Indiv** pushes
+  each face out along its own normal as a separate stud (rivets, greebles);
+  **Inset Indiv** insets each face on its own (panels, frames). Poke +
+  Extrude Indiv + Inset Indiv together cover most hard-surface detailing.
 - Edge tools: **Collapse Edges** (merge each selected edge's endpoints),
   **Split Edges** (insert a midpoint, cutting both neighbour faces),
   **Extrude Edges** (pull a wall out of each selected edge along its face's

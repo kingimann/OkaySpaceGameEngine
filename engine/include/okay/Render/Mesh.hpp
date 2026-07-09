@@ -700,76 +700,84 @@ struct Mesh {
     // serializes compactly and regenerates on load.
 
     /// A leaning palm: curved trunk, drooping fronds, coconuts. ~2.6 tall.
-    static Mesh PalmTree() {
+    static Mesh PalmTree(int variant = 0) {
         Mesh m;
         Color bark = Color::FromBytes(126, 96, 62);
         Color leaf = Color::FromBytes(62, 138, 66);
         Color coco = Color::FromBytes(92, 70, 46);
-        m.Add(SweepPath({{0,0,0}, {0.10f,0.7f,0.0f}, {0.28f,1.5f,0.0f}, {0.50f,2.2f,0.0f}},
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        float lean = R(1, 0.36f, 0.66f), ht = R(2, 0.88f, 1.16f);
+        int fronds = 6 + (int)(R(3, 0.0f, 2.99f));          // 6..8 fronds
+        m.Add(SweepPath({{0,0,0}, {0.10f,0.7f*ht,0.0f}, {0.28f,1.5f*ht,0.0f}, {lean,2.2f*ht,0.0f}},
                         0.12f, 8, true, 0.06f), {0,0,0}, {1,1,1}, &bark);
-        Vec3 top{0.50f, 2.25f, 0.0f};
-        for (int i = 0; i < 7; ++i) {                    // drooping fronds, fanned around
-            float a = (float)i * (360.0f / 7.0f);
+        Vec3 top{lean, 2.25f * ht, 0.0f};
+        for (int i = 0; i < fronds; ++i) {                  // drooping fronds, fanned around
+            float a = (float)i * (360.0f / fronds) + R(4, 0.0f, 40.0f);
             Mesh frond = Sphere(0.5f, 5, 8);
-            frond.JitterVertices({}, 0.03f, i + 1);
+            frond.JitterVertices({}, 0.03f, variant * 20 + i + 1);
             m.AddPosed(frond, {top.x + 0.55f, top.y + 0.02f, top.z},
-                       {1.35f, 0.05f, 0.28f}, {0.0f, a, -16.0f}, top, &leaf);
+                       {1.35f, 0.05f, 0.28f}, {0.0f, a, -16.0f + R(5, -6.0f, 6.0f)}, top, &leaf);
         }
         m.Add(Sphere(0.5f, 6, 8), {top.x - 0.10f, top.y - 0.10f, top.z + 0.08f}, {0.18f, 0.18f, 0.18f}, &coco);
         m.Add(Sphere(0.5f, 6, 8), {top.x + 0.08f, top.y - 0.12f, top.z - 0.09f}, {0.16f, 0.16f, 0.16f}, &coco);
-        m.MottleFaceColors(0.08f, 4);
+        m.MottleFaceColors(0.08f, 4 + variant);
         m.name = "PalmTree";
         m.ComputeSmoothNormals();
         return m;
     }
     /// A bare, weathered dead tree: gnarled trunk + reaching branches. ~2 tall.
-    static Mesh DeadTree() {
+    static Mesh DeadTree(int variant = 0) {
         Mesh m;
         Color wood = Color::FromBytes(92, 82, 70);
-        m.Add(SweepPath({{0,0,0}, {0.05f,0.5f,0.03f}, {-0.03f,1.0f,-0.02f}, {0.08f,1.6f,0.04f}},
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        float ht = R(1, 0.86f, 1.18f), tw = R(2, -0.12f, 0.12f);
+        m.Add(SweepPath({{0,0,0}, {0.05f,0.5f*ht,0.03f}, {-0.03f,1.0f*ht,-0.02f}, {0.08f,1.6f*ht,0.04f}},
                         0.13f, 7, true, 0.04f), {0,0,0}, {1,1,1}, &wood);
-        m.Add(SweepPath({{0.02f,0.9f,0.0f}, {0.35f,1.25f,0.15f}, {0.60f,1.65f,0.30f}},
+        m.Add(SweepPath({{0.02f,0.9f*ht,0.0f}, {0.35f+tw,1.25f*ht,0.15f}, {0.60f+tw,1.65f*ht,0.30f}},
                         0.05f, 6, true, 0.015f), {0,0,0}, {1,1,1}, &wood);
-        m.Add(SweepPath({{-0.02f,1.15f,0.0f}, {-0.30f,1.45f,-0.12f}, {-0.55f,1.85f,-0.20f}},
+        m.Add(SweepPath({{-0.02f,1.15f*ht,0.0f}, {-0.30f-tw,1.45f*ht,-0.12f}, {-0.55f-tw,1.85f*ht,-0.20f}},
                         0.045f, 6, true, 0.015f), {0,0,0}, {1,1,1}, &wood);
-        m.Add(SweepPath({{0.05f,1.45f,0.02f}, {0.18f,1.80f,-0.15f}, {0.25f,2.05f,-0.28f}},
+        m.Add(SweepPath({{0.05f,1.45f*ht,0.02f}, {0.18f,1.80f*ht,-0.15f}, {0.25f,2.05f*ht,-0.28f}},
                         0.035f, 5, true, 0.012f), {0,0,0}, {1,1,1}, &wood);
-        m.MottleFaceColors(0.10f, 6);
+        m.MottleFaceColors(0.10f, 6 + variant);
         m.name = "DeadTree";
         m.ComputeSmoothNormals();
         return m;
     }
     /// A toadstool: pale stem, red spotted cap. ~0.55 tall.
-    static Mesh Mushroom() {
+    static Mesh Mushroom(int variant = 0) {
         Mesh m;
         Color stem = Color::FromBytes(228, 218, 196);
         Color cap  = Color::FromBytes(188, 52, 44);
-        m.Add(SweepPath({{0,0,0}, {0.01f,0.18f,0.0f}, {0.0f,0.34f,0.0f}},
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        float sh = R(1, 0.80f, 1.30f), cw = R(2, 0.80f, 1.20f);   // stem height, cap width
+        m.Add(SweepPath({{0,0,0}, {0.01f,0.18f*sh,0.0f}, {0.0f,0.34f*sh,0.0f}},
                         0.09f, 10, true, 0.06f), {0,0,0}, {1,1,1}, &stem);
         int capStart = m.TriangleCount();
-        m.Add(Hemisphere(0.5f, 6, 14), {0.0f, 0.32f, 0.0f}, {0.62f, 0.42f, 0.62f}, &cap);
-        // White spots: hash-pick some cap faces.
-        for (int f = capStart; f < m.TriangleCount(); ++f) {
-            unsigned x = (unsigned)(f * 2654435761u);
+        m.Add(Hemisphere(0.5f, 6, 14), {0.0f, 0.32f*sh, 0.0f}, {0.62f*cw, 0.42f, 0.62f*cw}, &cap);
+        for (int f = capStart; f < m.TriangleCount(); ++f) {     // white spots (seed-shifted)
+            unsigned x = (unsigned)((f + variant * 7) * 2654435761u);
             if (((x >> 7) & 7) == 0) m.triColors[f] = Color::FromBytes(240, 234, 222);
         }
-        m.MottleFaceColors(0.05f, 2);
+        m.MottleFaceColors(0.05f, 2 + variant);
         m.name = "Mushroom";
         m.ComputeSmoothNormals();
         return m;
     }
     /// A saguaro cactus: ribbed body + two elbow arms. ~1.6 tall.
-    static Mesh Cactus() {
+    static Mesh Cactus(int variant = 0) {
         Mesh m;
         Color green = Color::FromBytes(74, 128, 58);
-        m.Add(SweepPath({{0,0,0}, {0,0.6f,0}, {0,1.2f,0}}, 0.18f, 10, true, 0.14f),
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        float ht = R(1, 0.82f, 1.22f), la = R(2, 0.85f, 1.10f), ra = R(3, 0.82f, 1.12f);
+        m.Add(SweepPath({{0,0,0}, {0,0.6f*ht,0}, {0,1.2f*ht,0}}, 0.18f, 10, true, 0.14f),
               {0,0,0}, {1,1,1}, &green);
-        m.Add(Sphere(0.5f, 6, 10), {0.0f, 1.22f, 0.0f}, {0.29f, 0.29f, 0.29f}, &green);
-        m.Add(SweepPath({{0.12f,0.55f,0.0f}, {0.38f,0.60f,0.0f}, {0.42f,0.95f,0.0f}},
+        m.Add(Sphere(0.5f, 6, 10), {0.0f, 1.22f*ht, 0.0f}, {0.29f, 0.29f, 0.29f}, &green);
+        m.Add(SweepPath({{0.12f,0.55f*ht,0.0f}, {0.38f,0.60f*ht,0.0f}, {0.42f,0.95f*ht*la,0.0f}},
                         0.10f, 8, true, 0.08f), {0,0,0}, {1,1,1}, &green);
-        m.Add(SweepPath({{-0.12f,0.75f,0.0f}, {-0.36f,0.80f,0.0f}, {-0.40f,1.10f,0.0f}},
+        m.Add(SweepPath({{-0.12f,0.75f*ht,0.0f}, {-0.36f,0.80f*ht,0.0f}, {-0.40f,1.10f*ht*ra,0.0f}},
                         0.09f, 8, true, 0.075f), {0,0,0}, {1,1,1}, &green);
-        m.MottleFaceColors(0.07f, 8);
+        m.MottleFaceColors(0.07f, 8 + variant);
         m.name = "Cactus";
         m.ComputeSmoothNormals();
         return m;
@@ -854,19 +862,21 @@ struct Mesh {
         return m;
     }
     /// A crystal cluster: tilted shards in two tones, flat-shaded. ~0.9 tall.
-    static Mesh Crystal() {
+    static Mesh Crystal(int variant = 0) {
         Mesh m;
         Color a = Color::FromBytes(120, 190, 230);
         Color b = Color::FromBytes(150, 130, 224);
-        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {0.0f, 0.42f, 0.0f}, {0.34f, 0.9f, 0.34f},
-                   {4.0f, 0.0f, -6.0f}, {0.0f, 0.0f, 0.0f}, &a);
-        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {0.24f, 0.28f, 0.10f}, {0.22f, 0.6f, 0.22f},
-                   {8.0f, 30.0f, 22.0f}, {0.24f, 0.0f, 0.10f}, &b);
-        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {-0.22f, 0.24f, -0.06f}, {0.18f, 0.5f, 0.18f},
-                   {-10.0f, 70.0f, -24.0f}, {-0.22f, 0.0f, -0.06f}, &a);
+        auto R = [&](int k, float lo, float hi) { return PropRand(variant, k, lo, hi); };
+        float h0 = R(1, 0.78f, 1.05f);                       // main-shard height
+        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {0.0f, 0.42f*h0, 0.0f}, {0.34f, 0.9f*h0, 0.34f},
+                   {4.0f, R(2, 0.0f, 60.0f), -6.0f}, {0.0f, 0.0f, 0.0f}, &a);
+        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {0.24f, 0.28f, 0.10f}, {0.22f, 0.6f*R(3,0.8f,1.2f), 0.22f},
+                   {8.0f, R(4, 0.0f, 90.0f), 22.0f}, {0.24f, 0.0f, 0.10f}, &b);
+        m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {-0.22f, 0.24f, -0.06f}, {0.18f, 0.5f*R(5,0.8f,1.2f), 0.18f},
+                   {-10.0f, R(6, 30.0f, 120.0f), -24.0f}, {-0.22f, 0.0f, -0.06f}, &a);
         m.AddPosed(Bipyramid(6, 0.5f, 1.0f), {0.05f, 0.20f, -0.24f}, {0.15f, 0.4f, 0.15f},
-                   {-18.0f, 130.0f, 10.0f}, {0.05f, 0.0f, -0.24f}, &b);
-        m.MottleFaceColors(0.10f, 21);
+                   {-18.0f, R(7, 90.0f, 200.0f), 10.0f}, {0.05f, 0.0f, -0.24f}, &b);
+        m.MottleFaceColors(0.10f, 21 + variant);
         m.name = "Crystal";
         m.normals.clear();                               // gem facets
         return m;
@@ -1081,7 +1091,9 @@ struct Mesh {
 
     /// True if this named prop supports procedural variants (FromNameSeeded).
     static bool NameHasVariants(const std::string& n) {
-        return n == "Tree" || n == "Pine" || n == "Rock" || n == "Bush";
+        return n == "Tree" || n == "Pine" || n == "Rock" || n == "Bush"
+            || n == "PalmTree" || n == "DeadTree" || n == "Mushroom"
+            || n == "Cactus" || n == "Crystal";
     }
 
     /// Like FromName, but for the nature props that support it, `variant` picks a
@@ -1094,6 +1106,11 @@ struct Mesh {
             if (n == "Pine") return Pine(variant);
             if (n == "Rock") return Rock(variant);
             if (n == "Bush") return Bush(variant);
+            if (n == "PalmTree") return PalmTree(variant);
+            if (n == "DeadTree") return DeadTree(variant);
+            if (n == "Mushroom") return Mushroom(variant);
+            if (n == "Cactus")   return Cactus(variant);
+            if (n == "Crystal")  return Crystal(variant);
         }
         return FromName(n);
     }
@@ -2237,6 +2254,92 @@ struct Mesh {
             }
         }
         triangles = std::move(out);
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Poke: fan each selected triangle from a new centre vertex (1 -> 3 tris).
+    /// `height` raises the centre along the face normal — 0 keeps it flat (adds an
+    /// editable centre point); positive spikes it, negative dimples it. Blender's
+    /// Poke Faces. Face colors of the poked triangle carry to its three children.
+    void PokeFaces(const std::vector<int>& faces, float height = 0.0f) {
+        if (faces.empty()) return;
+        std::set<int> sel(faces.begin(), faces.end());
+        const bool hadColors = HasFaceColors();
+        std::vector<int> out; out.reserve(triangles.size() * 2);
+        std::vector<Color> outC; if (hadColors) outC.reserve(triColors.size() * 2);
+        for (int f = 0, n = TriangleCount(); f < n; ++f) {
+            int i = f * 3, a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            Color fc = (hadColors && f < (int)triColors.size()) ? triColors[f] : Color{1,1,1,1};
+            if (!sel.count(f)) { out.insert(out.end(), {a, b, c}); if (hadColors) outC.push_back(fc); continue; }
+            Vec3 ctr = (vertices[a] + vertices[b] + vertices[c]) * (1.0f / 3.0f);
+            if (height != 0.0f) ctr += FaceNormal(f) * height;
+            int m = (int)vertices.size(); vertices.push_back(ctr);
+            out.insert(out.end(), {a, b, m,  b, c, m,  c, a, m});
+            if (hadColors) { outC.push_back(fc); outC.push_back(fc); outC.push_back(fc); }
+        }
+        triangles = std::move(out);
+        if (hadColors) triColors = std::move(outC);
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Extrude each selected face on its OWN normal as a separate protrusion
+    /// (studs, greebles, spikes) — Blender's "Extrude Individual Faces". Unlike
+    /// ExtrudeFaces (one connected cap along the averaged normal), each face gets
+    /// its own detached cap + side walls. Vertices are duplicated per face.
+    void ExtrudeFacesIndividual(const std::vector<int>& faces, float dist) {
+        if (faces.empty() || std::fabs(dist) < 1e-8f) return;
+        std::set<int> sel(faces.begin(), faces.end());
+        const bool hadColors = HasFaceColors();
+        std::vector<int> out; out.reserve(triangles.size() * 3);
+        std::vector<Color> outC; if (hadColors) outC.reserve(triColors.size() * 3);
+        for (int f = 0, n = TriangleCount(); f < n; ++f) {
+            int i = f * 3, a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            Color fc = (hadColors && f < (int)triColors.size()) ? triColors[f] : Color{1,1,1,1};
+            if (!sel.count(f)) { out.insert(out.end(), {a, b, c}); if (hadColors) outC.push_back(fc); continue; }
+            Vec3 nrm = FaceNormal(f) * dist;
+            int a2 = (int)vertices.size(); vertices.push_back(vertices[a] + nrm);
+            int b2 = (int)vertices.size(); vertices.push_back(vertices[b] + nrm);
+            int c2 = (int)vertices.size(); vertices.push_back(vertices[c] + nrm);
+            out.insert(out.end(), {a2, b2, c2});                     // cap
+            out.insert(out.end(), {a, b, b2,  a, b2, a2});           // side walls (outward)
+            out.insert(out.end(), {b, c, c2,  b, c2, b2});
+            out.insert(out.end(), {c, a, a2,  c, a2, c2});
+            if (hadColors) for (int k = 0; k < 7; ++k) outC.push_back(fc);
+        }
+        triangles = std::move(out);
+        if (hadColors) triColors = std::move(outC);
+        name = "";
+        RefreshNormals();
+    }
+
+    /// Inset each selected face independently (a smaller face inside + a border
+    /// ring), per face rather than as one shared region — Blender's "Inset
+    /// Individual". Pairs with ExtrudeFacesIndividual for panel/greeble looks.
+    void InsetFacesIndividual(const std::vector<int>& faces, float amount) {
+        if (faces.empty()) return;
+        float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
+        std::set<int> sel(faces.begin(), faces.end());
+        const bool hadColors = HasFaceColors();
+        std::vector<int> out; out.reserve(triangles.size() * 3);
+        std::vector<Color> outC; if (hadColors) outC.reserve(triColors.size() * 3);
+        for (int f = 0, n = TriangleCount(); f < n; ++f) {
+            int i = f * 3, a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            Color fc = (hadColors && f < (int)triColors.size()) ? triColors[f] : Color{1,1,1,1};
+            if (!sel.count(f)) { out.insert(out.end(), {a, b, c}); if (hadColors) outC.push_back(fc); continue; }
+            Vec3 ctr = (vertices[a] + vertices[b] + vertices[c]) * (1.0f / 3.0f);
+            int a2 = (int)vertices.size(); vertices.push_back(vertices[a] + (ctr - vertices[a]) * t);
+            int b2 = (int)vertices.size(); vertices.push_back(vertices[b] + (ctr - vertices[b]) * t);
+            int c2 = (int)vertices.size(); vertices.push_back(vertices[c] + (ctr - vertices[c]) * t);
+            out.insert(out.end(), {a2, b2, c2});                     // inner face
+            out.insert(out.end(), {a, b, b2,  a, b2, a2});           // border ring
+            out.insert(out.end(), {b, c, c2,  b, c2, b2});
+            out.insert(out.end(), {c, a, a2,  c, a2, c2});
+            if (hadColors) for (int k = 0; k < 7; ++k) outC.push_back(fc);
+        }
+        triangles = std::move(out);
+        if (hadColors) triColors = std::move(outC);
         name = "";
         RefreshNormals();
     }

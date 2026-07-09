@@ -401,8 +401,17 @@ void D3D11Renderer::Impl::DestroyTargets() {
 }
 
 bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
-    if (colorTex && w == W && h == H && samples == S) return true;
+    // A fully-built target set is cached by size; a half-built one (a mid-sequence
+    // CreateTexture2D/View failure) must NOT satisfy the cache — check the views we
+    // actually bind, not just colorTex. Otherwise the next call returns "ready" with
+    // a null rtv/dsv and the render binds a null render target (hard crash).
+    if (colorTex && rtv && dsv && resolveTex && staging &&
+        w == W && h == H && samples == S) return true;
     DestroyTargets();
+    // Any partial failure below returns false; reset the size cache so the next call
+    // starts clean (DestroyTargets nulls the resources, but the size fields linger).
+    w = 0; h = 0; samples = 0;
+    struct FailReset { Impl* p; bool ok = false; ~FailReset(){ if(!ok){ p->DestroyTargets(); p->w=p->h=p->samples=0; } } } fr{this};
     w = W; h = H;
     // Clamp the requested MSAA to what the device actually supports for BOTH the color
     // and depth formats. Creating a multisampled texture with an unsupported count is a
@@ -437,6 +446,7 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     D3D11_TEXTURE2D_DESC ts = tr;
     ts.Usage = D3D11_USAGE_STAGING; ts.BindFlags = 0; ts.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     if (FAILED(dev->CreateTexture2D(&ts, nullptr, &staging))) return false;
+    fr.ok = true;   // fully built — keep the cache
     return true;
 }
 
@@ -614,6 +624,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     if (!Available() || w < 1 || h < 1) return nullptr;
     Impl* p = m_impl;
     if (!p->EnsureTargets(w, h, samples)) return nullptr;
+    if (!p->rtv || !p->dsv || !p->ctx) return nullptr;   // never bind a null target
     ID3D11DeviceContext* c = p->ctx;
 
     // Advance the mesh-VB cache clock and evict buffers unused for ~5s of frames

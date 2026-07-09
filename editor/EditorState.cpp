@@ -51,7 +51,7 @@ void EditorState::StopNetwork() {
     if (!m_net) return;
     GameObject* go = m_net->gameObject;
     m_net->Stop();
-    if (go) { m_scene.Destroy(go); m_scene.Update(0.0f); }
+    if (go) { m_scene.Destroy(go); m_scene.FlushDestroyed(); }
     m_net = nullptr;
 }
 
@@ -213,7 +213,11 @@ void EditorState::DeleteSelected() {
     // Delete the whole selection (multi-select), not just the primary object.
     std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>{m_selected} : m_multi;
     for (GameObject* g : targets) if (g) m_scene.Destroy(g);
-    m_scene.Update(0.0f); // flush the destroy queue immediately
+    // Flush the destroy queue WITHOUT simulating a frame. Update(0) would run every
+    // component's Update/LateUpdate + both physics steps in EDIT mode — ticking
+    // half-torn-down objects (and a controller/camera-follow that references the
+    // object being deleted) is a needless hazard. FlushDestroyed only reaps the queue.
+    m_scene.FlushDestroyed();
     m_selected = nullptr;
     m_multi.clear();
     dirty = true;

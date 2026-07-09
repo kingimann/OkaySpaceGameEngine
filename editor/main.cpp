@@ -520,6 +520,26 @@ void SaveSettings();
 void ConsoleLog(const std::string& msg, int level = 0);   // default here so any call site can pass just a message
 static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir);   // defined below; used by the UI menu
 
+#if defined(_WIN32)
+// Call the D3D11 renderer behind a Structured-Exception guard, so a driver/backend
+// access violation (some GPUs faulted here on scene changes — e.g. deleting the main
+// camera — see the Render3D:d3d11 crash reports) is CAUGHT and turned into a clean
+// software/GL fallback instead of taking down the whole editor. Isolated in its own
+// function because SEH __try/__except cannot share a scope with C++ objects that need
+// stack unwinding.
+static const std::uint32_t* D3D11RenderSEH(okay::D3D11Renderer* r, const Scene& scene,
+                                           const Mat4& vp, const Vec3& eye, int rw, int rh,
+                                           const GameObject* ignore, bool& faulted) {
+    faulted = false;
+    __try {
+        return r->RenderToPixels(scene, vp, eye, rw, rh, 4, 0.0f, 0.0f, 0.0f, 0.0f, ignore);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        faulted = true;
+        return nullptr;
+    }
+}
+#endif
+
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
 SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
@@ -559,8 +579,15 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
 #if defined(_WIN32)
         if (!px && g_d3dReady && g_d3dRenderer) {
             OKAY_TRACE("Render3D:d3d11");   // crash breadcrumb: which backend faulted
-            px = g_d3dRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
-                                               0.0f, 0.0f, 0.0f, 0.0f, ignore);
+            bool d3dFaulted = false;
+            px = D3D11RenderSEH(g_d3dRenderer, scene, vp, eye, rw, rh, ignore, d3dFaulted);
+            if (d3dFaulted) {
+                // The D3D11 backend threw an access violation instead of returning a
+                // frame — disable it for the rest of the session and fall through to
+                // the OpenGL / software renderer so the editor stays alive.
+                g_d3dReady = false;
+                ConsoleLog("Direct3D 11 renderer faulted; switched to the OpenGL/software renderer for this session.", 2);
+            }
         }
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {

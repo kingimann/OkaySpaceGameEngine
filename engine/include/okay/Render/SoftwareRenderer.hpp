@@ -1012,6 +1012,7 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
     bool any = false;
     for (const auto& go : scene.Objects()) {
+        if (!go) continue;
         auto* mr = go->template GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();

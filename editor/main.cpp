@@ -978,6 +978,7 @@ struct CustomAction { std::string name; std::vector<okay::ActionList::Item> item
 std::vector<CustomAction> g_customInstr;   // reusable instruction groups
 std::vector<CustomAction> g_customCond;    // reusable condition groups
 bool g_showAnimation = false;    // keyframe animation timeline for the selected object
+bool g_showAnimatorGraph = false; // visual state-machine node graph (Animator window)
 bool g_showHistory   = false;    // undo/redo history panel (click a step to jump)
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
@@ -2714,6 +2715,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
         ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
         ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
+        ImGui::MenuItem("Animator (state graph)", nullptr, &g_showAnimatorGraph);
         ImGui::MenuItem("History", nullptr, &g_showHistory);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
@@ -11675,6 +11677,320 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
         ImGui::TextDisabled("Edit-mode preview — the scene pose isn't touched. Press Play (toolbar) to run it for real.");
 }
 
+// ---------------------------------------------------------------------------
+// Animator window — a visual node-graph editor for the AnimStateMachine
+// (Unity-style): drag state nodes, draw transitions between them, edit each
+// transition's condition in the side panel, and watch the ACTIVE state light
+// up during Play. Node positions save with the scene (animsmpos record).
+// ---------------------------------------------------------------------------
+static void DrawAnimatorGraph(EditorState& ed) {
+    if (!g_showAnimatorGraph) return;
+    ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Animator", &g_showAnimatorGraph)) { ImGui::End(); return; }
+
+    // Resolve the machine from the selection: self, then ancestors, then
+    // descendants (a player selected with the machine on the model root).
+    AnimStateMachine* sm = nullptr; GameObject* smObj = nullptr;
+    if (GameObject* go = ed.selected()) {
+        sm = go->GetComponent<AnimStateMachine>(); smObj = go;
+        if (!sm && go->transform)
+            for (Transform* t = go->transform->Parent(); t && !sm; t = t->Parent())
+                if (t->gameObject) { sm = t->gameObject->GetComponent<AnimStateMachine>(); smObj = t->gameObject; }
+        if (!sm && go->transform)
+            for (const auto& up : ed.scene().Objects())
+                if (up && up->IsSelfOrDescendantOf(go))
+                    if (auto* m = up->GetComponent<AnimStateMachine>()) { sm = m; smObj = up.get(); break; }
+    }
+    if (!sm) {
+        ImGui::TextDisabled("Select an object with an Anim State Machine (Add Component > Animation).");
+        ImGui::TextDisabled("States name a Model Animator clip; transitions switch between them\nwhen a condition passes (clip end, float compare, bool, trigger).");
+        ImGui::End(); return;
+    }
+    ModelAnimator* ma = smObj ? smObj->GetComponent<ModelAnimator>() : nullptr;
+    std::vector<std::string> clipNames = ma ? ma->ClipNames() : std::vector<std::string>{};
+
+    // Per-machine UI state.
+    static void* s_key = nullptr;
+    static int s_selState = -1, s_selTrFrom = -1, s_selTrIdx = -1, s_pendingFrom = -1;
+    static ImVec2 s_pan{40.0f, 40.0f};
+    static bool s_dragPushed = false;
+    if (s_key != (void*)sm) { s_key = (void*)sm; s_selState = -1; s_selTrFrom = -1; s_selTrIdx = -1; s_pendingFrom = -1; s_pan = ImVec2(40, 40); }
+    int n = (int)sm->states.size();
+    if (s_selState >= n) s_selState = -1;
+    if (s_selTrFrom >= n) { s_selTrFrom = -1; s_selTrIdx = -1; }
+    if (s_pendingFrom >= n) s_pendingFrom = -1;
+
+    // Auto-layout states that have never been placed (all at 0,0).
+    bool anyPlaced = false;
+    for (const auto& st : sm->states) if (st.nx != 0.0f || st.ny != 0.0f) { anyPlaced = true; break; }
+    if (!anyPlaced && n > 1)
+        for (int i = 0; i < n; ++i) { sm->states[i].nx = 20.0f + (i % 3) * 230.0f; sm->states[i].ny = 20.0f + (i / 3) * 110.0f; }
+
+    // ---- toolbar ----
+    ImGui::Text("%s", smObj->name.c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Add State##ag")) {
+        ed.PushUndo();
+        AnimStateMachine::State st;
+        st.name = "State " + std::to_string(n + 1);
+        if (!clipNames.empty()) st.clip = clipNames.front();
+        st.nx = 20.0f + (n % 3) * 230.0f; st.ny = 20.0f + (n / 3) * 110.0f;
+        sm->states.push_back(std::move(st));
+        s_selState = n; s_selTrFrom = -1; s_selTrIdx = -1;
+        ed.dirty = true;
+        n = (int)sm->states.size();
+    }
+    ImGui::SameLine();
+    if (ed.isPlaying()) ImGui::TextColored(AccentCol(1.0f), "playing: %s", sm->Current().empty() ? "(entering)" : sm->Current().c_str());
+    else ImGui::TextDisabled(s_pendingFrom >= 0 ? "click a state to connect the transition (right-click cancels)"
+                                                : "drag nodes | right-click a node: transitions/entry | drag empty space: pan");
+
+    const float sideW = 250.0f;
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+
+    // ---- canvas ----
+    ImGui::BeginChild("##agcanvas", ImVec2(avail.x - sideW - 8.0f, avail.y), true,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 org = ImGui::GetCursorScreenPos();
+    ImVec2 csz = ImGui::GetContentRegionAvail();
+    // subtle grid
+    ImU32 gridCol = ImGui::GetColorU32(ImGuiCol_Border, 0.25f);
+    for (float gx = std::fmod(s_pan.x, 40.0f); gx < csz.x; gx += 40.0f) dl->AddLine(ImVec2(org.x + gx, org.y), ImVec2(org.x + gx, org.y + csz.y), gridCol);
+    for (float gy = std::fmod(s_pan.y, 40.0f); gy < csz.y; gy += 40.0f) dl->AddLine(ImVec2(org.x, org.y + gy), ImVec2(org.x + csz.x, org.y + gy), gridCol);
+
+    const ImVec2 nodeSz(180.0f, 46.0f);
+    auto nodePos = [&](int i) { return ImVec2(org.x + s_pan.x + sm->states[i].nx, org.y + s_pan.y + sm->states[i].ny); };
+    auto nodeCenter = [&](int i) { ImVec2 p = nodePos(i); return ImVec2(p.x + nodeSz.x * 0.5f, p.y + nodeSz.y * 0.5f); };
+    int stateIdx[64]; (void)stateIdx;
+
+    // ---- transitions (drawn under the nodes) ----
+    ImVec2 mouse = ImGui::GetIO().MousePos;
+    int hovTrFrom = -1, hovTrIdx = -1;
+    for (int i = 0; i < n; ++i) {
+        int outIdx = 0;
+        for (int t = 0; t < (int)sm->states[i].transitions.size(); ++t) {
+            const auto& tr = sm->states[i].transitions[t];
+            int j = -1;
+            for (int k = 0; k < n; ++k) if (sm->states[k].name == tr.to) { j = k; break; }
+            if (j < 0) continue;
+            ImVec2 a = nodeCenter(i), b = nodeCenter(j);
+            float off = 10.0f * (float)outIdx++;
+            ImVec2 c1(a.x + 70.0f, a.y + off), c2(b.x - 70.0f, b.y + off);
+            if (i == j) { c1 = ImVec2(a.x + 120, a.y - 70); c2 = ImVec2(a.x - 120, a.y - 70); }   // self loop
+            bool sel = (s_selTrFrom == i && s_selTrIdx == t);
+            // hit test along the curve
+            bool hov = false;
+            for (int sIt = 0; sIt <= 24 && !hov; ++sIt) {
+                float u = sIt / 24.0f, v = 1.0f - u;
+                ImVec2 p(v*v*v*a.x + 3*v*v*u*c1.x + 3*v*u*u*c2.x + u*u*u*b.x,
+                         v*v*v*a.y + 3*v*v*u*c1.y + 3*v*u*u*c2.y + u*u*u*b.y);
+                float dx = p.x - mouse.x, dy = p.y - mouse.y;
+                if (dx * dx + dy * dy < 49.0f) hov = true;
+            }
+            if (hov) { hovTrFrom = i; hovTrIdx = t; }
+            ImU32 col = sel ? ImGui::GetColorU32(ImVec4(1.0f, 0.8f, 0.2f, 1.0f))
+                      : hov ? ImGui::GetColorU32(ImGuiCol_Text)
+                            : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+            dl->AddBezierCubic(a, c1, c2, b, col, sel ? 3.0f : 2.0f);
+            // arrowhead at the middle of the curve
+            float u = 0.55f, v = 1.0f - u;
+            ImVec2 p(v*v*v*a.x + 3*v*v*u*c1.x + 3*v*u*u*c2.x + u*u*u*b.x,
+                     v*v*v*a.y + 3*v*v*u*c1.y + 3*v*u*u*c2.y + u*u*u*b.y);
+            float u2 = 0.60f, v2 = 1.0f - u2;
+            ImVec2 q(v2*v2*v2*a.x + 3*v2*v2*u2*c1.x + 3*v2*u2*u2*c2.x + u2*u2*u2*b.x,
+                     v2*v2*v2*a.y + 3*v2*v2*u2*c1.y + 3*v2*u2*u2*c2.y + u2*u2*u2*b.y);
+            ImVec2 d(q.x - p.x, q.y - p.y);
+            float len = std::sqrt(d.x * d.x + d.y * d.y);
+            if (len > 1e-3f) {
+                d.x /= len; d.y /= len;
+                ImVec2 nrm(-d.y, d.x);
+                dl->AddTriangleFilled(ImVec2(p.x + d.x * 9, p.y + d.y * 9),
+                                      ImVec2(p.x + nrm.x * 5, p.y + nrm.y * 5),
+                                      ImVec2(p.x - nrm.x * 5, p.y - nrm.y * 5), col);
+            }
+        }
+    }
+    // pending new transition follows the mouse
+    if (s_pendingFrom >= 0 && s_pendingFrom < n)
+        dl->AddLine(nodeCenter(s_pendingFrom), mouse, ImGui::GetColorU32(ImVec4(1.0f, 0.8f, 0.2f, 1.0f)), 2.0f);
+
+    // ---- nodes ----
+    bool nodeHovered = false;
+    for (int i = 0; i < n; ++i) {
+        AnimStateMachine::State& st = sm->states[i];
+        ImVec2 p = nodePos(i);
+        ImGui::SetCursorScreenPos(p);
+        ImGui::PushID(i);
+        ImGui::InvisibleButton("##agnode", nodeSz);
+        bool hov = ImGui::IsItemHovered();
+        nodeHovered |= hov;
+        if (ImGui::IsItemActivated()) {
+            if (s_pendingFrom >= 0) {   // complete the pending transition onto this node
+                ed.PushUndo();
+                AnimStateMachine::Transition tr;
+                tr.to = st.name;
+                sm->states[s_pendingFrom].transitions.push_back(tr);
+                s_selTrFrom = s_pendingFrom; s_selTrIdx = (int)sm->states[s_pendingFrom].transitions.size() - 1;
+                s_selState = -1; s_pendingFrom = -1;
+                ed.dirty = true;
+            } else { s_selState = i; s_selTrFrom = -1; s_selTrIdx = -1; s_dragPushed = false; }
+        }
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f) && s_pendingFrom < 0) {
+            if (!s_dragPushed) { ed.PushUndo(); s_dragPushed = true; }
+            st.nx += ImGui::GetIO().MouseDelta.x;
+            st.ny += ImGui::GetIO().MouseDelta.y;
+            ed.dirty = true;
+        }
+        if (ImGui::BeginPopupContextItem("##agnodectx")) {
+            s_selState = i; s_selTrFrom = -1; s_selTrIdx = -1;
+            if (ImGui::MenuItem("Add Transition from here")) s_pendingFrom = i;
+            if (ImGui::MenuItem("Set as Entry")) { ed.PushUndo(); sm->entry = st.name; ed.dirty = true; }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete State")) {
+                ed.PushUndo();
+                std::string dead = st.name;
+                for (auto& s2 : sm->states) {
+                    auto& v = s2.transitions;
+                    for (int t2 = (int)v.size() - 1; t2 >= 0; --t2) if (v[t2].to == dead) v.erase(v.begin() + t2);
+                }
+                if (sm->entry == dead) sm->entry.clear();
+                sm->states.erase(sm->states.begin() + i);
+                s_selState = -1; s_selTrFrom = -1; s_selTrIdx = -1;
+                ed.dirty = true;
+                ImGui::EndPopup(); ImGui::PopID();
+                break;   // container changed — redraw next frame
+            }
+            ImGui::EndPopup();
+        }
+        // visuals
+        bool isEntry = (sm->entry == st.name) || (sm->entry.empty() && i == 0);
+        bool isCurrent = ed.isPlaying() && sm->Current() == st.name;
+        bool isSel = (s_selState == i);
+        ImU32 fill = isCurrent ? ImGui::GetColorU32(ImVec4(0.95f, 0.70f, 0.20f, 0.90f))
+                               : ImGui::GetColorU32(isSel ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
+        dl->AddRectFilled(p, ImVec2(p.x + nodeSz.x, p.y + nodeSz.y), fill, 6.0f);
+        ImU32 border = isEntry ? ImGui::GetColorU32(ImVec4(0.25f, 0.80f, 0.35f, 1.0f))
+                               : ImGui::GetColorU32(isSel ? ImGuiCol_Text : ImGuiCol_Border);
+        dl->AddRect(p, ImVec2(p.x + nodeSz.x, p.y + nodeSz.y), border, 6.0f, 0, isEntry || isSel ? 2.5f : 1.0f);
+        ImU32 txt = isCurrent ? ImGui::GetColorU32(ImVec4(0.05f, 0.05f, 0.05f, 1.0f)) : ImGui::GetColorU32(ImGuiCol_Text);
+        dl->AddText(ImVec2(p.x + 10, p.y + 6), txt, st.name.c_str());
+        std::string sub = st.clip.empty() ? "(no clip)" : st.clip;
+        if (isEntry) sub += "   [entry]";
+        dl->AddText(ImVec2(p.x + 10, p.y + 24), ImGui::GetColorU32(ImGuiCol_TextDisabled), sub.c_str());
+        ImGui::PopID();
+    }
+
+    // canvas-level interactions (below nodes): select transitions, pan, context menu
+    if (ImGui::IsWindowHovered() && !nodeHovered) {
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (hovTrFrom >= 0) { s_selTrFrom = hovTrFrom; s_selTrIdx = hovTrIdx; s_selState = -1; }
+            else { s_selState = -1; s_selTrFrom = -1; s_selTrIdx = -1; }
+        }
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+            s_pan.x += ImGui::GetIO().MouseDelta.x;
+            s_pan.y += ImGui::GetIO().MouseDelta.y;
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            if (s_pendingFrom >= 0) s_pendingFrom = -1;   // cancel pending connect
+            else ImGui::OpenPopup("##agcanvasctx");
+        }
+    }
+    if (ImGui::BeginPopup("##agcanvasctx")) {
+        if (ImGui::MenuItem("Add State Here")) {
+            ed.PushUndo();
+            AnimStateMachine::State st;
+            st.name = "State " + std::to_string(n + 1);
+            if (!clipNames.empty()) st.clip = clipNames.front();
+            st.nx = mouse.x - org.x - s_pan.x; st.ny = mouse.y - org.y - s_pan.y;
+            sm->states.push_back(std::move(st));
+            s_selState = (int)sm->states.size() - 1;
+            ed.dirty = true;
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::EndChild();
+
+    // ---- side panel ----
+    ImGui::SameLine();
+    ImGui::BeginChild("##agside", ImVec2(sideW, avail.y), true);
+    n = (int)sm->states.size();
+    if (s_selState >= 0 && s_selState < n) {
+        AnimStateMachine::State& st = sm->states[s_selState];
+        ImGui::TextDisabled("State");
+        char nb[48]; std::snprintf(nb, sizeof(nb), "%s", st.name.c_str());
+        if (ImGui::InputText("Name##ag", nb, sizeof(nb))) {
+            // keep transitions + entry pointing at the renamed state
+            std::string oldName = st.name, newName = nb;
+            if (!newName.empty() && newName != oldName) {
+                st.name = newName;
+                for (auto& s2 : sm->states)
+                    for (auto& tr : s2.transitions) if (tr.to == oldName) tr.to = newName;
+                if (sm->entry == oldName) sm->entry = newName;
+                ed.dirty = true;
+            }
+        }
+        if (!clipNames.empty()) {
+            if (ImGui::BeginCombo("Clip##ag", st.clip.empty() ? "(none)" : st.clip.c_str())) {
+                for (const auto& cn : clipNames)
+                    if (ImGui::Selectable(cn.c_str(), cn == st.clip)) { st.clip = cn; ed.dirty = true; }
+                ImGui::EndCombo();
+            }
+        } else {
+            char cb[48]; std::snprintf(cb, sizeof(cb), "%s", st.clip.c_str());
+            if (ImGui::InputText("Clip##ag", cb, sizeof(cb))) { st.clip = cb; ed.dirty = true; }
+        }
+        if (ImGui::DragFloat("Speed##ag", &st.speed, 0.02f, 0.05f, 5.0f)) ed.dirty = true;
+        if (ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
+        ImGui::Separator();
+        if (ImGui::Button("Add Transition##ag")) s_pendingFrom = s_selState;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Then click the target state in the graph.");
+        ImGui::TextDisabled("%d outgoing transition(s)", (int)st.transitions.size());
+    } else if (s_selTrFrom >= 0 && s_selTrFrom < n &&
+               s_selTrIdx >= 0 && s_selTrIdx < (int)sm->states[s_selTrFrom].transitions.size()) {
+        AnimStateMachine::State& from = sm->states[s_selTrFrom];
+        AnimStateMachine::Transition& tr = from.transitions[s_selTrIdx];
+        ImGui::TextDisabled("Transition");
+        ImGui::Text("%s -> %s", from.name.c_str(), tr.to.c_str());
+        static const char* kConds[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
+        int cd = (int)tr.cond;
+        if (ImGui::Combo("Condition##ag", &cd, kConds, 6)) { tr.cond = (AnimStateMachine::Cond)cd; ed.dirty = true; }
+        if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
+            char pb[48]; std::snprintf(pb, sizeof(pb), "%s", tr.param.c_str());
+            if (ImGui::InputText("Parameter##ag", pb, sizeof(pb))) { tr.param = pb; ed.dirty = true; }
+        }
+        if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess)
+            if (ImGui::DragFloat("Value##ag", &tr.value, 0.05f)) ed.dirty = true;
+        if (ImGui::DragFloat("Blend (s)##ag", &tr.blend, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+        ImGui::Separator();
+        if (ImGui::Button("Delete Transition##ag")) {
+            ed.PushUndo();
+            from.transitions.erase(from.transitions.begin() + s_selTrIdx);
+            s_selTrFrom = -1; s_selTrIdx = -1;
+            ed.dirty = true;
+        }
+    } else {
+        ImGui::TextDisabled("Click a state or a transition\narrow to edit it here.");
+        ImGui::Separator();
+        ImGui::TextDisabled("Entry state:");
+        const char* cur = sm->entry.empty() ? "(first state)" : sm->entry.c_str();
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::BeginCombo("##agentry", cur)) {
+            if (ImGui::Selectable("(first state)", sm->entry.empty())) { sm->entry.clear(); ed.dirty = true; }
+            for (const auto& st : sm->states)
+                if (ImGui::Selectable(st.name.c_str(), sm->entry == st.name)) { sm->entry = st.name; ed.dirty = true; }
+            ImGui::EndCombo();
+        }
+        if (ed.isPlaying()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Set from scripts:");
+            ImGui::TextWrapped("anim_set_float(\"speed\", v)\nanim_set_bool(\"armed\", 1)\nanim_trigger(\"attack\")");
+        }
+    }
+    ImGui::EndChild();
+    ImGui::End();
+}
+
 static void DrawAnimationEditor(EditorState& ed) {
     if (!g_showAnimation) { StopAnimPreview(); StopModelScenePreview(ed); StopLivePreview(ed); return; }
     if (!ImGui::Begin("Animation", &g_showAnimation)) { ImGui::End(); return; }
@@ -16221,6 +16537,8 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
         if (CompHeader("Anim State Machine", sm, &toRemove)) {
+            if (ImGui::Button("Open Animator Graph##asm")) g_showAnimatorGraph = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
             auto* ma = go->GetComponent<ModelAnimator>();
             if (!ma)
                 ImGui::TextColored(ImVec4(0.95f, 0.7f, 0.4f, 1.0f),
@@ -27035,6 +27353,7 @@ int main(int argc, char** argv) {
         DrawVarWatch();
         DrawFlowGraph(ed);
         DrawAnimationEditor(ed);
+        DrawAnimatorGraph(ed);
         DrawHistory(ed);
         if (g_showStats)     DrawStats(ed);
         if (g_showSaveManager) DrawSaveManager(ed);

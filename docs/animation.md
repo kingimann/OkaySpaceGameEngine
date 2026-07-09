@@ -117,6 +117,14 @@ clip (with speed/loop overrides); **transitions** move between states when
 their condition passes — a clip finishing, a float parameter compared to a
 value, a bool, or a one-frame trigger — each with its own crossfade time.
 
+Build it visually in the **Animator window** (View > Animator, or the
+"Open Animator Graph" button on the component): states are draggable
+nodes on a canvas (positions save with the scene), right-click a node to
+**Add Transition** (then click the target state), set the entry state, or
+delete; click a transition arrow to edit its condition/parameter/blend in
+the side panel; right-click empty canvas to add a state. In Play mode the
+**active state lights up** so you can watch the machine run.
+
 Gameplay sets the parameters:
 
 ```

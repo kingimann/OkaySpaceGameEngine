@@ -415,6 +415,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                     << " " << tr.value << " " << tr.blend;
         }
         out << "\n";
+        // Animator graph node positions (separate record so old files load; the
+        // graph auto-lays-out when it's absent). Order matches `states`.
+        out << "  animsmpos " << asm2->states.size();
+        for (const auto& st : asm2->states) out << " " << st.nx << " " << st.ny;
+        out << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -2115,6 +2120,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             st.transitions.push_back(std::move(tr));
                         }
                         sm2->states.push_back(std::move(st));
+                    }
+                } else if (field == "animsmpos") {
+                    // Animator graph node positions (index-matched to animsm's states).
+                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n; ++i) {
+                        float x = 0, y = 0; in >> x >> y;
+                        if (sm2 && i < (long)sm2->states.size()) { sm2->states[i].nx = x; sm2->states[i].ny = y; }
                     }
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {

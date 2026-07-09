@@ -45,6 +45,7 @@ public:
         float       speed = 1.0f;   ///< playback speed while in this state
         bool        loop  = true;   ///< loop while in this state
         std::vector<Transition> transitions;
+        float nx = 0.0f, ny = 0.0f; ///< Animator graph node position (editor; 0,0 = auto-layout)
     };
 
     std::vector<State> states;

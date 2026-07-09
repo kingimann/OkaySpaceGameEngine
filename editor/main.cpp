@@ -2617,6 +2617,11 @@ GameObject* MakeButtonTextChild(EditorState& ed, GameObject* button) {
     return g;
 }
 
+// Defined with the Animation window further down; entering Play must clear the
+// editor pose previews or they override the real animations every frame.
+static void StopAnimPreview();
+static void StopModelScenePreview(EditorState& ed);
+
 void DrawMenuAndToolbar(EditorState& ed) {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
@@ -3199,6 +3204,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     }
 
     // Centered Play / Stop / Step controls (Unity-style toolbar), color-coded.
+    // (defined later in this file; entering Play must clear any editor previews)
     float btnW = 64.0f;
     ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - btnW);
     if (!ed.isPlaying()) {
@@ -3206,6 +3212,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         if (ImGui::Button(">  Play", ImVec2(btnW, 0))) {
             if (g_clearConsoleOnPlay) ConsoleClear();
+            StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -8513,6 +8520,7 @@ void HandleShortcuts(EditorState& ed) {
         if (ed.isPlaying()) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         else {
             if (g_clearConsoleOnPlay) ConsoleClear();
+            StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -10989,10 +10997,19 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     }
     ImGui::SliderFloat("Time##ca", &t, 0.0f, dur > 0.5f ? dur : 2.0f);
 
-    // While playing, show the sampled pose; otherwise show the pose being authored.
-    g_animPreview = ch;
-    if (playing && !clip.keys.empty()) ch->PreviewPose(clip.Sample(t));
-    else ch->PreviewPose(pose);
+    // While the window's transport plays, show the sampled pose; otherwise show
+    // the pose being authored. NEVER during Play mode — the forced preview pose
+    // would override the character's real animations every frame ("I pressed
+    // Play and nothing happens" with the Animation window open).
+    if (!ed.isPlaying()) {
+        g_animPreview = ch;
+        if (playing && !clip.keys.empty()) ch->PreviewPose(clip.Sample(t));
+        else ch->PreviewPose(pose);
+    } else if (g_animPreview == ch) {
+        StopAnimPreview();
+    }
+    if (ed.isPlaying())
+        ImGui::TextDisabled("(Play mode: the character plays its real animations - Stop to pose/author)");
 
     ImGui::Separator();
     // Pick a bone and rotate it (euler degrees). The rig updates live.

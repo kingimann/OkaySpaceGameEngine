@@ -905,6 +905,179 @@ struct Mesh {
         m.normals.clear();
         return m;
     }
+    /// A windmill: tapered stone body, conical cap, four angled sail blades. ~3.4 tall.
+    static Mesh Windmill() {
+        Mesh m;
+        Color stone = Color::FromBytes(206, 198, 180);
+        Color roofC = Color::FromBytes(120, 74, 54);
+        Color sail  = Color::FromBytes(150, 120, 84);
+        m.Add(Lathe({{0.9f,0.0f}, {0.85f,0.6f}, {0.72f,1.4f}, {0.6f,2.2f}, {0.55f,2.5f}, {0.001f,2.5f}}, 16),
+              {0,0,0}, {1,1,1}, &stone);
+        m.Add(Cone(0.5f, 1.0f, 16), {0.0f, 2.75f, 0.0f}, {1.4f, 0.7f, 1.4f}, &roofC);
+        Vec3 hub{0.0f, 2.35f, 0.62f};
+        for (int i = 0; i < 4; ++i)                        // four sails around Z
+            m.AddPosed(Cube(1.0f), {hub.x, hub.y + 0.9f, hub.z}, {0.16f, 1.8f, 0.05f},
+                       {0.0f, 0.0f, (float)i * 90.0f}, hub, &sail);
+        m.MottleFaceColors(0.07f, 31);
+        m.name = "Windmill";
+        m.normals.clear();
+        return m;
+    }
+    /// An arched plank footbridge with side rails. ~3 long, ~1 tall.
+    static Mesh Bridge() {
+        Mesh m;
+        Color wood = Color::FromBytes(140, 104, 66);
+        // Deck: planks following a shallow arc across X.
+        const int planks = 11;
+        auto deckY = [](float t) { return 0.12f + 0.5f * std::sin(t * 3.14159f); }; // ends on ground, arch up
+        for (int i = 0; i < planks; ++i) {
+            float t = (float)i / (planks - 1);
+            m.Add(Cube(1.0f), {-1.4f + 2.8f * t, deckY(t), 0.0f}, {0.26f, 0.06f, 1.2f}, &wood);
+        }
+        for (int s = -1; s <= 1; s += 2)                   // two side rails + posts
+            for (int i = 0; i < planks; i += 2) {
+                float t = (float)i / (planks - 1);
+                m.Add(Cube(1.0f), {-1.4f + 2.8f * t, deckY(t) + 0.28f, s * 0.55f}, {0.06f, 0.5f, 0.06f}, &wood);
+            }
+        for (int s = -1; s <= 1; s += 2)                   // rail caps (swept arc)
+            m.Add(SweepPath({{-1.4f,deckY(0)+0.45f,s*0.55f}, {0.0f,deckY(0.5f)+0.45f,s*0.55f},
+                             {1.4f,deckY(1)+0.45f,s*0.55f}}, 0.05f, 6, true), {0,0,0}, {1,1,1}, &wood);
+        m.MottleFaceColors(0.08f, 33);
+        m.name = "Bridge";
+        m.normals.clear();
+        return m;
+    }
+    /// A natural stone arch: two tapered legs joined by a swept span. ~2.4 tall.
+    static Mesh RockArch() {
+        Mesh m;
+        Color stone = Color::FromBytes(150, 130, 104);
+        m.Add(SweepPath({{-1.0f,0.0f,0.0f}, {-1.05f,0.9f,0.0f}, {-0.7f,1.7f,0.0f},
+                         {-0.2f,2.15f,0.0f}, {0.4f,2.3f,0.0f}, {1.0f,2.0f,0.0f}, {1.15f,1.1f,0.0f},
+                         {1.0f,0.2f,0.0f}, {0.98f,0.0f,0.0f}}, 0.42f, 10, true, 0.30f),
+              {0,0,0}, {1,1,1}, &stone);
+        m.JitterVertices({}, 0.05f, 41);                   // rough it up
+        m.triColors.assign(m.TriangleCount(), stone);
+        m.MottleFaceColors(0.13f, 42);
+        m.name = "RockArch";
+        m.normals.clear();
+        return m;
+    }
+    /// A campfire: ring of stones, crossed logs, an emissive flame. ~0.6 tall.
+    static Mesh Campfire() {
+        Mesh m;
+        Color stone = Color::FromBytes(120, 116, 110);
+        Color log   = Color::FromBytes(96, 66, 42);
+        Color flame = Color::FromBytes(255, 150, 40);      // emissive-friendly warm
+        const float kPi = 3.14159265f;
+        for (int i = 0; i < 8; ++i) {                      // stone ring
+            float a = 2.0f * kPi * i / 8.0f;
+            m.Add(Icosphere(0.5f, 1), {std::cos(a) * 0.5f, 0.09f, std::sin(a) * 0.5f},
+                  {0.22f, 0.18f, 0.22f}, &stone);
+        }
+        m.AddPosed(Cylinder(0.5f, 1.0f, 6), {0.0f, 0.14f, 0.0f}, {0.10f, 0.7f, 0.10f},
+                   {0.0f, 0.0f, 90.0f}, {0,0,0}, &log);     // crossed logs
+        m.AddPosed(Cylinder(0.5f, 1.0f, 6), {0.0f, 0.20f, 0.0f}, {0.10f, 0.7f, 0.10f},
+                   {90.0f, 0.0f, 0.0f}, {0,0,0}, &log);
+        m.Add(Cone(0.5f, 1.0f, 8), {0.0f, 0.28f, 0.0f}, {0.34f, 0.6f, 0.34f}, &flame);
+        m.name = "Campfire";
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A hanging lantern: metal cage, warm glass core, top ring. ~0.6 tall.
+    static Mesh Lantern() {
+        Mesh m;
+        Color iron = Color::FromBytes(60, 60, 66);
+        Color glow = Color::FromBytes(255, 224, 150);
+        m.Add(Tube(0.5f, 0.42f, 1.0f, 8), {0.0f, 0.28f, 0.0f}, {0.5f, 0.5f, 0.5f}, &iron);
+        m.Add(Cube(1.0f), {0.0f, 0.28f, 0.0f}, {0.20f, 0.32f, 0.20f}, &glow);   // glass core
+        m.Add(Cone(0.5f, 1.0f, 8), {0.0f, 0.52f, 0.0f}, {0.34f, 0.18f, 0.34f}, &iron);
+        m.Add(Torus(0.09f, 0.03f, 8, 6), {0.0f, 0.62f, 0.0f}, {1.0f, 1.0f, 1.0f}, &iron);
+        m.name = "Lantern";
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A treasure chest: wooden box, curved lid, iron bands + lock. ~0.7 tall.
+    static Mesh Chest() {
+        Mesh m;
+        Color wood = Color::FromBytes(120, 82, 48);
+        Color iron = Color::FromBytes(78, 74, 66);
+        Color gold = Color::FromBytes(214, 176, 72);
+        m.Add(Cube(1.0f), {0.0f, 0.25f, 0.0f}, {1.0f, 0.5f, 0.66f}, &wood);      // body
+        m.Add(SweepPath({{-0.5f,0.5f,0.0f}, {0.0f,0.72f,0.0f}, {0.5f,0.5f,0.0f}}, // domed lid
+                        0.33f, 8, true), {0,0,0}, {1.0f, 1.0f, 1.0f}, &wood);
+        for (int s = -1; s <= 1; s += 2)                    // iron bands
+            m.Add(Cube(1.0f), {s * 0.35f, 0.30f, 0.0f}, {0.07f, 0.62f, 0.70f}, &iron);
+        m.Add(Cube(1.0f), {0.0f, 0.44f, 0.34f}, {0.14f, 0.16f, 0.05f}, &gold);   // lock
+        m.MottleFaceColors(0.06f, 51);
+        m.name = "Chest";
+        m.normals.clear();
+        return m;
+    }
+    /// A signpost: post with an angled board. ~1.5 tall.
+    static Mesh Signpost() {
+        Mesh m;
+        Color wood  = Color::FromBytes(128, 92, 56);
+        Color board = Color::FromBytes(168, 132, 84);
+        m.Add(Cylinder(0.5f, 1.0f, 8), {0.0f, 0.75f, 0.0f}, {0.12f, 1.5f, 0.12f}, &wood);
+        m.AddPosed(Cube(1.0f), {0.22f, 1.15f, 0.0f}, {0.7f, 0.34f, 0.06f},
+                   {0.0f, 0.0f, -6.0f}, {0.0f, 1.15f, 0.0f}, &board);
+        m.MottleFaceColors(0.07f, 55);
+        m.name = "Signpost";
+        m.normals.clear();
+        return m;
+    }
+    /// A wooden hand-cart: bed, side rails, two wheels. ~1 long.
+    static Mesh Cart() {
+        Mesh m;
+        Color wood = Color::FromBytes(134, 96, 58);
+        Color iron = Color::FromBytes(60, 58, 60);
+        m.Add(Cube(1.0f), {0.0f, 0.42f, 0.0f}, {1.1f, 0.12f, 0.66f}, &wood);     // bed
+        for (int s = -1; s <= 1; s += 2)
+            m.Add(Cube(1.0f), {0.0f, 0.58f, s * 0.32f}, {1.1f, 0.22f, 0.05f}, &wood);
+        m.Add(Cube(1.0f), {-0.55f, 0.58f, 0.0f}, {0.05f, 0.22f, 0.66f}, &wood);
+        for (int s = -1; s <= 1; s += 2)                    // wheels
+            m.AddPosed(Torus(0.26f, 0.07f, 12, 8), {0.30f, 0.26f, s * 0.38f}, {1.0f, 1.0f, 1.0f},
+                       {90.0f, 0.0f, 0.0f}, {0.30f, 0.26f, s * 0.38f}, &iron);
+        m.MottleFaceColors(0.07f, 57);
+        m.name = "Cart";
+        m.normals.clear();
+        return m;
+    }
+    /// A camping tent: ridged canvas with a dark door flap. ~1 tall.
+    static Mesh Tent() {
+        Mesh m;
+        Color canvas = Color::FromBytes(168, 96, 64);
+        Color dark   = Color::FromBytes(60, 40, 32);
+        // Triangular prism lying along Z (ridge tent) via Prism(3) rotated.
+        m.AddPosed(Prism(3, 0.5f, 1.0f), {0.0f, 0.0f, 0.0f}, {1.7f, 1.7f, 1.9f},
+                   {0.0f, 0.0f, 0.0f}, {0,0,0}, &canvas);
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        for (Vec3& v : m.vertices) v.y -= lo.y;             // ground it
+        m.Add(Cube(1.0f), {0.0f, 0.35f, 0.92f}, {0.34f, 0.7f, 0.05f}, &dark);   // door
+        m.MottleFaceColors(0.06f, 61);
+        m.name = "Tent";
+        m.normals.clear();
+        return m;
+    }
+    /// A park bench: slatted seat + back on two legs. ~0.8 tall, ~1.6 wide.
+    static Mesh Bench() {
+        Mesh m;
+        Color wood = Color::FromBytes(146, 108, 68);
+        Color iron = Color::FromBytes(54, 56, 60);
+        for (int i = 0; i < 3; ++i)                         // seat slats
+            m.Add(Cube(1.0f), {0.0f, 0.42f, -0.18f + i * 0.16f}, {1.6f, 0.05f, 0.13f}, &wood);
+        for (int i = 0; i < 3; ++i)                         // back slats
+            m.AddPosed(Cube(1.0f), {0.0f, 0.68f + i * 0.16f, -0.28f}, {1.6f, 0.05f, 0.13f},
+                       {-24.0f, 0.0f, 0.0f}, {0.0f, 0.42f, -0.28f}, &wood);
+        for (int s = -1; s <= 1; s += 2) {                  // end legs
+            m.Add(Cube(1.0f), {s * 0.7f, 0.2f, 0.0f}, {0.08f, 0.4f, 0.5f}, &iron);
+            m.Add(Cube(1.0f), {s * 0.7f, 0.62f, -0.28f}, {0.08f, 0.5f, 0.06f}, &iron);
+        }
+        m.MottleFaceColors(0.06f, 63);
+        m.name = "Bench";
+        m.normals.clear();
+        return m;
+    }
 
     /// True if this named prop supports procedural variants (FromNameSeeded).
     static bool NameHasVariants(const std::string& n) {
@@ -943,6 +1116,16 @@ struct Mesh {
         if (n == "Crystal")   return Crystal();
         if (n == "House")     return House();
         if (n == "Tower")     return Tower();
+        if (n == "Windmill")  return Windmill();
+        if (n == "Bridge")    return Bridge();
+        if (n == "RockArch")  return RockArch();
+        if (n == "Campfire")  return Campfire();
+        if (n == "Lantern")   return Lantern();
+        if (n == "Chest")     return Chest();
+        if (n == "Signpost")  return Signpost();
+        if (n == "Cart")      return Cart();
+        if (n == "Tent")      return Tent();
+        if (n == "Bench")     return Bench();
         if (n == "Pyramid")   return Pyramid();
         if (n == "Quad")      return Quad();
         if (n == "Plane")     return Plane();

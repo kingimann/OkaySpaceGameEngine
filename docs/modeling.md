@@ -24,8 +24,10 @@ menu + F3 search). Type in the filter box to narrow it, or expand a category:
   Scatter tool gives every instance its own variant, so a forest is a crowd
   of distinct shapes rather than identical clones. A variant is stored as a
   single number per object and regenerates the exact shape on load.
-- **Props** — Barrel, Crate, Fence, Well, Street Lamp.
-- **Structures** — House, Tower.
+- **Props** — Barrel, Crate, Fence, Well, Street Lamp, Campfire, Lantern,
+  Chest, Signpost, Cart, Tent, Bench. (Campfire and Lantern have emissive
+  cores — turn on Bloom for a glow.)
+- **Structures** — House, Tower, Windmill, Bridge, Rock Arch.
 
 Everything in Nature / Props / Structures is a normal editable mesh: tick
 **Edit Mesh** and reshape it, or **Export OBJ** to reuse it. Or select any

@@ -2862,8 +2862,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Props")) {
-                const char* pr[] = {"Barrel", "Crate", "Fence", "Well", "StreetLamp", "House", "Tower"};
+                const char* pr[] = {"Barrel", "Crate", "Fence", "Well", "StreetLamp",
+                                    "Campfire", "Lantern", "Chest", "Signpost", "Cart", "Tent", "Bench"};
                 for (const char* n : pr)
+                    if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Structures")) {
+                const char* st[] = {"House", "Tower", "Windmill", "Bridge", "RockArch"};
+                for (const char* n : st)
                     if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
                 ImGui::EndMenu();
             }
@@ -13810,8 +13817,9 @@ void DrawModeling(EditorState& ed) {
                         "Tetrahedron", "Bipyramid", "RoundedBox"}},
         {"Nature",     {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock", "Mushroom",
                         "Cactus", "Crystal"}},
-        {"Props",      {"Barrel", "Crate", "Fence", "Well", "StreetLamp"}},
-        {"Structures", {"House", "Tower"}},
+        {"Props",      {"Barrel", "Crate", "Fence", "Well", "StreetLamp", "Campfire",
+                        "Lantern", "Chest", "Signpost", "Cart", "Tent", "Bench"}},
+        {"Structures", {"House", "Tower", "Windmill", "Bridge", "RockArch"}},
     };
     static char s_addFilter[48] = "";
     ImGui::SetNextItemWidth(-1);

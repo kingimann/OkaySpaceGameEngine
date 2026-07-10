@@ -60,3 +60,13 @@ Pair with **Consumables** to make crafted items do something: craft a `bandage`,
 a button (Function `UseItem`, Amount = the consumable's index) consumes it and applies
 its effect (e.g. Heal). That's the full **gather → craft → use** loop, all native and
 no-code — exactly how OkaySurvival's bandage works.
+
+## NPC pathfinding
+
+Tick **Pathfinding** on the NPC Controller and it routes around walls,
+props and holes with grid A* instead of walking straight lines into them —
+follow, chase, patrol, wander and return-home all use it. The route
+recomputes every **Repath** seconds (default 0.6) and whenever the target
+moves; if no route exists the NPC falls back to straight-line steering.
+Works on box/sphere colliders and heightmap terrain (max step 0.45, holes
+and cliffs are avoided).

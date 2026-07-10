@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/AI/NavGrid3D.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -50,6 +51,11 @@ public:
     float acceleration = 14.0f;    ///< how quickly velocity eases to the target (per sec; <=0 = instant)
     float stopDistance = 0.0f;     ///< extra buffer added to the arrival distance
     bool  faceMovement = true;     ///< turn to face the direction of travel
+    /// Route around obstacles with grid A* (walls, props, terrain holes)
+    /// instead of walking straight lines into them. Recomputes every
+    /// `repathInterval` seconds while moving toward a goal.
+    bool  usePathfinding = false;
+    float repathInterval = 0.6f;
 
     // ---- Perception ----
     float sightRange   = 8.0f;     ///< how far it can see the target
@@ -220,6 +226,21 @@ public:
                 break;
         }
 
+        // ---- Pathfinding: steer via A* waypoints instead of a straight line --
+        if (move && usePathfinding && gameObject && gameObject->scene()) {
+            m_repath -= dt;
+            float goalMoved = Dist2D(goal, m_pathGoal);
+            if (m_repath <= 0.0f || m_path.empty() || goalMoved > 1.5f) {
+                m_path = NavGrid3D::FindPath(*gameObject->scene(), pos, goal, gameObject);
+                m_pathIdx = 0; m_pathGoal = goal; m_repath = repathInterval;
+            }
+            while (m_pathIdx < (int)m_path.size() && Dist2D(pos, m_path[m_pathIdx]) < 0.5f)
+                ++m_pathIdx;
+            if (m_pathIdx < (int)m_path.size()) goal = m_path[m_pathIdx];
+        } else if (!move) {
+            m_path.clear(); m_pathIdx = 0;
+        }
+
         // ---- Steering + movement ------------------------------------------
         Vec3 dir = move ? Dir(pos, goal) : Vec3{0, 0, 0};
         if (move && separationRadius > 0.0f) dir = Steer(dir, pos);
@@ -242,6 +263,11 @@ public:
     }
 
 private:
+    std::vector<Vec3> m_path;      // current A* route (world waypoints)
+    int   m_pathIdx  = 0;
+    float m_repath   = 0.0f;
+    Vec3  m_pathGoal{0, 0, 0};
+
     enum class State { Idle, Wander, Patrol, Follow, Flee, Chase, Search, Return };
 
     static State BaseState(Behavior b) {

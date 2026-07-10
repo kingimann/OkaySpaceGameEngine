@@ -19087,6 +19087,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steer away from other NPCs within this radius so they don't pile up (0 = off).");
             if (ImGui::Checkbox("Drive Character Animation##npc", &c->driveAnimation)) ed.dirty = true;
             if (ImGui::Checkbox("Foot IK##npc", &c->footIK)) ed.dirty = true;
+            if (ImGui::Checkbox("Pathfinding##npc", &c->usePathfinding)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Route around walls/props/holes with grid A* instead of\nwalking straight lines into them (follow/chase/patrol/wander).");
+            if (c->usePathfinding)
+                if (ImGui::DragFloat("Repath (s)##npc", &c->repathInterval, 0.05f, 0.1f, 3.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets a sibling Character's idle/walk/run animation from movement.");
             if (ImGui::Checkbox("Look At Target##npc", &c->lookAtTarget)) ed.dirty = true;
 

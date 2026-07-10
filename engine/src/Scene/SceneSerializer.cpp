@@ -1046,7 +1046,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << c->waypointWait << " " << c->attackWindup << " " << c->fleeHealthPct
             << " " << c->separationRadius << " " << (c->driveAnimation ? 1 : 0)
             << " " << (c->lookAtTarget ? 1 : 0)
-            << " " << (c->footIK ? 1 : 0) << "\n";
+            << " " << (c->footIK ? 1 : 0)
+            << " " << (c->usePathfinding ? 1 : 0) << " " << c->repathInterval << "\n";
         for (const Vec3& w : c->waypoints)
             out << "  npcwp " << w.x << " " << w.y << " " << w.z << "\n";
     }
@@ -2996,6 +2997,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         c->driveAnimation = g(21, c->driveAnimation ? 1.f : 0.f) != 0.0f;
                         c->lookAtTarget   = g(22, c->lookAtTarget ? 1.f : 0.f) != 0.0f;
                         c->footIK         = g(23, c->footIK ? 1.f : 0.f) != 0.0f;
+                        c->usePathfinding = g(24, c->usePathfinding ? 1.f : 0.f) != 0.0f;
+                        c->repathInterval = g(25, c->repathInterval);
                     }
                 } else if (field == "npcwp") {
                     if (auto* c = go->GetComponent<NPCController>()) {

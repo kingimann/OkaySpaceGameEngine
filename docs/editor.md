@@ -147,6 +147,15 @@ Recent additions (v2.12–2.14):
   the transform into keyframe tracks.
 
 - **Hierarchy** — see the scene tree (parents/children); click to select.
+  **Ctrl+click** toggles objects in a multi-selection, **Shift+click** selects
+  the whole range between the active object and the clicked row, **Ctrl+A**
+  selects everything visible. **Up/Down** walk the rows, **Left/Right**
+  collapse/expand the selected object's children. The search box also matches
+  type words — try `light`, `npc`, `spawner`, `collider`, `controller`, `ui`.
+- **Project** — the same selection model: **Ctrl+click** to toggle,
+  **Shift+click** for a range, **Ctrl+A** for everything shown. **Ctrl+C/X/V**
+  copy, cut and paste whole multi-selections between folders, and **Delete**
+  removes all selected assets after one confirmation.
 - **Inspector** — rename, toggle active, edit Transform (position / Z rotation /
   scale), edit the Sprite Renderer (color, size) and Camera (ortho size), and
   add components or delete the object.

@@ -4280,30 +4280,39 @@ void DrawProject(EditorState& ed) {
     static char renameBuf[256] = "";
     // Cut/Copy/Paste clipboard (a single asset path) and the deferred, confirmed
     // delete target — both file-scope so they survive across frames/folders.
-    static std::string s_assetClip;      // path on the clipboard ("" = empty)
-    static bool        s_assetClipCut = false;   // true = move on paste, false = copy
+    static std::vector<std::string> s_assetClip;  // paths on the clipboard (empty = none)
+    static bool        s_assetClipCut = false;    // true = move on paste, false = copy
     static std::string deleteTarget;     // pending delete, awaiting confirm
-    // Paste the clipboard asset into `into`, copying (or moving, if cut) with a
-    // unique name. Shared by the folder and empty-space context menus.
+    // Paste the clipboard assets into `into`, copying (or moving, if cut) each
+    // with a unique name. Shared by the folder and empty-space context menus.
     auto pasteInto = [&](const fs::path& into) {
         if (s_assetClip.empty()) return;
-        std::error_code pe;
-        fs::path src(s_assetClip);
-        if (!fs::exists(src, pe)) { s_assetClip.clear(); return; }
-        fs::path stem = src.stem(), x = src.extension();
-        fs::path dst = into / src.filename();
-        for (int n = 2; fs::exists(dst, pe); ++n)
-            dst = into / (stem.string() + " " + std::to_string(n) + x.string());
-        if (s_assetClipCut) {
-            fs::rename(src, dst, pe);
-            if (pe) { fs::copy(src, dst, fs::copy_options::recursive, pe); if (!pe) fs::remove_all(src, pe); }
-            ConsoleLog((pe ? "Move failed: " : "Moved to ") + dst.string());
-            s_assetClip.clear();            // a cut is consumed by the paste
-        } else {
-            fs::copy(src, dst, fs::copy_options::recursive, pe);
-            ConsoleLog((pe ? "Paste failed: " : "Pasted ") + dst.string());
+        int okN = 0;
+        for (const std::string& item : s_assetClip) {
+            std::error_code pe;
+            fs::path src(item);
+            if (!fs::exists(src, pe)) continue;
+            fs::path stem = src.stem(), x = src.extension();
+            fs::path dst = into / src.filename();
+            for (int n = 2; fs::exists(dst, pe); ++n)
+                dst = into / (stem.string() + " " + std::to_string(n) + x.string());
+            if (s_assetClipCut) {
+                fs::rename(src, dst, pe);
+                if (pe) { pe.clear(); fs::copy(src, dst, fs::copy_options::recursive, pe); if (!pe) fs::remove_all(src, pe); }
+            } else {
+                fs::copy(src, dst, fs::copy_options::recursive, pe);
+            }
+            if (!pe) { ++okN; selected = dst.string(); }
         }
-        if (!pe) selected = dst.string();
+        ConsoleLog((s_assetClipCut ? "Moved " : "Pasted ") + std::to_string(okN) +
+                   " item" + (okN == 1 ? "" : "s") + " into " + into.filename().string());
+        if (s_assetClipCut) s_assetClip.clear();   // a cut is consumed by the paste
+    };
+    // Fill the clipboard from the current multi-selection (falling back to one path).
+    auto clipFromSelection = [&](const std::string& fallback, bool cut) {
+        s_assetClip.assign(s_multi.begin(), s_multi.end());
+        if (s_assetClip.empty() && !fallback.empty()) s_assetClip.push_back(fallback);
+        s_assetClipCut = cut;
     };
     auto uniquePath = [&](const std::string& base, const std::string& ext) {
         std::error_code ue;
@@ -4478,9 +4487,16 @@ void DrawProject(EditorState& ed) {
     }
 
     // Selection with modifier keys: Ctrl-click toggles an item in the multi-select
-    // set (keeping the others), a plain click selects just that one. `selected` is
-    // always the last-touched "active" item (drives the details strip).
+    // set (keeping the others), Shift-click selects the whole visible range from
+    // the active item, a plain click selects just that one. `selected` is always
+    // the last-touched "active" item (drives the details strip).
+    std::vector<std::string> shownPaths;   // items in display order (for range select)
+    std::string rangeTo;                   // Shift+click target, resolved after the loop
     auto pickItem = [&](const std::string& full) {
+        if (ImGui::GetIO().KeyShift && !selected.empty() && selected != full) {
+            rangeTo = full;                          // range resolved once the order is known
+            return;
+        }
         if (ImGui::GetIO().KeyCtrl) {
             auto it = s_multi.find(full);
             if (it != s_multi.end()) s_multi.erase(it); else s_multi.insert(full);
@@ -4527,8 +4543,10 @@ void DrawProject(EditorState& ed) {
                 ConsoleLog((ce ? "Duplicate failed: " : "Duplicated ") + dst.string());
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Cut"))  { s_assetClip = full; s_assetClipCut = true; }
-            if (ImGui::MenuItem("Copy")) { s_assetClip = full; s_assetClipCut = false; }
+            if (ImGui::MenuItem(s_multi.size() > 1 ? "Cut Selected" : "Cut"))
+                clipFromSelection(full, true);
+            if (ImGui::MenuItem(s_multi.size() > 1 ? "Copy Selected" : "Copy"))
+                clipFromSelection(full, false);
             // Paste lands inside a folder when right-clicked on one, else beside the item.
             if (!s_assetClip.empty() && ImGui::MenuItem(isDir ? "Paste Into" : "Paste"))
                 pasteInto(isDir ? fs::path(full) : dir);
@@ -4596,6 +4614,7 @@ void DrawProject(EditorState& ed) {
         if (!passFilter(ext, isDir)) continue;
         AssetKind k = KindOf(ext, isDir);
         std::string full = e.path().string();
+        shownPaths.push_back(full);
         const bool isSel = isSelected(full);
 
         ImGui::PushID(shown);
@@ -4697,6 +4716,21 @@ void DrawProject(EditorState& ed) {
             ? "No project open — File > New Project to create one."
             : (s_filter == 0 && needle.empty() ? "Empty folder." : "No matching assets."));
     }
+    // Shift+click: select everything between the active item and the clicked one,
+    // in display order (Explorer/Unity-style range selection).
+    if (!rangeTo.empty()) {
+        int a = -1, b = -1;
+        for (int i = 0; i < (int)shownPaths.size(); ++i) {
+            if (shownPaths[i] == selected) a = i;
+            if (shownPaths[i] == rangeTo)  b = i;
+        }
+        if (a >= 0 && b >= 0) {
+            if (a > b) std::swap(a, b);
+            for (int i = a; i <= b; ++i) s_multi.insert(shownPaths[i]);
+        } else {
+            s_multi.clear(); s_multi.insert(rangeTo); selected = rangeTo;
+        }
+    }
     // Right-click empty space: create assets here / reveal the folder. Inside the
     // scroll child so it opens over the grid's empty area, not the details strip.
     if (ImGui::BeginPopupContextWindow("bgctx",
@@ -4728,9 +4762,11 @@ void DrawProject(EditorState& ed) {
         ImGui::TextDisabled("%d item%s", shown, shown == 1 ? "" : "s");
         if (!s_assetClip.empty()) {
             ImGui::SameLine();
+            std::string clipLbl = s_assetClip.size() == 1
+                ? fs::path(s_assetClip.front()).filename().string()
+                : std::to_string(s_assetClip.size()) + " items";
             ImGui::TextDisabled("   |   %s: %s  (Ctrl+V to paste here)",
-                                s_assetClipCut ? "Cut" : "Copied",
-                                fs::path(s_assetClip).filename().string().c_str());
+                                s_assetClipCut ? "Cut" : "Copied", clipLbl.c_str());
         }
     } else {
         std::error_code se;
@@ -4793,8 +4829,10 @@ void DrawProject(EditorState& ed) {
         if (ImGui::SmallButton("Copy Path")) ImGui::SetClipboardText(selected.c_str());
         if (!s_assetClip.empty()) {
             ImGui::SameLine();
-            ImGui::TextDisabled("(%s: %s)", s_assetClipCut ? "Cut" : "Copied",
-                                fs::path(s_assetClip).filename().string().c_str());
+            std::string clipLbl = s_assetClip.size() == 1
+                ? fs::path(s_assetClip.front()).filename().string()
+                : std::to_string(s_assetClip.size()) + " items";
+            ImGui::TextDisabled("(%s: %s)", s_assetClipCut ? "Cut" : "Copied", clipLbl.c_str());
         }
         ImGui::EndGroup();
     }
@@ -4869,7 +4907,11 @@ void DrawProject(EditorState& ed) {
             for (const std::string& v : victims) {
                 std::error_code re; fs::remove_all(v, re);
                 if (re) ConsoleLog("Delete failed: " + v, 2);
-                else { ++okCount; if (s_assetClip == v) s_assetClip.clear(); }
+                else {
+                    ++okCount;
+                    s_assetClip.erase(std::remove(s_assetClip.begin(), s_assetClip.end(), v),
+                                      s_assetClip.end());
+                }
             }
             ConsoleLog("Deleted " + std::to_string(okCount) + " item" + (okCount == 1 ? "" : "s"));
             selected.clear(); s_multi.clear();
@@ -4885,9 +4927,14 @@ void DrawProject(EditorState& ed) {
         if (!selected.empty() && renameTarget.empty() && deleteTarget.empty() &&
             ImGui::IsKeyPressed(ImGuiKey_Delete, false))
             deleteTarget = selected;
-        if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_C, false)) { s_assetClip = selected; s_assetClipCut = false; }
-        if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_X, false)) { s_assetClip = selected; s_assetClipCut = true; }
+        if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_C, false)) clipFromSelection(selected, false);
+        if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_X, false)) clipFromSelection(selected, true);
         if (kio.KeyCtrl && !s_assetClip.empty() && canEdit && ImGui::IsKeyPressed(ImGuiKey_V, false)) pasteInto(dir);
+        if (kio.KeyCtrl && !shownPaths.empty() && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+            s_multi.clear();
+            for (const std::string& p : shownPaths) s_multi.insert(p);
+            if (selected.empty()) selected = shownPaths.front();
+        }
     }
     // Whole-grid drop: drag a GameObject from the Hierarchy anywhere onto the asset
     // area to save it here as a prefab (Unity-style "drag to Project to make a prefab").
@@ -9412,6 +9459,8 @@ static GameObject* g_prefabSaveTarget = nullptr; // object being saved as a pref
 static char g_prefabNameBuf[128] = "";
 static bool g_hierSort   = false;            // sort siblings A->Z (Unity's alpha sort)
 static int  g_hierExpand = 0;                // 1=expand-all, 2=collapse-all (one frame)
+static GameObject* g_hierOpenNode = nullptr; // Left/Right arrow expand/collapse target
+static int  g_hierOpenVal = 0;               // 1 = expand, 0 = collapse (one frame)
 
 // Component "icon" badges at a Hierarchy row's right edge (like Unity showing
 // component icons): a quick read of what's attached. Drawn via the draw list so
@@ -9569,6 +9618,19 @@ void DrawHierarchy(EditorState& ed) {
             if (go->GetComponent<ParticleSystem>())  hay += " particles fx";
             if (go->GetComponent<AudioSource>())     hay += " sound audio";
             if (!go->GetComponents<ScriptComponent>().empty()) hay += " script";
+            if (go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>()) hay += " rigidbody physics";
+            if (go->GetComponent<Collider3D>() || go->GetComponent<Collider2D>())   hay += " collider";
+            if (go->GetComponent<NPCController>())   hay += " npc ai enemy";
+            if (go->GetComponent<Spawner>())         hay += " spawner waves";
+            if (go->GetComponent<Terrain>())         hay += " terrain ground";
+            if (go->GetComponent<Character>())       hay += " character humanoid";
+            if (go->GetComponent<FirstPersonController>() || go->GetComponent<ThirdPersonController>() ||
+                go->GetComponent<CharacterController3D>() || go->GetComponent<ClickToMoveController>())
+                hay += " player controller";
+            if (go->GetComponent<UIButton>() || go->GetComponent<UIPanel>() ||
+                go->GetComponent<UIImage>()  || go->GetComponent<UISlider>() ||
+                go->GetComponent<UIToggle>() || go->GetComponent<UIProgressBar>())
+                hay += " ui widget canvas";
             for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
             if (hay.find(needle) == std::string::npos) continue;
             ++hits;
@@ -9610,6 +9672,7 @@ void DrawHierarchy(EditorState& ed) {
         });
     int hierRow = 0;                        // visible-row counter for the zebra striping
     std::vector<GameObject*> visRows;       // visible rows in draw order (arrow-key nav)
+    GameObject* rangeClick = nullptr;       // Shift+click target — resolved after the draw
     std::string curSceneSection = "\x01";   // sentinel distinct from any real value (incl. "")
     for (GameObject* go : roots) {
         if (anyMerged && go->sourceScene != curSceneSection) {
@@ -9635,6 +9698,9 @@ void DrawHierarchy(EditorState& ed) {
             if (childCount == 0) flags |= ImGuiTreeNodeFlags_Leaf;
             // Expand All / Collapse All applies to nodes that actually have children.
             if (g_hierExpand && childCount > 0) ImGui::SetNextItemOpen(g_hierExpand == 1);
+            // Left/Right arrow expand/collapse request from last frame's key press.
+            if (node == g_hierOpenNode && childCount > 0)
+                ImGui::SetNextItemOpen(g_hierOpenVal == 1);
             // Unity dims inactive objects; grey the whole row (and its subtree label).
             bool dim = !node->active;
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
@@ -9682,6 +9748,8 @@ void DrawHierarchy(EditorState& ed) {
                     ed.PushUndo();
                     SetLockedRecursive(node, !node->editorLocked);
                     ed.dirty = true;
+                } else if (ImGui::GetIO().KeyShift && ed.selected()) {
+                    rangeClick = node;   // range select, resolved after the draw pass
                 } else if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
                 else ed.Select(node);                                       // single select
             }
@@ -9931,6 +9999,21 @@ void DrawHierarchy(EditorState& ed) {
         };
         drawNode(go);
     }
+    g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
+    // Shift+click: select the whole range between the active object and the
+    // clicked row, in visible order (Unity/Explorer-style range selection).
+    if (rangeClick) {
+        int a = -1, b = -1;
+        for (int i = 0; i < (int)visRows.size(); ++i) {
+            if (visRows[i] == ed.selected()) a = i;
+            if (visRows[i] == rangeClick)    b = i;
+        }
+        if (a >= 0 && b >= 0) {
+            if (a > b) std::swap(a, b);
+            for (int i = a; i <= b; ++i)
+                if (!ed.IsSelected(visRows[i])) ed.ToggleSelect(visRows[i]);
+        } else ed.Select(rangeClick);
+    }
     // Up/Down arrows walk the visible rows (Unity-style keyboard navigation).
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
         !ImGui::GetIO().WantTextInput && !visRows.empty() && ed.selected()) {
@@ -9942,6 +10025,13 @@ void DrawHierarchy(EditorState& ed) {
                 ed.Select(visRows[cur + 1]);
             else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && cur > 0)
                 ed.Select(visRows[cur - 1]);
+            // Left/Right collapse or expand the selected object's subtree
+            // (file-explorer style; applied to the row on the next frame).
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) &&
+                ed.selected()->transform && ed.selected()->transform->ChildCount() > 0)
+                { g_hierOpenNode = ed.selected(); g_hierOpenVal = 1; }
+            else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))
+                { g_hierOpenNode = ed.selected(); g_hierOpenVal = 0; }
         }
     }
     // Ctrl+A: select every visible object.

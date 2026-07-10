@@ -38,6 +38,7 @@
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/NoCode.hpp"         // Spawner
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
@@ -1936,6 +1937,30 @@ struct OkayScriptVM::Impl {
         b["npc_state"] = [npcOf](std::vector<Value>& a) -> Value {
             NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
             return Value{std::string{n ? n->StateName() : ""}};
+        };
+        // ---- Spawner control: run enemy/pickup waves from a script ----------
+        // Omit the name ("" ) to drive a sibling Spawner on this object.
+        auto spawnerOf = [this, sceneOf](const std::string& name) -> Spawner* {
+            if (name.empty())
+                return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<Spawner>() : nullptr;
+            Scene* s = sceneOf(); if (!s) return nullptr;
+            GameObject* g = s->Find(name);
+            return g ? g->GetComponent<Spawner>() : nullptr;
+        };
+        b["spawner_start"] = [spawnerOf](std::vector<Value>& a) -> Value {
+            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            if (!s) return Value{false};
+            s->StartWaves(); return Value{true};
+        };
+        b["spawner_stop"] = [spawnerOf](std::vector<Value>& a) -> Value {
+            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            if (!s) return Value{false};
+            s->StopWaves(); return Value{true};
+        };
+        // Live objects a spawner created (wave HUDs: "3 enemies left").
+        b["spawner_alive"] = [spawnerOf](std::vector<Value>& a) -> Value {
+            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            return Value{(float)(s ? s->AliveCount() : 0)};
         };
         // Distance from this object to a named object (0 if missing).
         b["dist_to"] = [this, sceneOf](std::vector<Value>& a) -> Value {

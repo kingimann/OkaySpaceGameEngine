@@ -5809,6 +5809,8 @@ void DrawScriptDocs() {
         fapi("dist_to(\"n\")", "distance to a named object");
         fapi("npc_goto(\"n\", x, y, z)", "send an NPC Controller to a point (npc_arrived on arrival)");
         fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
+        fapi("spawner_start(\"n\") / spawner_stop(\"n\")", "run / pause a Spawner's waves");
+        fapi("spawner_alive(\"n\")", "live objects a Spawner created (enemies left)");
         fapi("vel_toward(\"n\", speed)", "aim this body's velocity at a target");
         fapi("destroy_obj(\"n\")", "destroy a named object");
         fapi("count_tag(\"t\") / nearest_tag(\"t\")", "tag queries");
@@ -6103,6 +6105,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "name","set_name","tag","set_tag","has_tag","set_active","self_active","destroy",
         "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
         "npc_goto","npc_stop","npc_busy","npc_state",
+        "spawner_start","spawner_stop","spawner_alive",
         "nearest_tag","set_cam","move_cam","set_cam_zoom","set_bg","set_light","set_ambient",
         "load_scene","load_scene_index","load_next_scene","screen_w","screen_h",
         // components / fx
@@ -6192,6 +6195,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"count_tag","count_tag(\"tag\")"}, {"nearest_tag","nearest_tag(\"tag\")"}, {"load_scene","load_scene(\"file\")"},
         {"npc_goto","npc_goto(\"name\", x, y, z)"}, {"npc_stop","npc_stop(\"name\")"},
         {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
+        {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
+        {"spawner_alive","spawner_alive(\"name\")"},
         {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
         {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
         // variables / prefs
@@ -19788,6 +19793,33 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##jp")) toRemove = jp;
         }
     }
+    if (auto* sw = dynamic_cast<Spawner*>(curComp)) {
+        if (CompHeader("Spawner", sw, &toRemove)) {
+            ImGui::TextDisabled("Spawns copies of a scene object (or a prefab) in waves.");
+            strField("Template Object##sw", sw->templateName, "swTN");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scene object to clone — build the enemy/pickup in place, point this at it.\nHidden at Play start. Takes priority over the prefab file.");
+            strField("Prefab File##sw", sw->prefabPath, "swPF");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okayprefab to spawn when no template object is set.");
+            if (ImGui::DragInt("Count Per Wave##sw", &sw->count, 0.1f, 1, 200)) ed.dirty = true;
+            if (ImGui::DragFloat("Interval##sw", &sw->interval, 0.05f, 0.0f, 60.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds between spawns within a wave.");
+            if (ImGui::DragInt("Waves##sw", &sw->waves, 0.1f, 0, 999)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many waves to run. 0 = endless.");
+            if (ImGui::DragFloat("Wave Delay##sw", &sw->waveDelay, 0.05f, 0.0f, 300.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Radius##sw", &sw->radius, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn scatter disc around this object (drawn in the Scene view when selected).");
+            if (ImGui::DragInt("Max Alive##sw", &sw->maxAlive, 0.1f, 0, 500)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause spawning while this many spawned objects are alive. 0 = unlimited.");
+            if (ImGui::Checkbox("Auto Start##sw", &sw->autoStart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = start it from a script with spawner_start(\"name\").");
+            if (ImGui::Checkbox("Hide Template In Play##sw", &sw->hideTemplate)) ed.dirty = true;
+            if (ed.isPlaying())
+                ImGui::TextDisabled("%s — waves done %d, alive %d",
+                                    sw->Running() ? "Running" : "Stopped",
+                                    sw->WavesDone(), sw->AliveCount());
+            if (ImGui::SmallButton("Remove##sw")) toRemove = sw;
+        }
+    }
     if (auto* tp = dynamic_cast<Teleporter*>(curComp)) {
         if (CompHeader("Teleporter", tp, &toRemove)) {
             strField("Target Object##tp", tp->targetName, "tpTN");
@@ -21711,6 +21743,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<DamageOnTouch>(), "Damage On Touch (hazard)")) { go->AddComponent<DamageOnTouch>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<Teleporter>(), "Teleporter")) { go->AddComponent<Teleporter>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<JumpPad>(), "Jump Pad (launch on touch)")) { go->AddComponent<JumpPad>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Spawner>(), "Spawner (enemy / pickup waves)")) { go->AddComponent<Spawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<TriggerZone>(), "Trigger Zone (event)")) { go->AddComponent<TriggerZone>(); ensureCollider(true); ed.dirty = true; }
           } EndCat(o); }
 
@@ -24812,6 +24845,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         a.y += 0.05f; b.y += 0.05f;
                         line(a, b, wcol, 1.5f);
                     }
+                }
+            }
+            // Spawner gizmo (selected): the scatter disc copies appear on.
+            if (auto* sw = up->GetComponent<Spawner>()) {
+                if (ed.selected() == up.get() && sw->radius > 0.0f) {
+                    const ImU32 scol2 = IM_COL32(140, 235, 140, 190);
+                    ring(p, Vec3{1, 0, 0}, Vec3{0, 0, 1}, sw->radius, scol2);
+                    line(p, Vec3{p.x, p.y + 0.6f, p.z}, scol2, 2.0f);
                 }
             }
             // Pathfinding debug: the planned A* route of a playing NPC or

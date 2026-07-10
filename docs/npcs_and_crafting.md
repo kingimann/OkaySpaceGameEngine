@@ -85,3 +85,26 @@ commanded NPC that spots a threat will chase or flee first and finish the
 errand after. Pass `""` as the name to command a sibling NPC Controller.
 `npc_stop(name)` cancels the order, `npc_busy(name)` is true while walking,
 and `npc_state(name)` returns the live AI state (`Patrol`, `Chase`, …).
+
+## Spawner — enemy and pickup waves
+
+Add Component ▸ Gameplay ▸ **Spawner** turns any object into a wave
+spawner with zero scripting. Point **Template Object** at an enemy or
+pickup you built in the scene (it's hidden at Play start and cloned from
+then on), or set **Prefab File** to a `.okayprefab`. Copies appear on a
+flat disc of **Radius** around the spawner — shown as a green ring in the
+Scene view while selected.
+
+Waves work like you'd expect: **Count Per Wave** objects, one every
+**Interval** seconds, then a **Wave Delay** pause; **Waves** limits the
+run (0 = endless) and **Max Alive** pauses spawning while that many
+spawned objects are still alive, so an endless spawner can't flood the
+scene. It broadcasts `spawner_spawn`, `spawner_wave` and `spawner_done`
+for Action Lists, and scripts can drive it with `spawner_start(name)` /
+`spawner_stop(name)` and read `spawner_alive(name)` for a
+"3 enemies left" HUD. Turn **Auto Start** off to arm it from a script or
+a Trigger Zone instead of at scene start.
+
+Pair it with an NPC Controller template (aggressive + pathfinding) and a
+Trigger Zone at the arena door, and you have a wave-defense encounter
+without writing a line of code.

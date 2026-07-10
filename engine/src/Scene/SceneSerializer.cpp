@@ -1210,6 +1210,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  jumppad " << jp->force << " " << (jp->useObjectUp ? 1 : 0) << " "
             << jp->forwardBoost << " " << jp->cooldown << " " << Quote(jp->triggerTag) << "\n";
     }
+    if (auto* sw = go->GetComponent<Spawner>()) {
+        out << "  spawner " << sw->count << " " << sw->interval << " " << sw->waves << " "
+            << sw->waveDelay << " " << sw->radius << " " << sw->maxAlive << " "
+            << (sw->autoStart ? 1 : 0) << " " << (sw->hideTemplate ? 1 : 0) << " "
+            << Quote(sw->templateName) << " " << Quote(sw->prefabPath) << "\n";
+    }
     if (auto* tz = go->GetComponent<TriggerZone>()) {
         out << "  triggerzone " << tz->action << " " << Quote(tz->varName) << " " << tz->amount
             << " " << (tz->once ? 1 : 0) << " " << Quote(tz->targetName) << " " << Quote(tz->triggerTag) << "\n";
@@ -3239,6 +3245,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> jp->force >> uo >> jp->forwardBoost >> jp->cooldown;
                     jp->useObjectUp = (uo != 0);
                     jp->triggerTag = ReadQuoted(in);
+                } else if (field == "spawner") {
+                    auto* sw = go->AddComponent<Spawner>();
+                    int as = 1, ht = 1;
+                    in >> sw->count >> sw->interval >> sw->waves >> sw->waveDelay
+                       >> sw->radius >> sw->maxAlive >> as >> ht;
+                    sw->autoStart = (as != 0);
+                    sw->hideTemplate = (ht != 0);
+                    sw->templateName = ReadQuoted(in);
+                    sw->prefabPath = ReadQuoted(in);
                 } else if (field == "triggerzone") {
                     auto* tz = go->AddComponent<TriggerZone>();
                     int once = 1; in >> tz->action;

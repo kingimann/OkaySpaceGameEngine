@@ -244,6 +244,8 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `npc_stop(name)` | cancel an `npc_goto` order |
 | `npc_busy(name)` | true while the NPC is still walking to its ordered point |
 | `npc_state(name)` | the NPC's AI state name: `Idle`/`Wander`/`Patrol`/`Follow`/`Flee`/`Chase`/`Search`/`Return` |
+| `spawner_start(name)` / `spawner_stop(name)` | run / pause a Spawner component's waves (`""` targets a sibling Spawner) |
+| `spawner_alive(name)` | how many objects that Spawner created are still alive (wave HUDs) |
 | `count_tag(tag)` | how many active objects have a tag (coins left, enemies alive) |
 | `nearest_tag(tag)` | name of the nearest tagged object to this one ("" if none) — targeting |
 | `screen_w()` / `screen_h()` | render-target size in pixels |

@@ -91,6 +91,9 @@ public:
             // Stairs: step up onto low obstacles instead of grinding against them.
             if (grounded && moving && gameObject && gameObject->scene())
                 TryStepUp(*gameObject->scene(), gameObject, rb, {tx, 0.0f, tz}, grounded, moving, stepOffset);
+            // Moving platforms: ride whatever we stand on.
+            if (gameObject && gameObject->scene())
+                RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
         } else {
             transform->Translate({tx * dt, 0.0f, tz * dt});
         }
@@ -101,6 +104,8 @@ public:
     }
 
 private:
+    PlatformRide m_platRide;   // moving-platform tracking
+
     Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
 };
 

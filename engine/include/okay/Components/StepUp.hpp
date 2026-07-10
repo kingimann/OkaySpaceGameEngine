@@ -37,4 +37,33 @@ inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& di
     if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
 }
 
+
+/// Moving-platform support shared by the controllers: remember what the body
+/// stands on and apply the platform's frame-to-frame translation, so players
+/// RIDE elevators and moving props instead of sliding off them. Static ground
+/// has a zero delta, so tracking it costs nothing.
+struct PlatformRide { GameObject* platform = nullptr; Vec3 lastPos{0.0f, 0.0f, 0.0f}; };
+inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool grounded) {
+    if (!go || !go->transform) { st.platform = nullptr; return; }
+    GameObject* plat = nullptr;
+    if (grounded) {
+        Vec3 pos = go->transform->Position();
+        RaycastHit3D hit = sc.physics3D().Raycast(sc, {pos.x, pos.y + 0.1f, pos.z},
+                                                  {0.0f, -1.0f, 0.0f}, 1.4f, go);
+        if (hit.hit && hit.gameObject && hit.gameObject->transform) plat = hit.gameObject;
+    }
+    if (plat && plat == st.platform) {
+        Vec3 cur = plat->transform->Position();
+        Vec3 d{cur.x - st.lastPos.x, cur.y - st.lastPos.y, cur.z - st.lastPos.z};
+        if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f)
+            go->transform->SetPosition(go->transform->Position() + d);
+        st.lastPos = cur;
+    } else if (plat) {
+        st.platform = plat;
+        st.lastPos = plat->transform->Position();
+    } else {
+        st.platform = nullptr;
+    }
+}
+
 } // namespace okay

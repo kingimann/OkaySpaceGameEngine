@@ -242,6 +242,9 @@ public:
         // instead of grinding against the face (stepOffset = max step height).
         if (rb && grounded && moving && gameObject && gameObject->scene())
             TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded, moving, stepOffset);
+        // Moving platforms: ride whatever we stand on (elevators, movers).
+        if (gameObject && gameObject->scene())
+            RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
 
         // ---- Turn the body (smoothly) ----
         // The character mesh faces -Z (engine camera/controller convention).
@@ -390,6 +393,8 @@ public:
     void OnCollisionStay3D(const Collision3D& c)  override { NoteGround(c); }
 
 private:
+    PlatformRide m_platRide;   // moving-platform tracking
+
     Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
 
     void NoteGround(const Collision3D& c) {

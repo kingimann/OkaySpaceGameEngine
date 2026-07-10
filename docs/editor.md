@@ -357,3 +357,13 @@ the engine's 2D sprite model. A 3D scene view would swap that panel for an
 OpenGL framebuffer using the same `IRenderer` abstraction the engine already
 exposes — the rest of the editor (selection, inspector, serialization) is
 unchanged.
+
+## Scene & Game view extras
+
+- **View axis gizmo** (Scene view, top-right): the X/Y/Z tips track the camera
+  orientation; **click a tip** to snap the view to look along that axis.
+- **Game view Stats**: toggle in the Game toolbar — overlays FPS, frame time,
+  object and mesh/triangle counts on the running game.
+- **Console**: the tab badge shows live error/warning counts; **Error Pause**
+  pauses Play the moment a new error is logged.
+- **Play tint**: the editor chrome darkens subtly while the game runs.

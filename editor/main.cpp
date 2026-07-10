@@ -2630,6 +2630,19 @@ static void StopModelScenePreview(EditorState& ed);
 static void StopLivePreview(EditorState& ed);
 
 void DrawMenuAndToolbar(EditorState& ed) {
+    // Unity-style play tint: while the game runs, darken the editor chrome a
+    // touch so edit vs play is unmistakable at a glance. Only the custom dark
+    // theme (its palette constants are known); reset exactly on stop.
+    if (g_theme == 0) {
+        ImGuiStyle& st = ImGui::GetStyle();
+        if (ed.isPlaying()) {
+            st.Colors[ImGuiCol_WindowBg]  = ImVec4(0.135f, 0.135f, 0.146f, 1.00f);
+            st.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.115f, 0.115f, 0.125f, 1.00f);
+        } else {
+            st.Colors[ImGuiCol_WindowBg]  = ImVec4(0.180f, 0.180f, 0.192f, 1.00f);
+            st.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.155f, 0.155f, 0.165f, 1.00f);
+        }
+    }
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Project...", "Ctrl+N")) g_showNewProject = true;

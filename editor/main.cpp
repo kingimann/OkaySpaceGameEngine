@@ -19768,6 +19768,21 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##dot")) toRemove = dt;
         }
     }
+    if (auto* jp = dynamic_cast<JumpPad*>(curComp)) {
+        if (CompHeader("Jump Pad", jp, &toRemove)) {
+            ImGui::TextDisabled("Launches bodies that touch it (needs a collider on this object).");
+            if (ImGui::DragFloat("Force##jp", &jp->force, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Launch Along Object Up##jp", &jp->useObjectUp)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tilt this object to aim the launch; off = always straight up.");
+            if (ImGui::DragFloat("Forward Boost##jp", &jp->forwardBoost, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra speed along the body's current travel direction (booster rings).");
+            if (ImGui::DragFloat("Cooldown##jp", &jp->cooldown, 0.05f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+            { char tb[48]; std::snprintf(tb, sizeof(tb), "%s", jp->triggerTag.c_str());
+              if (ImGui::InputText("Who##jp", tb, sizeof(tb))) { jp->triggerTag = tb; ed.dirty = true; }
+              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tag or name of who launches; empty = anyone."); }
+            if (ImGui::SmallButton("Remove##jp")) toRemove = jp;
+        }
+    }
     if (auto* tp = dynamic_cast<Teleporter*>(curComp)) {
         if (CompHeader("Teleporter", tp, &toRemove)) {
             strField("Target Object##tp", tp->targetName, "tpTN");
@@ -21690,6 +21705,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Collectible>(), "Collectible (pickup -> score)")) { go->AddComponent<Collectible>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<DamageOnTouch>(), "Damage On Touch (hazard)")) { go->AddComponent<DamageOnTouch>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<Teleporter>(), "Teleporter")) { go->AddComponent<Teleporter>(); ensureCollider(true); ed.dirty = true; }
+            if (item(!go->GetComponent<JumpPad>(), "Jump Pad (launch on touch)")) { go->AddComponent<JumpPad>(); ed.dirty = true; }
             if (item(!go->GetComponent<TriggerZone>(), "Trigger Zone (event)")) { go->AddComponent<TriggerZone>(); ensureCollider(true); ed.dirty = true; }
           } EndCat(o); }
 

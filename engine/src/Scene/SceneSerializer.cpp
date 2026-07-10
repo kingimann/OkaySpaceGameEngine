@@ -1206,6 +1206,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  teleporter " << Quote(tp->targetName) << " " << tp->destination.x << " " << tp->destination.y
             << " " << tp->destination.z << " " << tp->cooldown << " " << Quote(tp->triggerTag) << "\n";
     }
+    if (auto* jp = go->GetComponent<JumpPad>()) {
+        out << "  jumppad " << jp->force << " " << (jp->useObjectUp ? 1 : 0) << " "
+            << jp->forwardBoost << " " << jp->cooldown << " " << Quote(jp->triggerTag) << "\n";
+    }
     if (auto* tz = go->GetComponent<TriggerZone>()) {
         out << "  triggerzone " << tz->action << " " << Quote(tz->varName) << " " << tz->amount
             << " " << (tz->once ? 1 : 0) << " " << Quote(tz->targetName) << " " << Quote(tz->triggerTag) << "\n";
@@ -3229,6 +3233,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tp->targetName = ReadQuoted(in);
                     in >> tp->destination.x >> tp->destination.y >> tp->destination.z >> tp->cooldown;
                     in >> std::ws; if (in.peek() == '"') tp->triggerTag = ReadQuoted(in);
+                } else if (field == "jumppad") {
+                    auto* jp = go->AddComponent<JumpPad>();
+                    int uo = 1;
+                    in >> jp->force >> uo >> jp->forwardBoost >> jp->cooldown;
+                    jp->useObjectUp = (uo != 0);
+                    jp->triggerTag = ReadQuoted(in);
                 } else if (field == "triggerzone") {
                     auto* tz = go->AddComponent<TriggerZone>();
                     int once = 1; in >> tz->action;

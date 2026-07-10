@@ -172,6 +172,44 @@ private:
     float m_cooldown = 0.0f;
 };
 
+/// Jump pad / launcher — put it on a trigger collider; anything (or a tagged
+/// body) that enters is flung along the pad's launch direction. The classic
+/// platformer bounce pad, booster ring or trampoline, with zero scripting.
+class JumpPad : public Behaviour {
+public:
+    std::string triggerTag;        ///< who launches (tag or name text); empty = anyone
+    float force = 12.0f;           ///< launch speed (world units/s)
+    bool  useObjectUp = true;      ///< launch along this object's local +Y (tilt the pad to aim); off = straight up
+    float forwardBoost = 0.0f;     ///< extra speed added along the body's CURRENT travel direction
+    float cooldown = 0.2f;         ///< seconds a just-launched body is ignored (no double-fire)
+
+    void OnTriggerEnter3D(Collider3D* o) override { if (o) Launch(o->gameObject); }
+    void OnCollisionEnter3D(const Collision3D& c) override { Launch(c.gameObject); }
+
+    void Update(float dt) override { if (m_cool > 0.0f) m_cool -= dt; }
+
+    void Launch(GameObject* who) {
+        if (!who || who == gameObject || m_cool > 0.0f) return;
+        if (!NoCodeMatches(who, triggerTag)) return;
+        auto* rb = who->GetComponent<Rigidbody3D>();
+        if (!rb) return;
+        Vec3 dir = (useObjectUp && transform) ? transform->Rotation() * Vec3{0, 1, 0} : Vec3{0, 1, 0};
+        float dl = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (dl > 1e-4f) { dir.x /= dl; dir.y /= dl; dir.z /= dl; }
+        rb->velocity = dir * force;
+        if (forwardBoost != 0.0f) {
+            Vec3 v{rb->velocity.x, 0.0f, rb->velocity.z};
+            float hl = std::sqrt(v.x * v.x + v.z * v.z);
+            if (hl > 1e-3f) { rb->velocity.x += v.x / hl * forwardBoost; rb->velocity.z += v.z / hl * forwardBoost; }
+        }
+        rb->WakeUp();
+        m_cool = cooldown;
+    }
+
+private:
+    float m_cool = 0.0f;
+};
+
 /// Trigger zone — the generic "when something enters here, do one thing" glue that
 /// replaces a lot of one-off scripting. Put it on a trigger collider; on entry by a
 /// matching body it runs its Action once (or every time). Win/Lose set the `won`/

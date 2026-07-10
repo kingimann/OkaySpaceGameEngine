@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -601,6 +602,69 @@ void ApplyAccent(int idx) {
     DarkTheme();          // re-apply the palette with the new accent
 }
 
+// ---- Shared look-and-feel helpers ------------------------------------------
+
+// Stable pastel color hashed from a name — every game/template gets its own
+// hue so lists read as a gallery instead of a wall of identical rows.
+ImVec4 NameColor(const std::string& s) {
+    unsigned h = 2166136261u;
+    for (char ch : s) h = (h ^ (unsigned char)ch) * 16777619u;
+    float hue = (float)(h % 360u) / 360.0f;
+    const float v = 0.80f, sat = 0.52f;
+    float i = std::floor(hue * 6.0f), f = hue * 6.0f - i;
+    float p = v * (1.0f - sat), q = v * (1.0f - sat * f), t = v * (1.0f - sat * (1.0f - f));
+    float r, g, b;
+    switch ((int)i % 6) {
+        case 0:  r = v; g = t; b = p; break;
+        case 1:  r = q; g = v; b = p; break;
+        case 2:  r = p; g = v; b = t; break;
+        case 3:  r = p; g = q; b = v; break;
+        case 4:  r = t; g = p; b = v; break;
+        default: r = v; g = p; b = q; break;
+    }
+    return ImVec4(r, g, b, 1.0f);
+}
+
+// Rounded square tile showing the item's initial — a lightweight "thumbnail"
+// that needs no image assets. Advances the layout like a normal item.
+void IconTile(const std::string& name, float size) {
+    ImVec4 col = NameColor(name);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size),
+                      ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.22f)), size * 0.22f);
+    dl->AddRect(p, ImVec2(p.x + size, p.y + size),
+                ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.80f)), size * 0.22f, 0, 1.5f);
+    char init[2] = { name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0 };
+    ImVec2 ts = ImGui::CalcTextSize(init);
+    dl->AddText(ImVec2(p.x + (size - ts.x) * 0.5f, p.y + (size - ts.y) * 0.5f),
+                ImGui::GetColorU32(ImVec4(0.96f, 0.97f, 1.0f, 1.0f)), init);
+    ImGui::Dummy(ImVec2(size, size));
+}
+
+// Accent-filled call-to-action button — the launcher's primary action style
+// (Open Editor, Play). Secondary actions keep the default gray Button.
+bool PrimaryButton(const char* label, const ImVec2& size) {
+    auto lift = [](float x) { return x + (1.0f - x) * 0.20f; };
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.92f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                          ImVec4(lift(kAccent.x), lift(kAccent.y), lift(kAccent.z), 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccentDim);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    bool hit = ImGui::Button(label, size);
+    ImGui::PopStyleColor(4);
+    return hit;
+}
+
+// Accent ring around the current child window when the mouse is over it
+// (hover feedback for card-style rows and tiles).
+void HoverRing() {
+    if (!ImGui::IsWindowHovered()) return;
+    ImVec2 mn = ImGui::GetWindowPos();
+    ImVec2 mx(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y);
+    ImGui::GetWindowDrawList()->AddRect(mn, mx, ImGui::GetColorU32(kAccent), 7.0f, 0, 2.0f);
+}
+
 // Launcher preferences persisted next to the exe (launcher.cfg).
 void LoadPrefs() {
     std::ifstream f(fs::path(g_exeDir) / "launcher.cfg");
@@ -869,26 +933,57 @@ int main(int argc, char** argv) {
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
             ImGuiWindowFlags_NoBringToFrontOnFocus);
 
+        // Soft accent glow across the top of the window: gives the launcher a
+        // branded, finished feel without shipping any image assets.
+        {
+            ImDrawList* bg = ImGui::GetWindowDrawList();
+            ImVec2 wp = vp->WorkPos;
+            ImU32 c0 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.10f));
+            ImU32 c1 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.00f));
+            bg->AddRectFilledMultiColor(wp, ImVec2(wp.x + vp->WorkSize.x, wp.y + 150.0f),
+                                        c0, c0, c1, c1);
+        }
+
         // ---- Left nav ----
         ImGui::BeginChild("nav", ImVec2(224, 0), true);
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::TextColored(kAccent, "  OkaySpace");
-        ImGui::SameLine();
-        ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
-        ImGui::TextDisabled("  game engine");
-        ImGui::Dummy(ImVec2(0, 18));
+        ImGui::Dummy(ImVec2(0, 6));
+        {   // App header: rounded accent logo tile + product name / version.
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
+            ImVec2 lp = ImGui::GetCursorScreenPos();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(lp, ImVec2(lp.x + 34, lp.y + 34),
+                              ImGui::GetColorU32(kAccent), 9.0f);
+            ImVec2 ts = ImGui::CalcTextSize("OS");
+            dl->AddText(ImVec2(lp.x + (34 - ts.x) * 0.5f, lp.y + (34 - ts.y) * 0.5f),
+                        IM_COL32(255, 255, 255, 255), "OS");
+            ImGui::Dummy(ImVec2(34 + 8, 34));
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            ImGui::Text("OkaySpace");
+            ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
+            ImGui::EndGroup();
+        }
+        ImGui::Dummy(ImVec2(0, 16));
         ImGui::TextDisabled("  MENU");
         ImGui::Dummy(ImVec2(0, 2));
         const char* navs[]  = {"Create", "Play", "Community", "Account", "Settings"};
         const char* navIco[] = {"+", ">", "*", "@", "="};
         for (int i = 0; i < 5; ++i) {
             char lbl[48];
-            std::snprintf(lbl, sizeof(lbl), "   %s   %s", navIco[i], navs[i]);
+            std::snprintf(lbl, sizeof(lbl), "     %s   %s", navIco[i], navs[i]);
             bool sel = (tab == i);
             // Accent the active item's label so the selection reads clearly.
             if (sel) ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
             if (ImGui::Selectable(lbl, sel, 0, ImVec2(0, 42))) tab = i;
             if (sel) ImGui::PopStyleColor();
+            if (sel) {   // accent bar marking the active section
+                ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImVec2(mn.x, mn.y + 8), ImVec2(mn.x + 3.5f, mx.y - 8),
+                    ImGui::GetColorU32(kAccent), 2.0f);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Shortcut: %d", i + 1);
         }
 
         // Signed-in status chip, just under the nav items.
@@ -947,41 +1042,85 @@ int main(int argc, char** argv) {
         };
         if (tab == 0) {                                   // ---- Create ----
             sectionHeader("Create a game", nullptr);
-            ImGui::TextWrapped("Open the OkaySpace editor to build 2D or 3D scenes, script "
-                               "them, and design UI. Use File > Build Game to export a "
-                               "standalone game you can share.");
-            ImGui::Dummy(ImVec2(0, 18));
+
+            // Hero card: gradient panel with the one primary action.
+            ImGui::BeginChild("hero", ImVec2(0, 118), true, ImGuiWindowFlags_NoScrollbar);
+            {
+                ImVec2 mn = ImGui::GetWindowPos(); ImVec2 sz = ImGui::GetWindowSize();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImU32 g0 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f));
+                ImU32 g1 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.03f));
+                dl->AddRectFilledMultiColor(mn, ImVec2(mn.x + sz.x, mn.y + sz.y), g0, g1, g1, g0);
+            }
+            ImGui::SetCursorPos(ImVec2(18, 14));
+            ImGui::Text("OkaySpace Editor");
+            ImGui::SetCursorPosX(18);
+            ImGui::TextDisabled("Build 2D and 3D games: scenes, scripting, UI, characters, multiplayer.");
+            ImGui::SetCursorPos(ImVec2(18, 62));
             if (editor.empty()) {
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Editor not found next to the launcher.");
-                ImGui::TextDisabled("Place OkayEngine.exe beside this launcher.");
+                ImGui::SetCursorPosX(18);
+                ImGui::TextDisabled("Place OkayEngine.exe beside this launcher, or run a Check for updates.");
             } else {
-                if (ImGui::Button("Open Editor", ImVec2(240, 60))) LaunchEditor(editor);
-                ImGui::Dummy(ImVec2(0, 6));
-                ImGui::TextDisabled("%s", editor.c_str());
-
-                // ---- New Project: pick a template, open the editor on it ----
-                ImGui::Dummy(ImVec2(0, 16));
-                ImGui::SeparatorText("New project");
-                // Titles must match the editor's New Project templates exactly.
-                static const char* kTemplates[] = {
-                    "2D Scene", "3D Scene", "First Person", "Third Person",
-                    "Third Person Shooter", "Point & Click", "Platformer", "Top-Down",
-                    "Coin Collector", "Snake", "Main Menu", "Inventory", "Multiplayer",
-                };
-                static int newTpl = 1;   // default 3D Scene
-                ImGui::TextDisabled("Template");
-                ImGui::PushItemWidth(280);
-                ImGui::Combo("##newtpl", &newTpl,
-                             kTemplates, (int)(sizeof(kTemplates) / sizeof(kTemplates[0])));
-                ImGui::PopItemWidth();
+                if (PrimaryButton("Open Editor", ImVec2(190, 44))) LaunchEditor(editor);
                 ImGui::SameLine();
-                if (ImGui::Button("New Project", ImVec2(150, 0))) {
-                    LaunchEditor(editor, kTemplates[newTpl]);
-                    Toast(std::string("Opening editor: ") + kTemplates[newTpl]);
-                }
-                ImGui::TextDisabled("Opens the editor with the chosen template selected.");
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 13);
+                ImGui::TextDisabled("%s", editor.c_str());
             }
-            ImGui::Dummy(ImVec2(0, 22));
+            ImGui::EndChild();
+
+            // ---- New project: a clickable template gallery ----
+            ImGui::Dummy(ImVec2(0, 10));
+            ImGui::SeparatorText("New project");
+            ImGui::TextDisabled("Pick a starting point — the editor opens with the template selected.");
+            ImGui::Dummy(ImVec2(0, 6));
+            // Titles must match the editor's New Project templates exactly.
+            static const struct { const char* name; const char* desc; } kTpl[] = {
+                {"2D Scene",             "A blank 2D canvas."},
+                {"3D Scene",             "Ground, light and sky — start here."},
+                {"First Person",         "FPS character: mouse-look, WASD, jump."},
+                {"Third Person",         "Orbit-camera character controller."},
+                {"Third Person Shooter", "TPS starter with aiming."},
+                {"Point & Click",        "Click-to-move adventure starter."},
+                {"Platformer",           "Side-scrolling jump-and-run."},
+                {"Top-Down",             "Top-down movement and rooms."},
+                {"Coin Collector",       "A complete pickup-the-coins game."},
+                {"Snake",                "The classic, fully playable."},
+                {"Main Menu",            "A title screen with buttons."},
+                {"Inventory",            "Drag & drop item grid."},
+                {"Multiplayer",          "Host / join networked starter."},
+            };
+            const int tplCount = (int)(sizeof(kTpl) / sizeof(kTpl[0]));
+            float availW = ImGui::GetContentRegionAvail().x;
+            int cols = (int)(availW / 235.0f);
+            if (cols < 2) cols = 2; if (cols > 4) cols = 4;
+            float cardW = (availW - (float)(cols - 1) * 8.0f) / (float)cols;
+            if (editor.empty()) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
+            for (int i = 0; i < tplCount; ++i) {
+                if (i % cols) ImGui::SameLine();
+                ImGui::PushID(i);
+                ImGui::BeginChild("tpl", ImVec2(cardW, 92), true, ImGuiWindowFlags_NoScrollbar);
+                bool hov = !editor.empty() && ImGui::IsWindowHovered();
+                if (hov) HoverRing();
+                ImGui::SetCursorPos(ImVec2(12, 12));
+                IconTile(kTpl[i].name, 30.0f);
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                ImGui::Text("%s", kTpl[i].name);
+                ImGui::PushTextWrapPos(cardW - 14.0f);
+                ImGui::TextDisabled("%s", kTpl[i].desc);
+                ImGui::PopTextWrapPos();
+                ImGui::EndGroup();
+                if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    LaunchEditor(editor, kTpl[i].name);
+                    Toast(std::string("Opening editor: ") + kTpl[i].name);
+                }
+                ImGui::EndChild();
+                ImGui::PopID();
+            }
+            if (editor.empty()) ImGui::PopStyleVar();
+
+            ImGui::Dummy(ImVec2(0, 14));
             ImGui::SeparatorText("Tips");
             ImGui::BulletText("Press Play in the editor to test instantly.");
             ImGui::BulletText("Drag assets from the Project panel onto objects.");
@@ -997,10 +1136,27 @@ int main(int argc, char** argv) {
             if (player.empty())
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
             else if (scenes.empty()) {
-                ImGui::Dummy(ImVec2(0, 12));
-                ImGui::TextDisabled("No games found yet.");
-                ImGui::TextWrapped("Build one from the editor (File > Build Game), then put it "
-                                   "next to the launcher or in a 'games' folder and hit Refresh.");
+                // Empty state: a friendly centered card instead of a bare line.
+                ImGui::Dummy(ImVec2(0, 26));
+                ImGui::BeginChild("noGames", ImVec2(0, 150), true, ImGuiWindowFlags_NoScrollbar);
+                float cw = ImGui::GetContentRegionAvail().x;
+                auto center = [&](const char* s) {
+                    float tw = ImGui::CalcTextSize(s).x;
+                    ImGui::SetCursorPosX((cw - tw) * 0.5f);
+                };
+                ImGui::Dummy(ImVec2(0, 22));
+                center("No games yet");
+                ImGui::Text("No games yet");
+                ImGui::Dummy(ImVec2(0, 2));
+                center("Build one from the editor (File > Build Game), then put it next to");
+                ImGui::TextDisabled("Build one from the editor (File > Build Game), then put it next to");
+                center("the launcher or in a 'games' folder and hit Refresh.");
+                ImGui::TextDisabled("the launcher or in a 'games' folder and hit Refresh.");
+                ImGui::Dummy(ImVec2(0, 8));
+                ImGui::SetCursorPosX((cw - 170.0f) * 0.5f);
+                if (!editor.empty() && PrimaryButton("Open Editor", ImVec2(170, 36)))
+                    LaunchEditor(editor);
+                ImGui::EndChild();
             } else {
                 auto lower = [](std::string s) {
                     for (char& c : s) c = (char)std::tolower((unsigned char)c);
@@ -1043,19 +1199,23 @@ int main(int argc, char** argv) {
                     std::string path = scenes[i].string();
                     bool fav = IsFavorite(path);
                     ImGui::PushID((int)i);
-                    ImGui::BeginChild("game", ImVec2(0, 62), true);
-                    if (ImGui::IsWindowHovered()) {
-                        ImVec2 mn = ImGui::GetWindowPos();
-                        ImGui::GetWindowDrawList()->AddRect(mn,
-                            ImVec2(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y),
-                            ImGui::GetColorU32(kAccent), 12.0f, 0, 2.0f);
+                    ImGui::BeginChild("game", ImVec2(0, 64), true, ImGuiWindowFlags_NoScrollbar);
+                    HoverRing();
+                    ImGui::SetCursorPos(ImVec2(10, 10));
+                    IconTile(name, 44.0f);
+                    ImGui::SameLine();
+                    ImGui::BeginGroup();
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
+                    ImGui::Text("%s", name.c_str());
+                    if (RecentRank(path) < 3) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(kAccent, "recent");
                     }
-                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-                    ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", name.c_str());
                     ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
+                    ImGui::EndGroup();
                     // Right-aligned: favorite star, Folder, Play.
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - (36 + 82 + 80 + 20));
-                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
+                    ImGui::SetCursorPosY(12.0f);
                     ImGui::PushStyleColor(ImGuiCol_Text,
                         fav ? ImVec4(1.0f, 0.80f, 0.25f, 1) : ImVec4(0.55f, 0.58f, 0.65f, 1));
                     if (ImGui::Button("*", ImVec2(36, 40))) { ToggleFavorite(path); SavePrefs(); }
@@ -1064,9 +1224,10 @@ int main(int argc, char** argv) {
                     ImGui::SameLine();
                     if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(scenes[i].parent_path().string());
                     ImGui::SameLine();
-                    if (ImGui::Button("Play", ImVec2(80, 40))) {
+                    if (PrimaryButton("Play", ImVec2(80, 40))) {
                         Launch(player, path);
                         RecordPlayed(path); SavePrefs();
+                        Toast(std::string("Playing ") + name);
                     }
                     ImGui::EndChild();
                     ImGui::PopID();
@@ -1102,20 +1263,20 @@ int main(int argc, char** argv) {
                 ++cShown;
                 std::string cpath = scenes[i].string();
                 ImGui::PushID((int)(i + 5000));
-                ImGui::BeginChild("citem", ImVec2(0, 62), true);
-                if (ImGui::IsWindowHovered()) {
-                    ImVec2 mn = ImGui::GetWindowPos();
-                    ImGui::GetWindowDrawList()->AddRect(mn,
-                        ImVec2(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y),
-                        ImGui::GetColorU32(kAccent), 12.0f, 0, 2.0f);
-                }
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-                ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", scenes[i].filename().string().c_str());
+                ImGui::BeginChild("citem", ImVec2(0, 64), true, ImGuiWindowFlags_NoScrollbar);
+                HoverRing();
+                ImGui::SetCursorPos(ImVec2(10, 10));
+                IconTile(scenes[i].filename().string(), 44.0f);
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
+                ImGui::Text("%s", scenes[i].filename().string().c_str());
                 ImGui::TextDisabled("%s", croot.filename().string().c_str());
+                ImGui::EndGroup();
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - (80 + 82 + 82 + 24));
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
+                ImGui::SetCursorPosY(12.0f);
                 ImGui::BeginDisabled(player.empty());
-                if (ImGui::Button("Play", ImVec2(80, 40))) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+                if (PrimaryButton("Play", ImVec2(80, 40))) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
                 if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(croot.string());
@@ -1162,18 +1323,18 @@ int main(int argc, char** argv) {
                     continue;
                 ++mShown;
                 ImGui::PushID(t.name);
-                ImGui::BeginChild(t.name, ImVec2(0, 70), true);
-                if (ImGui::IsWindowHovered()) {
-                    ImVec2 mn = ImGui::GetWindowPos();
-                    ImGui::GetWindowDrawList()->AddRect(mn,
-                        ImVec2(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y),
-                        ImGui::GetColorU32(kAccent), 12.0f, 0, 2.0f);
-                }
+                ImGui::BeginChild(t.name, ImVec2(0, 66), true, ImGuiWindowFlags_NoScrollbar);
+                HoverRing();
+                ImGui::SetCursorPos(ImVec2(10, 11));
+                IconTile(t.name, 44.0f);
+                ImGui::SameLine();
+                ImGui::BeginGroup();
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-                ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.95f, 1.0f), "%s", t.name);
+                ImGui::Text("%s", t.name);
                 ImGui::TextDisabled("%s", t.desc);
+                ImGui::EndGroup();
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 6);
+                ImGui::SetCursorPosY(11.0f);
                 ImGui::BeginDisabled(editor.empty());
                 if (ImGui::Button("Open", ImVec2(90, 44))) LaunchEditor(editor, t.tmpl);
                 ImGui::EndDisabled();
@@ -1484,6 +1645,8 @@ int main(int argc, char** argv) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.97f, 1.0f, alpha));
             ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(kAccent.x, kAccent.y, kAccent.z, alpha));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
             if (ImGui::Begin("##toast", nullptr,
                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
@@ -1491,7 +1654,7 @@ int main(int argc, char** argv) {
                 ImGui::TextUnformatted(g_toastMsg.c_str());
             }
             ImGui::End();
-            ImGui::PopStyleVar();
+            ImGui::PopStyleVar(3);
             ImGui::PopStyleColor(2);
         }
 

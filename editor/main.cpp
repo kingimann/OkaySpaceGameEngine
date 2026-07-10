@@ -12033,8 +12033,24 @@ static void DrawAnimatorGraph(EditorState& ed) {
         int cd = (int)tr.cond;
         if (ImGui::Combo("Condition##ag", &cd, kConds, 6)) { tr.cond = (AnimStateMachine::Cond)cd; ed.dirty = true; }
         if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
-            char pb[48]; std::snprintf(pb, sizeof(pb), "%s", tr.param.c_str());
-            if (ImGui::InputText("Parameter##ag", pb, sizeof(pb))) { tr.param = pb; ed.dirty = true; }
+            // Prefer picking from the DECLARED parameter list (see below);
+            // free-typing still works for undeclared names.
+            int wantType = (tr.cond == AnimStateMachine::Cond::Trigger) ? 2
+                         : (tr.cond == AnimStateMachine::Cond::BoolTrue ||
+                            tr.cond == AnimStateMachine::Cond::BoolFalse) ? 1 : 0;
+            bool anyOfType = false;
+            for (const auto& p : sm->params) if (p.type == wantType) { anyOfType = true; break; }
+            if (anyOfType) {
+                if (ImGui::BeginCombo("Parameter##ag", tr.param.empty() ? "(pick)" : tr.param.c_str())) {
+                    for (const auto& p : sm->params)
+                        if (p.type == wantType &&
+                            ImGui::Selectable(p.name.c_str(), tr.param == p.name)) { tr.param = p.name; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+            } else {
+                char pb[48]; std::snprintf(pb, sizeof(pb), "%s", tr.param.c_str());
+                if (ImGui::InputText("Parameter##ag", pb, sizeof(pb))) { tr.param = pb; ed.dirty = true; }
+            }
         }
         if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess)
             if (ImGui::DragFloat("Value##ag", &tr.value, 0.05f)) ed.dirty = true;
@@ -12058,6 +12074,34 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 if (ImGui::Selectable(st.name.c_str(), sm->entry == st.name)) { sm->entry = st.name; ed.dirty = true; }
             ImGui::EndCombo();
         }
+        // ---- Parameters (Unity's Animator list): declare once, pick from
+        //      dropdowns in transitions; live values shown in Play mode. ----
+        ImGui::Separator();
+        ImGui::TextDisabled("Parameters:");
+        static const char* kPTypes[] = {"Float", "Bool", "Trigger"};
+        int delP = -1;
+        for (int pi = 0; pi < (int)sm->params.size(); ++pi) {
+            AnimStateMachine::Param& p = sm->params[pi];
+            ImGui::PushID(pi);
+            ImGui::SetNextItemWidth(96);
+            char pb[40]; std::snprintf(pb, sizeof(pb), "%s", p.name.c_str());
+            if (ImGui::InputText("##pn", pb, sizeof(pb))) { p.name = pb; ed.dirty = true; }
+            ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+            if (ImGui::Combo("##pt", &p.type, kPTypes, 3)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ed.isPlaying()) {
+                if (p.type == 0)      ImGui::TextDisabled("%.2f", sm->GetFloat(p.name));
+                else if (p.type == 1) ImGui::TextDisabled(sm->GetBool(p.name) ? "true" : "false");
+                else                  { if (ImGui::SmallButton("fire##pf")) sm->SetTrigger(p.name); }
+            } else if (ImGui::SmallButton("x##pd")) delP = pi;
+            ImGui::PopID();
+        }
+        if (delP >= 0) { ed.PushUndo(); sm->params.erase(sm->params.begin() + delP); ed.dirty = true; }
+        if (ImGui::SmallButton("+ Float##pa"))   { ed.PushUndo(); sm->params.push_back({"param", 0}); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+ Bool##pb"))    { ed.PushUndo(); sm->params.push_back({"flag", 1}); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+ Trigger##pc")) { ed.PushUndo(); sm->params.push_back({"go", 2}); ed.dirty = true; }
         if (ed.isPlaying()) {
             ImGui::Separator();
             ImGui::TextDisabled("Set from scripts:");

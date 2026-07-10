@@ -420,6 +420,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  animsmpos " << asm2->states.size();
         for (const auto& st : asm2->states) out << " " << st.nx << " " << st.ny;
         out << "\n";
+        if (!asm2->params.empty()) {
+            out << "  animsmparams " << asm2->params.size();
+            for (const auto& p : asm2->params) out << " " << Quote(p.name) << " " << p.type;
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -2120,6 +2125,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             st.transitions.push_back(std::move(tr));
                         }
                         sm2->states.push_back(std::move(st));
+                    }
+                } else if (field == "animsmparams") {
+                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n; ++i) {
+                        AnimStateMachine::Param p;
+                        p.name = ReadQuoted(in); in >> p.type;
+                        if (sm2) sm2->params.push_back(std::move(p));
                     }
                 } else if (field == "animsmpos") {
                     // Animator graph node positions (index-matched to animsm's states).

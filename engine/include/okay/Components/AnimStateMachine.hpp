@@ -51,6 +51,13 @@ public:
     std::vector<State> states;
     std::string entry;              ///< starting state ("" = first state)
 
+    /// Declared parameters (Unity's Animator parameter list): purely for the
+    /// editor — transitions pick from this list instead of retyping names, and
+    /// Play mode shows their live values. The runtime maps stay name-keyed, so
+    /// undeclared names still work from scripts. Serialized.
+    struct Param { std::string name; int type = 0; };   ///< type: 0 float, 1 bool, 2 trigger
+    std::vector<Param> params;
+
     // ---- Parameters (runtime; set from gameplay) ----
     void SetFloat(const std::string& name, float v)  { m_floats[name] = v; }
     void SetBool(const std::string& name, bool b)    { m_bools[name] = b; }

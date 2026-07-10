@@ -94,6 +94,10 @@ public:
     float fallResetY = -100.0f;
     /// Max step height the controller climbs automatically (stairs/curbs). 0 = off.
     float stepOffset = 0.35f;
+    /// Steepest terrain slope (degrees) the player can stand on / climb; on
+    /// steeper ground the uphill velocity is cancelled and the body slides
+    /// back down (Unity's slope limit). 0 = no limit.
+    float slopeLimit = 50.0f;
     void Start() override {
         ApplyBodyVisibility();
         if (lockCursor) Cursor::Capture(true);   // hide + lock for mouse-look
@@ -229,6 +233,19 @@ public:
             transform->Translate(dir * (speed * dt));
             if (gameObject && gameObject->scene())
                 ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
+        }
+        // Slope limit: on terrain steeper than slopeLimit, cancel the uphill
+        // velocity component and accelerate a downhill slide.
+        if (rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
+            Vec3 n = rb->groundNormal;
+            float hl = std::sqrt(n.x * n.x + n.z * n.z);
+            if (hl > 1e-4f) {
+                Vec3 dh{n.x / hl, 0.0f, n.z / hl};                       // downhill direction
+                float up = -(rb->velocity.x * dh.x + rb->velocity.z * dh.z);   // uphill speed
+                if (up > 0.0f) { rb->velocity.x += dh.x * up; rb->velocity.z += dh.z * up; }
+                rb->velocity.x += dh.x * 18.0f * dt;                     // slide
+                rb->velocity.z += dh.z * 18.0f * dt;
+            }
         }
         // Stairs: step up onto low obstacles instead of grinding against them.
         if (rb && grounded && moving && gameObject && gameObject->scene())

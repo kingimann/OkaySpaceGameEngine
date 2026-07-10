@@ -57,6 +57,10 @@ public:
     /// collider, so it produces no collision contacts). Controllers read it as a
     /// ground signal so you can jump, refill jumps, etc. while standing on terrain.
     bool     groundedOnTerrain = false;
+    /// World-space normal of the terrain surface under the body (set with
+    /// groundedOnTerrain by the heightmap pass; Up when airborne/off-terrain).
+    /// Controllers use it for slope limits (slide down too-steep hills).
+    Vec3     groundNormal{0.0f, 1.0f, 0.0f};
 
     /// World position at the end of the previous physics step — used for swept
     /// (continuous) voxel collision so a fast-moving body can't tunnel through a

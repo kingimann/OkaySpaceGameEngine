@@ -519,7 +519,10 @@ void Physics3D::Step(Scene& scene, float dt) {
     // Clear the per-frame terrain-grounded flag on every body first, so both the
     // heightmap and the voxel pass below can set it (and it falls back to false
     // when a body is airborne over either kind of terrain).
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) rb->groundedOnTerrain = false;
+    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+        rb->groundedOnTerrain = false;
+        rb->groundNormal = Vec3{0.0f, 1.0f, 0.0f};
+    }
 
     auto terrains = scene.FindObjectsOfType<Terrain>();
     if (!terrains.empty()) {
@@ -552,7 +555,10 @@ void Physics3D::Step(Scene& scene, float dt) {
                 // Resting on (or just above) the surface counts as grounded, so a
                 // player standing on terrain can jump repeatedly. A small skin
                 // tolerance avoids flicker from the per-frame gravity nudge.
-                if (pos.y <= targetY + 0.05f) rb->groundedOnTerrain = true;
+                if (pos.y <= targetY + 0.05f) {
+                    rb->groundedOnTerrain = true;
+                    rb->groundNormal = l2w.MultiplyVector(terr->NormalAt(lx, lz)).Normalized();
+                }
                 if (pos.y < targetY) {                      // sank into the ground -> lift out
                     t->localPosition.y += (targetY - pos.y);
 

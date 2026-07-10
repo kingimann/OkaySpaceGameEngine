@@ -37,6 +37,9 @@ public:
     float fallResetY = -100.0f;
     /// Max step height the controller climbs automatically (stairs/curbs). 0 = off.
     float stepOffset = 0.35f;
+    /// Steepest terrain slope (degrees) standable; steeper ground slides the
+    /// body back down. 0 = no limit.
+    float slopeLimit = 50.0f;
 
     void Start() override {
         if (footIK) AttachCharacterFootIK(gameObject);
@@ -73,6 +76,18 @@ public:
             rb->velocity.z = Mathf::MoveTowards(rb->velocity.z, tz, rate * dt);
             if (canJump && Input::GetKeyDown(' ') && grounded)
                 rb->velocity.y = jumpForce;
+            // Slope limit: too-steep terrain cancels uphill velocity and slides.
+            if (slopeLimit > 0.0f && (grounded || rb->groundedOnTerrain) && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
+                Vec3 n = rb->groundNormal;
+                float hl = std::sqrt(n.x * n.x + n.z * n.z);
+                if (hl > 1e-4f && grounded) {
+                    Vec3 dh{n.x / hl, 0.0f, n.z / hl};
+                    float up = -(rb->velocity.x * dh.x + rb->velocity.z * dh.z);
+                    if (up > 0.0f) { rb->velocity.x += dh.x * up; rb->velocity.z += dh.z * up; }
+                    rb->velocity.x += dh.x * 18.0f * dt;
+                    rb->velocity.z += dh.z * 18.0f * dt;
+                }
+            }
             // Stairs: step up onto low obstacles instead of grinding against them.
             if (grounded && moving && gameObject && gameObject->scene())
                 TryStepUp(*gameObject->scene(), gameObject, rb, {tx, 0.0f, tz}, grounded, moving, stepOffset);

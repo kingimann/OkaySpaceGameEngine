@@ -8545,6 +8545,28 @@ void DrawScriptEditor(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to open the Problems panel");
         }
 
+        // F2 / Shift+F2 — jump to the next / previous problem line (errors and
+        // warnings together, Rider-style), wrapping around the file.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            !(ImGui::IsAnyItemActive() && ImGui::GetIO().WantTextInput) &&
+            ImGui::IsKeyPressed(ImGuiKey_F2, false) && (!s_diags.empty() || !s_warns.empty())) {
+            std::vector<int> lines;
+            for (const auto& d : s_diags) if (d.line > 0) lines.push_back(d.line);
+            for (const auto& w : s_warns) if (w.line > 0) lines.push_back(w.line);
+            std::sort(lines.begin(), lines.end());
+            lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+            if (!lines.empty()) {
+                int cur = caret.line, target = -1;
+                if (!ImGui::GetIO().KeyShift) {
+                    for (int ln : lines) if (ln > cur) { target = ln; break; }
+                    if (target < 0) target = lines.front();
+                } else {
+                    for (int ln : lines) if (ln < cur) target = ln;
+                    if (target < 0) target = lines.back();
+                }
+                jumpTo(target);
+            }
+        }
         // Problems panel: a collapsible list of every error and warning; each row
         // jumps to its line. Auto-hides when the source is clean.
         if (!s_diags.empty() || !s_warns.empty()) {

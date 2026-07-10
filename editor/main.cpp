@@ -8128,6 +8128,41 @@ void DrawScriptEditor(EditorState& ed) {
                 if (h != s_acLastHash) { s_acLastHash = h; s_acLastEdit = ImGui::GetTime(); }
             }
             bool recentlyTyping = (ImGui::GetTime() - s_acLastEdit) < 4.0;
+            // ---- Signature help: caret inside f( ... ) of a known builtin shows
+            // its parameter list + doc in a hint above the caret (IDE-style).
+            if (!inCommentOrString && recentlyTyping && prefix.empty()) {
+                int depth = 0, callAt = -1;
+                for (int k = p - 1; k >= 0 && t[k] != '\n' && t[k] != ';'; --k) {
+                    char c = t[k];
+                    if (c == ')') ++depth;
+                    else if (c == '(') { if (depth == 0) { callAt = k; break; } --depth; }
+                }
+                if (callAt > 0) {
+                    int we = callAt, wsb = callAt;
+                    while (wsb > 0 && isWord(t[wsb - 1])) --wsb;
+                    std::string fn(t + wsb, t + we);
+                    const std::string* sg = fn.empty() ? nullptr : ScriptSignature(fn);
+                    if (sg) {
+                        ImVec2 hp = te.CaretScreenPosBelow();
+                        ImGui::SetNextWindowPos(ImVec2(hp.x, hp.y - ImGui::GetTextLineHeightWithSpacing() * 2.4f));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(34, 34, 40, 245));
+                        if (ImGui::Begin("##sighelp", nullptr,
+                                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                ImGuiWindowFlags_NoSavedSettings)) {
+                            ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.70f, 1.0f), "%s", sg->c_str());
+                            if (const std::string* dsc = ScriptDoc(fn)) {
+                                ImGui::PushTextWrapPos(340.0f);
+                                ImGui::TextDisabled("%s", dsc->c_str());
+                                ImGui::PopTextWrapPos();
+                            }
+                        }
+                        ImGui::End();
+                        ImGui::PopStyleColor();
+                    }
+                }
+            }
             if (!g_acDismiss && !inCommentOrString && recentlyTyping &&
                 (memberMode || prefix.size() >= 2)) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);

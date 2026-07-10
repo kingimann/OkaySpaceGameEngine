@@ -49,6 +49,8 @@ public:
     /// behind a wall walk AROUND it, Diablo/RuneScape style.
     bool  usePathfinding = true;
     float repathInterval = 0.6f;
+    /// Spawn a brief expanding ring at the clicked point (in-game feedback).
+    bool  clickMarker = true;
 
     // ---- Follow camera (RuneScape-style: trails the player, looks at it) ----
     bool  followCamera   = true;    // position the main Camera each frame
@@ -88,8 +90,12 @@ public:
                                   : Input::GetMouseButtonDown(mouseButton);
         if (clicked) {
             Vec3 hit;
-            if (GroundPick(scene, hit)) { m_dest = hit; m_hasDest = true; }
+            if (GroundPick(scene, hit)) {
+                m_dest = hit; m_hasDest = true;
+                if (clickMarker) ShowMarker(scene, hit);
+            }
         }
+        TickMarker(scene, dt);
         if (!m_hasDest) { Animate(false, false); StopXZ(); return; }
 
         // ---- Steer toward the destination on the XZ plane ----
@@ -200,7 +206,38 @@ public:
     const std::vector<Vec3>& CurrentPath() const { return m_path; }
     int CurrentPathIndex() const { return m_pathIdx; }
 
+    // ---- Click marker: a flat unlit ring that expands and fades ~0.5s ------
+    void ShowMarker(Scene& scene, const Vec3& at) {
+        if (!m_marker) {
+            m_marker = scene.Find("__ClickMarker");
+            if (!m_marker) {
+                m_marker = scene.CreateGameObject("__ClickMarker");
+                auto* mr = m_marker->AddComponent<MeshRenderer>();
+                mr->mesh = Mesh::Disc(0.5f, 28);
+                mr->unlit = true;
+                mr->color = Color::FromBytes(120, 220, 140);
+            }
+        }
+        m_marker->active = true;
+        m_marker->transform->SetPosition({at.x, at.y + 0.03f, at.z});
+        m_markerT = 0.0f;
+    }
+    void TickMarker(Scene&, float dt) {
+        if (!m_marker || !m_marker->active) return;
+        m_markerT += dt;
+        const float dur = 0.55f;
+        if (m_markerT >= dur) { m_marker->active = false; return; }
+        float t = m_markerT / dur;
+        float s = 0.4f + 0.8f * t;               // expand
+        m_marker->transform->localScale = {s, 1.0f, s};
+        if (auto* mr = m_marker->GetComponent<MeshRenderer>())
+            mr->color.a = 1.0f - t;              // fade out
+    }
+
 private:
+    GameObject* m_marker = nullptr;   // shared transient ring (per scene)
+    float m_markerT = 1e9f;
+
     std::vector<Vec3> m_path;   // A* route to the destination
     int   m_pathIdx = 0;
     float m_repath  = 0.0f;

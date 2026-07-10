@@ -1008,6 +1008,7 @@ bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
+bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
 bool g_showUIOverlay = false;    // Scene view: overlay the screen-space UI (Canvas) on the 3D/2D scene. OFF by default so editing 3D objects / 2D sprites isn't obscured by the HUD; edit UI in the dedicated UI Only mode / UI tab, or toggle this on. (The Game view always shows UI regardless.)
@@ -1202,6 +1203,7 @@ void LoadSettings() {
         else if (k == "accent") g_accent = (v < 0 ? 0 : (v >= kAccentCount ? 0 : v));
         else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
+        else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
@@ -1237,6 +1239,7 @@ void SaveSettings() {
       << "accent " << g_accent << "\n"
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
+      << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
@@ -26704,6 +26707,9 @@ void DrawGameView(EditorState& ed) {
     // FPS testing: grab the mouse so look controls work in the Game tab.
     ImGui::SameLine();
     if (ImGui::Checkbox("Capture mouse", &g_gameMouseCapture)) {}
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Stats", &g_gameStatsOverlay)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("FPS / frame time / object + triangle counts, overlaid on the view");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nPress Esc to release. Auto-engages if the game locks the cursor.");
     if (ed.isPlaying() && g_gameMouseCapture) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)"); }
 
@@ -26798,6 +26804,27 @@ void DrawGameView(EditorState& ed) {
     } else {
         dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(180, 180, 190, 255),
                     "Game (press Play)");
+    }
+    // In-view Stats overlay (Unity's Game-view Stats): FPS, frame time, object
+    // and triangle counts, drawn over the running game's top-right corner.
+    if (g_gameStatsOverlay) {
+        int objs = 0, tris = 0, active3d = 0;
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up) continue;
+            ++objs;
+            if (!up->active) continue;
+            if (auto* mr = up->GetComponent<MeshRenderer>())
+                if (mr->enabled && !mr->mesh.triangles.empty()) { ++active3d; tris += (int)mr->mesh.triangles.size() / 3; }
+        }
+        char st[160];
+        std::snprintf(st, sizeof(st), "%.0f FPS  (%.2f ms)\n%d objects\n%d meshes  %dk tris",
+                      ImGui::GetIO().Framerate, 1000.0f / (ImGui::GetIO().Framerate > 1e-3f ? ImGui::GetIO().Framerate : 1.0f),
+                      objs, active3d, tris / 1000);
+        ImVec2 ts2 = ImGui::CalcTextSize(st);
+        ImVec2 p1(canvasEnd.x - ts2.x - 14, canvasPos.y + 6);
+        dl->AddRectFilled(ImVec2(p1.x - 6, p1.y - 4), ImVec2(p1.x + ts2.x + 6, p1.y + ts2.y + 4),
+                          IM_COL32(0, 0, 0, 160), 4.0f);
+        dl->AddText(p1, IM_COL32(225, 228, 235, 235), st);
     }
     ImGui::End();
 }

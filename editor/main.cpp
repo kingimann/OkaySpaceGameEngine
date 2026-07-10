@@ -8103,7 +8103,33 @@ void DrawScriptEditor(EditorState& ed) {
             if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; g_acDismiss = false; }
             if (acKeyEsc) g_acDismiss = true;
             g_acCount = 0;
-            if (!g_acDismiss && (memberMode || prefix.size() >= 2)) {
+            // NEVER pop suggestions inside a comment or string literal — scanning
+            // the caret's line is enough for both ("//", Lua "--", quotes). The
+            // popup steals Tab/Enter, so popping on comments broke plain typing.
+            bool inCommentOrString = false;
+            {
+                int ls2 = p; while (ls2 > 0 && t[ls2 - 1] != '\n') --ls2;
+                bool inStr = false; char q = 0;
+                bool isLua = sc->Language() == "lua";
+                for (int k = ls2; k < p && !inCommentOrString; ++k) {
+                    char c = t[k];
+                    if (inStr) { if (c == q && (k == 0 || t[k - 1] != '\\')) inStr = false; continue; }
+                    if (c == '"' || c == '\'') { inStr = true; q = c; continue; }
+                    if (c == '/' && k + 1 < p && t[k + 1] == '/') inCommentOrString = true;
+                    if (isLua && c == '-' && k + 1 < p && t[k + 1] == '-') inCommentOrString = true;
+                }
+                if (inStr) inCommentOrString = true;
+            }
+            // Only pop while actually TYPING: clicking the caret into an existing
+            // word (reading/navigating) shouldn't open a popup that grabs keys.
+            static std::size_t s_acLastHash = 0; static double s_acLastEdit = -100.0;
+            {
+                std::size_t h = std::hash<std::string>{}(std::string(t));
+                if (h != s_acLastHash) { s_acLastHash = h; s_acLastEdit = ImGui::GetTime(); }
+            }
+            bool recentlyTyping = (ImGui::GetTime() - s_acLastEdit) < 4.0;
+            if (!g_acDismiss && !inCommentOrString && recentlyTyping &&
+                (memberMode || prefix.size() >= 2)) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
                 struct Hit { const std::string* w; bool fuzzy; int score; };
                 std::vector<Hit> exact, ci, fuzz;
@@ -8122,9 +8148,12 @@ void DrawScriptEditor(EditorState& ed) {
                 std::sort(fuzz.begin(), fuzz.end(), [](const Hit& a, const Hit& b) {
                     return a.score != b.score ? a.score > b.score : a.w->size() < b.w->size(); });
                 std::vector<Hit> hits = exact;
-                for (auto& h : ci)   { if (hits.size() >= 12) break; hits.push_back(h); }
-                for (auto& h : fuzz) { if (hits.size() >= 12) break; hits.push_back(h); }
-                if (hits.size() > 12) hits.resize(12);
+                for (auto& h : ci) { if (hits.size() >= 8) break; hits.push_back(h); }
+                // Fuzzy matches are a FALLBACK only: when real prefix matches
+                // exist, fuzzy noise ("spr" -> set_parent) just buries them.
+                if (hits.empty())
+                    for (auto& h : fuzz) { if (hits.size() >= 8) break; hits.push_back(h); }
+                if (hits.size() > 8) hits.resize(8);
                 if (!hits.empty()) {
                     g_acCount = (int)hits.size();
                     if (acKeyUp)   g_acIndex = (g_acIndex - 1 + g_acCount) % g_acCount;
@@ -8273,8 +8302,12 @@ void DrawScriptEditor(EditorState& ed) {
         // active (the widget itself never activates an item, so typing in the code is
         // fine; typing in the find/goto boxes blocks these).
         {
+            // Chords fire while the window (or its code child) is focused. Only a
+            // TEXT input owning the keyboard blocks them (find bar, rename) — the
+            // code widget itself never claims an ActiveID, and a dragged slider
+            // or pressed button shouldn't disable keyboard shortcuts.
             bool chordOK = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-                           !ImGui::IsAnyItemActive();
+                           !(ImGui::IsAnyItemActive() && ImGui::GetIO().WantTextInput);
             ImGuiIO& cio = ImGui::GetIO();
             int selL0 = te.SelStart().mLine, selL1 = te.SelEnd().mLine;
             if (selL1 < selL0) std::swap(selL0, selL1);

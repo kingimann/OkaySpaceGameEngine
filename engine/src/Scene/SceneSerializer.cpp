@@ -1058,7 +1058,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* c = go->GetComponent<Spawner>()) {
         out << "  spawner " << Quote(c->templateName) << " " << c->interval << " " << c->maxAlive
             << " " << c->totalToSpawn << " " << c->spawnRadius << " " << c->startDelay
-            << " " << (c->deactivateTemplate ? 1 : 0) << "\n";
+            << " " << (c->deactivateTemplate ? 1 : 0)
+            // Wave fields appended (numeric-peek guarded on read, old scenes fine).
+            << " " << c->count << " " << c->waves << " " << c->waveDelay
+            << " " << (c->autoStart ? 1 : 0) << " " << Quote(c->prefabPath) << "\n";
     }
     if (auto* c = go->GetComponent<CraftingMenu>()) {
         out << "  craftmenu " << (int)(unsigned char)c->toggleKey << " " << (c->open ? 1 : 0)
@@ -1209,12 +1212,6 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* jp = go->GetComponent<JumpPad>()) {
         out << "  jumppad " << jp->force << " " << (jp->useObjectUp ? 1 : 0) << " "
             << jp->forwardBoost << " " << jp->cooldown << " " << Quote(jp->triggerTag) << "\n";
-    }
-    if (auto* sw = go->GetComponent<Spawner>()) {
-        out << "  spawner " << sw->count << " " << sw->interval << " " << sw->waves << " "
-            << sw->waveDelay << " " << sw->radius << " " << sw->maxAlive << " "
-            << (sw->autoStart ? 1 : 0) << " " << (sw->hideTemplate ? 1 : 0) << " "
-            << Quote(sw->templateName) << " " << Quote(sw->prefabPath) << "\n";
     }
     if (auto* tz = go->GetComponent<TriggerZone>()) {
         out << "  triggerzone " << tz->action << " " << Quote(tz->varName) << " " << tz->amount
@@ -3029,6 +3026,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> c->interval >> c->maxAlive >> c->totalToSpawn >> c->spawnRadius
                        >> c->startDelay >> dt;
                     c->deactivateTemplate = (dt != 0);
+                    // Trailing wave fields (newer scenes only).
+                    in >> std::ws;
+                    if (std::isdigit((unsigned char)in.peek())) {
+                        int as = 1;
+                        in >> c->count >> c->waves >> c->waveDelay >> as;
+                        c->autoStart = (as != 0);
+                        in >> std::ws;
+                        if (in.peek() == '"') c->prefabPath = ReadQuoted(in);
+                    }
                 } else if (field == "craftmenu") {
                     auto* c = go->AddComponent<CraftingMenu>();
                     int key = 'c', op = 0, anch = 0;
@@ -3245,15 +3251,6 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> jp->force >> uo >> jp->forwardBoost >> jp->cooldown;
                     jp->useObjectUp = (uo != 0);
                     jp->triggerTag = ReadQuoted(in);
-                } else if (field == "spawner") {
-                    auto* sw = go->AddComponent<Spawner>();
-                    int as = 1, ht = 1;
-                    in >> sw->count >> sw->interval >> sw->waves >> sw->waveDelay
-                       >> sw->radius >> sw->maxAlive >> as >> ht;
-                    sw->autoStart = (as != 0);
-                    sw->hideTemplate = (ht != 0);
-                    sw->templateName = ReadQuoted(in);
-                    sw->prefabPath = ReadQuoted(in);
                 } else if (field == "triggerzone") {
                     auto* tz = go->AddComponent<TriggerZone>();
                     int once = 1; in >> tz->action;

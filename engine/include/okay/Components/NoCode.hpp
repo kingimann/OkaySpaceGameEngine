@@ -20,15 +20,9 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn / HealOn
 #include "okay/Components/ActionList.hpp"            // ActionList::Vars() (score, flags)
-#include "okay/Scene/SceneSerializer.hpp"            // Spawner: clone / prefab instantiate
 #include "okay/Core/Game.hpp"
 #include "okay/Math/Mathf.hpp"
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
 #include <string>
-#include <utility>
-#include <vector>
 
 namespace okay {
 
@@ -214,135 +208,6 @@ public:
 
 private:
     float m_cool = 0.0f;
-};
-
-/// Spawner — waves of enemies, pickups or props with zero scripting. Point it at
-/// a template object in the scene (built and tuned in place, hidden at play
-/// start) or a .okayprefab file, and it spawns copies around itself: `count` per
-/// wave, one every `interval` seconds, pausing `waveDelay` between waves, with a
-/// live cap (`maxAlive`) so endless spawners can't flood the scene. Broadcasts
-/// `spawner_spawn` / `spawner_wave` / `spawner_done` for ActionLists, and
-/// scripts can drive it with `spawner_start(name)` / `spawner_stop(name)`.
-class Spawner : public Behaviour {
-public:
-    std::string templateName;      ///< scene object to clone (takes priority over the prefab)
-    std::string prefabPath;        ///< .okayprefab to instantiate when no template is set
-    int   count     = 3;           ///< objects per wave
-    float interval  = 1.0f;        ///< seconds between spawns within a wave
-    int   waves     = 0;           ///< how many waves to run (0 = endless)
-    float waveDelay = 4.0f;        ///< pause between waves
-    float radius    = 3.0f;        ///< spawn scatter radius around this object (flat XZ disc)
-    int   maxAlive  = 8;           ///< cap on live spawned objects (0 = unlimited)
-    bool  autoStart = true;        ///< begin as soon as the game starts
-    bool  hideTemplate = true;     ///< deactivate the template object itself in play
-
-    void StartWaves() { m_running = true; }
-    void StopWaves()  { m_running = false; }
-    bool Running()   const { return m_running; }
-    int  WavesDone() const { return m_wavesDone; }
-    /// Live objects this spawner created (destroyed ones are pruned).
-    int AliveCount() {
-        Prune();
-        return (int)m_spawned.size();
-    }
-
-    void Start() override {
-        m_running = autoStart;
-        m_left = count; m_timer = 0.0f; m_wavesDone = 0;
-        m_spawned.clear();
-        if (transform) {
-            Vec3 p = transform->Position();
-            m_seed = (uint32_t)(std::fabs(p.x) * 73856093.0f + std::fabs(p.z) * 19349663.0f) + 7u;
-        }
-        if (hideTemplate && !templateName.empty())
-            if (GameObject* t = Template())
-                if (t != gameObject) t->active = false;
-    }
-
-    void Update(float dt) override {
-        if (!m_running || !gameObject || !gameObject->scene()) return;
-        if (waves > 0 && m_wavesDone >= waves) return;
-        m_timer -= dt;
-        if (m_timer > 0.0f) return;
-        if (maxAlive > 0 && AliveCount() >= maxAlive) { m_timer = 0.25f; return; }   // wait for room
-        if (!SpawnOne()) { m_timer = 1.0f; return; }   // missing template/prefab: retry slowly
-        if (--m_left <= 0) {
-            ++m_wavesDone;
-            Broadcast("spawner_wave");
-            if (waves > 0 && m_wavesDone >= waves) {
-                m_running = false;
-                Broadcast("spawner_done");
-                return;
-            }
-            m_left = count; m_timer = waveDelay;
-        } else {
-            m_timer = interval;
-        }
-    }
-
-private:
-    GameObject* Template() const {
-        Scene* s = gameObject ? gameObject->scene() : nullptr;
-        return (s && !templateName.empty()) ? s->Find(templateName) : nullptr;
-    }
-
-    bool SpawnOne() {
-        Scene& sc = *gameObject->scene();
-        GameObject* go = nullptr;
-        if (!templateName.empty()) {
-            if (GameObject* t = Template())
-                if (t != gameObject) go = SceneSerializer::Instantiate(sc, *t);
-        } else if (!prefabPath.empty()) {
-            go = SceneSerializer::InstantiateFromFile(sc, prefabPath, nullptr);
-        }
-        if (!go) return false;
-        go->active = true;                       // the template may be hidden
-        if (go->transform && transform) {
-            float a = Rand() * 6.2831853f;
-            float r = std::sqrt(Rand()) * std::fmax(radius, 0.0f);    // even disc scatter
-            Vec3 p = transform->Position();
-            go->transform->SetPosition({p.x + std::cos(a) * r, p.y, p.z + std::sin(a) * r});
-        }
-        m_spawned.push_back({go, 2});   // grace: adoption into the scene is deferred a frame
-        Broadcast("spawner_spawn");
-        return true;
-    }
-
-    // Drop pointers to objects no longer in the scene. Membership is checked by
-    // pointer identity against the scene's object list — spawned objects are never
-    // dereferenced after they die. Fresh spawns get a 2-tick grace period because
-    // new objects are adopted into the scene list a frame after Instantiate.
-    void Prune() {
-        Scene* s = gameObject ? gameObject->scene() : nullptr;
-        if (!s) { m_spawned.clear(); return; }
-        std::vector<std::pair<GameObject*, int>> live;
-        live.reserve(m_spawned.size());
-        for (auto& e : m_spawned) {
-            bool found = false;
-            for (const auto& o : s->Objects())
-                if (o.get() == e.first) { found = true; break; }
-            if (found) live.push_back({e.first, 0});
-            else if (e.second > 0) live.push_back({e.first, e.second - 1});
-        }
-        m_spawned.swap(live);
-    }
-
-    void Broadcast(const std::string& msg) {
-        Scene* s = gameObject ? gameObject->scene() : nullptr;
-        if (s) for (ActionList* al : s->FindObjectsOfType<ActionList>()) al->ReceiveMessage(msg);
-    }
-
-    float Rand() {
-        m_seed = m_seed * 1664525u + 1013904223u;
-        return (float)((m_seed >> 8) & 0xFFFFFF) / (float)0x1000000;
-    }
-
-    // What we created: pointer identity + adoption-grace ticks (see Prune).
-    std::vector<std::pair<GameObject*, int>> m_spawned;
-    bool  m_running = false;
-    int   m_left = 0, m_wavesDone = 0;
-    float m_timer = 0.0f;
-    uint32_t m_seed = 7u;
 };
 
 /// Trigger zone — the generic "when something enters here, do one thing" glue that

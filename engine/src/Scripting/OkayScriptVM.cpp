@@ -38,7 +38,7 @@
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
-#include "okay/Components/NoCode.hpp"         // Spawner
+#include "okay/Components/Spawner.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"

@@ -19291,12 +19291,30 @@ void DrawInspector(EditorState& ed) {
             char tn[48]; std::strncpy(tn, c->templateName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Template##spwn", tn, sizeof(tn))) { c->templateName = tn; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of a scene object to clone (hidden at play as the blueprint).");
+            { char pf[128]; std::strncpy(pf, c->prefabPath.c_str(), sizeof(pf) - 1); pf[sizeof(pf) - 1] = '\0';
+              if (ImGui::InputText("Prefab File##spwn", pf, sizeof(pf))) { c->prefabPath = pf; ed.dirty = true; }
+              if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okayprefab to spawn when no Template object is set."); }
             if (ImGui::DragFloat("Interval##spwn", &c->interval, 0.1f, 0.05f, 600.0f, "%.2f s")) ed.dirty = true;
-            if (ImGui::DragInt("Max Alive##spwn", &c->maxAlive, 0.1f, 1, 1000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds between spawns (within a wave).");
+            if (ImGui::DragInt("Max Alive##spwn", &c->maxAlive, 0.1f, 0, 1000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause spawning while this many of its spawns are alive. 0 = unlimited.");
             if (ImGui::DragInt("Total (0=endless)##spwn", &c->totalToSpawn, 0.1f, 0, 100000)) ed.dirty = true;
             if (ImGui::DragFloat("Spawn Radius##spwn", &c->spawnRadius, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns land on this disc around the spawner (green ring in the Scene view when selected).");
             if (ImGui::DragFloat("Start Delay##spwn", &c->startDelay, 0.1f, 0.0f, 600.0f, "%.2f s")) ed.dirty = true;
             if (ImGui::Checkbox("Hide Template##spwn", &c->deactivateTemplate)) ed.dirty = true;
+            ImGui::SeparatorText("Waves");
+            if (ImGui::DragInt("Count Per Wave##spwn", &c->count, 0.1f, 1, 200)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns per wave. 1 = classic steady drip (no waves).");
+            if (ImGui::DragInt("Waves (0=endless)##spwn", &c->waves, 0.1f, 0, 999)) ed.dirty = true;
+            if (ImGui::DragFloat("Wave Delay##spwn", &c->waveDelay, 0.05f, 0.0f, 300.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause between waves. 0 = just the normal Interval.");
+            if (ImGui::Checkbox("Auto Start##spwn", &c->autoStart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = arm it and start from a script with spawner_start(\"name\") or a Trigger Zone.");
+            if (ed.isPlaying())
+                ImGui::TextDisabled("%s — wave %d done, %d alive, %d spawned",
+                                    c->Running() ? "Running" : "Stopped",
+                                    c->WavesDone(), c->AliveCount(), c->Spawned());
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
@@ -19881,33 +19899,6 @@ void DrawInspector(EditorState& ed) {
               if (ImGui::InputText("Who##jp", tb, sizeof(tb))) { jp->triggerTag = tb; ed.dirty = true; }
               if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tag or name of who launches; empty = anyone."); }
             if (ImGui::SmallButton("Remove##jp")) toRemove = jp;
-        }
-    }
-    if (auto* sw = dynamic_cast<Spawner*>(curComp)) {
-        if (CompHeader("Spawner", sw, &toRemove)) {
-            ImGui::TextDisabled("Spawns copies of a scene object (or a prefab) in waves.");
-            strField("Template Object##sw", sw->templateName, "swTN");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scene object to clone — build the enemy/pickup in place, point this at it.\nHidden at Play start. Takes priority over the prefab file.");
-            strField("Prefab File##sw", sw->prefabPath, "swPF");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okayprefab to spawn when no template object is set.");
-            if (ImGui::DragInt("Count Per Wave##sw", &sw->count, 0.1f, 1, 200)) ed.dirty = true;
-            if (ImGui::DragFloat("Interval##sw", &sw->interval, 0.05f, 0.0f, 60.0f, "%.2f s")) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds between spawns within a wave.");
-            if (ImGui::DragInt("Waves##sw", &sw->waves, 0.1f, 0, 999)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many waves to run. 0 = endless.");
-            if (ImGui::DragFloat("Wave Delay##sw", &sw->waveDelay, 0.05f, 0.0f, 300.0f, "%.2f s")) ed.dirty = true;
-            if (ImGui::DragFloat("Radius##sw", &sw->radius, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn scatter disc around this object (drawn in the Scene view when selected).");
-            if (ImGui::DragInt("Max Alive##sw", &sw->maxAlive, 0.1f, 0, 500)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause spawning while this many spawned objects are alive. 0 = unlimited.");
-            if (ImGui::Checkbox("Auto Start##sw", &sw->autoStart)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = start it from a script with spawner_start(\"name\").");
-            if (ImGui::Checkbox("Hide Template In Play##sw", &sw->hideTemplate)) ed.dirty = true;
-            if (ed.isPlaying())
-                ImGui::TextDisabled("%s — waves done %d, alive %d",
-                                    sw->Running() ? "Running" : "Stopped",
-                                    sw->WavesDone(), sw->AliveCount());
-            if (ImGui::SmallButton("Remove##sw")) toRemove = sw;
         }
     }
     if (auto* tp = dynamic_cast<Teleporter*>(curComp)) {
@@ -21833,7 +21824,6 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<DamageOnTouch>(), "Damage On Touch (hazard)")) { go->AddComponent<DamageOnTouch>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<Teleporter>(), "Teleporter")) { go->AddComponent<Teleporter>(); ensureCollider(true); ed.dirty = true; }
             if (item(!go->GetComponent<JumpPad>(), "Jump Pad (launch on touch)")) { go->AddComponent<JumpPad>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Spawner>(), "Spawner (enemy / pickup waves)")) { go->AddComponent<Spawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<TriggerZone>(), "Trigger Zone (event)")) { go->AddComponent<TriggerZone>(); ensureCollider(true); ed.dirty = true; }
           } EndCat(o); }
 
@@ -24939,9 +24929,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
             // Spawner gizmo (selected): the scatter disc copies appear on.
             if (auto* sw = up->GetComponent<Spawner>()) {
-                if (ed.selected() == up.get() && sw->radius > 0.0f) {
+                if (ed.selected() == up.get() && sw->spawnRadius > 0.0f) {
                     const ImU32 scol2 = IM_COL32(140, 235, 140, 190);
-                    ring(p, Vec3{1, 0, 0}, Vec3{0, 0, 1}, sw->radius, scol2);
+                    ring(p, Vec3{1, 0, 0}, Vec3{0, 0, 1}, sw->spawnRadius, scol2);
                     line(p, Vec3{p.x, p.y + 0.6f, p.z}, scol2, 2.0f);
                 }
             }

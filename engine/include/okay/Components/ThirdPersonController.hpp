@@ -14,6 +14,7 @@
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
+#include "okay/Components/StepUp.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -110,6 +111,8 @@ public:
     /// spawn point (fell off the map / through a floor with no collider).
     /// Set to 0 to disable.
     float fallResetY = -100.0f;
+    /// Max step height the controller climbs automatically (stairs/curbs). 0 = off.
+    float stepOffset = 0.35f;
     void Start() override {
         if (footIK) AttachCharacterFootIK(gameObject);
         if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
@@ -218,6 +221,10 @@ public:
             if (gameObject && gameObject->scene())
                 ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
         }
+        // Stairs: a grounded body blocked by a LOW obstacle steps up onto it
+        // instead of grinding against the face (stepOffset = max step height).
+        if (rb && grounded && moving && gameObject && gameObject->scene())
+            TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded, moving, stepOffset);
 
         // ---- Turn the body (smoothly) ----
         // The character mesh faces -Z (engine camera/controller convention).

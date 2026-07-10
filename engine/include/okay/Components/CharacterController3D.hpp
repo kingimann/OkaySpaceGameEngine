@@ -6,6 +6,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
+#include "okay/Components/StepUp.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
@@ -34,6 +35,8 @@ public:
     /// spawn point (fell off the map / through a floor with no collider).
     /// Set to 0 to disable.
     float fallResetY = -100.0f;
+    /// Max step height the controller climbs automatically (stairs/curbs). 0 = off.
+    float stepOffset = 0.35f;
 
     void Start() override {
         if (footIK) AttachCharacterFootIK(gameObject);
@@ -70,6 +73,9 @@ public:
             rb->velocity.z = Mathf::MoveTowards(rb->velocity.z, tz, rate * dt);
             if (canJump && Input::GetKeyDown(' ') && grounded)
                 rb->velocity.y = jumpForce;
+            // Stairs: step up onto low obstacles instead of grinding against them.
+            if (grounded && moving && gameObject && gameObject->scene())
+                TryStepUp(*gameObject->scene(), gameObject, rb, {tx, 0.0f, tz}, grounded, moving, stepOffset);
         } else {
             transform->Translate({tx * dt, 0.0f, tz * dt});
         }

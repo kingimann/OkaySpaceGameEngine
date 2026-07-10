@@ -13,6 +13,7 @@
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
+#include "okay/Components/StepUp.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -91,6 +92,8 @@ public:
     /// spawn point (fell off the map / through a floor with no collider).
     /// Set to 0 to disable.
     float fallResetY = -100.0f;
+    /// Max step height the controller climbs automatically (stairs/curbs). 0 = off.
+    float stepOffset = 0.35f;
     void Start() override {
         ApplyBodyVisibility();
         if (lockCursor) Cursor::Capture(true);   // hide + lock for mouse-look
@@ -227,6 +230,9 @@ public:
             if (gameObject && gameObject->scene())
                 ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
         }
+        // Stairs: step up onto low obstacles instead of grinding against them.
+        if (rb && grounded && moving && gameObject && gameObject->scene())
+            TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded, moving, stepOffset);
 
         // ---- View bob (footstep sway) ----
         {

@@ -1181,7 +1181,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
-            << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0) << "\n";
+            << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
+            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -2516,6 +2517,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
                         in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; cm->footIK = (fik != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek())) { int pf = 1; in >> pf; cm->usePathfinding = (pf != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->repathInterval;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);

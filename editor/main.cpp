@@ -19480,6 +19480,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##ctm", &cm->driveAnimation)) ed.dirty = true;
             if (ImGui::Checkbox("Foot IK##ctm", &cm->footIK)) ed.dirty = true;
+            if (ImGui::Checkbox("Pathfinding##ctm", &cm->usePathfinding)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clicks behind walls walk AROUND them (grid A*), Diablo-style.");
             if (ImGui::Checkbox("Use Player Height##ctm", &cm->usePlayerHeight)) ed.dirty = true;
             if (!cm->usePlayerHeight)
                 if (ImGui::DragFloat("Ground Y##ctm", &cm->groundY, 0.05f)) ed.dirty = true;

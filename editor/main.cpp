@@ -25893,6 +25893,46 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
 
     ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    // ---- View-axis gizmo (top-right corner, 3D view): shows the camera
+    // orientation; CLICK an axis tip to snap to that view (Unity's view cube).
+    if (ed.view3D && canvasSize.x > 160.0f && canvasSize.y > 120.0f) {
+        float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
+        Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
+                 Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
+        Vec3 fwd = dir * -1.0f;
+        Vec3 right = Vec3::Cross(fwd, Vec3::Up).Normalized();
+        Vec3 vup = Vec3::Cross(right, fwd);
+        ImVec2 c(canvasPos.x + canvasSize.x - 46.0f, canvasPos.y + 46.0f);
+        ImDrawList* adl = ImGui::GetWindowDrawList();
+        adl->AddCircleFilled(c, 36.0f, IM_COL32(20, 20, 24, 120));
+        struct Ax { Vec3 a; ImU32 col; const char* lbl; float yaw, pitch; };
+        const Ax axes[6] = {
+            {{ 1, 0, 0}, IM_COL32(235,  80,  80, 255), "X",  90.0f,  0.0f},
+            {{-1, 0, 0}, IM_COL32(150,  60,  60, 255), "",  -90.0f,  0.0f},
+            {{ 0, 1, 0}, IM_COL32( 96, 210,  96, 255), "Y",   0.0f, 89.0f},
+            {{ 0,-1, 0}, IM_COL32( 60, 130,  60, 255), "",    0.0f,-89.0f},
+            {{ 0, 0, 1}, IM_COL32( 90, 140, 240, 255), "Z",   0.0f,  0.0f},
+            {{ 0, 0,-1}, IM_COL32( 60,  90, 150, 255), "",  180.0f,  0.0f},
+        };
+        ImVec2 mp = ImGui::GetIO().MousePos;
+        for (const Ax& ax : axes) {
+            float sx = Vec3::Dot(ax.a, right), sy = Vec3::Dot(ax.a, vup);
+            ImVec2 tip(c.x + sx * 28.0f, c.y - sy * 28.0f);
+            float depth = Vec3::Dot(ax.a, fwd);          // pointing away = dimmer
+            ImU32 col = ax.col;
+            if (depth > 0.2f) col = (col & 0x00FFFFFF) | 0x66000000;
+            adl->AddLine(c, tip, col, 2.0f);
+            float dx = mp.x - tip.x, dy = mp.y - tip.y;
+            bool hot = (dx * dx + dy * dy) < 64.0f && ImGui::IsWindowHovered();
+            adl->AddCircleFilled(tip, hot ? 7.0f : 5.0f, col);
+            if (ax.lbl[0]) adl->AddText(ImVec2(tip.x - 3.5f, tip.y - 7.0f), IM_COL32(255, 255, 255, 230), ax.lbl);
+            if (hot && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                ed.camYaw = ax.yaw; ed.camPitch = ax.pitch;
+            }
+            if (hot) ImGui::SetTooltip("Look along %c%s", depth > 0.0f ? '-' : '+',
+                                       ax.a.x != 0 ? "X" : ax.a.y != 0 ? "Y" : "Z");
+        }
+    }
     if (canvasSize.x < 50) canvasSize.x = 50;
     if (canvasSize.y < 50) canvasSize.y = 50;
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);

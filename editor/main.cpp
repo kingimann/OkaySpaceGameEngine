@@ -3790,10 +3790,12 @@ static int   g_projFilter = 0;      // 0 All,1 Scripts,2 Images,3 Scenes,4 Mater
 static int   g_projSort   = 0;      // 0 Name, 1 Type, 2 Size, 3 Date
 static int   g_projView   = 0;      // 0 grid (tiles), 1 list (rows)
 static float g_projCell   = 76.0f;  // grid tile size
+static float g_projTreeW  = 200.0f; // folder-tree pane width (drag the splitter)
 static void SaveProjectViewPrefs() {
     std::ofstream f("okay_projectview.txt");
     f << "filter " << g_projFilter << "\nsort " << g_projSort
-      << "\nview " << g_projView << "\ncell " << (int)g_projCell << "\n";
+      << "\nview " << g_projView << "\ncell " << (int)g_projCell
+      << "\ntreew " << (int)g_projTreeW << "\n";
     for (const auto& p : g_favFolders) f << "fav " << p << "\n";
 }
 static void LoadProjectViewPrefs() {
@@ -3810,6 +3812,7 @@ static void LoadProjectViewPrefs() {
             else if (k == "sort")   g_projSort   = v < 0 ? 0 : (v > 3 ? 0 : v);
             else if (k == "view")   g_projView   = v != 0 ? 1 : 0;
             else if (k == "cell")   g_projCell   = v < 48 ? 48.0f : (v > 128 ? 128.0f : (float)v);
+            else if (k == "treew")  g_projTreeW  = v < 120 ? 120.0f : (v > 480 ? 480.0f : (float)v);
         }
     }
 }
@@ -4002,7 +4005,23 @@ static void AssetDropTarget(const std::filesystem::path& destDir) {
 }
 
 // Recursive folder tree (left pane). Clicking a node makes it the current dir.
-static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::size_t bufsz) {
+// Is `desc` inside `anc` (a strict descendant)? Component-wise so separators
+// and trailing slashes don't produce false negatives.
+static bool PathIsAncestor(const std::filesystem::path& anc, const std::filesystem::path& desc) {
+    auto a = anc.lexically_normal(), d = desc.lexically_normal();
+    auto ai = a.begin(), di = d.begin();
+    for (; ai != a.end() && di != d.end(); ++ai, ++di) if (*ai != *di) return false;
+    return ai == a.end() && di != d.end();
+}
+
+// The Project panel's folder tree (Unity-style). `reveal` is set for one frame
+// when the browsed folder changed from OUTSIDE the tree (breadcrumb, grid
+// double-click, ping, favorites) — the tree then expands every ancestor so the
+// highlight is always visible, without fighting manual collapses otherwise.
+// Navigating from the tree clears the search box (a stale search made the grid
+// look empty/broken after a "Show in Project" ping).
+static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::size_t bufsz,
+                           char* search, bool reveal) {
     namespace fs = std::filesystem;
     std::error_code ec;
     std::vector<fs::path> subs;
@@ -4011,16 +4030,23 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
     std::sort(subs.begin(), subs.end(), [](const fs::path& a, const fs::path& b) {
         return Lower(a.filename().string()) < Lower(b.filename().string());
     });
+    fs::path cur(dirBuf);
     for (const fs::path& s : subs) {
         bool hasKids = false;
         std::error_code e2;
         for (auto& c : fs::directory_iterator(s, e2)) { if (c.is_directory(e2)) { hasKids = true; break; } }
-        ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
+                               ImGuiTreeNodeFlags_OpenOnDoubleClick;
         if (!hasKids) f |= ImGuiTreeNodeFlags_Leaf;
-        if (fs::path(dirBuf) == s) f |= ImGuiTreeNodeFlags_Selected;
+        bool isCur = (cur == s);
+        if (isCur) f |= ImGuiTreeNodeFlags_Selected;
+        if (reveal && PathIsAncestor(s, cur)) ImGui::SetNextItemOpen(true);
         bool open = ImGui::TreeNodeEx(s.filename().string().c_str(), f);
-        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+        if (isCur && reveal) ImGui::SetScrollHereY(0.5f);   // bring the highlight into view
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
             std::strncpy(dirBuf, s.string().c_str(), bufsz - 1);
+            if (search) search[0] = '\0';
+        }
         // Right-click a folder to pin it to Favorites (or reveal it on disk).
         if (ImGui::BeginPopupContextItem()) {
             bool fav = IsFavFolder(s.string());
@@ -4030,7 +4056,7 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
             ImGui::EndPopup();
         }
         AssetDropTarget(s);   // drop assets onto a folder to move them in
-        if (open) { DrawFolderTree(s, dirBuf, bufsz); ImGui::TreePop(); }
+        if (open) { DrawFolderTree(s, dirBuf, bufsz, search, reveal); ImGui::TreePop(); }
     }
 }
 
@@ -4067,6 +4093,7 @@ void DrawProject(EditorState& ed) {
     static bool s_prefsLoaded = false;
     if (!s_prefsLoaded) { LoadProjectViewPrefs(); s_prefsLoaded = true; }
     // A pending "ping": jump to the asset's folder, filter to its name, select it.
+    static bool s_keepSearchOnce = false;   // the ping just SET the search — don't auto-clear it
     if (!g_pingAsset.empty()) {
         std::error_code pec;
         fs::path pp(g_pingAsset);
@@ -4074,6 +4101,7 @@ void DrawProject(EditorState& ed) {
             std::strncpy(dirBuf, pp.parent_path().string().c_str(), sizeof(dirBuf) - 1);
             std::snprintf(search, sizeof(search), "%s", pp.filename().string().c_str());
             selected = pp.string(); s_multi.clear();
+            s_keepSearchOnce = true;
         } else ConsoleLog("Can't find asset: " + g_pingAsset, 1);
         g_pingAsset.clear();
     }
@@ -4098,14 +4126,20 @@ void DrawProject(EditorState& ed) {
     static std::vector<std::string> s_navBack, s_navFwd;
     static std::string s_navLast;          // dirBuf as of last frame
     static bool s_navSuppress = false;     // this frame's change came from Back/Forward
+    bool revealTree = false;               // folder changed -> expand the tree to it
     {
         std::string cur(dirBuf);
         if (s_navLast.empty()) s_navLast = cur;
         if (cur != s_navLast) {
             if (!s_navSuppress) { s_navBack.push_back(s_navLast); s_navFwd.clear(); }
             s_navLast = cur;
+            revealTree = true;
+            // Navigating clears a stale search (Unity behaviour) — a leftover
+            // filter made every other folder look empty ("the panel is broken").
+            if (!s_keepSearchOnce) search[0] = '\0';
         }
         s_navSuppress = false;
+        s_keepSearchOnce = false;
     }
     ImGui::BeginDisabled(s_navBack.empty());
     if (ImGui::SmallButton("<##navb")) {
@@ -4147,8 +4181,9 @@ void DrawProject(EditorState& ed) {
     ImGui::InputTextWithHint("##search", "search...", search, sizeof(search));
     ImGui::Separator();
 
-    // ---- Two panes: folder tree (left) + asset grid (right) ----------
-    ImGui::BeginChild("tree", ImVec2(180, 0), true);
+    // ---- Two panes: folder tree (left) + asset grid (right), with a
+    //      draggable splitter between them (width persists) --------------
+    ImGui::BeginChild("tree", ImVec2(g_projTreeW, 0), true);
     // Favorites: pinned folders for one-click navigation (right-click a folder to
     // pin). Stale entries (deleted folders) are pruned as they're encountered.
     if (!g_favFolders.empty()) {
@@ -4158,8 +4193,10 @@ void DrawProject(EditorState& ed) {
             if (!fs::is_directory(fp, ec)) { g_favFolders.erase(g_favFolders.begin() + i); continue; }
             ImGui::PushID((int)i);
             std::string nm = "\xe2\x98\x85 " + fs::path(fp).filename().string();  // star + name
-            if (ImGui::Selectable(nm.c_str(), fs::path(dirBuf) == fs::path(fp)))
+            if (ImGui::Selectable(nm.c_str(), fs::path(dirBuf) == fs::path(fp))) {
                 std::strncpy(dirBuf, fp.c_str(), sizeof(dirBuf) - 1);
+                search[0] = '\0';
+            }
             AssetDropTarget(fs::path(fp));
             if (ImGui::BeginPopupContextItem("favctx")) {
                 if (ImGui::MenuItem("Remove from Favorites")) { ToggleFavFolder(fp); ImGui::EndPopup(); ImGui::PopID(); continue; }
@@ -4175,13 +4212,31 @@ void DrawProject(EditorState& ed) {
                                ImGuiTreeNodeFlags_SpanAvailWidth;
     if (fs::path(dirBuf) == root) rootF |= ImGuiTreeNodeFlags_Selected;
     bool ro = ImGui::TreeNodeEx("Assets##root", rootF);
-    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
         std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
+        search[0] = '\0';
+    }
     AssetDropTarget(root);
-    if (ro) { DrawFolderTree(root, dirBuf, sizeof(dirBuf)); ImGui::TreePop(); }
+    if (ro) { DrawFolderTree(root, dirBuf, sizeof(dirBuf), search, revealTree); ImGui::TreePop(); }
     ImGui::EndChild();
 
-    ImGui::SameLine();
+    // Splitter: drag to resize the folder pane (Unity-style), double-click to reset.
+    ImGui::SameLine(0, 0);
+    ImGui::InvisibleButton("##projsplit", ImVec2(7.0f, -1.0f));
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (ImGui::IsItemActive()) {
+        g_projTreeW += ImGui::GetIO().MouseDelta.x;
+        g_projTreeW = g_projTreeW < 120.0f ? 120.0f : (g_projTreeW > 480.0f ? 480.0f : g_projTreeW);
+    }
+    if (ImGui::IsItemDeactivated()) SaveProjectViewPrefs();
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { g_projTreeW = 200.0f; SaveProjectViewPrefs(); }
+    {   // a subtle handle line so the splitter is discoverable
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        float cx = (mn.x + mx.x) * 0.5f;
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(cx, mn.y + 4), ImVec2(cx, mx.y - 4),
+            ImGui::GetColorU32(ImGuiCol_Border, ImGui::IsItemHovered() || ImGui::IsItemActive() ? 1.0f : 0.5f));
+    }
+    ImGui::SameLine(0, 0);
     ImGui::BeginChild("grid", ImVec2(0, 0), true);
 
     // Asset operations toolbar + the deferred rename target.

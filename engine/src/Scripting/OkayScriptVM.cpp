@@ -37,6 +37,7 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/Tilemap.hpp"
+#include "okay/Components/NPCController.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
@@ -1902,6 +1903,39 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 return Value{g->transform->Position().z};
             return Value{0.0f};
+        };
+        // ---- NPC commands: order an NPC Controller around from a script -----
+        // npc_goto("Guard", x, y, z): send the named NPC to a world point (it
+        // pathfinds there if pathfinding is on, then broadcasts npc_arrived).
+        // Omit the name ("" or self name) to command a sibling NPCController.
+        auto npcOf = [this, sceneOf](const std::string& name) -> NPCController* {
+            if (name.empty())
+                return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<NPCController>() : nullptr;
+            Scene* s = sceneOf(); if (!s) return nullptr;
+            GameObject* g = s->Find(name);
+            return g ? g->GetComponent<NPCController>() : nullptr;
+        };
+        b["npc_goto"] = [npcOf](std::vector<Value>& a) -> Value {
+            if (a.size() < 4) return Value{false};
+            NPCController* n = npcOf(a[0].AsString()); if (!n) return Value{false};
+            n->CommandGoTo({a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat()});
+            return Value{true};
+        };
+        b["npc_stop"] = [npcOf](std::vector<Value>& a) -> Value {
+            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            if (!n) return Value{false};
+            n->CancelCommand(); return Value{true};
+        };
+        // True while the NPC is still walking to its npc_goto point.
+        b["npc_busy"] = [npcOf](std::vector<Value>& a) -> Value {
+            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            return Value{n && n->Commanded()};
+        };
+        // Current AI state name: "Idle","Wander","Patrol","Follow","Flee",
+        // "Chase","Search","Return" ("" if the object has no NPC Controller).
+        b["npc_state"] = [npcOf](std::vector<Value>& a) -> Value {
+            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            return Value{std::string{n ? n->StateName() : ""}};
         };
         // Distance from this object to a named object (0 if missing).
         b["dist_to"] = [this, sceneOf](std::vector<Value>& a) -> Value {

@@ -37,7 +37,7 @@ namespace okay {
 /// Moves a sibling Rigidbody3D (or the Transform), turns smoothly toward its heading,
 /// optionally drives a sibling Character's animation (idle/walk/run) and head-look,
 /// and broadcasts messages (`npc_alert`, `npc_lost`, `npc_search`, `npc_waypoint`,
-/// `npc_attack`, `npc_flee`, `npc_died`) ActionLists can react to.
+/// `npc_attack`, `npc_flee`, `npc_arrived`, `npc_died`) ActionLists can react to.
 class NPCController : public Behaviour {
 public:
     enum class Behavior { Idle, Wander, Follow, Flee, Chase, Patrol, Guard };
@@ -100,6 +100,12 @@ public:
     bool  invulnerable = false;
 
     bool IsDead() const { return m_dead; }
+    /// Order the NPC to walk to a world point, overriding its base behavior
+    /// (Chase/Flee still take priority so a commanded guard can defend itself).
+    /// Broadcasts `npc_arrived` on arrival. Call from a script (`npc_goto`) or code.
+    void CommandGoTo(const Vec3& p) { m_command = p; m_hasCommand = true; }
+    void CancelCommand() { m_hasCommand = false; }
+    bool Commanded() const { return m_hasCommand; }
     /// Current runtime AI state, for HUD / debugging / scripts.
     int  StateId() const { return (int)m_state; }
     const char* StateName() const {
@@ -226,8 +232,26 @@ public:
                 break;
         }
 
+        // ---- Commanded destination (CommandGoTo / `npc_goto` script) --------
+        // Overrides the base behavior's goal; combat (Chase/Flee) still wins so
+        // a commanded guard can defend itself mid-errand.
+        if (m_hasCommand && m_state != State::Chase && m_state != State::Flee) {
+            if (Dist2D(pos, m_command) < 0.6f + stopDistance) {
+                m_hasCommand = false; move = false; goal = pos;
+                Broadcast("npc_arrived");
+            } else {
+                goal = m_command; move = true; speed = moveSpeed;
+            }
+        }
+
         // ---- Pathfinding: steer via A* waypoints instead of a straight line --
         if (move && usePathfinding && gameObject && gameObject->scene()) {
+            // Wedged on a corner, a prop, or another NPC? Force a fresh route.
+            if (Dist2D(pos, m_lastPos) < 0.02f) {
+                m_stuckT += dt;
+                if (m_stuckT > 0.8f) { m_path.clear(); m_repath = 0.0f; m_stuckT = 0.0f; }
+            } else m_stuckT = 0.0f;
+            m_lastPos = pos;
             m_repath -= dt;
             float goalMoved = Dist2D(goal, m_pathGoal);
             if (m_repath <= 0.0f || m_path.empty() || goalMoved > 1.5f) {
@@ -271,6 +295,10 @@ private:
     int   m_pathIdx  = 0;
     float m_repath   = 0.0f;
     Vec3  m_pathGoal{0, 0, 0};
+    Vec3  m_command{0, 0, 0};      // CommandGoTo destination
+    bool  m_hasCommand = false;
+    Vec3  m_lastPos{0, 0, 0};      // stuck detection while pathfinding
+    float m_stuckT = 0.0f;
 
     enum class State { Idle, Wander, Patrol, Follow, Flee, Chase, Search, Return };
 

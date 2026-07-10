@@ -240,6 +240,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `scale_x()` / `scale_y()` / `scale_z()` | read this object's scale |
 | `set_rot3(x, y, z)` | set absolute 3D euler rotation (degrees) |
 | `set_mesh(name)` | swap this object's MeshRenderer primitive at runtime |
+| `npc_goto(name, x, y, z)` | order a named NPC Controller to walk to a world point (pathfinds if enabled; broadcasts `npc_arrived`) — `""` targets a sibling NPC Controller |
+| `npc_stop(name)` | cancel an `npc_goto` order |
+| `npc_busy(name)` | true while the NPC is still walking to its ordered point |
+| `npc_state(name)` | the NPC's AI state name: `Idle`/`Wander`/`Patrol`/`Follow`/`Flee`/`Chase`/`Search`/`Return` |
 | `count_tag(tag)` | how many active objects have a tag (coins left, enemies alive) |
 | `nearest_tag(tag)` | name of the nearest tagged object to this one ("" if none) — targeting |
 | `screen_w()` / `screen_h()` | render-target size in pixels |

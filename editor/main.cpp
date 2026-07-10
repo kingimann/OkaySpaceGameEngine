@@ -5807,6 +5807,8 @@ void DrawScriptDocs() {
         fapi("activate(\"n\") / deactivate(\"n\")", "show / hide an object");
         fapi("obj_x(\"n\") / obj_y(\"n\") / obj_z(\"n\")", "another object's position");
         fapi("dist_to(\"n\")", "distance to a named object");
+        fapi("npc_goto(\"n\", x, y, z)", "send an NPC Controller to a point (npc_arrived on arrival)");
+        fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
         fapi("vel_toward(\"n\", speed)", "aim this body's velocity at a target");
         fapi("destroy_obj(\"n\")", "destroy a named object");
         fapi("count_tag(\"t\") / nearest_tag(\"t\")", "tag queries");
@@ -6100,6 +6102,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         // object / scene
         "name","set_name","tag","set_tag","has_tag","set_active","self_active","destroy",
         "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
+        "npc_goto","npc_stop","npc_busy","npc_state",
         "nearest_tag","set_cam","move_cam","set_cam_zoom","set_bg","set_light","set_ambient",
         "load_scene","load_scene_index","load_next_scene","screen_w","screen_h",
         // components / fx
@@ -6187,6 +6190,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"find","find(\"name\")"}, {"spawn","spawn(\"prefab\", x, y)"}, {"spawn3","spawn3(\"prefab\", x, y, z)"},
         {"destroy","destroy(\"name\")"}, {"destroy_obj","destroy_obj(\"name\")"}, {"dist_to","dist_to(\"name\")"},
         {"count_tag","count_tag(\"tag\")"}, {"nearest_tag","nearest_tag(\"tag\")"}, {"load_scene","load_scene(\"file\")"},
+        {"npc_goto","npc_goto(\"name\", x, y, z)"}, {"npc_stop","npc_stop(\"name\")"},
+        {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
         {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
         {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
         // variables / prefs
@@ -24759,6 +24764,38 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             // polyline with numbered ticks (closed when the route loops) —
             // visible in edit mode so click-placement gives instant feedback.
             if (auto* wnc = up->GetComponent<NPCController>()) {
+                // Vision gizmo (selected NPC): the sight cone as a yellow arc at
+                // eye height with edge lines, plus a blue hearing ring — so
+                // perception tuning is visual instead of guess-numbers-and-play.
+                if (ed.selected() == up.get() && wnc->sightRange > 0.0f) {
+                    Vec3 eye = p; eye.y += wnc->eyeHeight;
+                    Vec3 fwd = t->Forward(); fwd.y = 0.0f;
+                    float fl = std::sqrt(fwd.x * fwd.x + fwd.z * fwd.z);
+                    if (fl < 1e-4f) fwd = Vec3{0, 0, 1}; else fwd = fwd * (1.0f / fl);
+                    const ImU32 scol = IM_COL32(255, 205, 70, 200);
+                    float fov  = Mathf::Clamp(wnc->fieldOfView, 4.0f, 360.0f);
+                    float half = fov * 0.5f * Mathf::Deg2Rad;
+                    float baseA = std::atan2(fwd.x, fwd.z);
+                    int segs = (int)(fov / 8.0f) + 2;
+                    Vec3 prevPt{0, 0, 0}; bool havePt = false;
+                    for (int s = 0; s <= segs; ++s) {
+                        float a = baseA - half + (half * 2.0f) * (float)s / (float)segs;
+                        Vec3 q{eye.x + std::sin(a) * wnc->sightRange, eye.y,
+                               eye.z + std::cos(a) * wnc->sightRange};
+                        if (havePt) line(prevPt, q, scol, 1.5f);
+                        prevPt = q; havePt = true;
+                    }
+                    if (fov < 359.0f) {
+                        float a0 = baseA - half, a1 = baseA + half;
+                        line(eye, Vec3{eye.x + std::sin(a0) * wnc->sightRange, eye.y,
+                                       eye.z + std::cos(a0) * wnc->sightRange}, scol, 1.5f);
+                        line(eye, Vec3{eye.x + std::sin(a1) * wnc->sightRange, eye.y,
+                                       eye.z + std::cos(a1) * wnc->sightRange}, scol, 1.5f);
+                    }
+                    if (wnc->hearingRange > 0.0f)
+                        ring(p, Vec3{1, 0, 0}, Vec3{0, 0, 1}, wnc->hearingRange,
+                             IM_COL32(110, 175, 255, 150));
+                }
                 bool showRoute = (ed.selected() == up.get() || g_wpPlace == wnc) && !wnc->waypoints.empty();
                 if (showRoute) {
                     const ImU32 wcol = IM_COL32(245, 165, 60, 230);

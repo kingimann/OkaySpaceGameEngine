@@ -69,4 +69,19 @@ follow, chase, patrol, wander and return-home all use it. The route
 recomputes every **Repath** seconds (default 0.6) and whenever the target
 moves; if no route exists the NPC falls back to straight-line steering.
 Works on box/sphere colliders and heightmap terrain (max step 0.45, holes
-and cliffs are avoided).
+and cliffs are avoided). A stuck watchdog forces a fresh route whenever the
+NPC stops making progress for ~0.8 s (wedged on a corner or another NPC).
+
+Selecting an NPC in the Scene view now draws its **perception** too: a
+yellow sight-cone arc at eye height (Sight Range + Field Of View) and a
+blue circle for Hearing Range, so you can tune a guard's senses visually.
+
+### Ordering NPCs around from scripts
+
+`npc_goto("Guard", x, y, z)` sends a named NPC Controller to a world point —
+it pathfinds there (when Pathfinding is on), then broadcasts `npc_arrived`
+for Action Lists and resumes its base behavior. Combat still wins: a
+commanded NPC that spots a threat will chase or flee first and finish the
+errand after. Pass `""` as the name to command a sibling NPC Controller.
+`npc_stop(name)` cancels the order, `npc_busy(name)` is true while walking,
+and `npc_state(name)` returns the live AI state (`Patrol`, `Chase`, …).

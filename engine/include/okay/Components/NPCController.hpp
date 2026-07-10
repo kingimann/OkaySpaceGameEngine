@@ -262,6 +262,10 @@ public:
         DriveCharacter(rb, move, speed, tgt, canSee || acquired);
     }
 
+    /// Editor/debug: the active A* route ("" while idle) and progress index.
+    const std::vector<Vec3>& CurrentPath() const { return m_path; }
+    int CurrentPathIndex() const { return m_pathIdx; }
+
 private:
     std::vector<Vec3> m_path;      // current A* route (world waypoints)
     int   m_pathIdx  = 0;

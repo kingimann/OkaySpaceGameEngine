@@ -24731,6 +24731,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(a - v * r, b - v * r, kColliderCol, 1.0f);
                 }
             }
+            // Pathfinding debug: the planned A* route of a playing NPC or
+            // click-to-move player, drawn as a cyan polyline with waypoint
+            // ticks (done segments dimmed). Free visibility into why an agent
+            // goes where it goes.
+            if (ed.isPlaying()) {
+                const std::vector<Vec3>* dbgPath = nullptr; int dbgIdx = 0;
+                if (auto* nc = up->GetComponent<NPCController>()) { dbgPath = &nc->CurrentPath(); dbgIdx = nc->CurrentPathIndex(); }
+                else if (auto* cc = up->GetComponent<ClickToMoveController>()) { dbgPath = &cc->CurrentPath(); dbgIdx = cc->CurrentPathIndex(); }
+                if (dbgPath && dbgPath->size() > 1) {
+                    const ImU32 done = IM_COL32(70, 140, 150, 120), todo = IM_COL32(70, 220, 235, 220);
+                    for (std::size_t i = 0; i + 1 < dbgPath->size(); ++i) {
+                        Vec3 a = (*dbgPath)[i], b = (*dbgPath)[i + 1];
+                        a.y += 0.1f; b.y += 0.1f;
+                        line(a, b, (int)i + 1 < dbgIdx ? done : todo, 2.0f);
+                    }
+                    for (std::size_t i = 0; i < dbgPath->size(); ++i) {
+                        Vec3 w = (*dbgPath)[i]; w.y += 0.1f;
+                        line(w, Vec3{w.x, w.y + 0.35f, w.z}, (int)i < dbgIdx ? done : todo, 2.0f);
+                    }
+                }
+            }
         }
     }
 

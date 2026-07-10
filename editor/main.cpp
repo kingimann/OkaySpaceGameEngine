@@ -2528,6 +2528,8 @@ void ApplyTheme() {
     c[ImGuiCol_TabActive]        = tint(0.245f, 0.14f, 1.00f);   // active tab = raised panel with an accent hint
     c[ImGuiCol_TabUnfocused]     = ImVec4(0.135f, 0.135f, 0.145f, 1.00f);
     c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.190f, 0.190f, 0.205f, 1.00f);
+    c[ImGuiCol_TabSelectedOverline]       = accent;                 // accent line atop the active tab
+    c[ImGuiCol_TabDimmedSelectedOverline] = accentDim;
     c[ImGuiCol_DockingPreview]   = accentDim;
     c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
     c[ImGuiCol_NavHighlight]     = accent;
@@ -2560,7 +2562,7 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
 
     ImGui::DockBuilderDockWindow("Hierarchy", left);
     ImGui::DockBuilderDockWindow("Inspector", right);
-    ImGui::DockBuilderDockWindow("Console", down);
+    ImGui::DockBuilderDockWindow("Console###Console", down);
     ImGui::DockBuilderDockWindow("Project", down);
     ImGui::DockBuilderDockWindow("Services", down);
     ImGui::DockBuilderDockWindow("Script Editor", down);
@@ -3324,14 +3326,14 @@ void DrawStatusBar(EditorState& ed) {
     ImGui::SameLine(ImGui::GetWindowWidth() - total - 14.0f);
     if (cw[0]) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1.0f));
-        if (flatBtn(cw)) { g_showConsole = true; ImGui::SetWindowFocus("Console"); }
+        if (flatBtn(cw)) { g_showConsole = true; ImGui::SetWindowFocus("Console###Console"); }
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Warnings in the Console — click to open");
         ImGui::SameLine(0, gap);
     }
     if (ce[0]) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.45f, 0.42f, 1.0f));
-        if (flatBtn(ce)) { g_showConsole = true; ImGui::SetWindowFocus("Console"); }
+        if (flatBtn(ce)) { g_showConsole = true; ImGui::SetWindowFocus("Console###Console"); }
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Errors in the Console — click to open");
         ImGui::SameLine(0, gap);
@@ -3457,8 +3459,25 @@ void DrawConsole() {
     static bool showInfo = true, showWarn = true, showError = true;
     static int  selected = -1;
 
-    if (ImGui::Begin("Console", &g_showConsole)) {
+    // Badge the tab with the current error/warning counts so problems are
+    // visible even when the Console is behind another tab. The ### keeps the
+    // window ID (and docking) stable while the visible label changes.
+    char conTitle[64];
+    if (g_consoleCounts[2] > 0)
+        std::snprintf(conTitle, sizeof(conTitle), "Console  [x %d]###Console", g_consoleCounts[2]);
+    else if (g_consoleCounts[1] > 0)
+        std::snprintf(conTitle, sizeof(conTitle), "Console  [! %d]###Console", g_consoleCounts[1]);
+    else
+        std::snprintf(conTitle, sizeof(conTitle), "Console###Console");
+    static bool s_errorPause = false;
+    static int  s_lastErrCount = 0;
+    if (s_errorPause && g_consoleCounts[2] > s_lastErrCount) g_paused = true;   // halt Play on new errors
+    s_lastErrCount = g_consoleCounts[2];
+    if (ImGui::Begin(conTitle, &g_showConsole)) {
         if (ImGui::Button("Clear")) { ConsoleClear(); selected = -1; }
+        ImGui::SameLine();
+        ImGui::Checkbox("Error Pause", &s_errorPause);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause Play mode whenever a new error is logged");
         ImGui::SameLine();
         if (ImGui::Button("Save")) {   // dump the whole log to a file beside the exe
             std::ofstream lf("console_log.txt");

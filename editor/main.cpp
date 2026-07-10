@@ -979,6 +979,7 @@ std::vector<CustomAction> g_customInstr;   // reusable instruction groups
 std::vector<CustomAction> g_customCond;    // reusable condition groups
 bool g_showAnimation = false;    // keyframe animation timeline for the selected object
 bool g_showAnimatorGraph = false; // visual state-machine node graph (Animator window)
+okay::NPCController* g_wpPlace = nullptr; // NPC whose patrol waypoints are being click-placed in the Scene view
 bool g_showHistory   = false;    // undo/redo history panel (click a step to jump)
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
@@ -19071,6 +19072,13 @@ void DrawInspector(EditorState& ed) {
                     c->waypoints.push_back(at); ed.dirty = true;
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds a point at the NPC's current position — move the NPC, then add again.");
+                ImGui::SameLine();
+                bool placing = (g_wpPlace == c);
+                if (placing) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+                if (ImGui::SmallButton(placing ? "Placing... (click Scene, Esc ends)##npc" : "Place in Scene##npc"))
+                    g_wpPlace = placing ? nullptr : c;
+                if (placing) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click points on the ground in the Scene view to build the route.\nEsc (or this button) finishes. The route draws as an orange line.");
             }
 
             SectionHeader("Combat");
@@ -24731,6 +24739,28 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(a - v * r, b - v * r, kColliderCol, 1.0f);
                 }
             }
+            // Patrol route gizmo: the selected NPC's waypoints as an orange
+            // polyline with numbered ticks (closed when the route loops) —
+            // visible in edit mode so click-placement gives instant feedback.
+            if (auto* wnc = up->GetComponent<NPCController>()) {
+                bool showRoute = (ed.selected() == up.get() || g_wpPlace == wnc) && !wnc->waypoints.empty();
+                if (showRoute) {
+                    const ImU32 wcol = IM_COL32(245, 165, 60, 230);
+                    for (std::size_t i = 0; i < wnc->waypoints.size(); ++i) {
+                        Vec3 w = wnc->waypoints[i]; w.y += 0.05f;
+                        line(w, Vec3{w.x, w.y + 0.5f, w.z}, wcol, 2.0f);
+                        if (i + 1 < wnc->waypoints.size()) {
+                            Vec3 n2 = wnc->waypoints[i + 1]; n2.y += 0.05f;
+                            line(w, n2, wcol, 2.0f);
+                        }
+                    }
+                    if (wnc->patrolLoop && wnc->waypoints.size() > 2) {
+                        Vec3 a = wnc->waypoints.back(), b = wnc->waypoints.front();
+                        a.y += 0.05f; b.y += 0.05f;
+                        line(a, b, wcol, 1.5f);
+                    }
+                }
+            }
             // Pathfinding debug: the planned A* route of a playing NPC or
             // click-to-move player, drawn as a cyan polyline with waypoint
             // ticks (done segments dimmed). Free visibility into why an agent
@@ -25694,7 +25724,31 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Click-select (skipped when a gizmo handle was just grabbed): pick the
     // nearest mesh whose projected bounding box contains the cursor.
-    if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && !s_vSnapDragging && !vHeld &&
+    // Waypoint placement mode: clicks drop patrol points on the ground instead
+    // of selecting (Esc or the inspector button ends it; deleted NPC self-heals).
+    if (g_wpPlace) {
+        bool alive = false;
+        for (const auto& up : objs) if (up && up->GetComponent<NPCController>() == g_wpPlace) { alive = true; break; }
+        if (!alive) g_wpPlace = nullptr;
+        else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_wpPlace = nullptr;
+    }
+    if (g_wpPlace && hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        float nx = (io.MousePos.x - canvasPos.x) / canvasSize.x * 2.0f - 1.0f;
+        float ny = 1.0f - (io.MousePos.y - canvasPos.y) / canvasSize.y * 2.0f;
+        Mat4 inv = vp.Inverse();
+        Vec3 p0 = inv.MultiplyPoint({nx, ny, -1.0f});
+        Vec3 p1 = inv.MultiplyPoint({nx, ny, 1.0f});
+        Vec3 rd = (p1 - p0).Normalized();
+        RaycastHit3D rh = ed.scene().physics3D().Raycast(ed.scene(), p0, rd, 800.0f, nullptr);
+        Vec3 at;
+        if (rh.hit) at = rh.point;
+        else if (Mathf::Abs(rd.y) > 1e-4f) at = p0 + rd * (-p0.y / rd.y);   // y=0 plane fallback
+        else at = p0 + rd * 10.0f;
+        ed.PushUndo();
+        g_wpPlace->waypoints.push_back(at);
+        ed.dirty = true;
+    } else if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && !s_vSnapDragging && !vHeld &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = nullptr;
         float bestDepth = 1e30f;

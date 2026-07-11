@@ -662,6 +662,58 @@ static bool GetMaterialSwatch(const std::string& path, ImVec4& out) {
     return ok;
 }
 
+// Rendered thumbnail for a .okayprefab: instantiate it into a throwaway scene,
+// frame it with a 3/4 camera and software-render one small image, cached until
+// the file changes. First sight of a prefab pays one tiny render (~128 px).
+static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius);   // defined with the Animation tab
+static SDL_Texture* GetPrefabThumb(const std::string& path) {
+    struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
+    static std::unordered_map<std::string, Entry> cache;
+    std::error_code ec;
+    auto mt = std::filesystem::last_write_time(path, ec);
+    auto it = cache.find(path);
+    if (it != cache.end() && (ec || it->second.mtime == mt)) return it->second.tex;
+
+    SDL_Texture* tex = nullptr;
+    if (g_sdlRenderer) {
+        okay::Scene sc;
+        if (GameObject* root = SceneSerializer::InstantiateFromFile(sc, path, nullptr)) {
+            sc.Update(0.0f);          // flush any deferred adoption (dt 0 = no simulation)
+            ApplySceneLight(sc);      // the editor sun/ambient, so shading matches the Scene view
+            Vec3 center; float radius;
+            AnimFocusBounds(root, center, radius);
+            Vec3 dir{0.62f, 0.5f, 0.62f};
+            float dm = std::sqrt(Vec3::Dot(dir, dir));
+            dir = dir * (1.0f / dm);
+            Vec3 eye = center + dir * (radius * 2.5f);
+            const int W = 128, H = 128;
+            Mat4 vp = Mat4::Perspective(40.0f, 1.0f, 0.05f, 4000.0f) *
+                      Mat4::LookAt(eye, center, Vec3::Up);
+            Raster work; std::vector<std::uint32_t> out;
+            if (const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, eye, W, H, 2)) {
+                // A prefab with no 3D meshes (pure 2D/UI) renders fully transparent —
+                // fall back to the type icon instead of an invisible tile.
+                bool anyPixel = false;
+                for (int i2 = 0; i2 < W * H && !anyPixel; ++i2)
+                    if (px[i2] >> 24) anyPixel = true;
+                if (anyPixel) {
+                    tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                            SDL_TEXTUREACCESS_STATIC, W, H);
+                    if (tex) {
+                        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+                        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+                        SDL_UpdateTexture(tex, nullptr, px, W * 4);
+                    }
+                }
+            }
+        }
+    }
+    if (it != cache.end() && it->second.tex && it->second.tex != tex)
+        SDL_DestroyTexture(it->second.tex);
+    cache[path] = {tex, mt};
+    return tex;
+}
+
 // Draw a shaded material ball (albedo sphere with a highlight) into a rect —
 // the Project browser's stand-in for a rendered material preview.
 static void DrawMaterialBall(ImDrawList* dl, const ImVec2& mn, const ImVec2& mx, const ImVec4& col) {
@@ -4714,6 +4766,7 @@ void DrawProject(EditorState& ed) {
             ImGui::BeginGroup();
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
             SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
+            if (!thumb && !isDir && ext == ".okayprefab") thumb = GetPrefabThumb(full);
             ImVec4 matCol;
             bool isMat = !isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, matCol);
             if (thumb) {
@@ -4778,6 +4831,7 @@ void DrawProject(EditorState& ed) {
             // Real previews where they're cheap: image files show their pixels,
             // materials their albedo ball; everything else keeps its icon chip.
             SDL_Texture* rowThumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
+            if (!rowThumb && !isDir && ext == ".okayprefab") rowThumb = GetPrefabThumb(full);
             ImVec4 rowMat;
             if (rowThumb) dl->AddImage((ImTextureID)rowThumb, c0, c1);
             else if (!isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, rowMat))
@@ -4878,6 +4932,7 @@ void DrawProject(EditorState& ed) {
         // Left: a larger preview — the real image for textures, else the type icon.
         const float pv = 68.0f;
         SDL_Texture* pthumb = (!selDir && sk.icon == AssetIcon::Image) ? GetThumb(selected) : nullptr;
+        if (!pthumb && !selDir && sext == ".okayprefab") pthumb = GetPrefabThumb(selected);
         ImVec4 pmat;
         bool pIsMat = !selDir && sk.icon == AssetIcon::Material && GetMaterialSwatch(selected, pmat);
         ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + pv, p0.y + pv);

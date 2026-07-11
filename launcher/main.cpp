@@ -1101,6 +1101,14 @@ int main(int argc, char** argv) {
         ImGui::BeginDisabled(busy);
         if (ImGui::SmallButton("Check for updates")) StartUpdateCheck();
         ImGui::EndDisabled();
+        if (g_upRelaunchNeeded && st == Up_Updated) {
+            ImGui::SameLine();
+            // The new launcher exe is already swapped in place; start it and quit.
+            if (ImGui::SmallButton("Restart now")) {
+                Launch(g_selfPath);
+                running = false;
+            }
+        }
         ImGui::EndChild();
 
         ImGui::SameLine();

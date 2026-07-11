@@ -454,9 +454,14 @@ int g_winW = 1040, g_winH = 680;  // last window size (persisted)
 const char* kThemeNames[] = {"Dark", "Midnight", "Light"};
 
 // Transient toast notification (bottom-right of the window).
+// kind: 0 = info (accent), 1 = success (green), 2 = error (red).
 std::string g_toastMsg;
 Uint32 g_toastUntil = 0;
-void Toast(const std::string& m) { g_toastMsg = m; g_toastUntil = SDL_GetTicks() + 2600; }
+int g_toastKind = 0;
+void Toast(const std::string& m, int kind = 0) {
+    g_toastMsg = m; g_toastKind = kind;
+    g_toastUntil = SDL_GetTicks() + 2600;
+}
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
 int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played
@@ -909,8 +914,8 @@ int main(int argc, char** argv) {
                 } else if (isDir || ext == ".okay" || ext == ".okayvs" || ext == ".obj" ||
                            ext == ".png" || ext == ".jpg" || ext == ".okayscene") {
                     std::string out = InstallToCommunity(dropped);
-                    if (!out.empty()) { scenes = FindScenes(); Toast("Added to your community library"); tab = 2; }
-                    else Toast("Couldn't install that item");
+                    if (!out.empty()) { scenes = FindScenes(); Toast("Added to your community library", 1); tab = 2; }
+                    else Toast("Couldn't install that item", 2);
                 } else {
                     Toast("Drop a game folder or .okayscene to add or play it");
                 }
@@ -929,9 +934,9 @@ int main(int argc, char** argv) {
             static int lastUp = -1;
             int us = (int)GetState();
             if (us != lastUp) {
-                if (us == (int)Up_Updated) Toast("Update installed — restart to finish");
-                else if (us == (int)Up_Failed) Toast("Update check failed");
-                else if (us == (int)Up_UpToDate && lastUp == (int)Up_Checking) Toast("You're up to date");
+                if (us == (int)Up_Updated) Toast("Update installed — restart to finish", 1);
+                else if (us == (int)Up_Failed) Toast("Update check failed", 2);
+                else if (us == (int)Up_UpToDate && lastUp == (int)Up_Checking) Toast("You're up to date", 1);
                 lastUp = us;
             }
         }
@@ -1416,7 +1421,7 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 if (ImGui::Button("Remove", ImVec2(82, 40))) {
                     std::error_code rec; fs::remove_all(croot, rec);
-                    Toast(rec ? "Remove failed" : "Removed from library");
+                    Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
                     scenes = FindScenes();
                 }
                 ImGui::EndChild();
@@ -1521,7 +1526,7 @@ int main(int argc, char** argv) {
                     account.Logout();
                     acctMessage.clear();
                     acctUser[0] = acctPass[0] = '\0';
-                    Toast("Signed out");
+                    Toast("Signed out", 1);
                 }
 
                 // ---- Account details ----
@@ -1538,7 +1543,7 @@ int main(int argc, char** argv) {
                     acct::Result r = account.ChangeUsername(acctChgName);
                     acctMessageError = !r.ok;
                     acctMessage = r.ok ? "Username updated." : r.error;
-                    if (r.ok) { acctChgName[0] = '\0'; Toast("Username updated"); }
+                    if (r.ok) { acctChgName[0] = '\0'; Toast("Username updated", 1); }
                 }
 
                 // Change email (online / Supabase only).
@@ -1552,7 +1557,7 @@ int main(int argc, char** argv) {
                         acctMessageError = !r.ok;
                         acctMessage = r.ok ? "Email change requested — confirm via the link sent to it."
                                            : r.error;
-                        if (r.ok) { acctChgEmail[0] = '\0'; Toast("Email change requested"); }
+                        if (r.ok) { acctChgEmail[0] = '\0'; Toast("Email change requested", 1); }
                     }
                 }
 
@@ -1567,7 +1572,7 @@ int main(int argc, char** argv) {
                     acct::Result r = account.ChangePassword(acctNewPass);
                     acctMessageError = !r.ok;
                     acctMessage = r.ok ? "Password updated." : r.error;
-                    if (r.ok) { std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0'); Toast("Password updated"); }
+                    if (r.ok) { std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0'); Toast("Password updated", 1); }
                 }
                 if (!acctMessage.empty()) {
                     ImGui::PushTextWrapPos(0.0f);
@@ -1622,7 +1627,7 @@ int main(int argc, char** argv) {
                     if (r.ok) {
                         acctMessage.clear();
                         std::fill(acctPass, acctPass + sizeof(acctPass), '\0');
-                        if (account.IsLoggedIn()) Toast("Signed in");
+                        if (account.IsLoggedIn()) Toast("Signed in", 1);
                     } else {
                         acctMessage = r.error;
                     }
@@ -1665,7 +1670,7 @@ int main(int argc, char** argv) {
             ImGui::PopItemWidth();
             ImGui::Dummy(ImVec2(0, 12));
 
-            if (ImGui::Button("Save & apply", ImVec2(180, 46))) { applyAccountSettings(false); Toast("Settings saved"); }
+            if (ImGui::Button("Save & apply", ImVec2(180, 46))) { applyAccountSettings(false); Toast("Settings saved", 1); }
             ImGui::SameLine();
             if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) applyAccountSettings(true);
 
@@ -1781,7 +1786,7 @@ int main(int argc, char** argv) {
                 ImGui::GetIO().FontGlobalScale = g_uiScale;
                 ApplyAccent(g_accentIndex);   // re-applies theme + accent
                 SavePrefs();
-                Toast("Preferences reset");
+                Toast("Preferences reset", 1);
             }
             ImGui::TextDisabled("Preferences are stored in launcher.cfg next to the launcher.");
         }
@@ -1810,10 +1815,13 @@ int main(int argc, char** argv) {
             float remain = (float)(g_toastUntil - SDL_GetTicks());
             float alpha = remain > 400.0f ? 1.0f : remain / 400.0f;   // fade out
             ImVec2 wp = vp->WorkPos, ws = vp->WorkSize;
+            ImVec4 tcol = g_toastKind == 1 ? ImVec4(0.45f, 0.85f, 0.52f, 1)
+                        : g_toastKind == 2 ? ImVec4(0.96f, 0.48f, 0.45f, 1)
+                                           : kAccent;
             ImGui::SetNextWindowPos(ImVec2(wp.x + ws.x - 18, wp.y + ws.y - 18), ImGuiCond_Always, ImVec2(1, 1));
             ImGui::SetNextWindowBgAlpha(0.92f * alpha);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.97f, 1.0f, alpha));
-            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(kAccent.x, kAccent.y, kAccent.z, alpha));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(tcol.x, tcol.y, tcol.z, alpha));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
@@ -1821,6 +1829,14 @@ int main(int argc, char** argv) {
                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                 ImGuiWindowFlags_AlwaysAutoResize)) {
+                // Status dot in the toast's kind color (info/success/error).
+                float r = ImGui::GetFontSize() * 0.24f;
+                ImVec2 dp = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddCircleFilled(
+                    ImVec2(dp.x + r, dp.y + ImGui::GetTextLineHeight() * 0.55f), r,
+                    ImGui::GetColorU32(ImVec4(tcol.x, tcol.y, tcol.z, alpha)));
+                ImGui::Dummy(ImVec2(r * 2.0f + 2.0f, ImGui::GetTextLineHeight()));
+                ImGui::SameLine(0, 6);
                 ImGui::TextUnformatted(g_toastMsg.c_str());
             }
             ImGui::End();

@@ -21707,9 +21707,25 @@ void DrawInspector(EditorState& ed) {
             return a.find(b) != std::string::npos;
         };
         // A category drills into a submenu when browsing (Unity-style), but its
-        // items render inline in a flat list while searching.
+        // items render inline in a flat list while searching. Category labels are
+        // tinted to match the Inspector's component-header colors.
+        auto catColor = [](const char* name) -> ImVec4 {
+            auto is = [&](const char* k) { return std::strstr(name, k) != nullptr; };
+            if (is("Rendering") || is("Lighting") || is("Camera")) return ImVec4(0.55f, 0.72f, 0.98f, 1.0f);
+            if (is("Physics"))                                     return ImVec4(0.55f, 0.84f, 0.60f, 1.0f);
+            if (is("Animation"))                                   return ImVec4(0.45f, 0.82f, 0.84f, 1.0f);
+            if (is("Scripts"))                                     return ImVec4(0.90f, 0.82f, 0.45f, 1.0f);
+            if (is("Audio"))                                       return ImVec4(0.95f, 0.70f, 0.42f, 1.0f);
+            if (is("UI"))                                          return ImVec4(0.74f, 0.62f, 0.98f, 1.0f);
+            if (is("Gameplay") || is("No-Code") || is("RPG"))      return ImVec4(0.92f, 0.60f, 0.66f, 1.0f);
+            return ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        };
         auto BeginCat = [&](const char* name) -> bool {
-            return searching ? true : ImGui::BeginMenu(name);
+            if (searching) return true;
+            ImGui::PushStyleColor(ImGuiCol_Text, catColor(name));
+            bool open = ImGui::BeginMenu(name);
+            ImGui::PopStyleColor();
+            return open;
         };
         auto EndCat = [&](bool opened) { if (!searching && opened) ImGui::EndMenu(); };
         // One component row: shown only if absent + matches the search. While searching,

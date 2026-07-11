@@ -1178,6 +1178,19 @@ int main(int argc, char** argv) {
             if (editor.empty()) ImGui::PopStyleVar();
 
             ImGui::Dummy(ImVec2(0, 14));
+            ImGui::SeparatorText("What's new");
+            // Curated highlights of the last few releases (updated each ship).
+            static const char* kNews[] = {
+                "NPC pathfinding (A*) with scriptable npc_goto commands",
+                "Spawner waves: count / wave delay / max alive, script control",
+                "Click-placed patrol waypoints + NPC vision-cone gizmos",
+                "Script Editor: signature help and smarter autocomplete",
+                "Hierarchy & Project: Shift+click range select, multi copy/paste",
+            };
+            for (const char* n : kNews) ImGui::BulletText("%s", n);
+            ImGui::TextDisabled("Full notes: GitHub repository (link below).");
+
+            ImGui::Dummy(ImVec2(0, 10));
             ImGui::SeparatorText("Tips");
             ImGui::BulletText("Press Play in the editor to test instantly.");
             ImGui::BulletText("Drag assets from the Project panel onto objects.");

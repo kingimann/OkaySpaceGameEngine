@@ -641,6 +641,39 @@ SDL_Texture* GetThumb(const std::string& path) {
     return tex;
 }
 
+// Cached albedo color of a .okaymat — a cheap material "thumbnail" for the
+// Project browser (a real render would need a preview scene). Reloads when the
+// file's write time changes, so edits show up without a restart.
+static bool GetMaterialSwatch(const std::string& path, ImVec4& out) {
+    struct Entry { ImVec4 col; std::filesystem::file_time_type mtime; bool ok; };
+    static std::unordered_map<std::string, Entry> cache;
+    std::error_code ec;
+    auto mt = std::filesystem::last_write_time(path, ec);
+    auto it = cache.find(path);
+    if (it != cache.end() && (ec || it->second.mtime == mt)) {
+        out = it->second.col;
+        return it->second.ok;
+    }
+    okay::Material m;
+    bool ok = okay::Material::LoadFromFile(path, m);
+    Entry e{ImVec4(m.color.r, m.color.g, m.color.b, 1.0f), mt, ok};
+    cache[path] = e;
+    out = e.col;
+    return ok;
+}
+
+// Draw a shaded material ball (albedo sphere with a highlight) into a rect —
+// the Project browser's stand-in for a rendered material preview.
+static void DrawMaterialBall(ImDrawList* dl, const ImVec2& mn, const ImVec2& mx, const ImVec4& col) {
+    ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
+    float r = (mx.x - mn.x) * 0.32f;
+    if ((mx.y - mn.y) * 0.32f < r) r = (mx.y - mn.y) * 0.32f;
+    dl->AddCircleFilled(c, r, ImGui::GetColorU32(col), 32);
+    dl->AddCircleFilled(ImVec2(c.x - r * 0.35f, c.y - r * 0.38f), r * 0.28f,
+                        IM_COL32(255, 255, 255, 70), 24);
+    dl->AddCircle(c, r, IM_COL32(0, 0, 0, 90), 32, 1.5f);
+}
+
 // ---- Built-in 2D sprite shapes --------------------------------------------
 // Shared by the "GameObject > 2D Shape" menu and the Sprite Editor's shape presets —
 // a quick way to get common sprites without external art. Defined up here so the menu
@@ -4652,6 +4685,8 @@ void DrawProject(EditorState& ed) {
             ImGui::BeginGroup();
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
             SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
+            ImVec4 matCol;
+            bool isMat = !isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, matCol);
             if (thumb) {
                 ImGui::ImageButton("##thumb", (ImTextureID)thumb, ImVec2(cell, cell));  // click handled below
             } else {
@@ -4662,8 +4697,11 @@ void DrawProject(EditorState& ed) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                                       ImVec4(cv.x * 0.45f, cv.y * 0.45f, cv.z * 0.45f, 1.0f));
                 ImGui::Button("##cell", ImVec2(cell, cell));
-                DrawAssetIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(),
-                              ImGui::GetItemRectMax(), k);
+                // Materials preview as a shaded ball in their albedo color.
+                if (isMat) DrawMaterialBall(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(),
+                                            ImGui::GetItemRectMax(), matCol);
+                else DrawAssetIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(),
+                                   ImGui::GetItemRectMax(), k);
                 ImGui::PopStyleColor(2);
             }
             // A clean accent outline marks the selected tile.
@@ -4708,7 +4746,14 @@ void DrawProject(EditorState& ed) {
             ImDrawList* dl = ImGui::GetWindowDrawList();
             float sq = rowH - 6.0f;
             ImVec2 c0(mn.x + 5.0f, mn.y + 3.0f), c1(c0.x + sq, c0.y + sq);
-            DrawAssetIcon(dl, c0, c1, k);
+            // Real previews where they're cheap: image files show their pixels,
+            // materials their albedo ball; everything else keeps its icon chip.
+            SDL_Texture* rowThumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
+            ImVec4 rowMat;
+            if (rowThumb) dl->AddImage((ImTextureID)rowThumb, c0, c1);
+            else if (!isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, rowMat))
+                DrawMaterialBall(dl, c0, c1, rowMat);
+            else DrawAssetIcon(dl, c0, c1, k);
             ImU32 tcol = ImGui::GetColorU32(isSel ? AccentCol(1.0f)
                                                   : ImGui::GetStyleColorVec4(ImGuiCol_Text));
             ImU32 dcol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -4804,10 +4849,13 @@ void DrawProject(EditorState& ed) {
         // Left: a larger preview — the real image for textures, else the type icon.
         const float pv = 68.0f;
         SDL_Texture* pthumb = (!selDir && sk.icon == AssetIcon::Image) ? GetThumb(selected) : nullptr;
+        ImVec4 pmat;
+        bool pIsMat = !selDir && sk.icon == AssetIcon::Material && GetMaterialSwatch(selected, pmat);
         ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + pv, p0.y + pv);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(p0, p1, IM_COL32(28, 30, 34, 255), 4.0f);
         if (pthumb) dl->AddImage((ImTextureID)pthumb, ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2));
+        else if (pIsMat) DrawMaterialBall(dl, p0, p1, pmat);
         else        DrawAssetIcon(dl, p0, p1, sk);
         dl->AddRect(p0, p1, IM_COL32(70, 74, 82, 255), 4.0f);
         ImGui::Dummy(ImVec2(pv, pv));

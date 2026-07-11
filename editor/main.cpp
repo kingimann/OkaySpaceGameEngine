@@ -1099,6 +1099,25 @@ static ImVec4 CategoryColor(const char* label) {
                                                                        return ImVec4(0.42f, 0.66f, 0.98f, 1.0f); // rendering — blue
     return AccentCol(1.0f);
 }
+// Icon family for a component header, matching CategoryColor's keywords:
+// 0 dot (default), 1 square (rendering), 2 circle (physics), 3 triangle
+// (animation), 4 diamond (scripts), 5 speaker (audio), 6 ring (UI).
+static int CategoryGlyph(const char* label) {
+    auto has = [&](const char* k) { return std::strstr(label, k) != nullptr; };
+    if (has("Collider") || has("Rigidbody") || has("Joint"))          return 2;
+    if (has("Audio"))                                                 return 5;
+    if (has("Animat") || has("IK") || has("Root Motion"))             return 3;
+    if (has("Script") || has("Visual Script"))                        return 4;
+    if (has("UI ") || has("Canvas") || has("Button") || has("Panel") || has("Slider") ||
+        has("Toggle") || has("Tabs") || has("Dropdown") || has("Scroll") || has("Layout") ||
+        has("Progress") || has("Rating") || has("Stepper") || has("Input Field") || has("Tooltip"))
+                                                                       return 6;
+    if (has("Renderer") || has("Sprite") || has("Mesh") || has("Text") || has("Particle") ||
+        has("Light") || has("Camera") || has("Tilemap") || has("Terrain") || has("Water"))
+                                                                       return 1;
+    return 0;
+}
+
 // A button that shows an accent "pressed" look while `active` — for toolbar
 // toggles (transform tools, Local/Global, Snap, edit modes) so the active state
 // reads consistently in the theme colour instead of ad-hoc blues.
@@ -14510,6 +14529,39 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     if (ImGui::ArrowButton("##mvup", ImGuiDir_Up))   { sMoveComp = comp; sMoveDelta = -1; }
     ImGui::SameLine();
     if (ImGui::ArrowButton("##mvdn", ImGuiDir_Down)) { sMoveComp = comp; sMoveDelta = +1; }
+    ImGui::SameLine();
+    {   // Category glyph chip: a tiny drawn icon in the component family's color
+        // (square = rendering, circle = physics, triangle = animation, diamond =
+        // scripts, speaker = audio, ring = UI) so headers scan by shape too.
+        ImVec4 c = CategoryColor(label);
+        float h = ImGui::GetFrameHeight(), s = h * 0.66f, off = (h - s) * 0.5f;
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImVec2 a(p.x, p.y + off), b2(p.x + s, p.y + off + s);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(a, b2, ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.18f)), 3.0f);
+        ImU32 ic = ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, en ? 1.0f : 0.55f));
+        ImVec2 ctr((a.x + b2.x) * 0.5f, (a.y + b2.y) * 0.5f);
+        float r = s * 0.27f;
+        switch (CategoryGlyph(label)) {
+            case 1: dl->AddRect(ImVec2(ctr.x - r, ctr.y - r), ImVec2(ctr.x + r, ctr.y + r), ic, 1.5f, 0, 2.0f); break;
+            case 2: dl->AddCircle(ctr, r, ic, 16, 2.0f); break;
+            case 3: dl->AddTriangleFilled(ImVec2(ctr.x - r, ctr.y + r), ImVec2(ctr.x + r, ctr.y + r),
+                                          ImVec2(ctr.x, ctr.y - r), ic); break;
+            case 4: {
+                ImVec2 q[4] = {ImVec2(ctr.x, ctr.y - r * 1.2f), ImVec2(ctr.x + r * 1.2f, ctr.y),
+                               ImVec2(ctr.x, ctr.y + r * 1.2f), ImVec2(ctr.x - r * 1.2f, ctr.y)};
+                dl->AddQuadFilled(q[0], q[1], q[2], q[3], ic); break;
+            }
+            case 5: // speaker: small filled box + sound wedge
+                dl->AddRectFilled(ImVec2(ctr.x - r, ctr.y - r * 0.5f), ImVec2(ctr.x - r * 0.2f, ctr.y + r * 0.5f), ic, 1.0f);
+                dl->AddTriangleFilled(ImVec2(ctr.x - r * 0.3f, ctr.y), ImVec2(ctr.x + r, ctr.y - r),
+                                      ImVec2(ctr.x + r, ctr.y + r), ic);
+                break;
+            case 6: dl->AddCircle(ctr, r, ic, 16, 2.0f); dl->AddCircleFilled(ctr, r * 0.35f, ic, 10); break;
+            default: dl->AddCircleFilled(ctr, r * 0.75f, ic, 12); break;
+        }
+        ImGui::Dummy(ImVec2(s, h));
+    }
     ImGui::SameLine();
     // Default to open the first time we see this component type, then honor whatever
     // the user toggled it to. SetNextItemOpen(..., Always) seeds the state before the

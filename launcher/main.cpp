@@ -460,6 +460,7 @@ void Toast(const std::string& m) { g_toastMsg = m; g_toastUntil = SDL_GetTicks()
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
 int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played
+int g_lastTab = 0;                // section shown when the launcher was last closed
 
 bool IsFavorite(const std::string& p) {
     return std::find(g_favorites.begin(), g_favorites.end(), p) != g_favorites.end();
@@ -656,6 +657,20 @@ bool PrimaryButton(const char* label, const ImVec2& size) {
     return hit;
 }
 
+// Human "modified N ago" text for a file ("" if the time can't be read).
+std::string ModifiedAgo(const fs::path& p) {
+    std::error_code ec;
+    auto wt = fs::last_write_time(p, ec);
+    if (ec) return {};
+    auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+        fs::file_time_type::clock::now() - wt).count();
+    if (secs < 0) secs = 0;
+    if (secs < 90) return "just now";
+    if (secs < 90 * 60) return std::to_string(secs / 60) + " min ago";
+    if (secs < 36 * 3600) return std::to_string(secs / 3600) + " h ago";
+    return std::to_string(secs / 86400) + " d ago";
+}
+
 // Accent ring around the current child window when the mouse is over it
 // (hover feedback for card-style rows and tiles).
 void HoverRing() {
@@ -679,6 +694,7 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
+        else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "win_w") { try { g_winW = std::stoi(v); } catch (...) {} }
@@ -697,6 +713,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
+    f << "tab=" << g_lastTab << "\n";
     f << "win_w=" << g_winW << "\n";
     f << "win_h=" << g_winH << "\n";
     for (const auto& p : g_favorites) f << "fav=" << p << "\n";
@@ -858,7 +875,10 @@ int main(int argc, char** argv) {
 
     char playFilter[128] = {0};   // Play-tab search box
     char marketFilter[128] = {0}; // Marketplace search box
-    int tab = 0; // 0 Create, 1 Play, 2 Marketplace, 3 Account, 4 Settings
+    char commFilter[128] = {0};   // Community library search box
+    // Reopen on the section the launcher was last closed on.
+    int tab = (g_lastTab >= 0 && g_lastTab < 5) ? g_lastTab : 0;
+    bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
     if (g_updateOnLaunch) StartUpdateCheck();   // opt-in auto-check at startup
     bool running = true;
     while (running) {
@@ -920,11 +940,15 @@ int main(int argc, char** argv) {
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field).
+        // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
+        // Ctrl+F focuses the current tab's search box.
         if (!ImGui::GetIO().WantTextInput) {
             for (int i = 0; i < 5; ++i)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
         }
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
+            focusSearch = true;
+        g_lastTab = tab;   // persisted on exit (and every SavePrefs)
 
         ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
@@ -1233,8 +1257,9 @@ int main(int argc, char** argv) {
                     return s;
                 };
                 // Toolbar: search, sort, open-folder.
+                if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
                 ImGui::PushItemWidth(-1);
-                ImGui::InputTextWithHint("##playFilter", "Search games...", playFilter, sizeof(playFilter));
+                ImGui::InputTextWithHint("##playFilter", "Search games...  (Ctrl+F)", playFilter, sizeof(playFilter));
                 ImGui::PopItemWidth();
                 ImGui::PushItemWidth(180);
                 if (ImGui::Combo("##playsort", &g_playSort,
@@ -1281,7 +1306,12 @@ int main(int argc, char** argv) {
                         ImGui::SameLine();
                         ImGui::TextColored(kAccent, "recent");
                     }
-                    ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
+                    std::string ago = ModifiedAgo(scenes[i]);
+                    if (ago.empty())
+                        ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
+                    else
+                        ImGui::TextDisabled("%s  \xC2\xB7  %s",
+                                            scenes[i].parent_path().string().c_str(), ago.c_str());
                     ImGui::EndGroup();
                     // Right-aligned: favorite star, Folder, Play.
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - (36 + 82 + 80 + 20));
@@ -1298,6 +1328,17 @@ int main(int argc, char** argv) {
                         Launch(player, path);
                         RecordPlayed(path); SavePrefs();
                         Toast(std::string("Playing ") + name);
+                    }
+                    // Right-click anywhere on the row for the usual file actions.
+                    if (ImGui::BeginPopupContextWindow("gamectx", ImGuiPopupFlags_MouseButtonRight)) {
+                        if (ImGui::MenuItem("Play")) {
+                            Launch(player, path); RecordPlayed(path); SavePrefs();
+                            Toast(std::string("Playing ") + name);
+                        }
+                        if (ImGui::MenuItem(fav ? "Unfavorite" : "Favorite")) { ToggleFavorite(path); SavePrefs(); }
+                        if (ImGui::MenuItem("Show in Explorer")) OpenExternal(scenes[i].parent_path().string());
+                        if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(path.c_str());
+                        ImGui::EndPopup();
                     }
                     ImGui::EndChild();
                     ImGui::PopID();
@@ -1326,10 +1367,24 @@ int main(int argc, char** argv) {
 
             // Installed community content (scenes living under community/).
             ImGui::SeparatorText("Your community library");
+            if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
+            ImGui::PushItemWidth(-1);
+            ImGui::InputTextWithHint("##commFilter", "Search your library...  (Ctrl+F)",
+                                     commFilter, sizeof(commFilter));
+            ImGui::PopItemWidth();
+            ImGui::Dummy(ImVec2(0, 4));
+            auto clower = [](std::string s) {
+                for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
+                return s;
+            };
+            std::string cneedle = clower(commFilter);
             int cShown = 0;
             for (std::size_t i = 0; i < scenes.size(); ++i) {
                 fs::path croot = CommunityItemRoot(scenes[i]);
                 if (croot.empty()) continue;
+                if (!cneedle.empty() &&
+                    clower(scenes[i].filename().string() + " " + croot.filename().string())
+                        .find(cneedle) == std::string::npos) continue;
                 ++cShown;
                 std::string cpath = scenes[i].string();
                 ImGui::PushID((int)(i + 5000));
@@ -1361,8 +1416,11 @@ int main(int argc, char** argv) {
             }
             if (cShown == 0) {
                 ImGui::Dummy(ImVec2(0, 4));
-                ImGui::TextDisabled("Nothing here yet. Drop a shared game into the community folder "
-                                    "(button above) and hit Refresh, or drag a .okayscene onto the window to play it.");
+                if (!cneedle.empty())
+                    ImGui::TextDisabled("No library items match \"%s\".", commFilter);
+                else
+                    ImGui::TextDisabled("Nothing here yet. Drop a shared game into the community folder "
+                                        "(button above) and hit Refresh, or drag a .okayscene onto the window to play it.");
             }
 
             // Share your own creations.
@@ -1425,8 +1483,12 @@ int main(int argc, char** argv) {
                 ImVec2 cp = ImGui::GetCursorScreenPos();
                 float r = 30.0f;
                 ImVec2 ctr(cp.x + r + 4, cp.y + r + 6);
-                ImGui::GetWindowDrawList()->AddCircleFilled(ctr, r, ImGui::GetColorU32(kAccentDim), 32);
-                ImGui::GetWindowDrawList()->AddCircle(ctr, r, ImGui::GetColorU32(kAccent), 32, 2.0f);
+                // Avatar tinted by the username (same stable hash as game tiles),
+                // so each account gets its own recognizable color.
+                ImVec4 av = NameColor(s.username);
+                ImGui::GetWindowDrawList()->AddCircleFilled(
+                    ctr, r, ImGui::GetColorU32(ImVec4(av.x * 0.55f, av.y * 0.55f, av.z * 0.55f, 1.0f)), 32);
+                ImGui::GetWindowDrawList()->AddCircle(ctr, r, ImGui::GetColorU32(av), 32, 2.0f);
                 char initial[2] = { (char)(s.username.empty() ? '?' : std::toupper((unsigned char)s.username[0])), 0 };
                 ImVec2 ts = ImGui::CalcTextSize(initial);
                 ImGui::GetWindowDrawList()->AddText(ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f),
@@ -1733,6 +1795,7 @@ int main(int argc, char** argv) {
 
         ImGui::EndChild();
         ImGui::End();
+        focusSearch = false;   // Ctrl+F is consumed the frame it's pressed
 
         // ---- Toast notification (bottom-right, auto-fading) ----
         if (SDL_GetTicks() < g_toastUntil && !g_toastMsg.empty()) {

@@ -3309,7 +3309,15 @@ void DrawStatusBar(EditorState& ed) {
     };
     // Left: the selection (click to frame it, like the Scene's Frame button).
     if (GameObject* sel = ed.selected()) {
-        ImGui::TextColored(AccentCol(1.0f), "\xE2\x97\x8F"); ImGui::SameLine(0, 6);
+        {   // accent dot, drawn (not a glyph) so it can't render as tofu
+            float r = ImGui::GetFontSize() * 0.24f;
+            ImVec2 dp = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddCircleFilled(
+                ImVec2(dp.x + r, dp.y + ImGui::GetTextLineHeight() * 0.60f), r,
+                ImGui::GetColorU32(AccentCol(1.0f)));
+            ImGui::Dummy(ImVec2(r * 2.0f + 2.0f, ImGui::GetTextLineHeight()));
+        }
+        ImGui::SameLine(0, 6);
         const char* ty = sel->GetComponent<Camera>() ? "Camera"
                        : sel->GetComponent<MeshRenderer>() ? "Mesh"
                        : sel->GetComponent<SpriteRenderer>() ? "Sprite"
@@ -3325,9 +3333,18 @@ void DrawStatusBar(EditorState& ed) {
         ImGui::TextDisabled("No selection");
     }
     // Unsaved-changes marker beside the selection (mirrors the Hierarchy's "*").
+    // The dot is drawn (not a glyph) so it can't render as tofu in the UI font.
     if (ed.dirty && !ed.isPlaying()) {
         ImGui::SameLine(0, 12);
-        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "\xE2\x97\x8F unsaved");
+        const ImVec4 amber(0.95f, 0.80f, 0.35f, 1.0f);
+        float r = ImGui::GetFontSize() * 0.22f;
+        ImVec2 dp = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(dp.x + r, dp.y + ImGui::GetTextLineHeight() * 0.60f), r,
+            ImGui::GetColorU32(amber));
+        ImGui::Dummy(ImVec2(r * 2.0f + 2.0f, ImGui::GetTextLineHeight()));
+        ImGui::SameLine(0, 4);
+        ImGui::TextColored(amber, "unsaved");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene has unsaved changes (Ctrl+S to save)");
     }
     // Right cluster: warnings/errors · object count · tool (click to cycle) · mode ·

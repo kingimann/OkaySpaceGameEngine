@@ -731,6 +731,7 @@ int main(int argc, char** argv) {
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_winW, g_winH,
         SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
     if (!window) return 1;
+    SDL_SetWindowMinimumSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1,
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -966,21 +967,65 @@ int main(int argc, char** argv) {
         ImGui::Dummy(ImVec2(0, 16));
         ImGui::TextDisabled("  MENU");
         ImGui::Dummy(ImVec2(0, 2));
-        const char* navs[]  = {"Create", "Play", "Community", "Account", "Settings"};
-        const char* navIco[] = {"+", ">", "*", "@", "="};
+        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings"};
         for (int i = 0; i < 5; ++i) {
             char lbl[48];
-            std::snprintf(lbl, sizeof(lbl), "     %s   %s", navIco[i], navs[i]);
+            std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);   // room for the icon
             bool sel = (tab == i);
             // Accent the active item's label so the selection reads clearly.
             if (sel) ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
             if (ImGui::Selectable(lbl, sel, 0, ImVec2(0, 42))) tab = i;
             if (sel) ImGui::PopStyleColor();
-            if (sel) {   // accent bar marking the active section
-                ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-                ImGui::GetWindowDrawList()->AddRectFilled(
-                    ImVec2(mn.x, mn.y + 8), ImVec2(mn.x + 3.5f, mx.y - 8),
-                    ImGui::GetColorU32(kAccent), 2.0f);
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            if (sel)   // accent bar marking the active section
+                dl->AddRectFilled(ImVec2(mn.x, mn.y + 8), ImVec2(mn.x + 3.5f, mx.y - 8),
+                                  ImGui::GetColorU32(kAccent), 2.0f);
+            // Little vector icon per section (no icon font needed).
+            {
+                float cy = (mn.y + mx.y) * 0.5f, cx = mn.x + 24.0f, r = 6.5f;
+                ImU32 ic = ImGui::GetColorU32(sel ? kAccent
+                                                  : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                switch (i) {
+                    case 0:   // Create: plus
+                        dl->AddLine(ImVec2(cx - r, cy), ImVec2(cx + r, cy), ic, 2.2f);
+                        dl->AddLine(ImVec2(cx, cy - r), ImVec2(cx, cy + r), ic, 2.2f);
+                        break;
+                    case 1:   // Play: triangle
+                        dl->AddTriangleFilled(ImVec2(cx - r * 0.7f, cy - r),
+                                              ImVec2(cx - r * 0.7f, cy + r),
+                                              ImVec2(cx + r, cy), ic);
+                        break;
+                    case 2:   // Community: three heads
+                        dl->AddCircleFilled(ImVec2(cx - r * 0.9f, cy + r * 0.45f), r * 0.42f, ic);
+                        dl->AddCircleFilled(ImVec2(cx + r * 0.9f, cy + r * 0.45f), r * 0.42f, ic);
+                        dl->AddCircleFilled(ImVec2(cx, cy - r * 0.45f), r * 0.52f, ic);
+                        break;
+                    case 3:   // Account: head + shoulders
+                        dl->AddCircleFilled(ImVec2(cx, cy - r * 0.45f), r * 0.45f, ic);
+                        dl->AddRectFilled(ImVec2(cx - r * 0.85f, cy + r * 0.1f),
+                                          ImVec2(cx + r * 0.85f, cy + r * 0.95f), ic, r * 0.45f);
+                        break;
+                    case 4: { // Settings: gear (ring + spokes)
+                        dl->AddCircle(ImVec2(cx, cy), r * 0.62f, ic, 12, 2.0f);
+                        for (int k = 0; k < 8; ++k) {
+                            float a = (float)k * 0.785398f;
+                            dl->AddLine(ImVec2(cx + std::cos(a) * r * 0.72f, cy + std::sin(a) * r * 0.72f),
+                                        ImVec2(cx + std::cos(a) * r * 1.05f, cy + std::sin(a) * r * 1.05f),
+                                        ic, 2.0f);
+                        }
+                        break;
+                    }
+                }
+            }
+            // Play shows how many games are installed, right-aligned in the row.
+            if (i == 1 && !scenes.empty()) {
+                char nb[16]; std::snprintf(nb, sizeof(nb), "%d", (int)scenes.size());
+                ImVec2 ts = ImGui::CalcTextSize(nb);
+                ImVec2 bp(mx.x - ts.x - 18.0f, (mn.y + mx.y) * 0.5f - ts.y * 0.5f);
+                dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
+                                  ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
+                dl->AddText(bp, ImGui::GetColorU32(ImGuiCol_Text), nb);
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Shortcut: %d", i + 1);
@@ -1012,6 +1057,18 @@ int main(int argc, char** argv) {
                          : (st == Up_Updated)     ? "Updated"
                          : (st == Up_Failed)      ? "Update failed"
                                                   : "Engine";
+        if (st == Up_Checking || st == Up_Downloading) {
+            // Spinner: an arc sweeping around while the worker runs.
+            ImVec2 sp = ImGui::GetCursorScreenPos();
+            float rad = 6.0f;
+            ImVec2 ctr(sp.x + rad + 2.0f, sp.y + rad + 3.0f);
+            float a0 = (float)ImGui::GetTime() * 6.0f;
+            ImDrawList* sdl = ImGui::GetWindowDrawList();
+            sdl->PathArcTo(ctr, rad, a0, a0 + 4.6f, 20);
+            sdl->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.4f);
+            ImGui::Dummy(ImVec2(rad * 2.0f + 6.0f, rad * 2.0f + 4.0f));
+            ImGui::SameLine();
+        }
         ImGui::TextColored(col, "%s", head);
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("%s", GetUpMsg().c_str());
@@ -1546,11 +1603,40 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 16));
             ImGui::SeparatorText("Appearance");
             ImGui::TextDisabled("Theme");
+            // Preview cards: a tiny mock window per theme (top bar, side panel,
+            // content area, accent strip) — pick by look, not by name.
+            static const struct { ImVec4 bg, panel, text; } kThemePrev[] = {
+                {ImVec4(0.180f, 0.180f, 0.192f, 1), ImVec4(0.265f, 0.265f, 0.285f, 1), ImVec4(0.86f, 0.87f, 0.88f, 1)},
+                {ImVec4(0.035f, 0.040f, 0.060f, 1), ImVec4(0.120f, 0.140f, 0.200f, 1), ImVec4(0.90f, 0.93f, 0.98f, 1)},
+                {ImVec4(0.930f, 0.940f, 0.960f, 1), ImVec4(0.845f, 0.865f, 0.905f, 1), ImVec4(0.10f, 0.12f, 0.16f, 1)},
+            };
             for (int i = 0; i < 3; ++i) {
                 if (i) ImGui::SameLine();
-                if (ImGui::RadioButton(kThemeNames[i], g_themeIndex == i)) {
-                    g_themeIndex = i; DarkTheme(); SavePrefs();
-                }
+                ImGui::PushID(i);
+                const ImVec2 sz(108, 76);
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                bool clicked = ImGui::InvisibleButton("##themecard", sz);
+                bool hov = ImGui::IsItemHovered();
+                bool cur = (g_themeIndex == i);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y),
+                                  ImGui::GetColorU32(kThemePrev[i].bg), 7.0f);
+                ImU32 pc = ImGui::GetColorU32(kThemePrev[i].panel);
+                dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8),  ImVec2(p.x + sz.x - 8, p.y + 17), pc, 3.0f);
+                dl->AddRectFilled(ImVec2(p.x + 8, p.y + 22), ImVec2(p.x + 38, p.y + sz.y - 22), pc, 3.0f);
+                dl->AddRectFilled(ImVec2(p.x + 43, p.y + 22), ImVec2(p.x + sz.x - 8, p.y + sz.y - 22), pc, 3.0f);
+                dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8),  ImVec2(p.x + 24, p.y + 11),
+                                  ImGui::GetColorU32(kAccent), 2.0f);
+                ImVec2 ts = ImGui::CalcTextSize(kThemeNames[i]);
+                dl->AddText(ImVec2(p.x + (sz.x - ts.x) * 0.5f, p.y + sz.y - 18),
+                            ImGui::GetColorU32(kThemePrev[i].text), kThemeNames[i]);
+                dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y),
+                            ImGui::GetColorU32(cur ? kAccent
+                                                   : (hov ? ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)
+                                                          : ImGui::GetStyleColorVec4(ImGuiCol_Border))),
+                            7.0f, 0, cur ? 2.5f : 1.5f);
+                if (clicked && !cur) { g_themeIndex = i; DarkTheme(); SavePrefs(); }
+                ImGui::PopID();
             }
             ImGui::Dummy(ImVec2(0, 6));
             ImGui::TextDisabled("Accent color");

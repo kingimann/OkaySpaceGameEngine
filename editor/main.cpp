@@ -3324,8 +3324,14 @@ void DrawStatusBar(EditorState& ed) {
     } else {
         ImGui::TextDisabled("No selection");
     }
+    // Unsaved-changes marker beside the selection (mirrors the Hierarchy's "*").
+    if (ed.dirty && !ed.isPlaying()) {
+        ImGui::SameLine(0, 12);
+        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "\xE2\x97\x8F unsaved");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene has unsaved changes (Ctrl+S to save)");
+    }
     // Right cluster: warnings/errors · object count · tool (click to cycle) · mode ·
-    // FPS, right-aligned. The console badges only appear when there's something to see.
+    // FPS · version, right-aligned. Console badges only appear when there's something.
     ImGuiStyle& st = ImGui::GetStyle();
     char c1[32], c3[24], cw[16] = "", ce[16] = "";
     std::snprintf(c1, sizeof(c1), "%d objects", (int)ed.scene().Objects().size());
@@ -3334,10 +3340,12 @@ void DrawStatusBar(EditorState& ed) {
     if (g_consoleCounts[2] > 0) std::snprintf(ce, sizeof(ce), "x %d", g_consoleCounts[2]);
     const char* toolName = g_tool == Tool::Move ? "Move" : g_tool == Tool::Rotate ? "Rotate" : "Scale";
     const char* mode = ed.isPlaying() ? "PLAY" : "EDIT";
+    const char* ver = "v" OKAY_ENGINE_VERSION;
     const float gap = 16.0f;
     float wTool = ImGui::CalcTextSize(toolName).x + st.FramePadding.x * 2.0f;
     float total = ImGui::CalcTextSize(c1).x + gap + wTool + gap +
-                  ImGui::CalcTextSize(mode).x + gap + ImGui::CalcTextSize(c3).x;
+                  ImGui::CalcTextSize(mode).x + gap + ImGui::CalcTextSize(c3).x +
+                  gap + ImGui::CalcTextSize(ver).x;
     if (cw[0]) total += ImGui::CalcTextSize(cw).x + st.FramePadding.x * 2.0f + gap;
     if (ce[0]) total += ImGui::CalcTextSize(ce).x + st.FramePadding.x * 2.0f + gap;
     ImGui::SameLine(ImGui::GetWindowWidth() - total - 14.0f);
@@ -3363,6 +3371,8 @@ void DrawStatusBar(EditorState& ed) {
     ImGui::TextColored(ed.isPlaying() ? ImVec4(0.45f, 0.85f, 0.5f, 1) : ImVec4(0.62f, 0.64f, 0.68f, 1), "%s", mode);
     ImGui::SameLine(0, gap);
     ImGui::TextDisabled("%s", c3);
+    ImGui::SameLine(0, gap);
+    ImGui::TextDisabled("%s", ver);
     ImGui::Unindent(8.0f);
     ImGui::EndChild();
     ImGui::PopStyleColor();

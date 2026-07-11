@@ -1735,9 +1735,20 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccentPresets[i].col);
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccentPresets[i].dim);
                 bool current = (g_accentIndex == i);
-                if (ImGui::Button(current ? "*" : " ", ImVec2(34, 34))) {
+                if (ImGui::Button("##accent", ImVec2(34, 34))) {
                     ApplyAccent(i);
                     SavePrefs();
+                }
+                if (current) {   // white ring + drawn check on the active swatch
+                    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    dl->AddRect(mn, mx, IM_COL32(255, 255, 255, 230),
+                                ImGui::GetStyle().FrameRounding, 0, 2.5f);
+                    ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
+                    dl->AddLine(ImVec2(c.x - 6, c.y), ImVec2(c.x - 2, c.y + 4),
+                                IM_COL32(255, 255, 255, 240), 2.5f);
+                    dl->AddLine(ImVec2(c.x - 2, c.y + 4), ImVec2(c.x + 6, c.y - 4),
+                                IM_COL32(255, 255, 255, 240), 2.5f);
                 }
                 ImGui::PopStyleColor(3);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kAccentPresets[i].name);

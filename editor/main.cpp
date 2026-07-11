@@ -4092,9 +4092,19 @@ static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir)
 // GameObject dragged from the Hierarchy is SAVED there as a prefab (Unity-style).
 static void AssetDropTarget(const std::filesystem::path& destDir) {
     if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+        // Accent glow over the hovered folder so the drop target is unmistakable
+        // (replaces ImGui's thin default yellow rect).
+        {
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(mn, mx, ImGui::GetColorU32(AccentCol(0.28f)), 4.0f);
+            dl->AddRect(mn, mx, ImGui::GetColorU32(AccentCol(1.0f)), 4.0f, 0, 2.0f);
+        }
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH",
+                                        ImGuiDragDropFlags_AcceptNoDrawDefaultRect))
             MoveAssetInto(std::string((const char*)p->Data), destDir);
-        if (const ImGuiPayload* g = ImGui::AcceptDragDropPayload("GO_PTR"))
+        if (const ImGuiPayload* g = ImGui::AcceptDragDropPayload("GO_PTR",
+                                        ImGuiDragDropFlags_AcceptNoDrawDefaultRect))
             SavePrefabInto(*(GameObject**)g->Data, destDir);
         ImGui::EndDragDropTarget();
     }
@@ -27296,6 +27306,23 @@ void DrawGameView(EditorState& ed) {
         dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + ts.x + 6, p0.y + ts.y + 3),
                           IM_COL32(0, 0, 0, 150), 4.0f);
         dl->AddText(p0, pc, pill);
+        if (g_paused) {
+            // Full-canvas dim + centered banner: a paused game should never be
+            // mistakable for a hang.
+            dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(8, 9, 12, 110));
+            ImFont* bf = g_headingFont ? g_headingFont : ImGui::GetFont();
+            const char* big = "PAUSED";
+            float bsz = ImGui::GetFontSize() * 2.1f;
+            ImVec2 bs = bf->CalcTextSizeA(bsz, 1e9f, 0.0f, big);
+            ImVec2 bp((canvasPos.x + canvasEnd.x - bs.x) * 0.5f,
+                      (canvasPos.y + canvasEnd.y) * 0.5f - bs.y);
+            dl->AddText(bf, bsz, ImVec2(bp.x + 2, bp.y + 2), IM_COL32(0, 0, 0, 160), big);
+            dl->AddText(bf, bsz, bp, IM_COL32(245, 205, 90, 255), big);
+            const char* sub = "Resume from the toolbar, or Step to advance one frame";
+            ImVec2 ss = ImGui::CalcTextSize(sub);
+            dl->AddText(ImVec2((canvasPos.x + canvasEnd.x - ss.x) * 0.5f, bp.y + bs.y + 10),
+                        IM_COL32(222, 224, 230, 220), sub);
+        }
     } else {
         dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(180, 180, 190, 255),
                     "Game (press Play)");

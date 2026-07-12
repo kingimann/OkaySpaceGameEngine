@@ -11,6 +11,7 @@
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
 #include "okay/Input/Cursor.hpp"
+#include "okay/AI/NavGrid3D.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -44,6 +45,12 @@ public:
     bool  showCursor = true;        // keep the mouse pointer visible (you click to move!)
     float groundY     = 0.0f;       // ground plane height when usePlayerHeight is off
     bool  usePlayerHeight = true;   // pick on the plane at the player's current Y
+    /// Route around obstacles with grid A* (walls, props, holes) — clicks
+    /// behind a wall walk AROUND it, Diablo/RuneScape style.
+    bool  usePathfinding = true;
+    float repathInterval = 0.6f;
+    /// Spawn a brief expanding ring at the clicked point (in-game feedback).
+    bool  clickMarker = true;
 
     // ---- Follow camera (RuneScape-style: trails the player, looks at it) ----
     bool  followCamera   = true;    // position the main Camera each frame
@@ -83,8 +90,12 @@ public:
                                   : Input::GetMouseButtonDown(mouseButton);
         if (clicked) {
             Vec3 hit;
-            if (GroundPick(scene, hit)) { m_dest = hit; m_hasDest = true; }
+            if (GroundPick(scene, hit)) {
+                m_dest = hit; m_hasDest = true;
+                if (clickMarker) ShowMarker(scene, hit);
+            }
         }
+        TickMarker(scene, dt);
         if (!m_hasDest) { Animate(false, false); StopXZ(); return; }
 
         // ---- Steer toward the destination on the XZ plane ----
@@ -97,7 +108,26 @@ public:
             StopXZ();
             return;
         }
-        Vec3 dir{to.x / dist, 0.0f, to.z / dist};
+        // Pathfinding: steer via the next A* waypoint instead of a straight line.
+        Vec3 steerTo = m_dest;
+        if (usePathfinding) {
+            m_repath -= dt;
+            float gm = std::sqrt((m_dest.x - m_pathGoal.x) * (m_dest.x - m_pathGoal.x) +
+                                 (m_dest.z - m_pathGoal.z) * (m_dest.z - m_pathGoal.z));
+            if (m_repath <= 0.0f || m_path.empty() || gm > 0.5f) {
+                m_path = NavGrid3D::FindPath(scene, pos, m_dest, gameObject);
+                m_pathIdx = 0; m_pathGoal = m_dest; m_repath = repathInterval;
+            }
+            while (m_pathIdx < (int)m_path.size() &&
+                   std::sqrt((pos.x - m_path[m_pathIdx].x) * (pos.x - m_path[m_pathIdx].x) +
+                             (pos.z - m_path[m_pathIdx].z) * (pos.z - m_path[m_pathIdx].z)) < 0.45f)
+                ++m_pathIdx;
+            if (m_pathIdx < (int)m_path.size()) steerTo = m_path[m_pathIdx];
+        }
+        Vec3 toW{steerTo.x - pos.x, 0.0f, steerTo.z - pos.z};
+        float wd = std::sqrt(toW.x * toW.x + toW.z * toW.z);
+        Vec3 dir = wd > 1e-4f ? Vec3{toW.x / wd, 0.0f, toW.z / wd}
+                              : Vec3{to.x / dist, 0.0f, to.z / dist};
         bool running = runKey && Input::GetKey(runKey);
         float speed = running ? runSpeed : walkSpeed;
         // Ease to a stop over the last `arriveRadius` metres so arrivals don't jolt.
@@ -172,7 +202,47 @@ public:
         cam->localRotation = Quat::Euler(-cameraPitch, cameraYaw, 0.0f);
     }
 
+    /// Editor/debug: the active A* route ("" while idle) and progress index.
+    const std::vector<Vec3>& CurrentPath() const { return m_path; }
+    int CurrentPathIndex() const { return m_pathIdx; }
+
+    // ---- Click marker: a flat unlit ring that expands and fades ~0.5s ------
+    void ShowMarker(Scene& scene, const Vec3& at) {
+        if (!m_marker) {
+            m_marker = scene.Find("__ClickMarker");
+            if (!m_marker) {
+                m_marker = scene.CreateGameObject("__ClickMarker");
+                auto* mr = m_marker->AddComponent<MeshRenderer>();
+                mr->mesh = Mesh::Disc(0.5f, 28);
+                mr->unlit = true;
+                mr->color = Color::FromBytes(120, 220, 140);
+            }
+        }
+        m_marker->active = true;
+        m_marker->transform->SetPosition({at.x, at.y + 0.03f, at.z});
+        m_markerT = 0.0f;
+    }
+    void TickMarker(Scene&, float dt) {
+        if (!m_marker || !m_marker->active) return;
+        m_markerT += dt;
+        const float dur = 0.55f;
+        if (m_markerT >= dur) { m_marker->active = false; return; }
+        float t = m_markerT / dur;
+        float s = 0.4f + 0.8f * t;               // expand
+        m_marker->transform->localScale = {s, 1.0f, s};
+        if (auto* mr = m_marker->GetComponent<MeshRenderer>())
+            mr->color.a = 1.0f - t;              // fade out
+    }
+
 private:
+    GameObject* m_marker = nullptr;   // shared transient ring (per scene)
+    float m_markerT = 1e9f;
+
+    std::vector<Vec3> m_path;   // A* route to the destination
+    int   m_pathIdx = 0;
+    float m_repath  = 0.0f;
+    Vec3  m_pathGoal{0, 0, 0};
+
     bool m_hasDest = false;
     Vec3 m_dest{0, 0, 0};
     Vec2 m_lastDrag{0, 0};

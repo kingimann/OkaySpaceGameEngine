@@ -72,6 +72,13 @@ public:
     /// All colliders overlapping a sphere.
     std::vector<Collider3D*> OverlapSphere(Scene& scene, const Vec3& center, float radius);
 
+    /// Sweep a sphere of `radius` from `origin` along `direction` and return the
+    /// first collider it touches (Unity's Physics.SphereCast) — a "thick ray" that
+    /// won't slip through gaps a zero-width ray would. `ignore` skips a GameObject.
+    /// The hit point is on the struck surface; the normal points back toward origin.
+    RaycastHit3D SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
+                            float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr);
+
     /// Push a sphere out of any SOLID colliders it overlaps (depenetration) and
     /// return the corrected centre — a lightweight "collide and slide" used to keep
     /// transform-only players (no Rigidbody3D) from clipping through walls/floors.

@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Math/Mathf.hpp"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace okay {
@@ -20,9 +21,26 @@ public:
     bool smooth = true; // smoothstep between keys vs linear
 
     void AddKey(float time, float value) {
-        m_keys.push_back({time, value});
-        std::sort(m_keys.begin(), m_keys.end(),
-                  [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
+        // Appending in time order (how importers and bakers add keys) is O(1);
+        // out-of-order keys insert at their sorted spot. The old push_back +
+        // full re-sort per key was O(K^2 log K) across a track — importing one
+        // Mixamo clip (~700 baked keys x ~65 bones x 7 tracks) froze the editor
+        // for over a minute.
+        if (m_keys.empty() || time >= m_keys.back().time) {
+            m_keys.push_back({time, value});
+            return;
+        }
+        auto it = std::lower_bound(m_keys.begin(), m_keys.end(), time,
+                                   [](const Keyframe& k, float t) { return k.time < t; });
+        m_keys.insert(it, {time, value});
+    }
+    /// Add a key, replacing any existing key at (nearly) the same time — what
+    /// editor "record value at playhead" tools want. O(log n) search.
+    void AddOrReplaceKey(float time, float value, float eps = 1e-4f) {
+        auto it = std::lower_bound(m_keys.begin(), m_keys.end(), time - eps,
+                                   [](const Keyframe& k, float t) { return k.time < t; });
+        if (it != m_keys.end() && std::abs(it->time - time) < eps) { it->time = time; it->value = value; return; }
+        m_keys.insert(it, {time, value});
     }
     void Clear() { m_keys.clear(); }
     bool Empty() const { return m_keys.empty(); }
@@ -46,18 +64,18 @@ public:
                 case Wrap::PingPong: t = start + Mathf::PingPong(t - start, span); break;
             }
         }
-        // Locate the segment.
-        for (std::size_t i = 0; i + 1 < m_keys.size(); ++i) {
-            const Keyframe& a = m_keys[i];
-            const Keyframe& b = m_keys[i + 1];
-            if (t <= b.time) {
-                float seg = b.time - a.time;
-                float u = seg > Mathf::Epsilon ? (t - a.time) / seg : 0.0f;
-                if (smooth) u = u * u * (3.0f - 2.0f * u);
-                return a.value + (b.value - a.value) * u;
-            }
-        }
-        return m_keys.back().value;
+        // Locate the segment by binary search — baked tracks (Mixamo etc.) carry
+        // hundreds of keys and get evaluated hundreds of times per frame, so the
+        // old linear scan was a real chunk of the frame on animated characters.
+        auto it = std::lower_bound(m_keys.begin() + 1, m_keys.end(), t,
+                                   [](const Keyframe& k, float tv) { return k.time < tv; });
+        if (it == m_keys.end()) return m_keys.back().value;
+        const Keyframe& a = *(it - 1);
+        const Keyframe& b = *it;
+        float seg = b.time - a.time;
+        float u = seg > Mathf::Epsilon ? (t - a.time) / seg : 0.0f;
+        if (smooth) u = u * u * (3.0f - 2.0f * u);
+        return a.value + (b.value - a.value) * u;
     }
 
     /// Convenience: a curve from a to b over `duration` seconds.

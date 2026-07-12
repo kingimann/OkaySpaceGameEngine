@@ -1,55 +1,59 @@
 # OkayScript
 
 OkayScript is the engine's built-in scripting language — a small, dependency-free
-language that ships in every build (no Lua/C# toolchain required). Attach a
-`ScriptComponent` to a GameObject, write a script, and the engine calls your
-`start()` and `update(dt)` functions as part of the normal scene lifecycle.
+language that ships in every build (no Lua/C# toolchain required). It's its own
+tiny language, designed so you write almost nothing and still do a lot.
+
+The whole point is minimal code:
+
+- **No boilerplate** — the whole file runs every frame, so a complete behaviour
+  can be a single line:
+
+  ```c
+  on_key_move(5)     // WASD / arrows — the entire script
+  ```
+
+- **`function` is optional, and so are braces on one-line bodies:**
+
+  ```c
+  // start() runs once, update(dt) runs every frame — no 'function' keyword.
+  start()      { set_pos(0, 0) }
+  update(dt)   { if (key_down("space")) jump(8) }   // no braces for one line
+  ```
+
+- **Movement one-liners are dt-scaled for you** — you never write `* dt`.
+  `walk(1, 0, 5)` moves 5 units/second regardless of frame rate; so do `spin`,
+  `follow`, `patrol`, `orbit`, `platformer`, `smooth_follow`, `spring_to`, …
+
+Attach a `ScriptComponent` to a GameObject and the engine calls your `start()`
+and `update(dt)` (plus event handlers like `on_collision(other)`) as part of the
+normal scene lifecycle.
+
+## Compatibility: C-style syntax also parses
+
+OkayScript's native style is the minimal one above — but if you're pasting code
+from elsewhere, a fuller C-style form with dot-properties and typed declarations
+also parses, so familiar snippets tend to just work. This is optional; prefer the
+short native form for new code.
 
 ```c
-function start() {
-    set_pos(0, 0);
-}
+speed = 5
 
-function update(dt) {
-    // Move with WASD at 5 units/second.
-    move(axis_x() * 5 * dt, axis_y() * 5 * dt);
-    if (key_down("space")) { print("jump!"); }
-}
-```
-
-## Unity-style syntax
-
-OkayScript can be written to look almost exactly like a Unity C# script, except
-the base class is OkaySpace's own `OkaySource` (Unity's `MonoBehaviour` still
-parses too). Unity habits — and most code — carry over. All of this is optional
-— the classic style below still works — but you can write:
-
-```cs
-public class Player : OkaySource {
-    float speed = 5f;
-
-    void Start() {
-        transform.position = new Vector3(0, 0, 0);
-    }
-
-    void Update() {
-        // Move with the arrow/WASD axes, scaled by deltaTime.
-        transform.position.x += Input.GetAxis("Horizontal") * speed * Time.deltaTime;
-        transform.position.y += Input.GetAxis("Vertical")   * speed * Time.deltaTime;
-
-        if (Input.GetKeyDown("space")) { Debug.Log("jump!"); }
-
-        for (int i = 0; i < 3; i++) { /* ... */ }
-    }
+update(dt) {
+    // Move with the arrow/WASD axes.
+    transform.position.x += axis_x() * speed * dt
+    transform.position.y += axis_y() * speed * dt
+    if (key_down("space")) log("jump!")
+    for (i = 0; i < 3; i = i + 1) { /* ... */ }
 }
 ```
 
 What's supported:
 
-- **Lifecycle methods** `Awake()`, `Start()`, `Update()`, `LateUpdate()` (and the
-  classic `start`/`update`). `void`/typed return + a `class : OkaySource`
-  wrapper are accepted and the methods are hoisted out, so a real Unity script
-  often pastes in unchanged.
+- **Lifecycle functions** `start()`, `update(dt)`, `late_update()` (and `Awake()`
+  / `Start()` / `Update()` / `LateUpdate()`). A typed/`void` return and a
+  `class { ... }` wrapper are accepted and their methods are hoisted out, so
+  familiar code often pastes in unchanged.
 - **Dot properties**: `transform.position` / `.localPosition` / `.localScale`
   (and `.x/.y/.z`), `transform.eulerAngles.z`, `Time.deltaTime` / `Time.time` /
   `Time.timeScale`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
@@ -107,7 +111,7 @@ What's supported:
   `transform.rotation` (the Z angle drives 2D rotation).
 - **C# attributes** like `[SerializeField]` and `[Header("Stats")]` are accepted
   (and ignored) before fields and methods.
-- **Event handlers** the Unity way: `OnCollisionEnter()`, `OnTriggerEnter()`,
+- **Event handlers**, PascalCase form: `OnCollisionEnter()`, `OnTriggerEnter()`,
   `OnClick()`, `OnValueChanged()` (alongside the classic `on_collision` etc).
 
 ## Language
@@ -164,11 +168,42 @@ as the *enter* handlers.
 | `pos_x()` / `pos_y()` | Read local position |
 | `rotate(deg)` | Rotate about Z by degrees |
 
+### Movement one-liners (dt-scaled — never write `* dt`)
+Each is a whole behaviour meant to be called every frame from `update()`. Speeds
+are in units/second (or degrees/second), independent of frame rate.
+
+| Function | Effect |
+| --- | --- |
+| `walk(dx, dy, speed)` | Head in a direction at `speed` |
+| `spin(degPerSec)` | Rotate smoothly forever |
+| `on_key_move(speed)` | WASD / arrows (drives a Rigidbody2D if present) |
+| `platformer(speed[, jump])` | Full 2D side-scroller: A/D move, W/Up jumps (Rigidbody2D) |
+| `move_to(x, y, speed)` | Walk to a point, stop on arrival |
+| `spring_to(x, y[, speed])` | Ease to a point, slowing as it arrives |
+| `follow("name", speed[, stop])` | Chase an object, stopping `stop` away |
+| `smooth_follow("name", speed)` | Chase with easing so it glides in |
+| `flee("name", speed)` | Run away from an object |
+| `patrol(x1, y1, x2, y2, speed)` | Walk back and forth between two points |
+| `orbit("name", radius, degPerSec)` | Circle a target |
+| `aim(x, y)` | Rotate to face a world point (turrets, arrows) |
+| `grid_snap(size)` | Snap position to a grid (tile / building games) |
+| `wander(speed)` | Roam, changing direction ~once a second |
+| `bob(amount, speed)` / `pulse(amount, speed)` | Hover / breathe (juice) |
+| `on_key("key", "fn")` | Call your function `fn` the frame `key` is pressed |
+
 ### Input
 | Function | Returns |
 | --- | --- |
 | `key("a")` | true while the key is held |
 | `key_down("a")` | true on the frame the key is pressed |
+| `key_up("a")` | true on the frame the key is released |
+
+Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`,
+`"left"`, `"right"`, `"enter"`, `"escape"`, `"backspace"`, `"tab"`, `"shift"`,
+`"ctrl"`. (Arrow keys and WASD are interchangeable.)
+
+| Function | Returns |
+| --- | --- |
 | `axis_x()` / `axis_y()` | -1..1 from A/D and S/W |
 | `mouse_x()` / `mouse_y()` | cursor position in pixels |
 | `mouse(btn)` | true while a mouse button is held (0=left, 1=right, 2=middle) |
@@ -184,6 +219,10 @@ as the *enter* handlers.
 | `after(secs, "fn")` | call a function once after a delay (respawns, cooldowns) |
 | `every(secs, "fn")` | call a function repeatedly at an interval (spawn waves, blinking) |
 | `cancel_timers()` | clear this script's scheduled after()/every() callbacks |
+| `cooldown("name", secs)` | true (and restarts) only once every `secs` — shooting, dashes, abilities |
+| `once("name")` | true exactly the first time it's reached — one-time events, no flag |
+| `stop()` | zero this object's Rigidbody velocity |
+| `is_moving()` / `face_velocity()` | is the Rigidbody2D moving / turn to its heading |
 | `set_timescale(x)` / `timescale()` | global speed (0 = pause, 0.5 = slow-mo) |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
@@ -201,6 +240,12 @@ as the *enter* handlers.
 | `scale_x()` / `scale_y()` / `scale_z()` | read this object's scale |
 | `set_rot3(x, y, z)` | set absolute 3D euler rotation (degrees) |
 | `set_mesh(name)` | swap this object's MeshRenderer primitive at runtime |
+| `npc_goto(name, x, y, z)` | order a named NPC Controller to walk to a world point (pathfinds if enabled; broadcasts `npc_arrived`) — `""` targets a sibling NPC Controller |
+| `npc_stop(name)` | cancel an `npc_goto` order |
+| `npc_busy(name)` | true while the NPC is still walking to its ordered point |
+| `npc_state(name)` | the NPC's AI state name: `Idle`/`Wander`/`Patrol`/`Follow`/`Flee`/`Chase`/`Search`/`Return` |
+| `spawner_start(name)` / `spawner_stop(name)` | run / pause a Spawner component's waves (`""` targets a sibling Spawner) |
+| `spawner_alive(name)` | how many objects that Spawner created are still alive (wave HUDs) |
 | `count_tag(tag)` | how many active objects have a tag (coins left, enemies alive) |
 | `nearest_tag(tag)` | name of the nearest tagged object to this one ("" if none) — targeting |
 | `screen_w()` / `screen_h()` | render-target size in pixels |
@@ -249,7 +294,7 @@ as the *enter* handlers.
 The standalone player auto-loads `game.okayprefs` on launch and saves it on
 exit, so values set with `prefs_set` persist between play sessions.
 
-### Save system (Easy-Save-style)
+### Save system
 
 For richer save games — many files (slots/profiles), typed values, and
 write-through to disk — use the `save`/`load` family. Each value keeps its type
@@ -305,7 +350,7 @@ split(s, sep) join(arr, sep)` — plus `+` concatenation.
 `map() map_set(m, k, v) map_get(m, k[, default]) map_has(m, k) map_remove(m, k)
 map_keys(m) map_count(m)` — shared by reference, like arrays.
 
-### Tweening (DOTween-style)
+### Tweening
 Smoothly animate this object over time via the scene scheduler. Every tween
 takes an optional easing name and an optional **on-complete** function name as
 its last argument(s).

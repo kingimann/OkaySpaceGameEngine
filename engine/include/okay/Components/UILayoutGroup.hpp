@@ -12,12 +12,14 @@ namespace okay {
 /// Arrange() after adding/removing children (Start() does it once).
 class UILayoutGroup : public Behaviour {
 public:
-    enum class Direction { Vertical, Horizontal };
+    enum class Direction { Vertical, Horizontal, Grid };
     Direction direction = Direction::Vertical;
     UIAnchor  anchor = UIAnchor::TopLeft;
     Vec2      origin{20.0f, 20.0f};   // where the first child is placed
-    float     spacing = 8.0f;
+    float     spacing = 8.0f;         // gap between children (row gap in Grid)
     float     padding = 0.0f;         // extra inset before the first child
+    int       columns = 3;            // Grid: children per row
+    float     spacingY = 8.0f;        // Grid: gap between rows (column gap uses `spacing`)
 
     /// Position every child UI widget in order along the layout direction.
     void Arrange();

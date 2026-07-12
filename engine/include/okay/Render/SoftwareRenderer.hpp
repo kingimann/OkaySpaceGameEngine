@@ -8,6 +8,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
+#include "okay/Render/ProcTexture.hpp"
 #include "okay/Core/Time.hpp"
 #include <algorithm>
 #include <cmath>
@@ -763,7 +764,10 @@ inline Image* GetCachedTexture(const std::string& path) {
     auto it = cache.find(path);
     if (it == cache.end()) {
         Image img;
-        img.Load(path);   // leaves the image empty on failure
+        if (path.rfind("proc:", 0) == 0)
+            img = GenerateProcTexture(path);   // built-in procedural (no file)
+        else
+            img.Load(path);                    // leaves the image empty on failure
         it = cache.emplace(path, std::move(img)).first;
     }
     return it->second.Width() > 0 ? &it->second : nullptr;
@@ -825,8 +829,8 @@ inline bool& PerPixelLighting() { static bool v = false; return v; }  // default
 // the light (i.e. it's occluded), giving real cast shadows. (ShadowMap struct is
 // declared above the Raster class so shading can consult it.)
 inline ShadowMap& Shadows()      { static ShadowMap s; return s; }
-inline bool& ShadowsEnabled()    { static bool v = false; return v; }  // off by default (perf); opt-in
-inline int&  ShadowMapResolution(){ static int s = 1024; return s; }   // per-cascade texels
+inline bool& ShadowsEnabled()    { static bool v = true; return v; }   // on by default (modern look); opt-out
+inline int&  ShadowMapResolution(){ static int s = 2048; return s; }   // per-cascade texels
 
 /// How far (world units) cascaded shadows reach in front of the camera. The near
 /// cascade hugs a small slice of this so its shadows stay crisp no matter how big
@@ -1012,6 +1016,7 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
     bool any = false;
     for (const auto& go : scene.Objects()) {
+        if (!go) continue;
         auto* mr = go->template GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();
@@ -1048,11 +1053,23 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
     }
 
     float texel = (2.0f * R) / (float)S;
-    Vec3 csnap{std::floor(ctr.x / texel) * texel, std::floor(ctr.y / texel) * texel, std::floor(ctr.z / texel) * texel};
     Vec3 up = std::fabs(L.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
     float back = R * 2.0f + depthPad;
-    Vec3 leye = csnap - L * back;
-    outVP = Mat4::Ortho(-R, R, -R, R, 0.05f, back + R * 2.0f + depthPad) * Mat4::LookAt(leye, csnap, up);
+    Vec3 leye = ctr - L * back;
+    Mat4 lightView = Mat4::LookAt(leye, ctr, up);
+    Mat4 lightProj = Mat4::Ortho(-R, R, -R, R, 0.05f, back + R * 2.0f + depthPad);
+    // Texel-snap the shadow centre IN LIGHT SPACE, not world space. The shadow
+    // map's texel grid is aligned to the light's view axes, so snapping the centre
+    // to a world-axis grid (as before) let the grid drift under the shadow whenever
+    // the light — or the camera, for a camera-focused cascade — moved or rotated,
+    // making the shadows "swim"/shimmer/glitch. Rounding the centre's light-space
+    // X/Y to the texel grid and folding the sub-texel remainder back in as a
+    // post-view translation keeps the grid rock-steady frame to frame.
+    Vec4 lc = lightView * Vec4{ctr, 1.0f};
+    float sx = std::floor(lc.x / texel) * texel;
+    float sy = std::floor(lc.y / texel) * texel;
+    Mat4 snap = Mat4::Translate({sx - lc.x, sy - lc.y, 0.0f});
+    outVP = lightProj * snap * lightView;
     outTexelWorld = texel;
     return true;
 }

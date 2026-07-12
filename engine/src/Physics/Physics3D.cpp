@@ -78,24 +78,6 @@ Contact TestSphereSphere(const Vec3& ca, float ra, const Vec3& cb, float rb) {
     return c;
 }
 
-Contact TestBoxBox(const Vec3& ca, const Vec3& ha, const Vec3& cb, const Vec3& hb) {
-    Contact c;
-    Vec3 d = cb - ca;
-    float ox = (ha.x + hb.x) - Mathf::Abs(d.x); if (ox <= 0) return c;
-    float oy = (ha.y + hb.y) - Mathf::Abs(d.y); if (oy <= 0) return c;
-    float oz = (ha.z + hb.z) - Mathf::Abs(d.z); if (oz <= 0) return c;
-    c.hit = true;
-    // Minimum translation axis.
-    if (ox <= oy && ox <= oz)      { c.normal = {d.x < 0 ? -1.0f : 1.0f, 0, 0}; c.penetration = ox; }
-    else if (oy <= ox && oy <= oz) { c.normal = {0, d.y < 0 ? -1.0f : 1.0f, 0}; c.penetration = oy; }
-    else                           { c.normal = {0, 0, d.z < 0 ? -1.0f : 1.0f}; c.penetration = oz; }
-    // Contact point: clamp each center into the other box and split the difference.
-    Vec3 pA = ClampVec(cb, ca - ha, ca + ha);
-    Vec3 pB = ClampVec(ca, cb - hb, cb + hb);
-    c.point = (pA + pB) * 0.5f;
-    return c;
-}
-
 // Box (A) vs sphere (B). Normal points from box toward sphere.
 Contact TestBoxSphere(const Vec3& cBox, const Vec3& hBox, const Vec3& cSph, float r) {
     Contact c;
@@ -170,6 +152,66 @@ inline Vec3 ClosestPointOnTri(const Vec3& p, const Vec3& a, const Vec3& b, const
     return a + ab * (vb * denom) + ac * (vc * denom);
 }
 
+// An oriented box: center, half-extents, and its three world-space unit axes.
+struct OBB3 { Vec3 c, h, ax, ay, az; };
+OBB3 MakeOBB3(BoxCollider3D* box) {
+    OBB3 o; o.c = box->WorldCenter(); o.h = box->HalfExtents();
+    box->WorldAxes(o.ax, o.ay, o.az);
+    return o;
+}
+float OBBProjRadius(const OBB3& o, const Vec3& L) {
+    return o.h.x * Mathf::Abs(Vec3::Dot(o.ax, L))
+         + o.h.y * Mathf::Abs(Vec3::Dot(o.ay, L))
+         + o.h.z * Mathf::Abs(Vec3::Dot(o.az, L));
+}
+Vec3 OBB3Support(const OBB3& o, const Vec3& dir) {
+    return o.c + o.ax * (Vec3::Dot(dir, o.ax) >= 0 ? o.h.x : -o.h.x)
+               + o.ay * (Vec3::Dot(dir, o.ay) >= 0 ? o.h.y : -o.h.y)
+               + o.az * (Vec3::Dot(dir, o.az) >= 0 ? o.h.z : -o.h.z);
+}
+// Separating-axis test between two oriented boxes (15 axes: 3+3 faces, 9 edge
+// cross-products). Normal points A -> B.
+Contact TestOBB3OBB3(const OBB3& A, const OBB3& B) {
+    Contact c;
+    Vec3 axes[15];
+    axes[0] = A.ax; axes[1] = A.ay; axes[2] = A.az;
+    axes[3] = B.ax; axes[4] = B.ay; axes[5] = B.az;
+    const Vec3 Aa[3] = {A.ax, A.ay, A.az}, Bb[3] = {B.ax, B.ay, B.az};
+    int n = 6;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) axes[n++] = Vec3::Cross(Aa[i], Bb[j]);
+    Vec3 d = B.c - A.c;
+    float bestMetric = 1e30f, bestOverlap = 0.0f; Vec3 bestAxis{0, 1, 0};
+    for (int i = 0; i < 15; ++i) {
+        float len2 = axes[i].SqrMagnitude();
+        if (len2 < 1e-8f) continue;                       // parallel edges -> skip
+        Vec3 L = axes[i] * (1.0f / Mathf::Sqrt(len2));
+        float overlap = OBBProjRadius(A, L) + OBBProjRadius(B, L) - Mathf::Abs(Vec3::Dot(d, L));
+        if (overlap <= 0.0f) return c;                    // separating axis found
+        // Bias face axes slightly under edge-cross axes so flat rests pick a clean
+        // face normal instead of chattering on a near-tie edge axis.
+        float metric = overlap + (i < 6 ? 0.0f : 1e-3f);
+        if (metric < bestMetric) { bestMetric = metric; bestOverlap = overlap; bestAxis = L; }
+    }
+    c.hit = true;
+    c.penetration = bestOverlap;
+    if (Vec3::Dot(d, bestAxis) < 0.0f) bestAxis = bestAxis * -1.0f;   // orient A -> B
+    c.normal = bestAxis;
+    Vec3 pB = OBB3Support(B, bestAxis * -1.0f);            // B's deepest vertex into A
+    c.point = pB + bestAxis * (bestOverlap * 0.5f);
+    return c;
+}
+// Oriented box vs sphere: solve in the box's local (unrotated) frame, map back.
+Contact TestOBB3Sphere(const OBB3& box, const Vec3& sc, float r) {
+    Vec3 d = sc - box.c;
+    Vec3 local{Vec3::Dot(d, box.ax), Vec3::Dot(d, box.ay), Vec3::Dot(d, box.az)};
+    Contact c = TestBoxSphere({0, 0, 0}, box.h, local, r);
+    if (!c.hit) return c;
+    c.normal = box.ax * c.normal.x + box.ay * c.normal.y + box.az * c.normal.z;
+    c.point  = box.c + box.ax * c.point.x + box.ay * c.point.y + box.az * c.point.z;
+    return c;
+}
+
 Contact TestColliders(Collider3D* a, Collider3D* b) {
     using S = Collider3D::Shape;
     S sa = a->shape(), sb = b->shape();
@@ -195,20 +237,18 @@ Contact TestColliders(Collider3D* a, Collider3D* b) {
 
     bool aBox = IsBoxLike(sa), bBox = IsBoxLike(sb);
     if (aBox && bBox) {
-        auto* ba = static_cast<BoxCollider3D*>(a);
-        auto* bb = static_cast<BoxCollider3D*>(b);
-        return TestBoxBox(ba->WorldCenter(), ba->HalfExtents(),
-                          bb->WorldCenter(), bb->HalfExtents());
+        return TestOBB3OBB3(MakeOBB3(static_cast<BoxCollider3D*>(a)),
+                            MakeOBB3(static_cast<BoxCollider3D*>(b)));
     }
     if (aBox) { // A box, B sphere/capsule
         auto* box = static_cast<BoxCollider3D*>(a);
         Vec3 sc; float sr; AsSphere(b, box->WorldCenter(), sc, sr);
-        return TestBoxSphere(box->WorldCenter(), box->HalfExtents(), sc, sr);
+        return TestOBB3Sphere(MakeOBB3(box), sc, sr);
     }
     if (bBox) { // A sphere/capsule, B box
         auto* box = static_cast<BoxCollider3D*>(b);
         Vec3 sc; float sr; AsSphere(a, box->WorldCenter(), sc, sr);
-        Contact c = TestBoxSphere(box->WorldCenter(), box->HalfExtents(), sc, sr);
+        Contact c = TestOBB3Sphere(MakeOBB3(box), sc, sr);
         c.normal = -c.normal; // flip to point from A toward B
         return c;
     }
@@ -252,10 +292,28 @@ bool Alive(Collider3D* c) { return c->enabled && c->gameObject && c->gameObject-
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
 
+    // Sleeping thresholds: under these speeds for kSleepTime seconds, a dynamic body
+    // sleeps (skipped until woken). Mirrors Unity/PhysX rest optimisation.
+    constexpr float kLinSleep = 0.05f;   // world units / second
+    constexpr float kAngSleep = 0.05f;   // radians / second
+    constexpr float kSleepTime = 0.5f;   // seconds at rest before sleeping
+
     // 1) Integrate dynamic / kinematic bodies.
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    auto bodies = scene.FindObjectsOfType<Rigidbody3D>();
+    for (Rigidbody3D* rb : bodies) {
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
         Transform* t = rb->transform;
+        // A sleeping body holds position until woken; a directly-set velocity above
+        // the threshold wakes it so scripted moves/teleports still take effect.
+        if (rb->bodyType == Rigidbody3D::BodyType::Dynamic && rb->sleeping) {
+            if (rb->velocity.SqrMagnitude() > kLinSleep * kLinSleep ||
+                rb->angularVelocity.SqrMagnitude() > kAngSleep * kAngSleep) {
+                rb->WakeUp();
+            } else {
+                rb->ConsumeForce(); rb->ConsumeTorque();
+                continue;
+            }
+        }
         if (rb->bodyType == Rigidbody3D::BodyType::Dynamic) {
             Vec3 accel = gravity * rb->gravityScale + rb->ConsumeForce() * rb->InvMass();
             rb->velocity = rb->velocity + accel * dt;
@@ -331,6 +389,14 @@ void Physics3D::Step(Scene& scene, float dt) {
 
             // 3) Resolve solids (skip triggers and pairs without dynamics).
             if (!trigger) {
+                // Wake a sleeping body when a moving body runs into it; two bodies
+                // both at rest stay asleep (resting stack).
+                auto awakeMover = [](Rigidbody3D* r) {
+                    return r && !r->sleeping && r->bodyType != Rigidbody3D::BodyType::Static;
+                };
+                if (ra && ra->sleeping && awakeMover(rb)) ra->WakeUp();
+                if (rb && rb->sleeping && awakeMover(ra)) rb->WakeUp();
+                if ((!(ra && ra->sleeping) || !(rb && rb->sleeping))) {
                 float ima = ra ? ra->InvMass() : 0.0f;
                 float imb = rb ? rb->InvMass() : 0.0f;
                 float imSum = ima + imb;
@@ -362,6 +428,10 @@ void Physics3D::Step(Scene& scene, float dt) {
                     if (velAlongNormal < 0.0f && denom > 0.0f) {
                         float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
                                              rb ? rb->bounciness : 0.0f);
+                        // Below a small approach speed, drop restitution so bodies
+                        // settle (and then sleep) instead of buzzing with micro-bounces
+                        // (Box2D/Unity/PhysX velocity threshold).
+                        if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec3 impulse = c.normal * jImp;
                         if (ra) { ra->velocity = ra->velocity - impulse * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
@@ -395,6 +465,7 @@ void Physics3D::Step(Scene& scene, float dt) {
                         }
                     }
                 }
+                } // both-asleep guard
             }
 
             // 4) Fire enter/stay messages.
@@ -448,7 +519,10 @@ void Physics3D::Step(Scene& scene, float dt) {
     // Clear the per-frame terrain-grounded flag on every body first, so both the
     // heightmap and the voxel pass below can set it (and it falls back to false
     // when a body is airborne over either kind of terrain).
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) rb->groundedOnTerrain = false;
+    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+        rb->groundedOnTerrain = false;
+        rb->groundNormal = Vec3{0.0f, 1.0f, 0.0f};
+    }
 
     auto terrains = scene.FindObjectsOfType<Terrain>();
     if (!terrains.empty()) {
@@ -467,15 +541,24 @@ void Physics3D::Step(Scene& scene, float dt) {
             }
             for (Terrain* terr : terrains) {
                 if (!terr->gameObject || !terr->gameObject->transform) continue;
-                Vec3 tp = terr->gameObject->transform->Position();
-                float lx = pos.x - tp.x, lz = pos.z - tp.z;
+                // Work in the terrain's LOCAL space so a scaled (or rotated)
+                // terrain supports bodies across its whole VISIBLE footprint —
+                // the old world-offset math ignored the transform, so scaling a
+                // terrain up let players walk past the unscaled square and fall
+                // through ground that looked perfectly solid.
+                Mat4 l2w = terr->gameObject->transform->LocalToWorldMatrix();
+                Vec3 lp = l2w.Inverse().MultiplyPoint(pos);
+                float lx = lp.x, lz = lp.z;
                 float half = terr->size * 0.5f;
                 if (lx < -half || lx > half || lz < -half || lz > half) continue;
-                float targetY = tp.y + terr->SampleHeight(lx, lz) + foot;
+                float targetY = l2w.MultiplyPoint({lx, terr->SampleHeight(lx, lz), lz}).y + foot;
                 // Resting on (or just above) the surface counts as grounded, so a
                 // player standing on terrain can jump repeatedly. A small skin
                 // tolerance avoids flicker from the per-frame gravity nudge.
-                if (pos.y <= targetY + 0.05f) rb->groundedOnTerrain = true;
+                if (pos.y <= targetY + 0.05f) {
+                    rb->groundedOnTerrain = true;
+                    rb->groundNormal = l2w.MultiplyVector(terr->NormalAt(lx, lz)).Normalized();
+                }
                 if (pos.y < targetY) {                      // sank into the ground -> lift out
                     t->localPosition.y += (targetY - pos.y);
 
@@ -484,7 +567,7 @@ void Physics3D::Step(Scene& scene, float dt) {
                     // slide down hills, bounce off (restitution) and lose tangential
                     // speed to friction — so debris tumbles and rolls realistically
                     // instead of sticking flat where it lands.
-                    Vec3 n = terr->NormalAt(lx, lz);        // unit surface normal (Y up)
+                    Vec3 n = l2w.MultiplyVector(terr->NormalAt(lx, lz)).Normalized();   // surface normal, world space
                     Vec3& v = rb->velocity;
                     float vn = v.x * n.x + v.y * n.y + v.z * n.z;   // into-surface component
                     if (vn < 0.0f) {
@@ -761,6 +844,26 @@ void Physics3D::Step(Scene& scene, float dt) {
         }
     }
 
+    // Sleep bookkeeping: a dynamic body under the speed thresholds for kSleepTime
+    // seconds sleeps (zeroed and skipped next step). Any motion resets the timer.
+    for (Rigidbody3D* rb : bodies) {
+        if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+        if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
+        if (!rb->allowSleep) { rb->WakeUp(); continue; }
+        if (rb->sleeping) continue;
+        if (rb->velocity.SqrMagnitude() < kLinSleep * kLinSleep &&
+            rb->angularVelocity.SqrMagnitude() < kAngSleep * kAngSleep) {
+            rb->m_sleepTimer += dt;
+            if (rb->m_sleepTimer >= kSleepTime) {
+                rb->sleeping = true;
+                rb->velocity = Vec3::Zero;
+                rb->angularVelocity = Vec3::Zero;
+            }
+        } else {
+            rb->m_sleepTimer = 0.0f;
+        }
+    }
+
     // Record where every dynamic body ended up, for next step's swept collision.
     for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
         if (rb->bodyType == Rigidbody3D::BodyType::Static || !rb->transform) continue;
@@ -801,6 +904,21 @@ bool RayAABB(const Vec3& o, const Vec3& d, const Vec3& mn, const Vec3& mx,
     tHit = tmin; n = nrm; return true;
 }
 
+// Ray vs oriented box: transform the ray into the box's local frame (where it's an
+// axis-aligned box centred at the origin), reuse RayAABB, rotate the normal back.
+bool RayOBB(const Vec3& o, const Vec3& d, BoxCollider3D* box,
+            float maxT, float& tHit, Vec3& n) {
+    Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+    Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+    Vec3 ro = o - bc;
+    Vec3 lo{Vec3::Dot(ro, ax), Vec3::Dot(ro, ay), Vec3::Dot(ro, az)};
+    Vec3 ld{Vec3::Dot(d, ax), Vec3::Dot(d, ay), Vec3::Dot(d, az)};  // d is unit -> ld is unit
+    Vec3 ln;
+    if (!RayAABB(lo, ld, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z}, maxT, tHit, ln)) return false;
+    n = ax * ln.x + ay * ln.y + az * ln.z;
+    return true;
+}
+
 bool RaySphere(const Vec3& o, const Vec3& d, const Vec3& c, float r,
                float maxT, float& tHit, Vec3& n) {
     Vec3 m = o - c;
@@ -830,13 +948,83 @@ RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& di
         if (c->shape() == Collider3D::Shape::Sphere) {
             auto* s = static_cast<SphereCollider3D*>(c);
             hit = RaySphere(origin, dir, s->WorldCenter(), s->WorldRadius(), best.distance, t, n);
-        } else { // Box, or capsule via its AABB
+        } else if (IsBoxLike(c->shape())) {   // exact oriented-box ray test
+            hit = RayOBB(origin, dir, static_cast<BoxCollider3D*>(c), best.distance, t, n);
+        } else { // capsule/cylinder via its AABB
             Vec3 mn, mx; c->WorldAABB(mn, mx);
             hit = RayAABB(origin, dir, mn, mx, best.distance, t, n);
         }
         if (hit && t <= best.distance) {
             best.hit = true; best.collider = c; best.gameObject = c->gameObject;
             best.distance = t; best.point = origin + dir * t; best.normal = n;
+        }
+    }
+    // Heightmap terrain: not a polygon collider, so march the ray against the
+    // height field (transform-aware — scaled/rotated terrains work). Lets Foot
+    // IK plant feet on hills, aim/mouse rays strike the ground, etc. Coarse
+    // steps sized to the heightmap cell, then a short bisection refine.
+    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+        GameObject* tg = terr->gameObject;
+        if (!tg || !tg->active || !tg->transform) continue;
+        if (ignore && tg == ignore) continue;
+        Mat4 l2w = tg->transform->LocalToWorldMatrix();
+        Mat4 w2l = l2w.Inverse();
+        float half = terr->size * 0.5f;
+        auto below = [&](float t) {   // is the ray point at t under the surface?
+            Vec3 lp = w2l.MultiplyPoint(origin + dir * t);
+            if (lp.x < -half || lp.x > half || lp.z < -half || lp.z > half) return false;
+            return lp.y <= terr->SampleHeight(lp.x, lp.z);
+        };
+        // Bound the march to the ray's overlap with the terrain's (generous)
+        // world AABB — callers raycast with huge max distances (camera rays),
+        // and stepping all the way out would stall the frame.
+        Vec3 bmn, bmx; bool bAny = false;
+        for (int cix = 0; cix < 8; ++cix) {
+            Vec3 c2 = l2w.MultiplyPoint({cix & 1 ? half : -half,
+                                         cix & 2 ? 1000.0f : -1000.0f,
+                                         cix & 4 ? half : -half});
+            if (!bAny) { bmn = bmx = c2; bAny = true; }
+            else {
+                bmn.x = Mathf::Min(bmn.x, c2.x); bmx.x = Mathf::Max(bmx.x, c2.x);
+                bmn.y = Mathf::Min(bmn.y, c2.y); bmx.y = Mathf::Max(bmx.y, c2.y);
+                bmn.z = Mathf::Min(bmn.z, c2.z); bmx.z = Mathf::Max(bmx.z, c2.z);
+            }
+        }
+        float tEnter = 0.0f, tExit = best.distance;
+        bool miss = false;
+        for (int ax = 0; ax < 3 && !miss; ++ax) {
+            float o = ax == 0 ? origin.x : ax == 1 ? origin.y : origin.z;
+            float d = ax == 0 ? dir.x : ax == 1 ? dir.y : dir.z;
+            float lo = ax == 0 ? bmn.x : ax == 1 ? bmn.y : bmn.z;
+            float hi = ax == 0 ? bmx.x : ax == 1 ? bmx.y : bmx.z;
+            if (Mathf::Abs(d) < 1e-8f) { if (o < lo || o > hi) miss = true; continue; }
+            float t0 = (lo - o) / d, t1 = (hi - o) / d;
+            if (t0 > t1) { float tmp = t0; t0 = t1; t1 = tmp; }
+            tEnter = Mathf::Max(tEnter, t0);
+            tExit  = Mathf::Min(tExit, t1);
+            if (tEnter > tExit) miss = true;
+        }
+        if (miss) continue;
+        float step = terr->size / (float)(terr->resolution > 1 ? terr->resolution : 64);
+        if (step < 0.05f) step = 0.05f;
+        if (below(tEnter)) continue;   // started under the terrain — no forward hit
+        float prev = tEnter;
+        int guard = 0;
+        for (float t = tEnter + step; t <= tExit && guard < 4096; t += step, ++guard) {
+            if (!below(t)) { prev = t; continue; }
+            float lo = prev, hi = t;                    // crossed: refine the crossing
+            for (int it = 0; it < 10; ++it) {
+                float mid = (lo + hi) * 0.5f;
+                if (below(mid)) hi = mid; else lo = mid;
+            }
+            float tHit = (lo + hi) * 0.5f;
+            if (tHit <= best.distance) {
+                Vec3 lp = w2l.MultiplyPoint(origin + dir * tHit);
+                best.hit = true; best.collider = nullptr; best.gameObject = tg;
+                best.distance = tHit; best.point = origin + dir * tHit;
+                best.normal = l2w.MultiplyVector(terr->NormalAt(lp.x, lp.z)).Normalized();
+            }
+            break;
         }
     }
     return best;
@@ -848,8 +1036,14 @@ std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& cent
         if (!Alive(c)) continue;
         bool hit = false;
         if (IsBoxLike(c->shape())) {
-            Vec3 mn, mx; c->WorldAABB(mn, mx);
-            hit = (ClampVec(center, mn, mx) - center).Magnitude() <= radius;
+            // Exact oriented-box overlap: closest point in the box's local frame.
+            auto* box = static_cast<BoxCollider3D*>(c);
+            Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+            Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+            Vec3 rel = center - bc;
+            Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
+            Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
+            hit = (l - cl).Magnitude() <= radius;
         } else {
             Vec3 sc; float sr; AsSphere(c, center, sc, sr);
             hit = (sc - center).Magnitude() <= radius + sr;
@@ -857,6 +1051,68 @@ std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& cent
         if (hit) out.push_back(c);
     }
     return out;
+}
+
+namespace {
+// Does a sphere (centre c, radius r) touch collider `col`? If so, fill `n` (unit
+// normal from the surface toward c) and `point` (the struck surface point).
+bool SphereTouch(Collider3D* col, const Vec3& c, float r, Vec3& n, Vec3& point) {
+    if (IsBoxLike(col->shape())) {
+        auto* box = static_cast<BoxCollider3D*>(col);
+        Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+        Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+        Vec3 rel = c - bc;
+        Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
+        Vec3 cl{Mathf::Clamp(l.x, -h.x, h.x), Mathf::Clamp(l.y, -h.y, h.y), Mathf::Clamp(l.z, -h.z, h.z)};
+        Vec3 dl = l - cl; float dist = dl.Magnitude();
+        if (dist > 1e-6f) {
+            if (dist > r) return false;
+            Vec3 ln = dl * (1.0f / dist);
+            n = ax * ln.x + ay * ln.y + az * ln.z;
+            point = bc + ax * cl.x + ay * cl.y + az * cl.z;
+            return true;
+        }
+        // Centre inside the box: eject along the least-penetrating local axis.
+        float best = h.x - Mathf::Abs(l.x); Vec3 ln{l.x < 0 ? -1.f : 1.f, 0, 0};
+        float ty = h.y - Mathf::Abs(l.y); if (ty < best) { best = ty; ln = {0, l.y < 0 ? -1.f : 1.f, 0}; }
+        float tz = h.z - Mathf::Abs(l.z); if (tz < best) { best = tz; ln = {0, 0, l.z < 0 ? -1.f : 1.f}; }
+        n = ax * ln.x + ay * ln.y + az * ln.z;
+        point = c;
+        return true;
+    }
+    // Sphere / capsule / cylinder: reduce to a sphere near c.
+    Vec3 sc; float sr; AsSphere(col, c, sc, sr);
+    Vec3 d = c - sc; float dist = d.Magnitude();
+    if (dist > r + sr) return false;
+    n = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
+    point = sc + n * sr;
+    return true;
+}
+} // namespace
+
+RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
+                                   float radius, float maxDistance, GameObject* ignore) {
+    RaycastHit3D best;
+    Vec3 dir = direction.Normalized();
+    if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore);
+    auto colliders = scene.FindObjectsOfType<Collider3D>();
+    // March the sphere along the ray; the grid is fine enough (<= radius) that a
+    // thin wall can't slip between two samples.
+    float step = radius * 0.5f; if (step < 0.02f) step = 0.02f;
+    for (float t = 0.0f; t <= maxDistance; t += step) {
+        Vec3 c = origin + dir * t;
+        for (Collider3D* col : colliders) {
+            if (!Alive(col) || col->isTrigger) continue;
+            if (ignore && col->gameObject == ignore) continue;
+            Vec3 n, p;
+            if (SphereTouch(col, c, radius, n, p)) {
+                best.hit = true; best.collider = col; best.gameObject = col->gameObject;
+                best.distance = t; best.point = p; best.normal = n;
+                return best;   // first touch along the sweep = nearest
+            }
+        }
+    }
+    return best;
 }
 
 Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore, int iterations) {
@@ -875,7 +1131,40 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
                 }
                 continue;
             }
-            // Box / capsule (via its world AABB): push out of the box surface.
+            if (IsBoxLike(col->shape())) {
+                // Oriented box: work in the box's local frame so a rotated platform
+                // pushes the sphere off its true faces, not its (larger) AABB.
+                auto* box = static_cast<BoxCollider3D*>(col);
+                Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+                Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+                Vec3 rel = c - bc;
+                Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
+                Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
+                Vec3 dl3 = l - cl; float dl = dl3.Magnitude();
+                Vec3 ln;                                   // push direction, local space
+                float push = 0.0f;
+                if (dl > 1e-5f) {
+                    if (dl < r) { ln = dl3 * (1.0f / dl); push = r - dl; }
+                } else {
+                    // Centre inside: eject along the least-penetrating local axis.
+                    float dxl = l.x + h.x, dxh = h.x - l.x;
+                    float dyl = l.y + h.y, dyh = h.y - l.y;
+                    float dzl = l.z + h.z, dzh = h.z - l.z;
+                    float m = dxl; ln = {-1, 0, 0};
+                    if (dxh < m) { m = dxh; ln = {1, 0, 0}; }
+                    if (dyl < m) { m = dyl; ln = {0, -1, 0}; }
+                    if (dyh < m) { m = dyh; ln = {0, 1, 0}; }
+                    if (dzl < m) { m = dzl; ln = {0, 0, -1}; }
+                    if (dzh < m) { m = dzh; ln = {0, 0, 1}; }
+                    push = m + r;
+                }
+                if (push > 0.0f) {
+                    Vec3 wn = ax * ln.x + ay * ln.y + az * ln.z;   // local -> world normal
+                    c = c + wn * push; moved = true;
+                }
+                continue;
+            }
+            // Capsule / cylinder (via its world AABB): push out of the box surface.
             Vec3 mn, mx; col->WorldAABB(mn, mx);
             Vec3 cp = ClampVec(c, mn, mx);
             Vec3 d = c - cp; float dl = d.Magnitude();

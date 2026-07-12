@@ -201,9 +201,76 @@ Mesh Character::BuildRig(std::vector<int>& bone) const {
 
 void Character::EnsureRest() const {
     if (m_built) return;
-    m_rest = BuildRig(m_bone);
+    if (m_hasCustomBind) {
+        m_rest = m_customBind;
+        AssignBonesForMesh(m_rest, m_bone);   // auto-rig: nearest bone segment
+    } else {
+        m_rest = BuildRig(m_bone);
+    }
     m_restPos = m_rest.vertices;
     m_built = true;
+}
+
+// Auto-rig: attach every vertex to its nearest bone SEGMENT (each bone's joint
+// toward its child's joint; end bones extrapolate — head up, hands along the
+// arm, feet to the ground). Rotating a bone then carries exactly the vertices
+// that hug that part of the body — the same one-bone-per-vertex skinning the
+// blocky body uses, computed geometrically instead of authored.
+void Character::AssignBonesForMesh(const Mesh& m, std::vector<int>& bone) const {
+    std::vector<Bone> bones = Skeleton();
+    std::vector<Vec3> tip(B_COUNT);
+    for (int i = 0; i < B_COUNT; ++i) {
+        int child = -1;
+        for (int j = 0; j < B_COUNT; ++j) if (bones[j].parent == i) { child = j; break; }
+        if (child >= 0) tip[i] = bones[child].joint;
+        else if (i == B_HEAD) tip[i] = bones[i].joint + Vec3{0.0f, 0.32f, 0.0f};
+        else if (i == B_LFOOT || i == B_RFOOT) tip[i] = Vec3{bones[i].joint.x, 0.0f, bones[i].joint.z + 0.12f};
+        else {   // hands: continue the forearm's direction
+            Vec3 d = bones[i].joint - bones[bones[i].parent].joint;
+            tip[i] = bones[i].joint + d * 0.8f;
+        }
+    }
+    auto segDist = [](const Vec3& p, const Vec3& a, const Vec3& b) {
+        Vec3 ab = b - a;
+        float len2 = Vec3::Dot(ab, ab);
+        float t = len2 > 1e-12f ? Vec3::Dot(p - a, ab) / len2 : 0.0f;
+        t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+        Vec3 q = a + ab * t;
+        return (p - q).Magnitude();
+    };
+    bone.assign(m.vertices.size(), B_HIPS);
+    for (std::size_t k = 0; k < m.vertices.size(); ++k) {
+        float best = 1e30f;
+        for (int i = 0; i < B_COUNT; ++i) {
+            float d = segDist(m.vertices[k], bones[i].joint, tip[i]);
+            if (d < best) { best = d; bone[k] = i; }
+        }
+    }
+}
+
+void Character::BindCustomMesh(const Mesh& m) {
+    m_customBind = m;
+    // Normalize into the bind frame the skeleton lives in: feet on y=0, height
+    // exactly 1.8 (the `height` property rescales at display time), centered on
+    // X/Z. Idempotent, so a saved (already-normalized) bind reloads unchanged.
+    Vec3 lo, hi; m_customBind.Bounds(lo, hi);
+    float h = hi.y - lo.y;
+    if (h > 1e-4f) {
+        float s = 1.8f / h;
+        Vec3 c{(lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f};
+        for (Vec3& v : m_customBind.vertices)
+            v = Vec3{(v.x - c.x) * s, (v.y - c.y) * s, (v.z - c.z) * s};
+    }
+    m_customBind.normals.clear();     // skinned rebuild face-shades (like the body)
+    m_hasCustomBind = true;
+    m_built = false;
+    separateParts = false;            // the custom mesh animates via the single-mesh path
+}
+
+void Character::ClearCustomBind() {
+    m_hasCustomBind = false;
+    m_customBind = Mesh();
+    m_built = false;
 }
 
 std::vector<Vec3> Character::PoseAt(float t) const {
@@ -217,6 +284,20 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_TORSO] = {1.5f * s, 0, 0};
         r[B_LUPARM] = {0, 0, 4 + 1.5f * s};
         r[B_RUPARM] = {0, 0, -4 - 1.5f * s};
+        // Idle fidgets: a slow side-to-side weight shift (hips roll one way, the
+        // torso counter-rolls to stay balanced) plus an occasional glance to one
+        // side — alternating sides each ~9s cycle — so a standing character reads
+        // as alive rather than a breathing statue.
+        float sway = std::sin(t * 0.45f);
+        r[B_HIPS].z  += 2.2f * sway;
+        r[B_TORSO].z -= 1.4f * sway;
+        float cyc = std::fmod(t, 9.0f);
+        if (cyc > 6.0f && cyc < 8.0f) {
+            float e = std::sin((cyc - 6.0f) * 0.5f * 3.14159265f);   // ease 0..1..0
+            float side = std::fmod(t / 9.0f, 2.0f) < 1.0f ? 1.0f : -1.0f;
+            r[B_HEAD].y += side * 22.0f * e;
+            r[B_HEAD].x += 2.0f * e;                                 // slight tilt with it
+        }
     } else if (anim == 2 || anim == 3) {   // walk / run
         float amp = (anim == 3) ? 42.0f : 26.0f;
         float w = t * (anim == 3 ? 9.0f : 6.5f);
@@ -226,7 +307,13 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_RSHIN]  = {std::fmax(0.0f,  1.2f * amp * s), 0, 0};
         r[B_LUPARM] = {-0.8f * amp * s, 0, 5};   r[B_RUPARM] = {0.8f * amp * s, 0, -5};
         r[B_LFORE]  = {18, 0, 0};   r[B_RFORE] = {18, 0, 0};
-        r[B_TORSO]  = {(anim == 3 ? 12.0f : 4.0f) + 2.0f * std::fabs(s), 0, 0};
+        // Feet counter-rotate against the thigh swing so the sole rolls heel->toe
+        // through the stride instead of staying rigidly welded to the shin.
+        r[B_LFOOT]  = {-0.30f * amp * s, 0, 0};   r[B_RFOOT] = {0.30f * amp * s, 0, 0};
+        // Shoulder counter-sway: the torso twists slightly against the hips with the
+        // stride (real gait), which reads as much more alive than a stiff spine.
+        r[B_TORSO]  = {(anim == 3 ? 12.0f : 4.0f) + 2.0f * std::fabs(s),
+                       (anim == 3 ? 7.0f : 4.0f) * s, 0};
     } else if (anim == 4) {                // wave
         r[B_RUPARM] = {0, 0, -150};
         r[B_RFORE]  = {0, 0, -15 + 28 * std::sin(t * 8.0f)};
@@ -330,6 +417,18 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LUPARM] = {6, 0, 6};
     }
 
+    // Landing recovery: layer a brief knee-bend absorb over the grounded states
+    // (idle/walk/run) right after a jump lands — legs flex, torso dips forward,
+    // arms swing out a touch for balance, then it springs back over ~0.3s.
+    if (m_landK > 0.0f && (anim == 1 || anim == 2 || anim == 3)) {
+        float lk = m_landK;
+        r[B_LTHIGH].x += 26.0f * lk;   r[B_RTHIGH].x += 26.0f * lk;
+        r[B_LSHIN].x  -= 34.0f * lk;   r[B_RSHIN].x  -= 34.0f * lk;
+        r[B_LFOOT].x  += 10.0f * lk;   r[B_RFOOT].x  += 10.0f * lk;
+        r[B_TORSO].x  += 10.0f * lk;
+        r[B_LUPARM].z += 12.0f * lk;   r[B_RUPARM].z -= 12.0f * lk;   // arms out for balance
+    }
+
     // Head look: layer the (eased) gaze on top of whatever the animation set, so the
     // head turns and tilts toward where the player is looking. Clamped so the neck
     // never breaks. (The body is flipped 180° about Y in Apply(), which negates the
@@ -351,6 +450,9 @@ std::vector<Vec3> Character::PoseAt(float t) const {
 Vec3 Character::StanceOffset() const {
     if (anim == 6 || anim == 17) return {0.0f, -0.12f, 0.0f};   // crouch / crouch-walk: light knee bend
     if (anim == 7) return {0.0f, -0.78f, 0.0f};   // prone: lay the body on the ground
+    // Landing recovery: the flexed knees momentarily lower the whole body.
+    if (m_landK > 0.0f && (anim == 1 || anim == 2 || anim == 3))
+        return {0.0f, -0.10f * m_landK, 0.0f};
     return {0.0f, 0.0f, 0.0f};
 }
 
@@ -373,6 +475,12 @@ void Character::Skin(Mesh& m, const std::vector<int>& bone, const std::vector<Ve
 
 void Character::Apply() {
     if (!gameObject) return;
+    // External-rig mode renders nothing of its own — keep the baked mesh off
+    // (Start() calls Apply, which would otherwise flash the blocky body).
+    if (driveExternal) {
+        if (auto* emr = gameObject->GetComponent<MeshRenderer>()) emr->enabled = false;
+        return;
+    }
     auto* mr = gameObject->GetComponent<MeshRenderer>();
     if (!mr) mr = gameObject->AddComponent<MeshRenderer>();
     m_built = false; EnsureRest();
@@ -493,6 +601,18 @@ void Character::SyncStateClips() {
 }
 
 void Character::Update(float dt) {
+    // Landing recovery: coming out of the jump pose into any grounded state plays a
+    // brief knee-bend "absorb" (sin arc in PoseAt/StanceOffset) so a landing has
+    // weight to it instead of the legs snapping straight the frame you touch down.
+    if (anim != m_prevAnim) {
+        if (m_prevAnim == 5 && (anim == 1 || anim == 2 || anim == 3)) m_landT = 0.0f;
+        m_prevAnim = anim;
+    }
+    if (m_landT >= 0.0f) {
+        m_landT += dt / 0.28f;                       // ~0.28s dip-and-spring
+        if (m_landT >= 1.0f) { m_landT = -1.0f; m_landK = 0.0f; }
+        else m_landK = std::sin(3.14159265f * m_landT);
+    }
     SyncStateClips();
     // Advance any in-progress crossfade (covers every render path below).
     if (m_blendT < 1.0f) {
@@ -501,6 +621,24 @@ void Character::Update(float dt) {
     }
     AdvanceLayer(dt);   // tick the partial-body layer clip (if any), every path below uses it
     AdvanceBlendTree(dt);   // tick the locomotion blend tree's shared clock
+    // External-rig mode: a HumanoidRetarget next to us transfers CurrentPose()
+    // onto an imported skeleton each frame — advance every animation clock and
+    // state here but render nothing ourselves (no baked mesh, no part rig).
+    if (driveExternal) {
+        if (auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr)
+            mr->enabled = false;
+        if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+            m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
+            if (m_punchT > 1.0f) m_punchT = 1.0f;
+        }
+        if (m_activeClip) AdvanceClip(dt);
+        else animTime += dt * animSpeed;
+        float ek = headTurnSpeed > 0.0f ? (1.0f - std::exp(-headTurnSpeed * dt)) : 1.0f;
+        m_headYaw   += (lookYaw   - m_headYaw)   * ek;
+        m_headPitch += (lookPitch - m_headPitch) * ek;
+        m_bodyLean  += (bodyLean  - m_bodyLean)  * ek;
+        return;
+    }
     // Separate-parts rig: animate the part transforms instead of baking one mesh.
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();
@@ -695,6 +833,9 @@ void Character::EditorPreviewTick() {
 void Character::BuildParts() {
     Scene* s = GetScene();
     if (!s || !gameObject || !gameObject->transform) return;
+    // A custom-rigged model owns this character: the blocky part rig would just
+    // spawn the old default body on top of it. (Unrig to get the rig back.)
+    if (m_hasCustomBind) { separateParts = false; return; }
     // Collapse to a SINGLE rig: adopt the first existing "Rig" child and destroy any
     // extras, so clicking "Separate Into Parts" (or replaying) never stacks up rigs.
     std::vector<GameObject*> rigs;

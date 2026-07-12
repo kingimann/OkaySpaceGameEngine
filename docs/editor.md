@@ -77,25 +77,42 @@ Recent additions (v2.12–2.14):
   highlighting, **Find** (Ctrl+F), inline compile errors, current-line
   highlight, **zoom** (Ctrl+scroll), **comment toggle** (Ctrl+/), **go-to-line**,
   **duplicate line** (Ctrl+D), **move line** (Alt+↑/↓), and a **Snippets** menu.
+  **Changed-line bars** in the gutter mark lines you've edited since the last
+  save (amber) or added past the file's end (green) — they clear on save.
+  **Find in Files** (Ctrl+Shift+F, or via the command palette) searches every
+  project script at once; click a result to open that file at that line.
   Prefer your own editor? **Open in IDE** launches the script in VS Code / your
   OS default, and with **Live Sync** on (enabled automatically when you open it)
   every save out there reloads in-engine — so you can code entirely outside
   OkaySpace. If you also have unsaved edits in-app when the file changes, a banner
   lets you pick which version to keep. The editor can also **Float** into its own
   window or **Dock** back as a tab.
-- **UI editing** — two ways to edit the Canvas on a flat screen (Unity's UI view):
-  a **mode toggle** that locks the Scene view to UI-only (View ▸ UI Editing Mode, or
-  the **UI Only** button on the Scene toolbar), and a **dedicated dockable "UI" tab**
+- **UI editing** — the screen-space UI (Canvas) is edited in its **own** view, kept
+  out of the way while you work on 3D objects / 2D sprites. The normal Scene view
+  shows **no UI overlay by default** (toggle it with the **UI** button if you want a
+  peek); the **Game** view always shows the UI, since that's what players see. Edit
+  UI two ways (Unity's UI view): a **mode toggle** that locks the Scene view to
+  UI-only (View ▸ UI Editing Mode, or the **UI Only** button on the Scene toolbar),
+  and a **dedicated dockable "UI" tab**
   (View ▸ UI Editor (separate tab)) you can keep open **beside** the 3D Scene so you
-  see the world and the UI layout at once. Both share the same tools — zoom/pan,
-  rule-of-thirds guides, an **All Bounds** outline of every widget, a **safe-area**
-  inset, grid snap, an **aspect-ratio device frame** (16:9 / 4:3 / 1:1 / 9:16
-  phone…) that shows how the layout crops on that shape, a **Frame Sel** button that
-  zooms/centres on the selected widget, and a compact **pos/size** editor right on
-  the toolbar. Only the viewport under the pointer processes a drag, so having both
-  the Scene view and the UI tab open never double-moves a widget. Dragging a UI
-  child **snaps stickily to its parent** (edges, center and thirds), Unity-style, in
-  addition to the canvas and sibling smart-guides.
+  see the world and the UI layout at once. The UI-only view frames the UI against the
+  **exact same screen the Game tab uses** — pick a resolution once in the **screen**
+  dropdown (it drives the Game view's *Resolution* menu too) and both tabs match
+  pixel-for-pixel: same aspect, same letterbox, and the same CanvasScaler
+  resolution-scale, so a HUD is the same size in the editor and the built game
+  (WYSIWYG, like Unity's Game view driving the Canvas). The letterbox margins outside
+  the screen are dimmed and any widget that runs **off-screen is outlined red**, so
+  "is my UI visible in-game?" is answerable at a glance, and the **safe-area** inset
+  is a true 5% inset of the real screen. Both views share the same tools — zoom/pan,
+  rule-of-thirds guides, an **All Bounds** outline of every widget, grid snap, a
+  **Subdivide** grid (split the screen into N×M cells and snap UI edges/centres to
+  them — subdivide, then resize UI to the divisions, like a 3D model), a **Frame Sel**
+  button that zooms/centres on the selected widget, and a compact **pos/size** editor
+  right on the toolbar. Drag a corner/edge handle to resize a widget to any size; only
+  the viewport under the pointer processes a drag, so having both the Scene view and
+  the UI tab open never double-moves a widget. Dragging a UI child **snaps stickily to
+  its parent** (edges, center and thirds), Unity-style, in addition to the canvas,
+  safe-area, subdivision and sibling smart-guides.
 - **Flow Graph** (Window ▸ Flow Graph) — a node view of the selected object's
   **Actions** (visual scripting): the trigger wires to its conditions and a chain
   of instructions. **Add** a condition/instruction and **click any node to edit it
@@ -134,6 +151,19 @@ Recent additions (v2.12–2.14):
   the transform into keyframe tracks.
 
 - **Hierarchy** — see the scene tree (parents/children); click to select.
+  **Ctrl+click** toggles objects in a multi-selection, **Shift+click** selects
+  the whole range between the active object and the clicked row, **Ctrl+A**
+  selects everything visible. **Up/Down** walk the rows, **Left/Right**
+  collapse/expand the selected object's children. The search box also matches
+  type words — try `light`, `npc`, `spawner`, `collider`, `controller`, `ui`.
+  **Isolate** (Shift+I, the Scene toolbar button, or right-click ▸ Isolate)
+  shows ONLY the selected object and its children in the Scene view — view-only,
+  nothing in the scene changes, and a banner reminds you it's on. Rows outside
+  the isolated subtree dim in the Hierarchy.
+- **Project** — the same selection model: **Ctrl+click** to toggle,
+  **Shift+click** for a range, **Ctrl+A** for everything shown. **Ctrl+C/X/V**
+  copy, cut and paste whole multi-selections between folders, and **Delete**
+  removes all selected assets after one confirmation.
 - **Inspector** — rename, toggle active, edit Transform (position / Z rotation /
   scale), edit the Sprite Renderer (color, size) and Camera (ortho size), and
   add components or delete the object.
@@ -190,8 +220,9 @@ Recent additions (v2.12–2.14):
   anchors** (Stretch Horizontal / Vertical / Fill) make a widget fill the canvas
   on that axis — its Position/Size fields then read as **margins** (Unity's
   offsetMin/offsetMax: Left/Top/Right/Bottom), so a full-bleed backdrop or a
-  top bar reflows with the window. The **Game view resolution** menu now scales a
-  Constant-Pixel-Size HUD to the picked resolution, like Unity's CanvasScaler.
+  top bar reflows with the window. The **Game view resolution** menu scales a
+  Constant-Pixel-Size HUD to the picked resolution, like Unity's CanvasScaler — and
+  the UI-only editor now applies the *same* scale, so the HUD is identical in both.
 - **Panel & image styling** — *UI Panel* adds a **gradient direction** (vertical,
   horizontal, or either diagonal), an outer **outline** ring (focus keylines /
   neon accents, distinct from the inset border), and an inner **top highlight**
@@ -253,6 +284,47 @@ Recent additions (v2.12–2.14):
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
   **Step** advances a single frame.
 
+### Graphics quality
+
+A **New 3D Scene** opens populated and lit like a modern engine's default
+level — a ground plane, a warm sun with sky-blue fill, a graded sky with a
+sun disc, gentle fog and vignette, and a couple of hero shapes — instead of
+an empty void. Everything is a normal object/setting you can change or
+delete.
+
+Rendering defaults to the modern look — tweak everything in the
+**Environment / Render Settings** panel:
+
+- **Filmic Rendering (linear + ACES)** — the gamma-correct pipeline: albedo
+  is decoded to linear, lighting runs in linear space, and the output gets
+  an ACES filmic roll-off plus proper sRGB encoding. On by default (this is
+  most of the "modern engine" look); untick for the legacy flat response.
+- **Shadows** — on by default: 2048-texel maps filtered with a 12-tap
+  Poisson disk and slope-scaled bias (soft edges, no acne on slopes). Tune
+  distance/cascades/resolution, or bake lighting for zero runtime cost.
+- **Bloom** — bright pixels glow: threshold + intensity sliders; drive it
+  with emissive materials (a lamp, neon strip, laser). Works on the GPU
+  renderer and the software fallback.
+- **Ambient occlusion (SSAO)** — corners, creases and contact points
+  darken naturally (radius + strength sliders). Runs on the GPU renderer
+  and the software fallback.
+- **Sky** — a graded sky with an **atmospheric sun** (a soft scattering
+  glow that brightens the sky around the sun) and a **horizon haze** band,
+  instead of a flat gradient; plus optional stars for night skies.
+- **Fog, vignette** — mood/depth layers, saved per scene so the shipped
+  game matches the editor preview.
+
+### Built-in procedural textures
+
+Texture anything without image files: the Mesh Renderer's **Procedural**
+button (next to the Texture field) opens a swatch picker with 12 tileable
+textures generated in code — `checker`, `grid`, `brick`, `wood`, `stone`,
+`tiles`, `marble`, `metal`, `noise`, `grass`, `sand`, `lava`. They're plain
+texture names (`proc:brick`), so they work in every renderer, tile with the
+Tiling controls, save with the scene, and ship inside the game — nothing to
+copy. You can also type a `proc:` name into any texture field (terrain,
+sprites, UI images).
+
 ### Building a standalone game
 
 **File → Build Game…** (Ctrl+B) exports the current scene as a self-contained
@@ -302,3 +374,44 @@ the engine's 2D sprite model. A 3D scene view would swap that panel for an
 OpenGL framebuffer using the same `IRenderer` abstraction the engine already
 exposes — the rest of the editor (selection, inspector, serialization) is
 unchanged.
+
+## Scene & Game view extras
+
+- **View axis gizmo** (Scene view, top-right): the X/Y/Z tips track the camera
+  orientation; **click a tip** to snap the view to look along that axis.
+- **Game view Stats**: toggle in the Game toolbar — overlays FPS, frame time,
+  object and mesh/triangle counts on the running game.
+- **Console**: the tab badge shows live error/warning counts; **Error Pause**
+  pauses Play the moment a new error is logged.
+- **Play tint**: the editor chrome darkens subtly while the game runs.
+
+## Editor quality-of-life
+
+- **File dialogs**: Open Scene, Save Scene As, Import Model and Instantiate
+  Prefab all have a `...` browse button (native picker with the right file
+  filter). The path field auto-focuses when the popup opens and **Enter
+  confirms**, so keyboard-only open/save works.
+- **Transport buttons**: Play / Stop / Pause / Resume / Step use drawn icons
+  and color-coding; tooltips carry the shortcuts (Ctrl+P toggles Play).
+- **History panel** (View ▸ History): a timeline rail — the filled accent dot
+  is the current state, hollow rows above are redo steps, below are undo
+  steps; click any row to jump straight there.
+- **Add Component search**: results in the flat search list carry a
+  category-colored dot (blue Rendering, green Physics, teal Animation, ...),
+  and Enter still adds the first match.
+- **Hierarchy search**: results show a dimmed `in Parent / Child` path so
+  same-named objects are tellable apart; double-click frames the object.
+- **Scripting Reference**: click any API signature to copy it; the filter box
+  narrows every section at once.
+- **Sprite Editor**: Mirror X *and* Mirror Y (both on = four-quadrant
+  symmetry), Ctrl+Z undo, and a hovered-texel outline with an `x, y` readout
+  in the canvas corner. P/E/F/I switch tools.
+- **UI Theme window**: preset buttons show a mini palette strip, and a live
+  preview card renders the current panel/button/slider/text style before you
+  bake it into the scene's widgets.
+- **Variables window**: right-click a variable for Copy name / Copy value /
+  Reset to 0 / Delete. Values flash amber when the running game changes them.
+- **Confirm-before-delete**: destructive buttons (Crash Log ▸ Clear,
+  Variables ▸ Clear All, the launcher's community Remove) ask first.
+- **About dialog** (Help ▸ About OkaySpace): version, SDL/ImGui build info,
+  and a Copy version info button for bug reports.

@@ -21,19 +21,14 @@ public:
     }
 
     /// Add/update a single keyframe on a track (creates the track if needed).
-    /// Editors use this to "record" a value at the current time.
+    /// Editors use this to "record" a value at the current time. Time-ordered
+    /// adds are O(1) — importers push thousands of baked keys through here, and
+    /// the old rebuild-the-whole-track-per-key made one Mixamo FBX clip take
+    /// over a minute to import (the editor read as frozen).
     void AddKey(const std::string& track, float time, float value) {
         AnimationCurve& c = m_tracks[track];
         if (loop) c.wrap = AnimationCurve::Wrap::Loop;
-        // Replace an existing key at (nearly) the same time, else add a new one.
-        bool replaced = false;
-        AnimationCurve nc; nc.wrap = c.wrap; nc.smooth = c.smooth;
-        for (const auto& k : c.Keys()) {
-            if (std::abs(k.time - time) < 1e-4f) { nc.AddKey(time, value); replaced = true; }
-            else nc.AddKey(k.time, k.value);
-        }
-        if (!replaced) nc.AddKey(time, value);
-        c = std::move(nc);
+        c.AddOrReplaceKey(time, value, 1e-4f);
         if (c.Duration() > m_length) m_length = c.Duration();
     }
     void RemoveTrack(const std::string& track) { m_tracks.erase(track); Recompute(); }
@@ -56,6 +51,46 @@ public:
     }
 
     const std::unordered_map<std::string, AnimationCurve>& Tracks() const { return m_tracks; }
+
+    // ---- Clip surgery (editor tools) ----
+    /// Reverse the clip in time (plays backwards). Length is preserved.
+    void Reverse() {
+        for (auto& kv : m_tracks) {
+            AnimationCurve nc; nc.wrap = kv.second.wrap; nc.smooth = kv.second.smooth;
+            for (const auto& k : kv.second.Keys()) nc.AddKey(m_length - k.time, k.value);
+            kv.second = std::move(nc);
+        }
+        Recompute();
+    }
+
+    /// Keep only [t0, t1] and shift it to start at 0 (cut a sub-clip out of a
+    /// longer take). The cut boundaries are sampled so the ends hold their
+    /// exact values instead of snapping to the nearest surviving key.
+    void Trim(float t0, float t1) {
+        if (t1 <= t0) return;
+        for (auto& kv : m_tracks) {
+            AnimationCurve& c = kv.second;
+            AnimationCurve nc; nc.wrap = c.wrap; nc.smooth = c.smooth;
+            nc.AddKey(0.0f, c.Evaluate(t0));
+            for (const auto& k : c.Keys())
+                if (k.time > t0 + 1e-4f && k.time < t1 - 1e-4f) nc.AddKey(k.time - t0, k.value);
+            nc.AddKey(t1 - t0, c.Evaluate(t1));
+            kv.second = std::move(nc);
+        }
+        Recompute();
+    }
+
+    /// Stretch/compress the clip in time: factor 2 = twice as long (half speed),
+    /// 0.5 = twice as fast. Key values are untouched - only their times move.
+    void ScaleTime(float factor) {
+        if (factor <= 1e-4f) return;
+        for (auto& kv : m_tracks) {
+            AnimationCurve nc; nc.wrap = kv.second.wrap; nc.smooth = kv.second.smooth;
+            for (const auto& k : kv.second.Keys()) nc.AddKey(k.time * factor, k.value);
+            kv.second = std::move(nc);
+        }
+        Recompute();
+    }
 
 private:
     std::unordered_map<std::string, AnimationCurve> m_tracks;

@@ -47,9 +47,22 @@ public:
                 Mathf::Abs(size.y * s.y) * 0.5f,
                 Mathf::Abs(size.z * s.z) * 0.5f};
     }
+    /// The box's three world-space unit axes (its local X/Y/Z after rotation).
+    /// Drives oriented-box (SAT) collision so a rotated box collides by its true
+    /// faces, not its axis-aligned bounds.
+    void WorldAxes(Vec3& ax, Vec3& ay, Vec3& az) const {
+        Quat q = transform ? transform->Rotation() : Quat::Identity;
+        ax = q * Vec3{1, 0, 0}; ay = q * Vec3{0, 1, 0}; az = q * Vec3{0, 0, 1};
+    }
     void WorldAABB(Vec3& mn, Vec3& mx) const override {
         Vec3 c = WorldCenter(), h = HalfExtents();
-        mn = c - h; mx = c + h;
+        Vec3 ax, ay, az; WorldAxes(ax, ay, az);
+        // Expand to the rotated box's extent so a spun box isn't culled before the
+        // narrow-phase SAT test (an unrotated box gives exactly h).
+        Vec3 e{ Mathf::Abs(ax.x) * h.x + Mathf::Abs(ay.x) * h.y + Mathf::Abs(az.x) * h.z,
+                Mathf::Abs(ax.y) * h.x + Mathf::Abs(ay.y) * h.y + Mathf::Abs(az.y) * h.z,
+                Mathf::Abs(ax.z) * h.x + Mathf::Abs(ay.z) * h.y + Mathf::Abs(az.z) * h.z };
+        mn = c - e; mx = c + e;
     }
 };
 

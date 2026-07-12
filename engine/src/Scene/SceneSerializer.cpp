@@ -38,6 +38,7 @@
 #include "okay/Components/CraftingMenu.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/TopDownController2D.hpp"
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
@@ -48,6 +49,7 @@
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
+#include "okay/Components/NoCode.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/TurnManager.hpp"
@@ -92,11 +94,13 @@
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
+#include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/RootMotion.hpp"
@@ -218,7 +222,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << sr->uvMax.x << " " << sr->uvMax.y
             << " " << sr->sortOrder
             << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0)
-            << " " << sr->sortingLayer << "\n";   // trailing (back-compatible)
+            << " " << sr->sortingLayer
+            << " " << (int)sr->texFilter << "\n";   // trailing (back-compatible)
     }
     if (auto* cam = go->GetComponent<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -242,6 +247,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
             << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
+        // Procedural variant of a named nature prop (compact: one int regenerates
+        // the exact varied shape on load, instead of baking meshgeo/meshcolors).
+        if (mr->meshVariant != 0 && Mesh::NameHasVariants(mr->mesh.name))
+            out << "  meshvar " << mr->meshVariant << "\n";
         // Persist edited/custom geometry: a mesh with no primitive name and no
         // .OBJ path is hand-edited, so its vertices/triangles can't be regenerated
         // from a name — write them verbatim. This record follows the `mesh` line
@@ -256,6 +265,32 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 out << " " << v.x << " " << v.y << " " << v.z;
             out << " " << mr->mesh.triangles.size();
             for (int t : mr->mesh.triangles) out << " " << t;
+            out << "\n";
+            // Per-vertex UVs for the edited geometry (separate optional record so
+            // older scenes still load). Written after meshgeo because the meshgeo
+            // reader clears the uvs array.
+            if (mr->mesh.uvs.size() == mr->mesh.vertices.size() && !mr->mesh.uvs.empty()) {
+                out << "  meshuv " << mr->mesh.uvs.size();
+                for (const Vec2& t : mr->mesh.uvs) out << " " << t.x << " " << t.y;
+                out << "\n";
+            }
+            // Shading mode: meshgeo loads flat by default; remember when the user
+            // chose Shade Smooth (1) or Auto Smooth by angle (2 <angle>) so it
+            // survives save/load (optional record).
+            if (mr->mesh.HasNormals()) {
+                if (mr->mesh.autoSmoothAngle > 0.0f)
+                    out << "  meshshade 2 " << mr->mesh.autoSmoothAngle << "\n";
+                else
+                    out << "  meshshade 1\n";
+            }
+        }
+        // Per-face colors (vertex-painting / baked lightmap) — separate record so
+        // older scenes still load. Written whenever populated, for named primitives
+        // too (a baked cube carries its baked lighting).
+        if (mr->mesh.HasFaceColors()) {
+            out << "  meshcolors " << mr->mesh.triColors.size();
+            for (const Color& c : mr->mesh.triColors)
+                out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
         // Material (emissive rgb, specular, shininess, unlit) — separate record
@@ -346,10 +381,50 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         }
         out << "\n";
         // Locomotion (auto idle/walk/run) — separate record so it's optional.
-        if (ma->driveByMovement || !ma->idleClip.empty() || !ma->walkClip.empty() || !ma->runClip.empty())
+        if (ma->driveByMovement || ma->inPlace || !ma->idleClip.empty() || !ma->walkClip.empty() || !ma->runClip.empty())
             out << "  modelanimdrive " << (ma->driveByMovement ? 1 : 0)
                 << " " << ma->walkThreshold << " " << ma->runThreshold
-                << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip) << "\n";
+                << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip)
+                << " " << (ma->inPlace ? 1 : 0) << "\n";
+        // Air states (jump/fall/land by vertical motion) — optional record.
+        if (!ma->jumpClip.empty() || !ma->fallClip.empty() || !ma->landClip.empty())
+            out << "  modelanimair " << Quote(ma->jumpClip) << " " << Quote(ma->fallClip)
+                << " " << Quote(ma->landClip) << " " << ma->airUpVel << " " << ma->airDownVel << "\n";
+        // Crossfade + clip events — separate optional records (older scenes lack them).
+        out << "  modelanimblend " << ma->blendTime << "\n";
+        if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty())
+            out << "  modelanimroot " << (ma->rootMotion ? 1 : 0) << " " << Quote(ma->rootMotionNode)
+                << " " << (ma->rootMotionY ? 1 : 0) << "\n";
+        if (ma->smoothLocomotion)
+            out << "  modelanimsmooth 1\n";
+        for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {
+            if (ma->clips[ci].events.empty()) continue;
+            out << "  modelanimevents " << ci << " " << ma->clips[ci].events.size();
+            for (const auto& ev : ma->clips[ci].events)
+                out << " " << ev.time << " " << Quote(ev.name);
+            out << "\n";
+        }
+    }
+    if (auto* asm2 = go->GetComponent<AnimStateMachine>()) {
+        out << "  animsm " << Quote(asm2->entry) << " " << asm2->states.size();
+        for (const auto& st : asm2->states) {
+            out << " " << Quote(st.name) << " " << Quote(st.clip) << " " << st.speed
+                << " " << (st.loop ? 1 : 0) << " " << st.transitions.size();
+            for (const auto& tr : st.transitions)
+                out << " " << Quote(tr.to) << " " << (int)tr.cond << " " << Quote(tr.param)
+                    << " " << tr.value << " " << tr.blend;
+        }
+        out << "\n";
+        // Animator graph node positions (separate record so old files load; the
+        // graph auto-lays-out when it's absent). Order matches `states`.
+        out << "  animsmpos " << asm2->states.size();
+        for (const auto& st : asm2->states) out << " " << st.nx << " " << st.ny;
+        out << "\n";
+        if (!asm2->params.empty()) {
+            out << "  animsmparams " << asm2->params.size();
+            for (const auto& p : asm2->params) out << " " << Quote(p.name) << " " << p.type;
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -447,19 +522,49 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << de->maxDebris << " " << de->breakButton
             << " " << de->breakRadius << " " << de->reach << "\n";
     }
-    if (auto* ch = go->GetComponent<Character>()) out << "  character " << ch->ToText() << "\n";
+    if (auto* ch = go->GetComponent<Character>()) {
+        out << "  character " << ch->ToText() << "\n";
+        // Disabled = a custom model replaced the blocky body (AttachCharacterModel):
+        // remember it so the default character stays hidden after a load.
+        if (!ch->enabled) out << "  charenabled 0\n";
+        // External-rig mode: a HumanoidRetarget next to this Character drives an
+        // imported skeleton from its pose (renders nothing itself).
+        if (ch->driveExternal) out << "  charext 1\n";
+        // Auto-rigged custom mesh (BindCustomMesh): store the bind geometry so the
+        // rigged model survives save/load (verts + tris + optional uvs).
+        if (ch->HasCustomBind()) {
+            const Mesh& bm = ch->CustomBindMesh();
+            out << "  charbind " << bm.vertices.size();
+            for (const Vec3& v : bm.vertices) out << " " << v.x << " " << v.y << " " << v.z;
+            out << " " << bm.triangles.size();
+            for (int t : bm.triangles) out << " " << t;
+            out << " " << (bm.uvs.size() == bm.vertices.size() ? bm.uvs.size() : 0);
+            if (bm.uvs.size() == bm.vertices.size())
+                for (const Vec2& t : bm.uvs) out << " " << t.x << " " << t.y;
+            out << "\n";
+            // A rigged model keeps its material/texture — Character objects skip
+            // the normal mesh/material records, so write one here (same format).
+            if (auto* mr = go->GetComponent<MeshRenderer>())
+                out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
+                    << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
+                    << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
+                    << mr->tiling.x << " " << mr->tiling.y << "\n";
+        }
+    }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
             << li->color.a << " " << li->ambient << " " << li->intensity
             << " " << (int)li->type << " " << li->range << " " << li->spotAngle
             << " " << li->spotSoftness << " " << (li->useTemperature ? 1 : 0) << " " << li->temperature
-            << " " << li->ambientColor.r << " " << li->ambientColor.g << " " << li->ambientColor.b << "\n";
+            << " " << li->ambientColor.r << " " << li->ambientColor.g << " " << li->ambientColor.b
+            << " " << (int)li->falloff << "\n";   // trailing (back-compatible)
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness
             << " " << rb->friction                                    // trailing (back-compatible)
-            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0) << "\n";
+            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
+            << " " << (rb->allowSleep ? 1 : 0) << "\n";
     }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -498,7 +603,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (rb->freezeZ ? 1 : 0)
             << " " << rb->maxFallSpeed
             << " " << rb->friction                                    // trailing (back-compatible)
-            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0) << "\n";
+            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
+            << " " << (rb->allowSleep ? 1 : 0) << "\n";
     }
     if (auto* j = go->GetComponent<Joint3D>()) {
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
@@ -523,7 +629,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << a->aimAxis.x << " " << a->aimAxis.y << " " << a->aimAxis.z
             << " " << a->upAxis.x << " " << a->upAxis.y << " " << a->upAxis.z
             << " " << a->weight << " " << a->maxAngle
-            << " " << a->target.x << " " << a->target.y << " " << a->target.z << "\n";
+            << " " << a->target.x << " " << a->target.y << " " << a->target.z
+            << " " << a->smoothing << "\n";
     }
     if (auto* l = go->GetComponent<LookAtIK>()) {
         out << "  lookatik " << Quote(l->targetName)
@@ -532,7 +639,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << l->target.x << " " << l->target.y << " " << l->target.z
             << " " << l->chainNames.size();
         for (const std::string& n : l->chainNames) out << " " << Quote(n);
-        out << "\n";
+        out << " " << l->smoothing << "\n";
+    }
+    // Written BEFORE footik on purpose: components load in record order, and
+    // the retarget must pose the rig before FootIK plants the feet on it.
+    if (auto* hr = go->GetComponent<HumanoidRetarget>()) {
+        out << "  humretarget " << hr->weight << "\n";
     }
     if (auto* f = go->GetComponent<FootIK>()) {
         out << "  footik " << Quote(f->leftHipName) << " " << Quote(f->leftKneeName) << " " << Quote(f->leftFootName)
@@ -540,7 +652,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << Quote(f->pelvisName)
             << " " << f->weight << " " << f->footOffset << " " << (f->useRaycast ? 1 : 0) << " " << f->groundY
             << " " << (f->adjustPelvis ? 1 : 0) << " " << (f->plantDown ? 1 : 0) << " " << (f->alignToGround ? 1 : 0)
-            << " " << f->minKneeBend << " " << f->maxKneeBend << "\n";
+            << " " << f->minKneeBend << " " << f->maxKneeBend << " " << f->smoothing << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
         out << "  limbik " << Quote(lb->upperName) << " " << Quote(lb->lowerName) << " " << Quote(lb->endName)
@@ -934,7 +1046,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << c->waypointWait << " " << c->attackWindup << " " << c->fleeHealthPct
             << " " << c->separationRadius << " " << (c->driveAnimation ? 1 : 0)
             << " " << (c->lookAtTarget ? 1 : 0)
-            << " " << (c->footIK ? 1 : 0) << "\n";
+            << " " << (c->footIK ? 1 : 0)
+            << " " << (c->usePathfinding ? 1 : 0) << " " << c->repathInterval << "\n";
         for (const Vec3& w : c->waypoints)
             out << "  npcwp " << w.x << " " << w.y << " " << w.z << "\n";
     }
@@ -945,7 +1058,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* c = go->GetComponent<Spawner>()) {
         out << "  spawner " << Quote(c->templateName) << " " << c->interval << " " << c->maxAlive
             << " " << c->totalToSpawn << " " << c->spawnRadius << " " << c->startDelay
-            << " " << (c->deactivateTemplate ? 1 : 0) << "\n";
+            << " " << (c->deactivateTemplate ? 1 : 0)
+            // Wave fields appended (numeric-peek guarded on read, old scenes fine).
+            << " " << c->count << " " << c->waves << " " << c->waveDelay
+            << " " << (c->autoStart ? 1 : 0) << " " << Quote(c->prefabPath) << "\n";
     }
     if (auto* c = go->GetComponent<CraftingMenu>()) {
         out << "  craftmenu " << (int)(unsigned char)c->toggleKey << " " << (c->open ? 1 : 0)
@@ -1016,6 +1132,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << td->lookHeight << " " << td->cameraDamping
             << " " << (td->footIK ? 1 : 0) << "\n";
     }
+    if (auto* t2 = go->GetComponent<TopDownController2D>()) {
+        out << "  tdctrl2d " << t2->speed << " " << t2->runSpeed << " " << (t2->sprintKey ? t2->sprintKey : '-')
+            << " " << (t2->normalizeDiagonal ? 1 : 0) << " " << (t2->useGamepad ? 1 : 0)
+            << " " << t2->acceleration << " " << t2->deceleration
+            << " " << (t2->dashKey ? t2->dashKey : '-') << " " << t2->dashSpeed << " " << t2->dashDuration << " " << t2->dashCooldown
+            << " " << t2->faceMode << " " << t2->spriteForward << " " << t2->turnSpeed << " " << (t2->driveAnimation ? 1 : 0)
+            << " " << (t2->clampBounds ? 1 : 0) << " " << t2->boundsMin.x << " " << t2->boundsMin.y
+            << " " << t2->boundsMax.x << " " << t2->boundsMax.y << " " << (t2->screenWrap ? 1 : 0)
+            << " " << t2->knockbackTime << " " << (t2->fireKey ? t2->fireKey : '-') << " " << t2->fireButton
+            << " " << t2->projectileSpeed << " " << t2->fireRate << " " << Quote(t2->projectile) << "\n";
+    }
     if (auto* fr = go->GetComponent<FreeRoamController>()) {
         out << "  frctrl " << fr->moveSpeed << " " << fr->boostMultiplier << " "
             << (int)(unsigned char)fr->sprintKey << " " << (int)(unsigned char)fr->upKey << " "
@@ -1057,7 +1184,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
-            << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0) << "\n";
+            << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
+            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -1068,6 +1196,26 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* lt = go->GetComponent<Lifetime>()) {
         out << "  lifetime " << lt->seconds << "\n";
+    }
+    if (auto* co = go->GetComponent<Collectible>()) {
+        out << "  collectible " << Quote(co->scoreVar) << " " << co->points << " " << co->heal
+            << " " << (co->respawn ? 1 : 0) << " " << co->respawnDelay << " " << Quote(co->collectorTag) << "\n";
+    }
+    if (auto* dt = go->GetComponent<DamageOnTouch>()) {
+        out << "  damagetouch " << dt->damage << " " << dt->interval << " " << (dt->once ? 1 : 0)
+            << " " << dt->knockback << " " << (dt->destroySelf ? 1 : 0) << " " << Quote(dt->targetTag) << "\n";
+    }
+    if (auto* tp = go->GetComponent<Teleporter>()) {
+        out << "  teleporter " << Quote(tp->targetName) << " " << tp->destination.x << " " << tp->destination.y
+            << " " << tp->destination.z << " " << tp->cooldown << " " << Quote(tp->triggerTag) << "\n";
+    }
+    if (auto* jp = go->GetComponent<JumpPad>()) {
+        out << "  jumppad " << jp->force << " " << (jp->useObjectUp ? 1 : 0) << " "
+            << jp->forwardBoost << " " << jp->cooldown << " " << Quote(jp->triggerTag) << "\n";
+    }
+    if (auto* tz = go->GetComponent<TriggerZone>()) {
+        out << "  triggerzone " << tz->action << " " << Quote(tz->varName) << " " << tz->amount
+            << " " << (tz->once ? 1 : 0) << " " << Quote(tz->targetName) << " " << Quote(tz->triggerTag) << "\n";
     }
     if (auto* st = go->GetComponent<Stats>()) {
         out << "  stats " << st->health << " " << st->maxHealth << " " << st->mana << " " << st->maxMana
@@ -1332,7 +1480,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
-            << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding << "\n";
+            << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding
+            << " " << lg->columns << " " << lg->spacingY << "\n";
     }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
@@ -1581,6 +1730,17 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             << rs.fogColor.r << " " << rs.fogColor.g << " " << rs.fogColor.b << " "
             << rs.fogStart << " " << rs.fogEnd << "\n";
         if (rs.vignette > 0.0f) out << "vignette " << rs.vignette << "\n";
+        // Always write the value (not just when true): the default is ON, so a
+        // scene that turned filmic OFF must record that or it re-enables on load.
+        out << "tonemap " << (rs.tonemap ? 1 : 0) << "\n";
+        // Skybox extras (horizon position + optional sun disc). Written when non-default.
+        if (rs.skyHorizonPos != 0.5f || rs.skySun)
+            out << "sky " << rs.skyHorizonPos << " " << (rs.skySun ? 1 : 0) << " "
+                << rs.skySunX << " " << rs.skySunY << " " << rs.skySunSize << " "
+                << rs.skySunColor.r << " " << rs.skySunColor.g << " " << rs.skySunColor.b << "\n";
+        // Star field (separate append-only record so older engines still load the scene).
+        if (rs.skyStars)
+            out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
@@ -1591,6 +1751,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
+        if (go->editorLocked) out << "  locked 1\n";
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
         if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
@@ -1656,6 +1817,25 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
         } else if (token == "vignette") {
             float v = 0.0f; in >> v;
             if (clear) scene.renderSettings.vignette = v;
+        } else if (token == "tonemap") {
+            int v = 0; in >> v;
+            if (clear) scene.renderSettings.tonemap = (v != 0);
+        } else if (token == "sky") {
+            float hp = 0.5f; int sun = 0; float sx = 0.5f, sy = 0.3f, ss = 0.05f;
+            Color sc = Color::FromBytes(255, 245, 214);
+            in >> hp >> sun >> sx >> sy >> ss >> sc.r >> sc.g >> sc.b;
+            if (clear) {
+                auto& rs = scene.renderSettings;
+                rs.skyHorizonPos = hp; rs.skySun = (sun != 0);
+                rs.skySunX = sx; rs.skySunY = sy; rs.skySunSize = ss; rs.skySunColor = sc;
+            }
+        } else if (token == "skystars") {
+            int on = 0; float density = 0.5f, bright = 0.9f;
+            in >> on >> density >> bright;
+            if (clear) {
+                auto& rs = scene.renderSettings;
+                rs.skyStars = (on != 0); rs.skyStarDensity = density; rs.skyStarBright = bright;
+            }
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;
@@ -1669,6 +1849,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
+                else if (field == "locked") { int l = 0; in >> l; go->editorLocked = (l != 0); }
                 else if (field == "layer") { in >> go->layer; }
                 else if (field == "uiorder") { in >> go->uiDrawOrder; }
                 else if (field == "srcscene") { go->sourceScene = ReadQuoted(in); }
@@ -1704,6 +1885,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 in >> std::ws; // optional sortingLayer follows flips
                                 if (in.peek() == '-' || std::isdigit(in.peek()))
                                     in >> sr->sortingLayer;
+                                in >> std::ws; // optional texFilter follows sortingLayer
+                                if (std::isdigit(in.peek())) {
+                                    int tf = 0; in >> tf;
+                                    sr->texFilter = (SpriteRenderer::TexFilter)tf;
+                                }
                             }
                         }
                     }
@@ -1778,6 +1964,47 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // force smooth normals, or an edited box/ground reloads looking like
                     // a soft rounded blob instead of clean flat faces.
                     mr->mesh.normals.clear();
+                } else if (field == "meshvar") {
+                    // Procedural variant of a named prop: regenerate the varied
+                    // shape (its face colors come from the later meshcolors record,
+                    // or from this regeneration if that record is absent).
+                    int v = 0; in >> v;
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    mr->meshVariant = v;
+                    if (v != 0 && Mesh::NameHasVariants(mr->mesh.name))
+                        mr->mesh = Mesh::FromNameSeeded(mr->mesh.name, v);
+                } else if (field == "meshuv") {
+                    // Per-vertex UVs for meshgeo geometry (optional record that
+                    // follows meshgeo, which cleared the uvs array).
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int uc = 0; in >> uc;
+                    mr->mesh.uvs.clear();
+                    mr->mesh.uvs.reserve(uc > 0 ? uc : 0);
+                    for (int i = 0; i < uc; ++i) {
+                        Vec2 t; in >> t.x >> t.y; mr->mesh.uvs.push_back(t);
+                    }
+                } else if (field == "meshshade") {
+                    // Optional: restore smooth (1) or angle-based auto-smooth (2)
+                    // shading on meshgeo geometry (the meshgeo reader cleared
+                    // normals for flat shading).
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int s = 0; in >> s;
+                    if (s == 2) { float a = 30.0f; in >> a; mr->mesh.ComputeAutoSmoothNormals(a); }
+                    else if (s) mr->mesh.ComputeSmoothNormals();
+                } else if (field == "meshcolors") {
+                    // Per-face colors (vertex paint / baked lightmap). Follows the
+                    // `mesh`/`meshgeo` geometry so the counts line up.
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int cc = 0; in >> cc;
+                    mr->mesh.triColors.clear();
+                    mr->mesh.triColors.reserve(cc > 0 ? cc : 0);
+                    for (int i = 0; i < cc; ++i) {
+                        Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.triColors.push_back(c);
+                    }
                 } else if (field == "skinmesh") {
                     // Rebuild a SkinnedMesh from its bind geometry + weights + joint
                     // names + inverse-bind matrices. Joints are re-resolved by name at
@@ -1844,6 +2071,86 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->idleClip = ReadQuoted(in);
                     ma->walkClip = ReadQuoted(in);
                     ma->runClip  = ReadQuoted(in);
+                    // Optional trailing fields (newer files): in-place playback.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); int ip;
+                      if (rs >> ip) ma->inPlace = (ip != 0); }
+                } else if (field == "modelanimair") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    ma->jumpClip = ReadQuoted(in);
+                    ma->fallClip = ReadQuoted(in);
+                    ma->landClip = ReadQuoted(in);
+                    in >> ma->airUpVel >> ma->airDownVel;
+                } else if (field == "modelanimblend") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    in >> ma->blendTime;
+                } else if (field == "modelanimroot") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int rm = 0; in >> rm;
+                    ma->rootMotion = (rm != 0);
+                    ma->rootMotionNode = ReadQuoted(in);
+                    // Optional trailing field (newer files): vertical root motion.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); int ry;
+                      if (rs >> ry) ma->rootMotionY = (ry != 0); }
+                } else if (field == "modelanimsmooth") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int sm = 0; in >> sm;
+                    ma->smoothLocomotion = (sm != 0);
+                } else if (field == "modelanimevents") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    long ci = -1, cnt = 0; in >> ci >> cnt;
+                    for (long k = 0; k < cnt; ++k) {
+                        ModelAnimator::ClipEvent ev;
+                        in >> ev.time; ev.name = ReadQuoted(in);
+                        if (ci >= 0 && ci < (long)ma->clips.size())
+                            ma->clips[ci].events.push_back(std::move(ev));
+                    }
+                } else if (field == "animsm") {
+                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    if (!sm2) sm2 = go->AddComponent<AnimStateMachine>();
+                    sm2->entry = ReadQuoted(in);
+                    long stCnt = 0; in >> stCnt;
+                    sm2->states.clear();
+                    for (long si = 0; si < stCnt; ++si) {
+                        AnimStateMachine::State st;
+                        st.name = ReadQuoted(in);
+                        st.clip = ReadQuoted(in);
+                        int lp = 1; long trCnt = 0;
+                        in >> st.speed >> lp >> trCnt;
+                        st.loop = (lp != 0);
+                        for (long ti = 0; ti < trCnt; ++ti) {
+                            AnimStateMachine::Transition tr;
+                            tr.to = ReadQuoted(in);
+                            int cd = 0; in >> cd;
+                            tr.cond = (AnimStateMachine::Cond)cd;
+                            tr.param = ReadQuoted(in);
+                            in >> tr.value >> tr.blend;
+                            st.transitions.push_back(std::move(tr));
+                        }
+                        sm2->states.push_back(std::move(st));
+                    }
+                } else if (field == "animsmparams") {
+                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n; ++i) {
+                        AnimStateMachine::Param p;
+                        p.name = ReadQuoted(in); in >> p.type;
+                        if (sm2) sm2->params.push_back(std::move(p));
+                    }
+                } else if (field == "animsmpos") {
+                    // Animator graph node positions (index-matched to animsm's states).
+                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n; ++i) {
+                        float x = 0, y = 0; in >> x >> y;
+                        if (sm2 && i < (long)sm2->states.size()) { sm2->states[i].nx = x; sm2->states[i].ny = y; }
+                    }
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;
@@ -1936,6 +2243,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> li->spotSoftness >> useT >> li->temperature
                            >> li->ambientColor.r >> li->ambientColor.g >> li->ambientColor.b;
                         li->useTemperature = (useT != 0);
+                        in >> std::ws; // optional falloff mode (added later)
+                        if (std::isdigit(in.peek())) { int fo = 0; in >> fo; li->falloff = (Light::Falloff)fo; }
                     }
                 } else if (field == "rigidbody2d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;
@@ -1946,6 +2255,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                 } else if (field == "boxcollider2d") {
                     Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
@@ -1998,6 +2308,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                 } else if (field == "joint3d") {
                     auto* j = go->AddComponent<Joint3D>();
                     int bk = 0, ac = 1;
@@ -2033,6 +2344,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> a->upAxis.x >> a->upAxis.y >> a->upAxis.z
                        >> a->weight >> a->maxAngle
                        >> a->target.x >> a->target.y >> a->target.z;
+                    // Optional trailing fields (newer files): rest-of-line parse so
+                    // older records still load cleanly.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); float sm;
+                      if (rs >> sm) a->smoothing = sm; }
                 } else if (field == "lookatik") {
                     auto* l = go->AddComponent<LookAtIK>();
                     l->targetName = ReadQuoted(in);
@@ -2041,6 +2357,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> l->target.x >> l->target.y >> l->target.z;
                     std::size_t n = 0; in >> n;
                     for (std::size_t k = 0; k < n; ++k) l->chainNames.push_back(ReadQuoted(in));
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); float sm;
+                      if (rs >> sm) l->smoothing = sm; }
                 } else if (field == "footik") {
                     auto* f = go->AddComponent<FootIK>();
                     f->leftHipName = ReadQuoted(in); f->leftKneeName = ReadQuoted(in); f->leftFootName = ReadQuoted(in);
@@ -2050,6 +2369,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> f->weight >> f->footOffset >> ur >> f->groundY >> ap >> pd >> ag
                        >> f->minKneeBend >> f->maxKneeBend;
                     f->useRaycast = (ur != 0); f->adjustPelvis = (ap != 0); f->plantDown = (pd != 0); f->alignToGround = (ag != 0);
+                    // Optional trailing fields (newer files): parse from the rest of
+                    // the line so older records still load cleanly.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); float sm;
+                      if (rs >> sm) f->smoothing = sm; }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
@@ -2200,6 +2524,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
                         in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; cm->footIK = (fik != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek())) { int pf = 1; in >> pf; cm->usePathfinding = (pf != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->repathInterval;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -2681,6 +3007,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         c->driveAnimation = g(21, c->driveAnimation ? 1.f : 0.f) != 0.0f;
                         c->lookAtTarget   = g(22, c->lookAtTarget ? 1.f : 0.f) != 0.0f;
                         c->footIK         = g(23, c->footIK ? 1.f : 0.f) != 0.0f;
+                        c->usePathfinding = g(24, c->usePathfinding ? 1.f : 0.f) != 0.0f;
+                        c->repathInterval = g(25, c->repathInterval);
                     }
                 } else if (field == "npcwp") {
                     if (auto* c = go->GetComponent<NPCController>()) {
@@ -2698,6 +3026,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> c->interval >> c->maxAlive >> c->totalToSpawn >> c->spawnRadius
                        >> c->startDelay >> dt;
                     c->deactivateTemplate = (dt != 0);
+                    // Trailing wave fields (newer scenes only).
+                    in >> std::ws;
+                    if (std::isdigit((unsigned char)in.peek())) {
+                        int as = 1;
+                        in >> c->count >> c->waves >> c->waveDelay >> as;
+                        c->autoStart = (as != 0);
+                        in >> std::ws;
+                        if (in.peek() == '"') c->prefabPath = ReadQuoted(in);
+                    }
                 } else if (field == "craftmenu") {
                     auto* c = go->AddComponent<CraftingMenu>();
                     int key = 'c', op = 0, anch = 0;
@@ -2828,6 +3165,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
                     in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; td->footIK = (fik != 0); }
+                } else if (field == "tdctrl2d") {
+                    auto* t2 = go->AddComponent<TopDownController2D>();
+                    std::string sk = "-", dk = "-"; int nd = 1, ug = 1, da = 1, cb = 0, sw = 0;
+                    in >> t2->speed >> t2->runSpeed >> sk >> nd >> ug
+                       >> t2->acceleration >> t2->deceleration
+                       >> dk >> t2->dashSpeed >> t2->dashDuration >> t2->dashCooldown
+                       >> t2->faceMode >> t2->spriteForward >> t2->turnSpeed >> da
+                       >> cb >> t2->boundsMin.x >> t2->boundsMin.y >> t2->boundsMax.x >> t2->boundsMax.y >> sw;
+                    t2->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
+                    t2->dashKey   = (dk == "-" || dk.empty()) ? 0 : dk[0];
+                    t2->normalizeDiagonal = (nd != 0); t2->useGamepad = (ug != 0);
+                    t2->driveAnimation = (da != 0); t2->clampBounds = (cb != 0); t2->screenWrap = (sw != 0);
+                    // Combat fields (appended later): only present if the next token is numeric.
+                    in >> std::ws; int pk = in.peek();
+                    if (pk == '-' || pk == '.' || std::isdigit(pk)) {
+                        std::string fk = "-";
+                        in >> t2->knockbackTime >> fk >> t2->fireButton >> t2->projectileSpeed >> t2->fireRate;
+                        t2->fireKey = (fk == "-" || fk.empty()) ? 0 : fk[0];
+                        in >> std::ws; if (in.peek() == '"') t2->projectile = ReadQuoted(in);
+                    }
                 } else if (field == "frctrl") {
                     auto* fr = go->AddComponent<FreeRoamController>();
                     int sk = (unsigned char)fr->sprintKey, uk = (unsigned char)fr->upKey,
@@ -2871,6 +3228,37 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "lifetime") {
                     float s = 1.0f; in >> s;
                     go->AddComponent<Lifetime>()->seconds = s;
+                } else if (field == "collectible") {
+                    auto* co = go->AddComponent<Collectible>();
+                    co->scoreVar = ReadQuoted(in);
+                    int rs = 0; in >> co->points >> co->heal >> rs >> co->respawnDelay;
+                    co->respawn = (rs != 0);
+                    in >> std::ws; if (in.peek() == '"') co->collectorTag = ReadQuoted(in);
+                } else if (field == "damagetouch") {
+                    auto* dt = go->AddComponent<DamageOnTouch>();
+                    int once = 0, ds = 0;
+                    in >> dt->damage >> dt->interval >> once >> dt->knockback >> ds;
+                    dt->once = (once != 0); dt->destroySelf = (ds != 0);
+                    in >> std::ws; if (in.peek() == '"') dt->targetTag = ReadQuoted(in);
+                } else if (field == "teleporter") {
+                    auto* tp = go->AddComponent<Teleporter>();
+                    tp->targetName = ReadQuoted(in);
+                    in >> tp->destination.x >> tp->destination.y >> tp->destination.z >> tp->cooldown;
+                    in >> std::ws; if (in.peek() == '"') tp->triggerTag = ReadQuoted(in);
+                } else if (field == "jumppad") {
+                    auto* jp = go->AddComponent<JumpPad>();
+                    int uo = 1;
+                    in >> jp->force >> uo >> jp->forwardBoost >> jp->cooldown;
+                    jp->useObjectUp = (uo != 0);
+                    jp->triggerTag = ReadQuoted(in);
+                } else if (field == "triggerzone") {
+                    auto* tz = go->AddComponent<TriggerZone>();
+                    int once = 1; in >> tz->action;
+                    tz->varName = ReadQuoted(in);
+                    in >> tz->amount >> once;
+                    tz->once = (once != 0);
+                    tz->targetName = ReadQuoted(in);
+                    in >> std::ws; if (in.peek() == '"') tz->triggerTag = ReadQuoted(in);
                 } else if (field == "stats") {
                     auto* st = go->AddComponent<Stats>();
                     in >> st->health >> st->maxHealth >> st->mana >> st->maxMana
@@ -3323,6 +3711,37 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* ch = go->AddComponent<Character>();
                     ch->FromText(rest);
                     ch->Apply();    // rebuild the mesh into a MeshRenderer
+                } else if (field == "charenabled") {
+                    // A custom model replaced the blocky body: keep the default
+                    // Character (and the mesh Apply() just rebuilt) hidden.
+                    int en = 1; in >> en;
+                    if (auto* ch = go->GetComponent<Character>()) ch->enabled = (en != 0);
+                    if (!en) if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = false;
+                } else if (field == "charext") {
+                    // External-rig mode: the Character computes the pose for a
+                    // HumanoidRetarget and renders nothing itself.
+                    int ex = 0; in >> ex;
+                    if (auto* ch = go->GetComponent<Character>()) ch->driveExternal = (ex != 0);
+                    if (ex) if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = false;
+                } else if (field == "humretarget") {
+                    auto* hr = go->AddComponent<HumanoidRetarget>();
+                    in >> hr->weight;   // bones re-detect + rest re-captures on first play frame
+                } else if (field == "charbind") {
+                    // Auto-rigged custom mesh: restore the bind geometry and re-rig.
+                    Mesh bm;
+                    std::size_t nv = 0; in >> nv;
+                    bm.vertices.reserve(nv);
+                    for (std::size_t k = 0; k < nv; ++k) { Vec3 v; in >> v.x >> v.y >> v.z; bm.vertices.push_back(v); }
+                    std::size_t nt = 0; in >> nt;
+                    bm.triangles.reserve(nt);
+                    for (std::size_t k = 0; k < nt; ++k) { int t = 0; in >> t; bm.triangles.push_back(t); }
+                    std::size_t nu = 0; in >> nu;
+                    bm.uvs.reserve(nu);
+                    for (std::size_t k = 0; k < nu; ++k) { Vec2 t; in >> t.x >> t.y; bm.uvs.push_back(t); }
+                    auto* ch = go->GetComponent<Character>();
+                    if (!ch) ch = go->AddComponent<Character>();
+                    ch->BindCustomMesh(bm);
+                    ch->Apply();
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();
                     int as = 0, port = 45000;
@@ -3467,9 +3886,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tt->background = bg; tt->textColor = tc; tt->borderColor = bc;
                 } else if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
-                    int dir = 0, an = 0;
-                    in >> dir >> an >> lg->origin.x >> lg->origin.y >> lg->spacing >> lg->padding;
+                    std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
+                    std::istringstream rs(rest);
+                    int dir = 0, an = 0, cols = -1; float sy = -1.0f;
+                    rs >> dir >> an >> lg->origin.x >> lg->origin.y >> lg->spacing >> lg->padding;
+                    rs >> cols; rs >> sy;                        // absent in older scenes -> keep defaults
                     lg->direction = (UILayoutGroup::Direction)dir; lg->anchor = (UIAnchor)an;
+                    if (cols >= 1) lg->columns = cols;
+                    if (sy >= 0.0f) lg->spacingY = sy;
                     lg->Arrange();
                 } else if (field == "uiscroll") {
                     auto* sv = go->AddComponent<UIScrollView>();
@@ -3909,6 +4333,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
+        if (go->editorLocked) out << "  locked 1\n";
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
         if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";

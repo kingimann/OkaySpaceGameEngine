@@ -117,6 +117,8 @@ public:
     bool Redo();
     bool CanUndo() const { return !m_undo.empty(); }
     bool CanRedo() const { return !m_redo.empty(); }
+    int  UndoDepth() const { return (int)m_undo.size(); }   ///< steps available behind
+    int  RedoDepth() const { return (int)m_redo.size(); }   ///< steps available ahead
 
     // ---- Play mode -----------------------------------------------------
     bool isPlaying() const { return m_playing; }

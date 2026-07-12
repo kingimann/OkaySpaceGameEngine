@@ -4,7 +4,8 @@
 //
 //   * .obj                -> built-in Mesh::LoadOBJ (always available)
 //   * .gltf / .glb        -> built-in okay::LoadGLTF (always available)
-//   * .fbx .dae .stl .ply -> Assimp, IF the engine was built with -DOKAY_USE_ASSIMP=ON
+//   * .fbx .dae .stl .ply .3ds .blend .x .md5mesh .smd .ms3d .lwo .dxf .off .ac .b3d
+//                         -> Assimp, IF the engine was built with -DOKAY_USE_ASSIMP=ON
 //                            (FetchContent pulls Assimp). Without it these return ok=false.
 //
 // This keeps the DEFAULT build fully self-contained (no downloads) while letting a
@@ -35,5 +36,15 @@ Mesh ImportModel(const std::string& path, bool* ok = nullptr, std::string* outTe
 /// non-glTF formats it falls back to a single mesh object. Use this from the editor's
 /// import so a rigged glTF brings its parts + animation in, not just one static mesh.
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok = nullptr);
+
+/// Make an imported model THE playable character of `player` (a controller
+/// object): import `path` as a child, scale it to the character's height,
+/// ground its feet on the player's origin, face it the way the body faces,
+/// wire its ModelAnimator locomotion (idle/walk/run auto-switch from movement,
+/// mapped from the clip names), and hide the default blocky Character body.
+/// Returns the imported model root (or nullptr on failure). `outLog`, when
+/// given, receives a one-line human-readable summary of what was wired.
+GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
+                                 const std::string& path, std::string* outLog = nullptr);
 
 } // namespace okay

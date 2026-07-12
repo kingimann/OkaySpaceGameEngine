@@ -32,8 +32,19 @@ public:
     /// body (boxes tip and tumble, wheels spin, etc.).
     bool     freezeRotation = true;
 
+    // ---- Sleeping (rest optimisation, Unity/Box2D-style) ----
+    /// May this body fall asleep once it comes to rest? A sleeping body is skipped
+    /// by the integrator and solver (no CPU cost, no jitter) until something wakes
+    /// it: a collision from a moving body, an applied force/impulse, or a directly
+    /// set velocity. Turn off for bodies that must stay perfectly live.
+    bool     allowSleep = true;
+    /// Runtime: true while asleep. Not authored — set/cleared by Physics2D.
+    bool     sleeping   = false;
+    /// Force this body awake (call after teleporting or externally moving it).
+    void WakeUp() { sleeping = false; m_sleepTimer = 0.0f; }
+
     /// Apply a continuous force (integrated over the next step, scaled by mass).
-    void AddForce(const Vec2& force) { m_forceAccum += force; }
+    void AddForce(const Vec2& force) { m_forceAccum += force; WakeUp(); }
     /// Apply a force with an explicit Unity-style ForceMode.
     void AddForce(const Vec2& force, ForceMode mode) {
         switch (mode) {
@@ -42,12 +53,13 @@ public:
             case ForceMode::Impulse:        velocity += force * InvMass(); break;
             case ForceMode::VelocityChange: velocity += force; break;
         }
+        WakeUp();
     }
     /// Apply an instantaneous change in momentum (immediate velocity change).
-    void AddImpulse(const Vec2& impulse) { velocity += impulse * InvMass(); }
+    void AddImpulse(const Vec2& impulse) { velocity += impulse * InvMass(); WakeUp(); }
 
     /// Apply a torque about Z (continuous, integrated next step, scaled by inertia).
-    void AddTorque(float torque) { m_torqueAccum += torque; }
+    void AddTorque(float torque) { m_torqueAccum += torque; WakeUp(); }
 
     /// Apply a force at a world point, producing both linear force and a torque
     /// from the lever arm (Unity's AddForceAtPosition). Off-center hits spin the body.
@@ -56,6 +68,7 @@ public:
         Vec3 c = transform ? transform->Position() : Vec3::Zero;
         Vec2 r{point.x - c.x, point.y - c.y};
         m_torqueAccum += r.x * force.y - r.y * force.x;   // 2D cross product
+        WakeUp();
     }
 
     /// 1/mass for dynamic bodies, 0 for kinematic/static (treated as infinite).
@@ -67,6 +80,7 @@ private:
     friend class Physics2D;
     Vec2  m_forceAccum  = Vec2::Zero;
     float m_torqueAccum = 0.0f;
+    float m_sleepTimer  = 0.0f;   // seconds spent under the sleep thresholds
     Vec2  ConsumeForce()  { Vec2 f = m_forceAccum; m_forceAccum = Vec2::Zero; return f; }
     float ConsumeTorque() { float t = m_torqueAccum; m_torqueAccum = 0.0f; return t; }
 };

@@ -1,6 +1,7 @@
 #include "EditorState.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
+#include <filesystem>
 
 namespace {
 // Every new 3D primitive ships with a collider fitted to its mesh (Unity-style), so
@@ -50,7 +51,7 @@ void EditorState::StopNetwork() {
     if (!m_net) return;
     GameObject* go = m_net->gameObject;
     m_net->Stop();
-    if (go) { m_scene.Destroy(go); m_scene.Update(0.0f); }
+    if (go) { m_scene.Destroy(go); m_scene.FlushDestroyed(); }
     m_net = nullptr;
 }
 
@@ -79,7 +80,7 @@ bool EditorState::Undo() {
     std::string s = m_undo.back(); m_undo.pop_back();
     StopNetwork();
     SceneSerializer::Deserialize(m_scene, s);
-    m_selected = nullptr;
+    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
     dirty = true;
     return true;
 }
@@ -90,7 +91,7 @@ bool EditorState::Redo() {
     std::string s = m_redo.back(); m_redo.pop_back();
     StopNetwork();
     SceneSerializer::Deserialize(m_scene, s);
-    m_selected = nullptr;
+    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
     dirty = true;
     return true;
 }
@@ -212,7 +213,11 @@ void EditorState::DeleteSelected() {
     // Delete the whole selection (multi-select), not just the primary object.
     std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>{m_selected} : m_multi;
     for (GameObject* g : targets) if (g) m_scene.Destroy(g);
-    m_scene.Update(0.0f); // flush the destroy queue immediately
+    // Flush the destroy queue WITHOUT simulating a frame. Update(0) would run every
+    // component's Update/LateUpdate + both physics steps in EDIT mode — ticking
+    // half-torn-down objects (and a controller/camera-follow that references the
+    // object being deleted) is a needless hazard. FlushDestroyed only reaps the queue.
+    m_scene.FlushDestroyed();
     m_selected = nullptr;
     m_multi.clear();
     dirty = true;
@@ -233,7 +238,7 @@ void EditorState::NewScene() {
     cam->main = true;
     camObj->transform->localPosition = {0, 2, 10};
     m_scene.mainCamera = cam;
-    m_selected = nullptr;
+    Select(nullptr);   // Clear() freed every object; clear m_multi too (no dangling ptrs)
     m_path.clear();
     dirty = false;
 }
@@ -257,19 +262,78 @@ void EditorState::NewScene3D() {
     m_scene.SetName("Untitled 3D");
     // NewScene already made a perspective Main Camera at {0,2,10}; reuse it.
 
-    // A single cube on the grid (clean, Unity-like default — neutral gray). Add a
-    // ground/other objects from the GameObject menu as needed.
-    GameObject* cube = CreateCube("Cube");
-    cube->transform->localPosition = {0, 0, 0};
+    // A polished, populated default (like Unreal's default level, not an empty
+    // void): a ground plane, a warm sun with soft sky fill, and a couple of hero
+    // shapes — so lighting, shadows, sky and reflections all read immediately.
 
-    // An angled directional light so the cube is shaded out of the box.
-    GameObject* light = CreateEmpty("Directional Light");
-    light->AddComponent<Light>();
-    light->transform->localRotation = Quat::Euler({50, -30, 0});
+    // ---- Ground plane: large, receives shadows, matte neutral ----
+    GameObject* ground = m_scene.CreateGameObject("Ground");
+    {
+        auto* mr = ground->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Plane(60.0f);
+        mr->color = Color::FromBytes(150, 154, 150);   // soft neutral, not pure gray
+        mr->specular = 0.05f; mr->shininess = 16.0f;
+        mr->groundShadow = false;                       // it IS the ground
+        ground->AddComponent<MeshCollider3D>();         // things rest on it
+    }
 
-    // Frame the editor orbit camera on the cube.
-    camTarget = {0, 0, 0};
-    camDist = 6.0f;
+    // ---- Hero shapes on the ground ----
+    GameObject* cube = m_scene.CreateGameObject("Cube");
+    {
+        auto* mr = cube->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::RoundedBox();
+        mr->color = Color::FromBytes(196, 128, 96);     // warm terracotta
+        mr->specular = 0.3f; mr->shininess = 40.0f;
+        cube->transform->localPosition = {-1.1f, 0.5f, 0.0f};
+        AddFittedBoxCollider(cube);
+    }
+    GameObject* ball = m_scene.CreateGameObject("Sphere");
+    {
+        auto* mr = ball->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Sphere(0.5f, 24, 32);
+        mr->color = Color::FromBytes(150, 165, 190);    // cool bluish, slightly glossy/metal
+        mr->specular = 0.7f; mr->shininess = 90.0f;
+        mr->metallic = 0.35f; mr->reflectivity = 0.25f;
+        ball->transform->localPosition = {0.9f, 0.55f, 0.4f};
+        ball->transform->localScale = {1.1f, 1.1f, 1.1f};
+        AddFittedBoxCollider(ball);
+    }
+
+    // ---- Sun: warm directional key light at a cinematic angle ----
+    GameObject* light = m_scene.CreateGameObject("Sun");
+    {
+        auto* L = light->AddComponent<Light>();
+        L->type = Light::Type::Directional;
+        L->useTemperature = true; L->temperature = 5600.0f;   // warm daylight
+        L->color = Light::KelvinToColor(5600.0f);
+        L->intensity = 1.15f;
+        L->ambient = 0.30f;
+        L->ambientColor = Color::FromBytes(150, 175, 210);    // sky-blue fill in shadow
+        light->transform->localRotation = Quat::Euler({48, -35, 0});
+    }
+
+    // ---- Scene lighting/atmosphere: rich sky, aligned sun disc, gentle fog ----
+    auto& rs = m_scene.renderSettings;
+    rs.skybox     = true;
+    rs.skyTop     = Color::FromBytes(74, 128, 208);     // deeper zenith blue
+    rs.skyHorizon = Color::FromBytes(196, 214, 232);    // pale haze at the horizon
+    rs.skyBottom  = Color::FromBytes(150, 150, 152);    // ground-ish under the horizon
+    rs.skyHorizonPos = 0.52f;
+    rs.ambient    = 0.22f;
+    rs.skySun     = true;                               // a soft sun disc + glow in the sky
+    rs.skySunX = 0.34f; rs.skySunY = 0.24f; rs.skySunSize = 0.045f;
+    rs.skySunColor = Color::FromBytes(255, 244, 214);
+    rs.fog = true;                                      // subtle depth haze (hides the far edge)
+    rs.fogColor = Color::FromBytes(200, 216, 230);
+    rs.fogStart = 35.0f; rs.fogEnd = 110.0f;
+    rs.tonemap = true;                                 // filmic (already the default)
+    rs.vignette = 0.12f;                               // gentle focus
+
+    // Shadows + sky reflections look best on; leave them at their global on-defaults.
+
+    // Frame the editor orbit camera on the shapes.
+    camTarget = {0, 0.5f, 0.0f};
+    camDist = 7.0f;
 
     m_suppressUndo = false;
     view3D = true;
@@ -478,7 +542,17 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     StopNetwork();
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;
     m_path = path;
-    m_selected = nullptr;
+    // Re-home the project to the scene's own project folder (the parent of its
+    // Assets/ dir), so opening another project's scene switches the Project panel
+    // and asset paths over instead of keeping the previous project's files around.
+    {
+        namespace fs = std::filesystem;
+        for (fs::path p = fs::absolute(fs::path(path)).parent_path(); !p.empty(); p = p.parent_path()) {
+            if (p.filename() == "Assets") { m_projectDir = p.parent_path().string(); break; }
+            if (p == p.parent_path()) break;   // reached the filesystem root
+        }
+    }
+    Select(nullptr);   // load rebuilt the scene; clear m_multi too (no dangling ptrs)
     dirty = false;
     return true;
 }
@@ -486,7 +560,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
 void EditorState::Play() {
     if (m_playing) return;
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
-    m_selected = nullptr;
+    Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
     Game::Reset();             // clear stale pause/quit state from a prior session
     m_scene.Start();
@@ -497,12 +571,13 @@ void EditorState::Stop() {
     if (!m_playing) return;
     m_playing = false;
     Game::Reset();   // unpause + clear quit so the next Play starts clean
+    ActionList::DebugPaused() = false; ActionList::StepBudget() = 0;   // never leave Actions frozen after Stop
     // Deserialize rebuilds the scene, destroying every live component — including
     // any NetworkManager m_net points at. Drop the pointer first so TickServices
     // never dereferences freed memory (a use-after-free crash).
     m_net = nullptr;
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
-    m_selected = nullptr;
+    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
 }
 
 void EditorState::Tick(float dt) {

@@ -50,7 +50,10 @@ public:
         R(targetObject, targetName); R(poleObject, poleName);
     }
 
-    void Update(float) override {
+    // Solve in LateUpdate so the correction lands AFTER every animation driver
+    // has posed the bones this frame (imported rigs create their per-node
+    // Animators lazily, which puts them late in the Update order).
+    void LateUpdate(float) override {
         if (weight <= 0.0f || !upper || !lower || !end) return;
         if (!m_init) {
             m_up = (lower->Position() - upper->Position()).Magnitude();

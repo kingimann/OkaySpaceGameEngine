@@ -9,6 +9,7 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
@@ -1023,9 +1024,9 @@ int main(int argc, char** argv) {
         bool showCursor = true, quitOnEscape = true, showFps = false;
         int  fpsCap = 0;
         float volume = 1.0f;
-        bool lockCursor = false, perPixel = false, shadows = false, bloom = false, ssao = false, fxaa = true;
+        bool lockCursor = false, perPixel = false, shadows = true, bloom = false, ssao = false, fxaa = true;
         float shadowDistance = 80.0f, shadowSoftness = 2.5f;
-        int  shadowCascades = 3, shadowResolution = 1024;
+        int  shadowCascades = 3, shadowResolution = 2048;
         int  antialias = 1;
         bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
         bool d3d12 = false; // opt-in: prefer the Direct3D 12 backend (Windows) over D3D11
@@ -1557,18 +1558,69 @@ int main(int argc, char** argv) {
                              a.b + (b.b - a.b) * t, 1.0f};
             };
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            float hp = rs.skyHorizonPos < 0.05f ? 0.05f : (rs.skyHorizonPos > 0.95f ? 0.95f : rs.skyHorizonPos);
             const int strips = h < 128 ? h : 128;     // smooth enough, cheap
             for (int s = 0; s < strips; ++s) {
                 float t = (float)s / (float)(strips - 1);   // 0 (top) .. 1 (bottom)
-                // Two-stop gradient: top->horizon for the upper half, horizon->bottom below.
-                Color c = (t < 0.5f) ? lerp(rs.skyTop, rs.skyHorizon, t * 2.0f)
-                                     : lerp(rs.skyHorizon, rs.skyBottom, (t - 0.5f) * 2.0f);
+                // Two-stop gradient with the horizon band at `hp` (top->horizon above
+                // it, horizon->bottom below it).
+                Color c = (t < hp) ? lerp(rs.skyTop, rs.skyHorizon, t / hp)
+                                   : lerp(rs.skyHorizon, rs.skyBottom, (t - hp) / (1.0f - hp));
+                // Atmospheric horizon haze: pale/warm brightening centered on the
+                // horizon line (matches the editor preview).
+                float hz = 1.0f - std::fabs(t - hp) / 0.10f;
+                if (hz > 0.0f) {
+                    Color haze{std::fmin(rs.skyHorizon.r * 1.15f + 0.12f, 1.0f),
+                               std::fmin(rs.skyHorizon.g * 1.15f + 0.12f, 1.0f),
+                               std::fmin(rs.skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f};
+                    c = lerp(c, haze, hz * 0.5f);
+                }
                 SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
                                        (Uint8)(c.b * 255), 255);
                 int y0 = (int)((float)s / strips * h);
                 int y1 = (int)((float)(s + 1) / strips * h);
                 SDL_Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
                 SDL_RenderFillRect(renderer, &rrect);
+            }
+            // Optional star field in the upper sky (above the horizon band).
+            if (rs.skyStars) {
+                int horizonPx = (int)(hp * h);
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                for (const auto& st : okay::SkyStars((float)w, (float)h, (float)horizonPx,
+                                                     rs.skyStarDensity, rs.skyStarBright)) {
+                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, st.a);
+                    int r = (int)(st.r + 0.5f); if (r < 1) r = 1;
+                    SDL_Rect sq{(int)st.x - r / 2, (int)st.y - r / 2, r, r};
+                    SDL_RenderFillRect(renderer, &sq);
+                }
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            }
+            // Optional sun disc: a filled circle + soft glow at a screen-space position.
+            if (rs.skySun) {
+                int cx = (int)(rs.skySunX * w), cy = (int)(rs.skySunY * h);
+                int rad = (int)((rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * h);
+                const Color& sk = rs.skySunColor;
+                Uint8 sr = (Uint8)(sk.r * 255), sg = (Uint8)(sk.g * 255), sb = (Uint8)(sk.b * 255);
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                auto fillDisc = [&](int r, Uint8 a) {
+                    SDL_SetRenderDrawColor(renderer, sr, sg, sb, a);
+                    for (int dy = -r; dy <= r; ++dy) {
+                        int dx = (int)std::sqrt((double)(r * r - dy * dy));
+                        SDL_Rect row{cx - dx, cy + dy, 2 * dx + 1, 1};
+                        SDL_RenderFillRect(renderer, &row);
+                    }
+                };
+                // Broad sun-scattering glow: faint warm discs brightening the sky
+                // around the sun (largest first so the centre accumulates).
+                int glowR = (int)(h * 0.45f);
+                for (int i = 12; i >= 1; --i) {
+                    float fr = (float)i / 12.0f;
+                    int a = (int)(34.0f * (1.0f - fr) * (1.0f - fr));
+                    if (a > 0) fillDisc((int)(glowR * fr), (Uint8)a);
+                }
+                for (int g = 4; g >= 1; --g) fillDisc((int)(rad * (1.0f + g * 0.7f)), (Uint8)(40 - g * 6));
+                fillDisc(rad, 255);
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             }
         }
 
@@ -1730,6 +1782,8 @@ int main(int argc, char** argv) {
                 // (corner 3 = top-left in world = texture uvMin). Honors the
                 // sprite's uv sub-region so sprite sheets / atlases work.
                 SDL_Texture* tex = GetTexture(renderer, sr->texture, baseDir, textureCache);
+                if (tex) SDL_SetTextureScaleMode(tex,
+                    sr->texFilter == SpriteRenderer::TexFilter::Pixel ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
                 float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
                 if (sr->flipX) std::swap(u0, u1);
                 if (sr->flipY) std::swap(v0, v1);

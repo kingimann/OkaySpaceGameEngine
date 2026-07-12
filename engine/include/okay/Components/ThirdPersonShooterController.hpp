@@ -130,10 +130,14 @@ public:
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f;
+        // Heightmap Terrain has no collider (no collision contacts), so also treat the
+        // rigidbody's terrain-grounded flag as ground — otherwise jumps never refill on
+        // terrain and only the first jump ever works (matches First/ThirdPerson controllers).
+        bool onTerrain = rb && rb->groundedOnTerrain;
+        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || onTerrain;
         // Jump count refills only on a real ground contact (no endless jumping at the
         // apex); maxJumps enables double jumps.
-        if (m_groundContact > 0.0f) m_jumpsUsed = 0;
+        if (m_groundContact > 0.0f || onTerrain) m_jumpsUsed = 0;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;

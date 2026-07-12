@@ -7,10 +7,13 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/SkinnedMesh.hpp"    // per-frame CPU-deformed meshes bypass the VB cache
+#include "okay/Components/Character.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <d3d11.h>
 #include <d3dcompiler.h>
+#include <cstdint>
 #include <cstring>
 #include <cmath>
 #include <vector>
@@ -64,12 +67,26 @@ const char* kHLSL =
     "  float2 uv = float2(q.x*0.5+0.5, -q.y*0.5+0.5);\n"          // D3D texture v is top-down
     "  float pz = q.z*0.5+0.5;\n"                                  // GL clip z [-1,1] -> [0,1]
     "  if (uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0||pz>1.0) return 1.0;\n"
-    "  float bias=0.0015; float t=1.0/max(uShadow.z,1.0); float s=0.0;\n"
-    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.5,-0.5)*t).r)?1.0:0.0;\n"
-    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.5,-0.5)*t).r)?1.0:0.0;\n"
-    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.5, 0.5)*t).r)?1.0:0.0;\n"
-    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.5, 0.5)*t).r)?1.0:0.0;\n"
-    "  return s*0.25;\n"
+    "  float ndl = saturate(dot(n, uLightDir));\n"
+    "  float bias = 0.0008 + 0.0022 * (1.0 - ndl);\n"              // slope-scaled: grazing faces need more
+    "  float t = 1.8/max(uShadow.z,1.0); float s=0.0;\n"           // ~1.8-texel Poisson disk = soft edge
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.326,-0.406)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.840,-0.074)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.696, 0.457)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.203, 0.621)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.962,-0.195)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.473,-0.480)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.519, 0.767)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.185,-0.893)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.507, 0.064)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.896, 0.412)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.322,-0.933)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.792,-0.598)*t).r)?1.0:0.0;\n"
+    "  return s/12.0;\n"
+    "}\n"
+    // ACES filmic curve (matches the GL renderer) for the linear/filmic pipeline.
+    "float3 aces(float3 x){\n"
+    "  return saturate((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14));\n"
     "}\n"
     "float4 VSDepth(float3 pos:POSITION):SV_POSITION {\n"          // depth-only shadow pass
     "  float4 cp = mul(uMVP, float4(pos,1.0)); cp.z = (cp.z + cp.w) * 0.5; return cp;\n"
@@ -116,7 +133,15 @@ const char* kHLSL =
     "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"   // Hologram
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(i.world.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
-    "  if (uUnlit > 0.5) return float4(base + uEmissive, uAlpha);\n"
+    // Filmic mode (uFogCol.w): gamma-correct pipeline — decode sRGB albedo/emissive
+    // to linear, light in linear, ACES + sRGB-encode at the end (matches GL).
+    "  bool lin = uFogCol.w > 0.5;\n"
+    "  if (lin) base = pow(max(base, 0.0), 2.2);\n"
+    "  float3 emis = uEmissive;\n"
+    "  if (lin) emis = pow(max(emis, 0.0), 2.2);\n"
+    "  if (uUnlit > 0.5) { float3 uc = base + emis;\n"            // decode+encode cancel: unlit unchanged
+    "    if (lin) uc = pow(max(uc, 0.0), 1.0/2.2);\n"
+    "    return float4(uc, uAlpha); }\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"  // hemisphere ambient
     "  float3 lit = amb; float spec = 0.0;\n"
@@ -159,13 +184,14 @@ const char* kHLSL =
     "  float3 rim = float3(0,0,0);\n"
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
     "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
-    "  float3 col = diff + (spec * gloss) * f0 + rim + uEmissive;\n"
+    "  float3 col = diff + (spec * gloss) * f0 + rim + emis;\n"
     "  float reflAmt = max(uPbr.y, metal);\n"                     // env reflection of the sky gradient
     "  float reflK = reflAmt * gloss;\n"
     "  if (reflK > 0.0 && uPbr2.y > 0.5) {\n"
     "    float ndv = max(dot(N, Vv), 0.0);\n"
     "    float3 R = reflect(-Vv, N); float ry = clamp(R.y, -1.0, 1.0);\n"
     "    float3 env = lerp(uSky[1].xyz, ry >= 0.0 ? uSky[0].xyz : uSky[2].xyz, abs(ry));\n"
+    "    if (lin) env = pow(max(env, 0.0), 2.2);\n"
     "    float fr2 = 1.0 - ndv; fr2 = fr2*fr2*fr2*fr2*fr2;\n"     // Schlick
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
@@ -173,8 +199,12 @@ const char* kHLSL =
     "  if (uFog.x > 0.5) {\n"                                    // distance fog
     "    float fd = length(uEye - i.world);\n"
     "    float ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"
-    "    col = lerp(col, uFogCol.xyz, ff);\n"
+    "    float3 fc = uFogCol.xyz;\n"
+    "    if (lin) fc = pow(max(fc, 0.0), 2.2);\n"                 // fog is authored sRGB too
+    "    col = lerp(col, fc, ff);\n"
     "  }\n"
+    // Filmic output: ACES roll-off in linear light, then encode back to sRGB.
+    "  if (lin) { col = aces(col); col = pow(max(col, 0.0), 1.0/2.2); }\n"
     "  return float4(col, uAlpha);\n"
     "}\n";
 
@@ -199,7 +229,7 @@ struct CB {
     float lightCount[4];       // .x = number of scene lights
     float lights[256];         // 64 float4: 16 lights x 4 rows
     float fog[4];              // x=on y=start z=end
-    float fogCol[4];           // xyz = fog colour
+    float fogCol[4];           // xyz = fog colour, w = filmic pipeline flag (linear + ACES + gamma)
     float lightVP[16];         // directional shadow-map view-projection
     float shadowP[4];          // x=on y=texelWorld z=mapSize w=unused
 };
@@ -239,6 +269,28 @@ struct D3D11Renderer::Impl {
     std::unordered_map<std::string, ID3D11ShaderResourceView*> texCache;
     std::vector<float> verts;
     std::vector<std::uint32_t> pixels;
+
+    // Per-mesh vertex-buffer cache (mirrors GLRenderer): static geometry (imported
+    // models, primitives) is expanded + uploaded ONCE (immutable buffer) and drawn
+    // from GPU memory, instead of being rebuilt on the CPU and re-uploaded every
+    // frame — which made large OBJ imports crawl. Revalidated per frame via an
+    // allocation fingerprint + sampled content hash, exactly about once a second.
+    // Meshes deformed each frame (SkinnedMesh/Character) bypass the cache.
+    struct MeshVB {
+        ID3D11Buffer* vbuf = nullptr;
+        int vertCount = 0;
+        const void* vp = nullptr;  std::size_t vn = 0;
+        const void* tp = nullptr;  std::size_t tn = 0;
+        const void* np = nullptr;  std::size_t nn = 0;
+        const void* uvp = nullptr; std::size_t uvn = 0;
+        const void* fcp = nullptr; std::size_t fcn = 0;
+        std::uint64_t sampleHash = 0, fullHash = 0;
+        unsigned lastUse = 0, lastFullHash = 0;
+    };
+    std::unordered_map<const void*, MeshVB> meshVB;
+    unsigned frame = 0;
+    MeshVB* EnsureMeshVB(const Mesh& mesh);   // expand + upload on miss
+    void BuildExpandedVerts(const Mesh& mesh); // fill `verts` (14 floats/vertex)
 
     ID3D11ShaderResourceView* TextureFor(const std::string& name);
     bool EnsureTargets(int W, int H, int S);
@@ -349,8 +401,17 @@ void D3D11Renderer::Impl::DestroyTargets() {
 }
 
 bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
-    if (colorTex && w == W && h == H && samples == S) return true;
+    // A fully-built target set is cached by size; a half-built one (a mid-sequence
+    // CreateTexture2D/View failure) must NOT satisfy the cache — check the views we
+    // actually bind, not just colorTex. Otherwise the next call returns "ready" with
+    // a null rtv/dsv and the render binds a null render target (hard crash).
+    if (colorTex && rtv && dsv && resolveTex && staging &&
+        w == W && h == H && samples == S) return true;
     DestroyTargets();
+    // Any partial failure below returns false; reset the size cache so the next call
+    // starts clean (DestroyTargets nulls the resources, but the size fields linger).
+    w = 0; h = 0; samples = 0;
+    struct FailReset { Impl* p; bool ok = false; ~FailReset(){ if(!ok){ p->DestroyTargets(); p->w=p->h=p->samples=0; } } } fr{this};
     w = W; h = H;
     // Clamp the requested MSAA to what the device actually supports for BOTH the color
     // and depth formats. Creating a multisampled texture with an unsupported count is a
@@ -385,6 +446,7 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     D3D11_TEXTURE2D_DESC ts = tr;
     ts.Usage = D3D11_USAGE_STAGING; ts.BindFlags = 0; ts.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     if (FAILED(dev->CreateTexture2D(&ts, nullptr, &staging))) return false;
+    fr.ok = true;   // fully built — keep the cache
     return true;
 }
 
@@ -420,6 +482,118 @@ bool D3D11Renderer::Impl::EnsureShadow(int size) {
     return true;
 }
 
+// ---- Per-mesh vertex-buffer cache (mirrors GLRenderer.cpp) -------------------
+static std::uint64_t FnvBytes(const void* data, std::size_t nbytes,
+                              std::uint64_t seed = 1469598103934665603ull) {
+    const unsigned char* pB = (const unsigned char*)data;
+    std::uint64_t h = seed;
+    for (std::size_t i = 0; i < nbytes; ++i) { h ^= pB[i]; h *= 1099511628211ull; }
+    return h;
+}
+static std::uint64_t MeshSampleHash(const Mesh& m) {
+    std::size_t sizes[5] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
+                             m.uvs.size(), m.triColors.size() };
+    std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
+    const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
+    for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
+    const std::size_t tn = m.triangles.size(), tstep = tn / 2048 + 1;
+    for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
+    return h;
+}
+static std::uint64_t MeshFullHash(const Mesh& m) {
+    std::uint64_t h = 1469598103934665603ull;
+    if (!m.vertices.empty())  h = FnvBytes(m.vertices.data(),  m.vertices.size()  * sizeof(Vec3),  h);
+    if (!m.normals.empty())   h = FnvBytes(m.normals.data(),   m.normals.size()   * sizeof(Vec3),  h);
+    if (!m.uvs.empty())       h = FnvBytes(m.uvs.data(),       m.uvs.size()       * sizeof(Vec2),  h);
+    if (!m.triangles.empty()) h = FnvBytes(m.triangles.data(), m.triangles.size() * sizeof(int),   h);
+    if (!m.triColors.empty()) h = FnvBytes(m.triColors.data(), m.triColors.size() * sizeof(Color), h);
+    return h;
+}
+
+// Expand indexed triangles into the interleaved non-indexed layout the shader
+// consumes: pos(3)+normal(3)+uv(2)+color(3)+tangent(3) = 14 floats per vertex.
+void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
+    const auto& V = mesh.vertices; const auto& T = mesh.triangles;
+    const bool hasN = mesh.HasNormals();
+    const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
+    const bool faceCols = mesh.HasFaceColors();
+    const int nv = (int)V.size();
+    verts.clear(); verts.reserve(T.size() * 14);
+    for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+        int a = T[i], b = T[i + 1], cc = T[i + 2];
+        if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue; // skip bad tris
+        Vec3 fn = Vec3::Cross(V[b] - V[a], V[cc] - V[a]);
+        { float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
+        const float ax = std::fabs(fn.x), ay = std::fabs(fn.y), az = std::fabs(fn.z);
+        float cr = 1.0f, cg = 1.0f, cb2 = 1.0f;  // white = no-op when there are no face colors
+        if (faceCols) { const Color& fc = mesh.triColors[i / 3]; cr = fc.r; cg = fc.g; cb2 = fc.b; }
+        const int idx[3] = {a, b, cc};
+        float uu[3], vv[3];
+        for (int k = 0; k < 3; ++k) {
+            const Vec3& pos = V[idx[k]];
+            if (hasUV) { uu[k] = mesh.uvs[idx[k]].x; vv[k] = mesh.uvs[idx[k]].y; }
+            else if (ax >= ay && ax >= az) { uu[k] = pos.z + 0.5f; vv[k] = pos.y + 0.5f; }
+            else if (ay >= ax && ay >= az) { uu[k] = pos.x + 0.5f; vv[k] = pos.z + 0.5f; }
+            else                           { uu[k] = pos.x + 0.5f; vv[k] = pos.y + 0.5f; }
+        }
+        Vec3 e1 = V[b] - V[a], e2 = V[cc] - V[a];
+        float du1 = uu[1] - uu[0], dv1 = vv[1] - vv[0];
+        float du2 = uu[2] - uu[0], dv2 = vv[2] - vv[0];
+        float det = du1 * dv2 - du2 * dv1;
+        Vec3 tan = std::fabs(det) > 1e-8f ? (e1 * dv2 - e2 * dv1) * (1.0f / det) : e1;
+        { float m = tan.Magnitude(); tan = m > 1e-6f ? tan * (1.0f / m) : Vec3{1, 0, 0}; }
+        for (int k = 0; k < 3; ++k) {
+            const Vec3& pos = V[idx[k]];
+            Vec3 nrm = hasN ? mesh.normals[idx[k]] : fn;
+            verts.push_back(pos.x); verts.push_back(pos.y); verts.push_back(pos.z);
+            verts.push_back(nrm.x); verts.push_back(nrm.y); verts.push_back(nrm.z);
+            verts.push_back(uu[k]); verts.push_back(vv[k]);
+            verts.push_back(cr);    verts.push_back(cg);    verts.push_back(cb2);
+            verts.push_back(tan.x); verts.push_back(tan.y); verts.push_back(tan.z);
+        }
+    }
+}
+
+// Return the up-to-date cached GPU buffer for a mesh, expanding + uploading only
+// when the mesh actually changed. nullptr = mesh has no drawable triangles.
+D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh) {
+    MeshVB& e = meshVB[&mesh];
+    e.lastUse = frame;
+    bool same = e.vbuf != nullptr &&
+        e.vp  == (const void*)mesh.vertices.data()  && e.vn  == mesh.vertices.size()  &&
+        e.tp  == (const void*)mesh.triangles.data() && e.tn  == mesh.triangles.size() &&
+        e.np  == (const void*)mesh.normals.data()   && e.nn  == mesh.normals.size()   &&
+        e.uvp == (const void*)mesh.uvs.data()       && e.uvn == mesh.uvs.size()       &&
+        e.fcp == (const void*)mesh.triColors.data() && e.fcn == mesh.triColors.size();
+    std::uint64_t sh = 0;
+    if (same) { sh = MeshSampleHash(mesh); if (sh != e.sampleHash) same = false; }
+    if (same && frame - e.lastFullHash >= 60) {     // exact check ~once a second
+        std::uint64_t fh = MeshFullHash(mesh);
+        e.lastFullHash = frame;
+        if (fh != e.fullHash) same = false; else e.fullHash = fh;
+    }
+    if (same) return e.vertCount > 0 ? &e : nullptr;
+    BuildExpandedVerts(mesh);
+    e.vp  = mesh.vertices.data();  e.vn  = mesh.vertices.size();
+    e.tp  = mesh.triangles.data(); e.tn  = mesh.triangles.size();
+    e.np  = mesh.normals.data();   e.nn  = mesh.normals.size();
+    e.uvp = mesh.uvs.data();       e.uvn = mesh.uvs.size();
+    e.fcp = mesh.triColors.data(); e.fcn = mesh.triColors.size();
+    e.sampleHash = sh ? sh : MeshSampleHash(mesh);
+    e.fullHash = MeshFullHash(mesh);
+    e.lastFullHash = frame;
+    e.vertCount = (int)(verts.size() / 14);
+    if (e.vbuf) { e.vbuf->Release(); e.vbuf = nullptr; }
+    if (e.vertCount == 0) return nullptr;
+    D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
+    bd.ByteWidth = (UINT)(verts.size() * sizeof(float));
+    bd.Usage = D3D11_USAGE_IMMUTABLE; bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA init; std::memset(&init, 0, sizeof(init));
+    init.pSysMem = verts.data();
+    if (FAILED(dev->CreateBuffer(&bd, &init, &e.vbuf))) { e.vbuf = nullptr; e.vertCount = 0; return nullptr; }
+    return &e;
+}
+
 ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return nullptr;
     auto it = texCache.find(name);
@@ -450,7 +624,20 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     if (!Available() || w < 1 || h < 1) return nullptr;
     Impl* p = m_impl;
     if (!p->EnsureTargets(w, h, samples)) return nullptr;
+    if (!p->rtv || !p->dsv || !p->ctx) return nullptr;   // never bind a null target
     ID3D11DeviceContext* c = p->ctx;
+
+    // Advance the mesh-VB cache clock and evict buffers unused for ~5s of frames
+    // (deleted objects, replaced meshes), so GPU memory doesn't grow unbounded.
+    ++p->frame;
+    if ((p->frame % 300u) == 0u) {
+        for (auto it = p->meshVB.begin(); it != p->meshVB.end();) {
+            if (p->frame - it->second.lastUse > 300u) {
+                if (it->second.vbuf) it->second.vbuf->Release();
+                it = p->meshVB.erase(it);
+            } else ++it;
+        }
+    }
 
     // ---- Shadow-map depth pre-pass (directional cast shadows) -----------------
     // Render scene depth from the sun into a depth texture the main pass samples
@@ -485,6 +672,25 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
                 const Mesh& mesh = mr->mesh;
                 const auto& V = mesh.vertices; const auto& T = mesh.triangles;
                 if (V.empty() || T.size() < 3) continue;
+                Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
+                CB dcb; std::memset(&dcb, 0, sizeof(dcb));
+                std::memcpy(dcb.mvp, dmvp.m, sizeof(dcb.mvp));
+                D3D11_MAPPED_SUBRESOURCE dms;
+                if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &dms))) {
+                    std::memcpy(dms.pData, &dcb, sizeof(dcb)); c->Unmap(p->cb, 0);
+                }
+                // Static meshes: draw positions straight from the cached interleaved
+                // buffer (stride 14). Per-frame-deformed meshes stream position-only.
+                const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
+                                      go->GetComponent<Character>() != nullptr;
+                if (!deformed) {
+                    Impl::MeshVB* mv = p->EnsureMeshVB(mesh);
+                    if (!mv) continue;
+                    UINT ds = 14 * sizeof(float), doff = 0;
+                    c->IASetVertexBuffers(0, 1, &mv->vbuf, &ds, &doff);
+                    c->Draw((UINT)mv->vertCount, 0);
+                    continue;
+                }
                 const int nv = (int)V.size();
                 p->verts.clear(); p->verts.reserve(T.size() * 3);
                 for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
@@ -507,16 +713,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
                     p->vbDepthCap = cap;
                 }
                 if (!p->vbDepth) continue;
-                D3D11_MAPPED_SUBRESOURCE dms;
                 if (SUCCEEDED(c->Map(p->vbDepth, 0, D3D11_MAP_WRITE_DISCARD, 0, &dms))) {
                     std::memcpy(dms.pData, p->verts.data(), p->verts.size() * sizeof(float));
                     c->Unmap(p->vbDepth, 0);
-                }
-                Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
-                CB dcb; std::memset(&dcb, 0, sizeof(dcb));
-                std::memcpy(dcb.mvp, dmvp.m, sizeof(dcb.mvp));
-                if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &dms))) {
-                    std::memcpy(dms.pData, &dcb, sizeof(dcb)); c->Unmap(p->cb, 0);
                 }
                 UINT ds = 3 * sizeof(float), doff = 0;
                 c->IASetVertexBuffers(0, 1, &p->vbDepth, &ds, &doff);
@@ -581,71 +780,39 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         const Mesh& mesh = mr->mesh;
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
-        const bool hasN = mesh.HasNormals();
-        // Texture whenever the material has one; box-project UVs when the mesh has none
-        // (matches the software renderer, so UV-less textured models still texture here).
-        const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
-        // Per-triangle face colors (skin/shirt/etc. on the Character, foliage tints, ...)
-        // are how UV-less meshes are colored in the software renderer; honor them here so
-        // those models don't render as one flat uColor under the GPU path.
-        const bool faceCols = mesh.HasFaceColors();
         ID3D11ShaderResourceView* srv = p->TextureFor(mr->texture);
 
-        const int nv = (int)V.size();
-        p->verts.clear(); p->verts.reserve(T.size() * 14);
-        for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
-            int a = T[i], b = T[i + 1], cc = T[i + 2];
-            if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue; // skip bad tris
-            Vec3 fn = Vec3::Cross(V[b] - V[a], V[cc] - V[a]);
-            { float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
-            const float ax = std::fabs(fn.x), ay = std::fabs(fn.y), az = std::fabs(fn.z);
-            float cr = 1.0f, cg = 1.0f, cb = 1.0f;  // white = no-op when there are no face colors
-            if (faceCols) { const Color& fc = mesh.triColors[i / 3]; cr = fc.r; cg = fc.g; cb = fc.b; }
-            const int idx[3] = {a, b, cc};
-            // Per-vertex UVs first, so we can derive the face tangent for normal mapping.
-            float uu[3], vv[3];
-            for (int k = 0; k < 3; ++k) {
-                const Vec3& pos = V[idx[k]];
-                if (hasUV) { uu[k] = mesh.uvs[idx[k]].x; vv[k] = mesh.uvs[idx[k]].y; }
-                else if (ax >= ay && ax >= az) { uu[k] = pos.z + 0.5f; vv[k] = pos.y + 0.5f; }
-                else if (ay >= ax && ay >= az) { uu[k] = pos.x + 0.5f; vv[k] = pos.z + 0.5f; }
-                else                           { uu[k] = pos.x + 0.5f; vv[k] = pos.y + 0.5f; }
-            }
-            // Local-space per-face tangent (edges + UV deltas), transformed to world in VSMain.
-            Vec3 e1 = V[b] - V[a], e2 = V[cc] - V[a];
-            float du1 = uu[1] - uu[0], dv1 = vv[1] - vv[0];
-            float du2 = uu[2] - uu[0], dv2 = vv[2] - vv[0];
-            float det = du1 * dv2 - du2 * dv1;
-            Vec3 tan = std::fabs(det) > 1e-8f ? (e1 * dv2 - e2 * dv1) * (1.0f / det) : e1;
-            { float m = tan.Magnitude(); tan = m > 1e-6f ? tan * (1.0f / m) : Vec3{1, 0, 0}; }
-            for (int k = 0; k < 3; ++k) {
-                const Vec3& pos = V[idx[k]];
-                Vec3 nrm = hasN ? mesh.normals[idx[k]] : fn;
-                p->verts.push_back(pos.x); p->verts.push_back(pos.y); p->verts.push_back(pos.z);
-                p->verts.push_back(nrm.x); p->verts.push_back(nrm.y); p->verts.push_back(nrm.z);
-                p->verts.push_back(uu[k]); p->verts.push_back(vv[k]);
-                p->verts.push_back(cr);    p->verts.push_back(cg);    p->verts.push_back(cb);
-                p->verts.push_back(tan.x); p->verts.push_back(tan.y); p->verts.push_back(tan.z);
-            }
-        }
-        const int vcount = (int)(p->verts.size() / 14);
-        if (vcount == 0) continue;
-
-        // Grow / upload the dynamic vertex buffer.
-        if (vcount > p->vbCap) {
-            if (p->vb) { p->vb->Release(); p->vb = nullptr; p->vbCap = 0; }
-            const int cap = vcount + 1024;
-            D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
-            bd.ByteWidth = (UINT)(cap * 14 * sizeof(float)); bd.Usage = D3D11_USAGE_DYNAMIC;
-            bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-            if (FAILED(p->dev->CreateBuffer(&bd, nullptr, &p->vb))) continue;
-            p->vbCap = cap;
-        }
-        if (!p->vb) continue;  // never Map a null buffer (a prior CreateBuffer may have failed)
+        // Geometry source: static meshes draw from the per-mesh cached GPU buffer
+        // (expanded + uploaded once — see Impl::EnsureMeshVB); meshes deformed on
+        // the CPU every frame (SkinnedMesh / Character) stream through `vb`.
+        const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
+                              go->GetComponent<Character>() != nullptr;
+        Impl::MeshVB* mvb = nullptr;
+        int vcount = 0;
         D3D11_MAPPED_SUBRESOURCE ms;
-        if (SUCCEEDED(c->Map(p->vb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
-            std::memcpy(ms.pData, p->verts.data(), p->verts.size() * sizeof(float));
-            c->Unmap(p->vb, 0);
+        if (!deformed) {
+            mvb = p->EnsureMeshVB(mesh);
+            if (!mvb) continue;                    // no drawable triangles
+            vcount = mvb->vertCount;
+        } else {
+            p->BuildExpandedVerts(mesh);
+            vcount = (int)(p->verts.size() / 14);
+            if (vcount == 0) continue;
+            // Grow / upload the dynamic vertex buffer.
+            if (vcount > p->vbCap) {
+                if (p->vb) { p->vb->Release(); p->vb = nullptr; p->vbCap = 0; }
+                const int cap = vcount + 1024;
+                D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
+                bd.ByteWidth = (UINT)(cap * 14 * sizeof(float)); bd.Usage = D3D11_USAGE_DYNAMIC;
+                bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+                if (FAILED(p->dev->CreateBuffer(&bd, nullptr, &p->vb))) continue;
+                p->vbCap = cap;
+            }
+            if (!p->vb) continue;  // never Map a null buffer (a prior CreateBuffer may have failed)
+            if (SUCCEEDED(c->Map(p->vb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                std::memcpy(ms.pData, p->verts.data(), p->verts.size() * sizeof(float));
+                c->Unmap(p->vb, 0);
+            }
         }
 
         Mat4 model = go->transform->LocalToWorldMatrix();
@@ -696,7 +863,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             const auto& rs = scene.renderSettings;
             bool fogOn = rs.fog && rs.fogEnd > rs.fogStart;
             cb.fog[0] = fogOn ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd; cb.fog[3] = 0.0f;
-            cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b; cb.fogCol[3] = 1.0f;
+            // fogCol.w carries the filmic (linear + ACES + gamma) pipeline flag.
+            cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b;
+            cb.fogCol[3] = rs.tonemap ? 1.0f : 0.0f;
         }
         std::memcpy(cb.lightVP, lightVP.m, sizeof(cb.lightVP));
         cb.shadowP[0] = shadowOn ? 1.0f : 0.0f; cb.shadowP[1] = shadowTexel;
@@ -717,7 +886,8 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         c->PSSetSamplers(0, 1, &useSamp);
 
         UINT stride = 14 * sizeof(float), offset = 0;
-        c->IASetVertexBuffers(0, 1, &p->vb, &stride, &offset);
+        ID3D11Buffer* vbUse = mvb ? mvb->vbuf : p->vb;   // cached static buffer or the stream buffer
+        c->IASetVertexBuffers(0, 1, &vbUse, &stride, &offset);
         // Transparency: a material alpha < 1 (water, glass) alpha-blends over the
         // scene and doesn't write depth, so geometry behind shows through. Reuses the
         // ground-shadow blend + no-depth-write states. Draw transparent meshes after
@@ -778,6 +948,8 @@ void D3D11Renderer::Destroy() {
     p->DestroyTargets();
     for (auto& kv : p->texCache) if (kv.second) kv.second->Release();
     p->texCache.clear();
+    for (auto& kv : p->meshVB) if (kv.second.vbuf) kv.second.vbuf->Release();
+    p->meshVB.clear();
     if (p->shadowSrv) p->shadowSrv->Release();
     if (p->shadowDsv) p->shadowDsv->Release();
     if (p->shadowTex) p->shadowTex->Release();

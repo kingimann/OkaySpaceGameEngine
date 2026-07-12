@@ -525,6 +525,8 @@ inline float ScrollViewContentHeight(GameObject* sv) {
     return maxBottom;
 }
 
+inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH);   // fwd: origin resolves stretch parents through it
+
 /// The top-left screen pixel of a widget, resolved WITHIN its UI parent when it has
 /// one (so moving/resizing the parent moves the child — Unity-style), else against
 /// the whole screen. Unscaled (Canvas scale = 1); the renderers that don't apply a
@@ -554,8 +556,12 @@ inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
     if (GameObject* parent = OwningUIParent(go)) {
         UIRect pr = GetUIRect(parent);
         if (pr.valid) {
+            // Use the parent's RESOLVED size, not pr.size: for a stretch-anchored parent
+            // pr.size holds offsetMin/offsetMax margins, not real pixels, so anchoring a
+            // child against it would jump the child toward a corner (mismatch vs hit-test).
+            Vec2 ps = UIResolveSize(parent, screenW, screenH);
             Vec2 local, sz;
-            ResolveAnchorRect(r.anchor, *r.position, r.size, pr.size.x, pr.size.y, local, sz);
+            ResolveAnchorRect(r.anchor, *r.position, r.size, ps.x, ps.y, local, sz);
             return UIResolveOrigin(parent, screenW, screenH) + local;
         }
     }

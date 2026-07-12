@@ -128,6 +128,32 @@ public:
         // finished frame, so it looks identical on every renderer backend. Great for
         // focus/mood without touching the 3D shading path.
         float vignette   = 0.0f;
+        // Filmic rendering: a gamma-correct pipeline (albedo decoded to linear,
+        // lighting in linear space, sRGB-encoded output) plus ACES tonemapping,
+        // which rolls bright over-1.0 lighting off toward white instead of
+        // hard-clipping. ON by default — this is what gives shading its depth;
+        // turn off to get the legacy flat response back.
+        bool  tonemap    = true;
+        // ---- Skybox customization ----
+        // Where the horizon band sits in the sky gradient, as a fraction of the view
+        // height (0 = top, 0.5 = middle, 1 = bottom). Raise it for more sky, lower it
+        // for a high horizon.
+        float skyHorizonPos = 0.5f;
+        // An optional sun disc painted into the sky (screen-space): position (0..1 of
+        // the view), size (radius as a fraction of view height), color, and a soft
+        // glow halo. Cheap and backend-independent, like the vignette.
+        bool  skySun      = false;
+        float skySunX     = 0.5f;
+        float skySunY     = 0.30f;
+        float skySunSize  = 0.05f;
+        Color skySunColor = Color::FromBytes(255, 245, 214);
+        // An optional star field painted in the upper sky (above the horizon band) —
+        // great for night / space skies. Stars are placed deterministically from a
+        // seed (so they don't flicker) via SkyStars(); density scales the count and
+        // brightness scales their alpha. Cheap and backend-independent.
+        bool  skyStars      = false;
+        float skyStarDensity = 0.5f;    // 0..1 -> up to ~kSkyStarMax stars
+        float skyStarBright  = 0.9f;    // 0..1 star alpha
     };
     RenderSettings renderSettings;
 

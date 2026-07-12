@@ -15,6 +15,8 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -35,6 +37,8 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/Tilemap.hpp"
+#include "okay/Components/NPCController.hpp"
+#include "okay/Components/Spawner.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
@@ -62,6 +66,31 @@ namespace okay {
 namespace {
 
 using Value = vs::VsValue;
+
+// Map a friendly key NAME to the char code the Input layer uses, so scripts can
+// write key("space") / key_down("up") instead of guessing the internal char. A
+// single character is taken as-is (lowercased); named keys map to their code
+// (arrows fold onto WASD exactly as the runtime feeds them). Unknown multi-char
+// names fall back to their first letter.
+static char KeyCharFromName(const std::string& s) {
+    if (s.empty()) return 0;
+    auto lower1 = [](char c) { return (char)std::tolower((unsigned char)c); };
+    if (s.size() == 1) return lower1(s[0]);
+    std::string k; k.reserve(s.size());
+    for (char c : s) k += lower1(c);
+    if (k == "space")                    return ' ';
+    if (k == "up")                       return 'w';   // arrows are fed as WASD
+    if (k == "down")                     return 's';
+    if (k == "left")                     return 'a';
+    if (k == "right")                    return 'd';
+    if (k == "enter" || k == "return")   return '\r';
+    if (k == "escape" || k == "esc")     return (char)27;
+    if (k == "backspace")                return (char)8;
+    if (k == "tab")                      return '\t';
+    if (k == "shift")                    return Input::KeyShift;
+    if (k == "ctrl" || k == "control")   return Input::KeyCtrl;
+    return lower1(s[0]);
+}
 
 // ===================== JSON (for to_json / from_json builtins) =====================
 // A compact, dependency-free JSON writer/reader over VsValue. Numbers, bools,
@@ -980,9 +1009,29 @@ public:
         } else if (IsTypedFunctionAhead()) {            // C#-style: void Start() { }
             std::string name; FunctionDecl decl = ParseTypedFunction(name);
             funcs[name] = std::move(decl);
+        } else if (IsBareFunctionAhead()) {             // OkayScript: update(dt) { }
+            std::string name = Expect(Tok::Ident, "function name").text;
+            FunctionDecl decl = ParseParamsAndBody();
+            funcs[name] = std::move(decl);
         } else {
             top.push_back(ParseStatement());
         }
+    }
+
+    // A brace-less OkayScript function: `name(params) { ... }` — a single
+    // identifier, then a parenthesised list, then a '{'. That last '{' is what
+    // tells it apart from an ordinary call statement like `on_key_move(5)` (which
+    // is followed by a newline/';'), so the `function` keyword is optional.
+    bool IsBareFunctionAhead() const {
+        std::size_t i = m_pos;
+        if (m_toks[i].type != Tok::Ident) return false;
+        if (m_toks[i + 1].type != Tok::LParen) return false;
+        int depth = 0;
+        for (i += 1; m_toks[i].type != Tok::End; ++i) {
+            if (m_toks[i].type == Tok::LParen) ++depth;
+            else if (m_toks[i].type == Tok::RParen && --depth == 0) { ++i; break; }
+        }
+        return m_toks[i].type == Tok::LBrace;
     }
 
     // Skip C# attributes like [SerializeField] or [Header("Stats")] that may
@@ -1079,6 +1128,14 @@ private:
         while (!Check(Tok::RBrace) && !Check(Tok::End)) stmts.push_back(ParseStatement());
         Expect(Tok::RBrace, "'}'");
         return stmts;
+    }
+
+    // A control-flow body: either a `{ ... }` block, or — to keep simple code short —
+    // a single statement with no braces (C/JS style). So `if (hit) jump(8)` and
+    // `while (alive) step()` both work without the ceremony of braces.
+    std::vector<StmtPtr> ParseBlockOrStmt() {
+        if (Check(Tok::LBrace)) return ParseBlock();
+        return SingleStmt();
     }
 
     // A C#-style typed local/field: a run of >= 2 identifiers (type + modifiers
@@ -1187,8 +1244,8 @@ private:
             Expect(Tok::RParen, "')'");
             auto st = std::make_unique<IfStmt>();
             st->cond = std::move(cond);
-            st->thenB = ParseBlock();
-            if (Match(Tok::Else)) st->elseB = Check(Tok::If) ? SingleStmt() : ParseBlock();
+            st->thenB = ParseBlockOrStmt();
+            if (Match(Tok::Else)) st->elseB = Check(Tok::If) ? SingleStmt() : ParseBlockOrStmt();
             return st;
         }
         if (Match(Tok::While)) {
@@ -1197,7 +1254,7 @@ private:
             Expect(Tok::RParen, "')'");
             auto st = std::make_unique<WhileStmt>();
             st->cond = std::move(cond);
-            st->body = ParseBlock();
+            st->body = ParseBlockOrStmt();
             return st;
         }
         if (Match(Tok::For)) {
@@ -1209,7 +1266,7 @@ private:
                     auto fe = std::make_unique<ForEachStmt>();
                     fe->var = var;
                     fe->iterable = ParseExpression();
-                    fe->body = ParseBlock();
+                    fe->body = ParseBlockOrStmt();
                     return fe;
                 }
                 m_pos = save; // not foreach; fall back to C-style for
@@ -1235,7 +1292,7 @@ private:
             // step (optional).
             if (!Check(Tok::RParen)) st->step = ParseExpression();
             Expect(Tok::RParen, "')'");
-            st->body = ParseBlock();
+            st->body = ParseBlockOrStmt();
             return st;
         }
         if (Match(Tok::Return)) {
@@ -1473,6 +1530,10 @@ struct OkayScriptVM::Impl {
     Runtime rt;
     std::vector<StmtPtr> topLevel;
     bool loaded = false;
+    // "Bare mode": a script with NO functions at all — its top-level statements ARE the
+    // per-frame loop. Lets a whole script be one line, e.g. `on_key_move(5)`. Setup-style
+    // top-level code (globals) still runs once at load whenever any function is defined.
+    bool bareMode = false;
 
     // Last network message popped by net_poll(), exposed via net_msg_* builtins.
     std::string netMsgChannel, netMsgData;
@@ -1593,6 +1654,69 @@ struct OkayScriptVM::Impl {
             if (Transform* t = tf()) t->Rotate({0, 0, a.empty() ? 0.0f : a[0].AsFloat()});
             return Value{};
         };
+        // ---- High-level one-liners: dt-scaled INTERNALLY so beginners never write
+        // "* dt". walk(dx,dy,speed) heads in a direction; spin(degPerSec) rotates
+        // smoothly. (WASD control is the existing on_key_move(speed).) Much less code.
+        b["walk"] = [this, tf](std::vector<Value>& a) {
+            float dx = a.size() > 0 ? a[0].AsFloat() : 0.0f, dy = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            float sp = a.size() > 2 ? a[2].AsFloat() : 1.0f;
+            float dt = rt.host ? rt.host->deltaTime : 0.0f;
+            float len = Mathf::Sqrt(dx * dx + dy * dy); if (len > 0.0001f) { dx /= len; dy /= len; }
+            if (Transform* t = tf()) t->Translate({dx * sp * dt, dy * sp * dt, 0.0f});
+            return Value{};
+        };
+        b["spin"] = [this, tf](std::vector<Value>& a) {
+            float dps = a.empty() ? 90.0f : a[0].AsFloat();
+            float dt = rt.host ? rt.host->deltaTime : 0.0f;
+            if (Transform* t = tf()) t->Rotate({0, 0, dps * dt});
+            return Value{};
+        };
+        // move_to(x, y, speed): walk toward a world POINT, stopping when it arrives.
+        // dt-scaled (no "* dt"); great for "go to a spot" without object lookups.
+        b["move_to"] = [this, tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || !rt.host || a.size() < 2) return Value{};
+            float tx = a[0].AsFloat(), ty = a[1].AsFloat(), sp = a.size() > 2 ? a[2].AsFloat() : 3.0f;
+            Vec3 me = t->Position();
+            float dx = tx - me.x, dy = ty - me.y, len = Mathf::Sqrt(dx * dx + dy * dy);
+            float step = sp * rt.host->deltaTime;
+            if (len <= step || len < 1e-5f) { t->Translate({dx, dy, 0.0f}); return Value{}; }
+            t->Translate({dx / len * step, dy / len * step, 0.0f});
+            return Value{};
+        };
+        // bob(amount, speed): hover up/down around the start height (juice, one line).
+        b["bob"] = [this, tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || !rt.host) return Value{};
+            float amt = a.size() > 0 ? a[0].AsFloat() : 0.5f, sp = a.size() > 1 ? a[1].AsFloat() : 2.0f;
+            auto& g = rt.host->globals;
+            auto it = g.find("__bob_y");
+            float baseY = it != g.end() ? it->second.AsFloat() : t->localPosition.y;
+            if (it == g.end()) g["__bob_y"] = Value{baseY};
+            t->localPosition.y = baseY + Mathf::Sin(Time::ElapsedTime() * sp) * amt;
+            return Value{};
+        };
+        // pulse(amount, speed): gently grow/shrink around normal size (juice).
+        b["pulse"] = [tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t) return Value{};
+            float amt = a.size() > 0 ? a[0].AsFloat() : 0.2f, sp = a.size() > 1 ? a[1].AsFloat() : 3.0f;
+            float s = 1.0f + Mathf::Sin(Time::ElapsedTime() * sp) * amt;
+            t->localScale = {s, s, s};
+            return Value{};
+        };
+        // wander(speed): roam in a random direction, picking a new one every ~1s.
+        b["wander"] = [this, tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || !rt.host) return Value{};
+            float sp = a.empty() ? 2.0f : a[0].AsFloat();
+            auto& g = rt.host->globals;
+            float dt = rt.host->deltaTime;
+            float tmr = g.count("__wander_t")  ? g["__wander_t"].AsFloat()  : 999.0f;
+            float dx  = g.count("__wander_dx") ? g["__wander_dx"].AsFloat() : 0.0f;
+            float dy  = g.count("__wander_dy") ? g["__wander_dy"].AsFloat() : 0.0f;
+            tmr += dt;
+            if (tmr > 1.0f) { tmr = 0.0f; float ang = Random::Shared().Range(0.0f, 6.2831853f); dx = Mathf::Cos(ang); dy = Mathf::Sin(ang); }
+            g["__wander_t"] = Value{tmr}; g["__wander_dx"] = Value{dx}; g["__wander_dy"] = Value{dy};
+            t->Translate({dx * sp * dt, dy * sp * dt, 0.0f});
+            return Value{};
+        };
         b["pos_x"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.x : 0.0f}; };
         b["pos_y"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.y : 0.0f}; };
         b["time"]  = [](std::vector<Value>&) { return Value{Time::ElapsedTime()}; };
@@ -1614,17 +1738,30 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["cancel_timers"] = [this](std::vector<Value>&) { rt.timers.clear(); return Value{}; };
+        // timer("name", seconds): returns true about once every `seconds` — kills the
+        // manual `t = t + dt; if (t >= N)` boilerplate. e.g.
+        //   if (timer("spawn", 2)) { spawn("enemy.okayprefab", 0, 5) }
+        b["timer"] = [this](std::vector<Value>& a) -> Value {
+            if (!rt.host || a.size() < 2) return Value{false};
+            float period = a[1].AsFloat(); if (period <= 0.0f) return Value{true};
+            std::string key = "__timer_" + a[0].AsString();
+            float acc = rt.host->globals.count(key) ? rt.host->globals[key].AsFloat() : 0.0f;
+            acc += rt.host->deltaTime;
+            if (acc >= period) { rt.host->globals[key] = Value{acc - period}; return Value{true}; }
+            rt.host->globals[key] = Value{acc};
+            return Value{false};
+        };
         b["axis_x"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().x}; };
         b["axis_y"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().y}; };
         b["key"]    = [](std::vector<Value>& a) {
             if (a.empty()) return Value{false};
-            std::string s = a[0].AsString();
-            return Value{!s.empty() && Input::GetKey(s[0])};
+            char c = KeyCharFromName(a[0].AsString());
+            return Value{c != 0 && Input::GetKey(c)};
         };
         b["key_down"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{false};
-            std::string s = a[0].AsString();
-            return Value{!s.empty() && Input::GetKeyDown(s[0])};
+            char c = KeyCharFromName(a[0].AsString());
+            return Value{c != 0 && Input::GetKeyDown(c)};
         };
         b["mouse_x"] = [](std::vector<Value>&) { return Value{Input::MousePosition().x}; };
         b["mouse_y"] = [](std::vector<Value>&) { return Value{Input::MousePosition().y}; };
@@ -1659,6 +1796,25 @@ struct OkayScriptVM::Impl {
         };
         b["set"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2 && rt.host) rt.host->globals[a[0].AsString()] = a[1];
+            return Value{};
+        };
+        // score()/add_score(n): the shared "score" value in one call (less than
+        // set("score", get("score") + n)). set_score(n) overwrites it.
+        b["score"] = [this](std::vector<Value>&) -> Value {
+            if (!rt.host) return Value{0.0f};
+            auto it = rt.host->globals.find("score");
+            return it != rt.host->globals.end() ? it->second : Value{0.0f};
+        };
+        b["add_score"] = [this](std::vector<Value>& a) {
+            if (!rt.host) return Value{};
+            float n = a.empty() ? 1.0f : a[0].AsFloat();
+            auto it = rt.host->globals.find("score");
+            float cur = it != rt.host->globals.end() ? it->second.AsFloat() : 0.0f;
+            rt.host->globals["score"] = Value{cur + n};
+            return Value{cur + n};
+        };
+        b["set_score"] = [this](std::vector<Value>& a) {
+            if (rt.host) rt.host->globals["score"] = Value{a.empty() ? 0.0f : a[0].AsFloat()};
             return Value{};
         };
         // Spawn a prefab file at (x, y); returns true on success. New objects
@@ -1749,6 +1905,63 @@ struct OkayScriptVM::Impl {
                 return Value{g->transform->Position().z};
             return Value{0.0f};
         };
+        // ---- NPC commands: order an NPC Controller around from a script -----
+        // npc_goto("Guard", x, y, z): send the named NPC to a world point (it
+        // pathfinds there if pathfinding is on, then broadcasts npc_arrived).
+        // Omit the name ("" or self name) to command a sibling NPCController.
+        auto npcOf = [this, sceneOf](const std::string& name) -> NPCController* {
+            if (name.empty())
+                return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<NPCController>() : nullptr;
+            Scene* s = sceneOf(); if (!s) return nullptr;
+            GameObject* g = s->Find(name);
+            return g ? g->GetComponent<NPCController>() : nullptr;
+        };
+        b["npc_goto"] = [npcOf](std::vector<Value>& a) -> Value {
+            if (a.size() < 4) return Value{false};
+            NPCController* n = npcOf(a[0].AsString()); if (!n) return Value{false};
+            n->CommandGoTo({a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat()});
+            return Value{true};
+        };
+        b["npc_stop"] = [npcOf](std::vector<Value>& a) -> Value {
+            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            if (!n) return Value{false};
+            n->CancelCommand(); return Value{true};
+        };
+        // True while the NPC is still walking to its npc_goto point.
+        b["npc_busy"] = [npcOf](std::vector<Value>& a) -> Value {
+            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            return Value{n && n->Commanded()};
+        };
+        // Current AI state name: "Idle","Wander","Patrol","Follow","Flee",
+        // "Chase","Search","Return" ("" if the object has no NPC Controller).
+        b["npc_state"] = [npcOf](std::vector<Value>& a) -> Value {
+            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            return Value{std::string{n ? n->StateName() : ""}};
+        };
+        // ---- Spawner control: run enemy/pickup waves from a script ----------
+        // Omit the name ("" ) to drive a sibling Spawner on this object.
+        auto spawnerOf = [this, sceneOf](const std::string& name) -> Spawner* {
+            if (name.empty())
+                return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<Spawner>() : nullptr;
+            Scene* s = sceneOf(); if (!s) return nullptr;
+            GameObject* g = s->Find(name);
+            return g ? g->GetComponent<Spawner>() : nullptr;
+        };
+        b["spawner_start"] = [spawnerOf](std::vector<Value>& a) -> Value {
+            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            if (!s) return Value{false};
+            s->StartWaves(); return Value{true};
+        };
+        b["spawner_stop"] = [spawnerOf](std::vector<Value>& a) -> Value {
+            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            if (!s) return Value{false};
+            s->StopWaves(); return Value{true};
+        };
+        // Live objects a spawner created (wave HUDs: "3 enemies left").
+        b["spawner_alive"] = [spawnerOf](std::vector<Value>& a) -> Value {
+            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            return Value{(float)(s ? s->AliveCount() : 0)};
+        };
         // Distance from this object to a named object (0 if missing).
         b["dist_to"] = [this, sceneOf](std::vector<Value>& a) -> Value {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
@@ -1786,6 +1999,236 @@ struct OkayScriptVM::Impl {
             float deg = std::atan2(ot.y - me.y, ot.x - me.x) * 57.2957795f;
             t->localRotation = Quat::Euler({0, 0, deg});
             return Value{};
+        };
+        // aim(x, y): rotate (Z) to face a world POINT — turrets, arrows, "look where
+        // I'm going". Like look_at but toward coordinates instead of a named object.
+        b["aim"] = [this, tf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{};
+            Transform* t = tf(); if (!t || !rt.host || !rt.host->gameObject) return Value{};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            float deg = std::atan2(a[1].AsFloat() - me.y, a[0].AsFloat() - me.x) * 57.2957795f;
+            t->localRotation = Quat::Euler({0, 0, deg});
+            return Value{};
+        };
+        // grid_snap(size): snap this object's position to the nearest multiple of
+        // `size` on X and Y — tile placement, building games, chunky movement.
+        b["grid_snap"] = [tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t) return Value{};
+            float g = a.empty() ? 1.0f : a[0].AsFloat();
+            if (g <= 1e-6f) return Value{};
+            t->localPosition.x = std::round(t->localPosition.x / g) * g;
+            t->localPosition.y = std::round(t->localPosition.y / g) * g;
+            return Value{};
+        };
+
+        // ---- High-level one-liners -----------------------------------------
+        // Each is a whole behaviour in a single call, meant to be invoked every
+        // frame from update(): the "write less, do more" layer over the low-level
+        // move/spawn/input builtins.
+        b["follow"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // follow("name", speed[, stopDist]): chase a named object on the XY plane.
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
+            float stop  = a.size() > 2 ? a[2].AsFloat() : 0.0f;
+            Vec3 me = t->Position(), ot = g->transform->Position();
+            float dx = ot.x - me.x, dy = ot.y - me.y;
+            float dist = Mathf::Sqrt(dx * dx + dy * dy);
+            if (dist > stop && dist > 1e-5f) {
+                float step = Mathf::Min(speed * rt.host->deltaTime, dist - stop);
+                t->Translate({dx / dist * step, dy / dist * step, 0.0f});
+            }
+            return Value{};
+        };
+        b["follow3"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // follow3("name", speed[, stopDist]): chase a named object in full 3D.
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
+            float stop  = a.size() > 2 ? a[2].AsFloat() : 0.0f;
+            Vec3 d = g->transform->Position() - t->Position();
+            float dist = d.Magnitude();
+            if (dist > stop && dist > 1e-5f) {
+                float step = Mathf::Min(speed * rt.host->deltaTime, dist - stop);
+                t->Translate(d * (step / dist));
+            }
+            return Value{};
+        };
+        b["flee"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // flee("name", speed): run directly away from a named object (XY plane).
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
+            Vec3 me = t->Position(), ot = g->transform->Position();
+            float dx = me.x - ot.x, dy = me.y - ot.y;
+            float dist = Mathf::Sqrt(dx * dx + dy * dy);
+            if (dist > 1e-5f) {
+                float k = speed * rt.host->deltaTime / dist;
+                t->Translate({dx * k, dy * k, 0.0f});
+            }
+            return Value{};
+        };
+        // platformer(speed[, jump]): a whole 2D side-scroller controller in one line.
+        // A/D or Left/Right set horizontal velocity; W / Up jumps (edge-triggered).
+        // Drives a Rigidbody2D if present (so gravity/ground work), else slides the
+        // Transform horizontally. dt-scaled — no `* dt` needed.
+        b["platformer"] = [this, tf](std::vector<Value>& a) {
+            if (!rt.host || !rt.host->gameObject) return Value{};
+            float speed = a.size() > 0 ? a[0].AsFloat() : 5.0f;
+            float jump  = a.size() > 1 ? a[1].AsFloat() : 9.0f;
+            Vec2 ax = Input::AxisWASD();
+            bool upNow = ax.y > 0.5f;
+            auto& g = rt.host->globals;
+            bool upWas = g.count("__plat_up") && g["__plat_up"].AsFloat() != 0.0f;
+            g["__plat_up"] = Value{upNow ? 1.0f : 0.0f};
+            if (auto* rb = rt.host->gameObject->GetComponent<Rigidbody2D>()) {
+                rb->velocity.x = ax.x * speed;
+                if (upNow && !upWas) rb->velocity.y = jump;      // rising edge = one jump
+            } else if (Transform* t = tf()) {
+                t->Translate({ax.x * speed * rt.host->deltaTime, 0.0f, 0.0f});
+            }
+            return Value{};
+        };
+        // on_key("key", "fn"): call this script's function `fn` once, the frame `key`
+        // is pressed. Event-style input with no if/edge bookkeeping.
+        b["on_key"] = [this](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{};
+            char c = KeyCharFromName(a[0].AsString());
+            if (c != 0 && Input::GetKeyDown(c)) {
+                std::string fn = a[1].AsString();
+                if (rt.functions.count(fn) || rt.builtins.count(fn)) { std::vector<Value> none; rt.Call(fn, none); }
+            }
+            return Value{};
+        };
+        // smooth_follow("name", speed): chase a named object, but ease in (exponential
+        // smoothing) so it glides instead of tracking rigidly. dt-scaled.
+        b["smooth_follow"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float speed = a.size() > 1 ? a[1].AsFloat() : 4.0f;
+            float k = 1.0f - std::exp(-speed * rt.host->deltaTime);   // 0..1 ease factor
+            Vec3 me = t->Position(), ot = g->transform->Position();
+            t->Translate({(ot.x - me.x) * k, (ot.y - me.y) * k, 0.0f});
+            return Value{};
+        };
+        // spring_to(x, y[, speed]): ease toward a world POINT with the same smoothing,
+        // slowing as it arrives. Great for cameras, cursors, snapping. dt-scaled.
+        b["spring_to"] = [this, tf](std::vector<Value>& a) {
+            if (a.size() < 2 || !rt.host) return Value{};
+            Transform* t = tf(); if (!t) return Value{};
+            float tx = a[0].AsFloat(), ty = a[1].AsFloat(), sp = a.size() > 2 ? a[2].AsFloat() : 6.0f;
+            float k = 1.0f - std::exp(-sp * rt.host->deltaTime);
+            Vec3 me = t->Position();
+            t->Translate({(tx - me.x) * k, (ty - me.y) * k, 0.0f});
+            return Value{};
+        };
+        b["patrol"] = [this, tf](std::vector<Value>& a) {
+            // patrol(x1, y1, x2, y2, speed): walk back and forth between two points.
+            // Uses a per-script time accumulator so it advances with update()'s dt.
+            if (a.size() < 5 || !rt.host) return Value{};
+            Transform* t = tf(); if (!t) return Value{};
+            float x1 = a[0].AsFloat(), y1 = a[1].AsFloat(), x2 = a[2].AsFloat(), y2 = a[3].AsFloat(), speed = a[4].AsFloat();
+            float dx = x2 - x1, dy = y2 - y1; float len = Mathf::Sqrt(dx * dx + dy * dy);
+            if (len < 1e-4f || speed <= 0.0f) return Value{};
+            auto& g = rt.host->globals;
+            float acc = 0.0f;
+            auto it = g.find("__patrol_t"); if (it != g.end()) acc = it->second.AsFloat();
+            acc += rt.host->deltaTime;
+            g["__patrol_t"] = Value{acc};
+            float period = 2.0f * len / speed;                             // full round trip
+            float ph = std::fmod(acc, period) / (period * 0.5f);           // 0..2
+            float f = ph < 1.0f ? ph : 2.0f - ph;                          // triangle 0..1..0
+            Vec3 me = t->Position();
+            t->SetPosition({x1 + dx * f, y1 + dy * f, me.z});
+            return Value{};
+        };
+        b["orbit"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // orbit("name", radius, degPerSec): circle a target each frame.
+            if (a.empty() || !rt.host) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            float radius = a.size() > 1 ? a[1].AsFloat() : 2.0f;
+            float spd    = a.size() > 2 ? a[2].AsFloat() : 90.0f;
+            Vec3 c = g->transform->Position(), me = t->Position();
+            float ang = std::atan2(me.y - c.y, me.x - c.x) + spd * 0.01745329f * rt.host->deltaTime;
+            t->SetPosition({c.x + Mathf::Cos(ang) * radius, c.y + Mathf::Sin(ang) * radius, me.z});
+            return Value{};
+        };
+        b["on_key_move"] = [this, tf](std::vector<Value>& a) {
+            // on_key_move(speed): WASD/arrow keys move this object on the XY plane
+            // (drives a Rigidbody2D's velocity if present, else the Transform).
+            Transform* t = tf(); if (!t || !rt.host) return Value{};
+            float speed = a.empty() ? 5.0f : a[0].AsFloat();
+            Vec2 ax = Input::AxisWASD();
+            float len = Mathf::Sqrt(ax.x * ax.x + ax.y * ax.y);
+            if (len > 1.0f) { ax.x /= len; ax.y /= len; }
+            GameObject* go = rt.host->gameObject;
+            if (auto* rb = go ? go->GetComponent<Rigidbody2D>() : nullptr)
+                rb->velocity = {ax.x * speed, ax.y * speed};
+            else
+                t->Translate({ax.x * speed * rt.host->deltaTime, ax.y * speed * rt.host->deltaTime, 0.0f});
+            return Value{};
+        };
+        b["on_key_move3"] = [this, tf](std::vector<Value>& a) {
+            // on_key_move3(speed): WASD/arrow keys move this object on the XZ ground
+            // plane (drives a Rigidbody3D's velocity if present, else the Transform).
+            Transform* t = tf(); if (!t || !rt.host) return Value{};
+            float speed = a.empty() ? 5.0f : a[0].AsFloat();
+            Vec2 ax = Input::AxisWASD();
+            float len = Mathf::Sqrt(ax.x * ax.x + ax.y * ax.y);
+            if (len > 1.0f) { ax.x /= len; ax.y /= len; }
+            GameObject* go = rt.host->gameObject;
+            if (auto* rb = go ? go->GetComponent<Rigidbody3D>() : nullptr)
+                { rb->velocity.x = ax.x * speed; rb->velocity.z = ax.y * speed; }
+            else
+                t->Translate({ax.x * speed * rt.host->deltaTime, 0.0f, ax.y * speed * rt.host->deltaTime});
+            return Value{};
+        };
+        b["shoot_at"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            // shoot_at("target", "prefab", speed): spawn a projectile at self flying
+            // toward the target (sets the new object's Rigidbody velocity).
+            if (a.size() < 2 || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* s = sceneOf(); if (!s) return Value{false};
+            GameObject* tgt = s->Find(a[0].AsString()); if (!tgt || !tgt->transform) return Value{false};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            GameObject* go = SceneSerializer::InstantiateFromFile(*s, a[1].AsString(), nullptr);
+            if (!go || !go->transform) return Value{false};
+            go->transform->localPosition = me;
+            float speed = a.size() > 2 ? a[2].AsFloat() : 8.0f;
+            Vec3 d = tgt->transform->Position() - me; float dist = d.Magnitude();
+            if (dist > 1e-5f) {
+                Vec3 v = d * (speed / dist);
+                if (auto* rb = go->GetComponent<Rigidbody2D>()) rb->velocity = {v.x, v.y};
+                else if (auto* rb3 = go->GetComponent<Rigidbody3D>()) rb3->velocity = v;
+            }
+            return Value{true};
+        };
+        b["spawn_wave"] = [this, sceneOf](std::vector<Value>& a) {
+            // spawn_wave("prefab", count[, radius]): ring of prefabs around self.
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
+            Scene* s = sceneOf(); if (!s) return Value{0.0f};
+            int count = a.size() > 1 ? (int)a[1].AsFloat() : 8;
+            if (count < 1) count = 1;
+            float radius = a.size() > 2 ? a[2].AsFloat() : 3.0f;
+            Vec3 c = rt.host->gameObject->transform->Position();
+            int made = 0;
+            for (int i = 0; i < count; ++i) {
+                GameObject* go = SceneSerializer::InstantiateFromFile(*s, a[0].AsString(), nullptr);
+                if (!go || !go->transform) continue;
+                float ang = (6.2831853f * i) / count;
+                go->transform->localPosition = {c.x + Mathf::Cos(ang) * radius, c.y + Mathf::Sin(ang) * radius, c.z};
+                ++made;
+            }
+            return Value{(float)made};
         };
         // Main-camera control from script (screen-follow, cutscenes, zoom).
         b["cam_x"] = [sceneOf](std::vector<Value>&) -> Value {
@@ -2067,6 +2510,36 @@ struct OkayScriptVM::Impl {
                 rb->velocity.y = a.empty() ? 0.0f : a[0].AsFloat();
             return Value{};
         };
+        // ---- Stay-in-bounds helpers (rectangle minX,minY,maxX,maxY) ----
+        // keep_in_box: clamp inside. wrap_in_box: teleport to the opposite edge
+        // (asteroids). bounce_in_box: reverse the Rigidbody2D velocity at each wall.
+        b["keep_in_box"] = [tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || a.size() < 4) return Value{};
+            Vec3 p = t->localPosition;
+            p.x = Mathf::Clamp(p.x, a[0].AsFloat(), a[2].AsFloat());
+            p.y = Mathf::Clamp(p.y, a[1].AsFloat(), a[3].AsFloat());
+            t->localPosition = p;
+            return Value{};
+        };
+        b["wrap_in_box"] = [tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || a.size() < 4) return Value{};
+            float x0 = a[0].AsFloat(), y0 = a[1].AsFloat(), x1 = a[2].AsFloat(), y1 = a[3].AsFloat();
+            Vec3 p = t->localPosition;
+            if (p.x < x0) p.x = x1; else if (p.x > x1) p.x = x0;
+            if (p.y < y0) p.y = y1; else if (p.y > y1) p.y = y0;
+            t->localPosition = p;
+            return Value{};
+        };
+        b["bounce_in_box"] = [go, tf](std::vector<Value>& a) {
+            Transform* t = tf(); if (!t || a.size() < 4) return Value{};
+            GameObject* g = go(); auto* rb = g ? g->GetComponent<Rigidbody2D>() : nullptr;
+            if (!rb) return Value{};
+            Vec3 p = t->localPosition;
+            float x0 = a[0].AsFloat(), y0 = a[1].AsFloat(), x1 = a[2].AsFloat(), y1 = a[3].AsFloat();
+            if ((p.x <= x0 && rb->velocity.x < 0) || (p.x >= x1 && rb->velocity.x > 0)) rb->velocity.x = -rb->velocity.x;
+            if ((p.y <= y0 && rb->velocity.y < 0) || (p.y >= y1 && rb->velocity.y > 0)) rb->velocity.y = -rb->velocity.y;
+            return Value{};
+        };
         b["add_force"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
                 rb->AddForce({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f});
@@ -2098,6 +2571,32 @@ struct OkayScriptVM::Impl {
         b["particles_on"] = [go](std::vector<Value>& a) {  // start/stop continuous emission
             if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>())
                 ps->playing = a.empty() || a[0].AsBool();
+            return Value{};
+        };
+        // explode([count]): burst particles AND remove this object — the classic death
+        // effect in one call (needs a Particle System for the burst).
+        b["explode"] = [this, go](std::vector<Value>& a) {
+            int n = a.empty() ? 20 : (int)a[0].AsFloat();
+            if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>()) ps->Emit(n);
+            if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                rt.host->gameObject->scene()->Destroy(rt.host->gameObject);
+            return Value{};
+        };
+        // Show/hide this object's graphics (sprite/mesh/text) without deactivating it, so
+        // its script keeps running. blink(rate) flashes visibility (invincibility/pickups).
+        auto setVis = [go](bool v) {
+            if (GameObject* g = go()) {
+                if (auto* sr = g->GetComponent<SpriteRenderer>()) sr->enabled = v;
+                if (auto* mr = g->GetComponent<MeshRenderer>())   mr->enabled = v;
+                if (auto* tr = g->GetComponent<TextRenderer>())   tr->enabled = v;
+            }
+        };
+        b["set_visible"] = [setVis](std::vector<Value>& a) { setVis(a.empty() || a[0].AsBool()); return Value{}; };
+        b["show"] = [setVis](std::vector<Value>&) { setVis(true);  return Value{}; };
+        b["hide"] = [setVis](std::vector<Value>&) { setVis(false); return Value{}; };
+        b["blink"] = [setVis](std::vector<Value>& a) {
+            float r = a.empty() ? 6.0f : a[0].AsFloat();
+            setVis(Mathf::Sin(Time::ElapsedTime() * r) > 0.0f);
             return Value{};
         };
         b["particles_alive"] = [go](std::vector<Value>&) -> Value {
@@ -2250,13 +2749,31 @@ struct OkayScriptVM::Impl {
         auto charSelf = [this]() -> Character* {
             return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<Character>() : nullptr;
         };
-        b["play_clip"] = [charSelf](std::vector<Value>& a) {
+        // Imported models keep their clips on a ModelAnimator on the import ROOT, so
+        // look on this object first, then up the parents (a script often sits on the
+        // root, but can also live on a mesh part).
+        auto modelSelf = [this]() -> ModelAnimator* {
+            GameObject* g = (rt.host ? rt.host->gameObject : nullptr);
+            if (!g) return nullptr;
+            if (auto* m = g->GetComponent<ModelAnimator>()) return m;
+            for (Transform* t = g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
+                if (t->gameObject)
+                    if (auto* m = t->gameObject->GetComponent<ModelAnimator>()) return m;
+            return nullptr;
+        };
+        b["play_clip"] = [charSelf, modelSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
             Character* c = charSelf();
-            return Value{(c && !a.empty() && c->PlayClip(a[0].AsString())) ? 1.0f : 0.0f};
+            if (c && c->PlayClip(a[0].AsString())) return Value{1.0f};
+            ModelAnimator* m = modelSelf();       // imported model fallback
+            return Value{(m && m->Play(a[0].AsString())) ? 1.0f : 0.0f};
         };
         b["stop_clip"] = [charSelf](std::vector<Value>&) { if (Character* c = charSelf()) c->StopClip(); return Value{}; };
-        b["playing_clip"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{c ? c->PlayingClip() : std::string{}};
+        b["playing_clip"] = [charSelf, modelSelf](std::vector<Value>&) {
+            Character* c = charSelf();
+            if (c) return Value{c->PlayingClip()};
+            ModelAnimator* m = modelSelf();
+            return Value{m ? m->CurrentName() : std::string{}};
         };
         b["is_playing_clip"] = [charSelf](std::vector<Value>&) {
             Character* c = charSelf(); return Value{(c && c->IsPlayingClip()) ? 1.0f : 0.0f};
@@ -2305,26 +2822,82 @@ struct OkayScriptVM::Impl {
             Character* c = charSelf(); return Value{c ? (float)c->anim : 0.0f};
         };
         // Clip queries: timing + existence, so scripts can react to where a clip is.
-        b["clip_time"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{c ? c->ClipTime() : 0.0f};
+        b["clip_time"] = [charSelf, modelSelf](std::vector<Value>&) {
+            Character* c = charSelf();
+            if (c) return Value{c->ClipTime()};
+            ModelAnimator* m = modelSelf();
+            return Value{m ? m->Time() : 0.0f};
         };
         b["clip_normalized"] = [charSelf](std::vector<Value>&) {
             Character* c = charSelf(); return Value{c ? c->ClipNormalizedTime() : 0.0f};
         };
-        b["clip_finished"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{(c && c->ClipFinished()) ? 1.0f : 0.0f};
-        };
-        b["clip_duration"] = [charSelf](std::vector<Value>& a) {
+        b["clip_finished"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();
-            return Value{(c && !a.empty()) ? c->ClipDuration(a[0].AsString()) : 0.0f};
+            if (c) return Value{c->ClipFinished() ? 1.0f : 0.0f};
+            ModelAnimator* m = modelSelf();
+            return Value{(m && m->ClipFinished()) ? 1.0f : 0.0f};
         };
-        b["has_clip"] = [charSelf](std::vector<Value>& a) {
+        b["clip_duration"] = [charSelf, modelSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
             Character* c = charSelf();
-            return Value{(c && !a.empty() && c->HasClip(a[0].AsString())) ? 1.0f : 0.0f};
+            if (c) return Value{c->ClipDuration(a[0].AsString())};
+            ModelAnimator* m = modelSelf();
+            return Value{m ? m->ClipLength(m->FindClip(a[0].AsString())) : 0.0f};
+        };
+        b["has_clip"] = [charSelf, modelSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            Character* c = charSelf();
+            if (c) return Value{c->HasClip(a[0].AsString()) ? 1.0f : 0.0f};
+            ModelAnimator* m = modelSelf();
+            return Value{(m && m->FindClip(a[0].AsString()) >= 0) ? 1.0f : 0.0f};
+        };
+        // Play a clip ONCE (attack / jump / hit reaction) and automatically return
+        // to the previous clip — imported models via ModelAnimator; a Character
+        // falls back to PlayClip (its clips carry their own once/loop mode).
+        b["play_clip_once"] = [charSelf, modelSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            ModelAnimator* m = modelSelf();
+            if (m && m->PlayOnce(a[0].AsString())) return Value{1.0f};
+            Character* c = charSelf();
+            return Value{(c && c->PlayClip(a[0].AsString())) ? 1.0f : 0.0f};
         };
         // Pop the next fired animation event name ("" if none) — footsteps, hit windows.
-        b["anim_event"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{c ? c->NextAnimEvent() : std::string{}};
+        // ---- Animation state machine (AnimStateMachine on self or an ancestor) ----
+        auto smSelf = [this]() -> AnimStateMachine* {
+            GameObject* g = (rt.host ? rt.host->gameObject : nullptr);
+            if (!g) return nullptr;
+            if (auto* m = g->GetComponent<AnimStateMachine>()) return m;
+            for (Transform* t = g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
+                if (t->gameObject)
+                    if (auto* m = t->gameObject->GetComponent<AnimStateMachine>()) return m;
+            return nullptr;
+        };
+        b["anim_set_float"] = [smSelf](std::vector<Value>& a) {
+            if (AnimStateMachine* m = smSelf(); m && a.size() >= 2) m->SetFloat(a[0].AsString(), a[1].AsFloat());
+            return Value{};
+        };
+        b["anim_set_bool"] = [smSelf](std::vector<Value>& a) {
+            if (AnimStateMachine* m = smSelf(); m && a.size() >= 2) m->SetBool(a[0].AsString(), a[1].AsFloat() != 0.0f);
+            return Value{};
+        };
+        b["anim_trigger"] = [smSelf](std::vector<Value>& a) {
+            if (AnimStateMachine* m = smSelf(); m && !a.empty()) m->SetTrigger(a[0].AsString());
+            return Value{};
+        };
+        b["anim_state"] = [smSelf](std::vector<Value>&) {
+            AnimStateMachine* m = smSelf(); return Value{m ? m->Current() : std::string{}};
+        };
+        b["anim_goto"] = [smSelf](std::vector<Value>& a) {
+            AnimStateMachine* m = smSelf();
+            return Value{(m && !a.empty() && m->GoTo(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["anim_event"] = [charSelf, modelSelf](std::vector<Value>&) {
+            if (Character* c = charSelf()) {
+                std::string n = c->NextAnimEvent();
+                if (!n.empty()) return Value{n};
+            }
+            ModelAnimator* m = modelSelf();       // imported-model clip events
+            return Value{m ? m->NextAnimEvent() : std::string{}};
         };
 
         b["net_host"] = [this](std::vector<Value>& a) {
@@ -3573,6 +4146,53 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // stop(): zero this object's Rigidbody velocity (halt in place).
+        b["stop"] = [go](std::vector<Value>&) {
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->velocity = {0.0f, 0.0f};
+                if (auto* rb3 = g->GetComponent<Rigidbody3D>()) rb3->velocity = {0.0f, 0.0f, 0.0f};
+            }
+            return Value{};
+        };
+        // is_moving(): true when the Rigidbody2D is moving (for anim/state).
+        b["is_moving"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go())
+                if (auto* rb = g->GetComponent<Rigidbody2D>())
+                    return Value{(rb->velocity.x * rb->velocity.x + rb->velocity.y * rb->velocity.y) > 1e-4f};
+            return Value{false};
+        };
+        // face_velocity(): rotate (Z) to point the way the Rigidbody2D is moving.
+        b["face_velocity"] = [go, tf](std::vector<Value>&) {
+            GameObject* g = go(); Transform* t = tf(); if (!g || !t) return Value{};
+            if (auto* rb = g->GetComponent<Rigidbody2D>()) {
+                float vx = rb->velocity.x, vy = rb->velocity.y;
+                if (vx * vx + vy * vy > 1e-6f)
+                    t->localRotation = Quat::Euler({0, 0, std::atan2(vy, vx) * 57.2957795f});
+            }
+            return Value{};
+        };
+        // cooldown("name", secs): true (and starts the timer) only when at least
+        // `secs` have passed since it last returned true — shooting, dashes, abilities.
+        //   if (cooldown("shoot", 0.3)) spawn("bullet.okayprefab", pos_x(), pos_y())
+        b["cooldown"] = [this](std::vector<Value>& a) -> Value {
+            if (!rt.host || a.size() < 2) return Value{false};
+            std::string key = "__cd_" + a[0].AsString();
+            float now = Time::ElapsedTime(), secs = a[1].AsFloat();
+            auto& g = rt.host->globals;
+            float last = g.count(key) ? g[key].AsFloat() : -1e9f;
+            if (now - last >= secs) { g[key] = Value{now}; return Value{true}; }
+            return Value{false};
+        };
+        // once("name"): true exactly the first time it's reached, false ever after
+        // (per name) — fire one-time events without a manual "did I already?" flag.
+        b["once"] = [this](std::vector<Value>& a) -> Value {
+            if (!rt.host || a.empty()) return Value{false};
+            std::string key = "__once_" + a[0].AsString();
+            auto& g = rt.host->globals;
+            if (g.count(key)) return Value{false};
+            g[key] = Value{1.0f};
+            return Value{true};
+        };
 
         // --- This object's identity / state ---
         b["name"] = [go](std::vector<Value>&) -> Value {
@@ -3626,8 +4246,8 @@ struct OkayScriptVM::Impl {
         // --- More input ---
         b["key_up"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{false};
-            std::string s = a[0].AsString();
-            return Value{!s.empty() && Input::GetKeyUp(s[0])};
+            char c = KeyCharFromName(a[0].AsString());
+            return Value{c != 0 && Input::GetKeyUp(c)};
         };
         b["mouse_up"] = [](std::vector<Value>& a) {
             return Value{Input::GetMouseButtonUp(a.empty() ? 0 : (int)a[0].AsFloat())};
@@ -3727,9 +4347,7 @@ struct OkayScriptVM::Impl {
         };
         b["gc_get"] = [](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value{0.0f};
-            auto& m = ActionList::Vars();
-            auto it = m.find(a[0].AsString());
-            return Value{it != m.end() ? it->second : 0.0f};
+            return Value{ActionList::GetVar(a[0].AsString())};   // shares stats/prefs too
         };
         // Broadcast a named signal to every Actions (OnMessage) list in the scene.
         b["send_message"] = [this](std::vector<Value>& a) {
@@ -4079,6 +4697,22 @@ struct OkayScriptVM::Impl {
             }, onDoneFromArg(a, 5));
             return Value{};
         };
+        // flash(r, g, b[, dur]): snap to a color, then fade back to the current one.
+        // Hit-feedback in one line (e.g. flash(1,0,0) turns red then back).
+        b["flash"] = [this, sched, colorPtr](std::vector<Value>& a) {
+            Scheduler* s = sched(); Color* c = colorPtr();
+            if (!s || !c || a.size() < 3) return Value{};
+            float dur = a.size() > 3 ? a[3].AsFloat() : 0.2f;
+            Color orig = *c;
+            Color hit{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), orig.a};
+            *c = hit;
+            s->Tween(dur, [c, hit, orig](float u) {
+                c->r = hit.r + (orig.r - hit.r) * u;
+                c->g = hit.g + (orig.g - hit.g) * u;
+                c->b = hit.b + (orig.b - hit.b) * u;
+            });
+            return Value{};
+        };
         b["tween_fade"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {
             Scheduler* s = sched(); Color* c = colorPtr();
             if (!s || !c || a.size() < 2) return Value{};
@@ -4402,6 +5036,8 @@ struct OkayScriptVM::Impl {
         alias("mouse_position_y", "mouse_y");
         // Transform / movement
         alias("move_by", "move");
+        alias("shake", "tween_shake");   // shake(intensity, dur) — shorter name
+        alias("face", "look_at");        // face("Name") — turn to look at an object
         alias("place_at", "set_pos");
         alias("set_position_x", "set_x");
         alias("set_position_y", "set_y");
@@ -4410,6 +5046,10 @@ struct OkayScriptVM::Impl {
         alias("position_z", "pos_z");
         alias("turn", "rotate");
         alias("face", "look_at");
+        alias("chase", "follow");
+        alias("run_from", "flee");
+        alias("wasd_move", "on_key_move");
+        alias("wasd_move3", "on_key_move3");
         alias("face_3d", "look_at3");
         alias("set_size", "set_scale");
         alias("move_towards_object", "move_toward3");
@@ -4496,8 +5136,12 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         Parser parser(lex.Scan());
         m_impl->rt.functions.clear();
         m_impl->topLevel = parser.ParseProgram(m_impl->rt.functions);
-        // Run top-level statements once so globals/setup execute.
-        for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt);
+        // Bare mode: no functions defined -> the top-level statements ARE the update
+        // loop (run every frame), so a whole script can be a single line. Otherwise run
+        // top-level once now for globals/setup.
+        m_impl->bareMode = m_impl->rt.functions.empty() && !m_impl->topLevel.empty();
+        if (!m_impl->bareMode)
+            for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt);
         m_impl->loaded = true;
         return true;
     } catch (const ReturnSignal&) {
@@ -4596,6 +5240,11 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
     if (!m_impl->loaded) return;
     if (m_impl->rt.host) m_impl->rt.host->deltaTime = deltaTime;
     std::vector<Value> args{Value{deltaTime}};
+    // Bare mode: re-run the top-level statements every frame (they ARE the loop).
+    if (m_impl->bareMode) {
+        try { for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt); }
+        catch (const std::exception& e) { Log::Error("OkayScript (bare): ", e.what()); }
+    }
     CallFirst(m_impl->rt, {"Update", "update"}, args, "Update");
     CallFirst(m_impl->rt, {"LateUpdate", "late_update"}, args, "LateUpdate");
     // Scheduled after()/every() callbacks tick even without an update().

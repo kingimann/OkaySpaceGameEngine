@@ -71,3 +71,16 @@ Full reference: [`scripting.md`](scripting.md).
 - [`scripting.md`](scripting.md) — the full OkayScript language + builtins.
 - [`visual_scripting.md`](visual_scripting.md) — node-graph scripting.
 - [`steam_release.md`](steam_release.md) — shipping on Steam.
+
+## Controller movement extras
+
+All three controllers (First-Person, Third-Person, Character Controller 3D)
+share these movement niceties:
+
+- **Step Offset** (default 0.35): stairs and curbs up to this height are
+  climbed automatically instead of stopping the player. 0 disables.
+- **Slope Limit** (default 50 deg): terrain steeper than this can't be
+  climbed — the uphill velocity is cancelled and the player slides back
+  down. 0 disables.
+- **Fall Reset Y** (default -100): falling below this world height teleports
+  the player back to spawn (with a console hint about missing colliders).

@@ -203,7 +203,10 @@ endif()
 # on with -DOKAY_USE_ASSIMP=ON; ModelImport.cpp then routes those formats through it.
 if(OKAY_USE_ASSIMP)
     include(FetchContent)
-    # Build only what we need — keep it lean and quiet.
+    # Build only what we need — keep it lean and quiet. Static, so shipped builds
+    # don't need an extra assimp DLL beside the exes; assimp builds its own zlib.
+    set(BUILD_SHARED_LIBS                        OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ZLIB                        ON  CACHE BOOL "" FORCE)
     set(ASSIMP_BUILD_TESTS                       OFF CACHE BOOL "" FORCE)
     set(ASSIMP_INSTALL                           OFF CACHE BOOL "" FORCE)
     set(ASSIMP_BUILD_ASSIMP_TOOLS                OFF CACHE BOOL "" FORCE)
@@ -219,6 +222,15 @@ if(OKAY_USE_ASSIMP)
     set(ASSIMP_BUILD_PLY_IMPORTER       ON CACHE BOOL "" FORCE)
     set(ASSIMP_BUILD_3DS_IMPORTER       ON CACHE BOOL "" FORCE)
     set(ASSIMP_BUILD_BLEND_IMPORTER     ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_X_IMPORTER         ON CACHE BOOL "" FORCE)   # DirectX .x
+    set(ASSIMP_BUILD_MD5_IMPORTER       ON CACHE BOOL "" FORCE)   # Doom 3
+    set(ASSIMP_BUILD_SMD_IMPORTER       ON CACHE BOOL "" FORCE)   # Source engine
+    set(ASSIMP_BUILD_MS3D_IMPORTER      ON CACHE BOOL "" FORCE)   # MilkShape 3D
+    set(ASSIMP_BUILD_LWO_IMPORTER       ON CACHE BOOL "" FORCE)   # LightWave
+    set(ASSIMP_BUILD_DXF_IMPORTER       ON CACHE BOOL "" FORCE)   # AutoCAD DXF
+    set(ASSIMP_BUILD_OFF_IMPORTER       ON CACHE BOOL "" FORCE)   # Object File Format
+    set(ASSIMP_BUILD_AC_IMPORTER        ON CACHE BOOL "" FORCE)   # AC3D
+    set(ASSIMP_BUILD_B3D_IMPORTER       ON CACHE BOOL "" FORCE)   # Blitz3D
     FetchContent_Declare(assimp
         GIT_REPOSITORY https://github.com/assimp/assimp.git
         GIT_TAG        v5.4.3
@@ -226,7 +238,7 @@ if(OKAY_USE_ASSIMP)
     FetchContent_MakeAvailable(assimp)
     target_link_libraries(okay_engine PUBLIC assimp)
     target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
-    message(STATUS "OkaySpace: Assimp model import ENABLED (FBX/DAE/STL/PLY/3DS/Blend)")
+    message(STATUS "OkaySpace: Assimp model import ENABLED (FBX/DAE/STL/PLY/3DS/Blend/X/MD5/SMD/MS3D/LWO/DXF/OFF/AC/B3D)")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

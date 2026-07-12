@@ -26,6 +26,9 @@ static std::string FormatBindNum(float f) {
 // Resolve a single {key}: a visual-scripting variable first (the new "grab a script
 // var" path), then a Prefs value. Numeric values are prettified either way.
 std::string UITextBind::ResolveKey(const std::string& key) {
+    auto& svars = ActionList::StrVars();          // text variables win (names, dialogue)
+    auto sit = svars.find(key);
+    if (sit != svars.end()) return sit->second;
     auto& vars = ActionList::Vars();
     auto it = vars.find(key);
     if (it != vars.end()) return FormatBindNum(it->second);

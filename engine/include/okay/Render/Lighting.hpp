@@ -37,14 +37,32 @@ struct SceneLight {
 /// One light gathered for a frame: directional, point, or spot. `dir` points
 /// *from* the light (the direction it shines); `color` already folds in intensity.
 struct LightSample {
-    int   type = 0;             // 0 = directional, 1 = point, 2 = spot
+    int   type = 0;             // 0 = directional, 1 = point, 2 = spot, 3 = area
+    int   falloff = 0;          // 0 = linear (1-d/range)^2, 1 = inverse-square (physical)
     Vec3  dir{0, -1, 0};
-    Vec3  pos{0, 0, 0};         // world position (point / spot)
+    Vec3  pos{0, 0, 0};         // world position (point / spot / area)
     Vec3  color{1, 1, 1};       // rgb * intensity
-    float range = 10.0f;        // point / spot falloff distance
+    float range = 10.0f;        // point / spot / area falloff distance
     float cosOuter = 0.7071f;   // cos(half spot angle) — cone edge
     float cosInner = 0.7071f;   // cos(soft inner angle) — full brightness inside
 };
+
+/// Distance attenuation for a positional light, shared by every shading path so
+/// the software renderer, the GL shader (mirrored) and the lightmap baker agree.
+/// `falloff` 0 = linear (1-d/range)^2; 1 = physical 1/d^2 windowed to reach 0 at
+/// `range`. Returns [0,1]-ish (inverse-square peaks >1 very close to the source).
+inline float LightAttenuation(float d, float range, int falloff) {
+    if (range <= 0.0f) return 0.0f;
+    if (falloff == 1) {                          // inverse-square, windowed at range
+        float dr = d / range; if (dr >= 1.0f) return 0.0f;
+        float win = 1.0f - dr * dr * dr * dr; win *= win;      // smooth cutoff (Unreal-style)
+        return win / (1.0f + 8.0f * d * d / (range * range));  // ~1 near source, scaled to range
+    }
+    float a = 1.0f - d / range; if (a < 0.0f) a = 0.0f;
+    return a * a;                                // smooth linear rolloff
+}
+/// Wrap-diffuse for Area lights: softens N·L so a broad panel fills shadows.
+inline float AreaWrap(float ndl) { return (ndl + 0.5f) / 1.5f; }
 
 /// Multi-light shading: the player/editor fill this list from the scene's Light
 /// components each frame, then the software renderer accumulates colored diffuse
@@ -106,9 +124,8 @@ struct SceneLights {
                 Vec3 toL = L.pos - p; float d = toL.Magnitude();
                 Vec3 ld = d > 1e-5f ? toL * (1.0f / d) : Vec3{0, 1, 0};
                 ndl = Vec3::Dot(nn, ld);
-                atten = (L.range > 0.0f) ? (1.0f - d / L.range) : 0.0f;
-                if (atten < 0.0f) atten = 0.0f;
-                atten *= atten;                                  // smooth falloff
+                if (L.type == 3) ndl = AreaWrap(ndl);            // area: soft wrap fill
+                atten = LightAttenuation(d, L.range, L.falloff);
                 if (L.type == 2) {                               // spot cone
                     float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
                     // Smooth from the soft inner angle to the hard outer edge.
@@ -160,9 +177,7 @@ struct SceneLights {
             } else {
                 Vec3 toL = L.pos - p; float d = toL.Magnitude();
                 ld = d > 1e-5f ? toL * (1.0f / d) : Vec3{0, 1, 0};
-                atten = (L.range > 0.0f) ? (1.0f - d / L.range) : 0.0f;
-                if (atten < 0.0f) atten = 0.0f;
-                atten *= atten;
+                atten = LightAttenuation(d, L.range, L.falloff);
                 if (L.type == 2) {
                     float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
                     float denom = L.cosInner - L.cosOuter;

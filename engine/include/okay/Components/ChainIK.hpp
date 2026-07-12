@@ -48,7 +48,10 @@ public:
             if (GameObject* g = s->Find(targetName)) targetObject = g->transform;
     }
 
-    void Update(float) override {
+    // Solve in LateUpdate so the correction lands AFTER every animation driver
+    // has posed the bones this frame (imported rigs create their per-node
+    // Animators lazily, which puts them late in the Update order).
+    void LateUpdate(float) override {
         const int n = static_cast<int>(bones.size());
         if (weight <= 0.0f || n < 2) return;
         for (Transform* b : bones) if (!b) return;

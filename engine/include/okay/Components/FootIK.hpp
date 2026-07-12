@@ -16,6 +16,8 @@
 #include "okay/Math/TwoBoneIK.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Components/Character.hpp"
+#include <cmath>
 #include <string>
 
 namespace okay {
@@ -32,6 +34,11 @@ public:
 
     float weight     = 1.0f;   ///< 0 = off (pure animation), 1 = fully planted
     float footOffset = 0.05f;  ///< ankle height to keep above the ground surface
+    /// Correction ease speed (per second). The foot lift fades in/out toward its
+    /// target instead of snapping the frame the ground appears/disappears under a
+    /// foot — that snap was the visible "pop" on stairs and ledge edges. Higher =
+    /// snappier; 0 = instant (the old behavior).
+    float smoothing  = 12.0f;
     bool  useRaycast = true;   ///< raycast the scene for ground; else use groundY
     float groundY    = 0.0f;   ///< fallback ground height when not raycasting
     float maxRayUp   = 0.6f;   ///< how far above the foot to start the ray
@@ -58,16 +65,91 @@ public:
         R(leftHip, leftHipName);   R(leftKnee, leftKneeName);   R(leftFoot, leftFootName);
         R(rightHip, rightHipName); R(rightKnee, rightKneeName); R(rightFoot, rightFootName);
         R(pelvis, pelvisName);
+        // Self-heal: if the leg chain is still unwired, pull the bones straight from a
+        // Character on this object. The editor's "Humanoid" setup wires FootIK by raw
+        // pointer, which the serializer DOESN'T persist (only the *Name fields are) — so
+        // after a save/reload the pointers were null and foot IK silently did nothing.
+        // Rebuilding from the Character every Start makes it survive save/reload and also
+        // "just work" when you drop FootIK onto a Character by hand.
+        if (!leftFoot || !rightFoot) WireFromCharacter();
     }
 
-    void Update(float) override {
+    /// Detect humanoid leg bones by NAME among `root`'s descendants (Mixamo
+    /// "LeftUpLeg/LeftLeg/LeftFoot", thigh/shin/calf variants, l_/_l suffixes)
+    /// and fill the *Name fields. Returns how many of the six leg bones matched
+    /// (Start() resolves the names to transforms). Mirrors the editor's
+    /// Auto-Detect so the character-swap can wire foot IK with no clicks.
+    int DetectHumanoidBones(Scene& s, GameObject* root) {
+        if (!root) return 0;
+        auto lower = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
+        std::string hipL, kneeL, footL, hipR, kneeR, footR, pel;
+        for (const auto& up : s.Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+            std::string nm = lower(g->name);
+            auto has = [&](const char* k) { return nm.find(k) != std::string::npos; };
+            auto endsW = [&](const char* k) {
+                std::size_t kl = std::char_traits<char>::length(k);
+                return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
+            };
+            bool isLeft  = has("left")  || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l");
+            bool isRight = has("right") || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r");
+            if (!isLeft && !isRight) {
+                if (pel.empty() && (has("hips") || has("pelvis"))) pel = g->name;
+                continue;
+            }
+            int part = -1;
+            if (has("foot") || has("ankle")) part = 2;
+            else if (has("upleg") || has("upperleg") || has("thigh") || has("hip")) part = 0;
+            else if (has("knee") || has("calf") || has("shin") || has("lowerleg") || has("leg")) part = 1;
+            if (part < 0) continue;
+            std::string& slot = isLeft ? (part == 0 ? hipL : part == 1 ? kneeL : footL)
+                                       : (part == 0 ? hipR : part == 1 ? kneeR : footR);
+            if (slot.empty()) slot = g->name;
+        }
+        int found = (int)(!hipL.empty()) + (int)(!kneeL.empty()) + (int)(!footL.empty()) +
+                    (int)(!hipR.empty()) + (int)(!kneeR.empty()) + (int)(!footR.empty());
+        if (found > 0) {
+            leftHipName = hipL;   leftKneeName = kneeL;   leftFootName = footL;
+            rightHipName = hipR;  rightKneeName = kneeR;  rightFootName = footR;
+            if (!pel.empty()) pelvisName = pel;
+            leftHip = leftKnee = leftFoot = nullptr;    // resolve the names on Start
+            rightHip = rightKnee = rightFoot = nullptr;
+            pelvis = nullptr;
+        }
+        return found;
+    }
+
+    // Wire the six leg bones (+ pelvis) from a Character's part rig by bone index.
+    void WireFromCharacter() {
+        if (!gameObject) return;
+        Character* pc = gameObject->GetComponent<Character>();
+        if (!pc) return;
+        if (!pc->PartsBuilt()) { pc->separateParts = true; pc->BuildParts(); }
+        auto T = [&](int b) -> Transform* { GameObject* g = pc->Part(b); return g ? g->transform : nullptr; };
+        // Bone indices (Character.cpp): hips=0; L thigh/shin/foot=9/10/11; R=12/13/14.
+        if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+        if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+        if (!pelvis)   pelvis   = T(0);
+    }
+
+    // Solve in LateUpdate so it corrects the pose AFTER every animation driver has
+    // written it. Imported rigs create their per-node Animators lazily (at Play
+    // start), which lands them after FootIK in the Update order — solving in
+    // Update let those Animators clobber the correction the same frame.
+    void LateUpdate(float dt) override {
         if (weight <= 0.0f) return;
         if (!m_init) { Learn(); m_init = true; }
         Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;
         Scene* s = GetScene();
-        if (adjustPelvis && pelvis) AdjustPelvis(s);
-        SolveLeg(leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s);
-        SolveLeg(rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s);
+        // Frame-rate-independent ease factor: each frame applies this fraction of
+        // the REMAINING correction (exponential approach). The bone offsets persist
+        // in the rig between frames, so the correction converges over a few frames
+        // and then holds — smooth engage with no pop, no accumulation.
+        float k = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
+        if (adjustPelvis && pelvis) AdjustPelvis(s, k);
+        SolveLeg(leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k);
+        SolveLeg(rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k);
     }
 
 private:
@@ -95,8 +177,11 @@ private:
     }
 
     // Lower the pelvis so the foot wanting to go lowest can still reach the ground;
-    // the other foot drops with the body and the per-leg IK re-plants it.
-    void AdjustPelvis(Scene* s) {
+    // the other foot drops with the body and the per-leg IK re-plants it. Applies
+    // `ease` of the remaining shift per frame so stepping onto a ledge sinks the
+    // body over a few frames instead of teleporting it (the shift persists in the
+    // rig, so the fractional steps converge on the full correction and hold).
+    void AdjustPelvis(Scene* s, float ease) {
         float off = 0.0f; bool any = false;
         auto consider = [&](Transform* foot) {
             if (!foot) return;
@@ -108,13 +193,14 @@ private:
         };
         consider(leftFoot); consider(rightFoot);
         if (!any) return;
-        off = Mathf::Clamp(off, -maxPelvisShift, maxPelvisShift) * weight;
+        off = Mathf::Clamp(off, -maxPelvisShift, maxPelvisShift) * weight * ease;
         if (Mathf::Abs(off) < 1e-5f) return;
         pelvis->SetPosition(pelvis->Position() + Vec3{0, off, 0});
     }
 
     void SolveLeg(Transform* hip, Transform* knee, Transform* foot,
-                  float upLen, float loLen, const Vec3& pole, Scene* s) {
+                  float upLen, float loLen, const Vec3& pole, Scene* s,
+                  float ease) {
         if (!hip || !knee || !foot || upLen <= 0.0f || loLen <= 0.0f) return;
         Vec3 animFoot = foot->Position();
         Vec3 normal;
@@ -123,17 +209,24 @@ private:
         // Lift the foot UP to meet ground (and, when plantDown/pelvis adjust is on,
         // also press it DOWN onto lower ground). Ignore ground out of reach below.
         bool down = plantDown || adjustPelvis;
-        if ((!down && targetY <= animFoot.y) || g < animFoot.y - maxRayDown) return;
+        bool apply = !((!down && targetY <= animFoot.y) || g < animFoot.y - maxRayDown);
+        // Smoothing: place the foot `ease` of the way toward the plant target. The
+        // offset persists in the rig, so repeating this each frame converges on the
+        // planted pose — a smooth engage instead of the old one-frame pop at step
+        // edges — and holds there (the remaining correction shrinks to zero).
+        float remaining = apply ? (targetY - animFoot.y) * ease : 0.0f;
+        if (Mathf::Abs(remaining) < 1e-4f) return;
 
-        Vec3 target{animFoot.x, targetY, animFoot.z};
+        Vec3 target{animFoot.x, animFoot.y + remaining, animFoot.z};
         Vec3 mid, end;
         SolveTwoBoneIK(hip->Position(), upLen, loLen, target, pole, mid, end,
                        minKneeBend, maxKneeBend);
         knee->SetPosition(Vec3::Lerp(knee->Position(), mid, weight));
         foot->SetPosition(Vec3::Lerp(foot->Position(), end, weight));
 
-        // Tilt the foot so its sole follows the ground slope.
-        if (alignToGround && normal.SqrMagnitude() > 1e-6f) {
+        // Tilt the foot so its sole follows the ground slope (only while a
+        // correction is actually in play — never tilt a mid-air swing foot).
+        if (alignToGround && apply && normal.SqrMagnitude() > 1e-6f) {
             Vec3 up = (foot->Rotation() * footUpAxis).Normalized();
             Quat tilt = Quat::FromToRotation(up, normal.Normalized());
             Quat desired = (tilt * foot->Rotation()).Normalized();

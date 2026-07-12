@@ -60,3 +60,52 @@ Pair with **Consumables** to make crafted items do something: craft a `bandage`,
 a button (Function `UseItem`, Amount = the consumable's index) consumes it and applies
 its effect (e.g. Heal). That's the full **gather → craft → use** loop, all native and
 no-code — exactly how OkaySurvival's bandage works.
+
+## NPC pathfinding
+
+Tick **Pathfinding** on the NPC Controller and it routes around walls,
+props and holes with grid A* instead of walking straight lines into them —
+follow, chase, patrol, wander and return-home all use it. The route
+recomputes every **Repath** seconds (default 0.6) and whenever the target
+moves; if no route exists the NPC falls back to straight-line steering.
+Works on box/sphere colliders and heightmap terrain (max step 0.45, holes
+and cliffs are avoided). A stuck watchdog forces a fresh route whenever the
+NPC stops making progress for ~0.8 s (wedged on a corner or another NPC).
+
+Selecting an NPC in the Scene view now draws its **perception** too: a
+yellow sight-cone arc at eye height (Sight Range + Field Of View) and a
+blue circle for Hearing Range, so you can tune a guard's senses visually.
+
+### Ordering NPCs around from scripts
+
+`npc_goto("Guard", x, y, z)` sends a named NPC Controller to a world point —
+it pathfinds there (when Pathfinding is on), then broadcasts `npc_arrived`
+for Action Lists and resumes its base behavior. Combat still wins: a
+commanded NPC that spots a threat will chase or flee first and finish the
+errand after. Pass `""` as the name to command a sibling NPC Controller.
+`npc_stop(name)` cancels the order, `npc_busy(name)` is true while walking,
+and `npc_state(name)` returns the live AI state (`Patrol`, `Chase`, …).
+
+## Spawner — enemy and pickup waves
+
+Add Component ▸ Gameplay ▸ **Spawner** turns any object into a wave
+spawner with zero scripting. Point **Template** at an enemy or pickup you
+built in the scene (it's hidden at Play start and cloned from then on),
+or set **Prefab File** to a `.okayprefab`. Copies appear on a flat disc
+of **Spawn Radius** around the spawner — shown as a green ring in the
+Scene view while selected.
+
+Waves work like you'd expect: **Count Per Wave** objects, one every
+**Interval** seconds, then a **Wave Delay** pause; **Waves** limits the
+run (0 = endless), **Total** caps lifetime spawns, and **Max Alive**
+pauses spawning while that many spawned objects are still alive, so an
+endless spawner can't flood the scene. The defaults (count 1, no delay)
+keep the classic steady drip. It broadcasts `spawner_spawn`, `spawner_wave` and `spawner_done`
+for Action Lists, and scripts can drive it with `spawner_start(name)` /
+`spawner_stop(name)` and read `spawner_alive(name)` for a
+"3 enemies left" HUD. Turn **Auto Start** off to arm it from a script or
+a Trigger Zone instead of at scene start.
+
+Pair it with an NPC Controller template (aggressive + pathfinding) and a
+Trigger Zone at the arena door, and you have a wave-defense encounter
+without writing a line of code.

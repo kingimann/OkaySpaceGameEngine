@@ -44,6 +44,12 @@ public:
     bool flipX = false;
     bool flipY = false;
 
+    /// How the texture is sampled when scaled. Smooth = bilinear (photos, hi-res
+    /// art); Pixel = nearest-neighbour (crisp pixel-art with no up-close blur).
+    /// Mirrors MeshRenderer::TexFilter.
+    enum class TexFilter { Smooth, Pixel };
+    TexFilter texFilter = TexFilter::Smooth;
+
     void OnRender(IRenderer& renderer) override;
 };
 

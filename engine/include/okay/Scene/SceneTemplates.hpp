@@ -22,6 +22,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/TopDownController2D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
@@ -120,6 +121,38 @@ inline GameObject* AddTopDownPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     return player;
 }
 
+/// Add a 2D top-down player: a sprite driven by the native TopDownController2D
+/// (WASD/arrows, dash, optional shooting), on a gravity-free Rigidbody2D + box
+/// collider, with an orthographic camera that follows it. The 2D counterpart to
+/// AddTopDownPlayer — a ready-to-play twin-stick / ARPG player for 2D games.
+inline GameObject* AddTopDown2DPlayer(Scene& scene, const Vec3& pos = {0, 0, 0}) {
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = pos;
+    auto* sr = player->AddComponent<SpriteRenderer>();
+    sr->color = Color::FromBytes(90, 170, 240);
+    auto* rb = player->AddComponent<Rigidbody2D>();
+    rb->bodyType = Rigidbody2D::BodyType::Dynamic;
+    rb->gravityScale = 0.0f;                 // top-down: no falling
+    player->AddComponent<BoxCollider2D>();
+    player->AddComponent<TopDownController2D>();
+
+    // An orthographic camera that follows the player (2D view).
+    GameObject* camObj = scene.Find("MainCamera");
+    if (!camObj) camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->GetComponent<Camera>();
+    if (!cam) cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = 6.0f;
+    cam->main = true;
+    if (!camObj->GetComponent<CameraFollow>()) {
+        auto* follow = camObj->AddComponent<CameraFollow>();
+        follow->targetName = "Player";
+        follow->offset = {0, 0, 0};
+        follow->smoothing = 6.0f;
+    }
+    return player;
+}
+
 /// Add a third-person shooter player (over-the-shoulder aim; cursor locked).
 inline GameObject* AddThirdPersonShooterPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
@@ -142,7 +175,13 @@ inline void WireCharacterIK(GameObject* player, Character* pc) {
     auto* fik = player->AddComponent<FootIK>();
     fik->leftHip  = T(9);  fik->leftKnee  = T(10); fik->leftFoot  = T(11);
     fik->rightHip = T(12); fik->rightKnee = T(13); fik->rightFoot = T(14);
+    fik->pelvis = T(0);
     fik->useRaycast = true; fik->weight = 1.0f;
+    // Full plant setup out of the box: sink the pelvis so a downhill foot reaches,
+    // press feet onto lower ground, and tilt soles to the slope — this is what makes
+    // foot IK VISIBLE on stairs and slopes (lift-only barely reads on flat ground).
+    fik->adjustPelvis = true; fik->plantDown = true; fik->alignToGround = true;
+    fik->maxPelvisShift = 0.35f;
     auto* rm = player->AddComponent<RootMotion>();
     rm->rootNode = T(0);
     rm->mode = (int)RootMotion::Mode::Disabled;
@@ -541,12 +580,12 @@ inline void TopDown(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     auto* psr = player->AddComponent<SpriteRenderer>();
     psr->color = Color::FromBytes(230, 120, 90);
-    auto* sc = player->AddComponent<ScriptComponent>("okayscript");
-    sc->LoadSource(
-        "function update(d) {\n"
-        "  var speed = 5;\n"
-        "  move(axis_x() * speed * d, axis_y() * speed * d);\n"
-        "}\n");
+    // Native, full-featured top-down movement (momentum + sprint + dash + facing) —
+    // no script needed. Shift to sprint, Space to dash.
+    auto* tdc = player->AddComponent<TopDownController2D>();
+    tdc->speed = 5.0f; tdc->runSpeed = 8.0f;
+    tdc->dashKey = ' ';             // Space to dash
+    tdc->acceleration = 60.0f; tdc->deceleration = 55.0f;
 
     for (int i = 0; i < 2; ++i) {
         GameObject* wall = scene.CreateGameObject(i == 0 ? "WallA" : "WallB");

@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/Log.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -12,6 +13,7 @@
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
+#include "okay/Components/StepUp.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -85,10 +87,22 @@ public:
 
     float yaw = 0.0f, pitch = 0.0f;     // look angles (degrees)
 
+
+    /// Safety net: falling below this world Y teleports the player back to its
+    /// spawn point (fell off the map / through a floor with no collider).
+    /// Set to 0 to disable.
+    float fallResetY = -100.0f;
+    /// Max step height the controller climbs automatically (stairs/curbs). 0 = off.
+    float stepOffset = 0.35f;
+    /// Steepest terrain slope (degrees) the player can stand on / climb; on
+    /// steeper ground the uphill velocity is cancelled and the body slides
+    /// back down (Unity's slope limit). 0 = no limit.
+    float slopeLimit = 50.0f;
     void Start() override {
         ApplyBodyVisibility();
         if (lockCursor) Cursor::Capture(true);   // hide + lock for mouse-look
         if (footIK) AttachCharacterFootIK(gameObject);
+        if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
     }
 
     // First person: the player's own camera should IGNORE the body (so you don't
@@ -112,6 +126,16 @@ public:
 
     void Update(float dt) override {
         if (!transform) return;
+        // Fell out of the world? Teleport home instead of falling forever (a
+        // floor without a collider, a hole in the map). fallResetY = 0 disables.
+        if (m_haveSpawn && fallResetY != 0.0f && transform->Position().y < fallResetY) {
+            transform->SetPosition(m_spawn);
+            if (auto* frb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr)
+                frb->velocity = Vec3{0, 0, 0};
+            OKAY_WARN("Player fell below Fall Reset Y and was returned to spawn. "
+                      "If this keeps happening, the floor is probably missing a collider "
+                      "(select it and Add Component > Mesh Collider 3D).");
+        }
         if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         ApplyBodyVisibility();
@@ -210,6 +234,25 @@ public:
             if (gameObject && gameObject->scene())
                 ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
         }
+        // Slope limit: on terrain steeper than slopeLimit, cancel the uphill
+        // velocity component and accelerate a downhill slide.
+        if (rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
+            Vec3 n = rb->groundNormal;
+            float hl = std::sqrt(n.x * n.x + n.z * n.z);
+            if (hl > 1e-4f) {
+                Vec3 dh{n.x / hl, 0.0f, n.z / hl};                       // downhill direction
+                float up = -(rb->velocity.x * dh.x + rb->velocity.z * dh.z);   // uphill speed
+                if (up > 0.0f) { rb->velocity.x += dh.x * up; rb->velocity.z += dh.z * up; }
+                rb->velocity.x += dh.x * 18.0f * dt;                     // slide
+                rb->velocity.z += dh.z * 18.0f * dt;
+            }
+        }
+        // Stairs: step up onto low obstacles instead of grinding against them.
+        if (rb && grounded && moving && gameObject && gameObject->scene())
+            TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded, moving, stepOffset);
+        // Moving platforms: ride whatever we stand on (elevators, movers).
+        if (gameObject && gameObject->scene())
+            RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
 
         // ---- View bob (footstep sway) ----
         {
@@ -239,6 +282,10 @@ public:
     void OnCollisionStay3D(const Collision3D& c)  override { NoteGround(c); }
 
 private:
+    PlatformRide m_platRide;   // moving-platform tracking
+
+    Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
+
     void NoteGround(const Collision3D& c) {
         bool vertical = Mathf::Abs(c.normal.y) > 0.5f;
         bool below = c.gameObject && c.gameObject->transform && transform &&

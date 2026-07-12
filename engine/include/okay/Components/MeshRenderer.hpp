@@ -129,6 +129,12 @@ public:
     /// the loaded geometry (and Build Game bundles the file alongside the exe).
     std::string meshPath;
 
+    /// Procedural variant for named nature props (Tree/Pine/Rock/Bush). 0 = the
+    /// canonical model; nonzero regenerates a deterministically-varied shape via
+    /// Mesh::FromNameSeeded, so a scattered forest isn't identical clones. Stored
+    /// per object (one int) so variation survives save/load without baking geometry.
+    int meshVariant = 0;
+
     MeshRenderer() : mesh(Mesh::Cube()) {}
     explicit MeshRenderer(Mesh m) : mesh(std::move(m)) {}
 };

@@ -24,6 +24,11 @@ public:
     /// static are not expected to move at runtime.
     bool isStatic = false;
 
+    /// Editor-only: locked objects can't be click-selected or dragged in the Scene
+    /// view (pick them via the Hierarchy). Protects backdrops/ground from stray
+    /// clicks while arranging things on top. No runtime effect; persisted.
+    bool editorLocked = false;
+
     /// The name of the scene this object was MERGED in from (empty = it belongs to
     /// the main/host scene). Set when combining scenes so the editor's Hierarchy can
     /// show where each merged scene starts and ends. Persisted with the scene.

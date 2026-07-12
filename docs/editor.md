@@ -77,6 +77,10 @@ Recent additions (v2.12–2.14):
   highlighting, **Find** (Ctrl+F), inline compile errors, current-line
   highlight, **zoom** (Ctrl+scroll), **comment toggle** (Ctrl+/), **go-to-line**,
   **duplicate line** (Ctrl+D), **move line** (Alt+↑/↓), and a **Snippets** menu.
+  **Changed-line bars** in the gutter mark lines you've edited since the last
+  save (amber) or added past the file's end (green) — they clear on save.
+  **Find in Files** (Ctrl+Shift+F, or via the command palette) searches every
+  project script at once; click a result to open that file at that line.
   Prefer your own editor? **Open in IDE** launches the script in VS Code / your
   OS default, and with **Live Sync** on (enabled automatically when you open it)
   every save out there reloads in-engine — so you can code entirely outside
@@ -152,6 +156,10 @@ Recent additions (v2.12–2.14):
   selects everything visible. **Up/Down** walk the rows, **Left/Right**
   collapse/expand the selected object's children. The search box also matches
   type words — try `light`, `npc`, `spawner`, `collider`, `controller`, `ui`.
+  **Isolate** (Shift+I, the Scene toolbar button, or right-click ▸ Isolate)
+  shows ONLY the selected object and its children in the Scene view — view-only,
+  nothing in the scene changes, and a banner reminds you it's on. Rows outside
+  the isolated subtree dim in the Hierarchy.
 - **Project** — the same selection model: **Ctrl+click** to toggle,
   **Shift+click** for a range, **Ctrl+A** for everything shown. **Ctrl+C/X/V**
   copy, cut and paste whole multi-selections between folders, and **Delete**
@@ -376,3 +384,34 @@ unchanged.
 - **Console**: the tab badge shows live error/warning counts; **Error Pause**
   pauses Play the moment a new error is logged.
 - **Play tint**: the editor chrome darkens subtly while the game runs.
+
+## Editor quality-of-life
+
+- **File dialogs**: Open Scene, Save Scene As, Import Model and Instantiate
+  Prefab all have a `...` browse button (native picker with the right file
+  filter). The path field auto-focuses when the popup opens and **Enter
+  confirms**, so keyboard-only open/save works.
+- **Transport buttons**: Play / Stop / Pause / Resume / Step use drawn icons
+  and color-coding; tooltips carry the shortcuts (Ctrl+P toggles Play).
+- **History panel** (View ▸ History): a timeline rail — the filled accent dot
+  is the current state, hollow rows above are redo steps, below are undo
+  steps; click any row to jump straight there.
+- **Add Component search**: results in the flat search list carry a
+  category-colored dot (blue Rendering, green Physics, teal Animation, ...),
+  and Enter still adds the first match.
+- **Hierarchy search**: results show a dimmed `in Parent / Child` path so
+  same-named objects are tellable apart; double-click frames the object.
+- **Scripting Reference**: click any API signature to copy it; the filter box
+  narrows every section at once.
+- **Sprite Editor**: Mirror X *and* Mirror Y (both on = four-quadrant
+  symmetry), Ctrl+Z undo, and a hovered-texel outline with an `x, y` readout
+  in the canvas corner. P/E/F/I switch tools.
+- **UI Theme window**: preset buttons show a mini palette strip, and a live
+  preview card renders the current panel/button/slider/text style before you
+  bake it into the scene's widgets.
+- **Variables window**: right-click a variable for Copy name / Copy value /
+  Reset to 0 / Delete. Values flash amber when the running game changes them.
+- **Confirm-before-delete**: destructive buttons (Crash Log ▸ Clear,
+  Variables ▸ Clear All, the launcher's community Remove) ask first.
+- **About dialog** (Help ▸ About OkaySpace): version, SDL/ImGui build info,
+  and a Copy version info button for bug reports.

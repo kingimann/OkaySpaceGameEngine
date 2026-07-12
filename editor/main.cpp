@@ -662,10 +662,49 @@ static bool GetMaterialSwatch(const std::string& path, ImVec4& out) {
     return ok;
 }
 
-// Rendered thumbnail for a .okayprefab: instantiate it into a throwaway scene,
-// frame it with a 3/4 camera and software-render one small image, cached until
-// the file changes. First sight of a prefab pays one tiny render (~128 px).
+// Render one auto-framed 128px snapshot of `root` inside `sc` (3/4 camera,
+// editor sun/ambient) and upload it as a texture. Shared by the prefab and
+// model thumbnails. Returns nullptr if nothing visible rendered (pure 2D/UI).
 static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius);   // defined with the Animation tab
+static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float radius);
+static SDL_Texture* RenderObjectThumb(okay::Scene& sc, GameObject* root) {
+    if (!root || !g_sdlRenderer) return nullptr;
+    sc.Update(0.0f);          // flush any deferred adoption (dt 0 = no simulation)
+    Vec3 center; float radius;
+    AnimFocusBounds(root, center, radius);
+    return RenderFramedThumb(sc, center, radius);
+}
+static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float radius) {
+    if (!g_sdlRenderer) return nullptr;
+    ApplySceneLight(sc);      // the editor sun/ambient, so shading matches the Scene view
+    Vec3 dir{0.62f, 0.5f, 0.62f};
+    float dm = std::sqrt(Vec3::Dot(dir, dir));
+    dir = dir * (1.0f / dm);
+    Vec3 eye = center + dir * (radius * 2.5f);
+    const int W = 128, H = 128;
+    Mat4 vp = Mat4::Perspective(40.0f, 1.0f, 0.05f, 4000.0f) *
+              Mat4::LookAt(eye, center, Vec3::Up);
+    Raster work; std::vector<std::uint32_t> out;
+    const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, eye, W, H, 2);
+    if (!px) return nullptr;
+    // Nothing visible (no 3D meshes) renders fully transparent — report that so
+    // callers fall back to the type icon instead of an invisible tile.
+    bool anyPixel = false;
+    for (int i2 = 0; i2 < W * H && !anyPixel; ++i2)
+        if (px[i2] >> 24) anyPixel = true;
+    if (!anyPixel) return nullptr;
+    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                         SDL_TEXTUREACCESS_STATIC, W, H);
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        SDL_UpdateTexture(tex, nullptr, px, W * 4);
+    }
+    return tex;
+}
+
+// Rendered thumbnail for a .okayprefab: instantiate it into a throwaway scene,
+// frame it and software-render one small image, cached until the file changes.
 static SDL_Texture* GetPrefabThumb(const std::string& path) {
     struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
     static std::unordered_map<std::string, Entry> cache;
@@ -675,38 +714,104 @@ static SDL_Texture* GetPrefabThumb(const std::string& path) {
     if (it != cache.end() && (ec || it->second.mtime == mt)) return it->second.tex;
 
     SDL_Texture* tex = nullptr;
-    if (g_sdlRenderer) {
+    {
         okay::Scene sc;
-        if (GameObject* root = SceneSerializer::InstantiateFromFile(sc, path, nullptr)) {
-            sc.Update(0.0f);          // flush any deferred adoption (dt 0 = no simulation)
-            ApplySceneLight(sc);      // the editor sun/ambient, so shading matches the Scene view
-            Vec3 center; float radius;
-            AnimFocusBounds(root, center, radius);
-            Vec3 dir{0.62f, 0.5f, 0.62f};
-            float dm = std::sqrt(Vec3::Dot(dir, dir));
-            dir = dir * (1.0f / dm);
-            Vec3 eye = center + dir * (radius * 2.5f);
-            const int W = 128, H = 128;
-            Mat4 vp = Mat4::Perspective(40.0f, 1.0f, 0.05f, 4000.0f) *
-                      Mat4::LookAt(eye, center, Vec3::Up);
-            Raster work; std::vector<std::uint32_t> out;
-            if (const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, eye, W, H, 2)) {
-                // A prefab with no 3D meshes (pure 2D/UI) renders fully transparent —
-                // fall back to the type icon instead of an invisible tile.
-                bool anyPixel = false;
-                for (int i2 = 0; i2 < W * H && !anyPixel; ++i2)
-                    if (px[i2] >> 24) anyPixel = true;
-                if (anyPixel) {
-                    tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                            SDL_TEXTUREACCESS_STATIC, W, H);
-                    if (tex) {
-                        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-                        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-                        SDL_UpdateTexture(tex, nullptr, px, W * 4);
-                    }
+        if (GameObject* root = SceneSerializer::InstantiateFromFile(sc, path, nullptr))
+            tex = RenderObjectThumb(sc, root);
+    }
+    if (it != cache.end() && it->second.tex && it->second.tex != tex)
+        SDL_DestroyTexture(it->second.tex);
+    cache[path] = {tex, mt};
+    return tex;
+}
+
+// Rendered thumbnail for a .okayscene: load the whole scene into a throwaway
+// Scene, frame ALL of its objects, snapshot once. Cached until the file
+// changes; oversized scene files are skipped rather than stalling the browser.
+static SDL_Texture* GetSceneThumb(const std::string& path) {
+    struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
+    static std::unordered_map<std::string, Entry> cache;
+    std::error_code ec;
+    auto mt = std::filesystem::last_write_time(path, ec);
+    auto it = cache.find(path);
+    if (it != cache.end() && (ec || it->second.mtime == mt)) return it->second.tex;
+
+    SDL_Texture* tex = nullptr;
+    auto sz = std::filesystem::file_size(path, ec);
+    if (!ec && sz <= 4u * 1024u * 1024u && g_sdlRenderer) {
+        okay::Scene sc;
+        if (SceneSerializer::LoadFromFile(sc, path, nullptr)) {
+            sc.Update(0.0f);
+            // Combined bounds over every root object (two passes: centroid, then reach).
+            Vec3 center{0, 0, 0}; int n = 0;
+            std::vector<std::pair<Vec3, float>> parts;
+            for (const auto& up : sc.Objects()) {
+                if (!up || !up->transform || up->transform->Parent()) continue;
+                Vec3 c2; float r2;
+                AnimFocusBounds(up.get(), c2, r2);
+                parts.push_back({c2, r2});
+                center = center + c2; ++n;
+            }
+            if (n > 0) {
+                center = center * (1.0f / (float)n);
+                float radius = 1.0f;
+                for (const auto& pr : parts) {
+                    Vec3 d = pr.first - center;
+                    radius = std::max(radius, std::sqrt(Vec3::Dot(d, d)) + pr.second);
                 }
+                tex = RenderFramedThumb(sc, center, radius);
             }
         }
+    }
+    if (it != cache.end() && it->second.tex && it->second.tex != tex)
+        SDL_DestroyTexture(it->second.tex);
+    cache[path] = {tex, mt};
+    return tex;
+}
+
+// Rendered thumbnail for a built-in primitive/prop mesh by name (the Modeling
+// panel's Add library). Rendered once per name, cached for the session, and
+// budgeted to a few renders per frame so opening a category never hitches —
+// missing tiles just fill in over the next frames.
+static SDL_Texture* GetPrimitiveThumb(const char* name) {
+    static std::unordered_map<std::string, SDL_Texture*> cache;
+    auto it = cache.find(name);
+    if (it != cache.end()) return it->second;
+    static int s_frame = -1, s_made = 0;
+    if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
+    if (s_made >= 3 || !g_sdlRenderer) return nullptr;   // out of budget: retry next frame
+    ++s_made;
+    SDL_Texture* tex = nullptr;
+    {
+        okay::Scene sc;
+        GameObject* g = sc.CreateGameObject(name);
+        g->AddComponent<MeshRenderer>()->mesh = Mesh::FromName(name);
+        sc.Update(0.0f);
+        tex = RenderObjectThumb(sc, g);
+    }
+    cache[name] = tex;   // cache even nullptr (unrenderable) so we don't retry forever
+    return tex;
+}
+
+// Rendered thumbnail for a model file (.obj/.fbx/.glb/...): import it into a
+// throwaway scene (same pipeline as drag-drop, so materials/rigs apply) and
+// snapshot it. Import can be slow, so it's cached until the file changes and
+// oversized files are skipped rather than stalling the Project browser.
+static SDL_Texture* GetModelThumb(const std::string& path) {
+    struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
+    static std::unordered_map<std::string, Entry> cache;
+    std::error_code ec;
+    auto mt = std::filesystem::last_write_time(path, ec);
+    auto it = cache.find(path);
+    if (it != cache.end() && (ec || it->second.mtime == mt)) return it->second.tex;
+
+    SDL_Texture* tex = nullptr;
+    auto sz = std::filesystem::file_size(path, ec);
+    if (!ec && sz <= 20u * 1024u * 1024u) {   // skip >20 MB: import would hitch the UI
+        okay::Scene sc;
+        bool okm = false;
+        GameObject* root = okay::ImportModelScene(sc, path, &okm);
+        if (root && okm) tex = RenderObjectThumb(sc, root);
     }
     if (it != cache.end() && it->second.tex && it->second.tex != tex)
         SDL_DestroyTexture(it->second.tex);
@@ -1067,6 +1172,10 @@ bool g_showAnimatorGraph = false; // visual state-machine node graph (Animator w
 okay::NPCController* g_wpPlace = nullptr; // NPC whose patrol waypoints are being click-placed in the Scene view
 bool g_showHistory   = false;    // undo/redo history panel (click a step to jump)
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
+// Isolate mode (Unity's Isolation view): the Scene view shows ONLY this object
+// and its children (lights stay on for shading). View-only — nothing in the
+// scene is modified, and the Game view / Play mode are unaffected.
+okay::GameObject* g_isolate = nullptr;
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
 bool g_showGrid = true;          // draw the XZ ground grid in the Scene view
 bool g_sceneSkybox = true;       // draw the sky gradient in the Scene view (Game view always uses the camera)
@@ -1250,7 +1359,20 @@ static void EmptyState(const char* glyph, const char* title, const char* hint = 
         ImGui::TextColored(col, "%s", txt);
         if (scale != 1.0f) ImGui::SetWindowFontScale(1.0f);
     };
-    if (glyph && *glyph) { centered(glyph, ImVec4(0.40f, 0.42f, 0.47f, 1.0f), 2.0f); ImGui::Spacing(); }
+    if (glyph && *glyph) {
+        // Drawn mark instead of the glyph string — dingbats like ◈/✱ are tofu
+        // in the UI font. A soft diamond outline + center dot reads as "empty".
+        float gs = ImGui::GetFontSize() * 1.6f;
+        ImVec2 cp = ImGui::GetCursorScreenPos();
+        ImVec2 c(cp.x + avail.x * 0.5f, cp.y + gs * 0.6f);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImU32 col = ImGui::GetColorU32(ImVec4(0.40f, 0.42f, 0.47f, 1.0f));
+        dl->AddQuad(ImVec2(c.x, c.y - gs * 0.55f), ImVec2(c.x + gs * 0.55f, c.y),
+                    ImVec2(c.x, c.y + gs * 0.55f), ImVec2(c.x - gs * 0.55f, c.y), col, 2.0f);
+        dl->AddCircleFilled(c, gs * 0.14f, col);
+        ImGui::Dummy(ImVec2(0, gs * 1.3f));
+        ImGui::Spacing();
+    }
     centered(title, ImVec4(0.66f, 0.68f, 0.72f, 1.0f), 1.0f);
     if (hint) { ImGui::Spacing(); centered(hint, ImVec4(0.46f, 0.47f, 0.51f, 1.0f), 1.0f); }
 }
@@ -1500,9 +1622,34 @@ void DrawVarWatch() {
     ImGui::SetNextItemWidth(-120);
     ImGui::InputTextWithHint("##vwf", "filter by name...", filter, sizeof(filter));
     ImGui::SameLine();
-    if (ImGui::SmallButton("Clear All")) { okay::ActionList::ResetVars(); }
+    if (ImGui::SmallButton("Clear All")) ImGui::OpenPopup("Clear all variables?");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wipe every variable and array");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Clear all variables?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Wipe every variable, array and text value?");
+        ImGui::TextDisabled("Running game logic that reads them will see zeros/empties.");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        bool doWipe = ImGui::Button("Clear", ImVec2(110, 0));
+        ImGui::PopStyleColor(2);
+        if (doWipe) { okay::ActionList::ResetVars(); ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    // Create a variable on the fly (handy for wiring UI/logic before any script runs).
+    static char newVar[48] = "";
+    ImGui::SetNextItemWidth(-120);
+    bool nvGo = ImGui::InputTextWithHint("##vwnew", "add a variable...", newVar, sizeof(newVar),
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if ((ImGui::SmallButton("Add") || nvGo) && newVar[0]) { vars[newVar]; newVar[0] = '\0'; }
     ImGui::TextDisabled("Shared by Actions, scripts, stats & UI. Drag a value to change it live.");
+    // Change-flash: remember each value and wash the row amber briefly when it
+    // changes, so activity is easy to spot while the game runs.
+    static std::unordered_map<std::string, float> s_prevVal, s_flash;
+    const float fdt = ImGui::GetIO().DeltaTime;
     auto lc = [](std::string s){ for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
     std::string q = lc(filter);
     auto matches = [&](const std::string& k){ return q.empty() || lc(k).find(q) != std::string::npos; };
@@ -1515,11 +1662,35 @@ void DrawVarWatch() {
         std::sort(keys.begin(), keys.end());
         for (const auto& k : keys) {
             ImGui::PushID(k.c_str());
+            auto pv = s_prevVal.find(k);
+            if (pv != s_prevVal.end() && pv->second != vars[k]) s_flash[k] = 0.8f;
+            s_prevVal[k] = vars[k];
+            float& ft = s_flash[k];
+            if (ft > 0.0f) {
+                ft -= fdt; if (ft < 0.0f) ft = 0.0f;
+                ImVec2 rm = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImVec2(rm.x - 2, rm.y - 1),
+                    ImVec2(rm.x + ImGui::GetContentRegionAvail().x, rm.y + ImGui::GetFrameHeight() - 1),
+                    ImGui::GetColorU32(ImVec4(0.95f, 0.75f, 0.30f, 0.22f * (ft / 0.8f))), 3.0f);
+            }
             ImGui::TextUnformatted(k.c_str());
             ImGui::SameLine(170);
             ImGui::SetNextItemWidth(-1);
             float v = vars[k];
             if (ImGui::DragFloat("##v", &v, 0.1f)) vars[k] = v;
+            // Right-click a value for quick actions.
+            if (ImGui::BeginPopupContextItem("##vctx")) {
+                if (ImGui::MenuItem("Copy name")) ImGui::SetClipboardText(k.c_str());
+                if (ImGui::MenuItem("Copy value")) {
+                    char vb[32]; std::snprintf(vb, sizeof(vb), "%g", vars[k]);
+                    ImGui::SetClipboardText(vb);
+                }
+                if (ImGui::MenuItem("Reset to 0")) vars[k] = 0.0f;
+                ImGui::Separator();
+                if (ImGui::MenuItem("Delete")) { vars.erase(k); s_prevVal.erase(k); s_flash.erase(k); }
+                ImGui::EndPopup();
+            }
             ImGui::PopID();
         }
     }
@@ -2758,6 +2929,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
             for (const std::string& p : g_recent) {
+                // Tiny rendered preview beside each recent scene (cached snapshot).
+                if (SDL_Texture* stx = GetSceneThumb(p)) {
+                    ImGui::Image((ImTextureID)stx, ImVec2(22, 22));
+                    ImGui::SameLine();
+                }
                 if (ImGui::MenuItem(p.c_str())) {
                     std::string err;
                     if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
@@ -2902,9 +3078,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Accent color")) {
-            for (int i = 0; i < kAccentCount; ++i)
-                if (ImGui::MenuItem(kAccents[i].name, nullptr, g_accent == i)) { g_accent = i; ApplyTheme(); SaveSettings(); }
-            if (ImGui::IsItemHovered()) {}
+            for (int i = 0; i < kAccentCount; ++i) {
+                char albl[48]; std::snprintf(albl, sizeof(albl), "     %s", kAccents[i].name);
+                if (ImGui::MenuItem(albl, nullptr, g_accent == i)) { g_accent = i; ApplyTheme(); SaveSettings(); }
+                // Drawn swatch dot in the leading space, in that accent's color.
+                ImVec2 amn = ImGui::GetItemRectMin(), amx = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddCircleFilled(
+                    ImVec2(amn.x + 11.0f, (amn.y + amx.y) * 0.5f),
+                    ImGui::GetFontSize() * 0.28f,
+                    ImGui::GetColorU32(ImVec4(kAccents[i].r, kAccents[i].g, kAccents[i].b, 1.0f)), 16);
+            }
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
@@ -3329,14 +3512,42 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::EndMenu();
     }
 
-    // Centered Play / Stop / Step controls (Unity-style toolbar), color-coded.
+    // Centered Play / Stop / Step controls (Unity-style toolbar), color-coded,
+    // with real drawn transport icons (the UI font has no media glyphs).
     // (defined later in this file; entering Play must clear any editor previews)
-    float btnW = 64.0f;
+    auto drawPlayTri = [](ImU32 col) {
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        float h = mx.y - mn.y, s = h * 0.24f;
+        ImVec2 c(mn.x + h * 0.52f, (mn.y + mx.y) * 0.5f);
+        ImGui::GetWindowDrawList()->AddTriangleFilled(
+            ImVec2(c.x - s * 0.6f, c.y - s), ImVec2(c.x - s * 0.6f, c.y + s),
+            ImVec2(c.x + s * 0.9f, c.y), col);
+    };
+    auto drawStopSq = [](ImU32 col) {
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        float h = mx.y - mn.y, s = h * 0.20f;
+        ImVec2 c(mn.x + h * 0.52f, (mn.y + mx.y) * 0.5f);
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(c.x - s, c.y - s),
+                                                  ImVec2(c.x + s, c.y + s), col, 1.5f);
+    };
+    auto drawPauseBars = [](ImU32 col) {
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        float h = mx.y - mn.y, s = h * 0.22f, w = h * 0.085f;
+        ImVec2 c(mn.x + h * 0.52f, (mn.y + mx.y) * 0.5f);
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(c.x - w * 2.2f, c.y - s),
+                                                  ImVec2(c.x - w * 0.5f, c.y + s), col, 1.0f);
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(c.x + w * 0.5f, c.y - s),
+                                                  ImVec2(c.x + w * 2.2f, c.y + s), col, 1.0f);
+    };
+    const ImU32 kIconWhite = IM_COL32(255, 255, 255, 235);
+    float btnW = 72.0f;
     ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - btnW);
     if (!ed.isPlaying()) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
-        if (ImGui::Button(">  Play", ImVec2(btnW, 0))) {
+        bool hit = ImGui::Button("    Play", ImVec2(btnW, 0));
+        drawPlayTri(kIconWhite);
+        if (hit) {
             if (g_clearConsoleOnPlay) ConsoleClear();
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
@@ -3347,21 +3558,39 @@ void DrawMenuAndToolbar(EditorState& ed) {
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        if (ImGui::Button("[]  Stop", ImVec2(btnW, 0))) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
+        bool hit = ImGui::Button("    Stop", ImVec2(btnW, 0));
+        drawStopSq(kIconWhite);
+        if (hit) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop (Ctrl+P) — return to the edit state");
         ImGui::SameLine();
         if (g_paused) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.45f, 0.15f, 1.0f));
-            if (ImGui::Button("Resume", ImVec2(64, 0))) g_paused = false;
+            bool rhit = ImGui::Button("    Resume", ImVec2(88, 0));
+            drawPlayTri(kIconWhite);
+            if (rhit) g_paused = false;
             ImGui::PopStyleColor();
         } else {
-            if (ImGui::Button("Pause", ImVec2(64, 0))) g_paused = true;
+            bool phit = ImGui::Button("    Pause", ImVec2(88, 0));
+            drawPauseBars(kIconWhite);
+            if (phit) g_paused = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause / Resume the simulation");
     }
     ImGui::SameLine();
-    if (ImGui::Button("Step", ImVec2(50, 0))) { g_paused = true; ed.Tick(1.0f / 60.0f); }
+    {
+        bool stepHit = ImGui::Button("    Step", ImVec2(66, 0));
+        // Step-forward icon: small triangle + bar.
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        float h = mx.y - mn.y, s = h * 0.20f;
+        ImVec2 ic(mn.x + h * 0.48f, (mn.y + mx.y) * 0.5f);
+        ImDrawList* tdl = ImGui::GetWindowDrawList();
+        tdl->AddTriangleFilled(ImVec2(ic.x - s, ic.y - s), ImVec2(ic.x - s, ic.y + s),
+                               ImVec2(ic.x + s * 0.5f, ic.y), kIconWhite);
+        tdl->AddRectFilled(ImVec2(ic.x + s * 0.8f, ic.y - s),
+                           ImVec2(ic.x + s * 0.8f + h * 0.085f, ic.y + s), kIconWhite, 1.0f);
+        if (stepHit) { g_paused = true; ed.Tick(1.0f / 60.0f); }
+    }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.34f, 0.62f, 1.0f));
@@ -3581,8 +3810,25 @@ void DrawCrashLog() {
     ImGui::SameLine();
     if (ImGui::Button("Open Folder")) extide::RevealInFiles(dir.string());
     ImGui::SameLine();
-    if (ImGui::Button("Clear")) { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); }
+    if (ImGui::Button("Clear")) ImGui::OpenPopup("Clear crash reports?");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Delete the saved crash reports.");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Clear crash reports?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Delete all saved crash reports from disk?");
+        ImGui::TextDisabled("This can't be undone.");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        bool doClear = ImGui::Button("Delete", ImVec2(110, 0));
+        ImGui::PopStyleColor(2);
+        if (doClear) {
+            std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
     ImGui::SameLine(); ImGui::TextDisabled("%s", histPath.string().c_str());
     ImGui::Separator();
 
@@ -3667,7 +3913,6 @@ void DrawConsole() {
         std::string needle = filter;
         for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
         const ImVec4 levelCol[3] = {cInfo, cWarn, cErr};
-        const char*  levelIcon[3] = {"[i]", "[!]", "[x]"};
         const bool   levelShow[3] = {showInfo, showWarn, showError};
 
         // Details pane reserves the bottom; the list fills the rest.
@@ -3699,11 +3944,20 @@ void DrawConsole() {
                 for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
                 if (low.find(needle) == std::string::npos) continue;
             }
+            // Drawn level dot in place of the old [i]/[!]/[x] text markers (the
+            // severity bar + row wash below already tint the row itself).
+            ImVec2 rp = ImGui::GetCursorScreenPos();
             ImGui::PushStyleColor(ImGuiCol_Text, levelCol[e.level]);
-            std::string label = std::string(levelIcon[e.level]) + " " + e.time + "  " + e.text;
+            std::string label = "     " + e.time + "  " + e.text;   // leading room for the dot
             if (mergedCount[row] > 1) label += "  (" + std::to_string(mergedCount[row]) + ")";
             label += "##c" + std::to_string(i);
             if (ImGui::Selectable(label.c_str(), selected == i)) selected = i;
+            {
+                float dr = ImGui::GetFontSize() * 0.22f;
+                ImGui::GetWindowDrawList()->AddCircleFilled(
+                    ImVec2(rp.x + dr + 7.0f, rp.y + ImGui::GetTextLineHeight() * 0.55f),
+                    dr, ImGui::GetColorU32(levelCol[e.level]));
+            }
             // Right-click an entry: copy it (or everything currently visible).
             if (ImGui::BeginPopupContextItem()) {
                 selected = i;
@@ -3789,29 +4043,66 @@ void DrawHistory(EditorState& ed) {
     ImGui::BeginDisabled(!ed.CanUndo());
     if (ImGui::Button("Undo##hist")) { ed.Undo(); ed.dirty = true; }
     ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
     ImGui::SameLine();
     ImGui::BeginDisabled(!ed.CanRedo());
     if (ImGui::Button("Redo##hist")) { ed.Redo(); ed.dirty = true; }
     ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y");
     ImGui::SameLine();
     ImGui::TextDisabled("%d behind  \xE2\x80\xA2  %d ahead", ed.UndoDepth(), ed.RedoDepth());
     ImGui::Separator();
     ImGui::BeginChild("##histlist");
+    if (!ed.CanUndo() && !ed.CanRedo()) {
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::TextDisabled("No edits yet — changes will appear here.");
+        ImGui::EndChild(); ImGui::End(); return;
+    }
+    // Timeline rail down the left: a node per state, the current one filled
+    // with the accent color, future (redo) states hollow and dimmed.
+    ImDrawList* hdl = ImGui::GetWindowDrawList();
+    const float railX = ImGui::GetCursorScreenPos().x + 9.0f;
+    const float railTopY = ImGui::GetCursorScreenPos().y;
+    {
+        int rows = ed.RedoDepth() + 1 + ed.UndoDepth();
+        float rowH = ImGui::GetTextLineHeightWithSpacing();
+        hdl->AddLine(ImVec2(railX, railTopY + 4.0f),
+                     ImVec2(railX, railTopY + rows * rowH - 4.0f),
+                     ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
+    }
+    auto histRow = [&](const char* lbl, bool current, bool ahead) {
+        char pad[72]; std::snprintf(pad, sizeof(pad), "     %s", lbl);
+        bool hit = ImGui::Selectable(pad, current);
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        float cy = (mn.y + mx.y) * 0.5f;
+        if (current) {
+            hdl->AddCircleFilled(ImVec2(railX, cy), 4.0f,
+                                 ImGui::GetColorU32(ImGuiCol_CheckMark), 12);
+        } else {
+            ImU32 col = ahead ? ImGui::GetColorU32(ImGuiCol_TextDisabled)
+                              : ImGui::GetColorU32(ImGuiCol_Text, 0.55f);
+            hdl->AddCircle(ImVec2(railX, cy), 3.0f, col, 12, 1.5f);
+        }
+        return hit;
+    };
     // Future (redo) states first, newest-forward at the top; then the current
     // state; then the past, most recent first. Click any row to jump there.
     bool jumped = false;
     for (int i = ed.RedoDepth(); i >= 1 && !jumped; --i) {
-        char lbl[48]; std::snprintf(lbl, sizeof(lbl), "\xE2\x86\xB7 %d step%s ahead##hr%d", i, i == 1 ? "" : "s", i);
-        if (ImGui::Selectable(lbl)) {
+        char lbl[48]; std::snprintf(lbl, sizeof(lbl), "%d step%s ahead##hr%d", i, i == 1 ? "" : "s", i);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        bool hit = histRow(lbl, false, true);
+        ImGui::PopStyleColor();
+        if (hit) {
             for (int k = 0; k < i && ed.CanRedo(); ++k) ed.Redo();
             ed.dirty = true; jumped = true;
         }
     }
     if (!jumped) {
-        ImGui::Selectable("\xE2\x97\x8F Current state", true);
+        histRow("Current state", true, false);
         for (int i = 1; i <= ed.UndoDepth() && !jumped; ++i) {
-            char lbl[48]; std::snprintf(lbl, sizeof(lbl), "\xE2\x86\xB6 %d step%s back##hu%d", i, i == 1 ? "" : "s", i);
-            if (ImGui::Selectable(lbl)) {
+            char lbl[48]; std::snprintf(lbl, sizeof(lbl), "%d step%s back##hu%d", i, i == 1 ? "" : "s", i);
+            if (histRow(lbl, false, false)) {
                 for (int k = 0; k < i && ed.CanUndo(); ++k) ed.Undo();
                 ed.dirty = true; jumped = true;
             }
@@ -3825,6 +4116,88 @@ void DrawHistory(EditorState& ed) {
 static std::string Lower(std::string s) {
     for (auto& c : s) c = (char)std::tolower((unsigned char)c);
     return s;
+}
+
+// ---- Find in Files (Ctrl+Shift+F in the Script Editor) ---------------------
+// Searches every project script (.okay/.lua/.cs/.okayvs under Assets) for a
+// term; clicking a result opens the file in the Script Editor at that line.
+static bool g_showFindInFiles = false;
+static bool g_fifFocus = false;
+static void DrawFindInFiles(EditorState& ed) {
+    if (!g_showFindInFiles) return;
+    static char query[128] = {0};
+    struct Hit { std::string path; int line; std::string preview; };
+    static std::vector<Hit> hits;
+    static bool ran = false;
+    ImGui::SetNextWindowSize(ImVec2(600, 420), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Find in Files", &g_showFindInFiles)) { ImGui::End(); return; }
+    if (g_fifFocus) { ImGui::SetKeyboardFocusHere(); g_fifFocus = false; }
+    ImGui::SetNextItemWidth(-90);
+    bool go = ImGui::InputTextWithHint("##fifq", "Search every project script...",
+                                       query, sizeof(query), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if (ImGui::Button("Search", ImVec2(80, 0))) go = true;
+    if (go && query[0]) {
+        hits.clear(); ran = true;
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::path root = ed.projectDir().empty() ? fs::path(".") : fs::path(ed.projectDir()) / "Assets";
+        std::string needle = Lower(query);
+        for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+             it != fs::recursive_directory_iterator() && hits.size() < 200; it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            std::string ext = Lower(it->path().extension().string());
+            if (ext != ".okay" && ext != ".lua" && ext != ".cs" && ext != ".okayvs") continue;
+            std::ifstream f(it->path(), std::ios::binary);
+            if (!f) continue;
+            std::string line; int ln = 0;
+            while (std::getline(f, line) && hits.size() < 200) {
+                ++ln;
+                if (Lower(line).find(needle) == std::string::npos) continue;
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                std::size_t a = line.find_first_not_of(" \t");
+                hits.push_back({it->path().string(), ln,
+                                a == std::string::npos ? line : line.substr(a)});
+            }
+        }
+    }
+    ImGui::Separator();
+    if (!ran)
+        ImGui::TextDisabled("Type a term and press Enter. Searches .okay / .lua / .cs scripts under Assets.");
+    else if (hits.empty())
+        ImGui::TextDisabled("No matches for \"%s\".", query);
+    else
+        ImGui::TextDisabled("%d match%s%s", (int)hits.size(), hits.size() == 1 ? "" : "es",
+                            hits.size() >= 200 ? " (capped at 200)" : "");
+    ImGui::BeginChild("##fifres");
+    int idx = 0;
+    for (const Hit& h : hits) {
+        ImGui::PushID(idx++);
+        std::string fn = std::filesystem::path(h.path).filename().string();
+        char lbl[96]; std::snprintf(lbl, sizeof(lbl), "%s:%d", fn.c_str(), h.line);
+        if (ImGui::Selectable(lbl)) OpenScriptFileInEditorAt(h.path, h.line);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", h.path.c_str());
+        ImGui::SameLine(180.0f);
+        ImGui::TextDisabled("%.120s", h.preview.c_str());
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+// Compact "modified ago" stamp for a file: "now", "5m", "3h", "12d" ("" if the
+// time can't be read). Used by the Project list's Date column.
+static std::string AgoShort(const std::filesystem::path& p) {
+    std::error_code ec;
+    auto wt = std::filesystem::last_write_time(p, ec);
+    if (ec) return {};
+    auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+        std::filesystem::file_time_type::clock::now() - wt).count();
+    if (secs < 0) secs = 0;
+    if (secs < 60)    return "now";
+    if (secs < 3600)  return std::to_string(secs / 60) + "m";
+    if (secs < 86400) return std::to_string(secs / 3600) + "h";
+    return std::to_string(secs / 86400) + "d";
 }
 
 // A Unity-style asset reference slot for the inspector: NOT editable. Shows the
@@ -4369,10 +4742,23 @@ void DrawProject(EditorState& ed) {
             const std::string fp = g_favFolders[i];
             if (!fs::is_directory(fp, ec)) { g_favFolders.erase(g_favFolders.begin() + i); continue; }
             ImGui::PushID((int)i);
-            std::string nm = "\xe2\x98\x85 " + fs::path(fp).filename().string();  // star + name
+            // Leading space + a drawn 5-point star (the ★ glyph is tofu in the UI font).
+            std::string nm = "     " + fs::path(fp).filename().string();
             if (ImGui::Selectable(nm.c_str(), fs::path(dirBuf) == fs::path(fp))) {
                 std::strncpy(dirBuf, fp.c_str(), sizeof(dirBuf) - 1);
                 search[0] = '\0';
+            }
+            {
+                ImVec2 smn = ImGui::GetItemRectMin();
+                float scy = (smn.y + ImGui::GetItemRectMax().y) * 0.5f;
+                float R = ImGui::GetFontSize() * 0.30f;
+                ImVec2 pts[10];
+                for (int k2 = 0; k2 < 10; ++k2) {
+                    float ang = -1.5707963f + k2 * 0.62831853f;
+                    float rr = (k2 % 2 == 0) ? R : R * 0.45f;
+                    pts[k2] = ImVec2(smn.x + 4.0f + R + std::cos(ang) * rr, scy + std::sin(ang) * rr);
+                }
+                ImGui::GetWindowDrawList()->AddConcavePolyFilled(pts, 10, IM_COL32(255, 204, 64, 220));
             }
             AssetDropTarget(fs::path(fp));
             if (ImGui::BeginPopupContextItem("favctx")) {
@@ -4605,14 +4991,15 @@ void DrawProject(EditorState& ed) {
     float availW = ImGui::GetContentRegionAvail().x;
     int cols = (int)(availW / (cell + ImGui::GetStyle().ItemSpacing.x));
     if (cols < 1) cols = 1;
-    // List-view column geometry (Type + Size right-aligned), shared by the header
-    // row and each entry row so they line up.
-    const float kSizeCol = 66.0f, kTypeCol = 90.0f;
-    const float typeOff = availW - kSizeCol - kTypeCol;   // x from a row's left edge
-    const float sizeOff = availW - kSizeCol;
+    // List-view column geometry (Type + Size + Date right-aligned), shared by the
+    // header row and each entry row so they line up.
+    const float kSizeCol = 66.0f, kTypeCol = 90.0f, kDateCol = 52.0f;
+    const float typeOff = availW - kSizeCol - kTypeCol - kDateCol;   // x from a row's left edge
+    const float sizeOff = availW - kSizeCol - kDateCol;
+    const float dateOff = availW - kDateCol;
 
-    // Clickable column headers for the list view — click Name / Type / Size to sort
-    // by that column (a small "v" marks the active sort).
+    // Clickable column headers for the list view — click Name / Type / Size / Date
+    // to sort by that column (a small "v" marks the active sort).
     if (s_view == 1) {
         float hx0 = ImGui::GetCursorPosX();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -4623,6 +5010,8 @@ void DrawProject(EditorState& ed) {
         if (ImGui::SmallButton((std::string("Type") + arrow(1) + "##hType").c_str())) { s_sort = 1; SaveProjectViewPrefs(); }
         ImGui::SameLine(hx0 + sizeOff);
         if (ImGui::SmallButton((std::string("Size") + arrow(2) + "##hSize").c_str())) { s_sort = 2; SaveProjectViewPrefs(); }
+        ImGui::SameLine(hx0 + dateOff);
+        if (ImGui::SmallButton((std::string("Date") + arrow(3) + "##hDate").c_str())) { s_sort = 3; SaveProjectViewPrefs(); }
         ImGui::PopStyleColor(2);
         ImGui::Separator();
     }
@@ -4767,6 +5156,11 @@ void DrawProject(EditorState& ed) {
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
             SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
             if (!thumb && !isDir && ext == ".okayprefab") thumb = GetPrefabThumb(full);
+            if (!thumb && !isDir) {
+                if (const char* mk = ImportKindLabel(ext); mk && std::strcmp(mk, "model") == 0)
+                    thumb = GetModelThumb(full);
+            }
+            if (!thumb && !isDir && ext == ".okayscene") thumb = GetSceneThumb(full);
             ImVec4 matCol;
             bool isMat = !isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, matCol);
             if (thumb) {
@@ -4832,6 +5226,11 @@ void DrawProject(EditorState& ed) {
             // materials their albedo ball; everything else keeps its icon chip.
             SDL_Texture* rowThumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
             if (!rowThumb && !isDir && ext == ".okayprefab") rowThumb = GetPrefabThumb(full);
+            if (!rowThumb && !isDir) {
+                if (const char* mk = ImportKindLabel(ext); mk && std::strcmp(mk, "model") == 0)
+                    rowThumb = GetModelThumb(full);
+            }
+            if (!rowThumb && !isDir && ext == ".okayscene") rowThumb = GetSceneThumb(full);
             ImVec4 rowMat;
             if (rowThumb) dl->AddImage((ImTextureID)rowThumb, c0, c1);
             else if (!isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, rowMat))
@@ -4850,13 +5249,15 @@ void DrawProject(EditorState& ed) {
                               : z < 1024 * 1024 ? std::to_string(z / 1024) + " KB"
                               : std::to_string(z / (1024 * 1024)) + " MB";
             }
-            float sizeX = mn.x + sizeOff, typeX = mn.x + typeOff;
+            float sizeX = mn.x + sizeOff, typeX = mn.x + typeOff, dateX = mn.x + dateOff;
             // Clip the name so a long filename never runs into the Type column.
             dl->PushClipRect(ImVec2(c1.x + 7.0f, mn.y), ImVec2(typeX - 6.0f, mx.y), true);
             dl->AddText(ImVec2(c1.x + 7.0f, ty), tcol, name.c_str());
             dl->PopClipRect();
             if (typeX > c1.x + 40.0f) dl->AddText(ImVec2(typeX, ty), dcol, tn.c_str());
             if (!szs.empty())         dl->AddText(ImVec2(sizeX, ty), dcol, szs.c_str());
+            std::string ago = AgoShort(e.path());
+            if (!ago.empty())         dl->AddText(ImVec2(dateX, ty), dcol, ago.c_str());
         }
 
         if (assetContext(full, name, ext, isDir)) dbl = true;
@@ -4933,6 +5334,11 @@ void DrawProject(EditorState& ed) {
         const float pv = 68.0f;
         SDL_Texture* pthumb = (!selDir && sk.icon == AssetIcon::Image) ? GetThumb(selected) : nullptr;
         if (!pthumb && !selDir && sext == ".okayprefab") pthumb = GetPrefabThumb(selected);
+        if (!pthumb && !selDir) {
+            if (const char* mk = ImportKindLabel(sext); mk && std::strcmp(mk, "model") == 0)
+                pthumb = GetModelThumb(selected);
+        }
+        if (!pthumb && !selDir && sext == ".okayscene") pthumb = GetSceneThumb(selected);
         ImVec4 pmat;
         bool pIsMat = !selDir && sk.icon == AssetIcon::Material && GetMaterialSwatch(selected, pmat);
         ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + pv, p0.y + pv);
@@ -5114,11 +5520,29 @@ void DrawProject(EditorState& ed) {
 void DrawServices(EditorState& ed) {
     if (!ImGui::Begin("Services", &g_showServices)) { ImGui::End(); return; }
 
+    // Small drawn status dot + tinted text, used for live/simulated/offline states.
+    auto statusLine = [](const char* text, ImVec4 col) {
+        ImVec2 dp = ImGui::GetCursorScreenPos();
+        float dr = ImGui::GetFontSize() * 0.26f;
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(dp.x + dr, dp.y + ImGui::GetTextLineHeight() * 0.55f), dr,
+            ImGui::GetColorU32(col));
+        ImGui::Dummy(ImVec2(dr * 2.0f + 5.0f, 0));
+        ImGui::SameLine(0, 0);
+        ImGui::TextColored(col, "%s", text);
+    };
+    const ImVec4 kLive(0.45f, 0.85f, 0.52f, 1.0f), kSim(0.70f, 0.72f, 0.78f, 1.0f),
+                 kCli(0.55f, 0.72f, 0.98f, 1.0f);
+
     // ---- Steam ----
     if (ImGui::CollapsingHeader("Steam", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (auto* s = ed.steam()) {
-            ImGui::Text("Backend: %s%s", s->BackendName(),
-                        s->IsAvailable() ? " (live)" : " (simulation)");
+            char bk[96];
+            std::snprintf(bk, sizeof(bk), "%s %s", s->BackendName(),
+                          s->IsAvailable() ? "(live)" : "(simulation)");
+            ImGui::TextDisabled("Backend:");
+            ImGui::SameLine();
+            statusLine(bk, s->IsAvailable() ? kLive : kSim);
             ImGui::Text("User: %s    Friends: %d", s->UserName().c_str(), s->FriendCount());
 
             SectionHeader("Achievements");
@@ -5130,9 +5554,12 @@ void DrawServices(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Clear")) s->ClearAchievement(ach);
             const char* known[] = {"FIRST_OBJECT", "FIRST_SAVE", "HIT_PLAY"};
-            for (const char* a : known)
-                ImGui::BulletText("%s: %s", a,
-                    s->IsAchievementUnlocked(a) ? "unlocked" : "locked");
+            for (const char* a : known) {
+                bool unlocked = s->IsAchievementUnlocked(a);
+                ImGui::Bullet(); ImGui::SameLine();
+                ImGui::TextUnformatted(a); ImGui::SameLine();
+                ImGui::TextColored(unlocked ? kLive : kSim, unlocked ? "unlocked" : "locked");
+            }
 
             SectionHeader("Stats");
             static char stat[64] = "kills";
@@ -5219,8 +5646,11 @@ void DrawServices(EditorState& ed) {
         if (ImGui::Button("Disconnect")) ed.StopNetwork();
         if (auto* n = ed.net()) {
             const char* mode = n->IsServer() ? "Server" : n->IsClient() ? "Client" : "Offline";
-            ImGui::Text("Mode: %s   Peers: %d   LocalId: %u",
-                        mode, (int)n->PeerCount(), n->LocalId());
+            ImGui::TextDisabled("Mode:");
+            ImGui::SameLine();
+            statusLine(mode, n->IsServer() ? kLive : n->IsClient() ? kCli : kSim);
+            ImGui::SameLine();
+            ImGui::Text("   Peers: %d   LocalId: %u", (int)n->PeerCount(), n->LocalId());
             if (n->IsClient()) ImGui::SameLine(), ImGui::Text("  Ping: %.0f ms", n->RttMs());
             // Chat: broadcast a line to every peer; show what arrives.
             static char chat[128] = "";
@@ -5428,14 +5858,45 @@ void DrawStats(EditorState& ed) {
     static float hist[120] = {0};
     static int hi = 0;
     hist[hi] = io.Framerate; hi = (hi + 1) % 120;
+    // Window stats + an auto-scaled plot (the old fixed 0-240 scale flattened
+    // everything under 100 FPS into an unreadable ribbon).
+    float fmin = 1e9f, fmax = 0.0f, fsum = 0.0f; int fcnt = 0;
+    for (float v : hist) if (v > 0.0f) { fmin = std::min(fmin, v); fmax = std::max(fmax, v); fsum += v; ++fcnt; }
+    float fscale = fmax * 1.2f < 75.0f ? 75.0f : fmax * 1.2f;
     ImGui::Text("FPS: %.0f  (%.2f ms)", io.Framerate, io.Framerate > 0 ? 1000.0f / io.Framerate : 0.0f);
-    ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, 240.0f, ImVec2(-1, 60));
+    ImGui::SameLine();
+    ImGui::TextDisabled("avg %.0f   min %.0f", fcnt ? fsum / fcnt : 0.0f, fcnt ? fmin : 0.0f);
+    ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, fscale, ImVec2(-1, 60));
+    {   // 60 FPS guide line over the plot
+        ImVec2 gmn = ImGui::GetItemRectMin(), gmx = ImGui::GetItemRectMax();
+        if (fscale > 60.0f) {
+            float gy = gmx.y - (60.0f / fscale) * (gmx.y - gmn.y);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(gmn.x, gy), ImVec2(gmx.x, gy),
+                                                IM_COL32(110, 220, 130, 150), 1.0f);
+            ImGui::GetWindowDrawList()->AddText(ImVec2(gmn.x + 4.0f, gy - ImGui::GetTextLineHeight()),
+                                                IM_COL32(110, 220, 130, 170), "60");
+        }
+    }
     ImGui::Separator();
     ImGui::Text("Mode: %s", ed.isPlaying() ? "PLAYING" : "EDIT");
+    // Scene census (active triangles/particles counted live).
+    int stTris = 0, stParts = 0;
+    for (const auto& up : ed.scene().Objects()) {
+        if (!up || !up->active) continue;
+        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->mesh.TriangleCount();
+        if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
+    }
     ImGui::Text("GameObjects: %d", (int)ed.scene().Objects().size());
-    ImGui::Text("Sprites: %d", (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size());
-    ImGui::Text("Meshes: %d", (int)ed.scene().FindObjectsOfType<MeshRenderer>().size());
-    ImGui::Text("Colliders: %d", (int)ed.scene().FindObjectsOfType<Collider2D>().size());
+    ImGui::Text("Sprites: %d    Meshes: %d    Triangles: %d",
+                (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size(),
+                (int)ed.scene().FindObjectsOfType<MeshRenderer>().size(), stTris);
+    ImGui::Text("Colliders: %d (2D)  %d (3D)    Lights: %d",
+                (int)ed.scene().FindObjectsOfType<Collider2D>().size(),
+                (int)ed.scene().FindObjectsOfType<Collider3D>().size(),
+                (int)ed.scene().FindObjectsOfType<Light>().size());
+    ImGui::Text("Scripts: %d    NPCs: %d    Particles alive: %d",
+                (int)ed.scene().FindObjectsOfType<ScriptComponent>().size(),
+                (int)ed.scene().FindObjectsOfType<NPCController>().size(), stParts);
 
     // Default UI font for this scene: every button/label/widget without its own
     // font uses it (saved with the scene, so the built game matches). Drag a .ttf
@@ -5469,15 +5930,41 @@ void DrawStats(EditorState& ed) {
             {"Alien",      {0.10f,0.30f,0.18f}, {0.45f,0.85f,0.35f}, {0.12f,0.22f,0.14f}},
             {"Mars",       {0.45f,0.26f,0.18f}, {0.85f,0.55f,0.38f}, {0.40f,0.22f,0.15f}},
         };
-        if (ImGui::BeginCombo("Sky Preset", "Choose a preset...")) {
-            for (const SkyPreset& p : kSky)
-                if (ImGui::Selectable(p.name)) {
+        // The combo remembers the last-applied preset (and shows a color swatch
+        // per row) — hand-editing a color below reverts the label to "Custom".
+        static int s_skyPick = -1;
+        static void* s_skyScene = nullptr;
+        if (s_skyScene != (void*)&ed.scene()) { s_skyScene = (void*)&ed.scene(); s_skyPick = -1; }
+        if (s_skyPick >= 0) {   // detect manual edits since the pick
+            const SkyPreset& p = kSky[s_skyPick];
+            if (std::fabs(rs.skyTop.r - p.top[0]) > 1e-3f || std::fabs(rs.skyTop.g - p.top[1]) > 1e-3f ||
+                std::fabs(rs.skyHorizon.r - p.hz[0]) > 1e-3f || std::fabs(rs.skyBottom.r - p.bot[0]) > 1e-3f)
+                s_skyPick = -1;
+        }
+        if (ImGui::BeginCombo("Sky Preset", s_skyPick >= 0 ? kSky[s_skyPick].name : "Custom")) {
+            for (int pi = 0; pi < (int)(sizeof(kSky) / sizeof(kSky[0])); ++pi) {
+                const SkyPreset& p = kSky[pi];
+                // Tiny three-band swatch so presets read at a glance.
+                ImVec2 sp2 = ImGui::GetCursorScreenPos();
+                ImDrawList* sdl2 = ImGui::GetWindowDrawList();
+                float sw = 26.0f, sh = ImGui::GetTextLineHeight();
+                sdl2->AddRectFilled(sp2, ImVec2(sp2.x + sw, sp2.y + sh * 0.4f),
+                                    IM_COL32((int)(p.top[0]*255), (int)(p.top[1]*255), (int)(p.top[2]*255), 255));
+                sdl2->AddRectFilled(ImVec2(sp2.x, sp2.y + sh * 0.4f), ImVec2(sp2.x + sw, sp2.y + sh * 0.7f),
+                                    IM_COL32((int)(p.hz[0]*255), (int)(p.hz[1]*255), (int)(p.hz[2]*255), 255));
+                sdl2->AddRectFilled(ImVec2(sp2.x, sp2.y + sh * 0.7f), ImVec2(sp2.x + sw, sp2.y + sh),
+                                    IM_COL32((int)(p.bot[0]*255), (int)(p.bot[1]*255), (int)(p.bot[2]*255), 255));
+                ImGui::Dummy(ImVec2(sw + 6.0f, sh));
+                ImGui::SameLine();
+                if (ImGui::Selectable(p.name, s_skyPick == pi)) {
                     rs.skybox   = true;
                     rs.skyTop     = {p.top[0], p.top[1], p.top[2], 1};
                     rs.skyHorizon = {p.hz[0],  p.hz[1],  p.hz[2],  1};
                     rs.skyBottom  = {p.bot[0], p.bot[1], p.bot[2], 1};
+                    s_skyPick = pi;
                     ed.dirty = true;
                 }
+            }
             ImGui::EndCombo();
         }
         float t[3] = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
@@ -5728,7 +6215,14 @@ void DrawScenes(EditorState& ed) {
         ImGui::PushID(i);
         ImGui::Text("%d", i);                 // build index
         ImGui::SameLine();
-        if (ImGui::Selectable(name.c_str(), isCurrent, ImGuiSelectableFlags_AllowDoubleClick)) {
+        // Rendered scene preview (same cached snapshot the Project browser uses).
+        const float th = 34.0f;
+        if (SDL_Texture* stx = GetSceneThumb(path)) {
+            ImGui::Image((ImTextureID)stx, ImVec2(th, th));
+            ImGui::SameLine();
+        }
+        if (ImGui::Selectable(name.c_str(), isCurrent,
+                              ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, th))) {
             if (ImGui::IsMouseDoubleClicked(0)) {
                 std::string err;
                 if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
@@ -5804,6 +6298,15 @@ void DrawScriptDocs() {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.90f, 0.74f, 1.0f));
         ImGui::Bullet(); ImGui::SameLine(); ImGui::TextUnformatted(sig);
         ImGui::PopStyleColor();
+        // Click a signature to copy it, ready to paste into a script.
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("Click to copy");
+        }
+        if (ImGui::IsItemClicked()) {
+            ImGui::SetClipboardText(sig);
+            ConsoleLog(std::string("Copied: ") + sig);
+        }
         if (desc && desc[0]) {
             ImGui::Indent(24.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.66f, 0.69f, 0.75f, 1.0f));
@@ -7768,8 +8271,14 @@ void DrawScriptEditor(EditorState& ed) {
         // F3 / Shift+F3 work any time (even with the bar closed).
         bool sfWinFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         bool sfFocusField = false;
-        if (sfWinFocused && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+        if (sfWinFocused && ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift &&
+            ImGui::IsKeyPressed(ImGuiKey_F, false)) {
             s_showFind = true; sfFocusField = true;
+        }
+        // Ctrl+Shift+F: search across every project script (Find in Files).
+        if (sfWinFocused && ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift &&
+            ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+            g_showFindInFiles = true; g_fifFocus = true;
         }
         // All case-insensitive match positions (shared by jump, the n/m indicator,
         // and the highlight pass below).
@@ -7872,6 +8381,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); SetCodeBuffer(sc, s); std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
+                {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
                 {"Toggle Comment Line", [&]{ caret.toggleComment = true; }},
                 {"Open Scripting Docs", [&]{ g_showScriptDocs = true; }},
                 {"Open in External IDE", [&]{ std::string p = filePath(); extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p); }},
@@ -8091,6 +8601,57 @@ void DrawScriptEditor(EditorState& ed) {
             {
                 float rx = textX + 120.0f * chW;
                 if (rx < teMax.x) fdl->AddLine(ImVec2(rx, teMin.y), ImVec2(rx, teMax.y), IM_COL32(255, 255, 255, 12));
+            }
+            // Changed-line diff bars (VS Code style): compare the buffer to the
+            // file on disk and bar edited lines amber / added lines green in the
+            // gutter. The baseline reloads whenever the file's mtime changes, so
+            // saving (or an external edit) clears the bars automatically.
+            if (sc && !sc->Path().empty()) {
+                static std::string s_diffPath;
+                static std::filesystem::file_time_type s_diffMTime{};
+                static std::vector<std::uint64_t> s_diskLines;   // per-line FNV hashes
+                static bool s_haveBase = false;
+                std::error_code dec;
+                auto dmt = std::filesystem::last_write_time(sc->Path(), dec);
+                if (dec) {
+                    s_haveBase = false; s_diffPath = sc->Path();
+                } else if (sc->Path() != s_diffPath || dmt != s_diffMTime) {
+                    s_diffPath = sc->Path(); s_diffMTime = dmt;
+                    s_diskLines.clear(); s_haveBase = false;
+                    std::ifstream df(sc->Path(), std::ios::binary);
+                    if (df) {
+                        std::string dline;
+                        while (std::getline(df, dline)) {
+                            if (!dline.empty() && dline.back() == '\r') dline.pop_back();
+                            std::uint64_t h = 1469598103934665603ull;
+                            for (char c2 : dline) { h ^= (unsigned char)c2; h *= 1099511628211ull; }
+                            s_diskLines.push_back(h);
+                        }
+                        s_haveBase = true;
+                    }
+                }
+                if (s_haveBase) {
+                    const char* t = buf.data();
+                    int ln = 0; const char* ls = t;
+                    auto bar = [&](int idx, bool added) {
+                        float y = corg.y + idx * rowH;
+                        if (y + rowH < teMin.y || y > teMax.y) return;
+                        fdl->AddRectFilled(ImVec2(textX - 6.0f, y + 1.0f),
+                                           ImVec2(textX - 3.0f, y + rowH - 1.0f),
+                                           added ? IM_COL32(120, 200, 120, 220)
+                                                 : IM_COL32(230, 190, 70, 220), 1.0f);
+                    };
+                    for (const char* p = t;; ++p) {
+                        if (*p == '\n' || *p == '\0') {
+                            std::uint64_t h = 1469598103934665603ull;
+                            for (const char* q = ls; q < p; ++q) { h ^= (unsigned char)*q; h *= 1099511628211ull; }
+                            if (ln >= (int)s_diskLines.size()) bar(ln, true);
+                            else if (s_diskLines[ln] != h) bar(ln, false);
+                            ++ln; ls = p + 1;
+                            if (*p == '\0') break;
+                        }
+                    }
+                }
             }
             // Highlight every find match while the bar is open (translucent tint over
             // the glyphs; the current selection is drawn by the widget itself).
@@ -8911,6 +9472,12 @@ void HandleShortcuts(EditorState& ed) {
     }
     // F focuses (frames) the selection in the view, like Unity.
     if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) FocusSelected(ed);
+    // Shift+I toggles Isolate mode on the selection (Unity's isolation view).
+    if (!ctrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_I, false)) {
+        g_isolate = g_isolate ? nullptr : ed.selected();
+        ConsoleLog(g_isolate ? "Isolating '" + g_isolate->name + "' (Shift+I to exit)"
+                             : "Isolation off");
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         ed.DeleteSelected(); ConsoleLog("Deleted selection");
     }
@@ -8943,8 +9510,18 @@ void DrawFileDialogs(EditorState& ed) {
         if (!okay::AssimpAvailable())
             ImGui::TextDisabled("(.fbx/.dae/... need a build with -DOKAY_USE_ASSIMP=ON.)");
         ImGui::TextDisabled("Tip: export from Blender / Mixamo / Sketchfab as glTF or OBJ.");
-        ImGui::InputText("Path##obj", g_objPathBuf, sizeof(g_objPathBuf));
-        if (ImGui::Button("Import", ImVec2(120, 0))) {
+        ImGui::SetNextItemWidth(320);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool objGo = ImGui::InputText("##objpath", g_objPathBuf, sizeof(g_objPathBuf),
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine(0, 4);
+        if (ImGui::Button("...##objbrowse")) {
+            const char* filt[6] = {"*.gltf", "*.glb", "*.obj", "*.fbx", "*.dae", "*.stl"};
+            if (const char* p = tinyfd_openFileDialog("Import model", "", 6, filt,
+                                                      "3D model (glTF/GLB/OBJ/FBX...)", 0))
+                std::snprintf(g_objPathBuf, sizeof(g_objPathBuf), "%s", p);
+        }
+        if (ImGui::Button("Import", ImVec2(120, 0)) || objGo) {
             // Scene import: a glTF brings in its node hierarchy + meshes + animation;
             // OBJ/Assimp come in as a single mesh object.
             bool okl = false;
@@ -8962,8 +9539,17 @@ void DrawFileDialogs(EditorState& ed) {
 
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Open Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("Path", g_pathBuf, sizeof(g_pathBuf));
-        if (ImGui::Button("Open", ImVec2(120, 0))) {
+        ImGui::SetNextItemWidth(320);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool openGo = ImGui::InputText("##openpath", g_pathBuf, sizeof(g_pathBuf),
+                                       ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine(0, 4);
+        if (ImGui::Button("...##openbrowse")) {
+            const char* filt[1] = {"*.okayscene"};
+            if (const char* p = tinyfd_openFileDialog("Open scene", "", 1, filt, "OkaySpace scene", 0))
+                std::snprintf(g_pathBuf, sizeof(g_pathBuf), "%s", p);
+        }
+        if (ImGui::Button("Open", ImVec2(120, 0)) || openGo) {
             std::string err;
             if (ed.Load(g_pathBuf, &err)) { ConsoleLog("Opened " + std::string(g_pathBuf)); AddRecent(g_pathBuf); }
             else ConsoleLog("Open failed: " + err);
@@ -8976,8 +9562,18 @@ void DrawFileDialogs(EditorState& ed) {
 
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Save Scene As", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("Path", g_pathBuf, sizeof(g_pathBuf));
-        if (ImGui::Button("Save", ImVec2(120, 0))) {
+        ImGui::SetNextItemWidth(320);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool saveGo = ImGui::InputText("##savepath", g_pathBuf, sizeof(g_pathBuf),
+                                       ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine(0, 4);
+        if (ImGui::Button("...##savebrowse")) {
+            const char* filt[1] = {"*.okayscene"};
+            const char* def = g_pathBuf[0] ? g_pathBuf : "scene.okayscene";
+            if (const char* p = tinyfd_saveFileDialog("Save scene as", def, 1, filt, "OkaySpace scene"))
+                std::snprintf(g_pathBuf, sizeof(g_pathBuf), "%s", p);
+        }
+        if (ImGui::Button("Save", ImVec2(120, 0)) || saveGo) {
             if (ed.Save(g_pathBuf)) { ConsoleLog("Saved " + std::string(g_pathBuf)); AddRecent(g_pathBuf); ed.Achievement("FIRST_SAVE"); }
             else ConsoleLog("Save failed");
             ImGui::CloseCurrentPopup();
@@ -8990,8 +9586,17 @@ void DrawFileDialogs(EditorState& ed) {
     if (g_showInstPrefab) { ImGui::OpenPopup("Instantiate Prefab"); g_showInstPrefab = false; }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Instantiate Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("Prefab", g_prefabBuf, sizeof(g_prefabBuf));
-        if (ImGui::Button("Instantiate", ImVec2(120, 0))) {
+        ImGui::SetNextItemWidth(320);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool prefabGo = ImGui::InputText("##prefabpath", g_prefabBuf, sizeof(g_prefabBuf),
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine(0, 4);
+        if (ImGui::Button("...##prefabbrowse")) {
+            const char* filt[1] = {"*.okayprefab"};
+            if (const char* p = tinyfd_openFileDialog("Instantiate prefab", "", 1, filt, "OkaySpace prefab", 0))
+                std::snprintf(g_prefabBuf, sizeof(g_prefabBuf), "%s", p);
+        }
+        if (ImGui::Button("Instantiate", ImVec2(120, 0)) || prefabGo) {
             ed.PushUndo();
             std::string err;
             GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), g_prefabBuf, &err);
@@ -9062,8 +9667,22 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(160); ImGui::InputText("Version", g_build.version, sizeof(g_build.version));
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Identifier", g_build.bundleId, sizeof(g_build.bundleId));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Application identifier (Unity's bundle id), e.g. com.studio.game.");
-                ImGui::SetNextItemWidth(420); ImGui::InputText("Output folder", g_buildDirBuf, sizeof(g_buildDirBuf));
-                ImGui::SetNextItemWidth(420); ImGui::InputText("Icon (PNG)", g_build.icon, sizeof(g_build.icon));
+                ImGui::SetNextItemWidth(388); ImGui::InputText("##bdir", g_buildDirBuf, sizeof(g_buildDirBuf));
+                ImGui::SameLine(0, 4);
+                if (ImGui::Button("...##bdir")) {   // native folder picker
+                    if (const char* p = tinyfd_selectFolderDialog("Choose the build output folder",
+                                                                  g_buildDirBuf[0] ? g_buildDirBuf : nullptr))
+                        std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", p);
+                }
+                ImGui::SameLine(0, 6); ImGui::TextUnformatted("Output folder");
+                const char* pngFilt[] = {"*.png"};
+                ImGui::SetNextItemWidth(388); ImGui::InputText("##bicon", g_build.icon, sizeof(g_build.icon));
+                ImGui::SameLine(0, 4);
+                if (ImGui::Button("...##bicon")) {
+                    if (const char* p = tinyfd_openFileDialog("Choose the game icon", "", 1, pngFilt, "PNG image", 0))
+                        std::snprintf(g_build.icon, sizeof(g_build.icon), "%s", p);
+                }
+                ImGui::SameLine(0, 6); ImGui::TextUnformatted("Icon (PNG)");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Window/taskbar icon (Unity's Default Icon). A PNG path; bundled into the build.");
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 ImGui::Checkbox("Development build", &g_build.developmentBuild);
@@ -9072,7 +9691,13 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Save to user folder", &g_build.saveToUserDir);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write game saves/prefs to a per-user app folder (Unity's persistentDataPath),\nfrom Company + Product name. Saving then works even from a read-only install\n(e.g. Program Files), and two games never overwrite each other.\nOff = save beside the .exe (old behaviour).");
                 ImGui::Spacing(); SectionHeader("Splash screen");
-                ImGui::SetNextItemWidth(420); ImGui::InputText("Splash image (PNG)", g_build.splash, sizeof(g_build.splash));
+                ImGui::SetNextItemWidth(388); ImGui::InputText("##bsplash", g_build.splash, sizeof(g_build.splash));
+                ImGui::SameLine(0, 4);
+                if (ImGui::Button("...##bsplash")) {
+                    if (const char* p = tinyfd_openFileDialog("Choose the splash image", "", 1, pngFilt, "PNG image", 0))
+                        std::snprintf(g_build.splash, sizeof(g_build.splash), "%s", p);
+                }
+                ImGui::SameLine(0, 6); ImGui::TextUnformatted("Splash image (PNG)");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A logo shown at startup (fades in/out, skippable). Leave blank for none. Bundled into the build.");
                 if (g_build.splash[0]) {
                     ImGui::SetNextItemWidth(160); ImGui::DragFloat("Duration (s)", &g_build.splashTime, 0.1f, 0.3f, 15.0f);
@@ -9197,9 +9822,27 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::Combo("Platform##build", &g_buildPlatform, plats, 3);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Desktop builds a runnable .exe here.\nWeb/Android export your game data + a build script/README;\nfinish the build with Emscripten (web) or Android Studio+NDK (mobile).");
+        // One-line summary of what's about to be produced, so a wrong setting
+        // is caught before the build instead of after it.
+        {
+            const char* wm2 = g_build.fullscreen ? "fullscreen" : (g_build.borderless ? "borderless" : "windowed");
+            ImGui::TextDisabled("%s v%s  \xC2\xB7  %dx%d %s  \xC2\xB7  %s%s%s  \xC2\xB7  %s",
+                g_buildNameBuf[0] ? g_buildNameBuf : "(unnamed)",
+                g_build.version[0] ? g_build.version : "1.0",
+                g_build.width, g_build.height, wm2,
+                g_build.gpuRenderer ? "GPU" : "software",
+                g_build.encryptData ? "  \xC2\xB7  encrypted" : "",
+                g_build.developmentBuild ? "  \xC2\xB7  DEV" : "",
+                g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
+        }
         ImGui::Spacing();
         const char* buildLabel = g_buildPlatform == 0 ? "Build" : "Export";
-        if (ImGui::Button(buildLabel, ImVec2(120, 0))) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        bool doBuild = ImGui::Button(buildLabel, ImVec2(120, 0));
+        ImGui::PopStyleColor(3);
+        if (doBuild) {
           if (g_buildPlatform != 0) {
             builder::Options wo;
             wo.company = g_build.company; wo.version = g_build.version;
@@ -9299,6 +9942,9 @@ void DrawFileDialogs(EditorState& ed) {
         }
         ImGui::Separator();
         if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::SameLine();
+        if (ImGui::Button("Show in Explorer", ImVec2(150, 0)) && g_buildDirBuf[0])
+            extide::RevealInFiles(g_buildDirBuf);
         ImGui::EndPopup();
     }
 }
@@ -9385,6 +10031,38 @@ void DrawNewProjectPopup(EditorState& ed) {
                 if (selected) { ImGui::PushStyleColor(ImGuiCol_Border, ac); ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f); }
                 std::string label = std::string(tpls[i].title) + "\n";
                 if (ImGui::Button((label + tpls[i].blurb + "##c").c_str(), ImVec2(CARD_W, CARD_H))) sel = i;
+                if (ImGui::IsItemHovered() && !selected) ImGui::SetTooltip("%s", tpls[i].desc);
+                {   // small category glyph in the card's top-left corner
+                    ImVec2 mn = ImGui::GetItemRectMin();
+                    ImDrawList* gdl = ImGui::GetWindowDrawList();
+                    ImU32 gc = ImGui::GetColorU32(ImVec4(ac.x, ac.y, ac.z, 0.95f));
+                    float gx = mn.x + 9.0f, gy = mn.y + 9.0f, gr = 4.5f;
+                    switch (cat) {
+                        case C_3D: {   // iso cube
+                            gdl->AddRect(ImVec2(gx - gr, gy - gr * 0.4f), ImVec2(gx + gr * 0.4f, gy + gr), gc, 0, 0, 1.4f);
+                            gdl->AddLine(ImVec2(gx - gr, gy - gr * 0.4f), ImVec2(gx - gr * 0.4f, gy - gr), gc, 1.4f);
+                            gdl->AddLine(ImVec2(gx - gr * 0.4f, gy - gr), ImVec2(gx + gr, gy - gr), gc, 1.4f);
+                            gdl->AddLine(ImVec2(gx + gr, gy - gr), ImVec2(gx + gr, gy + gr * 0.4f), gc, 1.4f);
+                            gdl->AddLine(ImVec2(gx + gr, gy + gr * 0.4f), ImVec2(gx + gr * 0.4f, gy + gr), gc, 1.4f);
+                            break;
+                        }
+                        case C_2D:   // flat square
+                            gdl->AddRect(ImVec2(gx - gr, gy - gr), ImVec2(gx + gr, gy + gr), gc, 1.5f, 0, 1.6f);
+                            break;
+                        case C_GAME:   // gamepad: pill + two "buttons"
+                            gdl->AddRectFilled(ImVec2(gx - gr, gy - gr * 0.55f), ImVec2(gx + gr, gy + gr * 0.55f), gc, gr * 0.55f);
+                            gdl->AddCircleFilled(ImVec2(gx - gr * 0.45f, gy), gr * 0.22f, IM_COL32(20, 20, 24, 255), 8);
+                            gdl->AddCircleFilled(ImVec2(gx + gr * 0.45f, gy), gr * 0.22f, IM_COL32(20, 20, 24, 255), 8);
+                            break;
+                        case C_UI:   // window: frame + title bar
+                            gdl->AddRect(ImVec2(gx - gr, gy - gr), ImVec2(gx + gr, gy + gr), gc, 1.5f, 0, 1.4f);
+                            gdl->AddLine(ImVec2(gx - gr, gy - gr * 0.35f), ImVec2(gx + gr, gy - gr * 0.35f), gc, 1.4f);
+                            break;
+                        default:   // blank canvas: empty circle
+                            gdl->AddCircle(ImVec2(gx, gy), gr * 0.8f, gc, 12, 1.5f);
+                            break;
+                    }
+                }
                 if (selected) { ImGui::PopStyleColor(); ImGui::PopStyleVar(); }
                 ImGui::PopStyleColor(3);
                 ImGui::PopID();
@@ -9404,7 +10082,14 @@ void DrawNewProjectPopup(EditorState& ed) {
         // ---- Name / Location ----
         ImGui::SetNextItemWidth(300); ImGui::InputText("Name", nameBuf, sizeof(nameBuf));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(-1); ImGui::InputText("Location", locBuf, sizeof(locBuf));
+        ImGui::SetNextItemWidth(-96); ImGui::InputText("##nploc", locBuf, sizeof(locBuf));
+        ImGui::SameLine(0, 4);
+        if (ImGui::Button("...##nploc")) {   // native folder picker
+            if (const char* p = tinyfd_selectFolderDialog("Choose where the project folder is created",
+                                                          locBuf[0] ? locBuf : nullptr))
+                std::snprintf(locBuf, sizeof(locBuf), "%s", p);
+        }
+        ImGui::SameLine(0, 6); ImGui::TextUnformatted("Location");
         ImGui::TextDisabled("Creates <Location>/<Name>/ with an Assets/ folder and the starting scene.");
         ImGui::Spacing();
 
@@ -9488,17 +10173,55 @@ void DrawAboutPopup() {
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("About OkaySpace", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.34f, 0.66f, 1.0f, 1.0f));
-        ImGui::TextUnformatted("OkaySpace Game Engine");
-        ImGui::PopStyleColor();
-        ImGui::Text("Version %s", OKAY_ENGINE_VERSION);
+        // Logo mark: accent isometric cube, drawn (no image asset needed).
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 lp = ImGui::GetCursorScreenPos();
+        const float S = 46.0f;
+        ImVec2 ctr(lp.x + S * 0.5f, lp.y + S * 0.5f);
+        const ImVec4 ac(0.34f, 0.66f, 1.0f, 1.0f);
+        float hw = S * 0.42f, hh = S * 0.24f, vh = S * 0.34f;
+        ImVec2 top(ctr.x, ctr.y - hh - vh * 0.5f), left(ctr.x - hw, ctr.y - vh * 0.5f),
+               right(ctr.x + hw, ctr.y - vh * 0.5f), mid(ctr.x, ctr.y + hh - vh * 0.5f);
+        ImVec2 lb(left.x, left.y + vh), rb(right.x, right.y + vh), mb(mid.x, mid.y + vh);
+        dl->AddQuadFilled(top, right, mid, left, ImGui::GetColorU32(ImVec4(ac.x, ac.y, ac.z, 0.95f)));
+        dl->AddQuadFilled(left, mid, mb, lb, ImGui::GetColorU32(ImVec4(ac.x * 0.55f, ac.y * 0.55f, ac.z * 0.55f, 1.0f)));
+        dl->AddQuadFilled(mid, right, rb, mb, ImGui::GetColorU32(ImVec4(ac.x * 0.75f, ac.y * 0.75f, ac.z * 0.75f, 1.0f)));
+        ImGui::Dummy(ImVec2(S, S));
+        ImGui::SameLine(0, 14);
+        ImGui::BeginGroup();
+        {
+            ImFont* bf = g_headingFont ? g_headingFont : ImGui::GetFont();
+            float bsz = ImGui::GetFontSize() * 1.45f;
+            ImVec2 tp = ImGui::GetCursorScreenPos();
+            dl->AddText(bf, bsz, ImVec2(tp.x, tp.y + 2.0f),
+                        ImGui::GetColorU32(ImVec4(0.93f, 0.95f, 0.99f, 1.0f)), "OkaySpace");
+            ImGui::Dummy(ImVec2(0, bsz + 4.0f));
+        }
+        ImGui::TextDisabled("Game Engine  ·  v%s", OKAY_ENGINE_VERSION);
+        ImGui::EndGroup();
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
         ImGui::TextWrapped("A Unity-inspired C++ game engine. Build 2D/3D scenes, "
                            "script them, and export a standalone game with File > Build Game.");
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
-        ImGui::TextDisabled("github.com/kingimann/OkaySpaceGameEngine");
+        ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s  ·  Assimp %s",
+                            SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
+                            okay::AssimpAvailable() ? "on" : "off");
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::SameLine();
+        if (ImGui::Button("GitHub", ImVec2(110, 0)))
+            extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine");
+        ImGui::SameLine();
+        if (ImGui::Button("Copy version info", ImVec2(150, 0))) {
+            char vb[128];
+            std::snprintf(vb, sizeof(vb), "OkaySpace v%s (SDL %d.%d.%d, ImGui %s)",
+                          OKAY_ENGINE_VERSION, SDL_MAJOR_VERSION, SDL_MINOR_VERSION,
+                          SDL_PATCHLEVEL, IMGUI_VERSION);
+            ImGui::SetClipboardText(vb);
+        }
         ImGui::EndPopup();
     }
 }
@@ -9608,6 +10331,63 @@ static const char* ObjectKind(GameObject* go) {
     if (go->GetComponent<SpriteRenderer>()) return "[Spr] ";
     if (go->GetComponent<AudioSource>())    return "[Snd] ";
     return "";
+}
+
+// Small drawn type icon for a Hierarchy row (replaces the old "[Cam]"-style
+// text prefixes): camera, light, cube, text, particles, tilemap, sprite, audio.
+static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList* dl) {
+    ImVec2 c(pos.x + sz * 0.5f, pos.y + sz * 0.55f);
+    float r = sz * 0.36f;
+    auto col = [](int cr, int cg, int cb) { return IM_COL32(cr, cg, cb, 235); };
+    if (go->GetComponent<Camera>()) {
+        ImU32 ic = col(120, 170, 250);
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.7f), ImVec2(c.x + r * 0.45f, c.y + r * 0.7f), ic, 1.5f, 0, 1.6f);
+        dl->AddTriangleFilled(ImVec2(c.x + r * 0.5f, c.y), ImVec2(c.x + r, c.y - r * 0.55f),
+                              ImVec2(c.x + r, c.y + r * 0.55f), ic);
+    } else if (go->GetComponent<Light>()) {
+        ImU32 ic = col(250, 215, 120);
+        dl->AddCircleFilled(c, r * 0.5f, ic, 10);
+        for (int k = 0; k < 8; ++k) {
+            float a = (float)k * 0.785398f;
+            dl->AddLine(ImVec2(c.x + std::cos(a) * r * 0.72f, c.y + std::sin(a) * r * 0.72f),
+                        ImVec2(c.x + std::cos(a) * r * 1.05f, c.y + std::sin(a) * r * 1.05f), ic, 1.4f);
+        }
+    } else if (go->GetComponent<MeshRenderer>()) {
+        ImU32 ic = col(120, 170, 250);   // little isometric cube
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.45f), ImVec2(c.x + r * 0.45f, c.y + r), ic, 0, 0, 1.5f);
+        dl->AddLine(ImVec2(c.x - r, c.y - r * 0.45f), ImVec2(c.x - r * 0.45f, c.y - r), ic, 1.5f);
+        dl->AddLine(ImVec2(c.x - r * 0.45f, c.y - r), ImVec2(c.x + r, c.y - r), ic, 1.5f);
+        dl->AddLine(ImVec2(c.x + r, c.y - r), ImVec2(c.x + r, c.y + r * 0.45f), ic, 1.5f);
+        dl->AddLine(ImVec2(c.x + r, c.y + r * 0.45f), ImVec2(c.x + r * 0.45f, c.y + r), ic, 1.5f);
+        dl->AddLine(ImVec2(c.x + r * 0.45f, c.y - r * 0.45f), ImVec2(c.x + r, c.y - r), ic, 1.2f);
+    } else if (go->GetComponent<TextRenderer>()) {
+        ImU32 ic = col(190, 160, 250);
+        dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y - r), ic, 1.8f);
+        dl->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), ic, 1.8f);
+    } else if (go->GetComponent<ParticleSystem>()) {
+        ImU32 ic = col(250, 170, 110);
+        dl->AddCircleFilled(ImVec2(c.x - r * 0.5f, c.y + r * 0.45f), r * 0.30f, ic, 8);
+        dl->AddCircleFilled(ImVec2(c.x + r * 0.45f, c.y - r * 0.05f), r * 0.24f, ic, 8);
+        dl->AddCircleFilled(ImVec2(c.x - r * 0.05f, c.y - r * 0.6f), r * 0.18f, ic, 8);
+    } else if (go->GetComponent<Tilemap>()) {
+        ImU32 ic = col(110, 210, 210);
+        dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), ic, 0, 0, 1.4f);
+        dl->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), ic, 1.2f);
+        dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), ic, 1.2f);
+    } else if (go->GetComponent<SpriteRenderer>()) {
+        ImU32 ic = col(130, 220, 150);   // picture: frame + sun + mountain
+        dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), ic, 1.5f, 0, 1.4f);
+        dl->AddCircleFilled(ImVec2(c.x - r * 0.4f, c.y - r * 0.4f), r * 0.2f, ic, 8);
+        dl->AddTriangleFilled(ImVec2(c.x - r * 0.7f, c.y + r * 0.8f), ImVec2(c.x + r * 0.1f, c.y - r * 0.1f),
+                              ImVec2(c.x + r * 0.85f, c.y + r * 0.8f), ic);
+    } else if (go->GetComponent<AudioSource>()) {
+        ImU32 ic = col(250, 170, 110);
+        dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.45f), ImVec2(c.x - r * 0.25f, c.y + r * 0.45f), ic, 1.0f);
+        dl->AddTriangleFilled(ImVec2(c.x - r * 0.35f, c.y), ImVec2(c.x + r * 0.5f, c.y - r * 0.8f),
+                              ImVec2(c.x + r * 0.5f, c.y + r * 0.8f), ic);
+    } else {
+        dl->AddCircleFilled(c, r * 0.32f, IM_COL32(150, 155, 165, 200), 8);
+    }
 }
 
 static char g_hierFilter[96] = "";
@@ -9795,8 +10575,27 @@ void DrawHierarchy(EditorState& ed) {
             ++hits;
             bool sel = (go == ed.selected());
             ImGui::PushID(go);
-            if (ImGui::Selectable((std::string(ObjectKind(go)) + go->name).c_str(), sel))
+            if (ImGui::Selectable(("     " + go->name).c_str(), sel))
                 ed.Select(go);
+            {   // drawn type icon in the leading space
+                ImVec2 smn = ImGui::GetItemRectMin();
+                HierKindIcon(go, ImVec2(smn.x + 2.0f, smn.y), ImGui::GetFontSize(),
+                             ImGui::GetWindowDrawList());
+            }
+            // Dimmed parent path after the name, so same-named results (e.g.
+            // several "Wheel"s) are tellable apart in the flat search list.
+            if (go->transform && go->transform->Parent()) {
+                std::string ppath;
+                for (Transform* t = go->transform->Parent(); t; t = t->Parent())
+                    if (t->gameObject) ppath = t->gameObject->name + (ppath.empty() ? "" : " / ") + ppath;
+                if (!ppath.empty()) {
+                    ImVec2 smn = ImGui::GetItemRectMin();
+                    float nx = smn.x + ImGui::CalcTextSize(("     " + go->name).c_str()).x + 12.0f;
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(nx, smn.y + 1.0f),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.75f),
+                        ("in " + ppath).c_str());
+                }
+            }
             // Double-click a result: also frame it in the viewport.
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 Vec3 p = go->transform->Position();
@@ -9844,8 +10643,17 @@ void DrawHierarchy(EditorState& ed) {
                                                 : IM_COL32(120, 190, 255, 255);
             ImGui::Spacing();
             ImGui::PushStyleColor(ImGuiCol_Text, col);
-            ImGui::TextUnformatted(("\xE2\x96\xBE " + lbl).c_str());   // ▾ scene section header
+            ImGui::TextUnformatted(("    " + lbl).c_str());   // scene section header
             ImGui::PopStyleColor();
+            {   // drawn ▾ in the leading space (the glyph is tofu in the UI font)
+                ImVec2 hmn = ImGui::GetItemRectMin();
+                float fs2 = ImGui::GetFontSize();
+                float cy2 = hmn.y + ImGui::GetTextLineHeight() * 0.52f;
+                ImGui::GetWindowDrawList()->AddTriangleFilled(
+                    ImVec2(hmn.x + 2.0f, cy2 - fs2 * 0.14f),
+                    ImVec2(hmn.x + 2.0f + fs2 * 0.42f, cy2 - fs2 * 0.14f),
+                    ImVec2(hmn.x + 2.0f + fs2 * 0.21f, cy2 + fs2 * 0.22f), col);
+            }
             ImGui::Separator();
         }
         std::function<void(GameObject*)> drawNode = [&](GameObject* node) {
@@ -9861,7 +10669,8 @@ void DrawHierarchy(EditorState& ed) {
             if (node == g_hierOpenNode && childCount > 0)
                 ImGui::SetNextItemOpen(g_hierOpenVal == 1);
             // Unity dims inactive objects; grey the whole row (and its subtree label).
-            bool dim = !node->active;
+            // Isolation dims everything outside the isolated subtree the same way.
+            bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
             visRows.push_back(node);   // for arrow-key navigation, in draw order
             // Zebra striping: a whisper-faint band on every other row keeps deep
@@ -9876,10 +10685,17 @@ void DrawHierarchy(EditorState& ed) {
             }
             // Show a child count on parents (Unity-style), plus an (off) marker.
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
-            bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s%s", ObjectKind(node),
+            bool open = ImGui::TreeNodeEx(node, flags, "     %s%s%s",
                                           node->name.c_str(), cnt, node->active ? "" : "  (off)");
             if (dim) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
+            {   // drawn type icon in the leading space (after the tree arrow zone)
+                float isz = ImGui::GetFontSize();
+                float ax = isz + ImGui::GetStyle().FramePadding.x * 2.0f;   // arrow width
+                HierKindIcon(node, ImVec2(rowMin.x + ax,
+                                          rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f),
+                             isz, ImGui::GetWindowDrawList());
+            }
             // Accent bar on the selected row — matches the Inspector's component cards
             // so the selection reads consistently across the editor.
             if (ed.IsSelected(node))
@@ -10068,6 +10884,8 @@ void DrawHierarchy(EditorState& ed) {
                 if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
                 if (ImGui::MenuItem("Group Selected", "Ctrl+Shift+G")) { ed.GroupSelected(); ConsoleLog("Grouped selection"); }
                 if (ImGui::MenuItem("Focus", "F")) FocusSelected(ed);
+                if (ImGui::MenuItem(g_isolate == node ? "Exit Isolation" : "Isolate", "Shift+I"))
+                    g_isolate = (g_isolate == node) ? nullptr : node;
                 if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
                 if (!node->GetComponent<Character>()) {
                     ImGui::Separator();
@@ -12069,17 +12887,57 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
         const ModelAnimator::Clip& cur = ma->clips[ma->active];
         float span = len > 0.05f ? len : 1.0f;
         ImDrawList* ddl = ImGui::GetWindowDrawList();
+        // Shared geometry so the ruler and every row line up column-for-column.
+        float dsW = ImGui::GetContentRegionAvail().x - 8.0f; if (dsW < 60.0f) dsW = 60.0f;
+        float pxPerSec = dsW / span;
+        float dsStep = pxPerSec > 400.0f ? 0.1f : pxPerSec > 160.0f ? 0.25f
+                     : pxPerSec > 80.0f  ? 0.5f : 1.0f;
+        // ---- Time ruler: ticks + second labels + playhead time; drag to seek.
+        {
+            ImVec2 r0 = ImGui::GetCursorScreenPos();
+            const float rh = 17.0f;
+            ddl->AddRectFilled(r0, ImVec2(r0.x + dsW, r0.y + rh), IM_COL32(30, 33, 41, 255), 3.0f);
+            for (float ts2 = 0.0f; ts2 <= span + 1e-3f; ts2 += dsStep) {
+                float x = r0.x + (ts2 / span) * dsW;
+                bool major = std::fabs(ts2 - std::round(ts2)) < 1e-3f;
+                ddl->AddLine(ImVec2(x, r0.y + (major ? 3.0f : 9.0f)), ImVec2(x, r0.y + rh),
+                             IM_COL32(140, 145, 155, major ? 200 : 110), 1.0f);
+                if (major && x + 26.0f < r0.x + dsW) {
+                    char tb2[16]; std::snprintf(tb2, sizeof(tb2), "%.0fs", ts2);
+                    ddl->AddText(ImVec2(x + 3.0f, r0.y + 1.0f), IM_COL32(150, 155, 165, 210), tb2);
+                }
+            }
+            float phx = r0.x + (t / span) * dsW;
+            ddl->AddLine(ImVec2(phx, r0.y), ImVec2(phx, r0.y + rh), IM_COL32(255, 210, 0, 255), 1.5f);
+            char pb[24]; std::snprintf(pb, sizeof(pb), "%.2fs", t);
+            ImVec2 pbs = ImGui::CalcTextSize(pb);
+            float pbx = phx + 5.0f;
+            if (pbx + pbs.x > r0.x + dsW) pbx = phx - pbs.x - 5.0f;   // keep the label inside
+            ddl->AddText(ImVec2(pbx, r0.y + 2.0f), IM_COL32(255, 210, 0, 255), pb);
+            ImGui::InvisibleButton("##dsruler", ImVec2(dsW, rh + 2.0f));
+            if (ImGui::IsItemActive() || ImGui::IsItemClicked()) {
+                t = Mathf::Clamp((ImGui::GetIO().MousePos.x - r0.x) / dsW, 0.0f, 1.0f) * span;
+                run = false;
+            }
+        }
         int shown = 0;
         for (const auto& nc : cur.nodes) {
             if (++shown > 40) { ImGui::TextDisabled("... %d more node(s)", (int)cur.nodes.size() - 40); break; }
             ImGui::PushID(3000 + shown);
             ImGui::TextDisabled("%s", nc.node.c_str());
             ImVec2 p0 = ImGui::GetCursorScreenPos();
-            float w = ImGui::GetContentRegionAvail().x - 8.0f; if (w < 60.0f) w = 60.0f;
+            float w = dsW;
             const float h = 12.0f;
             ddl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(40, 44, 54, 255), 3.0f);
+            // Faint grid lines aligned with the ruler's ticks.
+            for (float ts2 = dsStep; ts2 < span; ts2 += dsStep) {
+                float x = p0.x + (ts2 / span) * w;
+                bool major = std::fabs(ts2 - std::round(ts2)) < 1e-3f;
+                ddl->AddLine(ImVec2(x, p0.y), ImVec2(x, p0.y + h),
+                             IM_COL32(255, 255, 255, major ? 20 : 9), 1.0f);
+            }
             // Diamonds: the union of this node's track keys (quantized so a TRS key
-            // authored across 10 tracks draws once).
+            // authored across 10 tracks draws once). Keys at the playhead light up.
             float lastQ = -1.0f;
             std::vector<float> times;
             for (const auto& kv : nc.clip.Tracks())
@@ -12090,7 +12948,11 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
                 if (q == lastQ) continue;
                 lastQ = q;
                 float kx = p0.x + (q / span) * w;
-                ddl->AddCircleFilled(ImVec2(kx, p0.y + h * 0.5f), 3.0f, IM_COL32(120, 200, 255, 255));
+                float ky = p0.y + h * 0.5f, kr = 3.4f;
+                bool atHead = std::fabs(q - t) < 0.02f;
+                ImU32 kcol = atHead ? IM_COL32(255, 230, 120, 255) : IM_COL32(120, 200, 255, 255);
+                ddl->AddQuadFilled(ImVec2(kx, ky - kr), ImVec2(kx + kr, ky),
+                                   ImVec2(kx, ky + kr), ImVec2(kx - kr, ky), kcol);
             }
             // Event markers on every row (they're clip-wide).
             for (const auto& ev : cur.events) {
@@ -12098,14 +12960,33 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
                 ddl->AddTriangleFilled(ImVec2(ex - 3.5f, p0.y), ImVec2(ex + 3.5f, p0.y),
                                        ImVec2(ex, p0.y + 5.0f), IM_COL32(255, 210, 90, 230));
             }
-            // Playhead + click-to-seek.
+            // Playhead + click-to-seek (Ctrl snaps the scrub to the nearest key).
             float px = p0.x + (t / span) * w;
             ddl->AddLine(ImVec2(px, p0.y), ImVec2(px, p0.y + h), IM_COL32(255, 210, 0, 255), 1.5f);
             ImGui::InvisibleButton("##dsrow", ImVec2(w, h + 3.0f));
             if (ImGui::IsItemActive() || ImGui::IsItemClicked()) {
                 float mx2 = ImGui::GetIO().MousePos.x;
                 t = Mathf::Clamp((mx2 - p0.x) / w, 0.0f, 1.0f) * span;
+                if (ImGui::GetIO().KeyCtrl && !times.empty()) {
+                    float best = times[0];
+                    for (float kt : times) if (std::fabs(kt - t) < std::fabs(best - t)) best = kt;
+                    t = best;
+                }
                 run = false;
+            }
+            // Hovering near a key: outline it and show its exact time (hold Ctrl
+            // while scrubbing to snap to it).
+            if (ImGui::IsItemHovered() && !times.empty()) {
+                float mt = Mathf::Clamp((ImGui::GetIO().MousePos.x - p0.x) / w, 0.0f, 1.0f) * span;
+                float best = times[0];
+                for (float kt : times) if (std::fabs(kt - mt) < std::fabs(best - mt)) best = kt;
+                if (std::fabs(best - mt) * pxPerSec < 6.0f) {
+                    float kx = p0.x + (best / span) * w, ky = p0.y + h * 0.5f, kr = 5.0f;
+                    ddl->AddQuad(ImVec2(kx, ky - kr), ImVec2(kx + kr, ky),
+                                 ImVec2(kx, ky + kr), ImVec2(kx - kr, ky),
+                                 IM_COL32(255, 255, 255, 220), 1.5f);
+                    ImGui::SetTooltip("key @ %.3fs  (Ctrl+click to snap)", best);
+                }
             }
             ImGui::PopID();
         }
@@ -12181,6 +13062,31 @@ static void DrawAnimatorGraph(EditorState& ed) {
         n = (int)sm->states.size();
     }
     ImGui::SameLine();
+    if (ImGui::SmallButton("Auto Layout##ag")) {
+        // Re-grid every node and recentre the pan — untangles a messy graph.
+        ed.PushUndo();
+        for (int i = 0; i < n; ++i) { sm->states[i].nx = 20.0f + (i % 3) * 230.0f; sm->states[i].ny = 20.0f + (i / 3) * 110.0f; }
+        s_pan = ImVec2(40, 40);
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Arrange all states back into a tidy grid");
+    // Delete key removes the selected state (same cleanup as the context menu:
+    // drop inbound transitions and clear the entry if it pointed here).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete, false) && s_selState >= 0 && s_selState < n) {
+        ed.PushUndo();
+        std::string dead = sm->states[s_selState].name;
+        for (auto& s2 : sm->states) {
+            auto& v = s2.transitions;
+            for (int t2 = (int)v.size() - 1; t2 >= 0; --t2) if (v[t2].to == dead) v.erase(v.begin() + t2);
+        }
+        if (sm->entry == dead) sm->entry.clear();
+        sm->states.erase(sm->states.begin() + s_selState);
+        s_selState = -1; s_selTrFrom = -1; s_selTrIdx = -1;
+        ed.dirty = true;
+        n = (int)sm->states.size();
+    }
+    ImGui::SameLine();
     if (ed.isPlaying()) ImGui::TextColored(AccentCol(1.0f), "playing: %s", sm->Current().empty() ? "(entering)" : sm->Current().c_str());
     else ImGui::TextDisabled(s_pendingFrom >= 0 ? "click a state to connect the transition (right-click cancels)"
                                                 : "drag nodes | right-click a node: transitions/entry | drag empty space: pan");
@@ -12207,6 +13113,11 @@ static void DrawAnimatorGraph(EditorState& ed) {
     // ---- transitions (drawn under the nodes) ----
     ImVec2 mouse = ImGui::GetIO().MousePos;
     int hovTrFrom = -1, hovTrIdx = -1;
+    // The running state's outgoing edges draw brighter so the possible next
+    // moves stand out while watching the machine in Play.
+    int curIdx = -1;
+    if (ed.isPlaying())
+        for (int k = 0; k < n; ++k) if (sm->states[k].name == sm->Current()) { curIdx = k; break; }
     for (int i = 0; i < n; ++i) {
         int outIdx = 0;
         for (int t = 0; t < (int)sm->states[i].transitions.size(); ++t) {
@@ -12231,8 +13142,9 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (hov) { hovTrFrom = i; hovTrIdx = t; }
             ImU32 col = sel ? ImGui::GetColorU32(ImVec4(1.0f, 0.8f, 0.2f, 1.0f))
                       : hov ? ImGui::GetColorU32(ImGuiCol_Text)
-                            : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            dl->AddBezierCubic(a, c1, c2, b, col, sel ? 3.0f : 2.0f);
+                      : i == curIdx ? ImGui::GetColorU32(ImVec4(0.95f, 0.70f, 0.20f, 0.85f))
+                                    : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+            dl->AddBezierCubic(a, c1, c2, b, col, sel || i == curIdx ? 3.0f : 2.0f);
             // arrowhead at the middle of the curve
             float u = 0.55f, v = 1.0f - u;
             ImVec2 p(v*v*v*a.x + 3*v*v*u*c1.x + 3*v*u*u*c2.x + u*u*u*b.x,
@@ -12313,6 +13225,20 @@ static void DrawAnimatorGraph(EditorState& ed) {
         ImU32 border = isEntry ? ImGui::GetColorU32(ImVec4(0.25f, 0.80f, 0.35f, 1.0f))
                                : ImGui::GetColorU32(isSel ? ImGuiCol_Text : ImGuiCol_Border);
         dl->AddRect(p, ImVec2(p.x + nodeSz.x, p.y + nodeSz.y), border, 6.0f, 0, isEntry || isSel ? 2.5f : 1.0f);
+        // Running state: a soft pulsing halo so the live state is unmissable.
+        if (isCurrent) {
+            float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 5.0f);
+            dl->AddRect(ImVec2(p.x - 3.0f, p.y - 3.0f),
+                        ImVec2(p.x + nodeSz.x + 3.0f, p.y + nodeSz.y + 3.0f),
+                        ImGui::GetColorU32(ImVec4(0.95f, 0.70f, 0.20f, 0.30f + 0.45f * pulse)),
+                        8.0f, 0, 3.0f);
+        }
+        // Entry state: a small green play-triangle badge on the left edge.
+        if (isEntry)
+            dl->AddTriangleFilled(ImVec2(p.x - 9.0f, p.y + nodeSz.y * 0.5f - 7.0f),
+                                  ImVec2(p.x - 9.0f, p.y + nodeSz.y * 0.5f + 7.0f),
+                                  ImVec2(p.x + 1.0f, p.y + nodeSz.y * 0.5f),
+                                  ImGui::GetColorU32(ImVec4(0.25f, 0.80f, 0.35f, 1.0f)));
         ImU32 txt = isCurrent ? ImGui::GetColorU32(ImVec4(0.05f, 0.05f, 0.05f, 1.0f)) : ImGui::GetColorU32(ImGuiCol_Text);
         dl->AddText(ImVec2(p.x + 10, p.y + 6), txt, st.name.c_str());
         std::string sub = st.clip.empty() ? "(no clip)" : st.clip;
@@ -12880,8 +13806,23 @@ static void DrawFlowGraph(EditorState& ed) {
     if (ImGui::SmallButton("+ Script")) { auto* nl = go->AddComponent<ActionList>(); g_flowSelAl = nl; g_flowSelKind = 0; pick = (int)als.size(); ed.dirty = true; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another Actions script to this object.");
     ImGui::SameLine();
-    if (ImGui::SmallButton("Remove Script")) removeAl = al;
+    if (ImGui::SmallButton("Remove Script")) ImGui::OpenPopup("Remove Actions script?");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete this whole Actions script from the object.");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Remove Actions script?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Delete the Actions script '%s' and all its nodes?",
+                    al->name.empty() ? "(unnamed)" : al->name.c_str());
+        ImGui::TextDisabled("Undo (Ctrl+Z) can bring it back afterwards.");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        bool doRm = ImGui::Button("Remove", ImVec2(110, 0));
+        ImGui::PopStyleColor(2);
+        if (doRm) { removeAl = al; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
     ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty to pan; scroll to zoom");
 
     // Keyboard: Ctrl+C copies the selected node, Ctrl+V pastes it (after the selection,
@@ -12908,6 +13849,12 @@ static void DrawFlowGraph(EditorState& ed) {
     // and a running indicator that lights up while the list executes in Play.
     int delIns = -1, delCond = -1;            // delete from the FOCUSED rule (strip/popup/key)
     ActionList* gDelAl = nullptr; int gDelKind = 0, gDelIdx = -1, gDelHandler = -1;  // delete a canvas node from any handler
+    // Delete key removes the selected node (same path as the node's own x button).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete, false) &&
+        g_flowSelAl == al && g_flowSelKind != 0 && g_flowSelIdx >= 0) {
+        gDelAl = al; gDelKind = g_flowSelKind; gDelIdx = g_flowSelIdx; gDelHandler = g_flowSelHandler;
+    }
     // The conditions/instructions of the currently-focused handler (primary = -1).
     auto focusConds = [&]() -> std::vector<ActionList::Item>& {
         return (g_flowSelHandler >= 0 && g_flowSelHandler < (int)al->extraHandlers.size())
@@ -15027,7 +15974,24 @@ void DrawModeling(EditorState& ed) {
         int perRow = 0;
         for (const char* it : shown) {
             if (perRow++ % 4 != 0) ImGui::SameLine();
-            if (ImGui::Button(it, ImVec2(72, 0))) spawn(it);
+            // Thumbnail tile: rendered mesh preview on top, name underneath.
+            char bid[64]; std::snprintf(bid, sizeof(bid), "##add_%s", it);
+            bool hit = ImGui::Button(bid, ImVec2(72, 66));
+            ImVec2 bmn = ImGui::GetItemRectMin(), bmx = ImGui::GetItemRectMax();
+            ImDrawList* mdl = ImGui::GetWindowDrawList();
+            float cx2 = (bmn.x + bmx.x) * 0.5f;
+            if (SDL_Texture* th = GetPrimitiveThumb(it))
+                mdl->AddImage((ImTextureID)th, ImVec2(cx2 - 22.0f, bmn.y + 2.0f),
+                              ImVec2(cx2 + 22.0f, bmn.y + 46.0f));
+            ImVec2 nts = ImGui::CalcTextSize(it);
+            float ntx = cx2 - nts.x * 0.5f;
+            if (ntx < bmn.x + 2.0f) ntx = bmn.x + 2.0f;
+            mdl->PushClipRect(bmn, bmx, true);
+            mdl->AddText(ImVec2(ntx, bmx.y - ImGui::GetTextLineHeight() - 3.0f),
+                         ImGui::GetColorU32(ImGuiCol_Text), it);
+            mdl->PopClipRect();
+            if (ImGui::IsItemHovered() && nts.x > 68.0f) ImGui::SetTooltip("%s", it);
+            if (hit) spawn(it);
         }
     }
 
@@ -17103,7 +18067,7 @@ void DrawInspector(EditorState& ed) {
                 for (int ti = 0; ti < (int)st.transitions.size(); ++ti) {
                     AnimStateMachine::Transition& tr = st.transitions[ti];
                     ImGui::PushID(5000 + ti);
-                    ImGui::TextDisabled("  \xE2\x86\x92"); ImGui::SameLine();
+                    ImGui::TextDisabled("  ->"); ImGui::SameLine();
                     ImGui::SetNextItemWidth(120);
                     if (ImGui::BeginCombo("##trto", tr.to.empty() ? "(state)" : tr.to.c_str())) {
                         for (const auto& st2 : sm->states)
@@ -21837,7 +22801,9 @@ void DrawInspector(EditorState& ed) {
             if (is("Gameplay") || is("No-Code") || is("RPG"))      return ImVec4(0.92f, 0.60f, 0.66f, 1.0f);
             return ImGui::GetStyleColorVec4(ImGuiCol_Text);
         };
+        ImVec4 curCat = ImGui::GetStyleColorVec4(ImGuiCol_Text);   // category of the rows being emitted
         auto BeginCat = [&](const char* name) -> bool {
+            curCat = catColor(name);
             if (searching) return true;
             ImGui::PushStyleColor(ImGuiCol_Text, catColor(name));
             bool open = ImGui::BeginMenu(name);
@@ -21846,10 +22812,21 @@ void DrawInspector(EditorState& ed) {
         };
         auto EndCat = [&](bool opened) { if (!searching && opened) ImGui::EndMenu(); };
         // One component row: shown only if absent + matches the search. While searching,
-        // pressing Enter picks the first shown row.
+        // pressing Enter picks the first shown row; flat search results get a small
+        // category-colored dot so the flattened list keeps its grouping context.
         auto item = [&](bool absent, const char* label) {
             if (!absent || !F(label)) return false;
-            bool clicked = ImGui::MenuItem(label);
+            bool clicked;
+            if (searching) {
+                char pad[96]; std::snprintf(pad, sizeof(pad), "    %s", label);
+                clicked = ImGui::MenuItem(pad);
+                ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddCircleFilled(
+                    ImVec2(mn.x + 8.0f, (mn.y + mx.y) * 0.5f), 3.0f,
+                    ImGui::GetColorU32(curCat), 10);
+            } else {
+                clicked = ImGui::MenuItem(label);
+            }
             if (!clicked && searching && acEnter && !acFirstConsumed) { acFirstConsumed = true; clicked = true; }
             return clicked;
         };
@@ -22102,6 +23079,18 @@ void DrawInspector(EditorState& ed) {
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         bool enter = ImGui::InputText("Name", g_newScriptName, sizeof(g_newScriptName),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
+        {   // Live preview of the file that will be created (+ duplicate warning).
+            namespace fs = std::filesystem;
+            std::string base = g_newScriptName[0] ? g_newScriptName : "MyScript";
+            if (base.size() < 5 || base.substr(base.size() - 5) != ".okay") base += ".okay";
+            ImGui::TextDisabled("-> Assets/%s", base.c_str());
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
+                                                      : fs::path(ed.projectDir()) / "Assets";
+            std::error_code pe;
+            if (g_newScriptName[0] && fs::exists(assets / base, pe))
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f),
+                                   "Already exists — the existing file will be attached.");
+        }
         bool create = ImGui::Button("Create and Add", ImVec2(140, 0)) || enter;
         ImGui::SameLine();
         bool cancel = ImGui::Button("Cancel", ImVec2(100, 0));
@@ -25000,6 +25989,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
         for (const auto& up : objs) {
             if (!up->active) continue;
+            // Isolate mode: gizmos follow the render — only the isolated subtree.
+            if (g_isolate && !up->IsSelfOrDescendantOf(g_isolate)) continue;
             Transform* t = up->transform;
             Vec3 p = t->Position();
 
@@ -25200,10 +26191,40 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // always shows every layer so you can edit hidden objects.
     RenderCullingMask() = (gameView && SceneCamera(ed.scene())) ? SceneCamera(ed.scene())->cullingMask : ~0;
     float v3w = view3dMax.x - view3dMin.x, v3h = view3dMax.y - view3dMin.y;
+    // Isolate mode (Scene view only): validate the target still exists, then
+    // temporarily hide everything outside its subtree for this render (lights
+    // stay on so the shading matches) — the same trick the Animation preview uses.
+    if (g_isolate) {
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_isolate) { alive = true; break; }
+        if (!alive) g_isolate = nullptr;
+    }
+    std::vector<GameObject*> isoHidden;
+    if (g_isolate && !gameView) {
+        for (const auto& up : ed.scene().Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->active || g->IsSelfOrDescendantOf(g_isolate)) continue;
+            if (g->GetComponent<Light>()) continue;
+            isoHidden.push_back(g);
+            g->active = false;
+        }
+    }
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)(v3w * dpi), (int)(v3h * dpi),
                                            gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
+    for (GameObject* g : isoHidden) g->active = true;
+    // Banner so an "empty" viewport is never a mystery.
+    if (g_isolate && !gameView) {
+        char ib[128];
+        std::snprintf(ib, sizeof(ib), "Isolating: %s   (Shift+I or the Isolate button to exit)",
+                      g_isolate->name.c_str());
+        ImVec2 its = ImGui::CalcTextSize(ib);
+        ImVec2 ip((view3dMin.x + view3dMax.x - its.x) * 0.5f, view3dMin.y + 8.0f);
+        dl->AddRectFilled(ImVec2(ip.x - 8, ip.y - 4), ImVec2(ip.x + its.x + 8, ip.y + its.y + 4),
+                          IM_COL32(0, 0, 0, 160), 5.0f);
+        dl->AddText(ip, ImGui::GetColorU32(AccentCol(1.0f)), ib);
+    }
 
     // Highlight the selection with a clean yellow bounding box (12 edges).
     if (!gameView && g_showGizmos && ed.selected()) {
@@ -26239,12 +27260,14 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
 
     // 2D / 3D toggle + frame the selection.
     if (ImGui::Button(ed.view3D ? "3D" : "2D")) ed.view3D = !ed.view3D;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch between the 2D and 3D scene view");
     ImGui::SameLine();
     if (ImGui::Button("Frame") && ed.selected()) {
         Vec3 p = ed.selected()->transform->Position();
         ed.camTarget = p;
         ed.cameraPos = {p.x, p.y};
     }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Center the view on the selected object (F)");
     // Align a selected Camera to the current scene view (Unity's Align With View):
     // snap its position/orientation to the editor eye so the Game view matches.
     if (ed.view3D && ed.selected() && ed.selected()->GetComponent<Camera>()) {
@@ -26262,13 +27285,14 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     }
     // Transform tools (W/E/R), highlighting the active one.
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    auto toolBtn = [&](const char* lbl, Tool t) {
+    auto toolBtn = [&](const char* lbl, Tool t, const char* tip) {
         if (AccentToggleButton(lbl, g_tool == t)) g_tool = t;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
         ImGui::SameLine();
     };
-    toolBtn("Move", Tool::Move);
-    toolBtn("Rotate", Tool::Rotate);
-    toolBtn("Scale", Tool::Scale);
+    toolBtn("Move", Tool::Move, "Move tool (W)");
+    toolBtn("Rotate", Tool::Rotate, "Rotate tool (E)");
+    toolBtn("Scale", Tool::Scale, "Scale tool (R)");
     // Local/Global handle orientation (Unity's toggle); X toggles it. Tinted when Local.
     if (AccentToggleButton(g_gizmoLocal ? "Local" : "Global", g_gizmoLocal)) g_gizmoLocal = !g_gizmoLocal;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gizmo orientation: Local (object) vs Global (world). Shortcut: X");
@@ -26281,6 +27305,13 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         ImGui::SameLine();
         if (AccentToggleButton("UI Only", g_uiOnlyMode)) g_uiOnlyMode = !g_uiOnlyMode;   // flat UI view draws directly; never force the scene overlay on
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (like Unity's UI view).\nTip: View > UI Editor opens this as its own tab.");
+        ImGui::SameLine();
+        if (AccentToggleButton("Isolate", g_isolate != nullptr))
+            g_isolate = g_isolate ? nullptr : ed.selected();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(g_isolate
+                ? "Exit isolation and show the whole scene again (Shift+I)"
+                : "Show ONLY the selected object and its children in the Scene view (Shift+I).\nView-only: the scene, Game view and Play mode are unaffected.");
     } else {
         ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "UI Editing");
     }
@@ -26895,12 +27926,25 @@ void DrawSpriteEditor(EditorState& ed) {
 
     // ---- Row 2: tools + colour ----
     const char* toolNames[4] = {"Pencil", "Eraser", "Fill", "Pick"};
+    const char* toolKeys[4]  = {"P", "E", "F", "I"};
     for (int i = 0; i < 4; ++i) {
         if (i) ImGui::SameLine();
         bool on = (tool == i);
         if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.44f, 0.72f, 1.0f));
         if (ImGui::Button(toolNames[i])) tool = i;
         if (on) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s (%s)", toolNames[i], toolKeys[i]);
+    }
+    // Single-key tool switching while the window has focus (and nothing is typing).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_P, false)) tool = 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false)) tool = 1;
+        if (ImGui::IsKeyPressed(ImGuiKey_F, false)) tool = 2;
+        if (ImGui::IsKeyPressed(ImGuiKey_I, false)) tool = 3;
+        // Ctrl+Z: same as the Undo button.
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !undo.empty()) {
+            img = undo.back(); undo.pop_back(); texDirty = true; ed.dirty = true;
+        }
     }
     ImGui::SameLine(); ImGui::SetNextItemWidth(220);
     ImGui::ColorEdit4("##spcol", pri, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs);
@@ -26917,9 +27961,14 @@ void DrawSpriteEditor(EditorState& ed) {
         ImGui::PopID();
     }
 
-    // ---- Row 3: zoom + grid ----
+    // ---- Row 3: zoom + grid + symmetry ----
+    static bool symX = false, symY = false;
     ImGui::SetNextItemWidth(160); ImGui::SliderInt("Zoom", &zoom, 2, 32, "%dx");
     ImGui::SameLine(); ImGui::Checkbox("Grid", &grid);
+    ImGui::SameLine(); ImGui::Checkbox("Mirror X", &symX);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pencil/eraser also paint the mirrored pixel across the\nvertical center — half the work for symmetric sprites.");
+    ImGui::SameLine(); ImGui::Checkbox("Mirror Y", &symY);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror strokes across the horizontal center too.\nWith both on, one stroke paints all four quadrants.");
     ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", img.Width(), img.Height());
 
     // ---- Canvas ----
@@ -26952,6 +28001,21 @@ void DrawSpriteEditor(EditorState& ed) {
         px = (int)std::floor((mx - origin.x) / disp); py = (int)std::floor((my - origin.y) / disp);
         return px >= 0 && py >= 0 && px < img.Width() && py < img.Height();
     };
+    // Hovered texel: outline the cell and show its coordinates in the canvas corner.
+    {
+        int hpx, hpy;
+        if (hov && pixelAt(io.MousePos.x, io.MousePos.y, hpx, hpy)) {
+            ImVec2 c0(origin.x + hpx * disp, origin.y + hpy * disp);
+            dl->AddRect(c0, ImVec2(c0.x + disp, c0.y + disp), IM_COL32(255, 255, 255, 170), 0, 0, 1.5f);
+            char cb[32]; std::snprintf(cb, sizeof(cb), "%d, %d", hpx, hpy);
+            ImVec2 cs = ImGui::CalcTextSize(cb);
+            ImVec2 lp(origin.x + canvasSz.x - cs.x - 8.0f,
+                      origin.y + canvasSz.y - ImGui::GetTextLineHeight() - 5.0f);
+            dl->AddRectFilled(ImVec2(lp.x - 4, lp.y - 2), ImVec2(lp.x + cs.x + 4, lp.y + cs.y + 2),
+                              IM_COL32(0, 0, 0, 140), 3.0f);
+            dl->AddText(lp, IM_COL32(230, 230, 240, 235), cb);
+        }
+    }
     if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         if (tool != 3) pushUndo();   // eyedropper doesn't mutate -> no undo entry
         strokeOpen = true; lastPx = lastPy = -1;
@@ -26961,8 +28025,13 @@ void DrawSpriteEditor(EditorState& ed) {
         if (pixelAt(io.MousePos.x, io.MousePos.y, px, py)) {
             auto apply = [&](int x, int y) {
                 if (x < 0 || y < 0 || x >= img.Width() || y >= img.Height()) return;
-                if (tool == 0) img.SetPixel(x, y, curCol());
-                else if (tool == 1) img.SetPixel(x, y, okay::Color(0, 0, 0, 0));
+                okay::Color c = tool == 1 ? okay::Color(0, 0, 0, 0) : curCol();
+                if (tool == 0 || tool == 1) {
+                    img.SetPixel(x, y, c);
+                    if (symX) img.SetPixel(img.Width() - 1 - x, y, c);
+                    if (symY) img.SetPixel(x, img.Height() - 1 - y, c);
+                    if (symX && symY) img.SetPixel(img.Width() - 1 - x, img.Height() - 1 - y, c);
+                }
             };
             if (tool == 0 || tool == 1) {
                 if (lastPx < 0) apply(px, py);
@@ -27094,7 +28163,20 @@ void DrawUIThemer(EditorState& ed) {
     ImGui::TextDisabled("Define a reusable UI style, then apply it to every widget at once.");
     ImGui::TextUnformatted("Presets:");
     const char* names[] = {"Dark", "Light", "Neon", "Retro", "Pastel", "Mono"};
-    for (int i = 0; i < 6; ++i) { if (i) ImGui::SameLine(); if (ImGui::Button(names[i])) UIThemePreset(g_uiTheme, i); }
+    for (int i = 0; i < 6; ++i) {
+        if (i) ImGui::SameLine();
+        if (ImGui::Button(names[i])) UIThemePreset(g_uiTheme, i);
+        // Mini palette strip along the button's bottom edge: panel/button/accent/text.
+        EdUITheme tt; UIThemePreset(tt, i);
+        ImVec2 bmn = ImGui::GetItemRectMin(), bmx = ImGui::GetItemRectMax();
+        const float* sw[4] = {tt.panel, tt.button, tt.accent, tt.text};
+        float swW = (bmx.x - bmn.x - 8.0f) / 4.0f;
+        for (int s2 = 0; s2 < 4; ++s2) {
+            ImVec2 a(bmn.x + 4.0f + swW * s2, bmx.y - 5.0f), b(bmn.x + 4.0f + swW * (s2 + 1) - 1.0f, bmx.y - 2.0f);
+            ImGui::GetWindowDrawList()->AddRectFilled(a, b,
+                ImGui::GetColorU32(ImVec4(sw[s2][0], sw[s2][1], sw[s2][2], 1.0f)), 1.0f);
+        }
+    }
     ImGui::Separator();
     int cf = ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs;
     ImGui::ColorEdit4("Panel",        g_uiTheme.panel,       cf);
@@ -27107,6 +28189,42 @@ void DrawUIThemer(EditorState& ed) {
     ImGui::SliderFloat("Corner radius", &g_uiTheme.corner, 0.0f, 32.0f, "%.0f");
     ImGui::SliderFloat("Border width",  &g_uiTheme.border, 0.0f, 6.0f, "%.0f");
     ImGui::Separator();
+    // Live preview: a mock panel with a button, slider and text drawn from the
+    // current values, so you see the style before baking it into the scene.
+    ImGui::TextDisabled("Preview");
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 pv = ImGui::GetCursorScreenPos();
+        float pw = ImGui::GetContentRegionAvail().x, ph = 96.0f;
+        if (pw < 240.0f) pw = 240.0f;
+        auto U = [](const float* f, float amul = 1.0f) {
+            return ImGui::GetColorU32(ImVec4(f[0], f[1], f[2], f[3] * amul));
+        };
+        float cr = g_uiTheme.corner;
+        dl->AddRectFilled(pv, ImVec2(pv.x + pw, pv.y + ph), U(g_uiTheme.panel), cr);
+        dl->AddRectFilled(ImVec2(pv.x, pv.y + ph * 0.55f), ImVec2(pv.x + pw, pv.y + ph),
+                          U(g_uiTheme.panelBottom, 0.85f), cr,
+                          ImDrawFlags_RoundCornersBottom);
+        if (g_uiTheme.border > 0.0f)
+            dl->AddRect(pv, ImVec2(pv.x + pw, pv.y + ph),
+                        ImGui::GetColorU32(ImVec4(g_uiTheme.accent[0], g_uiTheme.accent[1],
+                                                  g_uiTheme.accent[2], 0.5f)),
+                        cr, 0, g_uiTheme.border);
+        float bx = pv.x + 16.0f, by = pv.y + 16.0f;
+        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + 110.0f, by + 30.0f),
+                          U(g_uiTheme.button), cr * 0.6f);
+        ImVec2 bts = ImGui::CalcTextSize("Button");
+        dl->AddText(ImVec2(bx + (110.0f - bts.x) * 0.5f, by + (30.0f - bts.y) * 0.5f),
+                    U(g_uiTheme.buttonText), "Button");
+        float sy = by + 46.0f;
+        dl->AddRectFilled(ImVec2(bx, sy), ImVec2(bx + 180.0f, sy + 8.0f), U(g_uiTheme.track), 4.0f);
+        dl->AddRectFilled(ImVec2(bx, sy), ImVec2(bx + 122.0f, sy + 8.0f), U(g_uiTheme.accent), 4.0f);
+        dl->AddCircleFilled(ImVec2(bx + 122.0f, sy + 4.0f), 7.0f, U(g_uiTheme.text), 16);
+        dl->AddText(ImVec2(bx + 210.0f, by + 6.0f), U(g_uiTheme.text), "Sample text");
+        dl->AddText(ImVec2(bx + 210.0f, by + 6.0f + ImGui::GetTextLineHeightWithSpacing()),
+                    U(g_uiTheme.accent), "Accent");
+        ImGui::Dummy(ImVec2(0, ph + 8.0f));
+    }
     if (ImGui::Button("Apply to All UI")) { int n = ApplyUITheme(ed, g_uiTheme, nullptr); ConsoleLog("Themed " + std::to_string(n) + " widget(s)"); }
     ImGui::SameLine();
     bool haveSel = ed.selected() != nullptr;
@@ -27165,6 +28283,24 @@ void DrawProfiler(EditorState& ed) {
     char ov[96];
     std::snprintf(ov, sizeof(ov), "%.2f ms   %.0f FPS", P.lastFrameMs, P.lastFrameMs > 0.001 ? 1000.0 / P.lastFrameMs : 0.0);
     ImGui::PlotLines("##frame", gTotal.empty() ? nullptr : gTotal.data(), n, 0, ov, 0.0f, top, ImVec2(-1, 80));
+    {   // Budget guide lines over the frame graph: green 60 FPS, amber 30 FPS —
+        // "is this frame over budget?" becomes visible instead of arithmetic.
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImDrawList* pdl = ImGui::GetWindowDrawList();
+        auto guide = [&](float ms, ImU32 col, const char* lbl) {
+            if (top <= ms) return;
+            float y = mx.y - (ms / top) * (mx.y - mn.y);
+            pdl->AddLine(ImVec2(mn.x, y), ImVec2(mx.x, y), col, 1.0f);
+            pdl->AddText(ImVec2(mn.x + 4.0f, y - ImGui::GetTextLineHeight() - 1.0f), col, lbl);
+        };
+        guide(16.7f, IM_COL32(110, 220, 130, 170), "16.7 (60)");
+        guide(33.3f, IM_COL32(240, 190, 80, 170), "33.3 (30)");
+        // Scrub marker: while paused, show which frame of the history is displayed.
+        if (P.paused && n > 1 && P.selected >= 0) {
+            float fx = mn.x + ((float)P.selected / (float)(n - 1)) * (mx.x - mn.x);
+            pdl->AddLine(ImVec2(fx, mn.y), ImVec2(fx, mx.y), IM_COL32(255, 210, 0, 220), 1.5f);
+        }
+    }
     ImGui::PlotLines("##gpu",   gGpu.empty()   ? nullptr : gGpu.data(),   n, 0, "GPU ms", 0.0f, top, ImVec2(-1, 44));
 
     // ---- Readouts ----
@@ -27315,14 +28451,25 @@ void DrawGameView(EditorState& ed) {
     }
     const bool  kFixedRes  = (curW > 0 && curH > 0);
     ImGui::SameLine();
-    ImGui::TextDisabled(ed.isPlaying() ? "live" : "press Play to run");
+    {
+        // Drawn status dot: green while the game runs, gray in edit mode.
+        ImVec2 dp = ImGui::GetCursorScreenPos();
+        float dr = ImGui::GetFontSize() * 0.26f;
+        ImU32 dc = ed.isPlaying() ? IM_COL32(90, 215, 110, 255) : IM_COL32(130, 134, 142, 255);
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(dp.x + dr, dp.y + ImGui::GetTextLineHeight() * 0.55f), dr, dc);
+        ImGui::Dummy(ImVec2(dr * 2.0f + 5.0f, 0));
+        ImGui::SameLine(0, 0);
+        if (ed.isPlaying()) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.52f, 1), "live");
+        else                ImGui::TextDisabled("press Play to run");
+    }
     // FPS testing: grab the mouse so look controls work in the Game tab.
     ImGui::SameLine();
     if (ImGui::Checkbox("Capture mouse", &g_gameMouseCapture)) {}
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nPress Esc to release. Auto-engages if the game locks the cursor.");
     ImGui::SameLine();
     if (ImGui::Checkbox("Stats", &g_gameStatsOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("FPS / frame time / object + triangle counts, overlaid on the view");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nPress Esc to release. Auto-engages if the game locks the cursor.");
     if (ed.isPlaying() && g_gameMouseCapture) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)"); }
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -27407,12 +28554,15 @@ void DrawGameView(EditorState& ed) {
         ImU32 pc = g_paused ? IM_COL32(240, 180, 55, 255) : IM_COL32(90, 215, 110, 255);
         dl->AddRect(ImVec2(canvasPos.x + 1, canvasPos.y + 1), ImVec2(canvasEnd.x - 1, canvasEnd.y - 1),
                     pc, 3.0f, 0, 2.5f);
-        const char* pill = g_paused ? "\xE2\x97\x8F PAUSED" : "\xE2\x97\x8F PLAYING";
+        const char* pill = g_paused ? "PAUSED" : "PLAYING";
         ImVec2 ts = ImGui::CalcTextSize(pill);
+        float pr = ImGui::GetTextLineHeight() * 0.26f;   // drawn dot (● is tofu here)
+        float dotW = pr * 2.0f + 6.0f;
         ImVec2 p0(canvasPos.x + 8, canvasPos.y + 6);
-        dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + ts.x + 6, p0.y + ts.y + 3),
+        dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + dotW + ts.x + 6, p0.y + ts.y + 3),
                           IM_COL32(0, 0, 0, 150), 4.0f);
-        dl->AddText(p0, pc, pill);
+        dl->AddCircleFilled(ImVec2(p0.x + pr, p0.y + ts.y * 0.55f), pr, pc);
+        dl->AddText(ImVec2(p0.x + dotW, p0.y), pc, pill);
         if (g_paused) {
             // Full-canvas dim + centered banner: a paused game should never be
             // mistakable for a hang.
@@ -28118,6 +29268,7 @@ int main(int argc, char** argv) {
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);
         if (g_showModeling)  DrawModeling(ed);
+        DrawFindInFiles(ed);
         DrawScriptDocs();
         DrawCustomActions();
         DrawVarWatch();

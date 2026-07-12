@@ -95,6 +95,21 @@ std::string GetUpMsg() {
     return m;
 }
 
+// Latest release notes, fetched by the update worker ("" until a check runs).
+// Bullet lines separated by '\n'; shown on the Create tab's What's-new card.
+std::string g_newsLines;
+std::string g_newsVersion;
+void SetNews(const std::string& ver, const std::string& lines) {
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    g_newsVersion = ver; g_newsLines = lines;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+}
+void GetNews(std::string& ver, std::string& lines) {
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    ver = g_newsVersion; lines = g_newsLines;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+}
+
 // Defeat the GitHub raw CDN cache (which can serve a stale VERSION.txt or .exe
 // for minutes after a release) with a unique query string per request.
 std::string BustCache(const std::string& url) {
@@ -212,11 +227,68 @@ bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse) {
     return true;
 }
 
+// Fetch the latest GitHub release's notes and stash the first few bullet
+// lines for the Create tab's What's-new card. Best-effort: any failure just
+// leaves the built-in list showing. Runs on the update worker thread.
+void FetchReleaseNews() {
+    std::error_code ec;
+    fs::path tmp = fs::temp_directory_path(ec);
+    if (ec) return;
+    fs::path jf = tmp / "okayspace_release.json";
+    if (!Download("https://api.github.com/repos/kingimann/OkaySpaceGameEngine/releases/latest",
+                  jf.string())) return;
+    std::ifstream f(jf, std::ios::binary);
+    if (!f) return;
+    std::string json((std::istreambuf_iterator<char>(f)), {});
+    f.close(); fs::remove(jf, ec);
+    // Pull a top-level string field out of the (flat enough) release JSON.
+    auto field = [&](const char* name) -> std::string {
+        std::string key = std::string("\"") + name + "\":\"";
+        auto p = json.find(key);
+        if (p == std::string::npos) return {};
+        p += key.size();
+        std::string out;
+        while (p < json.size() && json[p] != '"') {
+            char c2 = json[p++];
+            if (c2 == '\\' && p < json.size()) {          // unescape \n \" \\ \r \t
+                char e = json[p++];
+                if (e == 'n') out += '\n';
+                else if (e == 'r') { /* skip */ }
+                else if (e == 't') out += ' ';
+                else if (e == 'u') { p += 4; out += '?'; }
+                else out += e;
+            } else out += c2;
+        }
+        return out;
+    };
+    std::string tag  = field("tag_name");
+    std::string body = field("body");
+    if (body.empty()) return;
+    // Keep the first handful of bullet lines ("- ..." / "* ..."), stripped.
+    std::string lines; int kept = 0;
+    std::size_t start = 0;
+    while (start < body.size() && kept < 6) {
+        std::size_t end = body.find('\n', start);
+        if (end == std::string::npos) end = body.size();
+        std::string ln = body.substr(start, end - start);
+        start = end + 1;
+        std::size_t a = ln.find_first_not_of(" \t");
+        if (a == std::string::npos) continue;
+        if (ln[a] != '-' && ln[a] != '*') continue;
+        std::size_t b = ln.find_first_not_of(" \t", a + 1);
+        if (b == std::string::npos) continue;
+        lines += ln.substr(b) + "\n";
+        ++kept;
+    }
+    if (kept > 0) SetNews(tag, lines);
+}
+
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
 int RunUpdateCheck(void*) {
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
+    FetchReleaseNews();   // refresh the What's-new card while we're online anyway
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
     fs::path vf = tmp / "okayspace_launcher_ver.txt";
@@ -881,6 +953,8 @@ int main(int argc, char** argv) {
     char playFilter[128] = {0};   // Play-tab search box
     char marketFilter[128] = {0}; // Marketplace search box
     char commFilter[128] = {0};   // Community library search box
+    std::string commRemovePath;   // community item pending delete-confirmation
+    std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
     int tab = (g_lastTab >= 0 && g_lastTab < 5) ? g_lastTab : 0;
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
@@ -1070,6 +1144,12 @@ int main(int argc, char** argv) {
         } else {
             ImGui::TextDisabled("  not signed in");
         }
+        // The whole account line jumps to the Account tab.
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip(account.IsLoggedIn() ? "Open the Account tab" : "Sign in");
+        }
+        if (ImGui::IsItemClicked()) { tab = 3; g_lastTab = 3; SavePrefs(); }
 
         // ---- Update status (pinned to the bottom of the nav) ----
         UpState st = GetState();
@@ -1100,7 +1180,9 @@ int main(int argc, char** argv) {
         }
         ImGui::TextColored(col, "%s", head);
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("%s", GetUpMsg().c_str());
+        std::string upMsg = GetUpMsg();
+        // Before any check runs, at least show the installed version here.
+        ImGui::TextDisabled("%s", upMsg.empty() ? "v" OKAY_ENGINE_VERSION : upMsg.c_str());
         ImGui::PopTextWrapPos();
         bool busy = (st == Up_Checking || st == Up_Downloading);
         ImGui::BeginDisabled(busy);
@@ -1205,6 +1287,10 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("%s", kTpl[i].desc);
                 ImGui::PopTextWrapPos();
                 ImGui::EndGroup();
+                if (hov) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ImGui::SetTooltip("Open the editor with the %s template", kTpl[i].name);
+                }
                 if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     LaunchEditor(editor, kTpl[i].name);
                     Toast(std::string("Opening editor: ") + kTpl[i].name);
@@ -1215,16 +1301,32 @@ int main(int argc, char** argv) {
             if (editor.empty()) ImGui::PopStyleVar();
 
             ImGui::Dummy(ImVec2(0, 14));
-            ImGui::SeparatorText("What's new");
-            // Curated highlights of the last few releases (updated each ship).
-            static const char* kNews[] = {
-                "NPC pathfinding (A*) with scriptable npc_goto commands",
-                "Spawner waves: count / wave delay / max alive, script control",
-                "Click-placed patrol waypoints + NPC vision-cone gizmos",
-                "Script Editor: signature help and smarter autocomplete",
-                "Hierarchy & Project: Shift+click range select, multi copy/paste",
-            };
-            for (const char* n : kNews) ImGui::BulletText("%s", n);
+            // Live notes from the latest GitHub release when a check has run;
+            // the built-in highlights otherwise (offline / never checked).
+            std::string newsVer, newsLines;
+            GetNews(newsVer, newsLines);
+            if (!newsLines.empty()) {
+                std::string hdr = "What's new" + (newsVer.empty() ? "" : "  \xC2\xB7  " + newsVer);
+                ImGui::SeparatorText(hdr.c_str());
+                std::size_t s2 = 0;
+                while (s2 < newsLines.size()) {
+                    std::size_t e2 = newsLines.find('\n', s2);
+                    if (e2 == std::string::npos) e2 = newsLines.size();
+                    if (e2 > s2) ImGui::BulletText("%s", newsLines.substr(s2, e2 - s2).c_str());
+                    s2 = e2 + 1;
+                }
+            } else {
+                ImGui::SeparatorText("What's new");
+                // Curated highlights of the last few releases (updated each ship).
+                static const char* kNews[] = {
+                    "NPC pathfinding (A*) with scriptable npc_goto commands",
+                    "Spawner waves: count / wave delay / max alive, script control",
+                    "Click-placed patrol waypoints + NPC vision-cone gizmos",
+                    "Script Editor: signature help and smarter autocomplete",
+                    "Hierarchy & Project: Shift+click range select, multi copy/paste",
+                };
+                for (const char* n : kNews) ImGui::BulletText("%s", n);
+            }
             ImGui::TextDisabled("Full notes: GitHub repository (link below).");
 
             ImGui::Dummy(ImVec2(0, 10));
@@ -1316,8 +1418,18 @@ int main(int argc, char** argv) {
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
                     ImGui::Text("%s", name.c_str());
                     if (RecentRank(path) < 3) {
-                        ImGui::SameLine();
-                        ImGui::TextColored(kAccent, "recent");
+                        // "recent" as a small accent pill chip next to the name.
+                        ImGui::SameLine(0, 8);
+                        const char* rl = "recent";
+                        ImVec2 rs = ImGui::CalcTextSize(rl);
+                        ImVec2 pp = ImGui::GetCursorScreenPos();
+                        float ph = rs.y + 4.0f, pw = rs.x + 14.0f;
+                        ImDrawList* rdl = ImGui::GetWindowDrawList();
+                        rdl->AddRectFilled(ImVec2(pp.x, pp.y - 1), ImVec2(pp.x + pw, pp.y - 1 + ph),
+                                           ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.20f)),
+                                           ph * 0.5f);
+                        rdl->AddText(ImVec2(pp.x + 7, pp.y + 1), ImGui::GetColorU32(kAccent), rl);
+                        ImGui::Dummy(ImVec2(pw, rs.y));
                     }
                     std::string ago = ModifiedAgo(scenes[i]);
                     if (ago.empty())
@@ -1329,10 +1441,26 @@ int main(int argc, char** argv) {
                     // Right-aligned: favorite star, Folder, Play.
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - (36 + 82 + 80 + 20));
                     ImGui::SetCursorPosY(12.0f);
-                    ImGui::PushStyleColor(ImGuiCol_Text,
-                        fav ? ImVec4(1.0f, 0.80f, 0.25f, 1) : ImVec4(0.55f, 0.58f, 0.65f, 1));
-                    if (ImGui::Button("*", ImVec2(36, 40))) { ToggleFavorite(path); SavePrefs(); }
-                    ImGui::PopStyleColor();
+                    if (ImGui::Button("##fav", ImVec2(36, 40))) { ToggleFavorite(path); SavePrefs(); }
+                    {
+                        // Drawn five-point star (the UI font has no ★ glyph):
+                        // filled gold when favorited, gray outline otherwise.
+                        ImVec2 fmn = ImGui::GetItemRectMin(), fmx = ImGui::GetItemRectMax();
+                        ImVec2 fc((fmn.x + fmx.x) * 0.5f, (fmn.y + fmx.y) * 0.5f);
+                        float R = 9.0f;
+                        ImVec2 pts[10];
+                        for (int k = 0; k < 10; ++k) {
+                            float ang = -1.5707963f + k * 0.62831853f;
+                            float rr = (k % 2 == 0) ? R : R * 0.45f;
+                            pts[k] = ImVec2(fc.x + std::cos(ang) * rr, fc.y + std::sin(ang) * rr);
+                        }
+                        ImDrawList* fdl = ImGui::GetWindowDrawList();
+                        if (fav)
+                            fdl->AddConcavePolyFilled(pts, 10, IM_COL32(255, 204, 64, 255));
+                        else
+                            fdl->AddPolyline(pts, 10, IM_COL32(150, 155, 168, 255),
+                                             ImDrawFlags_Closed, 1.6f);
+                    }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip(fav ? "Unfavorite" : "Favorite");
                     ImGui::SameLine();
                     if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(scenes[i].parent_path().string());
@@ -1409,7 +1537,11 @@ int main(int argc, char** argv) {
                 ImGui::BeginGroup();
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
                 ImGui::Text("%s", scenes[i].filename().string().c_str());
-                ImGui::TextDisabled("%s", croot.filename().string().c_str());
+                std::string cago = ModifiedAgo(scenes[i]);
+                if (cago.empty())
+                    ImGui::TextDisabled("%s", croot.filename().string().c_str());
+                else
+                    ImGui::TextDisabled("%s  \xC2\xB7  %s", croot.filename().string().c_str(), cago.c_str());
                 ImGui::EndGroup();
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - (80 + 82 + 82 + 24));
                 ImGui::SetCursorPosY(12.0f);
@@ -1419,13 +1551,56 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(croot.string());
                 ImGui::SameLine();
+                // Removing deletes the game's folder from disk, so confirm first
+                // (modal rendered after the loop).
                 if (ImGui::Button("Remove", ImVec2(82, 40))) {
-                    std::error_code rec; fs::remove_all(croot, rec);
-                    Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
-                    scenes = FindScenes();
+                    commRemovePath = croot.string();
+                    commRemoveName = scenes[i].filename().string();
+                }
+                // Right-click parity with the Play tab rows.
+                if (ImGui::BeginPopupContextWindow("commctx", ImGuiPopupFlags_MouseButtonRight)) {
+                    if (!player.empty() && ImGui::MenuItem("Play")) {
+                        Launch(player, cpath); RecordPlayed(cpath); SavePrefs();
+                    }
+                    if (ImGui::MenuItem("Show in Explorer")) OpenExternal(croot.string());
+                    if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(cpath.c_str());
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Remove from library...")) {
+                        commRemovePath = croot.string();
+                        commRemoveName = scenes[i].filename().string();
+                    }
+                    ImGui::EndPopup();
                 }
                 ImGui::EndChild();
                 ImGui::PopID();
+            }
+            // Confirm before deleting a community game's folder from disk.
+            if (!commRemovePath.empty() && !ImGui::IsPopupOpen("Remove from library?"))
+                ImGui::OpenPopup("Remove from library?");
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Remove from library?", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Remove \"%s\"?", commRemoveName.c_str());
+                ImGui::TextDisabled("This deletes its folder from disk and can't be undone.");
+                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+                bool doRemove = ImGui::Button("Remove", ImVec2(110, 0));
+                ImGui::PopStyleColor(2);
+                if (doRemove) {
+                    std::error_code rec; fs::remove_all(commRemovePath, rec);
+                    Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
+                    scenes = FindScenes();
+                    commRemovePath.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(110, 0))) {
+                    commRemovePath.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
             }
             if (cShown == 0) {
                 ImGui::Dummy(ImVec2(0, 4));
@@ -1493,28 +1668,42 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 8));
                 // Profile card: avatar initial + name + account details.
                 ImGui::BeginChild("profile", ImVec2(0, 110), true);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 cp = ImGui::GetCursorScreenPos();
                 float r = 30.0f;
                 ImVec2 ctr(cp.x + r + 4, cp.y + r + 6);
                 // Avatar tinted by the username (same stable hash as game tiles),
                 // so each account gets its own recognizable color.
                 ImVec4 av = NameColor(s.username);
-                ImGui::GetWindowDrawList()->AddCircleFilled(
+                // Subtle wash of the avatar color across the whole card so the
+                // profile block reads as "yours" at a glance.
+                ImVec2 wmn = ImGui::GetWindowPos();
+                ImVec2 wmx(wmn.x + ImGui::GetWindowSize().x, wmn.y + ImGui::GetWindowSize().y);
+                dl->AddRectFilled(wmn, wmx, ImGui::GetColorU32(ImVec4(av.x, av.y, av.z, 0.06f)), 6.0f);
+                dl->AddCircleFilled(
                     ctr, r, ImGui::GetColorU32(ImVec4(av.x * 0.55f, av.y * 0.55f, av.z * 0.55f, 1.0f)), 32);
-                ImGui::GetWindowDrawList()->AddCircle(ctr, r, ImGui::GetColorU32(av), 32, 2.0f);
+                dl->AddCircle(ctr, r, ImGui::GetColorU32(av), 32, 2.0f);
                 char initial[2] = { (char)(s.username.empty() ? '?' : std::toupper((unsigned char)s.username[0])), 0 };
-                ImVec2 ts = ImGui::CalcTextSize(initial);
-                ImGui::GetWindowDrawList()->AddText(ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f),
-                                                    ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), initial);
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * 2 + 22);
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
-                ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", s.username.c_str());
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * 2 + 22);
-                ImGui::TextColored(account.IsOnline() ? ImVec4(0.55f, 0.9f, 0.6f, 1)
-                                                      : ImVec4(0.70f, 0.72f, 0.78f, 1),
-                                   account.IsOnline() ? "Online" : "Local (this device)");
+                float isz = ImGui::GetFontSize() * 1.6f;
+                ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(isz, 1e9f, 0.0f, initial);
+                dl->AddText(ImGui::GetFont(), isz, ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f),
+                            ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), initial);
+                // Username drawn oversized next to the avatar; status underneath
+                // with a colored presence dot.
+                float tx = cp.x + r * 2 + 22;
+                float nameSz = ImGui::GetFontSize() * 1.4f;
+                dl->AddText(ImGui::GetFont(), nameSz, ImVec2(tx, cp.y + 8),
+                            ImGui::GetColorU32(ImVec4(0.94f, 0.95f, 0.99f, 1)), s.username.c_str());
+                ImVec4 stCol = account.IsOnline() ? ImVec4(0.55f, 0.9f, 0.6f, 1)
+                                                  : ImVec4(0.70f, 0.72f, 0.78f, 1);
+                ImVec2 dp(tx, cp.y + 8 + nameSz + 7);
+                float sdr = ImGui::GetFontSize() * 0.28f;
+                dl->AddCircleFilled(ImVec2(dp.x + sdr, dp.y + ImGui::GetTextLineHeight() * 0.55f),
+                                    sdr, ImGui::GetColorU32(stCol), 12);
+                ImGui::SetCursorScreenPos(ImVec2(dp.x + sdr * 2 + 7, dp.y));
+                ImGui::TextColored(stCol, "%s", account.IsOnline() ? "Online" : "Local (this device)");
                 if (account.IsOnline()) {
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * 2 + 22);
+                    ImGui::SetCursorScreenPos(ImVec2(tx, ImGui::GetCursorScreenPos().y));
                     ImGui::TextDisabled("%s", account.ServerUrl().c_str());
                 }
                 ImGui::EndChild();
@@ -1617,7 +1806,7 @@ int main(int argc, char** argv) {
 
                 const char* btn = acctRegisterMode ? "Create account" : "Sign in";
                 ImGui::BeginDisabled(acctBusy);
-                if (ImGui::Button(btn, ImVec2(200, 48)) || submit) {
+                if (PrimaryButton(btn, ImVec2(200, 48)) || submit) {
                     acctBusy = true;
                     acct::Result r = acctRegisterMode
                         ? account.Register(acctUser, acctPass, acctName)
@@ -1670,7 +1859,7 @@ int main(int argc, char** argv) {
             ImGui::PopItemWidth();
             ImGui::Dummy(ImVec2(0, 12));
 
-            if (ImGui::Button("Save & apply", ImVec2(180, 46))) { applyAccountSettings(false); Toast("Settings saved", 1); }
+            if (PrimaryButton("Save & apply", ImVec2(180, 46))) { applyAccountSettings(false); Toast("Settings saved", 1); }
             ImGui::SameLine();
             if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) applyAccountSettings(true);
 
@@ -1763,9 +1952,12 @@ int main(int argc, char** argv) {
             ImGui::PushItemWidth(280);
             if (ImGui::SliderFloat("##uiscale", &g_uiScale, 0.8f, 1.6f, "%.2fx"))
                 ImGui::GetIO().FontGlobalScale = g_uiScale;   // live preview
+            // Persist + restyle when the drag ends, so releasing the slider is
+            // enough — no separate Apply click needed.
+            if (ImGui::IsItemDeactivatedAfterEdit()) { DarkTheme(); SavePrefs(); }
             ImGui::PopItemWidth();
             ImGui::SameLine();
-            if (ImGui::Button("Apply##scale")) { DarkTheme(); SavePrefs(); }
+            ImGui::TextDisabled("applies on release");
 
             // ---- Behavior ----
             ImGui::Dummy(ImVec2(0, 16));

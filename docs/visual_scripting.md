@@ -108,9 +108,10 @@ a **Trigger** (`OnStart`, `OnUpdate`, `OnKey`, `OnCollision`, `OnClick`,
 **Instructions** (run top to bottom). Build it entirely in the Inspector.
 
 - **Conditions**: `always`, `key`, `key_down`, `key_up`, `mouse`, `mouse_down`,
-  `chance`, `var_eq`, `var_neq`, `var_gt`, `var_lt`, `prefs_eq`, `prefs_gt`,
-  `has_tag`, `is_active`, `dist_lt`, `dist_gt`, `exists`, `raycast`,
-  `raycast_tag`, `raycast_name`.
+  `chance`, `cooldown` (passes at most once every N seconds — fire rates,
+  dashes), `var_eq`, `var_neq`, `var_gt`, `var_lt`, `var_between`, `vars_cmp`,
+  `prefs_eq`, `prefs_gt`, `has_tag`, `is_active`, `dist_lt`, `dist_gt`,
+  `exists`, `raycast`, `raycast_tag`, `raycast_name`.
 
 ### Raycasting (no code)
 
@@ -133,8 +134,13 @@ see exactly where it points before you press Play.
 `direction` is one of `forward`, `back`, `up`, `down`, `left`, `right`, or
 `toward:<ObjectName>`. The caster's own colliders are ignored.
 - **Instructions**: movement (`move`, `set_pos`, `rotate`, `set_scale(3)`,
-  `move_toward`, `look_at`), control (`wait`, `goto`, `stop`), variables
-  (`set_var`, `add_var`, `mul_var`, `div_var`, `copy_var`, `rand_var`),
+  `move_toward`, `look_at`, `move_dir` — facing-relative movement, `follow`,
+  `flee`, `orbit` — circle a named object), control (`wait`, `wait_until` —
+  hold until a variable passes a test, `goto`, `stop`), juice (`tween_move`,
+  `tween_scale`, `tween_rotate`, `shake`, `punch_scale`, `tween_color`,
+  `fade`, `flash` — eased, scheduler-driven), variables
+  (`set_var`, `add_var`, `mul_var`, `div_var`, `copy_var`, `rand_var`,
+  `tween_var` — animate a variable over time),
   objects (`spawn`, `spawn3`, `destroy`, `destroy_obj`, `activate`,
   `deactivate`, `set_active`, `set_tag`), rendering/audio (`set_text`,
   `set_color`, `emit`, `play_anim`, `play_sound`, `set_cam`, `set_bg`,
@@ -144,8 +150,69 @@ see exactly where it points before you press Play.
   hit in variables, see below), **multiplayer** (`net_host`,
   `net_join`, `net_send`, `net_set` synced vars, `net_spawn` replicated spawn,
   `net_disconnect`), **Steam** (`steam_unlock`, `steam_set_stat`,
-  `steam_inc_stat`), messaging (`send`), and `log`.
+  `steam_inc_stat`), messaging (`send`), **juice** (`tween_move`,
+  `tween_scale`, `shake`, `punch_scale` — eased motion, impact shake and
+  scale punches, mirroring the script `tween_*` builtins), `comment`
+  (a designer note, skipped at runtime), and `log`.
 
 Multiplayer with zero code: a `Player` with an `OnKey` ActionList whose
 instruction is `net_host 45000`, and another whose instruction is
 `net_join 127.0.0.1 45000`, is a complete host/join setup.
+
+### PlayFab (cloud login, leaderboards, saves) — no code
+
+The `playfab_*` instructions talk to Azure PlayFab over its REST API (no SDK
+to install; get a free Title ID from the PlayFab Game Manager):
+
+- `playfab_login <titleId> <customId>` — sign in (creates the account on
+  first use). `customId` is any stable id you pick, or `$textvar`. Sets
+  `playfab_ok` (1/0), `playfab_id`, and `playfab_error` on failure. Run it
+  once from **On Start**, not every frame — the call blocks while the
+  request runs.
+- `playfab_name <display name>` — the name shown on leaderboards.
+- `playfab_set_stat <stat> <value>` — publish a statistic (leaderboards are
+  built from statistics in PlayFab). `value` can be `$var` to send a game
+  variable, e.g. `playfab_set_stat highscore $score`.
+- `playfab_leaderboard <stat> [count]` — fetch the top entries into
+  variables: `pf_count`, then `pf_1_name` / `pf_1_score`, `pf_2_name` / ...
+  Show them on screen with **UI Text Bind** (`{pf_1_name} {pf_1_score}`).
+- `playfab_set_data <key> <value...>` / `playfab_get_data <key> [intoTextVar]`
+  — per-player cloud save data.
+
+The editor's **Services** panel has a PlayFab section to test your Title ID,
+publish a stat and fetch a leaderboard before wiring up the actions.
+
+OkayScript has the same powers as builtins: `pf_login`, `pf_login_password`,
+`pf_register`, `pf_logged_in`, `pf_id`, `pf_error`, `pf_name`, `pf_set_stat`,
+`pf_leaderboard_top` (array of `"rank,name,score"`), `pf_save`, `pf_load`,
+`pf_delete` — see the in-editor Scripting Reference.
+
+## Flow Graph editor (View ▸ Flow Graph)
+
+The node view of an object's Actions. Everything the Inspector edits is here
+too, plus graph-only conveniences:
+
+- **View**: drag empty space to pan, scroll to zoom (anchored on the cursor),
+  **Reset** for 100%, **Fit** to frame every node, and a **Minimap** toggle in
+  the right-click menu. Node positions you drag are saved with the scene;
+  "Tidy Up Layout" returns to the automatic arrangement.
+- **Editing**: click a node to edit it in the strip above the canvas;
+  right-click for Edit / Duplicate / Copy / Paste After / Move / Delete.
+  **Ctrl+C/V** copy-paste across scripts, **Ctrl+D** duplicates in place,
+  **Delete/Backspace** removes the selection.
+- **Comments**: right-click empty canvas ▸ **Add Comment** (or add the
+  `Comment (note)` block) — a note that is skipped at runtime, for explaining
+  what the next blocks do.
+- **Debugging**: the running instruction glows green in Play; **Pause** halts
+  every Actions script and **Step / Step 10 / Continue** single-step them.
+  Right-click a node ▸ **Add Breakpoint** (red badge) to pause automatically
+  the moment that node is about to run — then Step from there. Breakpoints
+  are debug-only and never saved with the scene.
+- **Code round-trip**: **View as Code** renders the blocks as OkayScript to
+  copy into a real script; **Paste Code** converts simple OkayScript back
+  into blocks.
+- **Adding nodes**: + Instruction / + Condition open a searchable palette —
+  type and press **Enter** to add the first match without the mouse.
+- **Templates & reuse**: **+ Template** inserts ready-made behaviours;
+  the ★ Custom buttons save/insert reusable instruction or condition groups
+  shared across projects.

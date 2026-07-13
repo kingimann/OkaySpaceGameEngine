@@ -71,13 +71,43 @@ private:
 
 } // namespace
 
+#ifdef OKAY_WITH_PHOTON
+// Defined in PhotonTransport.cpp (compiled only when the Photon SDK is wired
+// in with -DOKAY_WITH_PHOTON=ON; see docs/photon.md).
+std::unique_ptr<INetTransport> CreatePhotonNetTransport();
+#endif
+
 std::unique_ptr<INetTransport> CreateNetTransport(NetTransportProvider provider, NetworkManager* native) {
     switch (provider) {
         case NetTransportProvider::Native: return std::make_unique<NativeNetTransport>(native);
-        case NetTransportProvider::Photon: return std::make_unique<StubNetTransport>("Photon");
+        case NetTransportProvider::Photon:
+#ifdef OKAY_WITH_PHOTON
+            return CreatePhotonNetTransport();
+#else
+            return std::make_unique<StubNetTransport>("Photon");
+#endif
         case NetTransportProvider::Custom: return std::make_unique<StubNetTransport>("Custom");
     }
     return std::make_unique<NativeNetTransport>(native);
 }
+
+namespace {
+std::unique_ptr<INetTransport>& TransportSlot() { static std::unique_ptr<INetTransport> s; return s; }
+NetTransportProvider& TransportProvider() { static NetTransportProvider p = NetTransportProvider::Native; return p; }
+NetworkManager*& TransportNative() { static NetworkManager* n = nullptr; return n; }
+} // namespace
+
+INetTransport& NetTransport::Get() {
+    if (!TransportSlot()) TransportSlot() = CreateNetTransport(TransportProvider(), TransportNative());
+    return *TransportSlot();
+}
+bool NetTransport::Exists() { return (bool)TransportSlot(); }
+void NetTransport::Use(NetTransportProvider provider, NetworkManager* native) {
+    TransportProvider() = provider;
+    if (native || provider == NetTransportProvider::Native) TransportNative() = native;
+    TransportSlot().reset();          // rebuilt lazily on next Get()
+}
+NetTransportProvider NetTransport::Provider() { return TransportProvider(); }
+void NetTransport::Shutdown() { TransportSlot().reset(); }
 
 } // namespace okay

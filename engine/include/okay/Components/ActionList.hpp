@@ -144,6 +144,10 @@ public:
     // node. Off by default, so shipped games are unaffected.
     static bool& DebugPaused();
     static int&  StepBudget();
+    /// Debug breakpoints as (address of an instruction vector, instruction index).
+    /// Set by the editor's Flow Graph; runtime-only (never serialized). When the
+    /// interpreter is about to run a marked instruction it flips DebugPaused().
+    static std::vector<std::pair<const void*, int>>& Breakpoints();
 
 private:
     void Fire();   // fire handler 0 (used by Start for On Start)

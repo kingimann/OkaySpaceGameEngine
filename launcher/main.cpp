@@ -409,10 +409,15 @@ unsigned long CurrentPid() {
 // Launch the editor with a handshake token: "--launcher <pid>". The editor refuses
 // to start unless this token is present AND that launcher process is still alive,
 // so the engine can only be opened through (and alongside) the launcher.
-void LaunchEditor(const std::string& exe, const std::string& tmpl = "") {
+void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
+                  const std::string& newProjectDir = "", const std::string& openScene = "") {
     if (exe.empty()) return;
     std::string args = "--launcher " + std::to_string(CurrentPid());
     if (!tmpl.empty()) args += " --template \"" + tmpl + "\"";
+    // Project creation lives here in the launcher: the editor receives the
+    // target folder and builds <folder>/Assets + the template scene headlessly.
+    if (!newProjectDir.empty()) args += " --new-project \"" + newProjectDir + "\"";
+    if (!openScene.empty()) args += " --open \"" + openScene + "\"";   // reopen a project
 #if defined(_WIN32)
     std::string cmd = "start \"\" \"" + exe + "\" " + args;
 #else
@@ -537,6 +542,7 @@ void Toast(const std::string& m, int kind = 0) {
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
 int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played
+int g_playView = 0;               // 0 List rows, 1 Grid tiles
 int g_lastTab = 0;                // section shown when the launcher was last closed
 
 bool IsFavorite(const std::string& p) {
@@ -771,6 +777,7 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
+        else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
@@ -790,6 +797,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
+    f << "play_view=" << g_playView << "\n";
     f << "tab=" << g_lastTab << "\n";
     f << "win_w=" << g_winW << "\n";
     f << "win_h=" << g_winH << "\n";
@@ -1020,10 +1028,12 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
 
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
-        // Ctrl+F focuses the current tab's search box.
+        // Ctrl+F focuses the current tab's search box; Esc clears every search.
         if (!ImGui::GetIO().WantTextInput) {
             for (int i = 0; i < 5; ++i)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+                playFilter[0] = commFilter[0] = marketFilter[0] = '\0';
         }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
             focusSearch = true;
@@ -1227,6 +1237,27 @@ int main(int argc, char** argv) {
                 ImU32 g0 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f));
                 ImU32 g1 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.03f));
                 dl->AddRectFilledMultiColor(mn, ImVec2(mn.x + sz.x, mn.y + sz.y), g0, g1, g1, g0);
+                // Drawn isometric-cube logo mark, faded into the card's right side.
+                float S = 84.0f;
+                ImVec2 ctr(mn.x + sz.x - S * 0.75f, mn.y + sz.y * 0.5f);
+                float hw = S * 0.42f, hh = S * 0.24f, vh = S * 0.34f;
+                ImVec2 top(ctr.x, ctr.y - hh - vh * 0.5f), left(ctr.x - hw, ctr.y - vh * 0.5f),
+                       right(ctr.x + hw, ctr.y - vh * 0.5f), mid(ctr.x, ctr.y + hh - vh * 0.5f);
+                ImVec2 lb(left.x, left.y + vh), rb(right.x, right.y + vh), mb(mid.x, mid.y + vh);
+                dl->AddQuadFilled(top, right, mid, left,
+                    ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)));
+                dl->AddQuadFilled(left, mid, mb, lb,
+                    ImGui::GetColorU32(ImVec4(kAccent.x * 0.55f, kAccent.y * 0.55f, kAccent.z * 0.55f, 0.30f)));
+                dl->AddQuadFilled(mid, right, rb, mb,
+                    ImGui::GetColorU32(ImVec4(kAccent.x * 0.75f, kAccent.y * 0.75f, kAccent.z * 0.75f, 0.30f)));
+                // Version chip, top-right corner.
+                const char* vlbl = "v" OKAY_ENGINE_VERSION;
+                ImVec2 vts = ImGui::CalcTextSize(vlbl);
+                ImVec2 vp2(mn.x + sz.x - vts.x - 22.0f, mn.y + 10.0f);
+                dl->AddRectFilled(ImVec2(vp2.x - 7, vp2.y - 3), ImVec2(vp2.x + vts.x + 7, vp2.y + vts.y + 3),
+                                  ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.25f)),
+                                  (vts.y + 6.0f) * 0.5f);
+                dl->AddText(vp2, ImGui::GetColorU32(ImVec4(0.92f, 0.95f, 1.0f, 0.95f)), vlbl);
             }
             ImGui::SetCursorPos(ImVec2(18, 14));
             ImGui::Text("OkaySpace Editor");
@@ -1245,10 +1276,26 @@ int main(int argc, char** argv) {
             }
             ImGui::EndChild();
 
-            // ---- New project: a clickable template gallery ----
+            // ---- New project: name + location + a clickable template gallery.
+            // The LAUNCHER owns project creation now: clicking a template sends
+            // --new-project "<location>/<name>" to the editor, which creates the
+            // folder + Assets + starting scene and opens ready to work.
             ImGui::Dummy(ImVec2(0, 10));
             ImGui::SeparatorText("New project");
-            ImGui::TextDisabled("Pick a starting point — the editor opens with the template selected.");
+            static char npName[96] = "MyGame";
+            static char npLoc[400] = {0};
+            if (!npLoc[0])   // default: a Projects folder beside the launcher
+                std::snprintf(npLoc, sizeof(npLoc), "%s",
+                              (fs::path(g_exeDir) / "Projects").string().c_str());
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Name"); ImGui::SameLine();
+            ImGui::SetNextItemWidth(170);
+            ImGui::InputText("##npname", npName, sizeof(npName));
+            ImGui::SameLine(0, 14);
+            ImGui::TextDisabled("Location"); ImGui::SameLine();
+            ImGui::SetNextItemWidth(-16);
+            ImGui::InputText("##nploc", npLoc, sizeof(npLoc));
+            ImGui::TextDisabled("Pick a template to create <Location>/<Name> and open it in the editor.");
             ImGui::Dummy(ImVec2(0, 6));
             // Titles must match the editor's New Project templates exactly.
             static const struct { const char* name; const char* desc; } kTpl[] = {
@@ -1289,16 +1336,93 @@ int main(int argc, char** argv) {
                 ImGui::EndGroup();
                 if (hov) {
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    ImGui::SetTooltip("Open the editor with the %s template", kTpl[i].name);
+                    ImGui::SetTooltip("Create '%s' from the %s template and open it",
+                                      npName[0] ? npName : "MyGame", kTpl[i].name);
                 }
                 if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                    LaunchEditor(editor, kTpl[i].name);
-                    Toast(std::string("Opening editor: ") + kTpl[i].name);
+                    // Compose <Location>/<Name>; the editor creates the folder,
+                    // Assets/ and the starting scene (uniquifying if it's taken).
+                    std::string nm = npName[0] ? npName : "MyGame";
+                    for (char& ch : nm)   // keep the folder name filesystem-safe
+                        if (ch == '/' || ch == '\\' || ch == '"' || ch == ':') ch = '-';
+                    std::string root = (fs::path(npLoc[0] ? npLoc : ".") / nm).string();
+                    LaunchEditor(editor, kTpl[i].name, root);
+                    Toast(std::string("Creating ") + nm + " (" + kTpl[i].name + ")");
                 }
                 ImGui::EndChild();
                 ImGui::PopID();
             }
             if (editor.empty()) ImGui::PopStyleVar();
+
+            // ---- Your projects: everything in the Location folder, one line each ----
+            ImGui::Dummy(ImVec2(0, 12));
+            ImGui::SeparatorText("Your projects");
+            static std::vector<std::pair<std::string, std::string>> s_projects;  // name -> scene path
+            static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
+            if (s_projScanned != std::string(npLoc)) {
+                s_projScanned = npLoc;
+                s_projects.clear();
+                std::error_code pec;
+                for (auto& e : fs::directory_iterator(fs::path(npLoc), pec)) {
+                    if (!e.is_directory(pec)) continue;
+                    fs::path assets = e.path() / "Assets";
+                    if (!fs::exists(assets, pec)) continue;
+                    // Prefer the scene named after the project; else the first scene found.
+                    std::string scene;
+                    fs::path preferred = assets / (e.path().filename().string() + ".okayscene");
+                    if (fs::exists(preferred, pec)) scene = preferred.string();
+                    else for (auto& f : fs::directory_iterator(assets, pec))
+                        if (f.path().extension() == ".okayscene") { scene = f.path().string(); break; }
+                    if (!scene.empty())
+                        s_projects.push_back({e.path().filename().string(), scene});
+                }
+                std::sort(s_projects.begin(), s_projects.end());
+            }
+            if (ImGui::SmallButton("Refresh##projs")) s_projScanned = "\x01";
+            if (s_projects.empty()) {
+                ImGui::TextDisabled("No projects in this folder yet — create one above.");
+            }
+            for (auto& pr : s_projects) {
+                ImGui::PushID(pr.second.c_str());
+                ImGui::BeginChild("proj", ImVec2(0, 56), true, ImGuiWindowFlags_NoScrollbar);
+                HoverRing();
+                ImGui::SetCursorPos(ImVec2(10, 9));
+                IconTile(pr.first, 38.0f);
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2);
+                ImGui::TextUnformatted(pr.first.c_str());
+                std::string pago = ModifiedAgo(fs::path(pr.second));
+                if (pago.empty()) ImGui::TextDisabled("%s", pr.second.c_str());
+                else ImGui::TextDisabled("edited %s", pago.c_str());
+                ImGui::EndGroup();
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
+                ImGui::SetCursorPosY(10.0f);
+                ImGui::BeginDisabled(editor.empty());
+                if (PrimaryButton("Open", ImVec2(84, 36))) {
+                    LaunchEditor(editor, "", "", pr.second);
+                    Toast(std::string("Opening ") + pr.first);
+                }
+                ImGui::EndDisabled();
+                // Double-click the card opens it too; right-click for file actions.
+                if (!editor.empty() && ImGui::IsWindowHovered() &&
+                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    LaunchEditor(editor, "", "", pr.second);
+                    Toast(std::string("Opening ") + pr.first);
+                }
+                if (ImGui::BeginPopupContextWindow("projctx", ImGuiPopupFlags_MouseButtonRight)) {
+                    if (!editor.empty() && ImGui::MenuItem("Open in Editor")) {
+                        LaunchEditor(editor, "", "", pr.second);
+                        Toast(std::string("Opening ") + pr.first);
+                    }
+                    if (ImGui::MenuItem("Show in Explorer"))
+                        OpenExternal(fs::path(pr.second).parent_path().parent_path().string());
+                    if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(pr.second.c_str());
+                    ImGui::EndPopup();
+                }
+                ImGui::EndChild();
+                ImGui::PopID();
+            }
 
             ImGui::Dummy(ImVec2(0, 14));
             // Live notes from the latest GitHub release when a check has run;
@@ -1327,7 +1451,9 @@ int main(int argc, char** argv) {
                 };
                 for (const char* n : kNews) ImGui::BulletText("%s", n);
             }
-            ImGui::TextDisabled("Full notes: GitHub repository (link below).");
+            if (ImGui::SmallButton("View all releases"))
+                OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/releases");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the full release notes on GitHub");
 
             ImGui::Dummy(ImVec2(0, 10));
             ImGui::SeparatorText("Tips");
@@ -1371,17 +1497,36 @@ int main(int argc, char** argv) {
                     for (char& c : s) c = (char)std::tolower((unsigned char)c);
                     return s;
                 };
-                // Toolbar: search, sort, open-folder.
+                // Toolbar: search + sort + view toggle + folder, all on one row
+                // (the search field flexes to fill whatever is left).
                 if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
-                ImGui::PushItemWidth(-1);
+                {
+                    const float sortW = 156.0f, viewW = 100.0f, foldW = 108.0f;
+                    float sp = ImGui::GetStyle().ItemSpacing.x;
+                    float searchW = ImGui::GetContentRegionAvail().x - sortW - viewW - foldW - sp * 3.0f;
+                    if (searchW < 150.0f) searchW = 150.0f;
+                    ImGui::SetNextItemWidth(searchW);
+                }
                 ImGui::InputTextWithHint("##playFilter", "Search games...  (Ctrl+F)", playFilter, sizeof(playFilter));
-                ImGui::PopItemWidth();
-                ImGui::PushItemWidth(180);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(156);
                 if (ImGui::Combo("##playsort", &g_playSort,
                                  "Favorites first\0Name A\xE2\x80\x93Z\0Recently played\0")) SavePrefs();
-                ImGui::PopItemWidth();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sort order");
                 ImGui::SameLine();
-                if (ImGui::Button("Open games folder")) OpenExternal(g_exeDir);
+                // List / Grid view toggle (persisted).
+                auto viewBtn = [&](const char* lbl, int v) {
+                    bool on = g_playView == v;
+                    if (on) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+                    if (ImGui::Button(lbl, ImVec2(49, 0))) { g_playView = v; SavePrefs(); }
+                    if (on) ImGui::PopStyleColor();
+                };
+                viewBtn("List", 0);
+                ImGui::SameLine(0, 2);
+                viewBtn("Grid", 1);
+                ImGui::SameLine();
+                if (ImGui::Button("Folder", ImVec2(108, 0))) OpenExternal(g_exeDir);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the games folder");
                 ImGui::Dummy(ImVec2(0, 6));
 
                 // Display order: optional favorites-first, then name A–Z.
@@ -1400,6 +1545,109 @@ int main(int argc, char** argv) {
 
                 std::string needle = lower(playFilter);
                 int shown = 0;
+                // ---- Grid view: big tiles, double-click to play ----
+                if (g_playView == 1) {
+                    const float tileW = 112.0f, tileH = 128.0f;
+                    int cols = (int)(ImGui::GetContentRegionAvail().x / (tileW + 8.0f));
+                    if (cols < 2) cols = 2;
+                    int col = 0;
+                    for (std::size_t oi = 0; oi < order.size(); ++oi) {
+                        std::size_t i = order[oi];
+                        std::string name = scenes[i].filename().string();
+                        if (!needle.empty() && lower(name).find(needle) == std::string::npos)
+                            continue;
+                        ++shown;
+                        std::string path = scenes[i].string();
+                        bool fav = IsFavorite(path);
+                        if (col) ImGui::SameLine();
+                        ImGui::PushID((int)i);
+                        ImGui::BeginChild("gtile", ImVec2(tileW, tileH), true, ImGuiWindowFlags_NoScrollbar);
+                        HoverRing();
+                        ImGui::SetCursorPos(ImVec2((tileW - 64.0f) * 0.5f, 12.0f));
+                        IconTile(name, 64.0f);
+                        std::string nm = name;
+                        if (nm.size() > 13) nm = nm.substr(0, 12) + "..";
+                        ImVec2 nts = ImGui::CalcTextSize(nm.c_str());
+                        ImGui::SetCursorPos(ImVec2((tileW - nts.x) * 0.5f, 88.0f));
+                        ImGui::TextUnformatted(nm.c_str());
+                        ImGui::SetCursorPos(ImVec2((tileW - ImGui::CalcTextSize("2 d ago").x) * 0.5f, 104.0f));
+                        std::string gago = ModifiedAgo(scenes[i]);
+                        if (!gago.empty()) ImGui::TextDisabled("%s", gago.c_str());
+                        bool tileHov = ImGui::IsWindowHovered();
+                        bool overStar = false, overPlay = false;
+                        ImVec2 wmn = ImGui::GetWindowPos();
+                        if (fav || tileHov) {
+                            // Gold star badge, top-right: filled when favorited, a gray
+                            // outline on hover — and clickable either way to toggle.
+                            ImVec2 fc(wmn.x + tileW - 14.0f, wmn.y + 14.0f);
+                            ImVec2 m = ImGui::GetIO().MousePos;
+                            overStar = (m.x - fc.x) * (m.x - fc.x) + (m.y - fc.y) * (m.y - fc.y) < 10.0f * 10.0f;
+                            float R = overStar ? 7.5f : 6.0f;
+                            ImVec2 pts[10];
+                            for (int k2 = 0; k2 < 10; ++k2) {
+                                float ang = -1.5707963f + k2 * 0.62831853f;
+                                float rr = (k2 % 2 == 0) ? R : R * 0.45f;
+                                pts[k2] = ImVec2(fc.x + std::cos(ang) * rr, fc.y + std::sin(ang) * rr);
+                            }
+                            ImDrawList* sdl = ImGui::GetWindowDrawList();
+                            if (fav)
+                                sdl->AddConcavePolyFilled(pts, 10, IM_COL32(255, 204, 64, 255));
+                            else
+                                sdl->AddPolyline(pts, 10, IM_COL32(170, 175, 188, 220), ImDrawFlags_Closed, 1.6f);
+                        }
+                        if (tileHov) {
+                            // Hover play overlay on the icon: dark disc + accent triangle.
+                            // A single click on it plays right away (double-click elsewhere
+                            // on the tile still works).
+                            ImVec2 cc(wmn.x + tileW * 0.5f, wmn.y + 44.0f);
+                            ImVec2 m = ImGui::GetIO().MousePos;
+                            overPlay = (m.x - cc.x) * (m.x - cc.x) + (m.y - cc.y) * (m.y - cc.y) < 17.0f * 17.0f;
+                            ImDrawList* odl = ImGui::GetWindowDrawList();
+                            odl->AddCircleFilled(cc, 16.0f, IM_COL32(10, 12, 16, overPlay ? 215 : 165));
+                            odl->AddCircle(cc, 16.0f, ImGui::GetColorU32(kAccent), 0, overPlay ? 2.2f : 1.4f);
+                            odl->AddTriangleFilled(ImVec2(cc.x - 4.5f, cc.y - 7.0f),
+                                                   ImVec2(cc.x - 4.5f, cc.y + 7.0f),
+                                                   ImVec2(cc.x + 8.0f, cc.y), IM_COL32(255, 255, 255, 245));
+                        }
+                        if (tileHov) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            if (overStar)
+                                ImGui::SetTooltip(fav ? "Unfavorite" : "Favorite");
+                            else
+                                ImGui::SetTooltip("Double-click to play %s", name.c_str());
+                            // MouseClickedCount == 1 so the second click of a fast
+                            // double on the overlay doesn't launch the game twice.
+                            bool click1 = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                                          ImGui::GetIO().MouseClickedCount[ImGuiMouseButton_Left] == 1;
+                            if (overStar && click1) {
+                                ToggleFavorite(path); SavePrefs();
+                            } else if ((overPlay && click1) ||
+                                       (!overStar && !overPlay && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))) {
+                                Launch(player, path);
+                                RecordPlayed(path); SavePrefs();
+                                Toast(std::string("Playing ") + name);
+                            }
+                        }
+                        if (ImGui::BeginPopupContextWindow("gtilectx", ImGuiPopupFlags_MouseButtonRight)) {
+                            if (ImGui::MenuItem("Play")) {
+                                Launch(player, path); RecordPlayed(path); SavePrefs();
+                                Toast(std::string("Playing ") + name);
+                            }
+                            if (ImGui::MenuItem(fav ? "Unfavorite" : "Favorite")) { ToggleFavorite(path); SavePrefs(); }
+                            if (ImGui::MenuItem("Show in Explorer")) OpenExternal(scenes[i].parent_path().string());
+                            if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(path.c_str());
+                            ImGui::EndPopup();
+                        }
+                        ImGui::EndChild();
+                        ImGui::PopID();
+                        if (++col >= cols) col = 0;
+                    }
+                    if (shown == 0)
+                        ImGui::TextDisabled("No games match \"%s\".", playFilter);
+                    else
+                        ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
+                                            needle.empty() ? "" : " matching");
+                } else {
                 for (std::size_t oi = 0; oi < order.size(); ++oi) {
                     std::size_t i = order[oi];
                     std::string name = scenes[i].filename().string();
@@ -1470,6 +1718,12 @@ int main(int argc, char** argv) {
                         RecordPlayed(path); SavePrefs();
                         Toast(std::string("Playing ") + name);
                     }
+                    // Double-click anywhere on the row also plays it.
+                    if (ImGui::IsWindowHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        Launch(player, path);
+                        RecordPlayed(path); SavePrefs();
+                        Toast(std::string("Playing ") + name);
+                    }
                     // Right-click anywhere on the row for the usual file actions.
                     if (ImGui::BeginPopupContextWindow("gamectx", ImGuiPopupFlags_MouseButtonRight)) {
                         if (ImGui::MenuItem("Play")) {
@@ -1489,16 +1743,44 @@ int main(int argc, char** argv) {
                 else
                     ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
                                         needle.empty() ? "" : " matching");
+                }   // end list view
             }
         } else if (tab == 2) {                            // ---- Community ----
             sectionHeader("Community",
                 "Play and share games, levels, scripts and models with other creators.");
 
-            // Play a shared game in place — no install, no copy into your projects.
-            ImGui::TextWrapped("Got a game from a friend? Drag its game folder or .okayscene "
-                "onto this window to play it instantly — nothing is downloaded or copied. "
-                "Or keep it in your library below.");
-            ImGui::Dummy(ImVec2(0, 8));
+            // Play a shared game in place — drawn as a drop-zone banner (dashed
+            // border + drop icon) so it reads as "drag files here" at a glance.
+            {
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                float w = ImGui::GetContentRegionAvail().x, h = 66.0f;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h),
+                                  ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.07f)), 9.0f);
+                // Hand-dashed border (ImGui has no dashed-rect primitive).
+                ImU32 bc = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.55f));
+                const float dash = 8.0f, gap = 6.0f;
+                for (float x = p.x + 8; x + dash < p.x + w - 8; x += dash + gap) {
+                    dl->AddLine(ImVec2(x, p.y), ImVec2(x + dash, p.y), bc, 1.6f);
+                    dl->AddLine(ImVec2(x, p.y + h), ImVec2(x + dash, p.y + h), bc, 1.6f);
+                }
+                for (float y = p.y + 8; y + dash < p.y + h - 8; y += dash + gap) {
+                    dl->AddLine(ImVec2(p.x, y), ImVec2(p.x, y + dash), bc, 1.6f);
+                    dl->AddLine(ImVec2(p.x + w, y), ImVec2(p.x + w, y + dash), bc, 1.6f);
+                }
+                // Drop icon: circle + down arrow, left side of the banner.
+                ImVec2 cc(p.x + 33.0f, p.y + h * 0.5f);
+                dl->AddCircle(cc, 14.0f, bc, 0, 1.8f);
+                dl->AddLine(ImVec2(cc.x, cc.y - 7.0f), ImVec2(cc.x, cc.y + 5.0f), bc, 2.2f);
+                dl->AddLine(ImVec2(cc.x - 5.0f, cc.y), ImVec2(cc.x, cc.y + 5.0f), bc, 2.2f);
+                dl->AddLine(ImVec2(cc.x + 5.0f, cc.y), ImVec2(cc.x, cc.y + 5.0f), bc, 2.2f);
+                ImGui::SetCursorScreenPos(ImVec2(p.x + 58.0f, p.y + 13.0f));
+                ImGui::Text("Drop a shared game here to play it");
+                ImGui::SetCursorScreenPos(ImVec2(p.x + 58.0f, p.y + 13.0f + ImGui::GetTextLineHeightWithSpacing()));
+                ImGui::TextDisabled("Drag a game folder or .okayscene onto this window. It plays in place, nothing is copied.");
+                ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
+                ImGui::Dummy(ImVec2(0, 10));
+            }
             if (ImGui::Button("Open community folder", ImVec2(200, 0))) OpenExternal(CommunityDir().string());
             ImGui::SameLine();
             if (ImGui::Button("Refresh", ImVec2(110, 0))) scenes = FindScenes();
@@ -1556,6 +1838,11 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Remove", ImVec2(82, 40))) {
                     commRemovePath = croot.string();
                     commRemoveName = scenes[i].filename().string();
+                }
+                // Double-click plays, like the Play tab rows.
+                if (!player.empty() && ImGui::IsWindowHovered() &&
+                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    Launch(player, cpath); RecordPlayed(cpath); SavePrefs();
                 }
                 // Right-click parity with the Play tab rows.
                 if (ImGui::BeginPopupContextWindow("commctx", ImGuiPopupFlags_MouseButtonRight)) {
@@ -1977,19 +2264,40 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::SmallButton("GitHub repository"))
                 OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Copy version")) {
+                ImGui::SetClipboardText("OkaySpace v" OKAY_ENGINE_VERSION);
+                Toast("Version copied", 1);
+            }
 
             // ---- Maintenance ----
             ImGui::Dummy(ImVec2(0, 16));
             ImGui::SeparatorText("Maintenance");
             if (ImGui::Button("Open config folder")) OpenExternal(g_exeDir);
             ImGui::SameLine();
-            if (ImGui::Button("Reset preferences")) {
-                g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
-                g_updateOnLaunch = false; g_playSort = 0;
-                ImGui::GetIO().FontGlobalScale = g_uiScale;
-                ApplyAccent(g_accentIndex);   // re-applies theme + accent
-                SavePrefs();
-                Toast("Preferences reset", 1);
+            if (ImGui::Button("Reset preferences")) ImGui::OpenPopup("Reset preferences?");
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Reset preferences?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted("Reset theme, accent, UI scale, sorting and update settings?");
+                ImGui::TextDisabled("Favorites and recent games are kept.");
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+                bool doReset = ImGui::Button("Reset", ImVec2(110, 0));
+                ImGui::PopStyleColor(2);
+                if (doReset) {
+                    g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
+                    g_updateOnLaunch = false; g_playSort = 0;
+                    ImGui::GetIO().FontGlobalScale = g_uiScale;
+                    ApplyAccent(g_accentIndex);   // re-applies theme + accent
+                    SavePrefs();
+                    Toast("Preferences reset", 1);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
             }
             ImGui::TextDisabled("Preferences are stored in launcher.cfg next to the launcher.");
         }

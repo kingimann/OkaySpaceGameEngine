@@ -22,6 +22,7 @@ add_library(okay_engine
     src/Net/RelayServer.cpp
     src/Net/NetBackend.cpp
     src/Net/NetTransport.cpp
+    src/Net/PhotonTransport.cpp
     src/VisualScript/NodeGraph.cpp
     src/Components/VisualScriptComponent.cpp
     src/Scripting/OkayScriptVM.cpp
@@ -86,6 +87,35 @@ if(WIN32)
     # The Direct3D 12 scene renderer (D3D12Renderer.cpp, guarded by _WIN32) needs the
     # D3D12 runtime, DXGI and the COM IIDs (dxguid). Off Windows the file is empty.
     target_link_libraries(okay_engine PUBLIC d3d12 dxgi dxguid)
+endif()
+
+# ---- Optional Photon Realtime transport (closed-source SDK) ----------
+# Photon's C++ SDK is a per-platform download from dashboard.photonengine.com
+# and can't be redistributed, so the adapter (src/Net/PhotonTransport.cpp) is
+# an empty TU unless this is turned on with the SDK unpacked somewhere local:
+#   cmake -DOKAY_WITH_PHOTON=ON -DOKAY_PHOTON_SDK_DIR=/path/to/photon-sdk ...
+# The SDK dir is the one containing LoadBalancing-cpp/, Photon-cpp/ and
+# Common-cpp/. See docs/photon.md for the full walkthrough.
+option(OKAY_WITH_PHOTON "Photon Realtime transport adapter (requires the Photon C++ SDK)" OFF)
+set(OKAY_PHOTON_SDK_DIR "" CACHE PATH "Root of the unpacked Photon Realtime C++ SDK")
+if(OKAY_WITH_PHOTON)
+    target_compile_definitions(okay_engine PUBLIC OKAY_WITH_PHOTON=1)
+    if(OKAY_PHOTON_SDK_DIR)
+        target_include_directories(okay_engine PRIVATE "${OKAY_PHOTON_SDK_DIR}")
+        # Typical layout: <sdk>/<Module>-cpp/lib/lib<Module>-cpp_release_...a —
+        # exact names vary by platform/toolchain, so let the user override.
+        foreach(_pm LoadBalancing-cpp Photon-cpp Common-cpp)
+            file(GLOB _pl "${OKAY_PHOTON_SDK_DIR}/${_pm}/lib/*.a"
+                          "${OKAY_PHOTON_SDK_DIR}/${_pm}/lib/*.lib")
+            if(_pl)
+                list(GET _pl 0 _pl0)
+                target_link_libraries(okay_engine PUBLIC "${_pl0}")
+            endif()
+        endforeach()
+    else()
+        message(WARNING "OKAY_WITH_PHOTON is ON but OKAY_PHOTON_SDK_DIR is not set; "
+                        "the Photon adapter will not compile without the SDK headers.")
+    endif()
 endif()
 
 # ---- Optional packet encryption (libsodium) --------------------------

@@ -12,6 +12,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Renderer.hpp"
 #include "okay/Core/Profiler.hpp"
+#include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
 #include <algorithm>
 #include <functional>
 #include <limits>
@@ -94,6 +95,12 @@ void Scene::Update(float deltaTime) {
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
 
     m_scheduler.Update(deltaTime);
+
+    // Pump a non-native realtime transport (e.g. Photon needs its client
+    // serviced every frame). Native is a no-op — the NetworkManager component
+    // ticks itself — and when no transport was ever selected this skips
+    // entirely, so there's no cost in the common case.
+    if (NetTransport::Exists()) NetTransport::Get().Update();
 
     {
         OKAY_PROFILE("Scripts.Update");

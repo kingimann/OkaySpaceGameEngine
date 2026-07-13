@@ -1,5 +1,6 @@
 #include "okay/Net/NetBackend.hpp"
 #include "okay/Platform/Account/Account.hpp"
+#include "okay/Platform/PlayFab/PlayFab.hpp"
 
 namespace okay {
 
@@ -55,6 +56,83 @@ public:
     std::string LastError() const override { return Account::LastError(); }
 };
 
+// ---- PlayFab: auth, cloud saves and leaderboards over the PlayFab Client REST
+// API (via okay::PlayFab). Call PlayFab::Get().Configure("<TitleId>") before
+// switching to this provider. Matchmaking stays on the Native server browser —
+// PlayFab's matchmaking (Party/Multiplayer Servers) is a different product tier,
+// so those calls fail with a pointer instead of pretending. ----
+class PlayFabNetBackend : public INetBackend {
+public:
+    const char* BackendName() const override { return "PlayFab"; }
+    bool IsOnline() const override { return PF().IsLoggedIn(); }
+
+    bool IsLoggedIn() const override { return PF().IsLoggedIn(); }
+    std::string Username() const override { return PF().Username(); }
+    std::string Token() const override { return PF().SessionTicket(); }
+    bool Register(const std::string& user, const std::string& password) override {
+        return PF().RegisterWithPassword(user, password);
+    }
+    bool Login(const std::string& user, const std::string& password) override {
+        return PF().LoginWithPassword(user, password);
+    }
+    void Logout() override { PF().Logout(); }
+    bool VerifyToken(const std::string& token, std::string& outUserId) override {
+        // Only the live session's ticket can be checked client-side.
+        if (!PF().IsLoggedIn() || token != PF().SessionTicket()) return false;
+        outUserId = PF().PlayFabId();
+        return true;
+    }
+
+    bool CloudSave(const std::string& key, const std::string& data) override {
+        return PF().SetUserData(key, data);
+    }
+    std::string CloudLoad(const std::string& key) override {
+        std::string v; PF().GetUserData(key, v); return v;
+    }
+    bool CloudHas(const std::string& key) override {
+        std::vector<std::string> keys;
+        if (!PF().ListUserData(keys)) return false;
+        for (const std::string& k : keys) if (k == key) return true;
+        return false;
+    }
+    bool CloudDelete(const std::string& key) override { return PF().DeleteUserData(key); }
+    std::vector<std::string> CloudList() override {
+        std::vector<std::string> keys; PF().ListUserData(keys); return keys;
+    }
+
+    bool LeaderboardSubmit(const std::string& board, long score) override {
+        return PF().SetStat(board, (int)score);
+    }
+    std::vector<account::ScoreEntry> LeaderboardTop(const std::string& board, int count) override {
+        std::vector<PlayFab::Entry> rows;
+        std::vector<account::ScoreEntry> out;
+        if (!PF().GetLeaderboard(board, count, rows)) return out;
+        for (const PlayFab::Entry& e : rows)
+            out.push_back(account::ScoreEntry{e.name, (long)e.value, e.position + 1});
+        return out;
+    }
+
+    std::string HostSession(const std::string&, const std::string&, int, int,
+                            const std::string&, const std::string&) override { MmFail(); return {}; }
+    bool SessionHeartbeat(const std::string&, int) override { return MmFail(); }
+    bool SessionUnregister(const std::string&) override { return MmFail(); }
+    std::vector<GameSession> ListSessions(const std::string&) override { MmFail(); return {}; }
+
+    std::string LastError() const override {
+        return m_err.empty() ? PF().LastError() : m_err;
+    }
+
+private:
+    static PlayFab& PF() { return PlayFab::Get(); }
+    bool MmFail() {
+        m_err = "PlayFab matchmaking isn't wired to the server browser — keep the "
+                "Native provider for sessions (NetBackend::Use(Native)) or add a "
+                "PlayFab Multiplayer adapter.";
+        return false;
+    }
+    std::string m_err;
+};
+
 // ---- Stub: a provider whose adapter hasn't been compiled in yet. Every op is a
 // safe no-op and LastError() points at the extension work needed. ----
 class StubNetBackend : public INetBackend {
@@ -101,7 +179,7 @@ NetBackendProvider& CurrentProvider() { static NetBackendProvider p = NetBackend
 std::unique_ptr<INetBackend> CreateNetBackend(NetBackendProvider provider) {
     switch (provider) {
         case NetBackendProvider::Native:  return std::make_unique<NativeNetBackend>();
-        case NetBackendProvider::PlayFab: return std::make_unique<StubNetBackend>("PlayFab");
+        case NetBackendProvider::PlayFab: return std::make_unique<PlayFabNetBackend>();
         case NetBackendProvider::Custom:  return std::make_unique<StubNetBackend>("Custom");
     }
     return std::make_unique<NativeNetBackend>();

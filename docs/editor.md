@@ -266,8 +266,10 @@ Recent additions (v2.12–2.14):
   Scene/Game views and the built game; tick a Mesh Renderer's *Wireframe* for an
   edges-only view, or *Double-sided* to render both faces (planes, flags,
   foliage, tube interiors).
-- **Projects** — **File → New Project** creates a `<Location>/<Name>` folder with
-  an `Assets/` subfolder and saves the starting scene into it. The **Project**
+- **Projects** — projects are created from the **Launcher's Create tab**: enter
+  a Name and Location, click a template, and the editor opens with a
+  `<Location>/<Name>` folder (an `Assets/` subfolder + the starting scene)
+  already created. The **Project**
   panel is an asset browser rooted at the project's `Assets/`: navigate folders,
   tick **All** to list the whole subtree (Unity-style), and click a `.okayscene`
   to open or a `.okayprefab` to instantiate. It supports **create / import /
@@ -387,6 +389,12 @@ unchanged.
 
 ## Editor quality-of-life
 
+- **Multi-window panels (dual monitor)**: drag any tab outside the editor and
+  it becomes its own OS window — put the Inspector, Console, Script Editor or
+  Flow Graph on a second monitor; drag it back over the editor to re-dock.
+  Toggle with View ▸ Multi-Window Panels (persisted). Note: image-based
+  panels (Scene/Game views, asset thumbnails) only render their pictures
+  while docked in the main window.
 - **File dialogs**: Open Scene, Save Scene As, Import Model and Instantiate
   Prefab all have a `...` browse button (native picker with the right file
   filter). The path field auto-focuses when the popup opens and **Enter
@@ -415,3 +423,35 @@ unchanged.
   Variables ▸ Clear All, the launcher's community Remove) ask first.
 - **About dialog** (Help ▸ About OkaySpace): version, SDL/ImGui build info,
   and a Copy version info button for bug reports.
+- **Camera bookmarks**: Ctrl+Alt+1/2/3 saves the current Scene-view camera,
+  Ctrl+1/2/3 jumps back to it (also in View ▸ Camera Bookmarks). Slots keep
+  the 2D/3D mode, target, angle and zoom.
+- **Audio Source**: Stop button beside Play; the WAV field's `...` browse
+  (or the Load button on a typed path) loads the clip immediately so Play
+  previews the real sound in the editor.
+- **Hierarchy multi-drag**: dragging a multi-selection keeps the group's
+  scene order wherever you drop it (above, below, or onto a row).
+- **Particle presets**: the Particle System inspector opens with Fire /
+  Smoke / Sparks / Rain / Snow / Magic one-click starting points — every
+  value stays editable after.
+- **Inspector presets & pickers**: Light temperature presets (Candle→Shade),
+  Camera FOV buttons (60/75/90/110) + background swatches, Text color
+  swatches, a Uniform toggle that links the scale axes, and `...` browse
+  buttons on Sprite/Mesh texture fields.
+- **Shortcuts**: Ctrl+Shift+S = Save Scene As; Esc also exits Isolate; the
+  status-bar version copies itself on click; recent files that were moved or
+  deleted show grayed out.
+- **Launcher**: double-click a game row to play it, Esc clears searches,
+  1–5 switch tabs, and Reset preferences asks for confirmation.
+- **Save Manager**: filter keys, an "unsaved edits" marker, and a confirm on
+  Clear all keys.
+- **Material editor**: a live preview ball (albedo + emissive + specular
+  highlight) and a `...` texture browse button.
+- **Keyboard Shortcuts window** (Help ▸ Keyboard Shortcuts): every binding,
+  grouped by panel, with a filter box.
+- **Projects live in the Launcher**: create (Name + Location + template)
+  and reopen projects from the Launcher's Create tab; the editor receives
+  `--new-project` / `--open` and starts ready to work.
+- **NPC & Spawner presets**: NPC archetypes (Guard / Villager / Predator /
+  Skittish) and Spawner shapes (Drip / Horde / 3 Rounds / Triggered) set the
+  whole component in one click — all values stay editable.

@@ -29,12 +29,15 @@
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Platform/PlayFab/PlayFab.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/Game.hpp"          // win / lose / quit instructions
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/Easing.hpp"
 #include "okay/Core/Random.hpp"
+#include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 
@@ -70,10 +73,20 @@ std::unordered_map<std::string, std::string>& ActionList::StrVars() {
     return s;
 }
 
-void ActionList::ResetVars() { Vars().clear(); Arrays().clear(); Maps().clear(); StrVars().clear(); }
+// `cooldown` condition state: the next time each condition item may pass again.
+// Keyed by the item's address — runtime-only, cleared with the variable pools.
+static std::unordered_map<const void*, float> g_condCooldowns;
+
+void ActionList::ResetVars() {
+    Vars().clear(); Arrays().clear(); Maps().clear(); StrVars().clear();
+    g_condCooldowns.clear();
+}
 
 bool& ActionList::DebugPaused() { static bool p = false; return p; }
 int&  ActionList::StepBudget()  { static int  b = 0;     return b; }
+std::vector<std::pair<const void*, int>>& ActionList::Breakpoints() {
+    static std::vector<std::pair<const void*, int>> s; return s;
+}
 
 // A goto/if_goto target: a plain line number, or the index of `label "<name>"`.
 int ActionList::ResolveTarget(const std::string& t) const {
@@ -131,6 +144,18 @@ bool CmpPass(const std::string& op, float lhs, float rhs) {
     if (op == "ge"  || op == ">=") return lhs >= rhs;
     if (op == "le"  || op == "<=") return lhs <= rhs;
     return false;
+}
+
+// Ease-name → curve mapping shared by every tween-style op (tween_move/scale/rotate,
+// tween_color, fade, tween_var). Unknown/empty names fall back to Linear.
+Ease EaseByName(const std::string& s) {
+    if (s == "in")          return Ease::CubicIn;
+    if (s == "out")         return Ease::CubicOut;
+    if (s == "in_out")      return Ease::CubicInOut;
+    if (s == "out_back")    return Ease::BackOut;
+    if (s == "out_bounce")  return Ease::BounceOut;
+    if (s == "out_elastic") return Ease::ElasticOut;
+    return Ease::Linear;
 }
 
 // Resolve a raycast direction token into a world-space direction for `go`.
@@ -409,6 +434,11 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "key_down") ok = !Str(c, 0).empty() && Input::GetKeyDown(Str(c, 0)[0]);
         else if (op == "mouse")    ok = Input::GetMouseButton((int)Num(c, 0));
         else if (op == "chance")   ok = Random::Shared().Range(0.0f, 1.0f) < Num(c, 0);
+        else if (op == "cooldown") {   // pass at most once every N seconds (attack rate, pickups)
+            float now = Time::ElapsedTime();
+            float& nxt = g_condCooldowns[(const void*)&c];
+            if (now >= nxt) { nxt = now + Num(c, 0); ok = true; } else ok = false;
+        }
         else if (op == "var_eq")   ok = Mathf::Approximately(GetVar(Str(c, 0)), Num(c, 1));
         else if (op == "var_neq")  ok = !Mathf::Approximately(GetVar(Str(c, 0)), Num(c, 1));
         else if (op == "var_gt")   ok = GetVar(Str(c, 0)) > Num(c, 1);
@@ -549,6 +579,14 @@ void ActionList::Update(float dt) {
     const std::vector<Item>& ins = RunList();   // the running handler's instructions
     while (m_ip < ins.size()) {
         if (++guard > 10000) break;
+        // Breakpoint on the next instruction: flip into the paused/step mode the
+        // editor's Flow Graph drives, exactly as if the user hit Pause here.
+        if (!DebugPaused() && !Breakpoints().empty()) {
+            for (const auto& bp : Breakpoints())
+                if (bp.first == (const void*)&ins && bp.second == (int)m_ip) {
+                    DebugPaused() = true; StepBudget() = 0; break;
+                }
+        }
         // Step debugging: when paused, run only as many instructions as the editor
         // has granted, then hold here (return keeps the list running so it resumes).
         if (DebugPaused()) { if (StepBudget() <= 0) return; --StepBudget(); }
@@ -557,8 +595,142 @@ void ActionList::Update(float dt) {
         ++m_ip;
 
         if (op == "wait") { m_wait = Num(it, 0); if (m_wait > 0.0f) return; }
+        // wait_until <var> <cmp> <value>: hold ON this instruction, re-testing every
+        // frame, until the comparison passes — then flow continues past it.
+        else if (op == "wait_until") {
+            if (!CmpPass(Str(it, 1), GetVar(Str(it, 0)), Num(it, 2))) { --m_ip; return; }
+        }
         else if (op == "stop") { m_ip = ins.size(); }
         else if (op == "label") { /* jump target marker — no-op */ }
+        else if (op == "comment") { /* designer note — no-op at runtime */ }
+        // ---- Juice: scheduler-driven tweens (mirror the script tween_* builtins).
+        // They start the effect and continue immediately; add a `wait` to hold.
+        else if (op == "tween_move" || op == "tween_scale" || op == "shake" ||
+                 op == "punch_scale" || op == "tween_rotate") {
+            Transform* tt = transform;
+            if (scene && tt) {
+                Scheduler& sch = scene->scheduler();
+                const auto easeOf = EaseByName;   // shared ease-name mapping
+                if (op == "tween_move") {           // x y seconds [ease]
+                    Vec3 start = tt->localPosition, target{Num(it, 0), Num(it, 1), start.z};
+                    Ease e = easeOf(Str(it, 3));
+                    sch.Tween(Num(it, 2), [tt, start, target, e](float u) {
+                        float k = Easing::Evaluate(e, u);
+                        tt->localPosition = start + (target - start) * k;
+                    });
+                } else if (op == "tween_scale") {   // scale seconds [ease]
+                    Vec3 start = tt->localScale; float v = Num(it, 0); Vec3 target{v, v, v};
+                    Ease e = easeOf(Str(it, 2));
+                    sch.Tween(Num(it, 1), [tt, start, target, e](float u) {
+                        float k = Easing::Evaluate(e, u);
+                        tt->localScale = start + (target - start) * k;
+                    });
+                } else if (op == "shake") {         // intensity seconds
+                    Vec3 start = tt->localPosition; float inten = Num(it, 0);
+                    sch.Tween(Num(it, 1), [tt, start, inten](float u) {
+                        float decay = (1.0f - u) * inten;
+                        tt->localPosition = start + Vec3{Random::Shared().Range(-1.0f, 1.0f) * decay,
+                                                         Random::Shared().Range(-1.0f, 1.0f) * decay, 0.0f};
+                    }, [tt, start]() { tt->localPosition = start; });
+                } else if (op == "punch_scale") {    // amount seconds
+                    Vec3 start = tt->localScale; float amount = Num(it, 0);
+                    sch.Tween(Num(it, 1), [tt, start, amount](float u) {
+                        float osc = Mathf::Sin(u * Mathf::PI * 6.0f) * amount * (1.0f - u);
+                        tt->localScale = start + Vec3{osc, osc, osc};
+                    }, [tt, start]() { tt->localScale = start; });
+                } else {                             // tween_rotate: degrees seconds [ease]
+                    Quat start = tt->localRotation; float deg = Num(it, 0);
+                    Ease e = easeOf(Str(it, 2));
+                    sch.Tween(Num(it, 1), [tt, start, deg, e](float u) {
+                        float k = Easing::Evaluate(e, u);
+                        tt->localRotation = start * Quat::Euler({0, 0, deg * k});
+                    });
+                }
+            }
+        }
+        // ---- Juice: colour effects on this object's renderers (sprite/text/mesh).
+        // Like the transform tweens they start the effect and continue immediately.
+        else if (op == "tween_color" || op == "fade" || op == "flash") {
+            auto* srr = gameObject ? gameObject->GetComponent<SpriteRenderer>() : nullptr;
+            auto* trr = gameObject ? gameObject->GetComponent<TextRenderer>()   : nullptr;
+            auto* mrr = gameObject ? gameObject->GetComponent<MeshRenderer>()   : nullptr;
+            if (scene && (srr || trr || mrr)) {
+                Color start = srr ? srr->color : trr ? trr->color : mrr->color;
+                auto apply = [srr, trr, mrr](const Color& c) {
+                    if (srr) srr->color = c;
+                    if (trr) trr->color = c;
+                    if (mrr) mrr->color = c;
+                };
+                auto mix = [](const Color& a, const Color& b, float k) {
+                    return Color{a.r + (b.r - a.r) * k, a.g + (b.g - a.g) * k,
+                                 a.b + (b.b - a.b) * k, a.a + (b.a - a.a) * k};
+                };
+                Scheduler& sch = scene->scheduler();
+                if (op == "tween_color") {          // r g b seconds [ease]
+                    Color to{Num(it, 0), Num(it, 1), Num(it, 2), start.a};
+                    float dur = it.args.size() > 3 ? Num(it, 3) : 0.3f;
+                    Ease e = EaseByName(Str(it, 4));
+                    sch.Tween(dur, [apply, mix, start, to, e](float u) {
+                        apply(mix(start, to, Easing::Evaluate(e, u)));
+                    });
+                } else if (op == "fade") {          // alpha seconds [ease]
+                    Color to = start; to.a = Num(it, 0);
+                    float dur = it.args.size() > 1 ? Num(it, 1) : 0.3f;
+                    Ease e = EaseByName(Str(it, 2));
+                    sch.Tween(dur, [apply, mix, start, to, e](float u) {
+                        apply(mix(start, to, Easing::Evaluate(e, u)));
+                    });
+                } else {                            // flash [seconds] [r g b] — blink, then restore
+                    float dur = Num(it, 0);
+                    if (dur <= 0.0f) dur = 0.2f;
+                    Color fc = it.args.size() > 3 ? Color{Num(it, 1), Num(it, 2), Num(it, 3), start.a}
+                                                  : Color{1.0f, 1.0f, 1.0f, start.a};
+                    sch.Tween(dur, [apply, mix, start, fc](float u) {
+                        apply(mix(start, fc, 1.0f - std::fabs(2.0f * u - 1.0f)));   // up, then back
+                    }, [apply, start]() { apply(start); });
+                }
+            }
+        }
+        // tween_var <var> <to> <seconds> [ease]: animate a shared variable over time
+        // (HP bars, countdowns, smooth difficulty ramps — pairs with UI Text Bind).
+        else if (op == "tween_var") {
+            if (scene) {
+                std::string v = Str(it, 0);
+                float from = GetVar(v), to = Num(it, 1);
+                float dur = it.args.size() > 2 ? Num(it, 2) : 0.3f;
+                Ease e = EaseByName(Str(it, 3));
+                scene->scheduler().Tween(dur, [v, from, to, e](float u) {
+                    Vars()[v] = from + (to - from) * Easing::Evaluate(e, u);
+                });
+            }
+        }
+        // move_dir <direction> <speed>: facing-relative movement (forward/back/up/
+        // down/left/right or toward:<Object>), units/second — run under On Update.
+        // Uses this Update's dt (not Time::DeltaTime) so it also works when the
+        // scene is stepped outside the main app loop (tests, tools).
+        else if (op == "move_dir") {
+            Vec3 mdir;
+            if (t && RayDirFromToken(gameObject, Str(it, 0), mdir))
+                t->Translate(mdir * (Num(it, 1) * dt));
+        }
+        // orbit <object> <radius> <deg_per_sec>: circle a named object (moons,
+        // shields, patrol rings) — run under On Update. Arg order matches the
+        // script builtin orbit(name, radius, degPerSec); with only two args the
+        // radius is the current distance, so the orbit starts where the object is.
+        else if (op == "orbit") {
+            GameObject* g = scene ? scene->Find(ObjName(it, 0)) : nullptr;
+            if (g && g->transform && t && gameObject) {
+                Vec3 c = g->transform->Position(), me = gameObject->transform->Position();
+                float dx = me.x - c.x, dy = me.y - c.y;
+                float rad, degPerSec;
+                if (it.args.size() >= 3) { rad = Num(it, 1); degPerSec = Num(it, 2); }
+                else { rad = Mathf::Sqrt(dx * dx + dy * dy); degPerSec = Num(it, 1); }
+                if (rad < 1e-4f) rad = 1.0f;
+                float ang = std::atan2(dy, dx) + degPerSec * 0.0174532925f * dt;
+                Vec3 np{c.x + Mathf::Cos(ang) * rad, c.y + Mathf::Sin(ang) * rad, me.z};
+                t->Translate({np.x - me.x, np.y - me.y, 0.0f});
+            }
+        }
         else if (op == "goto") {
             int target = ResolveTarget(Str(it, 0));   // a line number OR a label name
             if (target >= 0 && target < (int)ins.size()) m_ip = (std::size_t)target;
@@ -974,6 +1146,43 @@ void ActionList::Update(float dt) {
         else if (op == "steam_unlock")   { Steam::Get().UnlockAchievement(Str(it, 0)); Steam::Get().StoreStats(); }
         else if (op == "steam_set_stat") { Steam::Get().SetStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         else if (op == "steam_inc_stat") { Steam::Get().IncrementStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
+        // ---- PlayFab (Azure PlayFab) — cloud login, leaderboards, saves ----
+        // Blocking HTTP via the system curl: run these from one-shot triggers
+        // (On Start / On Message), not every frame.
+        else if (op == "playfab_login") {   // titleId customId (customId can be $textvar)
+            PlayFab& pf = PlayFab::Get();
+            pf.Configure(Str(it, 0));
+            bool ok = pf.LoginWithCustomID(ObjName(it, 1));
+            Vars()["playfab_ok"] = ok ? 1.0f : 0.0f;
+            StrVars()["playfab_id"] = pf.PlayFabId();
+            if (!ok) { StrVars()["playfab_error"] = pf.LastError(); Log::Warning("[actions] ", pf.LastError()); }
+        }
+        else if (op == "playfab_name")     { PlayFab::Get().SetDisplayName(Rest(it, 0)); }
+        else if (op == "playfab_set_stat") {
+            // Value can be a number, or "$var" to publish a game variable (e.g. $score).
+            std::string vs = Str(it, 1);
+            float v = (vs.size() > 1 && vs[0] == '$') ? GetVar(vs.substr(1)) : Num(it, 1);
+            PlayFab::Get().SetStat(Str(it, 0), (int)v);
+        }
+        else if (op == "playfab_leaderboard") {
+            // stat [count] -> pf_count + pf_<rank>_name / pf_<rank>_score variables
+            // (show them with UI Text Bind {pf_1_name} {pf_1_score} ...).
+            std::vector<PlayFab::Entry> rows;
+            if (PlayFab::Get().GetLeaderboard(Str(it, 0), it.args.size() > 1 ? (int)Num(it, 1) : 10, rows)) {
+                Vars()["pf_count"] = (float)rows.size();
+                for (std::size_t ri = 0; ri < rows.size(); ++ri) {
+                    std::string pref = "pf_" + std::to_string(ri + 1);
+                    StrVars()[pref + "_name"] = rows[ri].name;
+                    Vars()[pref + "_score"]   = (float)rows[ri].value;
+                }
+            } else Log::Warning("[actions] ", PlayFab::Get().LastError());
+        }
+        else if (op == "playfab_set_data") { PlayFab::Get().SetUserData(Str(it, 0), Rest(it, 1)); }
+        else if (op == "playfab_get_data") {   // key [intoTextVar] (defaults to the key)
+            std::string v;
+            PlayFab::Get().GetUserData(Str(it, 0), v);
+            StrVars()[Str(it, 1).empty() ? Str(it, 0) : Str(it, 1)] = v;
+        }
         else if (op == "load_scene") { if (scene) scene->RequestLoad(Str(it, 0)); return; }
         else if (op == "load_scene_index") { if (scene) SceneManager::LoadScene(*scene, (int)Num(it, 0)); return; }
         else if (op == "load_next_scene")  { if (scene) SceneManager::LoadNextScene(*scene); return; }

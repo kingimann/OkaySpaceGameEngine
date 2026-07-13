@@ -26,6 +26,7 @@
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Platform/PlayFab/PlayFab.hpp"
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -3201,6 +3202,60 @@ struct OkayScriptVM::Impl {
         };
         b["steam_workshop_path"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? std::string{} : Steam::Get().WorkshopItemPath((std::uint64_t)a[0].AsFloat())};
+        };
+        // ---- PlayFab (cloud login / leaderboards / saves; blocking HTTP) ----
+        // Mirrors the playfab_* visual-scripting instructions. Call pf_login once
+        // (e.g. in start()), not per frame — each call is a real web request.
+        b["pf_login"] = [](std::vector<Value>& a) {           // pf_login(titleId, customId)
+            if (a.size() < 2) return Value{0.0f};
+            PlayFab::Get().Configure(a[0].AsString());
+            return Value{PlayFab::Get().LoginWithCustomID(a[1].AsString()) ? 1.0f : 0.0f};
+        };
+        b["pf_login_password"] = [](std::vector<Value>& a) {  // pf_login_password(titleId, user, pass)
+            if (a.size() < 3) return Value{0.0f};
+            PlayFab::Get().Configure(a[0].AsString());
+            return Value{PlayFab::Get().LoginWithPassword(a[1].AsString(), a[2].AsString()) ? 1.0f : 0.0f};
+        };
+        b["pf_register"] = [](std::vector<Value>& a) {        // pf_register(titleId, user, pass)
+            if (a.size() < 3) return Value{0.0f};
+            PlayFab::Get().Configure(a[0].AsString());
+            return Value{PlayFab::Get().RegisterWithPassword(a[1].AsString(), a[2].AsString()) ? 1.0f : 0.0f};
+        };
+        b["pf_logged_in"] = [](std::vector<Value>&) { return Value{PlayFab::Get().IsLoggedIn() ? 1.0f : 0.0f}; };
+        b["pf_id"]        = [](std::vector<Value>&) { return Value{PlayFab::Get().PlayFabId()}; };
+        b["pf_error"]     = [](std::vector<Value>&) { return Value{PlayFab::Get().LastError()}; };
+        b["pf_name"] = [](std::vector<Value>& a) {            // leaderboard display name
+            return Value{(!a.empty() && PlayFab::Get().SetDisplayName(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["pf_set_stat"] = [](std::vector<Value>& a) {        // pf_set_stat(stat, value)
+            return Value{(a.size() >= 2 &&
+                          PlayFab::Get().SetStat(a[0].AsString(), (int)a[1].AsFloat())) ? 1.0f : 0.0f};
+        };
+        // Top-N entries as an array of "rank,name,score" strings (Steam parity).
+        b["pf_leaderboard_top"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeArray();
+            auto arr = v.AsArray();
+            if (!a.empty() && arr) {
+                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                std::vector<PlayFab::Entry> rows;
+                if (PlayFab::Get().GetLeaderboard(a[0].AsString(), n, rows))
+                    for (auto& e : rows)
+                        arr->push_back(Value{std::to_string(e.position + 1) + "," + e.name + "," +
+                                             std::to_string(e.value)});
+            }
+            return v;
+        };
+        b["pf_save"] = [](std::vector<Value>& a) {            // pf_save(key, value)
+            return Value{(a.size() >= 2 &&
+                          PlayFab::Get().SetUserData(a[0].AsString(), a[1].AsString())) ? 1.0f : 0.0f};
+        };
+        b["pf_load"] = [](std::vector<Value>& a) {            // pf_load(key) -> text
+            std::string v2;
+            if (!a.empty()) PlayFab::Get().GetUserData(a[0].AsString(), v2);
+            return Value{v2};
+        };
+        b["pf_delete"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && PlayFab::Get().DeleteUserData(a[0].AsString())) ? 1.0f : 0.0f};
         };
         // ---- Player accounts (shared process-wide service) ------------
         // account_login("user","pass") / account_register(...) return 1 on

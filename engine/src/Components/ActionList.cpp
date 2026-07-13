@@ -758,6 +758,40 @@ void ActionList::Update(float dt) {
             else if (!pass) m_ip = (std::size_t)end + 1;           // condition false: exit
             else { LoopFrame f; f.kind = 1; f.headIp = m_ip - 1; f.bodyStart = m_ip; f.endIp = (std::size_t)end; m_loops.push_back(f); }
         }
+        // ---- Branching block: if <var> <cmp> <value> ... [else ...] end_if ----
+        // Structured version of If Go To — no line numbers or labels to maintain.
+        else if (op == "if") {
+            bool pass = CmpPass(Str(it, 1), GetVar(Str(it, 0)), Num(it, 2));
+            int end = MatchingEnd(m_ip - 1, "if", "end_if");
+            if (end < 0) { /* unmatched: ignore */ }
+            else if (!pass) {
+                // False: jump past our `else` (into its body) if one exists at
+                // this nesting depth, otherwise past the whole block.
+                std::size_t target = (std::size_t)end + 1;
+                int depth = 0;
+                for (std::size_t i = m_ip; i < (std::size_t)end; ++i) {
+                    const std::string& o2 = ins[i].op;
+                    if (o2 == "if") ++depth;
+                    else if (o2 == "end_if") --depth;
+                    else if (o2 == "else" && depth == 0) { target = i + 1; break; }
+                }
+                m_ip = target;
+            }
+            // True: fall through into the then-body.
+        }
+        else if (op == "else") {
+            // Only reached by falling out of a passing then-body: skip the
+            // else-body by jumping past the matching end_if.
+            int depth = 0;
+            for (std::size_t i = m_ip; i < ins.size(); ++i) {
+                if (ins[i].op == "if") ++depth;
+                else if (ins[i].op == "end_if") {
+                    if (depth == 0) { m_ip = i + 1; break; }
+                    --depth;
+                }
+            }
+        }
+        else if (op == "end_if") { /* block marker — no-op */ }
         else if (op == "end_while") {
             if (!m_loops.empty() && m_loops.back().kind == 1) {
                 std::size_t head = m_loops.back().headIp;

@@ -1207,7 +1207,7 @@ ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into 
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
-bool g_multiWindow = true;        // panels can be dragged out to other OS windows/monitors
+bool g_multiWindow = false;       // opt-in: panels can be dragged out to other OS windows/monitors
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
@@ -1454,6 +1454,11 @@ void LoadSettings() {
     // earlier ver-2 migration that had forced 2x AA on. Bumps the version so the
     // user's own choices stick afterward.
     if (ver < 3) { g_ssaa = 1; g_editorFov = 60.0f; SaveSettings(); }
+    // ver 4: multi-window panels became opt-in after v2.623 shipped with them on
+    // by default and a coordinate-space bug displaced the whole UI. Force the
+    // toggle off once so configs saved by that build recover; users re-enable
+    // from View > Multi-Window Panels.
+    if (ver < 4) { g_multiWindow = false; SaveSettings(); }
 }
 void SaveSettings() {
     std::ofstream f("okay_settings.txt");
@@ -11731,6 +11736,9 @@ static const ActionOpInfo kInstrOps[] = {
     {"end_repeat",  "End Repeat",         "",                      "Marks the end of a Repeat loop.",                                     "Flow"},
     {"while",       "While (loop)",       "var op value",          "Loop the actions up to End While as long as the test holds (op = eq/neq/gt/lt/ge/le). Put a Wait inside for per-frame loops.", "Flow"},
     {"end_while",   "End While",          "",                      "Marks the end of a While loop.",                                      "Flow"},
+    {"if",          "If (branch)",        "var op value",          "Run the actions up to Else / End If only when the test passes (op = eq/neq/gt/lt/ge/le). Cleaner than Jump If — no line numbers.", "Flow"},
+    {"else",        "Else",               "",                      "Optional: the actions from here to End If run when the If test FAILED.", "Flow"},
+    {"end_if",      "End If",             "",                      "Marks the end of an If branch.",                                      "Flow"},
     {"for_each",    "For Each (array)",   "array index-var value-var","Loop over an array up to End For, setting the index and value variables each pass.", "Flow"},
     {"end_for",     "End For",            "",                      "Marks the end of a For Each loop.",                                   "Flow"},
     {"for_each_tag","For Each Tagged",    "tag name-var",          "Loop over every object with a tag up to End For Tag; the name variable holds the current object. Use it as $name in object fields (Destroy/Look At/Follow/...).", "Flow"},
@@ -13975,10 +13983,10 @@ static ImU32 FlowNodeColor(const std::string& g) {
     return IM_COL32(50, 82, 142, 255);   // default blue
 }
 static bool FlowIsOpener(const std::string& o) {
-    return o == "repeat" || o == "while" || o == "for_each" || o == "for_each_tag";
+    return o == "repeat" || o == "while" || o == "for_each" || o == "for_each_tag" || o == "if";
 }
 static bool FlowIsEnder(const std::string& o) {
-    return o == "end_repeat" || o == "end_while" || o == "end_for" || o == "end_for_tag";
+    return o == "end_repeat" || o == "end_while" || o == "end_for" || o == "end_for_tag" || o == "end_if";
 }
 
 // Human-readable trigger names (index matches ActionList::Trigger).
@@ -29545,10 +29553,73 @@ static void OkayVp_DestroyWindow(ImGuiViewport* vp) {
     vp->RendererUserData = nullptr;
 }
 
+// Render one viewport's draw data with an SDL_Renderer, handling the
+// multi-viewport coordinate space: with viewports enabled, ImGui emits vertices
+// in ABSOLUTE DESKTOP coordinates, and SDL_Renderer has no projection/offset
+// stage — so when DisplayPos isn't (0,0) the vertices are rebased into
+// window-local space through a scratch copy before SDL_RenderGeometryRaw.
+// (Shipping v2.623 without this displaced the whole UI by the window's screen
+// position.) `d` is the per-window texture cache for secondary renderers;
+// null = the main renderer, whose textures resolve through GetTexID() as usual.
+static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d) {
+    if (!dd || !ren) return;
+    ImVec2 off = dd->DisplayPos;
+    ImVec2 scale = dd->FramebufferScale;
+    int fbW = (int)(dd->DisplaySize.x * scale.x), fbH = (int)(dd->DisplaySize.y * scale.y);
+    if (fbW <= 0 || fbH <= 0) return;
+    SDL_RenderSetScale(ren, scale.x, scale.y);
+
+    static std::vector<ImDrawVert> s_rebase;   // reused scratch for offset vertices
+    for (const ImDrawList* dl : dd->CmdLists) {
+        const ImDrawVert* vtx = dl->VtxBuffer.Data;
+        if (off.x != 0.0f || off.y != 0.0f) {
+            s_rebase.assign(dl->VtxBuffer.Data, dl->VtxBuffer.Data + dl->VtxBuffer.Size);
+            for (ImDrawVert& v : s_rebase) { v.pos.x -= off.x; v.pos.y -= off.y; }
+            vtx = s_rebase.data();
+        }
+        const ImDrawIdx* idx = dl->IdxBuffer.Data;
+        for (int ci = 0; ci < dl->CmdBuffer.Size; ++ci) {
+            const ImDrawCmd* cmd = &dl->CmdBuffer[ci];
+            if (cmd->UserCallback) {
+                if (cmd->UserCallback != ImDrawCallback_ResetRenderState)
+                    cmd->UserCallback(dl, cmd);
+                continue;
+            }
+            ImVec2 cmin((cmd->ClipRect.x - off.x) * scale.x, (cmd->ClipRect.y - off.y) * scale.y);
+            ImVec2 cmax((cmd->ClipRect.z - off.x) * scale.x, (cmd->ClipRect.w - off.y) * scale.y);
+            if (cmin.x < 0) cmin.x = 0;
+            if (cmin.y < 0) cmin.y = 0;
+            if (cmax.x > (float)fbW) cmax.x = (float)fbW;
+            if (cmax.y > (float)fbH) cmax.y = (float)fbH;
+            if (cmax.x <= cmin.x || cmax.y <= cmin.y) continue;
+            SDL_Rect clip = {(int)cmin.x, (int)cmin.y, (int)(cmax.x - cmin.x), (int)(cmax.y - cmin.y)};
+            SDL_RenderSetClipRect(ren, &clip);
+
+            SDL_Texture* tex = nullptr;
+            if (d) {   // secondary renderer: per-window copies; foreign textures skipped
+                if (cmd->TexRef._TexData)
+                    tex = OkayVpTexture(d, cmd->TexRef._TexData);
+                else if (cmd->TexRef._TexID != ImTextureID_Invalid)
+                    continue;   // raw SDL_Texture from the main renderer: can't cross renderers
+            } else {   // main renderer: everything resolves normally
+                tex = (SDL_Texture*)(intptr_t)cmd->GetTexID();
+            }
+
+            const char* vbase = (const char*)(vtx + cmd->VtxOffset);
+            SDL_RenderGeometryRaw(ren, tex,
+                (const float*)(const void*)(vbase + offsetof(ImDrawVert, pos)), (int)sizeof(ImDrawVert),
+                (const SDL_Color*)(const void*)(vbase + offsetof(ImDrawVert, col)), (int)sizeof(ImDrawVert),
+                (const float*)(const void*)(vbase + offsetof(ImDrawVert, uv)), (int)sizeof(ImDrawVert),
+                dl->VtxBuffer.Size - (int)cmd->VtxOffset,
+                idx + cmd->IdxOffset, (int)cmd->ElemCount, (int)sizeof(ImDrawIdx));
+        }
+    }
+    SDL_RenderSetClipRect(ren, nullptr);
+}
+
 static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
     OkayVpData* d = (OkayVpData*)vp->RendererUserData;
-    ImDrawData* dd = vp->DrawData;
-    if (!d || !d->ren || !dd) return;
+    if (!d || !d->ren || !vp->DrawData) return;
 
     // Drop cached copies of textures ImGui destroyed this frame.
     for (auto it = d->texes.begin(); it != d->texes.end();) {
@@ -29560,45 +29631,7 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
 
     SDL_SetRenderDrawColor(d->ren, 15, 16, 20, 255);
     SDL_RenderClear(d->ren);
-
-    ImVec2 off = dd->DisplayPos;
-    ImVec2 scale = dd->FramebufferScale;
-    int fbW = (int)(dd->DisplaySize.x * scale.x), fbH = (int)(dd->DisplaySize.y * scale.y);
-    if (fbW <= 0 || fbH <= 0) { SDL_RenderPresent(d->ren); return; }
-    SDL_RenderSetScale(d->ren, scale.x, scale.y);
-
-    for (const ImDrawList* dl : dd->CmdLists) {
-        const ImDrawVert* vtx = dl->VtxBuffer.Data;
-        const ImDrawIdx*  idx = dl->IdxBuffer.Data;
-        for (int ci = 0; ci < dl->CmdBuffer.Size; ++ci) {
-            const ImDrawCmd* cmd = &dl->CmdBuffer[ci];
-            if (cmd->UserCallback) continue;   // render-state callbacks are main-window-only
-            ImVec2 cmin((cmd->ClipRect.x - off.x) * scale.x, (cmd->ClipRect.y - off.y) * scale.y);
-            ImVec2 cmax((cmd->ClipRect.z - off.x) * scale.x, (cmd->ClipRect.w - off.y) * scale.y);
-            if (cmin.x < 0) cmin.x = 0;
-            if (cmin.y < 0) cmin.y = 0;
-            if (cmax.x > (float)fbW) cmax.x = (float)fbW;
-            if (cmax.y > (float)fbH) cmax.y = (float)fbH;
-            if (cmax.x <= cmin.x || cmax.y <= cmin.y) continue;
-            SDL_Rect clip = {(int)cmin.x, (int)cmin.y, (int)(cmax.x - cmin.x), (int)(cmax.y - cmin.y)};
-            SDL_RenderSetClipRect(d->ren, &clip);
-
-            SDL_Texture* tex = nullptr;
-            if (cmd->TexRef._TexData)
-                tex = OkayVpTexture(d, cmd->TexRef._TexData);
-            else if (cmd->TexRef._TexID != ImTextureID_Invalid)
-                continue;   // raw SDL_Texture from the main renderer: can't cross renderers
-
-            const char* vbase = (const char*)(vtx + cmd->VtxOffset);
-            SDL_RenderGeometryRaw(d->ren, tex,
-                (const float*)(const void*)(vbase + offsetof(ImDrawVert, pos)), (int)sizeof(ImDrawVert),
-                (const SDL_Color*)(const void*)(vbase + offsetof(ImDrawVert, col)), (int)sizeof(ImDrawVert),
-                (const float*)(const void*)(vbase + offsetof(ImDrawVert, uv)), (int)sizeof(ImDrawVert),
-                dl->VtxBuffer.Size - (int)cmd->VtxOffset,
-                idx + cmd->IdxOffset, (int)cmd->ElemCount, (int)sizeof(ImDrawIdx));
-        }
-    }
-    SDL_RenderSetClipRect(d->ren, nullptr);
+    OkayRenderDrawData(vp->DrawData, d->ren, d);
     SDL_RenderPresent(d->ren);
 }
 
@@ -30246,7 +30279,19 @@ int main(int argc, char** argv) {
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
         SDL_RenderClear(renderer);
-        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            // Multi-window mode: draw data is in absolute desktop coordinates,
+            // which the stock SDL_Renderer backend can't offset — process the
+            // texture updates it owns, then draw through our rebasing renderer.
+            ImDrawData* mdd = ImGui::GetDrawData();
+            if (mdd && mdd->Textures)
+                for (ImTextureData* tx : *mdd->Textures)
+                    if (tx->Status != ImTextureStatus_OK)
+                        ImGui_ImplSDLRenderer2_UpdateTexture(tx);
+            OkayRenderDrawData(mdd, renderer, nullptr);
+        } else {
+            ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        }
 #ifdef OKAY_HAVE_OKAYUI
         // Flush OkayUI here, AFTER ImGui, through the SAME SDL_Renderer — so it
         // composites on top with no GL/D3D conflict. The frame was opened with

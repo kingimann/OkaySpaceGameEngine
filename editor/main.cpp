@@ -14,6 +14,7 @@
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
+#include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -1143,8 +1144,9 @@ bool g_installingUpdate = false;  // set while InstallUpdate runs
 std::future<updater::UpdateInfo> g_updateCheck;  // async startup check (non-blocking)
 bool g_autoCheckDone = false;     // consumed the async result yet?
 bool g_openAbout = false;
-bool g_showNewProject = true;   // show the project chooser on launch
-std::string g_newProjectTemplate; // template title to preselect (from --template)
+std::string g_newProjectTemplate; // template title requested via --template
+std::string g_newProjectRoot;     // project folder requested via --new-project (launcher)
+std::string g_openScenePath;      // scene to open at startup via --open (launcher)
 
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
@@ -1156,6 +1158,7 @@ bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom 
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
+bool g_showShortcuts = false;    // keyboard shortcut cheatsheet window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
 bool g_showFlowGraph = false;    // node/flow-graph view of the selected object's Actions
 bool g_showCustomActions = false;// manager for reusable custom instructions/conditions
@@ -1171,6 +1174,10 @@ bool g_showAnimation = false;    // keyframe animation timeline for the selected
 bool g_showAnimatorGraph = false; // visual state-machine node graph (Animator window)
 okay::NPCController* g_wpPlace = nullptr; // NPC whose patrol waypoints are being click-placed in the Scene view
 bool g_showHistory   = false;    // undo/redo history panel (click a step to jump)
+// Viewport camera bookmarks: Ctrl+Alt+1..3 saves the current view, Ctrl+1..3 recalls it.
+struct CamBookmark { bool set = false; okay::Vec3 target{}; float yaw = 0, pitch = 0, dist = 10;
+                     float px = 0, py = 0; bool view3D = true; };
+CamBookmark g_camBookmarks[3];
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 // Isolate mode (Unity's Isolation view): the Scene view shows ONLY this object
 // and its children (lights stay on for shading). View-only — nothing in the
@@ -1200,6 +1207,7 @@ ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into 
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
+bool g_multiWindow = true;        // panels can be dragged out to other OS windows/monitors
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
@@ -1437,6 +1445,7 @@ void LoadSettings() {
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
+        else if (k == "multiwin") g_multiWindow = (v != 0);
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
@@ -1472,7 +1481,8 @@ void SaveSettings() {
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
-      << "uisubdivy " << g_uiSubdivY << "\n";
+      << "uisubdivy " << g_uiSubdivY << "\n"
+      << "multiwin " << (g_multiWindow ? 1 : 0) << "\n";
 }
 
 // ---- Reusable custom-action library (persisted globally) -----------------
@@ -2921,11 +2931,14 @@ void DrawMenuAndToolbar(EditorState& ed) {
     }
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Project...", "Ctrl+N")) g_showNewProject = true;
+        ImGui::MenuItem("New Project (in the Launcher)", nullptr, false, false);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Projects are created from the Launcher Create tab:\npick a template, name it, choose a folder.");
         if (ImGui::MenuItem("New 2D Scene")) { ed.NewScene2D(); ConsoleLog("New 2D project"); }
         if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
         ImGui::Separator();
-        if (ImGui::MenuItem("Import Model (.obj)...")) g_showImportObj = true;
+        if (ImGui::MenuItem("Import Model...")) g_showImportObj = true;   // glTF/GLB/OBJ/FBX/...
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", FBX, DAE, STL, ..." : "");
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
             for (const std::string& p : g_recent) {
@@ -2934,11 +2947,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
                     ImGui::Image((ImTextureID)stx, ImVec2(22, 22));
                     ImGui::SameLine();
                 }
-                if (ImGui::MenuItem(p.c_str())) {
+                std::error_code fec;
+                bool exists = std::filesystem::exists(p, fec);   // moved/deleted files gray out
+                if (ImGui::MenuItem(p.c_str(), nullptr, false, exists)) {
                     std::string err;
                     if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
                     else ConsoleLog("Open failed: " + err);
                 }
+                if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("File not found (moved or deleted)");
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
@@ -2950,7 +2967,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
             else ConsoleLog("Save failed");
         }
-        if (ImGui::MenuItem("Save As...")) {
+        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
             std::strncpy(g_pathBuf, ed.path().empty() ? "scene.okayscene" : ed.path().c_str(),
                          sizeof(g_pathBuf) - 1);
             g_showSaveAs = true;
@@ -3053,6 +3070,12 @@ void DrawMenuAndToolbar(EditorState& ed) {
 #endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
+        if (ImGui::MenuItem("Multi-Window Panels", nullptr, &g_multiWindow)) SaveSettings();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Drag a tab outside the editor to make it its own OS window —\n"
+                              "put the Inspector, Console or Flow Graph on a second monitor.\n"
+                              "Note: image-based panels (Scene/Game views, thumbnails) only\n"
+                              "render their pictures while docked in the main window.");
         if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
         ImGui::Separator();
@@ -3087,6 +3110,29 @@ void DrawMenuAndToolbar(EditorState& ed) {
                     ImVec2(amn.x + 11.0f, (amn.y + amx.y) * 0.5f),
                     ImGui::GetFontSize() * 0.28f,
                     ImGui::GetColorU32(ImVec4(kAccents[i].r, kAccents[i].g, kAccents[i].b, 1.0f)), 16);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Camera Bookmarks")) {
+            ImGui::TextDisabled("Save a viewport camera angle, jump back anytime.");
+            for (int bi = 0; bi < 3; ++bi) {
+                CamBookmark& b = g_camBookmarks[bi];
+                char sl[32], ss[16], gl[32], gs[12];
+                std::snprintf(sl, sizeof(sl), "Save slot %d", bi + 1);
+                std::snprintf(ss, sizeof(ss), "Ctrl+Alt+%d", bi + 1);
+                std::snprintf(gl, sizeof(gl), "Go to slot %d", bi + 1);
+                std::snprintf(gs, sizeof(gs), "Ctrl+%d", bi + 1);
+                if (ImGui::MenuItem(sl, ss)) {
+                    b.set = true; b.target = ed.camTarget; b.yaw = ed.camYaw; b.pitch = ed.camPitch;
+                    b.dist = ed.camDist; b.px = ed.cameraPos.x; b.py = ed.cameraPos.y; b.view3D = ed.view3D;
+                }
+                ImGui::BeginDisabled(!b.set);
+                if (ImGui::MenuItem(gl, gs)) {
+                    ed.camTarget = b.target; ed.camYaw = b.yaw; ed.camPitch = b.pitch;
+                    ed.camDist = b.dist; ed.cameraPos = {b.px, b.py}; ed.view3D = b.view3D;
+                }
+                ImGui::EndDisabled();
+                if (bi < 2) ImGui::Separator();
             }
             ImGui::EndMenu();
         }
@@ -3508,6 +3554,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     }
     if (ImGui::BeginMenu("Help")) {
         if (ImGui::MenuItem("Scripting Reference")) g_showScriptDocs = true;
+        if (ImGui::MenuItem("Keyboard Shortcuts")) g_showShortcuts = true;
         if (ImGui::MenuItem("About OkaySpace")) g_openAbout = true;
         ImGui::EndMenu();
     }
@@ -3723,6 +3770,11 @@ void DrawStatusBar(EditorState& ed) {
     ImGui::TextDisabled("%s", c3);
     ImGui::SameLine(0, gap);
     ImGui::TextDisabled("%s", ver);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::SetTooltip("Click to copy the version (for bug reports)");
+    }
+    if (ImGui::IsItemClicked()) { ImGui::SetClipboardText(ver); ConsoleLog(std::string("Copied ") + ver); }
     ImGui::Unindent(8.0f);
     ImGui::EndChild();
     ImGui::PopStyleColor();
@@ -3890,6 +3942,11 @@ void DrawConsole() {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(160);
         ImGui::InputTextWithHint("##cfilter", "Search", filter, sizeof(filter));
+        if (filter[0]) {
+            ImGui::SameLine(0, 2);
+            if (ImGui::SmallButton("x##cfclear")) filter[0] = '\0';
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear the search");
+        }
 
         // Right-aligned per-level toggle buttons with counts (like Unity).
         const ImVec4 cInfo(0.82f, 0.84f, 0.88f, 1.0f);
@@ -5606,6 +5663,52 @@ void DrawServices(EditorState& ed) {
         } else ImGui::TextDisabled("unavailable");
     }
 
+    // ---- PlayFab (cloud login / leaderboards / saves) ----
+    if (ImGui::CollapsingHeader("PlayFab")) {
+        okay::PlayFab& pf = okay::PlayFab::Get();
+        ImGui::TextDisabled("Azure PlayFab over its REST API. Games use the playfab_* actions;\n"
+                            "this panel is for trying your Title ID before wiring them up.");
+        static char pfTitle[32] = "";
+        static char pfCustom[64] = "editor-test-user";
+        ImGui::SetNextItemWidth(120);
+        ImGui::InputTextWithHint("Title ID##pf", "AB12CD", pfTitle, sizeof(pfTitle));
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputText("Custom ID##pf", pfCustom, sizeof(pfCustom));
+        if (ImGui::Button("Login##pf")) {
+            pf.Configure(pfTitle);
+            if (pf.LoginWithCustomID(pfCustom)) ConsoleLog("PlayFab: logged in as " + pf.PlayFabId());
+            else ConsoleLog(pf.LastError(), 2);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blocking network call (a moment's freeze is normal).");
+        ImGui::SameLine();
+        if (pf.IsLoggedIn()) statusLine(("logged in: " + pf.PlayFabId()).c_str(), kLive);
+        else statusLine("not logged in", kSim);
+        if (pf.IsLoggedIn()) {
+            static char pfStat[48] = "highscore";
+            static int  pfVal = 100;
+            ImGui::SetNextItemWidth(140);
+            ImGui::InputText("##pfstat", pfStat, sizeof(pfStat));
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            ImGui::InputInt("##pfval", &pfVal, 0);
+            ImGui::SameLine();
+            if (ImGui::Button("Set Stat##pf")) {
+                if (pf.SetStat(pfStat, pfVal)) ConsoleLog("PlayFab: stat published");
+                else ConsoleLog(pf.LastError(), 2);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Top 10##pf")) {
+                std::vector<okay::PlayFab::Entry> rows;
+                if (pf.GetLeaderboard(pfStat, 10, rows)) {
+                    ConsoleLog("PlayFab leaderboard '" + std::string(pfStat) + "': " +
+                               std::to_string(rows.size()) + " entries");
+                    for (const auto& e : rows)
+                        ConsoleLog("  #" + std::to_string(e.position + 1) + "  " + e.name +
+                                   "  " + std::to_string(e.value));
+                } else ConsoleLog(pf.LastError(), 2);
+            }
+        }
+    }
+
     // ---- Multiplayer ----
     if (ImGui::CollapsingHeader("Multiplayer", ImGuiTreeNodeFlags_DefaultOpen)) {
         static int port = 45000;
@@ -5737,11 +5840,15 @@ void DrawSaveManager(EditorState& ed) {
             if (ImGui::Selectable(f.c_str(), f == sel)) { sel = f; loaded.clear(); }
         ImGui::EndCombo();
     }
+    static bool s_dirty = false;       // edits not yet saved to disk
     if (sel.empty()) { ImGui::TextDisabled("No file selected."); ImGui::End(); return; }
-    if (loaded != sel) { file = okay::SaveFile{}; file.Load(sel); loaded = sel; }
+    if (loaded != sel) { file = okay::SaveFile{}; file.Load(sel); loaded = sel; s_dirty = false; }
 
     ImGui::SameLine();
-    if (ImGui::SmallButton("Reload")) { file = okay::SaveFile{}; file.Load(sel); }
+    if (ImGui::SmallButton("Reload")) { file = okay::SaveFile{}; file.Load(sel); s_dirty = false; }
+    static char kfilter[64] = "";
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##savefilter", "filter keys...", kfilter, sizeof(kfilter));
     ImGui::Separator();
 
     // Editable key table. Values are stored as type:payload; show the type and an
@@ -5758,6 +5865,12 @@ void DrawSaveManager(EditorState& ed) {
         std::vector<std::pair<std::string, std::string>> rows(file.Raw().begin(), file.Raw().end());
         std::sort(rows.begin(), rows.end(), [](auto& a, auto& b){ return a.first < b.first; });
         for (auto& kv : rows) {
+            if (kfilter[0]) {   // case-insensitive key filter
+                std::string lk = kv.first, lf = kfilter;
+                for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
+                for (auto& c : lf) c = (char)std::tolower((unsigned char)c);
+                if (lk.find(lf) == std::string::npos) continue;
+            }
             ImGui::PushID(kv.first.c_str());
             char type = kv.second.empty() ? 's' : kv.second[0];
             std::string payload = kv.second.size() > 2 ? kv.second.substr(2) : "";
@@ -5769,14 +5882,16 @@ void DrawSaveManager(EditorState& ed) {
             ImGui::TableNextColumn();
             char vbuf[256]; std::strncpy(vbuf, payload.c_str(), sizeof(vbuf) - 1); vbuf[sizeof(vbuf)-1] = '\0';
             ImGui::SetNextItemWidth(-44);
-            if (ImGui::InputText("##v", vbuf, sizeof(vbuf)))
+            if (ImGui::InputText("##v", vbuf, sizeof(vbuf))) {
                 file.SetRaw(kv.first, std::string(1, type) + ":" + vbuf);
+                s_dirty = true;
+            }
             ImGui::SameLine();
             if (ImGui::SmallButton("X")) deleteKey = kv.first;
             ImGui::PopID();
         }
         ImGui::EndTable();
-        if (!deleteKey.empty()) file.Delete(deleteKey);
+        if (!deleteKey.empty()) { file.Delete(deleteKey); s_dirty = true; }
     }
 
     // Add a new key (typed).
@@ -5793,16 +5908,36 @@ void DrawSaveManager(EditorState& ed) {
         const char tc[] = {'f', 'i', 'b', 's', 'v'};
         file.SetRaw(newKey, std::string(1, tc[newType]) + ":" + newVal);
         newKey[0] = '\0';
+        s_dirty = true;
     }
 
     ImGui::Separator();
     if (ImGui::Button("Save to disk")) {
-        if (file.Save(sel)) ConsoleLog("Saved " + sel); else ConsoleLog("Save failed: " + sel);
+        if (file.Save(sel)) { ConsoleLog("Saved " + sel); s_dirty = false; }
+        else ConsoleLog("Save failed: " + sel);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Clear all keys")) file.Clear();
+    if (ImGui::Button("Clear all keys")) ImGui::OpenPopup("Clear save keys?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Clear save keys?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Remove all %d keys from this save?", (int)file.Count());
+        ImGui::TextDisabled("Nothing is written to disk until you press Save to disk.");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        bool doClr = ImGui::Button("Clear", ImVec2(110, 0));
+        ImGui::PopStyleColor(2);
+        if (doClr) { file.Clear(); s_dirty = true; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("%d keys", (int)file.Count());
+    if (s_dirty) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "unsaved edits");
+    }
     ImGui::End();
 }
 
@@ -5818,6 +5953,26 @@ void DrawMaterialEditor(EditorState& ed) {
     if (!ImGui::Begin("Material", &g_matAssetOpen)) { ImGui::End(); return; }
     ImGui::TextDisabled("%s", g_matAssetPath.c_str());
     ImGui::Separator();
+    // Live preview ball: albedo shaded sphere, brightened by emissive, with a
+    // stronger highlight as specular rises — updates as you drag the values.
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 pv = ImGui::GetCursorScreenPos();
+        float pw = ImGui::GetContentRegionAvail().x, ph = 74.0f;
+        dl->AddRectFilled(pv, ImVec2(pv.x + pw, pv.y + ph), IM_COL32(28, 29, 34, 255), 5.0f);
+        ImVec4 shown(mat.color.r + mat.emissive.r * 0.6f,
+                     mat.color.g + mat.emissive.g * 0.6f,
+                     mat.color.b + mat.emissive.b * 0.6f, 1.0f);
+        if (shown.x > 1) shown.x = 1; if (shown.y > 1) shown.y = 1; if (shown.z > 1) shown.z = 1;
+        DrawMaterialBall(dl, pv, ImVec2(pv.x + pw, pv.y + ph), shown);
+        if (mat.specular > 0.0f) {
+            ImVec2 c(pv.x + pw * 0.5f, pv.y + ph * 0.5f);
+            float r = ph * 0.32f;
+            dl->AddCircleFilled(ImVec2(c.x - r * 0.30f, c.y - r * 0.34f), r * 0.12f,
+                                IM_COL32(255, 255, 255, (int)(120 + 130 * mat.specular)), 16);
+        }
+        ImGui::Dummy(ImVec2(0, ph + 6.0f));
+    }
     float col[4] = {mat.color.r, mat.color.g, mat.color.b, mat.color.a};
     if (ImGui::ColorEdit4("Albedo", col)) mat.color = {col[0], col[1], col[2], col[3]};
     float em[3] = {mat.emissive.r, mat.emissive.g, mat.emissive.b};
@@ -5828,11 +5983,20 @@ void DrawMaterialEditor(EditorState& ed) {
     ImGui::SameLine();
     ImGui::Checkbox("Double-sided", &mat.doubleSided);
     char tex[256]; std::strncpy(tex, mat.texture.c_str(), sizeof(tex) - 1); tex[sizeof(tex) - 1] = '\0';
-    if (ImGui::InputText("Texture", tex, sizeof(tex))) mat.texture = tex;
+    ImGui::SetNextItemWidth(210);
+    if (ImGui::InputText("##mattex", tex, sizeof(tex))) mat.texture = tex;
     if (ImGui::BeginDragDropTarget()) {   // drop an image from the Project panel
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) mat.texture = (const char*)p->Data;
         ImGui::EndDragDropTarget();
     }
+    ImGui::SameLine(0, 4);
+    if (ImGui::Button("...##mattexbrowse")) {
+        const char* imgFilt[3] = {"*.png", "*.jpg", "*.bmp"};
+        if (const char* p = tinyfd_openFileDialog("Choose a texture image", "", 3, imgFilt, "Image", 0))
+            mat.texture = p;
+    }
+    ImGui::SameLine(0, 4);
+    ImGui::TextUnformatted("Texture");
     float til[2] = {mat.tiling.x, mat.tiling.y};
     if (ImGui::DragFloat2("Tiling", til, 0.05f, 0.01f, 64.0f)) mat.tiling = {til[0], til[1]};
     ImGui::Separator();
@@ -6280,6 +6444,89 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
 }
 
 // In-editor OkayScript reference, so scripting is documented without leaving
+// Keyboard shortcut cheatsheet (Help > Keyboard Shortcuts): every binding in
+// one searchable place, grouped by the panel it applies to.
+void DrawShortcutsWindow() {
+    if (!g_showShortcuts) return;
+    ImGui::SetNextWindowSize(ImVec2(520, 560), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Keyboard Shortcuts", &g_showShortcuts)) { ImGui::End(); return; }
+    static char filter[48] = "";
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##scfilter", "filter...", filter, sizeof(filter));
+    ImGui::Separator();
+    auto lc = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    std::string q = lc(filter);
+    struct Row { const char* keys; const char* what; };
+    auto section = [&](const char* title, std::initializer_list<Row> rows) {
+        // Show a section only if any row matches the filter.
+        bool any = q.empty();
+        for (const Row& r : rows)
+            if (!any && (lc(r.keys).find(q) != std::string::npos ||
+                         lc(r.what).find(q) != std::string::npos)) any = true;
+        if (!any) return;
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.8f, 1.0f, 1.0f));
+        ImGui::SeparatorText(title);
+        ImGui::PopStyleColor();
+        for (const Row& r : rows) {
+            if (!q.empty() && lc(r.keys).find(q) == std::string::npos &&
+                lc(r.what).find(q) == std::string::npos) continue;
+            ImGui::TextColored(ImVec4(0.85f, 0.90f, 0.72f, 1.0f), "%-18s", r.keys);
+            ImGui::SameLine(150);
+            ImGui::TextDisabled("%s", r.what);
+        }
+    };
+    section("General", {
+        {"Ctrl+P",        "Play / Stop"},
+        {"Ctrl+S",        "Save scene"},
+        {"Ctrl+Shift+S",  "Save scene as..."},
+        {"Ctrl+O",        "Open scene"},
+        {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
+        {"Ctrl+B",        "Build Game"},
+        {"Ctrl+C / Ctrl+V","Copy / paste object"},
+        {"Ctrl+D",        "Duplicate selection"},
+        {"Ctrl+Shift+G",  "Group selection"},
+        {"Delete",        "Delete selection"},
+    });
+    section("Scene view", {
+        {"W / E / R",     "Move / Rotate / Scale tool"},
+        {"X",             "Local / world gizmo space"},
+        {"F",             "Frame (focus) the selection"},
+        {"Shift+I",       "Isolate selection (Esc exits)"},
+        {"Ctrl+Alt+1..3", "Save camera bookmark"},
+        {"Ctrl+1..3",     "Recall camera bookmark"},
+        {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
+        {"Ctrl+Wheel",    "Zoom UI authoring view"},
+    });
+    section("Hierarchy", {
+        {"F2",            "Rename object"},
+        {"Ctrl+Click",    "Add/remove from selection"},
+        {"Shift+Click",   "Range select"},
+        {"Ctrl+Up/Down",  "Reorder among siblings"},
+        {"Double-click",  "Frame object (in search results)"},
+    });
+    section("Script Editor", {
+        {"Ctrl+F",        "Find in this file"},
+        {"Ctrl+Shift+F",  "Find in Files (project-wide)"},
+        {"Ctrl+Click",    "Go to definition"},
+        {"Ctrl+E",        "Command palette"},
+        {"Ctrl+G",        "Go to line"},
+        {"Ctrl+Alt+L",    "Format document"},
+        {"F2",            "Next warning"},
+    });
+    section("Flow Graph", {
+        {"Ctrl+C / Ctrl+V","Copy / paste node"},
+        {"Ctrl+D",        "Duplicate node"},
+        {"Delete",        "Delete node"},
+        {"Scroll",        "Zoom (drag empty space to pan)"},
+        {"Right-click",   "Node menu / add nodes / breakpoint"},
+    });
+    section("Sprite Editor", {
+        {"P / E / F / I", "Pencil / Eraser / Fill / Pick tool"},
+        {"Ctrl+Z",        "Undo stroke"},
+    });
+    ImGui::End();
+}
+
 // the app. Opened from Help > Scripting Reference or the Script Editor's Docs.
 void DrawScriptDocs() {
     if (!g_showScriptDocs) return;
@@ -6645,6 +6892,17 @@ void DrawScriptDocs() {
         fapi("steam_presence(\"key\",\"value\") / steam_friends() / steam_overlay(\"page\")", "rich presence / friends / overlay");
         fapi("steam_owns(appId) / steam_owns_dlc(appId)", "ownership / DLC checks");
         fapi("steam_achievement_count() / steam_language()", "achievement count / client language");
+    }
+
+    if (sec("PlayFab (cloud login, leaderboards, saves)")) {
+        ImGui::TextDisabled("Blocking web requests over PlayFab's REST API — call from start(), not every frame.");
+        fapi("pf_login(\"titleId\", \"customId\")", "sign in (creates the account on first use); 1 on success");
+        fapi("pf_register(\"titleId\", \"user\", \"pass\") / pf_login_password(...)", "username + password accounts");
+        fapi("pf_logged_in() / pf_id() / pf_error()", "session state / PlayFab id / last error text");
+        fapi("pf_name(\"display name\")", "the name shown on leaderboards");
+        fapi("pf_set_stat(\"stat\", value)", "publish a statistic (drives leaderboards)");
+        fapi("pf_leaderboard_top(\"stat\", n)", "top-N entries as \"rank,name,score\" strings");
+        fapi("pf_save(\"key\",\"value\") / pf_load(\"key\") / pf_delete(\"key\")", "per-player cloud save data");
     }
 
     if (sec("Debugging")) {
@@ -7019,6 +7277,14 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"is_nan","is_nan(x)"}, {"is_finite","is_finite(x)"}, {"acos","acos(x)"}, {"asin","asin(x)"},
         {"atan","atan(x)"}, {"atan2","atan2(y, x)"}, {"sign","sign(x)"},
         {"approach","approach(current, target, step)"}, {"approximately","approximately(a, b)"}, {"angle_to","angle_to(\"name\")"},
+        // PlayFab (cloud services; blocking web calls — use from start())
+        {"pf_login","pf_login(\"titleId\", \"customId\")"},
+        {"pf_login_password","pf_login_password(\"titleId\", \"user\", \"pass\")"},
+        {"pf_register","pf_register(\"titleId\", \"user\", \"pass\")"},
+        {"pf_name","pf_name(\"display name\")"}, {"pf_set_stat","pf_set_stat(\"stat\", value)"},
+        {"pf_leaderboard_top","pf_leaderboard_top(\"stat\"[, n])"},
+        {"pf_save","pf_save(\"key\", \"value\")"}, {"pf_load","pf_load(\"key\")"},
+        {"pf_delete","pf_delete(\"key\")"},
     };
     return sig;
 }
@@ -9434,9 +9700,13 @@ void HandleShortcuts(EditorState& ed) {
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
         if (ed.Redo()) ConsoleLog("Redo");
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) g_showNewProject = true;
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+    if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        // Ctrl+Shift+S = Save Scene As (seed the dialog with the current path).
+        std::strncpy(g_pathBuf, ed.path().empty() ? "scene.okayscene" : ed.path().c_str(),
+                     sizeof(g_pathBuf) - 1);
+        g_showSaveAs = true;
+    } else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
         if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE");
             std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
@@ -9477,6 +9747,26 @@ void HandleShortcuts(EditorState& ed) {
         g_isolate = g_isolate ? nullptr : ed.selected();
         ConsoleLog(g_isolate ? "Isolating '" + g_isolate->name + "' (Shift+I to exit)"
                              : "Isolation off");
+    }
+    // Esc exits Isolate mode (when no popup wants the key).
+    if (g_isolate && ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+        g_isolate = nullptr; ConsoleLog("Isolation off");
+    }
+    // Camera bookmarks: Ctrl+Alt+1..3 saves the current viewport camera,
+    // Ctrl+1..3 jumps back to it (also in View > Camera Bookmarks).
+    for (int bi = 0; bi < 3; ++bi) {
+        if (!ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + bi), false)) continue;
+        CamBookmark& b = g_camBookmarks[bi];
+        if (ctrl && io.KeyAlt) {
+            b.set = true; b.target = ed.camTarget; b.yaw = ed.camYaw; b.pitch = ed.camPitch;
+            b.dist = ed.camDist; b.px = ed.cameraPos.x; b.py = ed.cameraPos.y; b.view3D = ed.view3D;
+            ConsoleLog("Saved camera bookmark " + std::to_string(bi + 1) +
+                       " (Ctrl+" + std::to_string(bi + 1) + " to recall)");
+        } else if (ctrl && !io.KeyAlt && !io.KeyShift && b.set) {
+            ed.camTarget = b.target; ed.camYaw = b.yaw; ed.camPitch = b.pitch;
+            ed.camDist = b.dist; ed.cameraPos = {b.px, b.py}; ed.view3D = b.view3D;
+        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         ed.DeleteSelected(); ConsoleLog("Deleted selection");
@@ -9817,11 +10107,28 @@ void DrawFileDialogs(EditorState& ed) {
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
-        ImGui::SetNextItemWidth(200);
         const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)"};
-        ImGui::Combo("Platform##build", &g_buildPlatform, plats, 3);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Desktop builds a runnable .exe here.\nWeb/Android export your game data + a build script/README;\nfinish the build with Emscripten (web) or Android Studio+NDK (mobile).");
+        {   // Segmented platform picker (clearer than a dropdown for 3 options).
+            const char* platShort[] = {"Desktop", "Web", "Android"};
+            const char* platTip[] = {
+                "Build a runnable Windows .exe right here.",
+                "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
+                "Export an Android Studio project;\nfinish the build with Android Studio + NDK."};
+            ImGui::TextDisabled("Platform");
+            ImGui::SameLine();
+            for (int pi = 0; pi < 3; ++pi) {
+                if (pi) ImGui::SameLine(0, 2);
+                bool on = g_buildPlatform == pi;
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+                }
+                if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
+                if (on) ImGui::PopStyleColor(3);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", platTip[pi]);
+            }
+        }
         // One-line summary of what's about to be produced, so a wrong setting
         // is caught before the build instead of after it.
         {
@@ -9836,11 +10143,18 @@ void DrawFileDialogs(EditorState& ed) {
                 g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
         }
         ImGui::Spacing();
+        // Footer buttons, right-aligned (dialog convention): Cancel, then the
+        // green primary Build/Export in the corner.
         const char* buildLabel = g_buildPlatform == 0 ? "Build" : "Export";
+        const float bw = 120.0f;
+        ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x -
+                             (bw * 2.0f + ImGui::GetStyle().ItemSpacing.x));
+        if (ImGui::Button("Cancel", ImVec2(bw, 0))) ImGui::CloseCurrentPopup();
+        ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-        bool doBuild = ImGui::Button(buildLabel, ImVec2(120, 0));
+        bool doBuild = ImGui::Button(buildLabel, ImVec2(bw, 0));
         ImGui::PopStyleColor(3);
         if (doBuild) {
           if (g_buildPlatform != 0) {
@@ -9885,8 +10199,6 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::CloseCurrentPopup();
           }   // end desktop branch
         }     // end Build/Export button
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -9949,193 +10261,96 @@ void DrawFileDialogs(EditorState& ed) {
     }
 }
 
+// Project creation moved to the LAUNCHER (Create tab). It sends
+// --new-project "<folder>" [--template "<Title>"] and the editor builds the
+// project here, headlessly, on its first frames — no in-editor dialog.
+// A bare --template (no folder) just loads that template into the open scene.
 void DrawNewProjectPopup(EditorState& ed) {
-    if (g_showNewProject) { ImGui::OpenPopup("New Project"); g_showNewProject = false; }
-    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(760, 580), ImGuiCond_Appearing);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(560, 420), ImVec2(2000, 1600));
-    if (ImGui::BeginPopupModal("New Project")) {   // resizable
-        static char nameBuf[128] = "MyGame";
-        static char locBuf[400]  = ".";
-
-        // Template registry: category, title, one-line blurb, longer description,
-        // and the factory. The grid + footer are driven from this.
-        struct Tpl { int cat; const char* title; const char* blurb; const char* desc;
-                     void (EditorState::*fn)(); };
-        enum { C_BLANK, C_3D, C_2D, C_GAME, C_UI };
-        static const Tpl tpls[] = {
-            {C_BLANK, "2D Scene",   "Empty 2D + camera",  "An empty 2D scene with a camera. Good starting point for sprites and UI.", &EditorState::NewScene2D},
-            {C_BLANK, "3D Scene",   "Empty 3D + cube",    "An empty 3D scene with a camera, a directional light and a cube.", &EditorState::NewScene3D},
-            {C_BLANK, "Empty",      "Nothing at all",     "A totally empty scene (no camera or light). Build it up yourself.", &EditorState::NewScene},
-            {C_3D,    "First Person","Character + FPS",    "A blocky Character you control in first person: mouse-look, WASD, jump. Camera at eye height, with crates to walk around.", &EditorState::NewFPS},
-            {C_3D,    "Third Person","Orbit camera",       "Your blocky Character with an orbit camera behind it: WASD relative to the camera, Space to jump, with walk/run animation. You see and control the character.", &EditorState::NewThirdPerson},
-            {C_3D,    "Humanoid",    "Rig + capsule + foot IK", "A fully-wired humanoid in one click (Unity's 'drop in a character'): the part-rigged Character, a physics capsule, foot IK that plants the feet on uneven ground, and root motion hooked to the hips. Stepped ground so the foot planting is visible.", &EditorState::NewHumanoid},
-            {C_3D,    "Third Person Shooter","Over-the-shoulder aim", "An over-the-shoulder shooter: the body faces where you aim, right mouse aims (camera zooms in), left mouse fires, cursor locked. Ground with cover crates and a row of targets to shoot.", &EditorState::NewThirdPersonShooter},
-            {C_3D,    "Point & Click","Click to move",     "RuneScape / Diablo style: click the ground and your Character walks there, under a high angled camera. Powered by the Click To Move controller.", &EditorState::NewPointAndClick},
-            {C_3D,    "Sandbox",     "Dig caves + water",  "A first-person sandbox on a single smooth voxel terrain you walk on AND dig real caves / tunnels / overhangs into (Left Mouse digs, Right Mouse fills), with full voxel collision (no falling through), a lake of animated water, and a pause menu. Space jumps, Esc pauses. A base for survival / mining / building games.", &EditorState::NewVoxelSandbox},
-            {C_3D,    "Vehicle (3D)","Arcade driving",     "A drivable car on a wide ground with a chase camera and a few blocks to weave around. WASD/arrows to steer, Space to handbrake. Powered by the Vehicle Controller.", &EditorState::NewVehicle3D},
-            {C_2D,    "Vehicle (2D)","Top-down driving",   "A top-down car with grip + drift, an orthographic follow camera, and cones to weave around. WASD/arrows to drive, Space to handbrake. Powered by the Vehicle Controller 2D.", &EditorState::NewVehicle2D},
-            {C_2D,    "Platformer",  "Side-scroller",      "A side-scroller: follow camera, a physics player on a wide ground, and a coin.", &EditorState::NewPlatformer},
-            {C_2D,    "Top-Down",    "WASD movement",      "A WASD-driven player with a follow camera and a couple of walls.", &EditorState::NewTopDown},
-            {C_GAME,  "Coin Collector","Mini game",        "A small complete game: drive the player to collect spinning coins; a HUD counts the score.", &EditorState::NewCoinCollector},
-            {C_GAME,  "Snake",       "Classic arcade",     "The classic Snake, fully playable.", &EditorState::NewSnake},
-            {C_UI,    "Main Menu",   "Title screen",       "A title screen with buttons wired to actions.", &EditorState::NewMainMenu},
-            {C_UI,    "Inventory",   "Drag & drop grid",   "A drag & drop item grid.", &EditorState::NewInventory},
-            {C_UI,    "Multiplayer", "Host / join",        "A host/join networked starter scene.", &EditorState::NewMultiplayer},
-        };
-        const int N = (int)(sizeof(tpls) / sizeof(tpls[0]));
-        static int sel = 1;   // default: 3D Scene
-        if (sel < 0 || sel >= N) sel = 1;
-        // Preselect the template requested via --template (launcher Create tab).
-        if (!g_newProjectTemplate.empty()) {
-            for (int i = 0; i < N; ++i)
-                if (g_newProjectTemplate == tpls[i].title) { sel = i; break; }
-            g_newProjectTemplate.clear();
-        }
-        auto catColor = [](int c) -> ImVec4 {
-            switch (c) { case C_3D:   return ImVec4(0.30f, 0.55f, 0.85f, 1);
-                         case C_2D:   return ImVec4(0.30f, 0.70f, 0.45f, 1);
-                         case C_GAME: return ImVec4(0.90f, 0.65f, 0.25f, 1);
-                         case C_UI:   return ImVec4(0.62f, 0.45f, 0.80f, 1);
-                         default:     return ImVec4(0.45f, 0.47f, 0.55f, 1); }
-        };
-        const char* catName[] = {"Blank canvas", "3D templates", "2D templates",
-                                 "Mini games", "UI & systems"};
-
-        ImGui::TextColored(ImVec4(0.95f, 0.95f, 1.0f, 1), "Create a New Project");
-        ImGui::TextDisabled("Pick a starting template, name it, and hit Create.");
-        ImGui::Spacing();
-
-        // ---- Card grid (scrollable; grows with the window) ----
-        float gridH = ImGui::GetContentRegionAvail().y - 196.0f;   // leave room for desc + fields + footer
-        if (gridH < 120.0f) gridH = 120.0f;
-        ImGui::BeginChild("tpl_grid", ImVec2(0, gridH), true);
-        const float CARD_W = 150.0f, CARD_H = 60.0f;
-        const int COLS = 4;
-        for (int cat = 0; cat <= C_UI; ++cat) {
-            ImGui::PushStyleColor(ImGuiCol_Text, catColor(cat));
-            SectionHeader(catName[cat]);
-            ImGui::PopStyleColor();
-            int col = 0;
-            for (int i = 0; i < N; ++i) {
-                if (tpls[i].cat != cat) continue;
-                if (col > 0) ImGui::SameLine();
-                ImGui::PushID(i);
-                bool selected = (sel == i);
-                ImVec4 ac = catColor(cat);
-                ImVec4 base = selected ? ImVec4(ac.x, ac.y, ac.z, 0.55f) : ImVec4(ac.x, ac.y, ac.z, 0.18f);
-                ImGui::PushStyleColor(ImGuiCol_Button, base);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(ac.x, ac.y, ac.z, 0.40f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(ac.x, ac.y, ac.z, 0.65f));
-                if (selected) { ImGui::PushStyleColor(ImGuiCol_Border, ac); ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f); }
-                std::string label = std::string(tpls[i].title) + "\n";
-                if (ImGui::Button((label + tpls[i].blurb + "##c").c_str(), ImVec2(CARD_W, CARD_H))) sel = i;
-                if (ImGui::IsItemHovered() && !selected) ImGui::SetTooltip("%s", tpls[i].desc);
-                {   // small category glyph in the card's top-left corner
-                    ImVec2 mn = ImGui::GetItemRectMin();
-                    ImDrawList* gdl = ImGui::GetWindowDrawList();
-                    ImU32 gc = ImGui::GetColorU32(ImVec4(ac.x, ac.y, ac.z, 0.95f));
-                    float gx = mn.x + 9.0f, gy = mn.y + 9.0f, gr = 4.5f;
-                    switch (cat) {
-                        case C_3D: {   // iso cube
-                            gdl->AddRect(ImVec2(gx - gr, gy - gr * 0.4f), ImVec2(gx + gr * 0.4f, gy + gr), gc, 0, 0, 1.4f);
-                            gdl->AddLine(ImVec2(gx - gr, gy - gr * 0.4f), ImVec2(gx - gr * 0.4f, gy - gr), gc, 1.4f);
-                            gdl->AddLine(ImVec2(gx - gr * 0.4f, gy - gr), ImVec2(gx + gr, gy - gr), gc, 1.4f);
-                            gdl->AddLine(ImVec2(gx + gr, gy - gr), ImVec2(gx + gr, gy + gr * 0.4f), gc, 1.4f);
-                            gdl->AddLine(ImVec2(gx + gr, gy + gr * 0.4f), ImVec2(gx + gr * 0.4f, gy + gr), gc, 1.4f);
-                            break;
-                        }
-                        case C_2D:   // flat square
-                            gdl->AddRect(ImVec2(gx - gr, gy - gr), ImVec2(gx + gr, gy + gr), gc, 1.5f, 0, 1.6f);
-                            break;
-                        case C_GAME:   // gamepad: pill + two "buttons"
-                            gdl->AddRectFilled(ImVec2(gx - gr, gy - gr * 0.55f), ImVec2(gx + gr, gy + gr * 0.55f), gc, gr * 0.55f);
-                            gdl->AddCircleFilled(ImVec2(gx - gr * 0.45f, gy), gr * 0.22f, IM_COL32(20, 20, 24, 255), 8);
-                            gdl->AddCircleFilled(ImVec2(gx + gr * 0.45f, gy), gr * 0.22f, IM_COL32(20, 20, 24, 255), 8);
-                            break;
-                        case C_UI:   // window: frame + title bar
-                            gdl->AddRect(ImVec2(gx - gr, gy - gr), ImVec2(gx + gr, gy + gr), gc, 1.5f, 0, 1.4f);
-                            gdl->AddLine(ImVec2(gx - gr, gy - gr * 0.35f), ImVec2(gx + gr, gy - gr * 0.35f), gc, 1.4f);
-                            break;
-                        default:   // blank canvas: empty circle
-                            gdl->AddCircle(ImVec2(gx, gy), gr * 0.8f, gc, 12, 1.5f);
-                            break;
-                    }
-                }
-                if (selected) { ImGui::PopStyleColor(); ImGui::PopStyleVar(); }
-                ImGui::PopStyleColor(3);
-                ImGui::PopID();
-                if (++col >= COLS) col = 0;
-            }
-        }
-        ImGui::EndChild();
-
-        // ---- Selected template description ----
-        ImGui::TextColored(catColor(tpls[sel].cat), "%s", tpls[sel].title);
-        ImGui::SameLine(); ImGui::TextDisabled("— %s", tpls[sel].blurb);
-        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-        ImGui::TextWrapped("%s", tpls[sel].desc);
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing(); ImGui::Separator();
-
-        // ---- Name / Location ----
-        ImGui::SetNextItemWidth(300); ImGui::InputText("Name", nameBuf, sizeof(nameBuf));
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(-96); ImGui::InputText("##nploc", locBuf, sizeof(locBuf));
-        ImGui::SameLine(0, 4);
-        if (ImGui::Button("...##nploc")) {   // native folder picker
-            if (const char* p = tinyfd_selectFolderDialog("Choose where the project folder is created",
-                                                          locBuf[0] ? locBuf : nullptr))
-                std::snprintf(locBuf, sizeof(locBuf), "%s", p);
-        }
-        ImGui::SameLine(0, 6); ImGui::TextUnformatted("Location");
-        ImGui::TextDisabled("Creates <Location>/<Name>/ with an Assets/ folder and the starting scene.");
-        ImGui::Spacing();
-
-        auto finishProject = [&]() {
-            namespace fs = std::filesystem;
-            std::string name = nameBuf[0] ? nameBuf : "MyGame";
+    // --open "<scene>": reopen an existing project from the launcher's list.
+    if (!g_openScenePath.empty()) {
+        namespace fs = std::filesystem;
+        std::string p = g_openScenePath;
+        g_openScenePath.clear();
+        std::string err;
+        if (ed.Load(p, &err)) {
+            AddRecent(p);
+            // Root the Project panel at the project folder (the scene's dir, or
+            // its parent when the scene lives in <root>/Assets).
+            fs::path dir = fs::path(p).parent_path();
+            if (dir.filename() == "Assets") dir = dir.parent_path();
             std::error_code ec;
-            // Every project gets its OWN folder. The default name is always
-            // "MyGame", so blindly reusing <Location>/<Name> would silently adopt
-            // a previous project's whole Assets tree — pick a fresh sibling
-            // (MyGame-2, MyGame-3, ...) when the folder is already a used project.
-            fs::path base = fs::path(locBuf[0] ? locBuf : ".");
-            fs::path root = base / name;
-            auto looksUsed = [&](const fs::path& r) {
-                if (!fs::exists(r, ec)) return false;
-                if (!fs::is_directory(r, ec)) return true;              // a file is in the way
-                fs::path assets = r / "Assets";
-                if (!fs::exists(assets, ec)) return !fs::is_empty(r, ec); // non-project clutter
-                return !fs::is_empty(assets, ec);                        // a project with files
-            };
-            std::string finalName = name;
-            for (int n = 2; looksUsed(root) && n < 1000; ++n) {
-                finalName = name + "-" + std::to_string(n);
-                root = base / finalName;
-            }
-            fs::create_directories(root / "Assets", ec);
-            if (ec) { ConsoleLog("Could not create project folder: " + ec.message()); return; }
-            if (finalName != name)
-                ConsoleLog("'" + name + "' already has a project in it — created '" + finalName + "' instead.");
-            ed.setProjectDir(root.string());
-            g_project = ProjectSettings{};   // per-project settings must not leak across projects
-            std::string sp = (root / "Assets" / (finalName + ".okayscene")).string();
-            if (ed.Save(sp)) ConsoleLog("Created project at " + root.string());
-            else ConsoleLog("Project folder made, but saving the scene failed.");
-            ImGui::CloseCurrentPopup();
-        };
-
-        // ---- Footer buttons ----
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.68f, 0.38f, 1));
-        if (ImGui::Button("Create Project", ImVec2(170, 32))) { (ed.*tpls[sel].fn)(); finishProject(); }
-        ImGui::PopStyleColor(2);
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(100, 32))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+            if (!dir.empty() && fs::is_directory(dir, ec)) ed.setProjectDir(dir.string());
+            ConsoleLog("Opened " + p);
+        } else ConsoleLog("Open failed: " + err);
+        return;
     }
+    if (g_newProjectRoot.empty() && g_newProjectTemplate.empty()) return;
+    namespace fs = std::filesystem;
+
+    // Template title -> EditorState scene factory (same set the launcher lists).
+    struct Tpl { const char* title; void (EditorState::*fn)(); };
+    static const Tpl tpls[] = {
+        {"2D Scene",             &EditorState::NewScene2D},
+        {"3D Scene",             &EditorState::NewScene3D},
+        {"Empty",                &EditorState::NewScene},
+        {"First Person",         &EditorState::NewFPS},
+        {"Third Person",         &EditorState::NewThirdPerson},
+        {"Humanoid",             &EditorState::NewHumanoid},
+        {"Third Person Shooter", &EditorState::NewThirdPersonShooter},
+        {"Point & Click",        &EditorState::NewPointAndClick},
+        {"Sandbox",              &EditorState::NewVoxelSandbox},
+        {"Vehicle (3D)",         &EditorState::NewVehicle3D},
+        {"Vehicle (2D)",         &EditorState::NewVehicle2D},
+        {"Platformer",           &EditorState::NewPlatformer},
+        {"Top-Down",             &EditorState::NewTopDown},
+        {"Coin Collector",       &EditorState::NewCoinCollector},
+        {"Snake",                &EditorState::NewSnake},
+        {"Main Menu",            &EditorState::NewMainMenu},
+        {"Inventory",            &EditorState::NewInventory},
+        {"Multiplayer",          &EditorState::NewMultiplayer},
+    };
+    void (EditorState::*fn)() = &EditorState::NewScene3D;   // default template
+    for (const Tpl& t : tpls)
+        if (g_newProjectTemplate == t.title) { fn = t.fn; break; }
+    g_newProjectTemplate.clear();
+
+    if (g_newProjectRoot.empty()) {           // template only: load it in place
+        (ed.*fn)();
+        return;
+    }
+
+    fs::path root = fs::path(g_newProjectRoot);
+    g_newProjectRoot.clear();
+    std::string name = root.filename().string();
+    if (name.empty()) { root = root.parent_path(); name = root.filename().string(); }
+    if (name.empty()) name = "MyGame";
+    fs::path base = root.parent_path().empty() ? fs::path(".") : root.parent_path();
+    std::error_code ec;
+    // Every project gets its OWN folder: if <root> already holds a used project
+    // (or clutter), create a fresh sibling (Name-2, Name-3, ...) instead of
+    // silently adopting an existing Assets tree.
+    auto looksUsed = [&](const fs::path& r) {
+        if (!fs::exists(r, ec)) return false;
+        if (!fs::is_directory(r, ec)) return true;               // a file is in the way
+        fs::path assets = r / "Assets";
+        if (!fs::exists(assets, ec)) return !fs::is_empty(r, ec); // non-project clutter
+        return !fs::is_empty(assets, ec);                         // a project with files
+    };
+    std::string finalName = name;
+    for (int n = 2; looksUsed(root) && n < 1000; ++n) {
+        finalName = name + "-" + std::to_string(n);
+        root = base / finalName;
+    }
+    fs::create_directories(root / "Assets", ec);
+    if (ec) { ConsoleLog("Could not create project folder: " + ec.message()); return; }
+    if (finalName != name)
+        ConsoleLog("'" + name + "' already has a project in it — created '" + finalName + "' instead.");
+    (ed.*fn)();                               // build the template scene
+    ed.setProjectDir(root.string());
+    g_project = ProjectSettings{};            // per-project settings must not leak
+    std::string sp = (root / "Assets" / (finalName + ".okayscene")).string();
+    if (ed.Save(sp)) ConsoleLog("Created project at " + root.string());
+    else ConsoleLog("Project folder made, but saving the scene failed.");
 }
 
 // Offer to restore a newer "<scene>.autosave" recovery copy after a crash or
@@ -10178,7 +10393,7 @@ void DrawAboutPopup() {
         ImVec2 lp = ImGui::GetCursorScreenPos();
         const float S = 46.0f;
         ImVec2 ctr(lp.x + S * 0.5f, lp.y + S * 0.5f);
-        const ImVec4 ac(0.34f, 0.66f, 1.0f, 1.0f);
+        const ImVec4 ac = AccentCol();   // follow the editor's accent theme
         float hw = S * 0.42f, hh = S * 0.24f, vh = S * 0.34f;
         ImVec2 top(ctr.x, ctr.y - hh - vh * 0.5f), left(ctr.x - hw, ctr.y - vh * 0.5f),
                right(ctr.x + hw, ctr.y - vh * 0.5f), mid(ctr.x, ctr.y + hh - vh * 0.5f);
@@ -10259,7 +10474,11 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         ImGui::Separator();
+        ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
         if (ImGui::Button("Save", ImVec2(110, 0))) { SaveProjectSettings(); ConsoleLog("Project settings saved"); }
+        ImGui::PopStyleColor(3);
         ImGui::SameLine();
         if (ImGui::Button("Use in Build", ImVec2(120, 0))) {
             std::strncpy(g_build.company, g_project.company, sizeof(g_build.company) - 1);
@@ -10267,6 +10486,8 @@ void DrawProjectSettings(EditorState& ed) {
             g_build.width = g_project.defaultWidth; g_build.height = g_project.defaultHeight;
             ConsoleLog("Build settings set from project defaults");
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Copy these defaults into the Build Game dialog now");
     }
     ImGui::End();
 }
@@ -10319,18 +10540,6 @@ void DrawUpdatePopup(EditorState& ed) {
         }
         ImGui::EndPopup();
     }
-}
-
-// A short type tag for a GameObject, based on its most distinctive component.
-static const char* ObjectKind(GameObject* go) {
-    if (go->GetComponent<Camera>())         return "[Cam] ";
-    if (go->GetComponent<MeshRenderer>())   return "[3D] ";
-    if (go->GetComponent<TextRenderer>())   return "[Txt] ";
-    if (go->GetComponent<ParticleSystem>()) return "[FX] ";
-    if (go->GetComponent<Tilemap>())        return "[Tile] ";
-    if (go->GetComponent<SpriteRenderer>()) return "[Spr] ";
-    if (go->GetComponent<AudioSource>())    return "[Snd] ";
-    return "";
 }
 
 // Small drawn type icon for a Hierarchy row (replaces the old "[Cam]"-style
@@ -10615,6 +10824,11 @@ void DrawHierarchy(EditorState& ed) {
     std::vector<GameObject*> roots;
     for (const auto& up : objs)
         if (up->transform->Parent() == nullptr) roots.push_back(up.get());
+    if (roots.empty()) {
+        EmptyState("o", "Empty scene",
+                   "Add objects from the GameObject menu, or right-click here.");
+        // Right-click the empty area still offers the usual create menu below.
+    }
     if (g_hierSort)
         std::sort(roots.begin(), roots.end(), [](GameObject* a, GameObject* b) {
             return a->name < b->name;
@@ -10762,6 +10976,18 @@ void DrawHierarchy(EditorState& ed) {
                             if (g && !covered) moved.push_back(g);
                         }
                     } else if (dragged) moved.push_back(dragged);
+                    // Keep the group's visible order: sort by scene order (the
+                    // selection set is in CLICK order), and when inserting after
+                    // the target, chain each drop behind the previous one —
+                    // otherwise repeated "insert after node" reverses the group.
+                    if (moved.size() > 1) {
+                        std::unordered_map<GameObject*, int> ord;
+                        int oi = 0;
+                        for (const auto& up2 : ed.scene().Objects()) ord[up2.get()] = oi++;
+                        std::sort(moved.begin(), moved.end(),
+                                  [&](GameObject* a, GameObject* b) { return ord[a] < ord[b]; });
+                    }
+                    GameObject* afterAnchor = node;
                     bool pushed = false;
                     for (GameObject* mv : moved) {
                         bool cycle = false;
@@ -10770,7 +10996,7 @@ void DrawHierarchy(EditorState& ed) {
                         if (mv == node || cycle) continue;
                         if (!pushed) { ed.PushUndo(); pushed = true; }
                         if (ty < 0.30f)      ed.scene().ReorderSibling(mv, node, /*after=*/false);
-                        else if (ty > 0.70f) ed.scene().ReorderSibling(mv, node, /*after=*/true);
+                        else if (ty > 0.70f) { ed.scene().ReorderSibling(mv, afterAnchor, /*after=*/true); afterAnchor = mv; }
                         else {
                             // Re-parent. For a UI widget, its pixel offset is resolved
                             // WITHIN its parent, so a plain re-parent makes it jump on
@@ -11350,7 +11576,8 @@ static const ActionOpInfo kCondOps[] = {
     {"raycast",   "Raycast Hits",        "direction [distance]",       "Casts a ray in a direction; passes if it hits a collider. Pick the direction below.", "World"},
     {"raycast_tag","Raycast Hits Tag",   "tag direction [distance]",   "Like Raycast Hits, but only passes if the hit object has the given tag.", "World"},
     {"raycast_name","Raycast Hits Object","object direction [distance]","Like Raycast Hits, but only passes if it hits the named object.", "World"},
-    {"prefs_neq",  "Saved Value ≠",        "key value",                  "Passes if a saved (Prefs) value is not equal to the number.",   "Variables"},
+    {"prefs_neq",  "Saved Value Not Equal","key value",                  "Passes if a saved (Prefs) value is not equal to the number.",   "Variables"},
+    {"cooldown",   "Cooldown",             "seconds",                    "Passes at most once every N seconds — fire rates, dashes, pickups that need a delay between uses.", "Basic"},
     {"var_between","Variable In Range",    "name min max",               "Passes if the variable is between min and max (inclusive).",    "Variables"},
     {"vars_cmp",  "Compare Two Variables","varA op varB",               "Passes if one variable compares to ANOTHER variable (a < b, a == b, ...).", "Variables"},
     {"is_moving",  "Is Moving",            "[min speed]",                "Passes if this object's Rigidbody is moving faster than the threshold.", "World"},
@@ -11436,6 +11663,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"pause",       "Pause Game",         "",                     "Freeze game time (set speed to 0).",                      "Scene"},
     {"resume",      "Resume Game",        "",                     "Resume normal game time (set speed to 1).",               "Scene"},
     {"wait",        "Wait",               "seconds",              "Pause here before the next instruction.",                 "Flow"},
+    {"wait_until",  "Wait Until",         "var cmp value",        "Hold here until a variable passes the test (cmp = eq/neq/gt/lt/ge/le), then continue. E.g. wait until door_open eq 1.", "Flow"},
     {"goto",        "Jump To Line",       "line number",          "Jump to an instruction line (0 = first).",                "Flow"},
     {"raycast",     "Raycast (store hit)","direction [distance] [prefix]","Cast a ray; store <prefix>_hit, _dist and _x/_y/_z (hit point) in variables (prefix defaults to 'ray').", "World"},
     {"if_goto",     "Jump If",            "var cmp value line",   "Jump to a line if a test passes (cmp: eq neq gt lt ge le).","Flow"},
@@ -11470,6 +11698,12 @@ static const ActionOpInfo kInstrOps[] = {
     {"steam_unlock","Steam Achievement",  "id",                   "Unlock a Steam achievement.",                             "Steam"},
     {"steam_set_stat","Steam Set Stat",   "name value",           "Set a Steam stat to a value.",                            "Steam"},
     {"steam_inc_stat","Steam Add Stat",   "name amount",          "Increase a Steam stat.",                                  "Steam"},
+    {"playfab_login", "PlayFab Login",    "titleId customId",     "Sign in to PlayFab (creates the account on first use). customId = any stable id, or $textvar. Sets playfab_ok / playfab_id (and playfab_error on failure). Run once from On Start.", "PlayFab"},
+    {"playfab_name",  "PlayFab Set Name", "display name",         "Set the display name shown on PlayFab leaderboards.",     "PlayFab"},
+    {"playfab_set_stat","PlayFab Set Stat","stat value",          "Publish a statistic value (drives PlayFab leaderboards). Value can be $var to send a game variable, e.g. $score.","PlayFab"},
+    {"playfab_leaderboard","PlayFab Leaderboard","stat [count]",  "Fetch the top entries into variables: pf_count, then pf_1_name / pf_1_score, pf_2_name / ... Show them with UI Text Bind.", "PlayFab"},
+    {"playfab_set_data","PlayFab Save Data","key value...",       "Save a per-player key/value in the PlayFab cloud.",       "PlayFab"},
+    {"playfab_get_data","PlayFab Load Data","key [intoTextVar]",  "Load a per-player value from the PlayFab cloud into a text variable (defaults to the key name).", "PlayFab"},
     {"heal",        "Heal",               "amount",               "Restore health on this object's survival stats.",         "Survival"},
     {"hurt",        "Damage",             "amount",               "Damage this object's survival health.",                   "Survival"},
     {"eat",         "Eat",                "amount",               "Restore hunger on this object.",                          "Survival"},
@@ -11478,7 +11712,20 @@ static const ActionOpInfo kInstrOps[] = {
     {"survival_on", "Survival On Object", "target verb amount",   "Call a survival verb on a named object.",                  "Survival"},
     {"use_item",    "Use Item",           "recipe-index",         "Use a Consumables recipe by index.",                      "Survival"},
     {"craft",       "Craft",              "recipe-index",         "Craft a Crafting recipe by index.",                       "Survival"},
+    // ---- Juice (tweens; they start the effect and continue immediately) ----
+    {"tween_move",  "Tween Move",         "x y seconds [ease]",   "Glide to (x, y) over the duration. Ease: in / out / in_out / out_back / out_bounce / out_elastic (blank = linear). Runs alongside later actions — add a Wait to hold for it.", "Juice"},
+    {"tween_scale", "Tween Scale",        "scale seconds [ease]", "Grow/shrink smoothly to a uniform scale over the duration.",           "Juice"},
+    {"shake",       "Shake",              "intensity seconds",    "Shake this object randomly, decaying to a stop (impacts, explosions).", "Juice"},
+    {"punch_scale", "Punch Scale",        "amount seconds",       "Bulge the scale outward and settle back (button presses, pickups).",    "Juice"},
+    {"tween_rotate","Tween Rotate",       "degrees seconds [ease]","Spin by the given degrees (around Z) over the duration.",               "Juice"},
+    {"tween_color", "Tween Color",        "r g b seconds [ease]",  "Blend this object's tint to a color over the duration (sprite, text or mesh).", "Juice"},
+    {"fade",        "Fade Alpha",         "alpha seconds [ease]",  "Fade this object's opacity to a level (0 = invisible, 1 = solid) over the duration.", "Juice"},
+    {"flash",       "Flash",              "seconds [r g b]",       "Blink to a color (white if none given) and back, then restore the original tint — classic hit feedback.", "Juice"},
+    {"tween_var",   "Tween Variable",     "var to seconds [ease]", "Animate a variable smoothly to a value over the duration (HP bars, countdowns, ramps).", "Variables"},
+    {"move_dir",    "Move In Direction",  "direction speed",       "Move relative to facing every frame: forward/back/up/down/left/right or toward:<Object>, at units/second. Run under On Update.", "Move"},
+    {"orbit",       "Orbit Object",       "object radius deg/sec", "Circle a named object (moons, shields, patrol rings). Run under On Update; leave out the radius to keep the current distance.", "Move"},
     // ---- Control flow (labels, loops, subroutines) ----
+    {"comment",     "Comment (note)",     "text",                 "A note to yourself — skipped when the script runs. Use it to explain what the next blocks do.", "Flow"},
     {"label",       "Label (jump target)","name",                 "A named spot other actions can jump to (Go To / If Go To / Go Sub). Build switches with several If Go To to labels.", "Flow"},
     {"repeat",      "Repeat (loop)",      "count",                 "Run the actions up to the matching End Repeat `count` times.",         "Flow"},
     {"end_repeat",  "End Repeat",         "",                      "Marks the end of a Repeat loop.",                                     "Flow"},
@@ -11716,6 +11963,24 @@ static std::string VsStmt(const ActionList::Item& it) {
     if (op == "set_cam")     return "set_cam(" + a(0) + ", " + a(1) + ")";
     if (op == "set_bg")      return "set_bg(" + a(0) + ", " + a(1) + ", " + a(2) + ")";
     if (op == "send")        return "// send message \"" + a(0) + "\"";
+    if (op == "comment")     return "// " + join(0);
+    if (op == "tween_move")  return "tween_move(" + a(0) + ", " + a(1) + ", " + a(2) +
+                                    (it.args.size() > 3 && !it.args[3].empty() ? ", \"" + it.args[3] + "\"" : "") + ")";
+    if (op == "tween_scale") return "tween_scale(" + a(0) + ", " + a(1) +
+                                    (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
+    if (op == "shake")       return "shake(" + a(0) + ", " + a(1) + ")";
+    if (op == "punch_scale") return "tween_punch_scale(" + a(0) + ", " + a(1) + ")";
+    if (op == "tween_rotate") return "tween_rotate(" + a(0) + ", " + a(1) +
+                                     (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
+    if (op == "tween_color") return "tween_color(" + a(0) + ", " + a(1) + ", " + a(2) + ", " + a(3) +
+                                    (it.args.size() > 4 && !it.args[4].empty() ? ", \"" + it.args[4] + "\"" : "") + ")";
+    if (op == "fade")        return "tween_fade(" + a(0) + ", " + a(1) +
+                                    (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
+    if (op == "flash")       return it.args.size() > 3
+                                    ? "flash(" + a(1) + ", " + a(2) + ", " + a(3) + ", " + a(0) + ")"
+                                    : "flash(1, 1, 1, " + a(0) + ")";
+    if (op == "orbit")       return "orbit(" + q(0) + ", " + a(1) + ", " + a(2) + ")";
+    if (op == "follow")      return "follow(" + q(0) + ", " + a(1) + ")";
     // Anything else (survival, waits, loops, flow) -> a comment so the file still parses.
     std::string j = join(0);
     return "// " + op + (j.empty() ? "" : (" " + j));
@@ -11852,6 +12117,26 @@ static bool VsCodeLineToItem(const std::string& lineIn, ActionList::Item& out) {
     if (fn == "heal")         { out = {"heal", {arg(0)}}; return true; }
     if (fn == "hurt")         { out = {"hurt", {arg(0)}}; return true; }
     if (fn == "reload_scene") { out = {"load_scene", {""}}; return true; }
+    // Juice / tweens (same names as the script builtins).
+    if (fn == "tween_move")   { out = {"tween_move", {arg(0), arg(1), arg(2)}};
+                                if (a.size() > 3) out.args.push_back(a[3]); return true; }
+    if (fn == "tween_scale")  { out = {"tween_scale", {arg(0), arg(1)}};
+                                if (a.size() > 2) out.args.push_back(a[2]); return true; }
+    if (fn == "shake" || fn == "tween_shake") { out = {"shake", {arg(0), arg(1)}}; return true; }
+    if (fn == "tween_punch_scale") { out = {"punch_scale", {arg(0), arg(1)}}; return true; }
+    if (fn == "tween_rotate")      { out = {"tween_rotate", {arg(0), arg(1)}};
+                                     if (a.size() > 2) out.args.push_back(a[2]); return true; }
+    if (fn == "tween_color")  { out = {"tween_color", {arg(0), arg(1), arg(2), arg(3)}};
+                                if (a.size() > 4) out.args.push_back(a[4]); return true; }
+    if (fn == "tween_fade" || fn == "fade") { out = {"fade", {arg(0), arg(1)}};
+                                if (a.size() > 2) out.args.push_back(a[2]); return true; }
+    if (fn == "flash")        { out = {"flash", {a.size() > 3 ? arg(3) : "0.2"}};   // flash(r,g,b[,dur]) -> flash dur r g b
+                                if (a.size() >= 3) { out.args.push_back(arg(0)); out.args.push_back(arg(1)); out.args.push_back(arg(2)); }
+                                return true; }
+    if (fn == "tween_var")    { out = {"tween_var", {arg(0), arg(1), arg(2)}};
+                                if (a.size() > 3) out.args.push_back(a[3]); return true; }
+    if (fn == "orbit")        { out = {"orbit", {arg(0), arg(1), arg(2)}}; return true; }
+    if (fn == "move_dir")     { out = {"move_dir", {arg(0), arg(1)}}; return true; }
     return false;
 }
 // Import OkayScript into visual handlers (best-effort). `skipped` counts unmapped lines.
@@ -12041,6 +12326,16 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnUpdate, "", {{"var_ge", {"score", "10"}}}, {{"load_scene", {"Win"}}}},
         {"Scene", "Win when enemies cleared", "Loads 'Win' when no objects are tagged 'enemy'.",
             T::OnUpdate, "", {{"tag_count_lt", {"enemy", "1"}}}, {{"load_scene", {"Win"}}}},
+        // ---- Juice ----
+        {"Juice", "Pickup pop", "Punches the scale, plays a sound, then vanishes when clicked.",
+            T::OnClick, "", {}, {{"punch_scale", {"0.4", "0.3"}}, {"play_sound", {"pickup.wav"}},
+                                 {"wait", {"0.3"}}, {"destroy", {}}}},
+        {"Juice", "Hit shake", "Shakes this object whenever a 'hit' message arrives.",
+            T::OnMessage, "hit", {}, {{"shake", {"0.4", "0.35"}}}},
+        {"Juice", "Bouncy entrance", "Grows from tiny to full size with a bounce when the game starts.",
+            T::OnStart, "", {}, {{"set_scale", {"0.05"}}, {"tween_scale", {"1", "0.6", "out_bounce"}}}},
+        {"Juice", "Glide to a point", "Eases to (0, 3) over a second when clicked — edit the target.",
+            T::OnClick, "", {}, {{"tween_move", {"0", "3", "1", "out"}}}},
         // ---- Messaging ----
         {"Messaging", "Broadcast 'hit' on collision", "Sends a 'hit' message to every script on collision.",
             T::OnCollision, "", {}, {{"send", {"hit"}}}},
@@ -12050,6 +12345,30 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnCollision, "", {}, {{"send_to", {"Player", "hit"}}}},
         {"Messaging", "Count kills on 'kill'", "Adds 1 to a 'kills' variable whenever a 'kill' message arrives.",
             T::OnMessage, "kill", {}, {{"add_var", {"kills", "1"}}}},
+        // ---- More juice (color effects) ----
+        {"Juice", "Hurt flash", "Blinks white and back whenever a 'hit' message arrives.",
+            T::OnMessage, "hit", {}, {{"flash", {"0.25"}}}},
+        {"Juice", "Fade out and die", "Fades to invisible over half a second, then removes the object, on a 'die' message.",
+            T::OnMessage, "die", {}, {{"fade", {"0", "0.5"}}, {"wait", {"0.5"}}, {"destroy", {}}}},
+        {"Juice", "Danger tint at low health", "Tints red while the 'health' variable is under 25.",
+            T::OnUpdate, "", {{"var_lt", {"health", "25"}}}, {{"tween_color", {"1", "0.2", "0.2", "0.3"}}}},
+        // ---- Movement patterns ----
+        {"Move", "Orbit the Player", "Circles the object named Player at radius 3 (moons, shields).",
+            T::OnUpdate, "", {}, {{"orbit", {"Player", "3", "90"}}}},
+        {"Move", "Cruise forward", "Moves in the facing direction at 2 units/second — pair with Look At or Aim.",
+            T::OnUpdate, "", {}, {{"move_dir", {"forward", "2"}}}},
+        // ---- Timing ----
+        {"Timing", "Rate-limited shot on Space", "Spawns a 'Bullet' prefab when Space is held, at most every 0.3s (edit the prefab name).",
+            T::OnKey, " ", {{"cooldown", {"0.3"}}}, {{"spawn", {"Bullet", "0", "0"}}}},
+        // ---- Cloud (PlayFab) ----
+        {"Cloud", "PlayFab sign-in on start", "Signs in to PlayFab when the game starts (put your Title ID in). Sets playfab_ok and playfab_id.",
+            T::OnStart, "", {}, {{"playfab_login", {"TITLEID", "player-1"}},
+                                 {"comment", {"replace TITLEID with your PlayFab Title ID"}}}},
+        {"Cloud", "Submit score on 'game_over'", "Publishes the 'score' variable to a PlayFab leaderboard when a 'game_over' message arrives.",
+            T::OnMessage, "game_over", {}, {{"playfab_set_stat", {"highscore", "$score"}}}},
+        {"Cloud", "Fetch Top 10 on start", "Loads a PlayFab leaderboard into pf_1_name/pf_1_score... — show them with UI Text Bind.",
+            T::OnStart, "", {}, {{"playfab_leaderboard", {"highscore", "10"}},
+                                 {"comment", {"bind {pf_1_name} {pf_1_score} in a Text"}}}},
     };
     return r;
 }
@@ -13602,7 +13921,8 @@ static const char* FlowOpPalettePopup(const char* popupId, const ActionOpInfo* o
         static char q[64] = "";
         if (ImGui::IsWindowAppearing()) { q[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##palq", "Search actions...", q, sizeof(q));
+        bool palGo = ImGui::InputTextWithHint("##palq", "Search actions... (Enter adds the first)",
+                                              q, sizeof(q), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::Separator();
         std::string ql = q;
         for (auto& c : ql) c = (char)std::tolower((unsigned char)c);
@@ -13618,6 +13938,8 @@ static const char* FlowOpPalettePopup(const char* popupId, const ActionOpInfo* o
             } else if (ops[i].group && (!lastGroup || std::strcmp(ops[i].group, lastGroup) != 0)) {
                 SectionHeader(ops[i].group); lastGroup = ops[i].group;
             }
+            // Enter in the search box adds the first match, mouse-free.
+            if (palGo && !ql.empty() && !chosen) { chosen = ops[i].op; ImGui::CloseCurrentPopup(); }
             if (ImGui::Selectable(ops[i].label)) { chosen = ops[i].op; ImGui::CloseCurrentPopup(); }
             if (ImGui::IsItemHovered() && ops[i].desc && ops[i].desc[0]) {
                 const char* rq = ActionOpRequires(ops[i].op);
@@ -13639,6 +13961,7 @@ static const char* ActionOpGroup(const ActionOpInfo* ops, int n, const std::stri
 // Colour a flow-graph node by its category, so the graph reads at a glance.
 static ImU32 FlowNodeColor(const std::string& g) {
     if (g == "Flow")                       return IM_COL32(150, 96, 44, 255);   // control flow — amber
+    if (g == "Juice")                      return IM_COL32(150, 76, 128, 255);  // tweens/shake — magenta
     if (g == "Variables")                  return IM_COL32(52, 110, 86, 255);   // green
     if (g == "Arrays" || g == "Maps")      return IM_COL32(96, 68, 140, 255);   // purple
     if (g == "Text")                       return IM_COL32(38, 108, 120, 255);  // teal
@@ -13648,6 +13971,7 @@ static ImU32 FlowNodeColor(const std::string& g) {
     if (g == "Audio")                      return IM_COL32(96, 96, 52, 255);
     if (g == "Render" || g == "Look" || g == "Camera") return IM_COL32(56, 92, 132, 255);
     if (g == "Survival")                   return IM_COL32(80, 110, 70, 255);
+    if (g == "PlayFab")                    return IM_COL32(140, 90, 40, 255);   // cloud services — orange
     return IM_COL32(50, 82, 142, 255);   // default blue
 }
 static bool FlowIsOpener(const std::string& o) {
@@ -13843,6 +14167,14 @@ static void DrawFlowGraph(EditorState& ed) {
             list.insert(list.begin() + at, g_flowClip); ed.dirty = true;
             g_flowSelAl = al; g_flowSelKind = g_flowClipKind; g_flowSelIdx = at;
         }
+        // Ctrl+D: duplicate the selected node in place (copy + paste-after in one).
+        if (ImGui::IsKeyPressed(ImGuiKey_D, false) && g_flowSelAl == al && g_flowSelKind != 0) {
+            auto& list = g_flowSelKind == 1 ? fc : fi;
+            if (g_flowSelIdx >= 0 && g_flowSelIdx < (int)list.size()) {
+                list.insert(list.begin() + g_flowSelIdx + 1, list[g_flowSelIdx]);
+                g_flowSelIdx++; ed.dirty = true;
+            }
+        }
     }
 
     // Toolbar: add/clear nodes (edits the live ActionList, mirrored in the Inspector)
@@ -13981,9 +14313,13 @@ static void DrawFlowGraph(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create variables with a starting value — usable in every action/condition.");
 
     // ---- Row 2: view + run/debug controls ----
+    bool fitReq = false;   // resolved after the canvas size + node positions are known
     ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("View:"); ImGui::SameLine();
     if (ImGui::Button("Reset")) { pan = ImVec2(0, 0); zoom = 1.0f; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Recentre and reset zoom to 100%%.");
+    ImGui::SameLine();
+    if (ImGui::Button("Fit")) fitReq = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom + pan so every node fits in the view.");
     ImGui::SameLine(); ImGui::Text("%d%%", (int)(zoom * 100.0f + 0.5f));
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom — scroll to change.");
     barSep();
@@ -14005,6 +14341,31 @@ static void DrawFlowGraph(EditorState& ed) {
         int cur = al->CurrentInstruction();
         if (al->IsRunning() && cur >= 0) ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "paused at #%d", cur);
         else ImGui::TextDisabled("paused");
+    }
+    barSep();
+    static char s_flowFind[48] = "";
+    ImGui::SetNextItemWidth(130);
+    ImGui::InputTextWithHint("##flowfind", "find node...", s_flowFind, sizeof(s_flowFind));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Highlight nodes whose name or values match.");
+    if (s_flowFind[0]) {
+        ImGui::SameLine(0, 2);
+        if (ImGui::SmallButton("x##flowfindclr")) s_flowFind[0] = '\0';
+    }
+    // Case-insensitive matcher shared by the node loops below.
+    auto flowFindMatch = [&](const std::string& hay) {
+        if (!s_flowFind[0]) return false;
+        std::string h = hay, n = s_flowFind;
+        for (auto& ch : h) ch = (char)std::tolower((unsigned char)ch);
+        for (auto& ch : n) ch = (char)std::tolower((unsigned char)ch);
+        return h.find(n) != std::string::npos;
+    };
+    if (!ActionList::Breakpoints().empty()) {
+        barSep();
+        ImGui::TextColored(ImVec4(0.92f, 0.45f, 0.45f, 1.0f), "%d bp", (int)ActionList::Breakpoints().size());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active breakpoints (red badges on nodes).");
+        ImGui::SameLine(0, 4);
+        if (ImGui::SmallButton("Clear##bps")) ActionList::Breakpoints().clear();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove every breakpoint.");
     }
     ImGui::SameLine(); ImGui::TextDisabled("   (click a node to edit its values below)");
     ImGui::Separator();
@@ -14052,6 +14413,18 @@ static void DrawFlowGraph(EditorState& ed) {
             char kb[64]; std::strncpy(kb, fKey->c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
             ImGui::SetNextItemWidth(130);
             if (ImGui::InputTextWithHint("##flowtrigkeyInline", "message name", kb, sizeof(kb))) { *fKey = kb; ed.dirty = true; }
+            // Fire the message by hand while playing — test the handler without
+            // needing the gameplay that normally sends it.
+            if (ed.isPlaying() && !fKey->empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Test Fire##flowmsg")) {
+                    for (ActionList* a2 : ed.scene().FindObjectsOfType<ActionList>())
+                        a2->ReceiveMessage(*fKey);
+                    ConsoleLog("Broadcast '" + *fKey + "' (Test Fire)");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Broadcast \"%s\" to every Actions script now.", fKey->c_str());
+            }
         } else if (*fTrig == ActionList::Trigger::OnInterval) {
             ImGui::SameLine(); ImGui::TextUnformatted("Every"); ImGui::SameLine();
             float sec = (float)std::atof(fKey->c_str()); ImGui::SetNextItemWidth(80);
@@ -14134,9 +14507,35 @@ static void DrawFlowGraph(EditorState& ed) {
             zoom = nz;
         }
     }
+    static std::unordered_map<std::string, ImVec2> pos;
+
+    // Zoom to Fit: frame every node of this object's scripts. Positions persist in
+    // `pos` from the last frame (keys are "<scriptptr>:..."), so filter to our scripts.
+    if (fitReq) {
+        float mnx = 1e9f, mny = 1e9f, mxx = -1e9f, mxy = -1e9f;
+        for (auto& kv : pos) {
+            bool mine = false;
+            for (ActionList* a2 : als) {
+                char pfx[24]; std::snprintf(pfx, sizeof(pfx), "%p:", (void*)a2);
+                if (kv.first.rfind(pfx, 0) == 0) { mine = true; break; }
+            }
+            if (!mine) continue;
+            mnx = std::min(mnx, kv.second.x);          mny = std::min(mny, kv.second.y);
+            mxx = std::max(mxx, kv.second.x + 190.0f); mxy = std::max(mxy, kv.second.y + 46.0f);
+        }
+        if (mnx < mxx) {
+            const float margin = 24.0f;
+            float w = mxx - mnx, h = mxy - mny;
+            float nz = std::min((cs.x - margin * 2.0f) / w, (cs.y - margin * 2.0f) / h);
+            nz = nz < 0.4f ? 0.4f : (nz > 1.5f ? 1.5f : nz);
+            zoom = nz;
+            // Centre the bounds in the canvas.
+            pan.x = (cs.x - w * nz) * 0.5f - mnx * nz;
+            pan.y = (cs.y - h * nz) * 0.5f - mny * nz;
+        }
+    }
     const float z = zoom;
 
-    static std::unordered_map<std::string, ImVec2> pos;
     const float NW = 190.0f * z, NH = 46.0f * z, GAPY = 72.0f;   // GAPY is graph-space (positions scale by z)
     const float fs = std::round(ImGui::GetFontSize() * z);   // whole-pixel size => crisper glyphs
     ImFont* fnt = ImGui::GetFont();
@@ -14274,6 +14673,9 @@ static void DrawFlowGraph(EditorState& ed) {
             ImVec2 c = node(keyR(al, hv.hidx, "cond", (int)i), ImVec2(30 + 190.0f + 60, 18 + bandY + i * GAPY),
                             ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), conds[i].op), csub,
                             IM_COL32(58, 112, 92, 255), &d, &clk, &rc);
+            if (flowFindMatch(std::string(ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), conds[i].op)) + " " + csub))
+                dl->AddRect(ImVec2(c.x - NW * 0.5f - 4, c.y - NH * 0.5f - 4),
+                            ImVec2(c.x + NW * 0.5f + 4, c.y + NH * 0.5f + 4), IM_COL32(90, 200, 255, 220), 9.0f, 0, 2.5f);
             if (selHere)
                 dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
                             ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
@@ -14339,6 +14741,17 @@ static void DrawFlowGraph(EditorState& ed) {
                 }
             }
             if (hv.hidx < 0 && al->CurrentInstruction() == (int)i) glow(c);
+            if (flowFindMatch(std::string(ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), item.op)) + " " + sub))
+                dl->AddRect(ImVec2(c.x - NW * 0.5f - 4, c.y - NH * 0.5f - 4),
+                            ImVec2(c.x + NW * 0.5f + 4, c.y + NH * 0.5f + 4), IM_COL32(90, 200, 255, 220), 9.0f, 0, 2.5f);
+            // Red breakpoint badge on the node's top-left corner.
+            for (const auto& bp : ActionList::Breakpoints())
+                if (bp.first == (const void*)&insL && bp.second == (int)i) {
+                    ImVec2 bc(c.x - NW * 0.5f + 10.0f * z, c.y - NH * 0.5f + 9.0f * z);
+                    dl->AddCircleFilled(bc, 4.5f * z, IM_COL32(235, 80, 80, 255), 12);
+                    dl->AddCircle(bc, 4.5f * z, IM_COL32(0, 0, 0, 130), 12, 1.0f);
+                    break;
+                }
             if (selHere)
                 dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
                             ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
@@ -14617,6 +15030,19 @@ static void DrawFlowGraph(EditorState& ed) {
             }
             if (ImGui::MenuItem("Move Up", nullptr, false, idx > 0)) { std::swap(list[idx], list[idx - 1]); g_flowSelIdx = idx - 1; ed.dirty = true; }
             if (ImGui::MenuItem("Move Down", nullptr, false, idx + 1 < (int)list.size())) { std::swap(list[idx], list[idx + 1]); g_flowSelIdx = idx + 1; ed.dirty = true; }
+            if (!isCond) {   // breakpoints only make sense on executing instructions
+                const void* laddr = (const void*)&list;
+                auto& bps = ActionList::Breakpoints();
+                int found = -1;
+                for (int b2 = 0; b2 < (int)bps.size(); ++b2)
+                    if (bps[b2].first == laddr && bps[b2].second == idx) { found = b2; break; }
+                if (ImGui::MenuItem(found >= 0 ? "Remove Breakpoint" : "Add Breakpoint", nullptr, found >= 0)) {
+                    if (found >= 0) bps.erase(bps.begin() + found);
+                    else bps.push_back({laddr, idx});
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Pause every Actions script the moment this node is about to run,\nthen use Step / Continue. Debug-only; not saved with the scene.");
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Delete")) { if (isCond) delCond = idx; else delIns = idx; }
         }
@@ -14626,6 +15052,11 @@ static void DrawFlowGraph(EditorState& ed) {
     if (ImGui::BeginPopup("##flowcanvasctx")) {
         if (ImGui::MenuItem("Add Instruction...")) g_flowAddInsReq = true;
         if (ImGui::MenuItem("Add Condition..."))   g_flowAddCondReq = true;
+        if (ImGui::MenuItem("Add Comment")) {   // designer note — no-op at runtime
+            focusIns().push_back({"comment", {"note..."}});
+            g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)focusIns().size() - 1;
+            ed.dirty = true;
+        }
         if (ImGui::MenuItem("Paste", nullptr, false, g_flowClipKind != 0)) {
             if (g_flowClipKind == 1) focusConds().push_back(g_flowClip);
             else                     focusIns().push_back(g_flowClip);
@@ -16901,10 +17332,13 @@ void DrawInspector(EditorState& ed) {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene (also toggles children + the whole selection)");
     ImGui::SameLine();
-    const char* kind = ObjectKind(go);
-    if (kind && *kind) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "%s", kind);
+    {   // Drawn type icon — the same glyph set the Hierarchy rows use, so the
+        // header reads consistently (replaces the old "[Cam]" text chip).
+        float ih = ImGui::GetFrameHeight();
+        const float isz = 17.0f;
+        ImVec2 ip = ImGui::GetCursorScreenPos();
+        HierKindIcon(go, ImVec2(ip.x, ip.y + (ih - isz) * 0.5f), isz, ImGui::GetWindowDrawList());
+        ImGui::Dummy(ImVec2(isz + 2.0f, ih));
         ImGui::SameLine();
     }
     char nameBuf[128];
@@ -17190,9 +17624,20 @@ void DrawInspector(EditorState& ed) {
         if (act) ed.PushUndo();
         // Cameras aren't scalable (scaling warps the view); show it read-only.
         bool isCam = go->GetComponent<Camera>() != nullptr;
+        static bool s_uniformScale = false;   // linked axes: drag one, all follow
         float scl[3] = {t->localScale.x, t->localScale.y, t->localScale.z};
+        float sclOld[3] = {scl[0], scl[1], scl[2]};
         if (isCam) ImGui::BeginDisabled();
         if (DragVec3Axis("Scale", scl, 0.05f, "%.3f", &act)) {
+            if (s_uniformScale) {
+                // Scale the untouched axes by the same ratio as the edited one.
+                for (int ax = 0; ax < 3; ++ax) {
+                    if (scl[ax] == sclOld[ax]) continue;
+                    float ratio = sclOld[ax] != 0.0f ? scl[ax] / sclOld[ax] : 1.0f;
+                    for (int o = 0; o < 3; ++o) if (o != ax) scl[o] = sclOld[o] * ratio;
+                    break;
+                }
+            }
             t->localScale = {scl[0], scl[1], scl[2]}; ed.dirty = true;
             others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
         }
@@ -17204,6 +17649,12 @@ void DrawInspector(EditorState& ed) {
         if (ImGui::SmallButton("Reset Rot")) { ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true; }
         ImGui::SameLine();
         if (!isCam && ImGui::SmallButton("Reset Scale")) { ed.PushUndo(); t->localScale = {1, 1, 1}; ed.dirty = true; }
+        if (!isCam) {
+            ImGui::SameLine();
+            ImGui::Checkbox("Uniform##scl", &s_uniformScale);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Link the scale axes: dragging X/Y/Z scales all three by the same ratio.");
+        }
     }
 
     // Draw the remaining components in their stored order so the user-controlled
@@ -17224,8 +17675,18 @@ void DrawInspector(EditorState& ed) {
             char tex[256];
             std::strncpy(tex, sr->texture.c_str(), sizeof(tex) - 1);
             tex[sizeof(tex) - 1] = '\0';
-            if (ImGui::InputText("Texture##sprite", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
+            ImGui::SetNextItemWidth(210);
+            if (ImGui::InputText("##spritetex", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
             if (AcceptAssetPathField(sr->texture)) ed.dirty = true;   // drop from Project
+            ImGui::SameLine(0, 4);
+            if (ImGui::Button("...##spritetexbrowse")) {
+                const char* imgFilt[3] = {"*.png", "*.jpg", "*.bmp"};
+                if (const char* p = tinyfd_openFileDialog("Choose a sprite image", "", 3, imgFilt, "Image", 0)) {
+                    sr->texture = p; ed.dirty = true;
+                }
+            }
+            ImGui::SameLine(0, 4);
+            ImGui::TextUnformatted("Texture");
             TexFieldThumb(sr->texture);
             if (ImGui::DragInt("Sorting Layer##sprite", &sr->sortingLayer, 0.05f, -100, 100)) ed.dirty = true;
             if (ImGui::DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000)) ed.dirty = true;
@@ -17242,6 +17703,88 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ps = dynamic_cast<ParticleSystem*>(curComp)) {
         if (CompHeader("Particle System", ps, &toRemove)) {
+            // ---- Presets: one-click classic effects (then tweak from there) ----
+            SectionHeader("Presets");
+            {
+                auto pre = [&](int which) {
+                    ed.PushUndo();
+                    ParticleSystem& P = *ps;
+                    // Common baseline; each preset overrides what it needs.
+                    P.playing = true; P.shape = ParticleSystem::Shape::Point;
+                    P.burstCount = 0; P.duration = 0.0f; P.loop = true;
+                    P.renderMode = ParticleSystem::RenderMode::Billboard;
+                    P.colorOverLife = true; P.sizeOverLife = false; P.fadeOverLife = true;
+                    P.speedRandom = 0.2f; P.damping = 0.0f; P.gravityModifier = 1.0f;
+                    P.rotationSpeed = 0.0f; P.startRotationRandom = 0.0f;
+                    switch (which) {
+                        case 0:   // Fire: rising, orange -> deep red, shrinking
+                            P.emissionRate = 60; P.maxParticles = 400;
+                            P.shape = ParticleSystem::Shape::Circle; P.shapeRadius = 0.25f;
+                            P.startLifetime = 0.9f; P.startLifetimeRandom = 0.3f;
+                            P.startSize = 0.35f; P.startSizeRandom = 0.15f;
+                            P.startColor = {1.0f, 0.75f, 0.25f, 1.0f}; P.endColor = {0.9f, 0.15f, 0.05f, 0.0f};
+                            P.startVelocity = {0, 2.2f, 0}; P.velocityRandom = 0.5f;
+                            P.gravity = {0, 1.2f, 0};   // hot air rises
+                            P.sizeOverLife = true; P.endSize = 0.05f;
+                            break;
+                        case 1:   // Smoke: slow gray puffs that grow and thin out
+                            P.emissionRate = 25; P.maxParticles = 300;
+                            P.shape = ParticleSystem::Shape::Circle; P.shapeRadius = 0.2f;
+                            P.startLifetime = 2.5f; P.startLifetimeRandom = 0.8f;
+                            P.startSize = 0.5f; P.startSizeRandom = 0.2f;
+                            P.startColor = {0.45f, 0.45f, 0.48f, 0.65f}; P.endColor = {0.25f, 0.25f, 0.28f, 0.0f};
+                            P.startVelocity = {0, 1.2f, 0}; P.velocityRandom = 0.3f;
+                            P.gravity = {0, 0.3f, 0}; P.damping = 0.3f;
+                            P.sizeOverLife = true; P.endSize = 1.4f;
+                            P.rotationSpeed = 20.0f; P.startRotationRandom = 180.0f;
+                            break;
+                        case 2:   // Sparks: fast streaks that arc down under gravity
+                            P.emissionRate = 90; P.maxParticles = 500;
+                            P.startLifetime = 0.6f; P.startLifetimeRandom = 0.2f;
+                            P.startSize = 0.08f; P.startSizeRandom = 0.03f;
+                            P.startColor = {1.0f, 0.9f, 0.5f, 1.0f}; P.endColor = {1.0f, 0.4f, 0.1f, 0.0f};
+                            P.startVelocity = {0, 4.0f, 0}; P.velocityRandom = 3.5f;
+                            P.gravity = {0, -9.0f, 0};
+                            P.renderMode = ParticleSystem::RenderMode::Stretch;
+                            break;
+                        case 3:   // Rain: fast streaks falling through a wide box
+                            P.emissionRate = 300; P.maxParticles = 2000;
+                            P.shape = ParticleSystem::Shape::Box; P.boxSize = {12, 0.1f, 12};
+                            P.startLifetime = 1.6f; P.startLifetimeRandom = 0.2f;
+                            P.startSize = 0.06f; P.startSizeRandom = 0.0f;
+                            P.startColor = {0.60f, 0.72f, 1.0f, 0.8f}; P.endColor = {0.60f, 0.72f, 1.0f, 0.4f};
+                            P.startVelocity = {0, -9.0f, 0}; P.velocityRandom = 0.4f;
+                            P.gravityModifier = 0.0f;
+                            P.renderMode = ParticleSystem::RenderMode::Stretch;
+                            break;
+                        case 4:   // Snow: slow drifting flakes over a wide box
+                            P.emissionRate = 80; P.maxParticles = 1500;
+                            P.shape = ParticleSystem::Shape::Box; P.boxSize = {12, 0.1f, 12};
+                            P.startLifetime = 6.0f; P.startLifetimeRandom = 2.0f;
+                            P.startSize = 0.09f; P.startSizeRandom = 0.04f;
+                            P.startColor = {1, 1, 1, 0.95f}; P.endColor = {1, 1, 1, 0.7f};
+                            P.startVelocity = {0, -0.8f, 0}; P.velocityRandom = 0.4f;
+                            P.gravityModifier = 0.0f; P.damping = 0.4f;
+                            break;
+                        case 5:   // Magic: violet-to-cyan motes floating up from a sphere
+                            P.emissionRate = 40; P.maxParticles = 400;
+                            P.shape = ParticleSystem::Shape::Sphere; P.shapeRadius = 0.6f;
+                            P.startLifetime = 1.4f; P.startLifetimeRandom = 0.5f;
+                            P.startSize = 0.15f; P.startSizeRandom = 0.08f;
+                            P.startColor = {0.55f, 0.40f, 1.0f, 1.0f}; P.endColor = {0.20f, 0.90f, 1.0f, 0.0f};
+                            P.startVelocity = {0, 0.6f, 0}; P.velocityRandom = 0.8f;
+                            P.gravityModifier = 0.0f; P.rotationSpeed = 90.0f;
+                            break;
+                    }
+                    ed.dirty = true;
+                };
+                static const char* kPsNames[6] = {"Fire", "Smoke", "Sparks", "Rain", "Snow", "Magic"};
+                for (int pi = 0; pi < 6; ++pi) {
+                    if (pi) ImGui::SameLine(0, 4);
+                    if (ImGui::SmallButton(kPsNames[pi])) pre(pi);
+                }
+                ImGui::TextDisabled("Starting points — every value below stays editable.");
+            }
             // ---- Emission ----
             SectionHeader("Emission");
             if (ImGui::Checkbox("Playing##ps", &ps->playing)) ed.dirty = true;
@@ -17442,8 +17985,18 @@ void DrawInspector(EditorState& ed) {
             char tex[256];
             std::strncpy(tex, mr->texture.c_str(), sizeof(tex) - 1);
             tex[sizeof(tex) - 1] = '\0';
-            if (ImGui::InputText("Texture##mesh", tex, sizeof(tex))) { mr->texture = tex; ed.dirty = true; }
+            ImGui::SetNextItemWidth(210);
+            if (ImGui::InputText("##meshtex", tex, sizeof(tex))) { mr->texture = tex; ed.dirty = true; }
             if (AcceptAssetPathField(mr->texture)) ed.dirty = true;   // drop from Project
+            ImGui::SameLine(0, 4);
+            if (ImGui::Button("...##meshtexbrowse")) {
+                const char* imgFilt[3] = {"*.png", "*.jpg", "*.bmp"};
+                if (const char* p = tinyfd_openFileDialog("Choose a texture image", "", 3, imgFilt, "Image", 0)) {
+                    mr->texture = p; ed.dirty = true;
+                }
+            }
+            ImGui::SameLine(0, 4);
+            ImGui::TextUnformatted("Texture");
             // Built-in procedural textures: generated in code (no files), tileable,
             // and they ship with the game — pick one to texture instantly.
             {
@@ -18426,6 +18979,18 @@ void DrawInspector(EditorState& ed) {
                 Color k = Light::KelvinToColor(li->temperature);
                 ImGui::SameLine(); ImGui::ColorButton("##kprev", ImVec4(k.r, k.g, k.b, 1.0f));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("2700K warm  -  6500K daylight  -  10000K cool");
+                // One-click real-world presets, each swatched in its own hue.
+                static const struct { const char* n; float kv; } kKelvin[] = {
+                    {"Candle", 1900.0f}, {"Bulb", 2700.0f}, {"Noon", 6500.0f},
+                    {"Overcast", 7500.0f}, {"Shade", 10000.0f}};
+                for (int ki = 0; ki < 5; ++ki) {
+                    if (ki) ImGui::SameLine(0, 4);
+                    Color pk = Light::KelvinToColor(kKelvin[ki].kv);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(pk.r, pk.g, pk.b, 1.0f));
+                    if (ImGui::SmallButton(kKelvin[ki].n)) { li->temperature = kKelvin[ki].kv; ed.dirty = true; }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%.0f K", kKelvin[ki].kv);
+                }
             } else {
                 float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
                 if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
@@ -18475,6 +19040,13 @@ void DrawInspector(EditorState& ed) {
                     ImGui::TextDisabled("Effective FOV: %.1f deg", cam->VerticalFovDegrees(16.0f / 9.0f));
                 } else {
                     if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+                    // Common gaming FOVs, one click each.
+                    static const struct { const char* n; float v; } kFovs[] = {
+                        {"60", 60.0f}, {"75", 75.0f}, {"90", 90.0f}, {"110", 110.0f}};
+                    for (int fi = 0; fi < 4; ++fi) {
+                        if (fi) ImGui::SameLine(0, 4);
+                        if (ImGui::SmallButton(kFovs[fi].n)) { cam->fieldOfView = kFovs[fi].v; ed.dirty = true; }
+                    }
                     int ax = cam->fovAxisHorizontal ? 1 : 0;
                     const char* axes[] = {"Vertical", "Horizontal"};
                     if (ImGui::Combo("FOV Axis", &ax, axes, 2)) { cam->fovAxisHorizontal = (ax == 1); ed.dirty = true; }
@@ -18488,6 +19060,20 @@ void DrawInspector(EditorState& ed) {
             if (cam->clearFlags == Camera::ClearFlags::SolidColor) {
                 float bg[4] = {cam->backgroundColor.r, cam->backgroundColor.g, cam->backgroundColor.b, cam->backgroundColor.a};
                 if (ImGui::ColorEdit4("Background", bg)) { cam->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+                // Quick swatches for the usual backdrops.
+                static const struct { const char* n; float r, g, b; } kBgs[] = {
+                    {"Sky", 0.36f, 0.58f, 0.85f}, {"Dusk", 0.16f, 0.12f, 0.24f},
+                    {"Night", 0.02f, 0.03f, 0.07f}, {"White", 1, 1, 1}, {"Black", 0, 0, 0}};
+                for (int bgi = 0; bgi < 5; ++bgi) {
+                    if (bgi) ImGui::SameLine(0, 4);
+                    ImGui::PushID(bgi);
+                    if (ImGui::ColorButton("##bgp", ImVec4(kBgs[bgi].r, kBgs[bgi].g, kBgs[bgi].b, 1.0f),
+                                           0, ImVec2(22, 18))) {
+                        cam->backgroundColor = {kBgs[bgi].r, kBgs[bgi].g, kBgs[bgi].b, 1.0f}; ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBgs[bgi].n);
+                    ImGui::PopID();
+                }
             }
 
             SectionHeader("Clipping Planes");
@@ -19223,6 +19809,38 @@ void DrawInspector(EditorState& ed) {
 
             if (cc->mode == CharacterController2D::Mode::Platformer) {
                 SectionHeader("Jump");
+                // Platformer jump-feel presets: force/gravity/forgiveness tuned together.
+                {
+                    auto ppre = [&](int which) {
+                        ed.PushUndo();
+                        CharacterController2D& C = *cc;
+                        switch (which) {
+                            case 0:   // Classic: Mario-ish — variable jump, heavy fall
+                                C.jumpForce = 11.0f; C.maxJumps = 1; C.variableJump = true;
+                                C.jumpCutMultiplier = 0.45f; C.coyoteTime = 0.10f; C.jumpBuffer = 0.10f;
+                                C.airControl = 0.85f; C.maxFallSpeed = 18.0f; C.extraFallGravity = 12.0f;
+                                break;
+                            case 1:   // Precise: tight speedrunner feel
+                                C.jumpForce = 9.5f; C.maxJumps = 1; C.variableJump = true;
+                                C.jumpCutMultiplier = 0.30f; C.coyoteTime = 0.06f; C.jumpBuffer = 0.08f;
+                                C.airControl = 1.0f; C.maxFallSpeed = 22.0f; C.extraFallGravity = 18.0f;
+                                break;
+                            case 2:   // Bouncy: double jump, floatier arcs
+                                C.jumpForce = 10.0f; C.maxJumps = 2; C.variableJump = true;
+                                C.jumpCutMultiplier = 0.55f; C.coyoteTime = 0.14f; C.jumpBuffer = 0.14f;
+                                C.airControl = 0.9f; C.maxFallSpeed = 14.0f; C.extraFallGravity = 6.0f;
+                                break;
+                        }
+                        ed.dirty = true;
+                    };
+                    ImGui::TextDisabled("Feel:");
+                    ImGui::SameLine();
+                    static const char* kJFeel[3] = {"Classic", "Precise", "Bouncy"};
+                    for (int ji = 0; ji < 3; ++ji) {
+                        if (ji) ImGui::SameLine(0, 4);
+                        if (ImGui::SmallButton(kJFeel[ji])) ppre(ji);
+                    }
+                }
                 if (ImGui::DragFloat("Jump Force##cc2", &cc->jumpForce, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
                 if (ImGui::DragInt("Max Jumps##cc2", &cc->maxJumps, 0.05f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("2 = double jump (ground counts as one)");
@@ -20269,6 +20887,59 @@ void DrawInspector(EditorState& ed) {
             char tn[48]; std::strncpy(tn, c->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target##npc", tn, sizeof(tn))) { c->targetName = tn; ed.dirty = true; }
             if (ed.isPlaying()) ImGui::TextDisabled("State: %s%s", c->StateName(), c->IsDead() ? " (dead)" : "");
+
+            // Archetype presets: one click configures behavior + movement +
+            // perception + aggression together; everything stays editable.
+            SectionHeader("Presets");
+            {
+                auto npre = [&](int which) {
+                    ed.PushUndo();
+                    NPCController& N = *c;
+                    switch (which) {
+                        case 0:   // Guard: patrols its post, hunts what it sees, comes back
+                            N.behavior = (int)NPCController::Behavior::Guard;
+                            N.moveSpeed = 2.0f; N.runSpeed = 5.0f;
+                            N.sightRange = 14.0f; N.fieldOfView = 110.0f; N.lineOfSight = true;
+                            N.hearingRange = 5.0f; N.detectionTime = 0.35f;
+                            N.loseSightTime = 4.0f; N.searchTime = 6.0f;
+                            N.aggressive = true; N.provokable = true;
+                            N.returnsHome = true; N.leashRange = 30.0f;
+                            break;
+                        case 1:   // Villager: harmless wanderer that stays near home
+                            N.behavior = (int)NPCController::Behavior::Wander;
+                            N.moveSpeed = 1.6f; N.runSpeed = 3.5f;
+                            N.sightRange = 8.0f; N.fieldOfView = 140.0f; N.lineOfSight = false;
+                            N.hearingRange = 4.0f; N.detectionTime = 0.5f;
+                            N.aggressive = false; N.provokable = false;
+                            N.returnsHome = true; N.leashRange = 15.0f;
+                            break;
+                        case 2:   // Predator: fast, far sight, never gives up
+                            N.behavior = (int)NPCController::Behavior::Chase;
+                            N.moveSpeed = 3.0f; N.runSpeed = 7.0f;
+                            N.sightRange = 20.0f; N.fieldOfView = 160.0f; N.lineOfSight = true;
+                            N.hearingRange = 8.0f; N.detectionTime = 0.1f;
+                            N.loseSightTime = 6.0f; N.searchTime = 8.0f;
+                            N.aggressive = true; N.provokable = true;
+                            N.returnsHome = false; N.leashRange = 0.0f;
+                            break;
+                        case 3:   // Skittish animal: sharp senses, bolts on contact
+                            N.behavior = (int)NPCController::Behavior::Flee;
+                            N.moveSpeed = 2.5f; N.runSpeed = 6.5f;
+                            N.sightRange = 12.0f; N.fieldOfView = 300.0f; N.lineOfSight = false;
+                            N.hearingRange = 10.0f; N.detectionTime = 0.0f;
+                            N.aggressive = false; N.provokable = false;
+                            N.returnsHome = true; N.leashRange = 25.0f;
+                            break;
+                    }
+                    ed.dirty = true;
+                };
+                static const char* kNpcNames[4] = {"Guard", "Villager", "Predator", "Skittish"};
+                for (int ni = 0; ni < 4; ++ni) {
+                    if (ni) ImGui::SameLine(0, 4);
+                    if (ImGui::SmallButton(kNpcNames[ni])) npre(ni);
+                }
+                ImGui::TextDisabled("Starting points — tweak any value below after.");
+            }
             auto bh = (NPCController::Behavior)c->behavior;
 
             SectionHeader("Movement");
@@ -20444,6 +21115,41 @@ void DrawInspector(EditorState& ed) {
     if (auto* c = dynamic_cast<Spawner*>(curComp)) {
         if (CompHeader("Spawner", c, &toRemove)) {
             ImGui::TextDisabled("Clones a template object near here over time.");
+            // Presets: the classic spawner shapes in one click (values stay editable).
+            {
+                auto spre = [&](int which) {
+                    ed.PushUndo();
+                    Spawner& S = *c;
+                    switch (which) {
+                        case 0:   // Drip: one at a time, forever, capped alive
+                            S.count = 1; S.waves = 0; S.waveDelay = 0.0f;
+                            S.interval = 3.0f; S.maxAlive = 5; S.totalToSpawn = 0;
+                            S.startDelay = 0.0f; S.autoStart = true;
+                            break;
+                        case 1:   // Horde waves: bursts of 8 with a breather between
+                            S.count = 8; S.waves = 0; S.waveDelay = 10.0f;
+                            S.interval = 0.4f; S.maxAlive = 0; S.totalToSpawn = 0;
+                            S.startDelay = 2.0f; S.autoStart = true;
+                            break;
+                        case 2:   // 3 rounds: a finite escalating encounter
+                            S.count = 6; S.waves = 3; S.waveDelay = 8.0f;
+                            S.interval = 0.5f; S.maxAlive = 0; S.totalToSpawn = 0;
+                            S.startDelay = 1.0f; S.autoStart = true;
+                            break;
+                        case 3:   // Triggered: armed but silent until a script/zone starts it
+                            S.count = 5; S.waves = 1; S.waveDelay = 0.0f;
+                            S.interval = 0.3f; S.maxAlive = 0; S.totalToSpawn = 0;
+                            S.startDelay = 0.0f; S.autoStart = false;
+                            break;
+                    }
+                    ed.dirty = true;
+                };
+                static const char* kSpNames[4] = {"Drip", "Horde", "3 Rounds", "Triggered"};
+                for (int si = 0; si < 4; ++si) {
+                    if (si) ImGui::SameLine(0, 4);
+                    if (ImGui::SmallButton(kSpNames[si])) spre(si);
+                }
+            }
             char tn[48]; std::strncpy(tn, c->templateName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Template##spwn", tn, sizeof(tn))) { c->templateName = tn; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of a scene object to clone (hidden at play as the blueprint).");
@@ -20476,6 +21182,38 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fp = dynamic_cast<FirstPersonController*>(curComp)) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
+            // Movement-feel presets: speed/accel/air-control/jump tuned together.
+            {
+                auto fpre = [&](int which) {
+                    ed.PushUndo();
+                    FirstPersonController& F = *fp;
+                    switch (which) {
+                        case 0:   // Tactical: weighty mil-sim movement
+                            F.walkSpeed = 3.2f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
+                            F.acceleration = 30.0f; F.deceleration = 35.0f; F.airControl = 0.15f;
+                            F.coyoteTime = 0.05f; F.jumpBufferTime = 0.08f;
+                            break;
+                        case 1:   // Arcade: snappy fast shooter
+                            F.walkSpeed = 5.5f; F.runSpeed = 9.0f; F.jumpForce = 6.5f;
+                            F.acceleration = 90.0f; F.deceleration = 100.0f; F.airControl = 0.6f;
+                            F.coyoteTime = 0.12f; F.jumpBufferTime = 0.12f;
+                            break;
+                        case 2:   // Floaty: big forgiving jumps, drifty air
+                            F.walkSpeed = 4.0f; F.runSpeed = 7.0f; F.jumpForce = 9.0f;
+                            F.acceleration = 40.0f; F.deceleration = 25.0f; F.airControl = 0.8f;
+                            F.coyoteTime = 0.15f; F.jumpBufferTime = 0.15f;
+                            break;
+                    }
+                    ed.dirty = true;
+                };
+                ImGui::TextDisabled("Feel:");
+                ImGui::SameLine();
+                static const char* kFeel[3] = {"Tactical", "Arcade", "Floaty"};
+                for (int fpi = 0; fpi < 3; ++fpi) {
+                    if (fpi) ImGui::SameLine(0, 4);
+                    if (ImGui::SmallButton(kFeel[fpi])) fpre(fpi);
+                }
+            }
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -20531,6 +21269,38 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body (auto-sized,\ngrounded, locomotion clips wired). Or drop a model asset onto this\nobject in the Hierarchy.");
             SectionHeader("Movement");
+            // Same movement-feel presets as the First Person controller.
+            {
+                auto tpre = [&](int which) {
+                    ed.PushUndo();
+                    ThirdPersonController& T = *tp;
+                    switch (which) {
+                        case 0:   // Grounded: weighty adventure movement
+                            T.walkSpeed = 3.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
+                            T.acceleration = 30.0f; T.deceleration = 35.0f; T.airControl = 0.2f;
+                            T.coyoteTime = 0.08f;
+                            break;
+                        case 1:   // Arcade: snappy platform-runner
+                            T.walkSpeed = 5.0f; T.runSpeed = 8.5f; T.jumpForce = 7.0f;
+                            T.acceleration = 90.0f; T.deceleration = 100.0f; T.airControl = 0.7f;
+                            T.coyoteTime = 0.12f;
+                            break;
+                        case 2:   // Floaty: big airy jumps
+                            T.walkSpeed = 4.0f; T.runSpeed = 7.0f; T.jumpForce = 9.5f;
+                            T.acceleration = 40.0f; T.deceleration = 25.0f; T.airControl = 0.85f;
+                            T.coyoteTime = 0.15f;
+                            break;
+                    }
+                    ed.dirty = true;
+                };
+                ImGui::TextDisabled("Feel:");
+                ImGui::SameLine();
+                static const char* kTFeel[3] = {"Grounded", "Arcade", "Floaty"};
+                for (int tpi = 0; tpi < 3; ++tpi) {
+                    if (tpi) ImGui::SameLine(0, 4);
+                    if (ImGui::SmallButton(kTFeel[tpi])) tpre(tpi);
+                }
+            }
             if (ImGui::DragFloat("Walk Speed##tp", &tp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -20959,12 +21729,37 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Button("Noise")) a->clip = AudioClip::Noise(0.3f);
             ImGui::SameLine();
             if (ImGui::Button("Play"))  a->Play();
+            ImGui::SameLine();
+            if (ImGui::Button("Stop##audio")) a->Stop();
             char cb[256];
             std::strncpy(cb, a->clipPath.c_str(), sizeof(cb) - 1);
             cb[sizeof(cb) - 1] = '\0';
-            if (ImGui::InputText("WAV File##audio", cb, sizeof(cb))) { a->clipPath = cb; ed.dirty = true; }
+            ImGui::SetNextItemWidth(210);
+            if (ImGui::InputText("##audiowav", cb, sizeof(cb))) { a->clipPath = cb; ed.dirty = true; }
             if (AcceptAssetPathField(a->clipPath)) ed.dirty = true;   // drop from Project
-            ImGui::TextDisabled("WAV path loads in the built game; %.2fs clip", a->clip.Duration());
+            ImGui::SameLine(0, 4);
+            // Browse for a WAV and load it immediately so Play previews it in-editor.
+            if (ImGui::Button("...##audiobrowse")) {
+                const char* wavFilt[1] = {"*.wav"};
+                if (const char* p = tinyfd_openFileDialog("Choose a WAV file", "", 1, wavFilt, "WAV audio", 0)) {
+                    a->clipPath = p; ed.dirty = true;
+                    std::string werr;
+                    if (a->clip.LoadWAV(p, &werr)) ConsoleLog("Loaded " + std::string(p));
+                    else ConsoleLog("WAV load failed: " + werr, 2);
+                }
+            }
+            ImGui::SameLine(0, 4);
+            ImGui::TextUnformatted("WAV File");
+            if (!a->clipPath.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Load##audiowavload")) {   // preview a typed/dropped path
+                    std::string werr;
+                    if (a->clip.LoadWAV(a->clipPath, &werr)) ConsoleLog("Loaded " + a->clipPath);
+                    else ConsoleLog("WAV load failed: " + werr, 2);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this WAV now so Play previews it in the editor");
+            }
+            ImGui::TextDisabled("WAV path also loads in the built game; %.2fs clip", a->clip.Duration());
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             if (a->spatial) {
                 if (ImGui::DragFloat("Min Distance##audio", &a->minDistance, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
@@ -21315,6 +22110,20 @@ void DrawInspector(EditorState& ed) {
                     ImVec2(-1.0f, ImGui::GetTextLineHeight() * 3.0f))) { tr->text = buf; ed.dirty = true; }
             float col[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##txt", col)) { tr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true; }
+            // Common text colors, one click each.
+            static const struct { const char* n; float r, g, b; } kTxtCols[] = {
+                {"White", 1, 1, 1}, {"Black", 0, 0, 0}, {"Gold", 1.0f, 0.84f, 0.30f},
+                {"Red", 0.95f, 0.30f, 0.28f}, {"Green", 0.35f, 0.85f, 0.42f}, {"Blue", 0.35f, 0.62f, 0.98f}};
+            for (int tci = 0; tci < 6; ++tci) {
+                if (tci) ImGui::SameLine(0, 4);
+                ImGui::PushID(400 + tci);
+                if (ImGui::ColorButton("##txtc", ImVec4(kTxtCols[tci].r, kTxtCols[tci].g, kTxtCols[tci].b, 1.0f),
+                                       0, ImVec2(20, 16))) {
+                    tr->color = {kTxtCols[tci].r, kTxtCols[tci].g, kTxtCols[tci].b, tr->color.a}; ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kTxtCols[tci].n);
+                ImGui::PopID();
+            }
             if (ImGui::DragFloat("Font Size##txt", &tr->pixelSize, tr->screenSpace ? 0.1f : 0.005f, 0.001f, 100.0f))
                 ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr->screenSpace ? "Window pixels per font pixel (screen UI: try 2-6)"
@@ -26217,7 +27026,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Banner so an "empty" viewport is never a mystery.
     if (g_isolate && !gameView) {
         char ib[128];
-        std::snprintf(ib, sizeof(ib), "Isolating: %s   (Shift+I or the Isolate button to exit)",
+        std::snprintf(ib, sizeof(ib), "Isolating: %s   (Esc, Shift+I or the Isolate button to exit)",
                       g_isolate->name.c_str());
         ImVec2 its = ImGui::CalcTextSize(ib);
         ImVec2 ip((view3dMin.x + view3dMax.x - its.x) * 0.5f, view3dMin.y + 8.0f);
@@ -27930,7 +28739,7 @@ void DrawSpriteEditor(EditorState& ed) {
     for (int i = 0; i < 4; ++i) {
         if (i) ImGui::SameLine();
         bool on = (tool == i);
-        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.44f, 0.72f, 1.0f));
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));   // follow the accent theme
         if (ImGui::Button(toolNames[i])) tool = i;
         if (on) ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s (%s)", toolNames[i], toolKeys[i]);
@@ -28672,6 +29481,137 @@ static bool PassesLauncherGate(int argc, char** argv) {
     return false;
 }
 
+// ==== Multi-window (dual monitor) support ====================================
+// Dear ImGui's stock SDL_Renderer2 backend renders only the main window, so we
+// implement the renderer side of multi-viewports ourselves: every OS window
+// ImGui spawns (a panel/tab dragged outside the editor) gets its own
+// SDL_Renderer, plus per-renderer copies of the ImGui-managed textures (the
+// font atlas) uploaded from the CPU pixels ImGui retains. SDL textures cannot
+// be shared across renderers, so editor images (Scene/Game views, thumbnails)
+// are skipped in secondary windows — dock those panels back into the main
+// window to see their content; text/vector panels (Hierarchy, Inspector,
+// Console, Script Editor, Flow Graph, ...) work fully on any monitor.
+// Toggled by g_multiWindow (View ▸ Multi-Window Panels, persisted, declared
+// with the other editor settings).
+
+struct OkayVpData {
+    SDL_Renderer* ren = nullptr;
+    std::unordered_map<ImTextureData*, SDL_Texture*> texes;   // per-renderer copies
+};
+
+// Fetch (creating/updating as needed) this renderer's copy of an ImGui-managed
+// texture. ImGui keeps the CPU pixels alive, so we can upload them per renderer.
+static SDL_Texture* OkayVpTexture(OkayVpData* d, ImTextureData* td) {
+    if (!td || td->Status == ImTextureStatus_Destroyed) return nullptr;
+    auto it = d->texes.find(td);
+    SDL_Texture* t = (it != d->texes.end()) ? it->second : nullptr;
+    bool fresh = false;
+    if (!t) {
+        t = SDL_CreateTexture(d->ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                              td->Width, td->Height);
+        if (!t) return nullptr;
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+        d->texes[td] = t;
+        fresh = true;
+    }
+    // The main backend consumes Status, but this frame's dirty rects stay in
+    // Updates[] until the next NewFrame — apply them to our copy too.
+    if (fresh)
+        SDL_UpdateTexture(t, nullptr, td->GetPixels(), td->GetPitch());
+    else
+        for (ImTextureRect& r : td->Updates) {
+            SDL_Rect sr = {r.x, r.y, r.w, r.h};
+            SDL_UpdateTexture(t, &sr, td->GetPixelsAt(r.x, r.y), td->GetPitch());
+        }
+    return t;
+}
+
+static void OkayVp_CreateWindow(ImGuiViewport* vp) {
+    SDL_Window* w = SDL_GetWindowFromID((Uint32)(intptr_t)vp->PlatformHandle);
+    if (!w) return;
+    OkayVpData* d = new OkayVpData();
+    d->ren = SDL_CreateRenderer(w, -1, SDL_RENDERER_ACCELERATED);
+    if (!d->ren) d->ren = SDL_CreateRenderer(w, -1, 0);
+    vp->RendererUserData = d;
+}
+
+static void OkayVp_DestroyWindow(ImGuiViewport* vp) {
+    if (OkayVpData* d = (OkayVpData*)vp->RendererUserData) {
+        for (auto& kv : d->texes) SDL_DestroyTexture(kv.second);
+        if (d->ren) SDL_DestroyRenderer(d->ren);
+        delete d;
+    }
+    vp->RendererUserData = nullptr;
+}
+
+static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
+    OkayVpData* d = (OkayVpData*)vp->RendererUserData;
+    ImDrawData* dd = vp->DrawData;
+    if (!d || !d->ren || !dd) return;
+
+    // Drop cached copies of textures ImGui destroyed this frame.
+    for (auto it = d->texes.begin(); it != d->texes.end();) {
+        if (it->first->Status == ImTextureStatus_Destroyed) {
+            SDL_DestroyTexture(it->second);
+            it = d->texes.erase(it);
+        } else ++it;
+    }
+
+    SDL_SetRenderDrawColor(d->ren, 15, 16, 20, 255);
+    SDL_RenderClear(d->ren);
+
+    ImVec2 off = dd->DisplayPos;
+    ImVec2 scale = dd->FramebufferScale;
+    int fbW = (int)(dd->DisplaySize.x * scale.x), fbH = (int)(dd->DisplaySize.y * scale.y);
+    if (fbW <= 0 || fbH <= 0) { SDL_RenderPresent(d->ren); return; }
+    SDL_RenderSetScale(d->ren, scale.x, scale.y);
+
+    for (const ImDrawList* dl : dd->CmdLists) {
+        const ImDrawVert* vtx = dl->VtxBuffer.Data;
+        const ImDrawIdx*  idx = dl->IdxBuffer.Data;
+        for (int ci = 0; ci < dl->CmdBuffer.Size; ++ci) {
+            const ImDrawCmd* cmd = &dl->CmdBuffer[ci];
+            if (cmd->UserCallback) continue;   // render-state callbacks are main-window-only
+            ImVec2 cmin((cmd->ClipRect.x - off.x) * scale.x, (cmd->ClipRect.y - off.y) * scale.y);
+            ImVec2 cmax((cmd->ClipRect.z - off.x) * scale.x, (cmd->ClipRect.w - off.y) * scale.y);
+            if (cmin.x < 0) cmin.x = 0;
+            if (cmin.y < 0) cmin.y = 0;
+            if (cmax.x > (float)fbW) cmax.x = (float)fbW;
+            if (cmax.y > (float)fbH) cmax.y = (float)fbH;
+            if (cmax.x <= cmin.x || cmax.y <= cmin.y) continue;
+            SDL_Rect clip = {(int)cmin.x, (int)cmin.y, (int)(cmax.x - cmin.x), (int)(cmax.y - cmin.y)};
+            SDL_RenderSetClipRect(d->ren, &clip);
+
+            SDL_Texture* tex = nullptr;
+            if (cmd->TexRef._TexData)
+                tex = OkayVpTexture(d, cmd->TexRef._TexData);
+            else if (cmd->TexRef._TexID != ImTextureID_Invalid)
+                continue;   // raw SDL_Texture from the main renderer: can't cross renderers
+
+            const char* vbase = (const char*)(vtx + cmd->VtxOffset);
+            SDL_RenderGeometryRaw(d->ren, tex,
+                (const float*)(const void*)(vbase + offsetof(ImDrawVert, pos)), (int)sizeof(ImDrawVert),
+                (const SDL_Color*)(const void*)(vbase + offsetof(ImDrawVert, col)), (int)sizeof(ImDrawVert),
+                (const float*)(const void*)(vbase + offsetof(ImDrawVert, uv)), (int)sizeof(ImDrawVert),
+                dl->VtxBuffer.Size - (int)cmd->VtxOffset,
+                idx + cmd->IdxOffset, (int)cmd->ElemCount, (int)sizeof(ImDrawIdx));
+        }
+    }
+    SDL_RenderSetClipRect(d->ren, nullptr);
+    SDL_RenderPresent(d->ren);
+}
+
+// Install the renderer-side viewport handlers (the SDL2 platform backend
+// already provides the window-side ones).
+static void OkayVpInstall() {
+    ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+    pio.Renderer_CreateWindow  = OkayVp_CreateWindow;
+    pio.Renderer_DestroyWindow = OkayVp_DestroyWindow;
+    pio.Renderer_RenderWindow  = OkayVp_RenderWindow;
+    ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
+}
+
 int main(int argc, char** argv) {
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
@@ -28681,13 +29621,18 @@ int main(int argc, char** argv) {
 
     if (!PassesLauncherGate(argc, argv)) return 0;
 
-    // --template "<Title>": preselect a New Project template (from the launcher's
-    // Create tab). The New Project chooser is shown on launch and will highlight
-    // the matching template.
+    // Project creation is driven by the launcher's Create tab:
+    //   --new-project "<folder>"  create <folder>/Assets + the starting scene there
+    //   --template "<Title>"      which template scene to start from
+    // A bare --template just loads that template into the open scene.
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--template" && i + 1 < argc) { g_newProjectTemplate = argv[i + 1]; ++i; }
         else if (a.rfind("--template=", 0) == 0) g_newProjectTemplate = a.substr(11);
+        else if (a == "--new-project" && i + 1 < argc) { g_newProjectRoot = argv[i + 1]; ++i; }
+        else if (a.rfind("--new-project=", 0) == 0) g_newProjectRoot = a.substr(14);
+        else if (a == "--open" && i + 1 < argc) { g_openScenePath = argv[i + 1]; ++i; }
+        else if (a.rfind("--open=", 0) == 0) g_openScenePath = a.substr(7);
     }
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
@@ -28728,6 +29673,11 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    // Multi-window panels: drag a tab outside the editor and it becomes its own
+    // OS window — put the Inspector or Console on a second monitor (View menu
+    // toggle; needs our SDL_Renderer viewport layer installed below).
+    if (g_multiWindow) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    io.ConfigViewportsNoTaskBarIcon = true;   // panels are satellites, not apps
     // This is a shipping app, not a Dear ImGui demo: don't pop the developer-only
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
     // button labels like "Load" in a panel) at end users.
@@ -28763,6 +29713,7 @@ int main(int argc, char** argv) {
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
+    OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
 
 #ifdef OKAY_HAVE_OKAYUI
     // Install an OkayUI-backed script UI bridge so a playing game's ui_* script
@@ -29270,6 +30221,7 @@ int main(int argc, char** argv) {
         if (g_showModeling)  DrawModeling(ed);
         DrawFindInFiles(ed);
         DrawScriptDocs();
+        DrawShortcutsWindow();
         DrawCustomActions();
         DrawVarWatch();
         DrawFlowGraph(ed);
@@ -29352,6 +30304,18 @@ int main(int argc, char** argv) {
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
 #endif
         SDL_RenderPresent(renderer);
+
+        // Multi-window panels: create/size/paint the extra OS windows (tabs
+        // dragged out of the editor). Also applies a runtime toggle from the
+        // View menu — flipping the flag between frames is supported by ImGui.
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+        }
+        if (g_multiWindow != ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0)) {
+            if (g_multiWindow) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+            else               io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+        }
 
         {   // Close out the profiler frame (total wall time incl. present).
             Uint64 f1 = SDL_GetPerformanceCounter();

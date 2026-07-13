@@ -32,6 +32,10 @@ public:
     virtual const char* BackendName() const = 0;
     /// True when this transport is usable (e.g. its SDK/socket layer is present).
     virtual bool Available() const = 0;
+    /// Optional per-frame pump for transports that need servicing (Photon's
+    /// client wants regular service() calls). The Native transport is pumped
+    /// by the engine's own net tick, so its override is a no-op.
+    virtual void Update() {}
 
     // ---- Connection ----
     virtual bool StartServer(std::uint16_t port) = 0;
@@ -59,5 +63,18 @@ public:
 /// their adapter is compiled in.
 std::unique_ptr<INetTransport> CreateNetTransport(NetTransportProvider provider = NetTransportProvider::Native,
                                                   NetworkManager* native = nullptr);
+
+/// Process-wide transport facade, mirroring NetBackend: pick a provider once
+/// (NetTransport::Use(NetTransportProvider::Photon)), then reach the active
+/// transport from anywhere with NetTransport::Get(). Native by default.
+class NetTransport {
+public:
+    static INetTransport& Get();      // builds lazily for the current provider
+    static bool Exists();
+    /// Switch providers; for Native, pass the NetworkManager to drive.
+    static void Use(NetTransportProvider provider, NetworkManager* native = nullptr);
+    static NetTransportProvider Provider();
+    static void Shutdown();
+};
 
 } // namespace okay

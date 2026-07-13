@@ -11,7 +11,9 @@ and Script Editor panels around a 2D/3D viewport.
 
 ## 2. Start a project
 
-**File → New Project** offers:
+Open the **Launcher**, go to the **Create** tab, enter a project Name and
+Location, then pick a template — the editor opens with the project folder and
+starting scene already created. Templates include:
 
 - **2D Scene** / **3D Scene** — a camera + a starter object.
 - **Platformer** / **Top-Down** — playable, component-wired starters.

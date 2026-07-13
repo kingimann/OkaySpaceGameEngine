@@ -136,7 +136,8 @@ see exactly where it points before you press Play.
 - **Instructions**: movement (`move`, `set_pos`, `rotate`, `set_scale(3)`,
   `move_toward`, `look_at`, `move_dir` — facing-relative movement, `follow`,
   `flee`, `orbit` — circle a named object), control (`wait`, `wait_until` —
-  hold until a variable passes a test, `goto`, `stop`), juice (`tween_move`,
+  hold until a variable passes a test, `goto`, `stop`, `if` / `else` /
+  `end_if` — structured branching without line numbers), juice (`tween_move`,
   `tween_scale`, `tween_rotate`, `shake`, `punch_scale`, `tween_color`,
   `fade`, `flash` — eased, scheduler-driven), variables
   (`set_var`, `add_var`, `mul_var`, `div_var`, `copy_var`, `rand_var`,

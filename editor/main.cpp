@@ -14423,8 +14423,14 @@ static void DrawFlowGraph(EditorState& ed) {
     ImGui::SameLine();
     if (ImGui::Button("Fit")) fitReq = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom + pan so every node fits in the view.");
-    ImGui::SameLine(); ImGui::Text("%d%%", (int)(zoom * 100.0f + 0.5f));
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom — scroll to change.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("-")) zoom = zoom * 0.9f < 0.4f ? 0.4f : zoom * 0.9f;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out.");
+    ImGui::SameLine(0.0f, 3.0f); ImGui::Text("%d%%", (int)(zoom * 100.0f + 0.5f));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Navigate: scroll = up/down, Shift+scroll = sideways, Ctrl+scroll = zoom.\nDrag empty canvas to pan.");
+    ImGui::SameLine(0.0f, 3.0f);
+    if (ImGui::SmallButton("+")) zoom = zoom * 1.1f > 2.5f ? 2.5f : zoom * 1.1f;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in.");
     barSep();
     if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "\xc2\xb7 running");
     else                 ImGui::TextDisabled("idle");
@@ -14597,17 +14603,24 @@ static void DrawFlowGraph(EditorState& ed) {
     ImGui::InvisibleButton("flow_bg", cs);
     ImGui::OpenPopupOnItemClick("##flowcanvasctx", ImGuiPopupFlags_MouseButtonRight);   // right-click empty space
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pan.x += ImGui::GetIO().MouseDelta.x; pan.y += ImGui::GetIO().MouseDelta.y; }
-    // Scroll to zoom (per-graph), anchored on the cursor so the point under the mouse
-    // stays put — the standard node-editor feel.
+    // Navigation: plain scroll pans up/down (what most people expect), Shift+scroll
+    // pans sideways, and Ctrl+scroll zooms anchored on the cursor. So you can BOTH
+    // scroll around AND zoom — never stuck. (Left-drag on empty canvas also pans.)
     if (ImGui::IsItemHovered()) {
-        float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.0f) {
+        float wheel  = ImGui::GetIO().MouseWheel;
+        float wheelH = ImGui::GetIO().MouseWheelH;
+        if (wheel != 0.0f && ImGui::GetIO().KeyCtrl) {
             ImVec2 m = ImGui::GetIO().MousePos;
             float gx = (m.x - cp.x - pan.x) / zoom, gy = (m.y - cp.y - pan.y) / zoom;  // graph point under cursor
             float nz = zoom * (1.0f + wheel * 0.12f);
             nz = nz < 0.4f ? 0.4f : (nz > 2.5f ? 2.5f : nz);
             pan.x = m.x - cp.x - gx * nz; pan.y = m.y - cp.y - gy * nz;               // keep it under the cursor
             zoom = nz;
+        } else {
+            const float step = 52.0f;   // pixels per wheel notch
+            if (ImGui::GetIO().KeyShift) pan.x += wheel * step;   // Shift = sideways
+            else                         pan.y += wheel * step;   // plain = up/down
+            pan.x += wheelH * step;                               // trackpad / tilt wheel
         }
     }
     static std::unordered_map<std::string, ImVec2> pos;

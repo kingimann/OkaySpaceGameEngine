@@ -1691,6 +1691,17 @@ int main(int argc, char** argv) {
                         bool tileHov = ImGui::IsWindowHovered();
                         bool overStar = false, overPlay = false;
                         ImVec2 wmn = ImGui::GetWindowPos();
+                        // Play-count badge, top-left, for games that have been played.
+                        int gpc = PlayCount(path);
+                        if (gpc > 0) {
+                            char cb[16]; std::snprintf(cb, sizeof(cb), "%d\xC3\x97", gpc);
+                            ImVec2 cs = ImGui::CalcTextSize(cb);
+                            ImVec2 bp(wmn.x + 8, wmn.y + 8);
+                            ImDrawList* cdl = ImGui::GetWindowDrawList();
+                            cdl->AddRectFilled(bp, ImVec2(bp.x + cs.x + 10, bp.y + cs.y + 4),
+                                               ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), 7.0f);
+                            cdl->AddText(ImVec2(bp.x + 5, bp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), cb);
+                        }
                         if (fav || tileHov) {
                             // Gold star badge, top-right: filled when favorited, a gray
                             // outline on hover — and clickable either way to toggle.

@@ -452,6 +452,13 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "prefs_lt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) < Num(c, 1);
         else if (op == "prefs_neq")ok = !Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
         else if (op == "var_between") { float v = GetVar(Str(c, 0)); ok = v >= Num(c, 1) && v <= Num(c, 2); }
+        else if (op == "var_even")     { long n = std::lround(GetVar(Str(c, 0))); ok = (n % 2) == 0; }
+        else if (op == "var_odd")      { long n = std::lround(GetVar(Str(c, 0))); ok = (n % 2) != 0; }
+        else if (op == "var_positive") { ok = GetVar(Str(c, 0)) > 0.0f; }
+        else if (op == "var_negative") { ok = GetVar(Str(c, 0)) < 0.0f; }
+        else if (op == "var_zero")     { ok = Mathf::Approximately(GetVar(Str(c, 0)), 0.0f); }
+        else if (op == "var_multiple_of") { float d = Num(c, 1); ok = (d != 0.0f) && Mathf::Approximately(std::fmod(GetVar(Str(c, 0)), d), 0.0f); }
+        else if (op == "var_near")     { ok = std::fabs(GetVar(Str(c, 0)) - Num(c, 1)) <= Num(c, 2); }
         else if (op == "vars_cmp") ok = CmpPass(Str(c, 1), GetVar(Str(c, 0)), GetVar(Str(c, 2)));  // var <op> var
         else if (op == "is_moving") {   // any Rigidbody velocity above the threshold (default 0.01)
             float thr = c.args.size() > 0 ? Num(c, 0) : 0.01f, sp = 0.0f;
@@ -1309,6 +1316,46 @@ void ActionList::Update(float dt) {
             v = (v < tg) ? Mathf::Min(tg, v + st) : Mathf::Max(tg, v - st);
         }
         else if (op == "add_var_var") { Vars()[Str(it, 0)] += Vars()[Str(it, 1)]; }
+        // ---- Float math on a variable (PlayMaker "Float Operator" staples) ----
+        else if (op == "floor_var")  { Vars()[Str(it, 0)] = std::floor(GetVar(Str(it, 0))); }
+        else if (op == "round_var")  { Vars()[Str(it, 0)] = std::round(GetVar(Str(it, 0))); }
+        else if (op == "abs_var")    { Vars()[Str(it, 0)] = std::fabs(GetVar(Str(it, 0))); }
+        else if (op == "negate_var") { Vars()[Str(it, 0)] = -GetVar(Str(it, 0)); }
+        else if (op == "sign_var")   { float v = GetVar(Str(it, 0)); Vars()[Str(it, 0)] = (v > 0.0f) ? 1.0f : ((v < 0.0f) ? -1.0f : 0.0f); }
+        else if (op == "sqrt_var")   { float v = GetVar(Str(it, 0)); Vars()[Str(it, 0)] = v > 0.0f ? std::sqrt(v) : 0.0f; }
+        else if (op == "pow_var")    { Vars()[Str(it, 0)] = std::pow(GetVar(Str(it, 0)), Num(it, 1)); }
+        else if (op == "min_var")    { Vars()[Str(it, 0)] = std::fmin(GetVar(Str(it, 0)), Num(it, 1)); }
+        else if (op == "max_var")    { Vars()[Str(it, 0)] = std::fmax(GetVar(Str(it, 0)), Num(it, 1)); }
+        else if (op == "mod_var")    { float d = Num(it, 1); if (d != 0.0f) Vars()[Str(it, 0)] = std::fmod(GetVar(Str(it, 0)), d); }
+        else if (op == "swap_var")   { float t2 = GetVar(Str(it, 0)); Vars()[Str(it, 0)] = GetVar(Str(it, 1)); Vars()[Str(it, 1)] = t2; }
+        else if (op == "clamp01_var"){ float& v = Vars()[Str(it, 0)]; v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+        else if (op == "round_to_var") { float s = Num(it, 1); if (s > 0.0f) Vars()[Str(it, 0)] = std::round(GetVar(Str(it, 0)) / s) * s; }
+        else if (op == "percent_var"){ float b = Num(it, 2); Vars()[Str(it, 0)] = (b != 0.0f) ? Num(it, 1) / b * 100.0f : 0.0f; }
+        else if (op == "approach_var") {   // linear step toward a target (unlike lerp's ease)
+            float& v = Vars()[Str(it, 0)]; float tgt = Num(it, 1), st = std::fabs(Num(it, 2));
+            if (std::fabs(tgt - v) <= st) v = tgt; else v += (tgt > v ? st : -st);
+        }
+        else if (op == "wrap_var") {   // wrap a value into [min, max) — angles, cycling indices
+            float lo = Num(it, 1), hi = Num(it, 2), range = hi - lo; float& v = Vars()[Str(it, 0)];
+            if (range > 0.0f) v = lo + std::fmod(std::fmod(v - lo, range) + range, range);
+        }
+        else if (op == "map_range_var") {   // remap value from one range to another (slider -> anything)
+            float v = GetVar(Str(it, 0)), a0 = Num(it, 1), a1 = Num(it, 2), b0 = Num(it, 3), b1 = Num(it, 4);
+            float tt = (a1 - a0) != 0.0f ? (v - a0) / (a1 - a0) : 0.0f;
+            Vars()[Str(it, 0)] = b0 + tt * (b1 - b0);
+        }
+        else if (op == "dice_var") {   // random whole number 1..sides
+            int sides = (int)Num(it, 1); if (sides < 1) sides = 1;
+            int roll = 1 + (int)Random::Shared().Range(0.0f, (float)sides);
+            if (roll > sides) roll = sides;
+            Vars()[Str(it, 0)] = (float)roll;
+        }
+        else if (op == "random_sign_var") { Vars()[Str(it, 0)] = (Random::Shared().Range(0.0f, 1.0f) < 0.5f) ? -1.0f : 1.0f; }
+        else if (op == "pick_var") {   // set to one of the listed values at random
+            int n = (int)it.args.size() - 1;
+            if (n > 0) { int k = (int)Random::Shared().Range(0.0f, (float)n); if (k >= n) k = n - 1;
+                         Vars()[Str(it, 0)] = Num(it, (std::size_t)(1 + k)); }
+        }
         else if (op == "spawn_at") {                   // spawn a prefab at a named object's position
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);

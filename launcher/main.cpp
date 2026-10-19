@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -544,9 +545,26 @@ void Toast(const std::string& m, int kind = 0) {
 }
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
-int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played
+int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played, 3 Most played
 int g_playView = 0;               // 0 List rows, 1 Grid tiles
 int g_lastTab = 0;                // section shown when the launcher was last closed
+
+// Per-game play stats (persisted): how many times launched + when last played.
+struct PlayStat { int count = 0; long last = 0; };
+std::map<std::string, PlayStat> g_stats;
+int  PlayCount(const std::string& p)  { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.count; }
+long LastPlayed(const std::string& p) { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.last; }
+// A short "2h ago" / "3d ago" from a unix time (empty if never).
+std::string AgoText(long when) {
+    if (when <= 0) return "";
+    long s = (long)std::time(nullptr) - when; if (s < 0) s = 0;
+    char b[32];
+    if (s < 60)        std::snprintf(b, sizeof(b), "just now");
+    else if (s < 3600) std::snprintf(b, sizeof(b), "%ldm ago", s / 60);
+    else if (s < 86400)std::snprintf(b, sizeof(b), "%ldh ago", s / 3600);
+    else               std::snprintf(b, sizeof(b), "%ldd ago", s / 86400);
+    return b;
+}
 
 bool IsFavorite(const std::string& p) {
     return std::find(g_favorites.begin(), g_favorites.end(), p) != g_favorites.end();
@@ -578,6 +596,10 @@ void RecordPlayed(const std::string& p) {
     if (it != g_recent.end()) g_recent.erase(it);
     g_recent.insert(g_recent.begin(), p);
     if (g_recent.size() > 16) g_recent.resize(16);
+
+    PlayStat& st = g_stats[p];   // bump the lifetime play count + last-played time
+    st.count += 1;
+    st.last = (long)std::time(nullptr);
 
     // Let friends see what I'm playing, and drop it in the activity feed.
     if (g_presenceAccount && g_presenceAccount->IsLoggedIn()) {
@@ -804,6 +826,16 @@ void LoadPrefs() {
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
+        else if (k == "stat" && !v.empty()) {
+            // stat=<count>|<lastunix>|<path>  (path may itself contain '|')
+            auto a = v.find('|'), b = (a == std::string::npos) ? a : v.find('|', a + 1);
+            if (a != std::string::npos && b != std::string::npos) {
+                PlayStat st; std::string path = v.substr(b + 1);
+                try { st.count = std::stoi(v.substr(0, a)); } catch (...) {}
+                try { st.last  = std::stol(v.substr(a + 1, b - a - 1)); } catch (...) {}
+                if (!path.empty()) g_stats[path] = st;
+            }
+        }
         else if (k == "win_w") { try { g_winW = std::stoi(v); } catch (...) {} }
         else if (k == "win_h") { try { g_winH = std::stoi(v); } catch (...) {} }
     }
@@ -826,6 +858,8 @@ void SavePrefs() {
     f << "win_h=" << g_winH << "\n";
     for (const auto& p : g_favorites) f << "fav=" << p << "\n";
     for (const auto& p : g_recent)    f << "recent=" << p << "\n";
+    for (const auto& kv : g_stats)
+        f << "stat=" << kv.second.count << "|" << kv.second.last << "|" << kv.first << "\n";
 }
 
 } // namespace
@@ -1566,7 +1600,7 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(156);
                 if (ImGui::Combo("##playsort", &g_playSort,
-                                 "Favorites first\0Name A\xE2\x80\x93Z\0Recently played\0")) SavePrefs();
+                                 "Favorites first\0Name A\xE2\x80\x93Z\0Recently played\0Most played\0")) SavePrefs();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sort order");
                 ImGui::SameLine();
                 // List / Grid view toggle (persisted).
@@ -1594,6 +1628,9 @@ int main(int argc, char** argv) {
                     } else if (g_playSort == 2) {
                         std::size_t ra = RecentRank(scenes[a].string()), rb = RecentRank(scenes[b].string());
                         if (ra != rb) return ra < rb;
+                    } else if (g_playSort == 3) {
+                        int ca = PlayCount(scenes[a].string()), cb = PlayCount(scenes[b].string());
+                        if (ca != cb) return ca > cb;
                     }
                     return lower(scenes[a].filename().string()) < lower(scenes[b].filename().string());
                 });
@@ -1735,11 +1772,17 @@ int main(int argc, char** argv) {
                         ImGui::Dummy(ImVec2(pw, rs.y));
                     }
                     std::string ago = ModifiedAgo(scenes[i]);
-                    if (ago.empty())
-                        ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
-                    else
-                        ImGui::TextDisabled("%s  \xC2\xB7  %s",
-                                            scenes[i].parent_path().string().c_str(), ago.c_str());
+                    std::string sub = scenes[i].parent_path().string();
+                    if (!ago.empty()) sub += "  \xC2\xB7  " + ago;
+                    int pc = PlayCount(path);
+                    if (pc > 0) {
+                        char pb[64];
+                        std::string la = AgoText(LastPlayed(path));
+                        std::snprintf(pb, sizeof(pb), "  \xC2\xB7  played %d\xC3\x97%s%s",
+                                      pc, la.empty() ? "" : "  \xC2\xB7  last ", la.c_str());
+                        sub += pb;
+                    }
+                    ImGui::TextDisabled("%s", sub.c_str());
                     ImGui::EndGroup();
                     // Right-aligned: favorite star, Folder, Play.
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - (36 + 82 + 80 + 20));

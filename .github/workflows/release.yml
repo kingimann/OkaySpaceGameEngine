@@ -57,7 +57,7 @@ jobs:
           VER=$(cat build-win-dist/VERSION.txt 2>/dev/null || echo dev)
           NAME="OkaySpace-windows-v${VER}"
           mkdir -p "$NAME"
-          cp build-win-dist/* "$NAME"/
+          cp -r build-win-dist/* "$NAME"/
           zip -r "${NAME}.zip" "$NAME"
           echo "zip=${NAME}.zip" >> "$GITHUB_OUTPUT"
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"

@@ -2745,12 +2745,12 @@ void ApplyTheme() {
     else if (g_theme == 2) ImGui::StyleColorsClassic();
     else                   ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Modern, consistent rounding — soft cards like s&box / Unity 6 (a touch more
-    // generous than before, unified across widgets so nothing looks mismatched).
-    s.WindowRounding    = 6.0f;  s.ChildRounding    = 6.0f;
-    s.FrameRounding     = 5.0f;  s.GrabRounding     = 4.0f;
-    s.PopupRounding     = 6.0f;  s.TabRounding      = 6.0f;
-    s.ScrollbarRounding = 6.0f;
+    // Flat, squared-off rounding — a pro-tool / Steam-like look rather than soft
+    // rounded "cards" (which read as generic). Unified across widgets.
+    s.WindowRounding    = 3.0f;  s.ChildRounding    = 3.0f;
+    s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
+    s.PopupRounding     = 3.0f;  s.TabRounding      = 2.0f;
+    s.ScrollbarRounding = 2.0f;
     // Balanced spacing: comfortable but not bloated (slightly roomier than the
     // ImGui defaults). View > UI Scale scales everything for bigger displays.
     s.WindowPadding   = ImVec2(10, 9);  s.FramePadding = ImVec2(8, 6);
@@ -2787,35 +2787,35 @@ void ApplyTheme() {
     // panels read as professional gray, with the chosen accent only on interactive
     // states (selection, buttons, checks, tabs, slider grabs).
     ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]         = ImVec4(0.180f, 0.180f, 0.192f, 1.00f);  // ~#2E2E31 panels
-    c[ImGuiCol_ChildBg]          = ImVec4(0.160f, 0.160f, 0.170f, 0.00f);
-    c[ImGuiCol_PopupBg]          = ImVec4(0.145f, 0.145f, 0.155f, 0.99f);
+    c[ImGuiCol_WindowBg]         = ImVec4(0.106f, 0.153f, 0.212f, 1.00f);  // Steam-style blue-grey panels (#1b2736)
+    c[ImGuiCol_ChildBg]          = ImVec4(0.086f, 0.125f, 0.176f, 0.00f);
+    c[ImGuiCol_PopupBg]          = ImVec4(0.078f, 0.114f, 0.161f, 0.99f);
     c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
-    c[ImGuiCol_FrameBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);  // sunken input fields
-    c[ImGuiCol_FrameBgHovered]   = tint(0.185f, 0.18f, 1.00f);             // subtle accent wash on hover
-    c[ImGuiCol_FrameBgActive]    = tint(0.225f, 0.25f, 1.00f);
-    c[ImGuiCol_TitleBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);
-    c[ImGuiCol_TitleBgActive]    = tint(0.165f, 0.16f, 1.00f);            // active panel title gets a hint of accent
-    c[ImGuiCol_MenuBarBg]        = ImVec4(0.155f, 0.155f, 0.165f, 1.00f);
+    c[ImGuiCol_FrameBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);  // sunken input fields
+    c[ImGuiCol_FrameBgHovered]   = tint(0.110f, 0.18f, 1.00f);             // subtle accent wash on hover
+    c[ImGuiCol_FrameBgActive]    = tint(0.140f, 0.25f, 1.00f);
+    c[ImGuiCol_TitleBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);
+    c[ImGuiCol_TitleBgActive]    = tint(0.100f, 0.16f, 1.00f);            // active panel title gets a hint of accent
+    c[ImGuiCol_MenuBarBg]        = ImVec4(0.090f, 0.133f, 0.184f, 1.00f);
     c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.42f);  // selection (muted)
     c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.55f);
     c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.70f);
-    c[ImGuiCol_Button]           = ImVec4(0.255f, 0.255f, 0.275f, 1.00f);  // raised buttons
-    c[ImGuiCol_ButtonHovered]    = tint(0.320f, 0.22f, 1.00f);             // hover leans toward the accent
+    c[ImGuiCol_Button]           = ImVec4(0.165f, 0.278f, 0.368f, 1.00f);  // Steam-style raised buttons (#2a475e)
+    c[ImGuiCol_ButtonHovered]    = ImVec4(0.216f, 0.361f, 0.467f, 1.00f);  // hover brightens
     c[ImGuiCol_ButtonActive]     = ImVec4(accent.x, accent.y, accent.z, 0.85f);
     c[ImGuiCol_CheckMark]        = accentHover;
     c[ImGuiCol_SliderGrab]       = accent;
     c[ImGuiCol_SliderGrabActive] = accentHover;
     c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
     c[ImGuiCol_SeparatorHovered] = accentDim;
-    c[ImGuiCol_ResizeGrip]       = ImVec4(0.40f, 0.40f, 0.43f, 0.30f);
+    c[ImGuiCol_ResizeGrip]       = ImVec4(0.30f, 0.40f, 0.50f, 0.30f);
     c[ImGuiCol_ResizeGripHovered]= accentDim;
     c[ImGuiCol_ResizeGripActive] = accent;
-    c[ImGuiCol_Tab]              = ImVec4(0.150f, 0.150f, 0.160f, 1.00f);
+    c[ImGuiCol_Tab]              = ImVec4(0.078f, 0.114f, 0.161f, 1.00f);
     c[ImGuiCol_TabHovered]       = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-    c[ImGuiCol_TabActive]        = tint(0.245f, 0.14f, 1.00f);   // active tab = raised panel with an accent hint
-    c[ImGuiCol_TabUnfocused]     = ImVec4(0.135f, 0.135f, 0.145f, 1.00f);
-    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.190f, 0.190f, 0.205f, 1.00f);
+    c[ImGuiCol_TabActive]        = tint(0.140f, 0.14f, 1.00f);   // active tab = raised panel with an accent hint
+    c[ImGuiCol_TabUnfocused]     = ImVec4(0.063f, 0.094f, 0.133f, 1.00f);
+    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.110f, 0.157f, 0.212f, 1.00f);
     c[ImGuiCol_TabSelectedOverline]       = accent;                 // accent line atop the active tab
     c[ImGuiCol_TabDimmedSelectedOverline] = accentDim;
     c[ImGuiCol_DockingPreview]   = accentDim;

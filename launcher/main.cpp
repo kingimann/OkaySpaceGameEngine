@@ -572,10 +572,10 @@ void DarkTheme() {
     ImGuiStyle& s = ImGui::GetStyle();
     // Metrics match the game engine editor's theme (ApplyTheme) so the launcher and
     // editor read as one product: soft unified rounding, thin frame borders.
-    s.WindowRounding    = 6.0f;  s.ChildRounding    = 6.0f;
-    s.FrameRounding     = 5.0f;  s.GrabRounding     = 4.0f;
-    s.PopupRounding     = 6.0f;  s.TabRounding      = 6.0f;
-    s.ScrollbarRounding = 6.0f;
+    s.WindowRounding    = 3.0f;  s.ChildRounding    = 3.0f;
+    s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
+    s.PopupRounding     = 3.0f;  s.TabRounding      = 2.0f;
+    s.ScrollbarRounding = 2.0f;
     s.WindowPadding   = ImVec2(14, 12); s.FramePadding = ImVec2(10, 7);
     s.ItemSpacing     = ImVec2(9, 8);   s.ItemInnerSpacing = ImVec2(7, 5);
     s.WindowBorderSize = 0.0f;          s.ChildBorderSize = 1.0f;
@@ -619,21 +619,21 @@ void DarkTheme() {
             return ImVec4(gray + (accent.x - gray) * amt, gray + (accent.y - gray) * amt,
                           gray + (accent.z - gray) * amt, a);
         };
-        c[ImGuiCol_WindowBg]         = ImVec4(0.180f, 0.180f, 0.192f, 1.00f);
-        c[ImGuiCol_ChildBg]          = ImVec4(0.160f, 0.160f, 0.170f, 0.00f);
-        c[ImGuiCol_PopupBg]          = ImVec4(0.145f, 0.145f, 0.155f, 0.99f);
+        c[ImGuiCol_WindowBg]         = ImVec4(0.106f, 0.153f, 0.212f, 1.00f);   // Steam #1b2736
+        c[ImGuiCol_ChildBg]          = ImVec4(0.086f, 0.125f, 0.176f, 0.00f);
+        c[ImGuiCol_PopupBg]          = ImVec4(0.078f, 0.114f, 0.161f, 0.99f);
         c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
-        c[ImGuiCol_FrameBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);
-        c[ImGuiCol_FrameBgHovered]   = tint(0.185f, 0.18f, 1.00f);
-        c[ImGuiCol_FrameBgActive]    = tint(0.225f, 0.25f, 1.00f);
-        c[ImGuiCol_TitleBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);
-        c[ImGuiCol_TitleBgActive]    = tint(0.165f, 0.16f, 1.00f);
-        c[ImGuiCol_MenuBarBg]        = ImVec4(0.155f, 0.155f, 0.165f, 1.00f);
+        c[ImGuiCol_FrameBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);
+        c[ImGuiCol_FrameBgHovered]   = tint(0.110f, 0.18f, 1.00f);
+        c[ImGuiCol_FrameBgActive]    = tint(0.140f, 0.25f, 1.00f);
+        c[ImGuiCol_TitleBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);
+        c[ImGuiCol_TitleBgActive]    = tint(0.100f, 0.16f, 1.00f);
+        c[ImGuiCol_MenuBarBg]        = ImVec4(0.090f, 0.133f, 0.184f, 1.00f);
         c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.42f);
         c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.55f);
         c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.70f);
-        c[ImGuiCol_Button]           = ImVec4(0.255f, 0.255f, 0.275f, 1.00f);
-        c[ImGuiCol_ButtonHovered]    = tint(0.320f, 0.22f, 1.00f);
+        c[ImGuiCol_Button]           = ImVec4(0.165f, 0.278f, 0.368f, 1.00f);   // Steam #2a475e
+        c[ImGuiCol_ButtonHovered]    = ImVec4(0.216f, 0.361f, 0.467f, 1.00f);
         c[ImGuiCol_ButtonActive]     = ImVec4(accent.x, accent.y, accent.z, 0.85f);
         c[ImGuiCol_CheckMark]        = accentHover;
         c[ImGuiCol_SliderGrab]       = accent;
@@ -641,13 +641,13 @@ void DarkTheme() {
         c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
         c[ImGuiCol_SeparatorHovered] = accentDim;
         c[ImGuiCol_SeparatorActive]  = accent;
-        c[ImGuiCol_Tab]              = ImVec4(0.150f, 0.150f, 0.160f, 1.00f);
+        c[ImGuiCol_Tab]              = ImVec4(0.078f, 0.114f, 0.161f, 1.00f);
         c[ImGuiCol_TabHovered]       = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-        c[ImGuiCol_TabActive]        = tint(0.245f, 0.14f, 1.00f);
-        c[ImGuiCol_TabUnfocused]     = ImVec4(0.135f, 0.135f, 0.145f, 1.00f);
-        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.190f, 0.190f, 0.205f, 1.00f);
-        c[ImGuiCol_Text]             = ImVec4(0.860f, 0.865f, 0.880f, 1.00f);
-        c[ImGuiCol_TextDisabled]     = ImVec4(0.480f, 0.485f, 0.510f, 1.00f);
+        c[ImGuiCol_TabActive]        = tint(0.140f, 0.14f, 1.00f);
+        c[ImGuiCol_TabUnfocused]     = ImVec4(0.063f, 0.094f, 0.133f, 1.00f);
+        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.110f, 0.157f, 0.212f, 1.00f);
+        c[ImGuiCol_Text]             = ImVec4(0.878f, 0.902f, 0.925f, 1.00f);
+        c[ImGuiCol_TextDisabled]     = ImVec4(0.451f, 0.510f, 0.580f, 1.00f);
         c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
         c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
         c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.330f, 0.330f, 0.355f, 1.00f);
@@ -1050,16 +1050,8 @@ int main(int argc, char** argv) {
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
             ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        // Soft accent glow across the top of the window: gives the launcher a
-        // branded, finished feel without shipping any image assets.
-        {
-            ImDrawList* bg = ImGui::GetWindowDrawList();
-            ImVec2 wp = vp->WorkPos;
-            ImU32 c0 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.10f));
-            ImU32 c1 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.00f));
-            bg->AddRectFilledMultiColor(wp, ImVec2(wp.x + vp->WorkSize.x, wp.y + 150.0f),
-                                        c0, c0, c1, c1);
-        }
+        // (Removed the soft accent glow gradient across the top — a flat, Steam-style
+        // dark surface reads more like a real app and less "designed".)
 
         // ---- Left nav ----
         ImGui::BeginChild("nav", ImVec2(224, 0), true);

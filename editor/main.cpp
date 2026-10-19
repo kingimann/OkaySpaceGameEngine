@@ -914,15 +914,9 @@ static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
 namespace updater {
 namespace fs = std::filesystem;
 
-// Raw GitHub URL of the published dist/ folder.
-const char* kRawBase =
-    "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/main/dist/";
-// Repo raw root (a commit SHA or "main" is inserted between this and /dist/...).
-const char* kRawRepo =
-    "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/";
-// GitHub API endpoint for the latest commit on main (to pin downloads by SHA).
-const char* kApiCommit =
-    "https://api.github.com/repos/kingimann/OkaySpaceGameEngine/commits/main";
+// Published builds live as the assets of the latest GitHub Release (what the
+// release workflow uploads). RawUrl() below builds the per-file URL; the old
+// raw main/dist/ URLs were removed — they served stale binaries.
 
 bool pendingQuit = false; // set true after a successful self-update relaunch
 
@@ -980,21 +974,7 @@ bool Download(const std::string& url, const std::string& outPath) {
 // Downloading from a commit-pinned raw URL is IMMUTABLE — it can never be served
 // stale by the CDN, which is the real reason "update" sometimes kept the old
 // version (the branch URL handed back a cached old binary).
-std::string LatestRef() {
-    std::error_code ec;
-    fs::path jf = fs::temp_directory_path(ec) / "okayspace_commit.json";
-    if (!Download(kApiCommit, jf.string())) return "main";
-    std::ifstream f(jf); std::stringstream ss; ss << f.rdbuf();
-    std::string s = ss.str(); fs::remove(jf, ec);
-    auto k = s.find("\"sha\"");                       // first sha = the commit's
-    if (k == std::string::npos) return "main";
-    auto colon = s.find(':', k);
-    auto q1 = colon == std::string::npos ? std::string::npos : s.find('"', colon);
-    auto q2 = q1 == std::string::npos ? std::string::npos : s.find('"', q1 + 1);
-    if (q2 == std::string::npos) return "main";
-    std::string sha = s.substr(q1 + 1, q2 - q1 - 1);
-    return sha.size() >= 7 ? sha : "main";
-}
+// (LatestRef removed — downloads use the releases/latest asset URL directly.)
 
 // URL of a published file: the named asset of the latest GitHub Release (what
 // the release workflow uploads). "releases/latest/download/<name>" always
@@ -2273,7 +2253,7 @@ std::string EnsurePlayer(std::string* note) {
     if (self.empty()) return {};
     fs::path dest = self.parent_path() / kPlayerExe;
     if (note) *note = "Fetching the player runtime from GitHub...";
-    if (!updater::Download(std::string(updater::kRawBase) + "OkaySpacePlayer.exe",
+    if (!updater::Download(updater::RawUrl("latest", "OkaySpacePlayer.exe"),
                            dest.string()))
         return {};
     std::error_code ec;

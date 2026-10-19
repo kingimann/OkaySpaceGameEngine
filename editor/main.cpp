@@ -1207,7 +1207,7 @@ ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into 
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
-bool g_multiWindow = false;       // opt-in: panels can be dragged out to other OS windows/monitors
+bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
@@ -1447,7 +1447,7 @@ void LoadSettings() {
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
-        else if (k == "multiwin") g_multiWindow = (v != 0);
+        // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
@@ -1456,11 +1456,8 @@ void LoadSettings() {
     // earlier ver-2 migration that had forced 2x AA on. Bumps the version so the
     // user's own choices stick afterward.
     if (ver < 3) { g_ssaa = 1; g_editorFov = 60.0f; SaveSettings(); }
-    // ver 4: multi-window panels became opt-in after v2.623 shipped with them on
-    // by default and a coordinate-space bug displaced the whole UI. Force the
-    // toggle off once so configs saved by that build recover; users re-enable
-    // from View > Multi-Window Panels.
-    if (ver < 4) { g_multiWindow = false; SaveSettings(); }
+    // Multi-window panels are always on now (no toggle) — the old coordinate-space
+    // bug that forced them off in v2.623 is fixed. g_multiWindow stays true.
 }
 void SaveSettings() {
     std::ofstream f("okay_settings.txt");
@@ -1488,8 +1485,7 @@ void SaveSettings() {
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
-      << "uisubdivy " << g_uiSubdivY << "\n"
-      << "multiwin " << (g_multiWindow ? 1 : 0) << "\n";
+      << "uisubdivy " << g_uiSubdivY << "\n";
 }
 
 // ---- Reusable custom-action library (persisted globally) -----------------
@@ -3015,35 +3011,49 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-        ImGui::MenuItem("Hierarchy", nullptr, &g_showHierarchy);
-        ImGui::MenuItem("Game", nullptr, &g_showGame);
-        ImGui::MenuItem("Profiler", nullptr, &g_showProfiler);
-        ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
-        ImGui::MenuItem("Console", nullptr, &g_showConsole);
-        ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
-        ImGui::MenuItem("Sprite Editor", nullptr, &g_showSpriteEditor);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites.");
-        ImGui::MenuItem("UI Theme", nullptr, &g_showUIThemer);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
-        ImGui::MenuItem("Project", nullptr, &g_showProject);
-        ImGui::MenuItem("Services", nullptr, &g_showServices);
-        ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
-        ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode);   // flat UI canvas draws directly, independent of the scene overlay toggle
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock THIS Scene view to a flat UI canvas with the 3D scene hidden (Unity's UI view).\nAlso available as the 'UI Only' button on the Scene toolbar.");
-        ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
-        ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
-        ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
-        ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
-        ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
-        ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
-        ImGui::MenuItem("Animator (state graph)", nullptr, &g_showAnimatorGraph);
-        ImGui::MenuItem("History", nullptr, &g_showHistory);
-        ImGui::MenuItem("Stats", nullptr, &g_showStats);
-        ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
-        ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
+        // Panels — the core dockable windows, grouped so the menu stays short.
+        if (ImGui::BeginMenu("Panels")) {
+            ImGui::MenuItem("Hierarchy", nullptr, &g_showHierarchy);
+            ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
+            ImGui::MenuItem("Project", nullptr, &g_showProject);
+            ImGui::MenuItem("Console", nullptr, &g_showConsole);
+            ImGui::MenuItem("Game", nullptr, &g_showGame);
+            ImGui::Separator();
+            ImGui::MenuItem("Services", nullptr, &g_showServices);
+            ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
+            ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
+            ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
+            ImGui::Separator();
+            ImGui::MenuItem("History", nullptr, &g_showHistory);
+            ImGui::MenuItem("Stats", nullptr, &g_showStats);
+            ImGui::MenuItem("Profiler", nullptr, &g_showProfiler);
+            ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
+            ImGui::EndMenu();
+        }
+        // Editors & Tools — the bigger authoring surfaces.
+        if (ImGui::BeginMenu("Editors & Tools")) {
+            ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
+            ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
+            ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
+            ImGui::Separator();
+            ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
+            ImGui::MenuItem("Animator (state graph)", nullptr, &g_showAnimatorGraph);
+            ImGui::Separator();
+            ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
+            ImGui::MenuItem("Sprite Editor", nullptr, &g_showSpriteEditor);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites.");
+            ImGui::Separator();
+            ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode);   // flat UI canvas draws directly, independent of the scene overlay toggle
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock THIS Scene view to a flat UI canvas with the 3D scene hidden (Unity's UI view).\nAlso available as the 'UI Only' button on the Scene toolbar.");
+            ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
+            ImGui::MenuItem("UI Theme", nullptr, &g_showUIThemer);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
+        if (ImGui::BeginMenu("Rendering & Performance")) {
         bool aa = g_ssaa > 1;
         if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
@@ -3077,21 +3087,21 @@ void DrawMenuAndToolbar(EditorState& ed) {
 #endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
-        if (ImGui::MenuItem("Multi-Window Panels", nullptr, &g_multiWindow)) SaveSettings();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Drag a tab outside the editor to make it its own OS window —\n"
-                              "put the Inspector, Console or Flow Graph on a second monitor.\n"
-                              "Note: image-based panels (Scene/Game views, thumbnails) only\n"
-                              "render their pictures while docked in the main window.");
+        // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
         if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
+        ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Scene Overlays")) {
+            ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
+            if (ImGui::MenuItem("Gizmos (selection / camera / lights)", nullptr, &g_showGizmos)) SaveSettings();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Editor-only overlays in the Scene view\n(yellow selection box, camera frustum, light icons).\nNever appear in the Game view or a build.");
+            if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
+            ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
-        ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
-        if (ImGui::MenuItem("Gizmos (selection / camera / lights)", nullptr, &g_showGizmos)) SaveSettings();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Editor-only overlays in the Scene view\n(yellow selection box, camera frustum, light icons).\nNever appear in the Game view or a build.");
-        if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
-        ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
-        ImGui::Separator();
+        if (ImGui::BeginMenu("Appearance")) {
         if (ImGui::BeginMenu("UI Scale")) {
             struct { const char* n; float s; } presets[] = {
                 {"Compact (90%)", 0.9f}, {"Normal (100%)", 1.0f},
@@ -3119,6 +3129,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
                     ImGui::GetColorU32(ImVec4(kAccents[i].r, kAccents[i].g, kAccents[i].b, 1.0f)), 16);
             }
             ImGui::EndMenu();
+        }
+        ImGui::EndMenu();   // Appearance
         }
         if (ImGui::BeginMenu("Camera Bookmarks")) {
             ImGui::TextDisabled("Save a viewport camera angle, jump back anytime.");

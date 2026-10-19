@@ -1141,6 +1141,7 @@ bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showShortcuts = false;    // keyboard shortcut cheatsheet window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
 bool g_showFlowGraph = false;    // node/flow-graph view of the selected object's Actions
+bool g_vsSimpleView = true;      // Flow Graph window: show the plain-English "WHEN -> DO" rule cards (default) vs the node canvas
 bool g_showCustomActions = false;// manager for reusable custom instructions/conditions
 bool g_showVarWatch = false;     // live watch of visual-script variables + arrays
 
@@ -14166,6 +14167,153 @@ static bool KeyPicker(const char* id, std::string& key, bool& dirty) {
 
 static bool ActionOpUsesVar(const std::string& o);   // defined below; used for live values
 
+// A plain-English "WHEN this happens -> DO these actions" view of an object's
+// Actions. Each handler (the primary trigger + every extra handler) is one
+// foldable rule card. Reuses the exact same data + DrawActionItem editors as the
+// node graph and the Inspector, so nothing is lost switching views.
+static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
+    using T = ActionList::Trigger;
+    (void)go;
+
+    std::vector<int> rules;              // -1 = primary handler, 0..n-1 = extra handlers
+    rules.push_back(-1);
+    for (int i = 0; i < (int)al->extraHandlers.size(); ++i) rules.push_back(i);
+
+    auto trigOf  = [&](int h) -> T& { return h < 0 ? al->trigger : al->extraHandlers[h].trigger; };
+    auto keyOf   = [&](int h) -> std::string& { return h < 0 ? al->triggerKey : al->extraHandlers[h].triggerKey; };
+    auto condsOf = [&](int h) -> std::vector<ActionList::Item>& { return h < 0 ? al->conditions   : al->extraHandlers[h].conditions; };
+    auto insOf   = [&](int h) -> std::vector<ActionList::Item>& { return h < 0 ? al->instructions : al->extraHandlers[h].instructions; };
+    auto onceOf  = [&](int h) -> bool& { return h < 0 ? al->once : al->extraHandlers[h].once; };
+    auto usesKey = [&](T t) { return t == T::OnKey || t == T::OnKeyUp || t == T::OnMessage || t == T::OnInterval; };
+
+    int addCondTo = -99, addInsTo = -99, delRule = -99;
+
+    const float W = ImMin(ImGui::GetContentRegionAvail().x, 780.0f);   // readable width cap
+    ImGui::BeginChild("##vswrap", ImVec2(W, 0), ImGuiChildFlags_AutoResizeY);
+
+    // ---- Variables ----
+    {
+        char vh[48]; std::snprintf(vh, sizeof(vh), "Variables (%d)###vars", (int)al->variables.size());
+        if (ImGui::CollapsingHeader(vh)) {
+            static const char* kVarTypes[] = {"Number","Text","True/False","Vector2","Vector3",
+                                              "Int","Float","Double","GameObject","Color"};
+            int delVar = -1;
+            for (std::size_t vi = 0; vi < al->variables.size(); ++vi) {
+                ImGui::PushID((int)(vi + 5000));
+                auto& vd = al->variables[vi];
+                char nb[64]; std::strncpy(nb, vd.name.c_str(), sizeof(nb)-1); nb[sizeof(nb)-1]='\0';
+                if (ImGui::SmallButton("x")) delVar = (int)vi;
+                ImGui::SameLine(); ImGui::SetNextItemWidth(120);
+                if (ImGui::InputTextWithHint("##vn","name",nb,sizeof(nb))) { vd.name=nb; ed.dirty=true; }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(96);
+                if (ImGui::Combo("##vt",&vd.type,kVarTypes,IM_ARRAYSIZE(kVarTypes))) ed.dirty=true;
+                ImGui::SameLine();
+                if (vd.type == 2) { bool bv=(vd.value=="1"||vd.value=="true"); if (ImGui::Checkbox("##vb",&bv)){vd.value=bv?"1":"0";ed.dirty=true;} }
+                else { bool numeric=(vd.type!=1&&vd.type!=8); char vb[96]; std::strncpy(vb,vd.value.c_str(),sizeof(vb)-1); vb[sizeof(vb)-1]='\0';
+                       ImGui::SetNextItemWidth(140);
+                       if (ImGui::InputTextWithHint("##vv",numeric?"start value":"text",vb,sizeof(vb))){vd.value=vb;ed.dirty=true;} }
+                ImGui::PopID();
+            }
+            if (delVar>=0){ al->variables.erase(al->variables.begin()+delVar); ed.dirty=true; }
+            if (ImGui::SmallButton("+ Add Variable")){ al->variables.push_back({"newVar",0,"0"}); ed.dirty=true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A named value your rules read and change (score, health, speed...). Show one in text with {name}.");
+        }
+        ImGui::Dummy(ImVec2(0,4));
+    }
+
+    ImGui::TextDisabled("Each rule: WHEN this happens -> DO these actions. Click a title to fold it.");
+    static int s_forceOpen = -1;
+    if (rules.size() > 1) {
+        if (ImGui::SmallButton("Expand all"))   s_forceOpen = 1;
+        ImGui::SameLine(); if (ImGui::SmallButton("Collapse all")) s_forceOpen = 0;
+        ImGui::SameLine(); ImGui::TextDisabled("(%d rules)", (int)rules.size());
+    }
+    ImGui::Dummy(ImVec2(0,4));
+
+    for (int ri = 0; ri < (int)rules.size(); ++ri) {
+        int h = rules[ri];
+        ImGui::PushID(ri + 1);
+        if (s_forceOpen >= 0) ImGui::SetNextItemOpen(s_forceOpen == 1);
+
+        std::string summary = "WHEN ";
+        int tsum = (int)trigOf(h);
+        summary += (tsum>=0 && tsum<IM_ARRAYSIZE(kTriggerLabels)) ? kTriggerLabels[tsum] : "?";
+        if (usesKey(trigOf(h)) && !keyOf(h).empty()) summary += " (" + keyOf(h) + ")";
+        if (!insOf(h).empty()) { summary += "  ->  "; summary += ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), insOf(h)[0].op);
+                                 if (insOf(h).size()>1) summary += " +" + std::to_string(insOf(h).size()-1); }
+        summary += "###rulehdr";
+        bool open = ImGui::CollapsingHeader(summary.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        { ImVec2 mn=ImGui::GetItemRectMin(), mx=ImGui::GetItemRectMax();
+          ImGui::GetWindowDrawList()->AddRectFilled(mn, ImVec2(mn.x+4.0f, mx.y), IM_COL32(240,189,107,255), 4.0f, ImDrawFlags_RoundCornersLeft); }
+        if (open) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f,0.16f,0.20f,1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12,10));
+            ImGui::BeginChild("card", ImVec2(0,0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ImVec4(0.94f,0.74f,0.42f,1.0f), "WHEN"); ImGui::SameLine();
+            int ti = (int)trigOf(h); ImGui::SetNextItemWidth(200);
+            if (ImGui::Combo("##trig",&ti,kTriggerLabels,IM_ARRAYSIZE(kTriggerLabels))) { trigOf(h)=(T)ti; ed.dirty=true; }
+            T tt = trigOf(h);
+            auto keyText = [&](const char* hint, float w){ std::string& k=keyOf(h); char kb[96]; std::strncpy(kb,k.c_str(),sizeof(kb)-1); kb[sizeof(kb)-1]='\0';
+                ImGui::SameLine(); ImGui::SetNextItemWidth(w); if (ImGui::InputTextWithHint("##k",hint,kb,sizeof(kb))){k=kb;ed.dirty=true;} };
+            auto keyNum = [&](const char* suffix){ float v=(float)std::atof(keyOf(h).c_str()); ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                if (ImGui::DragFloat("##kn",&v,0.1f,0.0f,1e9f,suffix)){char b[32];std::snprintf(b,sizeof(b),"%g",v<0?0:v);keyOf(h)=b;ed.dirty=true;} };
+            if (tt==T::OnKey||tt==T::OnKeyUp) keyText("key (e.g. space)",130);
+            else if (tt==T::OnMessage)        keyText("message name",150);
+            else if (tt==T::OnInterval)       keyNum("every %.2f s");
+            ImGui::SameLine(); ImGui::Checkbox("once", &onceOf(h));
+            if (h>=0) { ImGui::SameLine(); ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.2f,0.2f,1.0f));
+                        if (ImGui::SmallButton("delete rule")) delRule=h; ImGui::PopStyleColor(); }
+
+            auto& cs = condsOf(h); int cAct=0,cActI=-1;
+            for (int ci=0; ci<(int)cs.size(); ++ci) {
+                ImGui::PushID(1000+ci); ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(ImVec4(0.45f,0.80f,0.62f,1.0f), ci==0?"only if":"and  "); ImGui::SameLine();
+                bool d=false; int a=DrawActionItem(cs[ci], kCondOps, IM_ARRAYSIZE(kCondOps), 80000+ci, d, &ed.scene());
+                if (d) ed.dirty=true; if (a && cAct==0){cAct=a;cActI=ci;} ImGui::PopID();
+            }
+            if (cAct==1&&cActI>=0&&cActI<(int)cs.size()){cs.erase(cs.begin()+cActI);ed.dirty=true;}
+            else if (cAct==2&&cActI>0){std::swap(cs[cActI],cs[cActI-1]);ed.dirty=true;}
+            else if (cAct==3&&cActI+1<(int)cs.size()){std::swap(cs[cActI],cs[cActI+1]);ed.dirty=true;}
+            if (ImGui::SmallButton("+ only if...")) addCondTo=h;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a check - the actions run only when all checks pass.");
+
+            ImGui::Dummy(ImVec2(0,2)); ImGui::TextColored(ImVec4(0.52f,0.66f,0.88f,1.0f),"DO");
+            auto& is = insOf(h);
+            if (is.empty()){ ImGui::SameLine(); ImGui::TextDisabled("(nothing yet - click + do...)"); }
+            int iAct=0,iActI=-1;
+            for (int ii=0; ii<(int)is.size(); ++ii) {
+                ImGui::PushID(2000+ii); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("%d.", ii+1); ImGui::SameLine();
+                bool d=false; int a=DrawActionItem(is[ii], kInstrOps, IM_ARRAYSIZE(kInstrOps), 81000+ii, d, &ed.scene());
+                if (d) ed.dirty=true; if (a && iAct==0){iAct=a;iActI=ii;} ImGui::PopID();
+            }
+            if (iAct==1&&iActI>=0&&iActI<(int)is.size()){is.erase(is.begin()+iActI);ed.dirty=true;}
+            else if (iAct==2&&iActI>0){std::swap(is[iActI],is[iActI-1]);ed.dirty=true;}
+            else if (iAct==3&&iActI+1<(int)is.size()){std::swap(is[iActI],is[iActI+1]);ed.dirty=true;}
+            ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f)); ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
+            bool addDo = ImGui::SmallButton("+ do..."); ImGui::PopStyleColor(2);
+            if (addDo) addInsTo=h;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run when this rule fires.");
+
+            ImGui::EndChild(); ImGui::PopStyleVar(); ImGui::PopStyleColor();
+        }
+        ImGui::PopID();
+        ImGui::Dummy(ImVec2(0,6));
+    }
+    s_forceOpen = -1;
+
+    ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f)); ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
+    bool newRule = ImGui::Button("+ New Rule", ImVec2(140,30)); ImGui::PopStyleColor(2);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another WHEN -> DO rule to this object.");
+    ImGui::EndChild();   // ##vswrap
+
+    if (addCondTo != -99) { condsOf(addCondTo).push_back({}); ed.dirty=true; }
+    if (addInsTo  != -99) { insOf(addInsTo).push_back({});   ed.dirty=true; }
+    if (delRule != -99 && delRule>=0 && delRule<(int)al->extraHandlers.size()) { al->extraHandlers.erase(al->extraHandlers.begin()+delRule); ed.dirty=true; }
+    if (newRule) { ActionList::Handler nh; nh.trigger=T::OnUpdate; al->extraHandlers.push_back(nh); ed.dirty=true; }
+}
+
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
     g_pickerProjectDir = ed.projectDir();   // so in-place object/prefab pickers can list prefabs
@@ -14202,6 +14350,26 @@ static void DrawFlowGraph(EditorState& ed) {
     // rule whose node is selected, else the picked one.
     ActionList* al = als[pick];
     for (ActionList* a : als) if (a == g_flowSelAl) { al = a; break; }
+    // ---- View switch: Simple rule cards (default, beginner) vs the node canvas ----
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("View:"); ImGui::SameLine();
+        auto viewTab = [&](const char* label, bool active) {
+            ImGui::PushStyleColor(ImGuiCol_Button, active ? AccentCol(0.9f) : ImVec4(0.22f, 0.23f, 0.28f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text,   active ? ImVec4(1, 1, 1, 1) : ImVec4(0.70f, 0.70f, 0.75f, 1.0f));
+            bool c = ImGui::Button(label);
+            ImGui::PopStyleColor(2);
+            return c;
+        };
+        if (viewTab("Simple", g_vsSimpleView)) g_vsSimpleView = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plain-English rule cards: WHEN this happens -> DO these actions. Easiest to read.");
+        ImGui::SameLine(0.0f, 4.0f);
+        if (viewTab("Flow Graph", !g_vsSimpleView)) g_vsSimpleView = false;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The node canvas — drag/wire nodes for complex logic. Same rules, visual layout.");
+        ImGui::SameLine(); ImGui::TextDisabled("on '%s'", go->name.c_str());
+        ImGui::Separator();
+        if (g_vsSimpleView) { DrawSimpleRules(ed, al, go); ImGui::End(); return; }
+    }
     ActionList* removeAl = nullptr;   // deferred: remove this Actions script after drawing
     // Editable script name + add/remove Actions scripts (parity with the Inspector).
     ImGui::AlignTextToFramePadding();

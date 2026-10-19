@@ -11564,6 +11564,9 @@ static const ActionOpInfo kCondOps[] = {
     {"key",      "Key Is Held",          "key (e.g. e)",               "Passes while the given key is held down.",                      "Input"},
     {"key_down", "Key Just Pressed",     "key (e.g. space)",           "Passes on the frame the key is first pressed.",                 "Input"},
     {"key_up",   "Key Just Released",    "key",                        "Passes on the frame the key is released.",                      "Input"},
+    {"key_any",  "Any Of These Keys",    "key1 key2 key3...",          "Passes while ANY of the listed keys is held — WASD or arrows for the same move.", "Input"},
+    {"net_relay_ready","Relay Ready",     "",                           "Passes once the relay has paired this peer — safe to start the relay-hosted match.", "Multiplayer"},
+    {"net_relayed","Using Relay",         "",                           "Passes while this peer is routing through a relay (host or client).", "Multiplayer"},
     {"mouse",    "Mouse Button Held",    "button: 0=left 1=right 2=mid","Passes while a mouse button is held.",                         "Input"},
     {"mouse_down","Mouse Just Clicked",  "button: 0=left 1=right",     "Passes on the frame a mouse button is pressed.",               "Input"},
     {"var_eq",   "Variable Equals",      "name value",                 "Passes if the variable equals the value.",                     "Variables"},
@@ -11732,6 +11735,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"save_prefs",  "Write Save File",    "[file]",               "Write the saved values to disk.",                         "Save"},
     {"net_host",    "Host Game",          "port",                 "Start hosting a multiplayer session.",                    "Multiplayer"},
     {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
+    {"net_host_relay","Host via Relay",   "relayIp port code",    "Host through a relay using a shared code — players behind home routers connect with NO port-forwarding (NAT traversal). Run the okayspace-relay binary, or use a public one.", "Multiplayer"},
+    {"net_join_relay","Join via Relay",   "relayIp port code",    "Join a relay-hosted game with the same relay address + code the host used — no port-forwarding needed.", "Multiplayer"},
     {"net_send",    "Send Message (fast)","channel data",         "Send a fast (unreliable) network message.",               "Multiplayer"},
     {"net_send_reliable","Send Message (sure)","channel data",    "Send a guaranteed (reliable) network message.",           "Multiplayer"},
     {"net_set",     "Set Network Value",  "name value",           "Set a value shared across the network.",                  "Multiplayer"},
@@ -12558,6 +12563,7 @@ static const char* ActionOpRequires(const std::string& op) {
     if (op=="look_at"||op=="follow"||op=="flee"||op=="orbit"||op=="set_parent"||op=="dist_lt"||
         op=="dist_gt"||op=="exists"||op=="destroy_obj"||op=="set_text_on"||op=="raycast_name"||op=="angle_to")
         return "the named target object to exist in the scene";
+    if (op=="net_host_relay"||op=="net_join_relay") return "a reachable relay server (run okayspace-relay)";
     if (op.rfind("net_",0)==0) return "an active network session (Host / Join)";
     if (op.rfind("steam_",0)==0) return "Steam running (built with Steamworks)";
     if (op.rfind("raycast",0)==0) return "a Collider (2D or 3D) in the ray's path";

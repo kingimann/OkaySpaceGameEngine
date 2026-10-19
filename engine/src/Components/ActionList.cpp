@@ -459,6 +459,15 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "var_zero")     { ok = Mathf::Approximately(GetVar(Str(c, 0)), 0.0f); }
         else if (op == "var_multiple_of") { float d = Num(c, 1); ok = (d != 0.0f) && Mathf::Approximately(std::fmod(GetVar(Str(c, 0)), d), 0.0f); }
         else if (op == "var_near")     { ok = std::fabs(GetVar(Str(c, 0)) - Num(c, 1)) <= Num(c, 2); }
+        else if (op == "key_any") { ok = false; for (std::size_t i = 0; i < c.args.size(); ++i) { const std::string& k = Str(c, i); if (!k.empty() && Input::GetKey(k[0])) { ok = true; break; } } }  // any of these keys held
+        else if (op == "net_relay_ready") {   // relay has paired this peer (safe to play)
+            NetworkManager* n = GetScene() ? GetScene()->FindObjectOfType<NetworkManager>() : nullptr;
+            ok = n && n->RelayReady();
+        }
+        else if (op == "net_relayed") {       // routing through a relay (host or client)
+            NetworkManager* n = GetScene() ? GetScene()->FindObjectOfType<NetworkManager>() : nullptr;
+            ok = n && n->Relayed();
+        }
         else if (op == "vars_cmp") ok = CmpPass(Str(c, 1), GetVar(Str(c, 0)), GetVar(Str(c, 2)));  // var <op> var
         else if (op == "is_moving") {   // any Rigidbody velocity above the threshold (default 0.01)
             float thr = c.args.size() > 0 ? Num(c, 0) : 0.01f, sp = 0.0f;
@@ -1154,7 +1163,8 @@ void ActionList::Update(float dt) {
                 if (g && g->transform) g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
             }
         }
-        else if (op == "net_host" || op == "net_join" || op == "net_send" || op == "net_disconnect") {
+        else if (op == "net_host" || op == "net_join" || op == "net_send" || op == "net_disconnect" ||
+                 op == "net_host_relay" || op == "net_join_relay") {
             if (scene) {
                 NetworkManager* n = scene->FindObjectOfType<NetworkManager>();
                 if (!n && op != "net_disconnect") {
@@ -1173,6 +1183,10 @@ void ActionList::Update(float dt) {
                     else if (op == "net_join") n->StartClient(Str(it, 0).empty() ? "127.0.0.1" : Str(it, 0), (std::uint16_t)Num(it, 1));
                     else if (op == "net_send") n->Send(Str(it, 0), Rest(it, 1));
                     else if (op == "net_disconnect") n->Stop();
+                    // Relay (NAT traversal): host/join through a shared relay + code, so
+                    // players behind routers connect with no port-forwarding.
+                    else if (op == "net_host_relay") n->HostViaRelay(Str(it, 0), (std::uint16_t)Num(it, 1), Rest(it, 2));
+                    else if (op == "net_join_relay") n->JoinViaRelay(Str(it, 0), (std::uint16_t)Num(it, 1), Rest(it, 2));
                 }
             }
         }

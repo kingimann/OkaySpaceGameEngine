@@ -1,6 +1,7 @@
 ; OkaySpace Windows installer (NSIS / Modern UI 2).
 Unicode true
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
 
 !ifndef VERSION
   !define VERSION "0.0.0"
@@ -20,13 +21,34 @@ RequestExecutionLevel user
 SetCompressor /SOLID lzma
 BrandingText "OkaySpace ${VERSION}"
 
+Var IsUpdate                 ; 1 when an existing OkaySpace install was found
+
+; Detect a prior install up front: if OkaySpace is already on this system, reuse
+; its folder and UPDATE it in place instead of offering a second copy somewhere
+; new. The directory page is then skipped (see SkipDirIfUpdate).
+Function .onInit
+  ReadRegStr $0 HKCU "Software\OkaySpace" "InstallDir"
+  ${If} $0 != ""
+    ${AndIf} ${FileExists} "$0\OkaySpace.exe"
+      StrCpy $INSTDIR $0
+      StrCpy $IsUpdate "1"
+  ${EndIf}
+FunctionEnd
+
+Function SkipDirIfUpdate
+  ${If} $IsUpdate == "1"
+    Abort                    ; already installed -> don't ask where, just update it
+  ${EndIf}
+FunctionEnd
+
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\OkaySpace.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch OkaySpace now"
 !define MUI_WELCOMEPAGE_TITLE "Welcome to the OkaySpace setup"
-!define MUI_WELCOMEPAGE_TEXT "This installs OkaySpace ${VERSION}.$\r$\n$\r$\nRun this installer again any time to UPDATE in place — your games, projects and saves (in your Documents folder) are never touched."
+!define MUI_WELCOMEPAGE_TEXT "This installs or updates OkaySpace ${VERSION}.$\r$\n$\r$\nIf OkaySpace is already installed, it is UPDATED in place — your games, projects and saves (in your Documents folder) are never touched. (The app also updates itself automatically from inside OkaySpace.)"
 
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipDirIfUpdate
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH

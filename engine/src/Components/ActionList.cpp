@@ -951,7 +951,12 @@ void ActionList::Update(float dt) {
         }
         else if (op == "move") { if (t) t->Translate({Num(it, 0), Num(it, 1), Num(it, 2)}); }
         else if (op == "set_pos") { if (t) t->localPosition = {Num(it, 0), Num(it, 1), Num(it, 2)}; }
-        else if (op == "rotate") { if (t) t->Rotate({Num(it, 1), Num(it, 2), Num(it, 0)}); }
+        else if (op == "rotate") {
+            // "rotate 45" (one value) spins in 2D around Z; "rotate x y z" uses the
+            // documented straight order. (Older builds cyclically shifted the args.)
+            if (t) { if (it.args.size() <= 1) t->Rotate({0, 0, Num(it, 0)});
+                     else                     t->Rotate({Num(it, 0), Num(it, 1), Num(it, 2)}); }
+        }
         else if (op == "set_scale") { if (t) { float v = Num(it, 0); t->localScale = {v, v, v}; } }
         else if (op == "set_scale3") { if (t) t->localScale = {Num(it, 0), Num(it, 1), Num(it, 2)}; }
         else if (op == "move_toward") {
@@ -1068,6 +1073,8 @@ void ActionList::Update(float dt) {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;
                 ct->localPosition.x = Num(it, 0); ct->localPosition.y = Num(it, 1);
+                // Optional third value = zoom (2D orthographic size), per the hint.
+                if (it.args.size() > 2) { float z = Num(it, 2); if (z > 0.0f) scene->mainCamera->orthographicSize = z; }
             }
         }
         else if (op == "set_bg") {

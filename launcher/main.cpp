@@ -1618,6 +1618,36 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the games folder");
                 ImGui::Dummy(ImVec2(0, 6));
 
+                // "Jump back in": a hero card for the most-recently-played game
+                // that still exists on disk (hidden while searching).
+                if (playFilter[0] == '\0' && !player.empty()) {
+                    std::string resume;
+                    for (const auto& rp : g_recent)
+                        if (std::find_if(scenes.begin(), scenes.end(),
+                                [&](const fs::path& s){ return s.string() == rp; }) != scenes.end()) { resume = rp; break; }
+                    if (!resume.empty()) {
+                        fs::path rpath(resume);
+                        std::string rname = rpath.filename().string();
+                        ImGui::BeginChild("resume", ImVec2(0, 66), true, ImGuiWindowFlags_NoScrollbar);
+                        ImGui::SetCursorPos(ImVec2(10, 11));
+                        IconTile(rname, 44.0f);
+                        ImGui::SameLine();
+                        ImGui::BeginGroup();
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+                        ImGui::TextDisabled("JUMP BACK IN");
+                        ImGui::Text("%s", rname.c_str());
+                        ImGui::EndGroup();
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
+                        ImGui::SetCursorPosY(13.0f);
+                        if (PrimaryButton("Resume", ImVec2(96, 40))) {
+                            Launch(player, resume); RecordPlayed(resume); SavePrefs();
+                            Toast(std::string("Playing ") + rname);
+                        }
+                        ImGui::EndChild();
+                        ImGui::Dummy(ImVec2(0, 6));
+                    }
+                }
+
                 // Display order: optional favorites-first, then name A–Z.
                 std::vector<std::size_t> order(scenes.size());
                 for (std::size_t i = 0; i < scenes.size(); ++i) order[i] = i;

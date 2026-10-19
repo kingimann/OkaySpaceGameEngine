@@ -57,6 +57,7 @@ namespace {
 
 std::string g_exeDir = ".";
 std::string g_selfPath;   // absolute path of the running launcher exe
+std::vector<std::string> g_libraryDirs;  // extra folders to scan for games (persisted)
 
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
@@ -460,6 +461,7 @@ std::vector<fs::path> FindScenes() {
     scan(base / "games");
     scan(base / "Projects");
     scan(base / "community");     // installed/shared community content
+    for (const auto& d : g_libraryDirs) scan(fs::path(d));   // user-added libraries
     return out;
 }
 
@@ -829,6 +831,7 @@ void LoadPrefs() {
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
+        else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
         else if (k == "stat" && !v.empty()) {
             // stat=<count>|<lastunix>|<path>  (path may itself contain '|')
             auto a = v.find('|'), b = (a == std::string::npos) ? a : v.find('|', a + 1);
@@ -859,8 +862,9 @@ void SavePrefs() {
     f << "tab=" << g_lastTab << "\n";
     f << "win_w=" << g_winW << "\n";
     f << "win_h=" << g_winH << "\n";
-    for (const auto& p : g_favorites) f << "fav=" << p << "\n";
-    for (const auto& p : g_recent)    f << "recent=" << p << "\n";
+    for (const auto& p : g_favorites)    f << "fav=" << p << "\n";
+    for (const auto& p : g_recent)       f << "recent=" << p << "\n";
+    for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
     for (const auto& kv : g_stats)
         f << "stat=" << kv.second.count << "|" << kv.second.last << "|" << kv.first << "\n";
 }
@@ -2411,6 +2415,46 @@ int main(int argc, char** argv) {
             if (ImGui::SmallButton("Copy version")) {
                 ImGui::SetClipboardText("OkaySpace v" OKAY_ENGINE_VERSION);
                 Toast("Version copied", 1);
+            }
+
+            // ---- Game libraries ----
+            ImGui::Dummy(ImVec2(0, 16));
+            ImGui::SeparatorText("Game libraries");
+            ImGui::TextDisabled("Folders scanned for games (alongside the built-in ones next to the launcher).");
+            {
+                static char libBuf[512] = "";
+                int removeIdx = -1;
+                for (std::size_t li = 0; li < g_libraryDirs.size(); ++li) {
+                    ImGui::PushID((int)li);
+                    if (ImGui::SmallButton("Remove")) removeIdx = (int)li;
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(g_libraryDirs[li].c_str());
+                    ImGui::PopID();
+                }
+                if (removeIdx >= 0) {
+                    g_libraryDirs.erase(g_libraryDirs.begin() + removeIdx);
+                    SavePrefs(); scenes = FindScenes();
+                    Toast("Library folder removed", 1);
+                }
+                ImGui::SetNextItemWidth(360);
+                bool addSubmit = ImGui::InputTextWithHint("##libadd", "Paste a folder path to scan...",
+                                                          libBuf, sizeof(libBuf),
+                                                          ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                if ((ImGui::Button("Add folder") || addSubmit) && libBuf[0]) {
+                    std::error_code lec;
+                    std::string pathStr = libBuf;
+                    if (!fs::exists(fs::path(pathStr), lec) || !fs::is_directory(fs::path(pathStr), lec)) {
+                        Toast("That folder doesn't exist", 2);
+                    } else if (std::find(g_libraryDirs.begin(), g_libraryDirs.end(), pathStr) != g_libraryDirs.end()) {
+                        Toast("Already in your libraries", 2);
+                    } else {
+                        g_libraryDirs.push_back(pathStr);
+                        SavePrefs(); scenes = FindScenes();
+                        Toast("Library folder added", 1);
+                        libBuf[0] = '\0';
+                    }
+                }
             }
 
             // ---- Maintenance ----

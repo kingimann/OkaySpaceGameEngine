@@ -17,6 +17,14 @@
 #include "imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — shared with the editor
 
+// stb_image for optional per-game cover art. STATIC keeps its symbols file-local
+// (the launcher doesn't link the engine, so there's no clash, but this is tidy).
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
+#include "stb_image.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -58,6 +66,7 @@ namespace {
 std::string g_exeDir = ".";
 std::string g_selfPath;   // absolute path of the running launcher exe
 std::vector<std::string> g_libraryDirs;  // extra folders to scan for games (persisted)
+SDL_Renderer* g_renderer = nullptr;      // set in main(); used to upload cover-art textures
 
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
@@ -778,6 +787,50 @@ void IconTile(const std::string& name, float size) {
     ImGui::Dummy(ImVec2(size, size));
 }
 
+// ---- Optional per-game cover art -----------------------------------------
+// A game can ship a cover image next to its .okayscene (cover.png/.jpg, or
+// <stem>.png/.jpg). We load it once via stb_image, upload an SDL texture, and
+// cache it by game path. nullptr (cached) means "no cover — draw the initial".
+std::map<std::string, SDL_Texture*> g_coverCache;
+
+SDL_Texture* GameCover(const std::string& gamePath) {
+    auto it = g_coverCache.find(gamePath);
+    if (it != g_coverCache.end()) return it->second;
+    SDL_Texture* tex = nullptr;
+    if (g_renderer) {
+        fs::path gp(gamePath), dir = gp.parent_path(), stem = gp.stem();
+        std::error_code ec;
+        const char* names[] = { "cover.png", "cover.jpg", "cover.jpeg" };
+        std::vector<fs::path> cands = { dir / (stem.string() + ".png"),
+                                        dir / (stem.string() + ".jpg") };
+        for (const char* n : names) cands.push_back(dir / n);
+        for (const auto& c : cands) {
+            if (!fs::exists(c, ec)) continue;
+            int w = 0, h = 0, ch = 0;
+            unsigned char* px = stbi_load(c.string().c_str(), &w, &h, &ch, 4);
+            if (!px) continue;
+            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
+                px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
+            if (surf) { tex = SDL_CreateTextureFromSurface(g_renderer, surf); SDL_FreeSurface(surf); }
+            stbi_image_free(px);
+            break;
+        }
+    }
+    g_coverCache[gamePath] = tex;   // cache even nullptr so we don't re-stat every frame
+    return tex;
+}
+
+// Draw a game's cover (rounded, cover-fit) if it has one, else the initial tile.
+void DrawGameIcon(const std::string& gamePath, const std::string& name, float size) {
+    SDL_Texture* tex = GameCover(gamePath);
+    if (!tex) { IconTile(name, size); return; }
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddImageRounded(
+        (ImTextureID)(intptr_t)tex, p, ImVec2(p.x + size, p.y + size),
+        ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, size * 0.22f);
+    ImGui::Dummy(ImVec2(size, size));
+}
+
 // Accent-filled call-to-action button — the launcher's primary action style
 // (Open Editor, Play). Secondary actions keep the default gray Button.
 bool PrimaryButton(const char* label, const ImVec2& size) {
@@ -908,6 +961,7 @@ int main(int argc, char** argv) {
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
     if (!renderer) return 1;
+    g_renderer = renderer;   // lets GameCover() upload cover-art textures
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -1624,7 +1678,7 @@ int main(int argc, char** argv) {
                         std::string rname = rpath.filename().string();
                         ImGui::BeginChild("resume", ImVec2(0, 66), true, ImGuiWindowFlags_NoScrollbar);
                         ImGui::SetCursorPos(ImVec2(10, 11));
-                        IconTile(rname, 44.0f);
+                        DrawGameIcon(resume, rname, 44.0f);
                         ImGui::SameLine();
                         ImGui::BeginGroup();
                         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
@@ -1680,7 +1734,7 @@ int main(int argc, char** argv) {
                         ImGui::BeginChild("gtile", ImVec2(tileW, tileH), true, ImGuiWindowFlags_NoScrollbar);
                         HoverRing();
                         ImGui::SetCursorPos(ImVec2((tileW - 64.0f) * 0.5f, 12.0f));
-                        IconTile(name, 64.0f);
+                        DrawGameIcon(path, name, 64.0f);
                         std::string nm = name;
                         if (nm.size() > 13) nm = nm.substr(0, 12) + "..";
                         ImVec2 nts = ImGui::CalcTextSize(nm.c_str());
@@ -1787,7 +1841,7 @@ int main(int argc, char** argv) {
                     ImGui::BeginChild("game", ImVec2(0, 64), true, ImGuiWindowFlags_NoScrollbar);
                     HoverRing();
                     ImGui::SetCursorPos(ImVec2(10, 10));
-                    IconTile(name, 44.0f);
+                    DrawGameIcon(path, name, 44.0f);
                     ImGui::SameLine();
                     ImGui::BeginGroup();
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);

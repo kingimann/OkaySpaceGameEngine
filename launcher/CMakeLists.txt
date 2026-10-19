@@ -49,7 +49,8 @@ target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # link the engine library — the account core needs only the standard library.
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
-    ${CMAKE_SOURCE_DIR}/engine/include)
+    ${CMAKE_SOURCE_DIR}/engine/include
+    ${CMAKE_SOURCE_DIR}/engine/third_party/stb)   # stb_image for game cover art
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

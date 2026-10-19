@@ -9974,6 +9974,13 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
                 ImGui::SetNextItemWidth(160); ImGui::InputText("Version", g_build.version, sizeof(g_build.version));
+                ImGui::SameLine();
+                if (ImGui::SmallButton("+ patch")) {   // bump the last number of a.b.c
+                    int a = 1, b = 0, cc = 0;
+                    if (std::sscanf(g_build.version, "%d.%d.%d", &a, &b, &cc) >= 1)
+                        std::snprintf(g_build.version, sizeof(g_build.version), "%d.%d.%d", a, b, cc + 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bump the patch number (1.0.0 -> 1.0.1).");
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Identifier", g_build.bundleId, sizeof(g_build.bundleId));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Application identifier (Unity's bundle id), e.g. com.studio.game.");
                 ImGui::SetNextItemWidth(388); ImGui::InputText("##bdir", g_buildDirBuf, sizeof(g_buildDirBuf));
@@ -10032,11 +10039,19 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Resizable", &g_build.resizable); ImGui::SameLine();
                 ImGui::Checkbox("VSync", &g_build.vsync); ImGui::SameLine();
                 ImGui::Checkbox("Start maximized", &g_build.startMaximized);
-                const char* fpsOpts[] = {"Uncapped", "30", "60", "120", "144"};
-                const int   fpsVals[] = {0, 30, 60, 120, 144};
-                int fpsSel = 0; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;
+                const char* fpsOpts[] = {"Uncapped", "30", "60", "120", "144", "Custom"};
+                const int   fpsVals[] = {0, 30, 60, 120, 144, -1};
+                int fpsSel = 5; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;   // else Custom
                 ImGui::SetNextItemWidth(180);
-                if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 5)) g_build.fpsCap = fpsVals[fpsSel];
+                if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 6)) {
+                    if (fpsSel < 5) g_build.fpsCap = fpsVals[fpsSel];
+                    else if (g_build.fpsCap <= 0) g_build.fpsCap = 75;   // seed a sensible custom value
+                }
+                if (fpsSel == 5) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                    ImGui::InputInt("fps##custom", &g_build.fpsCap, 0);
+                    if (g_build.fpsCap < 0) g_build.fpsCap = 0;
+                }
                 ImGui::Spacing(); SectionHeader("Minimum window size (resizable)");
                 ImGui::SetNextItemWidth(90); ImGui::InputInt("Min W", &g_build.minWidth, 0); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::InputInt("Min H", &g_build.minHeight, 0);
@@ -10089,9 +10104,12 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
                 ImGui::Checkbox("Ambient occlusion", &g_build.ssao); ImGui::SameLine();
                 ImGui::Checkbox("FXAA", &g_build.fxaa);
-                bool aa2 = g_build.antialias > 1;
-                if (ImGui::Checkbox("Anti-aliasing 2x", &aa2)) g_build.antialias = aa2 ? 2 : 1;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Supersample: smoother but ~4x the pixels");
+                const char* aaOpts[] = {"Off", "2x", "4x"};
+                const int   aaVals[] = {1, 2, 4};
+                int aaSel = 0; for (int i = 0; i < 3; ++i) if (aaVals[i] == g_build.antialias) aaSel = i;
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::Combo("Supersampling (AA)", &aaSel, aaOpts, 3)) g_build.antialias = aaVals[aaSel];
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render at a higher resolution then downscale for smoother edges.\n2x = 4x the pixels, 4x = 16x — sharper but heavier on the GPU.");
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Audio & Input")) {
@@ -10162,6 +10180,19 @@ void DrawFileDialogs(EditorState& ed) {
                 g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
         }
         ImGui::Spacing();
+        // Left side: reset the window/graphics/audio options to defaults (keeps
+        // product name, company, version, output folder, icon, splash).
+        if (ImGui::Button("Reset to Defaults")) {
+            BuildSettings fresh;
+            std::strncpy(fresh.company, g_build.company, sizeof(fresh.company) - 1);
+            std::strncpy(fresh.version, g_build.version, sizeof(fresh.version) - 1);
+            std::strncpy(fresh.bundleId, g_build.bundleId, sizeof(fresh.bundleId) - 1);
+            std::strncpy(fresh.icon, g_build.icon, sizeof(fresh.icon) - 1);
+            std::strncpy(fresh.splash, g_build.splash, sizeof(fresh.splash) - 1);
+            g_build = fresh;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Restore Display / Graphics / Audio options to defaults.\nKeeps your name, company, version, icon and splash.");
+        ImGui::SameLine();
         // Footer buttons, right-aligned (dialog convention): Cancel, then the
         // green primary Build/Export in the corner.
         const char* buildLabel = g_buildPlatform == 0 ? "Build" : "Export";

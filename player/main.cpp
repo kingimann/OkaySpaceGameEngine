@@ -1304,10 +1304,17 @@ int main(int argc, char** argv) {
                 bool typing = false;
                 for (const auto& up : scene.Objects())
                     if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
-                // A PauseMenu owns Escape (it pauses instead of quitting); only hard-quit
-                // on Escape when the scene has no pause menu.
-                bool hasPause = scene.FindObjectOfType<okay::PauseMenu>() != nullptr;
-                if (!typing && cfg.quitOnEscape && !hasPause) running = false;
+                // Shift+Esc is a GUARANTEED quit: it always closes the game regardless of
+                // pause menus, fullscreen or a hidden cursor — so a player can never get
+                // trapped in a game with no visible way out.
+                bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+                if (shift && !typing) { running = false; }
+                else {
+                    // A PauseMenu owns a plain Escape (it pauses instead of quitting); only
+                    // hard-quit on Escape when the scene has no pause menu.
+                    bool hasPause = scene.FindObjectOfType<okay::PauseMenu>() != nullptr;
+                    if (!typing && cfg.quitOnEscape && !hasPause) running = false;
+                }
             }
         }
 

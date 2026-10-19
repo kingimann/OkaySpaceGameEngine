@@ -1098,10 +1098,23 @@ int main(int argc, char** argv) {
             ImGui::EndGroup();
         }
         ImGui::Dummy(ImVec2(0, 16));
-        ImGui::TextDisabled("  MENU");
-        ImGui::Dummy(ImVec2(0, 2));
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market"};
-        for (int i = 0; i < 8; ++i) {
+        // Grouped, Steam-style sidebar. Display order + section headers; the tab
+        // content blocks stay keyed by these indices, so only the order and the
+        // grouping change here (keyboard shortcuts still map 1..8 to the tabs).
+        struct NavRow { int tab; const char* section; };
+        static const NavRow kNavRows[] = {
+            {0, "MENU"},   {1, nullptr}, {2, nullptr},
+            {6, "SOCIAL"}, {5, nullptr}, {7, nullptr},
+            {3, "SYSTEM"}, {4, nullptr},
+        };
+        for (const NavRow& nv : kNavRows) {
+            int i = nv.tab;
+            if (nv.section) {
+                ImGui::Dummy(ImVec2(0, 8));
+                ImGui::TextDisabled("  %s", nv.section);
+                ImGui::Dummy(ImVec2(0, 2));
+            }
             char lbl[48];
             std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);   // room for the icon
             bool sel = (tab == i);

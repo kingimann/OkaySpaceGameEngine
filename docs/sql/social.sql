@@ -133,13 +133,22 @@ create policy "publish own item"     on public.workshop_items for insert with ch
 create policy "edit own item"        on public.workshop_items for update using (auth.uid() = author);
 create policy "delete own item"      on public.workshop_items for delete using (auth.uid() = author);
 
--- Storage bucket for workshop uploads (public read). If the dashboard is
--- easier, create a public bucket named 'workshop' there instead.
-insert into storage.buckets (id, name, public) values ('workshop','workshop', true)
-  on conflict (id) do nothing;
-drop policy if exists "workshop files readable" on storage.objects;
-drop policy if exists "upload own workshop file" on storage.objects;
-create policy "workshop files readable" on storage.objects for select
-  using (bucket_id = 'workshop');
-create policy "upload own workshop file" on storage.objects for insert
-  with check (bucket_id = 'workshop' and auth.role() = 'authenticated');
+-- Storage bucket for workshop uploads (public read). Guarded with a DO block so
+-- this migration still succeeds on a freshly-created project whose Storage
+-- schema hasn't finished provisioning yet (storage.buckets not created). Re-run
+-- this file once the project is fully up, or just create a public bucket named
+-- 'workshop' in the dashboard. The current link-based Marketplace stores a URL
+-- per item and does not require this bucket.
+do $$
+begin
+  if to_regclass('storage.buckets') is not null then
+    insert into storage.buckets (id, name, public) values ('workshop','workshop', true)
+      on conflict (id) do nothing;
+    drop policy if exists "workshop files readable" on storage.objects;
+    drop policy if exists "upload own workshop file" on storage.objects;
+    create policy "workshop files readable" on storage.objects for select
+      using (bucket_id = 'workshop');
+    create policy "upload own workshop file" on storage.objects for insert
+      with check (bucket_id = 'workshop' and auth.role() = 'authenticated');
+  end if;
+end $$;

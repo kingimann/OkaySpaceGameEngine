@@ -552,6 +552,9 @@ int g_lastTab = 0;                // section shown when the launcher was last cl
 // Per-game play stats (persisted): how many times launched + when last played.
 struct PlayStat { int count = 0; long last = 0; };
 std::map<std::string, PlayStat> g_stats;
+// Set by the Play tab's "Publish to Marketplace" action; the Market tab reads it
+// once to prefill + open its publish form, then clears it.
+std::string g_pendingPublishTitle;
 int  PlayCount(const std::string& p)  { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.count; }
 long LastPlayed(const std::string& p) { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.last; }
 // A short "2h ago" / "3d ago" from a unix time (empty if never).
@@ -1861,6 +1864,10 @@ int main(int argc, char** argv) {
                         if (ImGui::MenuItem(fav ? "Unfavorite" : "Favorite")) { ToggleFavorite(path); SavePrefs(); }
                         if (ImGui::MenuItem("Show in Explorer")) OpenExternal(scenes[i].parent_path().string());
                         if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(path.c_str());
+                        if (ImGui::MenuItem("Publish to Marketplace...")) {
+                            g_pendingPublishTitle = scenes[i].stem().string();   // Market tab prefills + opens its form
+                            tab = 7;
+                        }
                         ImGui::EndPopup();
                     }
                     ImGui::EndChild();
@@ -1868,9 +1875,17 @@ int main(int argc, char** argv) {
                 }
                 if (shown == 0)
                     ImGui::TextDisabled("No games match \"%s\".", playFilter);
-                else
-                    ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
-                                        needle.empty() ? "" : " matching");
+                else {
+                    long totalLaunches = 0;   // lifetime launches across this library
+                    for (const auto& s : scenes) totalLaunches += PlayCount(s.string());
+                    if (totalLaunches > 0)
+                        ImGui::TextDisabled("%d game%s%s  \xC2\xB7  %ld total launch%s", shown,
+                                            shown == 1 ? "" : "s", needle.empty() ? "" : " matching",
+                                            totalLaunches, totalLaunches == 1 ? "" : "es");
+                    else
+                        ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
+                                            needle.empty() ? "" : " matching");
+                }
                 }   // end list view
             }
         } else if (tab == 2) {                            // ---- Community ----
@@ -2603,6 +2618,12 @@ int main(int argc, char** argv) {
             static char wDesc[512] = "";
             static int  wKind = 0;
             static std::string wErr;
+            // A "Publish to Marketplace" action from the Play tab prefills + opens the form.
+            if (!g_pendingPublishTitle.empty()) {
+                std::snprintf(wTitle, sizeof(wTitle), "%s", g_pendingPublishTitle.c_str());
+                wShowPublish = true;
+                g_pendingPublishTitle.clear();
+            }
             Uint32 now = SDL_GetTicks();
             if (now >= wNextRefresh) { wCache = ws.List(); wNextRefresh = now + 15000; }
 

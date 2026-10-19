@@ -561,11 +561,31 @@ std::size_t RecentRank(const std::string& p) {
     auto it = std::find(g_recent.begin(), g_recent.end(), p);
     return it == g_recent.end() ? (std::size_t)1e9 : (std::size_t)(it - g_recent.begin());
 }
+// Set once in main() so RecordPlayed can broadcast "playing" presence/activity
+// to friends. Null until then (and on builds with no account backend).
+okay::account::AccountService* g_presenceAccount = nullptr;
+
+// A friendly game name from a scene/project path (the file stem, Title Cased-ish).
+static std::string GameNameFromPath(const std::string& p) {
+    fs::path fp(p);
+    std::string n = fp.stem().string();
+    if (n.empty()) n = fp.filename().string();
+    return n.empty() ? "a game" : n;
+}
+
 void RecordPlayed(const std::string& p) {
     auto it = std::find(g_recent.begin(), g_recent.end(), p);
     if (it != g_recent.end()) g_recent.erase(it);
     g_recent.insert(g_recent.begin(), p);
     if (g_recent.size() > 16) g_recent.resize(16);
+
+    // Let friends see what I'm playing, and drop it in the activity feed.
+    if (g_presenceAccount && g_presenceAccount->IsLoggedIn()) {
+        std::string name = GameNameFromPath(p);
+        okay::Friends fr(*g_presenceAccount);
+        fr.MarkPresence("Playing " + name);
+        fr.Post("playing", name);
+    }
 }
 
 // Apply the selected theme (g_themeIndex), accent (kAccent), and UI scale.
@@ -911,6 +931,7 @@ int main(int argc, char** argv) {
     // config changes.
     fs::path acctCfgDir = acct::DefaultConfigDir(fs::path(g_exeDir));
     auto accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, serverUrl, apiKey);
+    g_presenceAccount = accountPtr.get();   // RecordPlayed broadcasts playing-presence through this
     // If we resumed a saved session against an online server, make sure it's
     // still valid (the token may have been revoked/expired); this signs the
     // player out if so. Offline or local accounts are left as-is.
@@ -946,6 +967,7 @@ int main(int argc, char** argv) {
         setKey[0] = '\0';                       // never retain the typed key in the box
         if (clear) setUrl[0] = '\0';
         accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, url, key);
+        g_presenceAccount = accountPtr.get();
         accountPtr->VerifySession();
         setStatus = accountPtr->IsOnline()
             ? std::string("Saved. Server: ") + accountPtr->ServerUrl() + " (" +
@@ -2365,26 +2387,48 @@ int main(int argc, char** argv) {
                 static char addBuf[48] = "";
                 static std::string fErr;
                 static std::vector<okay::Friend> fCache;
+                static std::vector<okay::FriendEvent> fFeed;
+                static std::string fCode;
                 static Uint32 fNextRefresh = 0, fNextBeat = 0;
                 static bool fProfiled = false;
-                if (!fProfiled) { fr.EnsureProfile(); fProfiled = true; fNextRefresh = 0; }
+                if (!fProfiled) {
+                    fr.EnsureProfile();
+                    fr.MarkPresence("In OkaySpace");   // start broadcasting presence
+                    fCode = fr.MyCode();
+                    fProfiled = true; fNextRefresh = 0;
+                }
                 Uint32 now = SDL_GetTicks();
                 if (now >= fNextBeat)    { fr.Heartbeat();  fNextBeat = now + 60000; }
-                if (now >= fNextRefresh) { fCache = fr.List(); fNextRefresh = now + 10000; }
+                if (now >= fNextRefresh) { fCache = fr.List(); fFeed = fr.Feed(14); fNextRefresh = now + 10000; }
 
-                // Add-a-friend row
-                ImGui::SetNextItemWidth(220);
-                bool submit = ImGui::InputTextWithHint("##addfriend", "Add by username...", addBuf,
-                                                       sizeof(addBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                // --- Add a friend (username or code) + my own shareable code ---
+                ImGui::SetNextItemWidth(240);
+                bool submit = ImGui::InputTextWithHint("##addfriend", "Add by username or friend code...",
+                                                       addBuf, sizeof(addBuf),
+                                                       ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::SameLine();
-                if ((ImGui::Button("Send request") || submit) && addBuf[0]) {
-                    if (fr.Request(addBuf, &fErr)) {
+                if ((ImGui::Button("Add") || submit) && addBuf[0]) {
+                    // Try username first, then fall back to a friend code.
+                    std::string e1, e2;
+                    if (fr.Request(addBuf, &e1) || fr.RequestByCode(addBuf, &e2)) {
                         Toast(std::string("Friend request sent to ") + addBuf, 1);
                         addBuf[0] = '\0'; fErr.clear(); fNextRefresh = 0;
+                    } else {
+                        fErr = "No player with that username or code.";
                     }
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Refresh")) fNextRefresh = 0;
+                if (!fCode.empty()) {
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 196);
+                    ImGui::TextDisabled("Your code:");
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
+                    ImGui::TextUnformatted(fCode.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Copy")) { ImGui::SetClipboardText(fCode.c_str()); Toast("Friend code copied", 1); }
+                }
                 if (!fErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
                                      ImGui::TextWrapped("%s", fErr.c_str()); ImGui::PopStyleColor(); }
 
@@ -2408,18 +2452,30 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(26, 0)); ImGui::SameLine();
                     ImGui::BeginGroup();
                     ImGui::TextUnformatted(f->username.c_str());
-                    const char* sub = request ? "wants to be your friend"
+                    std::string sub = request ? "wants to be your friend"
                                    : f->status != "accepted" ? "request sent"
+                                   : (f->online && !f->playing.empty()) ? f->playing
                                    : f->online ? "online" : "offline";
-                    ImGui::TextDisabled("%s", sub);
+                    ImGui::TextDisabled("%s", sub.c_str());
                     ImGui::EndGroup();
-                    float btnW = request ? 170.0f : 86.0f;
+                    bool joinable = !request && f->online && !f->sessionCode.empty();
+                    float btnW = request ? 170.0f : joinable ? 150.0f : 86.0f;
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - btnW);
                     if (request) {
                         if (ImGui::Button("Accept")) { fr.Accept(f->rowId); fNextRefresh = 0; }
                         ImGui::SameLine();
                         if (ImGui::Button("Decline")) { fr.Remove(f->rowId); fNextRefresh = 0; }
                     } else {
+                        if (joinable) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.44f, 0.26f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.56f, 0.33f, 1.0f));
+                            if (ImGui::Button("Join")) {
+                                ImGui::SetClipboardText(f->sessionCode.c_str());
+                                Toast("Session code " + f->sessionCode + " copied - open the game and Join with it", 2);
+                            }
+                            ImGui::PopStyleColor(2);
+                            ImGui::SameLine();
+                        }
                         if (ImGui::SmallButton("Remove")) { fr.Remove(f->rowId); fNextRefresh = 0; }
                     }
                     ImGui::EndChild();
@@ -2430,8 +2486,24 @@ int main(int argc, char** argv) {
                 if (!offline.empty()) { ImGui::SeparatorText("Offline");         for (auto* f : offline) drawFriend(f, false); }
                 if (fCache.empty()) {
                     ImGui::Dummy(ImVec2(0, 20));
-                    ImGui::TextDisabled("No friends yet. Add someone by their username above.");
+                    ImGui::TextDisabled("No friends yet. Add someone by their username or friend code above,");
+                    ImGui::TextDisabled("or share your own code so they can add you.");
                     ImGui::TextDisabled("(Run docs/sql/social.sql in your Supabase project if this stays empty.)");
+                }
+                // --- Recent activity feed ---
+                if (!fFeed.empty()) {
+                    ImGui::Dummy(ImVec2(0, 8));
+                    ImGui::SeparatorText("Recent activity");
+                    for (const auto& e : fFeed) {
+                        const char* verb = e.kind == "playing"     ? " started playing "
+                                         : e.kind == "achievement" ? " unlocked "
+                                         : e.kind == "publish"     ? " published "
+                                         : e.kind == "online"      ? " came online"
+                                         : " ";
+                        ImGui::Bullet();
+                        ImGui::SameLine(0, 0);
+                        ImGui::Text("%s%s%s", e.actor.c_str(), verb, e.detail.c_str());
+                    }
                 }
                 ImGui::EndChild();
             }
@@ -2471,6 +2543,7 @@ int main(int argc, char** argv) {
                     if (ImGui::Button("Publish", ImVec2(120, 0))) {
                         const char* kinds[] = { "game", "scene", "template" };
                         if (ws.Publish(wTitle, wDesc, kinds[wKind], wUrl, &wErr)) {
+                            okay::Friends(account).Post("publish", wTitle);   // show it in friends' feeds
                             Toast("Published to the marketplace", 1);
                             wTitle[0] = wDesc[0] = wUrl[0] = '\0'; wErr.clear();
                             wShowPublish = false; wNextRefresh = 0;

@@ -13,11 +13,23 @@
 -- auth.users table from the API, so we mirror the bits we can show publicly).
 -- ---------------------------------------------------------------------------
 create table if not exists public.profiles (
-  id         uuid primary key default auth.uid() references auth.users on delete cascade,
-  username   text unique not null,
-  last_seen  timestamptz,
-  created_at timestamptz default now()
+  id          uuid primary key default auth.uid() references auth.users on delete cascade,
+  username    text unique not null,
+  last_seen   timestamptz,
+  friend_code text unique,              -- short shareable code (set by the client)
+  playing     text,                     -- what I'm doing right now (presence)
+  session_code text,                    -- relay room code when hosting a joinable game
+  created_at  timestamptz default now()
 );
+-- Add the presence/code columns to a profiles table created before this version.
+alter table public.profiles add column if not exists friend_code  text;
+alter table public.profiles add column if not exists playing      text;
+alter table public.profiles add column if not exists session_code text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_friend_code_key') then
+    alter table public.profiles add constraint profiles_friend_code_key unique (friend_code);
+  end if;
+end $$;
 alter table public.profiles enable row level security;
 drop policy if exists "profiles are readable"      on public.profiles;
 drop policy if exists "insert own profile"         on public.profiles;
@@ -65,6 +77,35 @@ create policy "respond to request"  on public.friendships for update
   using (auth.uid() = addressee or auth.uid() = requester);
 create policy "remove friendship"   on public.friendships for delete
   using (auth.uid() = requester or auth.uid() = addressee);
+
+-- ---------------------------------------------------------------------------
+-- activity: a lightweight feed (came online, started a game, unlocked an
+-- achievement, published to the marketplace). Each player writes their own
+-- rows; friends can read them. Kept small — the client only reads the most
+-- recent handful.
+-- ---------------------------------------------------------------------------
+create table if not exists public.activity (
+  id         bigint generated always as identity primary key,
+  actor      uuid not null default auth.uid() references auth.users on delete cascade,
+  actor_name text,
+  kind       text not null,              -- online | playing | achievement | publish
+  detail     text,
+  created_at timestamptz default now()
+);
+alter table public.activity enable row level security;
+drop policy if exists "see friends activity" on public.activity;
+drop policy if exists "post own activity"    on public.activity;
+drop policy if exists "prune own activity"   on public.activity;
+-- Readable when the actor is me or an accepted friend of mine.
+create policy "see friends activity" on public.activity for select using (
+  actor = auth.uid() or actor in (
+    select case when requester = auth.uid() then addressee else requester end
+    from public.friendships
+    where status = 'accepted' and (requester = auth.uid() or addressee = auth.uid())
+  )
+);
+create policy "post own activity"  on public.activity for insert with check (auth.uid() = actor);
+create policy "prune own activity" on public.activity for delete using (auth.uid() = actor);
 
 -- ---------------------------------------------------------------------------
 -- workshop_items: shared games / scenes / templates (the Marketplace tab).

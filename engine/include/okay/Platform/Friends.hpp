@@ -1,10 +1,16 @@
 #pragma once
-// Friends over Supabase (profiles + friendships tables; see docs/sql/social.sql).
-// Drives everything through an okay::account::AccountService instance (the same
-// one the launcher and engine already own), so it reuses the signed-in session,
-// the anon key and the bearer token, and needs no HTTP library of its own.
-// Account::Api() auto-adds the apikey + Authorization headers; the tables
-// DEFAULT requester/id to auth.uid(), so the client never sends its own uuid.
+// Friends over Supabase (profiles + friendships + activity tables; see
+// docs/sql/social.sql). Drives everything through an okay::account::
+// AccountService instance (the same one the launcher and engine already own),
+// so it reuses the signed-in session, the anon key and the bearer token, and
+// needs no HTTP library of its own. Account::Api() auto-adds the apikey +
+// Authorization headers; the tables DEFAULT the "me" columns to auth.uid(), so
+// the client never sends its own uuid.
+//
+// Features: add by username OR by a short shareable friend code; accept/decline
+// requests; online/offline + "what are they playing" presence via a heartbeat;
+// join a friend's hosted game by its relay session code; and a small activity
+// feed (came online / started a game / unlocked an achievement / published).
 //
 // Everything gracefully no-ops when signed out, on a local (offline) backend,
 // or when the tables don't exist yet — Api() returns a non-ok response and the
@@ -21,12 +27,21 @@
 namespace okay {
 
 struct Friend {
-    std::string id;        // profile/user uuid of the other person
+    std::string id;          // profile/user uuid of the other person
     std::string username;
-    std::string status;    // "accepted" | "pending"
-    bool incoming = false; // pending request sent TO me (I can accept/decline)
-    bool online   = false; // last_seen within a few minutes
-    long rowId    = 0;     // friendships.id (for accept/remove)
+    std::string status;      // "accepted" | "pending"
+    bool incoming = false;   // pending request sent TO me (I can accept/decline)
+    bool online   = false;   // last_seen within a few minutes
+    std::string playing;     // presence text ("Playing Asteroids", "In the launcher", ...)
+    std::string sessionCode; // relay room code if they're hosting a joinable game
+    long rowId    = 0;       // friendships.id (for accept/remove)
+};
+
+struct FriendEvent {
+    std::string actor;       // who did it (username)
+    std::string kind;        // online | playing | achievement | publish
+    std::string detail;
+    long        when = 0;    // unix time
 };
 
 class Friends {
@@ -35,24 +50,34 @@ public:
 
     bool Available() const { return acct_.IsLoggedIn(); }
 
-    // Mirror my username into profiles (the signup trigger does this for new
-    // accounts; call once after login so pre-existing accounts get a row too).
+    // Mirror my username into profiles and make sure I have a friend code.
+    // Safe to call repeatedly; it only writes a code the first time.
     void EnsureProfile() {
         if (!acct_.IsLoggedIn()) return;
         std::string body = "{\"username\":" + JStr(Me()) + "}";
         acct_.Api("/rest/v1/profiles?on_conflict=id", "POST", body,
                   "Prefer: resolution=merge-duplicates");
+        if (MyCode().empty()) {
+            std::string code = MakeCode();
+            acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
+                      "{\"friend_code\":" + JStr(code) + "}");
+        }
     }
 
-    // Send a friend request to a username. Returns true on a 2xx.
+    // My shareable friend code (empty until EnsureProfile() has run once).
+    std::string MyCode() {
+        auto p = ProfileOf(MyId());
+        return p.friendCode;
+    }
+
+    // ---- requests ---------------------------------------------------------
     bool Request(const std::string& username, std::string* err = nullptr) {
-        if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return false; }
-        std::string uid = IdForUsername(username);
-        if (uid.empty()) { if (err) *err = "No player named '" + username + "'."; return false; }
-        auto r = acct_.Api("/rest/v1/friendships", "POST",
-                           "{\"addressee\":" + JStr(uid) + "}");
-        if (!r.ok && err) *err = r.body.empty() ? "Request failed." : r.body;
-        return r.ok;
+        return RequestUid(IdForUsername(username),
+                          "No player named '" + username + "'.", err);
+    }
+    bool RequestByCode(const std::string& code, std::string* err = nullptr) {
+        return RequestUid(IdForCode(code),
+                          "No player with code '" + code + "'.", err);
     }
 
     bool Accept(long rowId) {
@@ -64,8 +89,7 @@ public:
                          "DELETE").ok;
     }
 
-    // Everyone I'm connected to or have a pending request with. RLS returns only
-    // rows involving me; I resolve the OTHER side's username via profiles.
+    // ---- the friend list --------------------------------------------------
     std::vector<Friend> List() {
         std::vector<Friend> out;
         if (!acct_.IsLoggedIn()) return out;
@@ -77,63 +101,152 @@ public:
             f.rowId  = std::atol(Field(obj, "id").c_str());
             f.status = Field(obj, "status");
             std::string req = Field(obj, "requester"), add = Field(obj, "addressee");
-            // Map both uuids to usernames; the friend is the one that isn't me.
-            std::string reqName = UsernameFor(req), addName = UsernameFor(add);
-            if (reqName == me) { f.id = add; f.username = addName; f.incoming = false; }
-            else               { f.id = req; f.username = reqName; f.incoming = true;  }
-            f.online = LastSeenOnline(f.id);
+            Profile rp = ProfileOf(req), ap = ProfileOf(add);
+            if (rp.username == me) { f.id = add; SetFrom(f, ap); f.incoming = false; }
+            else                   { f.id = req; SetFrom(f, rp); f.incoming = true;  }
             if (!f.username.empty()) out.push_back(f);
         }
         return out;
     }
 
-    // Heartbeat: stamp my last_seen so friends see me online. Call every ~60s.
-    void Heartbeat() {
+    // ---- presence ---------------------------------------------------------
+    // Stamp last_seen + what I'm doing. Call every ~60s and whenever my state
+    // changes (opened the launcher, launched a game, started hosting).
+    void SetPresence(const std::string& playing, const std::string& sessionCode = "") {
         if (!acct_.IsLoggedIn()) return;
         char iso[32]; std::time_t t = std::time(nullptr); std::tm* g = std::gmtime(&t);
-        if (g) { std::strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", g);
-                 acct_.Api("/rest/v1/profiles?username=eq." + Url(Me()),
-                           "PATCH", std::string("{\"last_seen\":\"") + iso + "\"}"); }
+        std::string now = (g && std::strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", g)) ? iso : "";
+        std::string body = "{\"last_seen\":" + JStr(now) +
+                           ",\"playing\":" + JStr(playing) +
+                           ",\"session_code\":" + JStr(sessionCode) + "}";
+        acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH", body);
+    }
+    void Heartbeat() { SetPresence(lastPresence_.empty() ? "In OkaySpace" : lastPresence_,
+                                   lastSession_); }
+    // Remember the last presence so a plain Heartbeat() keeps it.
+    void MarkPresence(const std::string& playing, const std::string& sessionCode = "") {
+        lastPresence_ = playing; lastSession_ = sessionCode; SetPresence(playing, sessionCode);
+    }
+
+    // ---- activity feed ----------------------------------------------------
+    void Post(const std::string& kind, const std::string& detail) {
+        if (!acct_.IsLoggedIn()) return;
+        acct_.Api("/rest/v1/activity", "POST",
+                  "{\"kind\":" + JStr(kind) + ",\"detail\":" + JStr(detail) +
+                  ",\"actor_name\":" + JStr(Me()) + "}");
+    }
+    std::vector<FriendEvent> Feed(int limit = 20) {
+        std::vector<FriendEvent> out;
+        if (!acct_.IsLoggedIn()) return out;
+        auto r = acct_.Api("/rest/v1/activity?select=actor_name,kind,detail,created_at"
+                           "&order=created_at.desc&limit=" + std::to_string(limit), "GET");
+        if (!r.ok) return out;
+        for (const auto& obj : SplitObjects(r.body)) {
+            FriendEvent e;
+            e.actor  = Field(obj, "actor_name");
+            e.kind   = Field(obj, "kind");
+            e.detail = Field(obj, "detail");
+            e.when   = ParseIso(Field(obj, "created_at"));
+            out.push_back(e);
+        }
+        return out;
     }
 
 private:
     okay::account::AccountService& acct_;
+    std::string lastPresence_, lastSession_;
 
-    std::string Me() const { return acct_.CurrentSession().username; }
+    struct Profile { std::string username, friendCode, playing, sessionCode; long lastSeen = 0; };
 
+    std::string Me()   const { return acct_.CurrentSession().username; }
+    // We don't know our own uuid directly, so look it up by username (cached by
+    // the server-side RLS select). Falls back to empty when offline.
+    std::string MyId() {
+        if (myId_.empty()) {
+            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(Me()), "GET");
+            if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myId_ = Field(o[0], "id"); }
+        }
+        return myId_;
+    }
+    std::string myId_;
+
+    bool RequestUid(const std::string& uid, const std::string& notFound, std::string* err) {
+        if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return false; }
+        if (uid.empty())         { if (err) *err = notFound;         return false; }
+        auto r = acct_.Api("/rest/v1/friendships", "POST", "{\"addressee\":" + JStr(uid) + "}");
+        if (!r.ok && err) *err = r.body.empty() ? "Request failed." : r.body;
+        return r.ok;
+    }
+
+    static void SetFrom(Friend& f, const Profile& p) {
+        f.username = p.username;
+        f.playing  = p.playing;
+        f.sessionCode = p.sessionCode;
+        f.online = p.lastSeen > 0 && std::difftime(std::time(nullptr), (std::time_t)p.lastSeen) < 180.0;
+    }
+
+    Profile ProfileOf(const std::string& uid) {
+        Profile p;
+        if (uid.empty()) return p;
+        auto r = acct_.Api("/rest/v1/profiles?select=username,friend_code,playing,session_code,last_seen"
+                           "&id=eq." + Url(uid), "GET");
+        if (!r.ok) return p;
+        auto objs = SplitObjects(r.body);
+        if (objs.empty()) return p;
+        p.username    = Field(objs[0], "username");
+        p.friendCode  = Field(objs[0], "friend_code");
+        p.playing     = Field(objs[0], "playing");
+        p.sessionCode = Field(objs[0], "session_code");
+        p.lastSeen    = ParseIso(Field(objs[0], "last_seen"));
+        return p;
+    }
     std::string IdForUsername(const std::string& name) {
         auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(name), "GET");
         if (!r.ok) return "";
         auto objs = SplitObjects(r.body);
         return objs.empty() ? "" : Field(objs[0], "id");
     }
-    std::string UsernameFor(const std::string& uid) {
-        if (uid.empty()) return "";
-        auto r = acct_.Api("/rest/v1/profiles?select=username&id=eq." + Url(uid), "GET");
+    std::string IdForCode(const std::string& code) {
+        std::string c = Upper(Trim(code));
+        auto r = acct_.Api("/rest/v1/profiles?select=id&friend_code=eq." + Url(c), "GET");
         if (!r.ok) return "";
         auto objs = SplitObjects(r.body);
-        return objs.empty() ? "" : Field(objs[0], "username");
-    }
-    bool LastSeenOnline(const std::string& uid) {
-        if (uid.empty()) return false;
-        auto r = acct_.Api("/rest/v1/profiles?select=last_seen&id=eq." + Url(uid), "GET");
-        if (!r.ok) return false;
-        auto objs = SplitObjects(r.body);
-        if (objs.empty()) return false;
-        std::string ls = Field(objs[0], "last_seen");
-        if (ls.size() < 19) return false;
-        std::tm tm{}; if (sscanf(ls.c_str(), "%d-%d-%dT%d:%d:%d",
-                        &tm.tm_year,&tm.tm_mon,&tm.tm_mday,&tm.tm_hour,&tm.tm_min,&tm.tm_sec) != 6) return false;
-        tm.tm_year -= 1900; tm.tm_mon -= 1;
-#if defined(_WIN32)
-        std::time_t seen = _mkgmtime(&tm);
-#else
-        std::time_t seen = timegm(&tm);
-#endif
-        return std::difftime(std::time(nullptr), seen) < 180.0;   // seen in the last 3 min
+        return objs.empty() ? "" : Field(objs[0], "id");
     }
 
-    // ---- tiny JSON helpers ----
+    // A readable 6-char code from a time+username seed (no ambiguous chars).
+    std::string MakeCode() {
+        static const char* A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   // no 0/O/1/I
+        unsigned long h = 1469598103u;
+        std::string seed = Me() + std::to_string((unsigned long)std::time(nullptr));
+        for (char c : seed) { h ^= (unsigned char)c; h *= 16777619u; }
+        std::string out; for (int i = 0; i < 6; ++i) { out += A[h % 31]; h /= 31; h ^= (h << 7); }
+        return out;
+    }
+
+    static long ParseIso(const std::string& ls) {
+        if (ls.size() < 19) return 0;
+        std::tm tm{};
+        if (sscanf(ls.c_str(), "%d-%d-%dT%d:%d:%d",
+                   &tm.tm_year,&tm.tm_mon,&tm.tm_mday,&tm.tm_hour,&tm.tm_min,&tm.tm_sec) != 6) return 0;
+        tm.tm_year -= 1900; tm.tm_mon -= 1;
+#if defined(_WIN32)
+        return (long)_mkgmtime(&tm);
+#else
+        return (long)timegm(&tm);
+#endif
+    }
+
+    // ---- tiny string/JSON helpers ----
+    static std::string Trim(const std::string& s) {
+        std::size_t a = 0, b = s.size();
+        while (a < b && std::isspace((unsigned char)s[a])) ++a;
+        while (b > a && std::isspace((unsigned char)s[b-1])) --b;
+        return s.substr(a, b - a);
+    }
+    static std::string Upper(const std::string& s) {
+        std::string o = s; for (char& c : o) c = (char)std::toupper((unsigned char)c); return o;
+    }
     static std::vector<std::string> SplitObjects(const std::string& json) {
         std::vector<std::string> out; int depth = 0; std::size_t start = std::string::npos;
         for (std::size_t i = 0; i < json.size(); ++i) {

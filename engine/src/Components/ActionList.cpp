@@ -1084,6 +1084,14 @@ void ActionList::Update(float dt) {
                 if (it.args.size() > 2) { float z = Num(it, 2); if (z > 0.0f) scene->mainCamera->orthographicSize = z; }
             }
         }
+        else if (op == "cam_center_on") {   // snap the camera's X/Y onto a named object
+            if (scene && scene->mainCamera)
+                if (GameObject* g = scene->Find(ObjName(it, 0))) {
+                    Vec3 p = g->transform->Position();
+                    Transform* ct = scene->mainCamera->gameObject->transform;
+                    ct->localPosition.x = p.x; ct->localPosition.y = p.y;
+                }
+        }
         else if (op == "set_bg") {
             if (scene && scene->mainCamera)
                 scene->mainCamera->backgroundColor = {Num(it, 0), Num(it, 1), Num(it, 2), 1.0f};
@@ -1130,6 +1138,16 @@ void ActionList::Update(float dt) {
         }
         else if (op == "activate")   { if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) g->active = true; }
         else if (op == "deactivate") { if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) g->active = false; }
+        else if (op == "set_name")   { if (gameObject) gameObject->name = Str(it, 0); }
+        else if (op == "destroy_all_tag") {   // clear a whole tag: every bullet, every coin
+            if (scene) { std::string tg = Str(it, 0);
+                for (auto& up : scene->Objects()) if (up && up->active && up->tag == tg) scene->Destroy(up.get()); }
+        }
+        else if (op == "activate_all_tag" || op == "deactivate_all_tag") {
+            bool on = (op == "activate_all_tag");
+            if (scene) { std::string tg = Str(it, 0);
+                for (auto& up : scene->Objects()) if (up && up->tag == tg) up->active = on; }
+        }
         else if (op == "spawn") {
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
@@ -1370,6 +1388,7 @@ void ActionList::Update(float dt) {
         else if (op == "unparent") { if (t) t->SetParent(nullptr); }
         else if (op == "pause")  { Time::SetTimeScale(0.0f); }
         else if (op == "resume") { Time::SetTimeScale(1.0f); }
+        else if (op == "toggle_pause") { Time::SetTimeScale(Time::TimeScale() <= 0.0001f ? 1.0f : 0.0f); }
         // ---- Survival kit: drive the native survival components ----
         else if (op == "heal")   { InvokeNativeUIAction(gameObject, "Heal",   Num(it, 0)); }
         else if (op == "hurt")   { InvokeNativeUIAction(gameObject, "Damage", Num(it, 0)); }
@@ -1390,6 +1409,12 @@ void ActionList::Update(float dt) {
         else if (op == "set_y") { if (t) t->localPosition.y = Num(it, 0); }
         else if (op == "set_z") { if (t) t->localPosition.z = Num(it, 0); }
         else if (op == "flip_x") { if (t) t->localScale.x = -t->localScale.x; }   // face the other way (2D)
+        else if (op == "flip_y") { if (t) t->localScale.y = -t->localScale.y; }   // flip upside-down (2D)
+        else if (op == "add_x") { if (t) t->localPosition.x += Num(it, 0); }
+        else if (op == "add_y") { if (t) t->localPosition.y += Num(it, 0); }
+        else if (op == "add_z") { if (t) t->localPosition.z += Num(it, 0); }
+        else if (op == "reset_rotation") { if (t) t->localRotation = Quat::Euler({0, 0, 0}); }
+        else if (op == "reset_scale")    { if (t) t->localScale = {1, 1, 1}; }
         else if (op == "add_score") {                                            // add to a score-like var
             std::string v = Str(it, 0).empty() ? std::string("score") : Str(it, 0);
             Vars()[v] += (it.args.size() > 1 ? Num(it, 1) : 1.0f);

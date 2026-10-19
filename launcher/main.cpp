@@ -819,6 +819,9 @@ int main(int argc, char** argv) {
         std::error_code ec; fs::remove(fs::path(g_selfPath + ".old"), ec);
     }
 
+    // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
+    // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
 
     // Show the bundled version and DON'T phone home on startup: the published build

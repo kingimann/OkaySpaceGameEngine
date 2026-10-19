@@ -979,44 +979,9 @@ int main(int argc, char** argv) {
     // player out if so. Offline or local accounts are left as-is.
     accountPtr->VerifySession();
 
-    // Editable copies of the account-server settings, shown in the Settings tab.
-    // The URL is prefilled (it isn't sensitive); the key field is left blank and
-    // masked so an existing or compiled-in key is never displayed. activeKey
-    // holds the key currently in use (from env/file/built-in) without showing it.
-    char setUrl[256]; std::snprintf(setUrl, sizeof(setUrl), "%s", serverUrl.c_str());
-    char setKey[256] = {0};
-    std::string activeKey = apiKey;
-    std::string setStatus;
-    // Apply the Settings form and rebuild the service live. clear=true switches
-    // to local accounts. The API key is written to disk ONLY when the user types
-    // a new one — an empty key field keeps the current key, so a built-in key is
-    // never persisted to a plaintext file. The URL isn't secret, so it's saved.
-    auto applyAccountSettings = [&](bool clear) {
-        std::error_code ec;
-        std::string url, typed = setKey; trimEol(typed);
-        if (!clear) { url = setUrl; trimEol(url); }
-        std::string key = clear ? std::string{} : (typed.empty() ? activeKey : typed);
-
-        std::ofstream(fs::path(g_exeDir) / "account_server.txt", std::ios::trunc) << url << "\n";
-        if (clear)
-            fs::remove(fs::path(g_exeDir) / "account_apikey.txt", ec);   // back to local/built-in
-        else if (!typed.empty())
-            std::ofstream(fs::path(g_exeDir) / "account_apikey.txt", std::ios::trunc) << typed << "\n";
-        // else: empty key field -> leave any existing key file untouched and
-        // never write a built-in key to disk.
-
-        activeKey = key;
-        setKey[0] = '\0';                       // never retain the typed key in the box
-        if (clear) setUrl[0] = '\0';
-        accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, url, key);
-        g_presenceAccount = accountPtr.get();
-        accountPtr->VerifySession();
-        setStatus = accountPtr->IsOnline()
-            ? std::string("Saved. Server: ") + accountPtr->ServerUrl() + " (" +
-              accountPtr->ProviderName() + ")."
-            : "Saved. Using local dev accounts (no server set).";
-    };
-
+    // The account server is baked into this build (OKAY_DEFAULT_ACCOUNT_URL /
+    // account_server.txt), so the launcher no longer exposes a server-URL field
+    // or any way to change it in the UI — it just uses whatever was configured.
     char acctUser[64] = {0};
     char acctPass[64] = {0};
     char acctName[64] = {0};             // username (display name) on register
@@ -2157,10 +2122,6 @@ int main(int argc, char** argv) {
                                     sdr, ImGui::GetColorU32(stCol), 12);
                 ImGui::SetCursorScreenPos(ImVec2(dp.x + sdr * 2 + 7, dp.y));
                 ImGui::TextColored(stCol, "%s", account.IsOnline() ? "Online" : "Local (this device)");
-                if (account.IsOnline()) {
-                    ImGui::SetCursorScreenPos(ImVec2(tx, ImGui::GetCursorScreenPos().y));
-                    ImGui::TextDisabled("%s", account.ServerUrl().c_str());
-                }
                 ImGui::EndChild();
                 ImGui::Dummy(ImVec2(0, 12));
                 if (account.IsOnline() && ImGui::Button("Re-check session", ImVec2(180, 44)))
@@ -2227,14 +2188,9 @@ int main(int argc, char** argv) {
                 }
             } else {
                 ImGui::TextWrapped(account.IsOnline()
-                    ? "Sign in to your OkaySpace account to sync your work."
-                    : "No account server configured — using a local dev account on "
-                      "this device. Open the Settings tab to connect to a server "
-                      "(Supabase) and sign in online.");
-                if (account.IsOnline()) {
-                    ImGui::TextDisabled("Server: %s (%s)", account.ServerUrl().c_str(),
-                                        account.ProviderName());
-                }
+                    ? "Sign in to your OkaySpace account to sync your work and use "
+                      "Friends and the Marketplace."
+                    : "Using a local account on this device.");
                 ImGui::Dummy(ImVec2(0, 12));
 
                 // Sign in / Create account toggle.
@@ -2300,36 +2256,13 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
-            ImGui::TextWrapped("Account server. This build is preconfigured, so you "
-                               "normally don't need to change anything here. Advanced: "
-                               "point the launcher at a different server URL below, or "
-                               "switch to local accounts on this device.");
-            ImGui::Dummy(ImVec2(0, 12));
-            ImGui::SeparatorText("Account server");
-
-            ImGui::TextDisabled("Server URL");
-            ImGui::PushItemWidth(460);
-            ImGui::InputTextWithHint("##setUrl", "https://YOUR-PROJECT.supabase.co",
-                                     setUrl, sizeof(setUrl));
-            ImGui::PopItemWidth();
-            ImGui::Dummy(ImVec2(0, 12));
-
-            if (PrimaryButton("Save & apply", ImVec2(180, 46))) { applyAccountSettings(false); Toast("Settings saved", 1); }
-            ImGui::SameLine();
-            if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) applyAccountSettings(true);
-
-            ImGui::Dummy(ImVec2(0, 10));
-            // accountPtr (not the per-frame alias) — applyAccountSettings above
-            // may have just rebuilt it this frame.
+            ImGui::SeparatorText("Account");
+            // The account server is baked into this build, so there's nothing to
+            // configure here — just a plain connection status (no URL shown).
             if (accountPtr->IsOnline())
-                ImGui::TextDisabled("Status: connected to %s", accountPtr->ServerUrl().c_str());
+                ImGui::TextDisabled("Accounts are online. Sign in from the Account tab.");
             else
-                ImGui::TextDisabled("Status: local accounts (no server)");
-            if (!setStatus.empty()) {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", setStatus.c_str());
-                ImGui::PopTextWrapPos();
-            }
+                ImGui::TextDisabled("Using local accounts on this device.");
 
             // ---- Appearance ----
             ImGui::Dummy(ImVec2(0, 16));

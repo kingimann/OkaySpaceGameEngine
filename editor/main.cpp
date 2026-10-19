@@ -11791,6 +11791,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"net_kick",    "Kick Player",        "id [reason]",          "Host: remove a player.",                                  "Multiplayer"},
     {"net_disconnect","Disconnect",       "",                     "Leave the multiplayer session.",                          "Multiplayer"},
     {"steam_unlock","Steam Achievement",  "id",                   "Unlock a Steam achievement.",                             "Steam"},
+    {"achievement", "Unlock Achievement",  "id [name...]",         "Unlock a built-in OkaySpace achievement (shows in the launcher's Achievements tab, shared across your games). Also fires the matching Steam achievement if running on Steam.", "Game"},
     {"steam_set_stat","Steam Set Stat",   "name value",           "Set a Steam stat to a value.",                            "Steam"},
     {"steam_inc_stat","Steam Add Stat",   "name amount",          "Increase a Steam stat.",                                  "Steam"},
     {"playfab_login", "PlayFab Login",    "titleId customId",     "Sign in to PlayFab (creates the account on first use). customId = any stable id, or $textvar. Sets playfab_ok / playfab_id (and playfab_error on failure). Run once from On Start.", "PlayFab"},

@@ -2659,9 +2659,28 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                 }
             } else {
+                // Search + kind filter.
+                static char wSearch[96] = "";
+                static int  wFilterKind = 0;   // 0 All, 1 Games, 2 Scenes, 3 Templates
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 236);
+                ImGui::InputTextWithHint("##mktsearch", "Search the marketplace...", wSearch, sizeof(wSearch));
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(228);
+                ImGui::Combo("##mktkind", &wFilterKind, "All kinds\0Games\0Scenes\0Templates\0");
+                ImGui::Dummy(ImVec2(0, 4));
+
+                auto mlo = [](std::string s){ for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+                std::string nd = mlo(wSearch);
+                const char* kindKey[] = { "", "game", "scene", "template" };
                 ImGui::BeginChild("##market", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
                 std::string me = account.CurrentSession().username;
+                int mktShown = 0;
                 for (const auto& w : wCache) {
+                    std::string wk = w.kind.empty() ? "game" : w.kind;
+                    if (wFilterKind != 0 && wk != kindKey[wFilterKind]) continue;
+                    if (!nd.empty() &&
+                        mlo(w.title + " " + w.description + " " + w.author).find(nd) == std::string::npos) continue;
+                    ++mktShown;
                     ImGui::PushID((int)w.id);
                     ImGui::BeginChild("##witem", ImVec2(0, 92), true);
                     ImGui::BeginGroup();
@@ -2692,6 +2711,9 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 20));
                     ImGui::TextDisabled("Nothing published yet. Be the first — hit \"Publish an item\".");
                     ImGui::TextDisabled("(Run docs/sql/social.sql in your Supabase project if this stays empty.)");
+                } else if (mktShown == 0) {
+                    ImGui::Dummy(ImVec2(0, 20));
+                    ImGui::TextDisabled("No items match your search or filter.");
                 }
                 ImGui::EndChild();
             }

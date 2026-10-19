@@ -60,7 +60,10 @@ FunctionEnd
 
 Section "OkaySpace" SecMain
   SetOutPath "$INSTDIR"
-  File /r "${DISTDIR}\*.*"
+  ; Forward slash + "*" so this resolves on the build host whether makensis runs
+  ; on Windows or (as in CI) on Linux, where "\" is literal and "*.*" would skip
+  ; extensionless files.
+  File /r "${DISTDIR}/*"
 
   CreateShortcut "$SMPROGRAMS\OkaySpace.lnk" "$INSTDIR\OkaySpace.exe" "" "$INSTDIR\OkaySpace.exe" 0
   CreateShortcut "$DESKTOP\OkaySpace.lnk"    "$INSTDIR\OkaySpace.exe" "" "$INSTDIR\OkaySpace.exe" 0

@@ -67,9 +67,11 @@ jobs:
         # One-click setup .exe that installs or updates in place (see the .nsi).
         # This is what the launcher's "download the installer" flow hands users.
         run: |
+          # NSIS resolves a relative File path against the .nsi's own directory,
+          # not the workspace, so pass an absolute DISTDIR (and OUTFILE).
           makensis -DVERSION="${{ steps.pkg.outputs.ver }}" \
-                   -DDISTDIR=build-win-dist \
-                   -DOUTFILE=OkaySpace-Setup.exe \
+                   -DDISTDIR="$PWD/build-win-dist" \
+                   -DOUTFILE="$PWD/OkaySpace-Setup.exe" \
                    scripts/okayspace-installer.nsi
           ls -la OkaySpace-Setup.exe
 

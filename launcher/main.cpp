@@ -557,6 +557,7 @@ std::map<std::string, PlayStat> g_stats;
 // Set by the Play tab's "Publish to Marketplace" action; the Market tab reads it
 // once to prefill + open its publish form, then clears it.
 std::string g_pendingPublishTitle;
+bool g_openPublishForm = false;   // request the Market tab to open its publish form
 int g_friendRequests = 0;   // incoming pending friend requests (nav badge), polled in the background
 int  PlayCount(const std::string& p)  { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.count; }
 long LastPlayed(const std::string& p) { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.last; }
@@ -2045,11 +2046,13 @@ int main(int argc, char** argv) {
             // Share your own creations.
             ImGui::Dummy(ImVec2(0, 14));
             ImGui::SeparatorText("Share your creation");
-            ImGui::TextWrapped("Build your game in the editor (File > Build Game), then share the whole "
-                "game folder (zip it) so friends can drop it in their community folder and play. "
-                "One-click online publishing is coming soon.");
+            ImGui::TextWrapped("Build your game in the editor (File > Build Game), then either share the "
+                "whole game folder (zip it) for friends to drop in their community folder, or "
+                "publish it to the Marketplace so anyone can find and download it.");
             ImGui::Dummy(ImVec2(0, 4));
             if (ImGui::Button("Reveal my games folder", ImVec2(220, 0))) OpenExternal(g_exeDir);
+            ImGui::SameLine();
+            if (PrimaryButton("Publish to the Marketplace", ImVec2(230, 0))) { tab = 7; g_openPublishForm = true; }
 
             // Starter templates — quick starting points, opened in the editor.
             ImGui::Dummy(ImVec2(0, 16));
@@ -2633,6 +2636,7 @@ int main(int argc, char** argv) {
                 wShowPublish = true;
                 g_pendingPublishTitle.clear();
             }
+            if (g_openPublishForm) { wShowPublish = true; g_openPublishForm = false; }
             Uint32 now = SDL_GetTicks();
             if (now >= wNextRefresh) { wCache = ws.List(); wNextRefresh = now + 15000; }
 

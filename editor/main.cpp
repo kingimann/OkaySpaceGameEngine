@@ -1210,6 +1210,7 @@ bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 bool g_multiWindow = false;       // opt-in: panels can be dragged out to other OS windows/monitors
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
+bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
@@ -1417,6 +1418,7 @@ void AddRecent(const std::string& path) {
 void SaveSettings();   // defined below; LoadSettings calls it for the one-time migration
 void LoadSettings() {
     std::ifstream f("okay_settings.txt");
+    g_firstRun = !f.good();   // no settings file yet → brand-new install (auto-scale UI to the display)
     std::string k; int v;
     int ver = 0;
     while (f >> k >> v) {
@@ -29719,6 +29721,11 @@ int main(int argc, char** argv) {
     }
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
+    // Windows 11 / high-DPI: declare the process per-monitor-DPI-aware BEFORE init so
+    // Windows renders the window at native resolution (crisp) instead of bitmap-
+    // stretching a 96-DPI surface (the blurry look on 125%/150% scaled displays).
+    // No-op on other platforms. Pair with the UI Scale menu to size the UI to taste.
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO |
                  SDL_INIT_GAMECONTROLLER) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
@@ -29859,6 +29866,18 @@ int main(int argc, char** argv) {
     EditorState ed;
     LoadRecent();
     LoadSettings();
+    // Brand-new install on a high-DPI display (common on Windows 11 laptops at
+    // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —
+    // afterwards the user's own UI Scale choice (saved) wins.
+    if (g_firstRun) {
+        float ddpi = 96.0f, hdpi = 96.0f, vdpi = 96.0f;
+        int disp = SDL_GetWindowDisplayIndex(window);
+        if (disp >= 0 && SDL_GetDisplayDPI(disp, &ddpi, &hdpi, &vdpi) == 0 && ddpi > 0.0f) {
+            float s = ddpi / 96.0f;
+            s = std::round(s * 4.0f) / 4.0f;              // snap to 1.0 / 1.25 / 1.5 ...
+            g_uiScale = s < 1.0f ? 1.0f : (s > 2.0f ? 2.0f : s);
+        }
+    }
     LoadCustomActions();   // reusable custom instruction/condition library
     ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
 

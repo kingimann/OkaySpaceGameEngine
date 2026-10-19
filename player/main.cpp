@@ -999,6 +999,9 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
 
 int main(int argc, char** argv) {
     SDL_SetMainReady();
+    // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
+    // resolution instead of being bitmap-stretched (blurry) on scaled displays.
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;

@@ -9,6 +9,7 @@
 #include <SDL.h>
 #include "AppIcon.hpp"
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Achievements.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -1033,7 +1034,7 @@ int main(int argc, char** argv) {
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
         if (!ImGui::GetIO().WantTextInput) {
-            for (int i = 0; i < 5; ++i)
+            for (int i = 0; i < 6; ++i)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
                 playFilter[0] = commFilter[0] = marketFilter[0] = '\0';
@@ -1075,8 +1076,8 @@ int main(int argc, char** argv) {
         ImGui::Dummy(ImVec2(0, 16));
         ImGui::TextDisabled("  MENU");
         ImGui::Dummy(ImVec2(0, 2));
-        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings"};
-        for (int i = 0; i < 5; ++i) {
+        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements"};
+        for (int i = 0; i < 6; ++i) {
             char lbl[48];
             std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);   // room for the icon
             bool sel = (tab == i);
@@ -1122,6 +1123,15 @@ int main(int argc, char** argv) {
                                         ImVec2(cx + std::cos(a) * r * 1.05f, cy + std::sin(a) * r * 1.05f),
                                         ic, 2.0f);
                         }
+                        break;
+                    }
+                    case 5: {  // Achievements: trophy (cup + stem + base)
+                        dl->AddRectFilled(ImVec2(cx - r * 0.55f, cy - r * 0.85f),
+                                          ImVec2(cx + r * 0.55f, cy - r * 0.05f), ic, r * 0.2f);
+                        dl->AddRectFilled(ImVec2(cx - r * 0.12f, cy - r * 0.1f),
+                                          ImVec2(cx + r * 0.12f, cy + r * 0.55f), ic);
+                        dl->AddRectFilled(ImVec2(cx - r * 0.6f, cy + r * 0.55f),
+                                          ImVec2(cx + r * 0.6f, cy + r * 0.9f), ic, r * 0.2f);
                         break;
                     }
                 }
@@ -2125,7 +2135,7 @@ int main(int argc, char** argv) {
                     ImGui::PopTextWrapPos();
                 }
             }
-        } else {                                          // ---- Settings ----
+        } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
             ImGui::TextWrapped("Account server. This build is preconfigured, so you "
                                "normally don't need to change anything here. Advanced: "
@@ -2295,6 +2305,41 @@ int main(int argc, char** argv) {
                 ImGui::EndPopup();
             }
             ImGui::TextDisabled("Preferences are stored in launcher.cfg next to the launcher.");
+        } else if (tab == 5) {                            // ---- Achievements ----
+            sectionHeader("Achievements", nullptr);
+            std::vector<okay::Achievement> achs = okay::Achievements::All();
+            ImGui::TextDisabled("%d unlocked across your OkaySpace games.", (int)achs.size());
+            ImGui::Spacing();
+            if (achs.empty()) {
+                ImGui::Dummy(ImVec2(0, 24));
+                ImGui::TextDisabled("No achievements yet.");
+                ImGui::TextDisabled("Play a game whose actions call \"Unlock Achievement\" to earn your first.");
+            } else {
+                ImGui::BeginChild("##achlist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+                for (std::size_t i = achs.size(); i-- > 0; ) {   // newest first
+                    const okay::Achievement& a = achs[i];
+                    ImGui::PushID((int)i);
+                    ImGui::BeginChild("##achrow", ImVec2(0, 56), true);
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    float cy = p.y + 18.0f, cx = p.x + 16.0f, r = 11.0f;
+                    ImU32 gold = IM_COL32(240, 196, 92, 255);
+                    dl->AddRectFilled(ImVec2(cx - r * 0.6f, cy - r), ImVec2(cx + r * 0.6f, cy - r * 0.1f), gold, 3.0f);
+                    dl->AddRectFilled(ImVec2(cx - r * 0.12f, cy - r * 0.1f), ImVec2(cx + r * 0.12f, cy + r * 0.55f), gold);
+                    dl->AddRectFilled(ImVec2(cx - r * 0.7f, cy + r * 0.55f), ImVec2(cx + r * 0.7f, cy + r), gold, 2.0f);
+                    ImGui::Dummy(ImVec2(40, 0)); ImGui::SameLine();
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(a.label.c_str());
+                    char when[48] = "";
+                    if (a.when > 0) { std::time_t t = (std::time_t)a.when; std::tm* tm = std::localtime(&t);
+                                      if (tm) std::strftime(when, sizeof(when), "Unlocked %b %d, %Y", tm); }
+                    ImGui::TextDisabled("%s%s%s", a.id.c_str(), when[0] ? "  -  " : "", when);
+                    ImGui::EndGroup();
+                    ImGui::EndChild();
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
+            }
         }
 
         // ---- Footer (pinned to the bottom of the content panel) ----

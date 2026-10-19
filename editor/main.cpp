@@ -538,6 +538,21 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     int ss = g_ssaa;
     int rw = (int)(w * scale); if (rw < 1) rw = 1;
     int rh = (int)(h * scale); if (rh < 1) rh = 1;
+    // Cap the offscreen 3D buffer's long edge. The viewport is rendered to a texture
+    // and READ BACK to the CPU every frame (a synchronous GPU->CPU transfer whose cost
+    // scales with rw*rh), then blitted STRETCHED to the panel — so a hi-DPI / large
+    // panel would explode that read-back for no visible gain (the texture upscales for
+    // free, linearly filtered). Bounding it here is the single biggest editor FPS lever
+    // on high-DPI (Windows 11 125/150%) displays.
+    {
+        const int kMax3DEdge = 1920;
+        int longEdge = rw > rh ? rw : rh;
+        if (longEdge > kMax3DEdge) {
+            float k = (float)kMax3DEdge / (float)longEdge;
+            rw = (int)(rw * k); if (rw < 1) rw = 1;
+            rh = (int)(rh * k); if (rh < 1) rh = 1;
+        }
+    }
     // Auto-performance: drop supersampling on heavy scenes OR very large viewports
     // (the supersampled buffer is rw*rh*ss*ss pixels — keep that within a budget so
     // 2x AA never tanks FPS on a big window).

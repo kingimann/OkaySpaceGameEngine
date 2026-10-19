@@ -557,6 +557,7 @@ std::map<std::string, PlayStat> g_stats;
 // Set by the Play tab's "Publish to Marketplace" action; the Market tab reads it
 // once to prefill + open its publish form, then clears it.
 std::string g_pendingPublishTitle;
+int g_friendRequests = 0;   // incoming pending friend requests (nav badge), polled in the background
 int  PlayCount(const std::string& p)  { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.count; }
 long LastPlayed(const std::string& p) { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.last; }
 // A short "2h ago" / "3d ago" from a unix time (empty if never).
@@ -1080,6 +1081,17 @@ int main(int argc, char** argv) {
             scenes = FindScenes();
             rescannedAfterUpdate = true;
         }
+        // Poll incoming friend requests in the background for the nav badge.
+        {
+            static Uint32 nextReqPoll = 0;
+            Uint32 nowReq = SDL_GetTicks();
+            if (account.IsLoggedIn() && nowReq >= nextReqPoll) {
+                g_friendRequests = okay::Friends(account).PendingRequests();
+                nextReqPoll = nowReq + 30000;
+            } else if (!account.IsLoggedIn()) {
+                g_friendRequests = 0;
+            }
+        }
         // Toast once when an update check finishes.
         {
             static int lastUp = -1;
@@ -1235,6 +1247,15 @@ int main(int argc, char** argv) {
                 dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
                                   ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
                 dl->AddText(bp, ImGui::GetColorU32(ImGuiCol_Text), nb);
+            }
+            // Friends shows a red badge with the number of pending requests.
+            if (i == 6 && g_friendRequests > 0) {
+                char nb[16]; std::snprintf(nb, sizeof(nb), "%d", g_friendRequests);
+                ImVec2 ts = ImGui::CalcTextSize(nb);
+                ImVec2 bp(mx.x - ts.x - 18.0f, (mn.y + mx.y) * 0.5f - ts.y * 0.5f);
+                dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
+                                  IM_COL32(210, 72, 72, 255), 8.0f);
+                dl->AddText(bp, IM_COL32(255, 255, 255, 255), nb);
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Shortcut: %d", i + 1);

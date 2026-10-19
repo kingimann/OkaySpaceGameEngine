@@ -109,6 +109,21 @@ public:
         return out;
     }
 
+    // Cheap count of incoming pending requests (for a nav badge). One GET; RLS
+    // already limits rows to ones involving me, so I just count those addressed
+    // to me that are still pending.
+    int PendingRequests() {
+        if (!acct_.IsLoggedIn()) return 0;
+        std::string mine = MyId();
+        if (mine.empty()) return 0;
+        auto r = acct_.Api("/rest/v1/friendships?select=addressee,status&status=eq.pending", "GET");
+        if (!r.ok) return 0;
+        int n = 0;
+        for (const auto& obj : SplitObjects(r.body))
+            if (Field(obj, "addressee") == mine) ++n;
+        return n;
+    }
+
     // ---- presence ---------------------------------------------------------
     // Stamp last_seen + what I'm doing. Call every ~60s and whenever my state
     // changes (opened the launcher, launched a game, started hosting).

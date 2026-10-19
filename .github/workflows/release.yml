@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build mingw-w64 zip
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build mingw-w64 zip nsis
 
       - name: Fetch SDL2 (MinGW dev)
         run: |
@@ -63,6 +63,16 @@ jobs:
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
           echo "ver=${VER}" >> "$GITHUB_OUTPUT"
 
+      - name: Build Windows installer (NSIS)
+        # One-click setup .exe that installs or updates in place (see the .nsi).
+        # This is what the launcher's "download the installer" flow hands users.
+        run: |
+          makensis -DVERSION="${{ steps.pkg.outputs.ver }}" \
+                   -DDISTDIR=build-win-dist \
+                   -DOUTFILE=OkaySpace-Setup.exe \
+                   scripts/okayspace-installer.nsi
+          ls -la OkaySpace-Setup.exe
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -84,6 +94,7 @@ jobs:
           # basename as the asset name, so these resolve to the URLs the updater uses.
           files: |
             ${{ steps.pkg.outputs.zip }}
+            OkaySpace-Setup.exe
             build-win-dist/OkaySpace.exe
             build-win-dist/Tools/OkayEngine.exe
             build-win-dist/Tools/OkaySpacePlayer.exe

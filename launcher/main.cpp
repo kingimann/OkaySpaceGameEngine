@@ -10,6 +10,8 @@
 #include "AppIcon.hpp"
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Achievements.hpp"
+#include "okay/Platform/Friends.hpp"
+#include "okay/Platform/Workshop.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -1034,7 +1036,7 @@ int main(int argc, char** argv) {
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
         if (!ImGui::GetIO().WantTextInput) {
-            for (int i = 0; i < 6; ++i)
+            for (int i = 0; i < 8; ++i)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
                 playFilter[0] = commFilter[0] = marketFilter[0] = '\0';
@@ -1076,8 +1078,8 @@ int main(int argc, char** argv) {
         ImGui::Dummy(ImVec2(0, 16));
         ImGui::TextDisabled("  MENU");
         ImGui::Dummy(ImVec2(0, 2));
-        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements"};
-        for (int i = 0; i < 6; ++i) {
+        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market"};
+        for (int i = 0; i < 8; ++i) {
             char lbl[48];
             std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);   // room for the icon
             bool sel = (tab == i);
@@ -1134,6 +1136,19 @@ int main(int argc, char** argv) {
                                           ImVec2(cx + r * 0.6f, cy + r * 0.9f), ic, r * 0.2f);
                         break;
                     }
+                    case 6:   // Friends: two heads
+                        dl->AddCircleFilled(ImVec2(cx - r * 0.5f, cy - r * 0.35f), r * 0.42f, ic);
+                        dl->AddCircleFilled(ImVec2(cx + r * 0.5f, cy - r * 0.35f), r * 0.42f, ic);
+                        dl->AddRectFilled(ImVec2(cx - r, cy + r * 0.15f), ImVec2(cx, cy + r), ic, r * 0.3f);
+                        dl->AddRectFilled(ImVec2(cx, cy + r * 0.15f), ImVec2(cx + r, cy + r), ic, r * 0.3f);
+                        break;
+                    case 7:   // Market: price tag
+                        dl->AddRectFilled(ImVec2(cx - r * 0.8f, cy - r * 0.8f),
+                                          ImVec2(cx + r * 0.3f, cy + r * 0.3f), ic, r * 0.2f);
+                        dl->AddCircleFilled(ImVec2(cx - r * 0.4f, cy - r * 0.4f), r * 0.16f,
+                                            ImGui::GetColorU32(ImGuiCol_WindowBg));
+                        dl->AddLine(ImVec2(cx + r * 0.1f, cy + r * 0.1f), ImVec2(cx + r * 0.9f, cy + r * 0.9f), ic, 3.0f);
+                        break;
                 }
             }
             // Play shows how many games are installed, right-aligned in the row.
@@ -2337,6 +2352,168 @@ int main(int argc, char** argv) {
                     ImGui::EndGroup();
                     ImGui::EndChild();
                     ImGui::PopID();
+                }
+                ImGui::EndChild();
+            }
+        } else if (tab == 6) {                            // ---- Friends ----
+            sectionHeader("Friends", nullptr);
+            okay::Friends fr(account);
+            if (!fr.Available()) {
+                ImGui::Dummy(ImVec2(0, 20));
+                ImGui::TextDisabled("Sign in on the Account tab to add friends and see who's online.");
+            } else {
+                static char addBuf[48] = "";
+                static std::string fErr;
+                static std::vector<okay::Friend> fCache;
+                static Uint32 fNextRefresh = 0, fNextBeat = 0;
+                static bool fProfiled = false;
+                if (!fProfiled) { fr.EnsureProfile(); fProfiled = true; fNextRefresh = 0; }
+                Uint32 now = SDL_GetTicks();
+                if (now >= fNextBeat)    { fr.Heartbeat();  fNextBeat = now + 60000; }
+                if (now >= fNextRefresh) { fCache = fr.List(); fNextRefresh = now + 10000; }
+
+                // Add-a-friend row
+                ImGui::SetNextItemWidth(220);
+                bool submit = ImGui::InputTextWithHint("##addfriend", "Add by username...", addBuf,
+                                                       sizeof(addBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                if ((ImGui::Button("Send request") || submit) && addBuf[0]) {
+                    if (fr.Request(addBuf, &fErr)) {
+                        Toast(std::string("Friend request sent to ") + addBuf, 1);
+                        addBuf[0] = '\0'; fErr.clear(); fNextRefresh = 0;
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Refresh")) fNextRefresh = 0;
+                if (!fErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
+                                     ImGui::TextWrapped("%s", fErr.c_str()); ImGui::PopStyleColor(); }
+
+                // Split into requests / online / offline
+                std::vector<const okay::Friend*> reqs, online, offline;
+                for (const auto& f : fCache) {
+                    if (f.status != "accepted" && f.incoming) reqs.push_back(&f);
+                    else if (f.status != "accepted")          offline.push_back(&f); // outgoing pending
+                    else if (f.online)                        online.push_back(&f);
+                    else                                      offline.push_back(&f);
+                }
+                ImGui::Spacing();
+                ImGui::BeginChild("##friendlist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+                auto drawFriend = [&](const okay::Friend* f, bool request) {
+                    ImGui::PushID((int)f->rowId);
+                    ImGui::BeginChild("##frow", ImVec2(0, 48), true);
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImU32 dot = f->online ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
+                    dl->AddCircleFilled(ImVec2(p.x + 12, p.y + 14), 5.0f, dot, 16);
+                    ImGui::Dummy(ImVec2(26, 0)); ImGui::SameLine();
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(f->username.c_str());
+                    const char* sub = request ? "wants to be your friend"
+                                   : f->status != "accepted" ? "request sent"
+                                   : f->online ? "online" : "offline";
+                    ImGui::TextDisabled("%s", sub);
+                    ImGui::EndGroup();
+                    float btnW = request ? 170.0f : 86.0f;
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - btnW);
+                    if (request) {
+                        if (ImGui::Button("Accept")) { fr.Accept(f->rowId); fNextRefresh = 0; }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Decline")) { fr.Remove(f->rowId); fNextRefresh = 0; }
+                    } else {
+                        if (ImGui::SmallButton("Remove")) { fr.Remove(f->rowId); fNextRefresh = 0; }
+                    }
+                    ImGui::EndChild();
+                    ImGui::PopID();
+                };
+                if (!reqs.empty())    { ImGui::SeparatorText("Friend requests"); for (auto* f : reqs)    drawFriend(f, true);  }
+                if (!online.empty())  { ImGui::SeparatorText("Online");          for (auto* f : online)  drawFriend(f, false); }
+                if (!offline.empty()) { ImGui::SeparatorText("Offline");         for (auto* f : offline) drawFriend(f, false); }
+                if (fCache.empty()) {
+                    ImGui::Dummy(ImVec2(0, 20));
+                    ImGui::TextDisabled("No friends yet. Add someone by their username above.");
+                    ImGui::TextDisabled("(Run docs/sql/social.sql in your Supabase project if this stays empty.)");
+                }
+                ImGui::EndChild();
+            }
+        } else if (tab == 7) {                            // ---- Market / Workshop ----
+            sectionHeader("Marketplace", nullptr);
+            okay::Workshop ws(account);
+            static std::vector<okay::WorkshopItem> wCache;
+            static Uint32 wNextRefresh = 0;
+            static bool wShowPublish = false;
+            static char wTitle[128] = "", wUrl[256] = "";
+            static char wDesc[512] = "";
+            static int  wKind = 0;
+            static std::string wErr;
+            Uint32 now = SDL_GetTicks();
+            if (now >= wNextRefresh) { wCache = ws.List(); wNextRefresh = now + 15000; }
+
+            ImGui::TextDisabled("Browse and share games, scenes and templates from the community.");
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 196);
+            if (ImGui::Button(wShowPublish ? "Browse" : "Publish an item", ImVec2(110, 0)))
+                wShowPublish = !wShowPublish;
+            ImGui::SameLine();
+            if (ImGui::Button("Refresh", ImVec2(78, 0))) wNextRefresh = 0;
+            ImGui::Spacing();
+
+            if (wShowPublish) {
+                if (!ws.Available()) {
+                    ImGui::TextDisabled("Sign in on the Account tab to publish.");
+                } else {
+                    ImGui::BeginChild("##publish", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), true);
+                    ImGui::SeparatorText("Publish to the marketplace");
+                    ImGui::SetNextItemWidth(360); ImGui::InputTextWithHint("Title", "My awesome game", wTitle, sizeof(wTitle));
+                    ImGui::SetNextItemWidth(200); ImGui::Combo("Kind", &wKind, "Game\0Scene\0Template\0");
+                    ImGui::InputTextMultiline("Description", wDesc, sizeof(wDesc), ImVec2(-1, 90));
+                    ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##url", "Download link (GitHub release, itch.io, or a public URL)...", wUrl, sizeof(wUrl));
+                    ImGui::TextDisabled("Host your build anywhere public and paste the link. Players download it from here.");
+                    ImGui::Dummy(ImVec2(0, 4));
+                    if (ImGui::Button("Publish", ImVec2(120, 0))) {
+                        const char* kinds[] = { "game", "scene", "template" };
+                        if (ws.Publish(wTitle, wDesc, kinds[wKind], wUrl, &wErr)) {
+                            Toast("Published to the marketplace", 1);
+                            wTitle[0] = wDesc[0] = wUrl[0] = '\0'; wErr.clear();
+                            wShowPublish = false; wNextRefresh = 0;
+                        }
+                    }
+                    if (!wErr.empty()) { ImGui::SameLine(); ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
+                                         ImGui::TextWrapped("%s", wErr.c_str()); ImGui::PopStyleColor(); }
+                    ImGui::EndChild();
+                }
+            } else {
+                ImGui::BeginChild("##market", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+                std::string me = account.CurrentSession().username;
+                for (const auto& w : wCache) {
+                    ImGui::PushID((int)w.id);
+                    ImGui::BeginChild("##witem", ImVec2(0, 92), true);
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(w.title.c_str());
+                    ImGui::TextDisabled("%s  -  by %s  -  %ld download%s",
+                                        w.kind.empty() ? "game" : w.kind.c_str(),
+                                        w.author.empty() ? "unknown" : w.author.c_str(),
+                                        w.downloads, w.downloads == 1 ? "" : "s");
+                    if (!w.description.empty()) ImGui::TextWrapped("%s", w.description.c_str());
+                    ImGui::EndGroup();
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
+                    ImGui::BeginGroup();
+                    if (!w.url.empty()) {
+                        if (ImGui::Button("Get", ImVec2(84, 0))) {
+                            OpenExternal(w.url);
+                            ws.NoteDownload(w.id, w.downloads);
+                            wNextRefresh = 0;
+                        }
+                    } else ImGui::TextDisabled("no link");
+                    if (!me.empty() && me == w.author) {
+                        if (ImGui::SmallButton("Remove")) { ws.Remove(w.id); wNextRefresh = 0; }
+                    }
+                    ImGui::EndGroup();
+                    ImGui::EndChild();
+                    ImGui::PopID();
+                }
+                if (wCache.empty()) {
+                    ImGui::Dummy(ImVec2(0, 20));
+                    ImGui::TextDisabled("Nothing published yet. Be the first — hit \"Publish an item\".");
+                    ImGui::TextDisabled("(Run docs/sql/social.sql in your Supabase project if this stays empty.)");
                 }
                 ImGui::EndChild();
             }

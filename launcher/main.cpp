@@ -3598,14 +3598,16 @@ int main(int argc, char** argv) {
                     ImGui::BeginChild("##dmlog", ImVec2(0, ImGui::GetContentRegionAvail().y - 40.0f), false);
                     static int dmLastShown = -1;
                     float avW = ImGui::GetContentRegionAvail().x;
-                    std::string prevSender; bool first = true; long prevDay = 0;
+                    std::string prevSender; bool first = true; long prevDay = 0, prevWhen = 0;
                     for (const auto& m : dmLog) {
                         long day = DayKey(m.when);
                         if (day != 0 && day != prevDay) {
                             ImGui::SetCursorPosX(0); ChatDateSeparator(m.when);
-                            prevDay = day; prevSender.clear(); first = true;
+                            prevDay = day; prevSender.clear(); first = true; prevWhen = 0;
                         }
-                        bool grp = (first || (m.mine ? prevSender!="me" : prevSender!="them"));
+                        bool grp = (first || (m.mine ? prevSender!="me" : prevSender!="them")
+                                    || (m.when > 0 && prevWhen > 0 && m.when - prevWhen > 420));
+                        prevWhen = m.when;
                         float bubbleMax = avW * 0.66f;
                         ImVec2 ts = ImGui::CalcTextSize(m.body.c_str(), nullptr, false, bubbleMax);
                         float bw = ts.x + 20, bh = ts.y + 14;
@@ -3643,13 +3645,15 @@ int main(int argc, char** argv) {
                     if (dmLog.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
                     if ((int)dmLog.size() != dmLastShown) { ImGui::SetScrollHereY(1.0f); dmLastShown = (int)dmLog.size(); }
                     ImGui::EndChild();
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 64);
-                    bool send = ImGui::InputTextWithHint("##dmin", "Message...", dmInput, sizeof(dmInput),
-                                                         ImGuiInputTextFlags_EnterReturnsTrue);
+                    // Multiline composer: Enter sends, Ctrl+Enter inserts a newline.
+                    ImVec2 dmInSz(ImGui::GetContentRegionAvail().x - 64, ImGui::GetTextLineHeight() + 14);
+                    bool send = ImGui::InputTextMultiline("##dmin", dmInput, sizeof(dmInput), dmInSz,
+                        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
                     ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-                    if ((ImGui::Button("Send", ImVec2(56,0)) || send) && dmInput[0]) {
+                    if ((ImGui::Button("Send", ImVec2(56, dmInSz.y)) || send) && dmInput[0]) {
                         if (dm.Send(dmUid, dmInput)) { dmInput[0] = '\0'; dmNextPoll = 0; }
+                        ImGui::SetKeyboardFocusHere(-1);
                     }
                     ImGui::PopStyleColor();
                     ImGui::EndPopup();
@@ -4156,14 +4160,17 @@ int main(int argc, char** argv) {
                         ImGui::Separator();
                         ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - 40.0f), false);
                         static int svLastShown = -1;
-                        std::string prevAuthor; bool firstMsg = true; long prevDay = 0;
+                        std::string prevAuthor; bool firstMsg = true; long prevDay = 0, prevWhen = 0;
                         for (const auto& m : svMsgs) {
                             std::string who = m.author.empty() ? "unknown" : m.author;
                             // Date separator when the day changes.
                             long day = DayKey(m.when);
                             if (day != 0 && day != prevDay) { ChatDateSeparator(m.when); prevDay = day; prevAuthor.clear(); }
                             char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
-                            if (who != prevAuthor) {
+                            // Start a fresh group on a new author or a >7 min gap.
+                            bool newGroup = (who != prevAuthor) || (m.when > 0 && prevWhen > 0 && m.when - prevWhen > 420);
+                            prevWhen = m.when;
+                            if (newGroup) {
                                 if (!firstMsg) ImGui::Dummy(ImVec2(0, 6));
                                 DrawAvatar("", who, 34.0f);            // colored initial avatar
                                 ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6);
@@ -4196,12 +4203,14 @@ int main(int argc, char** argv) {
                         }
                         if ((int)svMsgs.size() != svLastShown) { ImGui::SetScrollHereY(1.0f); svLastShown = (int)svMsgs.size(); }
                         ImGui::EndChild();
-                        char hint[64]; std::snprintf(hint, sizeof(hint), "Message #%s", chanName.empty()?"channel":chanName.c_str());
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70);
-                        bool send = ImGui::InputTextWithHint("##svsend", hint, svMsg, sizeof(svMsg), ImGuiInputTextFlags_EnterReturnsTrue);
+                        // Multiline composer: Enter sends, Ctrl+Enter inserts a newline.
+                        ImVec2 inSz(ImGui::GetContentRegionAvail().x - 70, ImGui::GetTextLineHeight() + 14);
+                        bool send = ImGui::InputTextMultiline("##svsend", svMsg, sizeof(svMsg), inSz,
+                            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
                         ImGui::SameLine();
-                        if ((ImGui::Button("Send", ImVec2(62, 0)) || send) && svMsg[0]) {
+                        if ((ImGui::Button("Send", ImVec2(62, inSz.y)) || send) && svMsg[0]) {
                             if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; svNextMsg = 0; }
+                            ImGui::SetKeyboardFocusHere(-1);   // keep focus in the box after sending
                         }
                     }
                     ImGui::EndChild();

@@ -360,6 +360,29 @@ extern "C" {
 
 namespace {
 
+// Run a shell command WITHOUT flashing a console window. On Windows std::system
+// spawns a visible cmd window for every call (the "command prompts popping up");
+// this runs the same command through cmd /C under CREATE_NO_WINDOW instead. It
+// blocks and returns the child's exit code, matching std::system's semantics.
+// On other platforms it is just the system shell.
+inline int SysNoWindow(const std::string& cmd) {
+#if defined(_WIN32)
+    std::string full = "cmd /C " + cmd;
+    std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
+    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
+    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
+    if (!CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1; GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    return (int)code;
+#else
+    return ::system(cmd.c_str());
+#endif
+}
+
 ImU32 ToColor(const Color& c) {
     return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(c.a * 255));
 }
@@ -984,17 +1007,17 @@ bool Download(const std::string& url, const std::string& outPath) {
     const char* noCache = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" -A \"OkaySpace-Updater\" ";
 #if defined(_WIN32)
     std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\"";
-    if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
+    if (SysNoWindow(c1.c_str()) == 0 && fs::exists(outPath)) return true;
     std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
                      "-Headers @{'Cache-Control'='no-cache'} "
                      "-UseBasicParsing -Uri '" + u + "' -OutFile '" + outPath +
                      "' } catch { exit 1 }\"";
-    return std::system(c2.c_str()) == 0 && fs::exists(outPath);
+    return SysNoWindow(c2.c_str()) == 0 && fs::exists(outPath);
 #else
     std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
-    if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
+    if (SysNoWindow(c1.c_str()) == 0 && fs::exists(outPath)) return true;
     std::string c2 = "wget -q --no-cache -O \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
-    return std::system(c2.c_str()) == 0 && fs::exists(outPath);
+    return SysNoWindow(c2.c_str()) == 0 && fs::exists(outPath);
 #endif
 }
 
@@ -1077,9 +1100,9 @@ UpdateInfo CheckLatest() {
 // Launch a (new) executable detached from this process.
 void Relaunch(const std::string& path) {
 #if defined(_WIN32)
-    int rc = std::system(("start \"\" \"" + path + "\"").c_str());
+    int rc = SysNoWindow(("start \"\" \"" + path + "\"").c_str());
 #else
-    int rc = std::system(("\"" + path + "\" >/dev/null 2>&1 &").c_str());
+    int rc = SysNoWindow(("\"" + path + "\" >/dev/null 2>&1 &").c_str());
 #endif
     (void)rc;
 }
@@ -1125,7 +1148,7 @@ std::string InstallUpdate(const std::string& latest, const std::string& ref = "m
           << "start \"\" \"" << sp << "\"\r\n"
           << "del \"%~f0\"\r\n";
     }
-    std::system(("start \"\" /min cmd /c \"" + bat.string() + "\"").c_str());
+    SysNoWindow(("start \"\" /min cmd /c \"" + bat.string() + "\"").c_str());
     pendingQuit = true;   // exit so the helper can replace the exe
     return "Updating to v" + latest + "... reopening.";
 #else
@@ -2165,11 +2188,11 @@ std::string ReadFile(const std::string& path) {
 // Reveal a path in the OS file manager (NOT an IDE) — for "Show in Explorer".
 void RevealInFiles(const std::string& path) {
 #if defined(_WIN32)
-    int rc = std::system(("explorer \"" + path + "\"").c_str());
+    int rc = SysNoWindow(("explorer \"" + path + "\"").c_str());
 #elif defined(__APPLE__)
-    int rc = std::system(("open \"" + path + "\" 2>/dev/null").c_str());
+    int rc = SysNoWindow(("open \"" + path + "\" 2>/dev/null").c_str());
 #else
-    int rc = std::system(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
+    int rc = SysNoWindow(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
 #endif
     (void)rc;
 }
@@ -2177,14 +2200,14 @@ void RevealInFiles(const std::string& path) {
 void OpenExternal(const std::string& path) {
     // Prefer VS Code if present, otherwise the OS default handler.
 #if defined(_WIN32)
-    int rc = std::system(("code \"" + path + "\"").c_str());
-    if (rc != 0) rc = std::system(("start \"\" \"" + path + "\"").c_str());
+    int rc = SysNoWindow(("code \"" + path + "\"").c_str());
+    if (rc != 0) rc = SysNoWindow(("start \"\" \"" + path + "\"").c_str());
 #elif defined(__APPLE__)
-    int rc = std::system(("code \"" + path + "\" 2>/dev/null").c_str());
-    if (rc != 0) rc = std::system(("open \"" + path + "\"").c_str());
+    int rc = SysNoWindow(("code \"" + path + "\" 2>/dev/null").c_str());
+    if (rc != 0) rc = SysNoWindow(("open \"" + path + "\"").c_str());
 #else
-    int rc = std::system(("code \"" + path + "\" >/dev/null 2>&1").c_str());
-    if (rc != 0) rc = std::system(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
+    int rc = SysNoWindow(("code \"" + path + "\" >/dev/null 2>&1").c_str());
+    if (rc != 0) rc = SysNoWindow(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
 #endif
     (void)rc;
 }
@@ -29969,7 +29992,7 @@ static bool PassesLauncherGate(int argc, char** argv) {
 #else
         std::string cmd = "\"" + launcher.string() + "\" >/dev/null 2>&1 &";
 #endif
-        std::system(cmd.c_str());
+        SysNoWindow(cmd.c_str());
     }
     return false;
 }

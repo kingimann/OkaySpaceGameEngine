@@ -2447,6 +2447,16 @@ static int PollWorker(void*) {
     return 0;
 }
 
+// Verify the saved account session on a worker thread so the main thread can
+// keep animating the startup splash instead of freezing on the network call.
+struct VerifyJob { okay::account::AccountService* acct; volatile bool done; };
+static int VerifySessionWorker(void* p) {
+    VerifyJob* j = (VerifyJob*)p;
+    try { if (j->acct) j->acct->VerifySession(); } catch (...) {}
+    j->done = true;
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2574,7 +2584,22 @@ int main(int argc, char** argv) {
     // If we resumed a saved session against an online server, make sure it's
     // still valid (the token may have been revoked/expired); this signs the
     // player out if so. Offline or local accounts are left as-is.
-    accountPtr->VerifySession();
+    // Run it on a worker thread and keep animating the splash so startup stays
+    // smooth instead of freezing on the network round-trip.
+    {
+        VerifyJob vj{ accountPtr.get(), false };
+        SDL_Thread* vt = SDL_CreateThread(VerifySessionWorker, "okay-verify", &vj);
+        int ai = g_accentIndex, an = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+        if (ai < 0 || ai >= an) ai = 0;
+        while (!vj.done) {
+            SDL_PumpEvents();   // keep the window responsive (and mapped) while we wait
+            int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+            okay::DrawSplash(renderer, sw, sh, kAccentPresets[ai].col.x,
+                             kAccentPresets[ai].col.y, kAccentPresets[ai].col.z);
+            SDL_Delay(16);
+        }
+        if (vt) SDL_WaitThread(vt, nullptr);
+    }
 
     // Start the background friends/DM poll (its own service, read from disk each
     // cycle) so the nav badges never block the UI on the network.

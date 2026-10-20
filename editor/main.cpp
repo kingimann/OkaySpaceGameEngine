@@ -14864,18 +14864,32 @@ static void DrawFlowGraph(EditorState& ed) {
         ImGui::PopID();
         ImVec2 br{p.x + NW, p.y + NH};
         float rad = 7.0f * z;
-        // Soft drop shadow, a slightly darkened body, a bright category stripe down the
-        // left edge, and a hover/edge outline — a cleaner, more "node editor" look.
-        dl->AddRectFilled(ImVec2(p.x + 3 * z, p.y + 5 * z), ImVec2(br.x + 3 * z, br.y + 5 * z), IM_COL32(0, 0, 0, 70), rad);
-        ImU32 top = IM_COL32(((col>>IM_COL32_R_SHIFT)&0xFF), ((col>>IM_COL32_G_SHIFT)&0xFF), ((col>>IM_COL32_B_SHIFT)&0xFF), 255);
-        dl->AddRectFilled(p, br, IM_COL32(38, 41, 50, 255), rad);
-        dl->AddRectFilledMultiColor(p, ImVec2(br.x, p.y + NH * 0.5f),
-            IM_COL32(255,255,255,14), IM_COL32(255,255,255,14), IM_COL32(255,255,255,0), IM_COL32(255,255,255,0));  // top sheen
-        dl->AddRectFilled(p, ImVec2(p.x + 5 * z, br.y), top, rad, ImDrawFlags_RoundCornersLeft);  // category stripe
-        dl->AddRect(p, br, hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,45), rad, 0, hov ? 2.0f : 1.0f);
-        dl->AddText(fnt, fs, ImVec2(std::round(p.x + 12 * z), std::round(p.y + 6 * z)), IM_COL32(236,239,246,255), title);
-        if (!sub.empty()) dl->AddText(fnt, std::round(fs * 0.9f), ImVec2(std::round(p.x + 12 * z), std::round(p.y + 25 * z)), IM_COL32(160,167,182,255), sub.c_str());
-        if (del) dl->AddText(fnt, fs, ImVec2(std::round(p.x + NW - 15 * z), std::round(p.y + 3 * z)), hov ? IM_COL32(240,140,140,255) : IM_COL32(150,110,110,255), "x");
+        int cr = (col>>IM_COL32_R_SHIFT)&0xFF, cg = (col>>IM_COL32_G_SHIFT)&0xFF, cb = (col>>IM_COL32_B_SHIFT)&0xFF;
+        // Blueprint/Unity-style node: a colored header bar (the category color)
+        // over a dark rounded body, soft drop shadow, left connector knobs and a
+        // hover outline — a clear, modern node-editor look.
+        dl->AddRectFilled(ImVec2(p.x + 3 * z, p.y + 5 * z), ImVec2(br.x + 3 * z, br.y + 5 * z), IM_COL32(0, 0, 0, 80), rad);
+        float hdrH = 24.0f * z;
+        // Body.
+        dl->AddRectFilled(p, br, IM_COL32(34, 37, 46, 255), rad);
+        // Header bar: full category color with a subtle vertical gradient, top corners rounded.
+        dl->AddRectFilled(p, ImVec2(br.x, p.y + hdrH), IM_COL32(cr, cg, cb, 255), rad, ImDrawFlags_RoundCornersTop);
+        dl->AddRectFilledMultiColor(p, ImVec2(br.x, p.y + hdrH),
+            IM_COL32(255,255,255,30), IM_COL32(255,255,255,30), IM_COL32(0,0,0,30), IM_COL32(0,0,0,30));
+        // A thin header/body divider + outline.
+        dl->AddLine(ImVec2(p.x, p.y + hdrH), ImVec2(br.x, p.y + hdrH), IM_COL32(0,0,0,70), 1.0f);
+        dl->AddRect(p, br, hov ? IM_COL32(255,255,255,170) : IM_COL32(cr, cg, cb, 150), rad, 0, hov ? 2.0f : 1.4f);
+        // Title on the header (dark text reads on the bright bar); sub in the body.
+        dl->AddText(fnt, fs, ImVec2(std::round(p.x + 12 * z), std::round(p.y + 5 * z)), IM_COL32(18,20,26,255), title);
+        if (!sub.empty()) dl->AddText(fnt, std::round(fs * 0.9f), ImVec2(std::round(p.x + 12 * z), std::round(p.y + hdrH + 5 * z)), IM_COL32(176,183,198,255), sub.c_str());
+        // Flow connector knobs: an input on the left edge and an output on the right,
+        // in the category color — the recognizable "plug the wire in here" affordance.
+        float knobY = p.y + hdrH * 0.5f;
+        dl->AddCircleFilled(ImVec2(p.x, knobY), 4.0f * z, IM_COL32(cr, cg, cb, 255), 12);
+        dl->AddCircleFilled(ImVec2(p.x, knobY), 2.0f * z, IM_COL32(20, 22, 28, 255), 10);
+        dl->AddCircleFilled(ImVec2(br.x, knobY), 4.0f * z, IM_COL32(cr, cg, cb, 255), 12);
+        dl->AddCircleFilled(ImVec2(br.x, knobY), 2.0f * z, IM_COL32(20, 22, 28, 255), 10);
+        if (del) dl->AddText(fnt, fs, ImVec2(std::round(p.x + NW - 15 * z), std::round(p.y + 3 * z)), hov ? IM_COL32(60,20,20,255) : IM_COL32(40,30,30,200), "x");
         // Drag-grip dots (2x3) at the node's right edge on hover — a clear "grab me" cue.
         if (hov) {
             float gxk = br.x - 12 * z, gyk = p.y + NH * 0.5f - 5 * z;

@@ -4462,72 +4462,183 @@ int main(int argc, char** argv) {
             okay::Forums fo(account);
             static std::vector<okay::ForumThread> ftCache;
             static std::vector<okay::ForumPost> fpCache;
+            static std::map<long,long> thScores, poScores;
+            static std::map<long,int>  thMy, poMy, thComments;
             static long   openThread = 0;
-            static std::string openTitle, openAuthor, foErr;
-            static char newThread[120] = "", replyBuf[600] = "";
+            static std::string openTitle, openAuthor, openBody, openCat, foErr;
+            static long openWhen = 0;
+            static char newThread[160] = "", newBody[800] = "", newCat[48] = "", replyBuf[600] = "";
+            static int  foSort = 0;      // 0 Hot, 1 New, 2 Top
+            static bool foShowNew = false;
             static Uint32 foNext = 0, fpNext = 0;
             Uint32 tnow = SDL_GetTicks();
-            if (tnow >= foNext) { ftCache = fo.Threads(); foNext = tnow + 20000; }
+            if (tnow >= foNext) {
+                ftCache = fo.Threads();
+                thScores = fo.Scores("thread"); thMy = fo.MyVotes("thread"); thComments = fo.CommentCounts();
+                foNext = tnow + 20000;
+            }
+
+            // A compact up/score/down vote widget (Reddit-style). Toggles like
+            // Reddit: clicking your current direction clears the vote. Returns true
+            // if a vote changed (so the caller can refresh).
+            auto voteWidget = [&](const char* kind, long id, long baseScore, int myVote) -> bool {
+                bool changed = false;
+                ImGui::BeginGroup();
+                ImGui::PushID((int)id); ImGui::PushID(kind);
+                ImU32 up  = myVote == 1  ? IM_COL32(236,128,64,255)  : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                ImU32 dn  = myVote == -1 ? IM_COL32(110,130,240,255) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                ImGui::PushStyleColor(ImGuiCol_Text, up);
+                bool canVote = fo.Available();
+                if (ImGui::ArrowButton("u", ImGuiDir_Up) && canVote) { fo.Vote(kind, id, myVote == 1 ? 0 : 1); changed = true; }
+                ImGui::PopStyleColor();
+                // Score, centered under the arrow, tinted by my vote.
+                char sc[16]; std::snprintf(sc, sizeof(sc), "%ld", baseScore);
+                float aw = ImGui::GetItemRectSize().x, tw = ImGui::CalcTextSize(sc).x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (aw - tw) * 0.5f);
+                ImVec4 scCol = myVote==1?ImVec4(0.93f,0.5f,0.25f,1):myVote==-1?ImVec4(0.43f,0.51f,0.94f,1):ImVec4(0.8f,0.82f,0.88f,1);
+                ImGui::TextColored(scCol, "%s", sc);
+                ImGui::PushStyleColor(ImGuiCol_Text, dn);
+                if (ImGui::ArrowButton("d", ImGuiDir_Down) && canVote) { fo.Vote(kind, id, myVote == -1 ? 0 : -1); changed = true; }
+                ImGui::PopStyleColor();
+                ImGui::PopID(); ImGui::PopID();
+                ImGui::EndGroup();
+                return changed;
+            };
 
             if (openThread == 0) {
-                // Start a thread.
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 154);
-                bool mk = ImGui::InputTextWithHint("##newthread", "Start a new discussion...",
-                                                   newThread, sizeof(newThread), ImGuiInputTextFlags_EnterReturnsTrue);
+                // Toolbar: sort selector + "New post" toggle.
+                ImGui::SetNextItemWidth(150);
+                ImGui::Combo("##fosort", &foSort, "Hot\0New\0Top\0");
                 ImGui::SameLine();
-                if ((PrimaryButton("Post thread", ImVec2(146, 0)) || mk) && newThread[0]) {
-                    if (fo.StartThread(newThread, &foErr)) { newThread[0] = '\0'; foErr.clear(); foNext = 0; }
+                if (foShowNew) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+                if (PrimaryButton(foShowNew ? "Cancel" : "+ New post", ImVec2(130, 0))) foShowNew = !foShowNew;
+                if (foShowNew) ImGui::PopStyleColor();
+                ImGui::SameLine(); if (ImGui::Button("Refresh", ImVec2(84, 0))) foNext = 0;
+
+                if (foShowNew) {
+                    ImGui::BeginChild("##newpost", ImVec2(0, 182), true);
+                    if (!fo.Available()) {
+                        ImGui::TextDisabled("Sign in to post.");
+                    } else {
+                        ImGui::SetNextItemWidth(-1);
+                        ImGui::InputTextWithHint("##nt", "Title", newThread, sizeof(newThread));
+                        ImGui::SetNextItemWidth(220);
+                        ImGui::InputTextWithHint("##ncat", "Topic (e.g. help, showcase)", newCat, sizeof(newCat));
+                        ImGui::InputTextMultiline("##nb", newBody, sizeof(newBody), ImVec2(-1, 80));
+                        if (PrimaryButton("Post", ImVec2(120, 0)) && newThread[0]) {
+                            if (fo.StartThread(newThread, newBody, newCat, &foErr)) {
+                                newThread[0] = newBody[0] = newCat[0] = '\0'; foErr.clear();
+                                foShowNew = false; foNext = 0;
+                            }
+                        }
+                        if (!foErr.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.9f,0.45f,0.45f,1), "%s", foErr.c_str()); }
+                    }
+                    ImGui::EndChild();
                 }
-                if (!foErr.empty()) { ImGui::TextColored(ImVec4(0.9f,0.45f,0.45f,1), "%s", foErr.c_str()); }
-                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::Dummy(ImVec2(0, 4));
+
+                // Sorted view of the threads.
+                std::vector<const okay::ForumThread*> order;
+                order.reserve(ftCache.size());
+                for (auto& t : ftCache) order.push_back(&t);
+                auto scoreOf = [&](long id){ auto it = thScores.find(id); return it!=thScores.end()?it->second:0L; };
+                if (foSort == 2)        // Top: highest score
+                    std::stable_sort(order.begin(), order.end(), [&](auto a, auto b){ return scoreOf(a->id) > scoreOf(b->id); });
+                else if (foSort == 0)   // Hot: score, then recency
+                    std::stable_sort(order.begin(), order.end(), [&](auto a, auto b){
+                        if (scoreOf(a->id) != scoreOf(b->id)) return scoreOf(a->id) > scoreOf(b->id);
+                        return a->when > b->when; });
+                // New (1): ftCache is already newest-first.
+
                 ImGui::BeginChild("##threads", ImVec2(0, ImGui::GetContentRegionAvail().y - 4), false);
-                for (const auto& t : ftCache) {
+                for (const okay::ForumThread* tp : order) {
+                    const okay::ForumThread& t = *tp;
+                    long sc = scoreOf(t.id); int mv = thMy.count(t.id) ? thMy[t.id] : 0;
+                    int nc = thComments.count(t.id) ? thComments[t.id] : 0;
                     ImGui::PushID((int)t.id);
-                    ImGui::BeginChild("##trow", ImVec2(0, 52), true);
+                    ImGui::BeginChild("##trow", ImVec2(0, 66), true);
                     HoverRing();
-                    ImGui::SetCursorPos(ImVec2(12, 10));
+                    ImGui::SetCursorPos(ImVec2(6, 8));
+                    if (voteWidget("thread", t.id, sc, mv)) foNext = 0;
+                    ImGui::SameLine(); ImGui::SetCursorPosX(52);
                     ImGui::BeginGroup();
+                    ImGui::SetCursorPosY(10);
+                    if (!t.category.empty()) {
+                        ImVec2 bp = ImGui::GetCursorScreenPos(); ImVec2 ks = ImGui::CalcTextSize(t.category.c_str());
+                        ImGui::GetWindowDrawList()->AddRectFilled(bp, ImVec2(bp.x+ks.x+12, bp.y+ks.y+4), ImGui::GetColorU32(kAccentDim), (ks.y+4)*0.5f);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x+6, bp.y+2), IM_COL32(235,238,245,255), t.category.c_str());
+                        ImGui::Dummy(ImVec2(ks.x+12, ks.y+4)); ImGui::SameLine(0, 6);
+                    }
                     ImGui::TextUnformatted(t.title.c_str());
                     std::string when = RelTime(t.when);
-                    ImGui::TextDisabled("by %s%s%s", t.author.empty()?"unknown":t.author.c_str(), when.empty()?"":"  -  ", when.c_str());
+                    ImGui::TextDisabled("by %s%s%s  -  %d comment%s",
+                        t.author.empty()?"unknown":t.author.c_str(), when.empty()?"":"  -  ", when.c_str(),
+                        nc, nc==1?"":"s");
                     ImGui::EndGroup();
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 76);
-                    ImGui::SetCursorPosY(14.0f);
-                    if (ImGui::Button("Open", ImVec2(70, 28))) { openThread=t.id; openTitle=t.title; openAuthor=t.author; fpNext=0; }
-                    if (ImGui::IsWindowHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { openThread=t.id; openTitle=t.title; openAuthor=t.author; fpNext=0; }
+                    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                        !ImGui::IsAnyItemHovered()) {
+                        openThread=t.id; openTitle=t.title; openAuthor=t.author; openBody=t.body; openCat=t.category; openWhen=t.when; fpNext=0;
+                    }
                     ImGui::EndChild();
                     ImGui::PopID();
                 }
                 if (ftCache.empty()) {
                     ImGui::Dummy(ImVec2(0, 20));
-                    if (!fo.Available()) ImGui::TextDisabled("Browse freely; sign in to post.");
-                    ImGui::TextDisabled("No discussions yet — start the first one above.");
+                    if (!fo.Available()) ImGui::TextDisabled("Browse freely; sign in to post and vote.");
+                    ImGui::TextDisabled("No discussions yet — start the first one with \"+ New post\".");
                 }
                 ImGui::EndChild();
             } else {
                 if (ImGui::Button("< Back")) { openThread = 0; fpCache.clear(); }
-                ImGui::SameLine(); ImGui::TextUnformatted(openTitle.c_str());
-                ImGui::SameLine(); ImGui::TextDisabled("  started by %s", openAuthor.empty()?"unknown":openAuthor.c_str());
-                if (tnow >= fpNext) { fpCache = fo.Posts(openThread); fpNext = tnow + 6000; }
-                ImGui::BeginChild("##fposts", ImVec2(0, ImGui::GetContentRegionAvail().y - 40), true);
-                std::string me = account.CurrentSession().username;
-                for (const auto& p : fpCache) {
-                    bool mine = !me.empty() && p.author == me;
-                    ImGui::PushStyleColor(ImGuiCol_Text, mine ? ImVec4(0.62f,0.78f,1.0f,1) : ImVec4(0.80f,0.84f,0.90f,1));
-                    ImGui::TextUnformatted(p.author.empty()?"unknown":p.author.c_str());
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine(0,8);
-                    char w[40]=""; if (p.when>0){std::time_t tt=(std::time_t)p.when;std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%b %d, %H:%M",tm);}
-                    ImGui::TextDisabled("%s", w);
-                    ImGui::TextWrapped("%s", p.body.c_str());
-                    ImGui::Dummy(ImVec2(0,2)); ImGui::Separator();
+                ImGui::SameLine();
+                if (!openCat.empty()) { ImGui::TextDisabled("[%s]", openCat.c_str()); ImGui::SameLine(); }
+                ImGui::TextUnformatted(openTitle.c_str());
+                if (tnow >= fpNext) {
+                    fpCache = fo.Posts(openThread);
+                    poScores = fo.Scores("post"); poMy = fo.MyVotes("post");
+                    thScores = fo.Scores("thread"); thMy = fo.MyVotes("thread");
+                    fpNext = tnow + 6000;
                 }
-                if (fpCache.empty()) ImGui::TextDisabled("No replies yet. Be the first to reply.");
+                // The original post card: vote column + author/time + self-text.
+                ImGui::BeginChild("##opcard", ImVec2(0, openBody.empty() ? 70 : 128), true);
+                long osc = thScores.count(openThread)?thScores[openThread]:0; int omv = thMy.count(openThread)?thMy[openThread]:0;
+                ImGui::SetCursorPos(ImVec2(6, 8));
+                if (voteWidget("thread", openThread, osc, omv)) fpNext = 0;
+                ImGui::SameLine(); ImGui::SetCursorPosX(52);
+                ImGui::BeginGroup();
+                ImGui::TextDisabled("Posted by %s  -  %s", openAuthor.empty()?"unknown":openAuthor.c_str(), RelTime(openWhen).c_str());
+                if (!openBody.empty()) RenderChatBody(openBody);
+                else ImGui::TextDisabled("(no body)");
+                ImGui::EndGroup();
+                ImGui::EndChild();
+
+                ImGui::BeginChild("##fposts", ImVec2(0, ImGui::GetContentRegionAvail().y - 42), false);
+                std::string me = account.CurrentSession().username;
+                int shownC = 0;
+                for (const auto& p : fpCache) {
+                    ++shownC;
+                    long psc = poScores.count(p.id)?poScores[p.id]:0; int pmv = poMy.count(p.id)?poMy[p.id]:0;
+                    ImGui::PushID((int)p.id);
+                    ImGui::BeginChild("##crow", ImVec2(0, p.body.size() > 80 ? 92 : 68), true);
+                    ImGui::SetCursorPos(ImVec2(6, 8));
+                    if (voteWidget("post", p.id, psc, pmv)) fpNext = 0;
+                    ImGui::SameLine(); ImGui::SetCursorPosX(52);
+                    ImGui::BeginGroup();
+                    bool mine = !me.empty() && p.author == me;
+                    ImGui::TextColored(mine ? ImVec4(0.62f,0.78f,1.0f,1) : ImVec4(0.72f,0.76f,0.84f,1),
+                                       "%s", p.author.empty()?"unknown":p.author.c_str());
+                    ImGui::SameLine(0,8); ImGui::TextDisabled("%s", RelTime(p.when).c_str());
+                    RenderChatBody(p.body);
+                    ImGui::EndGroup();
+                    ImGui::EndChild();
+                    ImGui::PopID();
+                }
+                if (shownC == 0) { ImGui::Dummy(ImVec2(0, 10)); ImGui::TextDisabled("No comments yet. Be the first to comment."); }
                 ImGui::EndChild();
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
-                bool rp = ImGui::InputTextWithHint("##reply", "Write a reply...", replyBuf, sizeof(replyBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                bool rp = ImGui::InputTextWithHint("##reply", "Add a comment...", replyBuf, sizeof(replyBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::SameLine();
-                if ((ImGui::Button("Reply", ImVec2(82, 0)) || rp) && replyBuf[0]) {
+                if ((PrimaryButton("Comment", ImVec2(82, 0)) || rp) && replyBuf[0]) {
                     if (fo.Reply(openThread, replyBuf, &foErr)) { replyBuf[0] = '\0'; fpNext = 0; }
                 }
             }

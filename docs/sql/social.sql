@@ -151,6 +151,9 @@ drop policy if exists "delete own thread" on public.forum_threads;
 create policy "threads readable"  on public.forum_threads for select using (true);
 create policy "start thread"      on public.forum_threads for insert with check (auth.uid() = author);
 create policy "delete own thread" on public.forum_threads for delete using (auth.uid() = author);
+-- Reddit-style extras: optional self-text body and a topic/category ("subforum").
+alter table public.forum_threads add column if not exists body     text;
+alter table public.forum_threads add column if not exists category text;
 
 create table if not exists public.forum_posts (
   id          bigint generated always as identity primary key,
@@ -167,6 +170,29 @@ drop policy if exists "delete own post" on public.forum_posts;
 create policy "posts readable"  on public.forum_posts for select using (true);
 create policy "write post"      on public.forum_posts for insert with check (auth.uid() = author);
 create policy "delete own post" on public.forum_posts for delete using (auth.uid() = author);
+
+-- ---------------------------------------------------------------------------
+-- Reddit-style voting: one row per (voter, target). target_kind is 'thread' or
+-- 'post', target_id the thread/post id. value is +1 or -1. Scores are public
+-- (anyone reads + aggregates); a voter writes/changes/removes only their own.
+-- ---------------------------------------------------------------------------
+create table if not exists public.forum_votes (
+  voter       uuid not null default auth.uid() references auth.users on delete cascade,
+  target_kind text not null check (target_kind in ('thread','post')),
+  target_id   bigint not null,
+  value       int  not null check (value in (-1, 1)),
+  created_at  timestamptz default now(),
+  primary key (voter, target_kind, target_id)
+);
+alter table public.forum_votes enable row level security;
+drop policy if exists "votes readable" on public.forum_votes;
+drop policy if exists "cast own vote"  on public.forum_votes;
+drop policy if exists "change own vote" on public.forum_votes;
+drop policy if exists "remove own vote" on public.forum_votes;
+create policy "votes readable"  on public.forum_votes for select using (true);
+create policy "cast own vote"   on public.forum_votes for insert with check (auth.uid() = voter);
+create policy "change own vote" on public.forum_votes for update using (auth.uid() = voter);
+create policy "remove own vote" on public.forum_votes for delete using (auth.uid() = voter);
 
 -- ---------------------------------------------------------------------------
 -- workshop_items: shared games / scenes / templates (the Marketplace tab).

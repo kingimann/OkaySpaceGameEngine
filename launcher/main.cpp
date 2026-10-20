@@ -1110,8 +1110,8 @@ void DarkTheme() {
     s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
     s.PopupRounding     = 2.0f;  s.TabRounding      = 2.0f;
     s.ScrollbarRounding = 2.0f;
-    s.WindowPadding   = ImVec2(12, 10); s.FramePadding = ImVec2(9, 6);
-    s.ItemSpacing     = ImVec2(8, 6);   s.ItemInnerSpacing = ImVec2(7, 5);
+    s.WindowPadding   = ImVec2(14, 12); s.FramePadding = ImVec2(10, 7);
+    s.ItemSpacing     = ImVec2(9, 8);   s.ItemInnerSpacing = ImVec2(7, 6);
     s.WindowBorderSize = 0.0f;          s.ChildBorderSize = 1.0f;
     s.FrameBorderSize  = 0.0f;          s.PopupBorderSize = 1.0f;
     s.ScrollbarSize   = 8.0f;           s.GrabMinSize = 11.0f;
@@ -1808,6 +1808,27 @@ static std::string FirstImageUrl(const std::string& body) {
     return "";
 }
 
+// ---- Background chat poll state ---------------------------------------------
+// The floating Chat window polled messages (every 4s), typing (every 2.5s),
+// conversations (every 6s) and the friend list (every 15s) on the UI thread —
+// a steady stream of blocking HTTPS calls that made chat feel laggy. A worker
+// thread (ChatPollWorker, own account service) now does all of it and publishes
+// here under a mutex; the window renders what's cached and never blocks. User
+// actions (send/edit/react/typing-out) stay on the main thread.
+static SDL_mutex*  g_chatMutex = nullptr;
+static SDL_Thread* g_chatThread = nullptr;
+static volatile bool g_chatPollRun = true;
+static volatile bool g_chatPeerTyping = false;
+static volatile bool g_chatForceLog = false;   // a send/edit/react asks for an immediate re-poll
+static std::string g_chatSelUid;                                        // (guarded) open conversation
+static bool g_chatLogReady = false, g_chatConvReady = false, g_chatFriReady = false;  // (guarded)
+static std::vector<okay::DirectMessage> g_chatLog;                      // (guarded)
+static std::map<long, std::map<std::string,long>> g_chatReacts;        // (guarded)
+static std::map<long, std::set<std::string>> g_chatMyReacts;           // (guarded)
+static long g_chatPeerRead = 0;                                         // (guarded)
+static std::vector<okay::Messages::ConversationPreview> g_chatConvs;    // (guarded)
+static std::vector<okay::Friend> g_chatFriends;                        // (guarded)
+
 void DrawChatWindow(okay::account::AccountService& account) {
     if (!g_chatWinOpen) return;
     static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
@@ -1831,7 +1852,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
 
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
         selUid = uid; selName = nm; selAvatar = av; selOnline = online;
-        log.clear(); logNext = 0; editId = 0; replyTo = 0; input[0] = '\0';
+        log.clear(); g_chatForceLog = true; editId = 0; replyTo = 0; input[0] = '\0';
         lastShown = -1; msgSearch[0] = '\0'; showSearch = false; focusComposer = true;
         peerTyping = false; typingPollNext = 0; typingSentAt = 0;
     };
@@ -1850,8 +1871,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
         }
         okay::Messages dm(account);
         Uint32 now = SDL_GetTicks();
-        if (now >= friendsNext) { friends = okay::Friends(account).List(); friendsNext = now + 15000; }
-        if (now >= convsNext)   { convs   = dm.Conversations();           convsNext   = now + 6000; }
+        // Friends + conversations come from the background chat poller (no UI block).
+        (void)friendsNext; (void)convsNext;
+        if (g_chatMutex) {
+            SDL_LockMutex(g_chatMutex);
+            if (g_chatFriReady)  { friends = g_chatFriends; g_chatFriReady = false; }
+            if (g_chatConvReady) { convs   = g_chatConvs;   g_chatConvReady = false; }
+            SDL_UnlockMutex(g_chatMutex);
+        }
 
         // Index friends by uid for names/avatars/presence.
         std::map<std::string, const okay::Friend*> fById;
@@ -2055,16 +2082,20 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (showSearch) { ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##msgsearch", "Find a message", msgSearch, sizeof(msgSearch)); }
             ImGui::Separator();
 
-            if (now >= logNext) {
-                log = dm.With(selUid);
-                reacts = dm.Reactions(); myReacts = dm.MyReactions();
-                peerRead = dm.PeerReadId(selUid);
-                logNext = now + 4000;
-                // Tell the peer I've read up to the newest message (Seen receipt).
-                if (!log.empty()) dm.MarkRead(selUid, log.back().id);
+            // Messages, reactions, read-receipt and typing come from the background
+            // chat poller — the window never blocks on the network. We just tell the
+            // worker which conversation is open and read what it has published.
+            (void)logNext; (void)typingPollNext;
+            if (g_chatMutex) {
+                SDL_LockMutex(g_chatMutex);
+                g_chatSelUid = selUid;
+                if (g_chatLogReady) {
+                    log = g_chatLog; reacts = g_chatReacts; myReacts = g_chatMyReacts;
+                    peerRead = g_chatPeerRead; g_chatLogReady = false;
+                }
+                SDL_UnlockMutex(g_chatMutex);
             }
-            // Typing indicator: poll the peer's state on a faster cadence.
-            if (now >= typingPollNext) { peerTyping = dm.PeerTyping(selUid); typingPollNext = now + 2500; }
+            peerTyping = g_chatPeerTyping;
             // Mark everything seen locally (clears the unread dot for this chat).
             long firstUnread = 0;
             for (const auto& m : log) {
@@ -2236,7 +2267,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                             bool have = myset.count(rdef.key) != 0;
                             ImVec2 mp = ImGui::GetCursorScreenPos();
                             if (ImGui::MenuItem((std::string("     ") + (have ? "remove" : "add") + "##rx" + rdef.key).c_str()))
-                                { dm.React(m.id, rdef.key, !have); logNext = 0; }
+                                { dm.React(m.id, rdef.key, !have); g_chatForceLog = true; }
                             DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(mp.x + 9, mp.y + ImGui::GetTextLineHeight()*0.5f), 18, rdef.id);
                         }
                         ImGui::EndMenu();
@@ -2246,13 +2277,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     if (m.mine) {
                         ImGui::Separator();
                         if (ImGui::MenuItem("Edit")) { editId = m.id; replyTo = 0; std::snprintf(input, sizeof(input), "%s", m.body.c_str()); }
-                        if (ImGui::MenuItem("Delete")) { if (dm.Delete(m.id)) logNext = 0; }
+                        if (ImGui::MenuItem("Delete")) { if (dm.Delete(m.id)) g_chatForceLog = true; }
                     }
                     ImGui::EndPopup();
                 }
                 // Double-click a bubble to quick-react with the heart (Messenger).
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    bool have = myset.count("heart") != 0; dm.React(m.id, "heart", !have); logNext = 0;
+                    bool have = myset.count("heart") != 0; dm.React(m.id, "heart", !have); g_chatForceLog = true;
                 }
 
                 // Reaction pills on the line under the bubble (normal layout).
@@ -2270,7 +2301,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         float pw = 22.0f + ImGui::CalcTextSize(cnt.c_str()).x;
                         ImGui::PushID(ReactionEmojiId(kv.first));
                         ImVec2 pp = ImGui::GetCursorScreenPos();
-                        if (ImGui::InvisibleButton("##pill", ImVec2(pw, 18))) { dm.React(m.id, kv.first, !mineR); logNext = 0; }
+                        if (ImGui::InvisibleButton("##pill", ImVec2(pw, 18))) { dm.React(m.id, kv.first, !mineR); g_chatForceLog = true; }
                         ImU32 pc = mineR ? ImGui::GetColorU32(kAccentDim) : IM_COL32(40, 46, 58, 255);
                         dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + 18), pc, 9.0f);
                         if (mineR) dl->AddRect(pp, ImVec2(pp.x + pw, pp.y + 18), ImGui::GetColorU32(kAccent), 9.0f, 0, 1.3f);
@@ -2376,8 +2407,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
             if ((ImGui::Button(editId ? "Save" : "Send", ImVec2(52, inH)) || send) && input[0]) {
-                if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; logNext = 0; } }
-                else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; logNext = 0; }
+                if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; g_chatForceLog = true; } }
+                else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; g_chatForceLog = true; }
                 ImGui::SetKeyboardFocusHere(-1);
             }
             ImGui::PopStyleColor(2);
@@ -2669,6 +2700,56 @@ static int AccountInfoWorker(void*) {
     return 0;
 }
 
+// ---- Background chat poll (worker; state declared before DrawChatWindow) ----
+static int ChatPollWorker(void*) {
+    okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+    okay::Messages dm(a); okay::Friends fr(a);
+    Uint32 nextLog = 0, nextTyping = 0, nextConv = 0, nextFri = 0;
+    std::string lastUid;
+    while (g_chatPollRun) {
+        if (!g_chatWinOpen) { SDL_Delay(200); continue; }
+        Uint32 now = SDL_GetTicks();
+        std::string uid;
+        if (g_chatMutex) { SDL_LockMutex(g_chatMutex); uid = g_chatSelUid; SDL_UnlockMutex(g_chatMutex); }
+        if (uid != lastUid) { lastUid = uid; nextLog = 0; nextTyping = 0; }   // conversation changed → poll now
+        if (g_chatForceLog) { g_chatForceLog = false; nextLog = 0; nextConv = 0; }  // a user action wants a fresh view
+        try {
+            if (now >= nextConv) {
+                auto c = dm.Conversations();
+                if (g_chatMutex) { SDL_LockMutex(g_chatMutex); g_chatConvs = std::move(c); g_chatConvReady = true; SDL_UnlockMutex(g_chatMutex); }
+                nextConv = now + 6000;
+            }
+            if (now >= nextFri) {
+                auto f = fr.List();
+                if (g_chatMutex) { SDL_LockMutex(g_chatMutex); g_chatFriends = std::move(f); g_chatFriReady = true; SDL_UnlockMutex(g_chatMutex); }
+                nextFri = now + 15000;
+            }
+            if (!uid.empty()) {
+                if (now >= nextLog) {
+                    auto l = dm.With(uid);
+                    auto rc = dm.Reactions(); auto mr = dm.MyReactions();
+                    long pr = dm.PeerReadId(uid);
+                    long markId = l.empty() ? 0 : l.back().id;
+                    if (markId) dm.MarkRead(uid, markId);
+                    if (g_chatMutex) {
+                        SDL_LockMutex(g_chatMutex);
+                        g_chatLog = std::move(l); g_chatReacts = std::move(rc); g_chatMyReacts = std::move(mr);
+                        g_chatPeerRead = pr; g_chatLogReady = true;
+                        SDL_UnlockMutex(g_chatMutex);
+                    }
+                    nextLog = now + 4000;
+                }
+                if (now >= nextTyping) {
+                    g_chatPeerTyping = dm.PeerTyping(uid);
+                    nextTyping = now + 2500;
+                }
+            }
+        } catch (...) { /* transient — retry next tick */ }
+        SDL_Delay(250);
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2818,6 +2899,10 @@ int main(int argc, char** argv) {
     g_pollCfgDir = acctCfgDir.string(); g_pollUrl = serverUrl; g_pollKey = apiKey;
     g_pollMutex = SDL_CreateMutex();
     g_pollThread = SDL_CreateThread(PollWorker, "okay-poll", nullptr);
+    // Background chat poller (messages/typing/conversations) so the Chat window
+    // never blocks the UI on the network.
+    g_chatMutex = SDL_CreateMutex();
+    g_chatThread = SDL_CreateThread(ChatPollWorker, "okay-chat", nullptr);
 
     // The account server is baked into this build (OKAY_DEFAULT_ACCOUNT_URL /
     // account_server.txt), so the launcher no longer exposes a server-URL field
@@ -6766,10 +6851,12 @@ int main(int argc, char** argv) {
     { int w = 0, h = 0; SDL_GetWindowSize(window, &w, &h);
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
-    // Stop the background friends/DM poll thread.
-    g_pollRun = false;
+    // Stop the background friends/DM poll + chat poll threads.
+    g_pollRun = false; g_chatPollRun = false;
     if (g_pollThread) { SDL_WaitThread(g_pollThread, nullptr); g_pollThread = nullptr; }
+    if (g_chatThread) { SDL_WaitThread(g_chatThread, nullptr); g_chatThread = nullptr; }
     if (g_pollMutex) { SDL_DestroyMutex(g_pollMutex); g_pollMutex = nullptr; }
+    if (g_chatMutex) { SDL_DestroyMutex(g_chatMutex); g_chatMutex = nullptr; }
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     if (g_upMutex) { SDL_DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     // Stop any in-flight downloads and join their worker threads before teardown.

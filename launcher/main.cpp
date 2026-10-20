@@ -847,6 +847,45 @@ std::vector<fs::path> FindScenes() {
     return out;
 }
 
+// Scan the same folders for HTML5 / JavaScript web games — a folder containing
+// an index.html (e.g. an Emscripten/HTML export, or any browser game), or a
+// loose *.html file. Returns the path to the .html to open; playing one just
+// opens it in the system's default browser (OpenExternal).
+std::vector<fs::path> FindWebGames() {
+    std::vector<fs::path> out;
+    std::error_code ec;
+    auto scan = [&](const fs::path& dir) {
+        if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return;
+        for (auto it = fs::recursive_directory_iterator(dir, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            std::string ext;
+            for (char c : it->path().extension().string()) ext += (char)std::tolower((unsigned char)c);
+            if (ext != ".html" && ext != ".htm") continue;
+            std::string stem;
+            for (char c : it->path().stem().string()) stem += (char)std::tolower((unsigned char)c);
+            // Prefer index.html per folder; a loose single .html also counts.
+            if (stem == "index") out.push_back(it->path());
+            else {
+                // Only include a non-index .html if its folder has no index.html.
+                std::error_code iec;
+                if (!fs::exists(it->path().parent_path() / "index.html", iec) &&
+                    !fs::exists(it->path().parent_path() / "index.htm", iec))
+                    out.push_back(it->path());
+            }
+        }
+    };
+    fs::path base(g_exeDir);
+    scan(base / "games");
+    scan(base / "community");
+    scan(base / "Projects");
+    scan(base / "webgames");
+    for (const auto& d : g_libraryDirs) scan(fs::path(d));
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 // A scene is a *built game* (vs a raw dev scene) when File > Build Game exported
 // it — that writes a game.okayconfig next to the scene. The Play tab shows only
 // built games; loose .okayscene dev files are hidden there.
@@ -937,6 +976,7 @@ bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
 int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
+bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1040, g_winH = 680;  // last window size (persisted)
 const char* kThemeNames[] = {"Dark", "Midnight", "Light"};
 
@@ -2783,7 +2823,14 @@ int main(int argc, char** argv) {
                 if (dot != std::string::npos) for (char ch : dropped.substr(dot)) ext += (char)std::tolower((unsigned char)ch);
                 std::error_code dec;
                 bool isDir = fs::is_directory(dropped, dec);
-                if (ext == ".okayscene" && !isDir && !player.empty()) {
+                if ((ext == ".html" || ext == ".htm") && !isDir) {
+                    // A web game: play it straight in the default browser. (Loose
+                    // .html files keep their sibling js/assets, so we open in place
+                    // rather than copying.)
+                    OpenExternal(dropped);
+                    Toast("Opening web game in your browser", 1);
+                    tab = 1;
+                } else if (ext == ".okayscene" && !isDir && !player.empty()) {
                     Launch(player, dropped);
                     RecordPlayed(dropped); SavePrefs();
                     Toast("Playing dropped game");
@@ -2791,10 +2838,17 @@ int main(int argc, char** argv) {
                 } else if (isDir || ext == ".okay" || ext == ".okayvs" || ext == ".obj" ||
                            ext == ".png" || ext == ".jpg" || ext == ".okayscene") {
                     std::string out = InstallToCommunity(dropped);
-                    if (!out.empty()) { scenes = FindScenes(); Toast("Added to your community library", 1); tab = 2; }
+                    if (!out.empty()) {
+                        scenes = FindScenes(); g_webNeedRescan = true;   // a dropped folder may be a web game
+                        // If the installed folder is a web game, jump to Play so it's visible.
+                        std::error_code wec;
+                        bool web = fs::exists(fs::path(out) / "index.html", wec) || fs::exists(fs::path(out) / "index.htm", wec);
+                        Toast(web ? "Added a web game \xE2\x80\x94 see Play" : "Added to your community library", 1);
+                        tab = web ? 1 : 2;
+                    }
                     else Toast("Couldn't install that item", 2);
                 } else {
-                    Toast("Drop a game folder or .okayscene to add or play it");
+                    Toast("Drop a game folder, .okayscene, or an .html web game");
                 }
             }
         }
@@ -3706,6 +3760,60 @@ int main(int argc, char** argv) {
             ImGui::BulletText("Add UI from GameObject > UI (buttons, sliders, radial loaders).");
         } else if (tab == 1) {                            // ---- Play ----
             sectionHeader("Play a game", nullptr);
+
+            // ---- Web games (HTML / JavaScript) -------------------------------
+            // Any folder with an index.html (e.g. a web export) or a loose .html
+            // in the games/community/webgames folders plays in the default browser.
+            static std::vector<fs::path> s_webGames; static bool s_webScanned = false;
+            if (!s_webScanned || g_webNeedRescan) { s_webGames = FindWebGames(); s_webScanned = true; g_webNeedRescan = false; }
+            if (!s_webGames.empty()) {
+                ImGui::SeparatorText("Web games (HTML / JavaScript)");
+                for (const auto& wg : s_webGames) {
+                    std::string nm = wg.parent_path().filename().string();
+                    if (nm.empty() || nm == "community" || nm == "games" || nm == "webgames")
+                        nm = wg.stem().string();
+                    ImGui::PushID(wg.string().c_str());
+                    ImGui::BeginChild("##wg", ImVec2(0, 48), true, ImGuiWindowFlags_NoScrollbar);
+                    if (ImGui::IsWindowHovered()) {
+                        ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+                        ImGui::GetWindowDrawList()->AddRectFilled(
+                            wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(255, 255, 255, 10), 3.0f);
+                    }
+                    // A small "JS" tile badge.
+                    ImGui::SetCursorPos(ImVec2(10, 8));
+                    ImVec2 tp = ImGui::GetCursorScreenPos();
+                    ImDrawList* wdl = ImGui::GetWindowDrawList();
+                    wdl->AddRectFilled(tp, ImVec2(tp.x + 32, tp.y + 32),
+                                       IM_COL32(222, 196, 60, 255), 5.0f);           // JS yellow
+                    wdl->AddText(ImVec2(tp.x + 7, tp.y + 8), IM_COL32(28, 28, 20, 255), "JS");
+                    ImGui::SetCursorPos(ImVec2(52, 7));
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(nm.c_str());
+                    ImGui::TextDisabled("HTML game \xE2\x80\x94 opens in your browser");
+                    ImGui::EndGroup();
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 88);
+                    ImGui::SetCursorPosY(7);
+                    if (PrimaryButton("Play", ImVec2(84, 34))) {
+                        OpenExternal(wg.string());
+                        Toast("Opening " + nm + " in your browser", 1);
+                    }
+                    if (ImGui::BeginPopupContextWindow("##wgctx", ImGuiPopupFlags_MouseButtonRight)) {
+                        if (ImGui::MenuItem("Play in browser")) { OpenExternal(wg.string()); }
+                        if (ImGui::MenuItem("Show in Explorer")) OpenExternal(wg.parent_path().string());
+                        if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(wg.string().c_str());
+                        ImGui::EndPopup();
+                    }
+                    ImGui::EndChild();
+                    ImGui::PopID();
+                }
+                ImGui::SameLine(); if (ImGui::SmallButton("Rescan web games")) s_webScanned = false;
+                ImGui::Dummy(ImVec2(0, 10));
+            } else if (s_webScanned) {
+                // Nothing yet — a tiny hint so the feature is discoverable.
+                ImGui::TextDisabled("Tip: drop an .html game (or a folder with index.html) here to play it in your browser.");
+                if (ImGui::SmallButton("Rescan web games")) s_webScanned = false;
+                ImGui::Dummy(ImVec2(0, 6));
+            }
             if (player.empty())
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
             else if (std::none_of(scenes.begin(), scenes.end(), IsBuiltGame)) {

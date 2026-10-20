@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -46,6 +47,8 @@
 #  include <windows.h>
 #else
 #  include <unistd.h>
+#  include <sys/wait.h>
+#  include <csignal>
 #endif
 
 namespace fs = std::filesystem;
@@ -180,6 +183,237 @@ bool Download(const std::string& url, const std::string& out) {
     std::string c2 = "wget -q --no-cache -O \"" + out + "\" \"" + u + "\" 2>/dev/null";
     return RunCmd(c2, true) == 0 && fs::exists(out);
 #endif
+}
+
+// ---- Download manager ------------------------------------------------------
+// A background download queue the Marketplace "Get" flow feeds into: each item
+// downloads to <launcher>/downloads/ via a hidden curl child process, and the
+// Downloads tab shows live progress, cancel, open-folder and (for .zip) an
+// extract-to-Community action. SDL threads again (no std::thread on MinGW).
+//
+// A download runs on its own SDL thread; the worker owns a child-process handle
+// so a cancel can terminate the in-flight curl. All shared fields are guarded
+// by g_dlMutex; progress is read by polling the growing .part file on disk.
+
+// A spawned, hidden child process we can poll and kill.
+struct Proc {
+#if defined(_WIN32)
+    void* h = nullptr;                 // HANDLE
+    bool valid() const { return h != nullptr; }
+#else
+    int pid = -1;
+    bool valid() const { return pid > 0; }
+#endif
+};
+
+Proc SpawnHidden(const std::string& cmd) {
+    Proc p;
+#if defined(_WIN32)
+    std::string full = "cmd /c " + cmd;
+    std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
+    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
+    if (CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        p.h = pi.hProcess;
+    }
+#else
+    pid_t pid = fork();
+    if (pid == 0) {                    // child: exec the command via /bin/sh
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
+        _exit(127);
+    } else if (pid > 0) {
+        p.pid = pid;
+    }
+#endif
+    return p;
+}
+
+// Returns true while still running; when it has exited, returns false and sets
+// *exitCode to its exit status.
+bool ProcRunning(Proc* p, int* exitCode) {
+    if (!p->valid()) { if (exitCode) *exitCode = -1; return false; }
+#if defined(_WIN32)
+    DWORD code = 0;
+    if (GetExitCodeProcess((HANDLE)p->h, &code)) {
+        if (code == STILL_ACTIVE) return true;
+        if (exitCode) *exitCode = (int)code;
+        CloseHandle((HANDLE)p->h); p->h = nullptr;
+        return false;
+    }
+    return false;
+#else
+    int st = 0;
+    pid_t r = waitpid(p->pid, &st, WNOHANG);
+    if (r == 0) return true;           // still running
+    if (exitCode) *exitCode = (r > 0 && WIFEXITED(st)) ? WEXITSTATUS(st) : -1;
+    p->pid = -1;
+    return false;
+#endif
+}
+
+void ProcKill(Proc* p) {
+    if (!p->valid()) return;
+#if defined(_WIN32)
+    TerminateProcess((HANDLE)p->h, 1);
+    CloseHandle((HANDLE)p->h); p->h = nullptr;
+#else
+    kill(p->pid, SIGTERM);
+    int st = 0; waitpid(p->pid, &st, 0);
+    p->pid = -1;
+#endif
+}
+
+// A HEAD request for the Content-Length (0 if unknown / chunked / failed). Runs
+// hidden and parses the dumped response headers (last Content-Length wins, so a
+// redirect chain reports the final resource's size).
+long long HeadSize(const std::string& url) {
+    std::error_code ec;
+    fs::path hdr = fs::temp_directory_path(ec) / ("okay_dlhead_" + std::to_string(SDL_GetTicks()) + ".txt");
+#if defined(_WIN32)
+    std::string devnull = "NUL";
+#else
+    std::string devnull = "/dev/null";
+#endif
+    std::string cmd = "curl -sIL -A \"OkaySpace-Launcher\" -o \"" + devnull +
+                      "\" -D \"" + hdr.string() + "\" \"" + url + "\"";
+    RunCmd(cmd, true);
+    long long total = 0;
+    std::ifstream f(hdr);
+    std::string line;
+    while (std::getline(f, line)) {
+        std::string low = line;
+        for (char& c : low) c = (char)std::tolower((unsigned char)c);
+        if (low.rfind("content-length:", 0) == 0) {
+            try { total = std::stoll(line.substr(15)); } catch (...) {}
+        }
+    }
+    f.close(); fs::remove(hdr, ec);
+    return total;
+}
+
+struct DlItem {
+    int         id = 0;
+    std::string url, title, dest, part;
+    long long   total = 0, received = 0;
+    int         status = 0;            // 0 queued, 1 downloading, 2 done, 3 failed, 4 canceled
+    bool        cancelReq = false;
+    Proc        proc;
+    SDL_Thread* th = nullptr;
+};
+
+std::vector<std::shared_ptr<DlItem>> g_dls;
+SDL_mutex* g_dlMutex = nullptr;
+int g_dlNextId = 1;
+
+long long FileSizeSafe(const std::string& p) {
+    std::error_code ec; auto s = fs::file_size(p, ec); return ec ? 0 : (long long)s;
+}
+
+int DlWorker(void* data) {
+    DlItem* d = static_cast<DlItem*>(data);
+    auto set = [&](std::function<void()> fn){ SDL_LockMutex(g_dlMutex); fn(); SDL_UnlockMutex(g_dlMutex); };
+    set([&]{ d->status = 1; });
+    long long total = HeadSize(d->url);
+    set([&]{ d->total = total; });
+
+    std::error_code ec; fs::remove(d->part, ec);
+    std::string cmd = "curl -L -s -f -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
+    Proc p = SpawnHidden(cmd);
+    if (!p.valid()) { set([&]{ d->status = 3; }); return 0; }
+    set([&]{ d->proc = p; });
+
+    int code = 0;
+    while (ProcRunning(&p, &code)) {
+        bool cancel = false;
+        SDL_LockMutex(g_dlMutex); cancel = d->cancelReq; SDL_UnlockMutex(g_dlMutex);
+        if (cancel) {
+            ProcKill(&p);
+            fs::remove(d->part, ec);
+            set([&]{ d->status = 4; d->proc = Proc{}; });
+            return 0;
+        }
+        long long got = FileSizeSafe(d->part);
+        set([&]{ d->received = got; });
+        SDL_Delay(200);
+    }
+    long long got = FileSizeSafe(d->part);
+    if (code == 0 && got > 0) {
+        fs::remove(d->dest, ec);
+        fs::rename(d->part, d->dest, ec);
+        set([&]{ d->received = got; if (d->total <= 0) d->total = got; d->status = ec ? 3 : 2; d->proc = Proc{}; });
+    } else {
+        fs::remove(d->part, ec);
+        set([&]{ d->status = 3; d->proc = Proc{}; });
+    }
+    return 0;
+}
+
+// Pick a filename from a URL (its last path segment, query stripped).
+std::string FileNameFromUrl(const std::string& url, const std::string& fallback) {
+    std::string u = url;
+    auto q = u.find('?'); if (q != std::string::npos) u = u.substr(0, q);
+    auto h = u.find('#'); if (h != std::string::npos) u = u.substr(0, h);
+    while (!u.empty() && u.back() == '/') u.pop_back();
+    auto s = u.find_last_of('/');
+    std::string name = (s == std::string::npos) ? u : u.substr(s + 1);
+    if (name.empty()) name = fallback;
+    std::string out;                           // sanitize for the filesystem
+    for (char c : name) out += (std::isalnum((unsigned char)c) || c=='.' || c=='-' || c=='_') ? c : '_';
+    if (out.empty()) out = "download";
+    return out;
+}
+
+// Queue a download; returns its id (0 if the manager isn't ready).
+int StartDownload(const std::string& url, const std::string& title) {
+    if (!g_dlMutex || url.empty()) return 0;
+    std::error_code ec;
+    fs::path dir = fs::path(g_exeDir) / "downloads";
+    fs::create_directories(dir, ec);
+    std::string base = FileNameFromUrl(url, title.empty() ? "download" : title);
+    fs::path dest = dir / base;
+    for (int n = 1; fs::exists(dest, ec); ++n)  // avoid clobbering an existing file
+        dest = dir / (std::to_string(n) + "_" + base);
+
+    auto d = std::make_shared<DlItem>();
+    SDL_LockMutex(g_dlMutex);
+    d->id = g_dlNextId++;
+    d->url = url; d->title = title.empty() ? base : title;
+    d->dest = dest.string(); d->part = dest.string() + ".part";
+    g_dls.push_back(d);
+    SDL_UnlockMutex(g_dlMutex);
+    d->th = SDL_CreateThread(DlWorker, "okay-dl", d.get());
+    return d->id;
+}
+
+// Extract a .zip into destDir, best-effort, using whatever's on the system.
+bool ExtractZip(const std::string& zip, const std::string& destDir) {
+    std::error_code ec; fs::create_directories(destDir, ec);
+#if defined(_WIN32)
+    // Windows 10+ ships bsdtar; fall back to PowerShell's Expand-Archive.
+    std::string c1 = "tar -xf \"" + zip + "\" -C \"" + destDir + "\"";
+    if (RunCmd(c1, true) == 0) return true;
+    std::string c2 = "powershell -NoProfile -Command \"Expand-Archive -Force -LiteralPath '" +
+                     zip + "' -DestinationPath '" + destDir + "'\"";
+    return RunCmd(c2, true) == 0;
+#else
+    std::string c1 = "unzip -o \"" + zip + "\" -d \"" + destDir + "\" >/dev/null 2>&1";
+    if (RunCmd(c1, true) == 0) return true;
+    std::string c2 = "tar -xf \"" + zip + "\" -C \"" + destDir + "\" 2>/dev/null";
+    return RunCmd(c2, true) == 0;
+#endif
+}
+
+// Count of downloads still in flight (for the nav badge).
+int ActiveDownloads() {
+    if (!g_dlMutex) return 0;
+    int n = 0;
+    SDL_LockMutex(g_dlMutex);
+    for (auto& d : g_dls) if (d->status == 0 || d->status == 1) ++n;
+    SDL_UnlockMutex(g_dlMutex);
+    return n;
 }
 
 // Compare dotted versions ("1.5.0"); returns -1 / 0 / 1 for a<b / a==b / a>b.
@@ -1068,6 +1302,7 @@ int main(int argc, char** argv) {
     // and mislead with "up to date". Updates are now opt-in via the button below.
     SDL_AtomicSet(&g_upState, (int)Up_UpToDate);
     g_upMutex = SDL_CreateMutex();
+    g_dlMutex = SDL_CreateMutex();
     SetUpMsg("OkaySpace v" + LocalVersion());
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
@@ -1343,13 +1578,13 @@ int main(int argc, char** argv) {
         const float kNavFootH = 92.0f;
         ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - kNavFootH), false);
         ImGui::Dummy(ImVec2(0, 16));
-        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums"};
+        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
         // Grouped, Steam-style sidebar. Display order + section headers; the tab
         // content blocks stay keyed by these indices, so only the order and the
         // grouping change here (keyboard shortcuts still map 1..8 to the tabs).
         struct NavRow { int tab; const char* section; };
         static const NavRow kNavRows[] = {
-            {0, "MENU"},   {1, nullptr}, {2, nullptr},
+            {0, "MENU"},   {1, nullptr}, {2, nullptr}, {10, nullptr},
             {6, "SOCIAL"}, {8, nullptr}, {9, nullptr}, {5, nullptr}, {7, nullptr},
             {3, "SYSTEM"}, {4, nullptr},
         };
@@ -1445,6 +1680,12 @@ int main(int argc, char** argv) {
                             dl->AddLine(ImVec2(cx - r * 0.5f, yy), ImVec2(cx + r * 0.5f, yy), ic, 1.6f);
                         }
                         break;
+                    case 10:  // Downloads: down-arrow into a tray
+                        dl->AddLine(ImVec2(cx, cy - r * 0.9f), ImVec2(cx, cy + r * 0.25f), ic, 2.2f);
+                        dl->AddLine(ImVec2(cx - r * 0.5f, cy - r * 0.25f), ImVec2(cx, cy + r * 0.25f), ic, 2.2f);
+                        dl->AddLine(ImVec2(cx + r * 0.5f, cy - r * 0.25f), ImVec2(cx, cy + r * 0.25f), ic, 2.2f);
+                        dl->AddLine(ImVec2(cx - r, cy + r * 0.7f), ImVec2(cx + r, cy + r * 0.7f), ic, 2.2f);
+                        break;
                 }
             }
             // Play shows how many games are installed, right-aligned in the row.
@@ -1464,6 +1705,18 @@ int main(int argc, char** argv) {
                 dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
                                   IM_COL32(210, 72, 72, 255), 8.0f);
                 dl->AddText(bp, IM_COL32(255, 255, 255, 255), nb);
+            }
+            // Downloads shows the number of active (in-flight) downloads.
+            if (i == 10) {
+                int act = ActiveDownloads();
+                if (act > 0) {
+                    char nb[16]; std::snprintf(nb, sizeof(nb), "%d", act);
+                    ImVec2 ts = ImGui::CalcTextSize(nb);
+                    ImVec2 bp(mx.x - ts.x - 18.0f, (mn.y + mx.y) * 0.5f - ts.y * 0.5f);
+                    dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
+                                      ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), 8.0f);
+                    dl->AddText(bp, ImGui::GetColorU32(ImGuiCol_Text), nb);
+                }
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Shortcut: %d", i + 1);
@@ -3618,14 +3871,24 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 2));
                 ImGui::TextDisabled("%s", getUrl.c_str());
                 ImGui::Dummy(ImVec2(0, 6));
-                if (PrimaryButton("Open download", ImVec2(160, 34))) {
+                if (PrimaryButton("Download", ImVec2(150, 34))) {
+                    StartDownload(getUrl, getTitle);
+                    okay::Workshop(account).NoteDownload(getId, getDl);
+                    wNextRefresh = 0;
+                    Toast("Added to Downloads", 1);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Download to the launcher's Downloads tab (best for direct file links)");
+                ImGui::SameLine();
+                if (ImGui::Button("Open in browser", ImVec2(150, 34))) {
                     OpenExternal(getUrl);
                     okay::Workshop(account).NoteDownload(getId, getDl);
                     wNextRefresh = 0;
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 34))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(90, 34))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
 
@@ -3931,6 +4194,103 @@ int main(int argc, char** argv) {
                     if (fo.Reply(openThread, replyBuf, &foErr)) { replyBuf[0] = '\0'; fpNext = 0; }
                 }
             }
+        } else if (tab == 10) {                           // ---- Downloads ----
+            sectionHeader("Downloads", "Games you download from the marketplace land here.");
+            fs::path ddir = fs::path(g_exeDir) / "downloads";
+            if (ImGui::Button("Open downloads folder", ImVec2(200, 0))) {
+                std::error_code ec; fs::create_directories(ddir, ec);
+                OpenExternal(ddir.string());
+            }
+            ImGui::SameLine();
+            bool anyDone = false;
+            SDL_LockMutex(g_dlMutex);
+            for (auto& d : g_dls) if (d->status >= 2) { anyDone = true; break; }
+            SDL_UnlockMutex(g_dlMutex);
+            ImGui::BeginDisabled(!anyDone);
+            if (ImGui::Button("Clear finished", ImVec2(130, 0))) {
+                SDL_LockMutex(g_dlMutex);
+                for (auto it = g_dls.begin(); it != g_dls.end(); ) {
+                    if ((*it)->status >= 2) { if ((*it)->th) SDL_WaitThread((*it)->th, nullptr); it = g_dls.erase(it); }
+                    else ++it;
+                }
+                SDL_UnlockMutex(g_dlMutex);
+            }
+            ImGui::EndDisabled();
+            ImGui::Dummy(ImVec2(0, 6));
+
+            // Snapshot the list under the lock so the UI iterates safely.
+            std::vector<std::shared_ptr<DlItem>> snap;
+            SDL_LockMutex(g_dlMutex);
+            snap = g_dls;
+            SDL_UnlockMutex(g_dlMutex);
+
+            ImGui::BeginChild("##dllist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+            if (snap.empty()) {
+                ImGui::Dummy(ImVec2(0, 24));
+                ImGui::TextDisabled("No downloads yet.");
+                ImGui::TextDisabled("Open the Marketplace, pick a game and hit Get > Download.");
+            }
+            auto humanBytes = [](long long b) {
+                char out[32];
+                if (b <= 0) std::snprintf(out, sizeof(out), "--");
+                else if (b < 1024) std::snprintf(out, sizeof(out), "%lld B", b);
+                else if (b < 1024*1024) std::snprintf(out, sizeof(out), "%.1f KB", b/1024.0);
+                else if (b < 1024LL*1024*1024) std::snprintf(out, sizeof(out), "%.1f MB", b/(1024.0*1024));
+                else std::snprintf(out, sizeof(out), "%.2f GB", b/(1024.0*1024*1024));
+                return std::string(out);
+            };
+            for (auto& d : snap) {
+                long long rec, tot; int stt; std::string title, dest;
+                SDL_LockMutex(g_dlMutex);
+                rec = d->received; tot = d->total; stt = d->status; title = d->title; dest = d->dest;
+                SDL_UnlockMutex(g_dlMutex);
+                ImGui::PushID(d->id);
+                ImGui::BeginChild("##dlrow", ImVec2(0, 80), true);
+                HoverRing();
+                ImGui::TextUnformatted(title.c_str());
+                const char* stTxt = stt==0?"Queued":stt==1?"Downloading":stt==2?"Completed":stt==3?"Failed":"Canceled";
+                ImVec4 stCol = stt==2?ImVec4(0.55f,0.9f,0.6f,1):stt==3?ImVec4(0.9f,0.45f,0.45f,1)
+                             : stt==4?ImVec4(0.75f,0.7f,0.5f,1):ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+                // Progress bar.
+                float frac = (tot > 0) ? (float)rec / (float)tot : (stt==2?1.0f:0.0f);
+                if (frac > 1.0f) frac = 1.0f;
+                char overlay[64];
+                if (tot > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", humanBytes(rec).c_str(), humanBytes(tot).c_str());
+                else         std::snprintf(overlay, sizeof(overlay), "%s", humanBytes(rec).c_str());
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 220);
+                ImGui::ProgressBar(frac, ImVec2(ImGui::GetContentRegionAvail().x - 220, 16), overlay);
+                ImGui::SameLine();
+                ImGui::TextColored(stCol, "%s", stTxt);
+                // Actions.
+                if (stt == 0 || stt == 1) {
+                    if (ImGui::SmallButton("Cancel")) { SDL_LockMutex(g_dlMutex); d->cancelReq = true; SDL_UnlockMutex(g_dlMutex); }
+                } else {
+                    if (stt == 2) {
+                        if (ImGui::SmallButton("Open folder")) OpenExternal(ddir.string());
+                        bool isZip = dest.size() > 4 &&
+                            (dest.substr(dest.size()-4) == ".zip" || dest.substr(dest.size()-4) == ".ZIP");
+                        if (isZip) {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Install to Community")) {
+                                fs::path sub = CommunityDir() /
+                                    fs::path(dest).stem();
+                                if (ExtractZip(dest, sub.string())) { Toast("Installed to Community", 1); scenes = FindScenes(); }
+                                else Toast("Couldn't extract the archive", 2);
+                            }
+                        }
+                        ImGui::SameLine();
+                    }
+                    if (ImGui::SmallButton("Remove")) {
+                        SDL_LockMutex(g_dlMutex);
+                        for (auto it = g_dls.begin(); it != g_dls.end(); ++it)
+                            if ((*it)->id == d->id) { if ((*it)->th) SDL_WaitThread((*it)->th, nullptr); g_dls.erase(it); break; }
+                        SDL_UnlockMutex(g_dlMutex);
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
         }
 
         // ---- Footer (pinned to the bottom of the content panel) ----
@@ -3999,6 +4359,17 @@ int main(int argc, char** argv) {
 
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     if (g_upMutex) { SDL_DestroyMutex(g_upMutex); g_upMutex = nullptr; }
+    // Stop any in-flight downloads and join their worker threads before teardown.
+    if (g_dlMutex) {
+        SDL_LockMutex(g_dlMutex);
+        for (auto& d : g_dls) d->cancelReq = true;
+        std::vector<SDL_Thread*> threads;
+        for (auto& d : g_dls) if (d->th) threads.push_back(d->th);
+        SDL_UnlockMutex(g_dlMutex);
+        for (SDL_Thread* t : threads) SDL_WaitThread(t, nullptr);
+        g_dls.clear();
+        SDL_DestroyMutex(g_dlMutex); g_dlMutex = nullptr;
+    }
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

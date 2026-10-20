@@ -595,6 +595,22 @@ std::size_t RecentRank(const std::string& p) {
     auto it = std::find(g_recent.begin(), g_recent.end(), p);
     return it == g_recent.end() ? (std::size_t)1e9 : (std::size_t)(it - g_recent.begin());
 }
+
+// ---- Collections (Steam-style library categories) ------------------------
+// name -> game paths. Persisted; names can't contain '|' (the save delimiter).
+std::map<std::string, std::vector<std::string>> g_collections;
+std::string g_collFilter;   // active collection filter on the Play tab ("" = all games)
+
+bool InCollection(const std::string& name, const std::string& path) {
+    auto it = g_collections.find(name);
+    return it != g_collections.end() &&
+           std::find(it->second.begin(), it->second.end(), path) != it->second.end();
+}
+void ToggleInCollection(const std::string& name, const std::string& path) {
+    auto& v = g_collections[name];
+    auto it = std::find(v.begin(), v.end(), path);
+    if (it != v.end()) v.erase(it); else v.push_back(path);
+}
 // Set once in main() so RecordPlayed can broadcast "playing" presence/activity
 // to friends. Null until then (and on builds with no account backend).
 okay::account::AccountService* g_presenceAccount = nullptr;
@@ -887,6 +903,12 @@ void LoadPrefs() {
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
+        else if (k == "collname" && !v.empty()) g_collections[v];   // ensure (possibly empty) collection
+        else if (k == "coll" && !v.empty()) {
+            auto bar = v.find('|');
+            if (bar != std::string::npos)
+                g_collections[v.substr(0, bar)].push_back(v.substr(bar + 1));
+        }
         else if (k == "stat" && !v.empty()) {
             // stat=<count>|<lastunix>|<path>  (path may itself contain '|')
             auto a = v.find('|'), b = (a == std::string::npos) ? a : v.find('|', a + 1);
@@ -920,6 +942,10 @@ void SavePrefs() {
     for (const auto& p : g_favorites)    f << "fav=" << p << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
     for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
+    for (const auto& kv : g_collections) {
+        f << "collname=" << kv.first << "\n";
+        for (const auto& p : kv.second) f << "coll=" << kv.first << "|" << p << "\n";
+    }
     for (const auto& kv : g_stats)
         f << "stat=" << kv.second.count << "|" << kv.second.last << "|" << kv.first << "\n";
 }
@@ -1666,6 +1692,52 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the games folder");
                 ImGui::Dummy(ImVec2(0, 6));
 
+                // Collection chips (Steam-style library categories). "All" plus one
+                // per collection; the active one filters the list below.
+                {
+                    auto chip = [&](const char* label, bool active) {
+                        if (active) { ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+                                      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1)); }
+                        bool c = ImGui::Button(label);
+                        if (active) ImGui::PopStyleColor(2);
+                        return c;
+                    };
+                    if (chip("All", g_collFilter.empty())) g_collFilter.clear();
+                    for (auto& kv : g_collections) {
+                        ImGui::SameLine();
+                        char lbl[80]; std::snprintf(lbl, sizeof(lbl), "%s (%d)", kv.first.c_str(), (int)kv.second.size());
+                        if (chip(lbl, g_collFilter == kv.first))
+                            g_collFilter = (g_collFilter == kv.first) ? std::string() : kv.first;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+ New collection")) ImGui::OpenPopup("##newcoll");
+                    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+                    if (ImGui::BeginPopup("##newcoll")) {
+                        static char cbuf[48] = "";
+                        ImGui::TextDisabled("New collection");
+                        ImGui::SetNextItemWidth(220);
+                        bool ok = ImGui::InputTextWithHint("##cn", "Name...", cbuf, sizeof(cbuf),
+                                                           ImGuiInputTextFlags_EnterReturnsTrue);
+                        ImGui::SameLine();
+                        if ((ImGui::Button("Create") || ok) && cbuf[0]) {
+                            std::string nm = cbuf;
+                            for (char& ch : nm) if (ch == '|') ch = '-';   // '|' is the save delimiter
+                            g_collections[nm]; g_collFilter = nm; SavePrefs();
+                            cbuf[0] = '\0'; ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::EndPopup();
+                    }
+                    // Manage the active collection: rename-free, but allow delete.
+                    if (!g_collFilter.empty()) {
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Delete collection")) {
+                            g_collections.erase(g_collFilter); g_collFilter.clear(); SavePrefs();
+                            Toast("Collection deleted", 1);
+                        }
+                    }
+                    ImGui::Dummy(ImVec2(0, 6));
+                }
+
                 // "Jump back in": a hero card for the most-recently-played game
                 // that still exists on disk (hidden while searching).
                 if (playFilter[0] == '\0' && !player.empty()) {
@@ -1712,6 +1784,11 @@ int main(int argc, char** argv) {
                     }
                     return lower(scenes[a].filename().string()) < lower(scenes[b].filename().string());
                 });
+                // Collection filter: keep only games in the active collection.
+                if (!g_collFilter.empty())
+                    order.erase(std::remove_if(order.begin(), order.end(),
+                        [&](std::size_t idx){ return !InCollection(g_collFilter, scenes[idx].string()); }),
+                        order.end());
 
                 std::string needle = lower(playFilter);
                 int shown = 0;
@@ -1918,6 +1995,27 @@ int main(int argc, char** argv) {
                             Toast(std::string("Playing ") + name);
                         }
                         if (ImGui::MenuItem(fav ? "Unfavorite" : "Favorite")) { ToggleFavorite(path); SavePrefs(); }
+                        if (ImGui::BeginMenu("Collections")) {
+                            for (auto& kv : g_collections) {
+                                bool in = InCollection(kv.first, path);
+                                if (ImGui::MenuItem(kv.first.c_str(), nullptr, in)) {
+                                    ToggleInCollection(kv.first, path); SavePrefs();
+                                }
+                            }
+                            if (!g_collections.empty()) ImGui::Separator();
+                            static char nbuf[48] = "";
+                            ImGui::TextDisabled("New collection");
+                            ImGui::SetNextItemWidth(160);
+                            bool mk = ImGui::InputTextWithHint("##mkcoll", "Name...", nbuf, sizeof(nbuf),
+                                                               ImGuiInputTextFlags_EnterReturnsTrue);
+                            ImGui::SameLine();
+                            if ((ImGui::SmallButton("Add") || mk) && nbuf[0]) {
+                                std::string nm = nbuf; for (char& ch : nm) if (ch == '|') ch = '-';
+                                g_collections[nm].push_back(path); SavePrefs();
+                                nbuf[0] = '\0';
+                            }
+                            ImGui::EndMenu();
+                        }
                         if (ImGui::MenuItem("Show in Explorer")) OpenExternal(scenes[i].parent_path().string());
                         if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(path.c_str());
                         if (ImGui::MenuItem("Publish to Marketplace...")) {

@@ -2859,6 +2859,56 @@ int main(int argc, char** argv) {
                         if (ImGui::SmallButton("Copy##code")) { ImGui::SetClipboardText(myCode.c_str()); Toast("Friend code copied", 1); }
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 8));
+                // View my own public profile card, exactly as friends see it.
+                static bool myProfOpen = false; static okay::Friend myProf; static int myProfAch = 0, myProfGames = 0;
+                if (account.IsOnline() && PrimaryButton("View my profile", ImVec2(200, 36))) {
+                    myProf = okay::Friends(account).MyProfile();
+                    myProfAch = (int)okay::Achievements::All().size();
+                    myProfGames = (int)scenes.size();
+                    myProfOpen = true;
+                }
+                if (account.IsOnline() && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("See your Steam-style profile card as other players see it");
+                if (myProfOpen) { ImGui::OpenPopup("My profile"); myProfOpen = false; }
+                ImGui::SetNextWindowSize(ImVec2(360, 0));
+                if (ImGui::BeginPopup("My profile")) {
+                    const okay::Friend& pf = myProf;
+                    std::string pname = pf.display.empty() ? pf.username : pf.display;
+                    float aw = ImGui::GetContentRegionAvail().x;
+                    int pai = pf.accent; if (pai < 0 || pai >= (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]))) pai = 0;
+                    ImVec4 pac = kAccentPresets[pai].col;
+                    ImVec2 bnp = ImGui::GetCursorScreenPos(); ImDrawList* pdl = ImGui::GetWindowDrawList();
+                    pdl->AddRectFilledMultiColor(bnp, ImVec2(bnp.x + aw, bnp.y + 54),
+                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.45f)), ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.12f)),
+                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.06f)), ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.26f)));
+                    ImGui::Dummy(ImVec2(0, 30));
+                    ImGui::SetCursorPosX((aw - 76) * 0.5f + ImGui::GetCursorPosX());
+                    ImVec2 avp = ImGui::GetCursorScreenPos();
+                    DrawAvatar(pf.avatar, pname, 76.0f);
+                    pdl->AddCircle(ImVec2(avp.x+38, avp.y+38), 39.0f, IM_COL32(120,200,110,255), 40, 3.0f);
+                    auto ctr = [&](const std::string& t, ImVec4 col){
+                        float w = ImGui::CalcTextSize(t.c_str()).x;
+                        float o = (ImGui::GetContentRegionAvail().x - w) * 0.5f; if (o > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + o);
+                        ImGui::TextColored(col, "%s", t.c_str()); };
+                    ctr(pname, ImVec4(0.95f,0.96f,1,1));
+                    ctr("@" + pf.username, ImVec4(0.6f,0.63f,0.7f,1));
+                    if (!pf.customStatus.empty()) ctr("\"" + pf.customStatus + "\"", ImVec4(0.72f,0.75f,0.82f,1));
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::Separator();
+                    ImGui::Text("%d achievement%s   -   %d game%s", myProfAch, myProfAch==1?"":"s", myProfGames, myProfGames==1?"":"s");
+                    if (!pf.bio.empty()) { ImGui::SeparatorText("About"); ImGui::TextWrapped("%s", pf.bio.c_str()); }
+                    if (!pf.favoriteGame.empty() || !pf.location.empty()) {
+                        ImGui::SeparatorText("Details");
+                        if (!pf.favoriteGame.empty()) { ImGui::TextColored(ImVec4(pac.x,pac.y,pac.z,1), "Favorite game"); ImGui::SameLine(); ImGui::TextWrapped(": %s", pf.favoriteGame.c_str()); }
+                        if (!pf.location.empty()) { ImGui::TextColored(ImVec4(pac.x,pac.y,pac.z,1), "Location"); ImGui::SameLine(); ImGui::TextWrapped(": %s", pf.location.c_str()); }
+                    }
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::TextDisabled("Edit any of this under Customize profile below.");
+                    ImGui::Dummy(ImVec2(0, 2));
+                    if (ImGui::Button("Close", ImVec2(-1, 0))) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                }
                 ImGui::Dummy(ImVec2(0, 12));
                 if (account.IsOnline() && ImGui::Button("Re-check session", ImVec2(180, 44)))
                     account.VerifySession();

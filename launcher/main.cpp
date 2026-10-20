@@ -2317,9 +2317,9 @@ static HWND OkayWindowHWND(SDL_Window* w) {
         return wm.info.win.window;
     return nullptr;
 }
-// Returns true only if the tray icon was actually registered — callers must not
-// hide the window unless this succeeds, or it would vanish with no way back.
-static bool OkayTrayAdd(SDL_Window* w) {
+// Returns true only if the tray icon was actually registered. Retained for
+// possible future use; the launcher no longer hides itself to the tray.
+[[maybe_unused]] static bool OkayTrayAdd(SDL_Window* w) {
     if (g_trayActive) return true;
     g_trayHwnd = OkayWindowHWND(w);
     if (!g_trayHwnd) return false;
@@ -2566,6 +2566,7 @@ int main(int argc, char** argv) {
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
     if (g_updateOnLaunch) StartUpdateCheck();   // opt-in auto-check at startup
     bool running = true;
+    bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
         // Current account service for this frame. Held by reference so existing
         // code reads naturally; the Settings tab may rebuild accountPtr (which
@@ -2574,16 +2575,13 @@ int main(int argc, char** argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
-            if (e.type == SDL_QUIT) running = false;
-#if defined(_WIN32)
-            // Steam-style: minimizing hides the launcher to the system tray.
-            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_MINIMIZED
-                     && g_minimizeToTray) {
-                // Only disappear into the tray if the icon actually registered,
-                // otherwise the window would be hidden with no way to get it back.
-                if (OkayTrayAdd(window)) SDL_HideWindow(window);
-            }
-#endif
+            // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
+            // minimize, rather than quitting outright.
+            if (e.type == SDL_QUIT) closeConfirm = true;
+            // NOTE: minimizing does a plain Windows minimize (to the taskbar) and
+            // is always restored by clicking the taskbar button. The launcher does
+            // NOT hide itself to the system tray — that could trap the window with
+            // no way to reopen or close it, so the behavior was removed.
             // Drag & drop onto the launcher: a .okayscene plays instantly (no
             // download); a shared game FOLDER (or loose script/model) installs into
             // your community library.
@@ -2695,9 +2693,37 @@ int main(int argc, char** argv) {
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
+        // ---- Exit / Minimize confirmation (raised by the window [X] or Alt+F4) ----
+        // Closing the launcher asks first, so an accidental [X] doesn't quit mid-task;
+        // "Minimize" is a normal taskbar minimize that always restores.
+        if (closeConfirm && !ImGui::IsPopupOpen("Close OkaySpace?"))
+            ImGui::OpenPopup("Close OkaySpace?");
+        {
+            ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+            ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Close OkaySpace?", nullptr,
+                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+                ImGui::TextUnformatted("Do you want to exit OkaySpace, or just minimize it?");
+                ImGui::Dummy(ImVec2(0, 10));
+                if (ImGui::Button("Exit", ImVec2(120, 0))) {
+                    running = false; closeConfirm = false; ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Minimize", ImVec2(120, 0))) {
+                    SDL_MinimizeWindow(window); closeConfirm = false; ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
+                    ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                    closeConfirm = false; ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+        }
+
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
-        if (!ImGui::GetIO().WantTextInput) {
+        if (!closeConfirm && !ImGui::GetIO().WantTextInput) {
             for (int i = 0; i < 9; ++i)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
@@ -4590,11 +4616,6 @@ int main(int argc, char** argv) {
             ImGui::SeparatorText("Behavior");
             if (ImGui::Checkbox("Check for updates when the launcher starts", &g_updateOnLaunch))
                 SavePrefs();
-            if (ImGui::Checkbox("Minimize to the system tray (keep running in the background)", &g_minimizeToTray))
-                SavePrefs();
-#if !defined(_WIN32)
-            ImGui::SameLine(); ImGui::TextDisabled("(Windows only)");
-#endif
 
             // ---- About ----
             ImGui::Dummy(ImVec2(0, 16));

@@ -13,7 +13,11 @@
 #include "okay/Platform/Account/AccountService.hpp"
 #include <string>
 #include <vector>
+#include <map>
+#include <utility>
 #include <cstdlib>
+#include <cstdio>
+#include <ctime>
 
 namespace okay {
 
@@ -25,6 +29,14 @@ struct WorkshopItem {
     std::string kind;         // "game" | "scene" | "template"
     std::string url;          // public download URL (stored in storage_path)
     long        downloads = 0;
+};
+
+struct WorkshopReview {
+    std::string reviewer;     // reviewer_name as written
+    int         rating = 0;   // 1-5 stars
+    std::string body;
+    long        when = 0;
+    bool        mine = false; // true when it's my own review
 };
 
 class Workshop {
@@ -86,9 +98,85 @@ public:
                          "DELETE").ok;
     }
 
+    // --- Reviews & ratings -------------------------------------------------
+
+    // Aggregate rating per item: itemId -> (sumOfStars, count). One request;
+    // the launcher turns this into an average + star display in the list. If
+    // the reviews table is missing/empty this is just an empty map (no-op).
+    std::map<long, std::pair<long, long>> Ratings() {
+        std::map<long, std::pair<long, long>> out;
+        auto r = acct_.Api("/rest/v1/workshop_reviews?select=item_id,rating", "GET");
+        if (!r.ok) return out;
+        for (const auto& obj : SplitObjects(r.body)) {
+            long id = std::atol(Field(obj, "item_id").c_str());
+            long rt = std::atol(Field(obj, "rating").c_str());
+            if (id <= 0 || rt < 1) continue;
+            out[id].first += rt; out[id].second += 1;
+        }
+        return out;
+    }
+
+    // All reviews for one item, newest first.
+    std::vector<WorkshopReview> Reviews(long itemId) {
+        std::vector<WorkshopReview> out;
+        if (itemId <= 0) return out;
+        auto r = acct_.Api("/rest/v1/workshop_reviews"
+                           "?select=reviewer_name,rating,body,created_at"
+                           "&item_id=eq." + std::to_string(itemId) +
+                           "&order=created_at.desc", "GET");
+        if (!r.ok) return out;
+        std::string me = acct_.CurrentSession().username;
+        for (const auto& obj : SplitObjects(r.body)) {
+            WorkshopReview w;
+            w.reviewer = Field(obj, "reviewer_name");
+            w.rating   = (int)std::atol(Field(obj, "rating").c_str());
+            w.body     = Field(obj, "body");
+            w.when     = ParseIso(Field(obj, "created_at"));
+            w.mine     = (!me.empty() && me == w.reviewer);
+            out.push_back(w);
+        }
+        return out;
+    }
+
+    // Post (or replace) my review for an item. Deletes any prior review of mine
+    // first (RLS scopes the delete to my own row), then inserts the new one, so
+    // re-rating just overwrites. reviewer defaults to auth.uid() server-side.
+    bool SubmitReview(long itemId, int rating, const std::string& body,
+                      std::string* err = nullptr) {
+        if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in to review."; return false; }
+        if (itemId <= 0 || rating < 1 || rating > 5) { if (err) *err = "Pick 1-5 stars."; return false; }
+        acct_.Api("/rest/v1/workshop_reviews?item_id=eq." + std::to_string(itemId), "DELETE");
+        std::string payload = "{\"item_id\":" + std::to_string(itemId) +
+                              ",\"rating\":" + std::to_string(rating) +
+                              ",\"body\":" + JStr(body) +
+                              ",\"reviewer_name\":" + JStr(acct_.CurrentSession().username) + "}";
+        auto r = acct_.Api("/rest/v1/workshop_reviews", "POST", payload);
+        if (!r.ok && err) *err = r.body.empty() ? "Review failed." : r.body;
+        return r.ok;
+    }
+
+    // Delete my review for an item (RLS scopes to my own row).
+    bool RemoveMyReview(long itemId) {
+        if (!acct_.IsLoggedIn() || itemId <= 0) return false;
+        return acct_.Api("/rest/v1/workshop_reviews?item_id=eq." + std::to_string(itemId),
+                         "DELETE").ok;
+    }
+
 private:
     okay::account::AccountService& acct_;
 
+    static long ParseIso(const std::string& ls) {
+        if (ls.size() < 19) return 0;
+        std::tm tm{};
+        if (sscanf(ls.c_str(), "%d-%d-%dT%d:%d:%d",
+                   &tm.tm_year,&tm.tm_mon,&tm.tm_mday,&tm.tm_hour,&tm.tm_min,&tm.tm_sec) != 6) return 0;
+        tm.tm_year -= 1900; tm.tm_mon -= 1;
+#if defined(_WIN32)
+        return (long)_mkgmtime(&tm);
+#else
+        return (long)timegm(&tm);
+#endif
+    }
     static std::vector<std::string> SplitObjects(const std::string& json) {
         std::vector<std::string> out; int depth = 0; std::size_t start = std::string::npos;
         for (std::size_t i = 0; i < json.size(); ++i) {

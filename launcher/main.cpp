@@ -949,6 +949,27 @@ void HoverRing() {
     ImGui::GetWindowDrawList()->AddRect(mn, mx, ImGui::GetColorU32(kAccent), 7.0f, 0, 2.0f);
 }
 
+// Draw a 5-star rating row at a screen position. `avg` in [0,5] fills stars
+// (a star lights once avg reaches its half-point). Each star is 5 triangles
+// radiating from a centre, so it reads as a real star without concave-fill
+// issues. Returns the row's pixel width so callers can advance the cursor.
+float DrawStars(ImDrawList* dl, ImVec2 pos, float sz, float avg, ImU32 on, ImU32 off) {
+    const float step = sz * 1.3f, outer = sz * 0.5f, inner = sz * 0.2f;
+    for (int i = 0; i < 5; ++i) {
+        ImVec2 c(pos.x + outer + i * step, pos.y + outer);
+        ImU32 col = (avg >= i + 0.5f) ? on : off;
+        ImVec2 pts[10];
+        for (int k = 0; k < 10; ++k) {
+            float ang = -1.5707963f + k * 0.6283185f;     // -90deg, +36deg steps
+            float rad = (k % 2 == 0) ? outer : inner;
+            pts[k] = ImVec2(c.x + std::cos(ang) * rad, c.y + std::sin(ang) * rad);
+        }
+        for (int k = 0; k < 10; ++k)                        // fan the 10 rim points around the centre
+            dl->AddTriangleFilled(c, pts[k], pts[(k + 1) % 10], col);
+    }
+    return 5 * step;
+}
+
 // Launcher preferences persisted next to the exe (launcher.cfg).
 void LoadPrefs() {
     std::ifstream f(fs::path(g_exeDir) / "launcher.cfg");
@@ -3337,8 +3358,16 @@ int main(int argc, char** argv) {
             if (loginGate("the marketplace")) {
             okay::Workshop ws(account);
             static std::vector<okay::WorkshopItem> wCache;
+            static std::map<long, std::pair<long, long>> wRatings;  // itemId -> (starSum, count)
             static Uint32 wNextRefresh = 0;
             static bool wShowPublish = false;
+            // Reviews popup (one item at a time).
+            static bool rvOpen = false;        // request to open the reviews popup
+            static long rvItem = 0;
+            static std::string rvTitle, rvErr;
+            static std::vector<okay::WorkshopReview> rvList;
+            static int  rvStars = 5;
+            static char rvBody[400] = "";
             static char wTitle[128] = "", wUrl[256] = "";
             static char wDesc[512] = "";
             static int  wKind = 0;
@@ -3351,7 +3380,7 @@ int main(int argc, char** argv) {
             }
             if (g_openPublishForm) { wShowPublish = true; g_openPublishForm = false; }
             Uint32 now = SDL_GetTicks();
-            if (now >= wNextRefresh) { wCache = ws.List(); wNextRefresh = now + 15000; }
+            if (now >= wNextRefresh) { wCache = ws.List(); wRatings = ws.Ratings(); wNextRefresh = now + 15000; }
 
             ImGui::TextDisabled("Browse and share games, scenes and templates from the community.");
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 196);
@@ -3420,7 +3449,7 @@ int main(int argc, char** argv) {
                         mlo(w.title + " " + w.description + " " + w.author).find(nd) == std::string::npos) continue;
                     ++mktShown;
                     ImGui::PushID((int)w.id);
-                    ImGui::BeginChild("##witem", ImVec2(0, 96), true);
+                    ImGui::BeginChild("##witem", ImVec2(0, 118), true);
                     HoverRing();
                     // Colored icon tile from the title.
                     ImGui::SetCursorPos(ImVec2(12, 14));
@@ -3443,6 +3472,19 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("by %s  -  %ld download%s",
                                         w.author.empty() ? "unknown" : w.author.c_str(),
                                         w.downloads, w.downloads == 1 ? "" : "s");
+                    // Rating row: star meter + average + count (or "Not yet rated").
+                    {
+                        auto it = wRatings.find(w.id);
+                        long sum = it != wRatings.end() ? it->second.first : 0;
+                        long cnt = it != wRatings.end() ? it->second.second : 0;
+                        float avg = cnt > 0 ? (float)sum / (float)cnt : 0.0f;
+                        ImVec2 sp = ImGui::GetCursorScreenPos(); sp.y += 2;
+                        float w5 = DrawStars(ImGui::GetWindowDrawList(), sp, 11.0f, avg,
+                                             IM_COL32(240, 196, 92, 255), IM_COL32(255, 255, 255, 46));
+                        ImGui::Dummy(ImVec2(w5, 15)); ImGui::SameLine(0, 8);
+                        if (cnt > 0) ImGui::TextDisabled("%.1f  (%ld)", avg, cnt);
+                        else         ImGui::TextDisabled("Not yet rated");
+                    }
                     if (!w.description.empty()) {
                         ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - 100);
                         ImGui::TextDisabled("%s", w.description.c_str());
@@ -3466,6 +3508,15 @@ int main(int argc, char** argv) {
                     if (wished) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f,0.80f,0.35f,1));
                     if (ImGui::SmallButton(wished ? "* Wishlisted" : "+ Wishlist")) { ToggleWishlist(w.id); SavePrefs(); }
                     if (wished) ImGui::PopStyleColor();
+                    if (ImGui::SmallButton("Reviews")) {
+                        rvItem = w.id; rvTitle = w.title; rvOpen = true;
+                        rvStars = 5; rvBody[0] = '\0'; rvErr.clear();
+                        rvList = ws.Reviews(w.id);
+                        for (const auto& rev : rvList) if (rev.mine) {   // prefill my existing review
+                            rvStars = rev.rating;
+                            std::snprintf(rvBody, sizeof(rvBody), "%s", rev.body.c_str());
+                        }
+                    }
                     if (!me.empty() && me == w.author) {
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Remove")) { ws.Remove(w.id); wNextRefresh = 0; }
@@ -3483,6 +3534,83 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("No items match your search or filter.");
                 }
                 ImGui::EndChild();
+            }
+
+            // --- Reviews popup (opened from a card's "Reviews" button) ---
+            if (rvOpen) { ImGui::OpenPopup("Reviews"); rvOpen = false; }
+            ImGui::SetNextWindowSize(ImVec2(520, 520), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal("Reviews", nullptr, ImGuiWindowFlags_NoCollapse)) {
+                ImGui::TextUnformatted(rvTitle.c_str());
+                // Aggregate for this item.
+                long sum = 0, cnt = 0;
+                auto rit = wRatings.find(rvItem);
+                if (rit != wRatings.end()) { sum = rit->second.first; cnt = rit->second.second; }
+                float avg = cnt > 0 ? (float)sum / (float)cnt : 0.0f;
+                ImVec2 ap = ImGui::GetCursorScreenPos(); ap.y += 2;
+                float aw = DrawStars(ImGui::GetWindowDrawList(), ap, 13.0f, avg,
+                                     IM_COL32(240,196,92,255), IM_COL32(255,255,255,46));
+                ImGui::Dummy(ImVec2(aw, 17)); ImGui::SameLine(0, 8);
+                if (cnt > 0) ImGui::TextDisabled("%.1f out of 5  -  %ld review%s", avg, cnt, cnt==1?"":"s");
+                else         ImGui::TextDisabled("No reviews yet");
+                ImGui::Separator();
+
+                // My review editor.
+                ImGui::TextUnformatted("Your rating:");
+                ImVec2 sp = ImGui::GetCursorScreenPos();
+                float sw = DrawStars(ImGui::GetWindowDrawList(), sp, 22.0f, (float)rvStars,
+                                     IM_COL32(240,196,92,255), IM_COL32(255,255,255,55));
+                float stepw = sw / 5.0f;
+                for (int s = 0; s < 5; ++s) {
+                    ImGui::SetCursorScreenPos(ImVec2(sp.x + s * stepw, sp.y));
+                    if (ImGui::InvisibleButton(("##st" + std::to_string(s)).c_str(), ImVec2(stepw, 28)))
+                        rvStars = s + 1;
+                }
+                ImGui::SetCursorScreenPos(ImVec2(sp.x + sw + 10, sp.y + 4));
+                ImGui::Text("%d / 5", rvStars);
+                ImGui::Dummy(ImVec2(0, 30));
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextMultiline("##rvbody", rvBody, sizeof(rvBody), ImVec2(-1, 70));
+                if (ImGui::Button("Submit review", ImVec2(140, 0))) {
+                    if (ws.SubmitReview(rvItem, rvStars, rvBody, &rvErr)) {
+                        Toast("Review posted", 1);
+                        rvList = ws.Reviews(rvItem);
+                        wRatings = ws.Ratings(); wNextRefresh = SDL_GetTicks() + 15000;
+                        rvErr.clear();
+                    }
+                }
+                bool haveMine = false; for (const auto& rev : rvList) if (rev.mine) haveMine = true;
+                if (haveMine) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Delete mine", ImVec2(120, 0))) {
+                        ws.RemoveMyReview(rvItem);
+                        rvStars = 5; rvBody[0] = '\0';
+                        rvList = ws.Reviews(rvItem);
+                        wRatings = ws.Ratings(); wNextRefresh = SDL_GetTicks() + 15000;
+                    }
+                }
+                if (!rvErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1));
+                                      ImGui::TextWrapped("%s", rvErr.c_str()); ImGui::PopStyleColor(); }
+                ImGui::Separator();
+
+                // All reviews for this item.
+                ImGui::BeginChild("##rvlist", ImVec2(0, ImGui::GetContentRegionAvail().y - 44), false);
+                if (rvList.empty()) ImGui::TextDisabled("Be the first to review this.");
+                for (const auto& rev : rvList) {
+                    ImGui::BeginChild(("##rv" + rev.reviewer + std::to_string(rev.when)).c_str(),
+                                      ImVec2(0, rev.body.empty() ? 40 : 64), true);
+                    ImVec2 rp = ImGui::GetCursorScreenPos(); rp.y += 2;
+                    DrawStars(ImGui::GetWindowDrawList(), rp, 10.0f, (float)rev.rating,
+                              IM_COL32(240,196,92,255), IM_COL32(255,255,255,46));
+                    ImGui::Dummy(ImVec2(68, 13)); ImGui::SameLine();
+                    ImGui::Text("%s%s", rev.reviewer.empty() ? "someone" : rev.reviewer.c_str(),
+                                rev.mine ? "  (you)" : "");
+                    if (!rev.body.empty()) { ImGui::PushTextWrapPos(0);
+                        ImGui::TextDisabled("%s", rev.body.c_str()); ImGui::PopTextWrapPos(); }
+                    ImGui::EndChild();
+                }
+                ImGui::EndChild();
+                if (ImGui::Button("Close", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
             }
             }   // end marketplace login gate
         } else if (tab == 8) {                            // ---- Servers (Discord-style) ----

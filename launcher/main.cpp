@@ -2750,9 +2750,21 @@ int main(int argc, char** argv) {
 
             if (account.IsLoggedIn()) {
                 const auto& s = account.CurrentSession();
+                // Load my customization once so the card below previews it.
+                if (!acctProfileLoaded && account.IsOnline()) {
+                    okay::Friend me = okay::Friends(account).MyProfile();
+                    acctAccent = me.accent;
+                    std::snprintf(acctStatus,   sizeof(acctStatus),   "%s", me.customStatus.c_str());
+                    std::snprintf(acctFavGame,  sizeof(acctFavGame),  "%s", me.favoriteGame.c_str());
+                    std::snprintf(acctLocation, sizeof(acctLocation), "%s", me.location.c_str());
+                    acctProfileLoaded = true;
+                }
+                int paIdx = acctAccent; if (paIdx < 0 || paIdx >= (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]))) paIdx = 0;
+                ImVec4 myAccent = kAccentPresets[paIdx].col;
                 ImGui::Dummy(ImVec2(0, 8));
-                // Profile card: avatar initial + name + account details.
-                ImGui::BeginChild("profile", ImVec2(0, 110), true);
+                // Profile card: avatar initial + name + account details. It doubles
+                // as a live preview of the player's chosen profile color/status.
+                ImGui::BeginChild("profile", ImVec2(0, 124), true);
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 cp = ImGui::GetCursorScreenPos();
                 float r = 30.0f;
@@ -2760,11 +2772,18 @@ int main(int argc, char** argv) {
                 // Avatar tinted by the username (same stable hash as game tiles),
                 // so each account gets its own recognizable color.
                 ImVec4 av = NameColor(s.username);
-                // Subtle wash of the avatar color across the whole card so the
-                // profile block reads as "yours" at a glance.
+                // Wash the card with the chosen profile accent so it reads as a
+                // preview of what friends see.
                 ImVec2 wmn = ImGui::GetWindowPos();
                 ImVec2 wmx(wmn.x + ImGui::GetWindowSize().x, wmn.y + ImGui::GetWindowSize().y);
-                dl->AddRectFilled(wmn, wmx, ImGui::GetColorU32(ImVec4(av.x, av.y, av.z, 0.06f)), 6.0f);
+                // Accent banner strip along the top + a faint full-card wash.
+                dl->AddRectFilledMultiColor(wmn, ImVec2(wmx.x, wmn.y + 46),
+                    ImGui::GetColorU32(ImVec4(myAccent.x,myAccent.y,myAccent.z,0.40f)),
+                    ImGui::GetColorU32(ImVec4(myAccent.x,myAccent.y,myAccent.z,0.14f)),
+                    ImGui::GetColorU32(ImVec4(myAccent.x,myAccent.y,myAccent.z,0.06f)),
+                    ImGui::GetColorU32(ImVec4(myAccent.x,myAccent.y,myAccent.z,0.22f)));
+                dl->AddRectFilled(ImVec2(wmn.x, wmn.y + 46), wmx,
+                    ImGui::GetColorU32(ImVec4(myAccent.x, myAccent.y, myAccent.z, 0.05f)), 6.0f);
                 // My avatar: fetched once; the "Update avatar" button refreshes it.
                 static std::string s_myAvatar; static bool s_avFetched = false;
                 if (!s_avFetched && account.IsOnline()) { s_myAvatar = okay::Friends(account).MyAvatar(); s_avFetched = true; }
@@ -2798,6 +2817,13 @@ int main(int argc, char** argv) {
                                     sdr, ImGui::GetColorU32(stCol), 12);
                 ImGui::SetCursorScreenPos(ImVec2(dp.x + sdr * 2 + 7, dp.y));
                 ImGui::TextColored(stCol, "%s", account.IsOnline() ? "Online" : "Local (this device)");
+                // Custom status / tagline preview.
+                if (acctStatus[0]) {
+                    ImGui::SetCursorScreenPos(ImVec2(tx, dp.y + ImGui::GetTextLineHeight() + 4));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.72f,0.75f,0.82f,1));
+                    ImGui::Text("\"%s\"", acctStatus);
+                    ImGui::PopStyleColor();
+                }
                 ImGui::EndChild();
                 // Profile stats row: achievements, games in library, friend code.
                 {

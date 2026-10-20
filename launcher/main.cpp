@@ -47,6 +47,8 @@
 
 #if defined(_WIN32)
 #  include <windows.h>
+#  include <shellapi.h>   // Shell_NotifyIcon (system-tray icon)
+#  include <SDL_syswm.h>  // HWND of the SDL window, for the tray
 #else
 #  include <unistd.h>
 #  include <sys/wait.h>
@@ -846,6 +848,12 @@ fs::path CommunityItemRoot(const fs::path& scenePath) {
 // name you see (Discord/Steam-style; only you see it).
 std::set<std::string>              g_favFriends;   // favorited friend uids
 std::map<std::string,std::string>  g_friendNicks;  // uid -> private nickname
+// Chat conversation state (client-side, persisted): pinned float to the top,
+// muted never raise an unread badge, archived hide until you show archived.
+std::set<std::string>              g_pinnedChats;
+std::set<std::string>              g_mutedChats;
+std::set<std::string>              g_archivedChats;
+bool                               g_minimizeToTray = true;   // Steam-style tray
 
 // Shared accent so UI code can match the theme.
 // Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
@@ -1583,6 +1591,10 @@ void LoadPrefs() {
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "favfriend" && !v.empty()) g_favFriends.insert(v);
+        else if (k == "pinchat" && !v.empty()) g_pinnedChats.insert(v);
+        else if (k == "mutechat" && !v.empty()) g_mutedChats.insert(v);
+        else if (k == "archivechat" && !v.empty()) g_archivedChats.insert(v);
+        else if (k == "min_to_tray") g_minimizeToTray = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
@@ -1628,6 +1640,10 @@ void SavePrefs() {
     f << "win_h=" << g_winH << "\n";
     for (const auto& p : g_favorites)    f << "fav=" << p << "\n";
     for (const auto& u : g_favFriends)   f << "favfriend=" << u << "\n";
+    for (const auto& u : g_pinnedChats)  f << "pinchat=" << u << "\n";
+    for (const auto& u : g_mutedChats)   f << "mutechat=" << u << "\n";
+    for (const auto& u : g_archivedChats) f << "archivechat=" << u << "\n";
+    f << "min_to_tray=" << (g_minimizeToTray ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
     for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
@@ -1654,6 +1670,25 @@ static std::string ChatPreview(const std::string& body, std::size_t n) {
     return s;
 }
 
+// The first http(s) URL in `body` that points at an image (by extension), so a
+// chat message containing an image link renders an inline preview.
+static std::string FirstImageUrl(const std::string& body) {
+    std::size_t i = 0, n = body.size();
+    while (i < n) {
+        while (i < n && (body[i]==' '||body[i]=='\n')) ++i;
+        std::size_t j = i; while (j < n && body[j]!=' ' && body[j]!='\n') ++j;
+        std::string tok = body.substr(i, j - i); i = j;
+        if (tok.rfind("http://",0)==0 || tok.rfind("https://",0)==0) {
+            std::string low = tok; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+            std::size_t q = low.find('?'); if (q != std::string::npos) low.erase(q);
+            for (std::string ext : {".png",".jpg",".jpeg",".bmp",".gif",".webp"})
+                if (low.size() >= ext.size() && low.compare(low.size()-ext.size(), ext.size(), ext) == 0)
+                    return tok;
+        }
+    }
+    return "";
+}
+
 void DrawChatWindow(okay::account::AccountService& account) {
     if (!g_chatWinOpen) return;
     static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
@@ -1669,11 +1704,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static char input[1024] = ""; static int lastShown = -1; static std::string lastConv;
     static char convFilter[96] = ""; static char msgSearch[96] = ""; static bool showSearch = false;
     static bool wantScrollBottom = false;            // Jump-to-latest request
+    static bool focusComposer = false;               // focus the input on open
 
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
         selUid = uid; selName = nm; selAvatar = av; selOnline = online;
         log.clear(); logNext = 0; editId = 0; replyTo = 0; input[0] = '\0';
-        lastShown = -1; msgSearch[0] = '\0'; showSearch = false;
+        lastShown = -1; msgSearch[0] = '\0'; showSearch = false; focusComposer = true;
     };
 
     if (g_chatReqPending) {                     // a "Message" button asked to open a convo
@@ -1699,8 +1735,29 @@ void DrawChatWindow(okay::account::AccountService& account) {
 
         // ---- Left: conversation list (Messenger-style rows) -------------------
         // The window shrinks the sidebar on narrow widths so the thread stays usable.
-        float listW = ImGui::GetContentRegionAvail().x < 560 ? 150.0f : 212.0f;
+        float listW = ImGui::GetContentRegionAvail().x < 560 ? 158.0f : 216.0f;
         ImGui::BeginChild("##chatlist", ImVec2(listW, 0), true);
+        // New-chat button + search.
+        ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+        if (ImGui::Button("+ New message", ImVec2(-1, 0))) ImGui::OpenPopup("##newchat");
+        ImGui::PopStyleColor();
+        if (ImGui::BeginPopup("##newchat")) {
+            ImGui::TextDisabled("Start a chat with...");
+            ImGui::Separator();
+            int shownF = 0;
+            for (const auto& f : friends) {
+                if (f.status != "accepted") continue;
+                std::string nm = f.display.empty() ? f.username : f.display;
+                if (ImGui::Selectable((nm + "##nc" + f.id).c_str())) {
+                    openConv(f.id, nm, f.avatar, f.online);
+                    g_archivedChats.erase(f.id);   // starting a chat un-archives it
+                    ImGui::CloseCurrentPopup();
+                }
+                ++shownF;
+            }
+            if (shownF == 0) ImGui::TextDisabled("Add friends first.");
+            ImGui::EndPopup();
+        }
         ImGui::SetNextItemWidth(-1);
         ImGui::InputTextWithHint("##convfilter", "Search chats", convFilter, sizeof(convFilter));
         ImGui::Spacing();
@@ -1712,7 +1769,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         std::set<std::string> have;
         for (const auto& c : convs) {
             Row r; r.uid = c.uid; r.lastId = c.lastId; r.when = c.when; r.mine = c.lastMine;
-            r.preview = (c.lastMine ? "You: " : "") + ChatPreview(c.lastBody, 28);
+            r.preview = (c.lastMine ? "You: " : "") + ChatPreview(c.lastBody, 26);
             if (auto it = fById.find(c.uid); it != fById.end()) {
                 r.name = it->second->display.empty() ? it->second->username : it->second->display;
                 r.avatar = it->second->avatar; r.online = it->second->online;
@@ -1725,25 +1782,37 @@ void DrawChatWindow(okay::account::AccountService& account) {
             r.avatar = f.avatar; r.online = f.online; r.preview = "Tap to chat";
             rows.push_back(r);
         }
+        // Pinned conversations float to the top (stable: keeps recency order).
+        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+            return g_pinnedChats.count(a.uid) > g_pinnedChats.count(b.uid);
+        });
         std::string filt = convFilter;
         for (auto& ch : filt) ch = (char)std::tolower((unsigned char)ch);
-        int shown = 0;
-        for (const auto& r : rows) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        // One conversation row. Returns true if it was shown (passed the filter).
+        auto drawConvRow = [&](const Row& r) -> bool {
             if (!filt.empty()) {
                 std::string low = r.name; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
-                if (low.find(filt) == std::string::npos) continue;
+                if (low.find(filt) == std::string::npos) return false;
             }
-            ++shown;
+            bool pinned = g_pinnedChats.count(r.uid) != 0;
+            bool muted  = g_mutedChats.count(r.uid) != 0;
+            bool archived = g_archivedChats.count(r.uid) != 0;
             ImGui::PushID(r.uid.c_str());
             bool sel = (r.uid == selUid);
-            bool unread = r.lastId > 0 && !r.mine && r.lastId > seenId[r.uid] && !sel;
+            bool unread = r.lastId > 0 && !r.mine && r.lastId > seenId[r.uid] && !sel && !muted;
             ImVec2 rp = ImGui::GetCursorScreenPos();
             float rowH = 46.0f;
-            if (ImGui::Selectable("##row", sel, 0, ImVec2(0, rowH))) {
-                openConv(r.uid, r.name, r.avatar, r.online);
+            if (ImGui::Selectable("##row", sel, 0, ImVec2(0, rowH))) openConv(r.uid, r.name, r.avatar, r.online);
+            // Right-click: pin / mute / archive / mark read.
+            if (ImGui::BeginPopupContextItem("##convctx")) {
+                if (ImGui::MenuItem(pinned ? "Unpin" : "Pin to top")) { if (pinned) g_pinnedChats.erase(r.uid); else g_pinnedChats.insert(r.uid); SavePrefs(); }
+                if (ImGui::MenuItem(muted ? "Unmute" : "Mute")) { if (muted) g_mutedChats.erase(r.uid); else g_mutedChats.insert(r.uid); SavePrefs(); }
+                if (ImGui::MenuItem(archived ? "Unarchive" : "Archive")) { if (archived) g_archivedChats.erase(r.uid); else g_archivedChats.insert(r.uid); SavePrefs(); }
+                if (unread && ImGui::MenuItem("Mark as read")) seenId[r.uid] = r.lastId;
+                ImGui::EndPopup();
             }
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            // avatar
             ImVec2 av(rp.x + 4, rp.y + 6); float as = 34.0f;
             SDL_Texture* tex = AvatarTexture(r.avatar);
             if (tex) dl->AddImageRounded((ImTextureID)(intptr_t)tex, av, ImVec2(av.x+as, av.y+as), ImVec2(0,0), ImVec2(1,1), IM_COL32_WHITE, as*0.5f);
@@ -1756,12 +1825,29 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
             if (r.online) dl->AddCircleFilled(ImVec2(av.x+as-3, av.y+as-3), 4.5f, IM_COL32(120,205,110,255), 16),
                           dl->AddCircle(ImVec2(av.x+as-3, av.y+as-3), 5.0f, IM_COL32(30,34,42,255), 16, 1.6f);
-            // name + preview
             float tx = rp.x + 4 + as + 8;
-            dl->AddText(ImVec2(tx, rp.y + 6), ImGui::GetColorU32(ImGuiCol_Text), ChatPreview(r.name, 16).c_str());
+            dl->AddText(ImVec2(tx, rp.y + 6), ImGui::GetColorU32(unread ? ImGuiCol_Text : ImGuiCol_Text), ChatPreview(r.name, 15).c_str());
             dl->AddText(ImVec2(tx, rp.y + 24), ImGui::GetColorU32(unread ? ImGuiCol_Text : ImGuiCol_TextDisabled), r.preview.c_str());
-            if (unread) dl->AddCircleFilled(ImVec2(rp.x + listW - 16, rp.y + rowH*0.5f), 4.5f, ImGui::GetColorU32(kAccent), 16);
+            // Right-side markers: pin, mute, unread dot.
+            float mx = rp.x + listW - 14;
+            if (unread) { dl->AddCircleFilled(ImVec2(mx, rp.y + 14), 4.5f, ImGui::GetColorU32(kAccent), 16); }
+            if (muted)  { DrawEmoji(dl, ImVec2(mx, rp.y + 32), 12, 2); }   // small marker
+            if (pinned) { dl->AddCircleFilled(ImVec2(rp.x + 10, rp.y + 10), 3.0f, ImGui::GetColorU32(kAccent), 10); }
             ImGui::PopID();
+            return true;
+        };
+
+        int shown = 0, archivedCount = 0;
+        for (const auto& r : rows) {
+            if (g_archivedChats.count(r.uid)) { ++archivedCount; continue; }
+            if (drawConvRow(r)) ++shown;
+        }
+        // Archived section (collapsed by default).
+        if (archivedCount > 0) {
+            ImGui::Spacing();
+            if (ImGui::CollapsingHeader(("Archived (" + std::to_string(archivedCount) + ")###arch").c_str())) {
+                for (const auto& r : rows) if (g_archivedChats.count(r.uid)) drawConvRow(r);
+            }
         }
         if (shown == 0) ImGui::TextDisabled(convFilter[0] ? "No matches." : "Add friends to start chatting.");
         ImGui::EndChild();
@@ -1861,8 +1947,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
                 float metaW = ImGui::CalcTextSize(meta.c_str()).x;
                 bool bareEmoji = emojiOnly && !rep;   // Telegram-style big, background-less emoji
+                std::string imgUrl = bareEmoji ? std::string() : FirstImageUrl(m.body);
                 float contentW = bareEmoji ? std::max((float)ecount * (bigEm + 3), metaW)
                                            : std::max({bodyW, repW, metaW});
+                if (!imgUrl.empty()) contentW = std::max(contentW, std::min(bubbleMax - padX*2, 240.0f));
                 float boxW = contentW + padX*2;
                 float leftPad = m.mine ? 0.0f : (avatarW + avatarGap);
                 float x0 = m.mine ? (avW - boxW) : leftPad; if (x0 < leftPad) x0 = leftPad;
@@ -1923,6 +2011,21 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     }
                 } else {
                     RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
+                }
+                // Inline image preview for an image link in the message.
+                if (!imgUrl.empty()) {
+                    if (SDL_Texture* it = AvatarTexture(imgUrl)) {
+                        int iw = 0, ih = 0; SDL_QueryTexture(it, nullptr, nullptr, &iw, &ih);
+                        float availW = ImGui::GetContentRegionAvail().x;
+                        float w = (iw > 0 && iw > availW) ? availW : (float)iw;
+                        if (w < 1) w = availW;
+                        float h = (iw > 0) ? w * (float)ih / (float)iw : w * 0.6f;
+                        float maxH = 220.0f; if (h > maxH) { w *= maxH / h; h = maxH; }
+                        ImGui::Dummy(ImVec2(0, 2));
+                        if (ImGui::ImageButton("##img", (ImTextureID)(intptr_t)it, ImVec2(w, h)))
+                            OpenExternal(imgUrl);
+                        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    }
                 }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bareEmoji ? ImVec4(0.6f,0.64f,0.72f,0.9f)
                                         : (m.mine ? ImVec4(0.85f,0.90f,1.0f,0.75f) : ImVec4(0.65f,0.70f,0.80f,0.9f))));
@@ -2051,6 +2154,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             float inH = ImGui::GetTextLineHeight() * lines + 14;
             EmojiPicker("cwemoji", input, sizeof(input)); ImGui::SameLine();
             ImVec2 inSz(ImGui::GetContentRegionAvail().x - 60, inH);
+            if (focusComposer) { ImGui::SetKeyboardFocusHere(); focusComposer = false; }
             bool send = ImGui::InputTextMultiline("##cwin", input, sizeof(input), inSz,
                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
             ImGui::SameLine();
@@ -2067,6 +2171,59 @@ void DrawChatWindow(okay::account::AccountService& account) {
     }
     ImGui::End();
 }
+
+// ---- Steam-style minimize to the system tray (Windows) ---------------------
+// When minimized (and the option is on), the launcher hides from the taskbar and
+// shows a tray icon; clicking it brings the launcher back. Keeps it running in
+// the background for presence/notifications, like Steam. No-op off Windows.
+#if defined(_WIN32)
+static HWND          g_trayHwnd = nullptr;
+static bool          g_trayActive = false;
+static volatile bool g_trayRestoreReq = false;
+static const UINT    WM_OKAYTRAY = WM_USER + 0x51;
+static const UINT    OKAY_TRAY_UID = 1;
+
+static HWND OkayWindowHWND(SDL_Window* w) {
+    SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
+    if (w && SDL_GetWindowWMInfo(w, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS)
+        return wm.info.win.window;
+    return nullptr;
+}
+static void OkayTrayAdd(SDL_Window* w) {
+    if (g_trayActive) return;
+    g_trayHwnd = OkayWindowHWND(w);
+    if (!g_trayHwnd) return;
+    NOTIFYICONDATAA nid; ZeroMemory(&nid, sizeof(nid));
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_trayHwnd;
+    nid.uID = OKAY_TRAY_UID;
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = WM_OKAYTRAY;
+    nid.hIcon = (HICON)LoadImageA(GetModuleHandleA(nullptr), MAKEINTRESOURCEA(1), IMAGE_ICON,
+                                  GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+    if (!nid.hIcon) nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    lstrcpynA(nid.szTip, "OkaySpace \xE2\x80\x94 click to open", (int)sizeof(nid.szTip));
+    Shell_NotifyIconA(NIM_ADD, &nid);
+    g_trayActive = true;
+}
+static void OkayTrayRemove() {
+    if (!g_trayActive || !g_trayHwnd) { g_trayActive = false; return; }
+    NOTIFYICONDATAA nid; ZeroMemory(&nid, sizeof(nid));
+    nid.cbSize = sizeof(nid); nid.hWnd = g_trayHwnd; nid.uID = OKAY_TRAY_UID;
+    Shell_NotifyIconA(NIM_DELETE, &nid);
+    g_trayActive = false;
+}
+// SDL pumps Win32 messages on the main thread, so this hook runs there too; it
+// just flags a restore which the main loop acts on (any click opens the app).
+static void SDLCALL OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, Uint64 wParam, Sint64 lParam) {
+    (void)userdata; (void)hWnd; (void)wParam;
+    if (msg == WM_OKAYTRAY) {
+        UINT ev = (UINT)(lParam & 0xFFFF);
+        if (ev == WM_LBUTTONUP || ev == WM_LBUTTONDBLCLK || ev == WM_RBUTTONUP)
+            g_trayRestoreReq = true;
+    }
+}
+#endif
 
 } // namespace
 
@@ -2102,6 +2259,9 @@ int main(int argc, char** argv) {
     if (!window) return 1;
     SDL_SetWindowMinimumSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
+#if defined(_WIN32)
+    SDL_SetWindowsMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
+#endif
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1,
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
@@ -2224,6 +2384,14 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) running = false;
+#if defined(_WIN32)
+            // Steam-style: minimizing hides the launcher to the system tray.
+            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_MINIMIZED
+                     && g_minimizeToTray) {
+                OkayTrayAdd(window);
+                SDL_HideWindow(window);
+            }
+#endif
             // Drag & drop onto the launcher: a .okayscene plays instantly (no
             // download); a shared game FOLDER (or loose script/model) installs into
             // your community library.
@@ -2250,6 +2418,16 @@ int main(int argc, char** argv) {
                 }
             }
         }
+#if defined(_WIN32)
+        // A tray-icon click restores the launcher from the tray.
+        if (g_trayRestoreReq) {
+            g_trayRestoreReq = false;
+            OkayTrayRemove();
+            SDL_ShowWindow(window);
+            SDL_RestoreWindow(window);
+            SDL_RaiseWindow(window);
+        }
+#endif
         // Once a background download finishes, re-detect the runtimes so the
         // "not found" notices clear without needing a restart.
         if (GetState() == Up_Updated && !rescannedAfterUpdate) {
@@ -2298,6 +2476,13 @@ int main(int argc, char** argv) {
             static Uint32 relaunchAt = 0;
             if (relaunchAt == 0) relaunchAt = SDL_GetTicks() + 1600;
             else if (SDL_GetTicks() >= relaunchAt) { Launch(g_selfPath); running = false; }
+        }
+
+        // While hidden in the system tray, idle cheaply instead of spinning the
+        // render loop (there's nothing to draw until the window is restored).
+        if ((SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) != 0) {
+            SDL_Delay(120);
+            continue;
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();
@@ -4080,6 +4265,11 @@ int main(int argc, char** argv) {
             ImGui::SeparatorText("Behavior");
             if (ImGui::Checkbox("Check for updates when the launcher starts", &g_updateOnLaunch))
                 SavePrefs();
+            if (ImGui::Checkbox("Minimize to the system tray (keep running in the background)", &g_minimizeToTray))
+                SavePrefs();
+#if !defined(_WIN32)
+            ImGui::SameLine(); ImGui::TextDisabled("(Windows only)");
+#endif
 
             // ---- About ----
             ImGui::Dummy(ImVec2(0, 16));
@@ -5647,6 +5837,9 @@ int main(int argc, char** argv) {
         g_dls.clear();
         SDL_DestroyMutex(g_dlMutex); g_dlMutex = nullptr;
     }
+#if defined(_WIN32)
+    OkayTrayRemove();   // make sure no stray tray icon lingers after exit
+#endif
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

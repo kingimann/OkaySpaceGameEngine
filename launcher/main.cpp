@@ -2475,6 +2475,22 @@ int main(int argc, char** argv) {
                 ImGui::SetCursorScreenPos(ImVec2(dp.x + sdr * 2 + 7, dp.y));
                 ImGui::TextColored(stCol, "%s", account.IsOnline() ? "Online" : "Local (this device)");
                 ImGui::EndChild();
+                // Profile stats row: achievements, games in library, friend code.
+                {
+                    int achN = (int)okay::Achievements::All().size();
+                    int gameN = (int)scenes.size();
+                    static std::string myCode; static bool codeFetched = false;
+                    if (!codeFetched && account.IsOnline()) { myCode = okay::Friends(account).MyCode(); codeFetched = true; }
+                    ImGui::Dummy(ImVec2(0, 4));
+                    ImGui::TextDisabled("%d achievement%s   -   %d game%s in library",
+                                        achN, achN == 1 ? "" : "s", gameN, gameN == 1 ? "" : "s");
+                    if (!myCode.empty()) {
+                        ImGui::TextDisabled("Friend code:"); ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f,0.78f,1.0f,1)); ImGui::TextUnformatted(myCode.c_str()); ImGui::PopStyleColor();
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Copy##code")) { ImGui::SetClipboardText(myCode.c_str()); Toast("Friend code copied", 1); }
+                    }
+                }
                 ImGui::Dummy(ImVec2(0, 12));
                 if (account.IsOnline() && ImGui::Button("Re-check session", ImVec2(180, 44)))
                     account.VerifySession();

@@ -194,6 +194,29 @@ public:
         return out;
     }
 
+    // ---- Typing indicator -------------------------------------------------
+    // Tell `peer` I'm typing to them right now (upsert a fresh timestamp). Call
+    // this throttled while the composer has text.
+    bool SetTyping(const std::string& peerUid) {
+        if (!acct_.IsLoggedIn() || peerUid.empty()) return false;
+        return acct_.Api("/rest/v1/typing_state?on_conflict=sender", "POST",
+                         "{\"peer\":" + JStr(peerUid) + ",\"at\":" + JStr(IsoNow()) + "}",
+                         "Prefer: resolution=merge-duplicates").ok;
+    }
+    // Is `peer` currently typing to me? True when their row is fresh (<6s old).
+    bool PeerTyping(const std::string& peerUid) {
+        if (!acct_.IsLoggedIn() || peerUid.empty()) return false;
+        std::string mine = MyId(); if (mine.empty()) return false;
+        auto r = acct_.Api("/rest/v1/typing_state?select=at&sender=eq." + peerUid +
+                           "&peer=eq." + mine, "GET");
+        if (!r.ok) return false;
+        auto o = SplitObjects(r.body);
+        if (o.empty()) return false;
+        long at = ParseIso(Field(o[0], "at"));
+        long now = (long)std::time(nullptr);
+        return at > 0 && (now - at) >= -2 && (now - at) < 6;   // fresh (allow small skew)
+    }
+
     // ---- Read receipts ----------------------------------------------------
     // Record that I've read up to message `lastId` in my conversation with
     // `peer` (upsert on (reader, peer)); drives the other side's "Seen" marker.
@@ -228,6 +251,20 @@ private:
             if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myId_ = Field(o[0], "id"); }
         }
         return myId_;
+    }
+
+    // Current UTC time as an ISO-8601 string (for timestamptz columns).
+    static std::string IsoNow() {
+        std::time_t t = std::time(nullptr);
+        std::tm tm{};
+#if defined(_WIN32)
+        gmtime_s(&tm, &t);
+#else
+        gmtime_r(&t, &tm);
+#endif
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+        return buf;
     }
 
     static long ParseIso(const std::string& ls) {

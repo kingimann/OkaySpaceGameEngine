@@ -1172,7 +1172,13 @@ std::string RelTime(long when) {
 void ChatDateSeparator(long when) {
     char d[48] = "";
     std::time_t t = (std::time_t)when; std::tm* tm = std::localtime(&t);
-    if (tm) std::strftime(d, sizeof(d), "%B %d, %Y", tm);
+    // "Today" / "Yesterday" for recent days, else the full date.
+    long today = DayKey((long)std::time(nullptr));
+    long yday  = DayKey((long)std::time(nullptr) - 86400);
+    long key   = DayKey(when);
+    if (key == today)      std::snprintf(d, sizeof(d), "Today");
+    else if (key == yday)  std::snprintf(d, sizeof(d), "Yesterday");
+    else if (tm)           std::strftime(d, sizeof(d), "%B %d, %Y", tm);
     ImGui::Dummy(ImVec2(0, 6));
     ImVec2 p = ImGui::GetCursorScreenPos();
     float avail = ImGui::GetContentRegionAvail().x;
@@ -1705,11 +1711,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static char convFilter[96] = ""; static char msgSearch[96] = ""; static bool showSearch = false;
     static bool wantScrollBottom = false;            // Jump-to-latest request
     static bool focusComposer = false;               // focus the input on open
+    static Uint32 typingSentAt = 0, typingPollNext = 0;  // typing indicator timers
+    static bool peerTyping = false;                  // the other person is typing
 
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
         selUid = uid; selName = nm; selAvatar = av; selOnline = online;
         log.clear(); logNext = 0; editId = 0; replyTo = 0; input[0] = '\0';
         lastShown = -1; msgSearch[0] = '\0'; showSearch = false; focusComposer = true;
+        peerTyping = false; typingPollNext = 0; typingSentAt = 0;
     };
 
     if (g_chatReqPending) {                     // a "Message" button asked to open a convo
@@ -1870,8 +1879,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
             DrawAvatar(selAvatar, selName, 34.0f);
             ImGui::SameLine(); ImGui::BeginGroup();
             ImGui::TextUnformatted(selName.c_str());
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(selOnline ? ImVec4(0.47f,0.80f,0.43f,1) : ImVec4(0.6f,0.64f,0.7f,1)));
-            ImGui::TextUnformatted(selOnline ? "Active now" : "Offline");
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(peerTyping ? kAccent
+                                        : (selOnline ? ImVec4(0.47f,0.80f,0.43f,1) : ImVec4(0.6f,0.64f,0.7f,1))));
+            ImGui::TextUnformatted(peerTyping ? "typing\xE2\x80\xA6" : (selOnline ? "Active now" : "Offline"));
             ImGui::PopStyleColor();
             ImGui::EndGroup();
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30);
@@ -1889,6 +1899,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 // Tell the peer I've read up to the newest message (Seen receipt).
                 if (!log.empty()) dm.MarkRead(selUid, log.back().id);
             }
+            // Typing indicator: poll the peer's state on a faster cadence.
+            if (now >= typingPollNext) { peerTyping = dm.PeerTyping(selUid); typingPollNext = now + 2500; }
             // Mark everything seen locally (clears the unread dot for this chat).
             long firstUnread = 0;
             for (const auto& m : log) {
@@ -2097,6 +2109,22 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // "claimed" — otherwise ImGui warns about moving the cursor without
             // growing the window (the "MESSAGE FROM DEAR IMGUI" overlay).
             ImGui::Dummy(ImVec2(0.0f, 0.0f));
+            // Typing bubble: a little received-style bubble with animated dots.
+            if (peerTyping && msFilt.empty()) {
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::SetCursorPosX(baseX + avatarW + avatarGap);
+                ImVec2 tp = ImGui::GetCursorScreenPos();
+                float bw = 54.0f, bh = 26.0f;
+                dl->AddRectFilled(tp, ImVec2(tp.x + bw, tp.y + bh), IM_COL32(52, 60, 78, 255), 11.0f);
+                float t = (float)(SDL_GetTicks() % 1200) / 1200.0f;
+                for (int d = 0; d < 3; ++d) {
+                    float ph = t - d * 0.18f; if (ph < 0) ph += 1.0f;
+                    float a = 0.35f + 0.65f * (0.5f + 0.5f * std::sin(ph * 6.2831853f));
+                    dl->AddCircleFilled(ImVec2(tp.x + 15 + d * 12, tp.y + bh * 0.5f), 3.2f,
+                                        ImGui::GetColorU32(ImVec4(0.8f, 0.84f, 0.92f, a)), 12);
+                }
+                ImGui::Dummy(ImVec2(bw, bh));
+            }
             // "Seen" under my latest message once the peer has read it.
             if (!log.empty() && log.back().mine && lastMineId > 0 && peerRead >= lastMineId && msFilt.empty()) {
                 std::string seen = "Seen";
@@ -2162,6 +2190,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (focusComposer) { ImGui::SetKeyboardFocusHere(); focusComposer = false; }
             bool send = ImGui::InputTextMultiline("##cwin", input, sizeof(input), inSz,
                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
+            // Broadcast a typing signal while there's text (throttled to ~2s).
+            if (input[0] && !editId && now - typingSentAt > 2000) { dm.SetTyping(selUid); typingSentAt = now; }
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);

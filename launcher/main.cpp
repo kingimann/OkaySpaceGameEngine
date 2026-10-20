@@ -2936,16 +2936,39 @@ int main(int argc, char** argv) {
             sectionHeader("Achievements", nullptr);
             if (loginGate("achievements")) {
             std::vector<okay::Achievement> achs = okay::Achievements::All();
-            ImGui::TextDisabled("%d unlocked across your OkaySpace games.", (int)achs.size());
-            ImGui::Spacing();
+            // Summary banner: big trophy + unlocked count.
+            {
+                ImGui::BeginChild("##achsum", ImVec2(0, 64), true);
+                ImVec2 p = ImGui::GetCursorScreenPos(); ImDrawList* dl = ImGui::GetWindowDrawList();
+                float cx = p.x + 26, cy = p.y + 30, r = 16.0f; ImU32 gold = IM_COL32(240, 196, 92, 255);
+                dl->AddRectFilled(ImVec2(cx-r*0.6f,cy-r),ImVec2(cx+r*0.6f,cy-r*0.1f),gold,3.0f);
+                dl->AddRectFilled(ImVec2(cx-r*0.12f,cy-r*0.1f),ImVec2(cx+r*0.12f,cy+r*0.55f),gold);
+                dl->AddRectFilled(ImVec2(cx-r*0.7f,cy+r*0.55f),ImVec2(cx+r*0.7f,cy+r),gold,2.0f);
+                ImGui::SetCursorPosX(58); ImGui::SetCursorPosY(ImGui::GetCursorPosY()+10);
+                ImGui::BeginGroup();
+                ImGui::Text("%d achievement%s unlocked", (int)achs.size(), achs.size()==1?"":"s");
+                ImGui::TextDisabled("Across all your OkaySpace games");
+                ImGui::EndGroup();
+                ImGui::EndChild();
+                ImGui::Dummy(ImVec2(0, 6));
+            }
+            static char achFilter[64] = "";
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##achsearch", "Search achievements...", achFilter, sizeof(achFilter));
+            ImGui::Dummy(ImVec2(0, 4));
+            auto alo = [](std::string s){ for (char& c : s) c=(char)std::tolower((unsigned char)c); return s; };
+            std::string an = alo(achFilter);
             if (achs.empty()) {
                 ImGui::Dummy(ImVec2(0, 24));
                 ImGui::TextDisabled("No achievements yet.");
                 ImGui::TextDisabled("Play a game whose actions call \"Unlock Achievement\" to earn your first.");
             } else {
                 ImGui::BeginChild("##achlist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+                int shownA = 0;
                 for (std::size_t i = achs.size(); i-- > 0; ) {   // newest first
                     const okay::Achievement& a = achs[i];
+                    if (!an.empty() && alo(a.label + " " + a.id).find(an) == std::string::npos) continue;
+                    ++shownA;
                     ImGui::PushID((int)i);
                     ImGui::BeginChild("##achrow", ImVec2(0, 56), true);
                     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -2965,6 +2988,10 @@ int main(int argc, char** argv) {
                     ImGui::EndGroup();
                     ImGui::EndChild();
                     ImGui::PopID();
+                }
+                if (shownA == 0) {
+                    ImGui::Dummy(ImVec2(0, 20));
+                    ImGui::TextDisabled("No achievements match \"%s\".", achFilter);
                 }
                 ImGui::EndChild();
             }

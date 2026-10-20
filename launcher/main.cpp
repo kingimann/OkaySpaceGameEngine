@@ -1990,8 +1990,16 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 selName = it->second->display.empty() ? it->second->username : it->second->display;
                 selAvatar = it->second->avatar;
             }
-            // Header
+            // Header: avatar with a presence dot, name + status, and actions.
+            ImVec2 avp = ImGui::GetCursorScreenPos();
             DrawAvatar(selAvatar, selName, 34.0f);
+            {   // presence dot on the avatar's corner
+                ImDrawList* hd = ImGui::GetWindowDrawList();
+                ImU32 dot = selOnline ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
+                hd->AddCircleFilled(ImVec2(avp.x + 28, avp.y + 28), 5.5f, dot, 16);
+                hd->AddCircle(ImVec2(avp.x + 28, avp.y + 28), 5.5f,
+                              ImGui::GetColorU32(ImGuiCol_WindowBg), 16, 2.0f);
+            }
             ImGui::SameLine(); ImGui::BeginGroup();
             ImGui::TextUnformatted(selName.c_str());
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(peerTyping ? kAccent
@@ -1999,9 +2007,50 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::TextUnformatted(peerTyping ? "typing\xE2\x80\xA6" : (selOnline ? "Active now" : "Offline"));
             ImGui::PopStyleColor();
             ImGui::EndGroup();
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30);
+            // Right-aligned actions: conversation menu (⋯) + search toggle.
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 62);
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-            if (ImGui::Button(showSearch ? "x##srch" : "Q##srch", ImVec2(26, 26))) { showSearch = !showSearch; if (!showSearch) msgSearch[0]='\0'; }
+            ImVec2 mbp = ImGui::GetCursorScreenPos();
+            if (ImGui::Button("##convmenu", ImVec2(26, 26))) ImGui::OpenPopup("##convmenu_pop");
+            {   // three-dots glyph
+                ImDrawList* d = ImGui::GetWindowDrawList();
+                ImU32 ic = ImGui::GetColorU32(ImGuiCol_Text);
+                for (int k = -1; k <= 1; ++k)
+                    d->AddCircleFilled(ImVec2(mbp.x + 13 + k * 5.0f, mbp.y + 13), 1.6f, ic, 8);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Conversation options");
+            if (ImGui::BeginPopup("##convmenu_pop")) {
+                bool pin = g_pinnedChats.count(selUid) != 0;
+                bool mut = g_mutedChats.count(selUid) != 0;
+                bool arc = g_archivedChats.count(selUid) != 0;
+                if (ImGui::MenuItem(pin ? "Unpin conversation" : "Pin conversation")) {
+                    if (pin) g_pinnedChats.erase(selUid); else g_pinnedChats.insert(selUid); SavePrefs();
+                }
+                if (ImGui::MenuItem(mut ? "Unmute" : "Mute notifications")) {
+                    if (mut) g_mutedChats.erase(selUid); else g_mutedChats.insert(selUid); SavePrefs();
+                }
+                if (ImGui::MenuItem(arc ? "Unarchive" : "Archive")) {
+                    if (arc) g_archivedChats.erase(selUid); else g_archivedChats.insert(selUid); SavePrefs();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Copy username")) ImGui::SetClipboardText(selName.c_str());
+                ImGui::EndPopup();
+            }
+            ImGui::SameLine();
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY());
+            ImVec2 sbp = ImGui::GetCursorScreenPos();
+            if (ImGui::Button("##srch", ImVec2(26, 26))) { showSearch = !showSearch; if (!showSearch) msgSearch[0]='\0'; }
+            {   // magnifier / close glyph
+                ImDrawList* d = ImGui::GetWindowDrawList();
+                ImU32 ic = ImGui::GetColorU32(ImGuiCol_Text);
+                if (showSearch) {
+                    d->AddLine(ImVec2(sbp.x + 9, sbp.y + 9), ImVec2(sbp.x + 17, sbp.y + 17), ic, 1.8f);
+                    d->AddLine(ImVec2(sbp.x + 17, sbp.y + 9), ImVec2(sbp.x + 9, sbp.y + 17), ic, 1.8f);
+                } else {
+                    d->AddCircle(ImVec2(sbp.x + 11, sbp.y + 11), 5.0f, ic, 16, 1.8f);
+                    d->AddLine(ImVec2(sbp.x + 15, sbp.y + 15), ImVec2(sbp.x + 19, sbp.y + 19), ic, 1.9f);
+                }
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Search in conversation");
             if (showSearch) { ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##msgsearch", "Find a message", msgSearch, sizeof(msgSearch)); }
             ImGui::Separator();

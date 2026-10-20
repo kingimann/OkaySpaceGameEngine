@@ -58,6 +58,10 @@ target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/engine/include
     ${CMAKE_SOURCE_DIR}/engine/third_party/stb)   # stb_image for game cover art
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
+# The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
+if(WIN32)
+    target_link_libraries(okayspace-launcher PRIVATE shell32)
+endif()
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     OUTPUT_NAME "OkaySpace")    # the single thing the user double-clicks

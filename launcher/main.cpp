@@ -2506,6 +2506,47 @@ static int ServerListWorker(void*) {
     return 0;
 }
 
+// Background Friends list/feed fetch (the periodic refresh used to hitch the
+// Friends tab every 10s on the UI thread).
+static SDL_mutex* g_frMutex = nullptr;
+static volatile bool g_frFetching = false;
+static bool g_frReady = false;                       // (guarded)
+static std::vector<okay::Friend> g_frList;           // (guarded)
+static std::vector<okay::FriendEvent> g_frFeed;      // (guarded)
+static int FriendsListWorker(void*) {
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Friends fr(a);
+        auto l = fr.List();
+        auto fd = fr.Feed(14);
+        if (g_frMutex) SDL_LockMutex(g_frMutex);
+        g_frList = std::move(l); g_frFeed = std::move(fd); g_frReady = true;
+        if (g_frMutex) SDL_UnlockMutex(g_frMutex);
+    } catch (...) {}
+    g_frFetching = false;
+    return 0;
+}
+
+// Background Marketplace list/ratings fetch.
+static SDL_mutex* g_wsMutex = nullptr;
+static volatile bool g_wsFetching = false;
+static bool g_wsReady = false;                       // (guarded)
+static std::vector<okay::WorkshopItem> g_wsList;     // (guarded)
+static std::map<long, std::pair<long,long>> g_wsRatings;  // (guarded)
+static int MarketListWorker(void*) {
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Workshop ws(a);
+        auto l = ws.List();
+        auto r = ws.Ratings();
+        if (g_wsMutex) SDL_LockMutex(g_wsMutex);
+        g_wsList = std::move(l); g_wsRatings = std::move(r); g_wsReady = true;
+        if (g_wsMutex) SDL_UnlockMutex(g_wsMutex);
+    } catch (...) {}
+    g_wsFetching = false;
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -5034,7 +5075,19 @@ int main(int argc, char** argv) {
                 }
                 Uint32 now = SDL_GetTicks();
                 if (now >= fNextBeat)    { applyStatus(); fNextBeat = now + 60000; }
-                if (now >= fNextRefresh) { fCache = fr.List(); fFeed = fr.Feed(14); fNextRefresh = now + 10000; }
+                // Refresh the friend list/feed in the background (no UI hitch).
+                if (!g_frMutex) g_frMutex = SDL_CreateMutex();
+                if (now >= fNextRefresh && !g_frFetching) {
+                    g_frFetching = true; fNextRefresh = now + 10000;
+                    if (SDL_Thread* t = SDL_CreateThread(FriendsListWorker, "okay-frlist", nullptr))
+                        SDL_DetachThread(t);
+                    else g_frFetching = false;
+                }
+                if (g_frMutex) {
+                    SDL_LockMutex(g_frMutex);
+                    if (g_frReady) { fCache = g_frList; fFeed = g_frFeed; g_frReady = false; }
+                    SDL_UnlockMutex(g_frMutex);
+                }
 
                 // --- Status selector (Online / Away / Invisible) ---
                 ImGui::TextDisabled("Status:");
@@ -5406,7 +5459,19 @@ int main(int argc, char** argv) {
             }
             if (g_openPublishForm) { wShowPublish = true; g_openPublishForm = false; }
             Uint32 now = SDL_GetTicks();
-            if (now >= wNextRefresh) { wCache = ws.List(); wRatings = ws.Ratings(); wNextRefresh = now + 15000; }
+            // Refresh the marketplace list/ratings in the background (no hitch).
+            if (!g_wsMutex) g_wsMutex = SDL_CreateMutex();
+            if (now >= wNextRefresh && !g_wsFetching) {
+                g_wsFetching = true; wNextRefresh = now + 15000;
+                if (SDL_Thread* t = SDL_CreateThread(MarketListWorker, "okay-wslist", nullptr))
+                    SDL_DetachThread(t);
+                else g_wsFetching = false;
+            }
+            if (g_wsMutex) {
+                SDL_LockMutex(g_wsMutex);
+                if (g_wsReady) { wCache = g_wsList; wRatings = g_wsRatings; g_wsReady = false; }
+                SDL_UnlockMutex(g_wsMutex);
+            }
 
             ImGui::TextDisabled("Browse and share games, scenes and templates from the community.");
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 196);

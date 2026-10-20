@@ -299,6 +299,8 @@ drop policy if exists "owner edits server"  on public.servers;
 create policy "see my servers"     on public.servers for select
   using (owner = auth.uid() or public.is_server_member(id));
 create policy "owner edits server" on public.servers for update using (owner = auth.uid());
+drop policy if exists "owner deletes server" on public.servers;
+create policy "owner deletes server" on public.servers for delete using (owner = auth.uid());
 
 drop policy if exists "see server members" on public.server_members;
 drop policy if exists "join self"          on public.server_members;
@@ -314,6 +316,12 @@ drop policy if exists "owner channels" on public.channels;
 create policy "see channels"   on public.channels for select using (public.is_server_member(server_id));
 create policy "owner channels" on public.channels for insert
   with check (exists (select 1 from public.servers s where s.id = server_id and s.owner = auth.uid()));
+drop policy if exists "owner edits channels"   on public.channels;
+drop policy if exists "owner deletes channels" on public.channels;
+create policy "owner edits channels"   on public.channels for update
+  using (exists (select 1 from public.servers s where s.id = server_id and s.owner = auth.uid()));
+create policy "owner deletes channels" on public.channels for delete
+  using (exists (select 1 from public.servers s where s.id = server_id and s.owner = auth.uid()));
 
 drop policy if exists "read channel messages" on public.channel_messages;
 drop policy if exists "post channel messages" on public.channel_messages;

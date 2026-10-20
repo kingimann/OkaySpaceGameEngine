@@ -4204,6 +4204,10 @@ int main(int argc, char** argv) {
                 static std::string svSelName, svErr;
                 static char svNew[64] = "", svJoin[24] = "", svMsg[800] = "", svNewChan[40] = "";
                 static Uint32 svNextList = 0, svNextChan = 0, svNextMsg = 0, svNextMem = 0;
+                // Owner-management state.
+                static long svRenChanId = 0;             // channel being renamed (0 = none)
+                static char svRenChanBuf[64] = "", svRenSrvBuf[64] = "";
+                static bool svSettingsOpen = false, svRenChanOpen = false;
                 Uint32 now = SDL_GetTicks();
                 if (now >= svNextList) { svList = sv.MyServers(); svNextList = now + 20000; }
 
@@ -4257,17 +4261,39 @@ int main(int argc, char** argv) {
                     } else {
                         if (now >= svNextChan) { svChannels = sv.Channels(svSel); svNextChan = now + 15000;
                             if (svChan == 0 && !svChannels.empty()) { svChan = svChannels[0].id; svNextMsg = 0; } }
+                        // Am I this server's owner? (drives the management controls)
+                        std::string svMyUid = sv.MyUid();
+                        bool svIAmOwner = false;
+                        for (const auto& s : svList) if (s.id == svSel && !s.owner.empty() && s.owner == svMyUid) svIAmOwner = true;
                         ImGui::TextDisabled("%s", svSelName.c_str());
+                        if (svIAmOwner) { ImGui::SameLine(ImGui::GetContentRegionAvail().x - 24);
+                            if (ImGui::SmallButton("...")) { std::snprintf(svRenSrvBuf,sizeof(svRenSrvBuf),"%s",svSelName.c_str()); svSettingsOpen = true; } }
                         ImGui::Separator();
                         for (const auto& c : svChannels) {
                             bool sel = (c.id == svChan);
                             if (ImGui::Selectable(("# " + c.name + "##" + std::to_string(c.id)).c_str(), sel)) { svChan = c.id; svNextMsg = 0; }
+                            // Owner: right-click a channel to rename or delete it.
+                            if (svIAmOwner && ImGui::BeginPopupContextItem(("chanctx" + std::to_string(c.id)).c_str())) {
+                                if (ImGui::MenuItem("Rename channel")) {
+                                    svRenChanId = c.id; std::snprintf(svRenChanBuf, sizeof(svRenChanBuf), "%s", c.name.c_str()); svRenChanOpen = true;
+                                }
+                                if (svChannels.size() > 1 && ImGui::MenuItem("Delete channel")) {
+                                    if (sv.DeleteChannel(c.id)) { if (svChan == c.id) { svChan = 0; } svNextChan = 0; Toast("Channel deleted", 1); }
+                                }
+                                ImGui::EndPopup();
+                            }
                         }
+                        if (svIAmOwner) ImGui::TextDisabled("(right-click a channel to rename/delete)");
                         ImGui::Separator();
                         ImGui::SetNextItemWidth(-1);
                         bool nc = ImGui::InputTextWithHint("##svnewchan", "new channel", svNewChan, sizeof(svNewChan), ImGuiInputTextFlags_EnterReturnsTrue);
                         if ((ImGui::SmallButton("Add channel") || nc) && svNewChan[0]) {
                             if (sv.CreateChannel(svSel, svNewChan)) { svNewChan[0] = '\0'; svNextChan = 0; }
+                        }
+                        if (!svIAmOwner) {
+                            if (ImGui::SmallButton("Leave server")) {
+                                if (sv.Leave(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Left server", 1); }
+                            }
                         }
                         if (now >= svNextMem) { svMembers = sv.Members(svSel); svNextMem = now + 20000; }
                         ImGui::Dummy(ImVec2(0, 6));
@@ -4358,6 +4384,57 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndChild();
                     ImGui::EndTable();
+                }
+
+                // --- Rename channel popup ---
+                if (svRenChanOpen) { ImGui::OpenPopup("Rename channel"); svRenChanOpen = false; }
+                if (ImGui::BeginPopupModal("Rename channel", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::SetNextItemWidth(260);
+                    bool go = ImGui::InputTextWithHint("##renchan", "channel name", svRenChanBuf, sizeof(svRenChanBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                    if ((PrimaryButton("Rename", ImVec2(120, 30)) || go) && svRenChanBuf[0]) {
+                        if (sv.RenameChannel(svRenChanId, svRenChanBuf)) { svNextChan = 0; Toast("Channel renamed", 1); }
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                }
+
+                // --- Server settings popup (owner) ---
+                if (svSettingsOpen) { ImGui::OpenPopup("Server settings"); svSettingsOpen = false; }
+                ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_Appearing);
+                if (ImGui::BeginPopupModal("Server settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::TextDisabled("Rename server");
+                    ImGui::SetNextItemWidth(-1);
+                    bool go = ImGui::InputTextWithHint("##rensrv", "server name", svRenSrvBuf, sizeof(svRenSrvBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                    if ((ImGui::Button("Save name", ImVec2(130, 0)) || go) && svRenSrvBuf[0]) {
+                        if (sv.RenameServer(svSel, svRenSrvBuf)) { svSelName = svRenSrvBuf; svNextList = 0; Toast("Server renamed", 1); }
+                    }
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Invite code"); ImGui::SameLine();
+                    std::string inv; for (const auto& s : svList) if (s.id == svSel) inv = s.invite;
+                    ImGui::TextUnformatted(inv.c_str()); ImGui::SameLine();
+                    if (ImGui::SmallButton("Copy##inv")) { ImGui::SetClipboardText(inv.c_str()); Toast("Invite code copied", 1); }
+                    ImGui::Separator();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f,0.22f,0.22f,1));
+                    if (ImGui::Button("Delete this server", ImVec2(-1, 0))) ImGui::OpenPopup("Delete server?");
+                    ImGui::PopStyleColor();
+                    if (ImGui::BeginPopupModal("Delete server?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                        ImGui::TextWrapped("Delete \"%s\" for everyone? Its channels and messages are removed. This can't be undone.", svSelName.c_str());
+                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f,0.22f,0.22f,1));
+                        if (ImGui::Button("Delete", ImVec2(120, 0))) {
+                            if (sv.DeleteServer(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Server deleted", 1); }
+                            ImGui::CloseCurrentPopup(); ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::PopStyleColor();
+                        ImGui::SameLine();
+                        if (ImGui::Button("Cancel", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                        ImGui::EndPopup();
+                    }
+                    ImGui::Dummy(ImVec2(0, 2));
+                    if (ImGui::Button("Close", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
                 }
             }
         } else if (tab == 9) {                            // ---- Forums ----

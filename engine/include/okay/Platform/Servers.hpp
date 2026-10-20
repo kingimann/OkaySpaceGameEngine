@@ -12,10 +12,11 @@
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
+#include <cctype>
 
 namespace okay {
 
-struct Server  { long id = 0; std::string name; std::string invite; };
+struct Server  { long id = 0; std::string name; std::string invite; std::string owner; };
 struct Channel { long id = 0; std::string name; };
 struct ChannelMessage { long id = 0; std::string author; std::string body; long when = 0; };
 struct ServerMember { std::string uid, name, avatar, role; bool online = false; };
@@ -29,14 +30,27 @@ public:
     std::vector<Server> MyServers() {
         std::vector<Server> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/servers?select=id,name,invite_code&order=created_at.asc", "GET");
+        auto r = acct_.Api("/rest/v1/servers?select=id,name,invite_code,owner&order=created_at.asc", "GET");
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             Server s; s.id = std::atol(Field(o, "id").c_str());
-            s.name = Field(o, "name"); s.invite = Field(o, "invite_code");
+            s.name = Field(o, "name"); s.invite = Field(o, "invite_code"); s.owner = Field(o, "owner");
             if (s.id) out.push_back(s);
         }
         return out;
+    }
+
+    // My own profile/user uuid (looked up by username, cached) — lets the UI tell
+    // whether I own the selected server (server.owner == MyUid()).
+    std::string MyUid() {
+        if (myUid_.empty() && acct_.IsLoggedIn()) {
+            std::string enc; for (char c : acct_.CurrentSession().username) {
+                if (std::isalnum((unsigned char)c)||c=='-'||c=='_'||c=='.'||c=='~') enc += c;
+                else { char b[4]; std::snprintf(b,sizeof(b),"%%%02X",(unsigned char)c); enc += b; } }
+            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + enc, "GET");
+            if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myUid_ = Field(o[0], "id"); }
+        }
+        return myUid_;
     }
 
     bool CreateServer(const std::string& name, Server* created = nullptr, std::string* err = nullptr) {
@@ -147,8 +161,29 @@ public:
         return acct_.Api("/rest/v1/server_members?server_id=eq." + std::to_string(serverId), "DELETE").ok;
     }
 
+    // ---- owner management (RLS restricts these to the server's owner) ------
+    bool RenameChannel(long channelId, const std::string& name) {
+        if (channelId <= 0 || name.empty()) return false;
+        return acct_.Api("/rest/v1/channels?id=eq." + std::to_string(channelId), "PATCH",
+                         "{\"name\":" + JStr(name) + "}").ok;
+    }
+    bool DeleteChannel(long channelId) {   // cascades its messages
+        if (channelId <= 0) return false;
+        return acct_.Api("/rest/v1/channels?id=eq." + std::to_string(channelId), "DELETE").ok;
+    }
+    bool RenameServer(long serverId, const std::string& name) {
+        if (serverId <= 0 || name.empty()) return false;
+        return acct_.Api("/rest/v1/servers?id=eq." + std::to_string(serverId), "PATCH",
+                         "{\"name\":" + JStr(name) + "}").ok;
+    }
+    bool DeleteServer(long serverId) {     // cascades members, channels, messages
+        if (serverId <= 0) return false;
+        return acct_.Api("/rest/v1/servers?id=eq." + std::to_string(serverId), "DELETE").ok;
+    }
+
 private:
     okay::account::AccountService& acct_;
+    std::string myUid_;
 
     static long ParseIso(const std::string& ls) {
         if (ls.size() < 19) return 0;

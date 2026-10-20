@@ -2602,14 +2602,23 @@ static volatile bool g_frFetching = false;
 static bool g_frReady = false;                       // (guarded)
 static std::vector<okay::Friend> g_frList;           // (guarded)
 static std::vector<okay::FriendEvent> g_frFeed;      // (guarded)
+static std::string g_frCode;                         // (guarded) my friend code
 static int FriendsListWorker(void*) {
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         okay::Friends fr(a);
+        // Everything that used to block the Friends tab on open now runs here:
+        // make sure my profile exists, broadcast presence per my chosen status,
+        // and fetch my code + the list/feed.
+        fr.EnsureProfile();
+        if (g_onlineStatus == 2) fr.GoOffline();
+        else fr.MarkPresence(g_onlineStatus == 1 ? "Away" : "In OkaySpace");
+        auto code = fr.MyCode();
         auto l = fr.List();
         auto fd = fr.Feed(14);
         if (g_frMutex) SDL_LockMutex(g_frMutex);
-        g_frList = std::move(l); g_frFeed = std::move(fd); g_frReady = true;
+        g_frList = std::move(l); g_frFeed = std::move(fd); g_frCode = std::move(code);
+        g_frReady = true;
         if (g_frMutex) SDL_UnlockMutex(g_frMutex);
     } catch (...) {}
     g_frFetching = false;
@@ -5266,22 +5275,11 @@ int main(int argc, char** argv) {
                 // the "Message" buttons call OpenChatWith().
                 static okay::Friend profFriend;   // friend whose profile card is open
                 static bool profOpen = false;
-                static Uint32 fNextRefresh = 0, fNextBeat = 0;
-                static bool fProfiled = false;
-                // Broadcast presence according to the chosen status (Online/Away/Invisible).
-                auto applyStatus = [&]() {
-                    if (g_onlineStatus == 2) fr.GoOffline();
-                    else fr.MarkPresence(g_onlineStatus == 1 ? "Away" : "In OkaySpace");
-                };
-                if (!fProfiled) {
-                    fr.EnsureProfile();
-                    fCode = fr.MyCode();
-                    applyStatus();
-                    fProfiled = true; fNextRefresh = 0;
-                }
+                static Uint32 fNextRefresh = 0;
                 Uint32 now = SDL_GetTicks();
-                if (now >= fNextBeat)    { applyStatus(); fNextBeat = now + 60000; }
-                // Refresh the friend list/feed in the background (no UI hitch).
+                // EVERYTHING network for this tab (ensure-profile, presence, my code,
+                // list, feed) runs on the Friends worker thread — the tab never
+                // blocks on the network, so switching to Friends can't freeze.
                 if (!g_frMutex) g_frMutex = SDL_CreateMutex();
                 if (now >= fNextRefresh && !g_frFetching) {
                     g_frFetching = true; fNextRefresh = now + 10000;
@@ -5291,7 +5289,7 @@ int main(int argc, char** argv) {
                 }
                 if (g_frMutex) {
                     SDL_LockMutex(g_frMutex);
-                    if (g_frReady) { fCache = g_frList; fFeed = g_frFeed; g_frReady = false; }
+                    if (g_frReady) { fCache = g_frList; fFeed = g_frFeed; fCode = g_frCode; g_frReady = false; }
                     SDL_UnlockMutex(g_frMutex);
                 }
 
@@ -5300,7 +5298,8 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(140);
                 if (ImGui::Combo("##status", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
-                    applyStatus(); SavePrefs();
+                    fNextRefresh = 0;   // let the worker broadcast the new presence (no UI block)
+                    SavePrefs();
                 }
                 ImGui::Spacing();
 
@@ -6137,6 +6136,9 @@ int main(int argc, char** argv) {
                         if (svIAmOwner) { ImGui::SameLine(ImGui::GetContentRegionAvail().x - 24);
                             if (ImGui::SmallButton("...")) { std::snprintf(svRenSrvBuf,sizeof(svRenSrvBuf),"%s",svSelName.c_str()); svSettingsOpen = true; } }
                         ImGui::Separator();
+                        ImGui::Dummy(ImVec2(0, 2));
+                        ImGui::TextDisabled("CHANNELS - %d", (int)svChannels.size());
+                        ImGui::Dummy(ImVec2(0, 2));
                         for (const auto& c : svChannels) {
                             bool sel = (c.id == svChan);
                             if (ImGui::Selectable(("# " + c.name + "##" + std::to_string(c.id)).c_str(), sel)) { svChan = c.id; svNextMsg = 0; }

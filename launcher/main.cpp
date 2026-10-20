@@ -1193,16 +1193,38 @@ int main(int argc, char** argv) {
         // ---- Left nav ----
         ImGui::BeginChild("nav", ImVec2(224, 0), true);
         ImGui::Dummy(ImVec2(0, 6));
-        {   // App header: rounded accent logo tile + product name / version.
+        {   // App header: drawn OkaySpace logo mark (ringed planet + star on a
+            // navy tile) + product name / version.
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
             ImVec2 lp = ImGui::GetCursorScreenPos();
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddRectFilled(lp, ImVec2(lp.x + 34, lp.y + 34),
-                              ImGui::GetColorU32(kAccent), 9.0f);
-            ImVec2 ts = ImGui::CalcTextSize("OS");
-            dl->AddText(ImVec2(lp.x + (34 - ts.x) * 0.5f, lp.y + (34 - ts.y) * 0.5f),
-                        IM_COL32(255, 255, 255, 255), "OS");
-            ImGui::Dummy(ImVec2(34 + 8, 34));
+            const float S = 34.0f;
+            ImVec2 br(lp.x + S, lp.y + S);
+            dl->AddRectFilledMultiColor(lp, br,
+                IM_COL32(20, 28, 48, 255), IM_COL32(20, 28, 48, 255),
+                IM_COL32(30, 40, 66, 255), IM_COL32(30, 40, 66, 255));
+            dl->AddRect(lp, br, IM_COL32(255, 255, 255, 24), 9.0f, 0, 1.0f);
+            // Clip the glyph to the rounded tile.
+            dl->PushClipRect(lp, br, true);
+            ImVec2 c(lp.x + S * 0.46f, lp.y + S * 0.52f);
+            ImU32 planet = ImGui::GetColorU32(kAccent);
+            ImU32 ringCol = IM_COL32(220, 232, 255, 230);
+            dl->AddCircleFilled(c, 7.5f, planet, 24);
+            dl->AddCircleFilled(ImVec2(c.x - 2.2f, c.y - 2.2f), 7.5f,
+                                IM_COL32(255, 255, 255, 40), 24);   // top-left sheen
+            // Ring: a thin flattened ellipse across the planet.
+            ImVec2 ring[28];
+            for (int k = 0; k < 28; ++k) {
+                float a = k * (6.2831853f / 28);
+                float rx = 13.5f, ry = 4.6f, rot = -0.5f;
+                float ex = std::cos(a) * rx, ey = std::sin(a) * ry;
+                ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot),
+                                 c.y + ex * std::sin(rot) + ey * std::cos(rot));
+            }
+            dl->AddPolyline(ring, 28, ringCol, ImDrawFlags_Closed, 1.6f);
+            dl->AddCircleFilled(ImVec2(lp.x + S * 0.76f, lp.y + S * 0.26f), 1.3f, IM_COL32(255, 255, 255, 230));
+            dl->PopClipRect();
+            ImGui::Dummy(ImVec2(S + 8, S));
             ImGui::SameLine();
             ImGui::BeginGroup();
             ImGui::Text("OkaySpace");
@@ -2392,6 +2414,8 @@ int main(int argc, char** argv) {
                                   sizeof(acctPass), ImGuiInputTextFlags_Password |
                                   ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::PopItemWidth();
+                if (acctRegisterMode && account.UsesEmail())
+                    ImGui::TextDisabled("Use a real email (for password resets). Password: 6+ characters.");
                 ImGui::Dummy(ImVec2(0, 8));
 
                 const char* btn = acctRegisterMode ? "Create account" : "Sign in";

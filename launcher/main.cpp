@@ -2457,7 +2457,11 @@ int main(int argc, char** argv) {
     // Show a loading frame immediately so the window isn't a black rectangle
     // while fonts, the account session and runtimes are set up below.
     { int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-      okay::DrawSplash(renderer, sw, sh, 0.62f, 0.63f, 0.66f); }
+      int ai = g_accentIndex;
+      int an = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+      if (ai < 0 || ai >= an) ai = 0;
+      okay::DrawSplash(renderer, sw, sh, kAccentPresets[ai].col.x,
+                       kAccentPresets[ai].col.y, kAccentPresets[ai].col.z); }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();

@@ -6292,18 +6292,30 @@ int main(int argc, char** argv) {
                     if (voteWidget("thread", t.id, sc, mv)) foNext = 0;
                     ImGui::SameLine(); ImGui::SetCursorPosX(52);
                     ImGui::BeginGroup();
-                    ImGui::SetCursorPosY(10);
+                    ImGui::SetCursorPosY(9);
                     if (!t.category.empty()) {
                         ImVec2 bp = ImGui::GetCursorScreenPos(); ImVec2 ks = ImGui::CalcTextSize(t.category.c_str());
                         ImGui::GetWindowDrawList()->AddRectFilled(bp, ImVec2(bp.x+ks.x+12, bp.y+ks.y+4), ImGui::GetColorU32(kAccentDim), (ks.y+4)*0.5f);
                         ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x+6, bp.y+2), IM_COL32(235,238,245,255), t.category.c_str());
-                        ImGui::Dummy(ImVec2(ks.x+12, ks.y+4)); ImGui::SameLine(0, 6);
+                        ImGui::Dummy(ImVec2(ks.x+12, ks.y+4)); ImGui::SameLine(0, 8);
                     }
+                    // Emphasized title.
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.96f, 0.98f, 1));
                     ImGui::TextUnformatted(t.title.c_str());
+                    ImGui::PopStyleColor();
+                    // Meta: a small author color dot, then author · time · replies, with
+                    // a comment count chip tinted when there are replies.
+                    ImVec2 mp = ImGui::GetCursorScreenPos();
+                    ImVec4 ac = NameColor(t.author.empty() ? "?" : t.author);
+                    ImGui::GetWindowDrawList()->AddCircleFilled(
+                        ImVec2(mp.x + 5, mp.y + ImGui::GetTextLineHeight() * 0.5f + 2), 5.0f,
+                        ImGui::GetColorU32(ac), 16);
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 16);
                     std::string when = RelTime(t.when);
-                    ImGui::TextDisabled("by %s%s%s  -  %d comment%s",
-                        t.author.empty()?"unknown":t.author.c_str(), when.empty()?"":"  -  ", when.c_str(),
-                        nc, nc==1?"":"s");
+                    ImGui::TextDisabled("%s%s%s  \xC2\xB7  %d repl%s",
+                        t.author.empty() ? "unknown" : t.author.c_str(),
+                        when.empty() ? "" : "  \xC2\xB7  ", when.c_str(),
+                        nc, nc == 1 ? "y" : "ies");
                     ImGui::EndGroup();
                     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                         !ImGui::IsAnyItemHovered()) {

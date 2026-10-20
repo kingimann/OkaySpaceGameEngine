@@ -3155,19 +3155,30 @@ int main(int argc, char** argv) {
         ImGui::SameLine();
         ImGui::BeginChild("content", ImVec2(0, 0), true);
 
-        const ImVec4 kTitle(0.85f, 0.9f, 1.0f, 1.0f);
-        // Section title with a short accent underline; optional subtitle.
+        const ImVec4 kTitle(0.95f, 0.96f, 0.98f, 1.0f);
+        // Page header: a large title with a short accent underline bar (tab-style),
+        // an optional subtitle, and a faint full-width divider below it.
         auto sectionHeader = [&](const char* title, const char* subtitle) {
-            ImGui::SetWindowFontScale(1.22f);
+            ImGui::Dummy(ImVec2(0, 2));
+            ImVec2 tp = ImGui::GetCursorScreenPos();
+            ImGui::SetWindowFontScale(1.34f);
             ImGui::TextColored(kTitle, "%s", title);
+            ImVec2 tsz = ImGui::GetItemRectSize();
             ImGui::SetWindowFontScale(1.0f);
-            ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 4 : 6));
+            // Short accent underline directly under the title (like an active-tab bar).
+            ImDrawList* hdl = ImGui::GetWindowDrawList();
+            float uy = tp.y + tsz.y + 5.0f;
+            hdl->AddRectFilled(ImVec2(tp.x, uy), ImVec2(tp.x + tsz.x, uy + 2.5f),
+                               ImGui::GetColorU32(kAccent), 1.5f);
+            ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 11 : 13));
             if (subtitle && *subtitle) {
                 ImGui::TextDisabled("%s", subtitle);
-                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::Dummy(ImVec2(0, 8));
             }
+            ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.05f));
             ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 6));
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 8));
         };
         // Login gate for online-only tabs: returns true when signed in, else
         // renders a centered "sign in" card and returns false.

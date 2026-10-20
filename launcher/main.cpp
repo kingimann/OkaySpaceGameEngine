@@ -1045,6 +1045,24 @@ long DayKey(long when) {
     return (tm->tm_year + 1900) * 10000L + (tm->tm_mon + 1) * 100L + tm->tm_mday;
 }
 
+// "just now" / "5m ago" / "3h ago" / "2d ago" / "Mar 04" for a unix time.
+std::string RelTime(long when) {
+    if (when <= 0) return "";
+    long now = (long)std::time(nullptr);
+    long d = now - when;
+    if (d < 0) d = 0;
+    char out[32];
+    if (d < 45)            std::snprintf(out, sizeof(out), "just now");
+    else if (d < 3600)     std::snprintf(out, sizeof(out), "%ldm ago", d / 60);
+    else if (d < 86400)    std::snprintf(out, sizeof(out), "%ldh ago", d / 3600);
+    else if (d < 7*86400)  std::snprintf(out, sizeof(out), "%ldd ago", d / 86400);
+    else {
+        std::time_t t = (std::time_t)when; std::tm* tm = std::localtime(&t);
+        if (tm) std::strftime(out, sizeof(out), "%b %d", tm); else out[0] = '\0';
+    }
+    return out;
+}
+
 // A centered "— Month DD, YYYY —" divider line across the chat width.
 void ChatDateSeparator(long when) {
     char d[48] = "";
@@ -3781,6 +3799,8 @@ int main(int argc, char** argv) {
                         ImGui::Bullet();
                         ImGui::SameLine(0, 0);
                         ImGui::Text("%s%s%s", e.actor.c_str(), verb, e.detail.c_str());
+                        std::string ago = RelTime(e.when);
+                        if (!ago.empty()) { ImGui::SameLine(0, 6); ImGui::TextDisabled("- %s", ago.c_str()); }
                     }
                 }
                 ImGui::EndChild();
@@ -4468,10 +4488,8 @@ int main(int argc, char** argv) {
                     ImGui::SetCursorPos(ImVec2(12, 10));
                     ImGui::BeginGroup();
                     ImGui::TextUnformatted(t.title.c_str());
-                    char when[40] = "";
-                    if (t.when > 0) { std::time_t tt=(std::time_t)t.when; std::tm* tm=std::localtime(&tt);
-                                      if (tm) std::strftime(when, sizeof(when), "%b %d", tm); }
-                    ImGui::TextDisabled("by %s%s%s", t.author.empty()?"unknown":t.author.c_str(), when[0]?"  -  ":"", when);
+                    std::string when = RelTime(t.when);
+                    ImGui::TextDisabled("by %s%s%s", t.author.empty()?"unknown":t.author.c_str(), when.empty()?"":"  -  ", when.c_str());
                     ImGui::EndGroup();
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 76);
                     ImGui::SetCursorPosY(14.0f);

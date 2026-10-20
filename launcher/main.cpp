@@ -568,6 +568,7 @@ std::map<std::string, PlayStat> g_stats;
 std::string g_pendingPublishTitle;
 bool g_openPublishForm = false;   // request the Market tab to open its publish form
 int g_friendRequests = 0;   // incoming pending friend requests (nav badge), polled in the background
+int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible (persisted)
 int  PlayCount(const std::string& p)  { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.count; }
 long LastPlayed(const std::string& p) { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.last; }
 // A short "2h ago" / "3d ago" from a unix time (empty if never).
@@ -633,8 +634,9 @@ void RecordPlayed(const std::string& p) {
     st.count += 1;
     st.last = (long)std::time(nullptr);
 
-    // Let friends see what I'm playing, and drop it in the activity feed.
-    if (g_presenceAccount && g_presenceAccount->IsLoggedIn()) {
+    // Let friends see what I'm playing, and drop it in the activity feed —
+    // unless I'm Invisible (status 2), in which case stay quiet.
+    if (g_presenceAccount && g_presenceAccount->IsLoggedIn() && g_onlineStatus != 2) {
         std::string name = GameNameFromPath(p);
         okay::Friends fr(*g_presenceAccount);
         fr.MarkPresence("Playing " + name);
@@ -898,6 +900,7 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
+        else if (k == "online_status") { try { g_onlineStatus = std::stoi(v); } catch (...) {} }
         else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
@@ -935,6 +938,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
+    f << "online_status=" << g_onlineStatus << "\n";
     f << "play_view=" << g_playView << "\n";
     f << "tab=" << g_lastTab << "\n";
     f << "win_w=" << g_winW << "\n";
@@ -2656,15 +2660,29 @@ int main(int argc, char** argv) {
                 static std::string fCode;
                 static Uint32 fNextRefresh = 0, fNextBeat = 0;
                 static bool fProfiled = false;
+                // Broadcast presence according to the chosen status (Online/Away/Invisible).
+                auto applyStatus = [&]() {
+                    if (g_onlineStatus == 2) fr.GoOffline();
+                    else fr.MarkPresence(g_onlineStatus == 1 ? "Away" : "In OkaySpace");
+                };
                 if (!fProfiled) {
                     fr.EnsureProfile();
-                    fr.MarkPresence("In OkaySpace");   // start broadcasting presence
                     fCode = fr.MyCode();
+                    applyStatus();
                     fProfiled = true; fNextRefresh = 0;
                 }
                 Uint32 now = SDL_GetTicks();
-                if (now >= fNextBeat)    { fr.Heartbeat();  fNextBeat = now + 60000; }
+                if (now >= fNextBeat)    { applyStatus(); fNextBeat = now + 60000; }
                 if (now >= fNextRefresh) { fCache = fr.List(); fFeed = fr.Feed(14); fNextRefresh = now + 10000; }
+
+                // --- Status selector (Online / Away / Invisible) ---
+                ImGui::TextDisabled("Status:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(140);
+                if (ImGui::Combo("##status", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
+                    applyStatus(); SavePrefs();
+                }
+                ImGui::Spacing();
 
                 // --- Add a friend (username or code) + my own shareable code ---
                 ImGui::SetNextItemWidth(240);

@@ -138,6 +138,13 @@ public:
     }
     void Heartbeat() { SetPresence(lastPresence_.empty() ? "In OkaySpace" : lastPresence_,
                                    lastSession_); }
+    // Appear offline to friends immediately: backdate last_seen well past the
+    // online window and clear presence. Used by the "Invisible" status.
+    void GoOffline() {
+        if (!acct_.IsLoggedIn()) return;
+        acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
+                  "{\"last_seen\":\"2000-01-01T00:00:00Z\",\"playing\":null,\"session_code\":null}");
+    }
     // Remember the last presence so a plain Heartbeat() keeps it.
     void MarkPresence(const std::string& playing, const std::string& sessionCode = "") {
         lastPresence_ = playing; lastSession_ = sessionCode; SetPresence(playing, sessionCode);

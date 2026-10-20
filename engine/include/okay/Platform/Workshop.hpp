@@ -84,6 +84,20 @@ public:
         return r.ok;
     }
 
+    // Edit one of my own items (RLS "edit own item" blocks editing others').
+    bool Update(long id, const std::string& title, const std::string& description,
+                const std::string& kind, const std::string& url, std::string* err = nullptr) {
+        if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in to edit."; return false; }
+        if (id <= 0 || title.empty()) { if (err) *err = "A title is required."; return false; }
+        std::string body = "{\"title\":" + JStr(title) +
+                           ",\"description\":" + JStr(description) +
+                           ",\"kind\":" + JStr(kind.empty() ? "game" : kind) +
+                           ",\"storage_path\":" + JStr(url) + "}";
+        auto r = acct_.Api("/rest/v1/workshop_items?id=eq." + std::to_string(id), "PATCH", body);
+        if (!r.ok && err) *err = r.body.empty() ? "Edit failed." : r.body;
+        return r.ok;
+    }
+
     // Best-effort download-counter bump (fire and forget).
     void NoteDownload(long id, long current) {
         if (!acct_.IsLoggedIn() || id <= 0) return;

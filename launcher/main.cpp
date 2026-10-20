@@ -3804,6 +3804,12 @@ int main(int argc, char** argv) {
             static bool getConfirmOpen = false;
             static long getId = 0, getDl = 0;
             static std::string getUrl, getTitle, getAuthor;
+            // Edit-my-item popup.
+            static bool edOpen = false;
+            static long edId = 0;
+            static int  edKind = 0;
+            static char edTitle[128] = "", edUrl[256] = "", edDesc[512] = "";
+            static std::string edErr;
             static char wTitle[128] = "", wUrl[256] = "";
             static char wDesc[512] = "";
             static int  wKind = 0;
@@ -4018,6 +4024,14 @@ int main(int argc, char** argv) {
                     }
                     if (!me.empty() && me == w.author) {
                         ImGui::SameLine();
+                        if (ImGui::SmallButton("Edit")) {
+                            edId = w.id; edKind = (wk == "template") ? 1 : 0;
+                            std::snprintf(edTitle, sizeof(edTitle), "%s", w.title.c_str());
+                            std::snprintf(edDesc,  sizeof(edDesc),  "%s", w.description.c_str());
+                            std::snprintf(edUrl,   sizeof(edUrl),   "%s", w.url.c_str());
+                            edErr.clear(); edOpen = true;
+                        }
+                        ImGui::SameLine();
                         if (ImGui::SmallButton("Remove")) { ws.Remove(w.id); wNextRefresh = 0; }
                     }
                     ImGui::EndGroup();
@@ -4033,6 +4047,31 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("No items match your search or filter.");
                 }
                 ImGui::EndChild();
+            }
+
+            // --- Edit my item ---
+            if (edOpen) { ImGui::OpenPopup("Edit item"); edOpen = false; }
+            ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal("Edit item", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##edtitle", "Title", edTitle, sizeof(edTitle));
+                ImGui::SetNextItemWidth(200);
+                ImGui::Combo("Kind##ed", &edKind, "Game\0Template\0");
+                ImGui::InputTextMultiline("##eddesc", edDesc, sizeof(edDesc), ImVec2(-1, 80));
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##edurl", "Download link", edUrl, sizeof(edUrl));
+                ImGui::Dummy(ImVec2(0, 4));
+                if (PrimaryButton("Save changes", ImVec2(150, 32))) {
+                    const char* kinds[] = { "game", "template" };
+                    if (okay::Workshop(account).Update(edId, edTitle, edDesc, kinds[edKind], edUrl, &edErr)) {
+                        Toast("Item updated", 1); wNextRefresh = 0; ImGui::CloseCurrentPopup();
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(100, 32))) ImGui::CloseCurrentPopup();
+                if (!edErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1));
+                                      ImGui::TextWrapped("%s", edErr.c_str()); ImGui::PopStyleColor(); }
+                ImGui::EndPopup();
             }
 
             // --- Download-safety confirm ---

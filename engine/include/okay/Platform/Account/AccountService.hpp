@@ -321,7 +321,8 @@ inline std::vector<long> JsonNumberValues(const std::string& json, const std::st
 struct Session {
     bool        loggedIn = false;
     std::string username;
-    std::string token;
+    std::string token;         // access token (short-lived for Supabase)
+    std::string refreshToken;  // used to renew the access token (Supabase)
 };
 
 /// Result of a register/login attempt. On failure `error` carries a short,
@@ -563,7 +564,10 @@ public:
         // uses /verify.
         ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
         if (!r.reached) return true;                 // offline: keep the session
-        if (r.status == 401 || r.status == 403) {    // token revoked/expired
+        if (r.status == 401 || r.status == 403) {    // token expired/revoked
+            // Try to renew from the refresh token before giving up — a 1-hour
+            // Supabase access token expiring shouldn't sign the player out.
+            if (RefreshSupabaseToken()) return true;
             Logout();
             return false;
         }
@@ -755,31 +759,56 @@ private:
     void LoadSession() {
         std::ifstream f(SessionPath());
         if (!f) return;
-        std::string user, token;
+        std::string user, token, refresh;
         std::getline(f, user);
         std::getline(f, token);
+        std::getline(f, refresh);   // optional 3rd line (older files won't have it)
         auto trim = [](std::string& s) {
             while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
         };
-        trim(user); trim(token);
+        trim(user); trim(token); trim(refresh);
         if (!user.empty() && !token.empty()) {
             session_.loggedIn = true;
             session_.username = user;
             session_.token    = token;
+            session_.refreshToken = refresh;
         }
     }
 
     void SaveSession() {
         std::ofstream f(SessionPath(), std::ios::trunc);
-        f << session_.username << "\n" << session_.token << "\n";
+        f << session_.username << "\n" << session_.token << "\n" << session_.refreshToken << "\n";
     }
 
-    Result Succeed(const std::string& username, const std::string& token) {
+    Result Succeed(const std::string& username, const std::string& token,
+                   const std::string& refresh = {}) {
         session_.loggedIn = true;
         session_.username = username;
         session_.token    = token;
+        session_.refreshToken = refresh;
         SaveSession();
         Result r; r.ok = true; r.session = session_; return r;
+    }
+
+    // Renew the Supabase access token from the stored refresh token. Returns
+    // true and updates the session on success. Used by VerifySession so a
+    // signed-in player isn't kicked out just because the 1-hour token expired.
+    bool RefreshSupabaseToken() {
+        if (provider_ != Provider::Supabase || session_.refreshToken.empty() || !IsOnline())
+            return false;
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        ApiResponse r = HttpRequest("POST", base + "/auth/v1/token?grant_type=refresh_token",
+                                    "{\"refresh_token\":\"" + detail::JsonEscape(session_.refreshToken) + "\"}",
+                                    /*authToken=*/{});
+        if (!r.ok) return false;
+        std::string tok = detail::JsonField(r.body, "access_token");
+        if (tok.empty()) return false;
+        session_.token = tok;
+        std::string nr = detail::JsonField(r.body, "refresh_token");
+        if (!nr.empty()) session_.refreshToken = nr;   // Supabase rotates refresh tokens
+        SaveSession();
+        return true;
     }
 
     // ---- local backend -------------------------------------------------
@@ -907,7 +936,8 @@ private:
         }
         // Display the username from user metadata when present; else the email.
         std::string display = detail::JsonField(r.body, "username");
-        return Succeed(display.empty() ? email : display, token);
+        std::string refresh = detail::JsonField(r.body, "refresh_token");
+        return Succeed(display.empty() ? email : display, token, refresh);
     }
 
     // Perform one HTTP request via the system `curl` so the launcher/engine need

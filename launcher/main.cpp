@@ -2979,6 +2979,7 @@ int main(int argc, char** argv) {
                 static std::vector<okay::DirectMessage> dmLog;
                 static Uint32 dmNextPoll = 0;
                 static char dmInput[512] = "";
+                static bool dmOpen = false;       // request to open the DM window
                 static okay::Friend profFriend;   // friend whose profile card is open
                 static bool profOpen = false;
                 static Uint32 fNextRefresh = 0, fNextBeat = 0;
@@ -3094,8 +3095,8 @@ int main(int argc, char** argv) {
                     } else {
                         if (accepted) {
                             if (ImGui::Button("Message")) {
-                                dmUid = f->id; dmName = f->username; dmLog.clear(); dmNextPoll = 0;
-                                ImGui::OpenPopup("##dmwin");
+                                dmUid = f->id; dmName = f->display.empty() ? f->username : f->display;
+                                dmLog.clear(); dmNextPoll = 0; dmOpen = true;
                             }
                             ImGui::SameLine();
                         }
@@ -3111,31 +3112,6 @@ int main(int argc, char** argv) {
                         }
                         if (ImGui::SmallButton("Remove")) { fr.Remove(f->rowId); fNextRefresh = 0; }
                     }
-                    // Per-friend DM window (opened by that friend's Message button).
-                    if (dmUid == f->id && ImGui::BeginPopup("##dmwin")) {
-                        okay::Messages dm(account);
-                        Uint32 tnow = SDL_GetTicks();
-                        if (tnow >= dmNextPoll) { dmLog = dm.With(dmUid); dmNextPoll = tnow + 4000; }
-                        ImGui::Text("Chat with %s", dmName.c_str());
-                        ImGui::Separator();
-                        ImGui::BeginChild("##dmlog", ImVec2(380, 260), true);
-                        for (const auto& m : dmLog) {
-                            ImGui::PushStyleColor(ImGuiCol_Text, m.mine ? ImVec4(0.75f,0.86f,1.0f,1.0f)
-                                                                        : ImVec4(0.85f,0.88f,0.92f,1.0f));
-                            ImGui::TextWrapped("%s: %s", m.mine ? "You" : dmName.c_str(), m.body.c_str());
-                            ImGui::PopStyleColor();
-                        }
-                        if (dmLog.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
-                        ImGui::EndChild();
-                        ImGui::SetNextItemWidth(300);
-                        bool send = ImGui::InputTextWithHint("##dmin", "Message...", dmInput, sizeof(dmInput),
-                                                             ImGuiInputTextFlags_EnterReturnsTrue);
-                        ImGui::SameLine();
-                        if ((ImGui::Button("Send") || send) && dmInput[0]) {
-                            if (dm.Send(dmUid, dmInput)) { dmInput[0] = '\0'; dmNextPoll = 0; }
-                        }
-                        ImGui::EndPopup();
-                    }
                     ImGui::EndChild();
                     ImGui::PopID();
                 };
@@ -3145,38 +3121,103 @@ int main(int argc, char** argv) {
 
                 // --- Steam-style profile card popup (opened from a friend avatar) ---
                 if (profOpen) { ImGui::OpenPopup("##profilecard"); profOpen = false; }
-                ImGui::SetNextWindowSize(ImVec2(320, 0));
+                ImGui::SetNextWindowSize(ImVec2(340, 0));
                 if (ImGui::BeginPopup("##profilecard")) {
                     const okay::Friend& pf = profFriend;
-                    ImGui::Dummy(ImVec2(0, 2));
+                    std::string pname = pf.display.empty() ? pf.username : pf.display;
                     float aw = ImGui::GetContentRegionAvail().x;
-                    ImGui::SetCursorPosX((aw - 72) * 0.5f + ImGui::GetCursorPosX());
-                    DrawAvatar(pf.avatar, pf.display.empty() ? pf.username : pf.display, 72.0f);
-                    auto ctr = [&](const char* t, ImVec4 col, bool big){
-                        float w = ImGui::CalcTextSize(t).x;
+                    // Accent banner header with the avatar (ringed by presence color).
+                    ImVec2 bnp = ImGui::GetCursorScreenPos();
+                    ImDrawList* pdl = ImGui::GetWindowDrawList();
+                    pdl->AddRectFilledMultiColor(bnp, ImVec2(bnp.x + aw, bnp.y + 54),
+                        ImGui::GetColorU32(ImVec4(kAccent.x,kAccent.y,kAccent.z,0.35f)),
+                        ImGui::GetColorU32(ImVec4(kAccent.x,kAccent.y,kAccent.z,0.10f)),
+                        ImGui::GetColorU32(ImVec4(kAccent.x,kAccent.y,kAccent.z,0.05f)),
+                        ImGui::GetColorU32(ImVec4(kAccent.x,kAccent.y,kAccent.z,0.20f)));
+                    ImGui::Dummy(ImVec2(0, 30));
+                    ImGui::SetCursorPosX((aw - 76) * 0.5f + ImGui::GetCursorPosX());
+                    ImVec2 avp = ImGui::GetCursorScreenPos();
+                    DrawAvatar(pf.avatar, pname, 76.0f);
+                    ImU32 ring = pf.online ? IM_COL32(120,200,110,255) : IM_COL32(120,128,140,255);
+                    pdl->AddCircle(ImVec2(avp.x+38, avp.y+38), 39.0f, ring, 40, 3.0f);
+                    auto ctr = [&](const std::string& t, ImVec4 col){
+                        float w = ImGui::CalcTextSize(t.c_str()).x;
                         float o = (ImGui::GetContentRegionAvail().x - w) * 0.5f; if (o > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + o);
-                        ImGui::TextColored(col, "%s", t); (void)big;
+                        ImGui::TextColored(col, "%s", t.c_str());
                     };
-                    ctr((pf.display.empty() ? pf.username : pf.display).c_str(), ImVec4(0.95f,0.96f,1,1), true);
-                    ctr(("@" + pf.username).c_str(), ImVec4(0.6f,0.63f,0.7f,1), false);
-                    const char* stx = (pf.online && !pf.playing.empty()) ? pf.playing.c_str()
+                    ctr(pname, ImVec4(0.95f,0.96f,1,1));
+                    ctr("@" + pf.username, ImVec4(0.6f,0.63f,0.7f,1));
+                    std::string stx = (pf.online && !pf.playing.empty()) ? pf.playing
                                      : pf.online ? "Online" : "Offline";
                     ImVec4 stc = (pf.online && !pf.playing.empty()) ? kAccent
                                : pf.online ? ImVec4(0.55f,0.9f,0.6f,1) : ImVec4(0.6f,0.63f,0.7f,1);
-                    ctr(stx, stc, false);
+                    ctr(stx, stc);
                     ImGui::Dummy(ImVec2(0, 6));
                     if (!pf.bio.empty()) {
-                        ImGui::Separator();
+                        ImGui::SeparatorText("About");
                         ImGui::TextWrapped("%s", pf.bio.c_str());
-                        ImGui::Dummy(ImVec2(0, 4));
                     }
+                    // Their recent activity (filtered from the feed).
+                    bool anyAct = false;
+                    for (const auto& e : fFeed) if (e.actor == pf.username || e.actor == pname) { anyAct = true; break; }
+                    if (anyAct) {
+                        ImGui::SeparatorText("Recent activity");
+                        int n = 0;
+                        for (const auto& e : fFeed) {
+                            if (e.actor != pf.username && e.actor != pname) continue;
+                            if (n++ >= 4) break;
+                            const char* verb = e.kind == "playing" ? "Played " : e.kind == "achievement" ? "Unlocked "
+                                             : e.kind == "publish" ? "Published " : e.kind == "online" ? "Came online" : "";
+                            ImGui::BulletText("%s%s", verb, e.detail.c_str());
+                        }
+                    }
+                    ImGui::Dummy(ImVec2(0, 4));
                     ImGui::Separator();
-                    ImGui::TextDisabled("Message / Join from the friend's row.");
+                    // Working actions.
+                    if (ImGui::Button("Message", ImVec2(-1, 0))) {
+                        dmUid = pf.id; dmName = pname; dmLog.clear(); dmNextPoll = 0; dmOpen = true;
+                        ImGui::CloseCurrentPopup();
+                    }
                     if (pf.online && !pf.sessionCode.empty()) {
-                        if (ImGui::Button("Copy their session code", ImVec2(-1, 0))) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f,0.44f,0.26f,1));
+                        if (ImGui::Button("Join their game", ImVec2(-1, 0))) {
                             ImGui::SetClipboardText(pf.sessionCode.c_str());
                             Toast("Session code " + pf.sessionCode + " copied", 2);
                         }
+                        ImGui::PopStyleColor();
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f,0.22f,0.22f,1));
+                    if (ImGui::Button("Remove friend", ImVec2(-1, 0))) {
+                        fr.Remove(pf.rowId); fNextRefresh = 0; ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::EndPopup();
+                }
+
+                // --- Top-level DM window (opened from a row or a profile card) ---
+                if (dmOpen) { ImGui::OpenPopup("##dmwin"); dmOpen = false; }
+                ImGui::SetNextWindowSize(ImVec2(420, 360));
+                if (ImGui::BeginPopup("##dmwin")) {
+                    okay::Messages dm(account);
+                    Uint32 tnow = SDL_GetTicks();
+                    if (tnow >= dmNextPoll) { dmLog = dm.With(dmUid); dmNextPoll = tnow + 4000; }
+                    ImGui::Text("Chat with %s", dmName.c_str());
+                    ImGui::Separator();
+                    ImGui::BeginChild("##dmlog", ImVec2(0, ImGui::GetContentRegionAvail().y - 36.0f), true);
+                    for (const auto& m : dmLog) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, m.mine ? ImVec4(0.62f,0.78f,1.0f,1.0f)
+                                                                    : ImVec4(0.90f,0.92f,0.96f,1.0f));
+                        ImGui::TextWrapped("%s: %s", m.mine ? "You" : dmName.c_str(), m.body.c_str());
+                        ImGui::PopStyleColor();
+                    }
+                    if (dmLog.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
+                    ImGui::EndChild();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 64);
+                    bool send = ImGui::InputTextWithHint("##dmin", "Message...", dmInput, sizeof(dmInput),
+                                                         ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    if ((ImGui::Button("Send", ImVec2(56,0)) || send) && dmInput[0]) {
+                        if (dm.Send(dmUid, dmInput)) { dmInput[0] = '\0'; dmNextPoll = 0; }
                     }
                     ImGui::EndPopup();
                 }

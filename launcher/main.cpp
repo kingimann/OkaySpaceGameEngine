@@ -3682,8 +3682,22 @@ int main(int argc, char** argv) {
                     else ImGui::TextDisabled("edited %s", pago.c_str());
                 }
                 ImGui::EndGroup();
-                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 180);
                 ImGui::SetCursorPosY(10.0f);
+                // Play the project straight in the universal player — no export /
+                // "Build Game" needed (Roblox / s&box style). Falls back to a
+                // tooltip when the player runtime isn't found next to the launcher.
+                bool canPlay = !player.empty() && ready;
+                ImGui::BeginDisabled(!canPlay);
+                if (ImGui::Button("Play", ImVec2(84, 36)) && canPlay) {
+                    Launch(player, pr.second);
+                    RecordPlayed(pr.second); SavePrefs();
+                    Toast(std::string("Playing ") + pr.first);
+                }
+                ImGui::EndDisabled();
+                if (player.empty() && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Player runtime not found next to the launcher");
+                ImGui::SameLine();
                 ImGui::BeginDisabled(editor.empty() || !ready);
                 if (PrimaryButton("Open", ImVec2(84, 36))) {
                     LaunchEditor(editor, "", "", pr.second);
@@ -3697,6 +3711,11 @@ int main(int argc, char** argv) {
                     Toast(std::string("Opening ") + pr.first);
                 }
                 if (ImGui::BeginPopupContextWindow("projctx", ImGuiPopupFlags_MouseButtonRight)) {
+                    if (!player.empty() && ready && ImGui::MenuItem("Play (no export)")) {
+                        Launch(player, pr.second);
+                        RecordPlayed(pr.second); SavePrefs();
+                        Toast(std::string("Playing ") + pr.first);
+                    }
                     if (!editor.empty() && ImGui::MenuItem("Open in Editor")) {
                         LaunchEditor(editor, "", "", pr.second);
                         Toast(std::string("Opening ") + pr.first);

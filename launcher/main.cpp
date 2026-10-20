@@ -1002,18 +1002,22 @@ void DarkTheme() {
     const bool light = (g_themeIndex == 2);
     if (light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Metrics match the game engine editor's theme (ApplyTheme) so the launcher and
-    // editor read as one product: soft unified rounding, thin frame borders.
-    s.WindowRounding    = 3.0f;  s.ChildRounding    = 3.0f;
-    s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
-    s.PopupRounding     = 3.0f;  s.TabRounding      = 2.0f;
-    s.ScrollbarRounding = 2.0f;
-    s.WindowPadding   = ImVec2(14, 12); s.FramePadding = ImVec2(10, 7);
-    s.ItemSpacing     = ImVec2(9, 8);   s.ItemInnerSpacing = ImVec2(7, 5);
+    // Modern, softer metrics: generous rounding and flat (borderless) frames so
+    // the launcher reads clean and current rather than boxy.
+    s.WindowRounding    = 9.0f;  s.ChildRounding    = 9.0f;
+    s.FrameRounding     = 7.0f;  s.GrabRounding     = 7.0f;
+    s.PopupRounding     = 9.0f;  s.TabRounding      = 7.0f;
+    s.ScrollbarRounding = 8.0f;
+    s.WindowPadding   = ImVec2(16, 14); s.FramePadding = ImVec2(12, 8);
+    s.ItemSpacing     = ImVec2(10, 9);  s.ItemInnerSpacing = ImVec2(8, 6);
     s.WindowBorderSize = 0.0f;          s.ChildBorderSize = 1.0f;
-    s.FrameBorderSize  = 1.0f;          s.PopupBorderSize = 1.0f;
-    s.ScrollbarSize   = 11.0f;          s.GrabMinSize = 11.0f;
+    s.FrameBorderSize  = 0.0f;          s.PopupBorderSize = 1.0f;
+    s.ScrollbarSize   = 12.0f;          s.GrabMinSize = 12.0f;
     s.SeparatorTextBorderSize = 1.0f;
+    s.SeparatorTextPadding = ImVec2(16, 6);
+    s.FrameBorderSize = 0.0f;
+    s.TabBarBorderSize = 0.0f;
+    s.DisabledAlpha = 0.5f;
     ImVec4* c = s.Colors;
     const ImVec4 accent = kAccent;
     const ImVec4 accentDim = kAccentDim;
@@ -1713,6 +1717,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static bool focusComposer = false;               // focus the input on open
     static Uint32 typingSentAt = 0, typingPollNext = 0;  // typing indicator timers
     static bool peerTyping = false;                  // the other person is typing
+    static long scrollToId = 0, flashId = 0;         // jump to a replied-to message
+    static Uint32 flashUntil = 0;
 
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
         selUid = uid; selName = nm; selAvatar = av; selOnline = online;
@@ -1997,7 +2003,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
                 ImDrawList* bdl = ImGui::GetWindowDrawList();
-                if (rep) {                                  // quoted message
+                if (rep) {                                  // quoted message (click to jump)
+                    ImGui::BeginGroup();
                     ImVec2 qp = ImGui::GetCursorScreenPos();
                     bdl->AddRectFilled(ImVec2(qp.x-4, qp.y), ImVec2(qp.x-1, qp.y + ImGui::GetTextLineHeight()*1.7f), ImGui::GetColorU32(kAccent), 1.0f);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImVec4(0.8f,0.85f,0.95f,0.9f)));
@@ -2006,6 +2013,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
                     ImGui::TextUnformatted(repText.c_str());
                     ImGui::PopStyleColor();
+                    ImGui::EndGroup();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                            scrollToId = rep->id; flashId = rep->id; flashUntil = now + 1400;
+                        }
+                    }
                 }
                 if (bareEmoji) {                            // big, bubble-less emoji
                     std::size_t bi = 0, bn = m.body.size();
@@ -2047,6 +2061,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);                      // ChildRounding, WindowPadding
                 ImGui::PopStyleColor();                     // ChildBg
+                ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
+                // Jump-to-reply target: scroll this message into view, then flash it.
+                if (scrollToId == m.id) { ImGui::SetScrollHereY(0.4f); scrollToId = 0; }
+                if (flashId == m.id && now < flashUntil) {
+                    float a = 0.55f * ((flashUntil - now) / 1400.0f);
+                    dl->AddRect(ImVec2(bmin.x-3, bmin.y-3), ImVec2(bmax.x+3, bmax.y+3),
+                                ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, a)), 12.0f, 0, 2.5f);
+                }
 
                 // Right-click actions (React submenu, Reply, Copy, Edit, Delete).
                 auto& myset = myReacts[m.id];
@@ -2539,10 +2561,16 @@ int main(int argc, char** argv) {
         ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
         ImGui::SetNextWindowSize(vp->WorkSize);
+        // The root window fills the OS client area edge-to-edge (no rounding or
+        // outer padding) so there's no odd dark border; panels inside it keep
+        // their own rounding and padding.
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::Begin("##launcher", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
             ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGui::PopStyleVar(2);
 
         // (Removed the soft accent glow gradient across the top — a flat, Steam-style
         // dark surface reads more like a real app and less "designed".)
@@ -2613,15 +2641,29 @@ int main(int argc, char** argv) {
             char lbl[48];
             std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);   // room for the icon
             bool sel = (tab == i);
-            // Accent the active item's label so the selection reads clearly.
+            // Rounded "pill" selection drawn BEHIND the label (the Selectable's own
+            // highlight is turned off so it doesn't paint a sharp block on top).
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 rowMin = ImGui::GetCursorScreenPos();
+            float  rowW   = ImGui::GetContentRegionAvail().x;
+            ImVec2 rowMax = ImVec2(rowMin.x + rowW, rowMin.y + 42);
+            bool hov = ImGui::IsMouseHoveringRect(rowMin, rowMax);
+            if (sel || hov) {
+                float a = sel ? 0.20f : 0.10f;
+                dl->AddRectFilled(ImVec2(rowMin.x + 6, rowMin.y + 3), ImVec2(rowMax.x - 8, rowMax.y - 3),
+                                  ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, a)), 8.0f);
+            }
+            if (sel)   // accent bar marking the active item
+                dl->AddRectFilled(ImVec2(rowMin.x + 6, rowMin.y + 10), ImVec2(rowMin.x + 9.5f, rowMax.y - 10),
+                                  ImGui::GetColorU32(kAccent), 2.0f);
+            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0,0,0,0));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0,0,0,0));
             if (sel) ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
             if (ImGui::Selectable(lbl, sel, 0, ImVec2(0, 42))) tab = i;
             if (sel) ImGui::PopStyleColor();
+            ImGui::PopStyleColor(3);
             ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            if (sel)   // accent bar marking the active section
-                dl->AddRectFilled(ImVec2(mn.x, mn.y + 8), ImVec2(mn.x + 3.5f, mx.y - 8),
-                                  ImGui::GetColorU32(kAccent), 2.0f);
             // Little vector icon per section (no icon font needed).
             {
                 float cy = (mn.y + mx.y) * 0.5f, cx = mn.x + 24.0f, r = 6.5f;
@@ -2813,16 +2855,17 @@ int main(int argc, char** argv) {
         const ImVec4 kTitle(0.85f, 0.9f, 1.0f, 1.0f);
         // Section title with a short accent underline; optional subtitle.
         auto sectionHeader = [&](const char* title, const char* subtitle) {
+            ImGui::SetWindowFontScale(1.42f);
             ImGui::TextColored(kTitle, "%s", title);
+            ImGui::SetWindowFontScale(1.0f);
             ImVec2 p = ImGui::GetCursorScreenPos();
-            float w = ImGui::GetContentRegionAvail().x;
             ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(p.x, p.y + 1), ImVec2(p.x + w * 0.16f, p.y + 4),
+                ImVec2(p.x, p.y + 2), ImVec2(p.x + 48.0f, p.y + 5),
                 ImGui::GetColorU32(kAccent), 2.0f);
-            ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 8 : 14));
+            ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 12 : 18));
             if (subtitle && *subtitle) {
                 ImGui::TextDisabled("%s", subtitle);
-                ImGui::Dummy(ImVec2(0, 10));
+                ImGui::Dummy(ImVec2(0, 12));
             }
         };
         // Login gate for online-only tabs: returns true when signed in, else

@@ -1786,6 +1786,11 @@ void SaveAllBeforeExit(EditorState& ed) {
 bool g_showSaveAs = false, g_showOpen = false, g_showImportObj = false;
 bool g_importAutoRig = false;    // Import Model dialog: auto-rig the model as a humanoid after import
 char g_objPathBuf[256] = "model.obj";
+// 2D sprite-sheet character wizard.
+bool g_showSpriteChar = false;
+char g_ssPathBuf[256] = "";
+int  g_ssCols = 4, g_ssRows = 1;
+float g_ssFps = 8.0f;
 char g_pathBuf[256] = "scene.okayscene";
 
 // Data Asset (Scriptable Object) editor window.
@@ -3169,6 +3174,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         bool created = false;
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
+        if (ImGui::MenuItem("2D Character (Sprite Sheet)...")) g_showSpriteChar = true;
         if (ImGui::BeginMenu("2D Shape")) {     // premade sprite shapes (saved to Assets/Sprites)
             for (int i = 0; i < SS_Count; ++i)
                 if (ImGui::MenuItem(kSpriteShapeNames[i])) {
@@ -9817,6 +9823,42 @@ void HandleShortcuts(EditorState& ed) {
 void DrawFileDialogs(EditorState& ed) {
     if (g_showOpen)   { ImGui::OpenPopup("Open Scene");    g_showOpen = false; }
     if (g_showSaveAs) { ImGui::OpenPopup("Save Scene As"); g_showSaveAs = false; }
+    // ---- 2D Character from a sprite sheet: one-step animated 2D character ----
+    if (g_showSpriteChar) { ImGui::OpenPopup("2D Character"); g_showSpriteChar = false; }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("2D Character", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Make an animated 2D character from a sprite sheet.");
+        ImGui::TextDisabled("A grid of frames in one image (e.g. a walk cycle). Rows can be facings.");
+        ImGui::SetNextItemWidth(320);
+        ImGui::InputText("##sspath", g_ssPathBuf, sizeof(g_ssPathBuf));
+        ImGui::SameLine(0, 4);
+        if (ImGui::Button("...##ssbrowse")) {
+            const char* filt[4] = {"*.png", "*.jpg", "*.jpeg", "*.bmp"};
+            if (const char* p = tinyfd_openFileDialog("Sprite sheet", "", 4, filt, "Image", 0))
+                std::snprintf(g_ssPathBuf, sizeof(g_ssPathBuf), "%s", p);
+        }
+        ImGui::SetNextItemWidth(120); ImGui::InputInt("Columns", &g_ssCols);
+        ImGui::SetNextItemWidth(120); ImGui::InputInt("Rows", &g_ssRows);
+        ImGui::SetNextItemWidth(120); ImGui::InputFloat("FPS", &g_ssFps, 1.0f, 0, "%.0f");
+        if (g_ssCols < 1) g_ssCols = 1; if (g_ssRows < 1) g_ssRows = 1; if (g_ssFps < 1) g_ssFps = 1;
+        ImGui::Dummy(ImVec2(0, 4));
+        if (ImGui::Button("Create", ImVec2(120, 0)) && g_ssPathBuf[0]) {
+            GameObject* go = ed.CreateSprite("2D Character");
+            if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = g_ssPathBuf;
+            auto* sa = go->GetComponent<SpriteAnimator>();
+            if (!sa) sa = go->AddComponent<SpriteAnimator>();
+            sa->atlasColumns = g_ssCols; sa->atlasRows = g_ssRows; sa->atlasCount = 0;
+            sa->fps = g_ssFps; sa->loop = true; sa->playing = true;
+            ed.Select(go); ed.dirty = true;
+            ConsoleLog("Created 2D character from sprite sheet (" + std::to_string(g_ssCols) + "x" +
+                       std::to_string(g_ssRows) + ")");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
     if (g_showImportObj) { ImGui::OpenPopup("Import Model"); g_showImportObj = false; }
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
 

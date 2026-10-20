@@ -841,6 +841,12 @@ fs::path CommunityItemRoot(const fs::path& scenePath) {
     return {};
 }
 
+// Friends-tab personalization, persisted in launcher.cfg: pinned (favorite)
+// friends float to the top, and a private per-friend nickname overrides the
+// name you see (Discord/Steam-style; only you see it).
+std::set<std::string>              g_favFriends;   // favorited friend uids
+std::map<std::string,std::string>  g_friendNicks;  // uid -> private nickname
+
 // Shared accent so UI code can match the theme.
 // Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
 // these, so changing them and re-applying restyles everything).
@@ -1576,6 +1582,8 @@ void LoadPrefs() {
         else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
+        else if (k == "favfriend" && !v.empty()) g_favFriends.insert(v);
+        else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
         else if (k == "wish" && !v.empty()) { try { g_wishlist.push_back(std::stol(v)); } catch (...) {} }
@@ -1619,6 +1627,8 @@ void SavePrefs() {
     f << "win_w=" << g_winW << "\n";
     f << "win_h=" << g_winH << "\n";
     for (const auto& p : g_favorites)    f << "fav=" << p << "\n";
+    for (const auto& u : g_favFriends)   f << "favfriend=" << u << "\n";
+    for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
     for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
     for (long id : g_wishlist)           f << "wish=" << id << "\n";
@@ -4302,17 +4312,66 @@ int main(int argc, char** argv) {
                 if (!fErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
                                      ImGui::TextWrapped("%s", fErr.c_str()); ImGui::PopStyleColor(); }
 
-                // Split into requests / online / offline
-                std::vector<const okay::Friend*> reqs, online, offline;
+                // Private display name: a nickname you set, else their display
+                // name, else the username.
+                auto nameOf = [&](const okay::Friend* f) -> std::string {
+                    auto it = g_friendNicks.find(f->id);
+                    if (it != g_friendNicks.end() && !it->second.empty()) return it->second;
+                    return f->display.empty() ? f->username : f->display;
+                };
+
+                // Search + summary row.
+                static char friendFilter[64] = "";
+                ImGui::SetNextItemWidth(240);
+                ImGui::InputTextWithHint("##friendsearch", "Search friends...", friendFilter, sizeof(friendFilter));
+                std::string ffilt = friendFilter;
+                for (auto& ch : ffilt) ch = (char)std::tolower((unsigned char)ch);
+                auto matches = [&](const okay::Friend* f) {
+                    if (ffilt.empty()) return true;
+                    std::string hay = nameOf(f) + " @" + f->username;
+                    for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
+                    return hay.find(ffilt) != std::string::npos;
+                };
+                int acceptedN = 0, onlineN = 0, reqN = 0;
                 for (const auto& f : fCache) {
+                    if (f.status == "accepted") { ++acceptedN; if (f.online) ++onlineN; }
+                    else if (f.incoming) ++reqN;
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%d of %d online", onlineN, acceptedN);
+                if (reqN > 0) { ImGui::SameLine(); ImGui::TextColored(kAccent, "%d request%s", reqN, reqN==1?"":"s"); }
+
+                // Split: requests / favorites / online / offline / outgoing-pending.
+                std::vector<const okay::Friend*> reqs, favs, online, offline, pending;
+                for (const auto& f : fCache) {
+                    if (!matches(&f)) continue;
+                    bool fav = g_favFriends.count(f.id) != 0;
                     if (f.status != "accepted" && f.incoming) reqs.push_back(&f);
-                    else if (f.status != "accepted")          offline.push_back(&f); // outgoing pending
+                    else if (f.status != "accepted")          pending.push_back(&f);
+                    else if (fav)                             favs.push_back(&f);
                     else if (f.online)                        online.push_back(&f);
                     else                                      offline.push_back(&f);
                 }
+                // Within a section: online first, then name.
+                auto byName = [&](const okay::Friend* a, const okay::Friend* b) {
+                    if (a->online != b->online) return a->online > b->online;
+                    std::string na = nameOf(a), nb = nameOf(b);
+                    for (auto& c : na) c = (char)std::tolower((unsigned char)c);
+                    for (auto& c : nb) c = (char)std::tolower((unsigned char)c);
+                    return na < nb;
+                };
+                std::sort(favs.begin(), favs.end(), byName);
+                std::sort(online.begin(), online.end(), byName);
+                std::sort(offline.begin(), offline.end(), byName);
+
+                // Nickname editor popup state.
+                static std::string nickUid; static char nickBuf[48] = ""; static bool nickOpen = false;
+
                 ImGui::Spacing();
                 ImGui::BeginChild("##friendlist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
                 auto drawFriend = [&](const okay::Friend* f, bool request) {
+                    bool fav = g_favFriends.count(f->id) != 0;
+                    std::string dispName = nameOf(f);
                     ImGui::PushID((int)f->rowId);
                     ImGui::BeginChild("##frow", ImVec2(0, 48), true);
                     // Avatar (32px, clickable -> profile card) with a status dot.
@@ -4323,25 +4382,22 @@ int main(int argc, char** argv) {
                     if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     ImGui::SetCursorPos(ImVec2(6, 6));
                     ImVec2 ap = ImGui::GetCursorScreenPos();
-                    DrawAvatar(f->avatar, f->display.empty() ? f->username : f->display, 32.0f);
+                    DrawAvatar(f->avatar, dispName, 32.0f);
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     ImU32 dot = f->online ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
                     dl->AddCircleFilled(ImVec2(ap.x + 28, ap.y + 28), 5.5f, dot, 16);
                     dl->AddCircle(ImVec2(ap.x + 28, ap.y + 28), 5.5f, IM_COL32(20, 28, 48, 255), 16, 2.0f);
+                    if (fav) DrawEmoji(dl, ImVec2(ap.x + 2, ap.y + 2), 12, 5);   // gold star badge
                     ImGui::SameLine(); ImGui::SetCursorPosX(46);
                     ImGui::BeginGroup();
-                    ImGui::TextUnformatted(f->display.empty() ? f->username.c_str() : f->display.c_str());
-                    if (!f->display.empty() && f->display != f->username) {
-                        ImGui::SameLine(0, 6);
-                        ImGui::TextDisabled("@%s", f->username.c_str());
-                    }
+                    ImGui::TextUnformatted(dispName.c_str());
+                    ImGui::SameLine(0, 6);
+                    ImGui::TextDisabled("@%s", f->username.c_str());
                     bool playing = f->online && !f->playing.empty();
                     std::string sub = request ? "wants to be your friend"
                                    : f->status != "accepted" ? "request sent"
                                    : playing ? f->playing
                                    : f->online ? "Online" : "Offline";
-                    // Color the presence line: accent when playing, green online,
-                    // muted grey offline/pending.
                     ImVec4 sc = playing ? kAccent
                               : (!request && f->online) ? ImVec4(0.55f,0.9f,0.6f,1)
                                                         : ImVec4(0.60f,0.63f,0.70f,1);
@@ -4349,20 +4405,16 @@ int main(int argc, char** argv) {
                     ImGui::EndGroup();
                     bool accepted = !request && f->status == "accepted";
                     bool joinable = accepted && f->online && !f->sessionCode.empty();
-                    float btnW = request ? 170.0f : accepted ? (joinable ? 240.0f : 170.0f) : 86.0f;
+                    float btnW = request ? 170.0f : accepted ? (joinable ? 170.0f : 92.0f) : 86.0f;
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - btnW);
                     if (request) {
                         if (ImGui::Button("Accept")) { fr.Accept(f->rowId); fNextRefresh = 0; }
                         ImGui::SameLine();
                         if (ImGui::Button("Decline")) { fr.Remove(f->rowId); fNextRefresh = 0; }
-                    } else {
-                        if (accepted) {
-                            if (ImGui::Button("Message")) {
-                                OpenChatWith(f->id, f->display.empty() ? f->username : f->display, f->avatar);
-                            }
-                            ImGui::SameLine();
-                        }
+                    } else if (accepted) {
+                        if (ImGui::Button("Message")) OpenChatWith(f->id, dispName, f->avatar);
                         if (joinable) {
+                            ImGui::SameLine();
                             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.44f, 0.26f, 1.0f));
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.56f, 0.33f, 1.0f));
                             if (ImGui::Button("Join")) {
@@ -4370,16 +4422,72 @@ int main(int argc, char** argv) {
                                 Toast("Session code " + f->sessionCode + " copied - open the game and Join with it", 2);
                             }
                             ImGui::PopStyleColor(2);
-                            ImGui::SameLine();
                         }
-                        if (ImGui::SmallButton("Remove")) { fr.Remove(f->rowId); fNextRefresh = 0; }
+                    } else {
+                        if (ImGui::SmallButton("Cancel")) { fr.Remove(f->rowId); fNextRefresh = 0; }
                     }
+                    // Right-click menu: favorite, nickname, copy, remove (Discord-style).
+                    if (ImGui::BeginPopupContextWindow("##frctx", ImGuiPopupFlags_MouseButtonRight)) {
+                        if (accepted) {
+                            if (ImGui::MenuItem("Message")) OpenChatWith(f->id, dispName, f->avatar);
+                            if (joinable && ImGui::MenuItem("Join their game")) {
+                                ImGui::SetClipboardText(f->sessionCode.c_str());
+                                Toast("Session code " + f->sessionCode + " copied", 2);
+                            }
+                            if (ImGui::MenuItem(fav ? "Unfavorite" : "Favorite")) {
+                                if (fav) g_favFriends.erase(f->id); else g_favFriends.insert(f->id);
+                                SavePrefs();
+                            }
+                            if (ImGui::MenuItem("Set nickname...")) {
+                                nickUid = f->id;
+                                std::snprintf(nickBuf, sizeof(nickBuf), "%s",
+                                              g_friendNicks.count(f->id) ? g_friendNicks[f->id].c_str() : "");
+                                nickOpen = true;
+                                ImGui::CloseCurrentPopup();
+                            }
+                            if (g_friendNicks.count(f->id) && ImGui::MenuItem("Clear nickname")) {
+                                g_friendNicks.erase(f->id); SavePrefs();
+                            }
+                            ImGui::Separator();
+                        }
+                        if (ImGui::MenuItem("Copy username")) { ImGui::SetClipboardText(f->username.c_str()); Toast("Username copied", 1); }
+                        if (ImGui::MenuItem("View profile")) { profFriend = *f; profOpen = true; }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem(request ? "Decline request" : accepted ? "Remove friend" : "Cancel request")) {
+                            fr.Remove(f->rowId); fNextRefresh = 0;
+                        }
+                        ImGui::EndPopup();
+                    }
+                    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
+                        ImGui::SetTooltip("Right-click for more");
                     ImGui::EndChild();
                     ImGui::PopID();
                 };
-                if (!reqs.empty())    { ImGui::SeparatorText("Friend requests"); for (auto* f : reqs)    drawFriend(f, true);  }
-                if (!online.empty())  { ImGui::SeparatorText("Online");          for (auto* f : online)  drawFriend(f, false); }
-                if (!offline.empty()) { ImGui::SeparatorText("Offline");         for (auto* f : offline) drawFriend(f, false); }
+                if (!reqs.empty())    { ImGui::SeparatorText(("Friend requests (" + std::to_string(reqs.size()) + ")").c_str()); for (auto* f : reqs)    drawFriend(f, true);  }
+                if (!favs.empty())    { ImGui::SeparatorText(("Favorites (" + std::to_string(favs.size()) + ")").c_str());       for (auto* f : favs)    drawFriend(f, false); }
+                if (!online.empty())  { ImGui::SeparatorText(("Online (" + std::to_string(online.size()) + ")").c_str());        for (auto* f : online)  drawFriend(f, false); }
+                if (!offline.empty()) { ImGui::SeparatorText(("Offline (" + std::to_string(offline.size()) + ")").c_str());      for (auto* f : offline) drawFriend(f, false); }
+                if (!pending.empty()) { ImGui::SeparatorText(("Sent requests (" + std::to_string(pending.size()) + ")").c_str()); for (auto* f : pending) drawFriend(f, false); }
+                if (!ffilt.empty() && reqs.empty() && favs.empty() && online.empty() && offline.empty() && pending.empty())
+                    ImGui::TextDisabled("No friends match \"%s\".", friendFilter);
+
+                // Nickname editor popup.
+                if (nickOpen) { ImGui::OpenPopup("Set nickname"); nickOpen = false; }
+                if (ImGui::BeginPopupModal("Set nickname", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::TextDisabled("Only you see this nickname.");
+                    ImGui::SetNextItemWidth(260);
+                    bool ok = ImGui::InputText("##nick", nickBuf, sizeof(nickBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                    if (ImGui::Button("Save", ImVec2(110, 0)) || ok) {
+                        if (!nickUid.empty()) {
+                            if (nickBuf[0]) g_friendNicks[nickUid] = nickBuf; else g_friendNicks.erase(nickUid);
+                            SavePrefs();
+                        }
+                        nickUid.clear(); ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(110, 0))) { nickUid.clear(); ImGui::CloseCurrentPopup(); }
+                    ImGui::EndPopup();
+                }
 
                 // --- Steam-style profile card popup (opened from a friend avatar) ---
                 if (profOpen) { ImGui::OpenPopup("##profilecard"); profOpen = false; }

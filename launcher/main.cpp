@@ -6768,9 +6768,29 @@ int main(int argc, char** argv) {
 
             ImGui::BeginChild("##dllist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
             if (snap.empty()) {
-                ImGui::Dummy(ImVec2(0, 24));
-                ImGui::TextDisabled("No downloads yet.");
-                ImGui::TextDisabled("Open the Marketplace, pick a game and hit Get > Download.");
+                float cw = ImGui::GetContentRegionAvail().x;
+                auto center = [&](const char* s, bool dim) {
+                    float tw = ImGui::CalcTextSize(s).x, o = (cw - tw) * 0.5f;
+                    if (o > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + o);
+                    if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
+                };
+                ImGui::Dummy(ImVec2(0, 34));
+                // Download-into-tray icon.
+                ImVec2 ip = ImGui::GetCursorScreenPos();
+                float icx = ip.x + cw * 0.5f, icy = ip.y + 12;
+                ImDrawList* dl2 = ImGui::GetWindowDrawList();
+                ImU32 ic = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                dl2->AddLine(ImVec2(icx, icy - 16), ImVec2(icx, icy + 6), ic, 2.6f);
+                dl2->AddLine(ImVec2(icx - 9, icy - 3), ImVec2(icx, icy + 6), ic, 2.6f);
+                dl2->AddLine(ImVec2(icx + 9, icy - 3), ImVec2(icx, icy + 6), ic, 2.6f);
+                dl2->AddLine(ImVec2(icx - 15, icy + 15), ImVec2(icx + 15, icy + 15), ic, 2.6f);
+                ImGui::Dummy(ImVec2(0, 40));
+                center("No downloads yet", false);
+                ImGui::Dummy(ImVec2(0, 2));
+                center("Games you get from the Marketplace land here.", true);
+                ImGui::Dummy(ImVec2(0, 12));
+                float bw = 210.0f; ImGui::SetCursorPosX((cw - bw) * 0.5f);
+                if (PrimaryButton("Browse Marketplace", ImVec2(bw, 38))) { tab = 7; g_lastTab = 7; SavePrefs(); }
             }
             auto humanBytes = [](long long b) {
                 char out[32];

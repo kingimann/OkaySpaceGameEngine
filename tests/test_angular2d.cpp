@@ -80,25 +80,25 @@ int main() {
         CHECK(std::fabs(r2->angularVelocity) < 1e-4f);
     }
 
-    // ---- Contact-driven spin: a box hitting a ledge off-center starts rotating ----
+    // ---- Contact-driven spin: a box landing off-center on a narrow pedestal
+    //      is supported on only one side, so gravity topples it (real torque from
+    //      an off-center contact — unlike a head-on hit, which stays square). ----
     {
         Scene s("tip");
-        // A tall static wall on the right.
-        auto* wall = s.CreateGameObject("Wall");
-        wall->transform->localPosition = {3, 0, 0};
-        { auto* r = wall->AddComponent<Rigidbody2D>(); r->bodyType = Rigidbody2D::BodyType::Static; }
-        { auto* c = wall->AddComponent<BoxCollider2D>(); c->size = {1, 6}; }
+        // A narrow static pedestal under the box's RIGHT side only.
+        auto* ped = s.CreateGameObject("Pedestal");
+        ped->transform->localPosition = {0.45f, 0, 0};
+        { auto* r = ped->AddComponent<Rigidbody2D>(); r->bodyType = Rigidbody2D::BodyType::Static; }
+        { auto* c = ped->AddComponent<BoxCollider2D>(); c->size = {0.4f, 0.4f}; }
 
-        // A free box drifting right, offset upward so the hit is off its center line.
         auto* box = s.CreateGameObject("Box");
-        box->transform->localPosition = {0, 1.5f, 0};
+        box->transform->localPosition = {0, 0.9f, 0};
         auto* rb = box->AddComponent<Rigidbody2D>();
-        rb->gravityScale = 0.0f; rb->freezeRotation = false; rb->angularDrag = 0.0f;
-        rb->velocity = {6, 0};
+        rb->freezeRotation = false; rb->angularDrag = 0.0f;   // gravity on (default scale 1)
         { auto* c = box->AddComponent<BoxCollider2D>(); c->size = {1, 1}; }
         s.Start();
-        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);
-        CHECK(std::fabs(rb->angularVelocity) > 1.0f);   // the impact set it spinning
+        for (int i = 0; i < 180; ++i) s.Update(1.0f / 60.0f);
+        CHECK(std::fabs(rb->angularVelocity) > 1.0f);   // tipped off the edge -> spinning
     }
 
     // ---- Angular fields round-trip through the scene file ----

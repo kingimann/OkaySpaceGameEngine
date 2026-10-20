@@ -42,6 +42,7 @@ int main() {
         auto* ik = body->AddComponent<FootIK>();
         ik->leftHip = hipO->transform; ik->leftKnee = kneeO->transform; ik->leftFoot = footO->transform;
         ik->useRaycast = false; ik->groundY = 0.3f; ik->footOffset = 0.05f; ik->weight = 1.0f;
+        ik->smoothing = 0.0f;   // plant in a single frame for a deterministic check
         float upLen = 0.45f, loLen = 0.45f;
         (void)upLen; (void)loLen;
         s.Start();
@@ -113,6 +114,7 @@ int main() {
         ik->chain = {neck->transform, head->transform};
         ik->target = {5, 1.7f, 0};                 // straight to the right (+X)
         ik->weight = 1.0f; ik->maxAngle = 180.0f;  // allow the full turn for the test
+        ik->smoothing = 0.0f;                       // snap to target for a deterministic check
         s.Start();
         for (int i = 0; i < 5; ++i) s.Update(1.0f / 60.0f);   // ease in over a few frames
         Vec3 fwd = (head->transform->Rotation() * Vec3::Forward).Normalized();
@@ -224,7 +226,7 @@ int main() {
         ik->leftHip = lHip->transform;  ik->leftKnee = lKnee->transform;  ik->leftFoot = lFoot->transform;
         ik->rightHip = rHip->transform; ik->rightKnee = rKnee->transform; ik->rightFoot = rFoot->transform;
         ik->useRaycast = false; ik->groundY = -0.3f;   // ground BELOW the animated feet
-        ik->footOffset = 0.0f; ik->weight = 1.0f;
+        ik->footOffset = 0.0f; ik->weight = 1.0f; ik->smoothing = 0.0f;
         ik->pelvis = hips->transform; ik->adjustPelvis = true; ik->plantDown = true;
         ik->maxRayDown = 2.0f;
         s.Start();

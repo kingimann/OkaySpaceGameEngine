@@ -51,6 +51,17 @@
 #  include <csignal>
 #endif
 
+#if defined(_WIN32)
+// Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
+// switchable). Exporting these symbols tells the drivers to run this process on
+// the discrete NVIDIA/AMD GPU instead of the slower integrated one. Must live at
+// global scope with C linkage and be exported from the .exe.
+extern "C" {
+    __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 namespace fs = std::filesystem;
 
 #ifndef OKAY_ENGINE_VERSION

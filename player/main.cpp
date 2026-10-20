@@ -33,6 +33,16 @@
 #include <unordered_map>
 #include <vector>
 
+#if defined(_WIN32)
+// Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
+// switchable): exporting these tells the drivers to run the game on the discrete
+// NVIDIA/AMD GPU instead of the slower integrated one.
+extern "C" {
+    __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 using namespace okay;
 
 static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int h) {

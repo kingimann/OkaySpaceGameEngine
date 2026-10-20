@@ -345,6 +345,16 @@ int main(int argc, char** argv) {
 using namespace okay;
 using namespace okay::editor;
 
+#if defined(_WIN32)
+// Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
+// switchable): exporting these tells the drivers to run the editor on the
+// discrete NVIDIA/AMD GPU instead of the slower integrated one.
+extern "C" {
+    __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 namespace {
 
 ImU32 ToColor(const Color& c) {

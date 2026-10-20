@@ -8,6 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "AppIcon.hpp"
+#include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -402,6 +403,63 @@ int StartDownload(const std::string& url, const std::string& title) {
     d->th = SDL_CreateThread(DlWorker, "okay-dl", d.get());
     return d->id;
 }
+
+// ---- Git for projects (clone / pull / commit+push / publish) ---------------
+// Git can be slow (clone/push), so it runs on a background thread and reports a
+// result the main loop turns into a toast. Requires `git` on the user's PATH.
+SDL_mutex*  g_gitMutex = nullptr;
+bool        g_gitBusy = false;
+bool        g_gitResultReady = false;
+std::string g_gitResultMsg;
+int         g_gitResultKind = 0;      // Toast kind: 1 = ok, 2 = error
+bool        g_gitWantRescan = false;  // re-list projects after a clone/pull
+
+static bool GitAvailable() {
+    static int cached = -1;
+    if (cached < 0)
+        cached = (RunCmd(
+#if defined(_WIN32)
+            "git --version >nul 2>&1"
+#else
+            "git --version >/dev/null 2>&1"
+#endif
+            , true) == 0) ? 1 : 0;
+    return cached == 1;
+}
+
+struct GitJob { std::vector<std::string> cmds; std::string okMsg, failMsg; bool rescan = false; };
+
+static int GitWorker(void* data) {
+    GitJob* job = (GitJob*)data;
+    int rc = 0;
+    for (std::size_t i = 0; i < job->cmds.size(); ++i) {
+        int c = RunCmd(job->cmds[i], true);
+        if (i + 1 == job->cmds.size()) rc = c;   // the last command decides success
+    }
+    SDL_LockMutex(g_gitMutex);
+    g_gitBusy = false;
+    g_gitResultReady = true;
+    g_gitResultMsg = (rc == 0) ? job->okMsg : job->failMsg;
+    g_gitResultKind = (rc == 0) ? 1 : 2;
+    if (rc == 0 && job->rescan) g_gitWantRescan = true;
+    SDL_UnlockMutex(g_gitMutex);
+    delete job;
+    return rc;
+}
+
+// Start a git job in the background (ignored if one is already running).
+static bool StartGit(GitJob* job) {
+    if (!g_gitMutex) { delete job; return false; }
+    SDL_LockMutex(g_gitMutex);
+    if (g_gitBusy) { SDL_UnlockMutex(g_gitMutex); delete job; return false; }
+    g_gitBusy = true;
+    SDL_UnlockMutex(g_gitMutex);
+    SDL_Thread* t = SDL_CreateThread(GitWorker, "okay-git", job);
+    if (t) SDL_DetachThread(t); else { SDL_LockMutex(g_gitMutex); g_gitBusy = false; SDL_UnlockMutex(g_gitMutex); delete job; return false; }
+    return true;
+}
+static std::string GitQ(const std::string& s) { return "\"" + s + "\""; }
+static std::string GitC(const std::string& dir) { return "git -C " + GitQ(dir) + " "; }
 
 // Extract a .zip into destDir, best-effort, using whatever's on the system.
 bool ExtractZip(const std::string& zip, const std::string& destDir) {
@@ -864,6 +922,7 @@ ImVec4 kAccentDim(0.19f, 0.43f, 0.72f, 1.0f);
 // Selectable accent colors (name, main, dim) — mirror the editor's accent presets.
 struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
 const AccentPreset kAccentPresets[] = {
+    {"Graphite", ImVec4(0.70f, 0.71f, 0.74f, 1), ImVec4(0.44f, 0.45f, 0.48f, 1)},  // neutral default (no blue)
     {"Blue",   ImVec4(0.26f, 0.59f, 0.98f, 1), ImVec4(0.19f, 0.43f, 0.72f, 1)},
     {"Teal",   ImVec4(0.18f, 0.78f, 0.74f, 1), ImVec4(0.13f, 0.56f, 0.53f, 1)},
     {"Violet", ImVec4(0.56f, 0.46f, 0.96f, 1), ImVec4(0.40f, 0.33f, 0.70f, 1)},
@@ -1045,52 +1104,47 @@ void DarkTheme() {
         c[ImGuiCol_FrameBgHovered] = ImVec4(0.85f, 0.88f, 0.93f, 1.0f);
         c[ImGuiCol_FrameBgActive]  = ImVec4(0.82f, 0.86f, 0.92f, 1.0f);
         c[ImGuiCol_Separator] = ImVec4(0, 0, 0, 0.10f);
-    } else {                                              // Dark (default) = engine editor theme
-        // Neutral medium-gray base (Unity Pro dark), identical to the editor's
-        // ApplyTheme, so the launcher and editor look like one product.
+    } else {                                              // Dark (default) = neutral charcoal
+        // A true neutral dark theme (VS Code / Unity dark): charcoal-grey surfaces,
+        // no blue tint. The accent colour is used ONLY for small interactive cues
+        // (checkmarks, slider grabs, the active nav bar), not the panels.
         auto lighten = [](float v) { return v + (1.0f - v) * 0.30f; };
         const ImVec4 accentHover = ImVec4(lighten(accent.x), lighten(accent.y), lighten(accent.z), 1.00f);
-        auto tint = [&](float gray, float amt, float a) {
-            return ImVec4(gray + (accent.x - gray) * amt, gray + (accent.y - gray) * amt,
-                          gray + (accent.z - gray) * amt, a);
-        };
-        c[ImGuiCol_WindowBg]         = ImVec4(0.106f, 0.153f, 0.212f, 1.00f);   // Steam #1b2736
-        c[ImGuiCol_ChildBg]          = ImVec4(0.086f, 0.125f, 0.176f, 0.00f);
-        c[ImGuiCol_PopupBg]          = ImVec4(0.078f, 0.114f, 0.161f, 0.99f);
-        c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
-        c[ImGuiCol_FrameBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);
-        c[ImGuiCol_FrameBgHovered]   = tint(0.110f, 0.18f, 1.00f);
-        c[ImGuiCol_FrameBgActive]    = tint(0.140f, 0.25f, 1.00f);
-        c[ImGuiCol_TitleBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);
-        c[ImGuiCol_TitleBgActive]    = tint(0.100f, 0.16f, 1.00f);
-        c[ImGuiCol_MenuBarBg]        = ImVec4(0.090f, 0.133f, 0.184f, 1.00f);
-        c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.42f);
-        c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-        c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.70f);
-        // Neutral slate buttons (Unity/Steam); colour is reserved for primary
-        // actions, which use PrimaryButton (accent).
-        c[ImGuiCol_Button]           = ImVec4(0.180f, 0.210f, 0.255f, 1.00f);
-        c[ImGuiCol_ButtonHovered]    = ImVec4(0.232f, 0.268f, 0.320f, 1.00f);
-        c[ImGuiCol_ButtonActive]     = ImVec4(0.270f, 0.312f, 0.368f, 1.00f);
+        c[ImGuiCol_WindowBg]         = ImVec4(0.137f, 0.137f, 0.145f, 1.00f);   // #232325
+        c[ImGuiCol_ChildBg]          = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
+        c[ImGuiCol_PopupBg]          = ImVec4(0.160f, 0.160f, 0.168f, 0.99f);
+        c[ImGuiCol_Border]           = ImVec4(0.000f, 0.000f, 0.000f, 0.45f);
+        c[ImGuiCol_FrameBg]          = ImVec4(0.092f, 0.092f, 0.098f, 1.00f);
+        c[ImGuiCol_FrameBgHovered]   = ImVec4(0.135f, 0.135f, 0.143f, 1.00f);
+        c[ImGuiCol_FrameBgActive]    = ImVec4(0.168f, 0.168f, 0.178f, 1.00f);
+        c[ImGuiCol_TitleBg]          = ImVec4(0.105f, 0.105f, 0.112f, 1.00f);
+        c[ImGuiCol_TitleBgActive]    = ImVec4(0.135f, 0.135f, 0.143f, 1.00f);
+        c[ImGuiCol_MenuBarBg]        = ImVec4(0.120f, 0.120f, 0.127f, 1.00f);
+        c[ImGuiCol_Header]           = ImVec4(1.00f, 1.00f, 1.00f, 0.085f);     // neutral selection
+        c[ImGuiCol_HeaderHovered]    = ImVec4(1.00f, 1.00f, 1.00f, 0.060f);
+        c[ImGuiCol_HeaderActive]     = ImVec4(1.00f, 1.00f, 1.00f, 0.110f);
+        c[ImGuiCol_Button]           = ImVec4(0.215f, 0.215f, 0.228f, 1.00f);   // neutral grey
+        c[ImGuiCol_ButtonHovered]    = ImVec4(0.262f, 0.262f, 0.278f, 1.00f);
+        c[ImGuiCol_ButtonActive]     = ImVec4(0.300f, 0.300f, 0.318f, 1.00f);
         c[ImGuiCol_CheckMark]        = accentHover;
         c[ImGuiCol_SliderGrab]       = accent;
         c[ImGuiCol_SliderGrabActive] = accentHover;
-        c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+        c[ImGuiCol_Separator]        = ImVec4(1.00f, 1.00f, 1.00f, 0.070f);
         c[ImGuiCol_SeparatorHovered] = accentDim;
         c[ImGuiCol_SeparatorActive]  = accent;
-        c[ImGuiCol_Tab]              = ImVec4(0.078f, 0.114f, 0.161f, 1.00f);
-        c[ImGuiCol_TabHovered]       = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-        c[ImGuiCol_TabActive]        = tint(0.140f, 0.14f, 1.00f);
-        c[ImGuiCol_TabUnfocused]     = ImVec4(0.063f, 0.094f, 0.133f, 1.00f);
-        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.110f, 0.157f, 0.212f, 1.00f);
-        c[ImGuiCol_Text]             = ImVec4(0.878f, 0.902f, 0.925f, 1.00f);
-        c[ImGuiCol_TextDisabled]     = ImVec4(0.451f, 0.510f, 0.580f, 1.00f);
-        c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
+        c[ImGuiCol_Tab]              = ImVec4(0.120f, 0.120f, 0.127f, 1.00f);
+        c[ImGuiCol_TabHovered]       = ImVec4(1.00f, 1.00f, 1.00f, 0.100f);
+        c[ImGuiCol_TabActive]        = ImVec4(0.205f, 0.205f, 0.217f, 1.00f);
+        c[ImGuiCol_TabUnfocused]     = ImVec4(0.105f, 0.105f, 0.112f, 1.00f);
+        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.165f, 0.165f, 0.175f, 1.00f);
+        c[ImGuiCol_Text]             = ImVec4(0.882f, 0.886f, 0.898f, 1.00f);
+        c[ImGuiCol_TextDisabled]     = ImVec4(0.470f, 0.475f, 0.495f, 1.00f);
+        c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.35f);
         c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
-        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.330f, 0.330f, 0.355f, 1.00f);
-        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.400f, 0.400f, 0.430f, 1.00f);
+        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.330f, 0.330f, 0.345f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.400f, 0.400f, 0.420f, 1.00f);
         c[ImGuiCol_ScrollbarGrabActive]  = accent;
-        c[ImGuiCol_TableHeaderBg]    = ImVec4(0.205f, 0.205f, 0.220f, 1.00f);
+        c[ImGuiCol_TableHeaderBg]    = ImVec4(0.195f, 0.195f, 0.207f, 1.00f);
         c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.022f);
         ImGui::GetIO().FontGlobalScale = g_uiScale;
         return;   // Dark theme is fully specified above (no shared overrides needed)
@@ -2313,6 +2367,7 @@ int main(int argc, char** argv) {
     SDL_AtomicSet(&g_upState, (int)Up_UpToDate);
     g_upMutex = SDL_CreateMutex();
     g_dlMutex = SDL_CreateMutex();
+    g_gitMutex = SDL_CreateMutex();
     SetUpMsg("OkaySpace v" + LocalVersion());
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
@@ -2330,6 +2385,10 @@ int main(int argc, char** argv) {
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
     if (!renderer) return 1;
     g_renderer = renderer;   // lets GameCover() upload cover-art textures
+    // Show a loading frame immediately so the window isn't a black rectangle
+    // while fonts, the account session and runtimes are set up below.
+    { int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+      okay::DrawSplash(renderer, sw, sh, 0.62f, 0.63f, 0.66f); }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -2491,6 +2550,16 @@ int main(int argc, char** argv) {
             SDL_RaiseWindow(window);
         }
 #endif
+        // A finished git job (clone/pull/push) reports its result as a toast.
+        if (g_gitMutex) {
+            SDL_LockMutex(g_gitMutex);
+            if (g_gitResultReady) {
+                g_gitResultReady = false;
+                Toast(g_gitResultMsg, g_gitResultKind);
+                if (g_gitWantRescan) { g_gitWantRescan = false; g_projectsNeedRescan = true; }
+            }
+            SDL_UnlockMutex(g_gitMutex);
+        }
         // Once a background download finishes, re-detect the runtimes so the
         // "not found" notices clear without needing a restart.
         if (GetState() == Up_Updated && !rescannedAfterUpdate) {
@@ -2592,13 +2661,13 @@ int main(int argc, char** argv) {
             const float S = 34.0f;
             ImVec2 br(lp.x + S, lp.y + S);
             dl->AddRectFilledMultiColor(lp, br,
-                IM_COL32(20, 28, 48, 255), IM_COL32(20, 28, 48, 255),
-                IM_COL32(30, 40, 66, 255), IM_COL32(30, 40, 66, 255));
+                IM_COL32(40, 40, 44, 255), IM_COL32(40, 40, 44, 255),
+                IM_COL32(54, 54, 58, 255), IM_COL32(54, 54, 58, 255));
             dl->AddRect(lp, br, IM_COL32(255, 255, 255, 24), 9.0f, 0, 1.0f);
             // Clip the glyph to the rounded tile.
             dl->PushClipRect(lp, br, true);
             ImVec2 c(lp.x + S * 0.46f, lp.y + S * 0.52f);
-            ImU32 planet = ImGui::GetColorU32(kAccent);
+            ImU32 planet = IM_COL32(176, 180, 190, 255);
             ImU32 ringCol = IM_COL32(220, 232, 255, 230);
             dl->AddCircleFilled(c, 7.5f, planet, 24);
             dl->AddCircleFilled(ImVec2(c.x - 2.2f, c.y - 2.2f), 7.5f,
@@ -2889,7 +2958,7 @@ int main(int argc, char** argv) {
 
             // Hero card: a flat, slightly-raised panel (no gradient wash) with the
             // one primary action — reads like a real app, not a designed banner.
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.140f, 0.188f, 0.247f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.180f, 0.180f, 0.190f, 1.0f));
             ImGui::BeginChild("hero", ImVec2(0, 110), true, ImGuiWindowFlags_NoScrollbar);
             {
                 ImVec2 mn = ImGui::GetWindowPos(); ImVec2 sz = ImGui::GetWindowSize();
@@ -3048,9 +3117,48 @@ int main(int argc, char** argv) {
                 if (SDL_GetTicks() - t > 1000) { t = SDL_GetTicks(); s_projScanned = "\x01"; }
             } else { s_watchUntil = 0; s_highlight.clear(); }
             if (ImGui::SmallButton("Refresh##projs")) s_projScanned = "\x01";
+            ImGui::SameLine();
+            // Clone a project straight from a GitHub (or any git) URL.
+            ImGui::BeginDisabled(!GitAvailable() || g_gitBusy);
+            if (ImGui::SmallButton("Clone from GitHub")) ImGui::OpenPopup("##clonegh");
+            ImGui::EndDisabled();
+            if (!GitAvailable())      { ImGui::SameLine(); ImGui::TextDisabled("install Git to clone/sync"); }
+            else if (g_gitBusy)       { ImGui::SameLine(); ImGui::TextDisabled("git working\xE2\x80\xA6"); }
+            {
+                static char ghUrl[300] = "";
+                if (ImGui::BeginPopup("##clonegh")) {
+                    ImGui::TextDisabled("Clone a project repo into your projects folder.");
+                    ImGui::SetNextItemWidth(380);
+                    bool go = ImGui::InputTextWithHint("##ghurl", "https://github.com/user/repo.git",
+                                                       ghUrl, sizeof(ghUrl), ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    if ((ImGui::Button("Clone") || go) && ghUrl[0]) {
+                        std::string url = ghUrl;
+                        std::string nm = url;
+                        if (auto sl = nm.find_last_of('/'); sl != std::string::npos) nm = nm.substr(sl + 1);
+                        if (nm.size() > 4 && nm.substr(nm.size() - 4) == ".git") nm.erase(nm.size() - 4);
+                        for (char& ch : nm) if (ch=='"'||ch=='\\'||ch==':'||ch=='*'||ch=='?') ch='-';
+                        if (nm.empty()) nm = "ClonedProject";
+                        std::error_code cec; fs::create_directories(fs::path(npLoc), cec);
+                        GitJob* j = new GitJob();
+                        j->cmds   = { GitC(npLoc) + "clone " + GitQ(url) + " " + GitQ(nm) };
+                        j->okMsg  = "Cloned " + nm + " from GitHub";
+                        j->failMsg= "Clone failed — check the URL and your Git sign-in";
+                        j->rescan = true;
+                        StartGit(j);
+                        Toast("Cloning " + nm + "\xE2\x80\xA6");
+                        ghUrl[0] = '\0'; ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+            }
             if (s_projects.empty()) {
                 ImGui::TextDisabled("No projects in this folder yet — create one above.");
             }
+            // Per-project git popups (filled by the project menu below).
+            static std::string gitCommitRoot, gitCommitName, gitPublishRoot, gitPublishName;
+            static bool gitOpenCommit = false, gitOpenPublish = false;
+            static char gitCommitMsg[200] = "Update", gitPublishUrl[300] = "";
             for (auto& pr : s_projects) {
                 ImGui::PushID(pr.second.c_str());
                 bool isNew = (pr.first == s_highlight);
@@ -3094,11 +3202,80 @@ int main(int argc, char** argv) {
                     if (ImGui::MenuItem("Show in Explorer"))
                         OpenExternal(fs::path(pr.second).parent_path().parent_path().string());
                     if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(pr.second.c_str());
+                    // ---- Git: sync this project with GitHub ----
+                    if (GitAvailable()) {
+                        std::string root = fs::path(pr.second).parent_path().parent_path().string();
+                        std::error_code gec;
+                        bool hasGit = fs::exists(fs::path(root) / ".git", gec);
+                        ImGui::Separator();
+                        if (hasGit) {
+                            if (ImGui::MenuItem("Git: Pull", nullptr, false, !g_gitBusy)) {
+                                GitJob* j = new GitJob();
+                                j->cmds = { GitC(root) + "pull" };
+                                j->okMsg = "Pulled latest for " + pr.first;
+                                j->failMsg = "Pull failed for " + pr.first;
+                                j->rescan = true; StartGit(j);
+                                Toast("Pulling " + pr.first + "\xE2\x80\xA6");
+                            }
+                            if (ImGui::MenuItem("Git: Commit & Push", nullptr, false, !g_gitBusy)) {
+                                gitCommitRoot = root; gitCommitName = pr.first; gitOpenCommit = true;
+                            }
+                        } else {
+                            if (ImGui::MenuItem("Publish to GitHub...", nullptr, false, !g_gitBusy)) {
+                                gitPublishRoot = root; gitPublishName = pr.first; gitOpenPublish = true;
+                            }
+                        }
+                    }
                     ImGui::EndPopup();
                 }
                 ImGui::EndChild();
                 if (isNew) ImGui::PopStyleColor();
                 ImGui::PopID();
+            }
+            // ---- Git commit-message + publish-URL popups ----
+            if (gitOpenCommit) { ImGui::OpenPopup("Commit & Push"); gitOpenCommit = false; }
+            if (ImGui::BeginPopupModal("Commit & Push", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextDisabled("Commit all changes in \"%s\" and push to GitHub.", gitCommitName.c_str());
+                ImGui::SetNextItemWidth(360);
+                ImGui::InputTextWithHint("##cmsg", "Commit message", gitCommitMsg, sizeof(gitCommitMsg));
+                if (ImGui::Button("Commit & Push", ImVec2(150, 0)) && gitCommitMsg[0]) {
+                    GitJob* j = new GitJob();
+                    j->cmds = { GitC(gitCommitRoot) + "add -A",
+                                GitC(gitCommitRoot) + "commit -m " + GitQ(gitCommitMsg),
+                                GitC(gitCommitRoot) + "push" };
+                    j->okMsg = "Pushed " + gitCommitName + " to GitHub";
+                    j->failMsg = "Push failed — is a GitHub remote set up?";
+                    StartGit(j);
+                    Toast("Pushing " + gitCommitName + "\xE2\x80\xA6");
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (gitOpenPublish) { ImGui::OpenPopup("Publish to GitHub"); gitOpenPublish = false; }
+            if (ImGui::BeginPopupModal("Publish to GitHub", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped("Create an empty repository on GitHub first, then paste its URL here.");
+                ImGui::TextDisabled("Publishes \"%s\" to that repository (initial commit on main).", gitPublishName.c_str());
+                ImGui::SetNextItemWidth(380);
+                ImGui::InputTextWithHint("##purl", "https://github.com/you/your-repo.git", gitPublishUrl, sizeof(gitPublishUrl));
+                if (ImGui::Button("Publish", ImVec2(130, 0)) && gitPublishUrl[0]) {
+                    GitJob* j = new GitJob();
+                    j->cmds = { GitC(gitPublishRoot) + "init",
+                                GitC(gitPublishRoot) + "add -A",
+                                GitC(gitPublishRoot) + "commit -m " + GitQ("Initial commit"),
+                                GitC(gitPublishRoot) + "branch -M main",
+                                GitC(gitPublishRoot) + "remote add origin " + GitQ(gitPublishUrl),
+                                GitC(gitPublishRoot) + "push -u origin main" };
+                    j->okMsg = "Published " + gitPublishName + " to GitHub";
+                    j->failMsg = "Publish failed — check the URL and your Git sign-in";
+                    StartGit(j);
+                    Toast("Publishing " + gitPublishName + "\xE2\x80\xA6");
+                    gitPublishUrl[0] = '\0'; ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
             }
 
             ImGui::Dummy(ImVec2(0, 14));
@@ -5889,7 +6066,7 @@ int main(int argc, char** argv) {
         }
 
         ImGui::Render();
-        SDL_SetRenderDrawColor(renderer, 18, 20, 26, 255);
+        SDL_SetRenderDrawColor(renderer, 30, 30, 32, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);

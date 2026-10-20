@@ -17,6 +17,7 @@
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
+#include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #endif
 #include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
@@ -1239,6 +1240,7 @@ int  g_accent = 0;               // accent colour preset (see kAccents)
 // checks, tabs, etc.). Index persists in settings.
 struct AccentPreset { const char* name; float r, g, b; };
 static const AccentPreset kAccents[] = {
+    {"Graphite", 0.70f, 0.71f, 0.74f},   // neutral default (no blue)
     {"Blue",    0.26f, 0.59f, 0.98f},
     {"Teal",    0.18f, 0.78f, 0.74f},
     {"Violet",  0.56f, 0.46f, 0.96f},
@@ -2798,28 +2800,26 @@ void ApplyTheme() {
     const ImVec4 accentHover = ImVec4(lighten(ap.r), lighten(ap.g), lighten(ap.b), 1.00f);
     // Blend a base gray a little toward the accent — for hovers/tabs/title, the
     // subtle accent wash that makes modern editors (s&box) feel cohesive, not gray.
-    auto tint = [&](float gray, float amt, float a) {
-        return ImVec4(gray + (ap.r - gray) * amt, gray + (ap.g - gray) * amt, gray + (ap.b - gray) * amt, a);
-    };
     // Neutral medium-gray base (Unity Pro dark) instead of a blue-tinted near-black:
     // panels read as professional gray, with the chosen accent only on interactive
     // states (selection, buttons, checks, tabs, slider grabs).
     ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]         = ImVec4(0.106f, 0.153f, 0.212f, 1.00f);  // Steam-style blue-grey panels (#1b2736)
-    c[ImGuiCol_ChildBg]          = ImVec4(0.086f, 0.125f, 0.176f, 0.00f);
-    c[ImGuiCol_PopupBg]          = ImVec4(0.078f, 0.114f, 0.161f, 0.99f);
+    // Neutral charcoal panels (no blue). The accent (default Graphite grey) is
+    // used only for small interactive cues, so nothing reads as a blue theme.
+    c[ImGuiCol_WindowBg]         = ImVec4(0.137f, 0.137f, 0.145f, 1.00f);  // #232325
+    c[ImGuiCol_ChildBg]          = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
+    c[ImGuiCol_PopupBg]          = ImVec4(0.160f, 0.160f, 0.168f, 0.99f);
     c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
-    c[ImGuiCol_FrameBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);  // sunken input fields
-    c[ImGuiCol_FrameBgHovered]   = tint(0.110f, 0.18f, 1.00f);             // subtle accent wash on hover
-    c[ImGuiCol_FrameBgActive]    = tint(0.140f, 0.25f, 1.00f);
-    c[ImGuiCol_TitleBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);
-    c[ImGuiCol_TitleBgActive]    = tint(0.100f, 0.16f, 1.00f);            // active panel title gets a hint of accent
-    c[ImGuiCol_MenuBarBg]        = ImVec4(0.090f, 0.133f, 0.184f, 1.00f);
-    // Selection / foldout headers: a DESATURATED blue-grey (Unity-style), not a
-    // bright accent bar — reads as a pro tool rather than a colourful dashboard.
-    c[ImGuiCol_Header]           = tint(0.200f, 0.34f, 1.00f);
-    c[ImGuiCol_HeaderHovered]    = tint(0.235f, 0.42f, 1.00f);
-    c[ImGuiCol_HeaderActive]     = tint(0.260f, 0.52f, 1.00f);
+    c[ImGuiCol_FrameBg]          = ImVec4(0.092f, 0.092f, 0.098f, 1.00f);  // sunken input fields
+    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.135f, 0.135f, 0.143f, 1.00f);
+    c[ImGuiCol_FrameBgActive]    = ImVec4(0.168f, 0.168f, 0.178f, 1.00f);
+    c[ImGuiCol_TitleBg]          = ImVec4(0.105f, 0.105f, 0.112f, 1.00f);
+    c[ImGuiCol_TitleBgActive]    = ImVec4(0.135f, 0.135f, 0.143f, 1.00f);
+    c[ImGuiCol_MenuBarBg]        = ImVec4(0.120f, 0.120f, 0.127f, 1.00f);
+    // Selection / foldout headers: a neutral raised grey (Unity foldouts).
+    c[ImGuiCol_Header]           = ImVec4(0.230f, 0.230f, 0.243f, 1.00f);
+    c[ImGuiCol_HeaderHovered]    = ImVec4(0.270f, 0.270f, 0.285f, 1.00f);
+    c[ImGuiCol_HeaderActive]     = ImVec4(0.300f, 0.300f, 0.318f, 1.00f);
     // Neutral slate buttons (Unity/Steam) — NOT bright blue. Colour is reserved
     // for primary/active states (Play, Build, the selected tool), which push their
     // own colours, so a toolbar reads as calm greys instead of a row of blue pills.
@@ -2834,11 +2834,11 @@ void ApplyTheme() {
     c[ImGuiCol_ResizeGrip]       = ImVec4(0.30f, 0.40f, 0.50f, 0.30f);
     c[ImGuiCol_ResizeGripHovered]= accentDim;
     c[ImGuiCol_ResizeGripActive] = accent;
-    c[ImGuiCol_Tab]              = ImVec4(0.078f, 0.114f, 0.161f, 1.00f);
-    c[ImGuiCol_TabHovered]       = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-    c[ImGuiCol_TabActive]        = tint(0.140f, 0.14f, 1.00f);   // active tab = raised panel with an accent hint
-    c[ImGuiCol_TabUnfocused]     = ImVec4(0.063f, 0.094f, 0.133f, 1.00f);
-    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.110f, 0.157f, 0.212f, 1.00f);
+    c[ImGuiCol_Tab]              = ImVec4(0.120f, 0.120f, 0.127f, 1.00f);
+    c[ImGuiCol_TabHovered]       = ImVec4(1.00f, 1.00f, 1.00f, 0.10f);
+    c[ImGuiCol_TabActive]        = ImVec4(0.205f, 0.205f, 0.217f, 1.00f);
+    c[ImGuiCol_TabUnfocused]     = ImVec4(0.105f, 0.105f, 0.112f, 1.00f);
+    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.165f, 0.165f, 0.175f, 1.00f);
     c[ImGuiCol_TabSelectedOverline]       = accent;                 // accent line atop the active tab
     c[ImGuiCol_TabDimmedSelectedOverline] = accentDim;
     c[ImGuiCol_DockingPreview]   = accentDim;
@@ -30281,6 +30281,10 @@ int main(int argc, char** argv) {
     SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
+    // Branded loading frame right away, so the editor isn't a black rectangle
+    // while fonts, GPU renderers and the project set-up run below.
+    { int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+      okay::DrawSplash(renderer, sw, sh, 0.62f, 0.63f, 0.66f); }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
 
     IMGUI_CHECKVERSION();

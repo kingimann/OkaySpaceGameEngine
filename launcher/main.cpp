@@ -3349,10 +3349,11 @@ int main(int argc, char** argv) {
                 static std::vector<okay::Server> svList;
                 static std::vector<okay::Channel> svChannels;
                 static std::vector<okay::ChannelMessage> svMsgs;
+                static std::vector<okay::ServerMember> svMembers;
                 static long svSel = 0, svChan = 0;
                 static std::string svSelName, svErr;
                 static char svNew[64] = "", svJoin[24] = "", svMsg[800] = "", svNewChan[40] = "";
-                static Uint32 svNextList = 0, svNextChan = 0, svNextMsg = 0;
+                static Uint32 svNextList = 0, svNextChan = 0, svNextMsg = 0, svNextMem = 0;
                 Uint32 now = SDL_GetTicks();
                 if (now >= svNextList) { svList = sv.MyServers(); svNextList = now + 20000; }
 
@@ -3389,8 +3390,8 @@ int main(int argc, char** argv) {
                 ImGui::EndChild();
                 ImGui::SameLine();
 
-                // --- Column 2: channels of the selected server ---
-                ImGui::BeginChild("##svchan", ImVec2(160, colH), true);
+                // --- Column 2: channels + members of the selected server ---
+                ImGui::BeginChild("##svchan", ImVec2(190, colH), true);
                 if (svSel == 0) {
                     ImGui::TextDisabled("Pick a server");
                 } else {
@@ -3407,6 +3408,24 @@ int main(int argc, char** argv) {
                     bool nc = ImGui::InputTextWithHint("##svnewchan", "new channel", svNewChan, sizeof(svNewChan), ImGuiInputTextFlags_EnterReturnsTrue);
                     if ((ImGui::SmallButton("Add channel") || nc) && svNewChan[0]) {
                         if (sv.CreateChannel(svSel, svNewChan)) { svNewChan[0] = '\0'; svNextChan = 0; }
+                    }
+                    // Member list (who's in this server), online first.
+                    if (now >= svNextMem) { svMembers = sv.Members(svSel); svNextMem = now + 20000; }
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::TextDisabled("MEMBERS - %d", (int)svMembers.size());
+                    ImGui::Separator();
+                    for (const auto& m : svMembers) {
+                        ImVec2 mp = ImGui::GetCursorScreenPos();
+                        ImU32 dot = m.online ? IM_COL32(120, 200, 110, 255) : IM_COL32(110, 118, 130, 255);
+                        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mp.x + 5, mp.y + 8), 4.0f, dot, 12);
+                        ImGui::Dummy(ImVec2(14, 0)); ImGui::SameLine();
+                        if (m.role == "owner") {
+                            ImGui::TextUnformatted(m.name.empty() ? "member" : m.name.c_str());
+                            ImGui::SameLine(0, 4); ImGui::TextColored(ImVec4(0.95f,0.80f,0.35f,1), "(owner)");
+                        } else {
+                            ImGui::TextColored(m.online ? ImVec4(0.9f,0.92f,0.96f,1) : ImVec4(0.6f,0.63f,0.7f,1),
+                                               "%s", m.name.empty() ? "member" : m.name.c_str());
+                        }
                     }
                 }
                 ImGui::EndChild();

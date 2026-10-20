@@ -8,6 +8,7 @@
 #include "okay/Platform/Account/AccountService.hpp"
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
@@ -17,6 +18,7 @@ namespace okay {
 struct Server  { long id = 0; std::string name; std::string invite; };
 struct Channel { long id = 0; std::string name; };
 struct ChannelMessage { long id = 0; std::string author; std::string body; long when = 0; };
+struct ServerMember { std::string uid, name, avatar, role; bool online = false; };
 
 class Servers {
 public:
@@ -67,6 +69,46 @@ public:
             Channel c; c.id = std::atol(Field(o, "id").c_str()); c.name = Field(o, "name");
             if (c.id) out.push_back(c);
         }
+        return out;
+    }
+
+    // Members of a server (with display name, avatar and online status), owner
+    // first. Resolves profiles in one batched query.
+    std::vector<ServerMember> Members(long serverId) {
+        std::vector<ServerMember> out;
+        if (serverId <= 0) return out;
+        auto r = acct_.Api("/rest/v1/server_members?server_id=eq." + std::to_string(serverId) +
+                           "&select=member,role", "GET");
+        if (!r.ok) return out;
+        std::string inList;
+        for (const auto& o : SplitObjects(r.body)) {
+            ServerMember m; m.uid = Field(o, "member"); m.role = Field(o, "role");
+            if (m.uid.empty()) continue;
+            out.push_back(m);
+            if (!inList.empty()) inList += ",";
+            inList += m.uid;
+        }
+        if (inList.empty()) return out;
+        auto p = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen"
+                           "&id=in.(" + inList + ")", "GET");
+        if (p.ok) {
+            for (const auto& o : SplitObjects(p.body)) {
+                std::string id = Field(o, "id");
+                for (auto& m : out) if (m.uid == id) {
+                    std::string disp = Field(o, "display_name");
+                    m.name = disp.empty() ? Field(o, "username") : disp;
+                    m.avatar = Field(o, "avatar_url");
+                    long seen = ParseIso(Field(o, "last_seen"));
+                    m.online = seen > 0 && std::difftime(std::time(nullptr), (std::time_t)seen) < 180.0;
+                }
+            }
+        }
+        // Owner/online first for a tidy list.
+        std::sort(out.begin(), out.end(), [](const ServerMember& a, const ServerMember& b){
+            if ((a.role == "owner") != (b.role == "owner")) return a.role == "owner";
+            if (a.online != b.online) return a.online;
+            return a.name < b.name;
+        });
         return out;
     }
 

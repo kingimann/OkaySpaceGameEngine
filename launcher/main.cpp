@@ -3412,6 +3412,11 @@ int main(int argc, char** argv) {
                 bool ready = fs::exists(fs::path(pr.second), sec);
                 if (isNew) ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.16f));
                 ImGui::BeginChild("proj", ImVec2(0, 56), true, ImGuiWindowFlags_NoScrollbar);
+                if (ImGui::IsWindowHovered()) {
+                    ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+                    ImGui::GetWindowDrawList()->AddRectFilled(
+                        wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(255, 255, 255, 10), 3.0f);
+                }
                 HoverRing();
                 ImGui::SetCursorPos(ImVec2(10, 9));
                 IconTile(pr.first, 38.0f);

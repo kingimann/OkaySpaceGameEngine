@@ -6111,12 +6111,36 @@ int main(int argc, char** argv) {
                     ImGui::TableSetColumnIndex(0);
                     ImGui::BeginChild("##svlist", ImVec2(0, colH - 4), false);
                     ImGui::TextDisabled("SERVERS");
+                    ImGui::Dummy(ImVec2(0, 2));
+                    // Discord-style server rail: a circular, name-tinted icon with the
+                    // server's initial, a left selection pill, and a hover wash.
                     for (const auto& s : svList) {
                         bool sel = (s.id == svSel);
-                        if (ImGui::Selectable((s.name + "##" + std::to_string(s.id)).c_str(), sel)) {
+                        ImGui::PushID((int)s.id);
+                        ImVec2 rp = ImGui::GetCursorScreenPos();
+                        float av = ImGui::GetContentRegionAvail().x, rh = 46.0f;
+                        if (ImGui::InvisibleButton("##srv", ImVec2(av, rh))) {
                             svSel = s.id; svSelName = s.name; svChan = 0; svNextChan = 0; svMsgs.clear();
                         }
+                        bool hov = ImGui::IsItemHovered();
+                        ImDrawList* d = ImGui::GetWindowDrawList();
+                        if (sel)      d->AddRectFilled(rp, ImVec2(rp.x + av, rp.y + rh), IM_COL32(255, 255, 255, 18), 5.0f);
+                        else if (hov) d->AddRectFilled(rp, ImVec2(rp.x + av, rp.y + rh), IM_COL32(255, 255, 255, 9), 5.0f);
+                        if (sel)      d->AddRectFilled(ImVec2(rp.x, rp.y + rh * 0.5f - 11), ImVec2(rp.x + 3, rp.y + rh * 0.5f + 11),
+                                                       ImGui::GetColorU32(kAccent), 2.0f);
+                        float cr = 16.0f; ImVec2 ctr(rp.x + 12 + cr, rp.y + rh * 0.5f);
+                        ImVec4 sc = NameColor(s.name);
+                        d->AddCircleFilled(ctr, cr, ImGui::GetColorU32(ImVec4(sc.x * 0.55f, sc.y * 0.55f, sc.z * 0.55f, 1)), 26);
+                        if (sel || hov) d->AddCircle(ctr, cr, ImGui::GetColorU32(sc), 26, 2.0f);
+                        char ini[2] = { (char)(s.name.empty() ? '#' : std::toupper((unsigned char)s.name[0])), 0 };
+                        ImVec2 ts = ImGui::CalcTextSize(ini);
+                        d->AddText(ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f), IM_COL32(245, 246, 250, 255), ini);
+                        d->AddText(ImVec2(ctr.x + cr + 10, rp.y + rh * 0.5f - ImGui::GetTextLineHeight() * 0.5f),
+                                   ImGui::GetColorU32(sel ? ImVec4(0.96f, 0.97f, 0.99f, 1) : ImVec4(0.74f, 0.76f, 0.82f, 1)),
+                                   s.name.c_str());
+                        ImGui::PopID();
                     }
+                    ImGui::Dummy(ImVec2(0, 4));
                     ImGui::Separator();
                     ImGui::TextDisabled("Create");
                     ImGui::SetNextItemWidth(-1);

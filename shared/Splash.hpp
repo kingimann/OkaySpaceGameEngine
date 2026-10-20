@@ -3,6 +3,15 @@
 // so the launcher and editor show a branded loading frame immediately after the
 // window is created instead of a black rectangle while the heavier init (font
 // atlas, GPU renderers, account/session checks) runs.
+//
+// Both hosts manage their own entry point (they call SDL_SetMainReady), so make
+// sure pulling in SDL here does NOT activate SDL's `#define main SDL_main`
+// redirection — otherwise, if this header is the first SDL include in a
+// translation unit, that macro mangles later identifiers named `main`
+// (e.g. a `Camera::main` member).
+#ifndef SDL_MAIN_HANDLED
+#  define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
 
 namespace okay {

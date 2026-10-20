@@ -283,6 +283,10 @@ public:
     }
 
 private:
+    // Persist only for a real game app id — never for 0 or Valve's shared test id
+    // 480 (Spacewar), which the engine's own tests and un-configured dev runs use.
+    // That keeps the simulation purely in-memory (and isolated) in those cases.
+    bool Persistent() const { return m_appId != 0 && m_appId != 480; }
     // Where the simulated profile is saved, keyed by app id so two games don't
     // clobber each other. Under the OS temp dir to avoid polluting game folders.
     std::filesystem::path StatePath() const {
@@ -294,6 +298,7 @@ private:
     // A simple length-prefixed text format so cloud data (possibly binary /
     // multi-line) round-trips intact.
     void SaveState() const {
+        if (!Persistent()) return;
         std::ofstream f(StatePath(), std::ios::binary | std::ios::trunc);
         if (!f) return;
         f << "okaysim1\n";
@@ -307,6 +312,7 @@ private:
         for (const auto& [n, d] : m_cloud) { f << n << "\t" << d.size() << "\n"; f.write(d.data(), (std::streamsize)d.size()); f << "\n"; }
     }
     void LoadState() {
+        if (!Persistent()) return;
         std::ifstream f(StatePath(), std::ios::binary);
         if (!f) return;
         std::string magic; std::getline(f, magic);

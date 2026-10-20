@@ -1139,6 +1139,7 @@ int main(int argc, char** argv) {
     char acctChgName[64] = {0};          // change-username field (signed in)
     char acctChgDisplay[64] = {0};       // change-display-name field (signed in)
     char acctAvatar[256] = {0};          // avatar image URL field (signed in)
+    char acctBio[280] = {0};             // profile bio field (signed in)
     char acctChgEmail[64] = {0};         // change-email field (signed in)
     bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
@@ -2521,6 +2522,16 @@ int main(int argc, char** argv) {
                         }
                     }
                     ImGui::TextDisabled("Paste a public link to a square PNG/JPG (e.g. an imgur/GitHub image).");
+
+                    // Bio ("about me") shown on the profile card.
+                    ImGui::TextDisabled("Bio");
+                    ImGui::InputTextMultiline("##acctBio", acctBio, sizeof(acctBio), ImVec2(kFieldW + kBtnW + 8, 60));
+                    if (ImGui::Button("Update bio", ImVec2(kBtnW, 0))) {
+                        bool ok = okay::Friends(account).SetBio(acctBio);
+                        acctMessageError = !ok;
+                        acctMessage = ok ? "Bio updated." : "Couldn't update bio.";
+                        if (ok) Toast("Bio updated", 1);
+                    }
                 }
 
                 // Change username / handle (all backends).
@@ -2952,6 +2963,8 @@ int main(int argc, char** argv) {
                 static std::vector<okay::DirectMessage> dmLog;
                 static Uint32 dmNextPoll = 0;
                 static char dmInput[512] = "";
+                static okay::Friend profFriend;   // friend whose profile card is open
+                static bool profOpen = false;
                 static Uint32 fNextRefresh = 0, fNextBeat = 0;
                 static bool fProfiled = false;
                 // Broadcast presence according to the chosen status (Online/Away/Invisible).
@@ -3022,7 +3035,12 @@ int main(int argc, char** argv) {
                 auto drawFriend = [&](const okay::Friend* f, bool request) {
                     ImGui::PushID((int)f->rowId);
                     ImGui::BeginChild("##frow", ImVec2(0, 48), true);
-                    // Avatar (32px) with an online/offline dot in the corner.
+                    // Avatar (32px, clickable -> profile card) with a status dot.
+                    ImGui::SetCursorPos(ImVec2(6, 6));
+                    if (ImGui::InvisibleButton("##avbtn", ImVec2(32, 32))) {
+                        profFriend = *f; profOpen = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     ImGui::SetCursorPos(ImVec2(6, 6));
                     ImVec2 ap = ImGui::GetCursorScreenPos();
                     DrawAvatar(f->avatar, f->display.empty() ? f->username : f->display, 32.0f);
@@ -3108,6 +3126,44 @@ int main(int argc, char** argv) {
                 if (!reqs.empty())    { ImGui::SeparatorText("Friend requests"); for (auto* f : reqs)    drawFriend(f, true);  }
                 if (!online.empty())  { ImGui::SeparatorText("Online");          for (auto* f : online)  drawFriend(f, false); }
                 if (!offline.empty()) { ImGui::SeparatorText("Offline");         for (auto* f : offline) drawFriend(f, false); }
+
+                // --- Steam-style profile card popup (opened from a friend avatar) ---
+                if (profOpen) { ImGui::OpenPopup("##profilecard"); profOpen = false; }
+                ImGui::SetNextWindowSize(ImVec2(320, 0));
+                if (ImGui::BeginPopup("##profilecard")) {
+                    const okay::Friend& pf = profFriend;
+                    ImGui::Dummy(ImVec2(0, 2));
+                    float aw = ImGui::GetContentRegionAvail().x;
+                    ImGui::SetCursorPosX((aw - 72) * 0.5f + ImGui::GetCursorPosX());
+                    DrawAvatar(pf.avatar, pf.display.empty() ? pf.username : pf.display, 72.0f);
+                    auto ctr = [&](const char* t, ImVec4 col, bool big){
+                        float w = ImGui::CalcTextSize(t).x;
+                        float o = (ImGui::GetContentRegionAvail().x - w) * 0.5f; if (o > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + o);
+                        ImGui::TextColored(col, "%s", t); (void)big;
+                    };
+                    ctr((pf.display.empty() ? pf.username : pf.display).c_str(), ImVec4(0.95f,0.96f,1,1), true);
+                    ctr(("@" + pf.username).c_str(), ImVec4(0.6f,0.63f,0.7f,1), false);
+                    const char* stx = (pf.online && !pf.playing.empty()) ? pf.playing.c_str()
+                                     : pf.online ? "Online" : "Offline";
+                    ImVec4 stc = (pf.online && !pf.playing.empty()) ? kAccent
+                               : pf.online ? ImVec4(0.55f,0.9f,0.6f,1) : ImVec4(0.6f,0.63f,0.7f,1);
+                    ctr(stx, stc, false);
+                    ImGui::Dummy(ImVec2(0, 6));
+                    if (!pf.bio.empty()) {
+                        ImGui::Separator();
+                        ImGui::TextWrapped("%s", pf.bio.c_str());
+                        ImGui::Dummy(ImVec2(0, 4));
+                    }
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Message / Join from the friend's row.");
+                    if (pf.online && !pf.sessionCode.empty()) {
+                        if (ImGui::Button("Copy their session code", ImVec2(-1, 0))) {
+                            ImGui::SetClipboardText(pf.sessionCode.c_str());
+                            Toast("Session code " + pf.sessionCode + " copied", 2);
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
                 if (fCache.empty()) {
                     ImGui::Dummy(ImVec2(0, 20));
                     ImGui::TextDisabled("No friends yet. Add someone by their username or friend code above,");

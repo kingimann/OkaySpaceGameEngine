@@ -27,6 +27,7 @@ alter table public.profiles add column if not exists playing      text;
 alter table public.profiles add column if not exists session_code text;
 alter table public.profiles add column if not exists display_name text;  -- friendly name (vs the unique username handle)
 alter table public.profiles add column if not exists avatar_url   text;  -- public URL of the player's avatar image
+alter table public.profiles add column if not exists bio          text;  -- short "about me" shown on the profile card
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'profiles_friend_code_key') then
     alter table public.profiles add constraint profiles_friend_code_key unique (friend_code);

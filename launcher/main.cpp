@@ -1074,7 +1074,7 @@ void DarkTheme() {
     s.ItemSpacing     = ImVec2(8, 6);   s.ItemInnerSpacing = ImVec2(7, 5);
     s.WindowBorderSize = 0.0f;          s.ChildBorderSize = 1.0f;
     s.FrameBorderSize  = 0.0f;          s.PopupBorderSize = 1.0f;
-    s.ScrollbarSize   = 10.0f;          s.GrabMinSize = 11.0f;
+    s.ScrollbarSize   = 8.0f;           s.GrabMinSize = 11.0f;
     s.SeparatorTextBorderSize = 1.0f;
     s.SeparatorTextPadding = ImVec2(14, 5);
     s.TabBarBorderSize = 1.0f;
@@ -1148,8 +1148,8 @@ void DarkTheme() {
         c[ImGuiCol_TextDisabled]     = ImVec4(0.500f, 0.500f, 0.505f, 1.00f);
         c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
         c[ImGuiCol_ScrollbarBg]      = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);   // no track column — just the thumb
-        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.355f, 0.355f, 0.358f, 1.00f);
-        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.420f, 0.420f, 0.423f, 1.00f);
+        c[ImGuiCol_ScrollbarGrab]    = ImVec4(1.000f, 1.000f, 1.000f, 0.13f);   // faint until hovered (overlay style)
+        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(1.000f, 1.000f, 1.000f, 0.26f);
         c[ImGuiCol_ScrollbarGrabActive]  = accent;
         c[ImGuiCol_TableHeaderBg]    = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
         c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.022f);
@@ -2410,6 +2410,43 @@ static bool AcquireSingleInstance() {
 }
 #endif
 
+// ---- Background friends/DM poll --------------------------------------------
+// The nav badges (pending friend requests + unread DMs) used to be fetched on
+// the MAIN thread every 30s, which froze the UI for the duration of two HTTPS
+// round-trips — a periodic hitch. It now runs on a worker thread that uses its
+// OWN AccountService (re-read from disk each cycle, so it tracks login/logout
+// without racing the main thread's service). Results are published under a
+// mutex; the main loop just reads them.
+static SDL_mutex*  g_pollMutex = nullptr;
+static SDL_Thread* g_pollThread = nullptr;
+static volatile bool g_pollRun = true;
+static bool g_pollReady = false;        // a fresh result is waiting (guarded)
+static int  g_pollFriendReqs = 0;       // (guarded)
+static int  g_pollUnread = 0;           // (guarded)
+static long g_pollNewestDm = 0;         // (guarded)
+static std::string g_pollCfgDir, g_pollUrl, g_pollKey;   // set once before the thread starts
+
+static int PollWorker(void*) {
+    while (g_pollRun) {
+        long since = g_lastDmId;   // benign read of a long written by the main thread
+        try {
+            okay::account::AccountService poller(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+            if (poller.IsLoggedIn()) {
+                int fr = okay::Friends(poller).PendingRequests();
+                long newest = since;
+                int unread = okay::Messages(poller).UnreadSince(since, newest);
+                if (g_pollMutex) SDL_LockMutex(g_pollMutex);
+                g_pollFriendReqs = fr; g_pollUnread = unread; g_pollNewestDm = newest;
+                g_pollReady = true;
+                if (g_pollMutex) SDL_UnlockMutex(g_pollMutex);
+            }
+        } catch (...) { /* transient network error — try again next cycle */ }
+        // Wait ~30s, in short steps so shutdown is prompt.
+        for (int i = 0; i < 150 && g_pollRun; ++i) SDL_Delay(200);
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2539,6 +2576,12 @@ int main(int argc, char** argv) {
     // player out if so. Offline or local accounts are left as-is.
     accountPtr->VerifySession();
 
+    // Start the background friends/DM poll (its own service, read from disk each
+    // cycle) so the nav badges never block the UI on the network.
+    g_pollCfgDir = acctCfgDir.string(); g_pollUrl = serverUrl; g_pollKey = apiKey;
+    g_pollMutex = SDL_CreateMutex();
+    g_pollThread = SDL_CreateThread(PollWorker, "okay-poll", nullptr);
+
     // The account server is baked into this build (OKAY_DEFAULT_ACCOUNT_URL /
     // account_server.txt), so the launcher no longer exposes a server-URL field
     // or any way to change it in the UI — it just uses whatever was configured.
@@ -2575,6 +2618,7 @@ int main(int argc, char** argv) {
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
+        Uint64 frameStart = SDL_GetPerformanceCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
@@ -2647,25 +2691,27 @@ int main(int argc, char** argv) {
             scenes = FindScenes();
             rescannedAfterUpdate = true;
         }
-        // Poll incoming friend requests in the background for the nav badge,
-        // and toast when a new one arrives.
+        // Apply the latest friends/DM counts published by the background poll
+        // thread (no network on the main thread → no hitch), and toast on new ones.
         {
-            static Uint32 nextReqPoll = 0;
             static int lastReqSeen = -1;
-            Uint32 nowReq = SDL_GetTicks();
-            if (account.IsLoggedIn() && nowReq >= nextReqPoll) {
-                g_friendRequests = okay::Friends(account).PendingRequests();
-                if (lastReqSeen >= 0 && g_friendRequests > lastReqSeen && tab != 6)
-                    Toast(g_friendRequests == 1 ? "New friend request" : "New friend requests", 1);
-                lastReqSeen = g_friendRequests;
-                // Unread DMs for the nav badge (+ toast on new ones).
-                long newest = g_lastDmId;
-                int unread = okay::Messages(account).UnreadSince(g_lastDmId, newest);
-                g_newestDmId = newest;
-                if (unread > g_dmUnread && tab != 6) Toast("New message", 1);
-                g_dmUnread = unread;
-                nextReqPoll = nowReq + 30000;
-            } else if (!account.IsLoggedIn()) {
+            if (account.IsLoggedIn()) {
+                bool apply = false; int fr = 0, unread = 0; long newest = 0;
+                if (g_pollMutex) {
+                    SDL_LockMutex(g_pollMutex);
+                    if (g_pollReady) { apply = true; fr = g_pollFriendReqs; unread = g_pollUnread; newest = g_pollNewestDm; g_pollReady = false; }
+                    SDL_UnlockMutex(g_pollMutex);
+                }
+                if (apply) {
+                    if (lastReqSeen >= 0 && fr > lastReqSeen && tab != 6)
+                        Toast(fr == 1 ? "New friend request" : "New friend requests", 1);
+                    lastReqSeen = fr;
+                    g_friendRequests = fr;
+                    g_newestDmId = newest;
+                    if (unread > g_dmUnread && tab != 6) Toast("New message", 1);
+                    g_dmUnread = unread;
+                }
+            } else {
                 g_friendRequests = 0; lastReqSeen = -1; g_dmUnread = 0;
             }
         }
@@ -2689,9 +2735,9 @@ int main(int argc, char** argv) {
             else if (SDL_GetTicks() >= relaunchAt) { Launch(g_selfPath); running = false; }
         }
 
-        // While hidden in the system tray, idle cheaply instead of spinning the
-        // render loop (there's nothing to draw until the window is restored).
-        if ((SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) != 0) {
+        // While minimized or hidden, idle cheaply instead of spinning the render
+        // loop (there's nothing to draw until the window is restored).
+        if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
             SDL_Delay(120);
             continue;
         }
@@ -6249,12 +6295,30 @@ int main(int argc, char** argv) {
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+
+        // Cap the frame rate so the launcher never spins the GPU/CPU at full tilt
+        // (which makes the whole machine feel laggy) — important if the renderer
+        // fell back to a non-VSync mode. ~60 fps while focused, ~20 fps when the
+        // window is in the background. With real VSync the present already took a
+        // frame, so the extra delay is ~0 when focused.
+        {
+            Uint32 flags = SDL_GetWindowFlags(window);
+            bool focused = (flags & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS)) != 0;
+            double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
+            double elapsed = (double)(SDL_GetPerformanceCounter() - frameStart) * 1000.0
+                           / (double)SDL_GetPerformanceFrequency();
+            if (elapsed < targetMs) SDL_Delay((Uint32)(targetMs - elapsed));
+        }
     }
 
     // Remember the window size for next launch.
     { int w = 0, h = 0; SDL_GetWindowSize(window, &w, &h);
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
+    // Stop the background friends/DM poll thread.
+    g_pollRun = false;
+    if (g_pollThread) { SDL_WaitThread(g_pollThread, nullptr); g_pollThread = nullptr; }
+    if (g_pollMutex) { SDL_DestroyMutex(g_pollMutex); g_pollMutex = nullptr; }
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     if (g_upMutex) { SDL_DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     // Stop any in-flight downloads and join their worker threads before teardown.

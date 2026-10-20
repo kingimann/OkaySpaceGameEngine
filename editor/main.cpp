@@ -2776,7 +2776,7 @@ void ApplyTheme() {
     s.WindowPadding   = ImVec2(10, 9);  s.FramePadding = ImVec2(8, 6);
     s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(7, 5);
     s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 18.0f;
-    s.ScrollbarSize   = 11.0f;          s.GrabMinSize = 11.0f;
+    s.ScrollbarSize   = 8.0f;           s.GrabMinSize = 11.0f;
     s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 1.0f;   // thin frame borders for definition (Unity-like)
     s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 1.0f;   // subtler section rules
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
@@ -2849,8 +2849,8 @@ void ApplyTheme() {
     c[ImGuiCol_Text]             = ImVec4(0.824f, 0.824f, 0.827f, 1.00f);   // #D2D2D2 Unity label
     c[ImGuiCol_TextDisabled]     = ImVec4(0.500f, 0.500f, 0.505f, 1.00f);
     c[ImGuiCol_ScrollbarBg]      = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);   // no track column — just the thumb
-    c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.355f, 0.355f, 0.358f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.420f, 0.420f, 0.423f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]    = ImVec4(1.000f, 1.000f, 1.000f, 0.13f);   // faint until hovered (overlay style)
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(1.000f, 1.000f, 1.000f, 0.26f);
     c[ImGuiCol_ScrollbarGrabActive]  = accent;
     c[ImGuiCol_DockingEmptyBg]   = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);  // #1E1E1E
     // Tables: a defined header, faint zebra rows, and low-contrast grid lines so

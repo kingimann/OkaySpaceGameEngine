@@ -151,7 +151,10 @@ see exactly where it points before you press Play.
   hit in variables, see below), **multiplayer** (`net_host`,
   `net_join`, `net_send`, `net_set` synced vars, `net_spawn` replicated spawn,
   `net_disconnect`), **Steam** (`steam_unlock`, `steam_set_stat`,
-  `steam_inc_stat`), messaging (`send`), **juice** (`tween_move`,
+  `steam_inc_stat`, `steam_inc_stat_int`, `steam_store`, `steam_cloud_write`,
+  `steam_presence`, `steam_lobby_create`, `steam_lobby_join`,
+  `steam_lobby_leave`, `steam_lobby_set_data`, `steam_invite` — matchmaking,
+  Cloud saves and rich presence, no code), messaging (`send`), **juice** (`tween_move`,
   `tween_scale`, `shake`, `punch_scale` — eased motion, impact shake and
   scale punches, mirroring the script `tween_*` builtins), `comment`
   (a designer note, skipped at runtime), and `log`.

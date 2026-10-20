@@ -711,6 +711,14 @@ std::vector<fs::path> FindScenes() {
     return out;
 }
 
+// A scene is a *built game* (vs a raw dev scene) when File > Build Game exported
+// it — that writes a game.okayconfig next to the scene. The Play tab shows only
+// built games; loose .okayscene dev files are hidden there.
+bool IsBuiltGame(const fs::path& scene) {
+    std::error_code ec;
+    return fs::exists(scene.parent_path() / "game.okayconfig", ec);
+}
+
 // The local library where downloaded/shared community content lands. Games dropped
 // here (a folder or a loose .okayscene) show up in Play and the Community tab.
 fs::path CommunityDir() {
@@ -2408,8 +2416,8 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 14));
             if (player.empty())
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
-            else if (scenes.empty()) {
-                // Empty state: a friendly centered card instead of a bare line.
+            else if (std::none_of(scenes.begin(), scenes.end(), IsBuiltGame)) {
+                // No *built* games (dev scenes don't count). A friendly centered card.
                 ImGui::Dummy(ImVec2(0, 26));
                 ImGui::BeginChild("noGames", ImVec2(0, 150), true, ImGuiWindowFlags_NoScrollbar);
                 float cw = ImGui::GetContentRegionAvail().x;
@@ -2559,6 +2567,10 @@ int main(int argc, char** argv) {
                     }
                     return lower(scenes[a].filename().string()) < lower(scenes[b].filename().string());
                 });
+                // Play shows only *built* games (exported with File > Build Game),
+                // never loose dev scenes.
+                order.erase(std::remove_if(order.begin(), order.end(),
+                    [&](std::size_t idx){ return !IsBuiltGame(scenes[idx]); }), order.end());
                 // Collection filter: keep only games in the active collection.
                 if (!g_collFilter.empty())
                     order.erase(std::remove_if(order.begin(), order.end(),

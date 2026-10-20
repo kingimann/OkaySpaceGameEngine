@@ -2013,12 +2013,24 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (r.online) dl->AddCircleFilled(ImVec2(av.x+as-3, av.y+as-3), 4.5f, IM_COL32(120,205,110,255), 16),
                           dl->AddCircle(ImVec2(av.x+as-3, av.y+as-3), 5.0f, IM_COL32(30,34,42,255), 16, 1.6f);
             float tx = rp.x + 4 + as + 8;
-            dl->AddText(ImVec2(tx, rp.y + 6), ImGui::GetColorU32(unread ? ImGuiCol_Text : ImGuiCol_Text), ChatPreview(r.name, 15).c_str());
-            dl->AddText(ImVec2(tx, rp.y + 24), ImGui::GetColorU32(unread ? ImGuiCol_Text : ImGuiCol_TextDisabled), r.preview.c_str());
-            // Right-side markers: pin, mute, unread dot.
+            // Unread conversations get a brighter name; a relative timestamp sits
+            // right-aligned on the name line (Messenger / Discord style).
+            ImU32 nameCol = ImGui::GetColorU32(unread ? ImVec4(0.97f, 0.98f, 1.00f, 1.0f)
+                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+            dl->AddText(ImVec2(tx, rp.y + 6), nameCol, ChatPreview(r.name, 13).c_str());
+            std::string rt = RelTime(r.when);
+            if (!rt.empty()) {
+                float rtw = ImGui::CalcTextSize(rt.c_str()).x;
+                dl->AddText(ImVec2(rp.x + listW - 12 - rtw, rp.y + 7),
+                            ImGui::GetColorU32(ImGuiCol_TextDisabled), rt.c_str());
+            }
+            dl->AddText(ImVec2(tx, rp.y + 24),
+                        ImGui::GetColorU32(unread ? ImGuiCol_Text : ImGuiCol_TextDisabled),
+                        ChatPreview(r.preview, 20).c_str());
+            // Right-side markers: unread dot (preview line) + mute.
             float mx = rp.x + listW - 14;
-            if (unread) { dl->AddCircleFilled(ImVec2(mx, rp.y + 14), 4.5f, ImGui::GetColorU32(kAccent), 16); }
-            if (muted)  { DrawEmoji(dl, ImVec2(mx, rp.y + 32), 12, 2); }   // small marker
+            if (unread) { dl->AddCircleFilled(ImVec2(mx, rp.y + 30), 4.5f, ImGui::GetColorU32(kAccent), 16); }
+            if (muted)  { DrawEmoji(dl, ImVec2(mx, rp.y + 30), 12, 2); }   // small marker
             if (pinned) { dl->AddCircleFilled(ImVec2(rp.x + 10, rp.y + 10), 3.0f, ImGui::GetColorU32(kAccent), 10); }
             ImGui::PopID();
             return true;

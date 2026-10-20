@@ -3287,7 +3287,12 @@ int main(int argc, char** argv) {
                 ImGui::PushID(i);
                 ImGui::BeginChild("tpl", ImVec2(cardW, 92), true, ImGuiWindowFlags_NoScrollbar);
                 bool hov = !editor.empty() && ImGui::IsWindowHovered();
-                if (hov) HoverRing();
+                if (hov) {
+                    ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+                    ImGui::GetWindowDrawList()->AddRectFilled(
+                        wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(255, 255, 255, 12), 3.0f);
+                    HoverRing();
+                }
                 ImGui::SetCursorPos(ImVec2(12, 12));
                 IconTile(kTpl[i].name, 30.0f);
                 ImGui::SameLine();
@@ -3556,13 +3561,7 @@ int main(int argc, char** argv) {
             ImGui::BulletText("Drag assets from the Project panel onto objects.");
             ImGui::BulletText("Add UI from GameObject > UI (buttons, sliders, radial loaders).");
         } else if (tab == 1) {                            // ---- Play ----
-            ImGui::TextColored(kTitle, "Play a game");
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
-            if (ImGui::Button("Refresh", ImVec2(92, 0))) scenes = FindScenes();
-            { ImVec2 p = ImGui::GetCursorScreenPos(); float w = ImGui::GetContentRegionAvail().x;
-              ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1),
-                  ImVec2(p.x + w * 0.16f, p.y + 4), ImGui::GetColorU32(kAccent), 2.0f); }
-            ImGui::Dummy(ImVec2(0, 14));
+            sectionHeader("Play a game", nullptr);
             if (player.empty())
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
             else if (std::none_of(scenes.begin(), scenes.end(), IsBuiltGame)) {
@@ -3583,9 +3582,14 @@ int main(int argc, char** argv) {
                 center("the launcher or in a 'games' folder and hit Refresh.");
                 ImGui::TextDisabled("the launcher or in a 'games' folder and hit Refresh.");
                 ImGui::Dummy(ImVec2(0, 8));
-                ImGui::SetCursorPosX((cw - 170.0f) * 0.5f);
-                if (!editor.empty() && PrimaryButton("Open Editor", ImVec2(170, 36)))
-                    LaunchEditor(editor);
+                bool haveEd = !editor.empty();
+                float btnRow = haveEd ? (170.0f + 8.0f + 100.0f) : 100.0f;
+                ImGui::SetCursorPosX((cw - btnRow) * 0.5f);
+                if (haveEd) {
+                    if (PrimaryButton("Open Editor", ImVec2(170, 36))) LaunchEditor(editor);
+                    ImGui::SameLine();
+                }
+                if (ImGui::Button("Refresh", ImVec2(100, 36))) scenes = FindScenes();
                 ImGui::EndChild();
             } else {
                 auto lower = [](std::string s) {
@@ -3596,9 +3600,9 @@ int main(int argc, char** argv) {
                 // (the search field flexes to fill whatever is left).
                 if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
                 {
-                    const float sortW = 156.0f, viewW = 100.0f, foldW = 108.0f;
+                    const float sortW = 156.0f, viewW = 100.0f, foldW = 92.0f, refW = 84.0f;
                     float sp = ImGui::GetStyle().ItemSpacing.x;
-                    float searchW = ImGui::GetContentRegionAvail().x - sortW - viewW - foldW - sp * 3.0f;
+                    float searchW = ImGui::GetContentRegionAvail().x - sortW - viewW - foldW - refW - sp * 4.0f;
                     if (searchW < 150.0f) searchW = 150.0f;
                     ImGui::SetNextItemWidth(searchW);
                 }
@@ -3620,8 +3624,11 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(0, 2);
                 viewBtn("Grid", 1);
                 ImGui::SameLine();
-                if (ImGui::Button("Folder", ImVec2(108, 0))) OpenExternal(g_exeDir);
+                if (ImGui::Button("Folder", ImVec2(92, 0))) OpenExternal(g_exeDir);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the games folder");
+                ImGui::SameLine();
+                if (ImGui::Button("Refresh", ImVec2(84, 0))) scenes = FindScenes();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rescan for games");
                 ImGui::Dummy(ImVec2(0, 6));
 
                 // Collection chips (Steam-style library categories). "All" plus one

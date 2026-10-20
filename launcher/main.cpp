@@ -1083,16 +1083,116 @@ void ChatDateSeparator(long when) {
     ImGui::Dummy(ImVec2(0, 2));
 }
 
-// Render a chat message body with word-wrapping, turning http(s) URLs into
-// clickable links. Plain text takes a fast TextWrapped path; only bodies that
-// actually contain a link do the manual token layout.
-void RenderChatBody(const std::string& body) {
-    if (body.find("http://") == std::string::npos && body.find("https://") == std::string::npos) {
-        ImGui::TextWrapped("%s", body.c_str());
-        return;
+// ---- Emoji -----------------------------------------------------------------
+// The shipped font has no emoji glyphs, so emoji are small vector drawings keyed
+// by text shortcodes (Discord/Slack style). The composer's emoji picker inserts
+// a shortcode; RenderChatBody draws it inline. This renders identically on every
+// machine with no emoji font to ship.
+struct EmojiDef { const char* code; const char* alt; int id; };
+static const EmojiDef kEmojis[] = {
+    {":)",     ":smile:",    0}, {":D",    ":grin:",  1}, {":(",     ":sad:",   2},
+    {":heart:","<3",         3}, {":fire:", ":flame:", 4}, {":star:", ":+1:",   5},
+    {":laugh:","xD",          6}, {":wow:", ":o",      7}, {":cool:", ":sunglasses:", 8},
+    {":thumbsup:",":+1b:",   9},
+};
+static int EmojiId(const std::string& t) {
+    for (const auto& e : kEmojis) if (t == e.code || (e.alt && t == e.alt)) return e.id;
+    return -1;
+}
+// Draw emoji `id` centered at `c`, fitting a box of side `s`.
+static void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id) {
+    float r = s * 0.46f;
+    ImU32 face = IM_COL32(245, 200, 70, 255), dark = IM_COL32(60, 48, 20, 255), white = IM_COL32(250,250,250,255);
+    auto eyes = [&](float ey, float er){ dl->AddCircleFilled(ImVec2(c.x-r*0.34f,c.y+ey), er, dark, 10);
+                                         dl->AddCircleFilled(ImVec2(c.x+r*0.34f,c.y+ey), er, dark, 10); };
+    auto mouthArc = [&](ImVec2 ctr, float rad, float a0, float a1){
+        dl->PathClear(); dl->PathArcTo(ctr, rad, a0, a1, 16); dl->PathStroke(dark, 0, 2.2f); };
+    const float PI = 3.14159265f;
+    switch (id) {
+        case 0: // smile
+            dl->AddCircleFilled(c, r, face, 24); eyes(-r*0.18f, r*0.10f);
+            mouthArc(ImVec2(c.x, c.y - r*0.05f), r*0.42f, 0.18f*PI, 0.82f*PI); break;
+        case 1: // grin (open smile w/ teeth)
+            dl->AddCircleFilled(c, r, face, 24); eyes(-r*0.2f, r*0.10f);
+            dl->PathClear(); dl->PathArcTo(ImVec2(c.x,c.y+r*0.02f), r*0.5f, 0.1f*PI, 0.9f*PI, 20); dl->PathFillConvex(dark);
+            dl->AddRectFilled(ImVec2(c.x-r*0.4f,c.y+r*0.08f), ImVec2(c.x+r*0.4f,c.y+r*0.2f), white); break;
+        case 2: // sad
+            dl->AddCircleFilled(c, r, face, 24); eyes(-r*0.18f, r*0.10f);
+            mouthArc(ImVec2(c.x, c.y + r*0.55f), r*0.42f, 1.18f*PI, 1.82f*PI); break;
+        case 3: { // heart
+            ImU32 red = IM_COL32(232, 72, 92, 255);
+            dl->AddCircleFilled(ImVec2(c.x-r*0.28f, c.y-r*0.12f), r*0.34f, red, 16);
+            dl->AddCircleFilled(ImVec2(c.x+r*0.28f, c.y-r*0.12f), r*0.34f, red, 16);
+            dl->AddTriangleFilled(ImVec2(c.x-r*0.58f,c.y+r*0.02f), ImVec2(c.x+r*0.58f,c.y+r*0.02f), ImVec2(c.x,c.y+r*0.62f), red); break; }
+        case 4: { // fire
+            dl->AddTriangleFilled(ImVec2(c.x,c.y-r*0.7f), ImVec2(c.x-r*0.5f,c.y+r*0.5f), ImVec2(c.x+r*0.5f,c.y+r*0.5f), IM_COL32(236,120,40,255));
+            dl->AddTriangleFilled(ImVec2(c.x,c.y-r*0.1f), ImVec2(c.x-r*0.26f,c.y+r*0.5f), ImVec2(c.x+r*0.26f,c.y+r*0.5f), IM_COL32(250,210,70,255)); break; }
+        case 5: { // star
+            ImU32 gold = IM_COL32(245, 205, 80, 255); ImVec2 p[10];
+            for (int k=0;k<10;++k){ float a=-PI/2+k*PI/5; float rr=(k%2==0)?r:r*0.42f; p[k]=ImVec2(c.x+std::cos(a)*rr,c.y+std::sin(a)*rr);}
+            for (int k=0;k<10;++k) dl->AddTriangleFilled(c,p[k],p[(k+1)%10],gold); break; }
+        case 6: // laugh (grin + closed happy eyes)
+            dl->AddCircleFilled(c, r, face, 24);
+            mouthArc(ImVec2(c.x-r*0.34f, c.y-r*0.05f), r*0.18f, 1.1f*PI, 1.9f*PI);
+            mouthArc(ImVec2(c.x+r*0.34f, c.y-r*0.05f), r*0.18f, 1.1f*PI, 1.9f*PI);
+            dl->PathClear(); dl->PathArcTo(ImVec2(c.x,c.y+r*0.05f), r*0.5f, 0.08f*PI, 0.92f*PI, 20); dl->PathFillConvex(dark); break;
+        case 7: // wow (o mouth)
+            dl->AddCircleFilled(c, r, face, 24); eyes(-r*0.2f, r*0.12f);
+            dl->AddCircleFilled(ImVec2(c.x, c.y+r*0.32f), r*0.2f, dark, 14); break;
+        case 8: // cool (sunglasses)
+            dl->AddCircleFilled(c, r, face, 24);
+            dl->AddRectFilled(ImVec2(c.x-r*0.6f,c.y-r*0.28f), ImVec2(c.x-r*0.08f,c.y+r*0.02f), dark, 2);
+            dl->AddRectFilled(ImVec2(c.x+r*0.08f,c.y-r*0.28f), ImVec2(c.x+r*0.6f,c.y+r*0.02f), dark, 2);
+            dl->AddLine(ImVec2(c.x-r*0.08f,c.y-r*0.16f), ImVec2(c.x+r*0.08f,c.y-r*0.16f), dark, 2.0f);
+            mouthArc(ImVec2(c.x, c.y + r*0.02f), r*0.36f, 0.18f*PI, 0.82f*PI); break;
+        case 9: { // thumbs up
+            ImU32 sk = IM_COL32(240, 196, 120, 255);
+            dl->AddRectFilled(ImVec2(c.x-r*0.1f,c.y-r*0.6f), ImVec2(c.x+r*0.32f,c.y+r*0.05f), sk, r*0.12f); // thumb
+            dl->AddRectFilled(ImVec2(c.x-r*0.5f,c.y-r*0.05f), ImVec2(c.x+r*0.5f,c.y+r*0.6f), sk, r*0.14f);  // fist
+            break; }
+        default: break;
     }
+}
+
+// A small emoji button that opens a picker grid; clicking an emoji appends its
+// shortcode to `buf` (space-separated so RenderChatBody tokenizes it).
+void EmojiPicker(const char* id, char* buf, std::size_t cap) {
+    ImGui::PushID(id);
+    ImVec2 bp = ImGui::GetCursorScreenPos();
+    if (ImGui::Button("##emojibtn", ImVec2(30, 30))) ImGui::OpenPopup("##emojipop");
+    DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(bp.x + 15, bp.y + 15), 22, 0);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Emoji");
+    if (ImGui::BeginPopup("##emojipop")) {
+        int k = 0;
+        for (const auto& e : kEmojis) {
+            if (k % 5 != 0) ImGui::SameLine();
+            ImGui::PushID(e.id);
+            ImVec2 sp = ImGui::GetCursorScreenPos();
+            if (ImGui::Button("##e", ImVec2(32, 32))) {
+                std::string s = buf;
+                if (!s.empty() && s.back() != ' ') s += ' ';
+                s += e.code; s += ' ';
+                std::snprintf(buf, cap, "%s", s.c_str());
+                ImGui::CloseCurrentPopup();
+            }
+            DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(sp.x + 16, sp.y + 16), 24, e.id);
+            ImGui::PopID(); ++k;
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
+// Render a chat message body with word-wrapping, turning http(s) URLs into
+// clickable links and emoji shortcodes into drawn glyphs. Plain text takes a
+// fast TextWrapped path; richer bodies use the manual token layout.
+void RenderChatBody(const std::string& body) {
+    bool hasLink  = body.find("http://") != std::string::npos || body.find("https://") != std::string::npos;
+    bool hasEmoji = body.find(':') != std::string::npos || body.find("<3") != std::string::npos || body.find("xD") != std::string::npos;
+    if (!hasLink && !hasEmoji) { ImGui::TextWrapped("%s", body.c_str()); return; }
     const float avail = ImGui::GetContentRegionAvail().x;
     const float spaceW = ImGui::CalcTextSize(" ").x;
+    const float em = ImGui::GetTextLineHeight();
     ImU32 linkCol = ImGui::GetColorU32(kAccent);
     float lineX = 0.0f; bool lineStarted = false;
     std::size_t i = 0, n = body.size();
@@ -1103,18 +1203,25 @@ void RenderChatBody(const std::string& body) {
         while (j < n && body[j] != ' ' && body[j] != '\n') ++j;
         std::string tok = body.substr(i, j - i);
         i = j;
-        float tw = ImGui::CalcTextSize(tok.c_str()).x;
+        int eid = EmojiId(tok);
+        float tw = (eid >= 0) ? em : ImGui::CalcTextSize(tok.c_str()).x;
         if (lineStarted && lineX + spaceW + tw > avail) { lineStarted = false; lineX = 0; }
         if (lineStarted) { ImGui::SameLine(0, spaceW); lineX += spaceW; }
-        bool link = tok.rfind("http://", 0) == 0 || tok.rfind("https://", 0) == 0;
-        if (link) {
-            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(linkCol), "%s", tok.c_str());
-            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(mn.x, mx.y - 1), ImVec2(mx.x, mx.y - 1), linkCol, 1.0f);
-            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked()) OpenExternal(tok);
+        if (eid >= 0) {
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(p.x + em * 0.5f, p.y + em * 0.5f), em, eid);
+            ImGui::Dummy(ImVec2(em, em));
         } else {
-            ImGui::TextUnformatted(tok.c_str());
+            bool link = tok.rfind("http://", 0) == 0 || tok.rfind("https://", 0) == 0;
+            if (link) {
+                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(linkCol), "%s", tok.c_str());
+                ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddLine(ImVec2(mn.x, mx.y - 1), ImVec2(mx.x, mx.y - 1), linkCol, 1.0f);
+                if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (ImGui::IsItemClicked()) OpenExternal(tok);
+            } else {
+                ImGui::TextUnformatted(tok.c_str());
+            }
         }
         lineX += tw; lineStarted = true;
     }
@@ -3804,7 +3911,7 @@ int main(int argc, char** argv) {
                         bl->AddRectFilled(p, ImVec2(p.x + bw, p.y + bh), bg, 9.0f);
                         ImGui::SetCursorScreenPos(ImVec2(p.x + 10, p.y + 6));
                         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bubbleMax);
-                        ImGui::TextUnformatted(m.body.c_str());
+                        RenderChatBody(m.body);   // clickable links + emoji
                         ImGui::PopTextWrapPos();
                         // tiny timestamp under the bubble
                         char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
@@ -3817,8 +3924,9 @@ int main(int argc, char** argv) {
                     if (dmLog.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
                     if ((int)dmLog.size() != dmLastShown) { ImGui::SetScrollHereY(1.0f); dmLastShown = (int)dmLog.size(); }
                     ImGui::EndChild();
-                    // Multiline composer: Enter sends, Ctrl+Enter inserts a newline.
-                    ImVec2 dmInSz(ImGui::GetContentRegionAvail().x - 64, ImGui::GetTextLineHeight() + 14);
+                    // Emoji picker + multiline composer: Enter sends, Ctrl+Enter = newline.
+                    ImVec2 dmInSz(ImGui::GetContentRegionAvail().x - 64 - 36, ImGui::GetTextLineHeight() + 14);
+                    EmojiPicker("dmemoji", dmInput, sizeof(dmInput)); ImGui::SameLine();
                     bool send = ImGui::InputTextMultiline("##dmin", dmInput, sizeof(dmInput), dmInSz,
                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
                     ImGui::SameLine();
@@ -4442,8 +4550,9 @@ int main(int argc, char** argv) {
                         }
                         if ((int)svMsgs.size() != svLastShown) { ImGui::SetScrollHereY(1.0f); svLastShown = (int)svMsgs.size(); }
                         ImGui::EndChild();
-                        // Multiline composer: Enter sends, Ctrl+Enter inserts a newline.
-                        ImVec2 inSz(ImGui::GetContentRegionAvail().x - 70, ImGui::GetTextLineHeight() + 14);
+                        // Emoji picker + multiline composer: Enter sends, Ctrl+Enter = newline.
+                        ImVec2 inSz(ImGui::GetContentRegionAvail().x - 70 - 36, ImGui::GetTextLineHeight() + 14);
+                        EmojiPicker("svemoji", svMsg, sizeof(svMsg)); ImGui::SameLine();
                         bool send = ImGui::InputTextMultiline("##svsend", svMsg, sizeof(svMsg), inSz,
                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
                         ImGui::SameLine();

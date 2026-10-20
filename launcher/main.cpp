@@ -1080,9 +1080,12 @@ int main(int argc, char** argv) {
     // or any way to change it in the UI — it just uses whatever was configured.
     char acctUser[64] = {0};
     char acctPass[64] = {0};
-    char acctName[64] = {0};             // username (display name) on register
+    char acctName[64] = {0};             // username (handle) on register
+    char acctDisplay[64] = {0};          // display name on register (optional)
+    bool acctShowPass = false;           // show/hide the password field
     char acctNewPass[64] = {0};          // change-password field (signed in)
     char acctChgName[64] = {0};          // change-username field (signed in)
+    char acctChgDisplay[64] = {0};       // change-display-name field (signed in)
     char acctChgEmail[64] = {0};         // change-email field (signed in)
     bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
@@ -2403,9 +2406,24 @@ int main(int argc, char** argv) {
                 ImGui::SeparatorText("Account details");
                 const float kFieldW = 300.0f, kBtnW = 170.0f;
 
-                // Change username (all backends).
+                // Display name (friendly name others see; online accounts only).
+                if (account.IsOnline()) {
+                    ImGui::PushItemWidth(kFieldW);
+                    ImGui::InputTextWithHint("##acctChgDisplay", "New display name", acctChgDisplay, sizeof(acctChgDisplay));
+                    ImGui::PopItemWidth();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Update display name", ImVec2(kBtnW, 0)) && acctChgDisplay[0]) {
+                        bool ok = okay::Friends(account).SetDisplayName(acctChgDisplay);
+                        acctMessageError = !ok;
+                        acctMessage = ok ? "Display name updated." : "Couldn't update display name.";
+                        if (ok) { acctChgDisplay[0] = '\0'; Toast("Display name updated", 1); }
+                    }
+                    ImGui::TextDisabled("Shown to friends. Your username (below) is your unique handle for adding friends.");
+                }
+
+                // Change username / handle (all backends).
                 ImGui::PushItemWidth(kFieldW);
-                ImGui::InputTextWithHint("##acctChgName", "New username", acctChgName, sizeof(acctChgName));
+                ImGui::InputTextWithHint("##acctChgName", "New username (handle)", acctChgName, sizeof(acctChgName));
                 ImGui::PopItemWidth();
                 ImGui::SameLine();
                 if (ImGui::Button("Update username", ImVec2(kBtnW, 0))) {
@@ -2457,33 +2475,63 @@ int main(int argc, char** argv) {
                     : "Using a local account on this device.");
                 ImGui::Dummy(ImVec2(0, 12));
 
-                // Sign in / Create account toggle.
-                if (ImGui::RadioButton("Sign in", !acctRegisterMode)) {
-                    acctRegisterMode = false; acctMessage.clear();
-                }
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Create account", acctRegisterMode)) {
-                    acctRegisterMode = true; acctMessage.clear();
-                }
+                // --- Centered sign-in / create-account card ---
+                const float cardW = 420.0f;
+                float offx = (ImGui::GetContentRegionAvail().x - cardW) * 0.5f;
+                if (offx > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offx);
+                ImGui::BeginChild("##authcard", ImVec2(cardW, 0), true);
+                float innerW = ImGui::GetContentRegionAvail().x;
+
+                // Heading.
+                ImGui::Dummy(ImVec2(0, 2));
+                ImGui::TextUnformatted(acctRegisterMode ? "Create your account" : "Sign in to OkaySpace");
+                ImGui::TextDisabled(acctRegisterMode
+                    ? "Join to use Friends, the Marketplace, DMs and forums."
+                    : "Welcome back.");
                 ImGui::Dummy(ImVec2(0, 8));
 
+                // Segmented Sign in / Create toggle (two half-width buttons).
+                auto seg = [&](const char* label, bool active, float w) {
+                    if (active) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+                    bool c = ImGui::Button(label, ImVec2(w, 0));
+                    if (active) ImGui::PopStyleColor();
+                    return c;
+                };
+                float halfW = (innerW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                if (seg("Sign in", !acctRegisterMode, halfW)) { acctRegisterMode = false; acctMessage.clear(); }
+                ImGui::SameLine();
+                if (seg("Create account", acctRegisterMode, halfW)) { acctRegisterMode = true; acctMessage.clear(); }
+                ImGui::Dummy(ImVec2(0, 10));
+
                 const char* idHint = account.UsesEmail() ? "Email" : "Username";
-                ImGui::PushItemWidth(320);
-                ImGui::InputTextWithHint("##acctUser", idHint, acctUser, sizeof(acctUser));
-                // For Supabase, sign-up also takes a display username.
-                if (acctRegisterMode && account.UsesEmail())
-                    ImGui::InputTextWithHint("##acctName", "Username (display name)", acctName, sizeof(acctName));
-                bool submit = ImGui::InputTextWithHint("##acctPass", "Password", acctPass,
-                                  sizeof(acctPass), ImGuiInputTextFlags_Password |
-                                  ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::PopItemWidth();
+                ImGui::TextDisabled("%s", idHint);
+                ImGui::SetNextItemWidth(innerW);
+                ImGui::InputTextWithHint("##acctUser", account.UsesEmail() ? "you@example.com" : "username",
+                                         acctUser, sizeof(acctUser));
+
+                if (acctRegisterMode && account.UsesEmail()) {
+                    ImGui::TextDisabled("Username (unique handle)");
+                    ImGui::SetNextItemWidth(innerW);
+                    ImGui::InputTextWithHint("##acctName", "e.g. starpilot", acctName, sizeof(acctName));
+                    ImGui::TextDisabled("Display name (optional)");
+                    ImGui::SetNextItemWidth(innerW);
+                    ImGui::InputTextWithHint("##acctDisplay", "e.g. Star Pilot", acctDisplay, sizeof(acctDisplay));
+                }
+
+                ImGui::TextDisabled("Password");
+                ImGuiInputTextFlags pf = ImGuiInputTextFlags_EnterReturnsTrue |
+                    (acctShowPass ? 0 : ImGuiInputTextFlags_Password);
+                ImGui::SetNextItemWidth(innerW - 86);
+                bool submit = ImGui::InputTextWithHint("##acctPass", "••••••••", acctPass, sizeof(acctPass), pf);
+                ImGui::SameLine();
+                if (ImGui::Button(acctShowPass ? "Hide" : "Show", ImVec2(80, 0))) acctShowPass = !acctShowPass;
                 if (acctRegisterMode && account.UsesEmail())
                     ImGui::TextDisabled("Use a real email (for password resets). Password: 6+ characters.");
-                ImGui::Dummy(ImVec2(0, 8));
+                ImGui::Dummy(ImVec2(0, 10));
 
                 const char* btn = acctRegisterMode ? "Create account" : "Sign in";
                 ImGui::BeginDisabled(acctBusy);
-                if (PrimaryButton(btn, ImVec2(200, 48)) || submit) {
+                if (PrimaryButton(btn, ImVec2(innerW, 46)) || submit) {
                     acctBusy = true;
                     acct::Result r = acctRegisterMode
                         ? account.Register(acctUser, acctPass, acctName)
@@ -2492,7 +2540,11 @@ int main(int argc, char** argv) {
                     acctMessageError = !r.ok;
                     if (r.ok) {
                         acctMessage.clear();
+                        // Set the optional display name right after signing up.
+                        if (acctRegisterMode && account.IsLoggedIn() && acctDisplay[0])
+                            okay::Friends(account).SetDisplayName(acctDisplay);
                         std::fill(acctPass, acctPass + sizeof(acctPass), '\0');
+                        acctDisplay[0] = '\0';
                         if (account.IsLoggedIn()) Toast("Signed in", 1);
                     } else {
                         acctMessage = r.error;
@@ -2501,9 +2553,8 @@ int main(int argc, char** argv) {
                 ImGui::EndDisabled();
 
                 // Forgot password (online/Supabase): emails a reset link.
-                if (account.UsesEmail()) {
-                    ImGui::SameLine();
-                    if (ImGui::Button("Forgot password?", ImVec2(180, 48))) {
+                if (account.UsesEmail() && !acctRegisterMode) {
+                    if (ImGui::SmallButton("Forgot password?")) {
                         acct::Result r = account.RequestPasswordReset(acctUser);
                         acctMessageError = !r.ok;
                         acctMessage = r.ok ? "Password reset email sent — check your inbox."
@@ -2512,13 +2563,15 @@ int main(int argc, char** argv) {
                 }
 
                 if (!acctMessage.empty()) {
-                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::Dummy(ImVec2(0, 4));
                     ImGui::PushTextWrapPos(0.0f);
                     ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1)
                                                         : ImVec4(0.55f, 0.9f, 0.6f, 1),
                                        "%s", acctMessage.c_str());
                     ImGui::PopTextWrapPos();
                 }
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::EndChild();
             }
         } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
@@ -2835,7 +2888,11 @@ int main(int argc, char** argv) {
                     dl->AddCircleFilled(ImVec2(p.x + 12, p.y + 14), 5.0f, dot, 16);
                     ImGui::Dummy(ImVec2(26, 0)); ImGui::SameLine();
                     ImGui::BeginGroup();
-                    ImGui::TextUnformatted(f->username.c_str());
+                    ImGui::TextUnformatted(f->display.empty() ? f->username.c_str() : f->display.c_str());
+                    if (!f->display.empty() && f->display != f->username) {
+                        ImGui::SameLine(0, 6);
+                        ImGui::TextDisabled("@%s", f->username.c_str());
+                    }
                     std::string sub = request ? "wants to be your friend"
                                    : f->status != "accepted" ? "request sent"
                                    : (f->online && !f->playing.empty()) ? f->playing

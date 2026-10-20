@@ -1,0 +1,5 @@
+// Windows executable icon for the OkaySpace launcher. Compiled by windres and
+// linked into OkaySpace.exe so the app has a real taskbar / Explorer / title-bar
+// icon (the runtime SDL window icon is set separately in AppIcon.hpp).
+// The lowest numeric icon ID becomes the application (.exe) icon.
+1 ICON "okayspace.ico"

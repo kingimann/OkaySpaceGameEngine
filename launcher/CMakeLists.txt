@@ -42,7 +42,13 @@ if(NOT TARGET launcher_imgui)
     target_compile_options(launcher_imgui PRIVATE -w)
 endif()
 
-add_executable(okayspace-launcher main.cpp)
+# Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
+set(OKAY_LAUNCHER_SOURCES main.cpp)
+if(WIN32)
+    enable_language(RC)
+    list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)
+endif()
+add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
 target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # shared/ for the launcher's AppIcon, and the engine's public headers for the
 # (header-only) account service it shares with the engine. The launcher doesn't

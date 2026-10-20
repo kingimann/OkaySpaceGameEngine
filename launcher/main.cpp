@@ -602,6 +602,13 @@ std::size_t RecentRank(const std::string& p) {
 std::map<std::string, std::vector<std::string>> g_collections;
 std::string g_collFilter;   // active collection filter on the Play tab ("" = all games)
 
+std::vector<long> g_wishlist;   // wishlisted marketplace item ids (persisted)
+bool IsWishlisted(long id) { return std::find(g_wishlist.begin(), g_wishlist.end(), id) != g_wishlist.end(); }
+void ToggleWishlist(long id) {
+    auto it = std::find(g_wishlist.begin(), g_wishlist.end(), id);
+    if (it != g_wishlist.end()) g_wishlist.erase(it); else g_wishlist.push_back(id);
+}
+
 bool InCollection(const std::string& name, const std::string& path) {
     auto it = g_collections.find(name);
     return it != g_collections.end() &&
@@ -906,6 +913,7 @@ void LoadPrefs() {
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
+        else if (k == "wish" && !v.empty()) { try { g_wishlist.push_back(std::stol(v)); } catch (...) {} }
         else if (k == "collname" && !v.empty()) g_collections[v];   // ensure (possibly empty) collection
         else if (k == "coll" && !v.empty()) {
             auto bar = v.find('|');
@@ -946,6 +954,7 @@ void SavePrefs() {
     for (const auto& p : g_favorites)    f << "fav=" << p << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
     for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
+    for (long id : g_wishlist)           f << "wish=" << id << "\n";
     for (const auto& kv : g_collections) {
         f << "collname=" << kv.first << "\n";
         for (const auto& p : kv.second) f << "coll=" << kv.first << "|" << p << "\n";
@@ -2847,11 +2856,17 @@ int main(int argc, char** argv) {
                 // Search + kind filter.
                 static char wSearch[96] = "";
                 static int  wFilterKind = 0;   // 0 All, 1 Games, 2 Scenes, 3 Templates
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 236);
+                static bool wWishOnly = false;
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 236 - 108);
                 ImGui::InputTextWithHint("##mktsearch", "Search the marketplace...", wSearch, sizeof(wSearch));
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(228);
                 ImGui::Combo("##mktkind", &wFilterKind, "All kinds\0Games\0Scenes\0Templates\0");
+                ImGui::SameLine();
+                if (wWishOnly) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+                if (ImGui::Button(wWishOnly ? "Wishlist *" : "Wishlist", ImVec2(100, 0))) wWishOnly = !wWishOnly;
+                if (wWishOnly) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show only wishlisted items");
                 ImGui::Dummy(ImVec2(0, 4));
 
                 auto mlo = [](std::string s){ for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
@@ -2863,6 +2878,7 @@ int main(int argc, char** argv) {
                 for (const auto& w : wCache) {
                     std::string wk = w.kind.empty() ? "game" : w.kind;
                     if (wFilterKind != 0 && wk != kindKey[wFilterKind]) continue;
+                    if (wWishOnly && !IsWishlisted(w.id)) continue;
                     if (!nd.empty() &&
                         mlo(w.title + " " + w.description + " " + w.author).find(nd) == std::string::npos) continue;
                     ++mktShown;
@@ -2885,6 +2901,8 @@ int main(int argc, char** argv) {
                             wNextRefresh = 0;
                         }
                     } else ImGui::TextDisabled("no link");
+                    bool wished = IsWishlisted(w.id);
+                    if (ImGui::SmallButton(wished ? "* Wishlisted" : "+ Wishlist")) { ToggleWishlist(w.id); SavePrefs(); }
                     if (!me.empty() && me == w.author) {
                         if (ImGui::SmallButton("Remove")) { ws.Remove(w.id); wNextRefresh = 0; }
                     }

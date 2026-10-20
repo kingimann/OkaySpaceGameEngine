@@ -924,7 +924,7 @@ ImVec4 kAccentDim(0.19f, 0.43f, 0.72f, 1.0f);
 // Selectable accent colors (name, main, dim) — mirror the editor's accent presets.
 struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
 const AccentPreset kAccentPresets[] = {
-    {"Silver", ImVec4(0.84f, 0.85f, 0.89f, 1), ImVec4(0.56f, 0.57f, 0.62f, 1)},  // bright neutral default (no blue) — crisp highlights on deep dark
+    {"Unity", ImVec4(0.235f, 0.475f, 0.800f, 1), ImVec4(0.172f, 0.360f, 0.600f, 1)},  // Unity Editor selection blue (default)
     {"Blue",   ImVec4(0.26f, 0.59f, 0.98f, 1), ImVec4(0.19f, 0.43f, 0.72f, 1)},
     {"Teal",   ImVec4(0.18f, 0.78f, 0.74f, 1), ImVec4(0.13f, 0.56f, 0.53f, 1)},
     {"Violet", ImVec4(0.56f, 0.46f, 0.96f, 1), ImVec4(0.40f, 0.33f, 0.70f, 1)},
@@ -1110,47 +1110,48 @@ void DarkTheme() {
         // A true neutral dark theme (VS Code / Unity dark): charcoal-grey surfaces,
         // no blue tint. The accent colour is used ONLY for small interactive cues
         // (checkmarks, slider grabs, the active nav bar), not the panels.
-        // A genuine deep-dark theme (not a flat mid-grey): near-black surfaces,
-        // crisp near-white text and clearly lit hover/selected states so nothing
-        // reads as "greyed out". The accent tints only small interactive cues.
-        auto lighten = [](float v) { return v + (1.0f - v) * 0.30f; };
+        // Unity Editor "Dark" skin: neutral medium-grey panels (#383838) with
+        // darker toolbars (#2D2D2D) and sunken fields (#2A2A2A), crisp light-grey
+        // text, and Unity's signature blue selection/accent (the blue is what
+        // keeps the grey from reading as "greyed out").
+        auto lighten = [](float v) { return v + (1.0f - v) * 0.25f; };
         const ImVec4 accentHover = ImVec4(lighten(accent.x), lighten(accent.y), lighten(accent.z), 1.00f);
-        c[ImGuiCol_WindowBg]         = ImVec4(0.082f, 0.082f, 0.094f, 1.00f);   // #15151800 deep base
+        c[ImGuiCol_WindowBg]         = ImVec4(0.220f, 0.220f, 0.220f, 1.00f);   // #383838 main panels
         c[ImGuiCol_ChildBg]          = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
-        c[ImGuiCol_PopupBg]          = ImVec4(0.118f, 0.118f, 0.133f, 0.99f);
-        c[ImGuiCol_Border]           = ImVec4(0.000f, 0.000f, 0.000f, 0.55f);
-        c[ImGuiCol_FrameBg]          = ImVec4(0.050f, 0.050f, 0.058f, 1.00f);   // recessed inputs
-        c[ImGuiCol_FrameBgHovered]   = ImVec4(0.090f, 0.090f, 0.102f, 1.00f);
-        c[ImGuiCol_FrameBgActive]    = ImVec4(0.125f, 0.125f, 0.140f, 1.00f);
-        c[ImGuiCol_TitleBg]          = ImVec4(0.062f, 0.062f, 0.072f, 1.00f);
-        c[ImGuiCol_TitleBgActive]    = ImVec4(0.092f, 0.092f, 0.104f, 1.00f);
-        c[ImGuiCol_MenuBarBg]        = ImVec4(0.068f, 0.068f, 0.078f, 1.00f);
-        c[ImGuiCol_Header]           = ImVec4(1.00f, 1.00f, 1.00f, 0.110f);     // neutral selection (brighter)
-        c[ImGuiCol_HeaderHovered]    = ImVec4(1.00f, 1.00f, 1.00f, 0.070f);
-        c[ImGuiCol_HeaderActive]     = ImVec4(1.00f, 1.00f, 1.00f, 0.150f);
-        c[ImGuiCol_Button]           = ImVec4(0.188f, 0.188f, 0.208f, 1.00f);   // clearly raised, clickable
-        c[ImGuiCol_ButtonHovered]    = ImVec4(0.250f, 0.250f, 0.275f, 1.00f);
-        c[ImGuiCol_ButtonActive]     = ImVec4(0.305f, 0.305f, 0.335f, 1.00f);
-        c[ImGuiCol_CheckMark]        = accentHover;
+        c[ImGuiCol_PopupBg]          = ImVec4(0.235f, 0.235f, 0.235f, 0.98f);   // #3C3C3C
+        c[ImGuiCol_Border]           = ImVec4(0.000f, 0.000f, 0.000f, 0.50f);   // dark dividers (#1E1E1E look)
+        c[ImGuiCol_FrameBg]          = ImVec4(0.165f, 0.165f, 0.165f, 1.00f);   // #2A2A2A input fields
+        c[ImGuiCol_FrameBgHovered]   = ImVec4(0.205f, 0.205f, 0.205f, 1.00f);
+        c[ImGuiCol_FrameBgActive]    = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);
+        c[ImGuiCol_TitleBg]          = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);   // #2D2D2D
+        c[ImGuiCol_TitleBgActive]    = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
+        c[ImGuiCol_MenuBarBg]        = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);   // #2D2D2D toolbar
+        c[ImGuiCol_Header]           = accent;                                   // selected row = Unity blue
+        c[ImGuiCol_HeaderHovered]    = ImVec4(1.00f, 1.00f, 1.00f, 0.055f);      // hover = subtle grey
+        c[ImGuiCol_HeaderActive]     = accentHover;
+        c[ImGuiCol_Button]           = ImVec4(0.345f, 0.345f, 0.345f, 1.00f);   // #585858 raised buttons
+        c[ImGuiCol_ButtonHovered]    = ImVec4(0.400f, 0.400f, 0.400f, 1.00f);
+        c[ImGuiCol_ButtonActive]     = accent;                                   // pressed = Unity blue
+        c[ImGuiCol_CheckMark]        = ImVec4(0.900f, 0.910f, 0.930f, 1.00f);    // Unity toggle check is light
         c[ImGuiCol_SliderGrab]       = accent;
         c[ImGuiCol_SliderGrabActive] = accentHover;
-        c[ImGuiCol_Separator]        = ImVec4(1.00f, 1.00f, 1.00f, 0.060f);
-        c[ImGuiCol_SeparatorHovered] = accentDim;
+        c[ImGuiCol_Separator]        = ImVec4(0.000f, 0.000f, 0.000f, 0.45f);   // dark Unity dividers
+        c[ImGuiCol_SeparatorHovered] = accent;
         c[ImGuiCol_SeparatorActive]  = accent;
-        c[ImGuiCol_Tab]              = ImVec4(0.072f, 0.072f, 0.082f, 1.00f);
-        c[ImGuiCol_TabHovered]       = ImVec4(1.00f, 1.00f, 1.00f, 0.100f);
-        c[ImGuiCol_TabActive]        = ImVec4(0.165f, 0.165f, 0.183f, 1.00f);
-        c[ImGuiCol_TabUnfocused]     = ImVec4(0.062f, 0.062f, 0.072f, 1.00f);
-        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.120f, 0.120f, 0.133f, 1.00f);
-        c[ImGuiCol_Text]             = ImVec4(0.925f, 0.928f, 0.940f, 1.00f);   // crisp near-white
-        c[ImGuiCol_TextDisabled]     = ImVec4(0.440f, 0.445f, 0.470f, 1.00f);
-        c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.35f);
-        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.26f);
-        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.270f, 0.270f, 0.292f, 1.00f);
-        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.345f, 0.345f, 0.368f, 1.00f);
+        c[ImGuiCol_Tab]              = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);
+        c[ImGuiCol_TabHovered]       = ImVec4(0.255f, 0.255f, 0.255f, 1.00f);
+        c[ImGuiCol_TabActive]        = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);
+        c[ImGuiCol_TabUnfocused]     = ImVec4(0.165f, 0.165f, 0.165f, 1.00f);
+        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.210f, 0.210f, 0.210f, 1.00f);
+        c[ImGuiCol_Text]             = ImVec4(0.824f, 0.824f, 0.827f, 1.00f);   // #D2D2D2 Unity label
+        c[ImGuiCol_TextDisabled]     = ImVec4(0.500f, 0.500f, 0.505f, 1.00f);
+        c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
+        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);   // #252525 track
+        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.355f, 0.355f, 0.358f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.420f, 0.420f, 0.423f, 1.00f);
         c[ImGuiCol_ScrollbarGrabActive]  = accent;
-        c[ImGuiCol_TableHeaderBg]    = ImVec4(0.140f, 0.140f, 0.155f, 1.00f);
-        c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.020f);
+        c[ImGuiCol_TableHeaderBg]    = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
+        c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.022f);
         ImGui::GetIO().FontGlobalScale = g_uiScale;
         return;   // Dark theme is fully specified above (no shared overrides needed)
     }
@@ -2797,23 +2798,22 @@ int main(int argc, char** argv) {
             const float rowH = 38.0f;
             ImVec2 rowMax = ImVec2(rowMin.x + rowW, rowMin.y + rowH);
             bool hov = ImGui::IsMouseHoveringRect(rowMin, rowMax);
-            if (sel)      dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 28));
-            else if (hov) dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 14));
-            if (sel)   // accent bar marking the active item
-                dl->AddRectFilled(rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y),
-                                  ImGui::GetColorU32(kAccent));
+            // Unity-style: the selected row is a solid blue fill (not a pill);
+            // hover on other rows is a faint grey wash.
+            if (sel)      dl->AddRectFilled(rowMin, rowMax, ImGui::GetColorU32(kAccent));
+            else if (hov) dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 16));
             ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0,0,0,0));
             ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0,0,0,0));
-            ImGui::PushStyleColor(ImGuiCol_Text, sel ? ImVec4(0.95f,0.96f,0.98f,1.0f)
-                                                     : ImVec4(0.62f,0.66f,0.72f,1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, sel ? ImVec4(1.00f,1.00f,1.00f,1.0f)
+                                                     : ImVec4(0.760f,0.760f,0.765f,1.0f));
             if (ImGui::Selectable(lbl, sel, 0, ImVec2(0, rowH))) tab = i;
             ImGui::PopStyleColor(4);
             ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
             // Little vector icon per section (no icon font needed).
             {
                 float cy = (mn.y + mx.y) * 0.5f, cx = mn.x + 24.0f, r = 6.5f;
-                ImU32 ic = ImGui::GetColorU32(sel ? kAccent
+                ImU32 ic = ImGui::GetColorU32(sel ? ImVec4(1.00f, 1.00f, 1.00f, 1.0f)
                                                   : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
                 switch (i) {
                     case 0:   // Create: plus

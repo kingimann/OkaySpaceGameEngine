@@ -1240,7 +1240,7 @@ int  g_accent = 0;               // accent colour preset (see kAccents)
 // checks, tabs, etc.). Index persists in settings.
 struct AccentPreset { const char* name; float r, g, b; };
 static const AccentPreset kAccents[] = {
-    {"Graphite", 0.70f, 0.71f, 0.74f},   // neutral default (no blue)
+    {"Unity",   0.235f, 0.475f, 0.800f}, // Unity Editor selection blue (default)
     {"Blue",    0.26f, 0.59f, 0.98f},
     {"Teal",    0.18f, 0.78f, 0.74f},
     {"Violet",  0.56f, 0.46f, 0.96f},
@@ -2804,56 +2804,58 @@ void ApplyTheme() {
     // panels read as professional gray, with the chosen accent only on interactive
     // states (selection, buttons, checks, tabs, slider grabs).
     ImVec4* c = s.Colors;
-    // Neutral charcoal panels (no blue). The accent (default Graphite grey) is
-    // used only for small interactive cues, so nothing reads as a blue theme.
-    c[ImGuiCol_WindowBg]         = ImVec4(0.137f, 0.137f, 0.145f, 1.00f);  // #232325
+    // Unity Editor "Dark" skin: neutral medium-grey panels (#383838), darker
+    // toolbars (#2D2D2D) and sunken fields (#2A2A2A), crisp light-grey text, and
+    // Unity's signature blue for selection/active states. Matches the launcher.
+    c[ImGuiCol_WindowBg]         = ImVec4(0.220f, 0.220f, 0.220f, 1.00f);  // #383838
     c[ImGuiCol_ChildBg]          = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
-    c[ImGuiCol_PopupBg]          = ImVec4(0.160f, 0.160f, 0.168f, 0.99f);
-    c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
-    c[ImGuiCol_FrameBg]          = ImVec4(0.092f, 0.092f, 0.098f, 1.00f);  // sunken input fields
-    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.135f, 0.135f, 0.143f, 1.00f);
-    c[ImGuiCol_FrameBgActive]    = ImVec4(0.168f, 0.168f, 0.178f, 1.00f);
-    c[ImGuiCol_TitleBg]          = ImVec4(0.105f, 0.105f, 0.112f, 1.00f);
-    c[ImGuiCol_TitleBgActive]    = ImVec4(0.135f, 0.135f, 0.143f, 1.00f);
-    c[ImGuiCol_MenuBarBg]        = ImVec4(0.120f, 0.120f, 0.127f, 1.00f);
-    // Selection / foldout headers: a neutral raised grey (Unity foldouts).
-    c[ImGuiCol_Header]           = ImVec4(0.230f, 0.230f, 0.243f, 1.00f);
-    c[ImGuiCol_HeaderHovered]    = ImVec4(0.270f, 0.270f, 0.285f, 1.00f);
-    c[ImGuiCol_HeaderActive]     = ImVec4(0.300f, 0.300f, 0.318f, 1.00f);
-    // Neutral slate buttons (Unity/Steam) — NOT bright blue. Colour is reserved
-    // for primary/active states (Play, Build, the selected tool), which push their
-    // own colours, so a toolbar reads as calm greys instead of a row of blue pills.
-    c[ImGuiCol_Button]           = ImVec4(0.180f, 0.210f, 0.255f, 1.00f);
-    c[ImGuiCol_ButtonHovered]    = ImVec4(0.232f, 0.268f, 0.320f, 1.00f);
-    c[ImGuiCol_ButtonActive]     = ImVec4(0.270f, 0.312f, 0.368f, 1.00f);
-    c[ImGuiCol_CheckMark]        = accentHover;
+    c[ImGuiCol_PopupBg]          = ImVec4(0.235f, 0.235f, 0.235f, 0.99f);  // #3C3C3C
+    c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+    c[ImGuiCol_FrameBg]          = ImVec4(0.165f, 0.165f, 0.165f, 1.00f);  // #2A2A2A input fields
+    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.205f, 0.205f, 0.205f, 1.00f);
+    c[ImGuiCol_FrameBgActive]    = ImVec4(0.245f, 0.245f, 0.245f, 1.00f);
+    c[ImGuiCol_TitleBg]          = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2D2D2D
+    c[ImGuiCol_TitleBgActive]    = ImVec4(0.205f, 0.205f, 0.205f, 1.00f);
+    c[ImGuiCol_MenuBarBg]        = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2D2D2D toolbar
+    // Selection = Unity blue (matches the launcher). Foldout bars use this too;
+    // Inspector component headers are custom-tinted (CategoryColor), unaffected.
+    c[ImGuiCol_Header]           = accent;
+    c[ImGuiCol_HeaderHovered]    = ImVec4(1.00f, 1.00f, 1.00f, 0.060f);
+    c[ImGuiCol_HeaderActive]     = accentHover;
+    // Neutral raised buttons (#585858, Unity). Primary/active toolbar actions push
+    // their own colours, so a toolbar reads as calm greys, not a row of blue pills.
+    c[ImGuiCol_Button]           = ImVec4(0.345f, 0.345f, 0.345f, 1.00f);
+    c[ImGuiCol_ButtonHovered]    = ImVec4(0.400f, 0.400f, 0.400f, 1.00f);
+    c[ImGuiCol_ButtonActive]     = accent;
+    c[ImGuiCol_CheckMark]        = ImVec4(0.900f, 0.910f, 0.930f, 1.00f);  // Unity toggle check is light
     c[ImGuiCol_SliderGrab]       = accent;
     c[ImGuiCol_SliderGrabActive] = accentHover;
     c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
     c[ImGuiCol_SeparatorHovered] = accentDim;
-    c[ImGuiCol_ResizeGrip]       = ImVec4(0.30f, 0.40f, 0.50f, 0.30f);
+    c[ImGuiCol_SeparatorActive]  = accent;
+    c[ImGuiCol_ResizeGrip]       = ImVec4(1.00f, 1.00f, 1.00f, 0.060f);
     c[ImGuiCol_ResizeGripHovered]= accentDim;
     c[ImGuiCol_ResizeGripActive] = accent;
-    c[ImGuiCol_Tab]              = ImVec4(0.120f, 0.120f, 0.127f, 1.00f);
-    c[ImGuiCol_TabHovered]       = ImVec4(1.00f, 1.00f, 1.00f, 0.10f);
-    c[ImGuiCol_TabActive]        = ImVec4(0.205f, 0.205f, 0.217f, 1.00f);
-    c[ImGuiCol_TabUnfocused]     = ImVec4(0.105f, 0.105f, 0.112f, 1.00f);
-    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.165f, 0.165f, 0.175f, 1.00f);
+    c[ImGuiCol_Tab]              = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2D2D2D
+    c[ImGuiCol_TabHovered]       = ImVec4(0.255f, 0.255f, 0.255f, 1.00f);
+    c[ImGuiCol_TabActive]        = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);  // active tab blends with panels
+    c[ImGuiCol_TabUnfocused]     = ImVec4(0.165f, 0.165f, 0.165f, 1.00f);
+    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.210f, 0.210f, 0.210f, 1.00f);
     c[ImGuiCol_TabSelectedOverline]       = accent;                 // accent line atop the active tab
     c[ImGuiCol_TabDimmedSelectedOverline] = accentDim;
     c[ImGuiCol_DockingPreview]   = accentDim;
     c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
     c[ImGuiCol_NavHighlight]     = accent;
-    c[ImGuiCol_Text]             = ImVec4(0.860f, 0.865f, 0.880f, 1.00f);   // soft off-white
-    c[ImGuiCol_TextDisabled]     = ImVec4(0.480f, 0.485f, 0.510f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
-    c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.330f, 0.330f, 0.355f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.400f, 0.400f, 0.430f, 1.00f);
+    c[ImGuiCol_Text]             = ImVec4(0.824f, 0.824f, 0.827f, 1.00f);   // #D2D2D2 Unity label
+    c[ImGuiCol_TextDisabled]     = ImVec4(0.500f, 0.500f, 0.505f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]      = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);   // no track column — just the thumb
+    c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.355f, 0.355f, 0.358f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.420f, 0.420f, 0.423f, 1.00f);
     c[ImGuiCol_ScrollbarGrabActive]  = accent;
-    c[ImGuiCol_DockingEmptyBg]   = ImVec4(0.110f, 0.110f, 0.118f, 1.00f);
+    c[ImGuiCol_DockingEmptyBg]   = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);  // #1E1E1E
     // Tables: a defined header, faint zebra rows, and low-contrast grid lines so
     // multi-column views (bindings, stats, asset lists) read cleanly.
-    c[ImGuiCol_TableHeaderBg]    = ImVec4(0.205f, 0.205f, 0.220f, 1.00f);
+    c[ImGuiCol_TableHeaderBg]    = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
     c[ImGuiCol_TableBorderStrong]= ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
     c[ImGuiCol_TableBorderLight] = ImVec4(0.00f, 0.00f, 0.00f, 0.25f);
     c[ImGuiCol_TableRowBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
@@ -30284,7 +30286,8 @@ int main(int argc, char** argv) {
     // Branded loading frame right away, so the editor isn't a black rectangle
     // while fonts, GPU renderers and the project set-up run below.
     { int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-      okay::DrawSplash(renderer, sw, sh, 0.62f, 0.63f, 0.66f); }
+      ImVec4 sa = AccentCol(1.0f);   // match the editor's accent (default Unity blue)
+      okay::DrawSplash(renderer, sw, sh, sa.x, sa.y, sa.z); }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
 
     IMGUI_CHECKVERSION();

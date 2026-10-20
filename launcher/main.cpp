@@ -936,6 +936,7 @@ int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
 int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
+bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 int g_winW = 1040, g_winH = 680;  // last window size (persisted)
 const char* kThemeNames[] = {"Dark", "Midnight", "Light"};
 
@@ -1073,7 +1074,7 @@ void DarkTheme() {
     s.ItemSpacing     = ImVec2(8, 6);   s.ItemInnerSpacing = ImVec2(7, 5);
     s.WindowBorderSize = 0.0f;          s.ChildBorderSize = 1.0f;
     s.FrameBorderSize  = 0.0f;          s.PopupBorderSize = 1.0f;
-    s.ScrollbarSize   = 13.0f;          s.GrabMinSize = 11.0f;
+    s.ScrollbarSize   = 10.0f;          s.GrabMinSize = 11.0f;
     s.SeparatorTextBorderSize = 1.0f;
     s.SeparatorTextPadding = ImVec2(14, 5);
     s.TabBarBorderSize = 1.0f;
@@ -1146,7 +1147,7 @@ void DarkTheme() {
         c[ImGuiCol_Text]             = ImVec4(0.824f, 0.824f, 0.827f, 1.00f);   // #D2D2D2 Unity label
         c[ImGuiCol_TextDisabled]     = ImVec4(0.500f, 0.500f, 0.505f, 1.00f);
         c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
-        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);   // #252525 track
+        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);   // no track column — just the thumb
         c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.355f, 0.355f, 0.358f, 1.00f);
         c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.420f, 0.420f, 0.423f, 1.00f);
         c[ImGuiCol_ScrollbarGrabActive]  = accent;
@@ -1671,6 +1672,7 @@ void LoadPrefs() {
         else if (k == "mutechat" && !v.empty()) g_mutedChats.insert(v);
         else if (k == "archivechat" && !v.empty()) g_archivedChats.insert(v);
         else if (k == "min_to_tray") g_minimizeToTray = (v != "0");
+        else if (k == "nav_collapsed") g_navCollapsed = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
@@ -1720,6 +1722,7 @@ void SavePrefs() {
     for (const auto& u : g_mutedChats)   f << "mutechat=" << u << "\n";
     for (const auto& u : g_archivedChats) f << "archivechat=" << u << "\n";
     f << "min_to_tray=" << (g_minimizeToTray ? 1 : 0) << "\n";
+    f << "nav_collapsed=" << (g_navCollapsed ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
     for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
@@ -2754,12 +2757,15 @@ int main(int argc, char** argv) {
         // (Removed the soft accent glow gradient across the top — a flat, Steam-style
         // dark surface reads more like a real app and less "designed".)
 
-        // ---- Left nav ----
-        ImGui::BeginChild("nav", ImVec2(224, 0), true);
+        // ---- Left nav (collapsible to an icon-only rail) ----
+        const float kNavExpandedW = 224.0f, kNavCollapsedW = 58.0f;
+        const float navW = g_navCollapsed ? kNavCollapsedW : kNavExpandedW;
+        ImGui::BeginChild("nav", ImVec2(navW, 0), true, ImGuiWindowFlags_NoScrollbar);
         ImGui::Dummy(ImVec2(0, 6));
         {   // App header: drawn OkaySpace logo mark (ringed planet + star on a
-            // navy tile) + product name / version.
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
+            // navy tile) + product name / version (hidden when collapsed).
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                 (g_navCollapsed ? (navW - 34.0f) * 0.5f - 4.0f : 8.0f));
             ImVec2 lp = ImGui::GetCursorScreenPos();
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const float S = 34.0f;
@@ -2788,17 +2794,39 @@ int main(int argc, char** argv) {
             dl->AddPolyline(ring, 28, ringCol, ImDrawFlags_Closed, 1.6f);
             dl->AddCircleFilled(ImVec2(lp.x + S * 0.76f, lp.y + S * 0.26f), 1.3f, IM_COL32(255, 255, 255, 230));
             dl->PopClipRect();
-            ImGui::Dummy(ImVec2(S + 8, S));
-            ImGui::SameLine();
-            ImGui::BeginGroup();
-            ImGui::Text("OkaySpace");
-            ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
-            ImGui::EndGroup();
+            ImGui::Dummy(ImVec2(S + (g_navCollapsed ? 0.0f : 8.0f), S));
+            if (!g_navCollapsed) {
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                ImGui::Text("OkaySpace");
+                ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
+                ImGui::EndGroup();
+            }
+        }
+        // Collapse / expand toggle (hamburger) — a full-width row that flips the rail.
+        {
+            ImGui::Dummy(ImVec2(0, 6));
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 rmin = ImGui::GetCursorScreenPos();
+            float rw = ImGui::GetContentRegionAvail().x, rh = 26.0f;
+            if (ImGui::InvisibleButton("##navtoggle", ImVec2(rw, rh))) { g_navCollapsed = !g_navCollapsed; SavePrefs(); }
+            bool th = ImGui::IsItemHovered();
+            if (th) dl->AddRectFilled(rmin, ImVec2(rmin.x + rw, rmin.y + rh), IM_COL32(255, 255, 255, 14));
+            float hx = g_navCollapsed ? rmin.x + rw * 0.5f : rmin.x + 20.0f;
+            float hy = rmin.y + rh * 0.5f;
+            ImU32 hc = ImGui::GetColorU32(ImGuiCol_Text);
+            for (int k = -1; k <= 1; ++k)
+                dl->AddLine(ImVec2(hx - 7, hy + k * 5.0f), ImVec2(hx + 7, hy + k * 5.0f), hc, 2.0f);
+            if (!g_navCollapsed)
+                dl->AddText(ImVec2(rmin.x + 40, hy - ImGui::GetTextLineHeight() * 0.5f),
+                            ImGui::GetColorU32(ImGuiCol_TextDisabled), "Collapse");
+            if (th) ImGui::SetTooltip(g_navCollapsed ? "Expand sidebar" : "Collapse sidebar");
         }
         // Scrollable nav items, sized to leave room for the pinned update footer
         // below — so on a short window the items scroll instead of overlapping it.
         const float kNavFootH = 92.0f;
-        ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - kNavFootH), false);
+        ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - kNavFootH), false,
+                          ImGuiWindowFlags_NoScrollbar);
         ImGui::Dummy(ImVec2(0, 16));
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
         // Grouped, Steam-style sidebar. Display order + section headers; the tab
@@ -2812,13 +2840,16 @@ int main(int argc, char** argv) {
         };
         for (const NavRow& nv : kNavRows) {
             int i = nv.tab;
-            if (nv.section) {
+            if (nv.section && !g_navCollapsed) {
                 ImGui::Dummy(ImVec2(0, 8));
                 ImGui::TextDisabled("  %s", nv.section);
                 ImGui::Dummy(ImVec2(0, 2));
+            } else if (nv.section) {
+                ImGui::Dummy(ImVec2(0, 6));   // just a gap between groups when collapsed
             }
             char lbl[48];
-            std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);   // room for the icon
+            if (g_navCollapsed) std::snprintf(lbl, sizeof(lbl), "##nav%d", i);
+            else                std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);
             bool sel = (tab == i);
             // Flat, full-width selection (Steam/Unity-style): a neutral fill across
             // the whole row + a thin accent bar on the left — no rounded pill.
@@ -2842,7 +2873,9 @@ int main(int argc, char** argv) {
             ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
             // Little vector icon per section (no icon font needed).
             {
-                float cy = (mn.y + mx.y) * 0.5f, cx = mn.x + 24.0f, r = 6.5f;
+                float cy = (mn.y + mx.y) * 0.5f;
+                float cx = g_navCollapsed ? (mn.x + mx.x) * 0.5f : mn.x + 24.0f;
+                float r = 6.5f;
                 ImU32 ic = ImGui::GetColorU32(sel ? ImVec4(1.00f, 1.00f, 1.00f, 1.0f)
                                                   : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
                 switch (i) {
@@ -2921,106 +2954,154 @@ int main(int argc, char** argv) {
                         break;
                 }
             }
-            // Play shows how many games are installed, right-aligned in the row.
-            if (i == 1 && !scenes.empty()) {
-                char nb[16]; std::snprintf(nb, sizeof(nb), "%d", (int)scenes.size());
+            // Right-aligned count/badge chips. When collapsed, a small corner dot
+            // stands in for the number so it doesn't overflow the narrow rail.
+            auto cornerDot = [&](ImU32 dotCol) {
+                dl->AddCircleFilled(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 4.0f, dotCol, 12);
+            };
+            auto countChip = [&](int n, ImU32 bgc) {
+                char nb[16]; std::snprintf(nb, sizeof(nb), "%d", n);
                 ImVec2 ts = ImGui::CalcTextSize(nb);
                 ImVec2 bp(mx.x - ts.x - 18.0f, (mn.y + mx.y) * 0.5f - ts.y * 0.5f);
-                dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
-                                  ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
-                dl->AddText(bp, ImGui::GetColorU32(ImGuiCol_Text), nb);
-            }
-            // Friends shows a red badge: pending requests + unread DMs.
-            if (i == 6 && (g_friendRequests + g_dmUnread) > 0) {
-                char nb[16]; std::snprintf(nb, sizeof(nb), "%d", g_friendRequests + g_dmUnread);
-                ImVec2 ts = ImGui::CalcTextSize(nb);
-                ImVec2 bp(mx.x - ts.x - 18.0f, (mn.y + mx.y) * 0.5f - ts.y * 0.5f);
-                dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
-                                  IM_COL32(210, 72, 72, 255), 8.0f);
+                dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2), bgc, 8.0f);
                 dl->AddText(bp, IM_COL32(255, 255, 255, 255), nb);
+            };
+            // Play: games installed.
+            if (i == 1 && !scenes.empty()) {
+                if (g_navCollapsed) cornerDot(ImGui::GetColorU32(kAccent));
+                else countChip((int)scenes.size(), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)));
             }
-            // Downloads shows the number of active (in-flight) downloads.
+            // Friends: pending requests + unread DMs (red).
+            if (i == 6 && (g_friendRequests + g_dmUnread) > 0) {
+                if (g_navCollapsed) cornerDot(IM_COL32(210, 72, 72, 255));
+                else countChip(g_friendRequests + g_dmUnread, IM_COL32(210, 72, 72, 255));
+            }
+            // Downloads: in-flight downloads.
             if (i == 10) {
                 int act = ActiveDownloads();
                 if (act > 0) {
-                    char nb[16]; std::snprintf(nb, sizeof(nb), "%d", act);
-                    ImVec2 ts = ImGui::CalcTextSize(nb);
-                    ImVec2 bp(mx.x - ts.x - 18.0f, (mn.y + mx.y) * 0.5f - ts.y * 0.5f);
-                    dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
-                                      ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), 8.0f);
-                    dl->AddText(bp, ImGui::GetColorU32(ImGuiCol_Text), nb);
+                    if (g_navCollapsed) cornerDot(ImGui::GetColorU32(kAccent));
+                    else countChip(act, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)));
                 }
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Shortcut: %d", i + 1);
+            if (ImGui::IsItemHovered()) {
+                if (g_navCollapsed) ImGui::SetTooltip("%s  (%d)", navs[i], i + 1);
+                else                ImGui::SetTooltip("Shortcut: %d", i + 1);
+            }
         }
 
         // Signed-in status chip, just under the nav items.
         ImGui::Dummy(ImVec2(0, 10));
-        ImGui::TextDisabled("  ACCOUNT");
-        if (account.IsLoggedIn()) {
-            ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "  %s  %s",
-                               account.IsOnline() ? "online" : "local",
-                               account.CurrentSession().username.c_str());
-        } else {
-            ImGui::TextDisabled("  not signed in");
-        }
-        // The whole account line jumps to the Account tab.
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            ImGui::SetTooltip(account.IsLoggedIn() ? "Open the Account tab" : "Sign in");
-        }
-        if (ImGui::IsItemClicked()) { tab = 3; g_lastTab = 3; SavePrefs(); }
-        // Open the floating Chat window (direct messages) from anywhere.
-        if (account.IsLoggedIn()) {
-            ImGui::Dummy(ImVec2(0, 4));
-            ImGui::SetCursorPosX(10);
-            char cbtn[48]; std::snprintf(cbtn, sizeof(cbtn), g_dmUnread > 0 ? "  Chat  (%d)" : "  Open Chat", g_dmUnread);
-            if (ImGui::Button(cbtn, ImVec2(-10, 0))) g_chatWinOpen = !g_chatWinOpen;
+        if (!g_navCollapsed) {
+            ImGui::TextDisabled("  ACCOUNT");
+            if (account.IsLoggedIn()) {
+                ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "  %s  %s",
+                                   account.IsOnline() ? "online" : "local",
+                                   account.CurrentSession().username.c_str());
+            } else {
+                ImGui::TextDisabled("  not signed in");
+            }
+            // The whole account line jumps to the Account tab.
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImGui::SetTooltip(account.IsLoggedIn() ? "Open the Account tab" : "Sign in");
+            }
+            if (ImGui::IsItemClicked()) { tab = 3; g_lastTab = 3; SavePrefs(); }
+            // Open the floating Chat window (direct messages) from anywhere.
+            if (account.IsLoggedIn()) {
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::SetCursorPosX(10);
+                char cbtn[48]; std::snprintf(cbtn, sizeof(cbtn), g_dmUnread > 0 ? "  Chat  (%d)" : "  Open Chat", g_dmUnread);
+                if (ImGui::Button(cbtn, ImVec2(-10, 0))) g_chatWinOpen = !g_chatWinOpen;
+            }
+        } else if (account.IsLoggedIn()) {
+            // Collapsed: a compact, centered chat button with a bubble icon.
+            float av = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av - 34.0f) * 0.5f);
+            if (ImGui::Button("##navchat", ImVec2(34, 30))) g_chatWinOpen = !g_chatWinOpen;
+            ImVec2 bmn = ImGui::GetItemRectMin(), bmx = ImGui::GetItemRectMax();
+            float bcx = (bmn.x + bmx.x) * 0.5f, bcy = (bmn.y + bmx.y) * 0.5f;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImU32 bc = ImGui::GetColorU32(ImGuiCol_Text);
+            dl->AddRectFilled(ImVec2(bcx - 8, bcy - 6), ImVec2(bcx + 8, bcy + 3), bc, 3.0f);
+            dl->AddTriangleFilled(ImVec2(bcx - 4, bcy + 2), ImVec2(bcx + 1, bcy + 2), ImVec2(bcx - 4, bcy + 7), bc);
+            if (g_dmUnread > 0)
+                dl->AddCircleFilled(ImVec2(bmx.x - 3, bmn.y + 3), 4.0f, IM_COL32(210, 72, 72, 255), 12);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(g_dmUnread > 0 ? "Chat  (%d unread)" : "Open Chat", g_dmUnread);
         }
         ImGui::EndChild();   // end scrollable nav items
 
         // ---- Update status (sits below the scrolling nav items) ----
         UpState st = GetState();
-        ImGui::Separator();
-        ImVec4 col = (st == Up_Failed)  ? ImVec4(1.0f, 0.55f, 0.55f, 1)
-                   : (st == Up_Updated) ? ImVec4(0.55f, 0.9f, 0.6f, 1)
-                   : (st == Up_Downloading || st == Up_Checking)
-                                        ? ImVec4(0.85f, 0.8f, 0.4f, 1)
-                                        : ImVec4(0.6f, 0.65f, 0.75f, 1);
-        const char* head = (st == Up_Downloading) ? "Updating..."
-                         : (st == Up_Checking)    ? "Checking..."
-                         : (st == Up_Updated)     ? "Updated"
-                         : (st == Up_Failed)      ? "Update failed"
-                                                  : "Engine";
-        if (st == Up_Checking || st == Up_Downloading) {
-            // Spinner: an arc sweeping around while the worker runs.
-            ImVec2 sp = ImGui::GetCursorScreenPos();
-            float rad = 6.0f;
-            ImVec2 ctr(sp.x + rad + 2.0f, sp.y + rad + 3.0f);
-            float a0 = (float)ImGui::GetTime() * 6.0f;
-            ImDrawList* sdl = ImGui::GetWindowDrawList();
-            sdl->PathArcTo(ctr, rad, a0, a0 + 4.6f, 20);
-            sdl->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.4f);
-            ImGui::Dummy(ImVec2(rad * 2.0f + 6.0f, rad * 2.0f + 4.0f));
-            ImGui::SameLine();
-        }
-        ImGui::TextColored(col, "%s", head);
-        ImGui::PushTextWrapPos(0.0f);
-        std::string upMsg = GetUpMsg();
-        // Before any check runs, at least show the installed version here.
-        ImGui::TextDisabled("%s", upMsg.empty() ? "v" OKAY_ENGINE_VERSION : upMsg.c_str());
-        ImGui::PopTextWrapPos();
         bool busy = (st == Up_Checking || st == Up_Downloading);
-        ImGui::BeginDisabled(busy);
-        if (ImGui::SmallButton("Check for updates")) StartUpdateCheck();
-        ImGui::EndDisabled();
-        if (g_upRelaunchNeeded && st == Up_Updated) {
-            ImGui::SameLine();
-            // The new launcher exe is already swapped in place; start it and quit.
-            if (ImGui::SmallButton("Restart now")) {
-                Launch(g_selfPath);
-                running = false;
+        ImGui::Separator();
+        if (!g_navCollapsed) {
+            ImVec4 col = (st == Up_Failed)  ? ImVec4(1.0f, 0.55f, 0.55f, 1)
+                       : (st == Up_Updated) ? ImVec4(0.55f, 0.9f, 0.6f, 1)
+                       : (st == Up_Downloading || st == Up_Checking)
+                                            ? ImVec4(0.85f, 0.8f, 0.4f, 1)
+                                            : ImVec4(0.6f, 0.65f, 0.75f, 1);
+            const char* head = (st == Up_Downloading) ? "Updating..."
+                             : (st == Up_Checking)    ? "Checking..."
+                             : (st == Up_Updated)     ? "Updated"
+                             : (st == Up_Failed)      ? "Update failed"
+                                                      : "Engine";
+            if (busy) {
+                // Spinner: an arc sweeping around while the worker runs.
+                ImVec2 sp = ImGui::GetCursorScreenPos();
+                float rad = 6.0f;
+                ImVec2 ctr(sp.x + rad + 2.0f, sp.y + rad + 3.0f);
+                float a0 = (float)ImGui::GetTime() * 6.0f;
+                ImDrawList* sdl = ImGui::GetWindowDrawList();
+                sdl->PathArcTo(ctr, rad, a0, a0 + 4.6f, 20);
+                sdl->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.4f);
+                ImGui::Dummy(ImVec2(rad * 2.0f + 6.0f, rad * 2.0f + 4.0f));
+                ImGui::SameLine();
+            }
+            ImGui::TextColored(col, "%s", head);
+            ImGui::PushTextWrapPos(0.0f);
+            std::string upMsg = GetUpMsg();
+            // Before any check runs, at least show the installed version here.
+            ImGui::TextDisabled("%s", upMsg.empty() ? "v" OKAY_ENGINE_VERSION : upMsg.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::BeginDisabled(busy);
+            if (ImGui::SmallButton("Check for updates")) StartUpdateCheck();
+            ImGui::EndDisabled();
+            if (g_upRelaunchNeeded && st == Up_Updated) {
+                ImGui::SameLine();
+                // The new launcher exe is already swapped in place; start it and quit.
+                if (ImGui::SmallButton("Restart now")) { Launch(g_selfPath); running = false; }
+            }
+        } else {
+            // Collapsed: a compact, centered update button (spinner while busy).
+            float av = ImGui::GetContentRegionAvail().x;
+            ImGui::Dummy(ImVec2(0, 2));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av - 34.0f) * 0.5f);
+            ImGui::BeginDisabled(busy);
+            bool clicked = ImGui::Button("##navupd", ImVec2(34, 30));
+            ImGui::EndDisabled();
+            if (clicked) StartUpdateCheck();
+            ImVec2 umn = ImGui::GetItemRectMin(), umx = ImGui::GetItemRectMax();
+            ImVec2 uc((umn.x + umx.x) * 0.5f, (umn.y + umx.y) * 0.5f);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            if (busy) {
+                float a0 = (float)ImGui::GetTime() * 6.0f;
+                dl->PathArcTo(uc, 7.0f, a0, a0 + 4.6f, 20);
+                dl->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.2f);
+            } else {
+                ImU32 uico = ImGui::GetColorU32(ImGuiCol_Text);
+                dl->PathArcTo(uc, 7.0f, -1.3f, 3.4f, 22);
+                dl->PathStroke(uico, 0, 2.0f);
+                float ea = 3.4f;
+                ImVec2 ep(uc.x + std::cos(ea) * 7.0f, uc.y + std::sin(ea) * 7.0f);
+                dl->AddTriangleFilled(ImVec2(ep.x - 4, ep.y - 3), ImVec2(ep.x + 3, ep.y - 4),
+                                      ImVec2(ep.x + 1, ep.y + 3), uico);
+            }
+            if (ImGui::IsItemHovered()) {
+                std::string um = GetUpMsg();
+                ImGui::SetTooltip("%s\nClick to check for updates",
+                                  um.empty() ? "v" OKAY_ENGINE_VERSION : um.c_str());
             }
         }
         ImGui::EndChild();

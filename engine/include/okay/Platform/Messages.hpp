@@ -161,6 +161,59 @@ public:
         return out;
     }
 
+    // ---- Reactions (any emoji, Messenger/Telegram-style) ------------------
+    // Toggle my `emoji` reaction (a short key like "heart","laugh","fire") on a
+    // message. The table keys on (reactor,scope,target_id,emoji), so each person
+    // may leave several different reactions on the same message.
+    bool React(long messageId, const std::string& emoji, bool on) {
+        if (!acct_.IsLoggedIn() || messageId <= 0 || emoji.empty()) return false;
+        if (on)
+            return acct_.Api("/rest/v1/message_reactions", "POST",
+                             "{\"scope\":\"dm\",\"target_id\":" + std::to_string(messageId) +
+                             ",\"emoji\":" + JStr(emoji) + "}", "Prefer: resolution=ignore-duplicates").ok;
+        return acct_.Api("/rest/v1/message_reactions?scope=eq.dm&target_id=eq." +
+                         std::to_string(messageId) + "&emoji=eq." + emoji, "DELETE").ok;
+    }
+    // Reaction counts per message: id -> (emoji -> count).
+    std::map<long, std::map<std::string,long>> Reactions() {
+        std::map<long, std::map<std::string,long>> out;
+        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id,emoji&scope=eq.dm", "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body))
+            out[std::atol(Field(o,"target_id").c_str())][Field(o,"emoji")] += 1;
+        return out;
+    }
+    // The emojis I've reacted with, per message: id -> set<emoji>.
+    std::map<long, std::set<std::string>> MyReactions() {
+        std::map<long, std::set<std::string>> out;
+        std::string mine = MyId(); if (mine.empty()) return out;
+        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id,emoji&scope=eq.dm&reactor=eq." + mine, "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body))
+            out[std::atol(Field(o,"target_id").c_str())].insert(Field(o,"emoji"));
+        return out;
+    }
+
+    // ---- Read receipts ----------------------------------------------------
+    // Record that I've read up to message `lastId` in my conversation with
+    // `peer` (upsert on (reader, peer)); drives the other side's "Seen" marker.
+    bool MarkRead(const std::string& peerUid, long lastId) {
+        if (!acct_.IsLoggedIn() || peerUid.empty() || lastId <= 0) return false;
+        return acct_.Api("/rest/v1/message_reads?on_conflict=reader,peer", "POST",
+                         "{\"peer\":" + JStr(peerUid) + ",\"last_read_id\":" + std::to_string(lastId) + "}",
+                         "Prefer: resolution=merge-duplicates").ok;
+    }
+    // The id up to which `peer` has read OUR conversation (0 = not read yet).
+    long PeerReadId(const std::string& peerUid) {
+        if (!acct_.IsLoggedIn() || peerUid.empty()) return 0;
+        std::string mine = MyId(); if (mine.empty()) return 0;
+        auto r = acct_.Api("/rest/v1/message_reads?select=last_read_id&reader=eq." + peerUid +
+                           "&peer=eq." + mine, "GET");
+        if (!r.ok) return 0;
+        auto o = SplitObjects(r.body);
+        return o.empty() ? 0 : std::atol(Field(o[0], "last_read_id").c_str());
+    }
+
 private:
     okay::account::AccountService& acct_;
     std::string myId_;

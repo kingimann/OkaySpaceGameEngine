@@ -1190,6 +1190,32 @@ static int EmojiId(const std::string& t) {
     for (const auto& e : kEmojis) if (t == e.code || (e.alt && t == e.alt)) return e.id;
     return -1;
 }
+
+// The quick-reaction palette (Messenger/Telegram-style): a short key stored in
+// message_reactions.emoji, paired with the drawable emoji id it renders as.
+struct ReactionDef { const char* key; int id; };
+static const ReactionDef kReactions[] = {
+    {"heart", 3}, {"thumbsup", 9}, {"laugh", 6}, {"wow", 7}, {"sad", 2}, {"fire", 4},
+};
+static int ReactionEmojiId(const std::string& key) {
+    for (const auto& r : kReactions) if (key == r.key) return r.id;
+    return 3;   // default to the heart glyph for unknown keys
+}
+
+// True when `body` is nothing but 1-3 emoji shortcodes (Telegram renders those
+// big and background-less). Reports how many via `count`.
+static bool IsEmojiOnly(const std::string& body, int& count) {
+    count = 0;
+    std::size_t i = 0, n = body.size();
+    while (i < n) {
+        while (i < n && (body[i] == ' ' || body[i] == '\n')) ++i;
+        if (i >= n) break;
+        std::size_t j = i; while (j < n && body[j] != ' ' && body[j] != '\n') ++j;
+        if (EmojiId(body.substr(i, j - i)) < 0) return false;
+        ++count; i = j;
+    }
+    return count > 0 && count <= 3;
+}
 // Draw emoji `id` centered at `c`, fitting a box of side `s`.
 static void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id) {
     float r = s * 0.46f;
@@ -1624,12 +1650,15 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static std::vector<okay::Messages::ConversationPreview> convs; static Uint32 convsNext = 0;
     static std::string selUid, selName, selAvatar; static bool selOnline = false;
     static std::vector<okay::DirectMessage> log; static Uint32 logNext = 0;
-    static std::map<long,long> likes; static std::map<long,bool> myLikes;
-    static std::map<std::string,long> seenId;       // newest id I've viewed, per friend (unread)
+    static std::map<long, std::map<std::string,long>> reacts;   // id -> emoji -> count
+    static std::map<long, std::set<std::string>> myReacts;      // id -> emojis I used
+    static long peerRead = 0;                        // peer's last-read id (Seen marker)
+    static std::map<std::string,long> seenId;        // newest id I've viewed, per friend (unread)
     static long editId = 0, replyTo = 0;
     static std::string replyName, replySnippet;
     static char input[1024] = ""; static int lastShown = -1; static std::string lastConv;
     static char convFilter[96] = ""; static char msgSearch[96] = ""; static bool showSearch = false;
+    static bool wantScrollBottom = false;            // Jump-to-latest request
 
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
         selUid = uid; selName = nm; selAvatar = av; selOnline = online;
@@ -1756,15 +1785,28 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (showSearch) { ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##msgsearch", "Find a message", msgSearch, sizeof(msgSearch)); }
             ImGui::Separator();
 
-            if (now >= logNext) { log = dm.With(selUid); likes = dm.Likes(); myLikes = dm.MyLikes(); logNext = now + 4000; }
-            // Mark everything seen (clears the unread dot for this conversation).
+            if (now >= logNext) {
+                log = dm.With(selUid);
+                reacts = dm.Reactions(); myReacts = dm.MyReactions();
+                peerRead = dm.PeerReadId(selUid);
+                logNext = now + 4000;
+                // Tell the peer I've read up to the newest message (Seen receipt).
+                if (!log.empty()) dm.MarkRead(selUid, log.back().id);
+            }
+            // Mark everything seen locally (clears the unread dot for this chat).
+            long firstUnread = 0;
+            for (const auto& m : log) {
+                if (!m.mine && m.id > seenId[selUid] && firstUnread == 0) firstUnread = m.id;
+            }
             for (const auto& m : log) if (!m.mine && m.id > seenId[selUid]) seenId[selUid] = m.id;
             // id -> message, for rendering reply quotes.
             std::map<long, const okay::DirectMessage*> byId;
             for (const auto& m : log) byId[m.id] = &m;
+            long lastMineId = 0; for (const auto& m : log) if (m.mine) lastMineId = m.id;
 
             // Reserve space for the composer (grows with reply banner + edit tag).
             float composerH = 48.0f + (replyTo || editId ? 24.0f : 0.0f);
+            bool scrolledUp = false; ImVec2 logRectMin, logRectMax;
             ImGui::BeginChild("##clog", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false);
             float avW = ImGui::GetContentRegionAvail().x;
             float baseX = ImGui::GetCursorPosX();
@@ -1781,9 +1823,24 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 }
                 long day = DayKey(m.when);
                 if (day != 0 && day != prevDay) { ImGui::SetCursorPosX(baseX); ChatDateSeparator(m.when); prevDay = day; prevMine = false; first = true; }
+                // "Unread messages" divider before the first message I hadn't seen.
+                if (firstUnread != 0 && m.id == firstUnread) {
+                    ImGui::SetCursorPosX(baseX); ImGui::Dummy(ImVec2(0, 4));
+                    ImVec2 up = ImGui::GetCursorScreenPos(); float uw = ImGui::GetContentRegionAvail().x;
+                    ImU32 uc = ImGui::GetColorU32(kAccent);
+                    const char* ul = "New messages"; float ulw = ImGui::CalcTextSize(ul).x;
+                    float uy = up.y + ImGui::GetTextLineHeight()*0.5f;
+                    dl->AddLine(ImVec2(up.x, uy), ImVec2(up.x + (uw-ulw)*0.5f - 8, uy), uc, 1.0f);
+                    dl->AddLine(ImVec2(up.x + (uw+ulw)*0.5f + 8, uy), ImVec2(up.x + uw, uy), uc, 1.0f);
+                    ImGui::SetCursorPosX(baseX + (uw-ulw)*0.5f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, uc); ImGui::TextUnformatted(ul); ImGui::PopStyleColor();
+                    ImGui::SetCursorPosX(baseX); ImGui::Dummy(ImVec2(0, 2));
+                }
                 bool grouped = !first && prevMine == m.mine && (m.when - prevWhen) < 300 && (m.when > 0);
                 ImGui::Dummy(ImVec2(0, grouped ? 1.0f : 6.0f));
 
+                int ecount = 0; bool emojiOnly = IsEmojiOnly(m.body, ecount);
+                const float bigEm = ImGui::GetTextLineHeight() * 2.3f;
                 float bubbleMax = avW * 0.70f; if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
                 float bodyW = MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
                 // reply quote + time contribute to width
@@ -1793,7 +1850,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
                 std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
                 float metaW = ImGui::CalcTextSize(meta.c_str()).x;
-                float contentW = std::max({bodyW, repW, metaW});
+                bool bareEmoji = emojiOnly && !rep;   // Telegram-style big, background-less emoji
+                float contentW = bareEmoji ? std::max((float)ecount * (bigEm + 3), metaW)
+                                           : std::max({bodyW, repW, metaW});
                 float boxW = contentW + padX*2;
                 float leftPad = m.mine ? 0.0f : (avatarW + avatarGap);
                 float x0 = m.mine ? (avW - boxW) : leftPad; if (x0 < leftPad) x0 = leftPad;
@@ -1832,10 +1891,27 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImGui::TextUnformatted(repText.c_str());
                     ImGui::PopStyleColor();
                 }
-                ImGui::PushTextWrapPos(gp.x + bubbleMax - padX);
-                RenderChatBody(m.body, bubbleMax - padX*2);
-                ImGui::PopTextWrapPos();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(m.mine ? ImVec4(0.85f,0.90f,1.0f,0.75f) : ImVec4(0.65f,0.70f,0.80f,0.9f)));
+                if (bareEmoji) {                            // big, bubble-less emoji
+                    std::size_t bi = 0, bn = m.body.size();
+                    bool firstTok = true;
+                    while (bi < bn) {
+                        while (bi < bn && (m.body[bi]==' '||m.body[bi]=='\n')) ++bi;
+                        if (bi >= bn) break;
+                        std::size_t bj = bi; while (bj < bn && m.body[bj]!=' ' && m.body[bj]!='\n') ++bj;
+                        int eid = EmojiId(m.body.substr(bi, bj-bi)); bi = bj;
+                        if (!firstTok) ImGui::SameLine(0, 3);
+                        ImVec2 ep = ImGui::GetCursorScreenPos();
+                        DrawEmoji(dl, ImVec2(ep.x + bigEm*0.5f, ep.y + bigEm*0.5f), bigEm, eid < 0 ? 0 : eid);
+                        ImGui::Dummy(ImVec2(bigEm, bigEm));
+                        firstTok = false;
+                    }
+                } else {
+                    ImGui::PushTextWrapPos(gp.x + bubbleMax - padX);
+                    RenderChatBody(m.body, bubbleMax - padX*2);
+                    ImGui::PopTextWrapPos();
+                }
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bareEmoji ? ImVec4(0.6f,0.64f,0.72f,0.9f)
+                                        : (m.mine ? ImVec4(0.85f,0.90f,1.0f,0.75f) : ImVec4(0.65f,0.70f,0.80f,0.9f))));
                 ImGui::TextUnformatted(meta.c_str());
                 ImGui::PopStyleColor();
                 ImGui::PopStyleVar();
@@ -1843,14 +1919,25 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::EndGroup();
                 ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
                 dl->ChannelsSetCurrent(0);                 // bubble behind
-                ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(52, 60, 78, 255);
-                dl->AddRectFilled(ImVec2(rmin.x - padX, rmin.y), ImVec2(rmax.x + padX, rmax.y), bg, 11.0f);
+                if (!bareEmoji) {
+                    ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(52, 60, 78, 255);
+                    dl->AddRectFilled(ImVec2(rmin.x - padX, rmin.y), ImVec2(rmax.x + padX, rmax.y), bg, 11.0f);
+                }
                 dl->ChannelsMerge();
 
-                // Reactions pill + right-click actions attach to the bubble item.
-                long lc = likes.count(m.id) ? likes[m.id] : 0; bool liked = myLikes.count(m.id) != 0;
+                // Right-click actions (React submenu, Reply, Copy, Edit, Delete).
+                auto& myset = myReacts[m.id];
                 if (ImGui::BeginPopupContextItem("##msgctx")) {
-                    if (ImGui::MenuItem(liked ? "Remove \xE2\x9D\xA4 reaction" : "React \xE2\x9D\xA4")) { dm.Like(m.id, !liked); logNext = 0; }
+                    if (ImGui::BeginMenu("React")) {
+                        for (const auto& rdef : kReactions) {
+                            bool have = myset.count(rdef.key) != 0;
+                            ImVec2 mp = ImGui::GetCursorScreenPos();
+                            if (ImGui::MenuItem((std::string("   ") + (have ? "(on)" : "") + "##rx" + rdef.key).c_str()))
+                                { dm.React(m.id, rdef.key, !have); logNext = 0; }
+                            DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(mp.x + 9, mp.y + ImGui::GetTextLineHeight()*0.5f), 18, rdef.id);
+                        }
+                        ImGui::EndMenu();
+                    }
                     if (ImGui::MenuItem("Reply")) { replyTo = m.id; replyName = m.mine ? "yourself" : selName; replySnippet = ChatPreview(m.body, 40); }
                     if (ImGui::MenuItem("Copy text")) ImGui::SetClipboardText(m.body.c_str());
                     if (m.mine) {
@@ -1860,32 +1947,84 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     }
                     ImGui::EndPopup();
                 }
-                if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::GetIO().KeyShift) { dm.Like(m.id, !liked); logNext = 0; }
-                // Reaction badge under the bubble.
-                if (lc > 0) {
-                    float bx = m.mine ? rmax.x - 6 : rmin.x + 6;
-                    ImGui::SetCursorScreenPos(ImVec2(m.mine ? bx - 34 : bx, rmax.y - 6));
-                    ImGui::BeginGroup();
-                    ImVec2 pp = ImGui::GetCursorScreenPos();
-                    dl->AddRectFilled(pp, ImVec2(pp.x + 34, pp.y + 17), IM_COL32(34,38,48,255), 8.0f);
-                    DrawHeart(dl, ImVec2(pp.x + 10, pp.y + 8.5f), 5.0f, IM_COL32(232,72,92,255));
-                    dl->AddText(ImVec2(pp.x + 18, pp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), std::to_string(lc).c_str());
-                    ImGui::Dummy(ImVec2(34, 17));
-                    ImGui::EndGroup();
+                // Double-click a bubble to quick-react with ❤ (Messenger).
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    bool have = myset.count("heart") != 0; dm.React(m.id, "heart", !have); logNext = 0;
                 }
+
+                // Reaction pills under the bubble (one per emoji with a count).
+                auto cit = reacts.find(m.id);
+                if (cit != reacts.end() && !cit->second.empty()) {
+                    ImGui::SetCursorScreenPos(ImVec2(rmin.x - (m.mine ? 0 : 0), rmax.y - 4));
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
+                    bool firstPill = true;
+                    for (const auto& kv : cit->second) {
+                        if (kv.second <= 0) continue;
+                        if (!firstPill) ImGui::SameLine();
+                        firstPill = false;
+                        bool mineR = myset.count(kv.first) != 0;
+                        std::string cnt = std::to_string(kv.second);
+                        float pw = 22.0f + ImGui::CalcTextSize(cnt.c_str()).x;
+                        ImGui::PushID((int)(m.id * 31 + ReactionEmojiId(kv.first)));
+                        ImVec2 pp = ImGui::GetCursorScreenPos();
+                        if (ImGui::InvisibleButton("##pill", ImVec2(pw, 18))) { dm.React(m.id, kv.first, !mineR); logNext = 0; }
+                        ImU32 pc = mineR ? ImGui::GetColorU32(kAccentDim) : IM_COL32(40, 46, 58, 255);
+                        dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + 18), pc, 9.0f);
+                        if (mineR) dl->AddRect(pp, ImVec2(pp.x + pw, pp.y + 18), ImGui::GetColorU32(kAccent), 9.0f, 0, 1.3f);
+                        DrawEmoji(dl, ImVec2(pp.x + 10, pp.y + 9), 13, ReactionEmojiId(kv.first));
+                        dl->AddText(ImVec2(pp.x + 17, pp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), cnt.c_str());
+                        ImGui::PopID();
+                    }
+                    ImGui::PopStyleVar();
+                    ImGui::SetCursorPosX(baseX); ImGui::Dummy(ImVec2(0, 14));
+                }
+
                 ImGui::PopID();
                 ImGui::SetCursorPosX(baseX);
                 prevMine = m.mine; prevWhen = m.when; first = false;
             }
+            // "Seen" under my latest message once the peer has read it.
+            if (!log.empty() && log.back().mine && lastMineId > 0 && peerRead >= lastMineId && msFilt.empty()) {
+                std::string seen = "Seen";
+                float sw = ImGui::CalcTextSize(seen.c_str()).x;
+                ImGui::SetCursorPosX(baseX + ImGui::GetContentRegionAvail().x - sw - 4);
+                ImGui::TextDisabled("%s", seen.c_str());
+            }
             if (log.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
             else if (!msFilt.empty() && matches == 0) ImGui::TextDisabled("No messages match \"%s\".", msgSearch);
-            if ((int)log.size() != lastShown || selUid != lastConv) {
-                if (msFilt.empty()) ImGui::SetScrollHereY(1.0f);
+            // Auto-scroll to the newest message on open / new message (unless the
+            // user has scrolled up to read history). Jump-to-latest overrides it.
+            scrolledUp = ImGui::GetScrollMaxY() > 1.0f && (ImGui::GetScrollMaxY() - ImGui::GetScrollY()) > 80.0f;
+            if (wantScrollBottom) { ImGui::SetScrollHereY(1.0f); wantScrollBottom = false; scrolledUp = false; }
+            else if ((int)log.size() != lastShown || selUid != lastConv) {
+                if (msFilt.empty() && !scrolledUp) ImGui::SetScrollHereY(1.0f);
                 lastShown = (int)log.size(); lastConv = selUid;
             }
+            logRectMin = ImGui::GetWindowPos();
+            logRectMax = ImVec2(logRectMin.x + ImGui::GetWindowWidth(), logRectMin.y + ImGui::GetWindowHeight());
             ImGui::EndChild();
+            // Floating "jump to latest" button when scrolled up.
+            if (scrolledUp) {
+                ImGui::SetCursorScreenPos(ImVec2(logRectMax.x - 44, logRectMax.y - 44));
+                if (ImGui::Button("\xE2\x86\x93##jump", ImVec2(32, 32))) wantScrollBottom = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to latest");
+            }
 
             // ---- Composer: reply/edit banner, emoji, growing input, send -------
+            // Esc clears a pending reply/edit; Up-arrow on an empty box edits your
+            // last message (Telegram/Messenger shortcuts).
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                    if (replyTo) replyTo = 0;
+                    else if (editId) { editId = 0; input[0] = '\0'; }
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && input[0] == '\0' && !editId && lastMineId > 0) {
+                    if (auto it = byId.find(lastMineId); it != byId.end()) {
+                        editId = lastMineId; replyTo = 0;
+                        std::snprintf(input, sizeof(input), "%s", it->second->body.c_str());
+                    }
+                }
+            }
             if (replyTo) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(kAccent));
                 ImGui::Text("Replying to %s", replyName.c_str());

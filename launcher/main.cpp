@@ -2547,6 +2547,30 @@ static int MarketListWorker(void*) {
     return 0;
 }
 
+// Background Account info fetch (profile + avatar + friend code). Opening the
+// Account tab used to block on three HTTPS calls; this fetches them once on a
+// worker and the tab applies the results when they arrive. g_acReady stays set
+// so each of the three consumers can pick up its piece on a later frame.
+static SDL_mutex* g_acMutex = nullptr;
+static volatile bool g_acStarted = false;
+static bool g_acReady = false;                 // (guarded)
+static okay::Friend g_acProfile;               // (guarded)
+static std::string g_acAvatar, g_acCode;       // (guarded)
+static int AccountInfoWorker(void*) {
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Friends fr(a);
+        auto prof = fr.MyProfile();
+        auto av   = fr.MyAvatar();
+        auto code = fr.MyCode();
+        if (g_acMutex) SDL_LockMutex(g_acMutex);
+        g_acProfile = std::move(prof); g_acAvatar = std::move(av); g_acCode = std::move(code);
+        g_acReady = true;
+        if (g_acMutex) SDL_UnlockMutex(g_acMutex);
+    } catch (...) {}
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -4314,14 +4338,26 @@ int main(int argc, char** argv) {
 
             if (account.IsLoggedIn()) {
                 const auto& s = account.CurrentSession();
-                // Load my customization once so the card below previews it.
-                if (!acctProfileLoaded && account.IsOnline()) {
-                    okay::Friend me = okay::Friends(account).MyProfile();
-                    acctAccent = me.accent;
-                    std::snprintf(acctStatus,   sizeof(acctStatus),   "%s", me.customStatus.c_str());
-                    std::snprintf(acctFavGame,  sizeof(acctFavGame),  "%s", me.favoriteGame.c_str());
-                    std::snprintf(acctLocation, sizeof(acctLocation), "%s", me.location.c_str());
-                    acctProfileLoaded = true;
+                // Fetch profile + avatar + code once, on a worker thread, so opening
+                // the Account tab doesn't freeze on three network calls.
+                if (!g_acMutex) g_acMutex = SDL_CreateMutex();
+                if (!g_acStarted && account.IsOnline()) {
+                    g_acStarted = true;
+                    if (SDL_Thread* t = SDL_CreateThread(AccountInfoWorker, "okay-acct", nullptr))
+                        SDL_DetachThread(t);
+                }
+                // Apply the fetched customization once it arrives.
+                if (!acctProfileLoaded && g_acMutex) {
+                    SDL_LockMutex(g_acMutex);
+                    if (g_acReady) {
+                        const okay::Friend& me = g_acProfile;
+                        acctAccent = me.accent;
+                        std::snprintf(acctStatus,   sizeof(acctStatus),   "%s", me.customStatus.c_str());
+                        std::snprintf(acctFavGame,  sizeof(acctFavGame),  "%s", me.favoriteGame.c_str());
+                        std::snprintf(acctLocation, sizeof(acctLocation), "%s", me.location.c_str());
+                        acctProfileLoaded = true;
+                    }
+                    SDL_UnlockMutex(g_acMutex);
                 }
                 int paIdx = acctAccent; if (paIdx < 0 || paIdx >= (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]))) paIdx = 0;
                 ImVec4 myAccent = kAccentPresets[paIdx].col;
@@ -4350,7 +4386,11 @@ int main(int argc, char** argv) {
                     ImGui::GetColorU32(ImVec4(myAccent.x, myAccent.y, myAccent.z, 0.05f)), 6.0f);
                 // My avatar: fetched once; the "Update avatar" button refreshes it.
                 static std::string s_myAvatar; static bool s_avFetched = false;
-                if (!s_avFetched && account.IsOnline()) { s_myAvatar = okay::Friends(account).MyAvatar(); s_avFetched = true; }
+                if (!s_avFetched && g_acMutex) {
+                    SDL_LockMutex(g_acMutex);
+                    if (g_acReady) { s_myAvatar = g_acAvatar; s_avFetched = true; }
+                    SDL_UnlockMutex(g_acMutex);
+                }
                 g_myAvatarSlot = &s_myAvatar;   // let the editor below update it live
                 SDL_Texture* myTex = AvatarTexture(s_myAvatar);
                 if (myTex) {
@@ -4394,7 +4434,11 @@ int main(int argc, char** argv) {
                     int achN = (int)okay::Achievements::All().size();
                     int gameN = (int)scenes.size();
                     static std::string myCode; static bool codeFetched = false;
-                    if (!codeFetched && account.IsOnline()) { myCode = okay::Friends(account).MyCode(); codeFetched = true; }
+                    if (!codeFetched && g_acMutex) {
+                        SDL_LockMutex(g_acMutex);
+                        if (g_acReady) { myCode = g_acCode; codeFetched = true; }
+                        SDL_UnlockMutex(g_acMutex);
+                    }
                     ImGui::Dummy(ImVec2(0, 4));
                     ImGui::TextDisabled("%d achievement%s   -   %d game%s in library",
                                         achN, achN == 1 ? "" : "s", gameN, gameN == 1 ? "" : "s");
@@ -4516,14 +4560,19 @@ int main(int argc, char** argv) {
                     // ---- Customize profile (Steam-style) ----
                     ImGui::Dummy(ImVec2(0, 10));
                     ImGui::SeparatorText("Customize profile");
-                    // Load current customization once.
-                    if (!acctProfileLoaded && account.IsOnline()) {
-                        okay::Friend me = okay::Friends(account).MyProfile();
-                        acctAccent = me.accent;
-                        std::snprintf(acctStatus,   sizeof(acctStatus),   "%s", me.customStatus.c_str());
-                        std::snprintf(acctFavGame,  sizeof(acctFavGame),  "%s", me.favoriteGame.c_str());
-                        std::snprintf(acctLocation, sizeof(acctLocation), "%s", me.location.c_str());
-                        acctProfileLoaded = true;
+                    // Customization is loaded once by the background worker above
+                    // (applied the moment it arrives) — never block here.
+                    if (!acctProfileLoaded && g_acMutex) {
+                        SDL_LockMutex(g_acMutex);
+                        if (g_acReady) {
+                            const okay::Friend& me = g_acProfile;
+                            acctAccent = me.accent;
+                            std::snprintf(acctStatus,   sizeof(acctStatus),   "%s", me.customStatus.c_str());
+                            std::snprintf(acctFavGame,  sizeof(acctFavGame),  "%s", me.favoriteGame.c_str());
+                            std::snprintf(acctLocation, sizeof(acctLocation), "%s", me.location.c_str());
+                            acctProfileLoaded = true;
+                        }
+                        SDL_UnlockMutex(g_acMutex);
                     }
                     // Accent color swatches — click one to set the profile theme.
                     ImGui::TextDisabled("Profile color");

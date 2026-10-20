@@ -2840,11 +2840,12 @@ void ApplyTheme() {
     c[ImGuiCol_TitleBg]          = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2D2D2D
     c[ImGuiCol_TitleBgActive]    = ImVec4(0.205f, 0.205f, 0.205f, 1.00f);
     c[ImGuiCol_MenuBarBg]        = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2D2D2D toolbar
-    // Selection = Unity blue (matches the launcher). Foldout bars use this too;
-    // Inspector component headers are custom-tinted (CategoryColor), unaffected.
-    c[ImGuiCol_Header]           = accent;
-    c[ImGuiCol_HeaderHovered]    = ImVec4(1.00f, 1.00f, 1.00f, 0.060f);
-    c[ImGuiCol_HeaderActive]     = accentHover;
+    // Foldout bars / selection: a neutral raised grey like Unity's foldouts (the
+    // accent is reserved for checks, sliders, tabs and pressed buttons, so the
+    // Inspector isn't a stack of solid-blue bars). HeaderActive lifts toward accent.
+    c[ImGuiCol_Header]           = ImVec4(0.270f, 0.270f, 0.285f, 1.00f);
+    c[ImGuiCol_HeaderHovered]    = ImVec4(0.320f, 0.320f, 0.338f, 1.00f);
+    c[ImGuiCol_HeaderActive]     = ImVec4(0.360f, 0.360f, 0.380f, 1.00f);
     // Neutral raised buttons (#585858, Unity). Primary/active toolbar actions push
     // their own colours, so a toolbar reads as calm greys, not a row of blue pills.
     c[ImGuiCol_Button]           = ImVec4(0.345f, 0.345f, 0.345f, 1.00f);
@@ -30354,6 +30355,15 @@ int main(int argc, char** argv) {
                 JetBrainsMono_compressed_data_base85, kCodeFontBakePx, &mc);
         if (!g_codeFont) { ImFontConfig fb; fb.SizePixels = 13.0f; g_codeFont = io.Fonts->AddFontDefault(&fb); }
     }
+    // Re-present the (animated) splash between heavy init steps so the loading
+    // frame keeps moving instead of sitting frozen until the first real frame.
+    auto splashTick = [&]() {
+        int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        ImVec4 sa = AccentCol(1.0f);
+        okay::DrawSplash(renderer, sw, sh, sa.x, sa.y, sa.z);
+        SDL_PumpEvents();
+    };
+    splashTick();
     LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
@@ -30435,6 +30445,7 @@ int main(int argc, char** argv) {
     }
     LoadCustomActions();   // reusable custom instruction/condition library
     ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
+    splashTick();   // keep the loading frame moving right up to the first real frame
 
     // Route engine logs (and script print/log/debug output) into the Console
     // with the matching severity (Unity-style info/warning/error).

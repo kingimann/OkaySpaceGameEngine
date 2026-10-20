@@ -1289,6 +1289,10 @@ int main(int argc, char** argv) {
             ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
             ImGui::EndGroup();
         }
+        // Scrollable nav items, sized to leave room for the pinned update footer
+        // below — so on a short window the items scroll instead of overlapping it.
+        const float kNavFootH = 92.0f;
+        ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - kNavFootH), false);
         ImGui::Dummy(ImVec2(0, 16));
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers"};
         // Grouped, Steam-style sidebar. Display order + section headers; the tab
@@ -1425,11 +1429,10 @@ int main(int argc, char** argv) {
             ImGui::SetTooltip(account.IsLoggedIn() ? "Open the Account tab" : "Sign in");
         }
         if (ImGui::IsItemClicked()) { tab = 3; g_lastTab = 3; SavePrefs(); }
+        ImGui::EndChild();   // end scrollable nav items
 
-        // ---- Update status (pinned to the bottom of the nav) ----
+        // ---- Update status (sits below the scrolling nav items) ----
         UpState st = GetState();
-        float footH = 78.0f;
-        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footH);
         ImGui::Separator();
         ImVec4 col = (st == Up_Failed)  ? ImVec4(1.0f, 0.55f, 0.55f, 1)
                    : (st == Up_Updated) ? ImVec4(0.55f, 0.9f, 0.6f, 1)

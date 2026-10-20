@@ -1154,6 +1154,14 @@ static void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id) {
     }
 }
 
+// A heart centered at c with lobe-radius ~r, in an arbitrary color (used for
+// the like toggle, where the color conveys liked/not-liked state).
+void DrawHeart(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
+    dl->AddCircleFilled(ImVec2(c.x - r*0.45f, c.y - r*0.2f), r*0.55f, col, 14);
+    dl->AddCircleFilled(ImVec2(c.x + r*0.45f, c.y - r*0.2f), r*0.55f, col, 14);
+    dl->AddTriangleFilled(ImVec2(c.x - r*0.95f, c.y + r*0.05f), ImVec2(c.x + r*0.95f, c.y + r*0.05f), ImVec2(c.x, c.y + r), col);
+}
+
 // A small emoji button that opens a picker grid; clicking an emoji appends its
 // shortcode to `buf` (space-separated so RenderChatBody tokenizes it).
 void EmojiPicker(const char* id, char* buf, std::size_t cap) {
@@ -3861,8 +3869,10 @@ int main(int argc, char** argv) {
                 ImGui::SetNextWindowSize(ImVec2(460, 440));
                 if (ImGui::BeginPopup("##dmwin")) {
                     okay::Messages dm(account);
+                    static std::map<long,long> dmLikes; static std::map<long,bool> dmMyLikes;
+                    static long dmEditId = 0;
                     Uint32 tnow = SDL_GetTicks();
-                    if (tnow >= dmNextPoll) { dmLog = dm.With(dmUid); dmNextPoll = tnow + 4000; }
+                    if (tnow >= dmNextPoll) { dmLog = dm.With(dmUid); dmLikes = dm.Likes(); dmMyLikes = dm.MyLikes(); dmNextPoll = tnow + 4000; }
                     // Header: friend avatar + name + presence dot.
                     ImVec2 hp = ImGui::GetCursorScreenPos();
                     DrawAvatar(dmAvatar, dmName, 30.0f);
@@ -3913,10 +3923,32 @@ int main(int argc, char** argv) {
                         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bubbleMax);
                         RenderChatBody(m.body);   // clickable links + emoji
                         ImGui::PopTextWrapPos();
-                        // tiny timestamp under the bubble
+                        // Meta row under the bubble: time, (edited), a ❤ like
+                        // toggle with count, and an Edit action on my own messages.
                         char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
-                        if (w[0]) { ImGui::SetCursorPosX(m.mine ? (avW - ImGui::CalcTextSize(w).x) : av);
-                                    ImGui::TextDisabled("%s", w); }
+                        long lc = dmLikes.count(m.id) ? dmLikes[m.id] : 0;
+                        bool liked = dmMyLikes.count(m.id) != 0;
+                        ImGui::PushID((int)m.id);
+                        ImGui::SetCursorPosX(m.mine ? (avW - 160) : av);
+                        ImGui::BeginGroup();
+                        if (w[0]) { ImGui::TextDisabled("%s%s", w, m.edited ? "  (edited)" : ""); ImGui::SameLine(0, 10); }
+                        // ❤ like toggle + count.
+                        {
+                            ImVec2 hp2 = ImGui::GetCursorScreenPos();
+                            if (ImGui::InvisibleButton("like", ImVec2(18, 16)) && account.IsLoggedIn()) {
+                                dm.Like(m.id, !liked); dmNextPoll = 0;
+                            }
+                            DrawHeart(ImGui::GetWindowDrawList(), ImVec2(hp2.x+8, hp2.y+8), 6.0f,
+                                      liked ? IM_COL32(232,72,92,255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip(liked ? "Unlike" : "Like");
+                            if (lc > 0) { ImGui::SameLine(0, 2); ImGui::TextDisabled("%ld", lc); }
+                        }
+                        if (m.mine) {
+                            ImGui::SameLine(0, 10);
+                            if (ImGui::SmallButton("edit")) { dmEditId = m.id; std::snprintf(dmInput, sizeof(dmInput), "%s", m.body.c_str()); }
+                        }
+                        ImGui::EndGroup();
+                        ImGui::PopID();
                         ImGui::SetCursorPosX(0);
                         ImGui::Dummy(ImVec2(0, 1));
                         prevSender = m.mine ? "me" : "them"; first = false;
@@ -3924,6 +3956,8 @@ int main(int argc, char** argv) {
                     if (dmLog.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
                     if ((int)dmLog.size() != dmLastShown) { ImGui::SetScrollHereY(1.0f); dmLastShown = (int)dmLog.size(); }
                     ImGui::EndChild();
+                    if (dmEditId) { ImGui::TextDisabled("Editing a message"); ImGui::SameLine();
+                        if (ImGui::SmallButton("cancel edit")) { dmEditId = 0; dmInput[0] = '\0'; } }
                     // Emoji picker + multiline composer: Enter sends, Ctrl+Enter = newline.
                     ImVec2 dmInSz(ImGui::GetContentRegionAvail().x - 64 - 36, ImGui::GetTextLineHeight() + 14);
                     EmojiPicker("dmemoji", dmInput, sizeof(dmInput)); ImGui::SameLine();
@@ -3931,8 +3965,9 @@ int main(int argc, char** argv) {
                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
                     ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-                    if ((ImGui::Button("Send", ImVec2(56, dmInSz.y)) || send) && dmInput[0]) {
-                        if (dm.Send(dmUid, dmInput)) { dmInput[0] = '\0'; dmNextPoll = 0; }
+                    if ((ImGui::Button(dmEditId ? "Save" : "Send", ImVec2(56, dmInSz.y)) || send) && dmInput[0]) {
+                        if (dmEditId) { if (dm.Edit(dmEditId, dmInput)) { dmEditId = 0; dmInput[0] = '\0'; dmNextPoll = 0; } }
+                        else if (dm.Send(dmUid, dmInput)) { dmInput[0] = '\0'; dmNextPoll = 0; }
                         ImGui::SetKeyboardFocusHere(-1);
                     }
                     ImGui::PopStyleColor();
@@ -4499,7 +4534,27 @@ int main(int argc, char** argv) {
                     if (svChan == 0) {
                         ImGui::TextDisabled("Pick a channel");
                     } else {
-                        if (now >= svNextMsg) { svMsgs = sv.Messages(svChan); svNextMsg = now + 4000; }
+                        static std::map<long,long> svLikes; static std::map<long,bool> svMyLikes; static long svEditId = 0;
+                        if (now >= svNextMsg) { svMsgs = sv.Messages(svChan); svLikes = sv.Likes(); svMyLikes = sv.MyLikes(); svNextMsg = now + 4000; }
+                        std::string svMe = account.CurrentSession().username;
+                        // Inline per-message actions: ❤ like + count, "(edited)", and
+                        // an Edit affordance on my own messages (loads it into the box).
+                        auto msgActions = [&](const okay::ChannelMessage& m) {
+                            long lc = svLikes.count(m.id) ? svLikes[m.id] : 0;
+                            bool liked = svMyLikes.count(m.id) != 0;
+                            ImGui::PushID((int)m.id);
+                            ImVec2 hp2 = ImGui::GetCursorScreenPos();
+                            if (ImGui::InvisibleButton("like", ImVec2(18, 16))) { sv.Like(m.id, !liked); svNextMsg = 0; }
+                            DrawHeart(ImGui::GetWindowDrawList(), ImVec2(hp2.x+8, hp2.y+9), 6.0f,
+                                      liked ? IM_COL32(232,72,92,255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                            if (lc > 0) { ImGui::SameLine(0, 2); ImGui::TextDisabled("%ld", lc); }
+                            if (m.edited) { ImGui::SameLine(0, 8); ImGui::TextDisabled("(edited)"); }
+                            if (!svMe.empty() && m.author == svMe) {
+                                ImGui::SameLine(0, 8);
+                                if (ImGui::SmallButton("edit")) { svEditId = m.id; std::snprintf(svMsg, sizeof(svMsg), "%s", m.body.c_str()); }
+                            }
+                            ImGui::PopID();
+                        };
                         // Channel header bar (# name), Discord-style.
                         std::string chanName;
                         for (const auto& c : svChannels) if (c.id == svChan) { chanName = c.name; break; }
@@ -4526,6 +4581,7 @@ int main(int argc, char** argv) {
                                 ImGui::TextColored(ImVec4(nc2.x,nc2.y,nc2.z,1), "%s", who.c_str());
                                 ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", w);
                                 RenderChatBody(m.body);
+                                msgActions(m);
                                 ImGui::EndGroup();
                                 prevAuthor = who;
                             } else {
@@ -4539,6 +4595,7 @@ int main(int argc, char** argv) {
                                     ImGui::GetWindowDrawList()->AddText(tp,
                                         ImGui::GetColorU32(ImGuiCol_TextDisabled), w);
                                 }
+                                msgActions(m);
                                 ImGui::Unindent(40.0f);
                             }
                             firstMsg = false;
@@ -4550,14 +4607,17 @@ int main(int argc, char** argv) {
                         }
                         if ((int)svMsgs.size() != svLastShown) { ImGui::SetScrollHereY(1.0f); svLastShown = (int)svMsgs.size(); }
                         ImGui::EndChild();
+                        if (svEditId) { ImGui::TextDisabled("Editing a message"); ImGui::SameLine();
+                            if (ImGui::SmallButton("cancel edit")) { svEditId = 0; svMsg[0] = '\0'; } }
                         // Emoji picker + multiline composer: Enter sends, Ctrl+Enter = newline.
                         ImVec2 inSz(ImGui::GetContentRegionAvail().x - 70 - 36, ImGui::GetTextLineHeight() + 14);
                         EmojiPicker("svemoji", svMsg, sizeof(svMsg)); ImGui::SameLine();
                         bool send = ImGui::InputTextMultiline("##svsend", svMsg, sizeof(svMsg), inSz,
                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
                         ImGui::SameLine();
-                        if ((ImGui::Button("Send", ImVec2(62, inSz.y)) || send) && svMsg[0]) {
-                            if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; svNextMsg = 0; }
+                        if ((ImGui::Button(svEditId ? "Save" : "Send", ImVec2(62, inSz.y)) || send) && svMsg[0]) {
+                            if (svEditId) { if (sv.EditMessage(svEditId, svMsg)) { svEditId = 0; svMsg[0] = '\0'; svNextMsg = 0; } }
+                            else if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; svNextMsg = 0; }
                             ImGui::SetKeyboardFocusHere(-1);   // keep focus in the box after sending
                         }
                     }

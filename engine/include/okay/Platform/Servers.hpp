@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <map>
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
@@ -18,7 +19,7 @@ namespace okay {
 
 struct Server  { long id = 0; std::string name; std::string invite; std::string owner; };
 struct Channel { long id = 0; std::string name; };
-struct ChannelMessage { long id = 0; std::string author; std::string body; long when = 0; };
+struct ChannelMessage { long id = 0; std::string author; std::string body; long when = 0; bool edited = false; long likes = 0; bool liked = false; };
 struct ServerMember { std::string uid, name, avatar, role; bool online = false; };
 
 class Servers {
@@ -136,12 +137,13 @@ public:
         std::vector<ChannelMessage> out;
         if (channelId <= 0) return out;
         auto r = acct_.Api("/rest/v1/channel_messages?channel_id=eq." + std::to_string(channelId) +
-                           "&select=id,author_name,body,created_at&order=created_at.asc&limit=" + std::to_string(limit), "GET");
+                           "&select=id,author_name,body,created_at,edited&order=created_at.asc&limit=" + std::to_string(limit), "GET");
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             ChannelMessage m; m.id = std::atol(Field(o, "id").c_str());
             m.author = Field(o, "author_name"); m.body = Field(o, "body");
             m.when = ParseIso(Field(o, "created_at"));
+            m.edited = Field(o, "edited") == "true";
             out.push_back(m);
         }
         return out;
@@ -153,6 +155,39 @@ public:
                          "{\"channel_id\":" + std::to_string(channelId) +
                          ",\"body\":" + JStr(body) +
                          ",\"author_name\":" + JStr(acct_.CurrentSession().username) + "}").ok;
+    }
+
+    // Edit one of my own channel messages (RLS blocks editing others').
+    bool EditMessage(long messageId, const std::string& body) {
+        if (!acct_.IsLoggedIn() || messageId <= 0 || body.empty()) return false;
+        return acct_.Api("/rest/v1/channel_messages?id=eq." + std::to_string(messageId), "PATCH",
+                         "{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
+    }
+    // ---- Reactions ("likes") on channel messages ---------------------------
+    bool Like(long messageId, bool on) {
+        if (!acct_.IsLoggedIn() || messageId <= 0) return false;
+        if (on)
+            return acct_.Api("/rest/v1/message_reactions", "POST",
+                             "{\"scope\":\"channel\",\"target_id\":" + std::to_string(messageId) +
+                             ",\"emoji\":\"heart\"}", "Prefer: resolution=ignore-duplicates").ok;
+        return acct_.Api("/rest/v1/message_reactions?scope=eq.channel&target_id=eq." +
+                         std::to_string(messageId) + "&emoji=eq.heart", "DELETE").ok;
+    }
+    std::map<long,long> Likes() {
+        std::map<long,long> out;
+        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id&scope=eq.channel&emoji=eq.heart", "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) out[std::atol(Field(o,"target_id").c_str())] += 1;
+        return out;
+    }
+    std::map<long,bool> MyLikes() {
+        std::map<long,bool> out;
+        std::string mine = MyUid();
+        if (mine.empty()) return out;
+        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id&scope=eq.channel&emoji=eq.heart&reactor=eq." + mine, "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) out[std::atol(Field(o,"target_id").c_str())] = true;
+        return out;
     }
 
     // Leave a server (RLS only lets a non-owner delete their own membership row).

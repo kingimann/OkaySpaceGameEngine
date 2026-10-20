@@ -133,6 +133,32 @@ drop policy if exists "send own messages" on public.messages;
 create policy "see own messages"  on public.messages for select
   using (auth.uid() = sender or auth.uid() = recipient);
 create policy "send own messages" on public.messages for insert with check (auth.uid() = sender);
+-- Editable DMs: a sender may edit their own message body (the `edited` flag
+-- lets the UI mark it "(edited)").
+alter table public.messages add column if not exists edited boolean default false;
+drop policy if exists "edit own messages" on public.messages;
+create policy "edit own messages" on public.messages for update using (auth.uid() = sender);
+
+-- ---------------------------------------------------------------------------
+-- Message reactions ("likes"): one row per (reactor, message, emoji). scope is
+-- 'dm' (messages) or 'channel' (channel_messages); emoji is a shortcode like
+-- 'heart'. Public read + aggregate; a reactor adds/removes only their own.
+-- ---------------------------------------------------------------------------
+create table if not exists public.message_reactions (
+  reactor     uuid not null default auth.uid() references auth.users on delete cascade,
+  scope       text not null check (scope in ('dm','channel')),
+  target_id   bigint not null,
+  emoji       text not null,
+  created_at  timestamptz default now(),
+  primary key (reactor, scope, target_id, emoji)
+);
+alter table public.message_reactions enable row level security;
+drop policy if exists "reactions readable" on public.message_reactions;
+drop policy if exists "add own reaction"   on public.message_reactions;
+drop policy if exists "drop own reaction"  on public.message_reactions;
+create policy "reactions readable" on public.message_reactions for select using (true);
+create policy "add own reaction"   on public.message_reactions for insert with check (auth.uid() = reactor);
+create policy "drop own reaction"  on public.message_reactions for delete using (auth.uid() = reactor);
 
 -- ---------------------------------------------------------------------------
 -- forums: public discussion threads + posts (the Community "Forums" section).
@@ -355,6 +381,10 @@ create policy "read channel messages" on public.channel_messages for select
   using (public.is_channel_member(channel_id));
 create policy "post channel messages" on public.channel_messages for insert
   with check (author = auth.uid() and public.is_channel_member(channel_id));
+-- Editable channel messages: the author may edit their own message body.
+alter table public.channel_messages add column if not exists edited boolean default false;
+drop policy if exists "edit own channel messages" on public.channel_messages;
+create policy "edit own channel messages" on public.channel_messages for update using (author = auth.uid());
 
 -- Create a server (owner joins + a #general channel), returning its id + code.
 create or replace function public.create_server(p_name text)

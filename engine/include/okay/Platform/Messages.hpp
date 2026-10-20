@@ -7,6 +7,7 @@
 #include "okay/Platform/Account/AccountService.hpp"
 #include <string>
 #include <vector>
+#include <map>
 #include <cstdlib>
 #include <ctime>
 #include <cctype>
@@ -19,6 +20,9 @@ struct DirectMessage {
     std::string body;
     long        when = 0;
     bool        mine = false;   // true when I sent it
+    bool        edited = false; // body was edited after sending
+    long        likes = 0;      // ❤ reaction count (filled by the UI)
+    bool        liked = false;  // I reacted (filled by the UI)
 };
 
 class Messages {
@@ -57,7 +61,7 @@ public:
     std::vector<DirectMessage> With(const std::string& friendUid) {
         std::vector<DirectMessage> out;
         if (!acct_.IsLoggedIn() || friendUid.empty()) return out;
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at"
+        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at,edited"
                            "&or=(sender.eq." + friendUid + ",recipient.eq." + friendUid + ")"
                            "&order=created_at.asc", "GET");
         if (!r.ok) return out;
@@ -67,8 +71,46 @@ public:
             m.body = Field(obj, "body");
             m.when = ParseIso(Field(obj, "created_at"));
             m.mine = Field(obj, "sender") != friendUid;   // the other party is the friend
+            m.edited = Field(obj, "edited") == "true";
             out.push_back(m);
         }
+        return out;
+    }
+
+    // Edit one of my own sent messages (RLS blocks editing others').
+    bool Edit(long messageId, const std::string& body) {
+        if (!acct_.IsLoggedIn() || messageId <= 0 || body.empty()) return false;
+        return acct_.Api("/rest/v1/messages?id=eq." + std::to_string(messageId), "PATCH",
+                         "{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
+    }
+
+    // ---- Reactions ("likes") ----------------------------------------------
+    // Toggle my ❤ on a message. Insert when `on`, delete when off.
+    bool Like(long messageId, bool on) {
+        if (!acct_.IsLoggedIn() || messageId <= 0) return false;
+        if (on)
+            return acct_.Api("/rest/v1/message_reactions", "POST",
+                             "{\"scope\":\"dm\",\"target_id\":" + std::to_string(messageId) +
+                             ",\"emoji\":\"heart\"}", "Prefer: resolution=ignore-duplicates").ok;
+        return acct_.Api("/rest/v1/message_reactions?scope=eq.dm&target_id=eq." +
+                         std::to_string(messageId) + "&emoji=eq.heart", "DELETE").ok;
+    }
+    // Like count per message id across this conversation.
+    std::map<long,long> Likes() {
+        std::map<long,long> out;
+        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id&scope=eq.dm&emoji=eq.heart", "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) out[std::atol(Field(o,"target_id").c_str())] += 1;
+        return out;
+    }
+    // Message ids I've liked.
+    std::map<long,bool> MyLikes() {
+        std::map<long,bool> out;
+        std::string mine = MyId();
+        if (mine.empty()) return out;
+        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id&scope=eq.dm&emoji=eq.heart&reactor=eq." + mine, "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) out[std::atol(Field(o,"target_id").c_str())] = true;
         return out;
     }
 

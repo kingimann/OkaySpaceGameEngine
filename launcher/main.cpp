@@ -4993,7 +4993,7 @@ int main(int argc, char** argv) {
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 196);
                     ImGui::TextDisabled("Your code:");
                     ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
                     ImGui::TextUnformatted(fCode.c_str());
                     ImGui::PopStyleColor();
                     ImGui::SameLine();
@@ -5076,7 +5076,7 @@ int main(int argc, char** argv) {
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     ImU32 dot = f->online ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
                     dl->AddCircleFilled(ImVec2(ap.x + 28, ap.y + 28), 5.5f, dot, 16);
-                    dl->AddCircle(ImVec2(ap.x + 28, ap.y + 28), 5.5f, IM_COL32(20, 28, 48, 255), 16, 2.0f);
+                    dl->AddCircle(ImVec2(ap.x + 28, ap.y + 28), 5.5f, IM_COL32(45, 45, 47, 255), 16, 2.0f);
                     if (fav) DrawEmoji(dl, ImVec2(ap.x + 2, ap.y + 2), 12, 5);   // gold star badge
                     ImGui::SameLine(); ImGui::SetCursorPosX(46);
                     ImGui::BeginGroup();

@@ -14,6 +14,7 @@
 #include "okay/Platform/Workshop.hpp"
 #include "okay/Platform/Messages.hpp"
 #include "okay/Platform/Forums.hpp"
+#include "okay/Platform/Servers.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -1227,7 +1228,7 @@ int main(int argc, char** argv) {
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
         if (!ImGui::GetIO().WantTextInput) {
-            for (int i = 0; i < 8; ++i)
+            for (int i = 0; i < 9; ++i)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
                 playFilter[0] = commFilter[0] = marketFilter[0] = '\0';
@@ -1289,14 +1290,14 @@ int main(int argc, char** argv) {
             ImGui::EndGroup();
         }
         ImGui::Dummy(ImVec2(0, 16));
-        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market"};
+        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers"};
         // Grouped, Steam-style sidebar. Display order + section headers; the tab
         // content blocks stay keyed by these indices, so only the order and the
         // grouping change here (keyboard shortcuts still map 1..8 to the tabs).
         struct NavRow { int tab; const char* section; };
         static const NavRow kNavRows[] = {
             {0, "MENU"},   {1, nullptr}, {2, nullptr},
-            {6, "SOCIAL"}, {5, nullptr}, {7, nullptr},
+            {6, "SOCIAL"}, {8, nullptr}, {5, nullptr}, {7, nullptr},
             {3, "SYSTEM"}, {4, nullptr},
         };
         for (const NavRow& nv : kNavRows) {
@@ -1374,6 +1375,15 @@ int main(int argc, char** argv) {
                         dl->AddCircleFilled(ImVec2(cx - r * 0.4f, cy - r * 0.4f), r * 0.16f,
                                             ImGui::GetColorU32(ImGuiCol_WindowBg));
                         dl->AddLine(ImVec2(cx + r * 0.1f, cy + r * 0.1f), ImVec2(cx + r * 0.9f, cy + r * 0.9f), ic, 3.0f);
+                        break;
+                    case 8:   // Servers: chat bubble
+                        dl->AddRectFilled(ImVec2(cx - r, cy - r * 0.8f), ImVec2(cx + r, cy + r * 0.3f), ic, r * 0.35f);
+                        dl->AddTriangleFilled(ImVec2(cx - r * 0.5f, cy + r * 0.2f),
+                                              ImVec2(cx - r * 0.1f, cy + r * 0.2f),
+                                              ImVec2(cx - r * 0.5f, cy + r * 0.8f), ic);
+                        dl->AddCircleFilled(ImVec2(cx - r * 0.45f, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
+                        dl->AddCircleFilled(ImVec2(cx, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
+                        dl->AddCircleFilled(ImVec2(cx + r * 0.45f, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
                         break;
                 }
             }
@@ -2563,13 +2573,40 @@ int main(int argc, char** argv) {
                 ImGui::BeginChild("##authcard", ImVec2(cardW, 0), true);
                 float innerW = ImGui::GetContentRegionAvail().x;
 
-                // Heading.
-                ImGui::Dummy(ImVec2(0, 2));
-                ImGui::TextUnformatted(acctRegisterMode ? "Create your account" : "Sign in to OkaySpace");
-                ImGui::TextDisabled(acctRegisterMode
+                // Centered OkaySpace logo mark (ringed planet) atop the card.
+                {
+                    const float L = 46.0f;
+                    ImGui::Dummy(ImVec2(0, 6));
+                    float cxpos = (ImGui::GetContentRegionAvail().x - L) * 0.5f;
+                    if (cxpos > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cxpos);
+                    ImVec2 lp = ImGui::GetCursorScreenPos();
+                    ImDrawList* ld = ImGui::GetWindowDrawList();
+                    ImVec2 c(lp.x + L * 0.5f, lp.y + L * 0.5f);
+                    ld->AddCircleFilled(c, L * 0.30f, ImGui::GetColorU32(kAccent), 28);
+                    ld->AddCircleFilled(ImVec2(c.x - L*0.07f, c.y - L*0.07f), L*0.30f, IM_COL32(255,255,255,40), 28);
+                    ImVec2 ring[28];
+                    for (int k = 0; k < 28; ++k) {
+                        float a = k * (6.2831853f/28), rx = L*0.46f, ry = L*0.16f, rot = -0.5f;
+                        float ex = std::cos(a)*rx, ey = std::sin(a)*ry;
+                        ring[k] = ImVec2(c.x + ex*std::cos(rot) - ey*std::sin(rot),
+                                         c.y + ex*std::sin(rot) + ey*std::cos(rot));
+                    }
+                    ld->AddPolyline(ring, 28, IM_COL32(220,232,255,235), ImDrawFlags_Closed, 1.8f);
+                    ImGui::Dummy(ImVec2(L, L));
+                }
+
+                // Heading (centered).
+                auto centerText = [&](const char* t, bool disabled) {
+                    float w = ImGui::CalcTextSize(t).x;
+                    float cxpos = (ImGui::GetContentRegionAvail().x - w) * 0.5f;
+                    if (cxpos > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cxpos);
+                    if (disabled) ImGui::TextDisabled("%s", t); else ImGui::TextUnformatted(t);
+                };
+                centerText(acctRegisterMode ? "Create your account" : "Sign in to OkaySpace", false);
+                centerText(acctRegisterMode
                     ? "Join to use Friends, the Marketplace, DMs and forums."
-                    : "Welcome back.");
-                ImGui::Dummy(ImVec2(0, 8));
+                    : "Welcome back.", true);
+                ImGui::Dummy(ImVec2(0, 10));
 
                 // Segmented Sign in / Create toggle (two half-width buttons).
                 auto seg = [&](const char* label, bool active, float w) {
@@ -3184,6 +3221,104 @@ int main(int argc, char** argv) {
                 } else if (mktShown == 0) {
                     ImGui::Dummy(ImVec2(0, 20));
                     ImGui::TextDisabled("No items match your search or filter.");
+                }
+                ImGui::EndChild();
+            }
+        } else if (tab == 8) {                            // ---- Servers (Discord-style) ----
+            sectionHeader("Servers", nullptr);
+            okay::Servers sv(account);
+            if (!sv.Available()) {
+                ImGui::Dummy(ImVec2(0, 20));
+                ImGui::TextDisabled("Sign in on the Account tab to create or join servers.");
+            } else {
+                static std::vector<okay::Server> svList;
+                static std::vector<okay::Channel> svChannels;
+                static std::vector<okay::ChannelMessage> svMsgs;
+                static long svSel = 0, svChan = 0;
+                static std::string svSelName, svErr;
+                static char svNew[64] = "", svJoin[24] = "", svMsg[800] = "", svNewChan[40] = "";
+                static Uint32 svNextList = 0, svNextChan = 0, svNextMsg = 0;
+                Uint32 now = SDL_GetTicks();
+                if (now >= svNextList) { svList = sv.MyServers(); svNextList = now + 20000; }
+
+                float colH = ImGui::GetContentRegionAvail().y - 6.0f;
+                // --- Column 1: server list + create/join ---
+                ImGui::BeginChild("##svlist", ImVec2(180, colH), true);
+                ImGui::TextDisabled("SERVERS");
+                for (const auto& s : svList) {
+                    bool sel = (s.id == svSel);
+                    if (ImGui::Selectable((s.name + "##" + std::to_string(s.id)).c_str(), sel)) {
+                        svSel = s.id; svSelName = s.name; svChan = 0; svNextChan = 0; svMsgs.clear();
+                    }
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("Create");
+                ImGui::SetNextItemWidth(-1);
+                bool mk = ImGui::InputTextWithHint("##svnew", "New server name", svNew, sizeof(svNew), ImGuiInputTextFlags_EnterReturnsTrue);
+                if ((ImGui::Button("Create server", ImVec2(-1, 0)) || mk) && svNew[0]) {
+                    okay::Server made;
+                    if (sv.CreateServer(svNew, &made, &svErr)) {
+                        svNew[0] = '\0'; svErr.clear(); svNextList = 0;
+                        svSel = made.id; svSelName = made.name; svChan = 0; svNextChan = 0;
+                        Toast("Server created", 1);
+                    }
+                }
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::TextDisabled("Join by code");
+                ImGui::SetNextItemWidth(-1);
+                bool jn = ImGui::InputTextWithHint("##svjoin", "invite code", svJoin, sizeof(svJoin), ImGuiInputTextFlags_EnterReturnsTrue);
+                if ((ImGui::Button("Join server", ImVec2(-1, 0)) || jn) && svJoin[0]) {
+                    if (sv.JoinServer(svJoin, &svErr)) { svJoin[0] = '\0'; svErr.clear(); svNextList = 0; Toast("Joined server", 1); }
+                }
+                if (!svErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1)); ImGui::TextWrapped("%s", svErr.c_str()); ImGui::PopStyleColor(); }
+                ImGui::EndChild();
+                ImGui::SameLine();
+
+                // --- Column 2: channels of the selected server ---
+                ImGui::BeginChild("##svchan", ImVec2(160, colH), true);
+                if (svSel == 0) {
+                    ImGui::TextDisabled("Pick a server");
+                } else {
+                    if (now >= svNextChan) { svChannels = sv.Channels(svSel); svNextChan = now + 15000;
+                        if (svChan == 0 && !svChannels.empty()) { svChan = svChannels[0].id; svNextMsg = 0; } }
+                    ImGui::TextDisabled("%s", svSelName.c_str());
+                    ImGui::Separator();
+                    for (const auto& c : svChannels) {
+                        bool sel = (c.id == svChan);
+                        if (ImGui::Selectable(("# " + c.name + "##" + std::to_string(c.id)).c_str(), sel)) { svChan = c.id; svNextMsg = 0; }
+                    }
+                    ImGui::Separator();
+                    ImGui::SetNextItemWidth(-1);
+                    bool nc = ImGui::InputTextWithHint("##svnewchan", "new channel", svNewChan, sizeof(svNewChan), ImGuiInputTextFlags_EnterReturnsTrue);
+                    if ((ImGui::SmallButton("Add channel") || nc) && svNewChan[0]) {
+                        if (sv.CreateChannel(svSel, svNewChan)) { svNewChan[0] = '\0'; svNextChan = 0; }
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::SameLine();
+
+                // --- Column 3: messages in the selected channel ---
+                ImGui::BeginChild("##svmsgs", ImVec2(0, colH), true);
+                if (svChan == 0) {
+                    ImGui::TextDisabled("Pick a channel");
+                } else {
+                    if (now >= svNextMsg) { svMsgs = sv.Messages(svChan); svNextMsg = now + 4000; }
+                    ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - 36.0f), false);
+                    for (const auto& m : svMsgs) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.78f, 1.0f, 1.0f));
+                        ImGui::TextUnformatted(m.author.empty() ? "unknown" : m.author.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::SameLine(0, 8);
+                        ImGui::TextWrapped("%s", m.body.c_str());
+                    }
+                    if (svMsgs.empty()) ImGui::TextDisabled("No messages yet. Say something!");
+                    ImGui::EndChild();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70);
+                    bool send = ImGui::InputTextWithHint("##svsend", "Message #channel", svMsg, sizeof(svMsg), ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    if ((ImGui::Button("Send", ImVec2(62, 0)) || send) && svMsg[0]) {
+                        if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; svNextMsg = 0; }
+                    }
                 }
                 ImGui::EndChild();
             }

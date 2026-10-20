@@ -207,3 +207,113 @@ begin
       with check (bucket_id = 'workshop' and auth.role() = 'authenticated');
   end if;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Servers (Discord-style): a server has members, channels, and per-channel
+-- messages. Membership drives all reads. To avoid RLS self-recursion we gate
+-- reads on a SECURITY DEFINER helper, and do create/join via SECURITY DEFINER
+-- RPCs (a non-member can't SELECT a server to find it by code otherwise).
+-- ---------------------------------------------------------------------------
+create table if not exists public.servers (
+  id          bigint generated always as identity primary key,
+  name        text not null,
+  owner       uuid not null default auth.uid() references auth.users on delete cascade,
+  invite_code text unique,
+  created_at  timestamptz default now()
+);
+create table if not exists public.server_members (
+  server_id  bigint not null references public.servers on delete cascade,
+  member     uuid not null default auth.uid() references auth.users on delete cascade,
+  role       text default 'member',
+  created_at timestamptz default now(),
+  primary key (server_id, member)
+);
+create table if not exists public.channels (
+  id         bigint generated always as identity primary key,
+  server_id  bigint not null references public.servers on delete cascade,
+  name       text not null,
+  position   int default 0,
+  created_at timestamptz default now()
+);
+create table if not exists public.channel_messages (
+  id          bigint generated always as identity primary key,
+  channel_id  bigint not null references public.channels on delete cascade,
+  author      uuid not null default auth.uid() references auth.users on delete cascade,
+  author_name text,
+  body        text not null,
+  created_at  timestamptz default now()
+);
+
+-- SECURITY DEFINER membership checks (bypass RLS -> no recursion).
+create or replace function public.is_server_member(sid bigint) returns boolean
+  language sql security definer stable set search_path = public as $$
+    select exists (select 1 from public.server_members m
+                   where m.server_id = sid and m.member = auth.uid());
+  $$;
+create or replace function public.is_channel_member(cid bigint) returns boolean
+  language sql security definer stable set search_path = public as $$
+    select public.is_server_member((select server_id from public.channels where id = cid));
+  $$;
+
+alter table public.servers         enable row level security;
+alter table public.server_members  enable row level security;
+alter table public.channels        enable row level security;
+alter table public.channel_messages enable row level security;
+
+drop policy if exists "see my servers"      on public.servers;
+drop policy if exists "owner edits server"  on public.servers;
+create policy "see my servers"     on public.servers for select
+  using (owner = auth.uid() or public.is_server_member(id));
+create policy "owner edits server" on public.servers for update using (owner = auth.uid());
+
+drop policy if exists "see server members" on public.server_members;
+drop policy if exists "join self"          on public.server_members;
+drop policy if exists "leave or kick"      on public.server_members;
+create policy "see server members" on public.server_members for select
+  using (member = auth.uid() or public.is_server_member(server_id));
+create policy "join self"     on public.server_members for insert with check (member = auth.uid());
+create policy "leave or kick" on public.server_members for delete
+  using (member = auth.uid() or exists (select 1 from public.servers s where s.id = server_id and s.owner = auth.uid()));
+
+drop policy if exists "see channels"   on public.channels;
+drop policy if exists "owner channels" on public.channels;
+create policy "see channels"   on public.channels for select using (public.is_server_member(server_id));
+create policy "owner channels" on public.channels for insert
+  with check (exists (select 1 from public.servers s where s.id = server_id and s.owner = auth.uid()));
+
+drop policy if exists "read channel messages" on public.channel_messages;
+drop policy if exists "post channel messages" on public.channel_messages;
+create policy "read channel messages" on public.channel_messages for select
+  using (public.is_channel_member(channel_id));
+create policy "post channel messages" on public.channel_messages for insert
+  with check (author = auth.uid() and public.is_channel_member(channel_id));
+
+-- Create a server (owner joins + a #general channel), returning its id + code.
+create or replace function public.create_server(p_name text)
+  returns public.servers language plpgsql security definer set search_path = public as $$
+  declare s public.servers;
+  begin
+    insert into public.servers (name, owner, invite_code)
+      values (p_name, auth.uid(), substr(md5(random()::text), 1, 8))
+      returning * into s;
+    insert into public.server_members (server_id, member, role) values (s.id, auth.uid(), 'owner');
+    insert into public.channels (server_id, name, position) values (s.id, 'general', 0);
+    return s;
+  end; $$;
+
+-- Join a server by its invite code; returns the server (null if the code is bad).
+create or replace function public.join_server(p_code text)
+  returns public.servers language plpgsql security definer set search_path = public as $$
+  declare s public.servers;
+  begin
+    select * into s from public.servers where invite_code = p_code;
+    if s.id is null then return null; end if;
+    insert into public.server_members (server_id, member) values (s.id, auth.uid())
+      on conflict do nothing;
+    return s;
+  end; $$;
+
+grant execute on function public.create_server(text) to anon, authenticated;
+grant execute on function public.join_server(text)   to anon, authenticated;
+grant execute on function public.is_server_member(bigint)  to anon, authenticated;
+grant execute on function public.is_channel_member(bigint) to anon, authenticated;

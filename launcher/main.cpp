@@ -1202,15 +1202,20 @@ int main(int argc, char** argv) {
             scenes = FindScenes();
             rescannedAfterUpdate = true;
         }
-        // Poll incoming friend requests in the background for the nav badge.
+        // Poll incoming friend requests in the background for the nav badge,
+        // and toast when a new one arrives.
         {
             static Uint32 nextReqPoll = 0;
+            static int lastReqSeen = -1;
             Uint32 nowReq = SDL_GetTicks();
             if (account.IsLoggedIn() && nowReq >= nextReqPoll) {
                 g_friendRequests = okay::Friends(account).PendingRequests();
+                if (lastReqSeen >= 0 && g_friendRequests > lastReqSeen && tab != 6)
+                    Toast(g_friendRequests == 1 ? "New friend request" : "New friend requests", 1);
+                lastReqSeen = g_friendRequests;
                 nextReqPoll = nowReq + 30000;
             } else if (!account.IsLoggedIn()) {
-                g_friendRequests = 0;
+                g_friendRequests = 0; lastReqSeen = -1;
             }
         }
         // Toast once when an update check finishes.
@@ -2728,7 +2733,6 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
-            if (loginGate("settings")) {
             ImGui::SeparatorText("Account");
             // The account server is baked into this build, so there's nothing to
             // configure here — just a plain connection status (no URL shown).
@@ -2914,7 +2918,6 @@ int main(int argc, char** argv) {
                 ImGui::EndPopup();
             }
             ImGui::TextDisabled("Preferences are stored in launcher.cfg next to the launcher.");
-            }   // end settings login gate
         } else if (tab == 5) {                            // ---- Achievements ----
             sectionHeader("Achievements", nullptr);
             if (loginGate("achievements")) {
@@ -3294,13 +3297,14 @@ int main(int argc, char** argv) {
                     ImGui::BeginChild("##publish", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), true);
                     ImGui::SeparatorText("Publish to the marketplace");
                     ImGui::SetNextItemWidth(360); ImGui::InputTextWithHint("Title", "My awesome game", wTitle, sizeof(wTitle));
-                    ImGui::SetNextItemWidth(200); ImGui::Combo("Kind", &wKind, "Game\0Scene\0Template\0");
+                    ImGui::SetNextItemWidth(200); ImGui::Combo("Kind", &wKind, "Game\0Template\0");
+                    ImGui::TextDisabled("Share a built game (exported with File > Build Game) or a template. Scenes can't be shared.");
                     ImGui::InputTextMultiline("Description", wDesc, sizeof(wDesc), ImVec2(-1, 90));
                     ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##url", "Download link (GitHub release, itch.io, or a public URL)...", wUrl, sizeof(wUrl));
                     ImGui::TextDisabled("Host your build anywhere public and paste the link. Players download it from here.");
                     ImGui::Dummy(ImVec2(0, 4));
                     if (ImGui::Button("Publish", ImVec2(120, 0))) {
-                        const char* kinds[] = { "game", "scene", "template" };
+                        const char* kinds[] = { "game", "template" };
                         if (ws.Publish(wTitle, wDesc, kinds[wKind], wUrl, &wErr)) {
                             okay::Friends(account).Post("publish", wTitle);   // show it in friends' feeds
                             Toast("Published to the marketplace", 1);
@@ -3321,7 +3325,7 @@ int main(int argc, char** argv) {
                 ImGui::InputTextWithHint("##mktsearch", "Search the marketplace...", wSearch, sizeof(wSearch));
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(228);
-                ImGui::Combo("##mktkind", &wFilterKind, "All kinds\0Games\0Scenes\0Templates\0");
+                ImGui::Combo("##mktkind", &wFilterKind, "All kinds\0Games\0Templates\0");
                 ImGui::SameLine();
                 if (wWishOnly) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
                 if (ImGui::Button(wWishOnly ? "Wishlist *" : "Wishlist", ImVec2(100, 0))) wWishOnly = !wWishOnly;
@@ -3331,7 +3335,7 @@ int main(int argc, char** argv) {
 
                 auto mlo = [](std::string s){ for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
                 std::string nd = mlo(wSearch);
-                const char* kindKey[] = { "", "game", "scene", "template" };
+                const char* kindKey[] = { "", "game", "template" };
                 ImGui::BeginChild("##market", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
                 std::string me = account.CurrentSession().username;
                 int mktShown = 0;
@@ -3509,14 +3513,19 @@ int main(int argc, char** argv) {
                 } else {
                     if (now >= svNextMsg) { svMsgs = sv.Messages(svChan); svNextMsg = now + 4000; }
                     ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - 36.0f), false);
+                    static int svLastShown = -1;
                     for (const auto& m : svMsgs) {
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.78f, 1.0f, 1.0f));
                         ImGui::TextUnformatted(m.author.empty() ? "unknown" : m.author.c_str());
                         ImGui::PopStyleColor();
                         ImGui::SameLine(0, 8);
+                        char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
+                        if (w[0]) ImGui::TextDisabled("%s", w);
                         ImGui::TextWrapped("%s", m.body.c_str());
+                        ImGui::Dummy(ImVec2(0, 2));
                     }
                     if (svMsgs.empty()) ImGui::TextDisabled("No messages yet. Say something!");
+                    if ((int)svMsgs.size() != svLastShown) { ImGui::SetScrollHereY(1.0f); svLastShown = (int)svMsgs.size(); }
                     ImGui::EndChild();
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70);
                     bool send = ImGui::InputTextWithHint("##svsend", "Message #channel", svMsg, sizeof(svMsg), ImGuiInputTextFlags_EnterReturnsTrue);

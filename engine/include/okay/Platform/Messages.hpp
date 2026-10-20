@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <cstdlib>
 #include <ctime>
 #include <cctype>
@@ -23,6 +24,7 @@ struct DirectMessage {
     bool        edited = false; // body was edited after sending
     long        likes = 0;      // ❤ reaction count (filled by the UI)
     bool        liked = false;  // I reacted (filled by the UI)
+    long        replyTo = 0;    // id of the message this one replies to (0 = none)
 };
 
 class Messages {
@@ -31,11 +33,20 @@ public:
 
     bool Available() const { return acct_.IsLoggedIn(); }
 
-    // Send a message to a friend (their profile/user uuid).
-    bool Send(const std::string& friendUid, const std::string& body) {
+    // Send a message to a friend (their profile/user uuid). Optionally a reply
+    // to an earlier message (Messenger/Telegram-style quoting), by its id.
+    bool Send(const std::string& friendUid, const std::string& body, long replyTo = 0) {
         if (!acct_.IsLoggedIn() || friendUid.empty() || body.empty()) return false;
-        return acct_.Api("/rest/v1/messages", "POST",
-                         "{\"recipient\":" + JStr(friendUid) + ",\"body\":" + JStr(body) + "}").ok;
+        std::string j = "{\"recipient\":" + JStr(friendUid) + ",\"body\":" + JStr(body);
+        if (replyTo > 0) j += ",\"reply_to\":" + std::to_string(replyTo);
+        j += "}";
+        return acct_.Api("/rest/v1/messages", "POST", j).ok;
+    }
+
+    // Delete one of my own sent messages (RLS blocks deleting others').
+    bool Delete(long messageId) {
+        if (!acct_.IsLoggedIn() || messageId <= 0) return false;
+        return acct_.Api("/rest/v1/messages?id=eq." + std::to_string(messageId), "DELETE").ok;
     }
 
     // Count incoming messages (addressed to me) newer than sinceId, and report
@@ -57,11 +68,46 @@ public:
         return n;
     }
 
+    // A per-conversation preview (newest message with each other party) for the
+    // Messenger-style conversation list: who, the last line, when, its id, and
+    // whether I sent it. Most-recent conversation first. One query.
+    struct ConversationPreview {
+        std::string uid;
+        std::string lastBody;
+        long        when = 0;
+        long        lastId = 0;
+        bool        lastMine = false;
+    };
+    std::vector<ConversationPreview> Conversations() {
+        std::vector<ConversationPreview> out;
+        if (!acct_.IsLoggedIn()) return out;
+        std::string mine = MyId();
+        if (mine.empty()) return out;
+        auto r = acct_.Api("/rest/v1/messages?select=id,sender,recipient,body,created_at"
+                           "&order=id.desc&limit=300", "GET");
+        if (!r.ok) return out;
+        std::set<std::string> seen;
+        for (const auto& o : SplitObjects(r.body)) {
+            std::string s = Field(o, "sender"), rc = Field(o, "recipient");
+            std::string other = (s == mine) ? rc : s;
+            if (other.empty() || seen.count(other)) continue;   // first seen = newest
+            seen.insert(other);
+            ConversationPreview c;
+            c.uid = other;
+            c.lastBody = Field(o, "body");
+            c.when = ParseIso(Field(o, "created_at"));
+            c.lastId = std::atol(Field(o, "id").c_str());
+            c.lastMine = (s == mine);
+            out.push_back(c);
+        }
+        return out;
+    }
+
     // The conversation with one friend, oldest first.
     std::vector<DirectMessage> With(const std::string& friendUid) {
         std::vector<DirectMessage> out;
         if (!acct_.IsLoggedIn() || friendUid.empty()) return out;
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at,edited"
+        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at,edited,reply_to"
                            "&or=(sender.eq." + friendUid + ",recipient.eq." + friendUid + ")"
                            "&order=created_at.asc", "GET");
         if (!r.ok) return out;
@@ -72,6 +118,7 @@ public:
             m.when = ParseIso(Field(obj, "created_at"));
             m.mine = Field(obj, "sender") != friendUid;   // the other party is the friend
             m.edited = Field(obj, "edited") == "true";
+            m.replyTo = std::atol(Field(obj, "reply_to").c_str());
             out.push_back(m);
         }
         return out;

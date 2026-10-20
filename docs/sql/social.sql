@@ -138,6 +138,12 @@ create policy "send own messages" on public.messages for insert with check (auth
 alter table public.messages add column if not exists edited boolean default false;
 drop policy if exists "edit own messages" on public.messages;
 create policy "edit own messages" on public.messages for update using (auth.uid() = sender);
+-- Replies (Messenger/Telegram-style quoting): a message may reference an earlier
+-- one by id; the UI renders the quoted snippet above the reply.
+alter table public.messages add column if not exists reply_to bigint;
+-- A sender may delete their own message.
+drop policy if exists "delete own messages" on public.messages;
+create policy "delete own messages" on public.messages for delete using (auth.uid() = sender);
 
 -- ---------------------------------------------------------------------------
 -- Message reactions ("likes"): one row per (reactor, message, emoji). scope is

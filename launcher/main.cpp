@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -39,6 +40,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -1331,6 +1333,35 @@ void RenderChatBody(const std::string& body, float maxW = 0.0f) {
     }
 }
 
+// The pixel WIDTH RenderChatBody will use for `body` wrapped at maxW — the width
+// of its longest wrapped line (<= maxW). Mirrors RenderChatBody's tokenizer so a
+// chat bubble can be sized to hug its content exactly (no overflow on resize).
+float MeasureChatBodyWidth(const std::string& body, float maxW) {
+    bool hasLink  = body.find("http://") != std::string::npos || body.find("https://") != std::string::npos;
+    bool hasEmoji = body.find(':') != std::string::npos || body.find("<3") != std::string::npos || body.find("xD") != std::string::npos;
+    if (!hasLink && !hasEmoji) {
+        float w = ImGui::CalcTextSize(body.c_str(), nullptr, false, maxW).x;
+        return w < maxW ? w : maxW;
+    }
+    const float spaceW = ImGui::CalcTextSize(" ").x;
+    const float em = ImGui::GetTextLineHeight();
+    float lineX = 0.0f, maxLine = 0.0f; bool lineStarted = false;
+    std::size_t i = 0, n = body.size();
+    while (i < n) {
+        if (body[i] == '\n') { if (lineX > maxLine) maxLine = lineX; lineStarted = false; lineX = 0; ++i; continue; }
+        if (body[i] == ' ')  { ++i; continue; }
+        std::size_t j = i; while (j < n && body[j] != ' ' && body[j] != '\n') ++j;
+        std::string tok = body.substr(i, j - i); i = j;
+        int eid = EmojiId(tok);
+        float tw = (eid >= 0) ? em : ImGui::CalcTextSize(tok.c_str()).x;
+        if (lineStarted && lineX + spaceW + tw > maxW) { if (lineX > maxLine) maxLine = lineX; lineStarted = false; lineX = 0; }
+        if (lineStarted) lineX += spaceW;
+        lineX += tw; lineStarted = true;
+    }
+    if (lineX > maxLine) maxLine = lineX;
+    return maxLine < maxW ? maxLine : maxW;
+}
+
 // Rounded square tile showing the item's initial — a lightweight "thumbnail"
 // that needs no image assets. Advances the layout like a normal item.
 void IconTile(const std::string& name, float size) {
@@ -1578,21 +1609,41 @@ void SavePrefs() {
 // on the left (the "tabs") and the selected conversation on the right, with the
 // full chat feature set (clickable links, emoji, ❤ likes, edit-your-own). Opened
 // from the sidebar "Chat" button and from any friend's "Message" action.
+// Short, single-line preview of a message body for the conversation list /
+// reply quote: strips newlines and clips to `n` chars with an ellipsis.
+static std::string ChatPreview(const std::string& body, std::size_t n) {
+    std::string s; s.reserve(body.size());
+    for (char c : body) s += (c == '\n' || c == '\r') ? ' ' : c;
+    if (s.size() > n) { s.erase(n); while (!s.empty() && s.back()==' ') s.pop_back(); s += "\xE2\x80\xA6"; }
+    return s;
+}
+
 void DrawChatWindow(okay::account::AccountService& account) {
     if (!g_chatWinOpen) return;
     static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
-    static std::string selUid, selName, selAvatar;
+    static std::vector<okay::Messages::ConversationPreview> convs; static Uint32 convsNext = 0;
+    static std::string selUid, selName, selAvatar; static bool selOnline = false;
     static std::vector<okay::DirectMessage> log; static Uint32 logNext = 0;
     static std::map<long,long> likes; static std::map<long,bool> myLikes;
-    static long editId = 0; static char input[512] = ""; static int lastShown = -1;
+    static std::map<std::string,long> seenId;       // newest id I've viewed, per friend (unread)
+    static long editId = 0, replyTo = 0;
+    static std::string replyName, replySnippet;
+    static char input[1024] = ""; static int lastShown = -1; static std::string lastConv;
+    static char convFilter[96] = ""; static char msgSearch[96] = ""; static bool showSearch = false;
+
+    auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
+        selUid = uid; selName = nm; selAvatar = av; selOnline = online;
+        log.clear(); logNext = 0; editId = 0; replyTo = 0; input[0] = '\0';
+        lastShown = -1; msgSearch[0] = '\0'; showSearch = false;
+    };
 
     if (g_chatReqPending) {                     // a "Message" button asked to open a convo
-        selUid = g_chatReqUid; selName = g_chatReqName; selAvatar = g_chatReqAvatar;
-        log.clear(); logNext = 0; editId = 0; input[0] = '\0'; lastShown = -1;
+        openConv(g_chatReqUid, g_chatReqName, g_chatReqAvatar, false);
         g_chatReqPending = false;
         ImGui::SetNextWindowFocus();
     }
-    ImGui::SetNextWindowSize(ImVec2(660, 460), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(720, 500), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(FLT_MAX, FLT_MAX));
     if (ImGui::Begin("Chat", &g_chatWinOpen)) {
         if (!account.IsLoggedIn()) {
             ImGui::TextDisabled("Sign in to chat with friends.");
@@ -1601,92 +1652,267 @@ void DrawChatWindow(okay::account::AccountService& account) {
         okay::Messages dm(account);
         Uint32 now = SDL_GetTicks();
         if (now >= friendsNext) { friends = okay::Friends(account).List(); friendsNext = now + 15000; }
+        if (now >= convsNext)   { convs   = dm.Conversations();           convsNext   = now + 6000; }
 
-        // Left: conversation list (the tabs).
-        ImGui::BeginChild("##chatlist", ImVec2(176, 0), true);
-        ImGui::TextDisabled("CONVERSATIONS");
-        ImGui::Separator();
-        int accepted = 0;
-        for (auto& f : friends) {
-            if (f.status != "accepted") continue;
-            ++accepted;
-            std::string nm = f.display.empty() ? f.username : f.display;
-            ImVec2 rp = ImGui::GetCursorScreenPos();
-            ImU32 dot = f.online ? IM_COL32(120,200,110,255) : IM_COL32(110,118,130,255);
-            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(rp.x+5, rp.y+9), 4.0f, dot, 12);
-            ImGui::Dummy(ImVec2(12,0)); ImGui::SameLine();
-            if (ImGui::Selectable((nm + "##" + f.id).c_str(), f.id == selUid)) {
-                selUid = f.id; selName = nm; selAvatar = f.avatar;
-                log.clear(); logNext = 0; editId = 0; input[0] = '\0'; lastShown = -1;
-            }
+        // Index friends by uid for names/avatars/presence.
+        std::map<std::string, const okay::Friend*> fById;
+        for (const auto& f : friends) fById[f.id] = &f;
+
+        // ---- Left: conversation list (Messenger-style rows) -------------------
+        // The window shrinks the sidebar on narrow widths so the thread stays usable.
+        float listW = ImGui::GetContentRegionAvail().x < 560 ? 150.0f : 212.0f;
+        ImGui::BeginChild("##chatlist", ImVec2(listW, 0), true);
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##convfilter", "Search chats", convFilter, sizeof(convFilter));
+        ImGui::Spacing();
+
+        // Merge: conversations (most-recent first) then accepted friends with no
+        // conversation yet, so you can always start one.
+        struct Row { std::string uid, name, avatar, preview; long when=0, lastId=0; bool mine=false, online=false; };
+        std::vector<Row> rows;
+        std::set<std::string> have;
+        for (const auto& c : convs) {
+            Row r; r.uid = c.uid; r.lastId = c.lastId; r.when = c.when; r.mine = c.lastMine;
+            r.preview = (c.lastMine ? "You: " : "") + ChatPreview(c.lastBody, 28);
+            if (auto it = fById.find(c.uid); it != fById.end()) {
+                r.name = it->second->display.empty() ? it->second->username : it->second->display;
+                r.avatar = it->second->avatar; r.online = it->second->online;
+            } else r.name = (c.uid == selUid) ? selName : ChatPreview(c.uid, 10);
+            rows.push_back(r); have.insert(c.uid);
         }
-        if (accepted == 0) ImGui::TextDisabled("Add friends to start chatting.");
+        for (const auto& f : friends) {
+            if (f.status != "accepted" || have.count(f.id)) continue;
+            Row r; r.uid = f.id; r.name = f.display.empty() ? f.username : f.display;
+            r.avatar = f.avatar; r.online = f.online; r.preview = "Tap to chat";
+            rows.push_back(r);
+        }
+        std::string filt = convFilter;
+        for (auto& ch : filt) ch = (char)std::tolower((unsigned char)ch);
+        int shown = 0;
+        for (const auto& r : rows) {
+            if (!filt.empty()) {
+                std::string low = r.name; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
+                if (low.find(filt) == std::string::npos) continue;
+            }
+            ++shown;
+            ImGui::PushID(r.uid.c_str());
+            bool sel = (r.uid == selUid);
+            bool unread = r.lastId > 0 && !r.mine && r.lastId > seenId[r.uid] && !sel;
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            float rowH = 46.0f;
+            if (ImGui::Selectable("##row", sel, 0, ImVec2(0, rowH))) {
+                openConv(r.uid, r.name, r.avatar, r.online);
+            }
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            // avatar
+            ImVec2 av(rp.x + 4, rp.y + 6); float as = 34.0f;
+            SDL_Texture* tex = AvatarTexture(r.avatar);
+            if (tex) dl->AddImageRounded((ImTextureID)(intptr_t)tex, av, ImVec2(av.x+as, av.y+as), ImVec2(0,0), ImVec2(1,1), IM_COL32_WHITE, as*0.5f);
+            else {
+                ImVec4 col = NameColor(r.name);
+                dl->AddCircleFilled(ImVec2(av.x+as*0.5f, av.y+as*0.5f), as*0.5f, ImGui::GetColorU32(ImVec4(col.x*0.55f,col.y*0.55f,col.z*0.55f,1)), 24);
+                char init[2] = { r.name.empty()?'?':(char)std::toupper((unsigned char)r.name[0]), 0 };
+                ImVec2 tsz = ImGui::CalcTextSize(init);
+                dl->AddText(ImVec2(av.x+as*0.5f-tsz.x*0.5f, av.y+as*0.5f-tsz.y*0.5f), IM_COL32(255,255,255,255), init);
+            }
+            if (r.online) dl->AddCircleFilled(ImVec2(av.x+as-3, av.y+as-3), 4.5f, IM_COL32(120,205,110,255), 16),
+                          dl->AddCircle(ImVec2(av.x+as-3, av.y+as-3), 5.0f, IM_COL32(30,34,42,255), 16, 1.6f);
+            // name + preview
+            float tx = rp.x + 4 + as + 8;
+            dl->AddText(ImVec2(tx, rp.y + 6), ImGui::GetColorU32(ImGuiCol_Text), ChatPreview(r.name, 16).c_str());
+            dl->AddText(ImVec2(tx, rp.y + 24), ImGui::GetColorU32(unread ? ImGuiCol_Text : ImGuiCol_TextDisabled), r.preview.c_str());
+            if (unread) dl->AddCircleFilled(ImVec2(rp.x + listW - 16, rp.y + rowH*0.5f), 4.5f, ImGui::GetColorU32(kAccent), 16);
+            ImGui::PopID();
+        }
+        if (shown == 0) ImGui::TextDisabled(convFilter[0] ? "No matches." : "Add friends to start chatting.");
         ImGui::EndChild();
         ImGui::SameLine();
 
-        // Right: the selected conversation.
+        // ---- Right: the selected conversation ---------------------------------
         ImGui::BeginChild("##chatconv", ImVec2(0, 0), false);
         if (selUid.empty()) {
-            ImGui::Dummy(ImVec2(0, 30));
-            ImGui::TextDisabled("  Pick a conversation on the left.");
+            float cw = ImGui::GetContentRegionAvail().x, cy = ImGui::GetContentRegionAvail().y;
+            ImGui::SetCursorPos(ImVec2(cw*0.5f - 90, cy*0.5f - 10));
+            ImGui::TextDisabled("Pick a conversation to start chatting.");
         } else {
-            DrawAvatar(selAvatar, selName, 30.0f);
-            ImGui::SameLine(); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6);
+            // refresh presence/name for the selected friend
+            if (auto it = fById.find(selUid); it != fById.end()) {
+                selOnline = it->second->online;
+                selName = it->second->display.empty() ? it->second->username : it->second->display;
+                selAvatar = it->second->avatar;
+            }
+            // Header
+            DrawAvatar(selAvatar, selName, 34.0f);
+            ImGui::SameLine(); ImGui::BeginGroup();
             ImGui::TextUnformatted(selName.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(selOnline ? ImVec4(0.47f,0.80f,0.43f,1) : ImVec4(0.6f,0.64f,0.7f,1)));
+            ImGui::TextUnformatted(selOnline ? "Active now" : "Offline");
+            ImGui::PopStyleColor();
+            ImGui::EndGroup();
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+            if (ImGui::Button(showSearch ? "x##srch" : "Q##srch", ImVec2(26, 26))) { showSearch = !showSearch; if (!showSearch) msgSearch[0]='\0'; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Search in conversation");
+            if (showSearch) { ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##msgsearch", "Find a message", msgSearch, sizeof(msgSearch)); }
             ImGui::Separator();
-            if (now >= logNext) { log = dm.With(selUid); likes = dm.Likes(); myLikes = dm.MyLikes(); logNext = now + 4000; }
 
-            ImGui::BeginChild("##clog", ImVec2(0, ImGui::GetContentRegionAvail().y - 40), false);
+            if (now >= logNext) { log = dm.With(selUid); likes = dm.Likes(); myLikes = dm.MyLikes(); logNext = now + 4000; }
+            // Mark everything seen (clears the unread dot for this conversation).
+            for (const auto& m : log) if (!m.mine && m.id > seenId[selUid]) seenId[selUid] = m.id;
+            // id -> message, for rendering reply quotes.
+            std::map<long, const okay::DirectMessage*> byId;
+            for (const auto& m : log) byId[m.id] = &m;
+
+            // Reserve space for the composer (grows with reply banner + edit tag).
+            float composerH = 48.0f + (replyTo || editId ? 24.0f : 0.0f);
+            ImGui::BeginChild("##clog", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false);
             float avW = ImGui::GetContentRegionAvail().x;
-            long prevDay = 0;
+            float baseX = ImGui::GetCursorPosX();
+            std::string msFilt = msgSearch; for (auto& ch : msFilt) ch = (char)std::tolower((unsigned char)ch);
+            long prevDay = 0; bool prevMine = false; long prevWhen = 0; bool first = true;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float avatarW = 28.0f, avatarGap = 6.0f, padX = 10.0f, padY = 6.0f;
+            int matches = 0;
             for (const auto& m : log) {
+                if (!msFilt.empty()) {
+                    std::string low = m.body; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
+                    if (low.find(msFilt) == std::string::npos) continue;
+                    ++matches;
+                }
                 long day = DayKey(m.when);
-                if (day != 0 && day != prevDay) { ImGui::SetCursorPosX(0); ChatDateSeparator(m.when); prevDay = day; }
-                float bubbleMax = avW * 0.66f;
-                ImVec2 ts = ImGui::CalcTextSize(m.body.c_str(), nullptr, false, bubbleMax);
-                float bw = ts.x + 20, bh = ts.y + 14;
-                float x0 = m.mine ? (avW - bw - 8) : 8; if (x0 < 0) x0 = 0;
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + x0);
-                ImVec2 p = ImGui::GetCursorScreenPos();
-                ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(48, 58, 80, 255);
-                ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + bw, p.y + bh), bg, 9.0f);
-                ImGui::SetCursorScreenPos(ImVec2(p.x + 10, p.y + 6));
-                RenderChatBody(m.body, bubbleMax);
-                // meta row: time, (edited), ❤ like, edit
-                char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
-                long lc = likes.count(m.id) ? likes[m.id] : 0; bool liked = myLikes.count(m.id) != 0;
+                if (day != 0 && day != prevDay) { ImGui::SetCursorPosX(baseX); ChatDateSeparator(m.when); prevDay = day; prevMine = false; first = true; }
+                bool grouped = !first && prevMine == m.mine && (m.when - prevWhen) < 300 && (m.when > 0);
+                ImGui::Dummy(ImVec2(0, grouped ? 1.0f : 6.0f));
+
+                float bubbleMax = avW * 0.70f; if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
+                float bodyW = MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
+                // reply quote + time contribute to width
+                const okay::DirectMessage* rep = (m.replyTo && byId.count(m.replyTo)) ? byId[m.replyTo] : nullptr;
+                std::string repText = rep ? ChatPreview(rep->body, 36) : "";
+                float repW = rep ? std::min(bubbleMax - padX*2, ImGui::CalcTextSize(repText.c_str()).x + 8) : 0.0f;
+                char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
+                std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
+                float metaW = ImGui::CalcTextSize(meta.c_str()).x;
+                float contentW = std::max({bodyW, repW, metaW});
+                float boxW = contentW + padX*2;
+                float leftPad = m.mine ? 0.0f : (avatarW + avatarGap);
+                float x0 = m.mine ? (avW - boxW) : leftPad; if (x0 < leftPad) x0 = leftPad;
+
+                // Avatar for received messages (only on the first of a run).
+                if (!m.mine && !grouped) {
+                    ImVec2 cp = ImGui::GetCursorScreenPos();
+                    float ax = cp.x; float ay = cp.y;
+                    SDL_Texture* at = AvatarTexture(selAvatar);
+                    if (at) dl->AddImageRounded((ImTextureID)(intptr_t)at, ImVec2(ax,ay), ImVec2(ax+avatarW,ay+avatarW), ImVec2(0,0), ImVec2(1,1), IM_COL32_WHITE, avatarW*0.5f);
+                    else {
+                        ImVec4 col = NameColor(selName);
+                        dl->AddCircleFilled(ImVec2(ax+avatarW*0.5f, ay+avatarW*0.5f), avatarW*0.5f, ImGui::GetColorU32(ImVec4(col.x*0.55f,col.y*0.55f,col.z*0.55f,1)), 20);
+                        char init[2]={selName.empty()?'?':(char)std::toupper((unsigned char)selName[0]),0};
+                        ImVec2 tsz=ImGui::CalcTextSize(init);
+                        dl->AddText(ImVec2(ax+avatarW*0.5f-tsz.x*0.5f, ay+avatarW*0.5f-tsz.y*0.5f), IM_COL32(255,255,255,255), init);
+                    }
+                }
+
                 ImGui::PushID((int)m.id);
-                ImGui::SetCursorPosX(m.mine ? std::max(8.0f, avW - 150.0f) : 8.0f);
+                ImGui::SetCursorPosX(baseX + x0 + padX);
+                ImVec2 gp = ImGui::GetCursorScreenPos();
+                dl->ChannelsSplit(2);
+                dl->ChannelsSetCurrent(1);                 // content on top
                 ImGui::BeginGroup();
-                if (w[0]) { ImGui::TextDisabled("%s%s", w, m.edited ? " (edited)" : ""); ImGui::SameLine(0, 10); }
-                ImVec2 hp2 = ImGui::GetCursorScreenPos();
-                if (ImGui::InvisibleButton("like", ImVec2(18, 16))) { dm.Like(m.id, !liked); logNext = 0; }
-                DrawHeart(ImGui::GetWindowDrawList(), ImVec2(hp2.x+8, hp2.y+8), 6.0f,
-                          liked ? IM_COL32(232,72,92,255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
-                if (lc > 0) { ImGui::SameLine(0, 2); ImGui::TextDisabled("%ld", lc); }
-                if (m.mine) { ImGui::SameLine(0, 10); if (ImGui::SmallButton("edit")) { editId = m.id; std::snprintf(input, sizeof(input), "%s", m.body.c_str()); } }
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
+                ImGui::Dummy(ImVec2(0, padY - 2));
+                if (rep) {                                  // quoted message
+                    ImVec2 qp = ImGui::GetCursorScreenPos();
+                    dl->ChannelsSetCurrent(1);
+                    dl->AddRectFilled(ImVec2(qp.x-4, qp.y), ImVec2(qp.x-1, qp.y + ImGui::GetTextLineHeight()*1.6f), ImGui::GetColorU32(kAccent), 1.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImVec4(0.8f,0.85f,0.95f,0.9f)));
+                    ImGui::TextUnformatted((rep->mine ? "You" : selName).c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                    ImGui::TextUnformatted(repText.c_str());
+                    ImGui::PopStyleColor();
+                }
+                ImGui::PushTextWrapPos(gp.x + bubbleMax - padX);
+                RenderChatBody(m.body, bubbleMax - padX*2);
+                ImGui::PopTextWrapPos();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(m.mine ? ImVec4(0.85f,0.90f,1.0f,0.75f) : ImVec4(0.65f,0.70f,0.80f,0.9f)));
+                ImGui::TextUnformatted(meta.c_str());
+                ImGui::PopStyleColor();
+                ImGui::PopStyleVar();
+                ImGui::Dummy(ImVec2(0, padY - 2));
                 ImGui::EndGroup();
+                ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
+                dl->ChannelsSetCurrent(0);                 // bubble behind
+                ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(52, 60, 78, 255);
+                dl->AddRectFilled(ImVec2(rmin.x - padX, rmin.y), ImVec2(rmax.x + padX, rmax.y), bg, 11.0f);
+                dl->ChannelsMerge();
+
+                // Reactions pill + right-click actions attach to the bubble item.
+                long lc = likes.count(m.id) ? likes[m.id] : 0; bool liked = myLikes.count(m.id) != 0;
+                if (ImGui::BeginPopupContextItem("##msgctx")) {
+                    if (ImGui::MenuItem(liked ? "Remove \xE2\x9D\xA4 reaction" : "React \xE2\x9D\xA4")) { dm.Like(m.id, !liked); logNext = 0; }
+                    if (ImGui::MenuItem("Reply")) { replyTo = m.id; replyName = m.mine ? "yourself" : selName; replySnippet = ChatPreview(m.body, 40); }
+                    if (ImGui::MenuItem("Copy text")) ImGui::SetClipboardText(m.body.c_str());
+                    if (m.mine) {
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Edit")) { editId = m.id; replyTo = 0; std::snprintf(input, sizeof(input), "%s", m.body.c_str()); }
+                        if (ImGui::MenuItem("Delete")) { if (dm.Delete(m.id)) logNext = 0; }
+                    }
+                    ImGui::EndPopup();
+                }
+                if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::GetIO().KeyShift) { dm.Like(m.id, !liked); logNext = 0; }
+                // Reaction badge under the bubble.
+                if (lc > 0) {
+                    float bx = m.mine ? rmax.x - 6 : rmin.x + 6;
+                    ImGui::SetCursorScreenPos(ImVec2(m.mine ? bx - 34 : bx, rmax.y - 6));
+                    ImGui::BeginGroup();
+                    ImVec2 pp = ImGui::GetCursorScreenPos();
+                    dl->AddRectFilled(pp, ImVec2(pp.x + 34, pp.y + 17), IM_COL32(34,38,48,255), 8.0f);
+                    DrawHeart(dl, ImVec2(pp.x + 10, pp.y + 8.5f), 5.0f, IM_COL32(232,72,92,255));
+                    dl->AddText(ImVec2(pp.x + 18, pp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), std::to_string(lc).c_str());
+                    ImGui::Dummy(ImVec2(34, 17));
+                    ImGui::EndGroup();
+                }
                 ImGui::PopID();
-                ImGui::SetCursorPosX(0); ImGui::Dummy(ImVec2(0, 2));
+                ImGui::SetCursorPosX(baseX);
+                prevMine = m.mine; prevWhen = m.when; first = false;
             }
             if (log.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
-            if ((int)log.size() != lastShown) { ImGui::SetScrollHereY(1.0f); lastShown = (int)log.size(); }
+            else if (!msFilt.empty() && matches == 0) ImGui::TextDisabled("No messages match \"%s\".", msgSearch);
+            if ((int)log.size() != lastShown || selUid != lastConv) {
+                if (msFilt.empty()) ImGui::SetScrollHereY(1.0f);
+                lastShown = (int)log.size(); lastConv = selUid;
+            }
             ImGui::EndChild();
 
-            if (editId) { ImGui::TextDisabled("Editing a message"); ImGui::SameLine();
-                if (ImGui::SmallButton("cancel edit")) { editId = 0; input[0] = '\0'; } }
-            ImVec2 inSz(ImGui::GetContentRegionAvail().x - 60 - 36, ImGui::GetTextLineHeight() + 14);
+            // ---- Composer: reply/edit banner, emoji, growing input, send -------
+            if (replyTo) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(kAccent));
+                ImGui::Text("Replying to %s", replyName.c_str());
+                ImGui::PopStyleColor();
+                ImGui::SameLine(); ImGui::TextDisabled("%s", replySnippet.c_str());
+                ImGui::SameLine(); if (ImGui::SmallButton("x##cancelreply")) replyTo = 0;
+            } else if (editId) {
+                ImGui::TextDisabled("Editing message"); ImGui::SameLine();
+                if (ImGui::SmallButton("cancel##edit")) { editId = 0; input[0] = '\0'; }
+            }
+            // Grow the input from 1 to 4 lines with the content.
+            int lines = 1; for (const char* c = input; *c; ++c) if (*c == '\n') ++lines;
+            if (lines > 4) lines = 4;
+            float inH = ImGui::GetTextLineHeight() * lines + 14;
             EmojiPicker("cwemoji", input, sizeof(input)); ImGui::SameLine();
+            ImVec2 inSz(ImGui::GetContentRegionAvail().x - 60, inH);
             bool send = ImGui::InputTextMultiline("##cwin", input, sizeof(input), inSz,
                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-            if ((ImGui::Button(editId ? "Save" : "Send", ImVec2(52, inSz.y)) || send) && input[0]) {
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
+            if ((ImGui::Button(editId ? "Save" : "Send", ImVec2(52, inH)) || send) && input[0]) {
                 if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; logNext = 0; } }
-                else if (dm.Send(selUid, input)) { input[0] = '\0'; logNext = 0; }
+                else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; logNext = 0; }
                 ImGui::SetKeyboardFocusHere(-1);
             }
-            ImGui::PopStyleColor();
+            ImGui::PopStyleColor(2);
         }
         ImGui::EndChild();
     }

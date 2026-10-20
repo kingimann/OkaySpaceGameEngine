@@ -17,6 +17,11 @@ public:
     bool active = true;
     /// Optional tag for lookups (see Scene::FindWithTag).
     std::string tag;
+    /// If this object was instantiated from a .okayprefab file, the path to that
+    /// file (empty otherwise). Links the instance to its source prefab so the
+    /// editor can Apply changes back, Revert to the saved prefab, or reload every
+    /// instance when the prefab file changes. Only the instance ROOT carries it.
+    std::string prefabSource;
     /// Render/physics layer (0-31). A camera's cullingMask selects which layers it
     /// draws (bit 1<<layer); also used by the physics collision matrix.
     int layer = 0;

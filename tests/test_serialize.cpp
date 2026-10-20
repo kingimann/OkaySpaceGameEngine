@@ -150,5 +150,29 @@ int main() {
         CHECK(reloaded.Find("Player")->sourceScene.empty());
     }
 
+    // ---- Prefab instance linking: instances remember their source prefab ----
+    {
+        Scene src("src");
+        GameObject* p = src.CreateGameObject("Turret");
+        p->transform->localPosition = {1, 2, 3};
+        p->AddComponent<Camera>();
+        const std::string path = "/tmp/okay_turret_link.okayprefab";
+        CHECK(SceneSerializer::SaveObjectToFile(*p, path));
+        // The prefab FILE itself must not carry a stale instance link.
+        {
+            std::ifstream f(path, std::ios::binary); std::stringstream ss; ss << f.rdbuf();
+            CHECK(ss.str().find("prefab ") == std::string::npos);
+        }
+        // Instantiating from the file links the new root to its source.
+        Scene scn("scn");
+        GameObject* inst = SceneSerializer::InstantiateFromFile(scn, path);
+        CHECK(inst != nullptr);
+        CHECK(inst->prefabSource == path);
+        // The link round-trips through scene serialization.
+        Scene back("back"); std::string e2;
+        CHECK(SceneSerializer::Deserialize(back, SceneSerializer::Serialize(scn), &e2));
+        CHECK(back.Find("Turret")->prefabSource == path);
+    }
+
     TEST_MAIN_RESULT();
 }

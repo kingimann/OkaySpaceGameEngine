@@ -4615,9 +4615,10 @@ static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir)
     std::string base = go->name.empty() ? std::string("Prefab") : go->name;
     fs::path out = destDir / (base + ".okayprefab");
     for (int n = 2; fs::exists(out, ec); ++n) out = destDir / (base + " " + std::to_string(n) + ".okayprefab");
-    if (SceneSerializer::SaveObjectToFile(*go, out.string()))
+    if (SceneSerializer::SaveObjectToFile(*go, out.string())) {
         ConsoleLog("Saved prefab " + out.filename().string() + " -> " + destDir.filename().string());
-    else
+        go->prefabSource = out.string();   // the dragged object becomes an instance of it
+    } else
         ConsoleLog("Prefab save failed: " + out.string(), 2);
 }
 
@@ -17650,6 +17651,47 @@ void DrawModeling(EditorState& ed) {
     ImGui::End();
 }
 
+// Re-instantiate a prefab instance from its source .okayprefab, discarding local
+// edits but keeping the instance's place in the scene (world transform, parent,
+// name, and the prefab link). The passed-in `inst` is DESTROYED — callers must
+// drop every reference to it and use the returned fresh root instead (nullptr on
+// failure). This is the engine side of Unity's per-instance "Revert".
+static GameObject* RevertPrefabInstance(EditorState& ed, GameObject* inst) {
+    if (!inst || inst->prefabSource.empty()) return nullptr;
+    const std::string path = inst->prefabSource;
+    // Capture the instance's scene placement so reverting doesn't make it jump.
+    Vec3 pos = inst->transform->localPosition;
+    Quat rot = inst->transform->localRotation;
+    Vec3 scl = inst->transform->localScale;
+    Transform* parent = inst->transform->Parent();
+    std::string name = inst->name;
+    std::string err;
+    GameObject* fresh = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
+    if (!fresh) { ConsoleLog("Revert failed: " + err, 2); return nullptr; }
+    fresh->transform->SetParent(parent, false);  // keep local values; we set them next
+    fresh->transform->localPosition = pos;
+    fresh->transform->localRotation = rot;
+    fresh->transform->localScale    = scl;
+    fresh->name = name;              // the scene keeps the instance's own name
+    fresh->prefabSource = path;      // InstantiateFromFile already set this; be explicit
+    ed.Deselect(inst);
+    ed.scene().Destroy(inst);
+    return fresh;
+}
+
+// Revert EVERY instance in the scene spawned from `path` (Unity's "reload all
+// instances" after the prefab file changed). Returns how many were reloaded.
+static int ReloadPrefabInstances(EditorState& ed, const std::string& path) {
+    if (path.empty()) return 0;
+    // Snapshot matching roots first — reverting mutates the scene's object list.
+    std::vector<GameObject*> targets;
+    for (const auto& up : ed.scene().Objects())
+        if (up->prefabSource == path) targets.push_back(up.get());
+    int n = 0;
+    for (GameObject* g : targets) if (RevertPrefabInstance(ed, g)) ++n;
+    return n;
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Roomier spacing for the Inspector specifically (it was too compact).
@@ -17799,8 +17841,11 @@ void DrawInspector(EditorState& ed) {
     if (avail > btnW) ImGui::SameLine(ImGui::GetCursorPosX() + (avail - btnW));
     if (ImGui::Button("Save as Prefab")) {
         std::string p = go->name + ".okayprefab";
-        if (SceneSerializer::SaveObjectToFile(*go, p)) ConsoleLog("Saved prefab " + p);
-        else ConsoleLog("Prefab save failed");
+        if (SceneSerializer::SaveObjectToFile(*go, p)) {
+            ConsoleLog("Saved prefab " + p);
+            go->prefabSource = p;   // link the live object so it becomes an instance
+            ed.dirty = true;
+        } else ConsoleLog("Prefab save failed");
     }
     ImGui::EndChild();
     // Drop a Project asset onto the object header to attach it: a .okay script
@@ -17840,6 +17885,79 @@ void DrawInspector(EditorState& ed) {
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     ImGui::Spacing();
+
+    // ---- Prefab instance banner (Unity-style) --------------------------------
+    // Shown when this object was instantiated from a .okayprefab: it links back to
+    // its source so you can Apply local edits to the prefab, Revert this instance,
+    // Reload every instance in the scene, find the asset in Project, or Unlink.
+    if (!go->prefabSource.empty()) {
+        std::string pname  = std::filesystem::path(go->prefabSource).filename().string();
+        std::error_code pec;
+        bool exists = std::filesystem::exists(go->prefabSource, pec) && !pec;
+        bool doRevert = false, doReloadAll = false;
+
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.20f, 0.23f, 1.0f));
+        ImGui::BeginChild("##prefabbanner", ImVec2(0, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+        ImGui::TextColored(ImVec4(0.31f, 0.82f, 0.88f, 1.0f), "Prefab");
+        ImGui::SameLine();
+        if (exists) ImGui::TextDisabled("%s", pname.c_str());
+        else        ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "%s (missing)", pname.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", go->prefabSource.c_str());
+
+        if (ImGui::SmallButton("Apply")) {
+            if (SceneSerializer::SaveObjectToFile(*go, go->prefabSource))
+                ConsoleLog("Applied changes to prefab " + pname);
+            else ConsoleLog("Apply failed: " + go->prefabSource, 2);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Overwrite the .okayprefab with this instance's current state");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!exists);
+        if (ImGui::SmallButton("Revert"))     doRevert = true;
+        if (ImGui::IsItemHovered() && exists) ImGui::SetTooltip("Discard local changes; reload this instance from the saved prefab");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reload All")) doReloadAll = true;
+        if (ImGui::IsItemHovered() && exists) ImGui::SetTooltip("Revert every instance of this prefab in the scene");
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Select")) {
+            g_pingAsset = go->prefabSource;
+            g_showProject = true;
+            ImGui::SetWindowFocus("Project");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find this prefab asset in the Project panel");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Unlink")) {
+            ed.PushUndo();
+            go->prefabSource.clear();
+            ed.dirty = true;
+            ConsoleLog("Unlinked instance from prefab");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Break the prefab connection (this becomes a plain object)");
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+
+        // Destructive actions run AFTER the banner child is fully closed, since they
+        // destroy `go`. Bail out of the inspector for this frame when they fire.
+        if (doRevert) {
+            ed.PushUndo();
+            if (GameObject* fresh = RevertPrefabInstance(ed, go)) {
+                ed.Select(fresh); ed.dirty = true;
+                ConsoleLog("Reverted instance to prefab " + pname);
+            }
+            ImGui::PopStyleVar(3); ImGui::End();
+            return;
+        }
+        if (doReloadAll) {
+            ed.PushUndo();
+            int n = ReloadPrefabInstances(ed, go->prefabSource);
+            ed.dirty = true;
+            ConsoleLog("Reloaded " + std::to_string(n) + " instance(s) of " + pname);
+            ImGui::PopStyleVar(3); ImGui::End();
+            return;
+        }
+    }
 
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
 

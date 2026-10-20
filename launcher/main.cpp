@@ -1203,11 +1203,18 @@ void EmojiPicker(const char* id, char* buf, std::size_t cap) {
 // Render a chat message body with word-wrapping, turning http(s) URLs into
 // clickable links and emoji shortcodes into drawn glyphs. Plain text takes a
 // fast TextWrapped path; richer bodies use the manual token layout.
-void RenderChatBody(const std::string& body) {
+// maxW > 0 constrains wrapping to that pixel width (e.g. a chat bubble); 0 uses
+// the remaining content width.
+void RenderChatBody(const std::string& body, float maxW = 0.0f) {
     bool hasLink  = body.find("http://") != std::string::npos || body.find("https://") != std::string::npos;
     bool hasEmoji = body.find(':') != std::string::npos || body.find("<3") != std::string::npos || body.find("xD") != std::string::npos;
-    if (!hasLink && !hasEmoji) { ImGui::TextWrapped("%s", body.c_str()); return; }
-    const float avail = ImGui::GetContentRegionAvail().x;
+    if (!hasLink && !hasEmoji) {
+        if (maxW > 0.0f) ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + maxW);
+        ImGui::TextWrapped("%s", body.c_str());
+        if (maxW > 0.0f) ImGui::PopTextWrapPos();
+        return;
+    }
+    const float avail = maxW > 0.0f ? maxW : ImGui::GetContentRegionAvail().x;
     const float spaceW = ImGui::CalcTextSize(" ").x;
     const float em = ImGui::GetTextLineHeight();
     ImU32 linkCol = ImGui::GetColorU32(kAccent);
@@ -1564,14 +1571,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(48, 58, 80, 255);
                 ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + bw, p.y + bh), bg, 9.0f);
                 ImGui::SetCursorScreenPos(ImVec2(p.x + 10, p.y + 6));
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bubbleMax);
-                RenderChatBody(m.body);
-                ImGui::PopTextWrapPos();
+                RenderChatBody(m.body, bubbleMax);
                 // meta row: time, (edited), ❤ like, edit
                 char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
                 long lc = likes.count(m.id) ? likes[m.id] : 0; bool liked = myLikes.count(m.id) != 0;
                 ImGui::PushID((int)m.id);
-                ImGui::SetCursorPosX(m.mine ? (avW - 150) : 8);
+                ImGui::SetCursorPosX(m.mine ? std::max(8.0f, avW - 150.0f) : 8.0f);
                 ImGui::BeginGroup();
                 if (w[0]) { ImGui::TextDisabled("%s%s", w, m.edited ? " (edited)" : ""); ImGui::SameLine(0, 10); }
                 ImVec2 hp2 = ImGui::GetCursorScreenPos();

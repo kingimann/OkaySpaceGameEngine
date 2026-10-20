@@ -1883,17 +1883,23 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 }
 
                 ImGui::PushID((int)m.id);
-                ImGui::SetCursorPosX(baseX + x0 + padX);
-                ImVec2 gp = ImGui::GetCursorScreenPos();
-                dl->ChannelsSplit(2);
-                dl->ChannelsSetCurrent(1);                 // content on top
-                ImGui::BeginGroup();
+                // The bubble is an auto-height child window: its ChildBg sits behind
+                // the content natively (no draw-list channel tricks), so it always
+                // hugs what it renders and stays correct on resize.
+                ImGui::SetCursorPosX(baseX + x0);
+                float useW = std::max(boxW, 46.0f);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, bareEmoji ? ImVec4(0,0,0,0)
+                                        : (m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f)));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 11.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
+                ImGui::BeginChild("##bubble", ImVec2(useW, 0),
+                                  ImGuiChildFlags_AutoResizeY,
+                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
-                ImGui::Dummy(ImVec2(0, padY - 2));
+                ImDrawList* bdl = ImGui::GetWindowDrawList();
                 if (rep) {                                  // quoted message
                     ImVec2 qp = ImGui::GetCursorScreenPos();
-                    dl->ChannelsSetCurrent(1);
-                    dl->AddRectFilled(ImVec2(qp.x-4, qp.y), ImVec2(qp.x-1, qp.y + ImGui::GetTextLineHeight()*1.6f), ImGui::GetColorU32(kAccent), 1.0f);
+                    bdl->AddRectFilled(ImVec2(qp.x-4, qp.y), ImVec2(qp.x-1, qp.y + ImGui::GetTextLineHeight()*1.7f), ImGui::GetColorU32(kAccent), 1.0f);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImVec4(0.8f,0.85f,0.95f,0.9f)));
                     ImGui::TextUnformatted((rep->mine ? "You" : selName).c_str());
                     ImGui::PopStyleColor();
@@ -1911,29 +1917,21 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         int eid = EmojiId(m.body.substr(bi, bj-bi)); bi = bj;
                         if (!firstTok) ImGui::SameLine(0, 3);
                         ImVec2 ep = ImGui::GetCursorScreenPos();
-                        DrawEmoji(dl, ImVec2(ep.x + bigEm*0.5f, ep.y + bigEm*0.5f), bigEm, eid < 0 ? 0 : eid);
+                        DrawEmoji(bdl, ImVec2(ep.x + bigEm*0.5f, ep.y + bigEm*0.5f), bigEm, eid < 0 ? 0 : eid);
                         ImGui::Dummy(ImVec2(bigEm, bigEm));
                         firstTok = false;
                     }
                 } else {
-                    ImGui::PushTextWrapPos(gp.x + bubbleMax - padX);
-                    RenderChatBody(m.body, bubbleMax - padX*2);
-                    ImGui::PopTextWrapPos();
+                    RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
                 }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bareEmoji ? ImVec4(0.6f,0.64f,0.72f,0.9f)
                                         : (m.mine ? ImVec4(0.85f,0.90f,1.0f,0.75f) : ImVec4(0.65f,0.70f,0.80f,0.9f))));
                 ImGui::TextUnformatted(meta.c_str());
                 ImGui::PopStyleColor();
-                ImGui::PopStyleVar();
-                ImGui::Dummy(ImVec2(0, padY - 2));
-                ImGui::EndGroup();
-                ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
-                dl->ChannelsSetCurrent(0);                 // bubble behind
-                if (!bareEmoji) {
-                    ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(52, 60, 78, 255);
-                    dl->AddRectFilled(ImVec2(rmin.x - padX, rmin.y), ImVec2(rmax.x + padX, rmax.y), bg, 11.0f);
-                }
-                dl->ChannelsMerge();
+                ImGui::PopStyleVar();                       // ItemSpacing
+                ImGui::EndChild();
+                ImGui::PopStyleVar(2);                      // ChildRounding, WindowPadding
+                ImGui::PopStyleColor();                     // ChildBg
 
                 // Right-click actions (React submenu, Reply, Copy, Edit, Delete).
                 auto& myset = myReacts[m.id];
@@ -1942,7 +1940,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         for (const auto& rdef : kReactions) {
                             bool have = myset.count(rdef.key) != 0;
                             ImVec2 mp = ImGui::GetCursorScreenPos();
-                            if (ImGui::MenuItem((std::string("   ") + (have ? "(on)" : "") + "##rx" + rdef.key).c_str()))
+                            if (ImGui::MenuItem((std::string("     ") + (have ? "remove" : "add") + "##rx" + rdef.key).c_str()))
                                 { dm.React(m.id, rdef.key, !have); logNext = 0; }
                             DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(mp.x + 9, mp.y + ImGui::GetTextLineHeight()*0.5f), 18, rdef.id);
                         }
@@ -1957,16 +1955,16 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     }
                     ImGui::EndPopup();
                 }
-                // Double-click a bubble to quick-react with ❤ (Messenger).
+                // Double-click a bubble to quick-react with the heart (Messenger).
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     bool have = myset.count("heart") != 0; dm.React(m.id, "heart", !have); logNext = 0;
                 }
 
-                // Reaction pills under the bubble (one per emoji with a count).
+                // Reaction pills on the line under the bubble (normal layout).
                 auto cit = reacts.find(m.id);
                 if (cit != reacts.end() && !cit->second.empty()) {
-                    ImGui::SetCursorScreenPos(ImVec2(rmin.x - (m.mine ? 0 : 0), rmax.y - 4));
-                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
+                    ImGui::SetCursorPosX(baseX + x0);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
                     bool firstPill = true;
                     for (const auto& kv : cit->second) {
                         if (kv.second <= 0) continue;
@@ -1975,7 +1973,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         bool mineR = myset.count(kv.first) != 0;
                         std::string cnt = std::to_string(kv.second);
                         float pw = 22.0f + ImGui::CalcTextSize(cnt.c_str()).x;
-                        ImGui::PushID((int)(m.id * 31 + ReactionEmojiId(kv.first)));
+                        ImGui::PushID(ReactionEmojiId(kv.first));
                         ImVec2 pp = ImGui::GetCursorScreenPos();
                         if (ImGui::InvisibleButton("##pill", ImVec2(pw, 18))) { dm.React(m.id, kv.first, !mineR); logNext = 0; }
                         ImU32 pc = mineR ? ImGui::GetColorU32(kAccentDim) : IM_COL32(40, 46, 58, 255);
@@ -1986,7 +1984,6 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         ImGui::PopID();
                     }
                     ImGui::PopStyleVar();
-                    ImGui::SetCursorPosX(baseX); ImGui::Dummy(ImVec2(0, 14));
                 }
 
                 ImGui::PopID();
@@ -2013,11 +2010,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
             logRectMin = ImGui::GetWindowPos();
             logRectMax = ImVec2(logRectMin.x + ImGui::GetWindowWidth(), logRectMin.y + ImGui::GetWindowHeight());
             ImGui::EndChild();
-            // Floating "jump to latest" button when scrolled up.
+            // Floating "jump to latest" button when scrolled up. Draw it as an
+            // overlay without disturbing the composer's normal layout below.
             if (scrolledUp) {
+                ImVec2 keep = ImGui::GetCursorScreenPos();
                 ImGui::SetCursorScreenPos(ImVec2(logRectMax.x - 44, logRectMax.y - 44));
                 if (ImGui::Button("\xE2\x86\x93##jump", ImVec2(32, 32))) wantScrollBottom = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to latest");
+                ImGui::SetCursorScreenPos(keep);
             }
 
             // ---- Composer: reply/edit banner, emoji, growing input, send -------

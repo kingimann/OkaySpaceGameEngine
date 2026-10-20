@@ -2973,7 +2973,8 @@ int main(int argc, char** argv) {
                 static std::vector<okay::FriendEvent> fFeed;
                 static std::string fCode;
                 // DM window state (one open conversation at a time).
-                static std::string dmUid, dmName;
+                static std::string dmUid, dmName, dmAvatar;
+                static bool dmOnline = false;
                 static std::vector<okay::DirectMessage> dmLog;
                 static Uint32 dmNextPoll = 0;
                 static char dmInput[512] = "";
@@ -3094,6 +3095,7 @@ int main(int argc, char** argv) {
                         if (accepted) {
                             if (ImGui::Button("Message")) {
                                 dmUid = f->id; dmName = f->display.empty() ? f->username : f->display;
+                                dmAvatar = f->avatar; dmOnline = f->online;
                                 dmLog.clear(); dmNextPoll = 0; dmOpen = true;
                             }
                             ImGui::SameLine();
@@ -3173,7 +3175,8 @@ int main(int argc, char** argv) {
                     ImGui::Separator();
                     // Working actions.
                     if (ImGui::Button("Message", ImVec2(-1, 0))) {
-                        dmUid = pf.id; dmName = pname; dmLog.clear(); dmNextPoll = 0; dmOpen = true;
+                        dmUid = pf.id; dmName = pname; dmAvatar = pf.avatar; dmOnline = pf.online;
+                        dmLog.clear(); dmNextPoll = 0; dmOpen = true;
                         ImGui::CloseCurrentPopup();
                     }
                     if (pf.online && !pf.sessionCode.empty()) {
@@ -3194,49 +3197,74 @@ int main(int argc, char** argv) {
 
                 // --- Top-level DM window (opened from a row or a profile card) ---
                 if (dmOpen) { ImGui::OpenPopup("##dmwin"); dmOpen = false; }
-                ImGui::SetNextWindowSize(ImVec2(420, 360));
+                ImGui::SetNextWindowSize(ImVec2(460, 440));
                 if (ImGui::BeginPopup("##dmwin")) {
                     okay::Messages dm(account);
                     Uint32 tnow = SDL_GetTicks();
                     if (tnow >= dmNextPoll) { dmLog = dm.With(dmUid); dmNextPoll = tnow + 4000; }
-                    ImGui::Text("Chat with %s", dmName.c_str());
+                    // Header: friend avatar + name + presence dot.
+                    ImVec2 hp = ImGui::GetCursorScreenPos();
+                    DrawAvatar(dmAvatar, dmName, 30.0f);
+                    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(hp.x+25, hp.y+25), 4.5f,
+                        dmOnline ? IM_COL32(120,200,110,255) : IM_COL32(120,128,140,255), 12);
+                    ImGui::SameLine(); ImGui::SetCursorPosY(ImGui::GetCursorPosY()+4);
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(dmName.c_str());
+                    ImGui::TextColored(dmOnline?ImVec4(0.55f,0.9f,0.6f,1):ImVec4(0.6f,0.63f,0.7f,1), "%s", dmOnline?"Online":"Offline");
+                    ImGui::EndGroup();
                     ImGui::Separator();
-                    ImGui::BeginChild("##dmlog", ImVec2(0, ImGui::GetContentRegionAvail().y - 36.0f), true);
+                    ImGui::BeginChild("##dmlog", ImVec2(0, ImGui::GetContentRegionAvail().y - 40.0f), false);
                     static int dmLastShown = -1;
                     float avW = ImGui::GetContentRegionAvail().x;
+                    std::string prevSender; bool first = true;
                     for (const auto& m : dmLog) {
-                        // Right-aligned bubble for my messages, left for theirs.
-                        float bubbleMax = avW * 0.74f;
+                        bool grp = (first || (m.mine ? prevSender!="me" : prevSender!="them"));
+                        float bubbleMax = avW * 0.66f;
                         ImVec2 ts = ImGui::CalcTextSize(m.body.c_str(), nullptr, false, bubbleMax);
-                        float bw = ts.x + 18, bh = ts.y + 22;
-                        float x0 = m.mine ? (avW - bw) : 0.0f; if (x0 < 0) x0 = 0;
-                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + x0);
+                        float bw = ts.x + 20, bh = ts.y + 14;
+                        float av = 34.0f;  // avatar gutter for theirs
+                        float x0 = m.mine ? (avW - bw) : av;
+                        if (x0 < 0) x0 = 0;
+                        if (grp && !first) ImGui::Dummy(ImVec2(0, 4));
+                        // Avatar for the other person's group start.
+                        if (!m.mine && grp) {
+                            ImVec2 ap2 = ImGui::GetCursorScreenPos();
+                            float sv = ImGui::GetCursorPosX();
+                            ImGui::SetCursorPosX(sv); DrawAvatar(dmAvatar, dmName, 28.0f);
+                            ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX() - 28 + av);
+                        } else if (!m.mine) {
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + av);
+                        } else {
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + x0);
+                        }
                         ImVec2 p = ImGui::GetCursorScreenPos();
                         ImDrawList* bl = ImGui::GetWindowDrawList();
-                        ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(44, 54, 74, 255);
-                        bl->AddRectFilled(p, ImVec2(p.x + bw, p.y + bh), bg, 8.0f);
-                        // sender + time header
-                        char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
-                        bl->AddText(ImVec2(p.x + 9, p.y + 3), IM_COL32(200, 210, 230, 180),
-                                    (std::string(m.mine ? "You" : dmName) + (w[0] ? std::string("  ") + w : "")).c_str());
-                        ImGui::SetCursorScreenPos(ImVec2(p.x + 9, p.y + 3 + ImGui::GetTextLineHeight() + 1));
+                        ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(48, 58, 80, 255);
+                        bl->AddRectFilled(p, ImVec2(p.x + bw, p.y + bh), bg, 9.0f);
+                        ImGui::SetCursorScreenPos(ImVec2(p.x + 10, p.y + 6));
                         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bubbleMax);
                         ImGui::TextUnformatted(m.body.c_str());
                         ImGui::PopTextWrapPos();
+                        // tiny timestamp under the bubble
+                        char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
+                        if (w[0]) { ImGui::SetCursorPosX(m.mine ? (avW - ImGui::CalcTextSize(w).x) : av);
+                                    ImGui::TextDisabled("%s", w); }
                         ImGui::SetCursorPosX(0);
-                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::Dummy(ImVec2(0, 1));
+                        prevSender = m.mine ? "me" : "them"; first = false;
                     }
                     if (dmLog.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
-                    // Auto-scroll to the newest message when the count changes.
                     if ((int)dmLog.size() != dmLastShown) { ImGui::SetScrollHereY(1.0f); dmLastShown = (int)dmLog.size(); }
                     ImGui::EndChild();
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 64);
                     bool send = ImGui::InputTextWithHint("##dmin", "Message...", dmInput, sizeof(dmInput),
                                                          ImGuiInputTextFlags_EnterReturnsTrue);
                     ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
                     if ((ImGui::Button("Send", ImVec2(56,0)) || send) && dmInput[0]) {
                         if (dm.Send(dmUid, dmInput)) { dmInput[0] = '\0'; dmNextPoll = 0; }
                     }
+                    ImGui::PopStyleColor();
                     ImGui::EndPopup();
                 }
                 if (fCache.empty()) {

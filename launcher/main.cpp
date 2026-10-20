@@ -3457,6 +3457,50 @@ int main(int argc, char** argv) {
                 else if (wSort == 2)
                     std::stable_sort(order.begin(), order.end(),
                         [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b){ return avgOf(a->id) > avgOf(b->id); });
+
+                // Featured strip: top-rated items, shown only on the unfiltered
+                // default view so it doesn't fight an active search/sort.
+                if (nd.empty() && wFilterKind == 0 && !wWishOnly && wSort == 0) {
+                    std::vector<const okay::WorkshopItem*> top;
+                    for (const auto& w : wCache) if (avgOf(w.id) > 0.0f) top.push_back(&w);
+                    std::stable_sort(top.begin(), top.end(),
+                        [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b){ return avgOf(a->id) > avgOf(b->id); });
+                    if (top.size() > 3) top.resize(3);
+                    if (!top.empty()) {
+                        ImGui::TextDisabled("FEATURED  -  TOP RATED");
+                        ImGui::Dummy(ImVec2(0, 2));
+                        float cw = (ImGui::GetContentRegionAvail().x - 2 * 10) / 3.0f;
+                        for (std::size_t i = 0; i < top.size(); ++i) {
+                            const okay::WorkshopItem& w = *top[i];
+                            if (i) ImGui::SameLine(0, 10);
+                            ImGui::PushID((int)(90000 + w.id));
+                            ImGui::BeginChild("##feat", ImVec2(cw, 86), true);
+                            HoverRing();
+                            ImGui::SetCursorPos(ImVec2(10, 12)); IconTile(w.title, 40.0f);
+                            ImGui::SameLine(); ImGui::SetCursorPosX(60);
+                            ImGui::BeginGroup();
+                            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+                            ImGui::TextUnformatted(w.title.c_str());
+                            ImVec2 fp = ImGui::GetCursorScreenPos(); fp.y += 2;
+                            DrawStars(ImGui::GetWindowDrawList(), fp, 10.0f, avgOf(w.id),
+                                      IM_COL32(240,196,92,255), IM_COL32(255,255,255,46));
+                            ImGui::Dummy(ImVec2(66, 13)); ImGui::SameLine();
+                            ImGui::TextDisabled("%.1f", avgOf(w.id));
+                            ImGui::TextDisabled("by %s", w.author.empty() ? "unknown" : w.author.c_str());
+                            ImGui::EndGroup();
+                            if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                rvItem = w.id; rvTitle = w.title; rvOpen = true;
+                                rvStars = 5; rvBody[0] = '\0'; rvErr.clear();
+                                rvList = ws.Reviews(w.id);
+                                for (const auto& rev : rvList) if (rev.mine) {
+                                    rvStars = rev.rating; std::snprintf(rvBody, sizeof(rvBody), "%s", rev.body.c_str()); }
+                            }
+                            ImGui::EndChild();
+                            ImGui::PopID();
+                        }
+                        ImGui::Dummy(ImVec2(0, 6));
+                    }
+                }
                 ImGui::BeginChild("##market", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
                 std::string me = account.CurrentSession().username;
                 int mktShown = 0;

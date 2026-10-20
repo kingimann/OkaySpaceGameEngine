@@ -1036,6 +1036,72 @@ ImVec4 NameColor(const std::string& s) {
     return ImVec4(r, g, b, 1.0f);
 }
 
+// Day bucket (YYYYMMDD in local time) for a unix timestamp — used to draw a
+// date separator in chat when the day rolls over between messages.
+long DayKey(long when) {
+    if (when <= 0) return 0;
+    std::time_t t = (std::time_t)when; std::tm* tm = std::localtime(&t);
+    if (!tm) return 0;
+    return (tm->tm_year + 1900) * 10000L + (tm->tm_mon + 1) * 100L + tm->tm_mday;
+}
+
+// A centered "— Month DD, YYYY —" divider line across the chat width.
+void ChatDateSeparator(long when) {
+    char d[48] = "";
+    std::time_t t = (std::time_t)when; std::tm* tm = std::localtime(&t);
+    if (tm) std::strftime(d, sizeof(d), "%B %d, %Y", tm);
+    ImGui::Dummy(ImVec2(0, 6));
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float avail = ImGui::GetContentRegionAvail().x;
+    ImU32 lc = ImGui::GetColorU32(ImGuiCol_Separator);
+    float tw = ImGui::CalcTextSize(d).x, pad = 12.0f;
+    float mid = p.x + avail * 0.5f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float ly = p.y + ImGui::GetTextLineHeight() * 0.5f;
+    dl->AddLine(ImVec2(p.x + 4, ly), ImVec2(mid - tw * 0.5f - pad, ly), lc, 1.0f);
+    dl->AddLine(ImVec2(mid + tw * 0.5f + pad, ly), ImVec2(p.x + avail - 4, ly), lc, 1.0f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail * 0.5f - tw * 0.5f);
+    ImGui::TextDisabled("%s", d);
+    ImGui::Dummy(ImVec2(0, 2));
+}
+
+// Render a chat message body with word-wrapping, turning http(s) URLs into
+// clickable links. Plain text takes a fast TextWrapped path; only bodies that
+// actually contain a link do the manual token layout.
+void RenderChatBody(const std::string& body) {
+    if (body.find("http://") == std::string::npos && body.find("https://") == std::string::npos) {
+        ImGui::TextWrapped("%s", body.c_str());
+        return;
+    }
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float spaceW = ImGui::CalcTextSize(" ").x;
+    ImU32 linkCol = ImGui::GetColorU32(kAccent);
+    float lineX = 0.0f; bool lineStarted = false;
+    std::size_t i = 0, n = body.size();
+    while (i < n) {
+        if (body[i] == '\n') { lineStarted = false; lineX = 0; ++i; ImGui::NewLine(); continue; }
+        if (body[i] == ' ')  { ++i; continue; }
+        std::size_t j = i;
+        while (j < n && body[j] != ' ' && body[j] != '\n') ++j;
+        std::string tok = body.substr(i, j - i);
+        i = j;
+        float tw = ImGui::CalcTextSize(tok.c_str()).x;
+        if (lineStarted && lineX + spaceW + tw > avail) { lineStarted = false; lineX = 0; }
+        if (lineStarted) { ImGui::SameLine(0, spaceW); lineX += spaceW; }
+        bool link = tok.rfind("http://", 0) == 0 || tok.rfind("https://", 0) == 0;
+        if (link) {
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(linkCol), "%s", tok.c_str());
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(mn.x, mx.y - 1), ImVec2(mx.x, mx.y - 1), linkCol, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (ImGui::IsItemClicked()) OpenExternal(tok);
+        } else {
+            ImGui::TextUnformatted(tok.c_str());
+        }
+        lineX += tw; lineStarted = true;
+    }
+}
+
 // Rounded square tile showing the item's initial — a lightweight "thumbnail"
 // that needs no image assets. Advances the layout like a normal item.
 void IconTile(const std::string& name, float size) {
@@ -3532,8 +3598,13 @@ int main(int argc, char** argv) {
                     ImGui::BeginChild("##dmlog", ImVec2(0, ImGui::GetContentRegionAvail().y - 40.0f), false);
                     static int dmLastShown = -1;
                     float avW = ImGui::GetContentRegionAvail().x;
-                    std::string prevSender; bool first = true;
+                    std::string prevSender; bool first = true; long prevDay = 0;
                     for (const auto& m : dmLog) {
+                        long day = DayKey(m.when);
+                        if (day != 0 && day != prevDay) {
+                            ImGui::SetCursorPosX(0); ChatDateSeparator(m.when);
+                            prevDay = day; prevSender.clear(); first = true;
+                        }
                         bool grp = (first || (m.mine ? prevSender!="me" : prevSender!="them"));
                         float bubbleMax = avW * 0.66f;
                         ImVec2 ts = ImGui::CalcTextSize(m.body.c_str(), nullptr, false, bubbleMax);
@@ -4078,37 +4149,56 @@ int main(int argc, char** argv) {
                         ImGui::TextDisabled("Pick a channel");
                     } else {
                         if (now >= svNextMsg) { svMsgs = sv.Messages(svChan); svNextMsg = now + 4000; }
-                        ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - 36.0f), false);
+                        // Channel header bar (# name), Discord-style.
+                        std::string chanName;
+                        for (const auto& c : svChannels) if (c.id == svChan) { chanName = c.name; break; }
+                        ImGui::Text("# %s", chanName.empty() ? "channel" : chanName.c_str());
+                        ImGui::Separator();
+                        ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - 40.0f), false);
                         static int svLastShown = -1;
-                        std::string prevAuthor; bool firstMsg = true;
+                        std::string prevAuthor; bool firstMsg = true; long prevDay = 0;
                         for (const auto& m : svMsgs) {
                             std::string who = m.author.empty() ? "unknown" : m.author;
-                            char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%b %d, %H:%M",tm); }
+                            // Date separator when the day changes.
+                            long day = DayKey(m.when);
+                            if (day != 0 && day != prevDay) { ChatDateSeparator(m.when); prevDay = day; prevAuthor.clear(); }
+                            char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
                             if (who != prevAuthor) {
                                 if (!firstMsg) ImGui::Dummy(ImVec2(0, 6));
-                                ImVec2 ap = ImGui::GetCursorScreenPos();
                                 DrawAvatar("", who, 34.0f);            // colored initial avatar
                                 ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6);
                                 ImGui::BeginGroup();
                                 ImVec4 nc2 = NameColor(who);
                                 ImGui::TextColored(ImVec4(nc2.x,nc2.y,nc2.z,1), "%s", who.c_str());
                                 ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", w);
-                                ImGui::TextWrapped("%s", m.body.c_str());
+                                RenderChatBody(m.body);
                                 ImGui::EndGroup();
                                 prevAuthor = who;
                             } else {
-                                // Continuation of the same author's group: indent under the avatar.
+                                // Continuation of the same author's group: indent under the
+                                // avatar, with a faint timestamp revealed on hover (Discord-like).
                                 ImGui::Indent(40.0f);
-                                ImGui::TextWrapped("%s", m.body.c_str());
+                                ImVec2 rowTop = ImGui::GetCursorScreenPos();
+                                RenderChatBody(m.body);
+                                if (w[0] && ImGui::IsItemHovered()) {
+                                    ImVec2 tp(rowTop.x - 38.0f, rowTop.y + 1.0f);
+                                    ImGui::GetWindowDrawList()->AddText(tp,
+                                        ImGui::GetColorU32(ImGuiCol_TextDisabled), w);
+                                }
                                 ImGui::Unindent(40.0f);
                             }
                             firstMsg = false;
                         }
-                        if (svMsgs.empty()) ImGui::TextDisabled("No messages yet. Say something!");
+                        if (svMsgs.empty()) {
+                            ImGui::Dummy(ImVec2(0, 10));
+                            ImGui::TextDisabled("This is the start of #%s.", chanName.empty()?"channel":chanName.c_str());
+                            ImGui::TextDisabled("Say something to kick things off!");
+                        }
                         if ((int)svMsgs.size() != svLastShown) { ImGui::SetScrollHereY(1.0f); svLastShown = (int)svMsgs.size(); }
                         ImGui::EndChild();
+                        char hint[64]; std::snprintf(hint, sizeof(hint), "Message #%s", chanName.empty()?"channel":chanName.c_str());
                         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70);
-                        bool send = ImGui::InputTextWithHint("##svsend", "Message #channel", svMsg, sizeof(svMsg), ImGuiInputTextFlags_EnterReturnsTrue);
+                        bool send = ImGui::InputTextWithHint("##svsend", hint, svMsg, sizeof(svMsg), ImGuiInputTextFlags_EnterReturnsTrue);
                         ImGui::SameLine();
                         if ((ImGui::Button("Send", ImVec2(62, 0)) || send) && svMsg[0]) {
                             if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; svNextMsg = 0; }

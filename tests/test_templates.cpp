@@ -75,12 +75,13 @@ int main() {
 
         GameObject* player = scene.Find("Player");
         CHECK(player != nullptr);
-        CHECK(player->GetComponent<ScriptComponent>() != nullptr);
+        // The top-down starter now uses the native TopDownController2D (no script).
+        CHECK(player->GetComponent<TopDownController2D>() != nullptr);
         CHECK(scene.Find("MainCamera")->GetComponent<CameraFollow>() != nullptr);
         CHECK(scene.Find("WallA") != nullptr);
         CHECK(scene.Find("WallB") != nullptr);
 
-        // The player's script should actually move it under input.
+        // The native controller should actually move the player under input.
         scene.Start();
         Input::FeedKeys({'d'}); // hold right
         Vec3 before = player->transform->localPosition;

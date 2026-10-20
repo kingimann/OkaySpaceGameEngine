@@ -1026,6 +1026,11 @@ public:
     bool IsBareFunctionAhead() const {
         std::size_t i = m_pos;
         if (m_toks[i].type != Tok::Ident) return false;
+        // Control-flow words that are lexed as identifiers (not keyword tokens)
+        // can be `word (...) { ... }`, which otherwise looks exactly like a bare
+        // function definition — exclude them so e.g. `foreach (x in xs) {}` is
+        // parsed as a statement, not a function named "foreach".
+        if (m_toks[i].text == "foreach" || m_toks[i].text == "do") return false;
         if (m_toks[i + 1].type != Tok::LParen) return false;
         int depth = 0;
         for (i += 1; m_toks[i].type != Tok::End; ++i) {
@@ -1535,6 +1540,10 @@ struct OkayScriptVM::Impl {
     // per-frame loop. Lets a whole script be one line, e.g. `on_key_move(5)`. Setup-style
     // top-level code (globals) still runs once at load whenever any function is defined.
     bool bareMode = false;
+    // In bare mode the top-level runs once at Load (so globals exist immediately,
+    // as for any script) AND every frame. To keep the per-frame tick count the
+    // same as before, the first bare Update skips the re-run that Load already did.
+    bool bareSkipFirstUpdate = false;
 
     // Last network message popped by net_poll(), exposed via net_msg_* builtins.
     std::string netMsgChannel, netMsgData;
@@ -5269,8 +5278,12 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         // loop (run every frame), so a whole script can be a single line. Otherwise run
         // top-level once now for globals/setup.
         m_impl->bareMode = m_impl->rt.functions.empty() && !m_impl->topLevel.empty();
-        if (!m_impl->bareMode)
-            for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt);
+        // Always run the top-level once now so globals/setup exist right after
+        // Load (the contract every caller relies on). In bare mode the top-level
+        // is also the per-frame loop, so this first run is the first tick — the
+        // first Update skips re-running it to keep the overall tick count intact.
+        for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt);
+        m_impl->bareSkipFirstUpdate = m_impl->bareMode;
         m_impl->loaded = true;
         return true;
     } catch (const ReturnSignal&) {
@@ -5370,9 +5383,14 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
     if (m_impl->rt.host) m_impl->rt.host->deltaTime = deltaTime;
     std::vector<Value> args{Value{deltaTime}};
     // Bare mode: re-run the top-level statements every frame (they ARE the loop).
+    // Load already ran them once, so skip that first re-run to avoid double-ticking.
     if (m_impl->bareMode) {
-        try { for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt); }
-        catch (const std::exception& e) { Log::Error("OkayScript (bare): ", e.what()); }
+        if (m_impl->bareSkipFirstUpdate) {
+            m_impl->bareSkipFirstUpdate = false;
+        } else {
+            try { for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt); }
+            catch (const std::exception& e) { Log::Error("OkayScript (bare): ", e.what()); }
+        }
     }
     CallFirst(m_impl->rt, {"Update", "update"}, args, "Update");
     CallFirst(m_impl->rt, {"LateUpdate", "late_update"}, args, "LateUpdate");

@@ -3644,6 +3644,11 @@ int main(int argc, char** argv) {
             ImGui::SetNextItemWidth(-16);
             ImGui::InputText("##nploc", npLoc, sizeof(npLoc));
             ImGui::TextDisabled("Pick a template to create <Location>/<Name> and open it in the editor.");
+            static char tplFilter[64] = "";
+            ImGui::Dummy(ImVec2(0, 4));
+            ImGui::SetNextItemWidth(260);
+            ImGui::InputTextWithHint("##tplFilter", "Search templates...", tplFilter, sizeof(tplFilter));
+            std::string tplNeedle; for (const char* c = tplFilter; *c; ++c) tplNeedle += (char)std::tolower((unsigned char)*c);
             ImGui::Dummy(ImVec2(0, 6));
             // Titles must match the editor's New Project templates exactly.
             static const struct { const char* name; const char* desc; } kTpl[] = {
@@ -3667,8 +3672,17 @@ int main(int argc, char** argv) {
             if (cols < 2) cols = 2; if (cols > 4) cols = 4;
             float cardW = (availW - (float)(cols - 1) * 8.0f) / (float)cols;
             if (editor.empty()) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
+            int tplShown = 0;
             for (int i = 0; i < tplCount; ++i) {
-                if (i % cols) ImGui::SameLine();
+                if (!tplNeedle.empty()) {
+                    std::string hay;
+                    for (const char* c = kTpl[i].name; *c; ++c) hay += (char)std::tolower((unsigned char)*c);
+                    hay += ' ';
+                    for (const char* c = kTpl[i].desc; *c; ++c) hay += (char)std::tolower((unsigned char)*c);
+                    if (hay.find(tplNeedle) == std::string::npos) continue;
+                }
+                if (tplShown % cols) ImGui::SameLine();
+                ++tplShown;
                 ImGui::PushID(i);
                 ImGui::BeginChild("tpl", ImVec2(cardW, 92), true, ImGuiWindowFlags_NoScrollbar);
                 bool hov = !editor.empty() && ImGui::IsWindowHovered();
@@ -3707,6 +3721,8 @@ int main(int argc, char** argv) {
                 ImGui::PopID();
             }
             if (editor.empty()) ImGui::PopStyleVar();
+            if (tplShown == 0 && !tplNeedle.empty())
+                ImGui::TextDisabled("No templates match \"%s\".", tplFilter);
 
             // ---- Your projects: everything in the Location folder, one line each ----
             ImGui::Dummy(ImVec2(0, 12));

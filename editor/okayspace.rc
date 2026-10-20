@@ -1,0 +1,3 @@
+// Windows executable icon for the OkaySpace editor (OkayEngine.exe), matching
+// the launcher's icon so both show the same OkaySpace mark in Explorer/taskbar.
+1 ICON "okayspace.ico"

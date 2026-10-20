@@ -1155,7 +1155,7 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab < 9) ? g_lastTab : 0;
+    int tab = (g_lastTab >= 0 && g_lastTab < 10) ? g_lastTab : 0;
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
     if (g_updateOnLaunch) StartUpdateCheck();   // opt-in auto-check at startup
     bool running = true;
@@ -1306,14 +1306,14 @@ int main(int argc, char** argv) {
         const float kNavFootH = 92.0f;
         ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - kNavFootH), false);
         ImGui::Dummy(ImVec2(0, 16));
-        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers"};
+        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums"};
         // Grouped, Steam-style sidebar. Display order + section headers; the tab
         // content blocks stay keyed by these indices, so only the order and the
         // grouping change here (keyboard shortcuts still map 1..8 to the tabs).
         struct NavRow { int tab; const char* section; };
         static const NavRow kNavRows[] = {
             {0, "MENU"},   {1, nullptr}, {2, nullptr},
-            {6, "SOCIAL"}, {8, nullptr}, {5, nullptr}, {7, nullptr},
+            {6, "SOCIAL"}, {8, nullptr}, {9, nullptr}, {5, nullptr}, {7, nullptr},
             {3, "SYSTEM"}, {4, nullptr},
         };
         for (const NavRow& nv : kNavRows) {
@@ -1400,6 +1400,13 @@ int main(int argc, char** argv) {
                         dl->AddCircleFilled(ImVec2(cx - r * 0.45f, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
                         dl->AddCircleFilled(ImVec2(cx, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
                         dl->AddCircleFilled(ImVec2(cx + r * 0.45f, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
+                        break;
+                    case 9:   // Forums: stacked lines (document)
+                        dl->AddRect(ImVec2(cx - r * 0.8f, cy - r), ImVec2(cx + r * 0.8f, cy + r), ic, r * 0.15f, 0, 1.6f);
+                        for (int k = 0; k < 3; ++k) {
+                            float yy = cy - r * 0.45f + k * r * 0.45f;
+                            dl->AddLine(ImVec2(cx - r * 0.5f, yy), ImVec2(cx + r * 0.5f, yy), ic, 1.6f);
+                        }
                         break;
                 }
             }
@@ -1505,6 +1512,20 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("%s", subtitle);
                 ImGui::Dummy(ImVec2(0, 10));
             }
+        };
+        // Login gate for online-only tabs: returns true when signed in, else
+        // renders a centered "sign in" card and returns false.
+        auto loginGate = [&](const char* what) -> bool {
+            if (account.IsLoggedIn()) return true;
+            ImGui::Dummy(ImVec2(0, 40));
+            auto center = [&](const char* s, bool dim){ float tw=ImGui::CalcTextSize(s).x; float o=(ImGui::GetContentRegionAvail().x-tw)*0.5f; if(o>0) ImGui::SetCursorPosX(ImGui::GetCursorPosX()+o); if(dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s); };
+            center("Sign in required", false);
+            char line[96]; std::snprintf(line, sizeof(line), "Sign in to your OkaySpace account to use %s.", what);
+            center(line, true);
+            ImGui::Dummy(ImVec2(0, 10));
+            float o=(ImGui::GetContentRegionAvail().x-180)*0.5f; if(o>0) ImGui::SetCursorPosX(ImGui::GetCursorPosX()+o);
+            if (PrimaryButton("Sign in", ImVec2(180, 42))) { tab = 3; g_lastTab = 3; SavePrefs(); }
+            return false;
         };
         if (tab == 0) {                                   // ---- Create ----
             sectionHeader("Create a game", nullptr);
@@ -2363,67 +2384,6 @@ int main(int argc, char** argv) {
             if (mShown == 0) ImGui::TextDisabled("No templates match \"%s\".", marketFilter);
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextDisabled("Opens the editor's New Project on the chosen template.");
-
-            // ---- Community forums ----
-            ImGui::Dummy(ImVec2(0, 16));
-            ImGui::SeparatorText("Forums");
-            {
-                okay::Forums fo(account);
-                static std::vector<okay::ForumThread> ftCache;
-                static std::vector<okay::ForumPost> fpCache;
-                static long   openThread = 0;
-                static std::string openTitle, foErr;
-                static char newThread[120] = "", replyBuf[600] = "";
-                static Uint32 foNext = 0, fpNext = 0;
-                Uint32 tnow = SDL_GetTicks();
-                if (tnow >= foNext) { ftCache = fo.Threads(); foNext = tnow + 20000; }
-
-                if (openThread == 0) {
-                    // Thread list + start-a-thread.
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 150);
-                    bool mk = ImGui::InputTextWithHint("##newthread", "Start a new discussion...",
-                                                       newThread, sizeof(newThread),
-                                                       ImGuiInputTextFlags_EnterReturnsTrue);
-                    ImGui::SameLine();
-                    if ((ImGui::Button("Post thread", ImVec2(140, 0)) || mk) && newThread[0]) {
-                        if (fo.StartThread(newThread, &foErr)) { newThread[0] = '\0'; foErr.clear(); foNext = 0; }
-                    }
-                    if (!foErr.empty()) { ImGui::TextColored(ImVec4(0.9f,0.45f,0.45f,1), "%s", foErr.c_str()); }
-                    ImGui::Dummy(ImVec2(0, 4));
-                    for (const auto& t : ftCache) {
-                        ImGui::PushID((int)t.id);
-                        if (ImGui::Selectable(("  " + t.title).c_str(), false, 0, ImVec2(0, 30))) {
-                            openThread = t.id; openTitle = t.title; fpNext = 0;
-                        }
-                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 160);
-                        ImGui::TextDisabled("by %s", t.author.empty() ? "unknown" : t.author.c_str());
-                        ImGui::PopID();
-                    }
-                    if (ftCache.empty())
-                        ImGui::TextDisabled("No discussions yet — start the first one above.");
-                } else {
-                    // Open thread: posts + reply box.
-                    if (ImGui::Button("< Back to forums")) { openThread = 0; fpCache.clear(); }
-                    ImGui::SameLine();
-                    ImGui::Text("%s", openTitle.c_str());
-                    if (tnow >= fpNext) { fpCache = fo.Posts(openThread); fpNext = tnow + 8000; }
-                    ImGui::BeginChild("##fposts", ImVec2(0, 240), true);
-                    for (const auto& p : fpCache) {
-                        ImGui::TextDisabled("%s", p.author.empty() ? "unknown" : p.author.c_str());
-                        ImGui::TextWrapped("%s", p.body.c_str());
-                        ImGui::Separator();
-                    }
-                    if (fpCache.empty()) ImGui::TextDisabled("No replies yet.");
-                    ImGui::EndChild();
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110);
-                    bool rp = ImGui::InputTextWithHint("##reply", "Write a reply...", replyBuf, sizeof(replyBuf),
-                                                       ImGuiInputTextFlags_EnterReturnsTrue);
-                    ImGui::SameLine();
-                    if ((ImGui::Button("Reply", ImVec2(100, 0)) || rp) && replyBuf[0]) {
-                        if (fo.Reply(openThread, replyBuf, &foErr)) { replyBuf[0] = '\0'; fpNext = 0; }
-                    }
-                }
-            }
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 
@@ -2768,6 +2728,7 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
+            if (loginGate("settings")) {
             ImGui::SeparatorText("Account");
             // The account server is baked into this build, so there's nothing to
             // configure here — just a plain connection status (no URL shown).
@@ -2953,8 +2914,10 @@ int main(int argc, char** argv) {
                 ImGui::EndPopup();
             }
             ImGui::TextDisabled("Preferences are stored in launcher.cfg next to the launcher.");
+            }   // end settings login gate
         } else if (tab == 5) {                            // ---- Achievements ----
             sectionHeader("Achievements", nullptr);
+            if (loginGate("achievements")) {
             std::vector<okay::Achievement> achs = okay::Achievements::All();
             ImGui::TextDisabled("%d unlocked across your OkaySpace games.", (int)achs.size());
             ImGui::Spacing();
@@ -2988,6 +2951,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndChild();
             }
+            }   // end achievements login gate
         } else if (tab == 6) {                            // ---- Friends ----
             sectionHeader("Friends", nullptr);
             okay::Friends fr(account);
@@ -3232,13 +3196,33 @@ int main(int argc, char** argv) {
                     ImGui::Text("Chat with %s", dmName.c_str());
                     ImGui::Separator();
                     ImGui::BeginChild("##dmlog", ImVec2(0, ImGui::GetContentRegionAvail().y - 36.0f), true);
+                    static int dmLastShown = -1;
+                    float avW = ImGui::GetContentRegionAvail().x;
                     for (const auto& m : dmLog) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, m.mine ? ImVec4(0.62f,0.78f,1.0f,1.0f)
-                                                                    : ImVec4(0.90f,0.92f,0.96f,1.0f));
-                        ImGui::TextWrapped("%s: %s", m.mine ? "You" : dmName.c_str(), m.body.c_str());
-                        ImGui::PopStyleColor();
+                        // Right-aligned bubble for my messages, left for theirs.
+                        float bubbleMax = avW * 0.74f;
+                        ImVec2 ts = ImGui::CalcTextSize(m.body.c_str(), nullptr, false, bubbleMax);
+                        float bw = ts.x + 18, bh = ts.y + 22;
+                        float x0 = m.mine ? (avW - bw) : 0.0f; if (x0 < 0) x0 = 0;
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + x0);
+                        ImVec2 p = ImGui::GetCursorScreenPos();
+                        ImDrawList* bl = ImGui::GetWindowDrawList();
+                        ImU32 bg = m.mine ? ImGui::GetColorU32(kAccentDim) : IM_COL32(44, 54, 74, 255);
+                        bl->AddRectFilled(p, ImVec2(p.x + bw, p.y + bh), bg, 8.0f);
+                        // sender + time header
+                        char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
+                        bl->AddText(ImVec2(p.x + 9, p.y + 3), IM_COL32(200, 210, 230, 180),
+                                    (std::string(m.mine ? "You" : dmName) + (w[0] ? std::string("  ") + w : "")).c_str());
+                        ImGui::SetCursorScreenPos(ImVec2(p.x + 9, p.y + 3 + ImGui::GetTextLineHeight() + 1));
+                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bubbleMax);
+                        ImGui::TextUnformatted(m.body.c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::SetCursorPosX(0);
+                        ImGui::Dummy(ImVec2(0, 4));
                     }
                     if (dmLog.empty()) ImGui::TextDisabled("No messages yet. Say hi!");
+                    // Auto-scroll to the newest message when the count changes.
+                    if ((int)dmLog.size() != dmLastShown) { ImGui::SetScrollHereY(1.0f); dmLastShown = (int)dmLog.size(); }
                     ImGui::EndChild();
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 64);
                     bool send = ImGui::InputTextWithHint("##dmin", "Message...", dmInput, sizeof(dmInput),
@@ -3274,6 +3258,7 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 7) {                            // ---- Market / Workshop ----
             sectionHeader("Marketplace", nullptr);
+            if (loginGate("the marketplace")) {
             okay::Workshop ws(account);
             static std::vector<okay::WorkshopItem> wCache;
             static Uint32 wNextRefresh = 0;
@@ -3422,6 +3407,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndChild();
             }
+            }   // end marketplace login gate
         } else if (tab == 8) {                            // ---- Servers (Discord-style) ----
             sectionHeader("Servers", nullptr);
             okay::Servers sv(account);
@@ -3540,6 +3526,82 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::EndChild();
+            }
+        } else if (tab == 9) {                            // ---- Forums ----
+            sectionHeader("Forums", "Discuss games, ask for help, and share ideas with the community.");
+            okay::Forums fo(account);
+            static std::vector<okay::ForumThread> ftCache;
+            static std::vector<okay::ForumPost> fpCache;
+            static long   openThread = 0;
+            static std::string openTitle, openAuthor, foErr;
+            static char newThread[120] = "", replyBuf[600] = "";
+            static Uint32 foNext = 0, fpNext = 0;
+            Uint32 tnow = SDL_GetTicks();
+            if (tnow >= foNext) { ftCache = fo.Threads(); foNext = tnow + 20000; }
+
+            if (openThread == 0) {
+                // Start a thread.
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 154);
+                bool mk = ImGui::InputTextWithHint("##newthread", "Start a new discussion...",
+                                                   newThread, sizeof(newThread), ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                if ((PrimaryButton("Post thread", ImVec2(146, 0)) || mk) && newThread[0]) {
+                    if (fo.StartThread(newThread, &foErr)) { newThread[0] = '\0'; foErr.clear(); foNext = 0; }
+                }
+                if (!foErr.empty()) { ImGui::TextColored(ImVec4(0.9f,0.45f,0.45f,1), "%s", foErr.c_str()); }
+                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::BeginChild("##threads", ImVec2(0, ImGui::GetContentRegionAvail().y - 4), false);
+                for (const auto& t : ftCache) {
+                    ImGui::PushID((int)t.id);
+                    ImGui::BeginChild("##trow", ImVec2(0, 52), true);
+                    HoverRing();
+                    ImGui::SetCursorPos(ImVec2(12, 10));
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(t.title.c_str());
+                    char when[40] = "";
+                    if (t.when > 0) { std::time_t tt=(std::time_t)t.when; std::tm* tm=std::localtime(&tt);
+                                      if (tm) std::strftime(when, sizeof(when), "%b %d", tm); }
+                    ImGui::TextDisabled("by %s%s%s", t.author.empty()?"unknown":t.author.c_str(), when[0]?"  -  ":"", when);
+                    ImGui::EndGroup();
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 76);
+                    ImGui::SetCursorPosY(14.0f);
+                    if (ImGui::Button("Open", ImVec2(70, 28))) { openThread=t.id; openTitle=t.title; openAuthor=t.author; fpNext=0; }
+                    if (ImGui::IsWindowHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { openThread=t.id; openTitle=t.title; openAuthor=t.author; fpNext=0; }
+                    ImGui::EndChild();
+                    ImGui::PopID();
+                }
+                if (ftCache.empty()) {
+                    ImGui::Dummy(ImVec2(0, 20));
+                    if (!fo.Available()) ImGui::TextDisabled("Browse freely; sign in to post.");
+                    ImGui::TextDisabled("No discussions yet — start the first one above.");
+                }
+                ImGui::EndChild();
+            } else {
+                if (ImGui::Button("< Back")) { openThread = 0; fpCache.clear(); }
+                ImGui::SameLine(); ImGui::TextUnformatted(openTitle.c_str());
+                ImGui::SameLine(); ImGui::TextDisabled("  started by %s", openAuthor.empty()?"unknown":openAuthor.c_str());
+                if (tnow >= fpNext) { fpCache = fo.Posts(openThread); fpNext = tnow + 6000; }
+                ImGui::BeginChild("##fposts", ImVec2(0, ImGui::GetContentRegionAvail().y - 40), true);
+                std::string me = account.CurrentSession().username;
+                for (const auto& p : fpCache) {
+                    bool mine = !me.empty() && p.author == me;
+                    ImGui::PushStyleColor(ImGuiCol_Text, mine ? ImVec4(0.62f,0.78f,1.0f,1) : ImVec4(0.80f,0.84f,0.90f,1));
+                    ImGui::TextUnformatted(p.author.empty()?"unknown":p.author.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0,8);
+                    char w[40]=""; if (p.when>0){std::time_t tt=(std::time_t)p.when;std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%b %d, %H:%M",tm);}
+                    ImGui::TextDisabled("%s", w);
+                    ImGui::TextWrapped("%s", p.body.c_str());
+                    ImGui::Dummy(ImVec2(0,2)); ImGui::Separator();
+                }
+                if (fpCache.empty()) ImGui::TextDisabled("No replies yet. Be the first to reply.");
+                ImGui::EndChild();
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
+                bool rp = ImGui::InputTextWithHint("##reply", "Write a reply...", replyBuf, sizeof(replyBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                if ((ImGui::Button("Reply", ImVec2(82, 0)) || rp) && replyBuf[0]) {
+                    if (fo.Reply(openThread, replyBuf, &foErr)) { replyBuf[0] = '\0'; fpNext = 0; }
+                }
             }
         }
 

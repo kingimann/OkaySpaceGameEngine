@@ -2457,6 +2457,55 @@ static int VerifySessionWorker(void* p) {
     return 0;
 }
 
+// ---- Background Forums fetch -----------------------------------------------
+// Opening the Forums tab used to fire four blocking HTTPS calls on the UI
+// thread, freezing the tab switch. This worker does them on its own account
+// service (same proven pattern as the friends poll) and publishes the results
+// under a mutex; the tab renders whatever is cached and never blocks.
+static SDL_mutex* g_foMutex = nullptr;
+static volatile bool g_foFetching = false;
+static bool g_foReady = false;                       // (guarded) fresh results waiting
+static std::vector<okay::ForumThread> g_foThreads;   // (guarded)
+static std::map<long,long> g_foScores;               // (guarded)
+static std::map<long,int>  g_foMy, g_foComments;     // (guarded)
+static int ForumFetchWorker(void*) {
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Forums fo(a);
+        auto th = fo.Threads();
+        auto sc = fo.Scores("thread");
+        auto mv = fo.MyVotes("thread");
+        auto cc = fo.CommentCounts();
+        if (g_foMutex) SDL_LockMutex(g_foMutex);
+        g_foThreads = std::move(th); g_foScores = std::move(sc);
+        g_foMy = std::move(mv); g_foComments = std::move(cc);
+        g_foReady = true;
+        if (g_foMutex) SDL_UnlockMutex(g_foMutex);
+    } catch (...) {}
+    g_foFetching = false;
+    return 0;
+}
+
+// Background Servers list fetch (same idea — opening the Servers tab shouldn't
+// block on the network). Only the server LIST is prefetched; channel/message
+// loads happen after the user picks a server.
+static SDL_mutex* g_svMutex = nullptr;
+static volatile bool g_svFetching = false;
+static bool g_svReady = false;                       // (guarded)
+static std::vector<okay::Server> g_svList;           // (guarded)
+static int ServerListWorker(void*) {
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Servers sv(a);
+        auto l = sv.MyServers();
+        if (g_svMutex) SDL_LockMutex(g_svMutex);
+        g_svList = std::move(l); g_svReady = true;
+        if (g_svMutex) SDL_UnlockMutex(g_svMutex);
+    } catch (...) {}
+    g_svFetching = false;
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -5744,7 +5793,20 @@ int main(int argc, char** argv) {
                 static char svRenChanBuf[64] = "", svRenSrvBuf[64] = "";
                 static bool svSettingsOpen = false, svRenChanOpen = false;
                 Uint32 now = SDL_GetTicks();
-                if (now >= svNextList) { svList = sv.MyServers(); svNextList = now + 20000; }
+                // Prefetch the server list in the background so switching to this
+                // tab never blocks on the network.
+                if (!g_svMutex) g_svMutex = SDL_CreateMutex();
+                if (now >= svNextList && !g_svFetching) {
+                    g_svFetching = true; svNextList = now + 20000;
+                    if (SDL_Thread* t = SDL_CreateThread(ServerListWorker, "okay-svlist", nullptr))
+                        SDL_DetachThread(t);
+                    else g_svFetching = false;
+                }
+                if (g_svMutex) {
+                    SDL_LockMutex(g_svMutex);
+                    if (g_svReady) { svList = g_svList; g_svReady = false; }
+                    SDL_UnlockMutex(g_svMutex);
+                }
 
                 float colH = ImGui::GetContentRegionAvail().y - 6.0f;
                 // Resizable 3-pane Discord layout: drag the column borders to resize.
@@ -6013,11 +6075,24 @@ int main(int argc, char** argv) {
             static bool foShowNew = false;
             static Uint32 foNext = 0, fpNext = 0;
             Uint32 tnow = SDL_GetTicks();
-            if (tnow >= foNext) {
-                ftCache = fo.Threads();
-                thScores = fo.Scores("thread"); thMy = fo.MyVotes("thread"); thComments = fo.CommentCounts();
-                foNext = tnow + 20000;
+            // Kick a background refresh (never blocks the tab switch); apply the
+            // results on a later frame once the worker publishes them.
+            if (!g_foMutex) g_foMutex = SDL_CreateMutex();
+            if (tnow >= foNext && !g_foFetching && fo.Available()) {
+                g_foFetching = true; foNext = tnow + 20000;
+                if (SDL_Thread* ft = SDL_CreateThread(ForumFetchWorker, "okay-forum", nullptr))
+                    SDL_DetachThread(ft);
+                else g_foFetching = false;
             }
+            if (g_foMutex) {
+                SDL_LockMutex(g_foMutex);
+                if (g_foReady) {
+                    ftCache = g_foThreads; thScores = g_foScores; thMy = g_foMy; thComments = g_foComments;
+                    g_foReady = false;
+                }
+                SDL_UnlockMutex(g_foMutex);
+            }
+            if (ftCache.empty() && g_foFetching) { ImGui::Dummy(ImVec2(0, 8)); ImGui::TextDisabled("Loading threads\xE2\x80\xA6"); }
 
             // A compact up/score/down vote widget (Reddit-style). Toggles like
             // Reddit: clicking your current direction clears the vote. Returns true

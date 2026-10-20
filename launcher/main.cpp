@@ -572,6 +572,7 @@ std::string g_pendingPublishTitle;
 bool g_openPublishForm = false;   // request the Market tab to open its publish form
 int g_friendRequests = 0;   // incoming pending friend requests (nav badge), polled in the background
 int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible (persisted)
+bool g_sharePresence = true; // share "Playing X" with friends (persisted)
 int  PlayCount(const std::string& p)  { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.count; }
 long LastPlayed(const std::string& p) { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.last; }
 // A short "2h ago" / "3d ago" from a unix time (empty if never).
@@ -646,7 +647,7 @@ void RecordPlayed(const std::string& p) {
 
     // Let friends see what I'm playing, and drop it in the activity feed —
     // unless I'm Invisible (status 2), in which case stay quiet.
-    if (g_presenceAccount && g_presenceAccount->IsLoggedIn() && g_onlineStatus != 2) {
+    if (g_presenceAccount && g_presenceAccount->IsLoggedIn() && g_onlineStatus != 2 && g_sharePresence) {
         std::string name = GameNameFromPath(p);
         okay::Friends fr(*g_presenceAccount);
         fr.MarkPresence("Playing " + name);
@@ -960,6 +961,7 @@ void LoadPrefs() {
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
         else if (k == "online_status") { try { g_onlineStatus = std::stoi(v); } catch (...) {} }
+        else if (k == "share_presence") g_sharePresence = (v != "0");
         else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
@@ -999,6 +1001,7 @@ void SavePrefs() {
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
     f << "online_status=" << g_onlineStatus << "\n";
+    f << "share_presence=" << (g_sharePresence ? 1 : 0) << "\n";
     f << "play_view=" << g_playView << "\n";
     f << "tab=" << g_lastTab << "\n";
     f << "win_w=" << g_winW << "\n";
@@ -2590,6 +2593,31 @@ int main(int argc, char** argv) {
                     acctMessage = r.ok ? "Password updated." : r.error;
                     if (r.ok) { std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0'); Toast("Password updated", 1); }
                 }
+
+                // ---- Privacy & presence ----
+                if (account.IsOnline()) {
+                    ImGui::Dummy(ImVec2(0, 14));
+                    ImGui::SeparatorText("Privacy & presence");
+                    ImGui::SetNextItemWidth(200);
+                    if (ImGui::Combo("Status", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
+                        okay::Friends pf(account);
+                        if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(g_onlineStatus == 1 ? "Away" : "In OkaySpace");
+                        SavePrefs();
+                    }
+                    if (ImGui::Checkbox("Share what I'm playing with friends", &g_sharePresence)) SavePrefs();
+                    ImGui::TextDisabled("When off, friends won't see the game you're playing.");
+
+                    // ---- Testing ----
+                    ImGui::Dummy(ImVec2(0, 14));
+                    ImGui::SeparatorText("Testing");
+                    ImGui::TextDisabled("Add OkayBot — a test friend that auto-accepts and replies to your DMs.");
+                    if (ImGui::Button("Add OkayBot", ImVec2(160, 0))) {
+                        std::string be;
+                        if (okay::Friends(account).Request("OkayBot", &be)) Toast("OkayBot added — open Friends", 1);
+                        else Toast(be.empty() ? "Couldn't add OkayBot" : be, 2);
+                    }
+                }
+
                 if (!acctMessage.empty()) {
                     ImGui::PushTextWrapPos(0.0f);
                     ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1)

@@ -571,6 +571,9 @@ std::map<std::string, PlayStat> g_stats;
 std::string g_pendingPublishTitle;
 bool g_openPublishForm = false;   // request the Market tab to open its publish form
 int g_friendRequests = 0;   // incoming pending friend requests (nav badge), polled in the background
+int  g_dmUnread = 0;        // unread direct messages (nav badge)
+long g_lastDmId = 0;        // newest incoming DM id the user has seen (persisted)
+long g_newestDmId = 0;      // newest incoming DM id currently on the server
 int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible (persisted)
 bool g_sharePresence = true; // share "Playing X" with friends (persisted)
 int  PlayCount(const std::string& p)  { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.count; }
@@ -961,6 +964,7 @@ void LoadPrefs() {
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
         else if (k == "online_status") { try { g_onlineStatus = std::stoi(v); } catch (...) {} }
+        else if (k == "last_dm_id") { try { g_lastDmId = std::stol(v); } catch (...) {} }
         else if (k == "share_presence") g_sharePresence = (v != "0");
         else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
@@ -1001,6 +1005,7 @@ void SavePrefs() {
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
     f << "online_status=" << g_onlineStatus << "\n";
+    f << "last_dm_id=" << g_lastDmId << "\n";
     f << "share_presence=" << (g_sharePresence ? 1 : 0) << "\n";
     f << "play_view=" << g_playView << "\n";
     f << "tab=" << g_lastTab << "\n";
@@ -1213,9 +1218,15 @@ int main(int argc, char** argv) {
                 if (lastReqSeen >= 0 && g_friendRequests > lastReqSeen && tab != 6)
                     Toast(g_friendRequests == 1 ? "New friend request" : "New friend requests", 1);
                 lastReqSeen = g_friendRequests;
+                // Unread DMs for the nav badge (+ toast on new ones).
+                long newest = g_lastDmId;
+                int unread = okay::Messages(account).UnreadSince(g_lastDmId, newest);
+                g_newestDmId = newest;
+                if (unread > g_dmUnread && tab != 6) Toast("New message", 1);
+                g_dmUnread = unread;
                 nextReqPoll = nowReq + 30000;
             } else if (!account.IsLoggedIn()) {
-                g_friendRequests = 0; lastReqSeen = -1;
+                g_friendRequests = 0; lastReqSeen = -1; g_dmUnread = 0;
             }
         }
         // Toast once when an update check finishes.
@@ -1424,9 +1435,9 @@ int main(int argc, char** argv) {
                                   ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
                 dl->AddText(bp, ImGui::GetColorU32(ImGuiCol_Text), nb);
             }
-            // Friends shows a red badge with the number of pending requests.
-            if (i == 6 && g_friendRequests > 0) {
-                char nb[16]; std::snprintf(nb, sizeof(nb), "%d", g_friendRequests);
+            // Friends shows a red badge: pending requests + unread DMs.
+            if (i == 6 && (g_friendRequests + g_dmUnread) > 0) {
+                char nb[16]; std::snprintf(nb, sizeof(nb), "%d", g_friendRequests + g_dmUnread);
                 ImVec2 ts = ImGui::CalcTextSize(nb);
                 ImVec2 bp(mx.x - ts.x - 18.0f, (mn.y + mx.y) * 0.5f - ts.y * 0.5f);
                 dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2),
@@ -2960,6 +2971,10 @@ int main(int argc, char** argv) {
             }   // end achievements login gate
         } else if (tab == 6) {                            // ---- Friends ----
             sectionHeader("Friends", nullptr);
+            // Viewing Friends clears the unread-DM badge.
+            if (account.IsLoggedIn() && (g_dmUnread > 0 || g_newestDmId > g_lastDmId)) {
+                g_lastDmId = g_newestDmId; g_dmUnread = 0; SavePrefs();
+            }
             okay::Friends fr(account);
             if (!fr.Available()) {
                 ImGui::Dummy(ImVec2(0, 20));

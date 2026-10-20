@@ -34,6 +34,25 @@ public:
                          "{\"recipient\":" + JStr(friendUid) + ",\"body\":" + JStr(body) + "}").ok;
     }
 
+    // Count incoming messages (addressed to me) newer than sinceId, and report
+    // the newest incoming id via newestOut. Used for an unread-DM nav badge.
+    int UnreadSince(long sinceId, long& newestOut) {
+        newestOut = sinceId;
+        if (!acct_.IsLoggedIn()) return 0;
+        std::string mine = MyId();
+        if (mine.empty()) return 0;
+        auto r = acct_.Api("/rest/v1/messages?select=id,recipient&order=id.desc&limit=60", "GET");
+        if (!r.ok) return 0;
+        int n = 0;
+        for (const auto& obj : SplitObjects(r.body)) {
+            if (Field(obj, "recipient") != mine) continue;   // only messages sent TO me
+            long id = std::atol(Field(obj, "id").c_str());
+            if (id > newestOut) newestOut = id;
+            if (id > sinceId) ++n;
+        }
+        return n;
+    }
+
     // The conversation with one friend, oldest first.
     std::vector<DirectMessage> With(const std::string& friendUid) {
         std::vector<DirectMessage> out;
@@ -55,6 +74,19 @@ public:
 
 private:
     okay::account::AccountService& acct_;
+    std::string myId_;
+
+    // My own profile/user uuid (looked up by username, cached).
+    std::string MyId() {
+        if (myId_.empty()) {
+            std::string enc; for (char c : acct_.CurrentSession().username) {
+                if (std::isalnum((unsigned char)c)||c=='-'||c=='_'||c=='.'||c=='~') enc += c;
+                else { char b[4]; std::snprintf(b,sizeof(b),"%%%02X",(unsigned char)c); enc += b; } }
+            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + enc, "GET");
+            if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myId_ = Field(o[0], "id"); }
+        }
+        return myId_;
+    }
 
     static long ParseIso(const std::string& ls) {
         if (ls.size() < 19) return 0;

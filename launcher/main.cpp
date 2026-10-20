@@ -2093,6 +2093,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::SetCursorPosX(baseX);
                 prevMine = m.mine; prevWhen = m.when; first = false;
             }
+            // Submit a zero-size item so the trailing SetCursorPosX above is
+            // "claimed" — otherwise ImGui warns about moving the cursor without
+            // growing the window (the "MESSAGE FROM DEAR IMGUI" overlay).
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
             // "Seen" under my latest message once the peer has read it.
             if (!log.empty() && log.back().mine && lastMineId > 0 && peerRead >= lastMineId && msFilt.empty()) {
                 std::string seen = "Seen";
@@ -2121,6 +2125,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (ImGui::Button("\xE2\x86\x93##jump", ImVec2(32, 32))) wantScrollBottom = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to latest");
                 ImGui::SetCursorScreenPos(keep);
+                ImGui::Dummy(ImVec2(0.0f, 0.0f));   // claim the restored cursor
             }
 
             // ---- Composer: reply/edit banner, emoji, growing input, send -------

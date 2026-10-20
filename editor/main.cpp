@@ -1774,6 +1774,7 @@ void SaveAllBeforeExit(EditorState& ed) {
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false, g_showImportObj = false;
+bool g_importAutoRig = false;    // Import Model dialog: auto-rig the model as a humanoid after import
 char g_objPathBuf[256] = "model.obj";
 char g_pathBuf[256] = "scene.okayscene";
 
@@ -9826,6 +9827,11 @@ void DrawFileDialogs(EditorState& ed) {
                                                       "3D model (glTF/GLB/OBJ/FBX...)", 0))
                 std::snprintf(g_objPathBuf, sizeof(g_objPathBuf), "%s", p);
         }
+        // One-step character import: rig the model to the humanoid skeleton right
+        // after importing, so it can play every built-in animation immediately.
+        ImGui::Checkbox("Auto-rig as a humanoid character (for people/animals you want to animate)", &g_importAutoRig);
+        if (g_importAutoRig)
+            ImGui::TextDisabled("Nearest-bone auto-weights fit the engine's humanoid rig; texture and clips carry over.");
         if (ImGui::Button("Import", ImVec2(120, 0)) || objGo) {
             // Scene import: a glTF brings in its node hierarchy + meshes + animation;
             // OBJ/Assimp come in as a single mesh object.
@@ -9833,7 +9839,12 @@ void DrawFileDialogs(EditorState& ed) {
             GameObject* root = okay::ImportModelScene(ed.scene(), g_objPathBuf, &okl);
             if (okl && root) {
                 ed.Select(root); ed.view3D = true; ed.dirty = true;
-                ConsoleLog("Imported " + std::string(g_objPathBuf));
+                if (g_importAutoRig) {
+                    RigModelHumanoid(ed, root);     // import + auto-rig in one action
+                    ConsoleLog("Imported + auto-rigged " + std::string(g_objPathBuf));
+                } else {
+                    ConsoleLog("Imported " + std::string(g_objPathBuf));
+                }
             } else ConsoleLog("Import failed: couldn't read " + std::string(g_objPathBuf), 2);
             ImGui::CloseCurrentPopup();
         }

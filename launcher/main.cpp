@@ -1111,9 +1111,11 @@ int main(int argc, char** argv) {
     };
     std::string serverUrl = fromEnvOrFile("OKAY_ACCOUNT_SERVER", "account_server.txt");
     std::string apiKey    = fromEnvOrFile("OKAY_ACCOUNT_API_KEY", "account_apikey.txt");
-    // Fall back to values baked into the build (no config file needed).
-    if (serverUrl.empty()) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
-    if (apiKey.empty())    apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
+    // Fall back to values baked into the build. Ignore an empty or junk server
+    // file (e.g. a stale "Use local (clear)" leftover from an old build) that
+    // would otherwise knock the launcher offline — only an http(s) URL counts.
+    if (serverUrl.rfind("http", 0) != 0) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
+    if (apiKey.empty())                  apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
     // Held by pointer so the Settings tab can rebuild it live when the server
     // config changes.
     fs::path acctCfgDir = acct::DefaultConfigDir(fs::path(g_exeDir));

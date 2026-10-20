@@ -43,12 +43,12 @@ jobs:
           echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"
 
       - name: Build Windows distribution
-        # Bake the account server into the binaries from repo secrets (if set),
-        # so released builds are online by default with no key file shipped.
-        # GitHub masks secret values in logs.
-        env:
-          OKAY_DEFAULT_ACCOUNT_URL: ${{ secrets.ACCOUNT_SERVER_URL }}
-          OKAY_DEFAULT_ACCOUNT_KEY: ${{ secrets.ACCOUNT_API_KEY }}
+        # The account server + public key are baked into the build as the CMake
+        # defaults (see the top-level CMakeLists), pointing at the OkaySpace
+        # Supabase project. We intentionally do NOT override them from CI secrets
+        # anymore: a stale/empty secret used to silently misconfigure the build
+        # and break sign-in. To point a fork at a different server, change the
+        # CMake defaults instead.
         run: scripts/build-windows-dist.sh
 
       - name: Package zip

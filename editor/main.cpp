@@ -2765,9 +2765,9 @@ void ApplyTheme() {
     ImGuiStyle& s = ImGui::GetStyle();
     // Flat, squared-off rounding — a pro-tool / Steam-like look rather than soft
     // rounded "cards" (which read as generic). Unified across widgets.
-    s.WindowRounding    = 3.0f;  s.ChildRounding    = 3.0f;
+    s.WindowRounding    = 0.0f;  s.ChildRounding    = 2.0f;
     s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
-    s.PopupRounding     = 3.0f;  s.TabRounding      = 2.0f;
+    s.PopupRounding     = 2.0f;  s.TabRounding      = 2.0f;
     s.ScrollbarRounding = 2.0f;
     // Balanced spacing: comfortable but not bloated (slightly roomier than the
     // ImGui defaults). View > UI Scale scales everything for bigger displays.
@@ -2815,12 +2815,17 @@ void ApplyTheme() {
     c[ImGuiCol_TitleBg]          = ImVec4(0.071f, 0.106f, 0.149f, 1.00f);
     c[ImGuiCol_TitleBgActive]    = tint(0.100f, 0.16f, 1.00f);            // active panel title gets a hint of accent
     c[ImGuiCol_MenuBarBg]        = ImVec4(0.090f, 0.133f, 0.184f, 1.00f);
-    c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.42f);  // selection (muted)
-    c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-    c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.70f);
-    c[ImGuiCol_Button]           = ImVec4(0.165f, 0.278f, 0.368f, 1.00f);  // Steam-style raised buttons (#2a475e)
-    c[ImGuiCol_ButtonHovered]    = ImVec4(0.216f, 0.361f, 0.467f, 1.00f);  // hover brightens
-    c[ImGuiCol_ButtonActive]     = ImVec4(accent.x, accent.y, accent.z, 0.85f);
+    // Selection / foldout headers: a DESATURATED blue-grey (Unity-style), not a
+    // bright accent bar — reads as a pro tool rather than a colourful dashboard.
+    c[ImGuiCol_Header]           = tint(0.200f, 0.34f, 1.00f);
+    c[ImGuiCol_HeaderHovered]    = tint(0.235f, 0.42f, 1.00f);
+    c[ImGuiCol_HeaderActive]     = tint(0.260f, 0.52f, 1.00f);
+    // Neutral slate buttons (Unity/Steam) — NOT bright blue. Colour is reserved
+    // for primary/active states (Play, Build, the selected tool), which push their
+    // own colours, so a toolbar reads as calm greys instead of a row of blue pills.
+    c[ImGuiCol_Button]           = ImVec4(0.180f, 0.210f, 0.255f, 1.00f);
+    c[ImGuiCol_ButtonHovered]    = ImVec4(0.232f, 0.268f, 0.320f, 1.00f);
+    c[ImGuiCol_ButtonActive]     = ImVec4(0.270f, 0.312f, 0.368f, 1.00f);
     c[ImGuiCol_CheckMark]        = accentHover;
     c[ImGuiCol_SliderGrab]       = accent;
     c[ImGuiCol_SliderGrabActive] = accentHover;

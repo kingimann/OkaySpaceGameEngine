@@ -1002,22 +1002,21 @@ void DarkTheme() {
     const bool light = (g_themeIndex == 2);
     if (light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Modern, softer metrics: generous rounding and flat (borderless) frames so
-    // the launcher reads clean and current rather than boxy.
-    s.WindowRounding    = 9.0f;  s.ChildRounding    = 9.0f;
-    s.FrameRounding     = 7.0f;  s.GrabRounding     = 7.0f;
-    s.PopupRounding     = 9.0f;  s.TabRounding      = 7.0f;
-    s.ScrollbarRounding = 8.0f;
-    s.WindowPadding   = ImVec2(16, 14); s.FramePadding = ImVec2(12, 8);
-    s.ItemSpacing     = ImVec2(10, 9);  s.ItemInnerSpacing = ImVec2(8, 6);
+    // Utilitarian, Steam/Unity-style metrics: mostly square, dense, flat. Small
+    // corner radii only (no big pill rounding), tight spacing, thin separators.
+    s.WindowRounding    = 0.0f;  s.ChildRounding    = 2.0f;
+    s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
+    s.PopupRounding     = 2.0f;  s.TabRounding      = 2.0f;
+    s.ScrollbarRounding = 2.0f;
+    s.WindowPadding   = ImVec2(12, 10); s.FramePadding = ImVec2(9, 6);
+    s.ItemSpacing     = ImVec2(8, 6);   s.ItemInnerSpacing = ImVec2(7, 5);
     s.WindowBorderSize = 0.0f;          s.ChildBorderSize = 1.0f;
     s.FrameBorderSize  = 0.0f;          s.PopupBorderSize = 1.0f;
-    s.ScrollbarSize   = 12.0f;          s.GrabMinSize = 12.0f;
+    s.ScrollbarSize   = 13.0f;          s.GrabMinSize = 11.0f;
     s.SeparatorTextBorderSize = 1.0f;
-    s.SeparatorTextPadding = ImVec2(16, 6);
-    s.FrameBorderSize = 0.0f;
-    s.TabBarBorderSize = 0.0f;
-    s.DisabledAlpha = 0.5f;
+    s.SeparatorTextPadding = ImVec2(14, 5);
+    s.TabBarBorderSize = 1.0f;
+    s.DisabledAlpha = 0.55f;
     ImVec4* c = s.Colors;
     const ImVec4 accent = kAccent;
     const ImVec4 accentDim = kAccentDim;
@@ -1068,9 +1067,11 @@ void DarkTheme() {
         c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.42f);
         c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.55f);
         c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.70f);
-        c[ImGuiCol_Button]           = ImVec4(0.165f, 0.278f, 0.368f, 1.00f);   // Steam #2a475e
-        c[ImGuiCol_ButtonHovered]    = ImVec4(0.216f, 0.361f, 0.467f, 1.00f);
-        c[ImGuiCol_ButtonActive]     = ImVec4(accent.x, accent.y, accent.z, 0.85f);
+        // Neutral slate buttons (Unity/Steam); colour is reserved for primary
+        // actions, which use PrimaryButton (accent).
+        c[ImGuiCol_Button]           = ImVec4(0.180f, 0.210f, 0.255f, 1.00f);
+        c[ImGuiCol_ButtonHovered]    = ImVec4(0.232f, 0.268f, 0.320f, 1.00f);
+        c[ImGuiCol_ButtonActive]     = ImVec4(0.270f, 0.312f, 0.368f, 1.00f);
         c[ImGuiCol_CheckMark]        = accentHover;
         c[ImGuiCol_SliderGrab]       = accent;
         c[ImGuiCol_SliderGrabActive] = accentHover;
@@ -1415,17 +1416,22 @@ float MeasureChatBodyWidth(const std::string& body, float maxW) {
 // Rounded square tile showing the item's initial — a lightweight "thumbnail"
 // that needs no image assets. Advances the layout like a normal item.
 void IconTile(const std::string& name, float size) {
-    ImVec4 col = NameColor(name);
+    ImVec4 raw = NameColor(name);
+    // Mute the hue toward a neutral steel so a list reads as a clean, uniform set
+    // (Steam/Unity) instead of a rainbow of saturated tiles.
+    auto mute = [](float c) { return 0.40f + (c - 0.40f) * 0.38f; };
+    ImVec4 col(mute(raw.x), mute(raw.y), mute(raw.z), 1.0f);
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    float rnd = size * 0.14f;
     dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size),
-                      ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.22f)), size * 0.22f);
+                      ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.30f)), rnd);
     dl->AddRect(p, ImVec2(p.x + size, p.y + size),
-                ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.80f)), size * 0.22f, 0, 1.5f);
+                ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.55f)), rnd, 0, 1.0f);
     char init[2] = { name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0 };
     ImVec2 ts = ImGui::CalcTextSize(init);
     dl->AddText(ImVec2(p.x + (size - ts.x) * 0.5f, p.y + (size - ts.y) * 0.5f),
-                ImGui::GetColorU32(ImVec4(0.96f, 0.97f, 1.0f, 1.0f)), init);
+                ImGui::GetColorU32(ImVec4(0.88f, 0.90f, 0.94f, 1.0f)), init);
     ImGui::Dummy(ImVec2(size, size));
 }
 
@@ -2641,28 +2647,26 @@ int main(int argc, char** argv) {
             char lbl[48];
             std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);   // room for the icon
             bool sel = (tab == i);
-            // Rounded "pill" selection drawn BEHIND the label (the Selectable's own
-            // highlight is turned off so it doesn't paint a sharp block on top).
+            // Flat, full-width selection (Steam/Unity-style): a neutral fill across
+            // the whole row + a thin accent bar on the left — no rounded pill.
             ImDrawList* dl = ImGui::GetWindowDrawList();
             ImVec2 rowMin = ImGui::GetCursorScreenPos();
             float  rowW   = ImGui::GetContentRegionAvail().x;
-            ImVec2 rowMax = ImVec2(rowMin.x + rowW, rowMin.y + 42);
+            const float rowH = 38.0f;
+            ImVec2 rowMax = ImVec2(rowMin.x + rowW, rowMin.y + rowH);
             bool hov = ImGui::IsMouseHoveringRect(rowMin, rowMax);
-            if (sel || hov) {
-                float a = sel ? 0.20f : 0.10f;
-                dl->AddRectFilled(ImVec2(rowMin.x + 6, rowMin.y + 3), ImVec2(rowMax.x - 8, rowMax.y - 3),
-                                  ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, a)), 8.0f);
-            }
+            if (sel)      dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 20));
+            else if (hov) dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 11));
             if (sel)   // accent bar marking the active item
-                dl->AddRectFilled(ImVec2(rowMin.x + 6, rowMin.y + 10), ImVec2(rowMin.x + 9.5f, rowMax.y - 10),
-                                  ImGui::GetColorU32(kAccent), 2.0f);
+                dl->AddRectFilled(rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y),
+                                  ImGui::GetColorU32(kAccent));
             ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0,0,0,0));
             ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0,0,0,0));
-            if (sel) ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
-            if (ImGui::Selectable(lbl, sel, 0, ImVec2(0, 42))) tab = i;
-            if (sel) ImGui::PopStyleColor();
-            ImGui::PopStyleColor(3);
+            ImGui::PushStyleColor(ImGuiCol_Text, sel ? ImVec4(0.95f,0.96f,0.98f,1.0f)
+                                                     : ImVec4(0.62f,0.66f,0.72f,1.0f));
+            if (ImGui::Selectable(lbl, sel, 0, ImVec2(0, rowH))) tab = i;
+            ImGui::PopStyleColor(4);
             ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
             // Little vector icon per section (no icon font needed).
             {
@@ -2855,18 +2859,16 @@ int main(int argc, char** argv) {
         const ImVec4 kTitle(0.85f, 0.9f, 1.0f, 1.0f);
         // Section title with a short accent underline; optional subtitle.
         auto sectionHeader = [&](const char* title, const char* subtitle) {
-            ImGui::SetWindowFontScale(1.42f);
+            ImGui::SetWindowFontScale(1.22f);
             ImGui::TextColored(kTitle, "%s", title);
             ImGui::SetWindowFontScale(1.0f);
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(p.x, p.y + 2), ImVec2(p.x + 48.0f, p.y + 5),
-                ImGui::GetColorU32(kAccent), 2.0f);
-            ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 12 : 18));
+            ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 4 : 6));
             if (subtitle && *subtitle) {
                 ImGui::TextDisabled("%s", subtitle);
-                ImGui::Dummy(ImVec2(0, 12));
+                ImGui::Dummy(ImVec2(0, 6));
             }
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 6));
         };
         // Login gate for online-only tabs: returns true when signed in, else
         // renders a centered "sign in" card and returns false.
@@ -2885,41 +2887,35 @@ int main(int argc, char** argv) {
         if (tab == 0) {                                   // ---- Create ----
             sectionHeader("Create a game", nullptr);
 
-            // Hero card: gradient panel with the one primary action.
-            ImGui::BeginChild("hero", ImVec2(0, 118), true, ImGuiWindowFlags_NoScrollbar);
+            // Hero card: a flat, slightly-raised panel (no gradient wash) with the
+            // one primary action — reads like a real app, not a designed banner.
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.140f, 0.188f, 0.247f, 1.0f));
+            ImGui::BeginChild("hero", ImVec2(0, 110), true, ImGuiWindowFlags_NoScrollbar);
             {
                 ImVec2 mn = ImGui::GetWindowPos(); ImVec2 sz = ImGui::GetWindowSize();
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                ImU32 g0 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f));
-                ImU32 g1 = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.03f));
-                dl->AddRectFilledMultiColor(mn, ImVec2(mn.x + sz.x, mn.y + sz.y), g0, g1, g1, g0);
-                // Drawn isometric-cube logo mark, faded into the card's right side.
-                float S = 84.0f;
-                ImVec2 ctr(mn.x + sz.x - S * 0.75f, mn.y + sz.y * 0.5f);
+                // A small, desaturated isometric cube at the right — monochrome, subtle.
+                float S = 66.0f;
+                ImVec2 ctr(mn.x + sz.x - S * 0.85f, mn.y + sz.y * 0.5f);
                 float hw = S * 0.42f, hh = S * 0.24f, vh = S * 0.34f;
                 ImVec2 top(ctr.x, ctr.y - hh - vh * 0.5f), left(ctr.x - hw, ctr.y - vh * 0.5f),
                        right(ctr.x + hw, ctr.y - vh * 0.5f), mid(ctr.x, ctr.y + hh - vh * 0.5f);
                 ImVec2 lb(left.x, left.y + vh), rb(right.x, right.y + vh), mb(mid.x, mid.y + vh);
-                dl->AddQuadFilled(top, right, mid, left,
-                    ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)));
-                dl->AddQuadFilled(left, mid, mb, lb,
-                    ImGui::GetColorU32(ImVec4(kAccent.x * 0.55f, kAccent.y * 0.55f, kAccent.z * 0.55f, 0.30f)));
-                dl->AddQuadFilled(mid, right, rb, mb,
-                    ImGui::GetColorU32(ImVec4(kAccent.x * 0.75f, kAccent.y * 0.75f, kAccent.z * 0.75f, 0.30f)));
-                // Version chip, top-right corner.
+                ImU32 cTop = IM_COL32(118, 136, 158, 42), cL = IM_COL32(78, 92, 110, 42), cR = IM_COL32(98, 114, 134, 42);
+                dl->AddQuadFilled(top, right, mid, left, cTop);
+                dl->AddQuadFilled(left, mid, mb, lb, cL);
+                dl->AddQuadFilled(mid, right, rb, mb, cR);
+                // Plain version label, top-right (no pill).
                 const char* vlbl = "v" OKAY_ENGINE_VERSION;
                 ImVec2 vts = ImGui::CalcTextSize(vlbl);
-                ImVec2 vp2(mn.x + sz.x - vts.x - 22.0f, mn.y + 10.0f);
-                dl->AddRectFilled(ImVec2(vp2.x - 7, vp2.y - 3), ImVec2(vp2.x + vts.x + 7, vp2.y + vts.y + 3),
-                                  ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.25f)),
-                                  (vts.y + 6.0f) * 0.5f);
-                dl->AddText(vp2, ImGui::GetColorU32(ImVec4(0.92f, 0.95f, 1.0f, 0.95f)), vlbl);
+                dl->AddText(ImVec2(mn.x + sz.x - vts.x - 16.0f, mn.y + 12.0f),
+                            ImGui::GetColorU32(ImGuiCol_TextDisabled), vlbl);
             }
-            ImGui::SetCursorPos(ImVec2(18, 14));
+            ImGui::SetCursorPos(ImVec2(16, 14));
             ImGui::Text("OkaySpace Editor");
-            ImGui::SetCursorPosX(18);
+            ImGui::SetCursorPosX(16);
             ImGui::TextDisabled("Build 2D and 3D games: scenes, scripting, UI, characters, multiplayer.");
-            ImGui::SetCursorPos(ImVec2(18, 62));
+            ImGui::SetCursorPos(ImVec2(16, 58));
             if (editor.empty()) {
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Editor not found next to the launcher.");
                 ImGui::SetCursorPosX(18);
@@ -2931,6 +2927,7 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("%s", editor.c_str());
             }
             ImGui::EndChild();
+            ImGui::PopStyleColor();   // hero ChildBg
 
             // ---- New project: name + location + a clickable template gallery.
             // The LAUNCHER owns project creation now: clicking a template sends

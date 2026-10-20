@@ -35,6 +35,7 @@ struct Friend {
     std::string playing;     // presence text ("Playing Asteroids", "In the launcher", ...)
     std::string sessionCode; // relay room code if they're hosting a joinable game
     std::string display;     // friendly display name (falls back to username)
+    std::string avatar;      // public URL of the player's avatar image (may be empty)
     long rowId    = 0;       // friendships.id (for accept/remove)
 };
 
@@ -76,6 +77,13 @@ public:
         if (!acct_.IsLoggedIn()) return false;
         return acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
                          "{\"display_name\":" + JStr(name) + "}").ok;
+    }
+    // Avatar image URL (public). Empty until set.
+    std::string MyAvatar() { return ProfileOf(MyId()).avatar; }
+    bool SetAvatar(const std::string& url) {
+        if (!acct_.IsLoggedIn()) return false;
+        return acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
+                         "{\"avatar_url\":" + JStr(url) + "}").ok;
     }
 
     // ---- requests ---------------------------------------------------------
@@ -186,7 +194,7 @@ private:
     okay::account::AccountService& acct_;
     std::string lastPresence_, lastSession_;
 
-    struct Profile { std::string username, friendCode, playing, sessionCode, displayName; long lastSeen = 0; };
+    struct Profile { std::string username, friendCode, playing, sessionCode, displayName, avatar; long lastSeen = 0; };
 
     std::string Me()   const { return acct_.CurrentSession().username; }
     // We don't know our own uuid directly, so look it up by username (cached by
@@ -213,13 +221,14 @@ private:
         f.playing  = p.playing;
         f.sessionCode = p.sessionCode;
         f.display  = p.displayName.empty() ? p.username : p.displayName;
+        f.avatar   = p.avatar;
         f.online = p.lastSeen > 0 && std::difftime(std::time(nullptr), (std::time_t)p.lastSeen) < 180.0;
     }
 
     Profile ProfileOf(const std::string& uid) {
         Profile p;
         if (uid.empty()) return p;
-        auto r = acct_.Api("/rest/v1/profiles?select=username,friend_code,playing,session_code,display_name,last_seen"
+        auto r = acct_.Api("/rest/v1/profiles?select=username,friend_code,playing,session_code,display_name,avatar_url,last_seen"
                            "&id=eq." + Url(uid), "GET");
         if (!r.ok) return p;
         auto objs = SplitObjects(r.body);
@@ -229,6 +238,7 @@ private:
         p.playing     = Field(objs[0], "playing");
         p.sessionCode = Field(objs[0], "session_code");
         p.displayName = Field(objs[0], "display_name");
+        p.avatar      = Field(objs[0], "avatar_url");
         p.lastSeen    = ParseIso(Field(objs[0], "last_seen"));
         return p;
     }

@@ -858,6 +858,55 @@ void DrawGameIcon(const std::string& gamePath, const std::string& name, float si
     ImGui::Dummy(ImVec2(size, size));
 }
 
+// ---- Profile-picture (avatar) textures, loaded from a public URL ----------
+// Downloaded once to a per-URL cache file, decoded via stb_image, cached as an
+// SDL texture. nullptr (cached) means "no avatar — draw the initial".
+std::map<std::string, SDL_Texture*> g_avatarCache;
+std::string* g_myAvatarSlot = nullptr;   // points at the Account card's cached avatar URL
+
+SDL_Texture* AvatarTexture(const std::string& url) {
+    if (url.empty() || !g_renderer) return nullptr;
+    auto it = g_avatarCache.find(url);
+    if (it != g_avatarCache.end()) return it->second;
+    SDL_Texture* tex = nullptr;
+    std::error_code ec;
+    fs::path dir = fs::temp_directory_path(ec) / "okayspace_avatars";
+    fs::create_directories(dir, ec);
+    char name[32]; std::snprintf(name, sizeof(name), "%zu", std::hash<std::string>{}(url));
+    fs::path cache = dir / (std::string(name) + ".img");
+    if (!fs::exists(cache, ec)) Download(url, cache.string());   // best-effort fetch
+    if (fs::exists(cache, ec)) {
+        int w = 0, h = 0, ch = 0;
+        unsigned char* px = stbi_load(cache.string().c_str(), &w, &h, &ch, 4);
+        if (px) {
+            SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
+            if (s) { tex = SDL_CreateTextureFromSurface(g_renderer, s); SDL_FreeSurface(s); }
+            stbi_image_free(px);
+        }
+    }
+    g_avatarCache[url] = tex;
+    return tex;
+}
+
+// Draw a circular avatar: the image if the URL loads, else a colored initial.
+void DrawAvatar(const std::string& url, const std::string& name, float size) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 ctr(p.x + size * 0.5f, p.y + size * 0.5f);
+    SDL_Texture* tex = AvatarTexture(url);
+    if (tex) {
+        dl->AddImageRounded((ImTextureID)(intptr_t)tex, p, ImVec2(p.x + size, p.y + size),
+                            ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, size * 0.5f);
+    } else {
+        ImVec4 col = NameColor(name);
+        dl->AddCircleFilled(ctr, size * 0.5f, ImGui::GetColorU32(ImVec4(col.x*0.55f, col.y*0.55f, col.z*0.55f, 1)), 32);
+        char init[2] = { name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0 };
+        ImVec2 ts = ImGui::CalcTextSize(init);
+        dl->AddText(ImVec2(ctr.x - ts.x*0.5f, ctr.y - ts.y*0.5f), IM_COL32(255,255,255,255), init);
+    }
+    ImGui::Dummy(ImVec2(size, size));
+}
+
 // Accent-filled call-to-action button — the launcher's primary action style
 // (Open Editor, Play). Secondary actions keep the default gray Button.
 bool PrimaryButton(const char* label, const ImVec2& size) {
@@ -1086,6 +1135,7 @@ int main(int argc, char** argv) {
     char acctNewPass[64] = {0};          // change-password field (signed in)
     char acctChgName[64] = {0};          // change-username field (signed in)
     char acctChgDisplay[64] = {0};       // change-display-name field (signed in)
+    char acctAvatar[256] = {0};          // avatar image URL field (signed in)
     char acctChgEmail[64] = {0};         // change-email field (signed in)
     bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
@@ -2367,14 +2417,25 @@ int main(int argc, char** argv) {
                 ImVec2 wmn = ImGui::GetWindowPos();
                 ImVec2 wmx(wmn.x + ImGui::GetWindowSize().x, wmn.y + ImGui::GetWindowSize().y);
                 dl->AddRectFilled(wmn, wmx, ImGui::GetColorU32(ImVec4(av.x, av.y, av.z, 0.06f)), 6.0f);
-                dl->AddCircleFilled(
-                    ctr, r, ImGui::GetColorU32(ImVec4(av.x * 0.55f, av.y * 0.55f, av.z * 0.55f, 1.0f)), 32);
-                dl->AddCircle(ctr, r, ImGui::GetColorU32(av), 32, 2.0f);
-                char initial[2] = { (char)(s.username.empty() ? '?' : std::toupper((unsigned char)s.username[0])), 0 };
-                float isz = ImGui::GetFontSize() * 1.6f;
-                ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(isz, 1e9f, 0.0f, initial);
-                dl->AddText(ImGui::GetFont(), isz, ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f),
-                            ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), initial);
+                // My avatar: fetched once; the "Update avatar" button refreshes it.
+                static std::string s_myAvatar; static bool s_avFetched = false;
+                if (!s_avFetched && account.IsOnline()) { s_myAvatar = okay::Friends(account).MyAvatar(); s_avFetched = true; }
+                g_myAvatarSlot = &s_myAvatar;   // let the editor below update it live
+                SDL_Texture* myTex = AvatarTexture(s_myAvatar);
+                if (myTex) {
+                    dl->AddImageRounded((ImTextureID)(intptr_t)myTex, ImVec2(ctr.x - r, ctr.y - r),
+                                        ImVec2(ctr.x + r, ctr.y + r), ImVec2(0,0), ImVec2(1,1), IM_COL32_WHITE, r);
+                    dl->AddCircle(ctr, r, ImGui::GetColorU32(av), 32, 2.0f);
+                } else {
+                    dl->AddCircleFilled(
+                        ctr, r, ImGui::GetColorU32(ImVec4(av.x * 0.55f, av.y * 0.55f, av.z * 0.55f, 1.0f)), 32);
+                    dl->AddCircle(ctr, r, ImGui::GetColorU32(av), 32, 2.0f);
+                    char initial[2] = { (char)(s.username.empty() ? '?' : std::toupper((unsigned char)s.username[0])), 0 };
+                    float isz = ImGui::GetFontSize() * 1.6f;
+                    ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(isz, 1e9f, 0.0f, initial);
+                    dl->AddText(ImGui::GetFont(), isz, ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f),
+                                ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), initial);
+                }
                 // Username drawn oversized next to the avatar; status underneath
                 // with a colored presence dot.
                 float tx = cp.x + r * 2 + 22;
@@ -2419,6 +2480,24 @@ int main(int argc, char** argv) {
                         if (ok) { acctChgDisplay[0] = '\0'; Toast("Display name updated", 1); }
                     }
                     ImGui::TextDisabled("Shown to friends. Your username (below) is your unique handle for adding friends.");
+
+                    // Profile picture (avatar) by public image URL.
+                    ImGui::PushItemWidth(kFieldW);
+                    ImGui::InputTextWithHint("##acctAvatar", "Avatar image URL (png/jpg)", acctAvatar, sizeof(acctAvatar));
+                    ImGui::PopItemWidth();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Update avatar", ImVec2(kBtnW, 0)) && acctAvatar[0]) {
+                        bool ok = okay::Friends(account).SetAvatar(acctAvatar);
+                        acctMessageError = !ok;
+                        acctMessage = ok ? "Avatar updated." : "Couldn't update avatar.";
+                        if (ok) {
+                            g_avatarCache.erase(acctAvatar);
+                            if (g_myAvatarSlot) *g_myAvatarSlot = acctAvatar;   // refresh the card now
+                            acctAvatar[0] = '\0';
+                            Toast("Avatar updated", 1);
+                        }
+                    }
+                    ImGui::TextDisabled("Paste a public link to a square PNG/JPG (e.g. an imgur/GitHub image).");
                 }
 
                 // Change username / handle (all backends).
@@ -2882,11 +2961,15 @@ int main(int argc, char** argv) {
                 auto drawFriend = [&](const okay::Friend* f, bool request) {
                     ImGui::PushID((int)f->rowId);
                     ImGui::BeginChild("##frow", ImVec2(0, 48), true);
-                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    // Avatar (32px) with an online/offline dot in the corner.
+                    ImGui::SetCursorPos(ImVec2(6, 6));
+                    ImVec2 ap = ImGui::GetCursorScreenPos();
+                    DrawAvatar(f->avatar, f->display.empty() ? f->username : f->display, 32.0f);
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     ImU32 dot = f->online ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
-                    dl->AddCircleFilled(ImVec2(p.x + 12, p.y + 14), 5.0f, dot, 16);
-                    ImGui::Dummy(ImVec2(26, 0)); ImGui::SameLine();
+                    dl->AddCircleFilled(ImVec2(ap.x + 28, ap.y + 28), 5.5f, dot, 16);
+                    dl->AddCircle(ImVec2(ap.x + 28, ap.y + 28), 5.5f, IM_COL32(20, 28, 48, 255), 16, 2.0f);
+                    ImGui::SameLine(); ImGui::SetCursorPosX(46);
                     ImGui::BeginGroup();
                     ImGui::TextUnformatted(f->display.empty() ? f->username.c_str() : f->display.c_str());
                     if (!f->display.empty() && f->display != f->username) {

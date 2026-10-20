@@ -2652,11 +2652,14 @@ int main(int argc, char** argv) {
                 if (seg("Create account", acctRegisterMode, halfW)) { acctRegisterMode = true; acctMessage.clear(); }
                 ImGui::Dummy(ImVec2(0, 10));
 
-                const char* idHint = account.UsesEmail() ? "Email" : "Username";
+                // Register takes an email; sign-in accepts email OR username.
+                const char* idHint = !account.UsesEmail() ? "Username"
+                                   : acctRegisterMode ? "Email" : "Email or username";
                 ImGui::TextDisabled("%s", idHint);
                 ImGui::SetNextItemWidth(innerW);
-                ImGui::InputTextWithHint("##acctUser", account.UsesEmail() ? "you@example.com" : "username",
-                                         acctUser, sizeof(acctUser));
+                ImGui::InputTextWithHint("##acctUser",
+                    !account.UsesEmail() ? "username" : acctRegisterMode ? "you@example.com" : "email or username",
+                    acctUser, sizeof(acctUser));
 
                 if (acctRegisterMode && account.UsesEmail()) {
                     ImGui::TextDisabled("Username (unique handle)");
@@ -3433,108 +3436,133 @@ int main(int argc, char** argv) {
                 if (now >= svNextList) { svList = sv.MyServers(); svNextList = now + 20000; }
 
                 float colH = ImGui::GetContentRegionAvail().y - 6.0f;
-                // --- Column 1: server list + create/join ---
-                ImGui::BeginChild("##svlist", ImVec2(180, colH), true);
-                ImGui::TextDisabled("SERVERS");
-                for (const auto& s : svList) {
-                    bool sel = (s.id == svSel);
-                    if (ImGui::Selectable((s.name + "##" + std::to_string(s.id)).c_str(), sel)) {
-                        svSel = s.id; svSelName = s.name; svChan = 0; svNextChan = 0; svMsgs.clear();
-                    }
-                }
-                ImGui::Separator();
-                ImGui::TextDisabled("Create");
-                ImGui::SetNextItemWidth(-1);
-                bool mk = ImGui::InputTextWithHint("##svnew", "New server name", svNew, sizeof(svNew), ImGuiInputTextFlags_EnterReturnsTrue);
-                if ((ImGui::Button("Create server", ImVec2(-1, 0)) || mk) && svNew[0]) {
-                    okay::Server made;
-                    if (sv.CreateServer(svNew, &made, &svErr)) {
-                        svNew[0] = '\0'; svErr.clear(); svNextList = 0;
-                        svSel = made.id; svSelName = made.name; svChan = 0; svNextChan = 0;
-                        Toast("Server created", 1);
-                    }
-                }
-                ImGui::Dummy(ImVec2(0, 4));
-                ImGui::TextDisabled("Join by code");
-                ImGui::SetNextItemWidth(-1);
-                bool jn = ImGui::InputTextWithHint("##svjoin", "invite code", svJoin, sizeof(svJoin), ImGuiInputTextFlags_EnterReturnsTrue);
-                if ((ImGui::Button("Join server", ImVec2(-1, 0)) || jn) && svJoin[0]) {
-                    if (sv.JoinServer(svJoin, &svErr)) { svJoin[0] = '\0'; svErr.clear(); svNextList = 0; Toast("Joined server", 1); }
-                }
-                if (!svErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1)); ImGui::TextWrapped("%s", svErr.c_str()); ImGui::PopStyleColor(); }
-                ImGui::EndChild();
-                ImGui::SameLine();
+                // Resizable 3-pane Discord layout: drag the column borders to resize.
+                if (ImGui::BeginTable("##svtable", 3,
+                        ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoHostExtendX,
+                        ImVec2(0, colH))) {
+                    ImGui::TableSetupColumn("servers",  ImGuiTableColumnFlags_WidthFixed, 180.0f);
+                    ImGui::TableSetupColumn("channels", ImGuiTableColumnFlags_WidthFixed, 190.0f);
+                    ImGui::TableSetupColumn("chat",     ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableNextRow();
 
-                // --- Column 2: channels + members of the selected server ---
-                ImGui::BeginChild("##svchan", ImVec2(190, colH), true);
-                if (svSel == 0) {
-                    ImGui::TextDisabled("Pick a server");
-                } else {
-                    if (now >= svNextChan) { svChannels = sv.Channels(svSel); svNextChan = now + 15000;
-                        if (svChan == 0 && !svChannels.empty()) { svChan = svChannels[0].id; svNextMsg = 0; } }
-                    ImGui::TextDisabled("%s", svSelName.c_str());
-                    ImGui::Separator();
-                    for (const auto& c : svChannels) {
-                        bool sel = (c.id == svChan);
-                        if (ImGui::Selectable(("# " + c.name + "##" + std::to_string(c.id)).c_str(), sel)) { svChan = c.id; svNextMsg = 0; }
-                    }
-                    ImGui::Separator();
-                    ImGui::SetNextItemWidth(-1);
-                    bool nc = ImGui::InputTextWithHint("##svnewchan", "new channel", svNewChan, sizeof(svNewChan), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if ((ImGui::SmallButton("Add channel") || nc) && svNewChan[0]) {
-                        if (sv.CreateChannel(svSel, svNewChan)) { svNewChan[0] = '\0'; svNextChan = 0; }
-                    }
-                    // Member list (who's in this server), online first.
-                    if (now >= svNextMem) { svMembers = sv.Members(svSel); svNextMem = now + 20000; }
-                    ImGui::Dummy(ImVec2(0, 6));
-                    ImGui::TextDisabled("MEMBERS - %d", (int)svMembers.size());
-                    ImGui::Separator();
-                    for (const auto& m : svMembers) {
-                        ImVec2 mp = ImGui::GetCursorScreenPos();
-                        ImU32 dot = m.online ? IM_COL32(120, 200, 110, 255) : IM_COL32(110, 118, 130, 255);
-                        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mp.x + 5, mp.y + 8), 4.0f, dot, 12);
-                        ImGui::Dummy(ImVec2(14, 0)); ImGui::SameLine();
-                        if (m.role == "owner") {
-                            ImGui::TextUnformatted(m.name.empty() ? "member" : m.name.c_str());
-                            ImGui::SameLine(0, 4); ImGui::TextColored(ImVec4(0.95f,0.80f,0.35f,1), "(owner)");
-                        } else {
-                            ImGui::TextColored(m.online ? ImVec4(0.9f,0.92f,0.96f,1) : ImVec4(0.6f,0.63f,0.7f,1),
-                                               "%s", m.name.empty() ? "member" : m.name.c_str());
+                    // --- Pane 1: server list + create/join ---
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::BeginChild("##svlist", ImVec2(0, colH - 4), false);
+                    ImGui::TextDisabled("SERVERS");
+                    for (const auto& s : svList) {
+                        bool sel = (s.id == svSel);
+                        if (ImGui::Selectable((s.name + "##" + std::to_string(s.id)).c_str(), sel)) {
+                            svSel = s.id; svSelName = s.name; svChan = 0; svNextChan = 0; svMsgs.clear();
                         }
                     }
-                }
-                ImGui::EndChild();
-                ImGui::SameLine();
-
-                // --- Column 3: messages in the selected channel ---
-                ImGui::BeginChild("##svmsgs", ImVec2(0, colH), true);
-                if (svChan == 0) {
-                    ImGui::TextDisabled("Pick a channel");
-                } else {
-                    if (now >= svNextMsg) { svMsgs = sv.Messages(svChan); svNextMsg = now + 4000; }
-                    ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - 36.0f), false);
-                    static int svLastShown = -1;
-                    for (const auto& m : svMsgs) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.78f, 1.0f, 1.0f));
-                        ImGui::TextUnformatted(m.author.empty() ? "unknown" : m.author.c_str());
-                        ImGui::PopStyleColor();
-                        ImGui::SameLine(0, 8);
-                        char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
-                        if (w[0]) ImGui::TextDisabled("%s", w);
-                        ImGui::TextWrapped("%s", m.body.c_str());
-                        ImGui::Dummy(ImVec2(0, 2));
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Create");
+                    ImGui::SetNextItemWidth(-1);
+                    bool mk = ImGui::InputTextWithHint("##svnew", "New server name", svNew, sizeof(svNew), ImGuiInputTextFlags_EnterReturnsTrue);
+                    if ((ImGui::Button("Create server", ImVec2(-1, 0)) || mk) && svNew[0]) {
+                        okay::Server made;
+                        if (sv.CreateServer(svNew, &made, &svErr)) {
+                            svNew[0] = '\0'; svErr.clear(); svNextList = 0;
+                            svSel = made.id; svSelName = made.name; svChan = 0; svNextChan = 0;
+                            Toast("Server created", 1);
+                        }
                     }
-                    if (svMsgs.empty()) ImGui::TextDisabled("No messages yet. Say something!");
-                    if ((int)svMsgs.size() != svLastShown) { ImGui::SetScrollHereY(1.0f); svLastShown = (int)svMsgs.size(); }
+                    ImGui::Dummy(ImVec2(0, 4));
+                    ImGui::TextDisabled("Join by code");
+                    ImGui::SetNextItemWidth(-1);
+                    bool jn = ImGui::InputTextWithHint("##svjoin", "invite code", svJoin, sizeof(svJoin), ImGuiInputTextFlags_EnterReturnsTrue);
+                    if ((ImGui::Button("Join server", ImVec2(-1, 0)) || jn) && svJoin[0]) {
+                        if (sv.JoinServer(svJoin, &svErr)) { svJoin[0] = '\0'; svErr.clear(); svNextList = 0; Toast("Joined server", 1); }
+                    }
+                    if (!svErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1)); ImGui::TextWrapped("%s", svErr.c_str()); ImGui::PopStyleColor(); }
                     ImGui::EndChild();
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70);
-                    bool send = ImGui::InputTextWithHint("##svsend", "Message #channel", svMsg, sizeof(svMsg), ImGuiInputTextFlags_EnterReturnsTrue);
-                    ImGui::SameLine();
-                    if ((ImGui::Button("Send", ImVec2(62, 0)) || send) && svMsg[0]) {
-                        if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; svNextMsg = 0; }
+
+                    // --- Pane 2: channels + members ---
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::BeginChild("##svchan", ImVec2(0, colH - 4), false);
+                    if (svSel == 0) {
+                        ImGui::TextDisabled("Pick a server");
+                    } else {
+                        if (now >= svNextChan) { svChannels = sv.Channels(svSel); svNextChan = now + 15000;
+                            if (svChan == 0 && !svChannels.empty()) { svChan = svChannels[0].id; svNextMsg = 0; } }
+                        ImGui::TextDisabled("%s", svSelName.c_str());
+                        ImGui::Separator();
+                        for (const auto& c : svChannels) {
+                            bool sel = (c.id == svChan);
+                            if (ImGui::Selectable(("# " + c.name + "##" + std::to_string(c.id)).c_str(), sel)) { svChan = c.id; svNextMsg = 0; }
+                        }
+                        ImGui::Separator();
+                        ImGui::SetNextItemWidth(-1);
+                        bool nc = ImGui::InputTextWithHint("##svnewchan", "new channel", svNewChan, sizeof(svNewChan), ImGuiInputTextFlags_EnterReturnsTrue);
+                        if ((ImGui::SmallButton("Add channel") || nc) && svNewChan[0]) {
+                            if (sv.CreateChannel(svSel, svNewChan)) { svNewChan[0] = '\0'; svNextChan = 0; }
+                        }
+                        if (now >= svNextMem) { svMembers = sv.Members(svSel); svNextMem = now + 20000; }
+                        ImGui::Dummy(ImVec2(0, 6));
+                        ImGui::TextDisabled("MEMBERS - %d", (int)svMembers.size());
+                        ImGui::Separator();
+                        for (const auto& m : svMembers) {
+                            ImVec2 mp = ImGui::GetCursorScreenPos();
+                            ImU32 dot = m.online ? IM_COL32(120, 200, 110, 255) : IM_COL32(110, 118, 130, 255);
+                            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mp.x + 5, mp.y + 8), 4.0f, dot, 12);
+                            ImGui::Dummy(ImVec2(14, 0)); ImGui::SameLine();
+                            if (m.role == "owner") {
+                                ImGui::TextUnformatted(m.name.empty() ? "member" : m.name.c_str());
+                                ImGui::SameLine(0, 4); ImGui::TextColored(ImVec4(0.95f,0.80f,0.35f,1), "(owner)");
+                            } else {
+                                ImGui::TextColored(m.online ? ImVec4(0.9f,0.92f,0.96f,1) : ImVec4(0.6f,0.63f,0.7f,1),
+                                                   "%s", m.name.empty() ? "member" : m.name.c_str());
+                            }
+                        }
                     }
+                    ImGui::EndChild();
+
+                    // --- Pane 3: Discord-style messages ---
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::BeginChild("##svmsgs", ImVec2(0, colH - 4), false);
+                    if (svChan == 0) {
+                        ImGui::TextDisabled("Pick a channel");
+                    } else {
+                        if (now >= svNextMsg) { svMsgs = sv.Messages(svChan); svNextMsg = now + 4000; }
+                        ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - 36.0f), false);
+                        static int svLastShown = -1;
+                        std::string prevAuthor; bool firstMsg = true;
+                        for (const auto& m : svMsgs) {
+                            std::string who = m.author.empty() ? "unknown" : m.author;
+                            char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%b %d, %H:%M",tm); }
+                            if (who != prevAuthor) {
+                                if (!firstMsg) ImGui::Dummy(ImVec2(0, 6));
+                                ImVec2 ap = ImGui::GetCursorScreenPos();
+                                DrawAvatar("", who, 34.0f);            // colored initial avatar
+                                ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6);
+                                ImGui::BeginGroup();
+                                ImVec4 nc2 = NameColor(who);
+                                ImGui::TextColored(ImVec4(nc2.x,nc2.y,nc2.z,1), "%s", who.c_str());
+                                ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", w);
+                                ImGui::TextWrapped("%s", m.body.c_str());
+                                ImGui::EndGroup();
+                                prevAuthor = who;
+                            } else {
+                                // Continuation of the same author's group: indent under the avatar.
+                                ImGui::Indent(40.0f);
+                                ImGui::TextWrapped("%s", m.body.c_str());
+                                ImGui::Unindent(40.0f);
+                            }
+                            firstMsg = false;
+                        }
+                        if (svMsgs.empty()) ImGui::TextDisabled("No messages yet. Say something!");
+                        if ((int)svMsgs.size() != svLastShown) { ImGui::SetScrollHereY(1.0f); svLastShown = (int)svMsgs.size(); }
+                        ImGui::EndChild();
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70);
+                        bool send = ImGui::InputTextWithHint("##svsend", "Message #channel", svMsg, sizeof(svMsg), ImGuiInputTextFlags_EnterReturnsTrue);
+                        ImGui::SameLine();
+                        if ((ImGui::Button("Send", ImVec2(62, 0)) || send) && svMsg[0]) {
+                            if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; svNextMsg = 0; }
+                        }
+                    }
+                    ImGui::EndChild();
+                    ImGui::EndTable();
                 }
-                ImGui::EndChild();
             }
         } else if (tab == 9) {                            // ---- Forums ----
             sectionHeader("Forums", "Discuss games, ask for help, and share ideas with the community.");

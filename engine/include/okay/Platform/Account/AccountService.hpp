@@ -931,9 +931,26 @@ private:
                         const std::string& username = {}) {
         std::string base = serverUrl_;
         if (!base.empty() && base.back() == '/') base.pop_back();
+        // Sign in with a username OR an email: if the identifier isn't an email,
+        // resolve it to the account's email via a SECURITY DEFINER RPC that only
+        // returns the email when the password is correct (no email enumeration).
+        std::string loginId = email;
+        if (!signUp && loginId.find('@') == std::string::npos) {
+            ApiResponse rr = HttpRequest("POST", base + "/rest/v1/rpc/email_for_login",
+                "{\"p_username\":\"" + detail::JsonEscape(loginId) +
+                "\",\"p_password\":\"" + detail::JsonEscape(password) + "\"}", /*authToken=*/{});
+            std::string resolved;   // the RPC returns a JSON string (the email) or null
+            if (rr.ok) { std::string b = rr.body;
+                std::size_t q = b.find('"');
+                if (q != std::string::npos) { std::size_t e2 = b.find('"', q + 1);
+                    if (e2 != std::string::npos) resolved = b.substr(q + 1, e2 - q - 1); } }
+            if (resolved.empty())
+                return Fail("Invalid username/email or password.");
+            loginId = resolved;
+        }
         std::string url = base + (signUp ? "/auth/v1/signup"
                                          : "/auth/v1/token?grant_type=password");
-        std::string body = "{\"email\":\"" + detail::JsonEscape(email) +
+        std::string body = "{\"email\":\"" + detail::JsonEscape(loginId) +
                            "\",\"password\":\"" + detail::JsonEscape(password) + "\"";
         if (signUp && !username.empty())   // store the display name in user metadata
             body += ",\"data\":{\"username\":\"" + detail::JsonEscape(username) + "\"}";

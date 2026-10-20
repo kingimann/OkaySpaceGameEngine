@@ -318,3 +318,23 @@ grant execute on function public.create_server(text) to anon, authenticated;
 grant execute on function public.join_server(text)   to anon, authenticated;
 grant execute on function public.is_server_member(bigint)  to anon, authenticated;
 grant execute on function public.is_channel_member(bigint) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- email_for_login: lets players sign in with their username instead of email.
+-- Returns the account's email ONLY when the password is correct (verified with
+-- pgcrypto crypt against the stored bcrypt hash), so it can't enumerate emails.
+-- The launcher calls this, then does the normal Supabase password sign-in.
+-- ---------------------------------------------------------------------------
+create or replace function public.email_for_login(p_username text, p_password text)
+  returns text language plpgsql security definer
+  set search_path = public, auth, extensions as $fn$
+  declare e text; pw text;
+  begin
+    select u.email, u.encrypted_password into e, pw
+      from auth.users u join public.profiles p on p.id = u.id
+      where lower(p.username) = lower(p_username) limit 1;
+    if e is null or pw is null then return null; end if;
+    if pw = crypt(p_password, pw) then return e; else return null; end if;
+  end; $fn$;
+revoke all on function public.email_for_login(text, text) from public;
+grant execute on function public.email_for_login(text, text) to anon, authenticated;

@@ -53,6 +53,8 @@
 #else
 #  include <unistd.h>
 #  include <sys/wait.h>
+#  include <sys/file.h>   // flock (single-instance lock)
+#  include <fcntl.h>
 #  include <csignal>
 #endif
 
@@ -911,7 +913,7 @@ std::map<std::string,std::string>  g_friendNicks;  // uid -> private nickname
 std::set<std::string>              g_pinnedChats;
 std::set<std::string>              g_mutedChats;
 std::set<std::string>              g_archivedChats;
-bool                               g_minimizeToTray = true;   // Steam-style tray
+bool                               g_minimizeToTray = false;  // opt-in Steam-style tray (off by default: a normal minimize always restores from the taskbar)
 
 // Shared accent so UI code can match the theme.
 // Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
@@ -922,7 +924,7 @@ ImVec4 kAccentDim(0.19f, 0.43f, 0.72f, 1.0f);
 // Selectable accent colors (name, main, dim) — mirror the editor's accent presets.
 struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
 const AccentPreset kAccentPresets[] = {
-    {"Graphite", ImVec4(0.70f, 0.71f, 0.74f, 1), ImVec4(0.44f, 0.45f, 0.48f, 1)},  // neutral default (no blue)
+    {"Silver", ImVec4(0.84f, 0.85f, 0.89f, 1), ImVec4(0.56f, 0.57f, 0.62f, 1)},  // bright neutral default (no blue) — crisp highlights on deep dark
     {"Blue",   ImVec4(0.26f, 0.59f, 0.98f, 1), ImVec4(0.19f, 0.43f, 0.72f, 1)},
     {"Teal",   ImVec4(0.18f, 0.78f, 0.74f, 1), ImVec4(0.13f, 0.56f, 0.53f, 1)},
     {"Violet", ImVec4(0.56f, 0.46f, 0.96f, 1), ImVec4(0.40f, 0.33f, 0.70f, 1)},
@@ -1108,44 +1110,47 @@ void DarkTheme() {
         // A true neutral dark theme (VS Code / Unity dark): charcoal-grey surfaces,
         // no blue tint. The accent colour is used ONLY for small interactive cues
         // (checkmarks, slider grabs, the active nav bar), not the panels.
+        // A genuine deep-dark theme (not a flat mid-grey): near-black surfaces,
+        // crisp near-white text and clearly lit hover/selected states so nothing
+        // reads as "greyed out". The accent tints only small interactive cues.
         auto lighten = [](float v) { return v + (1.0f - v) * 0.30f; };
         const ImVec4 accentHover = ImVec4(lighten(accent.x), lighten(accent.y), lighten(accent.z), 1.00f);
-        c[ImGuiCol_WindowBg]         = ImVec4(0.137f, 0.137f, 0.145f, 1.00f);   // #232325
+        c[ImGuiCol_WindowBg]         = ImVec4(0.082f, 0.082f, 0.094f, 1.00f);   // #15151800 deep base
         c[ImGuiCol_ChildBg]          = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
-        c[ImGuiCol_PopupBg]          = ImVec4(0.160f, 0.160f, 0.168f, 0.99f);
-        c[ImGuiCol_Border]           = ImVec4(0.000f, 0.000f, 0.000f, 0.45f);
-        c[ImGuiCol_FrameBg]          = ImVec4(0.092f, 0.092f, 0.098f, 1.00f);
-        c[ImGuiCol_FrameBgHovered]   = ImVec4(0.135f, 0.135f, 0.143f, 1.00f);
-        c[ImGuiCol_FrameBgActive]    = ImVec4(0.168f, 0.168f, 0.178f, 1.00f);
-        c[ImGuiCol_TitleBg]          = ImVec4(0.105f, 0.105f, 0.112f, 1.00f);
-        c[ImGuiCol_TitleBgActive]    = ImVec4(0.135f, 0.135f, 0.143f, 1.00f);
-        c[ImGuiCol_MenuBarBg]        = ImVec4(0.120f, 0.120f, 0.127f, 1.00f);
-        c[ImGuiCol_Header]           = ImVec4(1.00f, 1.00f, 1.00f, 0.085f);     // neutral selection
-        c[ImGuiCol_HeaderHovered]    = ImVec4(1.00f, 1.00f, 1.00f, 0.060f);
-        c[ImGuiCol_HeaderActive]     = ImVec4(1.00f, 1.00f, 1.00f, 0.110f);
-        c[ImGuiCol_Button]           = ImVec4(0.215f, 0.215f, 0.228f, 1.00f);   // neutral grey
-        c[ImGuiCol_ButtonHovered]    = ImVec4(0.262f, 0.262f, 0.278f, 1.00f);
-        c[ImGuiCol_ButtonActive]     = ImVec4(0.300f, 0.300f, 0.318f, 1.00f);
+        c[ImGuiCol_PopupBg]          = ImVec4(0.118f, 0.118f, 0.133f, 0.99f);
+        c[ImGuiCol_Border]           = ImVec4(0.000f, 0.000f, 0.000f, 0.55f);
+        c[ImGuiCol_FrameBg]          = ImVec4(0.050f, 0.050f, 0.058f, 1.00f);   // recessed inputs
+        c[ImGuiCol_FrameBgHovered]   = ImVec4(0.090f, 0.090f, 0.102f, 1.00f);
+        c[ImGuiCol_FrameBgActive]    = ImVec4(0.125f, 0.125f, 0.140f, 1.00f);
+        c[ImGuiCol_TitleBg]          = ImVec4(0.062f, 0.062f, 0.072f, 1.00f);
+        c[ImGuiCol_TitleBgActive]    = ImVec4(0.092f, 0.092f, 0.104f, 1.00f);
+        c[ImGuiCol_MenuBarBg]        = ImVec4(0.068f, 0.068f, 0.078f, 1.00f);
+        c[ImGuiCol_Header]           = ImVec4(1.00f, 1.00f, 1.00f, 0.110f);     // neutral selection (brighter)
+        c[ImGuiCol_HeaderHovered]    = ImVec4(1.00f, 1.00f, 1.00f, 0.070f);
+        c[ImGuiCol_HeaderActive]     = ImVec4(1.00f, 1.00f, 1.00f, 0.150f);
+        c[ImGuiCol_Button]           = ImVec4(0.188f, 0.188f, 0.208f, 1.00f);   // clearly raised, clickable
+        c[ImGuiCol_ButtonHovered]    = ImVec4(0.250f, 0.250f, 0.275f, 1.00f);
+        c[ImGuiCol_ButtonActive]     = ImVec4(0.305f, 0.305f, 0.335f, 1.00f);
         c[ImGuiCol_CheckMark]        = accentHover;
         c[ImGuiCol_SliderGrab]       = accent;
         c[ImGuiCol_SliderGrabActive] = accentHover;
-        c[ImGuiCol_Separator]        = ImVec4(1.00f, 1.00f, 1.00f, 0.070f);
+        c[ImGuiCol_Separator]        = ImVec4(1.00f, 1.00f, 1.00f, 0.060f);
         c[ImGuiCol_SeparatorHovered] = accentDim;
         c[ImGuiCol_SeparatorActive]  = accent;
-        c[ImGuiCol_Tab]              = ImVec4(0.120f, 0.120f, 0.127f, 1.00f);
+        c[ImGuiCol_Tab]              = ImVec4(0.072f, 0.072f, 0.082f, 1.00f);
         c[ImGuiCol_TabHovered]       = ImVec4(1.00f, 1.00f, 1.00f, 0.100f);
-        c[ImGuiCol_TabActive]        = ImVec4(0.205f, 0.205f, 0.217f, 1.00f);
-        c[ImGuiCol_TabUnfocused]     = ImVec4(0.105f, 0.105f, 0.112f, 1.00f);
-        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.165f, 0.165f, 0.175f, 1.00f);
-        c[ImGuiCol_Text]             = ImVec4(0.882f, 0.886f, 0.898f, 1.00f);
-        c[ImGuiCol_TextDisabled]     = ImVec4(0.470f, 0.475f, 0.495f, 1.00f);
+        c[ImGuiCol_TabActive]        = ImVec4(0.165f, 0.165f, 0.183f, 1.00f);
+        c[ImGuiCol_TabUnfocused]     = ImVec4(0.062f, 0.062f, 0.072f, 1.00f);
+        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.120f, 0.120f, 0.133f, 1.00f);
+        c[ImGuiCol_Text]             = ImVec4(0.925f, 0.928f, 0.940f, 1.00f);   // crisp near-white
+        c[ImGuiCol_TextDisabled]     = ImVec4(0.440f, 0.445f, 0.470f, 1.00f);
         c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.35f);
-        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
-        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.330f, 0.330f, 0.345f, 1.00f);
-        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.400f, 0.400f, 0.420f, 1.00f);
+        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.26f);
+        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.270f, 0.270f, 0.292f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.345f, 0.345f, 0.368f, 1.00f);
         c[ImGuiCol_ScrollbarGrabActive]  = accent;
-        c[ImGuiCol_TableHeaderBg]    = ImVec4(0.195f, 0.195f, 0.207f, 1.00f);
-        c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.022f);
+        c[ImGuiCol_TableHeaderBg]    = ImVec4(0.140f, 0.140f, 0.155f, 1.00f);
+        c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.020f);
         ImGui::GetIO().FontGlobalScale = g_uiScale;
         return;   // Dark theme is fully specified above (no shared overrides needed)
     }
@@ -2296,9 +2301,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
 #if defined(_WIN32)
 static HWND          g_trayHwnd = nullptr;
 static bool          g_trayActive = false;
-static volatile bool g_trayRestoreReq = false;
+static volatile bool g_trayRestoreReq = false;   // bring the window back (tray click / 2nd launch)
+static volatile bool g_trayMenuReq   = false;    // show the tray right-click menu
+static volatile bool g_trayQuitReq   = false;    // quit chosen from the tray menu
 static const UINT    WM_OKAYTRAY = WM_USER + 0x51;
 static const UINT    OKAY_TRAY_UID = 1;
+// A system-wide message a second launcher broadcasts so the first one surfaces
+// itself (single-instance). Registered in main() before the hook can fire.
+static UINT          g_showMsg = 0;
 
 static HWND OkayWindowHWND(SDL_Window* w) {
     SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
@@ -2306,10 +2316,12 @@ static HWND OkayWindowHWND(SDL_Window* w) {
         return wm.info.win.window;
     return nullptr;
 }
-static void OkayTrayAdd(SDL_Window* w) {
-    if (g_trayActive) return;
+// Returns true only if the tray icon was actually registered — callers must not
+// hide the window unless this succeeds, or it would vanish with no way back.
+static bool OkayTrayAdd(SDL_Window* w) {
+    if (g_trayActive) return true;
     g_trayHwnd = OkayWindowHWND(w);
-    if (!g_trayHwnd) return;
+    if (!g_trayHwnd) return false;
     NOTIFYICONDATAA nid; ZeroMemory(&nid, sizeof(nid));
     nid.cbSize = sizeof(nid);
     nid.hWnd = g_trayHwnd;
@@ -2319,9 +2331,10 @@ static void OkayTrayAdd(SDL_Window* w) {
     nid.hIcon = (HICON)LoadImageA(GetModuleHandleA(nullptr), MAKEINTRESOURCEA(1), IMAGE_ICON,
                                   GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
     if (!nid.hIcon) nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
-    lstrcpynA(nid.szTip, "OkaySpace \xE2\x80\x94 click to open", (int)sizeof(nid.szTip));
-    Shell_NotifyIconA(NIM_ADD, &nid);
+    lstrcpynA(nid.szTip, "OkaySpace \xE2\x80\x94 click to open (right-click for menu)", (int)sizeof(nid.szTip));
+    if (!Shell_NotifyIconA(NIM_ADD, &nid)) return false;
     g_trayActive = true;
+    return true;
 }
 static void OkayTrayRemove() {
     if (!g_trayActive || !g_trayHwnd) { g_trayActive = false; return; }
@@ -2330,15 +2343,66 @@ static void OkayTrayRemove() {
     Shell_NotifyIconA(NIM_DELETE, &nid);
     g_trayActive = false;
 }
+// Right-click tray menu: a guaranteed way to reopen or quit even if a left-click
+// is finicky. Called from the main loop (not the hook) since it blocks.
+static void OkayTrayShowMenu() {
+    if (!g_trayHwnd) return;
+    HMENU m = CreatePopupMenu();
+    if (!m) { g_trayRestoreReq = true; return; }
+    AppendMenuA(m, MF_STRING, 1, "Open OkaySpace");
+    AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuA(m, MF_STRING, 2, "Quit");
+    POINT pt; GetCursorPos(&pt);
+    SetForegroundWindow(g_trayHwnd);   // required so the menu dismisses correctly
+    int cmd = (int)TrackPopupMenu(m, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+                                  pt.x, pt.y, 0, g_trayHwnd, nullptr);
+    PostMessageA(g_trayHwnd, WM_NULL, 0, 0);
+    DestroyMenu(m);
+    if (cmd == 1)      g_trayRestoreReq = true;
+    else if (cmd == 2) g_trayQuitReq = true;
+}
 // SDL pumps Win32 messages on the main thread, so this hook runs there too; it
-// just flags a restore which the main loop acts on (any click opens the app).
+// just flags work the main loop performs (any left-click opens the app; a
+// right-click raises the menu; a broadcast from a 2nd launch also surfaces us).
 static void SDLCALL OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, Uint64 wParam, Sint64 lParam) {
     (void)userdata; (void)hWnd; (void)wParam;
     if (msg == WM_OKAYTRAY) {
         UINT ev = (UINT)(lParam & 0xFFFF);
-        if (ev == WM_LBUTTONUP || ev == WM_LBUTTONDBLCLK || ev == WM_RBUTTONUP)
-            g_trayRestoreReq = true;
+        if (ev == WM_LBUTTONUP || ev == WM_LBUTTONDBLCLK) g_trayRestoreReq = true;
+        else if (ev == WM_RBUTTONUP || ev == WM_CONTEXTMENU) g_trayMenuReq = true;
+    } else if (g_showMsg && msg == g_showMsg) {
+        g_trayRestoreReq = true;   // a second launcher asked us to come forward
     }
+}
+#endif
+
+// ---- Single instance -------------------------------------------------------
+// Only one launcher may run at a time. Returns true if this process is the
+// first/only instance (continue starting up); false if another is already
+// running — in which case we've asked that one to surface itself and should exit.
+#if defined(_WIN32)
+static HANDLE g_singletonMutex = nullptr;
+static bool AcquireSingleInstance() {
+    g_showMsg = RegisterWindowMessageA("OkaySpaceLauncherShowWindow");
+    g_singletonMutex = CreateMutexA(nullptr, FALSE, "Local\\OkaySpaceLauncherSingleton");
+    if (g_singletonMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (g_showMsg) PostMessageA(HWND_BROADCAST, g_showMsg, 0, 0);
+        return false;
+    }
+    return true;   // we hold the mutex (released when the process exits)
+}
+#else
+static int g_singletonFd = -1;
+static bool AcquireSingleInstance() {
+    std::error_code ec;
+    fs::path lock = fs::temp_directory_path(ec) / "okayspace_launcher.lock";
+    g_singletonFd = ::open(lock.c_str(), O_CREAT | O_RDWR, 0600);
+    if (g_singletonFd < 0) return true;   // can't lock → don't block startup
+    if (::flock(g_singletonFd, LOCK_EX | LOCK_NB) != 0) {
+        ::close(g_singletonFd); g_singletonFd = -1;
+        return false;   // another instance holds the lock
+    }
+    return true;   // lock held for the process lifetime
 }
 #endif
 
@@ -2360,6 +2424,10 @@ int main(int argc, char** argv) {
     // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
+
+    // One launcher at a time: a second launch asks the running one to come
+    // forward (restoring it from the tray / taskbar) and then exits quietly.
+    if (!AcquireSingleInstance()) { SDL_Quit(); return 0; }
 
     // Show the bundled version and DON'T phone home on startup: the published build
     // on GitHub can lag this one, so an auto-check used to download an OLDER engine
@@ -2510,8 +2578,9 @@ int main(int argc, char** argv) {
             // Steam-style: minimizing hides the launcher to the system tray.
             else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_MINIMIZED
                      && g_minimizeToTray) {
-                OkayTrayAdd(window);
-                SDL_HideWindow(window);
+                // Only disappear into the tray if the icon actually registered,
+                // otherwise the window would be hidden with no way to get it back.
+                if (OkayTrayAdd(window)) SDL_HideWindow(window);
             }
 #endif
             // Drag & drop onto the launcher: a .okayscene plays instantly (no
@@ -2541,7 +2610,11 @@ int main(int argc, char** argv) {
             }
         }
 #if defined(_WIN32)
-        // A tray-icon click restores the launcher from the tray.
+        // A right-click on the tray icon raises the Open/Quit menu (runs here, not
+        // in the message hook, because TrackPopupMenu blocks).
+        if (g_trayMenuReq) { g_trayMenuReq = false; OkayTrayShowMenu(); }
+        if (g_trayQuitReq) { g_trayQuitReq = false; OkayTrayRemove(); running = false; }
+        // A tray-icon click (or a second launch) restores the launcher.
         if (g_trayRestoreReq) {
             g_trayRestoreReq = false;
             OkayTrayRemove();
@@ -2724,8 +2797,8 @@ int main(int argc, char** argv) {
             const float rowH = 38.0f;
             ImVec2 rowMax = ImVec2(rowMin.x + rowW, rowMin.y + rowH);
             bool hov = ImGui::IsMouseHoveringRect(rowMin, rowMax);
-            if (sel)      dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 20));
-            else if (hov) dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 11));
+            if (sel)      dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 28));
+            else if (hov) dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 14));
             if (sel)   // accent bar marking the active item
                 dl->AddRectFilled(rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y),
                                   ImGui::GetColorU32(kAccent));

@@ -3419,15 +3419,19 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                 }
             } else {
-                // Search + kind filter.
+                // Search + kind filter + sort.
                 static char wSearch[96] = "";
-                static int  wFilterKind = 0;   // 0 All, 1 Games, 2 Scenes, 3 Templates
+                static int  wFilterKind = 0;   // 0 All, 1 Games, 2 Templates
+                static int  wSort = 0;         // 0 Newest, 1 Most downloaded, 2 Highest rated
                 static bool wWishOnly = false;
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 236 - 108);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 150 - 170 - 108);
                 ImGui::InputTextWithHint("##mktsearch", "Search the marketplace...", wSearch, sizeof(wSearch));
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(228);
+                ImGui::SetNextItemWidth(142);
                 ImGui::Combo("##mktkind", &wFilterKind, "All kinds\0Games\0Templates\0");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(162);
+                ImGui::Combo("##mktsort", &wSort, "Newest\0Most downloaded\0Highest rated\0");
                 ImGui::SameLine();
                 if (wWishOnly) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
                 if (ImGui::Button(wWishOnly ? "Wishlist *" : "Wishlist", ImVec2(100, 0))) wWishOnly = !wWishOnly;
@@ -3438,10 +3442,26 @@ int main(int argc, char** argv) {
                 auto mlo = [](std::string s){ for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
                 std::string nd = mlo(wSearch);
                 const char* kindKey[] = { "", "game", "template" };
+                // Build the display order from the chosen sort (wCache is newest-first).
+                auto avgOf = [&](long id)->float {
+                    auto it = wRatings.find(id);
+                    return (it != wRatings.end() && it->second.second > 0)
+                         ? (float)it->second.first / (float)it->second.second : 0.0f;
+                };
+                std::vector<const okay::WorkshopItem*> order;
+                order.reserve(wCache.size());
+                for (const auto& w : wCache) order.push_back(&w);
+                if (wSort == 1)
+                    std::stable_sort(order.begin(), order.end(),
+                        [](const okay::WorkshopItem* a, const okay::WorkshopItem* b){ return a->downloads > b->downloads; });
+                else if (wSort == 2)
+                    std::stable_sort(order.begin(), order.end(),
+                        [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b){ return avgOf(a->id) > avgOf(b->id); });
                 ImGui::BeginChild("##market", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
                 std::string me = account.CurrentSession().username;
                 int mktShown = 0;
-                for (const auto& w : wCache) {
+                for (const okay::WorkshopItem* wp : order) {
+                    const okay::WorkshopItem& w = *wp;
                     std::string wk = w.kind.empty() ? "game" : w.kind;
                     if (wFilterKind != 0 && wk != kindKey[wFilterKind]) continue;
                     if (wWishOnly && !IsWishlisted(w.id)) continue;

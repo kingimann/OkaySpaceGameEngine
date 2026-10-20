@@ -108,6 +108,59 @@ create policy "post own activity"  on public.activity for insert with check (aut
 create policy "prune own activity" on public.activity for delete using (auth.uid() = actor);
 
 -- ---------------------------------------------------------------------------
+-- messages: 1:1 direct messages between players. RLS limits reads to the two
+-- parties. (Placed here, but the original file already had a prune policy
+-- below for activity — kept idempotent with drop-if-exists.)
+-- ---------------------------------------------------------------------------
+create table if not exists public.messages (
+  id         bigint generated always as identity primary key,
+  sender     uuid not null default auth.uid() references auth.users on delete cascade,
+  recipient  uuid not null references auth.users on delete cascade,
+  body       text not null,
+  created_at timestamptz default now()
+);
+alter table public.messages enable row level security;
+drop policy if exists "see own messages"  on public.messages;
+drop policy if exists "send own messages" on public.messages;
+create policy "see own messages"  on public.messages for select
+  using (auth.uid() = sender or auth.uid() = recipient);
+create policy "send own messages" on public.messages for insert with check (auth.uid() = sender);
+
+-- ---------------------------------------------------------------------------
+-- forums: public discussion threads + posts (the Community "Forums" section).
+-- ---------------------------------------------------------------------------
+create table if not exists public.forum_threads (
+  id          bigint generated always as identity primary key,
+  author      uuid not null default auth.uid() references auth.users on delete cascade,
+  author_name text,
+  title       text not null,
+  created_at  timestamptz default now()
+);
+alter table public.forum_threads enable row level security;
+drop policy if exists "threads readable" on public.forum_threads;
+drop policy if exists "start thread"     on public.forum_threads;
+drop policy if exists "delete own thread" on public.forum_threads;
+create policy "threads readable"  on public.forum_threads for select using (true);
+create policy "start thread"      on public.forum_threads for insert with check (auth.uid() = author);
+create policy "delete own thread" on public.forum_threads for delete using (auth.uid() = author);
+
+create table if not exists public.forum_posts (
+  id          bigint generated always as identity primary key,
+  thread_id   bigint not null references public.forum_threads on delete cascade,
+  author      uuid not null default auth.uid() references auth.users on delete cascade,
+  author_name text,
+  body        text not null,
+  created_at  timestamptz default now()
+);
+alter table public.forum_posts enable row level security;
+drop policy if exists "posts readable" on public.forum_posts;
+drop policy if exists "write post"     on public.forum_posts;
+drop policy if exists "delete own post" on public.forum_posts;
+create policy "posts readable"  on public.forum_posts for select using (true);
+create policy "write post"      on public.forum_posts for insert with check (auth.uid() = author);
+create policy "delete own post" on public.forum_posts for delete using (auth.uid() = author);
+
+-- ---------------------------------------------------------------------------
 -- workshop_items: shared games / scenes / templates (the Marketplace tab).
 -- The actual files live in a public Storage bucket named 'workshop'; this row
 -- holds the metadata + the bucket path.

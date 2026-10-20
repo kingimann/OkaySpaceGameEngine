@@ -1586,18 +1586,40 @@ void DrawGameIcon(const std::string& gamePath, const std::string& name, float si
 std::map<std::string, SDL_Texture*> g_avatarCache;
 std::string* g_myAvatarSlot = nullptr;   // points at the Account card's cached avatar URL
 
+// Avatar downloads used to block the render thread (a freeze the first time a
+// friends/chat list showed uncached avatars). The network fetch now runs on a
+// detached worker; decode + GPU upload stay on the main thread (local, fast).
+static SDL_mutex*          g_avatarMutex = nullptr;   // guards the two sets below
+static std::set<std::string> g_avatarPending;         // URLs currently downloading
+static std::set<std::string> g_avatarFailed;          // URLs that failed (don't retry)
+struct AvatarDl { std::string url, path; };
+static int AvatarDlWorker(void* p) {
+    AvatarDl* d = (AvatarDl*)p;
+    bool ok = false;
+    try { ok = Download(d->url, d->path); } catch (...) {}
+    std::error_code ec;
+    if (g_avatarMutex) {
+        SDL_LockMutex(g_avatarMutex);
+        g_avatarPending.erase(d->url);
+        if (!ok && !fs::exists(d->path, ec)) g_avatarFailed.insert(d->url);
+        SDL_UnlockMutex(g_avatarMutex);
+    }
+    delete d;
+    return 0;
+}
+
 SDL_Texture* AvatarTexture(const std::string& url) {
     if (url.empty() || !g_renderer) return nullptr;
     auto it = g_avatarCache.find(url);
     if (it != g_avatarCache.end()) return it->second;
-    SDL_Texture* tex = nullptr;
     std::error_code ec;
     fs::path dir = fs::temp_directory_path(ec) / "okayspace_avatars";
     fs::create_directories(dir, ec);
     char name[32]; std::snprintf(name, sizeof(name), "%zu", std::hash<std::string>{}(url));
     fs::path cache = dir / (std::string(name) + ".img");
-    if (!fs::exists(cache, ec)) Download(url, cache.string());   // best-effort fetch
     if (fs::exists(cache, ec)) {
+        // Already downloaded: decode + upload here (fast), then cache the texture.
+        SDL_Texture* tex = nullptr;
         int w = 0, h = 0, ch = 0;
         unsigned char* px = stbi_load(cache.string().c_str(), &w, &h, &ch, 4);
         if (px) {
@@ -1605,9 +1627,22 @@ SDL_Texture* AvatarTexture(const std::string& url) {
             if (s) { tex = SDL_CreateTextureFromSurface(g_renderer, s); SDL_FreeSurface(s); }
             stbi_image_free(px);
         }
+        if (tex) { g_avatarCache[url] = tex; return tex; }
     }
-    g_avatarCache[url] = tex;
-    return tex;
+    // Not on disk yet (or a bad decode): fetch in the background once, and show
+    // the coloured-initial fallback until it lands. Never block the UI.
+    if (!g_avatarMutex) g_avatarMutex = SDL_CreateMutex();
+    bool kick = false;
+    SDL_LockMutex(g_avatarMutex);
+    if (g_avatarFailed.count(url)) { SDL_UnlockMutex(g_avatarMutex); return nullptr; }
+    if (!g_avatarPending.count(url)) { g_avatarPending.insert(url); kick = true; }
+    SDL_UnlockMutex(g_avatarMutex);
+    if (kick) {
+        AvatarDl* d = new AvatarDl{url, cache.string()};
+        if (SDL_Thread* t = SDL_CreateThread(AvatarDlWorker, "okay-avdl", d)) SDL_DetachThread(t);
+        else { SDL_LockMutex(g_avatarMutex); g_avatarPending.erase(url); SDL_UnlockMutex(g_avatarMutex); delete d; }
+    }
+    return nullptr;
 }
 
 // Draw a circular avatar: the image if the URL loads, else a colored initial.
@@ -1820,6 +1855,7 @@ static SDL_Thread* g_chatThread = nullptr;
 static volatile bool g_chatPollRun = true;
 static volatile bool g_chatPeerTyping = false;
 static volatile bool g_chatForceLog = false;   // a send/edit/react asks for an immediate re-poll
+static volatile bool g_chatTypingReq = false;  // the composer asks the worker to broadcast "typing"
 static std::string g_chatSelUid;                                        // (guarded) open conversation
 static bool g_chatLogReady = false, g_chatConvReady = false, g_chatFriReady = false;  // (guarded)
 static std::vector<okay::DirectMessage> g_chatLog;                      // (guarded)
@@ -2402,7 +2438,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             bool send = ImGui::InputTextMultiline("##cwin", input, sizeof(input), inSz,
                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
             // Broadcast a typing signal while there's text (throttled to ~2s).
-            if (input[0] && !editId && now - typingSentAt > 2000) { dm.SetTyping(selUid); typingSentAt = now; }
+            if (input[0] && !editId && now - typingSentAt > 2000) { g_chatTypingReq = true; typingSentAt = now; }
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
@@ -2725,6 +2761,7 @@ static int ChatPollWorker(void*) {
                 nextFri = now + 15000;
             }
             if (!uid.empty()) {
+                if (g_chatTypingReq) { g_chatTypingReq = false; dm.SetTyping(uid); }
                 if (now >= nextLog) {
                     auto l = dm.With(uid);
                     auto rc = dm.Reactions(); auto mr = dm.MyReactions();

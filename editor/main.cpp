@@ -336,6 +336,8 @@ int main(int argc, char** argv) {
 #else
 #  include <unistd.h>
 #  include <csignal>
+#  include <fcntl.h>      // open() for the single-instance lock file
+#  include <sys/file.h>   // flock() for the single-instance lock
 #endif
 
 #ifndef OKAY_ENGINE_VERSION
@@ -29965,6 +29967,93 @@ static bool PassesLauncherGate(int argc, char** argv) {
     return false;
 }
 
+// ==== Single-instance guard + launch hand-off ================================
+// Only ONE editor window may exist at a time — two editors fighting over the
+// same project files is a recipe for lost work. On startup we take a
+// process-wide lock. A second launch does NOT open a window: it writes its
+// request (new-project / open / just focus) to a small hand-off file and exits,
+// and the already-running editor picks it up, raises its window, and acts on it.
+// So the launcher's "Open Editor" / "Open project" / "Create" buttons always
+// drive the single existing window instead of spawning rivals.
+
+static std::filesystem::path OkaySingleLockPath() {
+    std::error_code ec;
+    std::filesystem::path t = std::filesystem::temp_directory_path(ec);
+    if (ec) t = std::filesystem::path(".");
+    return t / "okayspace_editor.lock";
+}
+static std::filesystem::path OkayHandoffPath() {
+    std::error_code ec;
+    std::filesystem::path t = std::filesystem::temp_directory_path(ec);
+    if (ec) t = std::filesystem::path(".");
+    return t / "okayspace_editor.handoff";
+}
+
+#if defined(_WIN32)
+static HANDLE g_singleMutex = nullptr;
+// True if we are the first/primary editor; false if another is already running.
+static bool AcquireSingleInstance() {
+    g_singleMutex = CreateMutexA(nullptr, FALSE, "Local\\OkaySpaceEditorSingleton");
+    if (!g_singleMutex) return true;   // can't tell — don't lock the user out
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(g_singleMutex); g_singleMutex = nullptr; return false;
+    }
+    return true;
+}
+#else
+static int g_singleFd = -1;
+static bool AcquireSingleInstance() {
+    g_singleFd = ::open(OkaySingleLockPath().c_str(), O_CREAT | O_RDWR, 0644);
+    if (g_singleFd < 0) return true;   // can't tell — allow
+    if (::flock(g_singleFd, LOCK_EX | LOCK_NB) != 0) { ::close(g_singleFd); g_singleFd = -1; return false; }
+    return true;
+}
+#endif
+
+// Second instance: hand our launch request to the running editor, atomically
+// (write a temp file, then rename over the hand-off path so the reader never
+// sees a half-written file).
+static void WriteHandoff() {
+    std::string body;
+    if (!g_newProjectRoot.empty())     body += "new-project\t" + g_newProjectRoot + "\n";
+    if (!g_newProjectTemplate.empty()) body += "template\t"    + g_newProjectTemplate + "\n";
+    if (!g_openScenePath.empty())      body += "open\t"        + g_openScenePath + "\n";
+    if (body.empty()) body = "focus\t1\n";   // plain "Open Editor": just bring to front
+    std::error_code ec;
+    std::filesystem::path f = OkayHandoffPath();
+    std::filesystem::path tmp = f; tmp += ".tmp";
+    { std::ofstream o(tmp, std::ios::binary); o << body; }
+    std::filesystem::rename(tmp, f, ec);
+    if (ec) { std::ofstream o(f, std::ios::binary); o << body; }   // best-effort fallback
+}
+
+// Primary editor, once per frame: pick up a pending hand-off. Fills the request
+// globals and sets `raiseWindow`. Returns true when a project request (open /
+// new-project) was read and should be applied; a bare focus returns false but
+// still asks to raise the window.
+static bool PollHandoff(bool& raiseWindow) {
+    raiseWindow = false;
+    std::error_code ec;
+    std::filesystem::path f = OkayHandoffPath();
+    if (!std::filesystem::exists(f, ec)) return false;
+    std::ifstream in(f, std::ios::binary);
+    std::string line; bool request = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        std::string k = line.substr(0, tab), v = line.substr(tab + 1);
+        if      (k == "new-project") { g_newProjectRoot = v;     request = true; }
+        else if (k == "template")    { g_newProjectTemplate = v; request = true; }
+        else if (k == "open")        { g_openScenePath = v;      request = true; }
+        else if (k == "focus")       { /* just raise */ }
+    }
+    in.close();
+    std::filesystem::remove(f, ec);
+    raiseWindow = true;
+    return request;
+}
+
 // ==== Multi-window (dual monitor) support ====================================
 // Dear ImGui's stock SDL_Renderer2 backend renders only the main window, so we
 // implement the renderer side of multi-viewports ourselves: every OS window
@@ -30142,6 +30231,13 @@ int main(int argc, char** argv) {
         else if (a.rfind("--new-project=", 0) == 0) g_newProjectRoot = a.substr(14);
         else if (a == "--open" && i + 1 < argc) { g_openScenePath = argv[i + 1]; ++i; }
         else if (a.rfind("--open=", 0) == 0) g_openScenePath = a.substr(7);
+    }
+
+    // Single-instance: if an editor is already running, hand this launch's
+    // request to it and exit instead of opening a second window.
+    if (!AcquireSingleInstance()) {
+        WriteHandoff();
+        return 0;
     }
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
@@ -30722,6 +30818,53 @@ int main(int argc, char** argv) {
 
         HandleShortcuts(ed);
         DrawDockSpace(ed);
+
+        // Single-instance hand-off: a second launch (launcher "Open Editor" /
+        // "Open project" / "Create") routes its request here instead of opening
+        // a rival window. Apply it to THIS window, guarding unsaved work.
+        {
+            static bool s_handoffConfirm = false;
+            static std::string s_hoRoot, s_hoTpl, s_hoOpen;
+            bool raise = false;
+            if (PollHandoff(raise)) {
+                if (ed.dirty) {   // stash the request and ask before replacing the scene
+                    s_hoRoot = g_newProjectRoot; s_hoTpl = g_newProjectTemplate; s_hoOpen = g_openScenePath;
+                    g_newProjectRoot.clear(); g_newProjectTemplate.clear(); g_openScenePath.clear();
+                    s_handoffConfirm = true;
+                }
+                // Not dirty: leave the g_* request set — DrawNewProjectPopup applies it below.
+            }
+            if (raise && window) { SDL_RestoreWindow(window); SDL_RaiseWindow(window); SDL_ShowWindow(window); }
+            if (s_handoffConfirm) {
+                ImGui::OpenPopup("Switch project?");
+                if (ImGui::BeginPopupModal("Switch project?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::TextWrapped("You have unsaved changes in the current scene.");
+                    ImGui::TextDisabled("%s", !s_hoOpen.empty() ? s_hoOpen.c_str()
+                                              : (!s_hoRoot.empty() ? s_hoRoot.c_str() : "another project"));
+                    ImGui::Separator();
+                    auto applyHandoff = [&]() {
+                        g_newProjectRoot = s_hoRoot; g_newProjectTemplate = s_hoTpl; g_openScenePath = s_hoOpen;
+                        s_hoRoot.clear(); s_hoTpl.clear(); s_hoOpen.clear();
+                        s_handoffConfirm = false; ImGui::CloseCurrentPopup();
+                    };
+                    if (ImGui::Button("Save & Switch", ImVec2(130, 0))) {
+                        std::string p = ed.path();
+                        if (!p.empty() && ed.Save(p)) { AddRecent(p); ed.dirty = false; }
+                        else ConsoleLog("Scene was never saved — switching without saving.", 1);
+                        ed.dirty = false; applyHandoff();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Switch Anyway", ImVec2(130, 0))) { ed.dirty = false; applyHandoff(); }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(90, 0))) {
+                        s_hoRoot.clear(); s_hoTpl.clear(); s_hoOpen.clear();
+                        s_handoffConfirm = false; ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+            }
+        }
+
         DrawNewProjectPopup(ed);
         DrawFileDialogs(ed);
         DrawQuitPrompt(ed, running);

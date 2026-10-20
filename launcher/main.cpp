@@ -688,6 +688,67 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
     RunCmd(cmd, false);
 }
 
+void Toast(const std::string& m, int kind);   // defined below; used by CreateProject
+
+// The Create tab asks for a rescan + highlight after making a project.
+bool        g_projectsNeedRescan = false;   // force "Your projects" to re-list
+std::string g_projectJustMade;              // name to highlight in the list
+
+// Make a real project on disk, in the LAUNCHER, so clicking a template actually
+// creates something (the folder + Assets exist the instant you click) instead of
+// only handing a request to the editor. Returns the created folder, or "" on
+// failure. When the editor is present it then fills in the template scene (it
+// adopts an empty Assets folder as-is); when it isn't, we still write a minimal
+// but valid starting scene so the project opens later.
+std::string CreateProject(const std::string& location, const std::string& rawName,
+                          const std::string& templateTitle, const std::string& editorExe) {
+    std::error_code ec;
+    // Sanitize the name into a filesystem-safe folder name.
+    std::string name = rawName.empty() ? "MyGame" : rawName;
+    for (char& ch : name)
+        if (ch == '/' || ch == '\\' || ch == '"' || ch == ':' || ch == '*' ||
+            ch == '?' || ch == '<' || ch == '>' || ch == '|') ch = '-';
+    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
+    if (name.empty()) name = "MyGame";
+
+    fs::path base = location.empty() ? fs::path(".") : fs::path(location);
+    fs::create_directories(base, ec);
+
+    // Uniquify: a folder counts as "used" if it already holds a non-empty Assets
+    // (a real project) or non-project clutter. Pick Name, then Name-2, Name-3, ...
+    auto used = [&](const fs::path& r) {
+        if (!fs::exists(r, ec)) return false;
+        if (!fs::is_directory(r, ec)) return true;
+        fs::path assets = r / "Assets";
+        if (!fs::exists(assets, ec)) return !fs::is_empty(r, ec);
+        return !fs::is_empty(assets, ec);
+    };
+    std::string finalName = name;
+    fs::path root = base / finalName;
+    for (int n = 2; used(root) && n < 1000; ++n) { finalName = name + "-" + std::to_string(n); root = base / finalName; }
+
+    if (!fs::create_directories(root / "Assets", ec) && ec) {
+        Toast("Couldn't create project folder: " + ec.message(), 2);
+        return "";
+    }
+
+    if (!editorExe.empty()) {
+        // Editor present: it adopts the empty Assets folder and writes the real
+        // template scene there. (Single-instance: if an editor is already open,
+        // the launch is handed off to it.)
+        LaunchEditor(editorExe, templateTitle, root.string());
+    } else {
+        // No editor installed yet: still leave a real, openable project behind so
+        // the folder isn't an empty shell — a minimal valid scene file.
+        std::ofstream o((root / "Assets" / (finalName + ".okayscene")).string(), std::ios::binary);
+        o << "name \"" << finalName << "\"\n";
+        Toast("Created " + finalName + " (install the editor to open it)", 1);
+    }
+    g_projectsNeedRescan = true;
+    g_projectJustMade = finalName;
+    return root.string();
+}
+
 // Open a URL in the default browser, or a folder in the file manager.
 void OpenExternal(const std::string& target) {
     if (target.empty()) return;
@@ -2297,14 +2358,15 @@ int main(int argc, char** argv) {
                                       npName[0] ? npName : "MyGame", kTpl[i].name);
                 }
                 if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                    // Compose <Location>/<Name>; the editor creates the folder,
-                    // Assets/ and the starting scene (uniquifying if it's taken).
-                    std::string nm = npName[0] ? npName : "MyGame";
-                    for (char& ch : nm)   // keep the folder name filesystem-safe
-                        if (ch == '/' || ch == '\\' || ch == '"' || ch == ':') ch = '-';
-                    std::string root = (fs::path(npLoc[0] ? npLoc : ".") / nm).string();
-                    LaunchEditor(editor, kTpl[i].name, root);
-                    Toast(std::string("Creating ") + nm + " (" + kTpl[i].name + ")");
+                    // The LAUNCHER creates the project folder + Assets right now
+                    // (uniquifying if the name is taken); the editor then fills in
+                    // the template scene. The project is real on disk immediately.
+                    std::string root = CreateProject(npLoc[0] ? npLoc : ".",
+                                                     npName[0] ? npName : "MyGame",
+                                                     kTpl[i].name, editor);
+                    if (!root.empty())
+                        Toast("Created " + fs::path(root).filename().string() +
+                              " (" + kTpl[i].name + ")" + (editor.empty() ? "" : " — opening editor"));
                 }
                 ImGui::EndChild();
                 ImGui::PopID();
@@ -2316,8 +2378,9 @@ int main(int argc, char** argv) {
             ImGui::SeparatorText("Your projects");
             static std::vector<std::pair<std::string, std::string>> s_projects;  // name -> scene path
             static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
-            if (s_projScanned != std::string(npLoc)) {
+            if (s_projScanned != std::string(npLoc) || g_projectsNeedRescan) {
                 s_projScanned = npLoc;
+                g_projectsNeedRescan = false;
                 s_projects.clear();
                 std::error_code pec;
                 for (auto& e : fs::directory_iterator(fs::path(npLoc), pec)) {
@@ -2330,17 +2393,35 @@ int main(int argc, char** argv) {
                     if (fs::exists(preferred, pec)) scene = preferred.string();
                     else for (auto& f : fs::directory_iterator(assets, pec))
                         if (f.path().extension() == ".okayscene") { scene = f.path().string(); break; }
+                    // A freshly made project whose scene the editor hasn't written
+                    // yet still lists (as "setting up…"), pointing at the expected
+                    // path so Open works the moment it exists.
+                    if (scene.empty() && fs::is_empty(assets, pec)) scene = preferred.string();
                     if (!scene.empty())
                         s_projects.push_back({e.path().filename().string(), scene});
                 }
                 std::sort(s_projects.begin(), s_projects.end());
             }
+            // Keep polling briefly after a create so the new project appears once
+            // the editor saves its first scene (no manual Refresh needed), and
+            // highlight the new card during that window.
+            static Uint32 s_watchUntil = 0;
+            static std::string s_highlight;
+            if (!g_projectJustMade.empty()) { s_watchUntil = SDL_GetTicks() + 8000; s_highlight = g_projectJustMade; g_projectJustMade.clear(); }
+            if (s_watchUntil && SDL_GetTicks() < s_watchUntil) {
+                static Uint32 t = 0;
+                if (SDL_GetTicks() - t > 1000) { t = SDL_GetTicks(); s_projScanned = "\x01"; }
+            } else { s_watchUntil = 0; s_highlight.clear(); }
             if (ImGui::SmallButton("Refresh##projs")) s_projScanned = "\x01";
             if (s_projects.empty()) {
                 ImGui::TextDisabled("No projects in this folder yet — create one above.");
             }
             for (auto& pr : s_projects) {
                 ImGui::PushID(pr.second.c_str());
+                bool isNew = (pr.first == s_highlight);
+                std::error_code sec;
+                bool ready = fs::exists(fs::path(pr.second), sec);
+                if (isNew) ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.16f));
                 ImGui::BeginChild("proj", ImVec2(0, 56), true, ImGuiWindowFlags_NoScrollbar);
                 HoverRing();
                 ImGui::SetCursorPos(ImVec2(10, 9));
@@ -2349,20 +2430,23 @@ int main(int argc, char** argv) {
                 ImGui::BeginGroup();
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2);
                 ImGui::TextUnformatted(pr.first.c_str());
-                std::string pago = ModifiedAgo(fs::path(pr.second));
-                if (pago.empty()) ImGui::TextDisabled("%s", pr.second.c_str());
-                else ImGui::TextDisabled("edited %s", pago.c_str());
+                if (!ready) ImGui::TextDisabled("setting up\xE2\x80\xA6");
+                else {
+                    std::string pago = ModifiedAgo(fs::path(pr.second));
+                    if (pago.empty()) ImGui::TextDisabled("%s", pr.second.c_str());
+                    else ImGui::TextDisabled("edited %s", pago.c_str());
+                }
                 ImGui::EndGroup();
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
                 ImGui::SetCursorPosY(10.0f);
-                ImGui::BeginDisabled(editor.empty());
+                ImGui::BeginDisabled(editor.empty() || !ready);
                 if (PrimaryButton("Open", ImVec2(84, 36))) {
                     LaunchEditor(editor, "", "", pr.second);
                     Toast(std::string("Opening ") + pr.first);
                 }
                 ImGui::EndDisabled();
                 // Double-click the card opens it too; right-click for file actions.
-                if (!editor.empty() && ImGui::IsWindowHovered() &&
+                if (ready && !editor.empty() && ImGui::IsWindowHovered() &&
                     ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     LaunchEditor(editor, "", "", pr.second);
                     Toast(std::string("Opening ") + pr.first);
@@ -2378,6 +2462,7 @@ int main(int argc, char** argv) {
                     ImGui::EndPopup();
                 }
                 ImGui::EndChild();
+                if (isNew) ImGui::PopStyleColor();
                 ImGui::PopID();
             }
 

@@ -1470,6 +1470,11 @@ int main(int argc, char** argv) {
     char acctChgDisplay[64] = {0};       // change-display-name field (signed in)
     char acctAvatar[256] = {0};          // avatar image URL field (signed in)
     char acctBio[280] = {0};             // profile bio field (signed in)
+    char acctStatus[96] = {0};           // custom status / tagline (signed in)
+    char acctFavGame[96] = {0};          // favorite-game showcase (signed in)
+    char acctLocation[64] = {0};         // free-form location (signed in)
+    int  acctAccent = 0;                 // chosen profile accent index
+    bool acctProfileLoaded = false;      // customization fields fetched once
     char acctChgEmail[64] = {0};         // change-email field (signed in)
     bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
@@ -2867,6 +2872,63 @@ int main(int argc, char** argv) {
                         acctMessage = ok ? "Bio updated." : "Couldn't update bio.";
                         if (ok) Toast("Bio updated", 1);
                     }
+
+                    // ---- Customize profile (Steam-style) ----
+                    ImGui::Dummy(ImVec2(0, 10));
+                    ImGui::SeparatorText("Customize profile");
+                    // Load current customization once.
+                    if (!acctProfileLoaded && account.IsOnline()) {
+                        okay::Friend me = okay::Friends(account).MyProfile();
+                        acctAccent = me.accent;
+                        std::snprintf(acctStatus,   sizeof(acctStatus),   "%s", me.customStatus.c_str());
+                        std::snprintf(acctFavGame,  sizeof(acctFavGame),  "%s", me.favoriteGame.c_str());
+                        std::snprintf(acctLocation, sizeof(acctLocation), "%s", me.location.c_str());
+                        acctProfileLoaded = true;
+                    }
+                    // Accent color swatches — click one to set the profile theme.
+                    ImGui::TextDisabled("Profile color");
+                    const int kNAcc = (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]));
+                    for (int ai = 0; ai < kNAcc; ++ai) {
+                        if (ai) ImGui::SameLine();
+                        ImGui::PushID(2000 + ai);
+                        ImVec4 c = kAccentPresets[ai].col;
+                        ImVec2 sp = ImGui::GetCursorScreenPos();
+                        if (ImGui::InvisibleButton("##acc", ImVec2(30, 30))) {
+                            acctAccent = ai;
+                            if (okay::Friends(account).SetAccent(ai)) Toast("Profile color updated", 1);
+                        }
+                        ImDrawList* d2 = ImGui::GetWindowDrawList();
+                        d2->AddRectFilled(sp, ImVec2(sp.x+26, sp.y+26), ImGui::GetColorU32(c), 6.0f);
+                        if (ai == acctAccent)
+                            d2->AddRect(ImVec2(sp.x-2, sp.y-2), ImVec2(sp.x+28, sp.y+28),
+                                        ImGui::GetColorU32(ImVec4(1,1,1,0.9f)), 7.0f, 0, 2.0f);
+                        ImGui::PopID();
+                    }
+                    // Custom status / tagline.
+                    ImGui::PushItemWidth(kFieldW);
+                    ImGui::InputTextWithHint("##acctStatus", "Status / tagline (e.g. \"Making my dream game\")", acctStatus, sizeof(acctStatus));
+                    ImGui::PopItemWidth();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Save status", ImVec2(kBtnW, 0))) {
+                        if (okay::Friends(account).SetStatus(acctStatus)) Toast("Status updated", 1);
+                    }
+                    // Favorite game showcase.
+                    ImGui::PushItemWidth(kFieldW);
+                    ImGui::InputTextWithHint("##acctFav", "Favorite game to show off", acctFavGame, sizeof(acctFavGame));
+                    ImGui::PopItemWidth();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Save favorite", ImVec2(kBtnW, 0))) {
+                        if (okay::Friends(account).SetFavoriteGame(acctFavGame)) Toast("Favorite game updated", 1);
+                    }
+                    // Location.
+                    ImGui::PushItemWidth(kFieldW);
+                    ImGui::InputTextWithHint("##acctLoc", "Location (optional)", acctLocation, sizeof(acctLocation));
+                    ImGui::PopItemWidth();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Save location", ImVec2(kBtnW, 0))) {
+                        if (okay::Friends(account).SetLocation(acctLocation)) Toast("Location updated", 1);
+                    }
+                    ImGui::TextDisabled("These show on your profile card when friends click your name.");
                 }
 
                 // Change username / handle (all backends).
@@ -3508,14 +3570,17 @@ int main(int argc, char** argv) {
                     const okay::Friend& pf = profFriend;
                     std::string pname = pf.display.empty() ? pf.username : pf.display;
                     float aw = ImGui::GetContentRegionAvail().x;
+                    // The player's chosen profile accent colors the banner (Steam-style).
+                    int pai = pf.accent; if (pai < 0 || pai >= (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]))) pai = 0;
+                    ImVec4 pac = kAccentPresets[pai].col;
                     // Accent banner header with the avatar (ringed by presence color).
                     ImVec2 bnp = ImGui::GetCursorScreenPos();
                     ImDrawList* pdl = ImGui::GetWindowDrawList();
                     pdl->AddRectFilledMultiColor(bnp, ImVec2(bnp.x + aw, bnp.y + 54),
-                        ImGui::GetColorU32(ImVec4(kAccent.x,kAccent.y,kAccent.z,0.35f)),
-                        ImGui::GetColorU32(ImVec4(kAccent.x,kAccent.y,kAccent.z,0.10f)),
-                        ImGui::GetColorU32(ImVec4(kAccent.x,kAccent.y,kAccent.z,0.05f)),
-                        ImGui::GetColorU32(ImVec4(kAccent.x,kAccent.y,kAccent.z,0.20f)));
+                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.45f)),
+                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.12f)),
+                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.06f)),
+                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.26f)));
                     ImGui::Dummy(ImVec2(0, 30));
                     ImGui::SetCursorPosX((aw - 76) * 0.5f + ImGui::GetCursorPosX());
                     ImVec2 avp = ImGui::GetCursorScreenPos();
@@ -3534,10 +3599,23 @@ int main(int argc, char** argv) {
                     ImVec4 stc = (pf.online && !pf.playing.empty()) ? kAccent
                                : pf.online ? ImVec4(0.55f,0.9f,0.6f,1) : ImVec4(0.6f,0.63f,0.7f,1);
                     ctr(stx, stc);
+                    // Custom status / tagline, centered under the presence line.
+                    if (!pf.customStatus.empty()) ctr("\"" + pf.customStatus + "\"", ImVec4(0.72f,0.75f,0.82f,1));
                     ImGui::Dummy(ImVec2(0, 6));
                     if (!pf.bio.empty()) {
                         ImGui::SeparatorText("About");
                         ImGui::TextWrapped("%s", pf.bio.c_str());
+                    }
+                    if (!pf.favoriteGame.empty() || !pf.location.empty()) {
+                        ImGui::SeparatorText("Details");
+                        if (!pf.favoriteGame.empty()) {
+                            ImGui::TextColored(ImVec4(pac.x,pac.y,pac.z,1), "Favorite game");
+                            ImGui::SameLine(); ImGui::TextWrapped(": %s", pf.favoriteGame.c_str());
+                        }
+                        if (!pf.location.empty()) {
+                            ImGui::TextColored(ImVec4(pac.x,pac.y,pac.z,1), "Location");
+                            ImGui::SameLine(); ImGui::TextWrapped(": %s", pf.location.c_str());
+                        }
                     }
                     // Their recent activity (filtered from the feed).
                     bool anyAct = false;

@@ -28,6 +28,11 @@ alter table public.profiles add column if not exists session_code text;
 alter table public.profiles add column if not exists display_name text;  -- friendly name (vs the unique username handle)
 alter table public.profiles add column if not exists avatar_url   text;  -- public URL of the player's avatar image
 alter table public.profiles add column if not exists bio          text;  -- short "about me" shown on the profile card
+-- Steam-style profile customization.
+alter table public.profiles add column if not exists accent        int  default 0;  -- profile theme-color index (client palette)
+alter table public.profiles add column if not exists status        text;  -- custom status / tagline under the name
+alter table public.profiles add column if not exists favorite_game text;  -- a game the player wants to show off
+alter table public.profiles add column if not exists location      text;  -- optional free-form location
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'profiles_friend_code_key') then
     alter table public.profiles add constraint profiles_friend_code_key unique (friend_code);

@@ -37,6 +37,10 @@ struct Friend {
     std::string display;     // friendly display name (falls back to username)
     std::string avatar;      // public URL of the player's avatar image (may be empty)
     std::string bio;         // short "about me"
+    int         accent = 0;  // profile theme-color index (client palette)
+    std::string customStatus;// free-form status / tagline
+    std::string favoriteGame;// a game they want to show off
+    std::string location;    // optional free-form location
     long rowId    = 0;       // friendships.id (for accept/remove)
 };
 
@@ -93,6 +97,22 @@ public:
         return acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
                          "{\"bio\":" + JStr(bio) + "}").ok;
     }
+
+    // ---- Steam-style profile customization --------------------------------
+    // Fetch my whole customizable profile in one go (for the editor).
+    Friend MyProfile() {
+        Friend f; Profile p = ProfileOf(MyId());
+        SetFrom(f, p); f.id = MyId();
+        return f;
+    }
+    int  MyAccent()        { return ProfileOf(MyId()).accent; }
+    bool SetAccent(int a)  { return PatchMe("{\"accent\":" + std::to_string(a) + "}"); }
+    std::string MyStatus() { return ProfileOf(MyId()).status; }
+    bool SetStatus(const std::string& s)       { return PatchMe("{\"status\":" + JStr(s) + "}"); }
+    std::string MyFavoriteGame() { return ProfileOf(MyId()).favoriteGame; }
+    bool SetFavoriteGame(const std::string& g) { return PatchMe("{\"favorite_game\":" + JStr(g) + "}"); }
+    std::string MyLocation() { return ProfileOf(MyId()).location; }
+    bool SetLocation(const std::string& l)     { return PatchMe("{\"location\":" + JStr(l) + "}"); }
 
     // ---- requests ---------------------------------------------------------
     bool Request(const std::string& username, std::string* err = nullptr) {
@@ -202,7 +222,13 @@ private:
     okay::account::AccountService& acct_;
     std::string lastPresence_, lastSession_;
 
-    struct Profile { std::string username, friendCode, playing, sessionCode, displayName, avatar, bio; long lastSeen = 0; };
+    struct Profile { std::string username, friendCode, playing, sessionCode, displayName, avatar, bio, status, favoriteGame, location; int accent = 0; long lastSeen = 0; };
+
+    // PATCH my own profile row with a JSON object body.
+    bool PatchMe(const std::string& body) {
+        if (!acct_.IsLoggedIn()) return false;
+        return acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH", body).ok;
+    }
 
     std::string Me()   const { return acct_.CurrentSession().username; }
     // We don't know our own uuid directly, so look it up by username (cached by
@@ -231,13 +257,17 @@ private:
         f.display  = p.displayName.empty() ? p.username : p.displayName;
         f.avatar   = p.avatar;
         f.bio      = p.bio;
+        f.accent       = p.accent;
+        f.customStatus = p.status;
+        f.favoriteGame = p.favoriteGame;
+        f.location     = p.location;
         f.online = p.lastSeen > 0 && std::difftime(std::time(nullptr), (std::time_t)p.lastSeen) < 180.0;
     }
 
     Profile ProfileOf(const std::string& uid) {
         Profile p;
         if (uid.empty()) return p;
-        auto r = acct_.Api("/rest/v1/profiles?select=username,friend_code,playing,session_code,display_name,avatar_url,bio,last_seen"
+        auto r = acct_.Api("/rest/v1/profiles?select=username,friend_code,playing,session_code,display_name,avatar_url,bio,accent,status,favorite_game,location,last_seen"
                            "&id=eq." + Url(uid), "GET");
         if (!r.ok) return p;
         auto objs = SplitObjects(r.body);
@@ -249,6 +279,10 @@ private:
         p.displayName = Field(objs[0], "display_name");
         p.avatar      = Field(objs[0], "avatar_url");
         p.bio         = Field(objs[0], "bio");
+        p.accent      = (int)std::atol(Field(objs[0], "accent").c_str());
+        p.status      = Field(objs[0], "status");
+        p.favoriteGame= Field(objs[0], "favorite_game");
+        p.location    = Field(objs[0], "location");
         p.lastSeen    = ParseIso(Field(objs[0], "last_seen"));
         return p;
     }

@@ -284,7 +284,23 @@ editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
 | `steam_presence("key", "value")` | Rich presence |
 | `steam_friends()` / `steam_overlay("page")` | Friend count / open the overlay |
 | `steam_owns(appId)` / `steam_owns_dlc(appId)` | Ownership / DLC checks |
-| `steam_achievement_count()` / `steam_language()` | Achievement count / client language |
+| `steam_achievement_count()` / `steam_achievement_name(i)` | Achievement count / name by index |
+| `steam_cloud_has("file")` / `steam_cloud_delete("file")` / `steam_cloud_count()` | Steam Cloud extras |
+| `steam_set_stat_int("n", v)` / `steam_get_stat_int("n")` / `steam_inc_stat_int("n", by)` | Integer stats (kills, wins — no float rounding) |
+| `steam_get_presence("key")` | Read back a rich-presence value |
+| `steam_friend_name(i)` / `steam_friend_id(i)` / `steam_invite(id)` | Friends by index; invite by id (ids are strings) |
+| `steam_lobby_create(maxMembers, "name")` → id | Create a matchmaking lobby (returns its id string) |
+| `steam_lobby_join(id)` / `steam_lobby_leave()` / `steam_lobby_current()` | Join / leave / current lobby id |
+| `steam_lobby_list()` | Open lobbies as an array of `"id,name,members,max,joinable"` |
+| `steam_lobby_set_data("k","v")` / `steam_lobby_get_data(id,"k")` | Lobby metadata (map, mode, …) |
+| `steam_lobby_members(id)` | Member display names in a lobby, as an array |
+| `steam_language()` | Steam client language |
+
+> Lobby and friend ids are passed as **strings** (they exceed float precision).
+> Without the Steamworks SDK these run against the in-memory simulation backend,
+> which now **persists achievements, stats and cloud files to disk** (under the
+> OS temp dir, keyed by app id) so progression and cloud saves survive a restart
+> while you test in the editor.
 
 ### Debugging
 All of these print into the editor's **Console**.

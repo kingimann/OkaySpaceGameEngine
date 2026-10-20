@@ -3,8 +3,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -17,10 +21,11 @@ class NullSteamService : public ISteamService {
 public:
     bool Initialize(const SteamConfig& config) override {
         m_appId = config.appId;
+        LoadState();   // restore achievements / stats / cloud from a previous run
         OKAY_INFO("Steam(sim): initialized for app ", m_appId, " (simulation backend)");
         return true;
     }
-    void Shutdown() override { OKAY_INFO("Steam(sim): shutdown"); }
+    void Shutdown() override { SaveState(); OKAY_INFO("Steam(sim): shutdown"); }
     void RunCallbacks() override {}
 
     bool IsAvailable() const override { return false; }
@@ -60,6 +65,7 @@ public:
         m_stats[name] += by; return m_stats[name];
     }
     bool StoreStats() override {
+        SaveState();   // flush achievements + stats to disk, like Steam's StoreStats
         OKAY_TRACE("Steam(sim): stored ", m_stats.size(), " stat(s), ",
                    m_achievements.size(), " achievement(s)");
         return true;
@@ -86,16 +92,17 @@ public:
         return rows;
     }
 
-    // Steam Cloud: an in-memory file store.
+    // Steam Cloud: an in-memory file store, persisted to disk so cloud saves
+    // survive a restart (as real Steam Cloud does).
     bool CloudWrite(const std::string& file, const std::string& data) override {
-        m_cloud[file] = data; return true;
+        m_cloud[file] = data; SaveState(); return true;
     }
     std::string CloudRead(const std::string& file) const override {
         auto it = m_cloud.find(file);
         return it != m_cloud.end() ? it->second : std::string{};
     }
     bool CloudHasFile(const std::string& file) const override { return m_cloud.count(file) != 0; }
-    bool CloudDelete(const std::string& file) override { return m_cloud.erase(file) != 0; }
+    bool CloudDelete(const std::string& file) override { bool e = m_cloud.erase(file) != 0; if (e) SaveState(); return e; }
     std::vector<std::string> CloudFiles() const override {
         std::vector<std::string> names;
         names.reserve(m_cloud.size());
@@ -276,6 +283,60 @@ public:
     }
 
 private:
+    // Where the simulated profile is saved, keyed by app id so two games don't
+    // clobber each other. Under the OS temp dir to avoid polluting game folders.
+    std::filesystem::path StatePath() const {
+        std::error_code ec;
+        std::filesystem::path dir = std::filesystem::temp_directory_path(ec) / "okayspace_sim";
+        std::filesystem::create_directories(dir, ec);
+        return dir / ("steam_" + std::to_string(m_appId) + ".dat");
+    }
+    // A simple length-prefixed text format so cloud data (possibly binary /
+    // multi-line) round-trips intact.
+    void SaveState() const {
+        std::ofstream f(StatePath(), std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        f << "okaysim1\n";
+        f << "A " << m_achievements.size() << "\n";
+        for (const auto& a : m_achievements) f << a << "\n";
+        f << "S " << m_stats.size() << "\n";
+        for (const auto& [n, v] : m_stats) f << n << "\t" << v << "\n";
+        f << "I " << m_statsInt.size() << "\n";
+        for (const auto& [n, v] : m_statsInt) f << n << "\t" << v << "\n";
+        f << "C " << m_cloud.size() << "\n";
+        for (const auto& [n, d] : m_cloud) { f << n << "\t" << d.size() << "\n"; f.write(d.data(), (std::streamsize)d.size()); f << "\n"; }
+    }
+    void LoadState() {
+        std::ifstream f(StatePath(), std::ios::binary);
+        if (!f) return;
+        std::string magic; std::getline(f, magic);
+        if (magic != "okaysim1") return;
+        auto readCount = [&](char tag) -> long {
+            std::string line; if (!std::getline(f, line)) return -1;
+            if (line.empty() || line[0] != tag) return -1;
+            try { return std::stol(line.substr(2)); } catch (...) { return -1; }
+        };
+        long n = readCount('A');
+        for (long i = 0; i < n; ++i) { std::string s; if (!std::getline(f, s)) break; m_achievements.insert(s); }
+        n = readCount('S');
+        for (long i = 0; i < n; ++i) { std::string s; if (!std::getline(f, s)) break;
+            auto t = s.find('\t'); if (t != std::string::npos) try { m_stats[s.substr(0,t)] = std::stof(s.substr(t+1)); } catch (...) {} }
+        n = readCount('I');
+        for (long i = 0; i < n; ++i) { std::string s; if (!std::getline(f, s)) break;
+            auto t = s.find('\t'); if (t != std::string::npos) try { m_statsInt[s.substr(0,t)] = std::stoi(s.substr(t+1)); } catch (...) {} }
+        n = readCount('C');
+        for (long i = 0; i < n; ++i) {
+            std::string hdr; if (!std::getline(f, hdr)) break;
+            auto t = hdr.find('\t'); if (t == std::string::npos) break;
+            std::string name = hdr.substr(0, t);
+            long len = 0; try { len = std::stol(hdr.substr(t+1)); } catch (...) { break; }
+            std::string data(len, '\0');
+            if (len > 0) f.read(&data[0], len);
+            f.get();   // consume the trailing newline
+            m_cloud[name] = data;
+        }
+    }
+
     struct LobbyRec {
         std::uint64_t id = 0;
         std::string   name;

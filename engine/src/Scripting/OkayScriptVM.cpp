@@ -3203,6 +3203,80 @@ struct OkayScriptVM::Impl {
         b["steam_workshop_path"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? std::string{} : Steam::Get().WorkshopItemPath((std::uint64_t)a[0].AsFloat())};
         };
+        // Integer stats (kills, wins, ...). Floats lose precision past 2^24, so
+        // counters that climb high belong here rather than in steam_*_stat.
+        b["steam_set_stat_int"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Steam::Get().SetStatInt(a[0].AsString(), (int)a[1].AsFloat());
+            return Value{};
+        };
+        b["steam_get_stat_int"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? 0.0f : (float)Steam::Get().GetStatInt(a[0].AsString())};
+        };
+        b["steam_inc_stat_int"] = [](std::vector<Value>& a) {
+            return Value{a.size() < 2 ? 0.0f : (float)Steam::Get().IncrementStatInt(a[0].AsString(), (int)a[1].AsFloat())};
+        };
+        // Achievement name by index (0..steam_achievement_count-1).
+        b["steam_achievement_name"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : Steam::Get().AchievementName((int)a[0].AsFloat())};
+        };
+        // Read back a rich-presence value previously set with steam_presence.
+        b["steam_get_presence"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : Steam::Get().GetRichPresence(a[0].AsString())};
+        };
+        // ---- Friends -------------------------------------------------------
+        // Big Steam ids exceed float precision, so friend/lobby ids are passed
+        // as strings in and out of these builtins.
+        b["steam_friend_name"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : Steam::Get().FriendName((int)a[0].AsFloat())};
+        };
+        b["steam_friend_id"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : std::to_string(Steam::Get().FriendId((int)a[0].AsFloat()))};
+        };
+        b["steam_invite"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            std::uint64_t fid = (std::uint64_t)std::strtoull(a[0].AsString().c_str(), nullptr, 10);
+            return Value{Steam::Get().InviteFriend(fid) ? 1.0f : 0.0f};
+        };
+        // ---- Lobbies (Steam matchmaking) -----------------------------------
+        b["steam_lobby_create"] = [](std::vector<Value>& a) {
+            int maxm = a.empty() ? 4 : (int)a[0].AsFloat();
+            std::string name = a.size() > 1 ? a[1].AsString() : std::string{};
+            return Value{std::to_string(Steam::Get().CreateLobby(maxm, name))};
+        };
+        b["steam_lobby_join"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            std::uint64_t id = (std::uint64_t)std::strtoull(a[0].AsString().c_str(), nullptr, 10);
+            return Value{Steam::Get().JoinLobby(id) ? 1.0f : 0.0f};
+        };
+        b["steam_lobby_leave"] = [](std::vector<Value>&) { Steam::Get().LeaveLobby(); return Value{}; };
+        b["steam_lobby_current"] = [](std::vector<Value>&) { return Value{std::to_string(Steam::Get().CurrentLobby())}; };
+        b["steam_lobby_set_data"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Steam::Get().SetLobbyData(a[0].AsString(), a[1].AsString());
+            return Value{};
+        };
+        b["steam_lobby_get_data"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{std::string{}};
+            std::uint64_t id = (std::uint64_t)std::strtoull(a[0].AsString().c_str(), nullptr, 10);
+            return Value{Steam::Get().GetLobbyData(id, a[1].AsString())};
+        };
+        // Open lobbies as an array of "id,name,members,max,joinable" strings.
+        b["steam_lobby_list"] = [](std::vector<Value>&) {
+            Value v = Value::MakeArray(); auto arr = v.AsArray();
+            if (arr) for (auto& l : Steam::Get().LobbyList())
+                arr->push_back(Value{std::to_string(l.id) + "," + l.name + "," +
+                                     std::to_string(l.memberCount) + "," + std::to_string(l.maxMembers) + "," +
+                                     (l.joinable ? "1" : "0")});
+            return v;
+        };
+        // Member display names in a lobby, as a string array.
+        b["steam_lobby_members"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeArray(); auto arr = v.AsArray();
+            if (arr && !a.empty()) {
+                std::uint64_t id = (std::uint64_t)std::strtoull(a[0].AsString().c_str(), nullptr, 10);
+                for (auto& n : Steam::Get().LobbyMembers(id)) arr->push_back(Value{n});
+            }
+            return v;
+        };
         // ---- PlayFab (cloud login / leaderboards / saves; blocking HTTP) ----
         // Mirrors the playfab_* visual-scripting instructions. Call pf_login once
         // (e.g. in start()), not per frame — each call is a real web request.

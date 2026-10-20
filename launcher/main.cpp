@@ -3368,6 +3368,10 @@ int main(int argc, char** argv) {
             static std::vector<okay::WorkshopReview> rvList;
             static int  rvStars = 5;
             static char rvBody[400] = "";
+            // Download-safety confirm (community downloads are untrusted).
+            static bool getConfirmOpen = false;
+            static long getId = 0, getDl = 0;
+            static std::string getUrl, getTitle, getAuthor;
             static char wTitle[128] = "", wUrl[256] = "";
             static char wDesc[512] = "";
             static int  wKind = 0;
@@ -3562,9 +3566,8 @@ int main(int argc, char** argv) {
                     if (!w.url.empty()) {
                         ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
                         if (ImGui::Button("Get", ImVec2(90, 30))) {
-                            OpenExternal(w.url);
-                            ws.NoteDownload(w.id, w.downloads);
-                            wNextRefresh = 0;
+                            getId = w.id; getUrl = w.url; getTitle = w.title;
+                            getAuthor = w.author; getDl = w.downloads; getConfirmOpen = true;
                         }
                         ImGui::PopStyleColor();
                     } else ImGui::TextDisabled("no link");
@@ -3598,6 +3601,32 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("No items match your search or filter.");
                 }
                 ImGui::EndChild();
+            }
+
+            // --- Download-safety confirm ---
+            if (getConfirmOpen) { ImGui::OpenPopup("Download"); getConfirmOpen = false; }
+            ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal("Download", nullptr,
+                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped("You're about to open a download for \"%s\" by %s.",
+                                   getTitle.c_str(), getAuthor.empty() ? "unknown" : getAuthor.c_str());
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1));
+                ImGui::TextWrapped("Community uploads aren't vetted by OkaySpace. Only download and run "
+                                   "games from people you trust.");
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, 2));
+                ImGui::TextDisabled("%s", getUrl.c_str());
+                ImGui::Dummy(ImVec2(0, 6));
+                if (PrimaryButton("Open download", ImVec2(160, 34))) {
+                    OpenExternal(getUrl);
+                    okay::Workshop(account).NoteDownload(getId, getDl);
+                    wNextRefresh = 0;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(110, 34))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
             }
 
             // --- Reviews popup (opened from a card's "Reviews" button) ---

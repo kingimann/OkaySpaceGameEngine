@@ -1151,7 +1151,7 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab < 5) ? g_lastTab : 0;
+    int tab = (g_lastTab >= 0 && g_lastTab < 9) ? g_lastTab : 0;
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
     if (g_updateOnLaunch) StartUpdateCheck();   // opt-in auto-check at startup
     bool running = true;
@@ -1214,11 +1214,19 @@ int main(int argc, char** argv) {
             static int lastUp = -1;
             int us = (int)GetState();
             if (us != lastUp) {
-                if (us == (int)Up_Updated) Toast("Update installed — restart to finish", 1);
+                if (us == (int)Up_Updated) Toast(g_upRelaunchNeeded ? "Updated — restarting..."
+                                                                     : "Update installed", 1);
                 else if (us == (int)Up_Failed) Toast("Update check failed", 2);
                 else if (us == (int)Up_UpToDate && lastUp == (int)Up_Checking) Toast("You're up to date", 1);
                 lastUp = us;
             }
+        }
+        // Auto-restart the launcher after it updates itself (the new exe is already
+        // swapped in). Give the toast a moment, then relaunch and quit.
+        if (g_upRelaunchNeeded && GetState() == Up_Updated) {
+            static Uint32 relaunchAt = 0;
+            if (relaunchAt == 0) relaunchAt = SDL_GetTicks() + 1600;
+            else if (SDL_GetTicks() >= relaunchAt) { Launch(g_selfPath); running = false; }
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();

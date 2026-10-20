@@ -22,6 +22,7 @@
 #pragma once
 
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -550,6 +551,31 @@ public:
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += path.empty() || path.front() == '/' ? path : ("/" + path);
         return HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+    }
+
+    /// Anonymous request (apikey only, no bearer) — for public reads that don't
+    /// need a session, e.g. checking username availability before sign-up.
+    ApiResponse ApiAnon(const std::string& path, const std::string& method = "GET",
+                        const std::string& jsonBody = {}, const std::string& extraHeader = {}) const {
+        if (!IsOnline()) return {};
+        std::string url = serverUrl_;
+        if (!url.empty() && url.back() == '/') url.pop_back();
+        url += path.empty() || path.front() == '/' ? path : ("/" + path);
+        return HttpRequest(method, url, jsonBody, /*authToken=*/{}, extraHeader);
+    }
+
+    /// Whether a username (profiles.username handle) is free. Online only; on a
+    /// local backend or when offline it optimistically returns true.
+    bool UsernameAvailable(const std::string& username) const {
+        if (provider_ != Provider::Supabase || username.empty()) return true;
+        std::string enc; char b[4];
+        for (unsigned char c : username) {
+            if (std::isalnum(c) || c=='-'||c=='_'||c=='.'||c=='~') enc += (char)c;
+            else { std::snprintf(b, sizeof(b), "%%%02X", c); enc += b; }
+        }
+        ApiResponse r = ApiAnon("/rest/v1/profiles?select=id&username=eq." + enc);
+        if (!r.ok) return true;                       // couldn't check -> don't block
+        return r.body.find('{') == std::string::npos; // no rows -> available
     }
 
     /// Confirm the saved session is still valid with the server (GET /verify

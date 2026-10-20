@@ -2654,9 +2654,18 @@ int main(int argc, char** argv) {
                 ImGui::BeginDisabled(acctBusy);
                 if (PrimaryButton(btn, ImVec2(innerW, 46)) || submit) {
                     acctBusy = true;
-                    acct::Result r = acctRegisterMode
-                        ? account.Register(acctUser, acctPass, acctName)
-                        : account.Login(acctUser, acctPass);
+                    // On sign-up, require a username and reject one already taken.
+                    acct::Result r;
+                    if (acctRegisterMode && account.UsesEmail() && !acctName[0]) {
+                        r.ok = false; r.error = "Choose a username.";
+                    } else if (acctRegisterMode && account.UsesEmail() &&
+                               !account.UsernameAvailable(acctName)) {
+                        r.ok = false; r.error = "That username is taken — pick another.";
+                    } else {
+                        r = acctRegisterMode
+                            ? account.Register(acctUser, acctPass, acctName)
+                            : account.Login(acctUser, acctPass);
+                    }
                     acctBusy = false;
                     acctMessageError = !r.ok;
                     if (r.ok) {
@@ -2921,7 +2930,9 @@ int main(int argc, char** argv) {
             okay::Friends fr(account);
             if (!fr.Available()) {
                 ImGui::Dummy(ImVec2(0, 20));
-                ImGui::TextDisabled("Sign in on the Account tab to add friends and see who's online.");
+                ImGui::TextDisabled("Sign in to add friends and see who's online.");
+                ImGui::Dummy(ImVec2(0, 6));
+                if (PrimaryButton("Sign in", ImVec2(160, 38))) { tab = 3; g_lastTab = 3; SavePrefs(); }
             } else {
                 static char addBuf[48] = "";
                 static std::string fErr;
@@ -3018,11 +3029,17 @@ int main(int argc, char** argv) {
                         ImGui::SameLine(0, 6);
                         ImGui::TextDisabled("@%s", f->username.c_str());
                     }
+                    bool playing = f->online && !f->playing.empty();
                     std::string sub = request ? "wants to be your friend"
                                    : f->status != "accepted" ? "request sent"
-                                   : (f->online && !f->playing.empty()) ? f->playing
-                                   : f->online ? "online" : "offline";
-                    ImGui::TextDisabled("%s", sub.c_str());
+                                   : playing ? f->playing
+                                   : f->online ? "Online" : "Offline";
+                    // Color the presence line: accent when playing, green online,
+                    // muted grey offline/pending.
+                    ImVec4 sc = playing ? kAccent
+                              : (!request && f->online) ? ImVec4(0.55f,0.9f,0.6f,1)
+                                                        : ImVec4(0.60f,0.63f,0.70f,1);
+                    ImGui::TextColored(sc, "%s", sub.c_str());
                     ImGui::EndGroup();
                     bool accepted = !request && f->status == "accepted";
                     bool joinable = accepted && f->online && !f->sessionCode.empty();
@@ -3136,7 +3153,9 @@ int main(int argc, char** argv) {
 
             if (wShowPublish) {
                 if (!ws.Available()) {
-                    ImGui::TextDisabled("Sign in on the Account tab to publish.");
+                    ImGui::TextDisabled("Sign in to publish.");
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Sign in")) { tab = 3; g_lastTab = 3; SavePrefs(); }
                 } else {
                     ImGui::BeginChild("##publish", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), true);
                     ImGui::SeparatorText("Publish to the marketplace");
@@ -3190,27 +3209,54 @@ int main(int argc, char** argv) {
                         mlo(w.title + " " + w.description + " " + w.author).find(nd) == std::string::npos) continue;
                     ++mktShown;
                     ImGui::PushID((int)w.id);
-                    ImGui::BeginChild("##witem", ImVec2(0, 92), true);
+                    ImGui::BeginChild("##witem", ImVec2(0, 96), true);
+                    HoverRing();
+                    // Colored icon tile from the title.
+                    ImGui::SetCursorPos(ImVec2(12, 14));
+                    IconTile(w.title, 56.0f);
+                    ImGui::SameLine(); ImGui::SetCursorPosX(84);
                     ImGui::BeginGroup();
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6);
                     ImGui::TextUnformatted(w.title.c_str());
-                    ImGui::TextDisabled("%s  -  by %s  -  %ld download%s",
-                                        w.kind.empty() ? "game" : w.kind.c_str(),
+                    // Kind badge pill (colored per kind) + author + downloads.
+                    ImVec4 kc = wk == "scene" ? ImVec4(0.30f,0.62f,0.40f,1)
+                              : wk == "template" ? ImVec4(0.52f,0.42f,0.72f,1)
+                                                 : ImVec4(0.24f,0.50f,0.72f,1);
+                    ImVec2 bp = ImGui::GetCursorScreenPos();
+                    ImVec2 ks = ImGui::CalcTextSize(wk.c_str());
+                    ImGui::GetWindowDrawList()->AddRectFilled(bp, ImVec2(bp.x+ks.x+14, bp.y+ks.y+4),
+                        ImGui::GetColorU32(ImVec4(kc.x,kc.y,kc.z,0.30f)), (ks.y+4)*0.5f);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x+7, bp.y+2), ImGui::GetColorU32(kc), wk.c_str());
+                    ImGui::Dummy(ImVec2(ks.x+14, ks.y+4));
+                    ImGui::SameLine(0, 8);
+                    ImGui::TextDisabled("by %s  -  %ld download%s",
                                         w.author.empty() ? "unknown" : w.author.c_str(),
                                         w.downloads, w.downloads == 1 ? "" : "s");
-                    if (!w.description.empty()) ImGui::TextWrapped("%s", w.description.c_str());
+                    if (!w.description.empty()) {
+                        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - 100);
+                        ImGui::TextDisabled("%s", w.description.c_str());
+                        ImGui::PopTextWrapPos();
+                    }
                     ImGui::EndGroup();
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
+                    // Right-aligned actions.
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 96);
+                    ImGui::SetCursorPosY(14.0f);
                     ImGui::BeginGroup();
                     if (!w.url.empty()) {
-                        if (ImGui::Button("Get", ImVec2(84, 0))) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+                        if (ImGui::Button("Get", ImVec2(90, 30))) {
                             OpenExternal(w.url);
                             ws.NoteDownload(w.id, w.downloads);
                             wNextRefresh = 0;
                         }
+                        ImGui::PopStyleColor();
                     } else ImGui::TextDisabled("no link");
                     bool wished = IsWishlisted(w.id);
+                    if (wished) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f,0.80f,0.35f,1));
                     if (ImGui::SmallButton(wished ? "* Wishlisted" : "+ Wishlist")) { ToggleWishlist(w.id); SavePrefs(); }
+                    if (wished) ImGui::PopStyleColor();
                     if (!me.empty() && me == w.author) {
+                        ImGui::SameLine();
                         if (ImGui::SmallButton("Remove")) { ws.Remove(w.id); wNextRefresh = 0; }
                     }
                     ImGui::EndGroup();
@@ -3232,7 +3278,9 @@ int main(int argc, char** argv) {
             okay::Servers sv(account);
             if (!sv.Available()) {
                 ImGui::Dummy(ImVec2(0, 20));
-                ImGui::TextDisabled("Sign in on the Account tab to create or join servers.");
+                ImGui::TextDisabled("Sign in to create or join servers.");
+                ImGui::Dummy(ImVec2(0, 6));
+                if (PrimaryButton("Sign in", ImVec2(160, 38))) { tab = 3; g_lastTab = 3; SavePrefs(); }
             } else {
                 static std::vector<okay::Server> svList;
                 static std::vector<okay::Channel> svChannels;

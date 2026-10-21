@@ -2377,7 +2377,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // Reserve space for the composer (grows with reply banner + edit tag).
             float composerH = 48.0f + (replyTo || editId ? 24.0f : 0.0f);
             bool scrolledUp = false; ImVec2 logRectMin, logRectMax;
-            ImGui::BeginChild("##clog", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false);
+            // AlwaysVerticalScrollbar reserves the scrollbar space permanently so the
+            // content width is stable — otherwise the right-aligned ("mine") bubbles
+            // jump sideways whenever the scrollbar appears/disappears on resize.
+            ImGui::BeginChild("##clog", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false,
+                              ImGuiWindowFlags_AlwaysVerticalScrollbar);
             float avW = ImGui::GetContentRegionAvail().x;
             float baseX = ImGui::GetCursorPosX();
             std::string msFilt = msgSearch; for (auto& ch : msFilt) ch = (char)std::tolower((unsigned char)ch);
@@ -2529,8 +2533,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         dl->AddTriangleFilled(ImVec2(bmin.x + 1, ty - 4), ImVec2(bmin.x - 6, ty), ImVec2(bmin.x + 1, ty + 5), tc);
                 }
                 // Quick-reaction bar on hover: thumbs-up / heart / laugh + Reply,
-                // so reacting doesn't need the right-click menu.
+                // so reacting doesn't need the right-click menu. Save/restore the
+                // cursor so this overlay never disturbs the message's vertical flow.
                 if (ImGui::IsMouseHoveringRect(bmin, bmax) && !ImGui::IsPopupOpen("##msgctx")) {
+                    ImVec2 afterBubble = ImGui::GetCursorScreenPos();
                     float barY = bmin.y - 13.0f;
                     float barX = m.mine ? bmax.x - 96.0f : bmin.x;
                     ImGui::SetCursorScreenPos(ImVec2(barX, barY));
@@ -2556,6 +2562,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     }
                     ImGui::PopStyleVar();
                     ImGui::PopStyleColor(2);
+                    ImGui::SetCursorScreenPos(afterBubble);   // restore vertical flow
                 }
                 // Jump-to-reply target: scroll this message into view, then flash it.
                 if (scrollToId == m.id) { ImGui::SetScrollHereY(0.4f); scrollToId = 0; }

@@ -516,6 +516,17 @@ bool Character::LoadClipsFromFile(const std::string& path, std::string* error) {
     return LoadClips(ss.str(), error) > 0;
 }
 
+bool Character::SaveClipsToFile(const std::string& path, std::string* error) const {
+    std::vector<AnimClip> clips;
+    clips.reserve(m_clips.size());
+    for (const auto& kv : m_clips) clips.push_back(kv.second);
+    std::string text = AnimClip::WriteAll(clips, [](int i) { return std::string(BoneName(i)); });
+    std::ofstream f(path, std::ios::trunc);
+    if (!f) { if (error) *error = "cannot write " + path; return false; }
+    f << text;
+    return (bool)f;
+}
+
 bool Character::PlayClip(const std::string& name) {
     if (name.empty()) { StopClip(); return true; }
     auto it = m_clips.find(name);

@@ -13298,6 +13298,18 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         ed.dirty = true;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Register + auto-play this clip on the Character (saved with the scene).");
+    ImGui::SameLine();
+    if (ImGui::Button("Save .okayanim...##ca")) {
+        ch->AddClip(clip);   // make sure the edited clip is included
+        const char* filt[] = {"*.okayanim"};
+        std::string def = ch->clipsFile.empty() ? (clip.name + ".okayanim") : ch->clipsFile;
+        if (const char* p = tinyfd_saveFileDialog("Save animation clips", def.c_str(), 1, filt, "OkaySpace animation")) {
+            std::string werr;
+            if (ch->SaveClipsToFile(p, &werr)) { ch->clipsFile = p; ed.dirty = true; ConsoleLog("Saved clips to " + std::string(p)); }
+            else ConsoleLog("Save clips failed: " + werr, 2);
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write all the Character's clips to a .okayanim text file you can re-load or ship.");
 
     ImGui::Separator();
     ImGui::TextDisabled("Keyframes (click to edit)");

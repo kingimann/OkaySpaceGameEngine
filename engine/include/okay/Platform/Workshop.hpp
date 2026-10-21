@@ -12,6 +12,7 @@
 // that hasn't run social.sql.
 #include "okay/Platform/Account/AccountService.hpp"
 #include <string>
+#include <filesystem>
 #include <vector>
 #include <map>
 #include <utility>
@@ -174,6 +175,35 @@ public:
         if (!acct_.IsLoggedIn() || itemId <= 0) return false;
         return acct_.Api("/rest/v1/workshop_reviews?item_id=eq." + std::to_string(itemId),
                          "DELETE").ok;
+    }
+
+    // Upload a file for a listing into the public "workshop" bucket (under my
+    // own folder) and return its public URL ("" on failure, with *err set).
+    std::string UploadFile(const std::string& localPath, std::string* err = nullptr) {
+        if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in to publish."; return ""; }
+        std::string enc; for (char c : acct_.CurrentSession().username) {
+            if (std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.') enc += c;
+            else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", (unsigned char)c); enc += b; } }
+        auto me = acct_.Api("/rest/v1/profiles?select=id&username=eq." + enc, "GET");
+        auto mo = me.ok ? SplitObjects(me.body) : std::vector<std::string>();
+        const std::string uid = mo.empty() ? std::string() : Field(mo[0], "id");
+        if (uid.empty()) { if (err) *err = "Couldn't resolve your account."; return ""; }
+        std::string name = std::filesystem::path(localPath).filename().string(), safe;
+        for (char c : name) safe += (std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_') ? c : '_';
+        if (safe.empty()) safe = "file";
+        char rnd[24]; std::snprintf(rnd, sizeof(rnd), "%08x%08x", (unsigned)std::rand(), (unsigned)std::time(nullptr));
+        const std::string obj = uid + "/" + rnd + "-" + safe;
+        auto r = acct_.ApiUpload("/storage/v1/object/workshop/" + obj, localPath, "application/octet-stream", "x-upsert: true");
+        if (!r.ok) {
+            if (err) *err = r.status == 404 || r.body.find("Bucket not found") != std::string::npos
+                ? "File uploads aren't set up on the server (create the 'workshop' bucket from docs/sql/social.sql)."
+                : r.body.find("too large") != std::string::npos || r.status == 413 ? "That file is too big for the server's upload limit."
+                : (r.body.empty() ? std::string("Upload failed.") : r.body);
+            return "";
+        }
+        std::string base = acct_.ServerUrl();
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        return base + "/storage/v1/object/public/workshop/" + obj;
     }
 
 private:

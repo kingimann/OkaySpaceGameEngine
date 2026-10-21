@@ -7965,6 +7965,51 @@ static void DrawSocialLinksEditor(float fieldW, float btnW) {
     ImGui::EndDisabled();
 }
 
+// Marketplace listing types (workshop_items.kind).
+struct MktKind { const char* key; const char* label; const char* plural; const char* desc; ImVec4 color; };
+static const MktKind kMktKinds[] = {
+    {"game",     "Full game",   "Games",       "A finished, playable game (File > Build Game).",   ImVec4(0.26f, 0.55f, 0.85f, 1)},
+    {"template", "Template",    "Templates",   "A starter project others build on.",               ImVec4(0.58f, 0.45f, 0.82f, 1)},
+    {"model",    "3D model",    "3D models",   "Meshes and characters (.obj, .gltf, .fbx ...).",   ImVec4(0.90f, 0.55f, 0.25f, 1)},
+    {"texture",  "Texture",     "Textures",    "Materials, PBR sets, skyboxes.",                   ImVec4(0.30f, 0.70f, 0.55f, 1)},
+    {"sprite",   "2D art",      "2D art",      "Sprites, tilesets, UI packs.",                     ImVec4(0.92f, 0.42f, 0.62f, 1)},
+    {"audio",    "Audio",       "Audio",       "Music, sound effects, voice.",                     ImVec4(0.95f, 0.75f, 0.25f, 1)},
+    {"script",   "Script",      "Scripts",     "OkayScript code, behaviours, visual graphs.",      ImVec4(0.35f, 0.80f, 0.85f, 1)},
+    {"tool",     "Tool",        "Tools",       "Editor tools, plugins and utilities.",             ImVec4(0.60f, 0.65f, 0.72f, 1)},
+    {"scene",    "Scene",       "Scenes",      "A single scene or level.",                         ImVec4(0.30f, 0.62f, 0.40f, 1)},
+};
+static const int kMktKindN = (int)(sizeof(kMktKinds) / sizeof(kMktKinds[0]));
+static int MktKindIndex(const std::string& k) {
+    for (int i = 0; i < kMktKindN; ++i) if (k == kMktKinds[i].key) return i;
+    return 0;   // unknown / empty -> game
+}
+// Publish in the background: upload the file (if any) to the workshop bucket,
+// then create the listing.
+struct MktPublishJob { std::string title, desc, kind, url, file; };
+static volatile bool g_mktPublishing = false;
+static SDL_mutex* g_mktMutex = nullptr;
+static std::string g_mktResult; static int g_mktResultKind = 0;   // (guarded) 1 ok, 2 error
+static int MarketPublishWorker(void* p) {
+    std::unique_ptr<MktPublishJob> j(static_cast<MktPublishJob*>(p));
+    std::string err; bool ok = false;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Workshop ws(a);
+        std::string url = j->url;
+        if (!j->file.empty()) url = ws.UploadFile(j->file, &err);
+        if (!url.empty()) {
+            ok = ws.Publish(j->title, j->desc, j->kind, url, &err);
+            if (ok) okay::Friends(a).Post("publish", j->title);   // show it in friends' feeds
+        }
+    } catch (...) { err = "Publishing failed."; }
+    SDL_LockMutex(g_mktMutex);
+    g_mktResult = ok ? "Published to the marketplace" : (err.empty() ? "Publishing failed." : err);
+    g_mktResultKind = ok ? 1 : 2;
+    SDL_UnlockMutex(g_mktMutex);
+    g_mktPublishing = false;
+    return 0;
+}
+
 static okay::ProfileBundle DemoProfileBundle(const PfOpenReq& r, const std::string& me) {
     okay::ProfileBundle b;
     b.found = b.reached = b.showcaseSupported = b.achSupported = true;
@@ -14262,7 +14307,7 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 7) {                            // ---- Market / Workshop ----
             sectionHeader("Marketplace", nullptr);
-            if (loginGate("the marketplace")) {
+            if (kUiDemoUser || loginGate("the marketplace")) {
             okay::Workshop ws(account);
             static std::vector<okay::WorkshopItem> wCache;
             static std::map<long, std::pair<long, long>> wRatings;  // itemId -> (starSum, count)
@@ -14288,7 +14333,17 @@ int main(int argc, char** argv) {
             static char wTitle[128] = "", wUrl[256] = "";
             static char wDesc[512] = "";
             static int  wKind = 0;
-            static std::string wErr;
+            static std::string wErr, wFile;   // wFile: local file to upload (instead of a link)
+            static int  wSource = 0;          // 0 upload a file, 1 link
+            if (!g_mktMutex) g_mktMutex = SDL_CreateMutex();
+            SDL_LockMutex(g_mktMutex);
+            if (g_mktResultKind) {
+                Toast(g_mktResult, g_mktResultKind);
+                if (g_mktResultKind == 1) { wTitle[0] = wDesc[0] = wUrl[0] = '\0'; wFile.clear(); wErr.clear(); wShowPublish = false; wNextRefresh = 0; }
+                else wErr = g_mktResult;
+                g_mktResultKind = 0;
+            }
+            SDL_UnlockMutex(g_mktMutex);
             // A "Publish to Marketplace" action from the Play tab prefills + opens the form.
             if (!g_pendingPublishTitle.empty()) {
                 std::snprintf(wTitle, sizeof(wTitle), "%s", g_pendingPublishTitle.c_str());
@@ -14296,6 +14351,8 @@ int main(int argc, char** argv) {
                 g_pendingPublishTitle.clear();
             }
             if (g_openPublishForm) { wShowPublish = true; g_openPublishForm = false; }
+            if (std::getenv("OKAY_UI_DEMO_PUBLISH")) { static bool once = true; if (once) { once = false; wShowPublish = true; wKind = 2;
+                std::snprintf(wTitle, sizeof(wTitle), "Low-poly space props pack"); } }
             Uint32 now = SDL_GetTicks();
             // Refresh the marketplace list/ratings in the background (no hitch).
             if (!g_wsMutex) g_wsMutex = SDL_CreateMutex();
@@ -14308,10 +14365,23 @@ int main(int argc, char** argv) {
             if (g_wsMutex) {
                 SDL_LockMutex(g_wsMutex);
                 if (g_wsReady) { wCache = g_wsList; wRatings = g_wsRatings; g_wsReady = false; }
+                if (kUiDemoUser && wCache.empty()) {   // dev screenshot hook: sample listings of every type
+                    auto it = [&](long id, const char* t, const char* a, const char* k, const char* d, long dl, long rs, long rc) {
+                        okay::WorkshopItem w; w.id = id; w.title = t; w.author = a; w.kind = k; w.description = d; w.downloads = dl; w.url = "https://example.com/x.zip";
+                        wCache.push_back(w); wRatings[id] = {rs, rc}; };
+                    it(1, "Neon Drift", "kingimann", "game", "Synthwave arcade racer with drift combos.", 4210, 46, 10);
+                    it(2, "Low-poly Space Props", "maya", "model", "120 ships, crates and stations. CC0.", 980, 28, 6);
+                    it(3, "Sci-fi Panels PBR", "priya", "texture", "Tileable 2K metal + emissive panels.", 640, 18, 4);
+                    it(4, "Pixel Dungeon Tileset", "jonas", "sprite", "16x16 tiles, 4 biomes, animated torches.", 1530, 44, 9);
+                    it(5, "Retro SFX Pack", "alexr", "audio", "200 chiptune blips, jumps and explosions.", 2210, 39, 8);
+                    it(6, "Inventory System", "priya", "script", "Drag & drop grid with stacking (OkayScript).", 870, 23, 5);
+                    it(7, "Platformer Starter", "kingimann", "template", "Tight jump physics + checkpoints.", 3120, 47, 10);
+                    it(8, "Level Lint", "maya", "tool", "Editor tool that flags unreachable tiles.", 210, 9, 2);
+                }
                 SDL_UnlockMutex(g_wsMutex);
             }
 
-            ImGui::TextDisabled("Browse and share games, scenes and templates from the community.");
+            ImGui::TextDisabled("Games, 3D models, textures, art, audio, scripts and templates from the community.");
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 196);
             if (ImGui::Button(wShowPublish ? "Browse" : "Publish an item", ImVec2(110, 0)))
                 wShowPublish = !wShowPublish;
@@ -14320,37 +14390,101 @@ int main(int argc, char** argv) {
             ImGui::Spacing();
 
             if (wShowPublish) {
-                if (!ws.Available()) {
+                if (!ws.Available() && !kUiDemoUser) {
                     ImGui::TextDisabled("Sign in to publish.");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Sign in")) { tab = 3; g_lastTab = 3; SavePrefs(); }
                 } else {
-                    ImGui::BeginChild("##publish", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), true);
-                    ImGui::SeparatorText("Publish to the marketplace");
-                    ImGui::SetNextItemWidth(360); ImGui::InputTextWithHint("Title", "My awesome game", wTitle, sizeof(wTitle));
-                    ImGui::SetNextItemWidth(200); ImGui::Combo("Kind", &wKind, "Game\0Template\0");
-                    ImGui::TextDisabled("Share a built game (exported with File > Build Game) or a template. Scenes can't be shared.");
-                    ImGui::InputTextMultiline("Description", wDesc, sizeof(wDesc), ImVec2(-1, 90));
-                    ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##url", "Download link (GitHub release, itch.io, or a public URL)...", wUrl, sizeof(wUrl));
-                    ImGui::TextDisabled("Host your build anywhere public and paste the link. Players download it from here.");
-                    ImGui::Dummy(ImVec2(0, 4));
-                    if (ImGui::Button("Publish", ImVec2(120, 0))) {
-                        const char* kinds[] = { "game", "template" };
-                        if (ws.Publish(wTitle, wDesc, kinds[wKind], wUrl, &wErr)) {
-                            okay::Friends(account).Post("publish", wTitle);   // show it in friends' feeds
-                            Toast("Published to the marketplace", 1);
-                            wTitle[0] = wDesc[0] = wUrl[0] = '\0'; wErr.clear();
-                            wShowPublish = false; wNextRefresh = 0;
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 16));
+                    ImGui::BeginChild("##publish", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::PopStyleVar(2);
+                    ImGui::PopStyleColor();
+                    ImGui::SetWindowFontScale(1.15f);
+                    ImGui::TextUnformatted("List something on the marketplace");
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::TextDisabled("Pick what it is, describe it, then upload the file or paste a link.");
+                    ImGui::Dummy(ImVec2(0, 6));
+                    // What is it? A grid of type cards.
+                    {
+                        ImDrawList* d = ImGui::GetWindowDrawList();
+                        const float aw = ImGui::GetContentRegionAvail().x, g = 8.0f;
+                        const int cols = aw > 900 ? 5 : aw > 640 ? 3 : 2;
+                        const float cw = (aw - g * (cols - 1)) / cols, chh = 58.0f;
+                        const ImVec2 o = ImGui::GetCursorScreenPos();
+                        for (int i = 0; i < kMktKindN; ++i) {
+                            const MktKind& k = kMktKinds[i];
+                            const ImVec2 p(o.x + (i % cols) * (cw + g), o.y + (i / cols) * (chh + g));
+                            ImGui::SetCursorScreenPos(p);
+                            ImGui::PushID(i);
+                            if (ImGui::InvisibleButton("##kind", ImVec2(cw, chh))) wKind = i;
+                            const bool h = ImGui::IsItemHovered(), on = wKind == i;
+                            ImGui::PopID();
+                            d->AddRectFilled(p, ImVec2(p.x + cw, p.y + chh), on ? ImGui::GetColorU32(ImVec4(k.color.x, k.color.y, k.color.z, 0.20f)) : IM_COL32(255, 255, 255, h ? 14 : 7), 10.0f);
+                            if (on) d->AddRect(p, ImVec2(p.x + cw, p.y + chh), ImGui::GetColorU32(k.color), 10.0f, 0, 1.6f);
+                            d->AddCircleFilled(ImVec2(p.x + 18, p.y + 18), 6.0f, ImGui::GetColorU32(k.color), 14);
+                            d->AddText(ImVec2(p.x + 32, p.y + 9), ImGui::GetColorU32(ImGuiCol_Text), k.label);
+                            d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.82f, ImVec2(p.x + 12, p.y + 32), ImGui::GetColorU32(ImGuiCol_TextDisabled), k.desc, nullptr, cw - 20);
+                            if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                         }
+                        const int rows = (kMktKindN + cols - 1) / cols;
+                        ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + rows * (chh + g)));
+                        ImGui::Dummy(ImVec2(0, 4));
                     }
-                    if (!wErr.empty()) { ImGui::SameLine(); ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputTextWithHint("##wtitle", "Title", wTitle, sizeof(wTitle));
+                    ImGui::InputTextMultiline("##wdesc", wDesc, sizeof(wDesc), ImVec2(-1, 80));
+                    if (!wDesc[0] && !ImGui::IsItemActive()) {
+                        ImVec2 dp = ImGui::GetItemRectMin();
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(dp.x + 10, dp.y + 8), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                                                            "Description: what's included, how to use it, license / credits\xE2\x80\xA6");
+                    }
+                    ImGui::PopStyleVar(2);
+                    ImGui::Dummy(ImVec2(0, 4));
+                    // Where the file comes from.
+                    ImGui::RadioButton("Upload a file", &wSource, 0); ImGui::SameLine(0, 18);
+                    ImGui::RadioButton("Link to it", &wSource, 1);
+                    if (wSource == 0) {
+                        if (ImGui::Button(wFile.empty() ? "Choose file\xE2\x80\xA6" : "Change file\xE2\x80\xA6", ImVec2(140, 0))) {
+                            const char* pick = tinyfd_openFileDialog("Choose a file to list", "", 0, nullptr, nullptr, 0);
+                            if (pick && *pick) wFile = pick;
+                        }
+                        ImGui::SameLine(0, 10);
+                        if (wFile.empty()) ImGui::TextDisabled("A .zip works for anything with several files. Up to your server's upload limit (50 MB by default).");
+                        else {
+                            std::error_code ec; const auto sz = fs::file_size(fs::path(wFile), ec);
+                            ImGui::Text("%s", fs::path(wFile).filename().string().c_str());
+                            ImGui::SameLine(); ImGui::TextDisabled("%.1f MB", ec ? 0.0 : sz / 1048576.0);
+                        }
+                    } else {
+                        ImGui::SetNextItemWidth(-1);
+                        ImGui::InputTextWithHint("##url", "https://\xE2\x80\xA6 (GitHub release, itch.io, or any public URL)", wUrl, sizeof(wUrl));
+                    }
+                    ImGui::Dummy(ImVec2(0, 8));
+                    const bool haveSource = wSource == 0 ? !wFile.empty() : ShellSafeUrl(wUrl);
+                    ImGui::BeginDisabled(!wTitle[0] || !haveSource || g_mktPublishing);
+                    if (PrimaryButton(g_mktPublishing ? "Publishing\xE2\x80\xA6" : "Publish", ImVec2(140, 34))) {
+                        auto* j = new MktPublishJob{wTitle, wDesc, kMktKinds[std::clamp(wKind, 0, kMktKindN - 1)].key,
+                                                    wSource == 1 ? std::string(wUrl) : std::string(), wSource == 0 ? wFile : std::string()};
+                        g_mktPublishing = true; wErr.clear();
+                        if (SDL_Thread* t = SDL_CreateThread(MarketPublishWorker, "okay-wspub", j)) SDL_DetachThread(t);
+                        else { g_mktPublishing = false; delete j; wErr = "Couldn't start publishing."; }
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(100, 34))) wShowPublish = false;
+                    if (wSource == 1 && wUrl[0] && !ShellSafeUrl(wUrl)) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.9f, 0.45f, 0.45f, 1), "That link doesn't look valid."); }
+                    if (!wErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
                                          ImGui::TextWrapped("%s", wErr.c_str()); ImGui::PopStyleColor(); }
                     ImGui::EndChild();
                 }
             } else {
                 // Search + sort + wishlist, with a category chip row underneath.
                 static char wSearch[96] = "";
-                static int  wFilterKind = 0;   // 0 All, 1 Games, 2 Scenes, 3 Templates
+                static int  wFilterKind = 0;   // 0 All, else 1 + index into kMktKinds
                 static int  wSort = 0;         // 0 Newest, 1 Most downloaded, 2 Highest rated
                 static bool wWishOnly = false;
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 170 - 108);
@@ -14367,37 +14501,41 @@ int main(int argc, char** argv) {
 
                 auto mlo = [](std::string s){ for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
                 std::string nd = mlo(wSearch);
-                const char* kindKey[] = { "", "game", "scene", "template" };
 
-                // Category chips: a modern, one-click filter row (counts per kind).
+
+                // Category chips (wrapping): All + every listing type, with counts.
                 {
-                    const char* chipLbl[] = { "All", "Games", "Scenes", "Templates" };
-                    int counts[4] = {0,0,0,0};
+                    std::vector<int> counts((std::size_t)kMktKindN + 1, 0);
                     long totalDl = 0;
-                    for (const auto& w : wCache) {
-                        std::string wk = w.kind.empty() ? "game" : w.kind;
-                        counts[0]++;
-                        if (wk == "game") counts[1]++;
-                        else if (wk == "scene") counts[2]++;
-                        else if (wk == "template") counts[3]++;
-                        totalDl += w.downloads;
+                    for (const auto& w : wCache) { counts[0]++; counts[(std::size_t)MktKindIndex(w.kind) + 1]++; totalDl += w.downloads; }
+                    ImDrawList* cdl = ImGui::GetWindowDrawList();
+                    const ImVec2 o = ImGui::GetCursorScreenPos();
+                    const float right = o.x + ImGui::GetContentRegionAvail().x, ch = ImGui::GetTextLineHeight() + 12.0f;
+                    float x = o.x, y = o.y;
+                    for (int c = 0; c <= kMktKindN; ++c) {
+                        if (c > 0 && counts[(std::size_t)c] == 0 && wFilterKind != c) continue;   // hide empty types
+                        const char* lbl = c == 0 ? "All" : kMktKinds[c - 1].plural;
+                        char cnt[16]; std::snprintf(cnt, sizeof(cnt), "%d", counts[(std::size_t)c]);
+                        const ImVec2 ts = ImGui::CalcTextSize(lbl), cs = ImGui::CalcTextSize(cnt);
+                        const float cw = ts.x + cs.x + 34 + (c ? 12 : 0);
+                        if (x + cw > right && x > o.x) { x = o.x; y += ch + 6; }
+                        ImGui::SetCursorScreenPos(ImVec2(x, y));
+                        ImGui::PushID(c);
+                        if (ImGui::InvisibleButton("##mk", ImVec2(cw, ch))) wFilterKind = c;
+                        const bool h = ImGui::IsItemHovered(), on = wFilterKind == c;
+                        ImGui::PopID();
+                        cdl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + ch), on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.26f)) : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9)), ch * 0.5f);
+                        float tx = x + 12;
+                        if (c) { cdl->AddCircleFilled(ImVec2(tx + 3, y + ch * 0.5f), 4.0f, ImGui::GetColorU32(kMktKinds[c - 1].color), 10); tx += 12; }
+                        cdl->AddText(ImVec2(tx, y + (ch - ts.y) * 0.5f), on || h ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled), lbl);
+                        cdl->AddText(ImVec2(tx + ts.x + 8, y + (ch - cs.y) * 0.5f), IM_COL32(150, 158, 175, 255), cnt);
+                        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        x += cw + 6;
                     }
-                    for (int c = 0; c < 4; ++c) {
-                        if (c) ImGui::SameLine(0, 6);
-                        bool on = (wFilterKind == c);
-                        if (on) { ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
-                                  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1)); }
-                        char cl[48]; std::snprintf(cl, sizeof(cl), "%s  %d", chipLbl[c], counts[c]);
-                        if (ImGui::Button(cl)) wFilterKind = c;
-                        if (on) ImGui::PopStyleColor(2);
-                    }
-                    ImGui::SameLine();
-                    float aw = ImGui::GetContentRegionAvail().x;
-                    char stat[64]; std::snprintf(stat, sizeof(stat), "%ld total download%s",
-                                                 totalDl, totalDl == 1 ? "" : "s");
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + aw - ImGui::CalcTextSize(stat).x - 4);
+                    ImGui::SetCursorScreenPos(ImVec2(o.x, y + ch + 4));
+                    char stat[64]; std::snprintf(stat, sizeof(stat), "%ld total download%s", totalDl, totalDl == 1 ? "" : "s");
                     ImGui::TextDisabled("%s", stat);
-                    ImGui::Dummy(ImVec2(0, 4));
+                    ImGui::Dummy(ImVec2(0, 2));
                 }
                 // Build the display order from the chosen sort (wCache is newest-first).
                 auto avgOf = [&](long id)->float {
@@ -14417,7 +14555,7 @@ int main(int argc, char** argv) {
 
                 // Featured strip: top-rated items, shown only on the unfiltered
                 // default view so it doesn't fight an active search/sort.
-                if (nd.empty() && wFilterKind == 0 && !wWishOnly && wSort == 0) {
+                if (nd.empty() && wFilterKind == 0 && !wWishOnly && wSort == 0) {   // (featured)
                     std::vector<const okay::WorkshopItem*> top;
                     for (const auto& w : wCache) if (avgOf(w.id) > 0.0f) top.push_back(&w);
                     std::stable_sort(top.begin(), top.end(),
@@ -14463,8 +14601,9 @@ int main(int argc, char** argv) {
                 int mktShown = 0;
                 for (const okay::WorkshopItem* wp : order) {
                     const okay::WorkshopItem& w = *wp;
-                    std::string wk = w.kind.empty() ? "game" : w.kind;
-                    if (wFilterKind != 0 && wk != kindKey[wFilterKind]) continue;
+                    const int ki = MktKindIndex(w.kind);
+                    const MktKind& mk = kMktKinds[ki];
+                    if (wFilterKind != 0 && ki != wFilterKind - 1) continue;
                     if (wWishOnly && !IsWishlisted(w.id)) continue;
                     if (!nd.empty() &&
                         mlo(w.title + " " + w.description + " " + w.author).find(nd) == std::string::npos) continue;
@@ -14480,14 +14619,12 @@ int main(int argc, char** argv) {
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6);
                     ImGui::TextUnformatted(w.title.c_str());
                     // Kind badge pill (colored per kind) + author + downloads.
-                    ImVec4 kc = wk == "scene" ? ImVec4(0.30f,0.62f,0.40f,1)
-                              : wk == "template" ? ImVec4(0.52f,0.42f,0.72f,1)
-                                                 : ImVec4(0.24f,0.50f,0.72f,1);
+                    const ImVec4 kc = mk.color;
                     ImVec2 bp = ImGui::GetCursorScreenPos();
-                    ImVec2 ks = ImGui::CalcTextSize(wk.c_str());
+                    ImVec2 ks = ImGui::CalcTextSize(mk.label);
                     ImGui::GetWindowDrawList()->AddRectFilled(bp, ImVec2(bp.x+ks.x+14, bp.y+ks.y+4),
-                        ImGui::GetColorU32(ImVec4(kc.x,kc.y,kc.z,0.30f)), (ks.y+4)*0.5f);
-                    ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x+7, bp.y+2), ImGui::GetColorU32(kc), wk.c_str());
+                        ImGui::GetColorU32(ImVec4(kc.x,kc.y,kc.z,0.28f)), (ks.y+4)*0.5f);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x+7, bp.y+2), ImGui::GetColorU32(ImVec4(kc.x*0.55f+0.45f,kc.y*0.55f+0.45f,kc.z*0.55f+0.45f,1)), mk.label);
                     ImGui::Dummy(ImVec2(ks.x+14, ks.y+4));
                     ImGui::SameLine(0, 8);
                     ImGui::TextDisabled("by %s  -  %ld download%s",
@@ -14540,7 +14677,7 @@ int main(int argc, char** argv) {
                     if (!me.empty() && me == w.author) {
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Edit")) {
-                            edId = w.id; edKind = (wk == "template") ? 1 : 0;
+                            edId = w.id; edKind = ki;
                             std::snprintf(edTitle, sizeof(edTitle), "%s", w.title.c_str());
                             std::snprintf(edDesc,  sizeof(edDesc),  "%s", w.description.c_str());
                             std::snprintf(edUrl,   sizeof(edUrl),   "%s", w.url.c_str());
@@ -14571,14 +14708,16 @@ int main(int argc, char** argv) {
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextWithHint("##edtitle", "Title", edTitle, sizeof(edTitle));
                 ImGui::SetNextItemWidth(200);
-                ImGui::Combo("Kind##ed", &edKind, "Game\0Template\0");
+                if (ImGui::BeginCombo("Type##ed", kMktKinds[std::clamp(edKind, 0, kMktKindN - 1)].label)) {
+                    for (int i = 0; i < kMktKindN; ++i) if (ImGui::Selectable(kMktKinds[i].label, edKind == i)) edKind = i;
+                    ImGui::EndCombo();
+                }
                 ImGui::InputTextMultiline("##eddesc", edDesc, sizeof(edDesc), ImVec2(-1, 80));
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextWithHint("##edurl", "Download link", edUrl, sizeof(edUrl));
                 ImGui::Dummy(ImVec2(0, 4));
                 if (PrimaryButton("Save changes", ImVec2(150, 32))) {
-                    const char* kinds[] = { "game", "template" };
-                    if (okay::Workshop(account).Update(edId, edTitle, edDesc, kinds[edKind], edUrl, &edErr)) {
+                    if (okay::Workshop(account).Update(edId, edTitle, edDesc, kMktKinds[std::clamp(edKind, 0, kMktKindN - 1)].key, edUrl, &edErr)) {
                         Toast("Item updated", 1); wNextRefresh = 0; ImGui::CloseCurrentPopup();
                     }
                 }

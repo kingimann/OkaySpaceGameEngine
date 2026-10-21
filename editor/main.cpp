@@ -11212,7 +11212,9 @@ static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
 }
 
 void DrawHierarchy(EditorState& ed) {
-    ImGui::Begin("Hierarchy", &g_showHierarchy);
+    // Skip the per-frame root-list build + sort + per-row component scans when the
+    // Hierarchy panel is collapsed or a hidden background tab.
+    if (!ImGui::Begin("Hierarchy", &g_showHierarchy)) { ImGui::End(); return; }
     ImGui::TextDisabled("Scene: %s%s", ed.scene().Name().c_str(), ed.dirty ? " *" : "");
     ImGui::SameLine(ImGui::GetWindowWidth() - 70);
     ImGui::TextDisabled("%d obj", (int)ed.scene().Objects().size());
@@ -27245,15 +27247,17 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Draw sprites back-to-front by Sort Order (scene order breaks ties), so the
     // editor preview layers them the same way the built game does.
     {
-        std::vector<GameObject*> sprites;
+        // Fetch each SpriteRenderer ONCE (GetComponent is a dynamic_cast scan) and
+        // sort precomputed keys, instead of two component lookups per comparison.
+        struct SpriteEnt { long long key; SpriteRenderer* sr; GameObject* go; };
+        std::vector<SpriteEnt> sprites;
         for (const auto& up : objs)
-            if (up->active && up->GetComponent<SpriteRenderer>()) sprites.push_back(up.get());
-        std::stable_sort(sprites.begin(), sprites.end(), [](GameObject* x, GameObject* y) {
-            return x->GetComponent<SpriteRenderer>()->SortKey() <
-                   y->GetComponent<SpriteRenderer>()->SortKey();
-        });
-        for (GameObject* go : sprites) {
-            auto* sr = go->GetComponent<SpriteRenderer>();
+            if (up->active) if (auto* s = up->GetComponent<SpriteRenderer>())
+                sprites.push_back({s->SortKey(), s, up.get()});
+        std::stable_sort(sprites.begin(), sprites.end(),
+                         [](const SpriteEnt& x, const SpriteEnt& y) { return x.key < y.key; });
+        for (const SpriteEnt& ent : sprites) {
+            SpriteRenderer* sr = ent.sr; GameObject* go = ent.go;
             Vec3 wp = go->transform->Position();
             Vec3 ls = go->transform->LossyScale();
             float hxw = sr->size.x * ls.x * 0.5f;   // world half-extents
@@ -29092,7 +29096,13 @@ static void LetterboxGameScreen(ImVec2 origin, ImVec2 avail,
 void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // A dedicated "UI" tab is just the Scene view locked to UI-only mode, so UI
     // editing gets its own dockable window without losing the 3D Scene view.
-    ImGui::Begin(uiPanel ? "UI" : "Scene", uiPanel ? &g_showUIEditor : nullptr);
+    // Early-out when the panel is collapsed or sitting as a hidden/background dock
+    // tab: the Scene view's 3D render + synchronous GPU->CPU readback is the single
+    // biggest per-frame cost, so don't pay it when the panel isn't visible.
+    if (!ImGui::Begin(uiPanel ? "UI" : "Scene", uiPanel ? &g_showUIEditor : nullptr)) {
+        ImGui::End();
+        return;
+    }
     const bool uiOnly = uiPanel || g_uiOnlyMode;   // the UI panel is always UI-only
 
     // 2D / 3D toggle + frame the selection.

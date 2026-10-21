@@ -1112,6 +1112,7 @@ const AccentPreset kAccentPresets[] = {
 };
 int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
+bool g_chatSounds = true;         // soft chime for new chat messages (persisted)
 // ---- Customizable loading screen (persisted) ----
 std::string g_splashLogo;                         // optional PNG shown instead of the cube
 float g_splashBgTop[3] = {0.094f, 0.094f, 0.106f};// backdrop gradient (top)
@@ -1897,6 +1898,110 @@ bool PrimaryButton(const char* label, const ImVec2& size) {
     return hit;
 }
 
+// ---- Sidebar icons ---------------------------------------------------------
+// One consistent set of 1.6px line icons (Lucide-like), drawn with the draw list
+// so no icon font is needed. Ids 0..10 match the launcher tabs; the rest are
+// sidebar extras.
+enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14 };
+static void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
+    const float r = 7.5f, t = 1.6f, PI = 3.14159265f;
+    switch (id) {
+    case 0:   // Create: plus in a rounded square
+        d->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), col, 3.5f, 0, t);
+        d->AddLine(ImVec2(c.x - 3.6f, c.y), ImVec2(c.x + 3.6f, c.y), col, t);
+        d->AddLine(ImVec2(c.x, c.y - 3.6f), ImVec2(c.x, c.y + 3.6f), col, t);
+        break;
+    case 1:   // Play: play button in a circle
+        d->AddCircle(c, r, col, 28, t);
+        d->AddTriangleFilled(ImVec2(c.x - 2.3f, c.y - 3.8f), ImVec2(c.x - 2.3f, c.y + 3.8f), ImVec2(c.x + 4.0f, c.y), col);
+        break;
+    case 2:   // Community: 2x2 grid
+        for (int k = 0; k < 4; ++k) {
+            float x = (k % 2) ? c.x + 1.2f : c.x - r, y = (k / 2) ? c.y + 1.2f : c.y - r;
+            d->AddRect(ImVec2(x, y), ImVec2(x + r - 1.2f, y + r - 1.2f), col, 1.5f, 0, t);
+        }
+        break;
+    case 3:   // Account: user
+        d->AddCircle(ImVec2(c.x, c.y - 2.6f), 3.3f, col, 16, t);
+        d->PathArcTo(ImVec2(c.x, c.y + 8.2f), 6.4f, PI + 0.32f, 2 * PI - 0.32f, 14);
+        d->PathStroke(col, 0, t);
+        break;
+    case 4:   // Settings: gear
+        d->AddCircle(c, 2.4f, col, 12, t);
+        d->AddCircle(c, 5.4f, col, 20, t);
+        for (int k = 0; k < 8; ++k) {
+            float a = k * PI / 4;
+            d->AddLine(ImVec2(c.x + std::cos(a) * 5.4f, c.y + std::sin(a) * 5.4f),
+                       ImVec2(c.x + std::cos(a) * 7.8f, c.y + std::sin(a) * 7.8f), col, 2.2f);
+        }
+        break;
+    case 5:   // Achievements: trophy
+        d->PathLineTo(ImVec2(c.x - 4.6f, c.y - r));
+        d->PathLineTo(ImVec2(c.x + 4.6f, c.y - r));
+        d->PathArcTo(ImVec2(c.x, c.y - 2.6f), 4.6f, 0.0f, PI, 12);
+        d->PathStroke(col, ImDrawFlags_Closed, t);
+        d->PathArcTo(ImVec2(c.x - 4.6f, c.y - 4.6f), 2.4f, PI * 0.5f, PI * 1.5f, 8); d->PathStroke(col, 0, t);
+        d->PathArcTo(ImVec2(c.x + 4.6f, c.y - 4.6f), 2.4f, -PI * 0.5f, PI * 0.5f, 8); d->PathStroke(col, 0, t);
+        d->AddLine(ImVec2(c.x, c.y + 2.0f), ImVec2(c.x, c.y + 5.6f), col, t);
+        d->AddLine(ImVec2(c.x - 3.8f, c.y + r - 0.6f), ImVec2(c.x + 3.8f, c.y + r - 0.6f), col, t);
+        break;
+    case 6:   // Friends: two users
+        d->AddCircle(ImVec2(c.x - 2.4f, c.y - 2.8f), 3.0f, col, 16, t);
+        d->PathArcTo(ImVec2(c.x - 2.4f, c.y + 7.8f), 5.8f, PI + 0.30f, 2 * PI - 0.30f, 12); d->PathStroke(col, 0, t);
+        d->PathArcTo(ImVec2(c.x + 4.2f, c.y - 2.8f), 2.6f, -PI * 0.5f, PI * 0.5f, 8); d->PathStroke(col, 0, t);
+        d->PathArcTo(ImVec2(c.x + 4.2f, c.y + 7.8f), 4.6f, PI * 1.55f, 2 * PI - 0.30f, 8); d->PathStroke(col, 0, t);
+        break;
+    case 7:   // Market: shopping bag
+        d->AddRect(ImVec2(c.x - 6.2f, c.y - 3.0f), ImVec2(c.x + 6.2f, c.y + r), col, 2.0f, 0, t);
+        d->PathArcTo(ImVec2(c.x, c.y - 3.0f), 3.2f, PI, 2 * PI, 10); d->PathStroke(col, 0, t);
+        break;
+    case 8:   // Servers: stacked server units
+        for (int k = 0; k < 2; ++k) {
+            float y0 = k ? c.y + 1.0f : c.y - r + 0.5f, y1 = k ? c.y + r - 0.5f : c.y - 1.0f;
+            d->AddRect(ImVec2(c.x - r, y0), ImVec2(c.x + r, y1), col, 2.0f, 0, t);
+            d->AddCircleFilled(ImVec2(c.x - 3.8f, (y0 + y1) * 0.5f), 1.2f, col, 8);
+        }
+        break;
+    case 9:   // Forums: document with lines
+        d->AddRect(ImVec2(c.x - 6.0f, c.y - r), ImVec2(c.x + 6.0f, c.y + r), col, 2.0f, 0, t);
+        for (int k = 0; k < 3; ++k) {
+            float y = c.y - 3.4f + k * 3.4f;
+            d->AddLine(ImVec2(c.x - 3.2f, y), ImVec2(c.x + (k == 2 ? 1.0f : 3.2f), y), col, t);
+        }
+        break;
+    case 10:  // Downloads: arrow into a tray
+        d->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + 2.6f), col, t);
+        d->AddLine(ImVec2(c.x - 3.6f, c.y - 1.0f), ImVec2(c.x, c.y + 2.6f), col, t);
+        d->AddLine(ImVec2(c.x + 3.6f, c.y - 1.0f), ImVec2(c.x, c.y + 2.6f), col, t);
+        d->PathLineTo(ImVec2(c.x - r, c.y + 2.2f)); d->PathLineTo(ImVec2(c.x - r, c.y + r));
+        d->PathLineTo(ImVec2(c.x + r, c.y + r));    d->PathLineTo(ImVec2(c.x + r, c.y + 2.2f));
+        d->PathStroke(col, 0, t);
+        break;
+    case kIcoBell:
+        d->PathArcTo(ImVec2(c.x, c.y - 1.2f), 5.0f, PI, 2 * PI, 12);
+        d->PathLineTo(ImVec2(c.x + 5.0f, c.y + 3.2f)); d->PathLineTo(ImVec2(c.x + 6.6f, c.y + 5.0f));
+        d->PathLineTo(ImVec2(c.x - 6.6f, c.y + 5.0f)); d->PathLineTo(ImVec2(c.x - 5.0f, c.y + 3.2f));
+        d->PathStroke(col, ImDrawFlags_Closed, t);
+        d->AddLine(ImVec2(c.x - 1.8f, c.y + 7.4f), ImVec2(c.x + 1.8f, c.y + 7.4f), col, t);
+        break;
+    case kIcoChat:
+        d->PathArcTo(c, 6.8f, PI * 0.80f, PI * 2.62f, 26);
+        d->PathLineTo(ImVec2(c.x - r, c.y + r));
+        d->PathStroke(col, ImDrawFlags_Closed, t);
+        break;
+    case kIcoPanel:   // sidebar toggle: a panel with its left column marked
+        d->AddRect(ImVec2(c.x - r, c.y - 6.5f), ImVec2(c.x + r, c.y + 6.5f), col, 2.5f, 0, t);
+        d->AddLine(ImVec2(c.x - 2.2f, c.y - 6.5f), ImVec2(c.x - 2.2f, c.y + 6.5f), col, t);
+        break;
+    case kIcoRefresh: {
+        d->PathArcTo(c, 5.6f, -PI * 0.35f, PI * 1.45f, 20); d->PathStroke(col, 0, t);
+        ImVec2 e(c.x + std::cos(-PI * 0.35f) * 5.6f, c.y + std::sin(-PI * 0.35f) * 5.6f);
+        d->AddTriangleFilled(ImVec2(e.x + 2.6f, e.y - 2.4f), ImVec2(e.x + 2.0f, e.y + 2.6f), ImVec2(e.x - 2.6f, e.y - 0.6f), col);
+        break;
+    }
+    }
+}
+
 // Human "modified N ago" text for a file ("" if the time can't be read).
 std::string ModifiedAgo(const fs::path& p) {
     std::error_code ec;
@@ -1954,6 +2059,7 @@ void LoadPrefs() {
         else if (k == "theme") { try { g_themeIndex = std::stoi(v); } catch (...) {} }
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
+        else if (k == "chat_sounds") g_chatSounds = (v != "0");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
         else if (k == "online_status") { try { g_onlineStatus = std::stoi(v); } catch (...) {} }
         else if (k == "last_dm_id") { try { g_lastDmId = std::stol(v); } catch (...) {} }
@@ -2028,6 +2134,7 @@ void SavePrefs() {
     f << "theme=" << g_themeIndex << "\n";
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
+    f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
     f << "online_status=" << g_onlineStatus << "\n";
     f << "last_dm_id=" << g_lastDmId << "\n";
@@ -2153,6 +2260,27 @@ static void RenderChatFileCard(const ChatFileInfo& f, float width) {
     if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Open / download\n%s", f.name.c_str()); }
     if (clicked) OpenExternal(f.url);
 }
+// Chat window palette (dark slate, Messenger-dark): the bubbles, header strip
+// and composer are designed around it.
+static const ImVec4 kChatWinBg   (0.118f, 0.129f, 0.161f, 1.0f);
+static const ImVec4 kChatSideBg  (0.094f, 0.102f, 0.129f, 1.0f);
+static const ImVec4 kChatSideSel (0.170f, 0.178f, 0.204f, 1.0f);   // side bg + the selected-row wash
+
+// Truncate to fit maxW pixels with an ellipsis, never splitting a UTF-8 sequence.
+static std::string FitText(const std::string& s, float maxW) {
+    if (maxW <= 0.0f) return std::string();
+    if (ImGui::CalcTextSize(s.c_str()).x <= maxW) return s;
+    const char* ell = "\xE2\x80\xA6";
+    const float ew = ImGui::CalcTextSize(ell).x;
+    std::size_t n = s.size();
+    while (n > 0) {
+        --n;
+        while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) --n;
+        if (ImGui::CalcTextSize(s.c_str(), s.c_str() + n).x + ew <= maxW) break;
+    }
+    return s.substr(0, n) + ell;
+}
+
 // Conversation-list preview: "Photo" / "File: name" instead of raw URLs.
 static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
     ChatFileInfo fi;
@@ -2511,6 +2639,47 @@ static void DrawVoiceRecorderBar(float h, ImVec4 sendCol) {
     if (bin) FinishVoiceRecord(false);
     else if (send) FinishVoiceRecord(true);
 }
+// New-message chime: a soft two-note "ding" synthesized once (no sound files),
+// played on its own output device so it never interrupts a voice note.
+static void PlayChatChime() {
+    if (!g_chatSounds || !EnsureAudio()) return;
+    static SDL_AudioDeviceID dev = 0;
+    static std::vector<Sint16> pcm;
+    static Uint32 lastAt = 0;
+    if (SDL_GetTicks() - lastAt < 1200 && lastAt) return;   // a burst of messages = one chime
+    lastAt = SDL_GetTicks();
+    const int rate = 22050;
+    if (pcm.empty()) {
+        const float notes[2] = {880.0f, 1318.5f};             // A5 -> E6
+        for (int n = 0; n < 2; ++n) {
+            const int len = (int)(rate * (n ? 0.22f : 0.09f));
+            for (int i = 0; i < len; ++i) {
+                float t = (float)i / rate;
+                float env = std::min(1.0f, t * 400.0f) * std::exp(-t * (n ? 14.0f : 22.0f));
+                float v = std::sin(6.2831853f * notes[n] * t) + 0.25f * std::sin(6.2831853f * notes[n] * 2.0f * t);
+                pcm.push_back((Sint16)(v * env * 5200.0f));
+            }
+        }
+    }
+    if (!dev) {
+        SDL_AudioSpec want{}, have{};
+        want.freq = rate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = 512;
+        dev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+        if (!dev) return;
+        SDL_PauseAudioDevice(dev, 0);
+    }
+    SDL_ClearQueuedAudio(dev);
+    SDL_QueueAudio(dev, pcm.data(), (Uint32)(pcm.size() * sizeof(Sint16)));
+}
+
+// Drag & drop target: DrawChatWindow publishes its rectangle and the open
+// conversation each frame; the main loop's SDL_DROPFILE handler sends a file
+// dropped inside it to that chat.
+static bool        g_chatDropOk = false;
+static ImVec2      g_chatDropMin, g_chatDropMax;
+static std::string g_chatDropUid;
+static long        g_chatDropGroup = 0;
+
 // Round mic button that stands in for Send while the composer is empty.
 static void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const std::string& toUid, long toGroup) {
     auto brighten = [](ImVec4 c, float k) { return ImVec4(std::min(1.0f, c.x * k), std::min(1.0f, c.y * k), std::min(1.0f, c.z * k), 1.0f); };
@@ -2893,8 +3062,10 @@ static void DrawGroupConversation(
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(2);
     if ((enter || sendBtn) && gInput[0]) {
-        if (gEditId) { if (dm.EditGroup(gEditId, gInput)) { gEditId = 0; gInput[0] = '\0'; g_chatForceLog = true; } }
+        if (gEditId) { if (dm.EditGroup(gEditId, gInput)) { gEditId = 0; gInput[0] = '\0'; g_chatForceLog = true; } else Toast("Couldn't save the edit", 2); }
         else if (dm.SendGroup(gid, gInput, gReplyTo)) { gInput[0] = '\0'; gReplyTo = 0; g_chatForceLog = true; }
+        else Toast("Message not sent \xE2\x80\x94 check your connection", 2);
+        gRefocus = true;   // Enter deactivates a single-line input: keep typing without clicking
     }
 }
 
@@ -3019,6 +3190,22 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     for (int i = 0; i < 160; ++i) g_recLevels.push_back(std::max(0.05f, std::fabs(std::sin(i * 0.37f) * std::sin(i * 0.11f + 0.4f))));
                 }
             }
+            {   // Sidebar sample: friends, DM previews, a group, a draft, pinned + muted chats.
+                auto fr = [&](const char* id, const char* nm, bool on) { okay::Friend f; f.id = id; f.username = nm; f.status = "accepted"; f.online = on; friends.push_back(f); };
+                fr("demo-uid", "Alex Rivera", true); fr("u-maya", "Maya Chen", true); fr("u-jon", "Jonas Berg", false);
+                fr("u-priya", "Priya Natarajan", true); fr("u-leo", "Leo Martins", false); fr("u-sam", "Sam Okafor", false);
+                auto cv = [&](const char* uid, const char* body, long ago, long id, bool mine) {
+                    okay::Messages::ConversationPreview c; c.uid = uid; c.lastBody = body; c.when = tt - ago; c.lastId = id; c.lastMine = mine; convs.push_back(c); };
+                cv("demo-uid", "sure, ping me when you're free", 460, 6, true);
+                cv("u-maya", "Pushed the new tileset, can you check the collision layer?", 300, 40, false);
+                cv("u-jon", "[Voice] 0:12 https://example.com/v.wav", 3600 * 5, 22, false);
+                cv("u-priya", "haha that boss fight is brutal", 86400 * 2, 15, true);
+                okay::Messages::GroupConvo g; g.id = 7; g.title = "Game Jam Team"; g.members = 5; g.lastSender = "Maya";
+                g.lastBody = "Build is up on itch, 3 hours left!"; g.when = tt - 180; g.lastId = 90; groups.push_back(g);
+                g_pinnedChats.insert("g:7");
+                g_mutedChats.insert("u-jon");
+                drafts["u-priya"] = "I'll send you the save file tonight";
+            }
             if (std::getenv("OKAY_CHAT_DEMO_MEDIA")) openMedia = true;
             peerRead = 4;   // 1..4 read (blue ticks), 6 delivered (grey ticks)
             // Showcase per-chat extras: theme colour, nickname, a starred message.
@@ -3033,8 +3220,40 @@ void DrawChatWindow(okay::account::AccountService& account) {
     }
     if (!kChatDemo) ImGui::SetNextWindowSize(ImVec2(720, 500), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(FLT_MAX, FLT_MAX));
-    if (ImGui::Begin("Chat", &g_chatWinOpen)) {
+    // The chat window wears its own slate palette (dark themes only); popped
+    // when this function returns, after End().
+    struct ChatStyleScope {
+        int n = 0;
+        ~ChatStyleScope() { if (n) ImGui::PopStyleColor(n); }
+    } chatStyle;
+    if (g_themeIndex != 2) {
+        const ImVec4 title(0.082f, 0.090f, 0.114f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, kChatWinBg);
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, title);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, title);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, title);
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1, 1, 1, 0.08f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.22f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.29f, 0.36f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.19f, 0.21f, 0.27f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.130f, 0.142f, 0.178f, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.08f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.92f, 0.96f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(0.55f, 0.59f, 0.67f, 1.0f));
+        chatStyle.n = 13;
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));   // the list/thread manage their own padding
+    const bool chatOpen = ImGui::Begin("Chat", &g_chatWinOpen, ImGuiWindowFlags_NoCollapse);
+    ImGui::PopStyleVar();
+    g_chatDropOk = chatOpen && (account.IsLoggedIn() || kChatDemo);
+    g_chatDropMin = ImGui::GetWindowPos();
+    g_chatDropMax = ImVec2(g_chatDropMin.x + ImGui::GetWindowWidth(), g_chatDropMin.y + ImGui::GetWindowHeight());
+    g_chatDropUid = g_chatSelGroup > 0 ? std::string() : selUid;
+    g_chatDropGroup = g_chatSelGroup;
+    if (chatOpen) {
         if (!account.IsLoggedIn() && !kChatDemo) {
+            ImGui::SetCursorPos(ImVec2(20, 40));
             ImGui::TextDisabled("Sign in to chat with friends.");
             ImGui::End(); return;
         }
@@ -3042,29 +3261,103 @@ void DrawChatWindow(okay::account::AccountService& account) {
         Uint32 now = SDL_GetTicks();
         // Friends + conversations come from the background chat poller (no UI block).
         (void)friendsNext; (void)convsNext;
-        if (g_chatMutex) {
+        bool chatNewsCheck = false;
+        if (g_chatMutex && !kChatDemo) {
             SDL_LockMutex(g_chatMutex);
             if (g_chatFriReady)  { friends = g_chatFriends; g_chatFriReady = false; }
-            if (g_chatConvReady) { convs   = g_chatConvs;   g_chatConvReady = false; }
-            if (g_chatGroupsReady) { groups = g_chatGroups; g_chatGroupsReady = false; }
+            if (g_chatConvReady) { convs   = g_chatConvs;   g_chatConvReady = false; chatNewsCheck = true; }
+            if (g_chatGroupsReady) { groups = g_chatGroups; g_chatGroupsReady = false; chatNewsCheck = true; }
             if (g_chatGLogReady) { glog = g_chatGLog; greacts = g_chatGReacts; gmyreacts = g_chatGMyReacts; g_chatGLogReady = false; }
             SDL_UnlockMutex(g_chatMutex);
         }
 
+        // Chime when a chat gets a new incoming message (not muted/blocked, and
+        // not the conversation you're already looking at).
+        if (chatNewsCheck) {
+            static std::map<std::string, long> lastIds;
+            static bool primed = false;
+            const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+            const std::string me = account.CurrentSession().username;
+            bool ding = false;
+            for (const auto& c : convs) {
+                long& prev = lastIds[c.uid];
+                if (primed && c.lastId > prev && !c.lastMine && !g_mutedChats.count(c.uid) && !g_blockedUsers.count(c.uid)
+                    && !(focused && g_chatSelGroup == 0 && c.uid == selUid)) ding = true;
+                prev = std::max(prev, c.lastId);
+            }
+            for (const auto& gc : groups) {
+                std::string key = "g:" + std::to_string(gc.id);
+                long& prev = lastIds[key];
+                if (primed && gc.lastId > prev && gc.lastSender != me && !g_mutedChats.count(key)
+                    && !(focused && g_chatSelGroup == gc.id)) ding = true;
+                prev = std::max(prev, gc.lastId);
+            }
+            primed = true;
+            if (ding) PlayChatChime();
+        }
         // Index friends by uid for names/avatars/presence.
         std::map<std::string, const okay::Friend*> fById;
         for (const auto& f : friends) fById[f.id] = &f;
 
-        // ---- Left: conversation list (Messenger-style rows) -------------------
-        // The window shrinks the sidebar on narrow widths so the thread stays usable.
-        float listW = ImGui::GetContentRegionAvail().x < 560 ? 158.0f : 216.0f;
-        ImGui::BeginChild("##chatlist", ImVec2(listW, 0), true);
-        // New-chat button + search.
-        ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-        if (ImGui::Button("+ New message", ImVec2(-1, 0))) ImGui::OpenPopup("##newchat");
-        ImGui::PopStyleColor();
+        // ---- Left: conversation list (Messenger-style) -------------------------
+        // A "Chats" header with compose / new-group buttons, a search pill,
+        // All / Unread / Groups chips, then ONE list of DMs and groups sorted by
+        // recency (pinned first): avatar + presence, name, time, a preview (or
+        // the unsent draft), and unread / muted / pinned markers.
+        static int  convTab = 0;          // 0 All, 1 Unread, 2 Groups
+        static bool showArchived = false;
+        float listW = ImGui::GetContentRegionAvail().x < 640 ? 214.0f : 280.0f;
+        const ImU32 cText   = IM_COL32(232, 236, 244, 255);
+        const ImU32 cDim    = IM_COL32(150, 158, 175, 255);
+        const ImU32 cFaint  = IM_COL32(118, 126, 142, 255);
+        const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, kChatSideBg);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
+        ImGui::BeginChild("##chatlist", ImVec2(listW, 0), ImGuiChildFlags_AlwaysUseWindowPadding,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        {   // Header: title + round icon buttons.
+            ImVec2 hp = ImGui::GetCursorScreenPos();
+            float hw = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorScreenPos(ImVec2(hp.x + 4, hp.y));
+            ImGui::SetWindowFontScale(1.30f);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(cText));
+            ImGui::TextUnformatted("Chats");
+            ImGui::PopStyleColor();
+            ImGui::SetWindowFontScale(1.0f);
+            const float th = ImGui::GetItemRectSize().y, B = 30.0f;
+            auto iconBtn = [&](const char* id, ImVec2 p, int kind, const char* tip) -> bool {
+                ImGui::SetCursorScreenPos(p);
+                bool c = ImGui::InvisibleButton(id, ImVec2(B, B));
+                bool h = ImGui::IsItemHovered();
+                ImVec2 cc(p.x + B * 0.5f, p.y + B * 0.5f);
+                dl->AddCircleFilled(cc, B * 0.5f, h ? IM_COL32(255, 255, 255, 36) : IM_COL32(255, 255, 255, 16), 28);
+                ImU32 ic = IM_COL32(232, 236, 244, 255);
+                if (kind == 0) {   // compose: open square + pencil
+                    dl->PathLineTo(ImVec2(cc.x + 0.5f, cc.y - 6.0f)); dl->PathLineTo(ImVec2(cc.x - 6.5f, cc.y - 6.0f));
+                    dl->PathLineTo(ImVec2(cc.x - 6.5f, cc.y + 6.5f)); dl->PathLineTo(ImVec2(cc.x + 6.0f, cc.y + 6.5f));
+                    dl->PathLineTo(ImVec2(cc.x + 6.0f, cc.y - 0.5f));
+                    dl->PathStroke(ic, 0, 1.5f);
+                    dl->AddLine(ImVec2(cc.x - 2.0f, cc.y + 2.0f), ImVec2(cc.x + 6.5f, cc.y - 6.5f), ic, 2.4f);
+                } else {           // new group: person + plus
+                    DrawNavIcon(dl, 3, ImVec2(cc.x - 2.0f, cc.y + 0.5f), ic);
+                    dl->AddLine(ImVec2(cc.x + 4.0f, cc.y - 4.0f), ImVec2(cc.x + 9.0f, cc.y - 4.0f), ic, 1.6f);
+                    dl->AddLine(ImVec2(cc.x + 6.5f, cc.y - 6.5f), ImVec2(cc.x + 6.5f, cc.y - 1.5f), ic, 1.6f);
+                }
+                if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", tip); }
+                return c;
+            };
+            float by = hp.y + (th - B) * 0.5f;
+            if (iconBtn("##newgrp", ImVec2(hp.x + hw - B, by), 1, "New group")) {
+                showNewGroup = true; newGroupPick.clear(); newGroupName[0] = '\0';
+            }
+            if (iconBtn("##newmsg", ImVec2(hp.x + hw - B * 2 - 6, by), 0, "New message"))
+                ImGui::OpenPopup("##newchat");
+            ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + std::max(th, B) + 10));
+        }
         if (ImGui::BeginPopup("##newchat")) {
-            ImGui::TextDisabled("Start a chat with...");
+            ImGui::TextDisabled("New message to\xE2\x80\xA6");
             ImGui::Separator();
             int shownF = 0;
             for (const auto& f : friends) {
@@ -3080,152 +3373,282 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (shownF == 0) ImGui::TextDisabled("Add friends first.");
             ImGui::EndPopup();
         }
-        // New group button opens the multi-select create dialog.
-        if (ImGui::Button("+ New group", ImVec2(-1, 0))) {
-            showNewGroup = true; newGroupPick.clear(); newGroupName[0] = '\0';
+        {   // Search pill with a magnifier.
+            ImVec2 sp = ImGui::GetCursorScreenPos();
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(30, 7));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1, 1, 1, 0.065f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(1, 1, 1, 0.09f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(1, 1, 1, 0.11f));
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##convfilter", "Search chats", convFilter, sizeof(convFilter));
+            ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar(2);
+            float fh = ImGui::GetItemRectSize().y;
+            ImVec2 mc(sp.x + 15.0f, sp.y + fh * 0.5f - 1.0f);
+            dl->AddCircle(mc, 4.6f, cDim, 16, 1.5f);
+            dl->AddLine(ImVec2(mc.x + 3.4f, mc.y + 3.4f), ImVec2(mc.x + 6.8f, mc.y + 6.8f), cDim, 1.8f);
         }
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##convfilter", "Search chats", convFilter, sizeof(convFilter));
-        ImGui::Spacing();
+        {   // Filter chips.
+            ImGui::Dummy(ImVec2(0, 2));
+            const char* chips[] = {"All", "Unread", "Groups"};
+            ImVec2 cp = ImGui::GetCursorScreenPos();
+            float x = cp.x, ch = ImGui::GetTextLineHeight() + 9.0f;
+            for (int k = 0; k < 3; ++k) {
+                ImVec2 ts = ImGui::CalcTextSize(chips[k]);
+                float cw = ts.x + 24.0f;
+                ImGui::SetCursorScreenPos(ImVec2(x, cp.y));
+                ImGui::PushID(k);
+                if (ImGui::InvisibleButton("##chip", ImVec2(cw, ch))) convTab = k;
+                bool h = ImGui::IsItemHovered();
+                ImGui::PopID();
+                bool on = convTab == k;
+                dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cw, cp.y + ch),
+                                  on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f))
+                                     : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 10)), ch * 0.5f);
+                dl->AddText(ImVec2(x + 12.0f, cp.y + (ch - ts.y) * 0.5f), on ? ImGui::GetColorU32(accLt) : cDim, chips[k]);
+                if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                x += cw + 6.0f;
+            }
+            ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + 8.0f));
+        }
 
-        // Merge: conversations (most-recent first) then accepted friends with no
-        // conversation yet, so you can always start one.
-        struct Row { std::string uid, name, avatar, preview; long when=0, lastId=0; bool mine=false, online=false; };
+        // ---- Build one list: DM conversations + groups, then friends to start.
+        struct Row {
+            std::string key, uid, name, avatar, preview;
+            long gid = 0, when = 0, lastId = 0;
+            int members = 0;
+            bool mine = false, online = false, unread = false, starter = false;
+        };
         std::vector<Row> rows;
         std::set<std::string> have;
         for (const auto& c : convs) {
-            Row r; r.uid = c.uid; r.lastId = c.lastId; r.when = c.when; r.mine = c.lastMine;
-            r.preview = (c.lastMine ? "You: " : "") + ChatPreviewSmart(c.lastBody, 26);
+            Row r; r.key = r.uid = c.uid; r.lastId = c.lastId; r.when = c.when; r.mine = c.lastMine;
+            r.preview = (c.lastMine ? "You: " : "") + ChatPreviewSmart(c.lastBody, 90);
             if (auto it = fById.find(c.uid); it != fById.end()) {
                 r.name = it->second->display.empty() ? it->second->username : it->second->display;
                 r.avatar = it->second->avatar; r.online = it->second->online;
             } else r.name = (c.uid == selUid) ? selName : ChatPreview(c.uid, 10);
+            bool open = g_chatSelGroup == 0 && c.uid == selUid;
+            r.unread = r.lastId > 0 && !r.mine && r.lastId > seenId[r.uid] && !open && !g_blockedUsers.count(r.uid);
             rows.push_back(r); have.insert(c.uid);
+        }
+        for (const auto& gc : groups) {
+            Row r; r.gid = gc.id; r.key = "g:" + std::to_string(gc.id); r.when = gc.when; r.lastId = gc.lastId;
+            r.members = gc.members;
+            r.name = gc.title.empty() ? ("Group (" + std::to_string(gc.members) + ")") : gc.title;
+            r.preview = gc.lastBody.empty() ? std::string("No messages yet")
+                      : (gc.lastSender.empty() ? "" : gc.lastSender + ": ") + ChatPreviewSmart(gc.lastBody, 90);
+            r.unread = gc.lastId > 0 && gc.lastId > std::max(gSeenId[gc.id], gc.lastRead) && g_chatSelGroup != gc.id;
+            rows.push_back(r);
         }
         for (const auto& f : friends) {
             if (f.status != "accepted" || have.count(f.id)) continue;
-            Row r; r.uid = f.id; r.name = f.display.empty() ? f.username : f.display;
-            r.avatar = f.avatar; r.online = f.online; r.preview = "Tap to chat";
+            Row r; r.key = r.uid = f.id; r.name = f.display.empty() ? f.username : f.display;
+            r.avatar = f.avatar; r.online = f.online; r.preview = "Say hi \xF0\x9F\x91\x8B"; r.starter = true;
             rows.push_back(r);
         }
         // Private nicknames (set from the conversation menu) replace display names.
         for (auto& r : rows)
-            if (auto nk = g_friendNicks.find(r.uid); nk != g_friendNicks.end() && !nk->second.empty()) r.name = nk->second;
-        // Pinned conversations float to the top (stable: keeps recency order).
+            if (!r.gid) if (auto nk = g_friendNicks.find(r.uid); nk != g_friendNicks.end() && !nk->second.empty()) r.name = nk->second;
+        // Pinned first, then most recent; people you haven't talked to yet last.
         std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-            return g_pinnedChats.count(a.uid) > g_pinnedChats.count(b.uid);
+            if (a.starter != b.starter) return !a.starter;
+            bool pa = g_pinnedChats.count(a.key) != 0, pb = g_pinnedChats.count(b.key) != 0;
+            if (pa != pb) return pa;
+            return a.when > b.when;
         });
         std::string filt = convFilter;
         for (auto& ch : filt) ch = (char)std::tolower((unsigned char)ch);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-
-        // One conversation row. Returns true if it was shown (passed the filter).
-        auto drawConvRow = [&](const Row& r) -> bool {
+        auto passes = [&](const Row& r) {
+            if (convTab == 1 && !r.unread) return false;
+            if (convTab == 2 && !r.gid) return false;
             if (!filt.empty()) {
                 std::string low = r.name; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
                 if (low.find(filt) == std::string::npos) return false;
             }
-            bool pinned = g_pinnedChats.count(r.uid) != 0;
-            bool muted  = g_mutedChats.count(r.uid) != 0;
-            bool archived = g_archivedChats.count(r.uid) != 0;
-            ImGui::PushID(r.uid.c_str());
-            bool sel = (r.uid == selUid);
-            bool blockedRow = g_blockedUsers.count(r.uid) != 0;
-            bool unread = r.lastId > 0 && !r.mine && r.lastId > seenId[r.uid] && !sel && !muted && !blockedRow;
-            ImVec2 rp = ImGui::GetCursorScreenPos();
-            float rowH = 46.0f;
-            if (ImGui::Selectable("##row", sel, 0, ImVec2(0, rowH))) openConv(r.uid, r.name, r.avatar, r.online);
-            // Right-click: pin / mute / archive / mark read.
-            if (ImGui::BeginPopupContextItem("##convctx")) {
-                if (ImGui::MenuItem(pinned ? "Unpin" : "Pin to top")) { if (pinned) g_pinnedChats.erase(r.uid); else g_pinnedChats.insert(r.uid); SavePrefs(); }
-                if (ImGui::MenuItem(muted ? "Unmute" : "Mute")) { if (muted) g_mutedChats.erase(r.uid); else g_mutedChats.insert(r.uid); SavePrefs(); }
-                if (ImGui::MenuItem(archived ? "Unarchive" : "Archive")) { if (archived) g_archivedChats.erase(r.uid); else g_archivedChats.insert(r.uid); SavePrefs(); }
-                if (unread && ImGui::MenuItem("Mark as read")) seenId[r.uid] = r.lastId;
-                ImGui::EndPopup();
-            }
-            ImVec2 av(rp.x + 4, rp.y + 6); float as = 34.0f;
-            SDL_Texture* tex = AvatarTexture(r.avatar);
-            if (tex) dl->AddImageRounded((ImTextureID)(intptr_t)tex, av, ImVec2(av.x+as, av.y+as), ImVec2(0,0), ImVec2(1,1), IM_COL32_WHITE, as*0.5f);
-            else {
-                ImVec4 col = NameColor(r.name);
-                dl->AddCircleFilled(ImVec2(av.x+as*0.5f, av.y+as*0.5f), as*0.5f, ImGui::GetColorU32(ImVec4(col.x*0.55f,col.y*0.55f,col.z*0.55f,1)), 24);
-                char init[2] = { r.name.empty()?'?':(char)std::toupper((unsigned char)r.name[0]), 0 };
-                ImVec2 tsz = ImGui::CalcTextSize(init);
-                dl->AddText(ImVec2(av.x+as*0.5f-tsz.x*0.5f, av.y+as*0.5f-tsz.y*0.5f), IM_COL32(255,255,255,255), init);
-            }
-            if (r.online) dl->AddCircleFilled(ImVec2(av.x+as-3, av.y+as-3), 4.5f, IM_COL32(120,205,110,255), 16),
-                          dl->AddCircle(ImVec2(av.x+as-3, av.y+as-3), 5.0f, IM_COL32(30,34,42,255), 16, 1.6f);
-            float tx = rp.x + 4 + as + 8;
-            // Unread conversations get a brighter name; a relative timestamp sits
-            // right-aligned on the name line (Messenger / Discord style).
-            ImU32 nameCol = ImGui::GetColorU32(unread ? ImVec4(0.97f, 0.98f, 1.00f, 1.0f)
-                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Text));
-            dl->AddText(ImVec2(tx, rp.y + 6), nameCol, ChatPreview(r.name, 13).c_str());
-            std::string rt = RelTime(r.when);
-            if (!rt.empty()) {
-                float rtw = ImGui::CalcTextSize(rt.c_str()).x;
-                dl->AddText(ImVec2(rp.x + listW - 12 - rtw, rp.y + 7),
-                            ImGui::GetColorU32(ImGuiCol_TextDisabled), rt.c_str());
-            }
-            dl->AddText(ImVec2(tx, rp.y + 24),
-                        ImGui::GetColorU32(unread ? ImGuiCol_Text : ImGuiCol_TextDisabled),
-                        ChatPreview(r.preview, 20).c_str());
-            // Right-side markers: unread dot (preview line) + mute.
-            float mx = rp.x + listW - 14;
-            if (unread) { dl->AddCircleFilled(ImVec2(mx, rp.y + 30), 4.5f, ImGui::GetColorU32(kAccent), 16); }
-            if (muted)  { DrawEmoji(dl, ImVec2(mx, rp.y + 30), 12, 2); }   // small marker
-            if (pinned) { dl->AddCircleFilled(ImVec2(rp.x + 10, rp.y + 10), 3.0f, ImGui::GetColorU32(kAccent), 10); }
-            ImGui::PopID();
             return true;
         };
 
-        int shown = 0, archivedCount = 0;
+        ImGui::BeginChild("##convrows", ImVec2(0, 0), false);
+        ImDrawList* rdl = ImGui::GetWindowDrawList();
+        auto drawRow = [&](const Row& r) {
+            const bool pinned = g_pinnedChats.count(r.key) != 0;
+            const bool muted  = g_mutedChats.count(r.key) != 0;
+            const bool archived = !r.gid && g_archivedChats.count(r.uid) != 0;
+            const bool sel = r.gid ? g_chatSelGroup == r.gid : (g_chatSelGroup == 0 && r.uid == selUid);
+            ImGui::PushID(r.key.c_str());
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            const float w = ImGui::GetContentRegionAvail().x, rowH = 62.0f, A = 44.0f;
+            bool click = ImGui::InvisibleButton("##row", ImVec2(w, rowH));
+            bool hov = ImGui::IsItemHovered();
+            if (ImGui::BeginPopupContextItem("##convctx")) {   // right-click actions
+                if (ImGui::MenuItem(pinned ? "Unpin" : "Pin to top")) { if (pinned) g_pinnedChats.erase(r.key); else g_pinnedChats.insert(r.key); SavePrefs(); }
+                if (ImGui::MenuItem(muted ? "Unmute" : "Mute notifications")) { if (muted) g_mutedChats.erase(r.key); else g_mutedChats.insert(r.key); SavePrefs(); }
+                if (!r.gid && !r.starter && ImGui::MenuItem(archived ? "Unarchive" : "Archive")) {
+                    if (archived) g_archivedChats.erase(r.uid); else g_archivedChats.insert(r.uid); SavePrefs();
+                }
+                if (r.unread && ImGui::MenuItem("Mark as read")) { if (r.gid) gSeenId[r.gid] = r.lastId; else seenId[r.uid] = r.lastId; }
+                ImGui::EndPopup();
+            }
+            if (click) { if (r.gid) openGroup(r.gid); else openConv(r.uid, r.name, r.avatar, r.online); }
+            if (sel || hov) rdl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), sel ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 11), 10.0f);
+            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+            // Avatar (groups: two overlapping discs) + presence dot.
+            ImVec2 ac(rp.x + 8.0f + A * 0.5f, rp.y + rowH * 0.5f);
+            if (r.gid) {
+                ImVec4 nc = NameColor(r.name);
+                rdl->AddCircleFilled(ImVec2(ac.x - 6, ac.y - 6), A * 0.34f, ImGui::GetColorU32(kAccentDim), 24);
+                rdl->AddCircleFilled(ImVec2(ac.x + 6, ac.y + 6), A * 0.34f + 2.5f, ImGui::GetColorU32(kChatSideBg), 24);
+                rdl->AddCircleFilled(ImVec2(ac.x + 6, ac.y + 6), A * 0.34f, ImGui::GetColorU32(ImVec4(nc.x * 0.6f, nc.y * 0.6f, nc.z * 0.6f, 1.0f)), 24);
+                char init[2] = {r.name.empty() ? '#' : (char)std::toupper((unsigned char)r.name[0]), 0};
+                ImVec2 ts = ImGui::CalcTextSize(init);
+                rdl->AddText(ImVec2(ac.x + 6 - ts.x * 0.5f, ac.y + 6 - ts.y * 0.5f), IM_COL32_WHITE, init);
+            } else {
+                SDL_Texture* tex = AvatarTexture(r.avatar);
+                if (tex) rdl->AddImageRounded((ImTextureID)(intptr_t)tex, ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f),
+                                              ImVec2(ac.x + A * 0.5f, ac.y + A * 0.5f), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
+                else {
+                    ImVec4 nc = NameColor(r.name);
+                    rdl->AddCircleFilled(ac, A * 0.5f, ImGui::GetColorU32(ImVec4(nc.x * 0.55f, nc.y * 0.55f, nc.z * 0.55f, 1)), 28);
+                    char init[2] = {r.name.empty() ? '?' : (char)std::toupper((unsigned char)r.name[0]), 0};
+                    ImGui::SetWindowFontScale(1.15f);
+                    ImVec2 ts = ImGui::CalcTextSize(init);
+                    rdl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(ac.x - ts.x * 0.5f, ac.y - ts.y * 0.5f), IM_COL32_WHITE, init);
+                    ImGui::SetWindowFontScale(1.0f);
+                }
+                if (r.online && !g_blockedUsers.count(r.uid)) {
+                    ImVec2 pd(ac.x + A * 0.35f, ac.y + A * 0.35f);
+                    rdl->AddCircleFilled(pd, 7.0f, ImGui::GetColorU32(sel ? kChatSideSel : kChatSideBg), 16);
+                    rdl->AddCircleFilled(pd, 5.0f, IM_COL32(76, 200, 110, 255), 16);
+                }
+            }
+
+            // Text column: name + time, then preview / draft + markers.
+            const float tx = rp.x + 8.0f + A + 12.0f, right = rp.x + w - 10.0f;
+            const float y1 = rp.y + 11.0f, y2 = rp.y + 33.0f;
+            std::string rt = r.starter ? std::string() : RelTime(r.when);
+            if (rt.size() > 4 && rt.compare(rt.size() - 4, 4, " ago") == 0) rt.resize(rt.size() - 4);   // "5m", "2h", "3d"
+            else if (rt == "just now") rt = "now";
+            float rtw = rt.empty() ? 0.0f : ImGui::CalcTextSize(rt.c_str()).x;
+            if (!rt.empty()) rdl->AddText(ImVec2(right - rtw, y1 + 1), r.unread && !muted ? ImGui::GetColorU32(accLt) : cFaint, rt.c_str());
+            std::string nm = FitText(r.name, right - tx - rtw - 8.0f);
+            rdl->AddText(ImVec2(tx, y1), cText, nm.c_str());
+            if (r.unread) rdl->AddText(ImVec2(tx + 0.6f, y1), cText, nm.c_str());   // faux-bold when unread
+            // Markers on the preview line (right to left): unread dot, muted, pinned.
+            float mx = right;
+            if (r.unread) {
+                ImU32 uc = muted ? IM_COL32(120, 128, 145, 255) : ImGui::GetColorU32(kAccent);
+                rdl->AddCircleFilled(ImVec2(mx - 5.0f, y2 + 8.0f), 5.0f, uc, 16);
+                mx -= 16.0f;
+            }
+            if (muted) {   // bell with a slash
+                ImVec2 bc(mx - 5.0f, y2 + 8.0f);
+                rdl->PathArcTo(ImVec2(bc.x, bc.y - 0.5f), 3.4f, 3.14159f, 6.28318f, 8);
+                rdl->PathLineTo(ImVec2(bc.x + 3.4f, bc.y + 2.6f)); rdl->PathLineTo(ImVec2(bc.x - 3.4f, bc.y + 2.6f));
+                rdl->PathStroke(cFaint, ImDrawFlags_Closed, 1.3f);
+                rdl->AddLine(ImVec2(bc.x - 5.0f, bc.y - 5.0f), ImVec2(bc.x + 5.0f, bc.y + 5.0f), cFaint, 1.4f);
+                mx -= 16.0f;
+            }
+            if (pinned) {   // push-pin
+                ImVec2 pc(mx - 5.0f, y2 + 6.0f);
+                rdl->AddCircleFilled(pc, 2.8f, cFaint, 10);
+                rdl->AddLine(ImVec2(pc.x - 1.0f, pc.y + 1.0f), ImVec2(pc.x - 5.0f, pc.y + 5.0f), cFaint, 1.5f);
+                mx -= 14.0f;
+            }
+            const float pw = mx - tx - 6.0f;
+            auto dr = r.gid ? drafts.end() : drafts.find(r.uid);
+            if (dr != drafts.end() && !dr->second.empty() && !sel) {
+                const char* lbl = "Draft: ";
+                float lw = ImGui::CalcTextSize(lbl).x;
+                rdl->AddText(ImVec2(tx, y2), IM_COL32(240, 120, 120, 255), lbl);
+                rdl->AddText(ImVec2(tx + lw, y2), cDim, FitText(ChatPreview(dr->second, 90), pw - lw).c_str());
+            } else if (sel && !r.gid && peerTyping) {
+                rdl->AddText(ImVec2(tx, y2), ImGui::GetColorU32(accLt), "typing\xE2\x80\xA6");
+            } else {
+                rdl->AddText(ImVec2(tx, y2), r.unread ? IM_COL32(214, 220, 232, 255) : cDim, FitText(r.preview, pw).c_str());
+            }
+            ImGui::PopID();
+        };
+
+        int shown = 0, archivedCount = 0, starters = 0;
         for (const auto& r : rows) {
-            if (g_archivedChats.count(r.uid)) { ++archivedCount; continue; }
-            if (drawConvRow(r)) ++shown;
+            if (!r.gid && !r.starter && g_archivedChats.count(r.uid)) { ++archivedCount; continue; }
+            if (r.starter) { ++starters; continue; }
+            if (!passes(r)) continue;
+            drawRow(r); ++shown;
         }
-        // Archived section (collapsed by default).
-        if (archivedCount > 0) {
-            ImGui::Spacing();
-            if (ImGui::CollapsingHeader(("Archived (" + std::to_string(archivedCount) + ")###arch").c_str())) {
-                for (const auto& r : rows) if (g_archivedChats.count(r.uid)) drawConvRow(r);
+        // Friends you haven't messaged yet (All tab only).
+        if (convTab == 0 && starters > 0) {
+            bool header = false;
+            for (const auto& r : rows) {
+                if (!r.starter || !passes(r)) continue;
+                if (!header) {
+                    header = true;
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
+                    ImGui::SetWindowFontScale(0.80f);
+                    ImGui::TextDisabled("START A CHAT");
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::Dummy(ImVec2(0, 2));
+                }
+                drawRow(r); ++shown;
             }
         }
-        // ---- Groups section ----------------------------------------------
-        if (!groups.empty()) {
-            ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
-            ImGui::TextUnformatted("GROUPS");
-            ImGui::PopStyleColor();
-            std::string gfilt = convFilter; for (auto& c : gfilt) c = (char)std::tolower((unsigned char)c);
-            for (const auto& gc : groups) {
-                std::string label = gc.title.empty() ? ("Group (" + std::to_string(gc.members) + ")") : gc.title;
-                if (!gfilt.empty()) { std::string low = label; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
-                                      if (low.find(gfilt) == std::string::npos) continue; }
-                bool gsel = (g_chatSelGroup == gc.id);
-                bool gunread = gc.lastId > 0 && gc.lastId > gSeenId[gc.id] && !gsel;
-                ImGui::PushID((int)(gc.id ^ 0x40000000));
-                ImVec2 rp = ImGui::GetCursorScreenPos();
-                if (ImGui::Selectable("##grow", gsel, 0, ImVec2(0, 46))) openGroup(gc.id);
-                ImDrawList* dl2 = ImGui::GetWindowDrawList();
-                float cy = rp.y + 23;
-                dl2->AddCircleFilled(ImVec2(rp.x + 15, cy - 4), 9, ImGui::GetColorU32(kAccentDim), 16);
-                dl2->AddCircleFilled(ImVec2(rp.x + 24, cy + 4), 9, IM_COL32(92, 102, 122, 255), 16);
-                dl2->AddText(ImVec2(rp.x + 42, rp.y + 6), ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
-                std::string prev = (gc.lastSender.empty() ? "" : gc.lastSender + ": ") + ChatPreviewSmart(gc.lastBody, 18);
-                dl2->AddText(ImVec2(rp.x + 42, rp.y + 24), ImGui::GetColorU32(ImGuiCol_TextDisabled), prev.c_str());
-                if (gunread) dl2->AddCircleFilled(ImVec2(rp.x + ImGui::GetContentRegionAvail().x - 8, cy), 4,
-                                                   ImGui::GetColorU32(kAccent), 12);
-                ImGui::PopID();
-            }
+        // Archived chats (collapsed behind one row).
+        if (archivedCount > 0 && convTab == 0) {
+            ImGui::Dummy(ImVec2(0, 4));
+            ImVec2 ap = ImGui::GetCursorScreenPos();
+            float aw = ImGui::GetContentRegionAvail().x, ah = 34.0f;
+            if (ImGui::InvisibleButton("##archrow", ImVec2(aw, ah))) showArchived = !showArchived;
+            bool ahov = ImGui::IsItemHovered();
+            if (ahov) rdl->AddRectFilled(ap, ImVec2(ap.x + aw, ap.y + ah), IM_COL32(255, 255, 255, 11), 8.0f);
+            ImVec2 bx(ap.x + 8.0f + 22.0f - 7.0f, ap.y + ah * 0.5f);   // archive box icon
+            rdl->AddRect(ImVec2(bx.x - 1, bx.y - 6), ImVec2(bx.x + 15, bx.y - 2), cDim, 1.5f, 0, 1.4f);
+            rdl->AddRect(ImVec2(bx.x + 1, bx.y - 2), ImVec2(bx.x + 13, bx.y + 7), cDim, 1.5f, 0, 1.4f);
+            rdl->AddLine(ImVec2(bx.x + 5, bx.y + 1.5f), ImVec2(bx.x + 9, bx.y + 1.5f), cDim, 1.4f);
+            char al[40]; std::snprintf(al, sizeof(al), "Archived  (%d)", archivedCount);
+            rdl->AddText(ImVec2(ap.x + 64.0f, ap.y + (ah - ImGui::GetTextLineHeight()) * 0.5f), cDim, al);
+            rdl->AddText(ImVec2(ap.x + aw - 18, ap.y + (ah - ImGui::GetTextLineHeight()) * 0.5f), cFaint, showArchived ? "\xE2\x80\x93" : "+");
+            if (showArchived)
+                for (const auto& r : rows)
+                    if (!r.gid && !r.starter && g_archivedChats.count(r.uid) && passes(r)) drawRow(r);
         }
-        if (shown == 0 && groups.empty())
-            ImGui::TextDisabled(convFilter[0] ? "No matches." : "Add friends to start chatting.");
-        ImGui::EndChild();
-        ImGui::SameLine();
+        if (shown == 0) {   // empty state
+            float aw = ImGui::GetContentRegionAvail().x;
+            ImGui::Dummy(ImVec2(0, 28));
+            ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 26);
+            rdl->AddCircleFilled(c, 26.0f, IM_COL32(255, 255, 255, 14), 32);
+            rdl->PathArcTo(c, 12.0f, 3.14159f * 0.80f, 3.14159f * 2.62f, 26);
+            rdl->PathLineTo(ImVec2(c.x - 12.0f, c.y + 12.0f));
+            rdl->PathStroke(cDim, ImDrawFlags_Closed, 2.0f);
+            ImGui::Dummy(ImVec2(0, 62));
+            auto centered = [&](const char* s, ImU32 col) {
+                float tw = ImGui::CalcTextSize(s).x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - tw) * 0.5f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(col));
+                ImGui::TextUnformatted(s);
+                ImGui::PopStyleColor();
+            };
+            if (convFilter[0]) centered("No chats match your search", cText);
+            else if (convTab == 1) { centered("You're all caught up", cText); centered("No unread chats.", cDim); }
+            else if (convTab == 2) { centered("No groups yet", cText); centered("Tap + to start one.", cDim); }
+            else { centered("No conversations yet", cText); centered("Add friends, then say hi.", cDim); }
+        }
+        ImGui::EndChild();   // ##convrows
+        ImGui::EndChild();   // ##chatlist
+        ImGui::PopStyleColor();
+        {   // hairline between the list and the thread
+            ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(b.x, a.y), ImVec2(b.x, b.y), IM_COL32(255, 255, 255, 14), 1.0f);
+        }
+        ImGui::SameLine(0, 0);
 
         // ---- Right: the selected conversation ---------------------------------
-        ImGui::BeginChild("##chatconv", ImVec2(0, 0), false);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
+        ImGui::BeginChild("##chatconv", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
         if (g_chatSelGroup > 0) {
             DrawGroupConversation(dm, groups, glog, greacts, gmyreacts, fById,
                                   gInput, gEditId, gReplyTo, gReplyName, gReplySnippet, gSeenId,
@@ -3524,6 +3947,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                               + cst.ItemSpacing.y * 2.0f + cst.WindowPadding.y + 4.0f
                               + (replyTo || editId ? ImGui::GetTextLineHeightWithSpacing() + 4.0f : 0.0f);
             bool scrolledUp = false; ImVec2 logRectMin, logRectMax;
+            {   // Composer grew/shrank (multi-line): stay pinned to the newest message.
+                static int prevClines = 1;
+                if (clines != prevClines) { prevClines = clines; wantScrollBottom = true; }
+            }
             // AlwaysVerticalScrollbar reserves the scrollbar space permanently so the
             // content width is stable — otherwise the right-aligned ("mine") bubbles
             // jump sideways whenever the scrollbar appears/disappears on resize.
@@ -4012,9 +4439,18 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
             const bool micMode = !input[0] && !editId && !g_attBusy;   // empty composer -> mic (WhatsApp)
             if (!micMode && (ImGui::Button(editId ? "Save" : "Send", ImVec2(58, inH)) || send) && input[0]) {
-                if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; g_chatForceLog = true; } }
+                if (kChatDemo) {   // demo: echo locally (no network)
+                    okay::DirectMessage dmm; dmm.id = log.empty() ? 1 : log.back().id + 1; dmm.body = input;
+                    dmm.when = (long)time(nullptr); dmm.mine = true; dmm.replyTo = replyTo; log.push_back(dmm);
+                    input[0] = '\0'; replyTo = 0; wantScrollBottom = true;
+                }
+                else if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; g_chatForceLog = true; } else Toast("Couldn't save the edit", 2); }
                 else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; drafts.erase(selUid); g_chatForceLog = true; }
-                ImGui::SetKeyboardFocusHere(-1);
+                else Toast("Message not sent \xE2\x80\x94 check your connection", 2);
+                // Keep typing: refocus the message box (not the Send button, which
+                // SetKeyboardFocusHere(-1) would pick — that broke Enter-to-send
+                // after the first message).
+                focusComposer = true;
             }
             ImGui::PopStyleVar();
             ImGui::PopStyleColor(2);
@@ -4892,6 +5328,24 @@ int main(int argc, char** argv) {
             else if (e.type == SDL_DROPFILE && e.drop.file) {
                 std::string dropped = e.drop.file;
                 SDL_free(e.drop.file);
+                // Dropped onto the open chat window: send it to that conversation.
+                bool toChat = false;
+                if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {
+                    int gx = 0, gy = 0, wx = 0, wy = 0;
+                    SDL_GetGlobalMouseState(&gx, &gy);
+                    SDL_GetWindowPosition(window, &wx, &wy);
+                    float mx = (float)(gx - wx), my = (float)(gy - wy);
+                    toChat = mx >= g_chatDropMin.x && mx <= g_chatDropMax.x && my >= g_chatDropMin.y && my <= g_chatDropMax.y;
+                }
+                if (toChat) {
+                    std::error_code fec;
+                    auto fsz = fs::file_size(fs::path(dropped), fec);
+                    if (fec || fs::is_directory(dropped, fec)) Toast("Only files can be sent", 2);
+                    else if ((unsigned long long)fsz > kMaxChatUpload) Toast("Files are limited to 25 MB", 2);
+                    else if (g_attBusy) Toast("An upload is already in progress", 2);
+                    else { StartChatUpload(dropped, g_chatDropUid, g_chatDropGroup); Toast("Sending " + fs::path(dropped).filename().string(), 1); }
+                    continue;
+                }
                 std::string ext;
                 auto dot = dropped.rfind('.');
                 if (dot != std::string::npos) for (char ch : dropped.substr(dot)) ext += (char)std::tolower((unsigned char)ch);
@@ -4976,6 +5430,7 @@ int main(int argc, char** argv) {
                     g_friendRequests = fr;
                     g_newestDmId = newest;
                     if (unread > g_dmUnread && tab != 6) Toast("New message", 1);
+                    if (unread > g_dmUnread && !g_chatWinOpen) PlayChatChime();
                     g_dmUnread = unread;
                 }
             } else {
@@ -5287,397 +5742,312 @@ int main(int argc, char** argv) {
         // dark surface reads more like a real app and less "designed".)
 
         // ---- Left nav (collapsible to an icon-only rail) ----
-        const float kNavExpandedW = 224.0f, kNavCollapsedW = 58.0f;
+        // Unity Hub-style rail: a darker, borderless column with the logo and the
+        // collapse toggle on top, grouped rows (inset + rounded; the active one
+        // gets a soft fill, an accent bar and an accent icon), and notifications,
+        // settings and a profile card pinned to the bottom. The page sits flush
+        // beside it, separated by a single hairline.
+        static const char* kUiDemoUser = std::getenv("OKAY_UI_DEMO_USER");   // dev screenshot hook
+        const bool navSignedIn = account.IsLoggedIn() || kUiDemoUser;
+        const float kNavExpandedW = 232.0f, kNavCollapsedW = 64.0f;
         const float navW = g_navCollapsed ? kNavCollapsedW : kNavExpandedW;
-        ImGui::BeginChild("nav", ImVec2(navW, 0), true, ImGuiWindowFlags_NoScrollbar);
-        ImGui::Dummy(ImVec2(0, 6));
-        {   // App header: drawn OkaySpace logo mark (ringed planet + star on a
-            // navy tile) + product name / version (hidden when collapsed).
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
-                                 (g_navCollapsed ? (navW - 34.0f) * 0.5f - 4.0f : 8.0f));
-            ImVec2 lp = ImGui::GetCursorScreenPos();
+        const float navRowH = g_navCollapsed ? 40.0f : 36.0f;
+        const bool  navLight = (g_themeIndex == 2);
+        const ImVec4 wbg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+        const float  navK = navLight ? 0.955f : 0.78f;
+        const ImVec4 navBg(wbg.x * navK, wbg.y * navK, wbg.z * navK, 1.0f);
+        const ImU32 navHover  = navLight ? IM_COL32(0, 0, 0, 12) : IM_COL32(255, 255, 255, 11);
+        const ImU32 navSel    = navLight ? IM_COL32(0, 0, 0, 22) : IM_COL32(255, 255, 255, 21);
+        const ImU32 navTextHi = navLight ? IM_COL32(22, 24, 28, 255) : IM_COL32(244, 245, 247, 255);
+        const ImU32 navText   = ImGui::GetColorU32(ImGuiCol_Text, 0.86f);
+        const ImU32 navIcon   = ImGui::GetColorU32(ImGuiCol_Text, 0.62f);
+        const ImU32 navDivide = navLight ? IM_COL32(0, 0, 0, 22) : IM_COL32(255, 255, 255, 14);
+        const ImU32 navRed    = IM_COL32(222, 76, 76, 255);
+        const ImU32 navAccent = ImGui::GetColorU32(kAccent);
+
+        // One sidebar row: icon + label (+ count pill). Returns true on click.
+        auto navRow = [&](const char* id, const char* label, int icon, bool sel, int badge, ImU32 badgeCol) -> bool {
+            ImVec2 mn = ImGui::GetCursorScreenPos();
+            float w = ImGui::GetContentRegionAvail().x;
+            ImVec2 mx(mn.x + w, mn.y + navRowH);
+            bool click = ImGui::InvisibleButton(id, ImVec2(w, navRowH));
+            bool hov = ImGui::IsItemHovered();
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const float S = 34.0f;
+            if (sel || hov) dl->AddRectFilled(mn, mx, sel ? navSel : navHover, 7.0f);
+            if (sel) dl->AddRectFilled(ImVec2(mn.x, mn.y + 10), ImVec2(mn.x + 3, mx.y - 10), navAccent, 1.5f);
+            const float cy = mn.y + navRowH * 0.5f;
+            ImVec2 ic(g_navCollapsed ? mn.x + w * 0.5f : mn.x + 22.0f, cy);
+            DrawNavIcon(dl, icon, ic, sel ? navAccent : (hov ? navTextHi : navIcon));
+            if (!g_navCollapsed)
+                dl->AddText(ImVec2(mn.x + 42.0f, cy - ImGui::GetTextLineHeight() * 0.5f),
+                            (sel || hov) ? navTextHi : navText, label);
+            if (badge > 0) {
+                if (g_navCollapsed) {
+                    ImVec2 bc(ic.x + 9.0f, cy - 8.0f);
+                    dl->AddCircleFilled(bc, 5.5f, ImGui::GetColorU32(navBg), 12);
+                    dl->AddCircleFilled(bc, 4.0f, badgeCol, 12);
+                } else {
+                    char nb[8]; std::snprintf(nb, sizeof(nb), badge > 99 ? "99+" : "%d", badge);
+                    ImVec2 ts = ImGui::CalcTextSize(nb);
+                    float bw = std::max(20.0f, ts.x + 12.0f), bx = mx.x - bw - 8.0f;
+                    dl->AddRectFilled(ImVec2(bx, cy - 9.0f), ImVec2(bx + bw, cy + 9.0f), badgeCol, 9.0f);
+                    dl->AddText(ImVec2(bx + (bw - ts.x) * 0.5f, cy - ts.y * 0.5f), IM_COL32_WHITE, nb);
+                }
+            }
+            if (hov) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (g_navCollapsed) ImGui::SetTooltip("%s", label);
+            }
+            return click;
+        };
+        // Group label (expanded) or a short hairline (collapsed).
+        auto navSection = [&](const char* title) {
+            if (g_navCollapsed) {
+                ImGui::Dummy(ImVec2(0, 6));
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                float w = ImGui::GetContentRegionAvail().x;
+                ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + 12, p.y), ImVec2(p.x + w - 12, p.y), navDivide, 1.0f);
+                ImGui::Dummy(ImVec2(0, 7));
+                return;
+            }
+            ImGui::Dummy(ImVec2(0, 12));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 12);
+            ImGui::SetWindowFontScale(0.78f);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextUnformatted(title);
+            ImGui::PopStyleColor();
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::Dummy(ImVec2(0, 4));
+        };
+
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, navBg);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 14));
+        ImGui::BeginChild("nav", ImVec2(navW, 0), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+        ImGui::PopStyleVar();
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 2));
+        {   // ---- Header: logo mark + name/version, and the collapse toggle ----
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float S = 32.0f;
+            ImVec2 start = ImGui::GetCursorScreenPos();
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImVec2 lp(g_navCollapsed ? start.x + (avail - S) * 0.5f : start.x + 6.0f, start.y);
             ImVec2 br(lp.x + S, lp.y + S);
-            dl->AddRectFilledMultiColor(lp, br,
-                IM_COL32(40, 40, 44, 255), IM_COL32(40, 40, 44, 255),
-                IM_COL32(54, 54, 58, 255), IM_COL32(54, 54, 58, 255));
-            dl->AddRect(lp, br, IM_COL32(255, 255, 255, 24), 9.0f, 0, 1.0f);
-            // Clip the glyph to the rounded tile.
-            dl->PushClipRect(lp, br, true);
-            ImVec2 c(lp.x + S * 0.46f, lp.y + S * 0.52f);
-            ImU32 planet = IM_COL32(176, 180, 190, 255);
-            ImU32 ringCol = IM_COL32(220, 232, 255, 230);
-            dl->AddCircleFilled(c, 7.5f, planet, 24);
-            dl->AddCircleFilled(ImVec2(c.x - 2.2f, c.y - 2.2f), 7.5f,
-                                IM_COL32(255, 255, 255, 40), 24);   // top-left sheen
-            // Ring: a thin flattened ellipse across the planet.
+            // Brand tile: accent fill with a soft top sheen; ringed planet + star.
+            dl->AddRectFilled(lp, br, ImGui::GetColorU32(kAccentDim), 8.0f);
+            dl->AddRectFilled(lp, ImVec2(br.x, lp.y + S * 0.5f), IM_COL32(255, 255, 255, 20), 8.0f, ImDrawFlags_RoundCornersTop);
+            ImVec2 c(lp.x + S * 0.47f, lp.y + S * 0.53f);
+            dl->AddCircleFilled(c, 6.8f, IM_COL32(236, 240, 248, 255), 24);
             ImVec2 ring[28];
             for (int k = 0; k < 28; ++k) {
-                float a = k * (6.2831853f / 28);
-                float rx = 13.5f, ry = 4.6f, rot = -0.5f;
+                float a = k * (6.2831853f / 28), rx = 12.0f, ry = 4.0f, rot = -0.5f;
                 float ex = std::cos(a) * rx, ey = std::sin(a) * ry;
-                ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot),
-                                 c.y + ex * std::sin(rot) + ey * std::cos(rot));
+                ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot), c.y + ex * std::sin(rot) + ey * std::cos(rot));
             }
-            dl->AddPolyline(ring, 28, ringCol, ImDrawFlags_Closed, 1.6f);
-            dl->AddCircleFilled(ImVec2(lp.x + S * 0.76f, lp.y + S * 0.26f), 1.3f, IM_COL32(255, 255, 255, 230));
+            dl->PushClipRect(lp, br, true);
+            dl->AddPolyline(ring, 28, IM_COL32(255, 255, 255, 235), ImDrawFlags_Closed, 1.5f);
             dl->PopClipRect();
-            ImGui::Dummy(ImVec2(S + (g_navCollapsed ? 0.0f : 8.0f), S));
+            dl->AddCircleFilled(ImVec2(lp.x + S * 0.78f, lp.y + S * 0.24f), 1.4f, IM_COL32(255, 255, 255, 240));
+            ImGui::Dummy(ImVec2(avail, S));
             if (!g_navCollapsed) {
-                ImGui::SameLine();
-                ImGui::BeginGroup();
-                ImGui::Text("OkaySpace");
-                ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
-                ImGui::EndGroup();
+                float tx = br.x + 10.0f;
+                dl->AddText(ImVec2(tx, lp.y - 1.0f), navTextHi, "OkaySpace");
+                // Version doubles as a "check for updates" link.
+                const char* ver = "v" OKAY_ENGINE_VERSION;
+                float fs = ImGui::GetFontSize() * 0.82f;
+                ImVec2 vsz = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, ver);
+                ImVec2 vp(tx, lp.y + S - vsz.y);
+                ImGui::SetCursorScreenPos(vp);
+                bool vclick = ImGui::InvisibleButton("##navver", vsz);
+                bool vhov = ImGui::IsItemHovered();
+                dl->AddText(ImGui::GetFont(), fs, vp, vhov ? navTextHi : ImGui::GetColorU32(ImGuiCol_TextDisabled), ver);
+                if (vhov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Check for updates"); }
+                if (vclick && GetState() != Up_Checking && GetState() != Up_Downloading) StartUpdateCheck();
+                // Collapse toggle on the right of the header.
+                ImVec2 tp(start.x + avail - 30.0f, start.y + 2.0f);
+                ImGui::SetCursorScreenPos(tp);
+                if (ImGui::InvisibleButton("##navtoggle", ImVec2(28, 28))) { g_navCollapsed = true; SavePrefs(); }
+                bool th = ImGui::IsItemHovered();
+                if (th) dl->AddRectFilled(tp, ImVec2(tp.x + 28, tp.y + 28), navHover, 6.0f);
+                DrawNavIcon(dl, kIcoPanel, ImVec2(tp.x + 14, tp.y + 14), th ? navTextHi : navIcon);
+                if (th) ImGui::SetTooltip("Collapse sidebar");
+                ImGui::SetCursorScreenPos(ImVec2(start.x, br.y));
+                ImGui::Dummy(ImVec2(avail, 6));
+            } else {
+                ImGui::Dummy(ImVec2(0, 4));
+                if (navRow("##navtoggle", "Expand sidebar", kIcoPanel, false, 0, 0)) { g_navCollapsed = false; SavePrefs(); }
             }
         }
-        // Collapse / expand toggle (hamburger) — a full-width row that flips the rail.
-        {
-            ImGui::Dummy(ImVec2(0, 6));
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            ImVec2 rmin = ImGui::GetCursorScreenPos();
-            float rw = ImGui::GetContentRegionAvail().x, rh = 26.0f;
-            if (ImGui::InvisibleButton("##navtoggle", ImVec2(rw, rh))) { g_navCollapsed = !g_navCollapsed; SavePrefs(); }
-            bool th = ImGui::IsItemHovered();
-            if (th) dl->AddRectFilled(rmin, ImVec2(rmin.x + rw, rmin.y + rh), IM_COL32(255, 255, 255, 14));
-            float hx = g_navCollapsed ? rmin.x + rw * 0.5f : rmin.x + 20.0f;
-            float hy = rmin.y + rh * 0.5f;
-            ImU32 hc = ImGui::GetColorU32(ImGuiCol_Text);
-            for (int k = -1; k <= 1; ++k)
-                dl->AddLine(ImVec2(hx - 7, hy + k * 5.0f), ImVec2(hx + 7, hy + k * 5.0f), hc, 2.0f);
-            if (!g_navCollapsed)
-                dl->AddText(ImVec2(rmin.x + 40, hy - ImGui::GetTextLineHeight() * 0.5f),
-                            ImGui::GetColorU32(ImGuiCol_TextDisabled), "Collapse");
-            if (th) ImGui::SetTooltip(g_navCollapsed ? "Expand sidebar" : "Collapse sidebar");
-        }
-        // Notifications bell — a full-width row that opens the notifications panel.
-        // Shows an unread count badge drawn over the bell.
         RefreshNotifs();
-        {
-            ImGui::Dummy(ImVec2(0, 2));
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            ImVec2 rmin = ImGui::GetCursorScreenPos();
-            float rw = ImGui::GetContentRegionAvail().x, rh = 28.0f;
+
+        // Footer (pinned): an update card while something is happening, then
+        // Notifications, Settings and the profile card. The rows above scroll on
+        // short windows instead of running into it.
+        const UpState st = GetState();
+        const bool upBusy = (st == Up_Checking || st == Up_Downloading);
+        const bool upNote = upBusy || st == Up_Updated || st == Up_Failed;
+        const float profH = g_navCollapsed ? 44.0f : 52.0f;
+        const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : (g_upRelaunchNeeded && st == Up_Updated ? 84.0f : 58.0f)) : 0.0f;
+        const float footH = upH + (navRowH + 2.0f) * 2 + 15.0f + profH;
+        ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - footH), false, ImGuiWindowFlags_NoScrollbar);
+        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
+        auto tabRow = [&](int i, int badge = 0, ImU32 badgeCol = 0) {
+            char id[16]; std::snprintf(id, sizeof(id), "##nav%d", i);
+            if (navRow(id, navs[i], i, tab == i, badge, badgeCol)) tab = i;
+        };
+        const ImU32 navSoft = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.40f));
+        navSection("MENU");
+        tabRow(0);
+        tabRow(1, (int)scenes.size(), navSoft);           // games installed
+        tabRow(2);
+        tabRow(7);
+        tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
+        navSection("SOCIAL");
+        tabRow(6, g_friendRequests, navRed);              // pending friend requests
+        if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, g_dmUnread, navRed))
+            g_chatWinOpen = !g_chatWinOpen;
+        tabRow(8);
+        tabRow(9);
+        tabRow(5);
+        ImGui::EndChild();   // end scrollable nav items
+
+        {   // ---- Update card (only while checking/downloading, or with news) ----
+            const char* head = (st == Up_Downloading) ? "Updating\xE2\x80\xA6"
+                             : (st == Up_Checking)    ? "Checking for updates\xE2\x80\xA6"
+                             : (st == Up_Updated)     ? "Update installed"
+                                                      : "Update failed";
+            ImU32 tone = (st == Up_Failed) ? IM_COL32(240, 120, 120, 255)
+                       : (st == Up_Updated) ? IM_COL32(110, 205, 140, 255) : navAccent;
+            std::string upMsg = GetUpMsg();
+            if (upNote && g_navCollapsed) {
+                ImVec2 mn = ImGui::GetCursorScreenPos();
+                float w = ImGui::GetContentRegionAvail().x;
+                bool click = ImGui::InvisibleButton("##navupd", ImVec2(w, navRowH));
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImVec2 uc(mn.x + w * 0.5f, mn.y + navRowH * 0.5f);
+                if (ImGui::IsItemHovered()) {
+                    dl->AddRectFilled(mn, ImVec2(mn.x + w, mn.y + navRowH), navHover, 7.0f);
+                    ImGui::SetTooltip("%s\n%s%s", head, upMsg.c_str(),
+                        st == Up_Failed ? "\nClick to retry" : (g_upRelaunchNeeded && st == Up_Updated) ? "\nClick to restart" : "");
+                }
+                if (upBusy) {
+                    float a0 = (float)ImGui::GetTime() * 6.0f;
+                    dl->PathArcTo(uc, 7.0f, a0, a0 + 4.6f, 20);
+                    dl->PathStroke(tone, 0, 2.2f);
+                } else DrawNavIcon(dl, kIcoRefresh, uc, tone);
+                if (click) {
+                    if (st == Up_Failed) StartUpdateCheck();
+                    else if (g_upRelaunchNeeded && st == Up_Updated) { Launch(g_selfPath); running = false; }
+                }
+                ImGui::Dummy(ImVec2(0, 2));
+            } else if (upNote) {
+                ImVec2 mn = ImGui::GetCursorScreenPos();
+                float w = ImGui::GetContentRegionAvail().x, h = upH - 8.0f;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(mn, ImVec2(mn.x + w, mn.y + h), navSel, 8.0f);
+                dl->AddRectFilled(mn, ImVec2(mn.x + 3, mn.y + h), tone, 8.0f, ImDrawFlags_RoundCornersLeft);
+                ImVec2 ic(mn.x + 20, mn.y + 17);
+                if (upBusy) {
+                    float a0 = (float)ImGui::GetTime() * 6.0f;
+                    dl->PathArcTo(ic, 6.0f, a0, a0 + 4.6f, 20);
+                    dl->PathStroke(tone, 0, 2.0f);
+                } else DrawNavIcon(dl, kIcoRefresh, ic, tone);
+                dl->AddText(ImVec2(mn.x + 36, mn.y + 8), navTextHi, head);
+                std::string sub = upMsg.empty() ? std::string("v" OKAY_ENGINE_VERSION) : upMsg;
+                while (sub.size() > 4 && ImGui::CalcTextSize(sub.c_str()).x > w - 44) sub = sub.substr(0, sub.size() - 4) + "\xE2\x80\xA6";
+                ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 27));
+                ImGui::TextDisabled("%s", sub.c_str());
+                if (ImGui::IsItemHovered() && !upMsg.empty()) ImGui::SetTooltip("%s", upMsg.c_str());
+                if (st == Up_Failed) {
+                    ImGui::SameLine(0, 0);
+                    ImGui::SetCursorScreenPos(ImVec2(mn.x + w - 50, mn.y + 7));
+                    if (ImGui::SmallButton("Retry")) StartUpdateCheck();
+                }
+                if (g_upRelaunchNeeded && st == Up_Updated) {
+                    ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
+                    if (PrimaryButton("Restart now", ImVec2(w - 48, 24))) { Launch(g_selfPath); running = false; }
+                }
+                ImGui::SetCursorScreenPos(ImVec2(mn.x, mn.y + h + 8.0f));
+            }
+        }
+        {   // ---- Notifications + Settings ----
             int unread = NotifUnread();
-            if (ImGui::InvisibleButton("##navbell", ImVec2(rw, rh))) {
+            if (navRow("##navbell", "Notifications", kIcoBell, g_notifPanelOpen, unread, navRed)) {
                 g_notifPanelOpen = true;
                 for (auto& n : g_notifs) n.read = true;   // opening clears unread
             }
-            bool bh = ImGui::IsItemHovered();
-            if (bh || g_notifPanelOpen)
-                dl->AddRectFilled(rmin, ImVec2(rmin.x + rw, rmin.y + rh), IM_COL32(255, 255, 255, 14), 4.0f);
-            float bx = g_navCollapsed ? rmin.x + rw * 0.5f : rmin.x + 20.0f;
-            float by = rmin.y + rh * 0.5f;
-            ImU32 bc = unread > 0 ? ImGui::GetColorU32(kAccent) : ImGui::GetColorU32(ImGuiCol_Text);
-            // Bell body: a rounded dome + flared base + clapper.
-            dl->PathArcTo(ImVec2(bx, by + 2.0f), 6.0f, 3.14159f, 6.2831853f, 12);
-            dl->PathLineTo(ImVec2(bx + 6.5f, by + 4.0f));
-            dl->PathLineTo(ImVec2(bx - 6.5f, by + 4.0f));
-            dl->PathStroke(bc, ImDrawFlags_Closed, 1.8f);
-            dl->AddCircleFilled(ImVec2(bx, by + 6.5f), 1.7f, bc);
-            dl->AddCircleFilled(ImVec2(bx, by - 5.5f), 1.4f, bc);   // top knob
-            if (!g_navCollapsed)
-                dl->AddText(ImVec2(rmin.x + 40, by - ImGui::GetTextLineHeight() * 0.5f),
-                            ImGui::GetColorU32(ImGuiCol_Text), "Notifications");
-            // Unread badge.
-            if (unread > 0) {
-                char cnt[8]; std::snprintf(cnt, sizeof(cnt), "%d", unread > 99 ? 99 : unread);
-                ImVec2 ts = ImGui::CalcTextSize(cnt);
-                ImVec2 bp = g_navCollapsed ? ImVec2(bx + 5, by - 9)
-                                           : ImVec2(rmin.x + rw - 24, by - 9);
-                float pad = 5.0f, bw = ts.x + pad * 2; if (bw < 18) bw = 18;
-                dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + 18), IM_COL32(210, 72, 72, 255), 9.0f);
-                dl->AddText(ImVec2(bp.x + (bw - ts.x) * 0.5f, bp.y + 2), IM_COL32_WHITE, cnt);
-            }
-            if (bh) ImGui::SetTooltip(unread > 0 ? "Notifications (%d new)" : "Notifications", unread);
+            if (navRow("##nav4", navs[4], 4, tab == 4, 0, 0)) tab = 4;
         }
-        // Scrollable nav items, sized to leave room for the pinned update footer
-        // below — so on a short window the items scroll instead of overlapping it.
-        const float kNavFootH = 92.0f;
-        ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - kNavFootH), false,
-                          ImGuiWindowFlags_NoScrollbar);
-        ImGui::Dummy(ImVec2(0, 16));
-        const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
-        // Grouped, Steam-style sidebar. Display order + section headers; the tab
-        // content blocks stay keyed by these indices, so only the order and the
-        // grouping change here (keyboard shortcuts still map 1..8 to the tabs).
-        struct NavRow { int tab; const char* section; };
-        static const NavRow kNavRows[] = {
-            {0, "MENU"},   {1, nullptr}, {2, nullptr}, {10, nullptr},
-            {6, "SOCIAL"}, {8, nullptr}, {9, nullptr}, {5, nullptr}, {7, nullptr},
-            {3, "SYSTEM"}, {4, nullptr},
-        };
-        for (const NavRow& nv : kNavRows) {
-            int i = nv.tab;
-            if (nv.section && !g_navCollapsed) {
-                ImGui::Dummy(ImVec2(0, 8));
-                ImGui::TextDisabled("  %s", nv.section);
-                ImGui::Dummy(ImVec2(0, 2));
-            } else if (nv.section) {
-                ImGui::Dummy(ImVec2(0, 6));   // just a gap between groups when collapsed
-            }
-            char lbl[48];
-            if (g_navCollapsed) std::snprintf(lbl, sizeof(lbl), "##nav%d", i);
-            else                std::snprintf(lbl, sizeof(lbl), "          %s", navs[i]);
-            bool sel = (tab == i);
-            // Flat, full-width selection (Steam/Unity-style): a neutral fill across
-            // the whole row + a thin accent bar on the left — no rounded pill.
+        {   // ---- Profile card (opens the Account tab) ----
+            ImGui::Dummy(ImVec2(0, 6));
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            ImVec2 rowMin = ImGui::GetCursorScreenPos();
-            float  rowW   = ImGui::GetContentRegionAvail().x;
-            const float rowH = 38.0f;
-            ImVec2 rowMax = ImVec2(rowMin.x + rowW, rowMin.y + rowH);
-            bool hov = ImGui::IsMouseHoveringRect(rowMin, rowMax);
-            // Unity-style: the selected row is a solid blue fill (not a pill);
-            // hover on other rows is a faint grey wash.
-            if (sel)      dl->AddRectFilled(rowMin, rowMax, ImGui::GetColorU32(kAccent));
-            else if (hov) dl->AddRectFilled(rowMin, rowMax, IM_COL32(255, 255, 255, 16));
-            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0,0,0,0));
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0,0,0,0));
-            ImGui::PushStyleColor(ImGuiCol_Text, sel ? ImVec4(1.00f,1.00f,1.00f,1.0f)
-                                                     : ImVec4(0.760f,0.760f,0.765f,1.0f));
-            if (ImGui::Selectable(lbl, sel, 0, ImVec2(0, rowH))) tab = i;
-            ImGui::PopStyleColor(4);
-            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-            // Little vector icon per section (no icon font needed).
-            {
-                float cy = (mn.y + mx.y) * 0.5f;
-                float cx = g_navCollapsed ? (mn.x + mx.x) * 0.5f : mn.x + 24.0f;
-                float r = 6.5f;
-                ImU32 ic = ImGui::GetColorU32(sel ? ImVec4(1.00f, 1.00f, 1.00f, 1.0f)
-                                                  : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                switch (i) {
-                    case 0:   // Create: plus
-                        dl->AddLine(ImVec2(cx - r, cy), ImVec2(cx + r, cy), ic, 2.2f);
-                        dl->AddLine(ImVec2(cx, cy - r), ImVec2(cx, cy + r), ic, 2.2f);
-                        break;
-                    case 1:   // Play: triangle
-                        dl->AddTriangleFilled(ImVec2(cx - r * 0.7f, cy - r),
-                                              ImVec2(cx - r * 0.7f, cy + r),
-                                              ImVec2(cx + r, cy), ic);
-                        break;
-                    case 2:   // Community: three heads
-                        dl->AddCircleFilled(ImVec2(cx - r * 0.9f, cy + r * 0.45f), r * 0.42f, ic);
-                        dl->AddCircleFilled(ImVec2(cx + r * 0.9f, cy + r * 0.45f), r * 0.42f, ic);
-                        dl->AddCircleFilled(ImVec2(cx, cy - r * 0.45f), r * 0.52f, ic);
-                        break;
-                    case 3:   // Account: head + shoulders
-                        dl->AddCircleFilled(ImVec2(cx, cy - r * 0.45f), r * 0.45f, ic);
-                        dl->AddRectFilled(ImVec2(cx - r * 0.85f, cy + r * 0.1f),
-                                          ImVec2(cx + r * 0.85f, cy + r * 0.95f), ic, r * 0.45f);
-                        break;
-                    case 4: { // Settings: gear (ring + spokes)
-                        dl->AddCircle(ImVec2(cx, cy), r * 0.62f, ic, 12, 2.0f);
-                        for (int k = 0; k < 8; ++k) {
-                            float a = (float)k * 0.785398f;
-                            dl->AddLine(ImVec2(cx + std::cos(a) * r * 0.72f, cy + std::sin(a) * r * 0.72f),
-                                        ImVec2(cx + std::cos(a) * r * 1.05f, cy + std::sin(a) * r * 1.05f),
-                                        ic, 2.0f);
-                        }
-                        break;
-                    }
-                    case 5: {  // Achievements: trophy (cup + stem + base)
-                        dl->AddRectFilled(ImVec2(cx - r * 0.55f, cy - r * 0.85f),
-                                          ImVec2(cx + r * 0.55f, cy - r * 0.05f), ic, r * 0.2f);
-                        dl->AddRectFilled(ImVec2(cx - r * 0.12f, cy - r * 0.1f),
-                                          ImVec2(cx + r * 0.12f, cy + r * 0.55f), ic);
-                        dl->AddRectFilled(ImVec2(cx - r * 0.6f, cy + r * 0.55f),
-                                          ImVec2(cx + r * 0.6f, cy + r * 0.9f), ic, r * 0.2f);
-                        break;
-                    }
-                    case 6:   // Friends: two heads
-                        dl->AddCircleFilled(ImVec2(cx - r * 0.5f, cy - r * 0.35f), r * 0.42f, ic);
-                        dl->AddCircleFilled(ImVec2(cx + r * 0.5f, cy - r * 0.35f), r * 0.42f, ic);
-                        dl->AddRectFilled(ImVec2(cx - r, cy + r * 0.15f), ImVec2(cx, cy + r), ic, r * 0.3f);
-                        dl->AddRectFilled(ImVec2(cx, cy + r * 0.15f), ImVec2(cx + r, cy + r), ic, r * 0.3f);
-                        break;
-                    case 7:   // Market: price tag
-                        dl->AddRectFilled(ImVec2(cx - r * 0.8f, cy - r * 0.8f),
-                                          ImVec2(cx + r * 0.3f, cy + r * 0.3f), ic, r * 0.2f);
-                        dl->AddCircleFilled(ImVec2(cx - r * 0.4f, cy - r * 0.4f), r * 0.16f,
-                                            ImGui::GetColorU32(ImGuiCol_WindowBg));
-                        dl->AddLine(ImVec2(cx + r * 0.1f, cy + r * 0.1f), ImVec2(cx + r * 0.9f, cy + r * 0.9f), ic, 3.0f);
-                        break;
-                    case 8:   // Servers: chat bubble
-                        dl->AddRectFilled(ImVec2(cx - r, cy - r * 0.8f), ImVec2(cx + r, cy + r * 0.3f), ic, r * 0.35f);
-                        dl->AddTriangleFilled(ImVec2(cx - r * 0.5f, cy + r * 0.2f),
-                                              ImVec2(cx - r * 0.1f, cy + r * 0.2f),
-                                              ImVec2(cx - r * 0.5f, cy + r * 0.8f), ic);
-                        dl->AddCircleFilled(ImVec2(cx - r * 0.45f, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
-                        dl->AddCircleFilled(ImVec2(cx, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
-                        dl->AddCircleFilled(ImVec2(cx + r * 0.45f, cy - r * 0.25f), r * 0.12f, ImGui::GetColorU32(ImGuiCol_WindowBg));
-                        break;
-                    case 9:   // Forums: stacked lines (document)
-                        dl->AddRect(ImVec2(cx - r * 0.8f, cy - r), ImVec2(cx + r * 0.8f, cy + r), ic, r * 0.15f, 0, 1.6f);
-                        for (int k = 0; k < 3; ++k) {
-                            float yy = cy - r * 0.45f + k * r * 0.45f;
-                            dl->AddLine(ImVec2(cx - r * 0.5f, yy), ImVec2(cx + r * 0.5f, yy), ic, 1.6f);
-                        }
-                        break;
-                    case 10:  // Downloads: down-arrow into a tray
-                        dl->AddLine(ImVec2(cx, cy - r * 0.9f), ImVec2(cx, cy + r * 0.25f), ic, 2.2f);
-                        dl->AddLine(ImVec2(cx - r * 0.5f, cy - r * 0.25f), ImVec2(cx, cy + r * 0.25f), ic, 2.2f);
-                        dl->AddLine(ImVec2(cx + r * 0.5f, cy - r * 0.25f), ImVec2(cx, cy + r * 0.25f), ic, 2.2f);
-                        dl->AddLine(ImVec2(cx - r, cy + r * 0.7f), ImVec2(cx + r, cy + r * 0.7f), ic, 2.2f);
-                        break;
-                }
-            }
-            // Right-aligned count/badge chips. When collapsed, a small corner dot
-            // stands in for the number so it doesn't overflow the narrow rail.
-            auto cornerDot = [&](ImU32 dotCol) {
-                dl->AddCircleFilled(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 4.0f, dotCol, 12);
-            };
-            auto countChip = [&](int n, ImU32 bgc) {
-                char nb[16]; std::snprintf(nb, sizeof(nb), "%d", n);
-                ImVec2 ts = ImGui::CalcTextSize(nb);
-                ImVec2 bp(mx.x - ts.x - 18.0f, (mn.y + mx.y) * 0.5f - ts.y * 0.5f);
-                dl->AddRectFilled(ImVec2(bp.x - 6, bp.y - 2), ImVec2(bp.x + ts.x + 6, bp.y + ts.y + 2), bgc, 8.0f);
-                dl->AddText(bp, IM_COL32(255, 255, 255, 255), nb);
-            };
-            // Play: games installed.
-            if (i == 1 && !scenes.empty()) {
-                if (g_navCollapsed) cornerDot(ImGui::GetColorU32(kAccent));
-                else countChip((int)scenes.size(), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)));
-            }
-            // Friends: pending requests + unread DMs (red).
-            if (i == 6 && (g_friendRequests + g_dmUnread) > 0) {
-                if (g_navCollapsed) cornerDot(IM_COL32(210, 72, 72, 255));
-                else countChip(g_friendRequests + g_dmUnread, IM_COL32(210, 72, 72, 255));
-            }
-            // Downloads: in-flight downloads.
-            if (i == 10) {
-                int act = ActiveDownloads();
-                if (act > 0) {
-                    if (g_navCollapsed) cornerDot(ImGui::GetColorU32(kAccent));
-                    else countChip(act, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)));
-                }
-            }
-            if (ImGui::IsItemHovered()) {
-                if (g_navCollapsed) ImGui::SetTooltip("%s  (%d)", navs[i], i + 1);
-                else                ImGui::SetTooltip("Shortcut: %d", i + 1);
-            }
-        }
-
-        // Signed-in status chip, just under the nav items.
-        ImGui::Dummy(ImVec2(0, 10));
-        if (!g_navCollapsed) {
-            ImGui::TextDisabled("  ACCOUNT");
-            if (account.IsLoggedIn()) {
-                ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "  %s  %s",
-                                   account.IsOnline() ? "online" : "local",
-                                   account.CurrentSession().username.c_str());
+            ImVec2 dp = ImGui::GetCursorScreenPos();
+            float w = ImGui::GetContentRegionAvail().x;
+            dl->AddLine(ImVec2(dp.x + 4, dp.y), ImVec2(dp.x + w - 4, dp.y), navDivide, 1.0f);
+            ImGui::Dummy(ImVec2(0, 6));
+            ImVec2 mn = ImGui::GetCursorScreenPos();
+            const float h = profH - 4.0f;
+            bool click = ImGui::InvisibleButton("##navprofile", ImVec2(w, h));
+            bool hov = ImGui::IsItemHovered();
+            bool sel = (tab == 3);
+            if (sel || hov) dl->AddRectFilled(mn, ImVec2(mn.x + w, mn.y + h), sel ? navSel : navHover, 8.0f);
+            std::string uname = kUiDemoUser ? std::string(kUiDemoUser)
+                              : account.IsLoggedIn() ? account.CurrentSession().username : std::string();
+            const float A = g_navCollapsed ? 30.0f : 32.0f;
+            ImVec2 ac(g_navCollapsed ? mn.x + w * 0.5f : mn.x + 8.0f + A * 0.5f, mn.y + h * 0.5f);
+            if (!navSignedIn) {   // generic person on a neutral disc
+                dl->AddCircleFilled(ac, A * 0.5f, navLight ? IM_COL32(0, 0, 0, 22) : IM_COL32(255, 255, 255, 22), 28);
+                DrawNavIcon(dl, 3, ImVec2(ac.x, ac.y + 1.0f), navIcon);
             } else {
-                ImGui::TextDisabled("  not signed in");
+                SDL_Texture* at = AvatarTexture(g_myAvatarSlot ? *g_myAvatarSlot : std::string());
+                if (at) dl->AddImageRounded((ImTextureID)(intptr_t)at, ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f),
+                                            ImVec2(ac.x + A * 0.5f, ac.y + A * 0.5f), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
+                else {
+                    ImVec4 nc = NameColor(uname);
+                    dl->AddCircleFilled(ac, A * 0.5f, ImGui::GetColorU32(ImVec4(nc.x * 0.6f, nc.y * 0.6f, nc.z * 0.6f, 1.0f)), 28);
+                    char init[2] = {uname.empty() ? '?' : (char)std::toupper((unsigned char)uname[0]), 0};
+                    ImVec2 ts = ImGui::CalcTextSize(init);
+                    dl->AddText(ImVec2(ac.x - ts.x * 0.5f, ac.y - ts.y * 0.5f), IM_COL32_WHITE, init);
+                }
+                // Presence dot.
+                ImU32 pc = !account.IsOnline() && !kUiDemoUser ? IM_COL32(140, 146, 156, 255)
+                         : g_onlineStatus == 1 ? IM_COL32(236, 180, 64, 255)
+                         : g_onlineStatus == 2 ? IM_COL32(140, 146, 156, 255) : IM_COL32(76, 200, 110, 255);
+                ImVec2 pd(ac.x + A * 0.36f, ac.y + A * 0.36f);
+                dl->AddCircleFilled(pd, 5.5f, ImGui::GetColorU32(navBg), 12);
+                dl->AddCircleFilled(pd, 4.0f, pc, 12);
             }
-            // The whole account line jumps to the Account tab.
-            if (ImGui::IsItemHovered()) {
+            if (!g_navCollapsed) {
+                float tx = mn.x + 16.0f + A, th = ImGui::GetTextLineHeight();
+                std::string line1 = navSignedIn ? uname : std::string("Sign in");
+                std::string line2 = !navSignedIn ? std::string("Friends, chat & cloud sync")
+                                  : (!account.IsOnline() && !kUiDemoUser) ? std::string("Offline")
+                                  : g_onlineStatus == 1 ? std::string("Away")
+                                  : g_onlineStatus == 2 ? std::string("Invisible") : std::string("Online");
+                float maxW = w - (tx - mn.x) - 8.0f;
+                while (line1.size() > 4 && ImGui::CalcTextSize(line1.c_str()).x > maxW) line1 = line1.substr(0, line1.size() - 4) + "\xE2\x80\xA6";
+                dl->AddText(ImVec2(tx, mn.y + h * 0.5f - th + 1.0f), navTextHi, line1.c_str());
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.86f, ImVec2(tx, mn.y + h * 0.5f + 2.0f),
+                            ImGui::GetColorU32(ImGuiCol_TextDisabled), line2.c_str());
+            }
+            if (hov) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                ImGui::SetTooltip(account.IsLoggedIn() ? "Open the Account tab" : "Sign in");
+                if (g_navCollapsed) ImGui::SetTooltip(navSignedIn ? "%s  \xC2\xB7  Account" : "Sign in", uname.c_str());
             }
-            if (ImGui::IsItemClicked()) { tab = 3; g_lastTab = 3; SavePrefs(); }
-            // Open the floating Chat window (direct messages) from anywhere.
-            if (account.IsLoggedIn()) {
-                ImGui::Dummy(ImVec2(0, 4));
-                ImGui::SetCursorPosX(10);
-                char cbtn[48]; std::snprintf(cbtn, sizeof(cbtn), g_dmUnread > 0 ? "  Chat  (%d)" : "  Open Chat", g_dmUnread);
-                if (ImGui::Button(cbtn, ImVec2(-10, 0))) g_chatWinOpen = !g_chatWinOpen;
-            }
-        } else if (account.IsLoggedIn()) {
-            // Collapsed: a compact, centered chat button with a bubble icon.
-            float av = ImGui::GetContentRegionAvail().x;
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av - 34.0f) * 0.5f);
-            if (ImGui::Button("##navchat", ImVec2(34, 30))) g_chatWinOpen = !g_chatWinOpen;
-            ImVec2 bmn = ImGui::GetItemRectMin(), bmx = ImGui::GetItemRectMax();
-            float bcx = (bmn.x + bmx.x) * 0.5f, bcy = (bmn.y + bmx.y) * 0.5f;
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            ImU32 bc = ImGui::GetColorU32(ImGuiCol_Text);
-            dl->AddRectFilled(ImVec2(bcx - 8, bcy - 6), ImVec2(bcx + 8, bcy + 3), bc, 3.0f);
-            dl->AddTriangleFilled(ImVec2(bcx - 4, bcy + 2), ImVec2(bcx + 1, bcy + 2), ImVec2(bcx - 4, bcy + 7), bc);
-            if (g_dmUnread > 0)
-                dl->AddCircleFilled(ImVec2(bmx.x - 3, bmn.y + 3), 4.0f, IM_COL32(210, 72, 72, 255), 12);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(g_dmUnread > 0 ? "Chat  (%d unread)" : "Open Chat", g_dmUnread);
+            if (click) { tab = 3; g_lastTab = 3; SavePrefs(); }
         }
-        ImGui::EndChild();   // end scrollable nav items
-
-        // ---- Update status (sits below the scrolling nav items) ----
-        UpState st = GetState();
-        bool busy = (st == Up_Checking || st == Up_Downloading);
-        ImGui::Separator();
-        if (!g_navCollapsed) {
-            ImVec4 col = (st == Up_Failed)  ? ImVec4(1.0f, 0.55f, 0.55f, 1)
-                       : (st == Up_Updated) ? ImVec4(0.55f, 0.9f, 0.6f, 1)
-                       : (st == Up_Downloading || st == Up_Checking)
-                                            ? ImVec4(0.85f, 0.8f, 0.4f, 1)
-                                            : ImVec4(0.6f, 0.65f, 0.75f, 1);
-            const char* head = (st == Up_Downloading) ? "Updating..."
-                             : (st == Up_Checking)    ? "Checking..."
-                             : (st == Up_Updated)     ? "Updated"
-                             : (st == Up_Failed)      ? "Update failed"
-                                                      : "Engine";
-            if (busy) {
-                // Spinner: an arc sweeping around while the worker runs.
-                ImVec2 sp = ImGui::GetCursorScreenPos();
-                float rad = 6.0f;
-                ImVec2 ctr(sp.x + rad + 2.0f, sp.y + rad + 3.0f);
-                float a0 = (float)ImGui::GetTime() * 6.0f;
-                ImDrawList* sdl = ImGui::GetWindowDrawList();
-                sdl->PathArcTo(ctr, rad, a0, a0 + 4.6f, 20);
-                sdl->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.4f);
-                ImGui::Dummy(ImVec2(rad * 2.0f + 6.0f, rad * 2.0f + 4.0f));
-                ImGui::SameLine();
-            }
-            ImGui::TextColored(col, "%s", head);
-            ImGui::PushTextWrapPos(0.0f);
-            std::string upMsg = GetUpMsg();
-            // Before any check runs, at least show the installed version here.
-            ImGui::TextDisabled("%s", upMsg.empty() ? "v" OKAY_ENGINE_VERSION : upMsg.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::BeginDisabled(busy);
-            if (ImGui::SmallButton("Check for updates")) StartUpdateCheck();
-            ImGui::EndDisabled();
-            if (g_upRelaunchNeeded && st == Up_Updated) {
-                ImGui::SameLine();
-                // The new launcher exe is already swapped in place; start it and quit.
-                if (ImGui::SmallButton("Restart now")) { Launch(g_selfPath); running = false; }
-            }
-        } else {
-            // Collapsed: a compact, centered update button (spinner while busy).
-            float av = ImGui::GetContentRegionAvail().x;
-            ImGui::Dummy(ImVec2(0, 2));
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av - 34.0f) * 0.5f);
-            ImGui::BeginDisabled(busy);
-            bool clicked = ImGui::Button("##navupd", ImVec2(34, 30));
-            ImGui::EndDisabled();
-            if (clicked) StartUpdateCheck();
-            ImVec2 umn = ImGui::GetItemRectMin(), umx = ImGui::GetItemRectMax();
-            ImVec2 uc((umn.x + umx.x) * 0.5f, (umn.y + umx.y) * 0.5f);
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            if (busy) {
-                float a0 = (float)ImGui::GetTime() * 6.0f;
-                dl->PathArcTo(uc, 7.0f, a0, a0 + 4.6f, 20);
-                dl->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.2f);
-            } else {
-                ImU32 uico = ImGui::GetColorU32(ImGuiCol_Text);
-                dl->PathArcTo(uc, 7.0f, -1.3f, 3.4f, 22);
-                dl->PathStroke(uico, 0, 2.0f);
-                float ea = 3.4f;
-                ImVec2 ep(uc.x + std::cos(ea) * 7.0f, uc.y + std::sin(ea) * 7.0f);
-                dl->AddTriangleFilled(ImVec2(ep.x - 4, ep.y - 3), ImVec2(ep.x + 3, ep.y - 4),
-                                      ImVec2(ep.x + 1, ep.y + 3), uico);
-            }
-            if (ImGui::IsItemHovered()) {
-                std::string um = GetUpMsg();
-                ImGui::SetTooltip("%s\nClick to check for updates",
-                                  um.empty() ? "v" OKAY_ENGINE_VERSION : um.c_str());
-            }
-        }
+        ImGui::PopStyleVar();   // ItemSpacing
         ImGui::EndChild();
+        ImGui::PopStyleColor(); // nav ChildBg
+        {   // A single hairline between the rail and the page.
+            ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(b.x - 0.5f, a.y), ImVec2(b.x - 0.5f, b.y),
+                                                navLight ? IM_COL32(0, 0, 0, 34) : IM_COL32(0, 0, 0, 120), 1.0f);
+        }
 
-        ImGui::SameLine();
-        ImGui::BeginChild("content", ImVec2(0, 0), true);
+        ImGui::SameLine(0, 0);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28, 20));
+        ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
 
         const ImVec4 kTitle(0.95f, 0.96f, 0.98f, 1.0f);
         // Page header: a large title with a short accent underline bar (tab-style),
@@ -7437,6 +7807,10 @@ int main(int argc, char** argv) {
             ImGui::SeparatorText("Behavior");
             if (ImGui::Checkbox("Check for updates when the launcher starts", &g_updateOnLaunch))
                 SavePrefs();
+            if (ImGui::Checkbox("Play a sound for new chat messages", &g_chatSounds)) {
+                SavePrefs();
+                if (g_chatSounds) PlayChatChime();   // preview
+            }
 
             // ---- About ----
             ImGui::Dummy(ImVec2(0, 16));

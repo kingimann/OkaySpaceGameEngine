@@ -8104,7 +8104,7 @@ static int MktKindIndex(const std::string& k) {
 }
 // Publish in the background: upload the file (if any) to the workshop bucket,
 // then create the listing.
-struct MktPublishJob { std::string title, desc, kind, url, file; };
+struct MktPublishJob { std::string title, desc, kind, url, file; long editId = 0; };   // editId: update that listing
 static volatile bool g_mktPublishing = false;
 static SDL_mutex* g_mktMutex = nullptr;
 static std::string g_mktResult; static int g_mktResultKind = 0;   // (guarded) 1 ok, 2 error
@@ -8116,7 +8116,10 @@ static int MarketPublishWorker(void* p) {
         okay::Workshop ws(a);
         std::string url = j->url;
         if (!j->file.empty()) url = ws.UploadFile(j->file, &err);
-        if (!url.empty()) {
+        if (j->editId > 0 && !url.empty()) {
+            ok = ws.Update(j->editId, j->title, j->desc, j->kind, url, &err);
+            if (ok) reviewed = a.Api("/rest/v1/workshop_items?select=status&limit=1", "GET").ok;
+        } else if (!url.empty()) {
             ok = ws.Publish(j->title, j->desc, j->kind, url, &err);
             if (ok) {
                 reviewed = a.Api("/rest/v1/workshop_items?select=status&limit=1", "GET").ok;   // admin.sql ran: listings are reviewed
@@ -8125,7 +8128,9 @@ static int MarketPublishWorker(void* p) {
         }
     } catch (...) { err = "Publishing failed."; }
     SDL_LockMutex(g_mktMutex);
-    g_mktResult = ok ? (reviewed ? "Submitted \xE2\x80\x94 it goes live once a moderator approves it" : "Published to the marketplace")
+    if (!ok && err.find("outside links") != std::string::npos) err = "Upload the file to OkaySpace \xE2\x80\x94 outside links aren't allowed on the marketplace.";
+    g_mktResult = ok ? (j->editId > 0 ? (reviewed ? "Saved \xE2\x80\x94 changed files go back to review" : "Listing updated")
+                                      : (reviewed ? "Submitted \xE2\x80\x94 it goes live once a moderator approves it" : "Published to the marketplace"))
                      : (err.empty() ? "Publishing failed." : err);
     g_mktResultKind = ok ? 1 : 2;
     SDL_UnlockMutex(g_mktMutex);
@@ -8296,7 +8301,7 @@ static AdminData DemoAdminData() {
     us("u-leo", "leo", "Leo Martins", {}, false, false, 5 * day, 90 * day);
     auto it = [&](long id, const char* t, const char* a, const char* k, const char* desc, const char* st, long ago, const char* note = "") {
         okay::WorkshopItem w; w.id = id; w.title = t; w.author = a; w.kind = k; w.description = desc; w.status = st; w.created = t0 - ago;
-        w.reviewNote = note; w.url = "https://example.com/files/listing.zip"; d.items.push_back(w); };
+        w.reviewNote = note; w.url = "https://demo.supabase.co/storage/v1/object/public/workshop/u/listing.zip"; d.items.push_back(w); };
     it(201, "Neon Racer Kit", "maya", "template", "A starter project for arcade racers: car controller, lap timer, neon track pieces and a ghost replay.", "pending", 40 * 60);
     it(202, "Low-poly Forest Pack", "pixelforge", "model", "60 trees, rocks and props, game-ready, 3 LODs each. CC-BY.", "pending", 3 * h);
     it(203, "Dungeon Crawler Demo", "leo", "game", "Three floors, two bosses, controller support. Built in OkaySpace.", "pending", 9 * h);
@@ -8680,12 +8685,19 @@ static void DrawAdminPage(okay::account::AccountService& account) {
             if (!w.reviewNote.empty()) ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.40f, 1), "Note: %s", w.reviewNote.c_str());
             ImGui::Dummy(ImVec2(0, 4));
             const bool safe = ShellSafeUrl(w.url);
+            const bool hosted = w.url.find("/storage/v1/object/public/workshop/") != std::string::npos;
+            if (!hosted) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "Outside link \xE2\x80\x94 not hosted by OkaySpace, can't be approved.");
             ImGui::BeginDisabled(!safe);
-            if (ImGui::Button("Open file / link", ImVec2(0, 30))) OpenExternal(w.url);
+            if (ImGui::Button("Download to check", ImVec2(0, 30))) OpenExternal(w.url);
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", safe ? w.url.c_str() : "No valid link");
             ImGui::SameLine(0, 8);
-            if (w.status != "approved") { if (PrimaryButton("Approve", ImVec2(110, 30))) { doId = w.id; doAct = "approve"; } ImGui::SameLine(0, 8); }
+            if (w.status != "approved") {
+                ImGui::BeginDisabled(!hosted);
+                if (PrimaryButton("Approve", ImVec2(110, 30))) { doId = w.id; doAct = "approve"; }
+                ImGui::EndDisabled();
+                ImGui::SameLine(0, 8);
+            }
             if (w.status != "rejected") { if (ImGui::Button(w.status == "approved" ? "Unpublish\xE2\x80\xA6" : "Reject\xE2\x80\xA6", ImVec2(110, 30))) { rejectId = w.id; rejectNote[0] = '\0'; } ImGui::SameLine(0, 8); }
             if (w.status == "approved") {
                 if (ImGui::Button(w.featured ? "Unfeature" : "Feature", ImVec2(100, 30))) { doId = w.id; doAct = w.featured ? "unfeature" : "feature"; }
@@ -15665,7 +15677,7 @@ int main(int argc, char** argv) {
                     ImGui::SetWindowFontScale(1.15f);
                     ImGui::TextUnformatted("List something on the marketplace");
                     ImGui::SetWindowFontScale(1.0f);
-                    ImGui::TextDisabled("Pick what it is, describe it, then upload the file or paste a link.");
+                    ImGui::TextDisabled("Pick what it is, describe it and upload the file. Listings go live once a moderator approves them.");
                     ImGui::Dummy(ImVec2(0, 6));
                     // What is it? A grid of type cards.
                     {
@@ -15705,31 +15717,29 @@ int main(int argc, char** argv) {
                     }
                     ImGui::PopStyleVar(2);
                     ImGui::Dummy(ImVec2(0, 4));
-                    // Where the file comes from.
-                    ImGui::RadioButton("Upload a file", &wSource, 0); ImGui::SameLine(0, 18);
-                    ImGui::RadioButton("Link to it", &wSource, 1);
-                    if (wSource == 0) {
+                    // The file is uploaded to OkaySpace (no outside links on the marketplace).
+                    wSource = 0;
+                    {
                         if (ImGui::Button(wFile.empty() ? "Choose file\xE2\x80\xA6" : "Change file\xE2\x80\xA6", ImVec2(140, 0))) {
                             const char* pick = tinyfd_openFileDialog("Choose a file to list", "", 0, nullptr, nullptr, 0);
                             if (pick && *pick) wFile = pick;
                         }
                         ImGui::SameLine(0, 10);
-                        if (wFile.empty()) ImGui::TextDisabled("A .zip works for anything with several files. Up to your server's upload limit (50 MB by default).");
+                        if (wFile.empty()) ImGui::TextDisabled(kMktKinds[std::clamp(wKind, 0, kMktKindN - 1)].key == std::string("game")
+                                                               ? "Your built game as a .zip (File > Build Game in the editor). Hosted by OkaySpace."
+                                                               : "A .zip works for anything with several files. Hosted by OkaySpace.");
                         else {
                             std::error_code ec; const auto sz = fs::file_size(fs::path(wFile), ec);
                             ImGui::Text("%s", fs::path(wFile).filename().string().c_str());
                             ImGui::SameLine(); ImGui::TextDisabled("%.1f MB", ec ? 0.0 : sz / 1048576.0);
                         }
-                    } else {
-                        ImGui::SetNextItemWidth(-1);
-                        ImGui::InputTextWithHint("##url", "https://\xE2\x80\xA6 (GitHub release, itch.io, or any public URL)", wUrl, sizeof(wUrl));
                     }
                     ImGui::Dummy(ImVec2(0, 8));
-                    const bool haveSource = wSource == 0 ? !wFile.empty() : ShellSafeUrl(wUrl);
+                    const bool haveSource = !wFile.empty();
                     ImGui::BeginDisabled(!wTitle[0] || !haveSource || g_mktPublishing);
                     if (PrimaryButton(g_mktPublishing ? "Publishing\xE2\x80\xA6" : "Publish", ImVec2(140, 34))) {
                         auto* j = new MktPublishJob{wTitle, wDesc, kMktKinds[std::clamp(wKind, 0, kMktKindN - 1)].key,
-                                                    wSource == 1 ? std::string(wUrl) : std::string(), wSource == 0 ? wFile : std::string()};
+                                                    std::string(), wFile};
                         g_mktPublishing = true; wErr.clear();
                         if (SDL_Thread* t = SDL_CreateThread(MarketPublishWorker, "okay-wspub", j)) SDL_DetachThread(t);
                         else { g_mktPublishing = false; delete j; wErr = "Couldn't start publishing."; }
@@ -15737,7 +15747,6 @@ int main(int argc, char** argv) {
                     ImGui::EndDisabled();
                     ImGui::SameLine();
                     if (ImGui::Button("Cancel", ImVec2(100, 34))) wShowPublish = false;
-                    if (wSource == 1 && wUrl[0] && !ShellSafeUrl(wUrl)) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.9f, 0.45f, 0.45f, 1), "That link doesn't look valid."); }
                     if (!wErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
                                          ImGui::TextWrapped("%s", wErr.c_str()); ImGui::PopStyleColor(); }
                     ImGui::EndChild();
@@ -15981,14 +15990,28 @@ int main(int argc, char** argv) {
                     ImGui::EndCombo();
                 }
                 ImGui::InputTextMultiline("##eddesc", edDesc, sizeof(edDesc), ImVec2(-1, 80));
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##edurl", "Download link", edUrl, sizeof(edUrl));
-                ImGui::Dummy(ImVec2(0, 4));
-                if (PrimaryButton("Save changes", ImVec2(150, 32))) {
-                    if (okay::Workshop(account).Update(edId, edTitle, edDesc, kMktKinds[std::clamp(edKind, 0, kMktKindN - 1)].key, edUrl, &edErr)) {
-                        Toast("Item updated", 1); wNextRefresh = 0; ImGui::CloseCurrentPopup();
-                    }
+                static std::string edFile;   // a replacement file to upload ("" = keep the current one)
+                if (ImGui::Button(edFile.empty() ? "Replace file\xE2\x80\xA6" : "Change file\xE2\x80\xA6", ImVec2(140, 0))) {
+                    const char* pick = tinyfd_openFileDialog("Choose the new file", "", 0, nullptr, nullptr, 0);
+                    if (pick && *pick) edFile = pick;
                 }
+                ImGui::SameLine(0, 10);
+                const bool hostedHere = std::string(edUrl).find("/storage/v1/object/public/workshop/") != std::string::npos;
+                if (!edFile.empty()) ImGui::TextUnformatted(fs::path(edFile).filename().string().c_str());
+                else if (hostedHere) ImGui::TextDisabled("Keeping the current file");
+                else ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.40f, 1), "This listing uses an outside link \xE2\x80\x94 upload the file to keep it listed");
+                ImGui::TextDisabled("Changing the title, description or file sends it back for review.");
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::BeginDisabled(g_mktPublishing || (!hostedHere && edFile.empty()));
+                if (PrimaryButton(g_mktPublishing ? "Saving\xE2\x80\xA6" : "Save changes", ImVec2(150, 32))) {
+                    auto* j = new MktPublishJob{edTitle, edDesc, kMktKinds[std::clamp(edKind, 0, kMktKindN - 1)].key,
+                                                edFile.empty() ? std::string(edUrl) : std::string(), edFile};
+                    j->editId = edId;
+                    g_mktPublishing = true; edErr.clear();
+                    if (SDL_Thread* t = SDL_CreateThread(MarketPublishWorker, "okay-wsedit", j)) { SDL_DetachThread(t); edFile.clear(); ImGui::CloseCurrentPopup(); }
+                    else { g_mktPublishing = false; delete j; edErr = "Couldn't start saving."; }
+                }
+                ImGui::EndDisabled();
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(100, 32))) ImGui::CloseCurrentPopup();
                 if (!edErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1));

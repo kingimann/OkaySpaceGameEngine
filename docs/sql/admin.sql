@@ -14,6 +14,9 @@
 --   select id, 'admin' from public.profiles where username = 'you'
 --   on conflict do nothing;
 --
+-- Marketplace files must be uploaded to OkaySpace's own storage: no outside
+-- download links (existing link-only listings are sent back to their authors).
+--
 -- Marketplace review: new listings wait as "pending" until a moderator approves
 -- them (rejected ones stay visible only to their author, with the reason).
 -- Changing an approved listing's file, title or description sends it back to
@@ -221,6 +224,19 @@ create index if not exists workshop_items_status on public.workshop_items (statu
 create or replace function public.workshop_items_guard() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  -- Files must be uploaded to OkaySpace (the 'workshop' bucket, in the
+  -- uploader's own folder): no outside links on the marketplace.
+  if auth.uid() is not null and (tg_op = 'INSERT' or new.storage_path is distinct from old.storage_path) then
+    if new.storage_path is null
+       or position('/storage/v1/object/public/workshop/' in new.storage_path) = 0
+       or not exists (select 1 from storage.objects o
+                      where o.bucket_id = 'workshop'
+                        and o.name like auth.uid()::text || '/%'
+                        and right(new.storage_path, length(o.name) + 1) = '/' || o.name) then
+      raise exception 'Upload the file to OkaySpace: outside links aren''t allowed on the marketplace'
+        using errcode = 'check_violation';
+    end if;
+  end if;
   if auth.uid() is null or public.is_global_mod(auth.uid()) then
     if tg_op = 'UPDATE' and new.status is distinct from old.status then
       new.reviewed_by := auth.uid(); new.reviewed_at := now();
@@ -247,6 +263,13 @@ end $$;
 drop trigger if exists workshop_items_guard on public.workshop_items;
 create trigger workshop_items_guard before insert or update on public.workshop_items
   for each row execute function public.workshop_items_guard();
+
+-- Listings that still point outside OkaySpace go back to their authors.
+update public.workshop_items
+   set status = 'rejected',
+       review_note = 'Marketplace files must be uploaded to OkaySpace now. Edit the listing and upload the file.'
+ where status <> 'rejected'
+   and (storage_path is null or position('/storage/v1/object/public/workshop/' in storage_path) = 0);
 
 drop policy if exists "workshop is readable" on public.workshop_items;
 create policy "workshop is readable" on public.workshop_items for select using (

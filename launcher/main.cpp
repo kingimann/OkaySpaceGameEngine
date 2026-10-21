@@ -2115,6 +2115,11 @@ static void DrawGroupConversation(
     // ---- Header: group glyph, title, member count, options menu ----------
     ImVec2 hp = ImGui::GetCursorScreenPos();
     ImDrawList* hd = ImGui::GetWindowDrawList();
+    {   // Distinct header zone (strip + bottom border), matching the DM header.
+        float hw = ImGui::GetContentRegionAvail().x;
+        hd->AddRectFilled(ImVec2(hp.x - 6, hp.y - 6), ImVec2(hp.x + hw + 6, hp.y + 40), IM_COL32(26, 29, 36, 150));
+        hd->AddLine(ImVec2(hp.x - 6, hp.y + 40), ImVec2(hp.x + hw + 6, hp.y + 40), IM_COL32(60, 66, 78, 200), 1.0f);
+    }
     hd->AddCircleFilled(ImVec2(hp.x + 13, hp.y + 13), 11, ImGui::GetColorU32(kAccentDim), 20);
     hd->AddCircleFilled(ImVec2(hp.x + 23, hp.y + 21), 10, IM_COL32(92, 102, 122, 255), 20);
     ImGui::Dummy(ImVec2(38, 34));
@@ -2573,6 +2578,16 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
             // Header: avatar with a presence dot, name + status, and actions.
             ImVec2 avp = ImGui::GetCursorScreenPos();
+            {   // Distinct header zone: a subtle strip + bottom border. Drawn first
+                // so the avatar/name/buttons (added to the same draw list after)
+                // render on top of it.
+                float hw = ImGui::GetContentRegionAvail().x;
+                ImDrawList* hbg = ImGui::GetWindowDrawList();
+                hbg->AddRectFilled(ImVec2(avp.x - 6, avp.y - 6), ImVec2(avp.x + hw + 6, avp.y + 40),
+                                   IM_COL32(26, 29, 36, 150));
+                hbg->AddLine(ImVec2(avp.x - 6, avp.y + 40), ImVec2(avp.x + hw + 6, avp.y + 40),
+                             IM_COL32(60, 66, 78, 200), 1.0f);
+            }
             DrawAvatar(selAvatar, selName, 34.0f);
             {   // presence dot on the avatar's corner
                 ImDrawList* hd = ImGui::GetWindowDrawList();

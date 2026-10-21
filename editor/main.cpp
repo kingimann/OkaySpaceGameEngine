@@ -20350,7 +20350,9 @@ void DrawInspector(EditorState& ed) {
                 if (!f->useRaycast) ImGui::DragFloat("Ground Y##fik", &f->groundY, 0.05f);
                 ImGui::Checkbox("Adjust Pelvis##fik", &f->adjustPelvis); ImGui::SameLine();
                 ImGui::Checkbox("Plant Down##fik", &f->plantDown);
-                ImGui::Checkbox("Align To Slope##fik", &f->alignToGround);
+                ImGui::Checkbox("Align To Slope##fik", &f->alignToGround); ImGui::SameLine();
+                ImGui::Checkbox("Orient Bones##fik", &f->orient);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the thigh/shin bones to follow the planted knee/foot,\nso leg meshes bend with the joints (not just the joints moving).");
                 ImGui::DragFloat("Max Knee Bend##fik", &f->maxKneeBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Smoothing##fik", &f->smoothing, 0.5f, 0.0f, 40.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast corrections ease in/out (per second).\nStops feet popping at step edges. 0 = instant.");
@@ -20431,6 +20433,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
                 ImGui::Checkbox("Match Target Rotation##lik", &lb->matchTargetRotation);
+                ImGui::Checkbox("Orient Bones##lik", &lb->orient);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the upper/lower bones to follow the solved joints,\nso a mesh skinned to the limb bends with it (not just the joints moving).");
                 if (ImGui::SmallButton("Remove##lik")) toRemove = lb;
             }
         }

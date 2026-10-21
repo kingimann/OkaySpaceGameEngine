@@ -17,22 +17,35 @@
 
 namespace okay {
 
-// Draw one animated splash frame and present it:
+// How the splash looks — lets a host customize the loading screen: the accent
+// colour, the background gradient, an optional custom logo image (drawn instead
+// of the built-in isometric cube), and whether the cube / progress bar show.
+struct SplashStyle {
+    float ar = 0.235f, ag = 0.475f, ab = 0.800f;   // accent colour (0..1)
+    SDL_Color bgTop{24, 24, 27, 255};              // backdrop gradient (top)
+    SDL_Color bgBottom{13, 13, 15, 255};           //                  (bottom)
+    SDL_Texture* logo = nullptr;                   // custom logo; replaces the cube when set
+    float logoScale = 1.0f;                        // relative size of the custom logo
+    bool  showCube = true;                         // draw the built-in cube (ignored if logo set)
+    bool  showProgress = true;                     // draw the sweeping progress bar
+};
+
+// Draw one animated splash frame (into `style`) and present it:
 //   - a soft vertical-gradient backdrop,
-//   - an accent-coloured glow with the isometric-cube logo mark floating over
-//     a contact shadow (a gentle bob + rim light), and
+//   - an accent-coloured glow with the logo mark (a custom image, or the
+//     built-in isometric cube) floating over a contact shadow, and
 //   - a rounded indeterminate progress bar sweeping in the accent colour.
-// `ar/ag/ab` is the accent colour (0..1). Call every frame to animate, or once
-// for a static frame.
-inline void DrawSplash(SDL_Renderer* r, int w, int h, float ar, float ag, float ab) {
+// Call every frame to animate, or once for a static frame.
+inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& style) {
     if (!r || w <= 0 || h <= 0) return;
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     auto U8 = [](float v) { return (Uint8)((v < 0 ? 0 : (v > 1 ? 1 : v)) * 255.0f + 0.5f); };
     const float tms = (float)SDL_GetTicks();
+    const float ar = style.ar, ag = style.ag, ab = style.ab;
 
     // ---- Backdrop: gentle vertical gradient (deep charcoal) --------------
     {
-        SDL_Color tcol{24, 24, 27, 255}, bcol{13, 13, 15, 255};
+        SDL_Color tcol = style.bgTop, bcol = style.bgBottom;
         SDL_Vertex bg[4] = {
             {{0.0f, 0.0f}, tcol, {0, 0}}, {{(float)w, 0.0f}, tcol, {0, 0}},
             {{(float)w, (float)h}, bcol, {0, 0}}, {{0.0f, (float)h}, bcol, {0, 0}} };
@@ -85,28 +98,42 @@ inline void DrawSplash(SDL_Renderer* r, int w, int h, float ar, float ag, float 
     glow(cx, cy + 86.0f, 86.0f, 18.0f, 0.0f, 0.0f, 0.0f, 0.50f);
     glow(cx, ccy, 158.0f + pulse * 20.0f, 150.0f + pulse * 20.0f, ar, ag, ab, 0.13f + pulse * 0.05f);
 
-    // ---- Isometric cube logo mark ----------------------------------------
-    const float S = 100.0f;
-    const float hw = S * 0.42f, hh = S * 0.24f, vh = S * 0.34f;
-    SDL_FPoint top{cx, ccy - hh - vh * 0.5f}, left{cx - hw, ccy - vh * 0.5f},
-               right{cx + hw, ccy - vh * 0.5f}, mid{cx, ccy + hh - vh * 0.5f};
-    SDL_FPoint lb{left.x, left.y + vh}, rb{right.x, right.y + vh}, mb{mid.x, mid.y + vh};
-    auto shade = [&](float m) -> SDL_Color { return {U8(ar*m), U8(ag*m), U8(ab*m), 255}; };
-    auto quad = [&](SDL_FPoint a, SDL_FPoint b, SDL_FPoint c2, SDL_FPoint d, SDL_Color col) {
-        SDL_Vertex v[4] = { {a, col, {0, 0}}, {b, col, {0, 0}}, {c2, col, {0, 0}}, {d, col, {0, 0}} };
-        int idx[6] = {0, 1, 2, 0, 2, 3};
-        SDL_RenderGeometry(r, nullptr, v, 4, idx, 6);
-    };
-    quad(top, right, mid, left, shade(1.00f));   // top face (brightest)
-    quad(left, mid, mb, lb,     shade(0.52f));   // left face
-    quad(mid, right, rb, mb,    shade(0.76f));   // right face
-    // Bright rim light along the two top edges.
-    SDL_SetRenderDrawColor(r, U8(ar + (1 - ar) * 0.6f), U8(ag + (1 - ag) * 0.6f),
-                           U8(ab + (1 - ab) * 0.6f), 230);
-    SDL_RenderDrawLineF(r, top.x, top.y, left.x, left.y);
-    SDL_RenderDrawLineF(r, top.x, top.y, right.x, right.y);
+    if (style.logo) {
+        // ---- Custom logo image (replaces the cube) -----------------------
+        int tw = 0, th = 0;
+        SDL_QueryTexture(style.logo, nullptr, nullptr, &tw, &th);
+        if (tw > 0 && th > 0) {
+            float maxDim = 120.0f * (style.logoScale > 0.05f ? style.logoScale : 1.0f);
+            float scale = maxDim / (float)(tw > th ? tw : th);
+            float dw = tw * scale, dh = th * scale;
+            SDL_FRect dst{cx - dw * 0.5f, ccy - dh * 0.5f, dw, dh};
+            SDL_RenderCopyF(r, style.logo, nullptr, &dst);
+        }
+    } else if (style.showCube) {
+        // ---- Isometric cube logo mark ------------------------------------
+        const float S = 100.0f;
+        const float hw = S * 0.42f, hh = S * 0.24f, vh = S * 0.34f;
+        SDL_FPoint top{cx, ccy - hh - vh * 0.5f}, left{cx - hw, ccy - vh * 0.5f},
+                   right{cx + hw, ccy - vh * 0.5f}, mid{cx, ccy + hh - vh * 0.5f};
+        SDL_FPoint lb{left.x, left.y + vh}, rb{right.x, right.y + vh}, mb{mid.x, mid.y + vh};
+        auto shade = [&](float m) -> SDL_Color { return {U8(ar*m), U8(ag*m), U8(ab*m), 255}; };
+        auto quad = [&](SDL_FPoint a, SDL_FPoint b, SDL_FPoint c2, SDL_FPoint d, SDL_Color col) {
+            SDL_Vertex v[4] = { {a, col, {0, 0}}, {b, col, {0, 0}}, {c2, col, {0, 0}}, {d, col, {0, 0}} };
+            int idx[6] = {0, 1, 2, 0, 2, 3};
+            SDL_RenderGeometry(r, nullptr, v, 4, idx, 6);
+        };
+        quad(top, right, mid, left, shade(1.00f));   // top face (brightest)
+        quad(left, mid, mb, lb,     shade(0.52f));   // left face
+        quad(mid, right, rb, mb,    shade(0.76f));   // right face
+        // Bright rim light along the two top edges.
+        SDL_SetRenderDrawColor(r, U8(ar + (1 - ar) * 0.6f), U8(ag + (1 - ag) * 0.6f),
+                               U8(ab + (1 - ab) * 0.6f), 230);
+        SDL_RenderDrawLineF(r, top.x, top.y, left.x, left.y);
+        SDL_RenderDrawLineF(r, top.x, top.y, right.x, right.y);
+    }
 
     // ---- Rounded indeterminate progress bar ------------------------------
+    if (style.showProgress) {
     const float bw = 210.0f, bx = cx - bw * 0.5f, by = cy + 118.0f, bh = 5.0f, brad = bh * 0.5f;
     auto bar = [&](float x0, float x1, float cr, float cg, float cb, float a) {
         if (x1 <= x0) return;
@@ -123,8 +150,15 @@ inline void DrawSplash(SDL_Renderer* r, int w, int h, float ar, float ag, float 
     float x0 = c0 < bx ? bx : c0;
     float x1 = (c0 + segw) > (bx + bw) ? (bx + bw) : (c0 + segw);
     bar(x0, x1, ar, ag, ab, 1.0f);                   // accent sweep
+    }
 
     SDL_RenderPresent(r);
+}
+
+// Backward-compatible helper: draw the splash with just an accent colour.
+inline void DrawSplash(SDL_Renderer* r, int w, int h, float ar, float ag, float ab) {
+    SplashStyle s; s.ar = ar; s.ag = ag; s.ab = ab;
+    DrawSplashStyled(r, w, h, s);
 }
 
 } // namespace okay

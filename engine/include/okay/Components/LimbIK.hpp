@@ -39,6 +39,9 @@ public:
     float minBend  = 0.0f;             ///< joint limits (interior angle, degrees)
     float maxBend  = 180.0f;
     bool  matchTargetRotation = false; ///< align the end bone to the target's rotation (grab)
+    bool  orient   = false;            ///< also rotate the upper/lower bones to follow the
+                                       ///< new joint positions (so meshes skinned to the bones
+                                       ///< bend with the limb instead of only the joints moving)
 
     void Start() override {
         Scene* s = GetScene();
@@ -66,10 +69,30 @@ public:
         Vec3 tgt = targetObject ? targetObject->Position() : target;
         Vec3 poleDir = poleObject ? (poleObject->Position() - root) : pole;
 
+        Vec3 oldMid = lower->Position();
+        Vec3 oldEnd = end->Position();
         Vec3 mid, e;
         SolveTwoBoneIK(root, m_up, m_lo, tgt, poleDir, mid, e, minBend, maxBend);
-        lower->SetPosition(Vec3::Lerp(lower->Position(), mid, weight));
-        end->SetPosition(Vec3::Lerp(end->Position(), e, weight));
+        Vec3 newMid = Vec3::Lerp(oldMid, mid, weight);
+        Vec3 newEnd = Vec3::Lerp(oldEnd, e, weight);
+
+        // Optional: rotate the bones so a mesh skinned to them bends with the
+        // joint, not just the joint positions moving. Do this BEFORE pinning the
+        // joint positions: rotate the upper bone to point root->newMid, then
+        // (recomputing, since rotating the upper moved its children) rotate the
+        // lower bone to point newMid->newEnd. FromToRotation preserves each
+        // bone's roll about its own axis.
+        if (orient) {
+            Vec3 oldUp = oldMid - root, newUp = newMid - root;
+            if (oldUp.SqrMagnitude() > 1e-8f && newUp.SqrMagnitude() > 1e-8f)
+                upper->SetRotation(Quat::FromToRotation(oldUp, newUp) * upper->Rotation());
+            Vec3 curMid = lower->Position(), curEnd = end->Position();
+            Vec3 oldLo = curEnd - curMid, newLo = newEnd - newMid;
+            if (oldLo.SqrMagnitude() > 1e-8f && newLo.SqrMagnitude() > 1e-8f)
+                lower->SetRotation(Quat::FromToRotation(oldLo, newLo) * lower->Rotation());
+        }
+        lower->SetPosition(newMid);
+        end->SetPosition(newEnd);
 
         if (matchTargetRotation && targetObject)
             end->SetRotation(Quat::Slerp(end->Rotation(), targetObject->Rotation(), weight));

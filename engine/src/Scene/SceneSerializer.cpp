@@ -652,14 +652,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << Quote(f->pelvisName)
             << " " << f->weight << " " << f->footOffset << " " << (f->useRaycast ? 1 : 0) << " " << f->groundY
             << " " << (f->adjustPelvis ? 1 : 0) << " " << (f->plantDown ? 1 : 0) << " " << (f->alignToGround ? 1 : 0)
-            << " " << f->minKneeBend << " " << f->maxKneeBend << " " << f->smoothing << "\n";
+            << " " << f->minKneeBend << " " << f->maxKneeBend << " " << f->smoothing
+            << " " << (f->orient ? 1 : 0) << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
         out << "  limbik " << Quote(lb->upperName) << " " << Quote(lb->lowerName) << " " << Quote(lb->endName)
             << " " << Quote(lb->targetName) << " " << Quote(lb->poleName)
             << " " << lb->weight << " " << lb->minBend << " " << lb->maxBend << " " << (lb->matchTargetRotation ? 1 : 0)
             << " " << lb->target.x << " " << lb->target.y << " " << lb->target.z
-            << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z << "\n";
+            << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z
+            << " " << (lb->orient ? 1 : 0) << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
@@ -2374,8 +2376,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // Optional trailing fields (newer files): parse from the rest of
                     // the line so older records still load cleanly.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); float sm;
-                      if (rs >> sm) f->smoothing = sm; }
+                      std::istringstream rs(rest); float sm; int o;
+                      if (rs >> sm) f->smoothing = sm;
+                      if (rs >> o)  f->orient = (o != 0); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
@@ -2385,6 +2388,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> lb->target.x >> lb->target.y >> lb->target.z
                        >> lb->pole.x >> lb->pole.y >> lb->pole.z;
                     lb->matchTargetRotation = (mr != 0);
+                    // Optional trailing field (newer files): orient bones toggle.
+                    { std::string rest; std::getline(in, rest);
+                      std::istringstream rs(rest); int o;
+                      if (rs >> o) lb->orient = (o != 0); }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
                     ci->targetName = ReadQuoted(in);

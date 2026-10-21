@@ -1105,6 +1105,14 @@ const AccentPreset kAccentPresets[] = {
 };
 int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
+// ---- Customizable loading screen (persisted) ----
+std::string g_splashLogo;                         // optional PNG shown instead of the cube
+float g_splashBgTop[3] = {0.094f, 0.094f, 0.106f};// backdrop gradient (top)
+float g_splashBgBot[3] = {0.051f, 0.051f, 0.059f};// backdrop gradient (bottom)
+bool  g_splashAccentOverride = false;             // use a custom accent for the splash
+float g_splashAccent[3] = {0.235f, 0.475f, 0.800f};
+bool  g_splashShowBar = true;                     // show the progress bar
+SDL_Texture* g_splashLogoTex = nullptr;           // loaded at startup from g_splashLogo
 int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
@@ -1969,6 +1977,12 @@ void LoadPrefs() {
         }
         else if (k == "win_w") { try { g_winW = std::stoi(v); } catch (...) {} }
         else if (k == "win_h") { try { g_winH = std::stoi(v); } catch (...) {} }
+        else if (k == "splash_logo") g_splashLogo = v;
+        else if (k == "splash_bar") g_splashShowBar = (v != "0");
+        else if (k == "splash_accent_on") g_splashAccentOverride = (v == "1");
+        else if (k == "splash_bg_top")  { std::sscanf(v.c_str(), "%f %f %f", &g_splashBgTop[0], &g_splashBgTop[1], &g_splashBgTop[2]); }
+        else if (k == "splash_bg_bot")  { std::sscanf(v.c_str(), "%f %f %f", &g_splashBgBot[0], &g_splashBgBot[1], &g_splashBgBot[2]); }
+        else if (k == "splash_accent")  { std::sscanf(v.c_str(), "%f %f %f", &g_splashAccent[0], &g_splashAccent[1], &g_splashAccent[2]); }
     }
     if (g_winW < 700)  g_winW = 700;
     if (g_winH < 500)  g_winH = 500;
@@ -1990,6 +2004,12 @@ void SavePrefs() {
     f << "tab=" << g_lastTab << "\n";
     f << "win_w=" << g_winW << "\n";
     f << "win_h=" << g_winH << "\n";
+    f << "splash_logo=" << g_splashLogo << "\n";
+    f << "splash_bar=" << (g_splashShowBar ? 1 : 0) << "\n";
+    f << "splash_accent_on=" << (g_splashAccentOverride ? 1 : 0) << "\n";
+    f << "splash_bg_top=" << g_splashBgTop[0] << " " << g_splashBgTop[1] << " " << g_splashBgTop[2] << "\n";
+    f << "splash_bg_bot=" << g_splashBgBot[0] << " " << g_splashBgBot[1] << " " << g_splashBgBot[2] << "\n";
+    f << "splash_accent=" << g_splashAccent[0] << " " << g_splashAccent[1] << " " << g_splashAccent[2] << "\n";
     for (const auto& p : g_favorites)    f << "fav=" << p << "\n";
     for (const auto& u : g_favFriends)   f << "favfriend=" << u << "\n";
     for (const auto& u : g_pinnedChats)  f << "pinchat=" << u << "\n";
@@ -3170,13 +3190,35 @@ int main(int argc, char** argv) {
     // Paint a loading frame into the back buffer, reveal the window, then present
     // again so the reveal lands on the splash (not a black frame), whatever the
     // platform's show-vs-present ordering.
-    auto firstSplash = [&]() {
-        int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+    // Load the user's custom splash logo (if any) so the first frame can show it.
+    if (!g_splashLogo.empty()) {
+        int lw = 0, lh = 0, lch = 0;
+        if (unsigned char* px = stbi_load(g_splashLogo.c_str(), &lw, &lh, &lch, 4)) {
+            if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, lw, lh, 32, lw * 4, SDL_PIXELFORMAT_ABGR8888)) {
+                g_splashLogoTex = SDL_CreateTextureFromSurface(renderer, s);
+                SDL_FreeSurface(s);
+            }
+            stbi_image_free(px);
+        }
+    }
+    // Build the splash style from the user's loading-screen preferences.
+    auto splashStyle = [&]() {
+        okay::SplashStyle st;
         int ai = g_accentIndex;
         int an = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
         if (ai < 0 || ai >= an) ai = 0;
-        okay::DrawSplash(renderer, sw, sh, kAccentPresets[ai].col.x,
-                         kAccentPresets[ai].col.y, kAccentPresets[ai].col.z);
+        if (g_splashAccentOverride) { st.ar = g_splashAccent[0]; st.ag = g_splashAccent[1]; st.ab = g_splashAccent[2]; }
+        else { st.ar = kAccentPresets[ai].col.x; st.ag = kAccentPresets[ai].col.y; st.ab = kAccentPresets[ai].col.z; }
+        auto C = [](const float* c) -> SDL_Color {
+            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+        st.bgTop = C(g_splashBgTop); st.bgBottom = C(g_splashBgBot);
+        st.logo = g_splashLogoTex; st.showProgress = g_splashShowBar;
+        return st;
+    };
+    auto firstSplash = [&]() {
+        int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     };
     firstSplash();                 // draw + present while still hidden
     SDL_ShowWindow(window);        // reveal with the splash already composited
@@ -3259,13 +3301,10 @@ int main(int argc, char** argv) {
     {
         VerifyJob vj{ accountPtr.get(), false };
         SDL_Thread* vt = SDL_CreateThread(VerifySessionWorker, "okay-verify", &vj);
-        int ai = g_accentIndex, an = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
-        if (ai < 0 || ai >= an) ai = 0;
         while (!vj.done) {
             SDL_PumpEvents();   // keep the window responsive (and mapped) while we wait
             int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-            okay::DrawSplash(renderer, sw, sh, kAccentPresets[ai].col.x,
-                             kAccentPresets[ai].col.y, kAccentPresets[ai].col.z);
+            okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
             SDL_Delay(16);
         }
         if (vt) SDL_WaitThread(vt, nullptr);
@@ -5856,6 +5895,30 @@ int main(int argc, char** argv) {
             ImGui::PopItemWidth();
             ImGui::SameLine();
             ImGui::TextDisabled("applies on release");
+
+            // ---- Loading screen ----
+            ImGui::Dummy(ImVec2(0, 16));
+            ImGui::SeparatorText("Loading screen");
+            ImGui::TextDisabled("Customize the startup splash. Changes apply on the next launch.");
+            {
+                char lb[260]; std::snprintf(lb, sizeof(lb), "%s", g_splashLogo.c_str());
+                ImGui::SetNextItemWidth(360);
+                if (ImGui::InputTextWithHint("##splashlogo", "Logo image path (PNG) — blank = built-in cube", lb, sizeof(lb)))
+                    { g_splashLogo = lb; SavePrefs(); }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##splashlogo")) { g_splashLogo.clear(); SavePrefs(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A PNG shown instead of the cube. Drag a .png onto a path field or paste its location.");
+                if (ImGui::Checkbox("Custom splash accent", &g_splashAccentOverride)) SavePrefs();
+                if (g_splashAccentOverride) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(220);
+                    if (ImGui::ColorEdit3("##splashaccent", g_splashAccent)) SavePrefs();
+                }
+                ImGui::SetNextItemWidth(220);
+                if (ImGui::ColorEdit3("Background top##splash", g_splashBgTop)) SavePrefs();
+                ImGui::SetNextItemWidth(220);
+                if (ImGui::ColorEdit3("Background bottom##splash", g_splashBgBot)) SavePrefs();
+                if (ImGui::Checkbox("Show progress bar##splash", &g_splashShowBar)) SavePrefs();
+            }
 
             // ---- Behavior ----
             ImGui::Dummy(ImVec2(0, 16));

@@ -55,6 +55,8 @@ public:
     float maxKneeBend = 178.0f;    ///< max knee angle (deg) — keeps knees from locking straight
     bool  alignToGround = false;   ///< tilt the planted foot to match the ground slope
     Vec3  footUpAxis = Vec3::Up;   ///< the foot bone's local "up" (sole normal)
+    bool  orient = false;          ///< also rotate the thigh/shin bones to follow the planted
+                                   ///< knee/foot, so leg meshes bend with the joints
 
     void Start() override {
         Scene* s = GetScene();
@@ -218,11 +220,26 @@ private:
         if (Mathf::Abs(remaining) < 1e-4f) return;
 
         Vec3 target{animFoot.x, animFoot.y + remaining, animFoot.z};
+        Vec3 oldMid = knee->Position(), oldEnd = foot->Position();
         Vec3 mid, end;
         SolveTwoBoneIK(hip->Position(), upLen, loLen, target, pole, mid, end,
                        minKneeBend, maxKneeBend);
-        knee->SetPosition(Vec3::Lerp(knee->Position(), mid, weight));
-        foot->SetPosition(Vec3::Lerp(foot->Position(), end, weight));
+        Vec3 newMid = Vec3::Lerp(oldMid, mid, weight);
+        Vec3 newEnd = Vec3::Lerp(oldEnd, end, weight);
+        // Optional: rotate the thigh (hip->knee) and shin (knee->foot) bones so a
+        // leg mesh skinned to them bends with the joints, not just the joints
+        // moving. Done before pinning positions; see LimbIK for the rationale.
+        if (orient) {
+            Vec3 oldUp = oldMid - hip->Position(), newUp = newMid - hip->Position();
+            if (oldUp.SqrMagnitude() > 1e-8f && newUp.SqrMagnitude() > 1e-8f)
+                hip->SetRotation(Quat::FromToRotation(oldUp, newUp) * hip->Rotation());
+            Vec3 curMid = knee->Position(), curEnd = foot->Position();
+            Vec3 oldLo = curEnd - curMid, newLo = newEnd - newMid;
+            if (oldLo.SqrMagnitude() > 1e-8f && newLo.SqrMagnitude() > 1e-8f)
+                knee->SetRotation(Quat::FromToRotation(oldLo, newLo) * knee->Rotation());
+        }
+        knee->SetPosition(newMid);
+        foot->SetPosition(newEnd);
 
         // Tilt the foot so its sole follows the ground slope (only while a
         // correction is actually in play — never tilt a mid-air swing foot).

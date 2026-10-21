@@ -2107,6 +2107,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static std::map<std::string,std::string> drafts;  // unsent text per conversation (kept on switch)
     static std::string fwdBody;                       // message body queued to forward
     static bool fwdPick = false;                      // forward: pick a conversation popup
+    static std::map<std::string, std::pair<long,std::string>> pinnedMsg;  // uid -> (msgId, preview)
+    static std::string lightboxUrl;                   // image shown fullscreen (empty = none)
 
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
         // Keep the current conversation's unsent draft before switching away.
@@ -2357,6 +2359,44 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (showSearch) { ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##msgsearch", "Find a message", msgSearch, sizeof(msgSearch)); }
             ImGui::Separator();
 
+            // Pinned-message bar: a slim strip under the header showing the pinned
+            // message. Click the text to jump to it in the thread; the x unpins.
+            if (auto pit = pinnedMsg.find(selUid); pit != pinnedMsg.end()) {
+                long pinId = pit->second.first;
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.17f,0.19f,0.25f,1.0f));
+                ImGui::BeginChild("##pinbar", ImVec2(0, 26), false, ImGuiWindowFlags_NoScrollbar);
+                ImVec2 pbp = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pbp.x, pbp.y + 3),
+                        ImVec2(pbp.x + 3, pbp.y + 19), ImGui::GetColorU32(kAccent), 1.0f);
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 9);
+                ImGui::AlignTextToFramePadding();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(kAccent));
+                ImGui::TextUnformatted("Pinned");
+                ImGui::PopStyleColor();
+                ImGui::SameLine(0, 8);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                ImGui::TextUnformatted(pit->second.second.c_str());
+                ImGui::PopStyleColor();
+                // Clicking anywhere on the label area jumps to the pinned message.
+                if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    scrollToId = pinId; flashId = pinId; flashUntil = now + 1400;
+                }
+                if (ImGui::IsWindowHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                // Unpin button pinned to the right edge of the strip.
+                ImGui::SameLine(ImGui::GetWindowWidth() - 24);
+                ImVec2 xbp = ImGui::GetCursorScreenPos();
+                if (ImGui::Button("##unpin", ImVec2(18, 18))) pinnedMsg.erase(selUid);
+                {
+                    ImDrawList* xd = ImGui::GetWindowDrawList();
+                    ImU32 xc = ImGui::GetColorU32(ImGuiCol_Text);
+                    xd->AddLine(ImVec2(xbp.x + 6, xbp.y + 6), ImVec2(xbp.x + 12, xbp.y + 12), xc, 1.6f);
+                    xd->AddLine(ImVec2(xbp.x + 12, xbp.y + 6), ImVec2(xbp.x + 6, xbp.y + 12), xc, 1.6f);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unpin");
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+            }
+
             // Messages, reactions, read-receipt and typing come from the background
             // chat poller — the window never blocks on the network. We just tell the
             // worker which conversation is open and read what it has published.
@@ -2520,7 +2560,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         float maxH = 220.0f; if (h > maxH) { w *= maxH / h; h = maxH; }
                         ImGui::Dummy(ImVec2(0, 2));
                         if (ImGui::ImageButton("##img", (ImTextureID)(intptr_t)it, ImVec2(w, h)))
-                            OpenExternal(imgUrl);
+                            lightboxUrl = imgUrl;   // click to view full-size
                         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     }
                 }
@@ -2599,6 +2639,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     if (ImGui::MenuItem("Reply")) { replyTo = m.id; replyName = m.mine ? "yourself" : selName; replySnippet = ChatPreview(m.body, 40); }
                     if (ImGui::MenuItem("Copy text")) ImGui::SetClipboardText(m.body.c_str());
                     if (ImGui::MenuItem("Forward...")) { fwdBody = m.body; fwdPick = true; }
+                    {
+                        bool isPinned = pinnedMsg.count(selUid) && pinnedMsg[selUid].first == m.id;
+                        if (ImGui::MenuItem(isPinned ? "Unpin message" : "Pin message")) {
+                            if (isPinned) pinnedMsg.erase(selUid);
+                            else pinnedMsg[selUid] = {m.id, ChatPreview(m.body, 48)};
+                        }
+                    }
                     if (m.mine) {
                         ImGui::Separator();
                         if (ImGui::MenuItem("Edit")) { editId = m.id; replyTo = 0; std::snprintf(input, sizeof(input), "%s", m.body.c_str()); }
@@ -2774,6 +2821,54 @@ void DrawChatWindow(okay::account::AccountService& account) {
         }
     }
     ImGui::End();
+
+    // ---- Image lightbox: full-screen viewer for a clicked chat image --------
+    // Drawn as its own top-level overlay so it covers the whole window, dims the
+    // background, centers the image, and dismisses on click / Esc.
+    if (!lightboxUrl.empty()) {
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(vp->Pos);
+        ImGui::SetNextWindowSize(vp->Size);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.02f, 0.03f, 0.92f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::SetNextWindowFocus();
+        if (ImGui::Begin("##lightbox", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav)) {
+            ImVec2 sz = ImGui::GetContentRegionAvail();
+            SDL_Texture* it = AvatarTexture(lightboxUrl);
+            if (it) {
+                int iw = 0, ih = 0; SDL_QueryTexture(it, nullptr, nullptr, &iw, &ih);
+                float w = (float)iw, h = (float)ih;
+                if (iw > 0 && ih > 0) {
+                    float scale = std::min((sz.x - 48) / w, (sz.y - 72) / h);
+                    if (scale > 1.0f) scale = 1.0f;   // never upscale past native
+                    if (scale > 0.0f) { w *= scale; h *= scale; }
+                }
+                ImGui::SetCursorPos(ImVec2((sz.x - w) * 0.5f, (sz.y - h) * 0.5f - 12));
+                ImGui::Image((ImTextureID)(intptr_t)it, ImVec2(w, h));
+            } else {
+                const char* ld = "Loading image\xE2\x80\xA6";
+                ImVec2 tsz = ImGui::CalcTextSize(ld);
+                ImGui::SetCursorPos(ImVec2((sz.x - tsz.x) * 0.5f, sz.y * 0.5f));
+                ImGui::TextDisabled("%s", ld);
+            }
+            // Bottom hint bar: open-in-browser + close.
+            ImGui::SetCursorPos(ImVec2(sz.x * 0.5f - 96, sz.y - 40));
+            if (ImGui::Button("Open in browser")) OpenExternal(lightboxUrl);
+            ImGui::SameLine();
+            if (ImGui::Button("Close")) lightboxUrl.clear();
+            // Click the dimmed backdrop (not the image/buttons) or Esc to dismiss.
+            if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                lightboxUrl.clear();
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) lightboxUrl.clear();
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
 }
 
 // ---- Steam-style minimize to the system tray (Windows) ---------------------

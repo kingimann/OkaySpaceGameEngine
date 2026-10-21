@@ -8278,14 +8278,33 @@ void DrawScriptEditor(EditorState& ed) {
         static bool s_showFind = false; // Rider-style: the find bar is hidden until Ctrl+F
         static int  s_findCursor = -1;  // search position — advances on each Enter/F3 even
                                         // while the editor is unfocused (its caret is frozen)
-        if (ImGui::SmallButton("Run")) {           // compile + run
+        if (ImGui::SmallButton("Run")) {           // compile + test-run in a sandbox
             bool ok = sc->LoadSource(buf.data(), &s_error);
-            if (ok) s_error.clear();
-            ConsoleLog(ok ? "Compiled OK" : "Error: " + s_error);
+            if (!ok) { ConsoleLog("Compile error: " + s_error, 2); }
+            else {
+                s_error.clear();
+                ConsoleLog("Compiled OK \xE2\x80\x94 test-running in a sandbox\xE2\x80\xA6");
+                // Execute on a throwaway scene object so the real scene is never
+                // disturbed. Script print()/log() go to the engine log, which the
+                // console mirrors as [script] lines. Inspector field overrides are
+                // applied so the test matches the component's configured values.
+                try {
+                    okay::Scene sandbox; sandbox.physicsEnabled = false;
+                    okay::GameObject* go = sandbox.CreateGameObject("ScriptTest");
+                    auto* tsc = go->AddComponent<okay::ScriptComponent>(sc->Language());
+                    for (const auto& kv : sc->fields) tsc->fields[kv.first] = kv.second;
+                    if (tsc->LoadSource(buf.data())) {
+                        sandbox.Start();
+                        for (int i = 0; i < 3; ++i) sandbox.Update(1.0f / 60.0f);
+                        ConsoleLog("Test run OK: start() + 3 update() frames (sandbox).", 0);
+                    }
+                } catch (const std::exception& e) { ConsoleLog(std::string("Runtime error: ") + e.what(), 2); }
+                catch (...) { ConsoleLog("Runtime error during test run.", 2); }
+            }
             ed.dirty = true;
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Compile and run now (executes the script immediately).\nUse Save to just write the file without running.");
+            ImGui::SetTooltip("Compile and test-run the script in a sandbox object.\nprint()/log() output shows in the console below.\nUse Save to just write the file without running.");
         ImGui::SameLine();
         // Save the current script to disk (button + Ctrl+S). One place so both agree.
         auto doSave = [&]() {

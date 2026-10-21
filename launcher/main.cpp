@@ -4162,6 +4162,43 @@ static void OutboxSend(const std::string& toUid, long toGroup, const std::string
     SDL_LockMutex(g_outMutex); g_outbox.push_back(o); SDL_UnlockMutex(g_outMutex);
     OutboxKick();
 }
+// Server channel replies and threads ride in the message text (the table has
+// no reply column): "[re:ID] text" answers message ID inline, "[th:ID] text" is
+// a reply inside ID's thread, kept out of the main channel. Older clients just
+// show the tag.
+struct SvBody { int kind = 0; long ref = 0; std::string text; };   // 0 plain, 1 reply, 2 thread reply
+static SvBody ParseSvBody(const std::string& b) {
+    SvBody r; r.text = b;
+    if (b.size() > 5 && b[0] == '[' && (b.compare(1, 3, "re:") == 0 || b.compare(1, 3, "th:") == 0)) {
+        const std::size_t e = b.find(']');
+        const long id = std::atol(b.c_str() + 4);
+        if (e != std::string::npos && e < 24 && id > 0) {
+            r.kind = b[1] == 'r' ? 1 : 2; r.ref = id; r.text = b.substr(e + 1);
+            if (!r.text.empty() && r.text[0] == ' ') r.text.erase(0, 1);
+        }
+    }
+    return r;
+}
+static std::string SvTag(int kind, long ref) { return kind == 0 || ref <= 0 ? std::string() : std::string(kind == 1 ? "[re:" : "[th:") + std::to_string(ref) + "] "; }
+
+// Little line icons for message toolbars.
+static void DrawReplyIcon(ImDrawList* d, ImVec2 c, ImU32 col) {   // curved "reply" arrow
+    d->PathArcTo(ImVec2(c.x + 1.0f, c.y + 4.0f), 6.0f, 3.14159265f * 1.5f, 3.14159265f * 2.0f, 8);
+    d->PathStroke(col, 0, 1.6f);
+    d->AddLine(ImVec2(c.x - 6, c.y - 2), ImVec2(c.x + 1, c.y - 2), col, 1.6f);
+    d->AddLine(ImVec2(c.x - 6, c.y - 2), ImVec2(c.x - 2.5f, c.y - 5.5f), col, 1.6f);
+    d->AddLine(ImVec2(c.x - 6, c.y - 2), ImVec2(c.x - 2.5f, c.y + 1.5f), col, 1.6f);
+}
+static void DrawThreadIcon(ImDrawList* d, ImVec2 c, ImU32 col) {   // two speech bubbles
+    d->AddRect(ImVec2(c.x - 7, c.y - 6), ImVec2(c.x + 3, c.y + 1), col, 3.0f, 0, 1.4f);
+    d->AddLine(ImVec2(c.x - 4, c.y + 1), ImVec2(c.x - 5, c.y + 4), col, 1.4f);
+    d->AddRect(ImVec2(c.x - 1, c.y - 1), ImVec2(c.x + 7, c.y + 5), col, 3.0f, 0, 1.4f);
+}
+static void DrawPencilIcon(ImDrawList* d, ImVec2 c, ImU32 col) {
+    d->AddLine(ImVec2(c.x - 5, c.y + 5), ImVec2(c.x + 4, c.y - 4), col, 2.2f);
+    d->AddLine(ImVec2(c.x - 6, c.y + 6), ImVec2(c.x - 4.5f, c.y + 4.5f), col, 1.2f);
+}
+
 static void OutboxSendChannel(long channelId, const std::string& body) { OutboxSend(std::string(), 0, body, 0, channelId); }
 // My pending posts for a server channel, after dropping the ones the channel log
 // now contains (inLog(body, when)).
@@ -13276,6 +13313,9 @@ int main(int argc, char** argv) {
                 static bool svSettingsOpen = false, svRenChanOpen = false;
                 static bool svShowMembers = true, svAddOpen = false, svAddChan = false, svFocus = false;
                 static std::map<long,long> svLikes; static std::map<long,bool> svMyLikes; static long svEditId = 0;
+                static long svReplyTo = 0, svThreadRoot = 0;       // replying to / thread panel open on
+                static std::string svEditTag;                       // reply/thread tag kept when editing
+                static char svThreadMsg[800] = ""; static bool svThreadFocus = false;
                 // Browser-style tabs: one per opened channel, across servers.
                 struct SvTab { long sel = 0, chan = 0; std::string chanName, srvName; };
                 static std::vector<SvTab> svTabs;
@@ -13299,6 +13339,11 @@ int main(int argc, char** argv) {
                         msg(3, "alexr", "I'm in. I can do the character controller + camera", 4800, 1);
                         msg(4, "kingimann", "Same, I'll take UI and the menus. Let's use the Platformer template as a base", 4200, 2);
                         msg(5, "maya", "Perfect. First playable by tonight?", 600, 0);
+                        msg(6, "alexr", "[th:3] camera lag or snap? I'm thinking a soft follow", 4700, 0);
+                        msg(7, "maya", "[th:3] soft follow, snap feels bad on small planets", 4600, 1);
+                        msg(8, "priya", "[th:3] +1 soft follow, maybe with look-ahead", 4500, 0);
+                        msg(9, "alexr", "[re:5] yep, I'll have the controller in by 8", 300, 0);
+                        if (std::getenv("OKAY_UI_DEMO_THREAD_OPEN")) svThreadRoot = 3;
                         svMyLikes[4] = true;
                         svSel = 1; svSelName = "Game Jam Crew"; svChan = 11;
                         svTabs = {{1, 11, "general", "Game Jam Crew"}, {1, 12, "game-jam", "Game Jam Crew"}, {3, 14, "help", "OkaySpace Devs"}};
@@ -13552,8 +13597,16 @@ int main(int argc, char** argv) {
 
                     // ---- Pane 3: channel chat (+ members on wide windows) ----------------
                     const float leftUsed = 72 + 10 + 224 + 10;
-                    const bool showMem = svShowMembers && (availW - leftUsed) > 620.0f;
-                    const float memW = showMem ? 210.0f : 0.0f;
+                    if (svThreadRoot && std::none_of(svMsgs.begin(), svMsgs.end(), [&](const okay::ChannelMessage& x) { return x.id == svThreadRoot; }))
+                        svThreadRoot = 0;   // root scrolled out / deleted / switched channel
+                    const bool showMem = (svShowMembers || svThreadRoot) && (availW - leftUsed) > (svThreadRoot ? 520.0f : 620.0f);
+                    const float memW = showMem ? (svThreadRoot ? 300.0f : 210.0f) : 0.0f;
+                    auto svToggleLike = [&](long id) {   // instant; saved in the background
+                        const bool liked = svMyLikes.count(id) != 0;
+                        if (liked) { svMyLikes.erase(id); if (svLikes[id] > 0) --svLikes[id]; }
+                        else { svMyLikes[id] = true; ++svLikes[id]; }
+                        if (!kSvDemo) ServerActionAsync(liked ? 1 : 0, id);
+                    };
                     ImGui::BeginChild("##svmsgs", ImVec2(showMem ? availW - leftUsed - memW - 10 : 0.0f, colH), false);
                     std::string chanName;
                     for (const auto& c : svChannels) if (c.id == svChan) { chanName = c.name; break; }
@@ -13689,29 +13742,89 @@ int main(int argc, char** argv) {
                     } else {
                         // Inline per-message actions: like + count, "(edited)", and an
                         // Edit affordance on my own messages (loads it into the box).
+                        // Thread stats per root, and quick lookup for reply quotes.
+                        std::map<long, const okay::ChannelMessage*> svById;
+                        for (const auto& x : svMsgs) svById[x.id] = &x;
+                        std::map<long, int> threadN; std::map<long, long> threadLast;
+                        for (const auto& x : svMsgs) {
+                            SvBody pb = ParseSvBody(x.body);
+                            if (pb.kind == 2 && svById.count(pb.ref)) { ++threadN[pb.ref]; threadLast[pb.ref] = std::max(threadLast[pb.ref], x.when); }
+                        }
                         auto msgActions = [&](const okay::ChannelMessage& m) {
                             long lc = svLikes.count(m.id) ? svLikes[m.id] : 0;
                             bool liked = svMyLikes.count(m.id) != 0;
                             ImGui::PushID((int)m.id);
-                            ImVec2 hp2 = ImGui::GetCursorScreenPos();
-                            if (ImGui::InvisibleButton("like", ImVec2(18, 16))) {
-                                if (liked) { svMyLikes.erase(m.id); if (svLikes[m.id] > 0) --svLikes[m.id]; }
-                                else { svMyLikes[m.id] = true; ++svLikes[m.id]; }
-                                if (!kSvDemo) ServerActionAsync(liked ? 1 : 0, m.id);
+                            bool any = false;
+                            if (lc > 0 || liked) {   // like pill (tap to toggle) once someone liked it
+                                ImVec2 hp2 = ImGui::GetCursorScreenPos();
+                                const std::string cnt = std::to_string(std::max(1L, lc));
+                                const float pw = 26.0f + ImGui::CalcTextSize(cnt.c_str()).x;
+                                if (ImGui::InvisibleButton("likepill", ImVec2(pw, 20))) svToggleLike(m.id);
+                                const bool ph = ImGui::IsItemHovered();
+                                if (ph) { ImGui::SetTooltip(liked ? "Unlike" : "Like"); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+                                ImDrawList* d = ImGui::GetWindowDrawList();
+                                d->AddRectFilled(hp2, ImVec2(hp2.x + pw, hp2.y + 20), liked ? IM_COL32(232, 72, 92, ph ? 60 : 42) : IM_COL32(255, 255, 255, ph ? 26 : 14), 10.0f);
+                                if (liked) d->AddRect(hp2, ImVec2(hp2.x + pw, hp2.y + 20), IM_COL32(232, 72, 92, 150), 10.0f, 0, 1.0f);
+                                DrawHeart(d, ImVec2(hp2.x + 11, hp2.y + 10), 5.5f, liked ? IM_COL32(232, 72, 92, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                                d->AddText(ImVec2(hp2.x + 20, hp2.y + 10 - ImGui::GetTextLineHeight() * 0.5f), cText, cnt.c_str());
+                                any = true;
                             }
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip(liked ? "Unlike" : "Like");
-                            DrawHeart(ImGui::GetWindowDrawList(), ImVec2(hp2.x+8, hp2.y+9), 6.0f,
-                                      liked ? IM_COL32(232,72,92,255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
-                            if (lc > 0) { ImGui::SameLine(0, 2); ImGui::TextDisabled("%ld", lc); }
-                            if (m.edited) { ImGui::SameLine(0, 8); ImGui::TextDisabled("(edited)"); }
-                            if (!svMe.empty() && m.author == svMe) {
-                                ImGui::SameLine(0, 8);
-                                if (ImGui::SmallButton("edit")) { svEditId = m.id; std::snprintf(svMsg, sizeof(svMsg), "%s", m.body.c_str()); svFocus = true; }
+                            if (m.edited) { if (any) ImGui::SameLine(0, 8); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("(edited)"); any = true; }
+                            if (auto tn = threadN.find(m.id); tn != threadN.end()) {   // "3 replies · 5m ago" -> open the thread
+                                if (any) ImGui::SameLine(0, 10);
+                                ImVec2 tp = ImGui::GetCursorScreenPos();
+                                char lbl[64]; std::snprintf(lbl, sizeof(lbl), "%d %s", tn->second, tn->second == 1 ? "reply" : "replies");
+                                const std::string ago = RelTime(threadLast[m.id]);
+                                const float lw = ImGui::CalcTextSize(lbl).x, aw = ImGui::CalcTextSize(ago.c_str()).x;
+                                if (ImGui::InvisibleButton("thr", ImVec2(22 + lw + 10 + aw, 20))) { svThreadRoot = m.id; svThreadFocus = true; }
+                                const bool th = ImGui::IsItemHovered();
+                                if (th) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                ImDrawList* d = ImGui::GetWindowDrawList();
+                                if (th || svThreadRoot == m.id) d->AddRectFilled(ImVec2(tp.x - 4, tp.y), ImVec2(tp.x + 26 + lw + 10 + aw, tp.y + 20), IM_COL32(255, 255, 255, 14), 6.0f);
+                                DrawThreadIcon(d, ImVec2(tp.x + 9, tp.y + 10), ImGui::GetColorU32(accLt));
+                                d->AddText(ImVec2(tp.x + 22, tp.y + 10 - ImGui::GetTextLineHeight() * 0.5f), ImGui::GetColorU32(accLt), lbl);
+                                d->AddText(ImVec2(tp.x + 22 + lw + 10, tp.y + 10 - ImGui::GetTextLineHeight() * 0.5f), cDim, ago.c_str());
                             }
                             ImGui::PopID();
                         };
+                        // Discord-style toolbar over the hovered message: like, reply, thread, edit.
+                        auto rowToolbar = [&](const okay::ChannelMessage& m, ImVec2 rowMin, ImVec2 rowMax) {
+                            if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) return;
+                            if (!ImGui::IsMouseHoveringRect(rowMin, rowMax, false)) return;
+                            ImDrawList* d = ImGui::GetWindowDrawList();
+                            d->AddRectFilled(ImVec2(rowMin.x - 6, rowMin.y - 2), ImVec2(rowMax.x, rowMax.y + 2), IM_COL32(255, 255, 255, 7), 6.0f);
+                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) svToggleLike(m.id);   // double-click = like
+                            const bool own = !svMe.empty() && m.author == svMe;
+                            const int nb = own ? 4 : 3; const float bs = 28.0f;
+                            const ImVec2 tb(rowMax.x - nb * bs - 10, std::max(rowMin.y - 16, ImGui::GetWindowPos().y + 2));
+                            const ImVec2 after = ImGui::GetCursorScreenPos();
+                            d->AddRectFilled(ImVec2(tb.x - 3, tb.y - 2), ImVec2(tb.x + nb * bs + 3, tb.y + bs + 2), ImGui::GetColorU32(okaytheme::kRaised), 8.0f);
+                            d->AddRect(ImVec2(tb.x - 3, tb.y - 2), ImVec2(tb.x + nb * bs + 3, tb.y + bs + 2), IM_COL32(255, 255, 255, 22), 8.0f);
+                            const bool liked = svMyLikes.count(m.id) != 0;
+                            for (int b = 0; b < nb; ++b) {
+                                ImGui::PushID((int)m.id * 8 + b);
+                                const ImVec2 bp(tb.x + b * bs, tb.y);
+                                ImGui::SetCursorScreenPos(bp);
+                                ImGui::SetNextItemAllowOverlap();
+                                const bool hit = ImGui::InvisibleButton("##tb", ImVec2(bs, bs));
+                                const bool h = ImGui::IsItemHovered();
+                                if (h) d->AddRectFilled(ImVec2(bp.x + 2, bp.y + 2), ImVec2(bp.x + bs - 2, bp.y + bs - 2), IM_COL32(255, 255, 255, 26), 6.0f);
+                                const ImVec2 c(bp.x + bs * 0.5f, bp.y + bs * 0.5f);
+                                const ImU32 ic = h ? cText : IM_COL32(200, 208, 225, 230);
+                                const char* tip = "";
+                                if (b == 0) { DrawHeart(d, c, 6.0f, liked ? IM_COL32(232, 72, 92, 255) : ic); tip = liked ? "Unlike" : "Like  (double-click)"; if (hit) svToggleLike(m.id); }
+                                if (b == 1) { DrawReplyIcon(d, c, ic); tip = "Reply"; if (hit) { svReplyTo = m.id; svEditId = 0; svFocus = true; } }
+                                if (b == 2) { DrawThreadIcon(d, c, ic); tip = threadN.count(m.id) ? "Open thread" : "Start a thread"; if (hit) { svThreadRoot = m.id; svThreadFocus = true; } }
+                                if (b == 3) { DrawPencilIcon(d, c, ic); tip = "Edit";
+                                    if (hit) { SvBody pb = ParseSvBody(m.body); svEditTag = SvTag(pb.kind, pb.ref); svEditId = m.id; svReplyTo = 0;
+                                               std::snprintf(svMsg, sizeof(svMsg), "%s", pb.text.c_str()); svFocus = true; } }
+                                if (h) ImGui::SetTooltip("%s", tip);
+                                ImGui::PopID();
+                            }
+                            ImGui::SetCursorScreenPos(after);
+                        };
                         const float composerH = (ImGui::GetTextLineHeight() + 16.0f) + 4.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f + 8.0f
-                                              + (svEditId ? ImGui::GetTextLineHeightWithSpacing() : 0.0f);
+                                              + ((svEditId || svReplyTo) ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
                         ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false);
                         static int svLastShown = -1;
                         std::string prevAuthor; bool firstMsg = true; long prevDay = 0, prevWhen = 0;
@@ -13730,17 +13843,39 @@ int main(int argc, char** argv) {
                             ImGui::TextDisabled("This is the start of the #%s channel.", chanName.empty() ? "channel" : chanName.c_str());
                             ImGui::Dummy(ImVec2(0, 8));
                         }
+                        const float rowRight = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
                         for (const auto& m : svMsgs) {
+                            SvBody pb = ParseSvBody(m.body);
+                            if (pb.kind == 2 && svById.count(pb.ref)) continue;     // lives in its thread
+                            if (pb.kind == 2) pb.kind = 1;                          // orphaned thread reply: show as a reply
+                            const okay::ChannelMessage* quoted = pb.kind == 1 && svById.count(pb.ref) ? svById[pb.ref] : nullptr;
                             std::string who = m.author.empty() ? "unknown" : m.author;
                             // Date separator when the day changes.
                             long day = DayKey(m.when);
                             if (day != 0 && day != prevDay) { ChatDateSeparator(m.when); prevDay = day; prevAuthor.clear(); }
                             char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
-                            // Start a fresh group on a new author or a >7 min gap.
-                            bool newGroup = (who != prevAuthor) || (m.when > 0 && prevWhen > 0 && m.when - prevWhen > 420);
+                            // Start a fresh group on a new author, a >7 min gap, or a reply.
+                            bool newGroup = (who != prevAuthor) || (m.when > 0 && prevWhen > 0 && m.when - prevWhen > 420) || pb.kind == 1;
                             prevWhen = m.when;
+                            if (newGroup && !firstMsg) ImGui::Dummy(ImVec2(0, 8));
+                            const ImVec2 rowMin = ImGui::GetCursorScreenPos();
+                            if (pb.kind == 1) {   // reply quote: a hooked line from the avatar to "@name  snippet"
+                                ImDrawList* d = ImGui::GetWindowDrawList();
+                                ImVec2 qp = ImGui::GetCursorScreenPos();
+                                const float qy = qp.y + ImGui::GetTextLineHeight() * 0.5f + 1;
+                                d->PathLineTo(ImVec2(qp.x + 18, qy + 9)); d->PathLineTo(ImVec2(qp.x + 18, qy + 3));
+                                d->PathArcTo(ImVec2(qp.x + 24, qy + 3), 6.0f, 3.14159265f, 3.14159265f * 1.5f, 6);
+                                d->PathLineTo(ImVec2(qp.x + 40, qy - 3));
+                                d->PathStroke(IM_COL32(255, 255, 255, 60), 0, 1.6f);
+                                ImGui::SetCursorScreenPos(ImVec2(qp.x + 44, qp.y));
+                                std::string qa = quoted ? (quoted->author.empty() ? std::string("unknown") : quoted->author) : std::string();
+                                std::string qt = quoted ? ChatPreviewSmart(ParseSvBody(quoted->body).text, 70) : std::string("Original message was deleted");
+                                if (quoted) { ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(accLt)), "@%s", qa.c_str()); ImGui::SameLine(0, 6); }
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                                ImGui::TextUnformatted(FitText(qt, std::max(60.0f, rowRight - ImGui::GetCursorScreenPos().x - 10)).c_str());
+                                ImGui::PopStyleColor();
+                            }
                             if (newGroup) {
-                                if (!firstMsg) ImGui::Dummy(ImVec2(0, 8));
                                 std::string av; for (const auto& mm : svMembers) if (mm.name == who) { av = mm.avatar; break; }
                                 DrawAvatar(av, who, 36.0f);
                                 ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6);
@@ -13748,7 +13883,7 @@ int main(int argc, char** argv) {
                                 ImVec4 nc2 = NameColor(who);
                                 ImGui::TextColored(ImVec4(nc2.x * 0.35f + 0.65f, nc2.y * 0.35f + 0.65f, nc2.z * 0.35f + 0.65f, 1), "%s", who.c_str());
                                 ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", w);
-                                RenderChatBody(m.body);
+                                RenderChatBody(pb.text);
                                 msgActions(m);
                                 ImGui::EndGroup();
                                 prevAuthor = who;
@@ -13757,16 +13892,18 @@ int main(int argc, char** argv) {
                                 // avatar, with a faint timestamp revealed on hover (Discord-like).
                                 ImGui::Indent(42.0f);
                                 ImVec2 rowTop = ImGui::GetCursorScreenPos();
-                                RenderChatBody(m.body);
-                                if (w[0] && ImGui::IsItemHovered()) {
+                                RenderChatBody(pb.text);
+                                if (w[0] && ImGui::IsMouseHoveringRect(ImVec2(rowMin.x, rowTop.y), ImVec2(rowRight, ImGui::GetCursorScreenPos().y))) {
                                     ImVec2 tp(rowTop.x - 40.0f, rowTop.y + 1.0f);
                                     ImGui::GetWindowDrawList()->AddText(tp, ImGui::GetColorU32(ImGuiCol_TextDisabled), w);
                                 }
                                 msgActions(m);
                                 ImGui::Unindent(42.0f);
                             }
+                            rowToolbar(m, rowMin, ImVec2(rowRight, ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y));
                             firstMsg = false;
                         }
+                        ImGui::Dummy(ImVec2(0, 0));
                         {   // My posts still on their way: same row layout, dimmed, with a clock
                             // while sending and Retry / Discard if the post failed.
                             const std::vector<OutMsg> pend = OutboxForChannel(svChan, [&](const std::string& body, long when) {
@@ -13775,6 +13912,8 @@ int main(int argc, char** argv) {
                                 return false;
                             });
                             for (const auto& o : pend) {
+                                const SvBody ob = ParseSvBody(o.body);
+                                if (ob.kind == 2) continue;   // shown in the thread panel
                                 ImGui::PushID((int)o.localId + 700000);
                                 const bool failed = o.state == -1;
                                 const bool cont = svMe == prevAuthor;
@@ -13792,7 +13931,7 @@ int main(int argc, char** argv) {
                                     ImGui::BeginGroup();
                                 }
                                 ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * (failed ? 0.85f : 0.55f));
-                                RenderChatBody(o.body);
+                                RenderChatBody(ob.text);
                                 ImGui::PopStyleVar();
                                 if (failed) {
                                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.55f, 1.0f), "Not sent");
@@ -13819,7 +13958,17 @@ int main(int argc, char** argv) {
                         ImGui::EndChild();
                         if (svEditId) {
                             ImGui::TextDisabled("Editing a message"); ImGui::SameLine();
-                            if (ImGui::SmallButton("cancel edit")) { svEditId = 0; svMsg[0] = '\0'; }
+                            if (ImGui::SmallButton("cancel edit")) { svEditId = 0; svMsg[0] = '\0'; svEditTag.clear(); }
+                        } else if (svReplyTo) {   // "Replying to @maya  ✕"
+                            auto it = std::find_if(svMsgs.begin(), svMsgs.end(), [&](const okay::ChannelMessage& x) { return x.id == svReplyTo; });
+                            if (it == svMsgs.end()) svReplyTo = 0;
+                            else {
+                                ImGui::TextDisabled("Replying to"); ImGui::SameLine(0, 4);
+                                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(accLt)), "@%s", it->author.c_str());
+                                ImGui::SameLine(0, 8);
+                                if (ImGui::SmallButton("cancel")) svReplyTo = 0;
+                                if (ImGui::IsKeyPressed(ImGuiKey_Escape)) svReplyTo = 0;
+                            }
                         }
                         // Composer (chat-style pill): emoji + input, Enter sends,
                         // Shift/Ctrl+Enter adds a line.
@@ -13844,16 +13993,17 @@ int main(int argc, char** argv) {
                         ImGui::PopStyleVar();
                         if ((clicked || send) && svMsg[0]) {
                             if (svEditId) {   // instant: patch the local copy, save off-thread
-                                for (auto& em : svMsgs) if (em.id == svEditId) { em.body = svMsg; em.edited = true; }
-                                if (!kSvDemo) ServerActionAsync(2, svEditId, svMsg);
-                                svEditId = 0; svMsg[0] = '\0';
+                                const std::string nb = svEditTag + svMsg;
+                                for (auto& em : svMsgs) if (em.id == svEditId) { em.body = nb; em.edited = true; }
+                                if (!kSvDemo) ServerActionAsync(2, svEditId, nb);
+                                svEditId = 0; svMsg[0] = '\0'; svEditTag.clear();
                             }
                             else if (kSvDemo && !std::getenv("OKAY_CHAT_DEMO_OUTBOX")) {   // demo: local echo
                                 okay::ChannelMessage em; em.id = 900000 + (long)svMsgs.size(); em.author = svMe;
-                                em.body = svMsg; em.when = (long)std::time(nullptr);
-                                svMsgs.push_back(em); svMsg[0] = '\0';
+                                em.body = SvTag(1, svReplyTo) + svMsg; em.when = (long)std::time(nullptr);
+                                svMsgs.push_back(em); svMsg[0] = '\0'; svReplyTo = 0;
                             } else {   // instant: shows as a pending row now, posts off-thread
-                                OutboxSendChannel(svChan, ExpandCustomEmoji(svMsg)); svMsg[0] = '\0';
+                                OutboxSendChannel(svChan, SvTag(1, svReplyTo) + ExpandCustomEmoji(svMsg)); svMsg[0] = '\0'; svReplyTo = 0;
                             }
                             svFocus = true;   // keep typing (refocus the box, not the Send button)
                         }
@@ -13867,6 +14017,106 @@ int main(int argc, char** argv) {
                         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
                         ImGui::BeginChild("##svmembers", ImVec2(memW, colH), ImGuiChildFlags_AlwaysUseWindowPadding);
                         ImGui::PopStyleVar();
+                        if (svThreadRoot) {   // ---- Thread panel: root message, its replies, a composer ----
+                            const okay::ChannelMessage* root = nullptr;
+                            for (const auto& x : svMsgs) if (x.id == svThreadRoot) root = &x;
+                            ImDrawList* d = ImGui::GetWindowDrawList();
+                            ImVec2 hp = ImGui::GetCursorScreenPos();
+                            const float pw = ImGui::GetContentRegionAvail().x;
+                            DrawThreadIcon(d, ImVec2(hp.x + 9, hp.y + 10), cText);
+                            ImGui::SetCursorScreenPos(ImVec2(hp.x + 22, hp.y + 1));
+                            ImGui::TextUnformatted("Thread");
+                            ImGui::SetCursorScreenPos(ImVec2(hp.x + pw - 24, hp.y - 2));
+                            if (ImGui::InvisibleButton("##thrx", ImVec2(24, 24))) svThreadRoot = 0;
+                            const bool xh = ImGui::IsItemHovered();
+                            if (xh) { d->AddRectFilled(ImVec2(hp.x + pw - 24, hp.y - 2), ImVec2(hp.x + pw, hp.y + 22), IM_COL32(255, 255, 255, 22), 6.0f); ImGui::SetTooltip("Close thread"); }
+                            const ImVec2 xc(hp.x + pw - 12, hp.y + 10);
+                            d->AddLine(ImVec2(xc.x - 4, xc.y - 4), ImVec2(xc.x + 4, xc.y + 4), xh ? cText : cDim, 1.5f);
+                            d->AddLine(ImVec2(xc.x + 4, xc.y - 4), ImVec2(xc.x - 4, xc.y + 4), xh ? cText : cDim, 1.5f);
+                            ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + 28));
+                            d->AddLine(ImVec2(hp.x, hp.y + 26), ImVec2(hp.x + pw, hp.y + 26), IM_COL32(255, 255, 255, 16), 1.0f);
+                            ImGui::Dummy(ImVec2(0, 2));
+                            const float tComposerH = ImGui::GetTextLineHeight() + 16.0f + 10.0f;
+                            ImGui::BeginChild("##thrscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - tComposerH), false);
+                            auto thrRow = [&](const okay::ChannelMessage& m, const std::string& text, float alpha) {
+                                std::string who = m.author.empty() ? "unknown" : m.author;
+                                std::string av; for (const auto& mm : svMembers) if (mm.name == who) { av = mm.avatar; break; }
+                                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * alpha);
+                                DrawAvatar(av, who, 28.0f);
+                                ImGui::SameLine(0, 8);
+                                ImGui::BeginGroup();
+                                ImVec4 nc2 = NameColor(who);
+                                ImGui::TextColored(ImVec4(nc2.x * 0.35f + 0.65f, nc2.y * 0.35f + 0.65f, nc2.z * 0.35f + 0.65f, 1), "%s", who.c_str());
+                                if (m.when > 0) { ImGui::SameLine(0, 6); ImGui::TextDisabled("%s", RelTime(m.when).c_str()); }
+                                RenderChatBody(text, ImGui::GetContentRegionAvail().x);
+                                if (m.id > 0) {   // like pill / heart
+                                    const bool liked = svMyLikes.count(m.id) != 0; const long lc = svLikes.count(m.id) ? svLikes[m.id] : 0;
+                                    ImGui::PushID((int)m.id);
+                                    ImVec2 lp = ImGui::GetCursorScreenPos();
+                                    if (ImGui::InvisibleButton("tl", ImVec2(lc > 0 ? 40.0f : 20.0f, 18))) svToggleLike(m.id);
+                                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(liked ? "Unlike" : "Like");
+                                    DrawHeart(ImGui::GetWindowDrawList(), ImVec2(lp.x + 9, lp.y + 9), 5.5f, liked ? IM_COL32(232, 72, 92, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                                    if (lc > 0) ImGui::GetWindowDrawList()->AddText(ImVec2(lp.x + 19, lp.y + 9 - ImGui::GetTextLineHeight() * 0.5f), cDim, std::to_string(lc).c_str());
+                                    ImGui::PopID();
+                                }
+                                ImGui::EndGroup();
+                                ImGui::PopStyleVar();
+                                ImGui::Dummy(ImVec2(0, 6));
+                            };
+                            int replies = 0;
+                            if (root) {
+                                thrRow(*root, ParseSvBody(root->body).text, 1.0f);
+                                for (const auto& x : svMsgs) { SvBody pb = ParseSvBody(x.body); if (pb.kind == 2 && pb.ref == svThreadRoot) ++replies; }
+                                ImVec2 sp = ImGui::GetCursorScreenPos();
+                                char rl[48]; std::snprintf(rl, sizeof(rl), "%d %s", replies, replies == 1 ? "reply" : "replies");
+                                ImGui::TextDisabled("%s", rl);
+                                ImGui::SameLine();
+                                ImVec2 lp = ImGui::GetCursorScreenPos();
+                                ImGui::GetWindowDrawList()->AddLine(ImVec2(lp.x, sp.y + ImGui::GetTextLineHeight() * 0.5f), ImVec2(sp.x + ImGui::GetContentRegionAvail().x + (lp.x - sp.x), sp.y + ImGui::GetTextLineHeight() * 0.5f), IM_COL32(255, 255, 255, 16));
+                                ImGui::NewLine();
+                                ImGui::Dummy(ImVec2(0, 4));
+                                for (const auto& x : svMsgs) {
+                                    SvBody pb = ParseSvBody(x.body);
+                                    if (pb.kind == 2 && pb.ref == svThreadRoot) thrRow(x, pb.text, 1.0f);
+                                }
+                                const std::string tag = SvTag(2, svThreadRoot);
+                                for (const auto& o : OutboxForChannel(svChan, [&](const std::string& body, long when) {
+                                         for (auto it = svMsgs.rbegin(); it != svMsgs.rend(); ++it)
+                                             if (it->author == svMe && it->body == body && (it->when == 0 || it->when >= when - 120)) return true;
+                                         return false; })) {
+                                    if (o.body.rfind(tag, 0) != 0) continue;
+                                    okay::ChannelMessage pm; pm.author = svMe; pm.when = 0;
+                                    thrRow(pm, ParseSvBody(o.body).text, o.state == -1 ? 0.9f : 0.55f);
+                                    if (o.state == -1) {
+                                        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.55f, 1.0f), "Not sent"); ImGui::SameLine();
+                                        ImGui::PushID((int)o.localId);
+                                        if (ImGui::SmallButton("Retry")) OutboxRetry(o.localId);
+                                        ImGui::SameLine(); if (ImGui::SmallButton("Discard")) OutboxDiscard(o.localId);
+                                        ImGui::PopID();
+                                    }
+                                }
+                                static int thrLastN = -1;
+                                if (replies != thrLastN) { ImGui::SetScrollHereY(1.0f); thrLastN = replies; }
+                            }
+                            ImGui::Dummy(ImVec2(0, 0));
+                            ImGui::EndChild();
+                            // Composer: Enter sends into the thread.
+                            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
+                            ImGui::SetNextItemWidth(-1);
+                            if (svThreadFocus) { ImGui::SetKeyboardFocusHere(); svThreadFocus = false; }
+                            const bool tsend = ImGui::InputTextWithHint("##thrsend", replies ? "Reply in thread" : "Start the thread\xE2\x80\xA6",
+                                                                        svThreadMsg, sizeof(svThreadMsg), ImGuiInputTextFlags_EnterReturnsTrue);
+                            ImGui::PopStyleVar(2);
+                            if (tsend && svThreadMsg[0] && root) {
+                                const std::string body = SvTag(2, svThreadRoot) + ExpandCustomEmoji(svThreadMsg);
+                                if (kSvDemo && !std::getenv("OKAY_CHAT_DEMO_OUTBOX")) {
+                                    okay::ChannelMessage em; em.id = 900000 + (long)svMsgs.size(); em.author = svMe; em.body = body; em.when = (long)std::time(nullptr);
+                                    svMsgs.push_back(em);
+                                } else OutboxSendChannel(svChan, body);
+                                svThreadMsg[0] = '\0'; svThreadFocus = true;
+                            }
+                        } else {
                         int onlineN = 0; for (const auto& m : svMembers) if (m.online) ++onlineN;
                         auto drawMember = [&](const okay::ServerMember& m) {
                             ImDrawList* d = ImGui::GetWindowDrawList();
@@ -13914,6 +14164,7 @@ int main(int argc, char** argv) {
                         int offN = (int)svMembers.size() - onlineN;
                         if (offN > 0) { ImGui::Dummy(ImVec2(0, 6)); label("OFFLINE", offN); for (const auto& m : svMembers) if (!m.online) drawMember(m); }
                         if (svMembers.empty()) ImGui::TextDisabled("Loading members\xE2\x80\xA6");
+                        }   // members
                         ImGui::EndChild();
                         ImGui::PopStyleVar();
                         ImGui::PopStyleColor();

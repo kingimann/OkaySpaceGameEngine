@@ -794,6 +794,12 @@ private:
         };
         trim(user); trim(token); trim(refresh);
         if (!user.empty() && !token.empty()) {
+            // Older sessions may have been saved with the email as the display
+            // name; show only the local-part so the UI never shows a raw email.
+            if (provider_ == Provider::Supabase) {
+                std::size_t at = user.find('@');
+                if (at != std::string::npos) user = user.substr(0, at);
+            }
             session_.loggedIn = true;
             session_.username = user;
             session_.token    = token;
@@ -977,10 +983,17 @@ private:
                             "(Turn off email confirmation in Supabase for instant sign-in.)");
             return Fail("Server response was missing an access token.");
         }
-        // Display the username from user metadata when present; else the email.
+        // Prefer the username from user metadata; never surface the raw email as
+        // the display name. When no handle was stored (e.g. an account made
+        // before usernames, or a bare email sign-up), derive a friendly handle
+        // from the email's local-part ("alex.doe@x.com" -> "alex.doe").
         std::string display = detail::JsonField(r.body, "username");
+        if (display.empty()) {
+            std::size_t at = loginId.find('@');
+            display = at == std::string::npos ? loginId : loginId.substr(0, at);
+        }
         std::string refresh = detail::JsonField(r.body, "refresh_token");
-        return Succeed(display.empty() ? email : display, token, refresh);
+        return Succeed(display, token, refresh);
     }
 
     // Perform one HTTP request via the system `curl` so the launcher/engine need

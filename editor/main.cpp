@@ -1936,8 +1936,159 @@ struct BuildSettings {
     int   antialias = 1;                   // 1 = off, 2 = 2x supersample
     bool  gpuRenderer = true;              // use the GPU (D3D11/OpenGL) 3D renderer; falls back to software
     bool  preferD3D12 = false;             // opt-in: prefer the Direct3D 12 backend (Windows)
+    // ---- Post-build actions (handled by the editor, not the builder) ----
+    bool  openFolderAfter = true;          // reveal the output folder when done
+    bool  zipAfter = false;                // also produce <Name>.zip of the build
 };
 BuildSettings g_build;
+
+// ---- Build profiles (Unity-style named build configurations) -------------
+// Persist the full Build Settings under named profiles in the project's
+// .okay/build_profiles.cfg, so "Dev" / "Release" / "Demo" setups can be kept
+// and switched. Also remembers settings across editor restarts.
+struct BuildProfile {
+    std::string   name;
+    BuildSettings settings;
+    std::string   productName;
+    std::string   outputDir;
+    int           platform = 0;
+};
+std::vector<BuildProfile> g_buildProfiles;
+int  g_buildProfileSel = -1;       // index into g_buildProfiles, or -1 (unsaved)
+bool g_buildProfilesLoaded = false;
+
+// The .okay config path for the current project (empty if no project open).
+static std::string BuildProfilePath(EditorState& ed) {
+    if (ed.projectDir().empty()) return {};
+    std::error_code ec;
+    std::filesystem::path d = std::filesystem::path(ed.projectDir()) / ".okay";
+    std::filesystem::create_directories(d, ec);
+    return (d / "build_profiles.cfg").string();
+}
+
+// Serialize one profile as an "@profile <name>" block of key=value lines.
+static void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
+    const BuildSettings& b = p.settings;
+    o << "@profile " << p.name << "\n";
+    o << "product="  << p.productName << "\n";
+    o << "dir="      << p.outputDir << "\n";
+    o << "platform=" << p.platform << "\n";
+    o << "company="  << b.company << "\n";
+    o << "version="  << b.version << "\n";
+    o << "bundleId=" << b.bundleId << "\n";
+    o << "icon="     << b.icon << "\n";
+    o << "splash="   << b.splash << "\n";
+    o << "width="    << b.width << "\n" << "height=" << b.height << "\n";
+    o << "minWidth=" << b.minWidth << "\n" << "minHeight=" << b.minHeight << "\n";
+    o << "fullscreen=" << b.fullscreen << "\n" << "borderless=" << b.borderless << "\n";
+    o << "resizable=" << b.resizable << "\n" << "vsync=" << b.vsync << "\n";
+    o << "hideCursor=" << b.hideCursor << "\n" << "fpsCap=" << b.fpsCap << "\n";
+    o << "quitOnEscape=" << b.quitOnEscape << "\n" << "masterVolume=" << b.masterVolume << "\n";
+    o << "showFps=" << b.showFps << "\n" << "includeAll=" << b.includeAllProjectScenes << "\n";
+    o << "dev=" << b.developmentBuild << "\n" << "clean=" << b.cleanOutput << "\n";
+    o << "dataFolder=" << b.dataFolder << "\n" << "encrypt=" << b.encryptData << "\n";
+    o << "runBg=" << b.runInBackground << "\n" << "muteUnfocus=" << b.muteOnFocusLoss << "\n";
+    o << "maximized=" << b.startMaximized << "\n" << "userDir=" << b.saveToUserDir << "\n";
+    o << "splashTime=" << b.splashTime << "\n";
+    o << "splashBg0=" << b.splashBg[0] << "\n" << "splashBg1=" << b.splashBg[1] << "\n" << "splashBg2=" << b.splashBg[2] << "\n";
+    o << "lockCursor=" << b.lockCursor << "\n" << "perPixel=" << b.perPixelLighting << "\n";
+    o << "shadows=" << b.shadows << "\n" << "shadowDist=" << b.shadowDistance << "\n";
+    o << "shadowSoft=" << b.shadowSoftness << "\n" << "shadowCasc=" << b.shadowCascades << "\n";
+    o << "shadowRes=" << b.shadowResolution << "\n" << "bloom=" << b.bloom << "\n";
+    o << "ssao=" << b.ssao << "\n" << "fxaa=" << b.fxaa << "\n" << "antialias=" << b.antialias << "\n";
+    o << "gpu=" << b.gpuRenderer << "\n" << "d3d12=" << b.preferD3D12 << "\n";
+    o << "openFolder=" << b.openFolderAfter << "\n" << "zip=" << b.zipAfter << "\n";
+}
+
+// Apply one key=value line to a profile being read.
+static void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std::string& v) {
+    BuildSettings& b = p.settings;
+    auto I = [&]{ return std::atoi(v.c_str()); };
+    auto F = [&]{ return (float)std::atof(v.c_str()); };
+    auto B = [&]{ return std::atoi(v.c_str()) != 0; };
+    auto S = [&](char* dst, size_t n){ std::snprintf(dst, n, "%s", v.c_str()); };
+    if      (k == "product")   p.productName = v;
+    else if (k == "dir")       p.outputDir = v;
+    else if (k == "platform")  p.platform = I();
+    else if (k == "company")   S(b.company, sizeof(b.company));
+    else if (k == "version")   S(b.version, sizeof(b.version));
+    else if (k == "bundleId")  S(b.bundleId, sizeof(b.bundleId));
+    else if (k == "icon")      S(b.icon, sizeof(b.icon));
+    else if (k == "splash")    S(b.splash, sizeof(b.splash));
+    else if (k == "width")     b.width = I();
+    else if (k == "height")    b.height = I();
+    else if (k == "minWidth")  b.minWidth = I();
+    else if (k == "minHeight") b.minHeight = I();
+    else if (k == "fullscreen") b.fullscreen = B();
+    else if (k == "borderless") b.borderless = B();
+    else if (k == "resizable") b.resizable = B();
+    else if (k == "vsync")     b.vsync = B();
+    else if (k == "hideCursor") b.hideCursor = B();
+    else if (k == "fpsCap")    b.fpsCap = I();
+    else if (k == "quitOnEscape") b.quitOnEscape = B();
+    else if (k == "masterVolume") b.masterVolume = F();
+    else if (k == "showFps")   b.showFps = B();
+    else if (k == "includeAll") b.includeAllProjectScenes = B();
+    else if (k == "dev")       b.developmentBuild = B();
+    else if (k == "clean")     b.cleanOutput = B();
+    else if (k == "dataFolder") b.dataFolder = B();
+    else if (k == "encrypt")   b.encryptData = B();
+    else if (k == "runBg")     b.runInBackground = B();
+    else if (k == "muteUnfocus") b.muteOnFocusLoss = B();
+    else if (k == "maximized") b.startMaximized = B();
+    else if (k == "userDir")   b.saveToUserDir = B();
+    else if (k == "splashTime") b.splashTime = F();
+    else if (k == "splashBg0") b.splashBg[0] = F();
+    else if (k == "splashBg1") b.splashBg[1] = F();
+    else if (k == "splashBg2") b.splashBg[2] = F();
+    else if (k == "lockCursor") b.lockCursor = B();
+    else if (k == "perPixel")  b.perPixelLighting = B();
+    else if (k == "shadows")   b.shadows = B();
+    else if (k == "shadowDist") b.shadowDistance = F();
+    else if (k == "shadowSoft") b.shadowSoftness = F();
+    else if (k == "shadowCasc") b.shadowCascades = I();
+    else if (k == "shadowRes") b.shadowResolution = I();
+    else if (k == "bloom")     b.bloom = B();
+    else if (k == "ssao")      b.ssao = B();
+    else if (k == "fxaa")      b.fxaa = B();
+    else if (k == "antialias") b.antialias = I();
+    else if (k == "gpu")       b.gpuRenderer = B();
+    else if (k == "d3d12")     b.preferD3D12 = B();
+    else if (k == "openFolder") b.openFolderAfter = B();
+    else if (k == "zip")       b.zipAfter = B();
+}
+
+static void SaveBuildProfiles(EditorState& ed) {
+    std::string path = BuildProfilePath(ed);
+    if (path.empty()) return;
+    std::ofstream f(path, std::ios::trunc);
+    if (!f) return;
+    f << "# OkaySpace build profiles\n";
+    for (const auto& p : g_buildProfiles) WriteBuildProfileBlock(f, p);
+}
+
+static void LoadBuildProfiles(EditorState& ed) {
+    g_buildProfiles.clear(); g_buildProfileSel = -1;
+    std::string path = BuildProfilePath(ed);
+    if (path.empty()) return;
+    std::ifstream f(path);
+    if (!f) return;
+    std::string line;
+    BuildProfile cur; bool have = false;
+    while (std::getline(f, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        if (line.rfind("@profile ", 0) == 0) {
+            if (have) g_buildProfiles.push_back(cur);
+            cur = BuildProfile{}; cur.name = line.substr(9); have = true;
+            continue;
+        }
+        auto eq = line.find('=');
+        if (!have || eq == std::string::npos) continue;
+        ApplyBuildProfileKV(cur, line.substr(0, eq), line.substr(eq + 1));
+    }
+    if (have) g_buildProfiles.push_back(cur);
+}
 
 // Project-wide settings (persisted to project.okayproj): defaults a build/scene
 // inherits, edited via Edit > Project Settings.
@@ -10081,13 +10232,84 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::EndPopup();
     }
 
-    if (g_showBuildGame) { ImGui::OpenPopup("Build Game"); g_showBuildGame = false; }
+    if (g_showBuildGame) {
+        ImGui::OpenPopup("Build Game"); g_showBuildGame = false;
+        // Load this project's saved build profiles the first time the dialog opens.
+        if (!g_buildProfilesLoaded) { LoadBuildProfiles(ed); g_buildProfilesLoaded = true; }
+    }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640, 560), ImGuiCond_Appearing);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(540, 460), ImVec2(1200, 1000));
+    ImGui::SetNextWindowSize(ImVec2(640, 600), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(540, 480), ImVec2(1200, 1000));
     if (ImGui::BeginPopupModal("Build Game")) {
         ImGui::TextDisabled("Export a standalone game:  <Name>.exe + game.okayscene + game.okayconfig");
         ImGui::Spacing();
+
+        // ---- Build profiles bar (Unity 6 "Build Profiles") ----------------
+        // Save the whole dialog as a named profile and switch between setups.
+        {
+            static char newProfName[64] = "";
+            static bool saveAsOpen = false;
+            float barW = ImGui::GetContentRegionAvail().x;
+            ImGui::SetNextItemWidth(barW - 320);
+            std::string preview = g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()
+                                  ? g_buildProfiles[g_buildProfileSel].name : "(unsaved settings)";
+            if (ImGui::BeginCombo("##buildprofile", preview.c_str())) {
+                for (int i = 0; i < (int)g_buildProfiles.size(); ++i) {
+                    bool sel = (g_buildProfileSel == i);
+                    if (ImGui::Selectable(g_buildProfiles[i].name.c_str(), sel)) {
+                        // Load the chosen profile into the live settings.
+                        const BuildProfile& p = g_buildProfiles[i];
+                        g_build = p.settings;
+                        std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", p.productName.c_str());
+                        std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", p.outputDir.c_str());
+                        g_buildPlatform = p.platform;
+                        g_buildProfileSel = i;
+                    }
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch between saved build configurations");
+            ImGui::SameLine();
+            // Save: overwrite the selected profile; Save As: create a new one.
+            ImGui::BeginDisabled(g_buildProfileSel < 0);
+            if (ImGui::Button("Save")) {
+                BuildProfile& p = g_buildProfiles[g_buildProfileSel];
+                p.settings = g_build; p.productName = g_buildNameBuf;
+                p.outputDir = g_buildDirBuf; p.platform = g_buildPlatform;
+                SaveBuildProfiles(ed); ConsoleLog("Saved build profile '" + p.name + "'");
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Save As...")) { newProfName[0] = '\0'; saveAsOpen = true; ImGui::OpenPopup("##saveprof"); }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(g_buildProfileSel < 0);
+            if (ImGui::Button("Delete")) {
+                g_buildProfiles.erase(g_buildProfiles.begin() + g_buildProfileSel);
+                g_buildProfileSel = -1; SaveBuildProfiles(ed);
+            }
+            ImGui::EndDisabled();
+            if (ImGui::BeginPopup("##saveprof")) {
+                ImGui::TextUnformatted("New profile name");
+                ImGui::SetNextItemWidth(220);
+                bool go = ImGui::InputText("##pn", newProfName, sizeof(newProfName),
+                                           ImGuiInputTextFlags_EnterReturnsTrue);
+                if ((ImGui::Button("Create") || go) && newProfName[0]) {
+                    BuildProfile p; p.name = newProfName; p.settings = g_build;
+                    p.productName = g_buildNameBuf; p.outputDir = g_buildDirBuf; p.platform = g_buildPlatform;
+                    g_buildProfiles.push_back(p);
+                    g_buildProfileSel = (int)g_buildProfiles.size() - 1;
+                    SaveBuildProfiles(ed); ConsoleLog("Created build profile '" + p.name + "'");
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            if (ed.projectDir().empty())
+                ImGui::TextDisabled("Open a project to save build profiles.");
+        }
+        ImGui::Separator();
         if (g_build.width  < 320) g_build.width  = 320;
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
@@ -10259,6 +10481,11 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unity-style: the game .exe + DLLs sit at the root; scenes/config/assets go in a Data/ subfolder so the game root is clean.");
                 ImGui::Checkbox("Encrypt game data", &g_build.encryptData);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Obfuscate the shipped scenes + config so players can't open them in a text editor to read or cheat-edit your game.\nNote: deters casual tampering, not a determined attacker (the key ships in the game).");
+                ImGui::Spacing(); SectionHeader("After the build");
+                ImGui::Checkbox("Open the output folder", &g_build.openFolderAfter);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reveal the finished build in your file browser when it's done.");
+                ImGui::Checkbox("Create a .zip archive", &g_build.zipAfter);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also package the whole build folder into <Name>.zip next to it — ready to share or upload.");
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -10321,14 +10548,24 @@ void DrawFileDialogs(EditorState& ed) {
         // green primary Build/Export in the corner.
         const char* buildLabel = g_buildPlatform == 0 ? "Build" : "Export";
         const float bw = 120.0f;
-        ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x -
-                             (bw * 2.0f + ImGui::GetStyle().ItemSpacing.x));
+        const bool  desktop = (g_buildPlatform == 0);
+        // Cancel, [Build & Run], Build/Export — right-aligned. Build & Run only
+        // makes sense for the desktop target (we can launch the .exe we produced).
+        float footW = bw * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+        if (desktop) footW += bw + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - footW);
         if (ImGui::Button("Cancel", ImVec2(bw, 0))) ImGui::CloseCurrentPopup();
+        bool doBuild = false, doRun = false;
+        if (desktop) {
+            ImGui::SameLine();
+            if (ImGui::Button("Build & Run", ImVec2(bw, 0))) { doBuild = true; doRun = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build, then launch the game immediately.");
+        }
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-        bool doBuild = ImGui::Button(buildLabel, ImVec2(bw, 0));
+        if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
         ImGui::PopStyleColor(3);
         if (doBuild) {
           if (g_buildPlatform != 0) {
@@ -10370,6 +10607,40 @@ void DrawFileDialogs(EditorState& ed) {
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o, &g_buildReport);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);
+            // Remember the settings used for next time (so they survive restarts).
+            if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()) {
+                BuildProfile& p = g_buildProfiles[g_buildProfileSel];
+                p.settings = g_build; p.productName = g_buildNameBuf;
+                p.outputDir = g_buildDirBuf; p.platform = g_buildPlatform;
+                SaveBuildProfiles(ed);
+            }
+            // Post-build actions (only when the build actually succeeded).
+            if (g_buildReport.valid) {
+                namespace fs = std::filesystem;
+                std::error_code pec;
+                fs::path outDir(g_buildDirBuf);
+                if (g_build.zipAfter) {
+                    fs::path zip = outDir; zip += ".zip";
+                    fs::remove(zip, pec);
+#if defined(_WIN32)
+                    std::string zc = "powershell -NoProfile -Command \"Compress-Archive -Force -Path '"
+                                   + outDir.string() + "\\*' -DestinationPath '" + zip.string() + "'\"";
+#else
+                    std::string zc = "cd \"" + outDir.string() + "\" && zip -rq \"" + zip.string() + "\" .";
+#endif
+                    if (SysNoWindow(zc) == 0) ConsoleLog("Zipped build -> " + zip.string());
+                    else ConsoleLog("Zip failed (is a zip tool available?)");
+                }
+                if (doRun) {
+                    // Launch the freshly built game (exe at the output root).
+                    fs::path exe = outDir / (std::string(g_buildNameBuf) + ".exe");
+                    if (!fs::exists(exe, pec)) exe = outDir / g_buildNameBuf;  // native/no-ext
+                    if (fs::exists(exe, pec)) { updater::Relaunch(exe.string()); ConsoleLog("Launched " + exe.string()); }
+                    else ConsoleLog("Build & Run: couldn't find the built executable to launch.");
+                } else if (g_build.openFolderAfter) {
+                    extide::RevealInFiles(g_buildDirBuf);
+                }
+            }
             ImGui::CloseCurrentPopup();
           }   // end desktop branch
         }     // end Build/Export button
@@ -27066,7 +27337,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (!g_dragRawValid) { g_dragRawPos = lp; g_dragRawValid = true; }
             g_dragRawPos.x += io.MouseDelta.x / scale;
             g_dragRawPos.y -= io.MouseDelta.y / scale;
-            if (g_snap && g_snapSize > 0.0f) {
+            if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {
                 lp.x = Mathf::Round(g_dragRawPos.x / g_snapSize) * g_snapSize;
                 lp.y = Mathf::Round(g_dragRawPos.y / g_snapSize) * g_snapSize;
             } else {
@@ -28373,7 +28644,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     if (tl > 1e-3f) {
                         tg.x /= tl; tg.y /= tl;
                         float deg = (io.MouseDelta.x * tg.x + io.MouseDelta.y * tg.y) * 0.5f;
-                        if (g_snap && g_rotSnapDeg > 0.0f) {
+                        if ((g_snap || io.KeyCtrl) && g_rotSnapDeg > 0.0f) {
                             // Detents: apply only whole snapped steps as we cross them.
                             g_rotAccum += deg;
                             float snapped = Mathf::Round(g_rotAccum / g_rotSnapDeg) * g_rotSnapDeg;
@@ -28396,7 +28667,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         // Accumulate the true position; snap only the output so the
                         // handle tracks the cursor and snaps cleanly at grid lines.
                         g_dragRawPos += axis[i] * amt;
-                        if (g_snap && g_snapSize > 0.0f) {
+                        if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {
                             t->localPosition.x = Mathf::Round(g_dragRawPos.x / g_snapSize) * g_snapSize;
                             t->localPosition.y = Mathf::Round(g_dragRawPos.y / g_snapSize) * g_snapSize;
                             t->localPosition.z = Mathf::Round(g_dragRawPos.z / g_snapSize) * g_snapSize;
@@ -28408,7 +28679,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         g_dragRawScale.y += (i == 1) ? amt : 0.0f;
                         g_dragRawScale.z += (i == 2) ? amt : 0.0f;
                         Vec3 sc = g_dragRawScale;
-                        if (g_snap && g_snapSize > 0.0f) {      // snap scale to the increment
+                        if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {      // snap scale to the increment
                             sc.x = Mathf::Round(sc.x / g_snapSize) * g_snapSize;
                             sc.y = Mathf::Round(sc.y / g_snapSize) * g_snapSize;
                             sc.z = Mathf::Round(sc.z / g_snapSize) * g_snapSize;
@@ -28859,24 +29130,29 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             }
         }
     }
+    // Unity-style snap: a toolbar toggle plus a "Snap settings" dropdown holding
+    // the increments, so the toolbar stays clean. (Holding Ctrl while dragging a
+    // gizmo also snaps momentarily — see the gizmo handlers.)
     ImGui::Checkbox("Snap", &g_snap);
-    if (g_snap) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(70);
-        ImGui::DragFloat("##snap", &g_snapSize, 0.05f, 0.05f, 10.0f);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move/Scale snap increment");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        ImGui::DragFloat("Rot deg##rotsnap", &g_rotSnapDeg, 1.0f, 1.0f, 90.0f, "%.0f");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotation snap increment (degrees)");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(70);
-        ImGui::DragInt("UI px##uigrid", &g_uiGrid, 1, 1, 256);   // UI pixel grid
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("UI snap grid (pixels) + edge/center guides");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(70);
-        ImGui::DragFloat("UI snap##uisnap", &g_uiSnapDist, 0.5f, 1.0f, 40.0f, "%.0f");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close (px) a UI edge/center snaps to a guide");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap moves / rotations / scales to increments (or hold Ctrl)");
+    ImGui::SameLine(0, 3);
+    if (ImGui::ArrowButton("##snapsettings", ImGuiDir_Down)) ImGui::OpenPopup("##snapsettingspop");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap settings");
+    if (ImGui::BeginPopup("##snapsettingspop")) {
+        ImGui::TextDisabled("SNAP INCREMENTS");
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(130);
+        ImGui::DragFloat("Move / Scale", &g_snapSize, 0.05f, 0.05f, 100.0f, "%.2f");
+        ImGui::SetNextItemWidth(130);
+        ImGui::DragFloat("Rotate (deg)", &g_rotSnapDeg, 1.0f, 1.0f, 180.0f, "%.0f");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextDisabled("UI (2D screen)");
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(130);
+        ImGui::DragInt("Grid (px)", &g_uiGrid, 1, 1, 256);
+        ImGui::SetNextItemWidth(130);
+        ImGui::DragFloat("Guide snap (px)", &g_uiSnapDist, 0.5f, 1.0f, 40.0f, "%.0f");
+        ImGui::EndPopup();
     }
     // UI authoring zoom readout + reset (Ctrl+Wheel to zoom, middle-drag to pan).
     ImGui::SameLine();

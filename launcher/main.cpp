@@ -117,8 +117,56 @@ std::string g_upLatest;
 bool g_upRelaunchNeeded = false;
 SDL_Thread* g_upThread = nullptr;
 
+// Rich update progress, so the updater can show a real dialog (from/to version,
+// stepped progress, a live download bar in MB, elapsed time, and the changelog)
+// instead of a one-line message. Written by the worker, read by the UI.
+SDL_atomic_t g_upStepIdx;        // current step index (0-based)
+SDL_atomic_t g_upStepTotal;      // total steps for this run
+SDL_atomic_t g_upBytesNow;       // bytes downloaded for the current file
+SDL_atomic_t g_upBytesTotal;     // total bytes for the current file (0 = unknown)
+SDL_atomic_t g_upStartMs;        // SDL_GetTicks() when the run started
+std::string  g_upFromVer;        // installed version at run start   (g_upMutex)
+std::string  g_upToVer;          // target/published version         (g_upMutex)
+std::string  g_upStepName;       // human label for the current step (g_upMutex)
+std::string  g_upChangelog;      // release notes for g_upToVer       (g_upMutex)
+bool         g_upModalOpen = false;   // UI: show the update dialog (main thread only)
+
 void SetState(UpState s) { SDL_AtomicSet(&g_upState, (int)s); }
 UpState GetState() { return (UpState)SDL_AtomicGet(&g_upState); }
+
+// Publish the current update step (label + which step of how many).
+void SetUpStep(const std::string& name, int idx, int total) {
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    g_upStepName = name;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    SDL_AtomicSet(&g_upStepIdx, idx);
+    SDL_AtomicSet(&g_upStepTotal, total);
+    SDL_AtomicSet(&g_upBytesNow, 0);
+    SDL_AtomicSet(&g_upBytesTotal, 0);
+}
+std::string GetUpStep() {
+    std::string s; if (g_upMutex) SDL_LockMutex(g_upMutex);
+    s = g_upStepName; if (g_upMutex) SDL_UnlockMutex(g_upMutex); return s;
+}
+void SetUpVers(const std::string& from, const std::string& to) {
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    g_upFromVer = from; g_upToVer = to;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+}
+void GetUpVers(std::string& from, std::string& to) {
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    from = g_upFromVer; to = g_upToVer;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+}
+void SetUpChangelog(const std::string& c) {
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    g_upChangelog = c;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+}
+std::string GetUpChangelog() {
+    std::string c; if (g_upMutex) SDL_LockMutex(g_upMutex);
+    c = g_upChangelog; if (g_upMutex) SDL_UnlockMutex(g_upMutex); return c;
+}
 
 void SetUpMsg(const std::string& m) {
     if (g_upMutex) SDL_LockMutex(g_upMutex);
@@ -529,9 +577,72 @@ std::string LocalVersion() {
 // Download <url> to <dest>.new, validate it, then replace <dest>. If the file
 // is in use (the running launcher) the old exe is renamed aside first, which
 // Windows allows; the swap then takes effect on the next launch.
-bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse) {
+// Best-effort remote size (Content-Length) via a HEAD request, so the updater's
+// progress bar can show a percentage. Returns 0 when unknown (indeterminate).
+long long RemoteSize(const std::string& url) {
+    std::error_code ec;
+    fs::path hf = fs::temp_directory_path(ec) / ("okay_head_" + std::to_string(SDL_GetTicks()) + ".txt");
+    std::string u = BustCache(url);
+#if defined(_WIN32)
+    std::string c = "curl -sIL \"" + u + "\" -o \"" + hf.string() + "\"";
+#else
+    std::string c = "curl -sIL \"" + u + "\" -o \"" + hf.string() + "\" 2>/dev/null";
+#endif
+    if (RunCmd(c, true) != 0) { fs::remove(hf, ec); return 0; }
+    std::ifstream f(hf); std::string line; long long sz = 0;
+    while (std::getline(f, line)) {
+        // Case-insensitive "content-length:"; keep the LAST one (after redirects).
+        std::string low = line;
+        for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
+        auto p = low.find("content-length:");
+        if (p != std::string::npos) {
+            long long v = 0; bool any = false;
+            for (std::size_t i = p + 15; i < line.size(); ++i) {
+                char d = line[i];
+                if (d >= '0' && d <= '9') { v = v * 10 + (d - '0'); any = true; }
+                else if (any) break;
+            }
+            if (any) sz = v;
+        }
+    }
+    f.close(); fs::remove(hf, ec);
+    return sz;
+}
+
+// Download helper that runs curl on a short-lived thread while the caller polls
+// the growing output file, publishing byte progress into the update globals so
+// the dialog can show a live MB / percentage bar.
+struct DlMonitor { std::string url, out; SDL_atomic_t done; SDL_atomic_t ok; };
+int DlMonitorThread(void* p) {
+    DlMonitor* d = (DlMonitor*)p;
+    bool r = Download(d->url, d->out);
+    SDL_AtomicSet(&d->ok, r ? 1 : 0);
+    SDL_AtomicSet(&d->done, 1);
+    return 0;
+}
+bool DownloadProgress(const std::string& url, const std::string& out) {
+    SDL_AtomicSet(&g_upBytesNow, 0);
+    SDL_AtomicSet(&g_upBytesTotal, (int)RemoteSize(url));   // 0 if unknown
+    DlMonitor d; d.url = url; d.out = out;
+    SDL_AtomicSet(&d.done, 0); SDL_AtomicSet(&d.ok, 0);
+    SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", &d);
+    while (SDL_AtomicGet(&d.done) == 0) {
+        std::error_code ec; auto sz = fs::file_size(out, ec);
+        SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
+        SDL_Delay(90);
+    }
+    SDL_WaitThread(th, nullptr);
+    std::error_code ec; auto sz = fs::file_size(out, ec);
+    SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
+    return SDL_AtomicGet(&d.ok) == 1;
+}
+
+bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse,
+                 bool progress = false) {
     fs::path tmp = dest; tmp += ".new";
-    if (!Download(url, tmp.string())) return false;
+    bool got = progress ? DownloadProgress(url, tmp.string())
+                        : Download(url, tmp.string());
+    if (!got) return false;
     std::error_code ec;
     if (!fs::exists(tmp, ec) || fs::file_size(tmp, ec) < 100000) {
         fs::remove(tmp, ec);
@@ -612,14 +723,25 @@ void FetchReleaseNews() {
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
 int RunUpdateCheck(void*) {
+    SDL_AtomicSet(&g_upStartMs, (int)SDL_GetTicks());
+    std::string local = LocalVersion();
+    SetUpVers(local, "");
+    SetUpStep("Contacting GitHub", 0, 1);
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
     FetchReleaseNews();   // refresh the What's-new card while we're online anyway
+    // Mirror the fetched release notes into the update dialog's changelog.
+    { std::string nv, nl;
+      if (g_upMutex) SDL_LockMutex(g_upMutex);
+      nv = g_newsVersion; nl = g_newsLines;
+      if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+      if (!nl.empty()) SetUpChangelog(nl); }
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
     fs::path vf = tmp / "okayspace_launcher_ver.txt";
     if (!Download(std::string(kRawBase) + "VERSION.txt", vf.string())) {
         SetUpMsg("Couldn't reach GitHub (offline?).");
+        SetUpStep("Couldn't reach the update server", 0, 1);
         SetState(Up_Failed);
         return 0;
     }
@@ -630,9 +752,9 @@ int RunUpdateCheck(void*) {
     fs::remove(vf, ec);
     g_upLatest = latest;
 
-    std::string local = LocalVersion();
     fs::path dir(g_exeDir);
     bool newer = !latest.empty() && CompareVersions(local, latest) < 0;   // installed < published
+    SetUpVers(local, latest);
 
     // Only ever download a STRICTLY newer published version. Never "self-heal" by
     // pulling a not-newer (older or equal) build — that used to downgrade the engine
@@ -640,12 +762,15 @@ int RunUpdateCheck(void*) {
     // 2.97" bug). If we're current or ahead, do nothing.
     if (!newer) {
         SetUpMsg("Up to date (v" + local + ").");
+        SetUpStep("You're on the latest version", 1, 1);
         SetState(Up_UpToDate);
         return 0;
     }
 
     SetState(Up_Downloading);
     bool ok = true;
+    // Three download steps: engine, player, launcher.
+    const int kSteps = 3;
     {
         // Write each exe back to wherever it currently lives (e.g. Tools/), so an
         // update preserves the organized layout instead of scattering exes to the
@@ -655,24 +780,29 @@ int RunUpdateCheck(void*) {
             return found.empty() ? (dir / name) : fs::path(found);
         };
         SetUpMsg("Downloading engine v" + latest + "...");
+        SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
         ok = ReplaceFile(std::string(kRawBase) + "OkayEngine.exe",
-                         destOf("OkayEngine.exe"), false) && ok;
+                         destOf("OkayEngine.exe"), false, /*progress=*/true) && ok;
         SetUpMsg("Downloading player runtime v" + latest + "...");
+        SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
         ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
-                         destOf("OkaySpacePlayer.exe"), false) && ok;
+                         destOf("OkaySpacePlayer.exe"), false, /*progress=*/true) && ok;
     }
     // Only self-update the launcher on a genuine version bump.
     bool launcherOk = false;
     if (newer) {
         SetUpMsg("Updating launcher...");
+        SetUpStep("Updating launcher (OkaySpace)", 2, kSteps);
         launcherOk = !g_selfPath.empty() &&
             ReplaceFile(std::string(kRawBase) + "OkaySpace.exe",
-                        fs::path(g_selfPath), true);
+                        fs::path(g_selfPath), true, /*progress=*/true);
     }
 
     if (ok) {
         std::ofstream(dir / "VERSION.txt") << latest << "\n";
         g_upRelaunchNeeded = launcherOk;
+        SetUpStep(launcherOk ? "Update complete — restart to finish"
+                             : "Update complete", kSteps, kSteps);
         SetUpMsg(launcherOk
             ? "Updated to v" + latest + " — restart the launcher to finish."
             : (newer ? "Updated engine & player to v" + latest + "."
@@ -680,15 +810,17 @@ int RunUpdateCheck(void*) {
         SetState(Up_Updated);
     } else {
         SetUpMsg("Download failed — check your internet connection.");
+        SetUpStep("Download failed — check your connection and retry", 0, kSteps);
         SetState(Up_Failed);
     }
     return 0;
 }
 
 // Kick off an update check on a background thread (no-op if one is running).
-void StartUpdateCheck() {
+void StartUpdateCheck(bool showDialog = true) {
     UpState s = GetState();
     if (s == Up_Checking || s == Up_Downloading) return;
+    if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
 }
@@ -1008,6 +1140,73 @@ long g_lastDmId = 0;        // newest incoming DM id the user has seen (persiste
 long g_newestDmId = 0;      // newest incoming DM id currently on the server
 int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible (persisted)
 bool g_sharePresence = true; // share "Playing X" with friends (persisted)
+
+// ---- Notifications area -------------------------------------------------
+// A unified notifications feed behind a bell button in the sidebar. Items are
+// synthesized from live signals (friend requests, unread DMs, finished updates,
+// release news) and keyed so the unread count stays stable across frames.
+struct Notif {
+    std::string key;      // stable identity (de-dup / mark-read)
+    std::string title;
+    std::string body;
+    int    kind = 0;      // 0 system, 1 friend, 2 message, 3 update
+    Uint32 time = 0;
+    bool   read = false;
+    int    gotoTab = -1;  // clicking jumps here (-1 = none)
+};
+std::vector<Notif> g_notifs;        // newest first
+bool g_notifPanelOpen = false;      // UI: notifications popup shown
+
+int NotifUnread() { int c = 0; for (auto& n : g_notifs) if (!n.read) ++c; return c; }
+
+// Upsert a notification by key (new ones land at the top, unread). Returns true
+// if a brand-new notification was created (so a toast can be shown once).
+bool UpsertNotif(const std::string& key, const std::string& title,
+                 const std::string& body, int kind, int gotoTab) {
+    for (auto& n : g_notifs)
+        if (n.key == key) { n.title = title; n.body = body; n.gotoTab = gotoTab; return false; }
+    Notif n; n.key = key; n.title = title; n.body = body; n.kind = kind;
+    n.time = SDL_GetTicks(); n.gotoTab = gotoTab; n.read = false;
+    g_notifs.insert(g_notifs.begin(), n);
+    if (g_notifs.size() > 50) g_notifs.pop_back();
+    return true;
+}
+// Drop a dynamic notification whose condition no longer holds (e.g. the last
+// friend request was accepted).
+void RemoveNotif(const std::string& key) {
+    for (auto it = g_notifs.begin(); it != g_notifs.end(); ++it)
+        if (it->key == key) { g_notifs.erase(it); return; }
+}
+
+// Sync the dynamic notifications with the current app state; called once a frame.
+void RefreshNotifs() {
+    char b[96];
+    if (g_friendRequests > 0) {
+        std::snprintf(b, sizeof(b), "%d pending friend request%s",
+                      g_friendRequests, g_friendRequests == 1 ? "" : "s");
+        UpsertNotif("dyn:friends", "Friend requests", b, 1, 6);
+    } else RemoveNotif("dyn:friends");
+    if (g_dmUnread > 0) {
+        std::snprintf(b, sizeof(b), "%d unread direct message%s",
+                      g_dmUnread, g_dmUnread == 1 ? "" : "s");
+        UpsertNotif("dyn:dms", "New messages", b, 2, 6);
+    } else RemoveNotif("dyn:dms");
+    if (GetState() == Up_Updated) {
+        std::string f, to; GetUpVers(f, to);
+        UpsertNotif("dyn:update", "Update installed",
+                    to.empty() ? "OkaySpace was updated." : ("Updated to v" + to + " \xE2\x80\x94 restart to finish."),
+                    3, -1);
+    }
+    // Release news ("what's new") once a check has fetched it.
+    std::string nv, nl;
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    nv = g_newsVersion; nl = g_newsLines;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (!nv.empty() && !nl.empty()) {
+        std::string first = nl.substr(0, nl.find('\n'));
+        UpsertNotif("news:" + nv, "What's new in v" + nv, first, 0, 0);
+    }
+}
 // Floating Chat window (DMs as a tabbed window). The friend "Message" buttons
 // request a conversation here; DrawChatWindow() consumes the request.
 bool g_chatWinOpen = false;
@@ -2654,6 +2853,64 @@ static int ForumFetchWorker(void*) {
     return 0;
 }
 
+// --- Forum post detail (comments) fetched off-thread --------------------
+// Opening a thread used to block the main thread on 5 network calls. Now a
+// worker fetches the thread's posts + vote maps and publishes them; the UI
+// shows "Loading comments..." until g_foPostHave matches the open thread.
+static volatile bool g_foPostFetching = false;
+static bool g_foPostReady = false;                      // (guarded) fresh detail waiting
+static long g_foPostHave  = 0;                          // (guarded) thread id in the cache
+static std::vector<okay::ForumPost> g_foPosts;          // (guarded)
+static std::map<long,long> g_foPostScores, g_foPostThScores;  // (guarded)
+static std::map<long,int>  g_foPostMy, g_foPostThMy;          // (guarded)
+static int ForumPostWorker(void* arg) {
+    long tid = (long)(intptr_t)arg;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Forums fo(a);
+        auto ps  = fo.Posts(tid);
+        auto psc = fo.Scores("post");
+        auto pmy = fo.MyVotes("post");
+        auto tsc = fo.Scores("thread");
+        auto tmy = fo.MyVotes("thread");
+        if (g_foMutex) SDL_LockMutex(g_foMutex);
+        g_foPosts = std::move(ps); g_foPostScores = std::move(psc); g_foPostMy = std::move(pmy);
+        g_foPostThScores = std::move(tsc); g_foPostThMy = std::move(tmy);
+        g_foPostHave = tid; g_foPostReady = true;
+        if (g_foMutex) SDL_UnlockMutex(g_foMutex);
+    } catch (...) {}
+    g_foPostFetching = false;
+    return 0;
+}
+
+// --- Forum actions (vote / reply / new thread) fired off-thread ---------
+// The UI updates optimistically and fires the POST here, so clicking an arrow
+// or posting a comment never stalls the frame. g_foActionDone asks the UI to
+// kick a background refresh so the authoritative counts replace the optimistic
+// ones shortly after.
+struct FoAction { int type; std::string kind; long id; int value; std::string a, b, c; };
+static SDL_atomic_t g_foActionBusy;     // number of in-flight actions (for a subtle hint)
+static volatile bool g_foActionDone = false;
+static int ForumActionWorker(void* arg) {
+    FoAction* j = (FoAction*)arg;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Forums fo(a);
+        if      (j->type == 0) fo.Vote(j->kind, j->id, j->value);
+        else if (j->type == 1) fo.Reply(j->id, j->a, nullptr);
+        else if (j->type == 2) fo.StartThread(j->a, j->b, j->c, nullptr);
+    } catch (...) {}
+    g_foActionDone = true;
+    SDL_AtomicAdd(&g_foActionBusy, -1);
+    delete j;
+    return 0;
+}
+static void FireForumAction(FoAction* j) {
+    SDL_AtomicAdd(&g_foActionBusy, 1);
+    if (SDL_Thread* t = SDL_CreateThread(ForumActionWorker, "okay-foact", j)) SDL_DetachThread(t);
+    else { SDL_AtomicAdd(&g_foActionBusy, -1); delete j; }
+}
+
 // Background Servers list fetch (same idea — opening the Servers tab shouldn't
 // block on the network). Only the server LIST is prefetched; channel/message
 // loads happen after the user picks a server.
@@ -2892,9 +3149,13 @@ int main(int argc, char** argv) {
     SetUpMsg("OkaySpace v" + LocalVersion());
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
+    // Create the window HIDDEN so the OS never composites a black, uninitialized
+    // rectangle during the window + renderer setup gap. We draw the first splash
+    // frame while hidden, then reveal the window already showing the splash, so
+    // the very first thing the user sees is the branded loading screen.
     SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher  v" OKAY_ENGINE_VERSION,
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_winW, g_winH,
-        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
+        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!window) return 1;
     SDL_SetWindowMinimumSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
@@ -2906,14 +3167,21 @@ int main(int argc, char** argv) {
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
     if (!renderer) return 1;
     g_renderer = renderer;   // lets GameCover() upload cover-art textures
-    // Show a loading frame immediately so the window isn't a black rectangle
-    // while fonts, the account session and runtimes are set up below.
-    { int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-      int ai = g_accentIndex;
-      int an = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
-      if (ai < 0 || ai >= an) ai = 0;
-      okay::DrawSplash(renderer, sw, sh, kAccentPresets[ai].col.x,
-                       kAccentPresets[ai].col.y, kAccentPresets[ai].col.z); }
+    // Paint a loading frame into the back buffer, reveal the window, then present
+    // again so the reveal lands on the splash (not a black frame), whatever the
+    // platform's show-vs-present ordering.
+    auto firstSplash = [&]() {
+        int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        int ai = g_accentIndex;
+        int an = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+        if (ai < 0 || ai >= an) ai = 0;
+        okay::DrawSplash(renderer, sw, sh, kAccentPresets[ai].col.x,
+                         kAccentPresets[ai].col.y, kAccentPresets[ai].col.z);
+    };
+    firstSplash();                 // draw + present while still hidden
+    SDL_ShowWindow(window);        // reveal with the splash already composited
+    SDL_RaiseWindow(window);
+    firstSplash();                 // present once more so the shown frame is the splash
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -3048,7 +3316,7 @@ int main(int argc, char** argv) {
     // Reopen on the section the launcher was last closed on.
     int tab = (g_lastTab >= 0 && g_lastTab < 10) ? g_lastTab : 0;
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
-    if (g_updateOnLaunch) StartUpdateCheck();   // opt-in auto-check at startup
+    if (g_updateOnLaunch) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
@@ -3222,6 +3490,222 @@ int main(int argc, char** argv) {
             }
         }
 
+        // ---- Software Update dialog ----------------------------------------
+        // A real update window: version from -> to, stepped progress, a live
+        // download bar in MB, elapsed time and the changelog. Opened by the
+        // "Check for updates" button (StartUpdateCheck sets g_upModalOpen).
+        if (g_upModalOpen && !ImGui::IsPopupOpen("Software Update"))
+            ImGui::OpenPopup("Software Update");
+        {
+            ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+            ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal("Software Update", nullptr,
+                    ImGuiWindowFlags_NoSavedSettings)) {
+                UpState us = GetState();
+                bool busy = (us == Up_Checking || us == Up_Downloading);
+                std::string fromV, toV; GetUpVers(fromV, toV);
+                ImDrawList* mdl = ImGui::GetWindowDrawList();
+
+                // Header: a small accent cube glyph + title + sub-line.
+                ImVec2 hp = ImGui::GetCursorScreenPos();
+                float cs = 20.0f, cx0 = hp.x + cs * 0.5f, cy0 = hp.y + cs * 0.6f;
+                ImU32 acol = ImGui::GetColorU32(kAccent);
+                mdl->AddQuadFilled(ImVec2(cx0, cy0 - 9), ImVec2(cx0 + 10, cy0 - 3),
+                                   ImVec2(cx0, cy0 + 3), ImVec2(cx0 - 10, cy0 - 3), acol);
+                mdl->AddQuadFilled(ImVec2(cx0 - 10, cy0 - 3), ImVec2(cx0, cy0 + 3),
+                                   ImVec2(cx0, cy0 + 13), ImVec2(cx0 - 10, cy0 + 7),
+                                   ImGui::GetColorU32(ImVec4(kAccent.x*0.55f,kAccent.y*0.55f,kAccent.z*0.55f,1)));
+                mdl->AddQuadFilled(ImVec2(cx0, cy0 + 3), ImVec2(cx0 + 10, cy0 - 3),
+                                   ImVec2(cx0 + 10, cy0 + 7), ImVec2(cx0, cy0 + 13),
+                                   ImGui::GetColorU32(ImVec4(kAccent.x*0.78f,kAccent.y*0.78f,kAccent.z*0.78f,1)));
+                ImGui::SetCursorScreenPos(ImVec2(hp.x + cs + 12, hp.y));
+                ImGui::BeginGroup();
+                ImGui::TextUnformatted(
+                    us == Up_Updated  ? "Update installed" :
+                    us == Up_Failed   ? "Update failed" :
+                    us == Up_UpToDate ? "You're up to date" :
+                    us == Up_Downloading ? "Downloading update" : "Checking for updates");
+                if (!fromV.empty()) {
+                    if (!toV.empty() && toV != fromV)
+                        ImGui::TextDisabled("v%s  \xE2\x86\x92  v%s", fromV.c_str(), toV.c_str());
+                    else
+                        ImGui::TextDisabled("Installed: v%s", fromV.c_str());
+                }
+                ImGui::EndGroup();
+                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0, 4));
+
+                // Current step label + animated spinner while busy.
+                if (busy) {
+                    ImVec2 sp = ImGui::GetCursorScreenPos();
+                    float rad = 7.0f; ImVec2 ctr(sp.x + rad + 1, sp.y + rad + 2);
+                    float a0 = (float)ImGui::GetTime() * 6.0f;
+                    mdl->PathArcTo(ctr, rad, a0, a0 + 4.6f, 20);
+                    mdl->PathStroke(acol, 0, 2.6f);
+                    ImGui::Dummy(ImVec2(rad * 2 + 6, rad * 2 + 2)); ImGui::SameLine();
+                }
+                ImGui::TextUnformatted(GetUpStep().c_str());
+
+                // Overall step progress (engine / player / launcher).
+                int si = SDL_AtomicGet(&g_upStepIdx), stt = SDL_AtomicGet(&g_upStepTotal);
+                if (stt > 0 && us == Up_Downloading) {
+                    float sf = (float)si / (float)stt;
+                    ImGui::ProgressBar(sf, ImVec2(-FLT_MIN, 6.0f), "");
+                }
+
+                // Live download bar for the current file (MB + %).
+                long long bn = (long long)(unsigned)SDL_AtomicGet(&g_upBytesNow);
+                long long bt = (long long)(unsigned)SDL_AtomicGet(&g_upBytesTotal);
+                if (us == Up_Downloading) {
+                    char ov[64];
+                    double mbN = (double)bn / (1024.0 * 1024.0);
+                    if (bt > 0) {
+                        double mbT = (double)bt / (1024.0 * 1024.0);
+                        float f = (float)bn / (float)bt; if (f > 1) f = 1;
+                        std::snprintf(ov, sizeof(ov), "%.1f / %.1f MB  (%.0f%%)", mbN, mbT, f * 100.0f);
+                        ImGui::ProgressBar(f, ImVec2(-FLT_MIN, 18.0f), ov);
+                    } else {
+                        // Unknown size: indeterminate sweep + MB-so-far readout.
+                        float t = (float)ImGui::GetTime();
+                        float f = 0.5f + 0.5f * std::sin(t * 2.2f);
+                        std::snprintf(ov, sizeof(ov), "%.1f MB", mbN);
+                        ImGui::ProgressBar(f, ImVec2(-FLT_MIN, 18.0f), ov);
+                    }
+                }
+
+                // Elapsed time.
+                int startMs = SDL_AtomicGet(&g_upStartMs);
+                if (startMs && us != Up_Idle) {
+                    int el = ((int)SDL_GetTicks() - startMs) / 1000; if (el < 0) el = 0;
+                    ImGui::TextDisabled("Elapsed: %d:%02d", el / 60, el % 60);
+                }
+
+                // Changelog / what's-new.
+                std::string cl = GetUpChangelog();
+                if (!cl.empty()) {
+                    ImGui::Dummy(ImVec2(0, 4));
+                    ImGui::TextDisabled("What's new%s%s", toV.empty() ? "" : " in v",
+                                        toV.empty() ? "" : toV.c_str());
+                    ImGui::BeginChild("##upchangelog", ImVec2(0, 120), true);
+                    // One bullet per line.
+                    std::size_t s0 = 0;
+                    while (s0 < cl.size()) {
+                        std::size_t e0 = cl.find('\n', s0);
+                        std::string ln = cl.substr(s0, e0 == std::string::npos ? std::string::npos : e0 - s0);
+                        if (!ln.empty()) {
+                            ImGui::TextColored(kAccent, "\xE2\x80\xA2"); ImGui::SameLine();
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextUnformatted(ln.c_str());
+                            ImGui::PopTextWrapPos();
+                        }
+                        if (e0 == std::string::npos) break; s0 = e0 + 1;
+                    }
+                    ImGui::EndChild();
+                }
+
+                ImGui::Dummy(ImVec2(0, 8));
+                // Action buttons depend on state.
+                if (us == Up_Updated && g_upRelaunchNeeded) {
+                    if (ImGui::Button("Restart now", ImVec2(140, 34))) {
+                        Launch(g_selfPath); running = false;
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Later", ImVec2(110, 34))) {
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
+                    }
+                } else if (us == Up_Failed) {
+                    if (ImGui::Button("Retry", ImVec2(130, 34))) StartUpdateCheck();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Close", ImVec2(110, 34))) {
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
+                    }
+                } else if (busy) {
+                    if (ImGui::Button("Hide", ImVec2(110, 34))) {
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Keep updating in the background");
+                } else {   // UpToDate / Idle
+                    if (ImGui::Button("Close", ImVec2(130, 34)) ||
+                        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
+                    }
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        // ---- Notifications flyout ------------------------------------------
+        // A left-anchored panel listing the notifications feed. Opened by the
+        // sidebar bell; closes on its [x], Escape, or clicking away.
+        if (g_notifPanelOpen) {
+            ImGuiViewport* vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 240, vp->WorkPos.y + 62), ImGuiCond_Appearing);
+            ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_Appearing);
+            ImGui::SetNextWindowBgAlpha(0.98f);
+            bool open = true;
+            if (ImGui::Begin("Notifications", &open,
+                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                    ImGuiWindowFlags_NoDocking)) {
+                if (g_notifs.empty()) {
+                    ImGui::Dummy(ImVec2(0, 24));
+                    float aw = ImGui::GetContentRegionAvail().x;
+                    const char* msg = "You're all caught up";
+                    ImGui::SetCursorPosX((aw - ImGui::CalcTextSize(msg).x) * 0.5f + ImGui::GetCursorPosX());
+                    ImGui::TextDisabled("%s", msg);
+                } else {
+                    ImGui::TextDisabled("%d notification%s", (int)g_notifs.size(),
+                                        g_notifs.size() == 1 ? "" : "s");
+                    ImGui::SameLine();
+                    float aw = ImGui::GetContentRegionAvail().x;
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + aw - 80);
+                    if (ImGui::SmallButton("Clear all")) g_notifs.clear();
+                    ImGui::Separator();
+                    ImGui::BeginChild("##notiflist", ImVec2(0, 0), false);
+                    int closeAfterTab = -1;
+                    for (int ni = 0; ni < (int)g_notifs.size(); ++ni) {
+                        Notif& n = g_notifs[ni];
+                        ImGui::PushID(ni);
+                        ImVec2 rp = ImGui::GetCursorScreenPos();
+                        float rw = ImGui::GetContentRegionAvail().x;
+                        bool click = ImGui::InvisibleButton("##n", ImVec2(rw, 52));
+                        bool hov = ImGui::IsItemHovered();
+                        ImDrawList* ndl = ImGui::GetWindowDrawList();
+                        if (hov) ndl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + 52), IM_COL32(255,255,255,12), 6.0f);
+                        // Kind dot.
+                        ImU32 kc = n.kind == 1 ? IM_COL32(90, 170, 250, 255) :   // friend
+                                   n.kind == 2 ? IM_COL32(120, 210, 120, 255) :  // message
+                                   n.kind == 3 ? ImGui::GetColorU32(kAccent) :    // update
+                                                 IM_COL32(200, 180, 90, 255);     // system
+                        ndl->AddCircleFilled(ImVec2(rp.x + 14, rp.y + 16), 4.0f, kc);
+                        ndl->AddText(ImVec2(rp.x + 28, rp.y + 8),
+                                     ImGui::GetColorU32(ImGuiCol_Text), n.title.c_str());
+                        ndl->AddText(ImVec2(rp.x + 28, rp.y + 27),
+                                     ImGui::GetColorU32(ImGuiCol_TextDisabled), n.body.c_str());
+                        // Relative time from session ticks.
+                        Uint32 ago = (SDL_GetTicks() - n.time) / 1000;
+                        char rt[24];
+                        if (ago < 10) std::snprintf(rt, sizeof(rt), "now");
+                        else if (ago < 60) std::snprintf(rt, sizeof(rt), "%us", ago);
+                        else if (ago < 3600) std::snprintf(rt, sizeof(rt), "%um", ago / 60);
+                        else std::snprintf(rt, sizeof(rt), "%uh", ago / 3600);
+                        ImVec2 ts = ImGui::CalcTextSize(rt);
+                        ndl->AddText(ImVec2(rp.x + rw - ts.x - 4, rp.y + 8),
+                                     ImGui::GetColorU32(ImGuiCol_TextDisabled), rt);
+                        if (click && n.gotoTab >= 0) { closeAfterTab = n.gotoTab; }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    if (closeAfterTab >= 0) { tab = closeAfterTab; g_notifPanelOpen = false; }
+                }
+            }
+            ImGui::End();
+            if (!open || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_notifPanelOpen = false;
+        }
+
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
         if (!closeConfirm && !ImGui::GetIO().WantTextInput) {
@@ -3315,6 +3799,47 @@ int main(int argc, char** argv) {
                 dl->AddText(ImVec2(rmin.x + 40, hy - ImGui::GetTextLineHeight() * 0.5f),
                             ImGui::GetColorU32(ImGuiCol_TextDisabled), "Collapse");
             if (th) ImGui::SetTooltip(g_navCollapsed ? "Expand sidebar" : "Collapse sidebar");
+        }
+        // Notifications bell — a full-width row that opens the notifications panel.
+        // Shows an unread count badge drawn over the bell.
+        RefreshNotifs();
+        {
+            ImGui::Dummy(ImVec2(0, 2));
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 rmin = ImGui::GetCursorScreenPos();
+            float rw = ImGui::GetContentRegionAvail().x, rh = 28.0f;
+            int unread = NotifUnread();
+            if (ImGui::InvisibleButton("##navbell", ImVec2(rw, rh))) {
+                g_notifPanelOpen = true;
+                for (auto& n : g_notifs) n.read = true;   // opening clears unread
+            }
+            bool bh = ImGui::IsItemHovered();
+            if (bh || g_notifPanelOpen)
+                dl->AddRectFilled(rmin, ImVec2(rmin.x + rw, rmin.y + rh), IM_COL32(255, 255, 255, 14), 4.0f);
+            float bx = g_navCollapsed ? rmin.x + rw * 0.5f : rmin.x + 20.0f;
+            float by = rmin.y + rh * 0.5f;
+            ImU32 bc = unread > 0 ? ImGui::GetColorU32(kAccent) : ImGui::GetColorU32(ImGuiCol_Text);
+            // Bell body: a rounded dome + flared base + clapper.
+            dl->PathArcTo(ImVec2(bx, by + 2.0f), 6.0f, 3.14159f, 6.2831853f, 12);
+            dl->PathLineTo(ImVec2(bx + 6.5f, by + 4.0f));
+            dl->PathLineTo(ImVec2(bx - 6.5f, by + 4.0f));
+            dl->PathStroke(bc, ImDrawFlags_Closed, 1.8f);
+            dl->AddCircleFilled(ImVec2(bx, by + 6.5f), 1.7f, bc);
+            dl->AddCircleFilled(ImVec2(bx, by - 5.5f), 1.4f, bc);   // top knob
+            if (!g_navCollapsed)
+                dl->AddText(ImVec2(rmin.x + 40, by - ImGui::GetTextLineHeight() * 0.5f),
+                            ImGui::GetColorU32(ImGuiCol_Text), "Notifications");
+            // Unread badge.
+            if (unread > 0) {
+                char cnt[8]; std::snprintf(cnt, sizeof(cnt), "%d", unread > 99 ? 99 : unread);
+                ImVec2 ts = ImGui::CalcTextSize(cnt);
+                ImVec2 bp = g_navCollapsed ? ImVec2(bx + 5, by - 9)
+                                           : ImVec2(rmin.x + rw - 24, by - 9);
+                float pad = 5.0f, bw = ts.x + pad * 2; if (bw < 18) bw = 18;
+                dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + 18), IM_COL32(210, 72, 72, 255), 9.0f);
+                dl->AddText(ImVec2(bp.x + (bw - ts.x) * 0.5f, bp.y + 2), IM_COL32_WHITE, cnt);
+            }
+            if (bh) ImGui::SetTooltip(unread > 0 ? "Notifications (%d new)" : "Notifications", unread);
         }
         // Scrollable nav items, sized to leave room for the pinned update footer
         // below — so on a short window the items scroll instead of overlapping it.
@@ -5952,16 +6477,13 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                 }
             } else {
-                // Search + kind filter + sort.
+                // Search + sort + wishlist, with a category chip row underneath.
                 static char wSearch[96] = "";
-                static int  wFilterKind = 0;   // 0 All, 1 Games, 2 Templates
+                static int  wFilterKind = 0;   // 0 All, 1 Games, 2 Scenes, 3 Templates
                 static int  wSort = 0;         // 0 Newest, 1 Most downloaded, 2 Highest rated
                 static bool wWishOnly = false;
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 150 - 170 - 108);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 170 - 108);
                 ImGui::InputTextWithHint("##mktsearch", "Search the marketplace...", wSearch, sizeof(wSearch));
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(142);
-                ImGui::Combo("##mktkind", &wFilterKind, "All kinds\0Games\0Templates\0");
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(162);
                 ImGui::Combo("##mktsort", &wSort, "Newest\0Most downloaded\0Highest rated\0");
@@ -5974,7 +6496,38 @@ int main(int argc, char** argv) {
 
                 auto mlo = [](std::string s){ for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
                 std::string nd = mlo(wSearch);
-                const char* kindKey[] = { "", "game", "template" };
+                const char* kindKey[] = { "", "game", "scene", "template" };
+
+                // Category chips: a modern, one-click filter row (counts per kind).
+                {
+                    const char* chipLbl[] = { "All", "Games", "Scenes", "Templates" };
+                    int counts[4] = {0,0,0,0};
+                    long totalDl = 0;
+                    for (const auto& w : wCache) {
+                        std::string wk = w.kind.empty() ? "game" : w.kind;
+                        counts[0]++;
+                        if (wk == "game") counts[1]++;
+                        else if (wk == "scene") counts[2]++;
+                        else if (wk == "template") counts[3]++;
+                        totalDl += w.downloads;
+                    }
+                    for (int c = 0; c < 4; ++c) {
+                        if (c) ImGui::SameLine(0, 6);
+                        bool on = (wFilterKind == c);
+                        if (on) { ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
+                                  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1)); }
+                        char cl[48]; std::snprintf(cl, sizeof(cl), "%s  %d", chipLbl[c], counts[c]);
+                        if (ImGui::Button(cl)) wFilterKind = c;
+                        if (on) ImGui::PopStyleColor(2);
+                    }
+                    ImGui::SameLine();
+                    float aw = ImGui::GetContentRegionAvail().x;
+                    char stat[64]; std::snprintf(stat, sizeof(stat), "%ld total download%s",
+                                                 totalDl, totalDl == 1 ? "" : "s");
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + aw - ImGui::CalcTextSize(stat).x - 4);
+                    ImGui::TextDisabled("%s", stat);
+                    ImGui::Dummy(ImVec2(0, 4));
+                }
                 // Build the display order from the chosen sort (wCache is newest-first).
                 auto avgOf = [&](long id)->float {
                     auto it = wRatings.find(id);
@@ -6648,24 +7201,37 @@ int main(int argc, char** argv) {
             // A compact up/score/down vote widget (Reddit-style). Toggles like
             // Reddit: clicking your current direction clears the vote. Returns true
             // if a vote changed (so the caller can refresh).
-            auto voteWidget = [&](const char* kind, long id, long baseScore, int myVote) -> bool {
+            // Vote widget: updates the local score/vote maps OPTIMISTICALLY and
+            // fires the POST on a background thread, so a click never stalls the
+            // frame. `scores`/`myVotes` are the live caches for this kind.
+            auto voteWidget = [&](const char* kind, long id,
+                                  std::map<long,long>& scores, std::map<long,int>& myVotes) -> bool {
+                long baseScore = scores.count(id) ? scores[id] : 0L;
+                int  myVote    = myVotes.count(id) ? myVotes[id] : 0;
                 bool changed = false;
+                bool canVote = fo.Available();
+                auto apply = [&](int nv) {
+                    scores[id] = baseScore + (nv - myVote);   // optimistic net-score delta
+                    myVotes[id] = nv;
+                    FireForumAction(new FoAction{0, kind, id, nv, "", "", ""});
+                    changed = true;
+                };
                 ImGui::BeginGroup();
                 ImGui::PushID((int)id); ImGui::PushID(kind);
                 ImU32 up  = myVote == 1  ? IM_COL32(236,128,64,255)  : ImGui::GetColorU32(ImGuiCol_TextDisabled);
                 ImU32 dn  = myVote == -1 ? IM_COL32(110,130,240,255) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
                 ImGui::PushStyleColor(ImGuiCol_Text, up);
-                bool canVote = fo.Available();
-                if (ImGui::ArrowButton("u", ImGuiDir_Up) && canVote) { fo.Vote(kind, id, myVote == 1 ? 0 : 1); changed = true; }
+                if (ImGui::ArrowButton("u", ImGuiDir_Up) && canVote) apply(myVote == 1 ? 0 : 1);
                 ImGui::PopStyleColor();
                 // Score, centered under the arrow, tinted by my vote.
-                char sc[16]; std::snprintf(sc, sizeof(sc), "%ld", baseScore);
+                char sc[16]; std::snprintf(sc, sizeof(sc), "%ld", scores.count(id) ? scores[id] : baseScore);
                 float aw = ImGui::GetItemRectSize().x, tw = ImGui::CalcTextSize(sc).x;
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (aw - tw) * 0.5f);
-                ImVec4 scCol = myVote==1?ImVec4(0.93f,0.5f,0.25f,1):myVote==-1?ImVec4(0.43f,0.51f,0.94f,1):ImVec4(0.8f,0.82f,0.88f,1);
+                int shownVote = myVotes.count(id) ? myVotes[id] : 0;
+                ImVec4 scCol = shownVote==1?ImVec4(0.93f,0.5f,0.25f,1):shownVote==-1?ImVec4(0.43f,0.51f,0.94f,1):ImVec4(0.8f,0.82f,0.88f,1);
                 ImGui::TextColored(scCol, "%s", sc);
                 ImGui::PushStyleColor(ImGuiCol_Text, dn);
-                if (ImGui::ArrowButton("d", ImGuiDir_Down) && canVote) { fo.Vote(kind, id, myVote == -1 ? 0 : -1); changed = true; }
+                if (ImGui::ArrowButton("d", ImGuiDir_Down) && canVote) apply(myVote == -1 ? 0 : -1);
                 ImGui::PopStyleColor();
                 ImGui::PopID(); ImGui::PopID();
                 ImGui::EndGroup();
@@ -6693,10 +7259,10 @@ int main(int argc, char** argv) {
                         ImGui::InputTextWithHint("##ncat", "Topic (e.g. help, showcase)", newCat, sizeof(newCat));
                         ImGui::InputTextMultiline("##nb", newBody, sizeof(newBody), ImVec2(-1, 80));
                         if (PrimaryButton("Post", ImVec2(120, 0)) && newThread[0]) {
-                            if (fo.StartThread(newThread, newBody, newCat, &foErr)) {
-                                newThread[0] = newBody[0] = newCat[0] = '\0'; foErr.clear();
-                                foShowNew = false; foNext = 0;
-                            }
+                            // Fire the post off-thread; optimistically close the form.
+                            FireForumAction(new FoAction{2, "", 0, 0, newThread, newBody, newCat});
+                            newThread[0] = newBody[0] = newCat[0] = '\0'; foErr.clear();
+                            foShowNew = false; foNext = tnow + 1200;   // refresh shortly after
                         }
                         if (!foErr.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.9f,0.45f,0.45f,1), "%s", foErr.c_str()); }
                     }
@@ -6720,13 +7286,12 @@ int main(int argc, char** argv) {
                 ImGui::BeginChild("##threads", ImVec2(0, ImGui::GetContentRegionAvail().y - 4), false);
                 for (const okay::ForumThread* tp : order) {
                     const okay::ForumThread& t = *tp;
-                    long sc = scoreOf(t.id); int mv = thMy.count(t.id) ? thMy[t.id] : 0;
                     int nc = thComments.count(t.id) ? thComments[t.id] : 0;
                     ImGui::PushID((int)t.id);
                     ImGui::BeginChild("##trow", ImVec2(0, 66), true);
                     HoverRing();
                     ImGui::SetCursorPos(ImVec2(6, 8));
-                    if (voteWidget("thread", t.id, sc, mv)) foNext = 0;
+                    voteWidget("thread", t.id, thScores, thMy);
                     ImGui::SameLine(); ImGui::SetCursorPosX(52);
                     ImGui::BeginGroup();
                     ImGui::SetCursorPosY(9);
@@ -6757,6 +7322,7 @@ int main(int argc, char** argv) {
                     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                         !ImGui::IsAnyItemHovered()) {
                         openThread=t.id; openTitle=t.title; openAuthor=t.author; openBody=t.body; openCat=t.category; openWhen=t.when; fpNext=0;
+                        fpCache.clear(); poScores.clear(); poMy.clear();   // show the loading state, not stale comments
                     }
                     ImGui::EndChild();
                     ImGui::PopID();
@@ -6772,17 +7338,29 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 if (!openCat.empty()) { ImGui::TextDisabled("[%s]", openCat.c_str()); ImGui::SameLine(); }
                 ImGui::TextUnformatted(openTitle.c_str());
-                if (tnow >= fpNext) {
-                    fpCache = fo.Posts(openThread);
-                    poScores = fo.Scores("post"); poMy = fo.MyVotes("post");
-                    thScores = fo.Scores("thread"); thMy = fo.MyVotes("thread");
-                    fpNext = tnow + 6000;
+                // Fetch the thread's comments + vote maps on a background thread,
+                // so opening a post never blocks the frame.
+                if (tnow >= fpNext && !g_foPostFetching) {
+                    g_foPostFetching = true; fpNext = tnow + 6000;
+                    if (SDL_Thread* pt = SDL_CreateThread(ForumPostWorker, "okay-fopost",
+                                                          (void*)(intptr_t)openThread))
+                        SDL_DetachThread(pt);
+                    else g_foPostFetching = false;
                 }
+                if (g_foMutex) {
+                    SDL_LockMutex(g_foMutex);
+                    if (g_foPostReady && g_foPostHave == openThread) {
+                        fpCache = g_foPosts; poScores = g_foPostScores; poMy = g_foPostMy;
+                        thScores = g_foPostThScores; thMy = g_foPostThMy;
+                        g_foPostReady = false;
+                    }
+                    SDL_UnlockMutex(g_foMutex);
+                }
+                bool detailLoading = g_foPostHave != openThread;   // first open, not cached yet
                 // The original post card: vote column + author/time + self-text.
                 ImGui::BeginChild("##opcard", ImVec2(0, openBody.empty() ? 70 : 128), true);
-                long osc = thScores.count(openThread)?thScores[openThread]:0; int omv = thMy.count(openThread)?thMy[openThread]:0;
                 ImGui::SetCursorPos(ImVec2(6, 8));
-                if (voteWidget("thread", openThread, osc, omv)) fpNext = 0;
+                voteWidget("thread", openThread, thScores, thMy);
                 ImGui::SameLine(); ImGui::SetCursorPosX(52);
                 ImGui::BeginGroup();
                 ImGui::TextDisabled("Posted by %s  -  %s", openAuthor.empty()?"unknown":openAuthor.c_str(), RelTime(openWhen).c_str());
@@ -6796,11 +7374,10 @@ int main(int argc, char** argv) {
                 int shownC = 0;
                 for (const auto& p : fpCache) {
                     ++shownC;
-                    long psc = poScores.count(p.id)?poScores[p.id]:0; int pmv = poMy.count(p.id)?poMy[p.id]:0;
                     ImGui::PushID((int)p.id);
                     ImGui::BeginChild("##crow", ImVec2(0, p.body.size() > 80 ? 92 : 68), true);
                     ImGui::SetCursorPos(ImVec2(6, 8));
-                    if (voteWidget("post", p.id, psc, pmv)) fpNext = 0;
+                    voteWidget("post", p.id, poScores, poMy);
                     ImGui::SameLine(); ImGui::SetCursorPosX(52);
                     ImGui::BeginGroup();
                     bool mine = !me.empty() && p.author == me;
@@ -6812,13 +7389,20 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                     ImGui::PopID();
                 }
-                if (shownC == 0) { ImGui::Dummy(ImVec2(0, 10)); ImGui::TextDisabled("No comments yet. Be the first to comment."); }
+                if (shownC == 0) {
+                    ImGui::Dummy(ImVec2(0, 10));
+                    ImGui::TextDisabled(detailLoading ? "Loading comments\xE2\x80\xA6"
+                                                      : "No comments yet. Be the first to comment.");
+                }
                 ImGui::EndChild();
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
                 bool rp = ImGui::InputTextWithHint("##reply", "Add a comment...", replyBuf, sizeof(replyBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::SameLine();
                 if ((PrimaryButton("Comment", ImVec2(82, 0)) || rp) && replyBuf[0]) {
-                    if (fo.Reply(openThread, replyBuf, &foErr)) { replyBuf[0] = '\0'; fpNext = 0; }
+                    // Post the comment off-thread; clear the box immediately and
+                    // refresh the detail shortly after so it appears.
+                    FireForumAction(new FoAction{1, "", openThread, 0, replyBuf, "", ""});
+                    replyBuf[0] = '\0'; foErr.clear(); fpNext = tnow + 1000;
                 }
             }
         } else if (tab == 10) {                           // ---- Downloads ----

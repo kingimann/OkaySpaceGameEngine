@@ -7100,21 +7100,41 @@ int main(int argc, char** argv) {
                             }
                         }
                         // (members come from the background poller, read above)
+                        // Collapsible, Online/Offline-grouped member list (Discord-style).
                         ImGui::Dummy(ImVec2(0, 6));
-                        ImGui::TextDisabled("MEMBERS - %d", (int)svMembers.size());
+                        static bool svMembersOpen = true;
+                        int onlineN = 0; for (const auto& m : svMembers) if (m.online) ++onlineN;
+                        if (ImGui::Selectable(svMembersOpen ? "- MEMBERS" : "+ MEMBERS", false,
+                                              ImGuiSelectableFlags_None, ImVec2(ImGui::GetContentRegionAvail().x - 70, 0)))
+                            svMembersOpen = !svMembersOpen;
+                        ImGui::SameLine(); ImGui::TextDisabled("%d/%d", onlineN, (int)svMembers.size());
                         ImGui::Separator();
-                        for (const auto& m : svMembers) {
-                            ImVec2 mp = ImGui::GetCursorScreenPos();
-                            ImU32 dot = m.online ? IM_COL32(120, 200, 110, 255) : IM_COL32(110, 118, 130, 255);
-                            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mp.x + 5, mp.y + 8), 4.0f, dot, 12);
-                            ImGui::Dummy(ImVec2(14, 0)); ImGui::SameLine();
-                            if (m.role == "owner") {
-                                ImGui::TextUnformatted(m.name.empty() ? "member" : m.name.c_str());
-                                ImGui::SameLine(0, 4); ImGui::TextColored(ImVec4(0.95f,0.80f,0.35f,1), "(owner)");
-                            } else {
-                                ImGui::TextColored(m.online ? ImVec4(0.9f,0.92f,0.96f,1) : ImVec4(0.6f,0.63f,0.7f,1),
-                                                   "%s", m.name.empty() ? "member" : m.name.c_str());
+                        if (svMembersOpen) {
+                            auto drawMember = [&](const okay::ServerMember& m) {
+                                ImVec2 mp = ImGui::GetCursorScreenPos();
+                                ImU32 dot = m.online ? IM_COL32(120, 200, 110, 255) : IM_COL32(110, 118, 130, 255);
+                                ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mp.x + 5, mp.y + 8), 4.0f, dot, 12);
+                                ImGui::Dummy(ImVec2(14, 0)); ImGui::SameLine();
+                                if (m.role == "owner") {
+                                    ImGui::TextColored(m.online ? ImVec4(0.9f,0.92f,0.96f,1) : ImVec4(0.6f,0.63f,0.7f,1),
+                                                       "%s", m.name.empty() ? "member" : m.name.c_str());
+                                    ImGui::SameLine(0, 4); ImGui::TextColored(ImVec4(0.95f,0.80f,0.35f,1), "(owner)");
+                                } else {
+                                    ImGui::TextColored(m.online ? ImVec4(0.9f,0.92f,0.96f,1) : ImVec4(0.6f,0.63f,0.7f,1),
+                                                       "%s", m.name.empty() ? "member" : m.name.c_str());
+                                }
+                            };
+                            if (onlineN > 0) {
+                                ImGui::TextDisabled("ONLINE - %d", onlineN);
+                                for (const auto& m : svMembers) if (m.online) drawMember(m);
                             }
+                            int offN = (int)svMembers.size() - onlineN;
+                            if (offN > 0) {
+                                ImGui::Dummy(ImVec2(0, 3));
+                                ImGui::TextDisabled("OFFLINE - %d", offN);
+                                for (const auto& m : svMembers) if (!m.online) drawMember(m);
+                            }
+                            if (svMembers.empty()) ImGui::TextDisabled("No members loaded.");
                         }
                     }
                     ImGui::EndChild();

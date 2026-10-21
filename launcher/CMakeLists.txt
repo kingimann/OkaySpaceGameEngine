@@ -40,6 +40,8 @@ if(NOT TARGET launcher_imgui)
         ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
     target_link_libraries(launcher_imgui PUBLIC ${OKAY_LAUNCHER_SDL})
     target_compile_options(launcher_imgui PRIVATE -w)
+    # 32-bit ImWchar: emoji (U+1F000+) survive in text inputs instead of "??".
+    target_compile_definitions(launcher_imgui PUBLIC IMGUI_USE_WCHAR32)
 endif()
 
 # Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.

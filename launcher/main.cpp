@@ -1363,7 +1363,18 @@ bool g_raiseMainReq = false;             // something in the chat window wants t
 #define OKAY_DEFAULT_VOICE_RELAY ""
 #endif
 std::string g_voiceRelay = OKAY_DEFAULT_VOICE_RELAY;   // voice server "host[:port]" (persisted)
-float g_voiceGate = -46.0f;                            // mic sensitivity, dBFS (persisted)  // last window size (persisted) — roomier first-launch default
+float g_voiceGate = -46.0f;                            // mic sensitivity, dBFS (persisted)
+std::string g_voiceInDev, g_voiceOutDev;               // audio devices by name ("" = default) (persisted)
+float g_voiceInGain = 1.0f, g_voiceOutVol = 1.0f;      // mic volume / call volume (persisted)
+// Privacy (persisted). Enforced by this client: who can reach me, and what
+// others see about me.
+bool g_dmFriendsOnly = false;     // messages from non-friends go to "Message requests"
+int  g_callsFrom = 1;             // 0 everyone, 1 friends, 2 nobody
+bool g_readReceipts = true;       // send read receipts / "in the chat" (off = you don't see theirs either)
+bool g_typingIndicator = true;    // tell people when I'm typing
+bool g_sharePlaytime = true;      // sync my playtime to my public profile
+std::set<std::string> g_friendUids;   // accepted friends (filled when a friends list loads)
+std::map<std::string, std::string> g_blockedNames;   // uid -> name, for the Blocked list (persisted)  // last window size (persisted) — roomier first-launch default
 const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
 
 // Transient toast notification (bottom-right of the window).
@@ -1930,6 +1941,28 @@ void EmojiPicker(const char* id, char* buf, std::size_t cap) {
 // tokenizer feeds both drawing and width measurement, so a chat bubble always
 // hugs exactly what gets drawn.
 ImFont* g_fontMono = nullptr;   // JetBrains Mono for `code` (loaded in main)
+// Merge the system's emoji font into the font just added, so emoji typed into
+// text boxes draw as emoji rather than "?" (message bodies use Twemoji images).
+// stb_truetype renders their outlines in one colour. Missing font = no-op.
+static void MergeEmojiFallback(float size) {
+    static const char* kPaths[] = {
+#if defined(_WIN32)
+        "C:\\Windows\\Fonts\\seguiemj.ttf",
+#elif defined(__APPLE__)
+        "/System/Library/Fonts/Apple Symbols.ttf",
+#else
+        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
+        "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+#endif
+    };
+    for (const char* path : kPaths) {
+        std::error_code ec;
+        if (!fs::exists(path, ec)) continue;
+        ImFontConfig fc; fc.MergeMode = true; fc.OversampleH = 1; fc.OversampleV = 1;
+        if (ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size, &fc)) return;
+    }
+}
 enum { kMdBold = 1, kMdItalic = 2, kMdStrike = 4, kMdCode = 8, kMdSpoiler = 16 };
 struct ChatTok { std::string text; int style = 0; bool glue = false; bool newline = false; };
 struct ChatBlock { int kind = 0; std::string text; std::vector<ChatTok> toks; };   // kind: 0 text, 1 quote, 2 code
@@ -3522,6 +3555,16 @@ void LoadPrefs() {
         else if (k == "win_w") { try { g_winW = std::stoi(v); } catch (...) {} }
         else if (k == "chat_window") g_chatSeparate = (v != "0");
         else if (k == "voice_relay") g_voiceRelay = v;
+        else if (k == "voice_in") g_voiceInDev = v;
+        else if (k == "voice_out") g_voiceOutDev = v;
+        else if (k == "voice_in_gain") { try { g_voiceInGain = std::clamp(std::stof(v), 0.0f, 4.0f); } catch (...) {} }
+        else if (k == "voice_out_vol") { try { g_voiceOutVol = std::clamp(std::stof(v), 0.0f, 2.0f); } catch (...) {} }
+        else if (k == "dm_friends_only") g_dmFriendsOnly = (v == "1");
+        else if (k == "calls_from") g_callsFrom = std::clamp(std::atoi(v.c_str()), 0, 2);
+        else if (k == "read_receipts") g_readReceipts = (v != "0");
+        else if (k == "typing_indicator") g_typingIndicator = (v != "0");
+        else if (k == "share_playtime") g_sharePlaytime = (v != "0");
+        else if (k == "block_name") { auto bar = v.find('|'); if (bar != std::string::npos) g_blockedNames[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "voice_gate") { try { g_voiceGate = std::clamp(std::stof(v), -70.0f, -10.0f); } catch (...) {} }
         else if (k == "chat_win_x") { try { g_chatWinX = std::stoi(v); } catch (...) {} }
         else if (k == "chat_win_y") { try { g_chatWinY = std::stoi(v); } catch (...) {} }
@@ -3561,6 +3604,12 @@ void SavePrefs() {
     f << "win_w=" << g_winW << "\n";
     f << "chat_window=" << (g_chatSeparate ? 1 : 0) << "\n";
     f << "voice_relay=" << g_voiceRelay << "\nvoice_gate=" << g_voiceGate << "\n";
+    f << "voice_in=" << g_voiceInDev << "\nvoice_out=" << g_voiceOutDev << "\n";
+    f << "voice_in_gain=" << g_voiceInGain << "\nvoice_out_vol=" << g_voiceOutVol << "\n";
+    f << "dm_friends_only=" << (g_dmFriendsOnly ? 1 : 0) << "\ncalls_from=" << g_callsFrom << "\n";
+    f << "read_receipts=" << (g_readReceipts ? 1 : 0) << "\ntyping_indicator=" << (g_typingIndicator ? 1 : 0) << "\n";
+    f << "share_playtime=" << (g_sharePlaytime ? 1 : 0) << "\n";
+    for (const auto& kv : g_blockedNames) if (g_blockedUsers.count(kv.first)) f << "block_name=" << kv.first << "|" << kv.second << "\n";
     f << "chat_win_x=" << g_chatWinX << "\nchat_win_y=" << g_chatWinY << "\nchat_win_w=" << g_chatWinW << "\nchat_win_h=" << g_chatWinH << "\n";
     f << "win_h=" << g_winH << "\n";
     f << "splash_logo=" << g_splashLogo << "\n";
@@ -5030,6 +5079,8 @@ static bool VoiceJoin(const std::string& room, const std::string& key) {
     if (!EnsureAudio()) { Toast("Audio isn't available on this system", 2); return false; }
     if (VoiceRecording()) FinishVoiceRecord(false);
     g_voice.SetGate(g_voiceGate);
+    g_voice.SetDevices(g_voiceInDev, g_voiceOutDev);
+    g_voice.SetInputGain(g_voiceInGain); g_voice.SetOutputVolume(g_voiceOutVol);
     if (!g_voice.Start(host, port ? port : 45100, room, key, g_voiceMe, g_voiceMe)) { Toast(g_voice.Error(), 2); return false; }
     if (!g_voice.Error().empty()) Toast(g_voice.Error(), 2);   // e.g. no microphone (listen-only)
     return true;
@@ -5144,6 +5195,7 @@ static void VoiceHandleSignals() {
         if (b.kind != 1 || g_callSeen.count(c.s.id) || ended.count(b.code)) continue;
         g_callSeen.insert(c.s.id);
         if (now - c.s.when > 45 || g_blockedUsers.count(c.s.from)) continue;
+        if (g_callsFrom == 2 || (g_callsFrom == 1 && !g_friendUids.empty() && !g_friendUids.count(c.s.from))) continue;   // privacy
         if (g_call.kind == 1 && g_call.code == b.code) continue;
         g_incoming = IncomingCall{c.s.from, c.name.empty() ? std::string("Someone") : c.name, c.avatar, b.code, b.key, c.s.id, SDL_GetTicks()};
     }
@@ -5627,7 +5679,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
         bool chatNewsCheck = false;
         if (g_chatMutex && !kChatDemo) {
             SDL_LockMutex(g_chatMutex);
-            if (g_chatFriReady)  { friends = g_chatFriends; g_chatFriReady = false; }
+            if (g_chatFriReady)  {
+                friends = g_chatFriends; g_chatFriReady = false;
+                g_friendUids.clear();
+                for (const auto& f : friends) if (f.status == "accepted") g_friendUids.insert(f.id);
+            }
             if (g_chatConvReady) { convs   = g_chatConvs;   g_chatConvReady = false; chatNewsCheck = true; }
             if (g_chatGroupsReady) { groups = g_chatGroups; g_chatGroupsReady = false; chatNewsCheck = true; }
             if (g_chatGLogReady) { glog = g_chatGLog; greacts = g_chatGReacts; gmyreacts = g_chatGMyReacts; g_chatGLogReady = false; }
@@ -5704,6 +5760,15 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImU32 ic = IM_COL32(232, 236, 244, 255);
                 if (kind == 2) {   // fold / unfold the list
                     DrawNavIcon(dl, kIcoPanel, cc, ic);
+                } else if (kind == 3) {   // pop out (arrow leaving a box) / dock back (arrow into it)
+                    dl->AddRect(ImVec2(cc.x - 7, cc.y - 5), ImVec2(cc.x + 5, cc.y + 7), ic, 2.0f, 0, 1.5f);
+                    const bool out = !g_chatInOwnWindow;
+                    const ImVec2 a0 = out ? ImVec2(cc.x - 1, cc.y + 1) : ImVec2(cc.x + 7, cc.y - 7);
+                    const ImVec2 a1 = out ? ImVec2(cc.x + 7, cc.y - 7) : ImVec2(cc.x - 1, cc.y + 1);
+                    dl->AddRectFilled(ImVec2(cc.x + 1, cc.y - 9), ImVec2(cc.x + 9, cc.y - 1), IM_COL32(40, 44, 54, 255));
+                    dl->AddLine(a0, a1, ic, 1.6f);
+                    dl->AddLine(a1, ImVec2(a1.x + (out ? -4.5f : 4.5f), a1.y), ic, 1.6f);
+                    dl->AddLine(a1, ImVec2(a1.x, a1.y + (out ? 4.5f : -4.5f)), ic, 1.6f);
                 } else if (kind == 0) {   // compose: open square + pencil
                     dl->PathLineTo(ImVec2(cc.x + 0.5f, cc.y - 6.0f)); dl->PathLineTo(ImVec2(cc.x - 6.5f, cc.y - 6.0f));
                     dl->PathLineTo(ImVec2(cc.x - 6.5f, cc.y + 6.5f)); dl->PathLineTo(ImVec2(cc.x + 6.0f, cc.y + 6.5f));
@@ -5722,7 +5787,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 float cx = hp.x + (hw - B) * 0.5f;
                 if (iconBtn("##foldlist", ImVec2(cx, hp.y), 2, "Show chat list")) { g_chatListFolded = false; SavePrefs(); }
                 if (iconBtn("##newmsg", ImVec2(cx, hp.y + B + 8), 0, "New message")) ImGui::OpenPopup("##newchat");
-                ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + B * 2 + 8 + 10));
+                if (iconBtn("##popout", ImVec2(cx, hp.y + (B + 8) * 2), 3,
+                            g_chatInOwnWindow ? "Put chat back inside the launcher" : "Pop out into its own window"))
+                    { g_chatSeparate = !g_chatInOwnWindow; SavePrefs(); }
+                ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + B * 3 + 16 + 10));
                 ImVec2 lp = ImGui::GetCursorScreenPos();
                 dl->AddLine(ImVec2(lp.x + 10, lp.y), ImVec2(lp.x + hw - 10, lp.y), IM_COL32(255, 255, 255, 18), 1.0f);
                 ImGui::Dummy(ImVec2(0, 8));
@@ -5735,6 +5803,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImGui::OpenPopup("##newchat");
                 if (iconBtn("##foldlist", ImVec2(hp.x + hw - B * 3 - 12, by), 2, "Collapse chat list"))
                     { g_chatListFolded = true; SavePrefs(); }
+                if (iconBtn("##popout", ImVec2(hp.x + hw - B * 4 - 18, by), 3,
+                            g_chatInOwnWindow ? "Put chat back inside the launcher" : "Pop out into its own window"))
+                    { g_chatSeparate = !g_chatInOwnWindow; SavePrefs(); }
                 ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + std::max(th, B) + 10));
             }
         }
@@ -5804,7 +5875,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
         };
         std::vector<Row> rows;
         std::set<std::string> have;
+        static bool showRequests = false;   // privacy: non-friends' chats wait under "Message requests"
+        int requestN = 0;
         for (const auto& c : convs) {
+            if (g_dmFriendsOnly && !friends.empty() && !fById.count(c.uid) && c.uid != selUid) {
+                ++requestN;
+                if (!showRequests) continue;
+            }
             Row r; r.key = r.uid = c.uid; r.lastId = c.lastId; r.when = c.when; r.mine = c.lastMine;
             r.preview = (c.lastMine ? "You: " : "") + ChatPreviewSmart(c.lastBody, 90);
             if (auto it = fById.find(c.uid); it != fById.end()) {
@@ -5858,6 +5935,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
 
         ImGui::BeginChild("##convrows", ImVec2(0, 0), false, folded ? ImGuiWindowFlags_NoScrollbar : 0);
         ImDrawList* rdl = ImGui::GetWindowDrawList();
+        if (requestN > 0 && !folded) {   // "Message requests (2)" toggle
+            char rl[48]; std::snprintf(rl, sizeof(rl), showRequests ? "Hide message requests (%d)" : "Message requests (%d)", requestN);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(kAccent));
+            if (ImGui::Selectable(rl, false, 0, ImVec2(0, 22))) showRequests = !showRequests;
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Chats from people who aren't your friends (Settings > Privacy).");
+        }
         auto drawRow = [&](const Row& r) {
             const bool pinned = g_pinnedChats.count(r.key) != 0;
             const bool muted  = g_mutedChats.count(r.key) != 0;
@@ -6295,7 +6380,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (ImGui::MenuItem("Copy username")) ImGui::SetClipboardText(selName.c_str());
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
                 if (ImGui::MenuItem(selBlocked ? "Unblock" : "Block")) {
-                    if (selBlocked) g_blockedUsers.erase(selUid); else g_blockedUsers.insert(selUid);
+                    if (selBlocked) g_blockedUsers.erase(selUid); else { g_blockedUsers.insert(selUid); g_blockedNames[selUid] = selName; }
                     SavePrefs();
                 }
                 ImGui::PopStyleColor();
@@ -6475,7 +6560,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // 1 sent, 2 delivered (they've been online / in the chat since), 3 read.
             const long nowT = (long)std::time(nullptr);
             auto deliveryState = [&](long id, long when) -> int {
-                if (id <= peerRead) return 3;
+                if (g_readReceipts && id <= peerRead) return 3;   // (receipts off: you don't see theirs either)
                 if (peerHere || (peerLastSeen > 0 && peerLastSeen >= when) || (selOnline && nowT - when >= 6)) return 2;
                 return 1;
             };
@@ -6896,7 +6981,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // thread while they have this chat open (with the typing dots when
             // they type), and slides away when they leave.
             static float hereAnim = 0.0f;
-            const bool showHere = (peerHere || peerTyping) && !selBlocked && msFilt.empty();
+            const bool showHere = ((peerHere && g_readReceipts) || peerTyping) && !selBlocked && msFilt.empty();
             hereAnim += (showHere ? 1.0f : -1.0f) * ImGui::GetIO().DeltaTime * 6.0f;
             hereAnim = std::clamp(hereAnim, 0.0f, 1.0f);
             if (hereAnim > 0.01f && !peerTyping) {
@@ -7079,7 +7164,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             int lines = 1; for (const char* c = input; *c; ++c) if (*c == '\n') ++lines;
             if (lines > 4) lines = 4;
             float inH = ImGui::GetTextLineHeight() * lines + 16;
-            if (input[0] && !editId && now - typingSentAt > 2000) { g_chatTypingReq = true; typingSentAt = now; }
+            if (input[0] && !editId && g_typingIndicator && now - typingSentAt > 2000) { g_chatTypingReq = true; typingSentAt = now; }
             if (VoiceRecording() && !VoiceRecordingFor(selUid, 0)) FinishVoiceRecord(false);   // switched chats
             if (VoiceRecordingFor(selUid, 0)) DrawVoiceRecorderBar(inH, myBubble);
             else {
@@ -9128,7 +9213,7 @@ static int ChatPollWorker(void*) {
                     auto l = dm.With(uid);
                     auto rc = dm.Reactions(); auto mr = dm.MyReactions();
                     long markId = l.empty() ? 0 : l.back().id;
-                    if (markId && viewing) { dm.MarkRead(uid, markId); nextHere = now + 3000; }
+                    if (markId && viewing && g_readReceipts) { dm.MarkRead(uid, markId); nextHere = now + 3000; }
                     if (markId) lastMark = markId;
                     if (g_chatMutex) {
                         SDL_LockMutex(g_chatMutex);
@@ -9139,7 +9224,7 @@ static int ChatPollWorker(void*) {
                     nextLog = now + 4000;
                 }
                 // "I'm here" heartbeat between log polls (refreshes the read row's time).
-                if (viewing && lastMark > 0 && now >= nextHere) { dm.MarkRead(uid, lastMark); nextHere = now + 3000; }
+                if (viewing && g_readReceipts && lastMark > 0 && now >= nextHere) { dm.MarkRead(uid, lastMark); nextHere = now + 3000; }
                 if (now >= nextTyping) {
                     g_chatPeerTyping = dm.PeerTyping(uid);
                     // Read position + whether they're in the chat (every 2.5s), and
@@ -9326,6 +9411,7 @@ static bool ChatHostCreate() {
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 17.0f, &fc))
             ImGui::GetIO().Fonts->AddFontDefault();
+        MergeEmojiFallback(17.0f);
         g_chatHost.mono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
     ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
@@ -9399,7 +9485,7 @@ static void PlaytimeTick(bool loggedIn) {
     static Uint32 nextPump = 0, nextSync = 0;
     const Uint32 now = SDL_GetTicks();
     if (now >= nextPump) { nextPump = now + 1000; PumpPlaytime(); }
-    if (g_playtimeDirty && loggedIn && !g_playtimeSyncing && now >= nextSync && !g_pollCfgDir.empty()) {
+    if (g_playtimeDirty && g_sharePlaytime && loggedIn && !g_playtimeSyncing && now >= nextSync && !g_pollCfgDir.empty()) {
         g_playtimeDirty = false; nextSync = now + 120000;   // at most every 2 minutes
         g_playtimeJob = g_playtime; g_playtimeSyncing = true;
         if (SDL_Thread* t = SDL_CreateThread(PlaytimeSyncWorker, "okay-playtime", nullptr)) SDL_DetachThread(t);
@@ -9534,6 +9620,7 @@ int main(int argc, char** argv) {
         if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(
                 RobotoMedium_compressed_data_base85, 17.0f, &fc))
             ImGui::GetIO().Fonts->AddFontDefault();
+        MergeEmojiFallback(17.0f);
         // JetBrains Mono (same as the editor's script editor) for `code` in chat.
         g_fontMono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(
             JetBrainsMono_compressed_data_base85, 16.0f, &fc);
@@ -12722,7 +12809,7 @@ int main(int argc, char** argv) {
             };
 
             // ---- Category list (left) + the selected category's cards (right) ----
-            static int setCat = 0;
+            static int setCat = std::getenv("OKAY_UI_DEMO_SETCAT") ? std::atoi(std::getenv("OKAY_UI_DEMO_SETCAT")) : 0;   // (env: dev screenshot hook)
             static const struct { const char* name; int icon; const char* sub; } kSetCats[] = {
                 {"Appearance",           kIcoPanel,   "Theme, accent color and interface size."},
                 {"Chat & Notifications", kIcoBell,    "Message sounds and what friends can see."},
@@ -12731,7 +12818,10 @@ int main(int argc, char** argv) {
                 {"Game libraries",       2,           "Extra folders the launcher scans for games."},
                 {"Account",              3,           "Your OkaySpace account on this device."},
                 {"About",                9,           "Version, updates and links."},
+                {"Privacy & Safety",     3,           "Who can reach you, what others see, and who you've blocked."},
+                {"Voice & Audio",        kIcoChat,    "Microphone, speakers and voice calls."},
             };
+            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 5, 6};   // rail order (new pages sit with Chat)
             const int nCats = (int)(sizeof(kSetCats) / sizeof(kSetCats[0]));
             setCat = std::clamp(setCat, 0, nCats - 1);
             const float availW = ImGui::GetContentRegionAvail().x;
@@ -12752,7 +12842,8 @@ int main(int argc, char** argv) {
                     ImGui::SetWindowFontScale(1.0f);
                     ImGui::Dummy(ImVec2(0, 2));
                 }
-                for (int i = 0; i < nCats; ++i) {
+                for (int oi = 0; oi < nCats; ++oi) {
+                    const int i = kSetOrder[oi];
                     ImGui::PushID(i);
                     ImVec2 rp = ImGui::GetCursorScreenPos();
                     const float rw = ImGui::GetContentRegionAvail().x, rh = 36.0f;
@@ -12876,16 +12967,160 @@ int main(int argc, char** argv) {
                         if (ToggleSwitch("##chatsep", &g_chatSeparate)) SavePrefs();
                     });
                     rowDivider();
-                    settingRow("Show link previews", "Cards with the page title and image under links in chat. Loading one contacts that website.", 40.0f, 22.0f, [&](float) {
-                        if (ToggleSwitch("##linkprev", &g_linkPreviews)) SavePrefs();
-                    });
-                    rowDivider();
                     settingRow("Test the chime", "Hear what a new message sounds like.", 96.0f, 30.0f, [&](float) {
                         if (ImGui::Button("Play sound", ImVec2(96, 30))) PlayChatChime();
                     });
                     cardEnd();
 
-                    cardBegin("##sc_voice", "VOICE CALLS");
+                    cardBegin("##sc_notif", "NOTIFICATIONS");
+                    settingRow("Notification center", "Friend requests, update notes and finished downloads collect here.", 96.0f, 30.0f, [&](float) {
+                        if (ImGui::Button("Open", ImVec2(96, 30))) g_notifPanelOpen = true;
+                    });
+                    cardEnd();
+                } else if (setCat == 7) {   // ---- Privacy & Safety ----
+                    cardBegin("##sc_reach", "WHO CAN REACH ME");
+                    settingRow("Direct messages", "Friends only puts chats from everyone else under \"Message requests\" instead of your list.", 180.0f, ImGui::GetFrameHeight(), [&](float) {
+                        int dm = g_dmFriendsOnly ? 1 : 0;
+                        ImGui::SetNextItemWidth(180);
+                        if (ImGui::Combo("##dmfrom", &dm, "Everyone\0Friends only\0")) { g_dmFriendsOnly = dm == 1; SavePrefs(); }
+                    });
+                    rowDivider();
+                    settingRow("Voice calls", "Who can ring you. Calls from anyone else are ignored.", 180.0f, ImGui::GetFrameHeight(), [&](float) {
+                        ImGui::SetNextItemWidth(180);
+                        if (ImGui::Combo("##callfrom", &g_callsFrom, "Everyone\0Friends only\0Nobody\0")) SavePrefs();
+                    });
+                    cardEnd();
+
+                    cardBegin("##sc_seen", "WHAT OTHERS SEE");
+                    if (account.IsOnline() || kUiDemoUser) {
+                        settingRow("Online status", "Invisible appears offline to everyone, while you can still chat.", 180.0f, ImGui::GetFrameHeight(), [&](float) {
+                            ImGui::SetNextItemWidth(180);
+                            if (ImGui::Combo("##ostatus", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
+                                if (!kUiDemoUser) {
+                                    okay::Friends pf(account);
+                                    if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(g_onlineStatus == 1 ? "Away" : "In OkaySpace");
+                                }
+                                SavePrefs();
+                            }
+                        });
+                        rowDivider();
+                    }
+                    settingRow("Share what I'm playing", "Friends see the game you're in on their Friends list and activity feed.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##sharepres", &g_sharePresence)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Read receipts", "Blue ticks and \"in the chat\". Turn off and you won't see other people's either.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##readrc", &g_readReceipts)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Typing indicator", "Let people see when you're typing to them.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##typing", &g_typingIndicator)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Show my playtime", "Hours per game and in the editor on your public profile.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##shareplay", &g_sharePlaytime)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Show link previews", "Cards with the page title and image under links. Loading one contacts that website.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##linkprev", &g_linkPreviews)) SavePrefs();
+                    });
+                    cardEnd();
+
+                    cardBegin("##sc_blocked", "BLOCKED");
+                    if (g_blockedUsers.empty()) ImGui::TextDisabled("You haven't blocked anyone. Block someone from a chat's menu.");
+                    std::string unblock;
+                    for (const auto& uid : g_blockedUsers) {
+                        ImGui::PushID(uid.c_str());
+                        auto nm = g_blockedNames.find(uid);
+                        const std::string name = nm != g_blockedNames.end() && !nm->second.empty() ? nm->second : "User " + uid.substr(0, 8);
+                        DrawAvatar(std::string(), name, 26.0f);
+                        ImGui::SameLine(0, 10);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted(name.c_str());
+                        ImGui::SameLine(ImGui::GetContentRegionMax().x - 90);
+                        if (ImGui::Button("Unblock", ImVec2(90, 0))) unblock = uid;
+                        ImGui::PopID();
+                    }
+                    if (!unblock.empty()) { g_blockedUsers.erase(unblock); g_blockedNames.erase(unblock); SavePrefs(); Toast("Unblocked", 1); }
+                    cardEnd();
+                } else if (setCat == 8) {   // ---- Voice & Audio ----
+                    static okay::voice::MicTest micTest;
+                    static bool hearMyself = false;
+                    EnsureAudio();
+                    auto deviceCombo = [&](const char* id, bool capture, std::string& sel) {
+                        const int n = SDL_GetNumAudioDevices(capture ? 1 : 0);
+                        const std::string cur = sel.empty() ? std::string("System default") : sel;
+                        ImGui::SetNextItemWidth(300);
+                        if (ImGui::BeginCombo(id, cur.c_str())) {
+                            if (ImGui::Selectable("System default", sel.empty())) { sel.clear(); SavePrefs(); }
+                            for (int i = 0; i < n; ++i) {
+                                const char* nm = SDL_GetAudioDeviceName(i, capture ? 1 : 0);
+                                if (!nm) continue;
+                                if (ImGui::Selectable(nm, sel == nm)) { sel = nm; SavePrefs(); }
+                            }
+                            ImGui::EndCombo();
+                        }
+                    };
+                    cardBegin("##sc_devices", "DEVICES");
+                    settingRow("Microphone", "Used for calls, voice rooms and voice messages.", 300.0f, ImGui::GetFrameHeight(), [&](float) {
+                        deviceCombo("##indev", true, g_voiceInDev);
+                    });
+                    rowDivider();
+                    settingRow("Speakers / headphones", "Where calls play.", 300.0f, ImGui::GetFrameHeight(), [&](float) {
+                        deviceCombo("##outdev", false, g_voiceOutDev);
+                    });
+                    if (g_call.kind) { rowDivider(); ImGui::TextDisabled("  Device changes apply to your next call."); }
+                    cardEnd();
+
+                    cardBegin("##sc_levels", "VOLUME");
+                    settingRow("Microphone volume", "How loud you are to others.", 260.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        ImGui::SetNextItemWidth(std::min(w, 260.0f));
+                        float pct = g_voiceInGain * 100.0f;
+                        if (ImGui::SliderFloat("##ingain", &pct, 0.0f, 400.0f, "%.0f%%")) {
+                            g_voiceInGain = pct / 100.0f; g_voice.SetInputGain(g_voiceInGain); micTest.SetGain(g_voiceInGain);
+                        }
+                        if (ImGui::IsItemDeactivatedAfterEdit()) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Call volume", "How loud other people are.", 260.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        ImGui::SetNextItemWidth(std::min(w, 260.0f));
+                        float pct = g_voiceOutVol * 100.0f;
+                        if (ImGui::SliderFloat("##outvol", &pct, 0.0f, 200.0f, "%.0f%%")) { g_voiceOutVol = pct / 100.0f; g_voice.SetOutputVolume(g_voiceOutVol); }
+                        if (ImGui::IsItemDeactivatedAfterEdit()) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Mic sensitivity", "Sounds quieter than this aren't sent. Lower it if friends can't hear you; raise it if they hear your keyboard.", 260.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        ImGui::SetNextItemWidth(std::min(w, 260.0f));
+                        ImGui::SliderFloat("##vgate", &g_voiceGate, -70.0f, -10.0f, "%.0f dB");
+                        if (ImGui::IsItemDeactivatedAfterEdit()) { g_voice.SetGate(g_voiceGate); SavePrefs(); }
+                    });
+                    cardEnd();
+
+                    cardBegin("##sc_mictest", "MIC TEST");
+                    {
+                        const bool live = micTest.Running();
+                        const float level = live ? micTest.Level() : g_call.kind ? g_voice.SelfLevel() : 0.0f;
+                        const float mw = std::min(ImGui::GetContentRegionAvail().x - 150.0f, 360.0f);
+                        if (live ? ImGui::Button("Stop test", ImVec2(130, 30)) : PrimaryButton("Test microphone", ImVec2(130, 30))) {
+                            if (live) micTest.Stop();
+                            else if (!micTest.Start(g_voiceInDev, g_voiceOutDev, hearMyself, g_voiceInGain)) Toast("Couldn't open the microphone", 2);
+                        }
+                        ImGui::SameLine(0, 14);
+                        ImVec2 mp = ImGui::GetCursorScreenPos(); mp.y += 11;
+                        ImDrawList* md = ImGui::GetWindowDrawList();
+                        md->AddRectFilled(mp, ImVec2(mp.x + mw, mp.y + 8), IM_COL32(255, 255, 255, 20), 4.0f);
+                        const float gateFrac = std::clamp((g_voiceGate + 60.0f) / 60.0f, 0.0f, 1.0f);
+                        md->AddRectFilled(mp, ImVec2(mp.x + mw * level, mp.y + 8), level >= gateFrac ? IM_COL32(67, 181, 129, 255) : IM_COL32(150, 156, 170, 255), 4.0f);
+                        md->AddLine(ImVec2(mp.x + mw * gateFrac, mp.y - 3), ImVec2(mp.x + mw * gateFrac, mp.y + 11), IM_COL32(240, 200, 90, 255), 2.0f);
+                        ImGui::Dummy(ImVec2(mw, 30));
+                        if (ImGui::Checkbox("Let me hear myself", &hearMyself) && live) {
+                            micTest.Stop(); micTest.Start(g_voiceInDev, g_voiceOutDev, hearMyself, g_voiceInGain);
+                        }
+                        ImGui::TextDisabled("Green = loud enough to be sent (past the yellow sensitivity mark).");
+                    }
+                    cardEnd();
+
+                    cardBegin("##sc_voice", "VOICE SERVER");
                     settingRow("Voice server", "The OkaySpace relay calls go through (host or host:port). Run okayspace-relay on any server \xE2\x80\x94 see docs/relay.md.", 260.0f, ImGui::GetFrameHeight(), [&](float w) {
                         static char vbuf[128] = ""; static bool vinit = false;
                         if (!vinit) { std::snprintf(vbuf, sizeof(vbuf), "%s", g_voiceRelay.c_str()); vinit = true; }
@@ -12894,34 +13129,7 @@ int main(int argc, char** argv) {
                         if (ImGui::IsItemDeactivatedAfterEdit()) SavePrefs();
                     });
                     rowDivider();
-                    settingRow("Mic sensitivity", "Sounds quieter than this aren't sent. Lower it if friends can't hear you; raise it if they hear your keyboard.", 260.0f, ImGui::GetFrameHeight(), [&](float w) {
-                        ImGui::SetNextItemWidth(std::min(w, 260.0f));
-                        ImGui::SliderFloat("##vgate", &g_voiceGate, -70.0f, -10.0f, "%.0f dB");
-                        if (ImGui::IsItemDeactivatedAfterEdit()) { g_voice.SetGate(g_voiceGate); SavePrefs(); }
-                        if (g_call.kind) {   // live mic level against the threshold
-                            ImVec2 mp = ImGui::GetCursorScreenPos(); const float mw = std::min(w, 260.0f);
-                            ImDrawList* md = ImGui::GetWindowDrawList();
-                            md->AddRectFilled(mp, ImVec2(mp.x + mw, mp.y + 5), IM_COL32(255, 255, 255, 20), 2.0f);
-                            md->AddRectFilled(mp, ImVec2(mp.x + mw * g_voice.SelfLevel(), mp.y + 5), g_voice.SelfSpeaking() ? IM_COL32(67, 181, 129, 255) : IM_COL32(150, 156, 170, 255), 2.0f);
-                            const float gx = mp.x + mw * std::clamp((g_voiceGate + 60.0f) / 60.0f, 0.0f, 1.0f);
-                            md->AddLine(ImVec2(gx, mp.y - 2), ImVec2(gx, mp.y + 7), IM_COL32(240, 200, 90, 255), 1.5f);
-                            ImGui::Dummy(ImVec2(mw, 8));
-                        }
-                    });
-                    rowDivider();
                     ImGui::TextDisabled("  Tip: use headphones \xE2\x80\x94 calls don't have echo cancellation yet.");
-                    cardEnd();
-
-                    cardBegin("##sc_privacy", "PRIVACY");
-                    settingRow("Share what I'm playing", "Friends see the game you're in on their Friends list and activity feed.", 40.0f, 22.0f, [&](float) {
-                        if (ToggleSwitch("##sharepres", &g_sharePresence)) SavePrefs();
-                    });
-                    cardEnd();
-
-                    cardBegin("##sc_notif", "NOTIFICATIONS");
-                    settingRow("Notification center", "Friend requests, update notes and finished downloads collect here.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Open", ImVec2(96, 30))) g_notifPanelOpen = true;
-                    });
                     cardEnd();
                 } else if (setCat == 2) {   // ---- Loading screen ----
                     cardBegin("##sc_splprev", "PREVIEW");

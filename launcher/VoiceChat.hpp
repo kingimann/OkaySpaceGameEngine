@@ -233,9 +233,11 @@ public:
         // Audio devices (SDL converts to/from our 16 kHz mono s16).
         SDL_AudioSpec want{}; want.freq = kRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = kFrame;
         want.callback = &Session::CaptureCb; want.userdata = this;
-        m_cap = SDL_OpenAudioDevice(nullptr, 1, &want, nullptr, 0);
+        m_cap = SDL_OpenAudioDevice(m_inDev.empty() ? nullptr : m_inDev.c_str(), 1, &want, nullptr, 0);
+        if (!m_cap && !m_inDev.empty()) m_cap = SDL_OpenAudioDevice(nullptr, 1, &want, nullptr, 0);   // unplugged: default
         SDL_AudioSpec pw = want; pw.callback = &Session::PlayCb;
-        m_play = SDL_OpenAudioDevice(nullptr, 0, &pw, nullptr, 0);
+        m_play = SDL_OpenAudioDevice(m_outDev.empty() ? nullptr : m_outDev.c_str(), 0, &pw, nullptr, 0);
+        if (!m_play && !m_outDev.empty()) m_play = SDL_OpenAudioDevice(nullptr, 0, &pw, nullptr, 0);
         if (!m_play) { m_state = Failed; m_error = "No audio output device"; Stop(); return false; }
         if (!m_cap) m_error = "No microphone found \xE2\x80\x94 you can listen but not talk";
         m_run = true;
@@ -269,6 +271,10 @@ public:
     float SelfLevel() const { return m_selfLevel; }
     // Mic sensitivity in dBFS (frames quieter than this are not sent).
     void SetGate(float dbfs) { m_gateDb = dbfs; }
+    // Devices by SDL name ("" = system default); applied on the next Start.
+    void SetDevices(const std::string& in, const std::string& out) { m_inDev = in; m_outDev = out; }
+    void SetInputGain(float g) { m_inGain = std::clamp(g, 0.0f, 4.0f); }        // 1 = as captured
+    void SetOutputVolume(float v) { m_outVol = std::clamp(v, 0.0f, 2.0f); }     // 1 = as received
     std::vector<PeerView> Peers() {
         std::vector<PeerView> out;
         if (!m_mx) return out;
@@ -302,9 +308,13 @@ private:
         Session* s = (Session*)ud;
         const std::int16_t* smp = (const std::int16_t*)stream;
         const int n = len / 2;
+        const float g = s->m_inGain;
         SDL_LockMutex(s->m_mx);
         for (int i = 0; i < n; ++i) {
-            s->m_capBuf[(std::size_t)s->m_capFill++] = smp[i];
+            // Gain + a gentle high-pass (removes rumble / DC offset before the gate).
+            const float x = smp[i] * g;
+            s->m_hp = 0.995f * (s->m_hp + x - s->m_hpPrev); s->m_hpPrev = x;
+            s->m_capBuf[(std::size_t)s->m_capFill++] = (std::int16_t)std::clamp(s->m_hp, -32768.0f, 32767.0f);
             if (s->m_capFill == kFrame) {
                 if (s->m_capQ.size() < 25) s->m_capQ.push_back(s->m_capBuf);
                 s->m_capFill = 0;
@@ -328,7 +338,8 @@ private:
         }
         SDL_UnlockMutex(s->m_mx);
         const bool deaf = s->m_deaf;
-        for (int i = 0; i < n; ++i) out[i] = deaf ? 0 : (std::int16_t)std::clamp(mix[(std::size_t)i], -32768, 32767);
+        const float vol = s->m_outVol;
+        for (int i = 0; i < n; ++i) out[i] = deaf ? 0 : (std::int16_t)std::clamp((int)(mix[(std::size_t)i] * vol), -32768, 32767);
     }
 
     // Wrap an app message for the relay and send it to `dest`.
@@ -494,9 +505,59 @@ private:
     volatile bool m_muted = false, m_deaf = false, m_selfSpeaking = false;
     volatile float m_selfLevel = 0.0f, m_gateDb = -46.0f;
     int m_badKey = 0;
+    std::string m_inDev, m_outDev;
+    volatile float m_inGain = 1.0f, m_outVol = 1.0f;
+    float m_hp = 0.0f, m_hpPrev = 0.0f;   // capture high-pass state (audio thread)
     std::map<std::uint32_t, Peer> m_peers;                    // (m_mx) by relay slot
     std::deque<std::array<std::int16_t, kFrame>> m_capQ;      // (m_mx) mic frames to send
     std::array<std::int16_t, kFrame> m_capBuf{}; int m_capFill = 0;
+};
+
+// ---- Mic test (Settings): live level, optionally hear yourself ----------------
+class MicTest {
+public:
+    ~MicTest() { Stop(); }
+    bool Start(const std::string& inDev, const std::string& outDev, bool loopback, float gain) {
+        Stop();
+        m_gain = gain;
+        SDL_AudioSpec want{}; want.freq = kRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = 512;
+        want.callback = &MicTest::Cb; want.userdata = this;
+        m_cap = SDL_OpenAudioDevice(inDev.empty() ? nullptr : inDev.c_str(), 1, &want, nullptr, 0);
+        if (!m_cap) return false;
+        if (loopback) {
+            SDL_AudioSpec pw = want; pw.callback = nullptr; pw.userdata = nullptr;
+            m_out = SDL_OpenAudioDevice(outDev.empty() ? nullptr : outDev.c_str(), 0, &pw, nullptr, 0);
+            if (m_out) SDL_PauseAudioDevice(m_out, 0);
+        }
+        SDL_PauseAudioDevice(m_cap, 0);
+        return true;
+    }
+    void Stop() {
+        if (m_cap) { SDL_CloseAudioDevice(m_cap); m_cap = 0; }
+        if (m_out) { SDL_CloseAudioDevice(m_out); m_out = 0; }
+        m_level = 0.0f;
+    }
+    bool Running() const { return m_cap != 0; }
+    float Level() const { return m_level; }   // 0..1 (-60..0 dBFS)
+    float Db() const { return m_db; }
+    void SetGain(float g) { m_gain = g; }
+private:
+    static void Cb(void* ud, Uint8* stream, int len) {
+        MicTest* t = (MicTest*)ud;
+        std::int16_t* smp = (std::int16_t*)stream;
+        const int n = len / 2;
+        double e = 0;
+        for (int i = 0; i < n; ++i) {
+            const int v = std::clamp((int)(smp[i] * t->m_gain), -32768, 32767);
+            smp[i] = (std::int16_t)v; e += (double)v * v;
+        }
+        const float rms = (float)std::sqrt(e / std::max(1, n));
+        t->m_db = 20.0f * std::log10(std::max(1.0f, rms) / 32768.0f);
+        t->m_level = std::clamp((t->m_db + 60.0f) / 60.0f, 0.0f, 1.0f);
+        if (t->m_out && SDL_GetQueuedAudioSize(t->m_out) < 16000) SDL_QueueAudio(t->m_out, stream, (Uint32)len);   // hear yourself
+    }
+    SDL_AudioDeviceID m_cap = 0, m_out = 0;
+    volatile float m_level = 0.0f, m_db = -90.0f, m_gain = 1.0f;
 };
 
 } // namespace okay::voice

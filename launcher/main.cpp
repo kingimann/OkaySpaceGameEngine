@@ -1373,6 +1373,7 @@ int  g_callsFrom = 1;             // 0 everyone, 1 friends, 2 nobody
 bool g_readReceipts = true;       // send read receipts / "in the chat" (off = you don't see theirs either)
 bool g_typingIndicator = true;    // tell people when I'm typing
 bool g_sharePlaytime = true;      // sync my playtime to my public profile
+bool g_followersSeeActivity = true;   // people who follow me see my activity feed (profiles.followers_see_activity)
 std::set<std::string> g_friendUids;   // accepted friends (filled when a friends list loads)
 std::map<std::string, std::string> g_blockedNames;   // uid -> name, for the Blocked list (persisted)  // last window size (persisted) — roomier first-launch default
 const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
@@ -3590,6 +3591,7 @@ void LoadPrefs() {
         else if (k == "read_receipts") g_readReceipts = (v != "0");
         else if (k == "typing_indicator") g_typingIndicator = (v != "0");
         else if (k == "share_playtime") g_sharePlaytime = (v != "0");
+        else if (k == "followers_activity") g_followersSeeActivity = (v != "0");
         else if (k == "block_name") { auto bar = v.find('|'); if (bar != std::string::npos) g_blockedNames[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "voice_gate") { try { g_voiceGate = std::clamp(std::stof(v), -70.0f, -10.0f); } catch (...) {} }
         else if (k == "chat_win_x") { try { g_chatWinX = std::stoi(v); } catch (...) {} }
@@ -3635,6 +3637,7 @@ void SavePrefs() {
     f << "dm_friends_only=" << (g_dmFriendsOnly ? 1 : 0) << "\ncalls_from=" << g_callsFrom << "\n";
     f << "read_receipts=" << (g_readReceipts ? 1 : 0) << "\ntyping_indicator=" << (g_typingIndicator ? 1 : 0) << "\n";
     f << "share_playtime=" << (g_sharePlaytime ? 1 : 0) << "\n";
+    f << "followers_activity=" << (g_followersSeeActivity ? 1 : 0) << "\n";
     for (const auto& kv : g_blockedNames) if (g_blockedUsers.count(kv.first)) f << "block_name=" << kv.first << "|" << kv.second << "\n";
     f << "chat_win_x=" << g_chatWinX << "\nchat_win_y=" << g_chatWinY << "\nchat_win_w=" << g_chatWinW << "\nchat_win_h=" << g_chatWinH << "\n";
     f << "win_h=" << g_winH << "\n";
@@ -7726,6 +7729,54 @@ static int AccountInfoWorker(void*) {
     return 0;
 }
 
+// Friends > Following / Followers. kind: 0 load, 1 follow id, 2 unfollow id,
+// 3 remove follower id, 4 follow by username. Every job reloads both lists.
+struct FollowJob { int kind = 0; std::string arg; };
+static SDL_mutex* g_flMutex = nullptr;
+static volatile bool g_flBusy = false;
+static bool g_flReady = false, g_flSupported = true;                  // (guarded)
+static std::vector<okay::FollowEntry> g_flFollowing, g_flFollowers;    // (guarded)
+static std::string g_flMsg; static bool g_flMsgErr = false;            // (guarded) last action's result
+static int FollowWorker(void* p) {
+    std::unique_ptr<FollowJob> j(static_cast<FollowJob*>(p));
+    std::vector<okay::FollowEntry> ing, ers; bool sup = false; std::string msg; bool err = false;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Profiles pr(a);
+        if (j->kind == 1)      { err = !pr.Follow(j->arg);         msg = err ? "Couldn't follow" : "Following"; }
+        else if (j->kind == 2) { err = !pr.Unfollow(j->arg);       msg = err ? "Couldn't unfollow" : "Unfollowed"; }
+        else if (j->kind == 3) { err = !pr.RemoveFollower(j->arg); msg = err ? "Couldn't remove them" : "Removed from your followers"; }
+        else if (j->kind == 4) { std::string e; err = !pr.FollowByName(j->arg, &e); msg = err ? e : "Now following @" + j->arg; }
+        ing = pr.FollowList("", false, &sup);
+        if (sup) ers = pr.FollowList("", true);
+    } catch (...) {}
+    SDL_LockMutex(g_flMutex);
+    g_flFollowing = std::move(ing); g_flFollowers = std::move(ers); g_flSupported = sup;
+    g_flMsg = msg; g_flMsgErr = err; g_flReady = true;
+    SDL_UnlockMutex(g_flMutex);
+    g_flBusy = false;
+    return 0;
+}
+static int FollowersActivityWorker(void* p) {
+    const bool on = p != nullptr;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Profiles(a).SetFollowersSeeActivity(on);
+    } catch (...) {}
+    return 0;
+}
+static void PushFollowersSeeActivity() {
+    if (g_pollCfgDir.empty()) return;
+    if (SDL_Thread* t = SDL_CreateThread(FollowersActivityWorker, "okay-flact", g_followersSeeActivity ? (void*)1 : nullptr)) SDL_DetachThread(t);
+}
+static void QueueFollowJob(int kind, const std::string& arg = std::string()) {
+    if (!g_flMutex) g_flMutex = SDL_CreateMutex();
+    if (g_flBusy) return;
+    g_flBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(FollowWorker, "okay-follow", new FollowJob{kind, arg})) SDL_DetachThread(t);
+    else g_flBusy = false;
+}
+
 // Account > Profile: the editable public-profile fields, saved together on a
 // worker (only the fields that changed are sent).
 struct AcctProfileForm { std::string display, avatar, bio, status, fav, loc; int accent = 0; };
@@ -7788,7 +7839,8 @@ static void OpenPublicProfile(const std::string& uid, const std::string& usernam
 }
 static void ClosePublicProfile() { g_pfOpen = false; }
 
-// type: 0 load, 1 save my showcase, 2 add friend, 3 accept, 4 remove/decline.
+// type: 0 load, 1 save my showcase, 2 add friend, 3 accept, 4 remove/decline,
+// 5 follow, 6 unfollow.
 // Every job ends with a fresh Load() so the page shows the server's truth.
 struct PfJob {
     int type = 0; unsigned serial = 0;
@@ -7809,6 +7861,8 @@ static int ProfileWorker(void* arg) {
         } else if (j->type == 2) act = pr.AddFriend(j->target) ? 1 : -1;
         else if (j->type == 3)   act = pr.Accept(j->row) ? 1 : -1;
         else if (j->type == 4)   act = pr.Remove(j->row) ? 1 : -1;
+        else if (j->type == 5)   act = pr.Follow(j->target) ? 1 : -1;
+        else if (j->type == 6)   act = pr.Unfollow(j->target) ? 1 : -1;
         else if (j->syncLocal)   pr.SyncAchievements(okay::Achievements::All());
         okay::ProfileBundle b = pr.Load(j->target, j->byName);
         if (j->type == 0 && !j->syncLocal && b.isMe && pr.SyncAchievements(okay::Achievements::All()))
@@ -8068,6 +8122,7 @@ static int MarketPublishWorker(void* p) {
 static okay::ProfileBundle DemoProfileBundle(const PfOpenReq& r, const std::string& me) {
     okay::ProfileBundle b;
     b.found = b.reached = b.showcaseSupported = b.achSupported = true;
+    b.followSupported = true; b.followers = 128; b.following = 37; b.followsMe = true;
     const long t0 = (long)std::time(nullptr), day = 86400;
     okay::PublicProfile& p = b.p;
     auto ach = [&](const char* id, const char* label, long ago) {
@@ -8266,6 +8321,8 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
             else if (at == 2) Toast(ar > 0 ? "Friend request sent" : "Couldn't send the friend request", ar > 0 ? 1 : 2);
             else if (at == 3) Toast(ar > 0 ? "Friend request accepted" : "Couldn't accept the request", ar > 0 ? 1 : 2);
             else if (at == 4 && ar < 0) Toast("Couldn't update the friendship", 2);
+            else if (at == 5) Toast(ar > 0 ? "Following" : "Couldn't follow â try again", ar > 0 ? 1 : 2);
+            else if (at == 6 && ar < 0) Toast("Couldn't unfollow", 2);
         }
     }
 
@@ -8523,7 +8580,7 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         const float bh = ImGui::GetTextLineHeight() + 16.0f, rb = bh;   // button height, round "more" size
         struct Btn { std::string label; int kind; };   // kind: 0 secondary, 1 primary
         std::vector<Btn> btns;
-        enum { kBMsg, kBFriend, kBEdit, kBProfile, kBCancel, kBSave };
+        enum { kBMsg, kBFriend, kBEdit, kBProfile, kBCancel, kBSave, kBFollow };
         std::vector<int> ids;
         if (me) {
             if (s_edit) { btns.push_back({"Cancel", 0}); ids.push_back(kBCancel); btns.push_back({"Save showcase", 1}); ids.push_back(kBSave); }
@@ -8533,6 +8590,10 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
             btns.push_back({"Message", friends ? 1 : 0}); ids.push_back(kBMsg);
             std::string fl = friends ? "Friends" : s_b.friendStatus == "pending" ? (s_b.incoming ? "Accept request" : "Request sent") : "Add friend";
             btns.push_back({fl, (!friends && !(s_b.friendStatus == "pending" && !s_b.incoming)) ? 1 : 0}); ids.push_back(kBFriend);
+            if (s_b.followSupported) {
+                btns.push_back({s_b.iFollow ? "Following" : s_b.followsMe ? "Follow back" : "Follow", 0});
+                ids.push_back(kBFollow);
+            }
         }
         float actW = rb;
         for (const auto& b : btns) actW += ImGui::CalcTextSize(b.label.c_str()).x + 30.0f + 8.0f;
@@ -8548,7 +8609,7 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
             float w = ImGui::CalcTextSize(b.label.c_str()).x + 30.0f;
             ImGui::SetCursorScreenPos(ImVec2(bx, by));
             ImGui::PushID((int)i);
-            bool disabled = !kDemo && ((ids[i] == kBMsg || ids[i] == kBFriend) && p.id.empty());
+            bool disabled = !kDemo && ((ids[i] == kBMsg || ids[i] == kBFriend || ids[i] == kBFollow) && p.id.empty());
             ImGui::BeginDisabled(disabled);
             bool hit;
             if (b.kind == 1) hit = PrimaryButton(b.label.c_str(), ImVec2(w, bh));
@@ -8560,6 +8621,9 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
                 ImGui::PopStyleColor(3);
             }
             ImGui::EndDisabled();
+            if (ids[i] == kBFollow && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", s_b.iFollow ? "You follow them - click to unfollow"
+                                                    : "See their activity in your feed. No request needed.");
             if (ids[i] == kBFriend && ImGui::IsItemHovered() && !s_b.friendStatus.empty() && !s_b.incoming)
                 ImGui::SetTooltip(s_b.friendStatus == "accepted" ? "You're friends - click for options" : "Waiting for them to accept");
             ImGui::PopID();
@@ -8570,6 +8634,14 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
                 case kBCancel: s_edit = false; break;
                 case kBSave: saveEdit(); break;
                 case kBProfile: out.gotoTab = 3; ClosePublicProfile(); break;
+                case kBFollow:
+                    if (s_b.iFollow) ImGui::OpenPopup("##pffollow");
+                    else {
+                        if (kDemo) Toast("Following " + dispName, 1);
+                        else queueJob(5);
+                        s_b.iFollow = true; if (s_b.followers >= 0) ++s_b.followers;
+                    }
+                    break;
                 case kBFriend:
                     if (s_b.friendStatus == "accepted" || (s_b.friendStatus == "pending" && !s_b.incoming))
                         ImGui::OpenPopup("##pffriend");
@@ -8591,6 +8663,15 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         ImGui::SetCursorScreenPos(ImVec2(bx, by + (bh - rb) * 0.5f));
         if (RoundIconButton("##pfmore", kRibMore, rb, IM_COL32(255, 255, 255, 18), IM_COL32(255, 255, 255, 36), cText, "More"))
             ImGui::OpenPopup("##pfmorepop");
+        if (ImGui::BeginPopup("##pffollow")) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+            if (ImGui::MenuItem("Unfollow")) {
+                if (!kDemo) queueJob(6); else Toast("Unfollowed", 1);
+                s_b.iFollow = false; if (s_b.followers > 0) --s_b.followers;
+            }
+            ImGui::PopStyleColor();
+            ImGui::EndPopup();
+        }
         if (ImGui::BeginPopup("##pffriend")) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
             if (ImGui::MenuItem(s_b.friendStatus == "accepted" ? "Remove friend" : "Cancel request")) {
@@ -8638,6 +8719,15 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
                 float py = nameY + (nsz - ts.y - 6.0f) * 0.5f + 1.0f;
                 dl->AddRectFilled(ImVec2(nx, py), ImVec2(nx + ts.x + 12.0f, py + ts.y + 6.0f), ImGui::GetColorU32(okaytheme::WithAlpha(kAccent, 0.28f)), 8.0f);
                 dl->AddText(font, fs * 0.72f, ImVec2(nx + 6.0f, py + 3.0f), ImGui::GetColorU32(accLt), "YOU");
+            } else if (s_b.followsMe) {   // "FOLLOWS YOU" pill
+                float nx = afterName + 10.0f;
+                const char* fy = "FOLLOWS YOU";
+                ImVec2 ts = font->CalcTextSizeA(fs * 0.72f, FLT_MAX, 0.0f, fy);
+                float py = nameY + (nsz - ts.y - 6.0f) * 0.5f + 1.0f;
+                if (nx + ts.x + 12.0f < nameX + textMaxW + 40.0f) {
+                    dl->AddRectFilled(ImVec2(nx, py), ImVec2(nx + ts.x + 12.0f, py + ts.y + 6.0f), IM_COL32(255, 255, 255, 22), 8.0f);
+                    dl->AddText(font, fs * 0.72f, ImVec2(nx + 6.0f, py + 3.0f), cDim, fy);
+                }
             }
             float y2 = nameY + nsz + 6.0f;
             std::string handle = p.username.empty() ? std::string() : "@" + p.username;
@@ -8666,18 +8756,24 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
             dl->AddLine(ImVec2(hp.x + 18.0f, sy), ImVec2(he.x - 18.0f, sy), hair, 1.0f);
             char v0s[24], v1s[24], v2s[24], v3s[24];
             if (s_b.friends >= 0) std::snprintf(v0s, sizeof(v0s), "%d", s_b.friends); else std::snprintf(v0s, sizeof(v0s), "\xE2\x80\x94");
-            std::snprintf(v1s, sizeof(v1s), "%d", gameN);
+            if (s_b.followSupported) {   // followers replace "games published" (they have their own card)
+                if (s_b.followers >= 0) std::snprintf(v1s, sizeof(v1s), "%d", s_b.followers); else std::snprintf(v1s, sizeof(v1s), "\xE2\x80\x94");
+            } else std::snprintf(v1s, sizeof(v1s), "%d", gameN);
             if (achKnown) std::snprintf(v2s, sizeof(v2s), "%d", achPts); else std::snprintf(v2s, sizeof(v2s), "\xE2\x80\x94");
             if (playSecs + editorSecs > 0) std::snprintf(v3s, sizeof(v3s), "%ld", (playSecs + editorSecs) / 3600);
             else std::snprintf(v3s, sizeof(v3s), "\xE2\x80\x94");
             const char* vals[4] = {v0s, v1s, v2s, v3s};
-            const char* labs[4] = {"FRIENDS", "GAMES PUBLISHED", "ACHIEVEMENT POINTS", "HOURS PLAYED"};
+            const char* labs[4] = {"FRIENDS", s_b.followSupported ? "FOLLOWERS" : "GAMES PUBLISHED", "ACHIEVEMENT POINTS", "HOURS PLAYED"};
             const float tw = W / statCols;
             for (int i = 0; i < 4; ++i) {
                 float tx = hp.x + (i % statCols) * tw, ty = sy + 3.0f + (i / statCols) * statRowH;
                 if (i % statCols) dl->AddLine(ImVec2(tx, ty + 14.0f), ImVec2(tx, ty + statRowH - 14.0f), hair, 1.0f);
                 dl->AddText(font, fs * 1.3f, ImVec2(tx + 24.0f, ty + 11.0f), IM_COL32(242, 244, 250, 255), vals[i]);
                 dl->AddText(font, fs * 0.74f, ImVec2(tx + 24.0f, ty + 13.0f + fs * 1.3f + 2.0f), cDim, labs[i]);
+                if (i == 1 && s_b.followSupported && s_b.following >= 0 &&
+                    ImGui::IsMouseHoveringRect(ImVec2(tx, ty), ImVec2(tx + tw, ty + statRowH)))
+                    ImGui::SetTooltip("%s follow%s %d player%s", me ? "You" : dispName.c_str(), me ? "" : "s",
+                                      s_b.following, s_b.following == 1 ? "" : "s");
             }
         }
         ImGui::SetCursorScreenPos(hp);
@@ -12889,6 +12985,10 @@ int main(int argc, char** argv) {
                         if (ToggleSwitch("##spt", &g_sharePlaytime)) SavePrefs();
                     });
                     acDivider();
+                    acRow("Followers see my activity", "People who follow you see your feed (playing, achievements, published). Friends always do.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##fsa", &g_followersSeeActivity)) { SavePrefs(); if (!acDemo) PushFollowersSeeActivity(); }
+                    });
+                    acDivider();
                     acRow("Direct messages", "Who can message you.", 180.0f, ImGui::GetFrameHeight(), [&](float w) {
                         int dm = g_dmFriendsOnly ? 1 : 0;
                         ImGui::SetNextItemWidth(w);
@@ -13363,6 +13463,10 @@ int main(int argc, char** argv) {
                     rowDivider();
                     settingRow("Show my playtime", "Hours per game and in the editor on your public profile.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##shareplay", &g_sharePlaytime)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Followers see my activity", "People who follow you see your activity feed. Friends always do.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##flact", &g_followersSeeActivity)) { SavePrefs(); if (account.IsLoggedIn()) PushFollowersSeeActivity(); }
                     });
                     rowDivider();
                     settingRow("Show link previews", "Cards with the page title and image under links. Loading one contacts that website.", 40.0f, 22.0f, [&](float) {
@@ -14072,11 +14176,46 @@ int main(int argc, char** argv) {
                 static std::vector<okay::Friend> fCache;
                 static std::vector<okay::FriendEvent> fFeed;
                 static std::string fCode;
+                // Follows (one-way): lists refreshed on a worker (QueueFollowJob).
+                static std::vector<okay::FollowEntry> flFollowing, flFollowers;
+                static bool flSupported = true;
+                static Uint32 flNext = 0;
+                static char flAddBuf[48] = "";
+                {
+                    const Uint32 tnow = SDL_GetTicks();
+                    if (kFrDemo) {
+                        static bool flSeeded = false;
+                        if (!flSeeded) {
+                            flSeeded = true;
+                            const long t0 = (long)std::time(nullptr);
+                            auto fe = [&](std::vector<okay::FollowEntry>& v, const char* id, const char* u, const char* d, bool on, long ago) {
+                                okay::FollowEntry e; e.id = id; e.username = u; e.display = d; e.online = on; e.lastSeen = t0 - ago; v.push_back(e); };
+                            fe(flFollowing, "u-maya", "maya", "Maya Chen", true, 0);
+                            fe(flFollowing, "u-studio", "pixelforge", "PixelForge Studio", false, 3 * 3600);
+                            fe(flFollowing, "u-ren", "ren", "Ren Ito", false, 2 * 86400);
+                            fe(flFollowers, "u-maya", "maya", "Maya Chen", true, 0);
+                            fe(flFollowers, "u-sam", "samw", "Sam Wilde", true, 0);
+                            fe(flFollowers, "u-ola", "ola", "Ola Nordmann", false, 26 * 3600);
+                            fe(flFollowers, "u-dev", "nightowl", "nightowl", false, 6 * 86400);
+                        }
+                    } else if (account.IsLoggedIn() && account.IsOnline()) {
+                        if (!g_flMutex) g_flMutex = SDL_CreateMutex();
+                        if (tnow >= flNext && !g_flBusy) { QueueFollowJob(0); flNext = tnow + 60000; }
+                        SDL_LockMutex(g_flMutex);
+                        if (g_flReady) {
+                            g_flReady = false;
+                            flFollowing = g_flFollowing; flFollowers = g_flFollowers; flSupported = g_flSupported;
+                            if (!g_flMsg.empty()) Toast(g_flMsg, g_flMsgErr ? 2 : 1);
+                            g_flMsg.clear();
+                        }
+                        SDL_UnlockMutex(g_flMutex);
+                    }
+                }
                 // Direct messages live in the floating Chat window (DrawChatWindow);
                 // the "Message" buttons call OpenChatWith(). Clicking a row opens
                 // the full public profile page (OpenPublicProfile).
                 static Uint32 fNextRefresh = 0;
-                static int fView = 0;             // 0 Online, 1 All, 2 Pending, 3 Add friend
+                static int fView = std::getenv("OKAY_UI_DEMO_FRVIEW") ? std::atoi(std::getenv("OKAY_UI_DEMO_FRVIEW")) : 0;   // 0 Online, 1 All, 2 Pending, 3 Add friend, 4 Following, 5 Followers (env: dev screenshot hook)
                 Uint32 now = SDL_GetTicks();
                 if (kFrDemo) {
                     static bool seeded = false;
@@ -14175,6 +14314,8 @@ int main(int argc, char** argv) {
                     chip(0, "Online", onlineN, false);
                     chip(1, "All", acceptedN, false);
                     chip(2, "Pending", reqN + sentN, reqN > 0);
+                    chip(4, "Following", (int)flFollowing.size(), false);
+                    chip(5, "Followers", (int)flFollowers.size(), false);
                     chip(3, "Add friend", 0, false);
                     // Presence picker (right): dot + label, opens a small menu.
                     static const char* kStat[] = {"Online", "Away", "Invisible"};
@@ -14414,7 +14555,87 @@ int main(int argc, char** argv) {
                 const float sideW = side ? 280.0f : 0.0f;
                 const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
                 ImGui::BeginChild("##friendlist", ImVec2(side ? availW - sideW - 18.0f : 0.0f, bodyH), false);
-                if (fView == 3) {   // ---- Add friend ----
+                if (fView == 4 || fView == 5) {   // ---- Following / Followers ----
+                    const bool ing = fView == 4;
+                    if (!flSupported) emptyState(6, "Follows aren't switched on yet", "The server needs the follows update (docs/sql/follows.sql).");
+                    else {
+                        if (ing) {   // follow someone by username
+                            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
+                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 120.0f);
+                            const bool sub = ImGui::InputTextWithHint("##followname", "Follow someone by username", flAddBuf, sizeof(flAddBuf),
+                                                                      ImGuiInputTextFlags_EnterReturnsTrue);
+                            ImGui::SameLine(0, 8);
+                            ImGui::BeginDisabled(!flAddBuf[0] || g_flBusy);
+                            const bool go = PrimaryButton("Follow", ImVec2(110, ImGui::GetFrameHeight()));
+                            ImGui::EndDisabled();
+                            ImGui::PopStyleVar(2);
+                            if ((go || sub) && flAddBuf[0]) {
+                                std::string nm = flAddBuf; if (!nm.empty() && nm[0] == '@') nm.erase(0, 1);
+                                if (kFrDemo) Toast("Now following @" + nm, 1); else QueueFollowJob(4, nm);
+                                flAddBuf[0] = '\0';
+                            }
+                            ImGui::TextDisabled("Following is one-way: no request, and their activity shows in your feed.");
+                        }
+                        const auto& list = ing ? flFollowing : flFollowers;
+                        std::set<std::string> iFollow;
+                        for (const auto& e : flFollowing) iFollow.insert(e.id);
+                        if (list.empty())
+                            emptyState(6, ing ? "You're not following anyone" : "No followers yet",
+                                       ing ? "Follow players to see what they're up to." : "When someone follows you, they show up here.");
+                        else sectionLabel(ing ? "FOLLOWING" : "FOLLOWERS", (int)list.size());
+                        std::string act; int actKind = 0;
+                        for (const auto& e : list) {
+                            ImGui::PushID(e.id.c_str());
+                            ImDrawList* dl = ImGui::GetWindowDrawList();
+                            const ImVec2 rp = ImGui::GetCursorScreenPos();
+                            const float w = ImGui::GetContentRegionAvail().x, rowH = 56.0f, A = 38.0f;
+                            ImGui::SetNextItemAllowOverlap();
+                            if (ImGui::InvisibleButton("##flrow", ImVec2(w, rowH))) OpenPublicProfile(e.id, e.username, e.display, e.avatar);
+                            const bool hov = ImGui::IsItemHovered();
+                            if (hov) dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), IM_COL32(255, 255, 255, 8), 10.0f);
+                            ImGui::SetCursorScreenPos(ImVec2(rp.x + 10, rp.y + (rowH - A) * 0.5f));
+                            DrawAvatar(e.avatar, e.display, A);
+                            const ImVec2 pd(rp.x + 10 + A * 0.85f, rp.y + (rowH + A) * 0.5f - A * 0.15f);
+                            dl->AddCircleFilled(pd, 6.5f, ImGui::GetColorU32(okaytheme::kBase), 16);
+                            dl->AddCircleFilled(pd, 4.5f, e.online ? IM_COL32(76, 200, 110, 255) : IM_COL32(120, 128, 140, 255), 16);
+                            const float tx = rp.x + 10 + A + 12;
+                            dl->AddText(ImVec2(tx, rp.y + 10), cText, e.display.c_str());
+                            std::string sub = "@" + e.username + "  \xC2\xB7  " + (e.online ? std::string("Online")
+                                            : e.lastSeen > 0 ? "seen " + RelTime(e.lastSeen) : std::string("Offline"));
+                            if (!ing && iFollow.count(e.id)) sub += "  \xC2\xB7  you follow each other";
+                            dl->AddText(ImVec2(tx, rp.y + 30), cDim, sub.c_str());
+                            // Actions (right).
+                            float bx = rp.x + w - 10;
+                            auto rowBtn = [&](const char* lbl, bool primary) {
+                                const float bw = ImGui::CalcTextSize(lbl).x + 26.0f;
+                                bx -= bw;
+                                ImGui::SetCursorScreenPos(ImVec2(bx, rp.y + (rowH - 30) * 0.5f));
+                                bx -= 8;
+                                ImGui::BeginDisabled(g_flBusy);
+                                bool hit = primary ? PrimaryButton(lbl, ImVec2(bw, 30)) : ImGui::Button(lbl, ImVec2(bw, 30));
+                                ImGui::EndDisabled();
+                                return hit;
+                            };
+                            if (ing) { if (rowBtn("Unfollow", false)) { act = e.id; actKind = 2; } }
+                            else {
+                                if (rowBtn("Remove", false)) { act = e.id; actKind = 3; }
+                                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop them following you");
+                                if (!iFollow.count(e.id) && rowBtn("Follow back", true)) { act = e.id; actKind = 1; }
+                            }
+                            ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + 4));
+                            ImGui::Dummy(ImVec2(0, 0));
+                            ImGui::PopID();
+                        }
+                        if (!act.empty()) {
+                            if (kFrDemo) {
+                                if (actKind == 2) flFollowing.erase(std::remove_if(flFollowing.begin(), flFollowing.end(), [&](const okay::FollowEntry& x) { return x.id == act; }), flFollowing.end());
+                                else if (actKind == 3) flFollowers.erase(std::remove_if(flFollowers.begin(), flFollowers.end(), [&](const okay::FollowEntry& x) { return x.id == act; }), flFollowers.end());
+                                else for (const auto& x : flFollowers) if (x.id == act) { flFollowing.insert(flFollowing.begin(), x); break; }
+                            } else QueueFollowJob(actKind, act);
+                        }
+                    }
+                } else if (fView == 3) {   // ---- Add friend ----
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 18));
                     ImGui::BeginChild("##addcard", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);

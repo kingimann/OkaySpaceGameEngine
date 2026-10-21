@@ -41,6 +41,9 @@ struct PublicProfile {
     std::vector<std::pair<std::string, std::string>> socials;   // ("x", "@handle" or url), in display order
 };
 
+// Someone in a followers / following list.
+struct FollowEntry { std::string id, username, display, avatar; long lastSeen = 0; bool online = false; };
+
 // Time played in one game (or "editor" for time in the editor).
 struct PlaytimeEntry { std::string key, title; long seconds = 0, lastPlayed = 0; };
 
@@ -56,6 +59,10 @@ struct ProfileBundle {
     std::vector<Achievement> achievements;   // their public unlocks (newest first)
     std::vector<WorkshopItem> games;         // their published Workshop items
     int  friends = -1;               // -1 = unknown
+    // Follows (docs/sql/follows.sql): one-way, no request.
+    bool followSupported = false;
+    int  followers = -1, following = -1;
+    bool iFollow = false, followsMe = false;
     std::vector<FriendEvent> activity;       // visible only to friends (RLS)
     // My relationship to them.
     bool isMe = false;
@@ -176,6 +183,24 @@ public:
             std::string t = Trim(rc.body);
             if (!t.empty() && std::isdigit((unsigned char)t[0])) b.friends = (int)std::atol(t.c_str());
         }
+        // Follows: counts, and whether we follow each other.
+        auto rfc = acct_.Api("/rest/v1/rpc/follow_counts", "POST", "{\"p_uid\":" + JStr(uid) + "}");
+        if (rfc.ok) {
+            b.followSupported = true;
+            auto fo = SplitObjects(rfc.body);
+            if (!fo.empty()) {
+                b.followers = (int)std::atol(Field(fo[0], "followers").c_str());
+                b.following = (int)std::atol(Field(fo[0], "following").c_str());
+            }
+            const std::string me = MyId();
+            if (!b.isMe && !me.empty()) {
+                auto rr = acct_.Api("/rest/v1/follows?select=follower,followee&or=(and(follower.eq." + Url(me) + ",followee.eq." + Url(uid) +
+                                    "),and(follower.eq." + Url(uid) + ",followee.eq." + Url(me) + "))", "GET");
+                if (rr.ok) for (const auto& x : SplitObjects(rr.body)) {
+                    if (Field(x, "follower") == me) b.iFollow = true; else b.followsMe = true;
+                }
+            }
+        }
         // Relationship (RLS only returns friendships that involve me).
         auto rf = acct_.Api("/rest/v1/friendships?select=id,status,requester,addressee"
                             "&or=(requester.eq." + Url(uid) + ",addressee.eq." + Url(uid) + ")", "GET");
@@ -288,6 +313,68 @@ public:
     }
 
     // Relationship actions (RLS scopes them to rows involving me).
+    // ---- follows -----------------------------------------------------------
+    bool Follow(const std::string& uid) {
+        return acct_.Api("/rest/v1/follows", "POST", "{\"followee\":" + JStr(uid) + "}").ok;
+    }
+    bool Unfollow(const std::string& uid) {
+        const std::string me = MyId(); if (me.empty()) return false;
+        return acct_.Api("/rest/v1/follows?follower=eq." + Url(me) + "&followee=eq." + Url(uid), "DELETE").ok;
+    }
+    bool RemoveFollower(const std::string& uid) {
+        const std::string me = MyId(); if (me.empty()) return false;
+        return acct_.Api("/rest/v1/follows?follower=eq." + Url(uid) + "&followee=eq." + Url(me), "DELETE").ok;
+    }
+    /// The people following `uid` (followers=true) or that `uid` follows.
+    /// Empty `uid` = me. `supported` reports whether follows.sql has run.
+    std::vector<FollowEntry> FollowList(std::string uid, bool followers, bool* supported = nullptr) {
+        std::vector<FollowEntry> out;
+        if (supported) *supported = false;
+        if (uid.empty()) uid = MyId();
+        if (uid.empty()) return out;
+        auto r = acct_.Api(std::string("/rest/v1/follows?select=follower,followee&") + (followers ? "followee" : "follower") +
+                           "=eq." + Url(uid) + "&order=created_at.desc&limit=200", "GET");
+        if (!r.ok) return out;
+        if (supported) *supported = true;
+        std::vector<std::string> ids;
+        for (const auto& x : SplitObjects(r.body)) {
+            std::string id = Field(x, followers ? "follower" : "followee");
+            if (!id.empty()) ids.push_back(id);
+        }
+        if (ids.empty()) return out;
+        std::string in;
+        for (const auto& id : ids) { if (!in.empty()) in += ","; in += Url(id); }
+        auto rp = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen&id=in.(" + in + ")", "GET");
+        if (!rp.ok) return out;
+        const auto objs = SplitObjects(rp.body);
+        for (const auto& id : ids)   // keep newest-first order
+            for (const auto& o : objs) {
+                if (Field(o, "id") != id) continue;
+                FollowEntry e; e.id = id; e.username = Field(o, "username");
+                e.display = Field(o, "display_name"); if (e.display.empty()) e.display = e.username;
+                e.avatar = Field(o, "avatar_url"); e.lastSeen = ParseIso(Field(o, "last_seen"));
+                e.online = e.lastSeen > 0 && std::difftime(std::time(nullptr), (std::time_t)e.lastSeen) < 180.0;
+                out.push_back(e);
+            }
+        return out;
+    }
+    /// Follow by username (the Friends page's "Add" box).
+    bool FollowByName(const std::string& username, std::string* err = nullptr) {
+        auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(username), "GET");
+        auto o = r.ok ? SplitObjects(r.body) : std::vector<std::string>{};
+        if (o.empty()) { if (err) *err = "No player with that username."; return false; }
+        const std::string id = Field(o[0], "id");
+        if (id == MyId()) { if (err) *err = "That's you!"; return false; }
+        if (!Follow(id)) { if (err) *err = "Couldn't follow them (already following?)."; return false; }
+        return true;
+    }
+    /// Whether my followers see my activity feed (profiles.followers_see_activity).
+    bool SetFollowersSeeActivity(bool on) {
+        const std::string me = MyId(); if (me.empty()) return false;
+        return acct_.Api("/rest/v1/profiles?id=eq." + Url(me), "PATCH",
+                         std::string("{\"followers_see_activity\":") + (on ? "true" : "false") + "}").ok;
+    }
+
     bool AddFriend(const std::string& uid) {
         if (!acct_.IsLoggedIn() || uid.empty()) return false;
         return acct_.Api("/rest/v1/friendships", "POST", "{\"addressee\":" + JStr(uid) + "}").ok;

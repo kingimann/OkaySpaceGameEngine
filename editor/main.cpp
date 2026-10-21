@@ -2532,6 +2532,14 @@ struct Options {
     std::string splashImage;     // startup logo PNG
     float splashTime = 2.0f;
     float splashBg[3] = {0.05f, 0.05f, 0.06f};
+    // ---- Boot splash (branded loading frame; the project's custom loading
+    // screen carried into the shipped game so it matches the editor/launcher) ----
+    std::string bootLogo;        // optional PNG (copied into the build)
+    float bootBgTop[3] = {0.094f, 0.094f, 0.106f};
+    float bootBgBot[3] = {0.051f, 0.051f, 0.059f};
+    bool  bootAccentOverride = false;
+    float bootAccent[3] = {0.235f, 0.475f, 0.800f};
+    bool  bootBar = true;
 };
 
 // Obfuscate a just-written text file in place (scene/config) so it can't be read
@@ -2689,6 +2697,15 @@ std::string Build(EditorState& ed, const std::string& outDir,
             cf << "splash_bg=" << (int)(opt.splashBg[0] * 255) << "," << (int)(opt.splashBg[1] * 255)
                << "," << (int)(opt.splashBg[2] * 255) << "\n";
         }
+        // Boot splash (branded loading frame shown immediately on launch, before
+        // the scene/renderer are up) — the project's custom loading screen.
+        if (!opt.bootLogo.empty())
+            cf << "boot_logo=" << fs::path(opt.bootLogo).filename().string() << "\n";
+        cf << "boot_bg_top=" << opt.bootBgTop[0] << " " << opt.bootBgTop[1] << " " << opt.bootBgTop[2] << "\n";
+        cf << "boot_bg_bot=" << opt.bootBgBot[0] << " " << opt.bootBgBot[1] << " " << opt.bootBgBot[2] << "\n";
+        if (opt.bootAccentOverride)
+            cf << "boot_accent=" << opt.bootAccent[0] << " " << opt.bootAccent[1] << " " << opt.bootAccent[2] << "\n";
+        cf << "boot_bar=" << (opt.bootBar ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
     }
@@ -2787,6 +2804,12 @@ std::string Build(EditorState& ed, const std::string& outDir,
         std::error_code se; fs::path ssrc(opt.splashImage);
         if (fs::exists(ssrc, se) && fs::is_regular_file(ssrc, se))
             fs::copy_file(ssrc, data / ssrc.filename(), fs::copy_options::overwrite_existing, se);
+    }
+    // Boot splash logo (the project's custom loading-screen logo).
+    if (!opt.bootLogo.empty()) {
+        std::error_code be; fs::path bsrc(opt.bootLogo);
+        if (fs::exists(bsrc, be) && fs::is_regular_file(bsrc, be))
+            fs::copy_file(bsrc, data / bsrc.filename(), fs::copy_options::overwrite_existing, be);
     }
 
     // Total build size on disk (so the user sees a clean, accounted-for output) +
@@ -10623,6 +10646,10 @@ void DrawFileDialogs(EditorState& ed) {
             o.saveToUserDir = g_build.saveToUserDir;
             o.splashImage = g_build.splash; o.splashTime = g_build.splashTime;
             o.splashBg[0] = g_build.splashBg[0]; o.splashBg[1] = g_build.splashBg[1]; o.splashBg[2] = g_build.splashBg[2];
+            // Carry the project's custom loading screen into the shipped game.
+            o.bootLogo = g_project.splashLogo;
+            for (int i = 0; i < 3; ++i) { o.bootBgTop[i] = g_project.splashBgTop[i]; o.bootBgBot[i] = g_project.splashBgBot[i]; o.bootAccent[i] = g_project.splashAccent[i]; }
+            o.bootAccentOverride = g_project.splashAccentOverride; o.bootBar = g_project.splashShowBar;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o, &g_buildReport);
             g_openBuildResult = true;

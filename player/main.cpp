@@ -15,6 +15,7 @@
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
+#include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
 #endif
@@ -1056,6 +1057,15 @@ int main(int argc, char** argv) {
         std::string splash;        // startup logo PNG (in the Data folder)
         float splashTime = 2.0f;   // seconds the splash shows
         int   splashBg[3] = {12, 12, 16};  // splash background colour
+        // Boot splash — the project's branded loading frame, shown immediately on
+        // launch (before the renderer/scene are up) so the game never flashes a
+        // black window and matches the editor/launcher loading screen.
+        std::string bootLogo;      // optional PNG (in the Data folder)
+        float bootBgTop[3] = {0.094f, 0.094f, 0.106f};
+        float bootBgBot[3] = {0.051f, 0.051f, 0.059f};
+        bool  bootAccentOn = false;
+        float bootAccent[3] = {0.235f, 0.475f, 0.800f};
+        bool  bootBar = true;
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -1107,6 +1117,11 @@ int main(int argc, char** argv) {
             else if (k == "splash")         cfg.splash = v;
             else if (k == "splash_time")    cfg.splashTime = (float)std::atof(v.c_str());
             else if (k == "splash_bg")      std::sscanf(v.c_str(), "%d,%d,%d", &cfg.splashBg[0], &cfg.splashBg[1], &cfg.splashBg[2]);
+            else if (k == "boot_logo")      cfg.bootLogo = v;
+            else if (k == "boot_bg_top")    std::sscanf(v.c_str(), "%f %f %f", &cfg.bootBgTop[0], &cfg.bootBgTop[1], &cfg.bootBgTop[2]);
+            else if (k == "boot_bg_bot")    std::sscanf(v.c_str(), "%f %f %f", &cfg.bootBgBot[0], &cfg.bootBgBot[1], &cfg.bootBgBot[2]);
+            else if (k == "boot_accent")  { std::sscanf(v.c_str(), "%f %f %f", &cfg.bootAccent[0], &cfg.bootAccent[1], &cfg.bootAccent[2]); cfg.bootAccentOn = true; }
+            else if (k == "boot_bar")       cfg.bootBar = std::atoi(v.c_str()) != 0;
         }
     }
     // Register the build's scenes so scripts can load_scene_index / load_next.
@@ -1147,6 +1162,11 @@ int main(int argc, char** argv) {
     if (cfg.fullscreen) winFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     if (cfg.borderless) winFlags |= SDL_WINDOW_BORDERLESS;
     if (cfg.startMaximized && cfg.resizable && !cfg.fullscreen) winFlags |= SDL_WINDOW_MAXIMIZED;
+#if !defined(__EMSCRIPTEN__)
+    // Create hidden so the game never flashes a black window during renderer /
+    // GPU setup; we draw the boot splash then reveal it (see below).
+    if (!cfg.fullscreen) winFlags |= SDL_WINDOW_HIDDEN;
+#endif
     if (!cfg.showCursor) SDL_ShowCursor(SDL_DISABLE);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
     SDL_Window* window = SDL_CreateWindow(
@@ -1166,6 +1186,36 @@ int main(int argc, char** argv) {
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+
+    // ---- Boot splash: the project's branded loading frame, shown immediately so
+    // the game doesn't flash a black window while the renderer / GPU / scene set
+    // up. Matches the editor/launcher loading screen. Reveal the window on it.
+    SDL_Texture* bootTex = nullptr;
+    if (renderer && window) {
+        okay::SplashStyle st;
+        if (cfg.bootAccentOn) { st.ar = cfg.bootAccent[0]; st.ag = cfg.bootAccent[1]; st.ab = cfg.bootAccent[2]; }
+        auto C = [](const float* c) -> SDL_Color {
+            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+        st.bgTop = C(cfg.bootBgTop); st.bgBottom = C(cfg.bootBgBot); st.showProgress = cfg.bootBar;
+        if (!cfg.bootLogo.empty()) {
+            okay::Image img;
+            if (img.Load(cfg.bootLogo) || img.Load(baseDir + cfg.bootLogo)) {
+                if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
+                        (void*)img.Data(), img.Width(), img.Height(), 32, img.Width() * 4, SDL_PIXELFORMAT_ABGR8888)) {
+                    bootTex = SDL_CreateTextureFromSurface(renderer, s);
+                    SDL_FreeSurface(s);
+                }
+            }
+        }
+        st.logo = bootTex;
+        int bw = cfg.width, bh = cfg.height; SDL_GetRendererOutputSize(renderer, &bw, &bh);
+        okay::DrawSplashStyled(renderer, bw, bh, st);
+#if !defined(__EMSCRIPTEN__)
+        SDL_ShowWindow(window); SDL_RaiseWindow(window);
+        okay::DrawSplashStyled(renderer, bw, bh, st);
+#endif
+    }
 
     // Apply the build's graphics/quality settings to the renderer + cursor.
     PerPixelLighting() = cfg.perPixel;

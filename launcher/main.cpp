@@ -2176,7 +2176,7 @@ static void DrawGroupConversation(
                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
     float avW = ImGui::GetContentRegionAvail().x;
     float baseX = ImGui::GetCursorPosX();
-    const float padX = 10.0f, padY = 6.0f;
+    const float padX = 12.0f, padY = 7.0f;
     std::string prevSender; bool firstMsg = true;
     for (const auto& m : glog) {
         bool newSender = firstMsg || m.sender != prevSender;
@@ -2203,7 +2203,7 @@ static void DrawGroupConversation(
         ImGui::PushID((int)m.id);
         ImGui::SetCursorPosX(baseX + x0);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 11.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
         ImGui::BeginChild("##gbub", ImVec2(useW, 0), ImGuiChildFlags_AutoResizeY,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -2702,7 +2702,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             std::string msFilt = msgSearch; for (auto& ch : msFilt) ch = (char)std::tolower((unsigned char)ch);
             long prevDay = 0; bool prevMine = false; long prevWhen = 0; bool first = true;
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const float avatarW = 28.0f, avatarGap = 6.0f, padX = 10.0f, padY = 6.0f;
+            const float avatarW = 28.0f, avatarGap = 6.0f, padX = 12.0f, padY = 7.0f;
             int matches = 0;
             for (const auto& m : log) {
                 if (!msFilt.empty()) {
@@ -2777,7 +2777,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::SetCursorPosX(baseX + x0);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, bareEmoji ? ImVec4(0,0,0,0)
                                         : (m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f)));
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 11.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
                 ImGui::BeginChild("##bubble", ImVec2(useW, 0),
                                   ImGuiChildFlags_AutoResizeY,

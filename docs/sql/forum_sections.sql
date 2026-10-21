@@ -147,6 +147,14 @@ create policy "bans readable" on public.forum_section_bans for select using (tru
 create policy "mods ban"      on public.forum_section_bans for insert with check (public.is_section_mod(section_id, auth.uid()));
 create policy "mods unban"    on public.forum_section_bans for delete using (public.is_section_mod(section_id, auth.uid()));
 
+-- ---------------------------------------------------------------------------
+-- Threads in sections + moderation
+-- ---------------------------------------------------------------------------
+alter table public.forum_threads add column if not exists section_id bigint references public.forum_sections on delete cascade;
+alter table public.forum_threads add column if not exists pinned     boolean not null default false;
+alter table public.forum_threads add column if not exists locked     boolean not null default false;
+create index if not exists forum_threads_section on public.forum_threads (section_id);
+
 -- Member / post counts for the section list.
 create or replace function public.forum_section_counts()
 returns table (section_id bigint, members bigint, threads bigint)
@@ -156,14 +164,6 @@ language sql stable security definer set search_path = public as $$
          (select count(*) from public.forum_threads t where t.section_id = s.id)
   from public.forum_sections s;
 $$;
-
--- ---------------------------------------------------------------------------
--- Threads in sections + moderation
--- ---------------------------------------------------------------------------
-alter table public.forum_threads add column if not exists section_id bigint references public.forum_sections on delete cascade;
-alter table public.forum_threads add column if not exists pinned     boolean not null default false;
-alter table public.forum_threads add column if not exists locked     boolean not null default false;
-create index if not exists forum_threads_section on public.forum_threads (section_id);
 
 drop policy if exists "start thread"        on public.forum_threads;
 drop policy if exists "mods moderate thread" on public.forum_threads;

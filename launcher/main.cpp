@@ -724,6 +724,7 @@ void FetchReleaseNews() {
     if (kept > 0) SetNews(tag, lines);
 }
 
+bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
 int RunUpdateCheck(void*) {
@@ -764,7 +765,11 @@ int RunUpdateCheck(void*) {
     // pulling a not-newer (older or equal) build — that used to downgrade the engine
     // to whatever stale binary sits in the repo's dist/ folder (the "it downloads
     // 2.97" bug). If we're current or ahead, do nothing.
-    if (!newer) {
+    // Repair: on the SAME version, fetch only executables that are missing
+    // (e.g. the editor was never installed). Never downloads anything older.
+    const bool repair = g_upRepairMissing && !newer && !latest.empty() && CompareVersions(local, latest) == 0;
+    g_upRepairMissing = false;
+    if (!newer && !repair) {
         SetUpMsg("Up to date (v" + local + ").");
         SetUpStep("You're on the latest version", 1, 1);
         SetState(Up_UpToDate);
@@ -783,14 +788,18 @@ int RunUpdateCheck(void*) {
             std::string found = FindExe({name});
             return found.empty() ? (dir / name) : fs::path(found);
         };
-        SetUpMsg("Downloading engine v" + latest + "...");
-        SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
-        ok = ReplaceFile(std::string(kRawBase) + "OkayEngine.exe",
-                         destOf("OkayEngine.exe"), false, /*progress=*/true) && ok;
-        SetUpMsg("Downloading player runtime v" + latest + "...");
-        SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
-        ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
-                         destOf("OkaySpacePlayer.exe"), false, /*progress=*/true) && ok;
+        if (!repair || FindExe({"OkayEngine.exe"}).empty()) {
+            SetUpMsg("Downloading engine v" + latest + "...");
+            SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
+            ok = ReplaceFile(std::string(kRawBase) + "OkayEngine.exe",
+                             destOf("OkayEngine.exe"), false, /*progress=*/true) && ok;
+        }
+        if (!repair || FindExe({"OkaySpacePlayer.exe"}).empty()) {
+            SetUpMsg("Downloading player runtime v" + latest + "...");
+            SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
+            ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
+                             destOf("OkaySpacePlayer.exe"), false, /*progress=*/true) && ok;
+        }
     }
     // Only self-update the launcher on a genuine version bump.
     bool launcherOk = false;
@@ -7377,8 +7386,15 @@ int main(int argc, char** argv) {
             ImGui::SetCursorPos(ImVec2(16, 58));
             if (editor.empty()) {
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Editor not found next to the launcher.");
-                ImGui::SetCursorPosX(18);
-                ImGui::TextDisabled("Place OkayEngine.exe beside this launcher, or run a Check for updates.");
+                ImGui::SetCursorPosX(16);
+                const UpState ust = GetState();
+                const bool ubusy = ust == Up_Checking || ust == Up_Downloading;
+                ImGui::BeginDisabled(ubusy);
+                if (PrimaryButton(ubusy ? "Downloading\xE2\x80\xA6" : "Get the editor", ImVec2(150, 28))) { g_upRepairMissing = true; StartUpdateCheck(true); }
+                ImGui::EndDisabled();
+                ImGui::SameLine(0, 10);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5);
+                ImGui::TextDisabled("Downloads OkayEngine next to the launcher (or place OkayEngine.exe there).");
             } else {
                 if (PrimaryButton("Open Editor", ImVec2(190, 44))) LaunchEditor(editor);
                 ImGui::SameLine();

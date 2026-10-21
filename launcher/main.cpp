@@ -7484,6 +7484,8 @@ static bool g_foReady = false;                       // (guarded) fresh results 
 static std::vector<okay::ForumThread> g_foThreads;   // (guarded)
 static std::map<long,long> g_foScores;               // (guarded)
 static std::map<long,int>  g_foMy, g_foComments;     // (guarded)
+static std::vector<okay::ForumSection> g_foSections;  // (guarded) forum sections (o/slug)
+static bool g_foSecSupported = false, g_foStaff = false;   // (guarded)
 static int ForumFetchWorker(void*) {
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
@@ -7492,9 +7494,13 @@ static int ForumFetchWorker(void*) {
         auto sc = fo.Scores("thread");
         auto mv = fo.MyVotes("thread");
         auto cc = fo.CommentCounts();
+        bool sup = false;
+        auto secs = fo.Sections(&sup);
+        const bool staff = sup && fo.AmStaff();
         if (g_foMutex) SDL_LockMutex(g_foMutex);
         g_foThreads = std::move(th); g_foScores = std::move(sc);
         g_foMy = std::move(mv); g_foComments = std::move(cc);
+        g_foSections = std::move(secs); g_foSecSupported = sup; g_foStaff = staff;
         g_foReady = true;
         if (g_foMutex) SDL_UnlockMutex(g_foMutex);
     } catch (...) {}
@@ -7540,15 +7546,55 @@ static int ForumPostWorker(void* arg) {
 struct FoAction { int type; std::string kind; long id; int value; std::string a, b, c; };
 static SDL_atomic_t g_foActionBusy;     // number of in-flight actions (for a subtle hint)
 static volatile bool g_foActionDone = false;
+// Section admin tools data + action feedback (guarded by g_foMutex).
+static std::vector<okay::ForumMember> g_foAdmMembers;
+static std::vector<okay::ForumBan> g_foAdmBans;
+static bool g_foAdmReady = false;
+static std::string g_foActMsg; static int g_foActKind = 0;   // toast to show (1 ok, 2 error)
+// Action types: 0 vote, 1 reply, 2 new thread (id = section), 3 join, 4 leave,
+// 5 create section (a slug, b name, c desc, value color), 6 edit section (a desc,
+// b rules, value color), 7 delete section, 8 pin, 9 lock (value on/off),
+// 10 remove thread, 11 remove comment, 12 set role (a uid, b role), 13 remove
+// member (a uid), 14 ban (a username or uid, b reason, c name), 15 unban (a uid),
+// 16 make moderator by username (a), 17 staff: verify (a username, value),
+// 18 staff: badge (a username, b badge, value), 20 load members + bans.
 static int ForumActionWorker(void* arg) {
     FoAction* j = (FoAction*)arg;
+    std::string msg; int kind = 0;
+    auto say = [&](bool ok, const char* good, const char* bad) { msg = ok ? good : bad; kind = ok ? 1 : 2; };
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         okay::Forums fo(a);
+        auto uidOf = [&](const std::string& s2) { return s2.size() == 36 && s2[8] == '-' ? s2 : fo.UidFor(s2); };
         if      (j->type == 0) fo.Vote(j->kind, j->id, j->value);
-        else if (j->type == 1) fo.Reply(j->id, j->a, nullptr);
-        else if (j->type == 2) fo.StartThread(j->a, j->b, j->c, nullptr);
+        else if (j->type == 1) { std::string err; if (!fo.Reply(j->id, j->a, &err)) { msg = err.empty() ? "Couldn't post the comment" : err; kind = 2; } }
+        else if (j->type == 2) { std::string err; if (!fo.StartThread(j->a, j->b, j->c, &err, j->id)) { msg = err.empty() ? "Couldn't post" : err; kind = 2; } }
+        else if (j->type == 3) say(fo.Join(j->id), "Joined", "Couldn't join (banned?)");
+        else if (j->type == 4) say(fo.Leave(j->id), "Left the section", "Couldn't leave");
+        else if (j->type == 5) { std::string err; long id = fo.CreateSection(j->a, j->b, j->c, j->value, &err); if (id) say(true, "Section created \xE2\x80\x94 you're its admin", ""); else { msg = err; kind = 2; } }
+        else if (j->type == 6) say(fo.UpdateSection(j->id, j->a, j->b, j->value), "Section updated", "Couldn't save (admins only)");
+        else if (j->type == 7) say(fo.DeleteSection(j->id), "Section deleted", "Only the owner can delete it");
+        else if (j->type == 8) say(fo.SetPinned(j->id, j->value != 0), j->value ? "Pinned" : "Unpinned", "Moderators only");
+        else if (j->type == 9) say(fo.SetLocked(j->id, j->value != 0), j->value ? "Locked" : "Unlocked", "Moderators only");
+        else if (j->type == 10) say(fo.DeleteThread(j->id), "Post removed", "Couldn't remove it");
+        else if (j->type == 11) say(fo.DeletePost(j->id), "Comment removed", "Couldn't remove it");
+        else if (j->type == 12) say(fo.SetRole(j->id, j->a, j->b), "Role updated", "Admins only");
+        else if (j->type == 13) say(fo.RemoveMember(j->id, j->a), "Member removed", "Couldn't remove them");
+        else if (j->type == 14) { const std::string u = uidOf(j->a); if (u.empty()) { msg = "No user called " + j->a; kind = 2; }
+                                  else say(fo.Ban(j->id, u, j->c.empty() ? j->a : j->c, j->b), "Banned from the section", "Moderators only"); }
+        else if (j->type == 15) say(fo.Unban(j->id, j->a), "Unbanned", "Moderators only");
+        else if (j->type == 16) { const std::string u = uidOf(j->a); if (u.empty()) { msg = "No user called " + j->a; kind = 2; }
+                                  else say(fo.AddMember(j->id, u, j->a, "moderator"), "Moderator added", "Admins only"); }
+        else if (j->type == 17) { const std::string u = uidOf(j->a); if (u.empty()) { msg = "No user called " + j->a; kind = 2; }
+                                  else say(fo.SetVerified(u, j->value != 0), j->value ? "Verified" : "Verification removed", "Staff only"); }
+        else if (j->type == 18) { const std::string u = uidOf(j->a); if (u.empty()) { msg = "No user called " + j->a; kind = 2; }
+                                  else say(fo.AwardBadge(u, j->b, j->value != 0), j->value ? "Badge awarded" : "Badge removed", "Staff only"); }
+        if (j->type == 20 || (j->type >= 12 && j->type <= 16)) {   // refresh the admin lists
+            auto m = fo.Members(j->id); auto b = fo.Bans(j->id);
+            if (g_foMutex) { SDL_LockMutex(g_foMutex); g_foAdmMembers = std::move(m); g_foAdmBans = std::move(b); g_foAdmReady = true; SDL_UnlockMutex(g_foMutex); }
+        }
     } catch (...) {}
+    if (kind && g_foMutex) { SDL_LockMutex(g_foMutex); g_foActMsg = msg; g_foActKind = kind; SDL_UnlockMutex(g_foMutex); }
     g_foActionDone = true;
     SDL_AtomicAdd(&g_foActionBusy, -1);
     delete j;
@@ -15677,6 +15723,13 @@ int main(int argc, char** argv) {
             static bool foShowNew = false, foReplyFocus = false;
             static std::string foCat;    // selected category chip ("" = all)
             static Uint32 foNext = 0, fpNext = 0;
+            static std::vector<okay::ForumSection> foSections;   // o/slug communities
+            static bool foSecSup = false, foStaff = false;
+            static long foSection = 0;                // open section (0 = everything)
+            static long openSection = 0; static bool openPinned = false, openLocked = false;
+            static long foNewSection = -1;            // section picked in the composer (-1 = follow foSection)
+            static bool foCreateOpen = false, foAdminOpen = false, foStaffOpen = false;
+            static std::vector<okay::ForumMember> foAdmMembers; static std::vector<okay::ForumBan> foAdmBans;
             Uint32 tnow = SDL_GetTicks();
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
             const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
@@ -15695,6 +15748,28 @@ int main(int argc, char** argv) {
                     th(4, "Feature idea: tilemap auto-tiling", "jonas", "ideas", "", 3 * 86400, 9, 3);
                     th(5, "Weekly jam #12: theme is ORBIT", "kingimann", "events", "48 hours, any engine feature goes. Submit by Sunday night.", 5 * 3600, 56, 21);
                     thMy[5] = 1; thMy[1] = 1;
+                    auto sec = [&](long id, const char* slug, const char* name, const char* desc, int color, long members, long threads, const char* role) {
+                        okay::ForumSection x; x.id = id; x.slug = slug; x.name = name; x.description = desc; x.color = color;
+                        x.members = members; x.threads = threads; x.myRole = role; foSections.push_back(x); };
+                    sec(1, "gamejams", "Game Jams", "Weekly jams, themes and submissions. Ship something small!", 2, 1240, 2, "admin");
+                    sec(2, "help", "Help & Support", "Stuck? Ask here. Be kind, share your code.", 0, 3310, 1, "member");
+                    sec(3, "okayscript", "OkayScript", "Tips, snippets and questions about scripting.", 4, 870, 1, "moderator");
+                    sec(4, "showcase", "Showcase", "Show what you made.", 5, 2050, 1, "");
+                    foSections[0].rules = "1. Be nice.\n2. Post your own work.\n3. One submission per jam.";
+                    foSecSup = true; foStaff = true;
+                    for (auto& t : ftCache) {
+                        t.sectionId = t.id == 5 || t.id == 1 ? 1 : t.id == 2 ? 2 : t.id == 3 ? 3 : 4;
+                        if (t.id == 1) t.sectionId = 4;
+                    }
+                    for (auto& t : ftCache) if (t.id == 5) t.pinned = true;
+                    for (auto& t : ftCache) if (t.id == 4) t.locked = true;
+                    if (const char* fs2 = std::getenv("OKAY_UI_DEMO_SECTION")) foSection = std::atol(fs2);
+                    if (std::getenv("OKAY_UI_DEMO_FOADMIN")) {
+                        foAdminOpen = true;
+                        foAdmMembers = {{"u1", "kingimann", "admin", t0 - 90 * 86400}, {"u2", "maya", "moderator", t0 - 60 * 86400},
+                                        {"u3", "alexr", "member", t0 - 20 * 86400}, {"u4", "priya", "member", t0 - 5 * 86400}};
+                        foAdmBans = {{"u9", "spambot42", "Posting ads", t0 - 2 * 86400}};
+                    }
                     auto po = [&](long id, const char* au, const char* body, long ago, long score) {
                         okay::ForumPost p; p.id = id; p.author = au; p.body = body; p.when = t0 - ago; fpCache.push_back(p); poScores[id] = score; };
                     po(101, "priya", "Use the Camera Follow component and set damping to ~0.15. Way smoother.", 6500, 9);
@@ -15719,8 +15794,11 @@ int main(int argc, char** argv) {
                     SDL_LockMutex(g_foMutex);
                     if (g_foReady) {
                         ftCache = g_foThreads; thScores = g_foScores; thMy = g_foMy; thComments = g_foComments;
+                        foSections = g_foSections; foSecSup = g_foSecSupported; foStaff = g_foStaff;
                         g_foReady = false;
                     }
+                    if (g_foAdmReady) { foAdmMembers = g_foAdmMembers; foAdmBans = g_foAdmBans; g_foAdmReady = false; }
+                    if (g_foActKind) { Toast(g_foActMsg, g_foActKind); g_foActKind = 0; foNext = 0; }
                     SDL_UnlockMutex(g_foMutex);
                 }
             }
@@ -15797,10 +15875,384 @@ int main(int argc, char** argv) {
                 ImGui::GetWindowDrawList()->AddLine(ImVec2(mc.x + 3.4f, mc.y + 3.4f), ImVec2(mc.x + 6.8f, mc.y + 6.8f), cDim, 1.8f);
             };
 
+            // ---- Sections (o/slug, Reddit-style; docs/sql/forum_sections.sql) ----
+            const int nSecColors = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+            auto sectionById = [&](long id) -> const okay::ForumSection* {
+                for (const auto& x : foSections) if (x.id == id) return &x;
+                return nullptr;
+            };
+            auto sectionColor = [&](const okay::ForumSection& x) { return kAccentPresets[std::clamp(x.color, 0, nSecColors - 1)].col; };
+            auto canModerate = [&](long sectionId) {
+                if (foStaff) return true;
+                const okay::ForumSection* sx = sectionById(sectionId);
+                return sx && (sx->myRole == "admin" || sx->myRole == "moderator");
+            };
+            auto sectionPill = [&](ImDrawList* d, ImVec2 at, const okay::ForumSection& x) -> float {
+                const std::string lbl = "o/" + x.slug;
+                const ImVec2 ts = ImGui::CalcTextSize(lbl.c_str());
+                const ImVec4 c = sectionColor(x);
+                d->AddRectFilled(at, ImVec2(at.x + ts.x + 14, at.y + ts.y + 4), ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.22f)), 9.0f);
+                d->AddText(ImVec2(at.x + 7, at.y + 2), ImGui::GetColorU32(ImVec4(c.x * 0.5f + 0.5f, c.y * 0.5f + 0.5f, c.z * 0.5f + 0.5f, 1.0f)), lbl.c_str());
+                return ts.x + 14;
+            };
+            auto drawPinIcon = [](ImDrawList* d, ImVec2 c, ImU32 col) {
+                d->AddCircleFilled(ImVec2(c.x, c.y - 3), 4.0f, col, 12);
+                d->AddLine(ImVec2(c.x, c.y), ImVec2(c.x, c.y + 6), col, 1.6f);
+                d->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), col, 1.6f);
+            };
+            auto drawLockIcon = [](ImDrawList* d, ImVec2 c, ImU32 col) {
+                d->AddRectFilled(ImVec2(c.x - 5, c.y - 1), ImVec2(c.x + 5, c.y + 6), col, 1.5f);
+                d->PathArcTo(ImVec2(c.x, c.y - 1), 3.5f, 3.14159265f, 3.14159265f * 2.0f, 8);
+                d->PathStroke(col, 0, 1.6f);
+            };
+            auto sectionBadge = [&](ImDrawList* d, ImVec2 c, float r, const okay::ForumSection& x) {
+                const ImVec4 col = sectionColor(x);
+                d->AddCircleFilled(c, r, ImGui::GetColorU32(col), 24);
+                char ini[2] = {x.name.empty() ? '?' : (char)std::toupper((unsigned char)x.name[0]), 0};
+                const float fs = r * 1.1f;
+                const ImVec2 is = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, ini);
+                d->AddText(ImGui::GetFont(), fs, ImVec2(c.x - is.x * 0.5f, c.y - is.y * 0.5f), IM_COL32_WHITE, ini);
+            };
+            auto openSectionPage = [&](long id) { foSection = id; foCat.clear(); foNewSection = -1; };
+            // Left rail: Home, joined sections, all sections, create.
+            auto drawSectionsRail = [&](float w, float h) {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 10));
+                ImGui::BeginChild("##forail", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding);
+                ImDrawList* d = ImGui::GetWindowDrawList();
+                auto row = [&](const char* id, const std::string& label, bool sel, const okay::ForumSection* x, const std::string& right) -> bool {
+                    ImVec2 rp = ImGui::GetCursorScreenPos();
+                    const float rw = ImGui::GetContentRegionAvail().x, rh = 34.0f;
+                    const bool hit = ImGui::InvisibleButton(id, ImVec2(rw, rh));
+                    const bool hov = ImGui::IsItemHovered();
+                    if (sel || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 11), 7.0f);
+                    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    const ImVec2 ic(rp.x + 17, rp.y + rh * 0.5f);
+                    if (x) sectionBadge(d, ic, 10.0f, *x);
+                    else DrawNavIcon(d, 9, ic, sel ? ImGui::GetColorU32(kAccent) : cDim);
+                    const float rtw = right.empty() ? 0.0f : ImGui::CalcTextSize(right.c_str()).x + 8;
+                    d->AddText(ImVec2(rp.x + 34, rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f), sel || hov ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.8f),
+                               FitText(label, rw - 40 - rtw).c_str());
+                    if (!right.empty()) d->AddText(ImVec2(rp.x + rw - rtw, rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f), cDim, right.c_str());
+                    return hit;
+                };
+                if (row("##fohome", "All posts", foSection == 0, nullptr, "")) openSectionPage(0);
+                auto label = [&](const char* t) {
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
+                    ImGui::SetWindowFontScale(0.78f); ImGui::TextDisabled("%s", t); ImGui::SetWindowFontScale(1.0f);
+                };
+                bool anyJoined = false;
+                for (const auto& x : foSections) if (!x.myRole.empty()) anyJoined = true;
+                if (anyJoined) {
+                    label("YOUR SECTIONS");
+                    for (const auto& x : foSections) {
+                        if (x.myRole.empty()) continue;
+                        ImGui::PushID((int)x.id);
+                        if (row("##sec", "o/" + x.slug, foSection == x.id, &x, x.myRole == "admin" ? "admin" : x.myRole == "moderator" ? "mod" : "")) openSectionPage(x.id);
+                        ImGui::PopID();
+                    }
+                }
+                label(anyJoined ? "DISCOVER" : "SECTIONS");
+                std::vector<const okay::ForumSection*> rest;
+                for (const auto& x : foSections) if (x.myRole.empty()) rest.push_back(&x);
+                std::sort(rest.begin(), rest.end(), [](auto a, auto b) { return a->members > b->members; });
+                for (const auto* x : rest) {
+                    ImGui::PushID((int)x->id);
+                    char mc[24]; std::snprintf(mc, sizeof(mc), x->members >= 1000 ? "%.1fk" : "%.0f", x->members >= 1000 ? x->members / 1000.0 : (double)x->members);
+                    if (row("##sec", "o/" + x->slug, foSection == x->id, x, mc)) openSectionPage(x->id);
+                    ImGui::PopID();
+                }
+                if (foSections.empty()) ImGui::TextDisabled("  No sections yet.");
+                ImGui::Dummy(ImVec2(0, 8));
+                if (canAct && ImGui::Button("+ Create a section", ImVec2(-1, 32))) foCreateOpen = true;
+                if (foStaff) {
+                    ImGui::Dummy(ImVec2(0, 4));
+                    if (ImGui::Button("Staff tools", ImVec2(-1, 30))) foStaffOpen = true;
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+            };
+            // Narrow windows: a combo instead of the rail.
+            auto drawSectionsStrip = [&]() {
+                std::string cur = "All posts";
+                if (const okay::ForumSection* x = sectionById(foSection)) cur = "o/" + x->slug;
+                ImGui::SetNextItemWidth(220);
+                if (ImGui::BeginCombo("##secstrip", cur.c_str())) {
+                    if (ImGui::Selectable("All posts", foSection == 0)) openSectionPage(0);
+                    for (const auto& x : foSections) if (ImGui::Selectable(("o/" + x.slug).c_str(), foSection == x.id)) openSectionPage(x.id);
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                if (canAct && ImGui::Button("+ Section")) foCreateOpen = true;
+                if (foStaff) { ImGui::SameLine(); if (ImGui::Button("Staff tools")) foStaffOpen = true; }
+                ImGui::Dummy(ImVec2(0, 4));
+            };
+            // Section banner: colour band, name, about, counts, Join/Leave, Admin tools.
+            auto drawSectionHeader = [&]() {
+                const okay::ForumSection* x = sectionById(foSection);
+                if (!x) { foSection = 0; return; }
+                ImDrawList* d = ImGui::GetWindowDrawList();
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float w = ImGui::GetContentRegionAvail().x, h = 104.0f;
+                const ImVec4 c = sectionColor(*x);
+                d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(okaytheme::kRaised), 12.0f);
+                d->AddRectFilledMultiColor(p, ImVec2(p.x + w, p.y + 34), ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.85f)), ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.35f)),
+                                           ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.35f)), ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.85f)));
+                d->AddCircleFilled(ImVec2(p.x + 44, p.y + 40), 27.0f, ImGui::GetColorU32(okaytheme::kRaised), 32);
+                sectionBadge(d, ImVec2(p.x + 44, p.y + 40), 23.0f, *x);
+                ImGui::SetWindowFontScale(1.25f);
+                d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 80, p.y + 40), cText, x->name.c_str());
+                ImGui::SetWindowFontScale(1.0f);
+                char meta[96]; std::snprintf(meta, sizeof(meta), "o/%s  \xC2\xB7  %ld members  \xC2\xB7  %ld posts", x->slug.c_str(), x->members, x->threads);
+                d->AddText(ImVec2(p.x + 80, p.y + 66), cDim, meta);
+                if (!x->description.empty()) d->AddText(ImVec2(p.x + 80, p.y + 84), IM_COL32(190, 198, 215, 255), FitText(x->description, w - 340).c_str());
+                // Buttons (right).
+                float bx = p.x + w - 16;
+                const float by = p.y + 46;
+                if (canModerate(x->id)) {
+                    bx -= 120;
+                    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+                    if (ImGui::Button("Admin tools", ImVec2(120, 32))) {
+                        foAdminOpen = true;
+                        if (!kFoDemo) FireForumAction(new FoAction{20, "", x->id, 0, "", "", ""});
+                    }
+                    bx -= 8;
+                }
+                if (canAct) {
+                    const bool joined = !x->myRole.empty();
+                    bx -= 100;
+                    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+                    if (x->banned) { ImGui::BeginDisabled(); ImGui::Button("Banned", ImVec2(100, 32)); ImGui::EndDisabled(); }
+                    else if (joined ? ImGui::Button(x->myRole == "admin" ? "Admin" : "Joined", ImVec2(100, 32)) : PrimaryButton("Join", ImVec2(100, 32))) {
+                        if (joined && x->myRole == "admin") Toast("You run this section \xE2\x80\x94 hand it over in Admin tools before leaving", 0);
+                        else {
+                            for (auto& y : foSections) if (y.id == x->id) { y.myRole = joined ? "" : "member"; y.members += joined ? -1 : 1; }
+                            if (!kFoDemo) FireForumAction(new FoAction{joined ? 4 : 3, "", x->id, 0, "", "", ""});
+                        }
+                    }
+                    if (joined && x->myRole != "admin" && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to leave");
+                }
+                ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 8));
+                if (!x->rules.empty() && ImGui::CollapsingHeader("Section rules")) {
+                    ImGui::PushTextWrapPos(0.0f); ImGui::TextUnformatted(x->rules.c_str()); ImGui::PopTextWrapPos();
+                    ImGui::Dummy(ImVec2(0, 4));
+                }
+                ImGui::Dummy(ImVec2(0, 2));
+            };
+            // Create section / Admin tools / Staff tools dialogs.
+            auto drawForumModals = [&]() {
+                if (foCreateOpen) { ImGui::OpenPopup("Create a section"); foCreateOpen = false; }
+                ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_Appearing);
+                if (ImGui::BeginPopupModal("Create a section", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+                    static char nm[41] = "", slug[25] = "", desc[300] = ""; static int col = 0; static bool slugEdited = false;
+                    ImGui::TextDisabled("A community for a topic. You'll be its admin.");
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##snm", "Name (e.g. Pixel Art)", nm, sizeof(nm)) && !slugEdited) {
+                        std::string sl; for (const char* c = nm; *c; ++c) { char ch = (char)std::tolower((unsigned char)*c); if (std::isalnum((unsigned char)ch)) sl += ch; else if (ch == ' ' || ch == '_' || ch == '-') sl += '_'; }
+                        std::snprintf(slug, sizeof(slug), "%s", sl.substr(0, 24).c_str());
+                    }
+                    ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("o/"); ImGui::SameLine(0, 2);
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##sslug", "link_name", slug, sizeof(slug), ImGuiInputTextFlags_CharsNoBlank)) slugEdited = true;
+                    ImGui::InputTextMultiline("##sdesc", desc, sizeof(desc), ImVec2(-1, 60));
+                    ImGui::TextDisabled("Colour");
+                    for (int i = 0; i < nSecColors && i < 10; ++i) {
+                        if (i) ImGui::SameLine(0, 6);
+                        ImVec2 cp = ImGui::GetCursorScreenPos();
+                        ImGui::PushID(i);
+                        if (ImGui::InvisibleButton("##sc", ImVec2(22, 22))) col = i;
+                        ImGui::PopID();
+                        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cp.x + 11, cp.y + 11), 10.0f, ImGui::GetColorU32(kAccentPresets[i].col), 20);
+                        if (col == i) ImGui::GetWindowDrawList()->AddCircle(ImVec2(cp.x + 11, cp.y + 11), 12.0f, IM_COL32_WHITE, 20, 2.0f);
+                    }
+                    std::string s2 = slug; bool slugOk = s2.size() >= 3;
+                    for (char ch : s2) if (!(std::islower((unsigned char)ch) || std::isdigit((unsigned char)ch) || ch == '_')) slugOk = false;
+                    const bool ok = std::strlen(nm) >= 3 && slugOk;
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::BeginDisabled(!ok);
+                    if (PrimaryButton("Create", ImVec2(110, 32))) {
+                        if (!kFoDemo) FireForumAction(new FoAction{5, "", 0, col, slug, nm, desc});
+                        else { okay::ForumSection x; x.id = 50 + (long)foSections.size(); x.slug = slug; x.name = nm; x.description = desc; x.color = col; x.members = 1; x.myRole = "admin"; foSections.push_back(x); foSection = x.id; }
+                        nm[0] = slug[0] = desc[0] = '\0'; slugEdited = false; foNext = tnow + 1500;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(90, 32))) ImGui::CloseCurrentPopup();
+                    if (!ok && nm[0]) { ImGui::SameLine(); ImGui::TextDisabled("Link: 3-24 a-z, 0-9, _"); }
+                    ImGui::EndPopup();
+                }
+
+                const okay::ForumSection* ax = sectionById(foSection);
+                if (foAdminOpen && ax) { ImGui::OpenPopup("Admin tools"); foAdminOpen = false; }
+                ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_Appearing);
+                if (ImGui::BeginPopupModal("Admin tools", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+                    if (!ax) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+                    const bool isAdmin = ax->myRole == "admin" || foStaff;
+                    ImGui::Text("o/%s", ax->slug.c_str()); ImGui::SameLine(); ImGui::TextDisabled(isAdmin ? "(admin)" : "(moderator)");
+                    if (ImGui::BeginTabBar("##admtabs")) {
+                        if (ImGui::BeginTabItem("Members")) {
+                            static char addMod[40] = "";
+                            if (isAdmin) {
+                                ImGui::SetNextItemWidth(220);
+                                ImGui::InputTextWithHint("##addmod", "username", addMod, sizeof(addMod));
+                                ImGui::SameLine();
+                                if (ImGui::Button("Make moderator") && addMod[0]) {
+                                    if (!kFoDemo) FireForumAction(new FoAction{16, "", ax->id, 0, addMod, "", ""});
+                                    else foAdmMembers.push_back({"new", addMod, "moderator", (long)std::time(nullptr)});
+                                    addMod[0] = '\0';
+                                }
+                            }
+                            ImGui::BeginChild("##admmem", ImVec2(0, -48), false);
+                            for (auto& m : foAdmMembers) {
+                                ImGui::PushID(m.uid.c_str());
+                                DrawAvatar("", m.name.empty() ? "?" : m.name, 24.0f);
+                                ImGui::SameLine(0, 8); ImGui::AlignTextToFramePadding();
+                                ImGui::TextUnformatted(m.name.empty() ? m.uid.substr(0, 8).c_str() : m.name.c_str());
+                                ImGui::SameLine(0, 8);
+                                ImGui::TextColored(m.role == "admin" ? ImVec4(0.95f, 0.45f, 0.45f, 1) : m.role == "moderator" ? ImVec4(0.45f, 0.85f, 0.55f, 1) : ImVec4(0.6f, 0.64f, 0.72f, 1), "%s", m.role.c_str());
+                                if (m.role != "admin") {
+                                    ImGui::SameLine(ImGui::GetContentRegionMax().x - 250);
+                                    if (isAdmin && ImGui::SmallButton(m.role == "moderator" ? "Remove mod" : "Make mod")) {
+                                        m.role = m.role == "moderator" ? "member" : "moderator";
+                                        if (!kFoDemo) FireForumAction(new FoAction{12, "", ax->id, 0, m.uid, m.role, ""});
+                                    }
+                                    ImGui::SameLine();
+                                    if (ImGui::SmallButton("Kick")) { if (!kFoDemo) FireForumAction(new FoAction{13, "", ax->id, 0, m.uid, "", ""}); }
+                                    ImGui::SameLine();
+                                    if (ImGui::SmallButton("Ban")) {
+                                        if (!kFoDemo) FireForumAction(new FoAction{14, "", ax->id, 0, m.uid, "Banned by a moderator", m.name});
+                                        else foAdmBans.push_back({m.uid, m.name, "Banned by a moderator", (long)std::time(nullptr)});
+                                    }
+                                }
+                                ImGui::PopID();
+                            }
+                            if (foAdmMembers.empty()) ImGui::TextDisabled("Loading members\xE2\x80\xA6");
+                            ImGui::EndChild();
+                            ImGui::EndTabItem();
+                        }
+                        if (ImGui::BeginTabItem("Bans")) {
+                            static char banUser[40] = "", banWhy[120] = "";
+                            ImGui::SetNextItemWidth(160); ImGui::InputTextWithHint("##banu", "username", banUser, sizeof(banUser));
+                            ImGui::SameLine(); ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("##banw", "reason (optional)", banWhy, sizeof(banWhy));
+                            ImGui::SameLine();
+                            if (ImGui::Button("Ban") && banUser[0]) {
+                                if (!kFoDemo) FireForumAction(new FoAction{14, "", ax->id, 0, banUser, banWhy, banUser});
+                                else foAdmBans.push_back({"x", banUser, banWhy, (long)std::time(nullptr)});
+                                banUser[0] = banWhy[0] = '\0';
+                            }
+                            ImGui::Separator();
+                            std::string unban;
+                            for (const auto& b : foAdmBans) {
+                                ImGui::PushID(b.uid.c_str());
+                                ImGui::AlignTextToFramePadding();
+                                ImGui::TextUnformatted(b.name.empty() ? b.uid.substr(0, 8).c_str() : b.name.c_str());
+                                ImGui::SameLine(0, 10); ImGui::TextDisabled("%s  \xC2\xB7  %s", b.reason.empty() ? "no reason" : b.reason.c_str(), RelTime(b.when).c_str());
+                                ImGui::SameLine(ImGui::GetContentRegionMax().x - 70);
+                                if (ImGui::SmallButton("Unban")) unban = b.uid;
+                                ImGui::PopID();
+                            }
+                            if (!unban.empty()) {
+                                if (!kFoDemo) FireForumAction(new FoAction{15, "", ax->id, 0, unban, "", ""});
+                                foAdmBans.erase(std::remove_if(foAdmBans.begin(), foAdmBans.end(), [&](const okay::ForumBan& b) { return b.uid == unban; }), foAdmBans.end());
+                            }
+                            if (foAdmBans.empty()) ImGui::TextDisabled("Nobody is banned.");
+                            ImGui::EndTabItem();
+                        }
+                        if (isAdmin && ImGui::BeginTabItem("Settings")) {
+                            static long editing = 0; static char desc[300] = "", rules[2000] = ""; static int col = 0;
+                            if (editing != ax->id) {
+                                editing = ax->id; col = ax->color;
+                                std::snprintf(desc, sizeof(desc), "%s", ax->description.c_str());
+                                std::snprintf(rules, sizeof(rules), "%s", ax->rules.c_str());
+                            }
+                            ImGui::TextDisabled("About");
+                            ImGui::InputTextMultiline("##adesc", desc, sizeof(desc), ImVec2(-1, 60));
+                            ImGui::TextDisabled("Rules");
+                            ImGui::InputTextMultiline("##arules", rules, sizeof(rules), ImVec2(-1, 110));
+                            ImGui::TextDisabled("Colour");
+                            for (int i = 0; i < nSecColors && i < 10; ++i) {
+                                if (i) ImGui::SameLine(0, 6);
+                                ImVec2 cp = ImGui::GetCursorScreenPos();
+                                ImGui::PushID(i + 100);
+                                if (ImGui::InvisibleButton("##ac", ImVec2(22, 22))) col = i;
+                                ImGui::PopID();
+                                ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cp.x + 11, cp.y + 11), 10.0f, ImGui::GetColorU32(kAccentPresets[i].col), 20);
+                                if (col == i) ImGui::GetWindowDrawList()->AddCircle(ImVec2(cp.x + 11, cp.y + 11), 12.0f, IM_COL32_WHITE, 20, 2.0f);
+                            }
+                            ImGui::Dummy(ImVec2(0, 4));
+                            if (PrimaryButton("Save", ImVec2(100, 30))) {
+                                for (auto& y : foSections) if (y.id == ax->id) { y.description = desc; y.rules = rules; y.color = col; }
+                                if (!kFoDemo) FireForumAction(new FoAction{6, "", ax->id, col, desc, rules, ""});
+                            }
+                            ImGui::SameLine(0, 20);
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.20f, 1.0f));
+                            if (ImGui::Button("Delete section", ImVec2(130, 30))) ImGui::OpenPopup("##delsec");
+                            ImGui::PopStyleColor();
+                            if (ImGui::BeginPopup("##delsec")) {
+                                ImGui::TextUnformatted("Delete this section and every post in it?");
+                                if (ImGui::Button("Delete", ImVec2(100, 0))) {
+                                    if (!kFoDemo) FireForumAction(new FoAction{7, "", ax->id, 0, "", "", ""});
+                                    const long gone = ax->id;
+                                    foSections.erase(std::remove_if(foSections.begin(), foSections.end(), [&](const okay::ForumSection& y) { return y.id == gone; }), foSections.end());
+                                    foSection = 0; ImGui::CloseCurrentPopup();
+                                }
+                                ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+                                ImGui::EndPopup();
+                            }
+                            ImGui::EndTabItem();
+                        }
+                        ImGui::EndTabBar();
+                    }
+                    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 100, ImGui::GetWindowHeight() - 44));
+                    if (ImGui::Button("Close", ImVec2(84, 30))) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                }
+
+                if (foStaffOpen) { ImGui::OpenPopup("Staff tools"); foStaffOpen = false; }
+                ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_Appearing);
+                if (ImGui::BeginPopupModal("Staff tools", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+                    static char who[40] = "";
+                    ImGui::TextDisabled("Staff can moderate every section, verify players and award badges.");
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputTextWithHint("##staffwho", "Player username", who, sizeof(who));
+                    ImGui::BeginDisabled(!who[0]);
+                    if (ImGui::Button("Verify", ImVec2(100, 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 1, who, "", ""}); else Toast("Verified", 1); }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Unverify", ImVec2(100, 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 0, who, "", ""}); }
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Badges");
+                    static const char* kBadges[] = {"developer", "moderator", "beta", "partner"};
+                    for (const char* b : kBadges) {
+                        ImGui::PushID(b);
+                        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted(b);
+                        ImGui::SameLine(140);
+                        if (ImGui::SmallButton("Award")) { if (!kFoDemo) FireForumAction(new FoAction{18, "", 0, 1, who, b, ""}); else Toast("Badge awarded", 1); }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Remove")) { if (!kFoDemo) FireForumAction(new FoAction{18, "", 0, 0, who, b, ""}); }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::Dummy(ImVec2(0, 6));
+                    if (ImGui::Button("Close", ImVec2(90, 30))) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                }
+            };
+
             if (openThread == 0) {
+                // Sections rail (left) on wide windows; the list lives beside it.
+                const float foAvailY = ImGui::GetContentRegionAvail().y - 46.0f;
+                const bool showRail = foSecSup && ImGui::GetContentRegionAvail().x > 820.0f;
+                if (showRail) { drawSectionsRail(220.0f, foAvailY); ImGui::SameLine(0, 14); }
+                ImGui::BeginChild("##fomain", ImVec2(0, foAvailY), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                if (!showRail && foSecSup) drawSectionsStrip();
+                if (foSection != 0) drawSectionHeader();
                 // ---- Toolbar: categories (left), sort + search + New post (right) ----
                 std::vector<std::string> cats;
-                for (const auto& t : ftCache) if (!t.category.empty() && std::find(cats.begin(), cats.end(), t.category) == cats.end()) cats.push_back(t.category);
+                for (const auto& t : ftCache) if ((foSection == 0 || t.sectionId == foSection) && !t.category.empty() && std::find(cats.begin(), cats.end(), t.category) == cats.end()) cats.push_back(t.category);
                 std::sort(cats.begin(), cats.end());
                 {
                     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -15862,6 +16314,21 @@ int main(int argc, char** argv) {
                         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
                         ImGui::SetNextItemWidth(-1);
                         ImGui::InputTextWithHint("##nt", "Title", newThread, sizeof(newThread));
+                        if (foSecSup) {   // where it goes
+                            const long cur = foNewSection >= 0 ? foNewSection : foSection;
+                            std::string lbl = "General";
+                            for (const auto& x : foSections) if (x.id == cur) lbl = "o/" + x.slug;
+                            ImGui::SetNextItemWidth(200);
+                            if (ImGui::BeginCombo("##nsec", lbl.c_str())) {
+                                if (ImGui::Selectable("General", cur == 0)) foNewSection = 0;
+                                for (const auto& x : foSections) {
+                                    if (x.banned) continue;
+                                    if (ImGui::Selectable(("o/" + x.slug).c_str(), cur == x.id)) foNewSection = x.id;
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::SameLine(0, 8);
+                        }
                         ImGui::SetNextItemWidth(240);
                         ImGui::InputTextWithHint("##ncat", "Topic (e.g. help, showcase)", newCat, sizeof(newCat));
                         for (const auto& c : cats) {   // quick-pick existing topics
@@ -15873,7 +16340,11 @@ int main(int argc, char** argv) {
                         ImGui::BeginDisabled(!newThread[0]);
                         if (PrimaryButton("Post", ImVec2(110, 32))) {
                             // Fire the post off-thread; optimistically close the form.
-                            if (!kFoDemo) FireForumAction(new FoAction{2, "", 0, 0, newThread, newBody, newCat});
+                            const long toSec = foNewSection >= 0 ? foNewSection : foSection;
+                            if (!kFoDemo) FireForumAction(new FoAction{2, "", toSec, 0, newThread, newBody, newCat});
+                            else { okay::ForumThread t; t.id = 900 + (long)ftCache.size(); t.title = newThread; t.body = newBody; t.category = newCat;
+                                   t.author = std::getenv("OKAY_UI_DEMO_USER"); t.when = (long)std::time(nullptr); t.sectionId = toSec; ftCache.push_back(t); }
+                            foNewSection = -1;
                             newThread[0] = newBody[0] = newCat[0] = '\0'; foErr.clear();
                             foShowNew = false; foNext = tnow + 1200;   // refresh shortly after
                             Toast("Posted", 1);
@@ -15897,6 +16368,7 @@ int main(int argc, char** argv) {
                 auto lo = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
                 const std::string q = lo(foSearch);
                 for (auto& t : ftCache) {
+                    if (foSection != 0 && t.sectionId != foSection) continue;
                     if (!foCat.empty() && t.category != foCat) continue;
                     if (!q.empty() && lo(t.title + " " + t.body + " " + t.author).find(q) == std::string::npos) continue;
                     order.push_back(&t);
@@ -15911,8 +16383,10 @@ int main(int argc, char** argv) {
                         return hot(a) > hot(b); });
                 else                    // New
                     std::stable_sort(order.begin(), order.end(), [](auto a, auto b) { return a->when > b->when; });
+                if (foSection != 0)     // a section's pinned posts stay on top
+                    std::stable_sort(order.begin(), order.end(), [](auto a, auto b) { return a->pinned && !b->pinned; });
 
-                ImGui::BeginChild("##threads", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+                ImGui::BeginChild("##threads", ImVec2(0, ImGui::GetContentRegionAvail().y), false);
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 for (const okay::ForumThread* tp : order) {
                     const okay::ForumThread& t = *tp;
@@ -15932,7 +16406,16 @@ int main(int argc, char** argv) {
                     // Content.
                     const float tx = rp.x + 52, maxW = w - 52 - 16;
                     float y = rp.y + 12;
-                    float pw = catPill(dl, ImVec2(tx, y), t.category);
+                    float pw = 0.0f;
+                    if (t.sectionId && foSection == 0) {   // o/slug
+                        if (const okay::ForumSection* sx = sectionById(t.sectionId)) pw += sectionPill(dl, ImVec2(tx, y), *sx) + 6;
+                    }
+                    const float cpw = catPill(dl, ImVec2(tx + pw, y), t.category);
+                    pw += cpw > 0 ? cpw : 0;
+                    float flagW = 0;
+                    if (t.pinned && foSection != 0) { drawPinIcon(dl, ImVec2(tx + pw + 10, y + 9), IM_COL32(67, 181, 129, 255)); flagW += 20; }
+                    if (t.locked) { drawLockIcon(dl, ImVec2(tx + pw + flagW + 10, y + 9), IM_COL32(240, 200, 90, 255)); flagW += 20; }
+                    pw += flagW;
                     ImGui::SetWindowFontScale(1.06f);
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx + (pw > 0 ? pw + 8 : 0), y), cText, FitText(t.title, maxW - pw - 8).c_str());
                     ImGui::SetWindowFontScale(1.0f);
@@ -15954,6 +16437,7 @@ int main(int argc, char** argv) {
                     if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     if (open) {
                         openThread = t.id; openTitle = t.title; openAuthor = t.author; openBody = t.body; openCat = t.category; openWhen = t.when; fpNext = 0;
+                        openSection = t.sectionId; openPinned = t.pinned; openLocked = t.locked;
                         if (!kFoDemo) { fpCache.clear(); poScores.clear(); poMy.clear(); }   // show the loading state, not stale comments
                     }
                     ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + h + 10));
@@ -15978,6 +16462,8 @@ int main(int argc, char** argv) {
                     else { centered("No discussions yet", false); centered("Start the first one with \"New post\".", true); }
                 }
                 ImGui::EndChild();
+                ImGui::EndChild();   // ##fomain
+                drawForumModals();
             } else {
                 // ---- Thread view ----
                 // Fetch the thread's comments + vote maps on a background thread,
@@ -16042,6 +16528,36 @@ int main(int argc, char** argv) {
                         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) OpenPublicProfile("", openAuthor, openAuthor);
                     }
                     if (!openBody.empty()) { ImGui::Dummy(ImVec2(0, 4)); RenderChatBody(openBody, ImGui::GetContentRegionAvail().x - 8); }
+                    if (openLocked) { ImGui::Dummy(ImVec2(0, 2)); ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.40f, 1.0f), "Locked \xE2\x80\x94 no new comments"); }
+                    if (canModerate(openSection)) {   // moderator tools for this post
+                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.07f));
+                        if (ImGui::SmallButton(openPinned ? "Unpin" : "Pin")) { openPinned = !openPinned; for (auto& t : ftCache) if (t.id == openThread) t.pinned = openPinned;
+                            if (!kFoDemo) FireForumAction(new FoAction{8, "", openThread, openPinned ? 1 : 0, "", "", ""}); }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton(openLocked ? "Unlock" : "Lock")) { openLocked = !openLocked; for (auto& t : ftCache) if (t.id == openThread) t.locked = openLocked;
+                            if (!kFoDemo) FireForumAction(new FoAction{9, "", openThread, openLocked ? 1 : 0, "", "", ""}); }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Remove post")) ImGui::OpenPopup("##rmthread");
+                        if (openSection && !openAuthor.empty() && openAuthor != (kFoDemo ? std::string(std::getenv("OKAY_UI_DEMO_USER")) : account.CurrentSession().username)) {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton(("Ban " + openAuthor).c_str())) {
+                                if (!kFoDemo) FireForumAction(new FoAction{14, "", openSection, 0, openAuthor, "Removed by a moderator", openAuthor});
+                                else Toast(openAuthor + " banned from the section", 1);
+                            }
+                        }
+                        ImGui::PopStyleColor();
+                        if (ImGui::BeginPopup("##rmthread")) {
+                            ImGui::TextUnformatted("Remove this post and its comments?");
+                            if (ImGui::Button("Remove", ImVec2(110, 0))) {
+                                if (!kFoDemo) FireForumAction(new FoAction{10, "", openThread, 0, "", "", ""});
+                                ftCache.erase(std::remove_if(ftCache.begin(), ftCache.end(), [&](const okay::ForumThread& t) { return t.id == openThread; }), ftCache.end());
+                                openThread = 0; ImGui::CloseCurrentPopup();
+                            }
+                            ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+                            ImGui::EndPopup();
+                        }
+                    }
                     ImGui::EndGroup();
                     ImGui::EndChild();
                     ImGui::PopStyleVar(2);
@@ -16070,6 +16586,15 @@ int main(int argc, char** argv) {
                     ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", RelTime(p.when).c_str());
                     RenderChatBody(p.body, ImGui::GetContentRegionAvail().x - 8);
                     voteWidget("post", p.id, poScores, poMy, true);
+                    if (canModerate(openSection) || mine) {
+                        ImGui::SameLine(0, 12);
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.05f));
+                        if (ImGui::SmallButton("Remove")) {
+                            if (!kFoDemo) FireForumAction(new FoAction{11, "", p.id, 0, "", "", ""});
+                            fpNext = tnow + 800;
+                        }
+                        ImGui::PopStyleColor();
+                    }
                     ImGui::EndGroup();
                     ImGui::Dummy(ImVec2(0, 8));
                     ImGui::PopID();
@@ -16085,8 +16610,11 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 9));
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 108);
                 if (foReplyFocus) { ImGui::SetKeyboardFocusHere(); foReplyFocus = false; }
-                ImGui::BeginDisabled(!canAct);
-                bool rp = ImGui::InputTextWithHint("##reply", canAct ? "Add a comment\xE2\x80\xA6" : "Sign in to comment", replyBuf, sizeof(replyBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                const bool bannedHere = [&]() { const okay::ForumSection* sx = sectionById(openSection); return sx && sx->banned; }();
+                ImGui::BeginDisabled(!canAct || openLocked || bannedHere);
+                bool rp = ImGui::InputTextWithHint("##reply", !canAct ? "Sign in to comment" : openLocked ? "This post is locked" :
+                                                   bannedHere ? "You're banned from this section" : "Add a comment\xE2\x80\xA6",
+                                                   replyBuf, sizeof(replyBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::SameLine(0, 8);
                 bool post = PrimaryButton("Comment", ImVec2(100, ImGui::GetFrameHeight()));
                 ImGui::EndDisabled();

@@ -130,6 +130,24 @@ inline const std::vector<VsDef>& Registry() {
         {"LogError", "Log Error",   CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
         {"AddForce", "Add Force",   CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
         {"SetVelocity","Set Velocity",CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
+        {"AddImpulse","Add Impulse", CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
+        // --- Logic / selection ---
+        {"Approx",  "Approx Equal", CAT_LOGIC, false, {}, {"A","B"}, {"Bool"}, 0, nullptr},
+        {"Between", "Between",      CAT_LOGIC, false, {}, {"Value","Min","Max"}, {"Bool"}, 0, nullptr},
+        {"Chance",  "Chance",       CAT_LOGIC, false, {}, {}, {"Bool"}, 1, "0..1"},
+        {"HasVar",  "Has Var",      CAT_LOGIC, false, {}, {}, {"Bool"}, 1, "name"},
+        {"Select",  "Select",       CAT_LOGIC, false, {}, {"Cond","A","B"}, {"Out"}, 0, nullptr},
+        {"Concat",  "Concat (text)",CAT_DATA,  false, {}, {"A","B"}, {"Out"}, 0, nullptr},
+        // --- Vectors ---
+        {"VecX", "Vec X", CAT_MATH, false, {}, {"Vec"}, {"X"}, 0, nullptr},
+        {"VecY", "Vec Y", CAT_MATH, false, {}, {"Vec"}, {"Y"}, 0, nullptr},
+        {"VecZ", "Vec Z", CAT_MATH, false, {}, {"Vec"}, {"Z"}, 0, nullptr},
+        // --- Physics reads + tween ---
+        {"VelX", "Velocity X", CAT_INPUT, false, {}, {}, {"X"}, 0, nullptr},
+        {"VelY", "Velocity Y", CAT_INPUT, false, {}, {}, {"Y"}, 0, nullptr},
+        {"EaseIn",    "Ease In",     CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
+        {"EaseOut",   "Ease Out",    CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
+        {"EaseInOut", "Ease In-Out", CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
     };
     return defs;
 }
@@ -297,6 +315,15 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::TextDisabled("%s%s", g.path.empty() ? "(unsaved)" : g.path.c_str(), g.dirty ? " *" : "");
     ImGui::SameLine();
     ImGui::TextDisabled("  |  right-click: add node  ·  drag pins to wire  ·  Del: delete");
+    // Lightweight validation: a graph with nodes but no event entry never runs.
+    {
+        bool hasEvent = false;
+        for (const auto& n : g.nodes) if (n.type == "OnStart" || n.type == "OnUpdate") { hasEvent = true; break; }
+        if (!g.nodes.empty() && !hasEvent) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.40f, 1.0f), "  \xE2\x9A\xA0 add an On Start / On Update node");
+        }
+    }
 
     // Canvas.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.105f, 0.105f, 0.112f, 1.0f));

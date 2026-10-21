@@ -20821,6 +20821,13 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Air Control##cc2", &cc->airControl, 0.02f, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Max Fall Speed##cc2", &cc->maxFallSpeed, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Extra Fall Gravity##cc2", &cc->extraFallGravity, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Wall Slide + Jump##cc2", &cc->wallJump)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide slowly down walls and jump off them (needs side colliders).");
+                if (cc->wallJump) {
+                    if (ImGui::DragFloat("Wall Slide Speed##cc2", &cc->wallSlideSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                    if (ImGui::DragFloat("Wall Jump Up##cc2", &cc->wallJumpForce, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                    if (ImGui::DragFloat("Wall Jump Push##cc2", &cc->wallJumpPush, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                }
             }
             ImGui::TextDisabled("WASD / arrows / stick. Uses a Rigidbody2D if present.");
             if (ImGui::SmallButton("Remove##cc2")) toRemove = cc;

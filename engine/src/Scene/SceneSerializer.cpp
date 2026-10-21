@@ -729,7 +729,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cc->flipSprite ? 1 : 0) << " " << cc->maxJumps
             << " " << (cc->variableJump ? 1 : 0) << " " << cc->jumpCutMultiplier
             << " " << cc->coyoteTime << " " << cc->jumpBuffer << " " << cc->airControl
-            << " " << cc->maxFallSpeed << " " << cc->extraFallGravity << "\n";
+            << " " << cc->maxFallSpeed << " " << cc->extraFallGravity
+            << " " << (cc->wallJump ? 1 : 0) << " " << cc->wallSlideSpeed
+            << " " << cc->wallJumpForce << " " << cc->wallJumpPush << "\n";
     }
     if (auto* cc = go->GetComponent<CharacterController3D>()) {
         out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0)
@@ -2506,6 +2508,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cc->airControl = (float)std::atof(air.c_str());
                         cc->maxFallSpeed = (float)std::atof(mfs.c_str());
                         cc->extraFallGravity = (float)std::atof(efg.c_str());
+                        // Wall slide / wall jump (optional trailing fields).
+                        std::string wj, wss, wjf, wjp;
+                        if (in >> wj >> wss >> wjf >> wjp) {
+                            cc->wallJump = (wj != "0");
+                            cc->wallSlideSpeed = (float)std::atof(wss.c_str());
+                            cc->wallJumpForce = (float)std::atof(wjf.c_str());
+                            cc->wallJumpPush = (float)std::atof(wjp.c_str());
+                        }
                     }
                 } else if (field == "ctmctrl") {
                     float ws = 4, rs = 7, sd = 0.15f, ts = 12, gy = 0; std::string rk = "-";

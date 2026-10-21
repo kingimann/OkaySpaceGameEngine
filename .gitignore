@@ -30,3 +30,6 @@ compile_commands.json
 OkaySpace-*.zip
 OkaySpacev*.zip
 winbuild.log
+
+# Claude Code agent worktrees (temporary, local only)
+.claude/worktrees/

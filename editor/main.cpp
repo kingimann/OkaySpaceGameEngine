@@ -315,6 +315,7 @@ int main(int argc, char** argv) {
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "AppIcon.hpp"
+#include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "backends/imgui_impl_sdl2.h"
@@ -1404,11 +1405,31 @@ static void EmptyState(const char* glyph, const char* title, const char* hint = 
     if (avail.y < 40.0f) { ImGui::TextDisabled("%s", title); return; }
     float startY = ImGui::GetCursorPosY() + avail.y * 0.34f;
     ImGui::SetCursorPosY(startY);
+    // Centered text, word-wrapped to the panel width so a long hint in a
+    // narrow panel isn't cut off on both sides.
     auto centered = [&](const char* txt, ImVec4 col, float scale) {
         if (scale != 1.0f) ImGui::SetWindowFontScale(scale);
-        float w = ImGui::CalcTextSize(txt).x;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - w) * 0.5f);
-        ImGui::TextColored(col, "%s", txt);
+        const float maxW = std::max(40.0f, avail.x - 16.0f);
+        const float x0 = ImGui::GetCursorPosX();
+        std::string s = txt, line;
+        auto flush = [&]() {
+            if (line.empty()) return;
+            float w = ImGui::CalcTextSize(line.c_str()).x;
+            ImGui::SetCursorPosX(x0 + std::max(0.0f, (avail.x - w) * 0.5f));
+            ImGui::TextColored(col, "%s", line.c_str());
+            line.clear();
+        };
+        std::size_t i = 0;
+        while (i < s.size()) {
+            std::size_t j = s.find(' ', i);
+            if (j == std::string::npos) j = s.size();
+            std::string word = s.substr(i, j - i);
+            std::string trial = line.empty() ? word : line + " " + word;
+            if (!line.empty() && ImGui::CalcTextSize(trial.c_str()).x > maxW) { flush(); line = word; }
+            else line = trial;
+            i = j + 1;
+        }
+        flush();
         if (scale != 1.0f) ImGui::SetWindowFontScale(1.0f);
     };
     if (glyph && *glyph) {
@@ -2998,7 +3019,7 @@ void ConsoleClear() {
     g_consoleCounts[0] = g_consoleCounts[1] = g_consoleCounts[2] = 0;
 }
 
-// ---- A dark, Unity-ish theme ------------------------------------------
+// ---- Editor theme (default: the shared Slate palette) ----------------------
 void ApplyTheme() {
     if (g_theme == 1)      ImGui::StyleColorsLight();
     else if (g_theme == 2) ImGui::StyleColorsClassic();
@@ -3024,6 +3045,10 @@ void ApplyTheme() {
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     s.DockingSeparatorSize = 1.5f;
+    if (g_theme == 0) {   // Slate: rounded controls + hairline borders (shared with the launcher)
+        okaytheme::ApplySlateMetrics(s);
+        s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
+    }
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
@@ -3031,75 +3056,10 @@ void ApplyTheme() {
     // Light / Classic keep ImGui's own palette (only the metrics above apply).
     if (g_theme != 0) return;
 
-    // A cohesive dark palette with the user's chosen accent colour.
+    // The shared OkaySpace "Slate" palette (same as the launcher and its chat),
+    // with the user's chosen accent colour.
     const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
-    auto lighten = [](float v) { return v + (1.0f - v) * 0.30f; };   // brighter for hover
-    const ImVec4 accent      = ImVec4(ap.r, ap.g, ap.b, 1.00f);
-    const ImVec4 accentDim   = ImVec4(ap.r, ap.g, ap.b, 0.55f);
-    const ImVec4 accentHover = ImVec4(lighten(ap.r), lighten(ap.g), lighten(ap.b), 1.00f);
-    // Blend a base gray a little toward the accent — for hovers/tabs/title, the
-    // subtle accent wash that makes modern editors (s&box) feel cohesive, not gray.
-    // Neutral medium-gray base (Unity Pro dark) instead of a blue-tinted near-black:
-    // panels read as professional gray, with the chosen accent only on interactive
-    // states (selection, buttons, checks, tabs, slider grabs).
-    ImVec4* c = s.Colors;
-    // Unity Editor "Dark" skin: neutral medium-grey panels (#383838), darker
-    // toolbars (#2D2D2D) and sunken fields (#2A2A2A), crisp light-grey text, and
-    // Unity's signature blue for selection/active states. Matches the launcher.
-    c[ImGuiCol_WindowBg]         = ImVec4(0.220f, 0.220f, 0.220f, 1.00f);  // #383838
-    c[ImGuiCol_ChildBg]          = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
-    c[ImGuiCol_PopupBg]          = ImVec4(0.235f, 0.235f, 0.235f, 0.99f);  // #3C3C3C
-    c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
-    c[ImGuiCol_FrameBg]          = ImVec4(0.165f, 0.165f, 0.165f, 1.00f);  // #2A2A2A input fields
-    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.205f, 0.205f, 0.205f, 1.00f);
-    c[ImGuiCol_FrameBgActive]    = ImVec4(0.245f, 0.245f, 0.245f, 1.00f);
-    c[ImGuiCol_TitleBg]          = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2D2D2D
-    c[ImGuiCol_TitleBgActive]    = ImVec4(0.205f, 0.205f, 0.205f, 1.00f);
-    c[ImGuiCol_MenuBarBg]        = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2D2D2D toolbar
-    // Foldout bars / selection: a neutral raised grey like Unity's foldouts (the
-    // accent is reserved for checks, sliders, tabs and pressed buttons, so the
-    // Inspector isn't a stack of solid-blue bars). HeaderActive lifts toward accent.
-    c[ImGuiCol_Header]           = ImVec4(0.270f, 0.270f, 0.285f, 1.00f);
-    c[ImGuiCol_HeaderHovered]    = ImVec4(0.320f, 0.320f, 0.338f, 1.00f);
-    c[ImGuiCol_HeaderActive]     = ImVec4(0.360f, 0.360f, 0.380f, 1.00f);
-    // Neutral raised buttons (#585858, Unity). Primary/active toolbar actions push
-    // their own colours, so a toolbar reads as calm greys, not a row of blue pills.
-    c[ImGuiCol_Button]           = ImVec4(0.345f, 0.345f, 0.345f, 1.00f);
-    c[ImGuiCol_ButtonHovered]    = ImVec4(0.400f, 0.400f, 0.400f, 1.00f);
-    c[ImGuiCol_ButtonActive]     = accent;
-    c[ImGuiCol_CheckMark]        = ImVec4(0.900f, 0.910f, 0.930f, 1.00f);  // Unity toggle check is light
-    c[ImGuiCol_SliderGrab]       = accent;
-    c[ImGuiCol_SliderGrabActive] = accentHover;
-    c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
-    c[ImGuiCol_SeparatorHovered] = accentDim;
-    c[ImGuiCol_SeparatorActive]  = accent;
-    c[ImGuiCol_ResizeGrip]       = ImVec4(1.00f, 1.00f, 1.00f, 0.060f);
-    c[ImGuiCol_ResizeGripHovered]= accentDim;
-    c[ImGuiCol_ResizeGripActive] = accent;
-    c[ImGuiCol_Tab]              = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2D2D2D
-    c[ImGuiCol_TabHovered]       = ImVec4(0.255f, 0.255f, 0.255f, 1.00f);
-    c[ImGuiCol_TabActive]        = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);  // active tab blends with panels
-    c[ImGuiCol_TabUnfocused]     = ImVec4(0.165f, 0.165f, 0.165f, 1.00f);
-    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.210f, 0.210f, 0.210f, 1.00f);
-    c[ImGuiCol_TabSelectedOverline]       = accent;                 // accent line atop the active tab
-    c[ImGuiCol_TabDimmedSelectedOverline] = accentDim;
-    c[ImGuiCol_DockingPreview]   = accentDim;
-    c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
-    c[ImGuiCol_NavHighlight]     = accent;
-    c[ImGuiCol_Text]             = ImVec4(0.824f, 0.824f, 0.827f, 1.00f);   // #D2D2D2 Unity label
-    c[ImGuiCol_TextDisabled]     = ImVec4(0.500f, 0.500f, 0.505f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]      = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);   // no track column — just the thumb
-    c[ImGuiCol_ScrollbarGrab]    = ImVec4(1.000f, 1.000f, 1.000f, 0.13f);   // faint until hovered (overlay style)
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(1.000f, 1.000f, 1.000f, 0.26f);
-    c[ImGuiCol_ScrollbarGrabActive]  = accent;
-    c[ImGuiCol_DockingEmptyBg]   = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);  // #1E1E1E
-    // Tables: a defined header, faint zebra rows, and low-contrast grid lines so
-    // multi-column views (bindings, stats, asset lists) read cleanly.
-    c[ImGuiCol_TableHeaderBg]    = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
-    c[ImGuiCol_TableBorderStrong]= ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
-    c[ImGuiCol_TableBorderLight] = ImVec4(0.00f, 0.00f, 0.00f, 0.25f);
-    c[ImGuiCol_TableRowBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.022f);   // subtle zebra
+    okaytheme::ApplySlateColors(s, ImVec4(ap.r, ap.g, ap.b, 1.0f));
 }
 
 // Build the default Unity-style dock layout once.
@@ -3186,11 +3146,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
     if (g_theme == 0) {
         ImGuiStyle& st = ImGui::GetStyle();
         if (ed.isPlaying()) {
-            st.Colors[ImGuiCol_WindowBg]  = ImVec4(0.135f, 0.135f, 0.146f, 1.00f);
-            st.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.115f, 0.115f, 0.125f, 1.00f);
+            st.Colors[ImGuiCol_WindowBg]  = okaytheme::Mix(okaytheme::kBase, ImVec4(0, 0, 0, 1), 0.22f);
+            st.Colors[ImGuiCol_MenuBarBg] = okaytheme::Mix(okaytheme::kSunken, ImVec4(0, 0, 0, 1), 0.22f);
         } else {
-            st.Colors[ImGuiCol_WindowBg]  = ImVec4(0.180f, 0.180f, 0.192f, 1.00f);
-            st.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.155f, 0.155f, 0.165f, 1.00f);
+            st.Colors[ImGuiCol_WindowBg]  = okaytheme::kBase;
+            st.Colors[ImGuiCol_MenuBarBg] = okaytheme::kSunken;
         }
     }
     if (!ImGui::BeginMenuBar()) return;
@@ -3374,7 +3334,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Theme")) {
-            if (ImGui::MenuItem("Dark", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); SaveSettings(); }
+            if (ImGui::MenuItem("Slate", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); SaveSettings(); }
             if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); SaveSettings(); }
             if (ImGui::MenuItem("Classic", nullptr, g_theme == 2)) { g_theme = 2; ApplyTheme(); SaveSettings(); }
             ImGui::EndMenu();

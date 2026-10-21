@@ -8,6 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "AppIcon.hpp"
+#include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Achievements.hpp"
@@ -1028,6 +1029,22 @@ bool IsBuiltGame(const fs::path& scene) {
     return fs::exists(scene.parent_path() / "game.okayconfig", ec);
 }
 
+// How many playable games the library holds: built games + web games. Editor
+// projects / loose dev scenes don't count. Cached (re-checked every 2s or when
+// the scene list changes) so the sidebar badge doesn't hit the disk every frame.
+int g_webGameCount = -1;   // set by the Play tab's web-game scan (-1 = not scanned yet)
+std::vector<fs::path> FindWebGames();
+int LibraryGameCount(const std::vector<fs::path>& scenes) {
+    static int cached = 0; static std::size_t lastN = (std::size_t)-1; static Uint32 lastAt = 0;
+    if (g_webGameCount < 0) g_webGameCount = (int)FindWebGames().size();
+    Uint32 now = SDL_GetTicks();
+    if (scenes.size() != lastN || now - lastAt > 2000) {
+        cached = (int)std::count_if(scenes.begin(), scenes.end(), IsBuiltGame);
+        lastN = scenes.size(); lastAt = now;
+    }
+    return cached + g_webGameCount;
+}
+
 // The local library where downloaded/shared community content lands. Games dropped
 // here (a folder or a loose .okayscene) show up in Play and the Community tab.
 fs::path CommunityDir() {
@@ -1127,7 +1144,7 @@ float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1160, g_winH = 752;  // last window size (persisted) — roomier first-launch default
-const char* kThemeNames[] = {"Dark", "Midnight", "Light"};
+const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
 
 // Transient toast notification (bottom-right of the window).
 // kind: 0 = info (accent), 1 = success (green), 2 = error (red).
@@ -1363,52 +1380,10 @@ void DarkTheme() {
         c[ImGuiCol_FrameBgHovered] = ImVec4(0.85f, 0.88f, 0.93f, 1.0f);
         c[ImGuiCol_FrameBgActive]  = ImVec4(0.82f, 0.86f, 0.92f, 1.0f);
         c[ImGuiCol_Separator] = ImVec4(0, 0, 0, 0.10f);
-    } else {                                              // Dark (default) = neutral charcoal
-        // A true neutral dark theme (VS Code / Unity dark): charcoal-grey surfaces,
-        // no blue tint. The accent colour is used ONLY for small interactive cues
-        // (checkmarks, slider grabs, the active nav bar), not the panels.
-        // Unity Editor "Dark" skin: neutral medium-grey panels (#383838) with
-        // darker toolbars (#2D2D2D) and sunken fields (#2A2A2A), crisp light-grey
-        // text, and Unity's signature blue selection/accent (the blue is what
-        // keeps the grey from reading as "greyed out").
-        auto lighten = [](float v) { return v + (1.0f - v) * 0.25f; };
-        const ImVec4 accentHover = ImVec4(lighten(accent.x), lighten(accent.y), lighten(accent.z), 1.00f);
-        c[ImGuiCol_WindowBg]         = ImVec4(0.220f, 0.220f, 0.220f, 1.00f);   // #383838 main panels
-        c[ImGuiCol_ChildBg]          = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
-        c[ImGuiCol_PopupBg]          = ImVec4(0.235f, 0.235f, 0.235f, 0.98f);   // #3C3C3C
-        c[ImGuiCol_Border]           = ImVec4(0.000f, 0.000f, 0.000f, 0.50f);   // dark dividers (#1E1E1E look)
-        c[ImGuiCol_FrameBg]          = ImVec4(0.165f, 0.165f, 0.165f, 1.00f);   // #2A2A2A input fields
-        c[ImGuiCol_FrameBgHovered]   = ImVec4(0.205f, 0.205f, 0.205f, 1.00f);
-        c[ImGuiCol_FrameBgActive]    = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);
-        c[ImGuiCol_TitleBg]          = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);   // #2D2D2D
-        c[ImGuiCol_TitleBgActive]    = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
-        c[ImGuiCol_MenuBarBg]        = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);   // #2D2D2D toolbar
-        c[ImGuiCol_Header]           = accent;                                   // selected row = Unity blue
-        c[ImGuiCol_HeaderHovered]    = ImVec4(1.00f, 1.00f, 1.00f, 0.055f);      // hover = subtle grey
-        c[ImGuiCol_HeaderActive]     = accentHover;
-        c[ImGuiCol_Button]           = ImVec4(0.345f, 0.345f, 0.345f, 1.00f);   // #585858 raised buttons
-        c[ImGuiCol_ButtonHovered]    = ImVec4(0.400f, 0.400f, 0.400f, 1.00f);
-        c[ImGuiCol_ButtonActive]     = accent;                                   // pressed = Unity blue
-        c[ImGuiCol_CheckMark]        = ImVec4(0.900f, 0.910f, 0.930f, 1.00f);    // Unity toggle check is light
-        c[ImGuiCol_SliderGrab]       = accent;
-        c[ImGuiCol_SliderGrabActive] = accentHover;
-        c[ImGuiCol_Separator]        = ImVec4(0.000f, 0.000f, 0.000f, 0.45f);   // dark Unity dividers
-        c[ImGuiCol_SeparatorHovered] = accent;
-        c[ImGuiCol_SeparatorActive]  = accent;
-        c[ImGuiCol_Tab]              = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);
-        c[ImGuiCol_TabHovered]       = ImVec4(0.255f, 0.255f, 0.255f, 1.00f);
-        c[ImGuiCol_TabActive]        = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);
-        c[ImGuiCol_TabUnfocused]     = ImVec4(0.165f, 0.165f, 0.165f, 1.00f);
-        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.210f, 0.210f, 0.210f, 1.00f);
-        c[ImGuiCol_Text]             = ImVec4(0.824f, 0.824f, 0.827f, 1.00f);   // #D2D2D2 Unity label
-        c[ImGuiCol_TextDisabled]     = ImVec4(0.500f, 0.500f, 0.505f, 1.00f);
-        c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
-        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);   // no track column — just the thumb
-        c[ImGuiCol_ScrollbarGrab]    = ImVec4(1.000f, 1.000f, 1.000f, 0.13f);   // faint until hovered (overlay style)
-        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(1.000f, 1.000f, 1.000f, 0.26f);
-        c[ImGuiCol_ScrollbarGrabActive]  = accent;
-        c[ImGuiCol_TableHeaderBg]    = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
-        c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.022f);
+    } else {                                              // Slate (default): shared with the editor + chat
+        okaytheme::ApplySlateMetrics(s);
+        s.WindowRounding = 0.0f;           // the launcher's root window fills the OS window
+        okaytheme::ApplySlateColors(s, accent);
         ImGui::GetIO().FontGlobalScale = g_uiScale;
         return;   // Dark theme is fully specified above (no shared overrides needed)
     }
@@ -1528,9 +1503,57 @@ static const EmojiDef kEmojis[] = {
     {":laugh:","xD",          6}, {":wow:", ":o",      7}, {":cool:", ":sunglasses:", 8},
     {":thumbsup:",":+1b:",   9},
 };
+static constexpr int kEmojiUnknown = 99;   // a Unicode emoji we have no drawing for
 static int EmojiId(const std::string& t) {
     for (const auto& e : kEmojis) if (t == e.code || (e.alt && t == e.alt)) return e.id;
+    if (t == ":emoji?:") return kEmojiUnknown;
     return -1;
+}
+
+// Real Unicode emoji (typed on a phone, pasted from elsewhere) have no glyphs
+// in the UI font, so they used to show as "?" boxes. Map the common ones to the
+// drawn set, mark the rest as a neutral placeholder tile, and drop the
+// invisible joiners/variation selectors/skin tones.
+static std::string NormalizeEmoji(const std::string& in) {
+    bool any = false;
+    for (unsigned char ch : in) if (ch >= 0xE2) { any = true; break; }
+    if (!any) return in;
+    struct Map { unsigned cp; const char* code; };
+    static const Map kMap[] = {
+        {0x1F600, ":D"}, {0x1F603, ":D"}, {0x1F604, ":D"}, {0x1F601, ":D"}, {0x1F642, ":)"}, {0x1F60A, ":)"},
+        {0x263A, ":)"}, {0x1F622, ":("}, {0x1F61E, ":("}, {0x1F641, ":("}, {0x2639, ":("}, {0x1F62D, ":("},
+        {0x2764, ":heart:"}, {0x1F499, ":heart:"}, {0x1F49A, ":heart:"}, {0x1F49C, ":heart:"}, {0x1F9E1, ":heart:"},
+        {0x1F525, ":fire:"}, {0x2B50, ":star:"}, {0x1F31F, ":star:"}, {0x1F602, ":laugh:"}, {0x1F923, ":laugh:"},
+        {0x1F606, ":laugh:"}, {0x1F62E, ":wow:"}, {0x1F62F, ":wow:"}, {0x1F632, ":wow:"}, {0x1F60E, ":cool:"},
+        {0x1F44D, ":thumbsup:"},
+    };
+    std::string out;
+    out.reserve(in.size() + 16);
+    std::size_t i = 0, n = in.size();
+    while (i < n) {
+        unsigned char c0 = (unsigned char)in[i];
+        int len = c0 < 0x80 ? 1 : (c0 >> 5) == 0x6 ? 2 : (c0 >> 4) == 0xE ? 3 : (c0 >> 3) == 0x1E ? 4 : 1;
+        if (i + len > n) len = 1;
+        unsigned cp = c0;
+        if (len == 2) cp = ((c0 & 0x1F) << 6) | (in[i + 1] & 0x3F);
+        else if (len == 3) cp = ((c0 & 0x0F) << 12) | ((in[i + 1] & 0x3F) << 6) | (in[i + 2] & 0x3F);
+        else if (len == 4) cp = ((c0 & 0x07) << 18) | ((in[i + 1] & 0x3F) << 12) | ((in[i + 2] & 0x3F) << 6) | (in[i + 3] & 0x3F);
+        const bool invisible = cp == 0xFE0F || cp == 0xFE0E || cp == 0x200D || (cp >= 0x1F3FB && cp <= 0x1F3FF);
+        const bool pictograph = (cp >= 0x1F000 && cp <= 0x1FAFF) || (cp >= 0x2600 && cp <= 0x27BF) || cp == 0x2B50 || cp == 0x2B55;
+        if (invisible) { i += len; continue; }
+        if (pictograph) {
+            const char* code = ":emoji?:";
+            for (const auto& m : kMap) if (m.cp == cp) { code = m.code; break; }
+            if (!out.empty() && out.back() != ' ' && out.back() != '\n') out += ' ';
+            out += code;
+            out += ' ';
+            i += len;
+            continue;
+        }
+        out.append(in, i, (std::size_t)len);
+        i += len;
+    }
+    return out;
 }
 
 // The quick-reaction palette (Messenger/Telegram-style): a short key stored in
@@ -1567,6 +1590,13 @@ static void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id) {
     auto mouthArc = [&](ImVec2 ctr, float rad, float a0, float a1){
         dl->PathClear(); dl->PathArcTo(ctr, rad, a0, a1, 16); dl->PathStroke(dark, 0, 2.2f); };
     const float PI = 3.14159265f;
+    if (id == kEmojiUnknown) {   // neutral tile: "an emoji was here"
+        dl->AddRectFilled(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), IM_COL32(255, 255, 255, 30), r * 0.45f);
+        dl->AddCircleFilled(ImVec2(c.x - r * 0.32f, c.y - r * 0.12f), r * 0.11f, IM_COL32(255, 255, 255, 120), 8);
+        dl->AddCircleFilled(ImVec2(c.x + r * 0.32f, c.y - r * 0.12f), r * 0.11f, IM_COL32(255, 255, 255, 120), 8);
+        dl->AddLine(ImVec2(c.x - r * 0.3f, c.y + r * 0.35f), ImVec2(c.x + r * 0.3f, c.y + r * 0.35f), IM_COL32(255, 255, 255, 120), 1.5f);
+        return;
+    }
     switch (id) {
         case 0: // smile
             dl->AddCircleFilled(c, r, face, 24); eyes(-r*0.18f, r*0.10f);
@@ -1655,7 +1685,8 @@ void EmojiPicker(const char* id, char* buf, std::size_t cap) {
 // fast TextWrapped path; richer bodies use the manual token layout.
 // maxW > 0 constrains wrapping to that pixel width (e.g. a chat bubble); 0 uses
 // the remaining content width.
-void RenderChatBody(const std::string& body, float maxW = 0.0f) {
+void RenderChatBody(const std::string& bodyIn, float maxW = 0.0f) {
+    const std::string body = NormalizeEmoji(bodyIn);
     bool hasLink  = body.find("http://") != std::string::npos || body.find("https://") != std::string::npos;
     bool hasEmoji = body.find(':') != std::string::npos || body.find("<3") != std::string::npos || body.find("xD") != std::string::npos;
     bool hasMention = body.find('@') != std::string::npos;   // @name gets highlighted
@@ -1708,7 +1739,8 @@ void RenderChatBody(const std::string& body, float maxW = 0.0f) {
 // The pixel WIDTH RenderChatBody will use for `body` wrapped at maxW — the width
 // of its longest wrapped line (<= maxW). Mirrors RenderChatBody's tokenizer so a
 // chat bubble can be sized to hug its content exactly (no overflow on resize).
-float MeasureChatBodyWidth(const std::string& body, float maxW) {
+float MeasureChatBodyWidth(const std::string& bodyIn, float maxW) {
+    const std::string body = NormalizeEmoji(bodyIn);
     bool hasLink  = body.find("http://") != std::string::npos || body.find("https://") != std::string::npos;
     bool hasEmoji = body.find(':') != std::string::npos || body.find("<3") != std::string::npos || body.find("xD") != std::string::npos;
     bool hasMention = body.find('@') != std::string::npos;   // must mirror RenderChatBody's routing
@@ -2003,6 +2035,34 @@ static void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
     }
 }
 
+// Round icon button (Discord/Messenger-style row actions).
+enum { kRibChat, kRibPlay, kRibCheck, kRibClose, kRibMore };
+static bool RoundIconButton(const char* id, int icon, float d, ImU32 bg, ImU32 bgHover, ImU32 fg, const char* tip) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool click = ImGui::InvisibleButton(id, ImVec2(d, d));
+    bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 c(p.x + d * 0.5f, p.y + d * 0.5f);
+    dl->AddCircleFilled(c, d * 0.5f, hov ? bgHover : bg, 28);
+    switch (icon) {
+    case kRibChat:  DrawNavIcon(dl, kIcoChat, c, fg); break;
+    case kRibPlay:  dl->AddTriangleFilled(ImVec2(c.x - 3.5f, c.y - 5.5f), ImVec2(c.x - 3.5f, c.y + 5.5f), ImVec2(c.x + 5.5f, c.y), fg); break;
+    case kRibCheck:
+        dl->PathLineTo(ImVec2(c.x - 5.0f, c.y + 0.2f)); dl->PathLineTo(ImVec2(c.x - 1.5f, c.y + 4.0f));
+        dl->PathLineTo(ImVec2(c.x + 5.5f, c.y - 4.5f)); dl->PathStroke(fg, 0, 2.2f);
+        break;
+    case kRibClose:
+        dl->AddLine(ImVec2(c.x - 4.5f, c.y - 4.5f), ImVec2(c.x + 4.5f, c.y + 4.5f), fg, 2.0f);
+        dl->AddLine(ImVec2(c.x + 4.5f, c.y - 4.5f), ImVec2(c.x - 4.5f, c.y + 4.5f), fg, 2.0f);
+        break;
+    case kRibMore:
+        for (int k = -1; k <= 1; ++k) dl->AddCircleFilled(ImVec2(c.x + k * 5.0f, c.y), 1.8f, fg, 8);
+        break;
+    }
+    if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (tip && *tip) ImGui::SetTooltip("%s", tip); }
+    return click;
+}
+
 // Human "modified N ago" text for a file ("" if the time can't be read).
 std::string ModifiedAgo(const fs::path& p) {
     std::error_code ec;
@@ -2265,8 +2325,8 @@ static void RenderChatFileCard(const ChatFileInfo& f, float width) {
 }
 // Chat window palette (dark slate, Messenger-dark): the bubbles, header strip
 // and composer are designed around it.
-static const ImVec4 kChatWinBg   (0.118f, 0.129f, 0.161f, 1.0f);
-static const ImVec4 kChatSideBg  (0.094f, 0.102f, 0.129f, 1.0f);
+static const ImVec4 kChatWinBg   = okaytheme::kBase;
+static const ImVec4 kChatSideBg  = okaytheme::kSunken;
 static const ImVec4 kChatSideSel (0.170f, 0.178f, 0.204f, 1.0f);   // side bg + the selected-row wash
 
 // Truncate to fit maxW pixels with an ellipsis, never splitting a UTF-8 sequence.
@@ -5926,7 +5986,7 @@ int main(int argc, char** argv) {
         const bool  navLight = (g_themeIndex == 2);
         const ImVec4 wbg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
         const float  navK = navLight ? 0.955f : 0.78f;
-        const ImVec4 navBg(wbg.x * navK, wbg.y * navK, wbg.z * navK, 1.0f);
+        const ImVec4 navBg = g_themeIndex == 0 ? okaytheme::kSunken : ImVec4(wbg.x * navK, wbg.y * navK, wbg.z * navK, 1.0f);
         const ImU32 navHover  = navLight ? IM_COL32(0, 0, 0, 12) : IM_COL32(255, 255, 255, 11);
         const ImU32 navSel    = navLight ? IM_COL32(0, 0, 0, 22) : IM_COL32(255, 255, 255, 21);
         const ImU32 navTextHi = navLight ? IM_COL32(22, 24, 28, 255) : IM_COL32(244, 245, 247, 255);
@@ -6068,7 +6128,7 @@ int main(int argc, char** argv) {
         const ImU32 navSoft = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.40f));
         navSection("MENU");
         tabRow(0);
-        tabRow(1, (int)scenes.size(), navSoft);           // games installed
+        tabRow(1, LibraryGameCount(scenes), navSoft);     // built + web games (not editor projects)
         tabRow(2);
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
@@ -6672,7 +6732,7 @@ int main(int argc, char** argv) {
             // Any folder with an index.html (e.g. a web export) or a loose .html
             // in the games/community/webgames folders plays in the default browser.
             static std::vector<fs::path> s_webGames; static bool s_webScanned = false;
-            if (!s_webScanned || g_webNeedRescan) { s_webGames = FindWebGames(); s_webScanned = true; g_webNeedRescan = false; }
+            if (!s_webScanned || g_webNeedRescan) { s_webGames = FindWebGames(); s_webScanned = true; g_webNeedRescan = false; g_webGameCount = (int)s_webGames.size(); }
             if (!s_webGames.empty()) {
                 ImGui::SeparatorText("Web games (HTML / JavaScript)");
                 for (const auto& wg : s_webGames) {
@@ -7447,7 +7507,7 @@ int main(int argc, char** argv) {
                 // Profile stats row: achievements, games in library, friend code.
                 {
                     int achN = (int)okay::Achievements::All().size();
-                    int gameN = (int)scenes.size();
+                    int gameN = LibraryGameCount(scenes);   // built games only, not projects
                     static std::string myCode; static bool codeFetched = false;
                     if (!codeFetched && g_acMutex) {
                         SDL_LockMutex(g_acMutex);
@@ -7873,7 +7933,7 @@ int main(int argc, char** argv) {
             // Preview cards: a tiny mock window per theme (top bar, side panel,
             // content area, accent strip) — pick by look, not by name.
             static const struct { ImVec4 bg, panel, text; } kThemePrev[] = {
-                {ImVec4(0.180f, 0.180f, 0.192f, 1), ImVec4(0.265f, 0.265f, 0.285f, 1), ImVec4(0.86f, 0.87f, 0.88f, 1)},
+                {okaytheme::kSunken, okaytheme::kControl, okaytheme::kText},
                 {ImVec4(0.035f, 0.040f, 0.060f, 1), ImVec4(0.120f, 0.140f, 0.200f, 1), ImVec4(0.90f, 0.93f, 0.98f, 1)},
                 {ImVec4(0.930f, 0.940f, 0.960f, 1), ImVec4(0.845f, 0.865f, 0.905f, 1), ImVec4(0.10f, 0.12f, 0.16f, 1)},
             };
@@ -8141,80 +8201,62 @@ int main(int argc, char** argv) {
             if (account.IsLoggedIn() && (g_dmUnread > 0 || g_newestDmId > g_lastDmId)) {
                 g_lastDmId = g_newestDmId; g_dmUnread = 0; SavePrefs();
             }
+            static const bool kFrDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;   // dev screenshot hook
             okay::Friends fr(account);
-            if (!fr.Available()) {
-                ImGui::Dummy(ImVec2(0, 20));
-                ImGui::TextDisabled("Sign in to add friends and see who's online.");
-                ImGui::Dummy(ImVec2(0, 6));
-                if (PrimaryButton("Sign in", ImVec2(160, 38))) { tab = 3; g_lastTab = 3; SavePrefs(); }
+            if (!fr.Available() && !kFrDemo) {
+                loginGate("Friends");
             } else {
                 static char addBuf[48] = "";
-                static std::string fErr;
+                static std::string fErr, fOk;
                 static std::vector<okay::Friend> fCache;
                 static std::vector<okay::FriendEvent> fFeed;
                 static std::string fCode;
-                // Direct messages now live in the floating Chat window (DrawChatWindow);
+                // Direct messages live in the floating Chat window (DrawChatWindow);
                 // the "Message" buttons call OpenChatWith().
                 static okay::Friend profFriend;   // friend whose profile card is open
                 static bool profOpen = false;
                 static Uint32 fNextRefresh = 0;
+                static int fView = 0;             // 0 Online, 1 All, 2 Pending, 3 Add friend
                 Uint32 now = SDL_GetTicks();
-                // EVERYTHING network for this tab (ensure-profile, presence, my code,
-                // list, feed) runs on the Friends worker thread — the tab never
-                // blocks on the network, so switching to Friends can't freeze.
-                if (!g_frMutex) g_frMutex = SDL_CreateMutex();
-                if (now >= fNextRefresh && !g_frFetching) {
-                    g_frFetching = true; fNextRefresh = now + 10000;
-                    if (SDL_Thread* t = SDL_CreateThread(FriendsListWorker, "okay-frlist", nullptr))
-                        SDL_DetachThread(t);
-                    else g_frFetching = false;
-                }
-                if (g_frMutex) {
-                    SDL_LockMutex(g_frMutex);
-                    if (g_frReady) { fCache = g_frList; fFeed = g_frFeed; fCode = g_frCode; g_frReady = false; }
-                    SDL_UnlockMutex(g_frMutex);
-                }
-
-                // --- Status selector (Online / Away / Invisible) ---
-                ImGui::TextDisabled("Status:");
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(140);
-                if (ImGui::Combo("##status", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
-                    fNextRefresh = 0;   // let the worker broadcast the new presence (no UI block)
-                    SavePrefs();
-                }
-                ImGui::Spacing();
-
-                // --- Add a friend (username or code) + my own shareable code ---
-                ImGui::SetNextItemWidth(240);
-                bool submit = ImGui::InputTextWithHint("##addfriend", "Add by username or friend code...",
-                                                       addBuf, sizeof(addBuf),
-                                                       ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::SameLine();
-                if ((ImGui::Button("Add") || submit) && addBuf[0]) {
-                    // Try username first, then fall back to a friend code.
-                    std::string e1, e2;
-                    if (fr.Request(addBuf, &e1) || fr.RequestByCode(addBuf, &e2)) {
-                        Toast(std::string("Friend request sent to ") + addBuf, 1);
-                        addBuf[0] = '\0'; fErr.clear(); fNextRefresh = 0;
-                    } else {
-                        fErr = "No player with that username or code.";
+                if (kFrDemo) {
+                    static bool seeded = false;
+                    if (!seeded) {
+                        seeded = true;
+                        long t0 = (long)std::time(nullptr);
+                        auto mk = [&](long row, const char* id, const char* user, const char* disp, const char* st, bool in, bool on, const char* playing, const char* custom) {
+                            okay::Friend f; f.rowId = row; f.id = id; f.username = user; f.display = disp; f.status = st;
+                            f.incoming = in; f.online = on; f.playing = playing; f.customStatus = custom; fCache.push_back(f); };
+                        mk(1, "u-maya", "maya", "Maya Chen", "accepted", false, true, "Playing Neon Drift", "");
+                        mk(2, "demo-uid", "alexr", "Alex Rivera", "accepted", false, true, "", "shipping the jam build");
+                        mk(3, "u-priya", "priya", "Priya Natarajan", "accepted", false, true, "In the editor", "");
+                        mk(4, "u-jon", "jonas", "Jonas Berg", "accepted", false, false, "", "");
+                        mk(5, "u-leo", "leo", "Leo Martins", "accepted", false, false, "", "");
+                        mk(6, "u-kai", "kai_dev", "Kai", "pending", true, true, "", "");
+                        mk(7, "u-zoe", "zoe", "Zoe Park", "pending", false, false, "", "");
+                        fCache[0].sessionCode = "QX7-42";
+                        g_favFriends.insert("u-maya");
+                        auto ev = [&](const char* a, const char* k, const char* d, long ago) { okay::FriendEvent e; e.actor = a; e.kind = k; e.detail = d; e.when = t0 - ago; fFeed.push_back(e); };
+                        ev("maya", "playing", "Neon Drift", 240); ev("alexr", "publish", "Coin Collector Deluxe", 3600);
+                        ev("priya", "achievement", "First Build", 7200); ev("jonas", "online", "", 86400);
+                        fCode = "OKAY-7K2F";
+                    }
+                } else {
+                    // EVERYTHING network for this tab (ensure-profile, presence, my code,
+                    // list, feed) runs on the Friends worker thread — the tab never
+                    // blocks on the network, so switching to Friends can't freeze.
+                    if (!g_frMutex) g_frMutex = SDL_CreateMutex();
+                    if (now >= fNextRefresh && !g_frFetching) {
+                        g_frFetching = true; fNextRefresh = now + 10000;
+                        if (SDL_Thread* t = SDL_CreateThread(FriendsListWorker, "okay-frlist", nullptr))
+                            SDL_DetachThread(t);
+                        else g_frFetching = false;
+                    }
+                    if (g_frMutex) {
+                        SDL_LockMutex(g_frMutex);
+                        if (g_frReady) { fCache = g_frList; fFeed = g_frFeed; fCode = g_frCode; g_frReady = false; }
+                        SDL_UnlockMutex(g_frMutex);
                     }
                 }
-                ImGui::SameLine();
-                if (ImGui::Button("Refresh")) fNextRefresh = 0;
-                if (!fCode.empty()) {
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 196);
-                    ImGui::TextDisabled("Your code:");
-                    ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
-                    ImGui::TextUnformatted(fCode.c_str());
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Copy")) { ImGui::SetClipboardText(fCode.c_str()); Toast("Friend code copied", 1); }
-                }
-                if (!fErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
-                                     ImGui::TextWrapped("%s", fErr.c_str()); ImGui::PopStyleColor(); }
 
                 // Private display name: a nickname you set, else their display
                 // name, else the username.
@@ -8223,115 +8265,111 @@ int main(int argc, char** argv) {
                     if (it != g_friendNicks.end() && !it->second.empty()) return it->second;
                     return f->display.empty() ? f->username : f->display;
                 };
-
-                // Search + summary row.
-                static char friendFilter[64] = "";
-                ImGui::SetNextItemWidth(240);
-                ImGui::InputTextWithHint("##friendsearch", "Search friends...", friendFilter, sizeof(friendFilter));
-                std::string ffilt = friendFilter;
-                for (auto& ch : ffilt) ch = (char)std::tolower((unsigned char)ch);
-                auto matches = [&](const okay::Friend* f) {
-                    if (ffilt.empty()) return true;
-                    std::string hay = nameOf(f) + " @" + f->username;
-                    for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
-                    return hay.find(ffilt) != std::string::npos;
-                };
-                int acceptedN = 0, onlineN = 0, reqN = 0;
+                int acceptedN = 0, onlineN = 0, reqN = 0, sentN = 0;
                 for (const auto& f : fCache) {
                     if (f.status == "accepted") { ++acceptedN; if (f.online) ++onlineN; }
-                    else if (f.incoming) ++reqN;
+                    else if (f.incoming) ++reqN; else ++sentN;
                 }
-                ImGui::SameLine();
-                ImGui::TextDisabled("%d of %d online", onlineN, acceptedN);
-                if (reqN > 0) { ImGui::SameLine(); ImGui::TextColored(kAccent, "%d request%s", reqN, reqN==1?"":"s"); }
+                const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
+                const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+                const ImU32 cGreen = IM_COL32(76, 200, 110, 255);
+                const ImU32 pageBg = ImGui::GetColorU32(ImGuiCol_WindowBg);
 
-                // Split: requests / favorites / online / offline / outgoing-pending.
-                std::vector<const okay::Friend*> reqs, favs, online, offline, pending;
-                for (const auto& f : fCache) {
-                    if (!matches(&f)) continue;
-                    bool fav = g_favFriends.count(f.id) != 0;
-                    if (f.status != "accepted" && f.incoming) reqs.push_back(&f);
-                    else if (f.status != "accepted")          pending.push_back(&f);
-                    else if (fav)                             favs.push_back(&f);
-                    else if (f.online)                        online.push_back(&f);
-                    else                                      offline.push_back(&f);
+                // ---- Toolbar: view chips (left) + my presence (right) ------------
+                {
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImVec2 cp = ImGui::GetCursorScreenPos();
+                    const float ch = ImGui::GetTextLineHeight() + 12.0f;
+                    float x = cp.x;
+                    auto chip = [&](int view, const char* label, int count, bool alert) {
+                        char txt[48];
+                        if (count >= 0) std::snprintf(txt, sizeof(txt), "%s", label); else std::snprintf(txt, sizeof(txt), "%s", label);
+                        ImVec2 ts = ImGui::CalcTextSize(txt);
+                        char cnt[8] = ""; if (count > 0) std::snprintf(cnt, sizeof(cnt), "%d", count);
+                        float cw = ts.x + 26.0f + (cnt[0] ? ImGui::CalcTextSize(cnt).x + 14.0f : 0.0f);
+                        ImGui::SetCursorScreenPos(ImVec2(x, cp.y));
+                        ImGui::PushID(view);
+                        if (ImGui::InvisibleButton("##frchip", ImVec2(cw, ch))) { fView = view; fErr.clear(); fOk.clear(); }
+                        bool h = ImGui::IsItemHovered();
+                        ImGui::PopID();
+                        const bool on = fView == view;
+                        const bool add = view == 3;
+                        ImU32 bg = add ? (on ? ImGui::GetColorU32(ImVec4(0.18f, 0.55f, 0.32f, 1)) : (h ? IM_COL32(46, 140, 82, 255) : IM_COL32(38, 120, 70, 255)))
+                                       : on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f))
+                                            : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9));
+                        dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cw, cp.y + ch), bg, ch * 0.5f);
+                        dl->AddText(ImVec2(x + 13.0f, cp.y + (ch - ts.y) * 0.5f),
+                                    add ? IM_COL32_WHITE : on ? ImGui::GetColorU32(accLt) : (h ? cText : cDim), txt);
+                        if (cnt[0]) {
+                            ImVec2 cs = ImGui::CalcTextSize(cnt);
+                            float bx = x + 13.0f + ts.x + 7.0f, bw = cs.x + 10.0f;
+                            dl->AddRectFilled(ImVec2(bx, cp.y + (ch - 16) * 0.5f), ImVec2(bx + bw, cp.y + (ch + 16) * 0.5f),
+                                              alert ? IM_COL32(222, 76, 76, 255) : IM_COL32(255, 255, 255, 28), 8.0f);
+                            dl->AddText(ImVec2(bx + 5.0f, cp.y + (ch - cs.y) * 0.5f), IM_COL32_WHITE, cnt);
+                        }
+                        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        x += cw + 8.0f;
+                    };
+                    chip(0, "Online", onlineN, false);
+                    chip(1, "All", acceptedN, false);
+                    chip(2, "Pending", reqN + sentN, reqN > 0);
+                    chip(3, "Add friend", 0, false);
+                    // Presence picker (right): dot + label, opens a small menu.
+                    static const char* kStat[] = {"Online", "Away", "Invisible"};
+                    static const ImU32 kStatCol[] = {IM_COL32(76, 200, 110, 255), IM_COL32(236, 180, 64, 255), IM_COL32(140, 146, 156, 255)};
+                    int si = std::clamp(g_onlineStatus, 0, 2);
+                    float pw = ImGui::CalcTextSize(kStat[si]).x + 52.0f;
+                    ImVec2 pp(cp.x + ImGui::GetContentRegionAvail().x - pw, cp.y);
+                    ImGui::SetCursorScreenPos(pp);
+                    if (ImGui::InvisibleButton("##presence", ImVec2(pw, ch))) ImGui::OpenPopup("##presencepop");
+                    bool ph = ImGui::IsItemHovered();
+                    dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + ch), ph ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9), ch * 0.5f);
+                    dl->AddCircleFilled(ImVec2(pp.x + 15, pp.y + ch * 0.5f), 4.5f, kStatCol[si], 12);
+                    dl->AddText(ImVec2(pp.x + 26, pp.y + (ch - ImGui::GetTextLineHeight()) * 0.5f), cText, kStat[si]);
+                    float vx = pp.x + pw - 15, vy = pp.y + ch * 0.5f;   // chevron
+                    dl->AddLine(ImVec2(vx - 3.5f, vy - 1.5f), ImVec2(vx, vy + 2.0f), cDim, 1.6f);
+                    dl->AddLine(ImVec2(vx + 3.5f, vy - 1.5f), ImVec2(vx, vy + 2.0f), cDim, 1.6f);
+                    if (ph) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Your status"); }
+                    if (ImGui::BeginPopup("##presencepop")) {
+                        static const char* kStatDesc[] = {"Friends see you're around", "Shown as away", "Appear offline to everyone"};
+                        for (int k = 0; k < 3; ++k) {
+                            ImGui::PushID(k);
+                            ImVec2 rp = ImGui::GetCursorScreenPos();
+                            if (ImGui::Selectable("##st", g_onlineStatus == k, 0, ImVec2(230, 38))) {
+                                g_onlineStatus = k; fNextRefresh = 0; SavePrefs();   // the worker broadcasts it
+                            }
+                            ImDrawList* pd = ImGui::GetWindowDrawList();
+                            pd->AddCircleFilled(ImVec2(rp.x + 10, rp.y + 19), 5.0f, kStatCol[k], 12);
+                            pd->AddText(ImVec2(rp.x + 24, rp.y + 2), cText, kStat[k]);
+                            pd->AddText(ImVec2(rp.x + 24, rp.y + 19), cDim, kStatDesc[k]);
+                            ImGui::PopID();
+                        }
+                        ImGui::EndPopup();
+                    }
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + 14.0f));
+                    ImGui::Dummy(ImVec2(0, 0));
                 }
-                // Within a section: online first, then name.
-                auto byName = [&](const okay::Friend* a, const okay::Friend* b) {
-                    if (a->online != b->online) return a->online > b->online;
-                    std::string na = nameOf(a), nb = nameOf(b);
-                    for (auto& c : na) c = (char)std::tolower((unsigned char)c);
-                    for (auto& c : nb) c = (char)std::tolower((unsigned char)c);
-                    return na < nb;
-                };
-                std::sort(favs.begin(), favs.end(), byName);
-                std::sort(online.begin(), online.end(), byName);
-                std::sort(offline.begin(), offline.end(), byName);
 
                 // Nickname editor popup state.
                 static std::string nickUid; static char nickBuf[48] = ""; static bool nickOpen = false;
 
-                ImGui::Spacing();
-                ImGui::BeginChild("##friendlist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
-                auto drawFriend = [&](const okay::Friend* f, bool request) {
-                    bool fav = g_favFriends.count(f->id) != 0;
-                    std::string dispName = nameOf(f);
+                // ---- One friend row (chat-list style) ------------------------------
+                // kind: 0 friend, 1 incoming request, 2 sent request.
+                auto drawFriend = [&](const okay::Friend* f, int kind) {
+                    const bool fav = g_favFriends.count(f->id) != 0;
+                    const std::string dispName = nameOf(f);
+                    const bool accepted = kind == 0;
+                    const bool joinable = accepted && f->online && !f->sessionCode.empty();
                     ImGui::PushID((int)f->rowId);
-                    ImGui::BeginChild("##frow", ImVec2(0, 48), true);
-                    // Avatar (32px, clickable -> profile card) with a status dot.
-                    ImGui::SetCursorPos(ImVec2(6, 6));
-                    if (ImGui::InvisibleButton("##avbtn", ImVec2(32, 32))) {
-                        profFriend = *f; profOpen = true;
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    ImGui::SetCursorPos(ImVec2(6, 6));
-                    ImVec2 ap = ImGui::GetCursorScreenPos();
-                    DrawAvatar(f->avatar, dispName, 32.0f);
                     ImDrawList* dl = ImGui::GetWindowDrawList();
-                    ImU32 dot = f->online ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
-                    dl->AddCircleFilled(ImVec2(ap.x + 28, ap.y + 28), 5.5f, dot, 16);
-                    dl->AddCircle(ImVec2(ap.x + 28, ap.y + 28), 5.5f, IM_COL32(45, 45, 47, 255), 16, 2.0f);
-                    if (fav) DrawEmoji(dl, ImVec2(ap.x + 2, ap.y + 2), 12, 5);   // gold star badge
-                    ImGui::SameLine(); ImGui::SetCursorPosX(46);
-                    ImGui::BeginGroup();
-                    ImGui::TextUnformatted(dispName.c_str());
-                    ImGui::SameLine(0, 6);
-                    ImGui::TextDisabled("@%s", f->username.c_str());
-                    bool playing = f->online && !f->playing.empty();
-                    std::string sub = request ? "wants to be your friend"
-                                   : f->status != "accepted" ? "request sent"
-                                   : playing ? f->playing
-                                   : f->online ? "Online" : "Offline";
-                    ImVec4 sc = playing ? kAccent
-                              : (!request && f->online) ? ImVec4(0.55f,0.9f,0.6f,1)
-                                                        : ImVec4(0.60f,0.63f,0.70f,1);
-                    ImGui::TextColored(sc, "%s", sub.c_str());
-                    ImGui::EndGroup();
-                    bool accepted = !request && f->status == "accepted";
-                    bool joinable = accepted && f->online && !f->sessionCode.empty();
-                    float btnW = request ? 170.0f : accepted ? (joinable ? 170.0f : 92.0f) : 86.0f;
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - btnW);
-                    if (request) {
-                        if (ImGui::Button("Accept")) { fr.Accept(f->rowId); fNextRefresh = 0; }
-                        ImGui::SameLine();
-                        if (ImGui::Button("Decline")) { fr.Remove(f->rowId); fNextRefresh = 0; }
-                    } else if (accepted) {
-                        if (ImGui::Button("Message")) OpenChatWith(f->id, dispName, f->avatar);
-                        if (joinable) {
-                            ImGui::SameLine();
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.44f, 0.26f, 1.0f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.56f, 0.33f, 1.0f));
-                            if (ImGui::Button("Join")) {
-                                ImGui::SetClipboardText(f->sessionCode.c_str());
-                                Toast("Session code " + f->sessionCode + " copied - open the game and Join with it", 2);
-                            }
-                            ImGui::PopStyleColor(2);
-                        }
-                    } else {
-                        if (ImGui::SmallButton("Cancel")) { fr.Remove(f->rowId); fNextRefresh = 0; }
-                    }
+                    ImVec2 rp = ImGui::GetCursorScreenPos();
+                    const float w = ImGui::GetContentRegionAvail().x, rowH = 62.0f, A = 40.0f, d = 34.0f;
+                    ImGui::SetNextItemAllowOverlap();
+                    if (ImGui::InvisibleButton("##frrow", ImVec2(w, rowH))) { profFriend = *f; profOpen = true; }
+                    const bool rowHov = ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + w, rp.y + rowH)) && ImGui::IsWindowHovered();
                     // Right-click menu: favorite, nickname, copy, remove (Discord-style).
-                    if (ImGui::BeginPopupContextWindow("##frctx", ImGuiPopupFlags_MouseButtonRight)) {
+                    if (ImGui::BeginPopupContextItem("##frctx")) {
                         if (accepted) {
                             if (ImGui::MenuItem("Message")) OpenChatWith(f->id, dispName, f->avatar);
                             if (joinable && ImGui::MenuItem("Join their game")) {
@@ -8357,23 +8395,283 @@ int main(int argc, char** argv) {
                         if (ImGui::MenuItem("Copy username")) { ImGui::SetClipboardText(f->username.c_str()); Toast("Username copied", 1); }
                         if (ImGui::MenuItem("View profile")) { profFriend = *f; profOpen = true; }
                         ImGui::Separator();
-                        if (ImGui::MenuItem(request ? "Decline request" : accepted ? "Remove friend" : "Cancel request")) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                        if (ImGui::MenuItem(kind == 1 ? "Decline request" : accepted ? "Remove friend" : "Cancel request")) {
                             fr.Remove(f->rowId); fNextRefresh = 0;
                         }
+                        ImGui::PopStyleColor();
                         ImGui::EndPopup();
                     }
-                    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
-                        ImGui::SetTooltip("Right-click for more");
-                    ImGui::EndChild();
+                    if (rowHov) dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), IM_COL32(255, 255, 255, 11), 10.0f);
+                    // Avatar + presence dot + favourite star.
+                    ImGui::SetCursorScreenPos(ImVec2(rp.x + 10, rp.y + (rowH - A) * 0.5f));
+                    ImVec2 ap = ImGui::GetCursorScreenPos();
+                    DrawAvatar(f->avatar, dispName, A);
+                    if (accepted || kind == 1) {
+                        ImVec2 pd(ap.x + A * 0.85f, ap.y + A * 0.85f);
+                        dl->AddCircleFilled(pd, 7.0f, pageBg, 16);
+                        dl->AddCircleFilled(pd, 5.0f, f->online ? cGreen : IM_COL32(120, 128, 140, 255), 16);
+                    }
+                    if (fav) DrawStar(dl, ImVec2(ap.x + 3, ap.y + 3), 6.0f, IM_COL32(250, 200, 70, 255));
+                    // Name, @username, status line.
+                    const float tx = rp.x + 10 + A + 12, ty = rp.y + 12;
+                    const int nBtns = kind == 1 ? 2 : kind == 2 ? 1 : (joinable ? 3 : 2);
+                    const float right = rp.x + w - 12 - nBtns * (d + 8);
+                    std::string nm = FitText(dispName, right - tx - 10);
+                    dl->AddText(ImVec2(tx, ty), cText, nm.c_str());
+                    float nx = tx + ImGui::CalcTextSize(nm.c_str()).x + 6;
+                    std::string un = "@" + f->username;
+                    if (nx + ImGui::CalcTextSize(un.c_str()).x < right - 6)
+                        dl->AddText(ImVec2(nx, ty), cDim, un.c_str());
+                    const bool playing = f->online && !f->playing.empty();
+                    std::string sub = kind == 1 ? "Incoming friend request"
+                                    : kind == 2 ? "Request sent"
+                                    : playing ? f->playing
+                                    : !f->customStatus.empty() ? f->customStatus
+                                    : f->online ? "Online" : "Offline";
+                    ImU32 sc = kind == 1 ? ImGui::GetColorU32(accLt) : playing ? ImGui::GetColorU32(accLt)
+                             : (accepted && f->online && f->customStatus.empty()) ? cGreen : cDim;
+                    dl->AddText(ImVec2(tx, ty + 20), sc, FitText(sub, right - tx - 10).c_str());
+                    // Actions (right): round icon buttons.
+                    float bx = rp.x + w - 12 - d;
+                    const float by = rp.y + (rowH - d) * 0.5f;
+                    const ImU32 bg = IM_COL32(255, 255, 255, 16), bgh = IM_COL32(255, 255, 255, 34);
+                    auto at = [&](void) { ImGui::SetCursorScreenPos(ImVec2(bx, by)); bx -= d + 8; };
+                    if (kind == 1) {
+                        at(); if (RoundIconButton("##decline", kRibClose, d, bg, IM_COL32(200, 70, 70, 255), cText, "Decline")) { fr.Remove(f->rowId); fNextRefresh = 0; }
+                        at(); if (RoundIconButton("##accept", kRibCheck, d, IM_COL32(38, 120, 70, 255), IM_COL32(46, 150, 86, 255), IM_COL32_WHITE, "Accept")) {
+                            if (fr.Accept(f->rowId)) Toast("You're now friends with " + dispName, 1);
+                            fNextRefresh = 0;
+                        }
+                    } else if (kind == 2) {
+                        at(); if (RoundIconButton("##cancel", kRibClose, d, bg, bgh, cText, "Cancel request")) { fr.Remove(f->rowId); fNextRefresh = 0; }
+                    } else {
+                        at(); if (RoundIconButton("##more", kRibMore, d, bg, bgh, cText, "More")) ImGui::OpenPopup("##frctx");
+                        if (joinable) {
+                            at();
+                            if (RoundIconButton("##join", kRibPlay, d, IM_COL32(38, 120, 70, 255), IM_COL32(46, 150, 86, 255), IM_COL32_WHITE, "Join their game")) {
+                                ImGui::SetClipboardText(f->sessionCode.c_str());
+                                Toast("Session code " + f->sessionCode + " copied - open the game and Join with it", 2);
+                            }
+                        }
+                        at(); if (RoundIconButton("##msg", kRibChat, d, bg, bgh, cText, "Message")) OpenChatWith(f->id, dispName, f->avatar);
+                    }
+                    ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + 2));
+                    ImGui::Dummy(ImVec2(0, 0));   // an item must follow a cursor move (ImGui boundary check)
                     ImGui::PopID();
                 };
-                if (!reqs.empty())    { ImGui::SeparatorText(("Friend requests (" + std::to_string(reqs.size()) + ")").c_str()); for (auto* f : reqs)    drawFriend(f, true);  }
-                if (!favs.empty())    { ImGui::SeparatorText(("Favorites (" + std::to_string(favs.size()) + ")").c_str());       for (auto* f : favs)    drawFriend(f, false); }
-                if (!online.empty())  { ImGui::SeparatorText(("Online (" + std::to_string(online.size()) + ")").c_str());        for (auto* f : online)  drawFriend(f, false); }
-                if (!offline.empty()) { ImGui::SeparatorText(("Offline (" + std::to_string(offline.size()) + ")").c_str());      for (auto* f : offline) drawFriend(f, false); }
-                if (!pending.empty()) { ImGui::SeparatorText(("Sent requests (" + std::to_string(pending.size()) + ")").c_str()); for (auto* f : pending) drawFriend(f, false); }
-                if (!ffilt.empty() && reqs.empty() && favs.empty() && online.empty() && offline.empty() && pending.empty())
-                    ImGui::TextDisabled("No friends match \"%s\".", friendFilter);
+                // Section label: "ONLINE — 3" + hairline.
+                auto sectionLabel = [&](const char* title, int n) {
+                    ImGui::Dummy(ImVec2(0, 6));
+                    char t[64]; std::snprintf(t, sizeof(t), "%s  \xE2\x80\x94  %d", title, n);
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10);
+                    ImGui::SetWindowFontScale(0.80f);
+                    ImGui::TextDisabled("%s", t);
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImVec2 lp = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(lp.x + 10, lp.y + 2), ImVec2(lp.x + ImGui::GetContentRegionAvail().x - 10, lp.y + 2),
+                                                        IM_COL32(255, 255, 255, 14), 1.0f);
+                    ImGui::Dummy(ImVec2(0, 6));
+                };
+                // Centered empty state with a big icon.
+                auto emptyState = [&](int icon, const char* title, const char* sub) {
+                    float aw = ImGui::GetContentRegionAvail().x;
+                    ImGui::Dummy(ImVec2(0, 40));
+                    ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 30);
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    dl->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
+                    DrawNavIcon(dl, icon, c, cDim);
+                    ImGui::Dummy(ImVec2(0, 70));
+                    auto centered = [&](const char* s, bool dim) {
+                        float tw = ImGui::CalcTextSize(s).x;
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - tw) * 0.5f));
+                        if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
+                    };
+                    centered(title, false);
+                    centered(sub, true);
+                };
+                // Friend code card (side panel / add view).
+                auto codeCard = [&]() {
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+                    ImGui::BeginChild("##frcode", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::TextDisabled("YOUR FRIEND CODE");
+                    ImGui::SetWindowFontScale(1.35f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, accLt);
+                    ImGui::TextUnformatted(fCode.empty() ? "\xE2\x80\xA6" : fCode.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::BeginDisabled(fCode.empty());
+                    if (ImGui::Button("Copy code", ImVec2(-1, 0))) { ImGui::SetClipboardText(fCode.c_str()); Toast("Friend code copied", 1); }
+                    ImGui::EndDisabled();
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Share it so friends can add you.");
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                };
+                // Recent activity card.
+                auto activityCard = [&]() {
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+                    ImGui::BeginChild("##fract", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::TextDisabled("ACTIVITY");
+                    ImGui::Dummy(ImVec2(0, 2));
+                    if (fFeed.empty()) ImGui::TextDisabled("It's quiet\xE2\x80\xA6 nothing new from friends yet.");
+                    int n = 0;
+                    for (const auto& e : fFeed) {
+                        if (n++ >= 8) break;
+                        std::string av, who = e.actor;
+                        for (const auto& f : fCache) if (f.username == e.actor) { av = f.avatar; who = nameOf(&f); break; }
+                        ImGui::PushID(n);
+                        ImVec2 ip = ImGui::GetCursorScreenPos();
+                        DrawAvatar(av, who, 28.0f);
+                        ImGui::SetCursorScreenPos(ImVec2(ip.x + 38, ip.y - 1));
+                        ImGui::BeginGroup();
+                        const char* verb = e.kind == "playing" ? "is playing " : e.kind == "achievement" ? "unlocked "
+                                         : e.kind == "publish" ? "published " : e.kind == "online" ? "came online" : "";
+                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+                        ImGui::TextWrapped("%s %s%s", who.c_str(), verb, e.detail.c_str());
+                        ImGui::PopTextWrapPos();
+                        std::string ago = RelTime(e.when);
+                        if (!ago.empty()) ImGui::TextDisabled("%s", ago.c_str());
+                        ImGui::EndGroup();
+                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                };
+
+                // ---- Body: list (left) + side panel (right on wide windows) ---------
+                const float availW = ImGui::GetContentRegionAvail().x;
+                const bool side = availW >= 760.0f;
+                const float sideW = side ? 280.0f : 0.0f;
+                const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
+                ImGui::BeginChild("##friendlist", ImVec2(side ? availW - sideW - 18.0f : 0.0f, bodyH), false);
+                if (fView == 3) {   // ---- Add friend ----
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 18));
+                    ImGui::BeginChild("##addcard", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::SetWindowFontScale(1.15f);
+                    ImGui::TextUnformatted("Add a friend");
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::TextDisabled("Add people by their OkaySpace username or friend code.");
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 9));
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 156.0f);
+                    bool submit = ImGui::InputTextWithHint("##addfriend", "Username or friend code", addBuf, sizeof(addBuf),
+                                                           ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine(0, 10);
+                    ImGui::BeginDisabled(!addBuf[0]);
+                    bool send = PrimaryButton("Send request", ImVec2(146, ImGui::GetFrameHeight()));
+                    ImGui::EndDisabled();
+                    ImGui::PopStyleVar(2);
+                    if ((send || submit) && addBuf[0]) {
+                        // Try username first, then fall back to a friend code.
+                        std::string e1, e2;
+                        if (fr.Request(addBuf, &e1) || fr.RequestByCode(addBuf, &e2)) {
+                            fOk = std::string("Friend request sent to ") + addBuf + ".";
+                            Toast(fOk, 1);
+                            addBuf[0] = '\0'; fErr.clear(); fNextRefresh = 0;
+                        } else { fErr = "Hmm, no player with that username or code. Check the spelling?"; fOk.clear(); }
+                    }
+                    if (!fErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.50f, 1), "%s", fErr.c_str());
+                    if (!fOk.empty())  ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "%s", fOk.c_str());
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    if (!side) { ImGui::Dummy(ImVec2(0, 10)); codeCard(); }
+                } else {
+                    // Search pill.
+                    static char friendFilter[64] = "";
+                    {
+                        ImVec2 sp = ImGui::GetCursorScreenPos();
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
+                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(30, 7));
+                        ImGui::SetNextItemWidth(-1);
+                        ImGui::InputTextWithHint("##friendsearch", "Search friends", friendFilter, sizeof(friendFilter));
+                        ImGui::PopStyleVar(2);
+                        float fh = ImGui::GetItemRectSize().y;
+                        ImVec2 mc(sp.x + 15.0f, sp.y + fh * 0.5f - 1.0f);
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        dl->AddCircle(mc, 4.6f, cDim, 16, 1.5f);
+                        dl->AddLine(ImVec2(mc.x + 3.4f, mc.y + 3.4f), ImVec2(mc.x + 6.8f, mc.y + 6.8f), cDim, 1.8f);
+                    }
+                    std::string ffilt = friendFilter;
+                    for (auto& ch : ffilt) ch = (char)std::tolower((unsigned char)ch);
+                    auto matches = [&](const okay::Friend* f) {
+                        if (ffilt.empty()) return true;
+                        std::string hay = nameOf(f) + " @" + f->username;
+                        for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
+                        return hay.find(ffilt) != std::string::npos;
+                    };
+                    std::vector<const okay::Friend*> reqs, favs, online, offline, pending;
+                    for (const auto& f : fCache) {
+                        if (!matches(&f)) continue;
+                        bool fav = g_favFriends.count(f.id) != 0;
+                        if (f.status != "accepted" && f.incoming) reqs.push_back(&f);
+                        else if (f.status != "accepted")          pending.push_back(&f);
+                        else if (fav)                             favs.push_back(&f);
+                        else if (f.online)                        online.push_back(&f);
+                        else                                      offline.push_back(&f);
+                    }
+                    // Within a section: online first, then name.
+                    auto byName = [&](const okay::Friend* a, const okay::Friend* b) {
+                        if (a->online != b->online) return a->online > b->online;
+                        std::string na = nameOf(a), nb = nameOf(b);
+                        for (auto& c : na) c = (char)std::tolower((unsigned char)c);
+                        for (auto& c : nb) c = (char)std::tolower((unsigned char)c);
+                        return na < nb;
+                    };
+                    std::sort(favs.begin(), favs.end(), byName);
+                    std::sort(online.begin(), online.end(), byName);
+                    std::sort(offline.begin(), offline.end(), byName);
+                    int shownN = 0;
+                    if (fView == 0) {          // Online: favourites that are online + online
+                        std::vector<const okay::Friend*> on;
+                        for (auto* f : favs) if (f->online) on.push_back(f);
+                        for (auto* f : online) on.push_back(f);
+                        if (!on.empty()) { sectionLabel("ONLINE", (int)on.size()); for (auto* f : on) drawFriend(f, 0); shownN += (int)on.size(); }
+                    } else if (fView == 1) {   // All
+                        if (!favs.empty())    { sectionLabel("FAVORITES", (int)favs.size()); for (auto* f : favs) drawFriend(f, 0); }
+                        if (!online.empty())  { sectionLabel("ONLINE", (int)online.size()); for (auto* f : online) drawFriend(f, 0); }
+                        if (!offline.empty()) { sectionLabel("OFFLINE", (int)offline.size()); for (auto* f : offline) drawFriend(f, 0); }
+                        shownN = (int)(favs.size() + online.size() + offline.size());
+                    } else {                   // Pending
+                        if (!reqs.empty())    { sectionLabel("INCOMING", (int)reqs.size()); for (auto* f : reqs) drawFriend(f, 1); }
+                        if (!pending.empty()) { sectionLabel("SENT", (int)pending.size()); for (auto* f : pending) drawFriend(f, 2); }
+                        shownN = (int)(reqs.size() + pending.size());
+                    }
+                    if (shownN == 0) {
+                        if (!ffilt.empty())      emptyState(6, "No matches", "No friends match your search.");
+                        else if (fCache.empty()) emptyState(6, "No friends yet", "Use \"Add friend\" to send your first request.");
+                        else if (fView == 0)     emptyState(6, "No one's online right now", "Friends who come online will show up here.");
+                        else if (fView == 2)     emptyState(kIcoBell, "No pending requests", "Requests you send or receive appear here.");
+                        else                     emptyState(6, "No friends yet", "Use \"Add friend\" to send your first request.");
+                    }
+                    // Incoming requests nudge on the Online/All views.
+                    if (fView != 2 && reqN > 0 && ffilt.empty()) {
+                        ImGui::Dummy(ImVec2(0, 8));
+                        char rq[64]; std::snprintf(rq, sizeof(rq), "%d friend request%s waiting  \xC2\xBB", reqN, reqN == 1 ? "" : "s");
+                        ImGui::PushStyleColor(ImGuiCol_Text, accLt);
+                        if (ImGui::Selectable(rq, false, 0, ImVec2(0, 0))) fView = 2;
+                        ImGui::PopStyleColor();
+                    }
+                }
+                if (!side) { ImGui::Dummy(ImVec2(0, 12)); activityCard(); }
+                ImGui::EndChild();   // ##friendlist
+                if (side) {
+                    ImGui::SameLine(0, 18);
+                    ImGui::BeginChild("##frside", ImVec2(0, bodyH), false);
+                    codeCard();
+                    ImGui::Dummy(ImVec2(0, 10));
+                    activityCard();
+                    ImGui::EndChild();
+                }
 
                 // Nickname editor popup.
                 if (nickOpen) { ImGui::OpenPopup("Set nickname"); nickOpen = false; }
@@ -8484,30 +8782,6 @@ int main(int argc, char** argv) {
                     ImGui::EndPopup();
                 }
 
-                if (fCache.empty()) {
-                    ImGui::Dummy(ImVec2(0, 20));
-                    ImGui::TextDisabled("No friends yet. Add someone by their username or friend code above,");
-                    ImGui::TextDisabled("or share your own code so they can add you.");
-                    ImGui::TextDisabled("(Run docs/sql/social.sql in your Supabase project if this stays empty.)");
-                }
-                // --- Recent activity feed ---
-                if (!fFeed.empty()) {
-                    ImGui::Dummy(ImVec2(0, 8));
-                    ImGui::SeparatorText("Recent activity");
-                    for (const auto& e : fFeed) {
-                        const char* verb = e.kind == "playing"     ? " started playing "
-                                         : e.kind == "achievement" ? " unlocked "
-                                         : e.kind == "publish"     ? " published "
-                                         : e.kind == "online"      ? " came online"
-                                         : " ";
-                        ImGui::Bullet();
-                        ImGui::SameLine(0, 0);
-                        ImGui::Text("%s%s%s", e.actor.c_str(), verb, e.detail.c_str());
-                        std::string ago = RelTime(e.when);
-                        if (!ago.empty()) { ImGui::SameLine(0, 6); ImGui::TextDisabled("- %s", ago.c_str()); }
-                    }
-                }
-                ImGui::EndChild();
             }
         } else if (tab == 7) {                            // ---- Market / Workshop ----
             sectionHeader("Marketplace", nullptr);
@@ -8953,12 +9227,10 @@ int main(int argc, char** argv) {
             }   // end marketplace login gate
         } else if (tab == 8) {                            // ---- Servers (Discord-style) ----
             sectionHeader("Servers", nullptr);
+            static const bool kSvDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;   // dev screenshot hook
             okay::Servers sv(account);
-            if (!sv.Available()) {
-                ImGui::Dummy(ImVec2(0, 20));
-                ImGui::TextDisabled("Sign in to create or join servers.");
-                ImGui::Dummy(ImVec2(0, 6));
-                if (PrimaryButton("Sign in", ImVec2(160, 38))) { tab = 3; g_lastTab = 3; SavePrefs(); }
+            if (!sv.Available() && !kSvDemo) {
+                loginGate("Servers");
             } else {
                 static std::vector<okay::Server> svList;
                 static std::vector<okay::Channel> svChannels;
@@ -8972,123 +9244,255 @@ int main(int argc, char** argv) {
                 static long svRenChanId = 0;             // channel being renamed (0 = none)
                 static char svRenChanBuf[64] = "", svRenSrvBuf[64] = "";
                 static bool svSettingsOpen = false, svRenChanOpen = false;
+                static bool svShowMembers = true, svAddOpen = false, svAddChan = false, svFocus = false;
+                static std::map<long,long> svLikes; static std::map<long,bool> svMyLikes; static long svEditId = 0;
                 Uint32 now = SDL_GetTicks();
-                // Prefetch the server list in the background so switching to this
-                // tab never blocks on the network.
-                if (!g_svMutex) g_svMutex = SDL_CreateMutex();
-                if (now >= svNextList && !g_svFetching) {
-                    g_svFetching = true; svNextList = now + 20000;
-                    if (SDL_Thread* t = SDL_CreateThread(ServerListWorker, "okay-svlist", nullptr))
-                        SDL_DetachThread(t);
-                    else g_svFetching = false;
-                }
-                if (g_svMutex) {
-                    SDL_LockMutex(g_svMutex);
-                    if (g_svReady) { svList = g_svList; g_svReady = false; }
-                    SDL_UnlockMutex(g_svMutex);
-                }
-
-                float colH = ImGui::GetContentRegionAvail().y - 6.0f;
-                // Resizable 3-pane Discord layout: drag the column borders to resize.
-                if (ImGui::BeginTable("##svtable", 3,
-                        ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoHostExtendX,
-                        ImVec2(0, colH))) {
-                    ImGui::TableSetupColumn("servers",  ImGuiTableColumnFlags_WidthFixed, 180.0f);
-                    ImGui::TableSetupColumn("channels", ImGuiTableColumnFlags_WidthFixed, 190.0f);
-                    ImGui::TableSetupColumn("chat",     ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableNextRow();
-
-                    // --- Pane 1: server list + create/join ---
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::BeginChild("##svlist", ImVec2(0, colH - 4), false);
-                    ImGui::TextDisabled("SERVERS");
-                    ImGui::Dummy(ImVec2(0, 2));
-                    // Discord-style server rail: a circular, name-tinted icon with the
-                    // server's initial, a left selection pill, and a hover wash.
-                    for (const auto& s : svList) {
-                        bool sel = (s.id == svSel);
-                        ImGui::PushID((int)s.id);
-                        ImVec2 rp = ImGui::GetCursorScreenPos();
-                        float av = ImGui::GetContentRegionAvail().x, rh = 46.0f;
-                        if (ImGui::InvisibleButton("##srv", ImVec2(av, rh))) {
-                            svSel = s.id; svSelName = s.name; svChan = 0; svNextChan = 0; svMsgs.clear();
-                        }
-                        bool hov = ImGui::IsItemHovered();
-                        ImDrawList* d = ImGui::GetWindowDrawList();
-                        if (sel)      d->AddRectFilled(rp, ImVec2(rp.x + av, rp.y + rh), IM_COL32(255, 255, 255, 18), 5.0f);
-                        else if (hov) d->AddRectFilled(rp, ImVec2(rp.x + av, rp.y + rh), IM_COL32(255, 255, 255, 9), 5.0f);
-                        if (sel)      d->AddRectFilled(ImVec2(rp.x, rp.y + rh * 0.5f - 11), ImVec2(rp.x + 3, rp.y + rh * 0.5f + 11),
-                                                       ImGui::GetColorU32(kAccent), 2.0f);
-                        float cr = 16.0f; ImVec2 ctr(rp.x + 12 + cr, rp.y + rh * 0.5f);
-                        ImVec4 sc = NameColor(s.name);
-                        d->AddCircleFilled(ctr, cr, ImGui::GetColorU32(ImVec4(sc.x * 0.55f, sc.y * 0.55f, sc.z * 0.55f, 1)), 26);
-                        if (sel || hov) d->AddCircle(ctr, cr, ImGui::GetColorU32(sc), 26, 2.0f);
-                        char ini[2] = { (char)(s.name.empty() ? '#' : std::toupper((unsigned char)s.name[0])), 0 };
-                        ImVec2 ts = ImGui::CalcTextSize(ini);
-                        d->AddText(ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f), IM_COL32(245, 246, 250, 255), ini);
-                        d->AddText(ImVec2(ctr.x + cr + 10, rp.y + rh * 0.5f - ImGui::GetTextLineHeight() * 0.5f),
-                                   ImGui::GetColorU32(sel ? ImVec4(0.96f, 0.97f, 0.99f, 1) : ImVec4(0.74f, 0.76f, 0.82f, 1)),
-                                   s.name.c_str());
-                        ImGui::PopID();
+                if (kSvDemo) {
+                    static bool seeded = false;
+                    if (!seeded) {
+                        seeded = true;
+                        long t0 = (long)std::time(nullptr);
+                        svList = {{1, "Game Jam Crew", "JAM-2026", "me"}, {2, "Pixel Artists", "PIX-88", "x"}, {3, "OkaySpace Devs", "OKAY-1", "x"}};
+                        svChannels = {{11, "general"}, {12, "game-jam"}, {13, "showcase"}, {14, "help"}};
+                        auto mem = [&](const char* n, const char* role, bool on) { okay::ServerMember m; m.name = n; m.role = role; m.online = on; svMembers.push_back(m); };
+                        mem("kingimann", "owner", true); mem("maya", "member", true); mem("alexr", "member", true);
+                        mem("priya", "member", false); mem("jonas", "member", false);
+                        auto msg = [&](long id, const char* a, const char* b, long ago, long likes) {
+                            okay::ChannelMessage m; m.id = id; m.author = a; m.body = b; m.when = t0 - ago; svMsgs.push_back(m); if (likes) svLikes[id] = likes; };
+                        msg(1, "maya", "Morning! Theme for the jam just dropped: orbit", 5400, 3);
+                        msg(2, "maya", "I'm thinking a tiny planet hopper, anyone want to team up?", 5340, 0);
+                        msg(3, "alexr", "I'm in. I can do the character controller + camera", 4800, 1);
+                        msg(4, "kingimann", "Same, I'll take UI and the menus. Let's use the Platformer template as a base", 4200, 2);
+                        msg(5, "maya", "Perfect. First playable by tonight?", 600, 0);
+                        svMyLikes[4] = true;
+                        svSel = 1; svSelName = "Game Jam Crew"; svChan = 11;
                     }
-                    ImGui::Dummy(ImVec2(0, 4));
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Create");
-                    ImGui::SetNextItemWidth(-1);
-                    bool mk = ImGui::InputTextWithHint("##svnew", "New server name", svNew, sizeof(svNew), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if ((ImGui::Button("Create server", ImVec2(-1, 0)) || mk) && svNew[0]) {
-                        okay::Server made;
-                        if (sv.CreateServer(svNew, &made, &svErr)) {
-                            svNew[0] = '\0'; svErr.clear(); svNextList = 0;
-                            svSel = made.id; svSelName = made.name; svChan = 0; svNextChan = 0;
-                            Toast("Server created", 1);
-                        }
+                } else {
+                    // Prefetch the server list in the background so switching to this
+                    // tab never blocks on the network.
+                    if (!g_svMutex) g_svMutex = SDL_CreateMutex();
+                    if (now >= svNextList && !g_svFetching) {
+                        g_svFetching = true; svNextList = now + 20000;
+                        if (SDL_Thread* t = SDL_CreateThread(ServerListWorker, "okay-svlist", nullptr))
+                            SDL_DetachThread(t);
+                        else g_svFetching = false;
                     }
-                    ImGui::Dummy(ImVec2(0, 4));
-                    ImGui::TextDisabled("Join by code");
-                    ImGui::SetNextItemWidth(-1);
-                    bool jn = ImGui::InputTextWithHint("##svjoin", "invite code", svJoin, sizeof(svJoin), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if ((ImGui::Button("Join server", ImVec2(-1, 0)) || jn) && svJoin[0]) {
-                        if (sv.JoinServer(svJoin, &svErr)) { svJoin[0] = '\0'; svErr.clear(); svNextList = 0; Toast("Joined server", 1); }
+                    if (g_svMutex) {
+                        SDL_LockMutex(g_svMutex);
+                        if (g_svReady) { svList = g_svList; g_svReady = false; }
+                        SDL_UnlockMutex(g_svMutex);
                     }
-                    if (!svErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1)); ImGui::TextWrapped("%s", svErr.c_str()); ImGui::PopStyleColor(); }
-                    ImGui::EndChild();
-
-                    // --- Pane 2: channels + members ---
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::BeginChild("##svchan", ImVec2(0, colH - 4), false);
-                    if (svSel == 0) {
-                        ImGui::TextDisabled("Pick a server");
-                    } else {
+                    // Open the first server automatically (no empty "pick a server" pane).
+                    if (svSel == 0 && !svList.empty()) { svSel = svList[0].id; svSelName = svList[0].name; svChan = 0; svNextChan = 0; }
+                    if (svSel != 0) {
                         // Feed the background Servers poller; read what it published.
                         // No channels/members/messages fetch on the UI thread.
                         g_srvActiveMs = now; g_srvSel = svSel; g_srvChan = svChan;
-                        (void)svNextChan; (void)svNextMem;
+                        (void)svNextChan; (void)svNextMem; (void)svNextMsg;
                         if (g_srvMutex) {
                             SDL_LockMutex(g_srvMutex);
                             if (g_srvChanReady) { svChannels = g_srvChannels; g_srvChanReady = false; }
                             if (g_srvMemReady)  { svMembers  = g_srvMembers;  g_srvMemReady  = false; }
+                            if (g_srvMsgReady)  { svMsgs = g_srvMsgs; svLikes = g_srvLikes; svMyLikes = g_srvMyLikes; g_srvMsgReady = false; }
                             SDL_UnlockMutex(g_srvMutex);
                         }
                         if (svChan == 0 && !svChannels.empty()) svChan = svChannels[0].id;
-                        // Owner check: MyUid() is the session's id, so fetch it once.
-                        static std::string svMyUidCache; static bool svMyUidGot = false;
-                        if (!svMyUidGot) { svMyUidCache = sv.MyUid(); svMyUidGot = true; }
-                        std::string svMyUid = svMyUidCache;
-                        bool svIAmOwner = false;
-                        for (const auto& s : svList) if (s.id == svSel && !s.owner.empty() && s.owner == svMyUid) svIAmOwner = true;
-                        ImGui::TextDisabled("%s", svSelName.c_str());
-                        if (svIAmOwner) { ImGui::SameLine(ImGui::GetContentRegionAvail().x - 24);
-                            if (ImGui::SmallButton("...")) { std::snprintf(svRenSrvBuf,sizeof(svRenSrvBuf),"%s",svSelName.c_str()); svSettingsOpen = true; } }
-                        ImGui::Separator();
-                        ImGui::Dummy(ImVec2(0, 2));
-                        ImGui::TextDisabled("CHANNELS - %d", (int)svChannels.size());
-                        ImGui::Dummy(ImVec2(0, 2));
+                    }
+                }
+                // Owner check: MyUid() is the session's id, so fetch it once.
+                static std::string svMyUidCache; static bool svMyUidGot = false;
+                if (!svMyUidGot && !kSvDemo) { svMyUidCache = sv.MyUid(); svMyUidGot = true; }
+                const std::string svMyUid = kSvDemo ? std::string("me") : svMyUidCache;
+                bool svIAmOwner = false;
+                for (const auto& s : svList) if (s.id == svSel && !s.owner.empty() && s.owner == svMyUid) svIAmOwner = true;
+                const std::string svMe = kSvDemo ? std::string("kingimann") : account.CurrentSession().username;
+
+                const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
+                const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+                const ImVec4 colBg = okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f);
+                const float colH = ImGui::GetContentRegionAvail().y - 46.0f;   // leave the page footer clear
+                const float availW = ImGui::GetContentRegionAvail().x;
+                auto initials = [](const std::string& n) {
+                    std::string o;
+                    bool start = true;
+                    for (char ch : n) {
+                        if (ch == ' ' || ch == '-' || ch == '_') { start = true; continue; }
+                        if (start && o.size() < 2) o += (char)std::toupper((unsigned char)ch);
+                        start = false;
+                    }
+                    return o.empty() ? std::string("#") : o;
+                };
+
+                // ---- Pane 1: server rail (round icons, Discord-style) -------------------
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kSunken);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 12));
+                ImGui::BeginChild("##svrail", ImVec2(72, colH), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+                ImGui::PopStyleVar();
+                {
+                    ImDrawList* d = ImGui::GetWindowDrawList();
+                    const float S = 44.0f;
+                    for (const auto& s : svList) {
+                        const bool sel = (s.id == svSel);
+                        ImGui::PushID((int)s.id);
+                        ImVec2 rp = ImGui::GetCursorScreenPos();
+                        ImVec2 ip(rp.x + (72.0f - S) * 0.5f, rp.y);
+                        ImGui::SetCursorScreenPos(ip);
+                        if (ImGui::InvisibleButton("##srv", ImVec2(S, S)) && !sel) {
+                            svSel = s.id; svSelName = s.name; svChan = 0; svNextChan = 0; svMsgs.clear(); svEditId = 0;
+                            if (!kSvDemo) { svChannels.clear(); svMembers.clear(); }
+                            else svChan = 11;
+                        }
+                        const bool hov = ImGui::IsItemHovered();
+                        ImVec4 sc = NameColor(s.name);
+                        ImU32 fill = ImGui::GetColorU32(sel ? kAccentDim : ImVec4(sc.x * 0.55f, sc.y * 0.55f, sc.z * 0.55f, 1));
+                        // Selected/hovered icons morph from a circle to a rounded square.
+                        d->AddRectFilled(ip, ImVec2(ip.x + S, ip.y + S), fill, (sel || hov) ? 14.0f : S * 0.5f);
+                        std::string ini = initials(s.name);
+                        ImVec2 ts = ImGui::CalcTextSize(ini.c_str());
+                        d->AddText(ImVec2(ip.x + (S - ts.x) * 0.5f, ip.y + (S - ts.y) * 0.5f), IM_COL32(245, 246, 250, 255), ini.c_str());
+                        if (sel || hov) {   // left pill
+                            float ph = sel ? 36.0f : 18.0f;
+                            d->AddRectFilled(ImVec2(rp.x, ip.y + (S - ph) * 0.5f), ImVec2(rp.x + 4, ip.y + (S + ph) * 0.5f), IM_COL32(240, 243, 250, 255), 2.0f);
+                        }
+                        if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", s.name.c_str()); }
+                        ImGui::SetCursorScreenPos(ImVec2(rp.x, ip.y + S + 8));
+                        ImGui::Dummy(ImVec2(0, 0));
+                        ImGui::PopID();
+                    }
+                    if (!svList.empty()) {
+                        ImVec2 lp = ImGui::GetCursorScreenPos();
+                        d->AddLine(ImVec2(lp.x + 22, lp.y), ImVec2(lp.x + 50, lp.y), IM_COL32(255, 255, 255, 22), 2.0f);
+                        ImGui::Dummy(ImVec2(0, 8));
+                    }
+                    ImVec2 rp = ImGui::GetCursorScreenPos();
+                    ImVec2 ip(rp.x + (72.0f - S) * 0.5f, rp.y);
+                    ImGui::SetCursorScreenPos(ip);
+                    if (ImGui::InvisibleButton("##svadd", ImVec2(S, S))) { svAddOpen = true; svErr.clear(); }
+                    const bool ah = ImGui::IsItemHovered();
+                    d->AddRectFilled(ip, ImVec2(ip.x + S, ip.y + S), ah ? IM_COL32(46, 150, 86, 255) : ImGui::GetColorU32(okaytheme::kControl), ah ? 14.0f : S * 0.5f);
+                    ImU32 pc = ah ? IM_COL32_WHITE : IM_COL32(76, 200, 110, 255);
+                    ImVec2 c(ip.x + S * 0.5f, ip.y + S * 0.5f);
+                    d->AddLine(ImVec2(c.x - 7, c.y), ImVec2(c.x + 7, c.y), pc, 2.2f);
+                    d->AddLine(ImVec2(c.x, c.y - 7), ImVec2(c.x, c.y + 7), pc, 2.2f);
+                    if (ah) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Create or join a server"); }
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+                ImGui::SameLine(0, 10);
+
+                if (svSel == 0) {
+                    // ---- No servers yet: friendly empty state with both actions ----
+                    ImGui::BeginChild("##svempty", ImVec2(0, colH), false);
+                    float aw = ImGui::GetContentRegionAvail().x;
+                    ImGui::Dummy(ImVec2(0, colH * 0.22f));
+                    ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 34);
+                    ImGui::GetWindowDrawList()->AddCircleFilled(c, 34.0f, IM_COL32(255, 255, 255, 12), 40);
+                    DrawNavIcon(ImGui::GetWindowDrawList(), 8, c, cDim);
+                    ImGui::Dummy(ImVec2(0, 80));
+                    auto centered = [&](const char* s, bool dim) {
+                        float tw = ImGui::CalcTextSize(s).x;
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - tw) * 0.5f));
+                        if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
+                    };
+                    centered("You're not in any servers yet", false);
+                    centered("Create one for your team, or join with an invite code.", true);
+                    ImGui::Dummy(ImVec2(0, 10));
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - 300.0f) * 0.5f));
+                    if (PrimaryButton("Create a server", ImVec2(146, 36))) { svAddOpen = true; svErr.clear(); }
+                    ImGui::SameLine(0, 8);
+                    if (ImGui::Button("Join with code", ImVec2(146, 36))) { svAddOpen = true; svErr.clear(); }
+                    ImGui::EndChild();
+                } else {
+                    // ---- Pane 2: server header + channels ------------------------------
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, colBg);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+                    ImGui::BeginChild("##svchan", ImVec2(224, colH), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::PopStyleVar();
+                    {
+                        ImDrawList* d = ImGui::GetWindowDrawList();
+                        // Server name header (menu: invite / settings / leave).
+                        ImVec2 hp = ImGui::GetCursorScreenPos();
+                        float hw = ImGui::GetContentRegionAvail().x, hh = 38.0f;
+                        if (ImGui::InvisibleButton("##svhead", ImVec2(hw, hh))) ImGui::OpenPopup("##svmenu");
+                        bool hh2 = ImGui::IsItemHovered();
+                        if (hh2) d->AddRectFilled(hp, ImVec2(hp.x + hw, hp.y + hh), IM_COL32(255, 255, 255, 12), 8.0f);
+                        d->AddText(ImVec2(hp.x + 10, hp.y + (hh - ImGui::GetTextLineHeight()) * 0.5f), cText,
+                                   FitText(svSelName, hw - 40).c_str());
+                        float vx = hp.x + hw - 16, vy = hp.y + hh * 0.5f;
+                        d->AddLine(ImVec2(vx - 4, vy - 2), ImVec2(vx, vy + 2), cDim, 1.6f);
+                        d->AddLine(ImVec2(vx + 4, vy - 2), ImVec2(vx, vy + 2), cDim, 1.6f);
+                        if (hh2) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        if (ImGui::BeginPopup("##svmenu")) {
+                            std::string inv; for (const auto& s : svList) if (s.id == svSel) inv = s.invite;
+                            if (ImGui::MenuItem("Copy invite code", inv.c_str(), false, !inv.empty())) {
+                                ImGui::SetClipboardText(inv.c_str()); Toast("Invite code copied", 1);
+                            }
+                            if (svIAmOwner && ImGui::MenuItem("Server settings")) {
+                                std::snprintf(svRenSrvBuf, sizeof(svRenSrvBuf), "%s", svSelName.c_str()); svSettingsOpen = true;
+                            }
+                            ImGui::MenuItem("Show members", nullptr, &svShowMembers);
+                            if (!svIAmOwner) {
+                                ImGui::Separator();
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                                if (ImGui::MenuItem("Leave server")) {
+                                    if (sv.Leave(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Left server", 1); }
+                                }
+                                ImGui::PopStyleColor();
+                            }
+                            ImGui::EndPopup();
+                        }
+                        ImVec2 lp = ImGui::GetCursorScreenPos();
+                        d->AddLine(ImVec2(lp.x, lp.y + 2), ImVec2(lp.x + hw, lp.y + 2), IM_COL32(255, 255, 255, 16), 1.0f);
+                        ImGui::Dummy(ImVec2(0, 10));
+                        // "TEXT CHANNELS" + add button.
+                        ImVec2 sp = ImGui::GetCursorScreenPos();
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
+                        ImGui::SetWindowFontScale(0.80f);
+                        ImGui::TextDisabled("TEXT CHANNELS");
+                        ImGui::SetWindowFontScale(1.0f);
+                        ImGui::SetCursorScreenPos(ImVec2(sp.x + hw - 22, sp.y - 3));
+                        if (ImGui::InvisibleButton("##addchan", ImVec2(20, 20))) { svAddChan = !svAddChan; svNewChan[0] = '\0'; }
+                        bool ach = ImGui::IsItemHovered();
+                        ImVec2 ac(sp.x + hw - 12, sp.y + 7);
+                        d->AddLine(ImVec2(ac.x - 5, ac.y), ImVec2(ac.x + 5, ac.y), ach ? cText : cDim, 1.6f);
+                        d->AddLine(ImVec2(ac.x, ac.y - 5), ImVec2(ac.x, ac.y + 5), ach ? cText : cDim, 1.6f);
+                        if (ach) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Create channel"); }
+                        ImGui::SetCursorScreenPos(ImVec2(sp.x, sp.y + 20));
+                        ImGui::Dummy(ImVec2(0, 0));
+                        if (svAddChan) {
+                            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+                            ImGui::SetNextItemWidth(-1);
+                            ImGui::SetKeyboardFocusHere();
+                            bool nc = ImGui::InputTextWithHint("##svnewchan", "new-channel  (Enter)", svNewChan, sizeof(svNewChan), ImGuiInputTextFlags_EnterReturnsTrue);
+                            ImGui::PopStyleVar();
+                            if (nc && svNewChan[0]) {
+                                if (sv.CreateChannel(svSel, svNewChan)) { g_srvForce = true; Toast("Channel created", 1); }
+                                svNewChan[0] = '\0'; svAddChan = false;
+                            }
+                            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) svAddChan = false;
+                        }
                         for (const auto& c : svChannels) {
-                            bool sel = (c.id == svChan);
-                            if (ImGui::Selectable(("# " + c.name + "##" + std::to_string(c.id)).c_str(), sel)) { svChan = c.id; svNextMsg = 0; }
+                            const bool sel = (c.id == svChan);
+                            ImGui::PushID((int)c.id);
+                            ImVec2 rp = ImGui::GetCursorScreenPos();
+                            float rw = ImGui::GetContentRegionAvail().x, rh = 32.0f;
+                            if (ImGui::InvisibleButton("##chan", ImVec2(rw, rh)) && !sel) {
+                                svChan = c.id; svNextMsg = 0; svEditId = 0;
+                                if (!kSvDemo) svMsgs.clear();
+                            }
+                            bool hov = ImGui::IsItemHovered();
+                            if (sel || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 11), 7.0f);
+                            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            const float ty = rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f;
+                            d->AddText(ImVec2(rp.x + 10, ty), sel ? cText : cDim, "#");
+                            d->AddText(ImVec2(rp.x + 26, ty), (sel || hov) ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.72f),
+                                       FitText(c.name, rw - 34).c_str());
                             // Owner: right-click a channel to rename or delete it.
-                            if (svIAmOwner && ImGui::BeginPopupContextItem(("chanctx" + std::to_string(c.id)).c_str())) {
+                            if (svIAmOwner && ImGui::BeginPopupContextItem("##chanctx")) {
                                 if (ImGui::MenuItem("Rename channel")) {
                                     svRenChanId = c.id; std::snprintf(svRenChanBuf, sizeof(svRenChanBuf), "%s", c.name.c_str()); svRenChanOpen = true;
                                 }
@@ -9097,100 +9501,85 @@ int main(int argc, char** argv) {
                                 }
                                 ImGui::EndPopup();
                             }
+                            ImGui::PopID();
                         }
-                        if (svIAmOwner) ImGui::TextDisabled("(right-click a channel to rename/delete)");
-                        ImGui::Separator();
-                        ImGui::SetNextItemWidth(-1);
-                        bool nc = ImGui::InputTextWithHint("##svnewchan", "new channel", svNewChan, sizeof(svNewChan), ImGuiInputTextFlags_EnterReturnsTrue);
-                        if ((ImGui::SmallButton("Add channel") || nc) && svNewChan[0]) {
-                            if (sv.CreateChannel(svSel, svNewChan)) { svNewChan[0] = '\0'; g_srvForce = true; }
-                        }
-                        if (!svIAmOwner) {
-                            if (ImGui::SmallButton("Leave server")) {
-                                if (sv.Leave(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Left server", 1); }
-                            }
-                        }
-                        // (members come from the background poller, read above)
-                        // Collapsible, Online/Offline-grouped member list (Discord-style).
-                        ImGui::Dummy(ImVec2(0, 6));
-                        static bool svMembersOpen = true;
-                        int onlineN = 0; for (const auto& m : svMembers) if (m.online) ++onlineN;
-                        if (ImGui::Selectable(svMembersOpen ? "- MEMBERS" : "+ MEMBERS", false,
-                                              ImGuiSelectableFlags_None, ImVec2(ImGui::GetContentRegionAvail().x - 70, 0)))
-                            svMembersOpen = !svMembersOpen;
-                        ImGui::SameLine(); ImGui::TextDisabled("%d/%d", onlineN, (int)svMembers.size());
-                        ImGui::Separator();
-                        if (svMembersOpen) {
-                            auto drawMember = [&](const okay::ServerMember& m) {
-                                ImVec2 mp = ImGui::GetCursorScreenPos();
-                                ImU32 dot = m.online ? IM_COL32(120, 200, 110, 255) : IM_COL32(110, 118, 130, 255);
-                                ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mp.x + 5, mp.y + 8), 4.0f, dot, 12);
-                                ImGui::Dummy(ImVec2(14, 0)); ImGui::SameLine();
-                                if (m.role == "owner") {
-                                    ImGui::TextColored(m.online ? ImVec4(0.9f,0.92f,0.96f,1) : ImVec4(0.6f,0.63f,0.7f,1),
-                                                       "%s", m.name.empty() ? "member" : m.name.c_str());
-                                    ImGui::SameLine(0, 4); ImGui::TextColored(ImVec4(0.95f,0.80f,0.35f,1), "(owner)");
-                                } else {
-                                    ImGui::TextColored(m.online ? ImVec4(0.9f,0.92f,0.96f,1) : ImVec4(0.6f,0.63f,0.7f,1),
-                                                       "%s", m.name.empty() ? "member" : m.name.c_str());
-                                }
-                            };
-                            if (onlineN > 0) {
-                                ImGui::TextDisabled("ONLINE - %d", onlineN);
-                                for (const auto& m : svMembers) if (m.online) drawMember(m);
-                            }
-                            int offN = (int)svMembers.size() - onlineN;
-                            if (offN > 0) {
-                                ImGui::Dummy(ImVec2(0, 3));
-                                ImGui::TextDisabled("OFFLINE - %d", offN);
-                                for (const auto& m : svMembers) if (!m.online) drawMember(m);
-                            }
-                            if (svMembers.empty()) ImGui::TextDisabled("No members loaded.");
-                        }
+                        if (svChannels.empty()) ImGui::TextDisabled("  Loading channels\xE2\x80\xA6");
                     }
                     ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 10);
 
-                    // --- Pane 3: Discord-style messages ---
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::BeginChild("##svmsgs", ImVec2(0, colH - 4), false);
+                    // ---- Pane 3: channel chat (+ members on wide windows) ----------------
+                    const float leftUsed = 72 + 10 + 224 + 10;
+                    const bool showMem = svShowMembers && (availW - leftUsed) > 620.0f;
+                    const float memW = showMem ? 210.0f : 0.0f;
+                    ImGui::BeginChild("##svmsgs", ImVec2(showMem ? availW - leftUsed - memW - 10 : 0.0f, colH), false);
+                    std::string chanName;
+                    for (const auto& c : svChannels) if (c.id == svChan) { chanName = c.name; break; }
+                    {   // Channel header: "# name" + members toggle.
+                        ImDrawList* d = ImGui::GetWindowDrawList();
+                        ImVec2 hp = ImGui::GetCursorScreenPos();
+                        float hw = ImGui::GetContentRegionAvail().x;
+                        ImGui::SetWindowFontScale(1.12f);
+                        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(cDim), "#");
+                        ImGui::SameLine(0, 6);
+                        ImGui::TextUnformatted(chanName.empty() ? "channel" : chanName.c_str());
+                        ImGui::SetWindowFontScale(1.0f);
+                        ImGui::SetCursorScreenPos(ImVec2(hp.x + hw - 32, hp.y - 4));
+                        if (ImGui::InvisibleButton("##memtoggle", ImVec2(30, 30))) svShowMembers = !svShowMembers;
+                        bool mh = ImGui::IsItemHovered();
+                        if (mh || svShowMembers) d->AddRectFilled(ImVec2(hp.x + hw - 32, hp.y - 4), ImVec2(hp.x + hw - 2, hp.y + 26),
+                                                                  mh ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 10), 8.0f);
+                        DrawNavIcon(d, 6, ImVec2(hp.x + hw - 17, hp.y + 11), svShowMembers ? cText : cDim);
+                        if (mh) ImGui::SetTooltip(svShowMembers ? "Hide members" : "Show members");
+                        ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + 30));
+                        ImVec2 lp = ImGui::GetCursorScreenPos();
+                        d->AddLine(lp, ImVec2(lp.x + hw, lp.y), IM_COL32(255, 255, 255, 16), 1.0f);
+                        ImGui::Dummy(ImVec2(0, 6));
+                    }
                     if (svChan == 0) {
-                        ImGui::TextDisabled("Pick a channel");
+                        ImGui::TextDisabled("Pick a channel on the left.");
                     } else {
-                        static std::map<long,long> svLikes; static std::map<long,bool> svMyLikes; static long svEditId = 0;
-                        // Messages + likes come from the background Servers poller.
-                        (void)svNextMsg;
-                        if (g_srvMutex) {
-                            SDL_LockMutex(g_srvMutex);
-                            if (g_srvMsgReady) { svMsgs = g_srvMsgs; svLikes = g_srvLikes; svMyLikes = g_srvMyLikes; g_srvMsgReady = false; }
-                            SDL_UnlockMutex(g_srvMutex);
-                        }
-                        std::string svMe = account.CurrentSession().username;
-                        // Inline per-message actions: ❤ like + count, "(edited)", and
-                        // an Edit affordance on my own messages (loads it into the box).
+                        // Inline per-message actions: like + count, "(edited)", and an
+                        // Edit affordance on my own messages (loads it into the box).
                         auto msgActions = [&](const okay::ChannelMessage& m) {
                             long lc = svLikes.count(m.id) ? svLikes[m.id] : 0;
                             bool liked = svMyLikes.count(m.id) != 0;
                             ImGui::PushID((int)m.id);
                             ImVec2 hp2 = ImGui::GetCursorScreenPos();
                             if (ImGui::InvisibleButton("like", ImVec2(18, 16))) { sv.Like(m.id, !liked); g_srvForce = true; }
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip(liked ? "Unlike" : "Like");
                             DrawHeart(ImGui::GetWindowDrawList(), ImVec2(hp2.x+8, hp2.y+9), 6.0f,
                                       liked ? IM_COL32(232,72,92,255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
                             if (lc > 0) { ImGui::SameLine(0, 2); ImGui::TextDisabled("%ld", lc); }
                             if (m.edited) { ImGui::SameLine(0, 8); ImGui::TextDisabled("(edited)"); }
                             if (!svMe.empty() && m.author == svMe) {
                                 ImGui::SameLine(0, 8);
-                                if (ImGui::SmallButton("edit")) { svEditId = m.id; std::snprintf(svMsg, sizeof(svMsg), "%s", m.body.c_str()); }
+                                if (ImGui::SmallButton("edit")) { svEditId = m.id; std::snprintf(svMsg, sizeof(svMsg), "%s", m.body.c_str()); svFocus = true; }
                             }
                             ImGui::PopID();
                         };
-                        // Channel header bar (# name), Discord-style.
-                        std::string chanName;
-                        for (const auto& c : svChannels) if (c.id == svChan) { chanName = c.name; break; }
-                        ImGui::Text("# %s", chanName.empty() ? "channel" : chanName.c_str());
-                        ImGui::Separator();
-                        ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - 40.0f), false);
+                        const float composerH = (ImGui::GetTextLineHeight() + 16.0f) + 4.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f + 8.0f
+                                              + (svEditId ? ImGui::GetTextLineHeightWithSpacing() : 0.0f);
+                        ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false);
                         static int svLastShown = -1;
                         std::string prevAuthor; bool firstMsg = true; long prevDay = 0, prevWhen = 0;
+                        {   // channel intro at the top of the history (Discord-style "start of #channel")
+                            ImGui::Dummy(ImVec2(0, 6));
+                            ImVec2 ip = ImGui::GetCursorScreenPos();
+                            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(ip.x + 26, ip.y + 26), 26.0f, ImGui::GetColorU32(okaytheme::kControl), 32);
+                            ImGui::SetWindowFontScale(1.6f);
+                            ImVec2 hs = ImGui::CalcTextSize("#");
+                            ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(ip.x + 26 - hs.x * 0.5f, ip.y + 26 - hs.y * 0.5f), cText, "#");
+                            ImGui::SetWindowFontScale(1.0f);
+                            ImGui::Dummy(ImVec2(0, 58));
+                            ImGui::SetWindowFontScale(1.25f);
+                            ImGui::Text("Welcome to #%s", chanName.empty() ? "channel" : chanName.c_str());
+                            ImGui::SetWindowFontScale(1.0f);
+                            ImGui::TextDisabled("This is the start of the #%s channel.", chanName.empty() ? "channel" : chanName.c_str());
+                            ImGui::Dummy(ImVec2(0, 8));
+                        }
                         for (const auto& m : svMsgs) {
                             std::string who = m.author.empty() ? "unknown" : m.author;
                             // Date separator when the day changes.
@@ -9201,12 +9590,13 @@ int main(int argc, char** argv) {
                             bool newGroup = (who != prevAuthor) || (m.when > 0 && prevWhen > 0 && m.when - prevWhen > 420);
                             prevWhen = m.when;
                             if (newGroup) {
-                                if (!firstMsg) ImGui::Dummy(ImVec2(0, 6));
-                                DrawAvatar("", who, 34.0f);            // colored initial avatar
+                                if (!firstMsg) ImGui::Dummy(ImVec2(0, 8));
+                                std::string av; for (const auto& mm : svMembers) if (mm.name == who) { av = mm.avatar; break; }
+                                DrawAvatar(av, who, 36.0f);
                                 ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6);
                                 ImGui::BeginGroup();
                                 ImVec4 nc2 = NameColor(who);
-                                ImGui::TextColored(ImVec4(nc2.x,nc2.y,nc2.z,1), "%s", who.c_str());
+                                ImGui::TextColored(ImVec4(nc2.x * 0.35f + 0.65f, nc2.y * 0.35f + 0.65f, nc2.z * 0.35f + 0.65f, 1), "%s", who.c_str());
                                 ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", w);
                                 RenderChatBody(m.body);
                                 msgActions(m);
@@ -9215,42 +9605,140 @@ int main(int argc, char** argv) {
                             } else {
                                 // Continuation of the same author's group: indent under the
                                 // avatar, with a faint timestamp revealed on hover (Discord-like).
-                                ImGui::Indent(40.0f);
+                                ImGui::Indent(42.0f);
                                 ImVec2 rowTop = ImGui::GetCursorScreenPos();
                                 RenderChatBody(m.body);
                                 if (w[0] && ImGui::IsItemHovered()) {
-                                    ImVec2 tp(rowTop.x - 38.0f, rowTop.y + 1.0f);
-                                    ImGui::GetWindowDrawList()->AddText(tp,
-                                        ImGui::GetColorU32(ImGuiCol_TextDisabled), w);
+                                    ImVec2 tp(rowTop.x - 40.0f, rowTop.y + 1.0f);
+                                    ImGui::GetWindowDrawList()->AddText(tp, ImGui::GetColorU32(ImGuiCol_TextDisabled), w);
                                 }
                                 msgActions(m);
-                                ImGui::Unindent(40.0f);
+                                ImGui::Unindent(42.0f);
                             }
                             firstMsg = false;
                         }
-                        if (svMsgs.empty()) {
-                            ImGui::Dummy(ImVec2(0, 10));
-                            ImGui::TextDisabled("This is the start of #%s.", chanName.empty()?"channel":chanName.c_str());
-                            ImGui::TextDisabled("Say something to kick things off!");
-                        }
                         if ((int)svMsgs.size() != svLastShown) { ImGui::SetScrollHereY(1.0f); svLastShown = (int)svMsgs.size(); }
                         ImGui::EndChild();
-                        if (svEditId) { ImGui::TextDisabled("Editing a message"); ImGui::SameLine();
-                            if (ImGui::SmallButton("cancel edit")) { svEditId = 0; svMsg[0] = '\0'; } }
-                        // Emoji picker + multiline composer: Enter sends, Ctrl+Enter = newline.
-                        ImVec2 inSz(ImGui::GetContentRegionAvail().x - 70 - 36, ImGui::GetTextLineHeight() + 14);
-                        EmojiPicker("svemoji", svMsg, sizeof(svMsg)); ImGui::SameLine();
-                        bool send = ImGui::InputTextMultiline("##svsend", svMsg, sizeof(svMsg), inSz,
+                        if (svEditId) {
+                            ImGui::TextDisabled("Editing a message"); ImGui::SameLine();
+                            if (ImGui::SmallButton("cancel edit")) { svEditId = 0; svMsg[0] = '\0'; }
+                        }
+                        // Composer (chat-style pill): emoji + input, Enter sends,
+                        // Shift/Ctrl+Enter adds a line.
+                        ImGui::Dummy(ImVec2(0, 4));
+                        EmojiPicker("svemoji", svMsg, sizeof(svMsg)); ImGui::SameLine(0, 6);
+                        const float inH = ImGui::GetTextLineHeight() + 16.0f;
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 8));
+                        if (svFocus) { ImGui::SetKeyboardFocusHere(); svFocus = false; }
+                        std::string hint = "Message #" + (chanName.empty() ? std::string("channel") : chanName);
+                        bool send = ImGui::InputTextMultiline("##svsend", svMsg, sizeof(svMsg),
+                            ImVec2(ImGui::GetContentRegionAvail().x - 70, inH),
                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
-                        ImGui::SameLine();
-                        if ((ImGui::Button(svEditId ? "Save" : "Send", ImVec2(62, inSz.y)) || send) && svMsg[0]) {
-                            if (svEditId) { if (sv.EditMessage(svEditId, svMsg)) { svEditId = 0; svMsg[0] = '\0'; g_srvForce = true; } }
+                        if (!svMsg[0] && !ImGui::IsItemActive()) {   // placeholder (multiline inputs have no hint)
+                            ImVec2 ip = ImGui::GetItemRectMin();
+                            ImGui::GetWindowDrawList()->AddText(ImVec2(ip.x + 11, ip.y + 8), cDim, hint.c_str());
+                        }
+                        ImGui::PopStyleVar(2);
+                        ImGui::SameLine(0, 8);
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+                        bool clicked = PrimaryButton(svEditId ? "Save" : "Send", ImVec2(62, inH));
+                        ImGui::PopStyleVar();
+                        if ((clicked || send) && svMsg[0]) {
+                            if (svEditId) { if (sv.EditMessage(svEditId, svMsg)) { svEditId = 0; svMsg[0] = '\0'; g_srvForce = true; } else Toast("Couldn't save the edit", 2); }
                             else if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; g_srvForce = true; }
-                            ImGui::SetKeyboardFocusHere(-1);   // keep focus in the box after sending
+                            else Toast("Message not sent \xE2\x80\x94 check your connection", 2);
+                            svFocus = true;   // keep typing (refocus the box, not the Send button)
                         }
                     }
                     ImGui::EndChild();
-                    ImGui::EndTable();
+
+                    if (showMem) {   // ---- Members (Online / Offline) ----
+                        ImGui::SameLine(0, 10);
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, colBg);
+                        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
+                        ImGui::BeginChild("##svmembers", ImVec2(memW, colH), ImGuiChildFlags_AlwaysUseWindowPadding);
+                        ImGui::PopStyleVar();
+                        int onlineN = 0; for (const auto& m : svMembers) if (m.online) ++onlineN;
+                        auto drawMember = [&](const okay::ServerMember& m) {
+                            ImDrawList* d = ImGui::GetWindowDrawList();
+                            ImVec2 mp = ImGui::GetCursorScreenPos();
+                            float rw = ImGui::GetContentRegionAvail().x;
+                            std::string nm = m.name.empty() ? std::string("member") : m.name;
+                            if (ImGui::IsMouseHoveringRect(mp, ImVec2(mp.x + rw, mp.y + 40)))
+                                d->AddRectFilled(mp, ImVec2(mp.x + rw, mp.y + 40), IM_COL32(255, 255, 255, 10), 8.0f);
+                            ImGui::SetCursorScreenPos(ImVec2(mp.x + 4, mp.y + 5));
+                            DrawAvatar(m.avatar, nm, 30.0f);
+                            ImVec2 pd(mp.x + 4 + 26, mp.y + 5 + 26);
+                            d->AddCircleFilled(pd, 6.0f, ImGui::GetColorU32(colBg), 12);
+                            d->AddCircleFilled(pd, 4.0f, m.online ? IM_COL32(76, 200, 110, 255) : IM_COL32(110, 118, 130, 255), 12);
+                            ImU32 tc = m.online ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.45f);
+                            float tx = mp.x + 44;
+                            d->AddText(ImVec2(tx, mp.y + 20 - ImGui::GetTextLineHeight() * 0.5f), tc, FitText(nm, rw - 66).c_str());
+                            if (m.role == "owner") {   // crown-ish gold star after the name
+                                float nx = tx + std::min(ImGui::CalcTextSize(nm.c_str()).x, rw - 66) + 10;
+                                DrawStar(d, ImVec2(nx, mp.y + 20), 5.5f, IM_COL32(250, 200, 70, 255));
+                                if (ImGui::IsMouseHoveringRect(ImVec2(nx - 6, mp.y + 14), ImVec2(nx + 6, mp.y + 26))) ImGui::SetTooltip("Server owner");
+                            }
+                            ImGui::SetCursorScreenPos(ImVec2(mp.x, mp.y + 42));
+                            ImGui::Dummy(ImVec2(0, 0));
+                        };
+                        auto label = [&](const char* t, int n) {
+                            ImGui::SetWindowFontScale(0.80f);
+                            ImGui::TextDisabled("  %s  \xE2\x80\x94  %d", t, n);
+                            ImGui::SetWindowFontScale(1.0f);
+                            ImGui::Dummy(ImVec2(0, 2));
+                        };
+                        if (onlineN > 0) { label("ONLINE", onlineN); for (const auto& m : svMembers) if (m.online) drawMember(m); }
+                        int offN = (int)svMembers.size() - onlineN;
+                        if (offN > 0) { ImGui::Dummy(ImVec2(0, 6)); label("OFFLINE", offN); for (const auto& m : svMembers) if (!m.online) drawMember(m); }
+                        if (svMembers.empty()) ImGui::TextDisabled("Loading members\xE2\x80\xA6");
+                        ImGui::EndChild();
+                        ImGui::PopStyleVar();
+                        ImGui::PopStyleColor();
+                    }
+                }
+
+                // --- Create / join a server ---
+                if (svAddOpen) { ImGui::OpenPopup("Add a server"); svAddOpen = false; }
+                ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+                if (ImGui::BeginPopupModal("Add a server", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::SetWindowFontScale(1.12f);
+                    ImGui::TextUnformatted("Create a server");
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::TextDisabled("A home for your team: channels, chat and members.");
+                    ImGui::SetNextItemWidth(-1);
+                    bool mk = ImGui::InputTextWithHint("##svnew", "Server name", svNew, sizeof(svNew), ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::BeginDisabled(!svNew[0]);
+                    bool mkBtn = PrimaryButton("Create", ImVec2(-1, 34));
+                    ImGui::EndDisabled();
+                    if ((mkBtn || mk) && svNew[0]) {
+                        okay::Server made;
+                        if (sv.CreateServer(svNew, &made, &svErr)) {
+                            svNew[0] = '\0'; svErr.clear(); svNextList = 0;
+                            svSel = made.id; svSelName = made.name; svChan = 0; svNextChan = 0;
+                            Toast("Server created", 1);
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    ImGui::Dummy(ImVec2(0, 8));
+                    ImGui::SeparatorText("or");
+                    ImGui::SetWindowFontScale(1.12f);
+                    ImGui::TextUnformatted("Join with an invite code");
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::SetNextItemWidth(-1);
+                    bool jn = ImGui::InputTextWithHint("##svjoin", "e.g. JAM-2026", svJoin, sizeof(svJoin), ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::BeginDisabled(!svJoin[0]);
+                    bool jnBtn = ImGui::Button("Join server", ImVec2(-1, 34));
+                    ImGui::EndDisabled();
+                    if ((jnBtn || jn) && svJoin[0]) {
+                        if (sv.JoinServer(svJoin, &svErr)) { svJoin[0] = '\0'; svErr.clear(); svNextList = 0; Toast("Joined server", 1); ImGui::CloseCurrentPopup(); }
+                    }
+                    if (!svErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.5f, 0.5f, 1)); ImGui::TextWrapped("%s", svErr.c_str()); ImGui::PopStyleColor(); }
+                    ImGui::Dummy(ImVec2(0, 4));
+                    if (ImGui::Button("Cancel", ImVec2(-1, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
                 }
 
                 // --- Rename channel popup ---

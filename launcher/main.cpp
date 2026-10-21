@@ -29,6 +29,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
+#define STBI_ONLY_GIF        // animated GIFs in chat (stbi_load_gif_from_memory)
 #include "stb_image.h"
 
 #include <algorithm>
@@ -828,6 +829,39 @@ void StartUpdateCheck(bool showDialog = true) {
     g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
 }
 
+// ---- Periodic "is a newer version out?" check -------------------------------
+// The full updater (RunUpdateCheck) installs immediately, which would be rude
+// mid-session. While the launcher is open or minimized it only *looks* every
+// 20 minutes; a newer version raises a toast + notification and the sidebar
+// offers "Install now".
+std::string g_upAvailable;                 // newer published version ("" = none known)
+static SDL_mutex* g_upPollMutex = nullptr;
+static std::string g_upPollResult;         // (guarded)
+static bool g_upPollDone = false;          // (guarded)
+static volatile bool g_upPollBusy = false;
+static int UpdatePollWorker(void*) {
+    std::error_code ec;
+    fs::path vf = fs::temp_directory_path(ec) / "okayspace_launcher_ver_poll.txt";
+    std::string latest;
+    if (Download(std::string(kRawBase) + "VERSION.txt", vf.string())) {
+        std::ifstream f(vf); std::getline(f, latest);
+        while (!latest.empty() && (latest.back() == '\r' || latest.back() == '\n' || latest.back() == ' ')) latest.pop_back();
+    }
+    fs::remove(vf, ec);
+    SDL_LockMutex(g_upPollMutex);
+    g_upPollResult = latest; g_upPollDone = true;
+    SDL_UnlockMutex(g_upPollMutex);
+    g_upPollBusy = false;
+    return 0;
+}
+static void StartUpdatePoll() {
+    if (g_upPollBusy) return;
+    if (!g_upPollMutex) g_upPollMutex = SDL_CreateMutex();
+    g_upPollBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(UpdatePollWorker, "okay-uppoll", nullptr)) SDL_DetachThread(t);
+    else g_upPollBusy = false;
+}
+
 // Find the first of `names` that exists next to the launcher.
 std::string FindExe(std::initializer_list<const char*> names) {
     std::error_code ec;
@@ -1504,54 +1538,89 @@ static const EmojiDef kEmojis[] = {
     {":thumbsup:",":+1b:",   9},
 };
 static constexpr int kEmojiUnknown = 99;   // a Unicode emoji we have no drawing for
+static constexpr int kEmojiUnicode = 98;   // "<e:1F600>" — a real emoji, drawn from the Twemoji sheet
+static constexpr int kEmojiCustom  = 97;   // "<:name:url>" — a user's custom emoji image
 static int EmojiId(const std::string& t) {
     for (const auto& e : kEmojis) if (t == e.code || (e.alt && t == e.alt)) return e.id;
     if (t == ":emoji?:") return kEmojiUnknown;
+    if (t.size() > 4 && t.back() == '>') {
+        if (t.compare(0, 3, "<e:") == 0) return kEmojiUnicode;
+        if (t.compare(0, 2, "<:") == 0 && t.find(':', 2) != std::string::npos) return kEmojiCustom;
+    }
     return -1;
 }
+// Draws any emoji token (shortcode, Unicode cluster, custom image) centred at c;
+// defined with the chat media code further down.
+static void DrawEmojiToken(ImDrawList* dl, ImVec2 c, float s, const std::string& tok);
 
-// Real Unicode emoji (typed on a phone, pasted from elsewhere) have no glyphs
-// in the UI font, so they used to show as "?" boxes. Map the common ones to the
-// drawn set, mark the rest as a neutral placeholder tile, and drop the
-// invisible joiners/variation selectors/skin tones.
+// Real Unicode emoji (typed on a phone, pasted, or from the picker) have no
+// glyphs in the UI font, so each emoji *cluster* (incl. skin tones, ZWJ
+// families, flags and keycaps) becomes a token "<e:1F44D-1F3FB>" that the chat
+// renders from the cached Twemoji sheet (DrawEmojiToken).
+static bool EmojiIsPictograph(unsigned cp) {
+    return (cp >= 0x1F000 && cp <= 0x1FAFF) || (cp >= 0x2600 && cp <= 0x27BF) || cp == 0x2B50 || cp == 0x2B55 ||
+           (cp >= 0x2B05 && cp <= 0x2B07) || cp == 0x2B1B || cp == 0x2B1C || cp == 0x231A || cp == 0x231B ||
+           cp == 0x2328 || cp == 0x23CF || (cp >= 0x23E9 && cp <= 0x23F3) || (cp >= 0x23F8 && cp <= 0x23FA) ||
+           cp == 0x24C2 || cp == 0x25B6 || cp == 0x25C0 || (cp >= 0x25FB && cp <= 0x25FE) || cp == 0x2934 || cp == 0x2935 ||
+           cp == 0x3030 || cp == 0x303D || cp == 0x3297 || cp == 0x3299;
+}
+static unsigned Utf8Decode(const std::string& s, std::size_t i, int& len) {
+    unsigned char c0 = (unsigned char)s[i];
+    len = c0 < 0x80 ? 1 : (c0 >> 5) == 0x6 ? 2 : (c0 >> 4) == 0xE ? 3 : (c0 >> 3) == 0x1E ? 4 : 1;
+    if (i + len > s.size()) { len = 1; return c0; }
+    if (len == 2) return ((c0 & 0x1Fu) << 6) | (s[i + 1] & 0x3F);
+    if (len == 3) return ((c0 & 0x0Fu) << 12) | ((s[i + 1] & 0x3F) << 6) | (s[i + 2] & 0x3F);
+    if (len == 4) return ((c0 & 0x07u) << 18) | ((s[i + 1] & 0x3F) << 12) | ((s[i + 2] & 0x3F) << 6) | (s[i + 3] & 0x3F);
+    return c0;
+}
+static std::string Utf8Encode(unsigned cp) {
+    std::string o;
+    if (cp < 0x80) o += (char)cp;
+    else if (cp < 0x800) { o += (char)(0xC0 | (cp >> 6)); o += (char)(0x80 | (cp & 0x3F)); }
+    else if (cp < 0x10000) { o += (char)(0xE0 | (cp >> 12)); o += (char)(0x80 | ((cp >> 6) & 0x3F)); o += (char)(0x80 | (cp & 0x3F)); }
+    else { o += (char)(0xF0 | (cp >> 18)); o += (char)(0x80 | ((cp >> 12) & 0x3F)); o += (char)(0x80 | ((cp >> 6) & 0x3F)); o += (char)(0x80 | (cp & 0x3F)); }
+    return o;
+}
 static std::string NormalizeEmoji(const std::string& in) {
     bool any = false;
-    for (unsigned char ch : in) if (ch >= 0xE2) { any = true; break; }
+    for (unsigned char ch : in) if (ch >= 0xC2) { any = true; break; }
     if (!any) return in;
-    struct Map { unsigned cp; const char* code; };
-    static const Map kMap[] = {
-        {0x1F600, ":D"}, {0x1F603, ":D"}, {0x1F604, ":D"}, {0x1F601, ":D"}, {0x1F642, ":)"}, {0x1F60A, ":)"},
-        {0x263A, ":)"}, {0x1F622, ":("}, {0x1F61E, ":("}, {0x1F641, ":("}, {0x2639, ":("}, {0x1F62D, ":("},
-        {0x2764, ":heart:"}, {0x1F499, ":heart:"}, {0x1F49A, ":heart:"}, {0x1F49C, ":heart:"}, {0x1F9E1, ":heart:"},
-        {0x1F525, ":fire:"}, {0x2B50, ":star:"}, {0x1F31F, ":star:"}, {0x1F602, ":laugh:"}, {0x1F923, ":laugh:"},
-        {0x1F606, ":laugh:"}, {0x1F62E, ":wow:"}, {0x1F62F, ":wow:"}, {0x1F632, ":wow:"}, {0x1F60E, ":cool:"},
-        {0x1F44D, ":thumbsup:"},
-    };
     std::string out;
     out.reserve(in.size() + 16);
     std::size_t i = 0, n = in.size();
+    auto hex = [](unsigned cp) { char b[12]; std::snprintf(b, sizeof(b), "%X", cp); return std::string(b); };
     while (i < n) {
-        unsigned char c0 = (unsigned char)in[i];
-        int len = c0 < 0x80 ? 1 : (c0 >> 5) == 0x6 ? 2 : (c0 >> 4) == 0xE ? 3 : (c0 >> 3) == 0x1E ? 4 : 1;
-        if (i + len > n) len = 1;
-        unsigned cp = c0;
-        if (len == 2) cp = ((c0 & 0x1F) << 6) | (in[i + 1] & 0x3F);
-        else if (len == 3) cp = ((c0 & 0x0F) << 12) | ((in[i + 1] & 0x3F) << 6) | (in[i + 2] & 0x3F);
-        else if (len == 4) cp = ((c0 & 0x07) << 18) | ((in[i + 1] & 0x3F) << 12) | ((in[i + 2] & 0x3F) << 6) | (in[i + 3] & 0x3F);
-        const bool invisible = cp == 0xFE0F || cp == 0xFE0E || cp == 0x200D || (cp >= 0x1F3FB && cp <= 0x1F3FF);
-        const bool pictograph = (cp >= 0x1F000 && cp <= 0x1FAFF) || (cp >= 0x2600 && cp <= 0x27BF) || cp == 0x2B50 || cp == 0x2B55;
-        if (invisible) { i += len; continue; }
-        if (pictograph) {
-            const char* code = ":emoji?:";
-            for (const auto& m : kMap) if (m.cp == cp) { code = m.code; break; }
-            if (!out.empty() && out.back() != ' ' && out.back() != '\n') out += ' ';
-            out += code;
-            out += ' ';
-            i += len;
-            continue;
+        int len = 1;
+        unsigned cp = Utf8Decode(in, i, len);
+        int nlen = 0;
+        unsigned next = (i + len < n) ? Utf8Decode(in, i + len, nlen) : 0;
+        const bool ri = cp >= 0x1F1E6 && cp <= 0x1F1FF;
+        const bool keycap = (cp == '#' || cp == '*' || (cp >= '0' && cp <= '9')) && (next == 0xFE0F || next == 0x20E3);
+        const bool textPresent = (cp == 0xA9 || cp == 0xAE || cp == 0x203C || cp == 0x2049 || cp == 0x2122 || cp == 0x2139 ||
+                                  (cp >= 0x2194 && cp <= 0x21AA)) && next == 0xFE0F;
+        if (cp == 0xFE0F || cp == 0xFE0E || cp == 0x200D) { i += len; continue; }   // stray joiners/selectors
+        if (!(EmojiIsPictograph(cp) || ri || keycap || textPresent)) { out.append(in, i, (std::size_t)len); i += len; continue; }
+        std::vector<unsigned> cl{cp};
+        std::size_t j = i + len;
+        if (ri && next >= 0x1F1E6 && next <= 0x1F1FF) { cl.push_back(next); j += nlen; }   // flag = two letters
+        while (j < n) {
+            int l2 = 0; unsigned c2 = Utf8Decode(in, j, l2);
+            if (c2 == 0xFE0F || c2 == 0x20E3 || (c2 >= 0x1F3FB && c2 <= 0x1F3FF) || (c2 >= 0xE0020 && c2 <= 0xE007F)) {
+                cl.push_back(c2); j += l2; continue;
+            }
+            if (c2 == 0x200D && j + l2 < n) {   // ZWJ sequence: keep going if a pictograph follows
+                int l3 = 0; unsigned c3 = Utf8Decode(in, j + l2, l3);
+                if (EmojiIsPictograph(c3)) { cl.push_back(c2); cl.push_back(c3); j += l2 + l3; continue; }
+            }
+            break;
         }
-        out.append(in, i, (std::size_t)len);
-        i += len;
+        std::string tok = "<e:";
+        for (std::size_t k = 0; k < cl.size(); ++k) { if (k) tok += '-'; tok += hex(cl[k]); }
+        tok += '>';
+        if (!out.empty() && out.back() != ' ' && out.back() != '\n') out += ' ';
+        out += tok;
+        out += ' ';
+        i = j;
     }
     return out;
 }
@@ -1569,7 +1638,8 @@ static int ReactionEmojiId(const std::string& key) {
 
 // True when `body` is nothing but 1-3 emoji shortcodes (Telegram renders those
 // big and background-less). Reports how many via `count`.
-static bool IsEmojiOnly(const std::string& body, int& count) {
+static bool IsEmojiOnly(const std::string& bodyIn, int& count) {
+    const std::string body = NormalizeEmoji(bodyIn);
     count = 0;
     std::size_t i = 0, n = body.size();
     while (i < n) {
@@ -1653,31 +1723,11 @@ void DrawHeart(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
 
 // A small emoji button that opens a picker grid; clicking an emoji appends its
 // shortcode to `buf` (space-separated so RenderChatBody tokenizes it).
+static std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
+                                   const std::vector<std::string>* recentGifs, bool canSendMedia);   // chat media section
+// Emoji button + picker for any text box (inserts real Unicode emoji).
 void EmojiPicker(const char* id, char* buf, std::size_t cap) {
-    ImGui::PushID(id);
-    ImVec2 bp = ImGui::GetCursorScreenPos();
-    if (ImGui::Button("##emojibtn", ImVec2(30, 30))) ImGui::OpenPopup("##emojipop");
-    DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(bp.x + 15, bp.y + 15), 22, 0);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Emoji");
-    if (ImGui::BeginPopup("##emojipop")) {
-        int k = 0;
-        for (const auto& e : kEmojis) {
-            if (k % 5 != 0) ImGui::SameLine();
-            ImGui::PushID(e.id);
-            ImVec2 sp = ImGui::GetCursorScreenPos();
-            if (ImGui::Button("##e", ImVec2(32, 32))) {
-                std::string s = buf;
-                if (!s.empty() && s.back() != ' ') s += ' ';
-                s += e.code; s += ' ';
-                std::snprintf(buf, cap, "%s", s.c_str());
-                ImGui::CloseCurrentPopup();
-            }
-            DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(sp.x + 16, sp.y + 16), 24, e.id);
-            ImGui::PopID(); ++k;
-        }
-        ImGui::EndPopup();
-    }
-    ImGui::PopID();
+    ChatMediaPicker(id, buf, cap, nullptr, false);
 }
 
 // Render a chat message body with word-wrapping, turning http(s) URLs into
@@ -1715,8 +1765,10 @@ void RenderChatBody(const std::string& bodyIn, float maxW = 0.0f) {
         if (lineStarted) { ImGui::SameLine(0, spaceW); lineX += spaceW; }
         if (eid >= 0) {
             ImVec2 p = ImGui::GetCursorScreenPos();
-            DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(p.x + em * 0.5f, p.y + em * 0.5f), em, eid);
+            DrawEmojiToken(ImGui::GetWindowDrawList(), ImVec2(p.x + em * 0.5f, p.y + em * 0.5f), em * 1.12f, tok);
             ImGui::Dummy(ImVec2(em, em));
+            if (eid == kEmojiCustom && ImGui::IsItemHovered())
+                ImGui::SetTooltip(":%s:", tok.substr(2, tok.find(':', 2) - 2).c_str());
         } else {
             bool link = tok.rfind("http://", 0) == 0 || tok.rfind("https://", 0) == 0;
             bool mention = tok.size() > 1 && tok[0] == '@';
@@ -1931,6 +1983,690 @@ bool PrimaryButton(const char* label, const ImVec2& size) {
     return hit;
 }
 
+// ===========================================================================
+// Chat media: colour emoji, animated GIFs, custom emoji + stickers.
+//
+// - Emoji: the full Unicode set rendered from the Twemoji sprite sheet + catalog
+//   of the emoji-datasource project (MIT; Twemoji art CC-BY 4.0 by Twitter/X and
+//   contributors). Both are downloaded once and cached; until they arrive (or if
+//   offline) the drawn fallback glyphs are used.
+// - GIFs: any .gif URL animates (frames decoded once, cached as textures). Search
+//   goes through Tenor when a Tenor API key is set in the GIF tab.
+// - Custom emoji / stickers: your own images in Storage (Messages::*Library);
+//   messages carry the URL ("<:name:url>", "[Sticker] url").
+// ===========================================================================
+void SavePrefs();                                              // defined with the prefs below
+static void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col);   // defined with the chat helpers
+static const char* kEmojiJsonUrl  = "https://cdn.jsdelivr.net/npm/emoji-datasource@15.1.2/emoji.json";
+static const char* kEmojiSheetUrl = "https://cdn.jsdelivr.net/npm/emoji-datasource-twitter@15.1.2/img/twitter/sheets/32.png";
+static constexpr int kEmojiCell = 32, kEmojiStride = 34;   // sheet cells have 1px padding
+
+static fs::path MediaCacheDir() {
+    std::error_code ec;
+    fs::path d = fs::temp_directory_path(ec) / "okayspace_media";
+    fs::create_directories(d, ec);
+    return d;
+}
+static fs::path MediaCachePath(const std::string& url, const char* ext) {
+    return MediaCacheDir() / (std::to_string(std::hash<std::string>{}(url)) + ext);
+}
+// Background download into `path` (shares the avatar downloader's bookkeeping).
+// 1 = on disk, 0 = downloading, -1 = failed.
+static int CachedFetch(const std::string& url, const fs::path& path) {
+    if (!g_avatarMutex) g_avatarMutex = SDL_CreateMutex();
+    SDL_LockMutex(g_avatarMutex);
+    const bool pending = g_avatarPending.count(url) != 0, failed = g_avatarFailed.count(url) != 0;
+    SDL_UnlockMutex(g_avatarMutex);
+    if (pending) return 0;
+    std::error_code ec;
+    if (fs::exists(path, ec) && fs::file_size(path, ec) > 0) return 1;
+    if (failed) return -1;
+    SDL_LockMutex(g_avatarMutex); g_avatarPending.insert(url); SDL_UnlockMutex(g_avatarMutex);
+    AvatarDl* d = new AvatarDl{url, path.string()};
+    if (SDL_Thread* t = SDL_CreateThread(AvatarDlWorker, "okay-mediadl", d)) SDL_DetachThread(t);
+    else { SDL_LockMutex(g_avatarMutex); g_avatarPending.erase(url); SDL_UnlockMutex(g_avatarMutex); delete d; return -1; }
+    return 0;
+}
+
+// ---- Emoji catalog + sheet ----------------------------------------------------
+struct EmojiInfo { std::string unified, utf8, name, shortName; int cat = 0, sx = 0, sy = 0, sort = 0; };
+static const char* kEmojiCatNames[] = {"Smileys & Emotion", "People & Body", "Animals & Nature", "Food & Drink",
+                                       "Activities", "Travel & Places", "Objects", "Symbols", "Flags"};
+static constexpr int kEmojiCatCount = 9;
+static std::vector<EmojiInfo> g_emojiAll;                        // picker order (category, then sort_order)
+static std::map<std::string, std::pair<int, int>> g_emojiCells;  // "1F44D-1F3FB" -> sheet cell (incl. skin tones)
+static SDL_Texture* g_emojiSheet = nullptr;
+static int g_emojiSheetW = 0, g_emojiSheetH = 0;
+static int g_emojiState = 0;   // 0 idle, 1 downloading/parsing, 2 ready, -1 unavailable
+static SDL_mutex* g_emojiMutex = nullptr;
+static bool g_emojiParsed = false;   // (guarded) worker finished
+static unsigned char* g_emojiPixels = nullptr; static int g_emojiPxW = 0, g_emojiPxH = 0;   // (guarded)
+static std::vector<EmojiInfo> g_emojiParsedList;                  // (guarded)
+static std::map<std::string, std::pair<int, int>> g_emojiParsedCells;
+
+static int EmojiParseWorker(void*) {
+    std::vector<EmojiInfo> list; std::map<std::string, std::pair<int, int>> cells;
+    unsigned char* px = nullptr; int w = 0, h = 0, ch = 0;
+    try {
+        std::ifstream f(MediaCachePath(kEmojiJsonUrl, ".json"), std::ios::binary);
+        std::stringstream ss; ss << f.rdbuf();
+        const std::string json = ss.str();
+        auto utf8Of = [](const std::string& unified) {
+            std::string o; std::size_t p = 0;
+            while (p < unified.size()) {
+                std::size_t q = unified.find('-', p); if (q == std::string::npos) q = unified.size();
+                o += Utf8Encode((unsigned)std::strtoul(unified.substr(p, q - p).c_str(), nullptr, 16));
+                p = q + 1;
+            }
+            return o;
+        };
+        for (const std::string& o : okay::Messages::SplitObjects(json)) {
+            const std::size_t sk = o.find("\"skin_variations\"");
+            const std::string top = sk == std::string::npos ? o : o.substr(0, sk);
+            if (okay::Messages::Field(top, "has_img_twitter") == "false") continue;
+            EmojiInfo e;
+            e.unified = okay::Messages::Field(top, "unified");
+            if (e.unified.empty()) continue;
+            e.sx = std::atoi(okay::Messages::Field(top, "sheet_x").c_str());
+            e.sy = std::atoi(okay::Messages::Field(top, "sheet_y").c_str());
+            cells[e.unified] = {e.sx, e.sy};
+            std::string nq = okay::Messages::Field(top, "non_qualified");
+            if (!nq.empty()) cells[nq] = {e.sx, e.sy};
+            if (sk != std::string::npos) {   // skin-tone variants: "unified":"1F44D-1F3FB", "sheet_x":..,"sheet_y":..
+                std::size_t p = sk;
+                while ((p = o.find("\"unified\"", p + 1)) != std::string::npos) {
+                    std::string sub = o.substr(p, 400);
+                    std::string u = okay::Messages::Field(sub, "unified");
+                    if (!u.empty()) cells[u] = {std::atoi(okay::Messages::Field(sub, "sheet_x").c_str()),
+                                                std::atoi(okay::Messages::Field(sub, "sheet_y").c_str())};
+                }
+            }
+            std::string cat = okay::Messages::Field(top, "category");
+            e.cat = -1;
+            for (int k = 0; k < kEmojiCatCount; ++k) if (cat == kEmojiCatNames[k]) e.cat = k;
+            if (e.cat < 0 || !okay::Messages::Field(top, "obsoleted_by").empty()) continue;   // "Component" etc.
+            e.utf8 = utf8Of(e.unified);
+            e.name = okay::Messages::Field(top, "name");
+            for (auto& c : e.name) c = (char)std::tolower((unsigned char)c);
+            e.shortName = okay::Messages::Field(top, "short_name");
+            e.sort = std::atoi(okay::Messages::Field(top, "sort_order").c_str());
+            list.push_back(e);
+        }
+        std::stable_sort(list.begin(), list.end(), [](const EmojiInfo& a, const EmojiInfo& b) {
+            return a.cat != b.cat ? a.cat < b.cat : a.sort < b.sort;
+        });
+        px = stbi_load(MediaCachePath(kEmojiSheetUrl, ".png").string().c_str(), &w, &h, &ch, 4);
+    } catch (...) {}
+    SDL_LockMutex(g_emojiMutex);
+    g_emojiParsedList.swap(list); g_emojiParsedCells.swap(cells);
+    g_emojiPixels = px; g_emojiPxW = w; g_emojiPxH = h; g_emojiParsed = true;
+    SDL_UnlockMutex(g_emojiMutex);
+    return 0;
+}
+// Advance loading (call wherever emoji are drawn; cheap once ready).
+static void EmojiCatalogPump() {
+    if (g_emojiState == 2 || g_emojiState == -1) return;
+    if (!g_emojiMutex) g_emojiMutex = SDL_CreateMutex();
+    if (g_emojiState == 0) {
+        int a = CachedFetch(kEmojiJsonUrl, MediaCachePath(kEmojiJsonUrl, ".json"));
+        int b = CachedFetch(kEmojiSheetUrl, MediaCachePath(kEmojiSheetUrl, ".png"));
+        if (a < 0 || b < 0) { g_emojiState = -1; return; }
+        if (a == 0 || b == 0) return;   // still downloading
+        g_emojiState = 1;
+        if (SDL_Thread* t = SDL_CreateThread(EmojiParseWorker, "okay-emoji", nullptr)) SDL_DetachThread(t);
+        else g_emojiState = -1;
+        return;
+    }
+    SDL_LockMutex(g_emojiMutex);
+    const bool done = g_emojiParsed;
+    SDL_UnlockMutex(g_emojiMutex);
+    if (!done) return;
+    if (g_emojiPixels && g_renderer && !g_emojiParsedCells.empty()) {
+        SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(g_emojiPixels, g_emojiPxW, g_emojiPxH, 32, g_emojiPxW * 4, SDL_PIXELFORMAT_ABGR8888);
+        if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
+        g_emojiSheetW = g_emojiPxW; g_emojiSheetH = g_emojiPxH;
+    }
+    if (g_emojiPixels) { stbi_image_free(g_emojiPixels); g_emojiPixels = nullptr; }
+    g_emojiAll.swap(g_emojiParsedList); g_emojiCells.swap(g_emojiParsedCells);
+    g_emojiState = g_emojiSheet ? 2 : -1;
+    if (g_emojiState < 0) {   // corrupt/partial cache: drop it so the next launch re-downloads
+        std::error_code ec;
+        fs::remove(MediaCachePath(kEmojiJsonUrl, ".json"), ec);
+        fs::remove(MediaCachePath(kEmojiSheetUrl, ".png"), ec);
+    }
+}
+// Draw sheet cell (sx,sy) into the square [c-s/2, c+s/2].
+static void DrawEmojiCell(ImDrawList* dl, ImVec2 c, float s, int sx, int sy) {
+    const float u0 = (float)(sx * kEmojiStride + 1) / g_emojiSheetW, v0 = (float)(sy * kEmojiStride + 1) / g_emojiSheetH;
+    const float u1 = u0 + (float)kEmojiCell / g_emojiSheetW, v1 = v0 + (float)kEmojiCell / g_emojiSheetH;
+    dl->AddImage((ImTextureID)(intptr_t)g_emojiSheet, ImVec2(c.x - s * 0.5f, c.y - s * 0.5f), ImVec2(c.x + s * 0.5f, c.y + s * 0.5f),
+                 ImVec2(u0, v0), ImVec2(u1, v1));
+}
+// Look up a "1F44D-1F3FB"-style code (tries with and without FE0F).
+static bool EmojiCellFor(const std::string& code, int& sx, int& sy) {
+    auto it = g_emojiCells.find(code);
+    if (it == g_emojiCells.end()) {
+        std::string stripped;
+        std::size_t p = 0;
+        while (p < code.size()) {
+            std::size_t q = code.find('-', p); if (q == std::string::npos) q = code.size();
+            std::string part = code.substr(p, q - p);
+            if (part != "FE0F") { if (!stripped.empty()) stripped += '-'; stripped += part; }
+            p = q + 1;
+        }
+        it = g_emojiCells.find(stripped);
+        if (it == g_emojiCells.end()) {   // drop a skin tone as a last resort
+            std::size_t t = stripped.find("-1F3F");
+            if (t != std::string::npos) it = g_emojiCells.find(stripped.substr(0, t));
+        }
+    }
+    if (it == g_emojiCells.end()) return false;
+    sx = it->second.first; sy = it->second.second;
+    return true;
+}
+
+// ---- Animated / still chat images ---------------------------------------------
+struct AnimImage { std::vector<SDL_Texture*> frames; std::vector<int> ends; int total = 0, w = 0, h = 0; bool ok = false; };
+static std::map<std::string, AnimImage> g_animImages;
+static bool IsGifUrl(const std::string& url) {
+    std::string low = url; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+    std::size_t q = low.find('?'); if (q != std::string::npos) low.erase(q);
+    return low.size() > 4 && low.compare(low.size() - 4, 4, ".gif") == 0;
+}
+// The texture to draw for an image URL right now (GIFs advance with time);
+// nullptr while it downloads. w/h receive the image size.
+static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, int* h = nullptr) {
+    if (url.empty() || !g_renderer) return nullptr;
+    if (!IsGifUrl(url)) {
+        SDL_Texture* t = AvatarTexture(url);
+        if (t && (w || h)) { int tw = 0, th = 0; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th); if (w) *w = tw; if (h) *h = th; }
+        return t;
+    }
+    auto it = g_animImages.find(url);
+    if (it == g_animImages.end()) {
+        fs::path p = MediaCachePath(url, ".gif");
+        int st = CachedFetch(url, p);
+        if (st == 0) return nullptr;
+        AnimImage& a = g_animImages[url];
+        if (st > 0) {
+            std::ifstream f(p, std::ios::binary);
+            std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            int* delays = nullptr; int fw = 0, fh = 0, frames = 0, comp = 0;
+            unsigned char* px = data.empty() ? nullptr :
+                stbi_load_gif_from_memory((const stbi_uc*)data.data(), (int)data.size(), &delays, &fw, &fh, &frames, &comp, 4);
+            if (px && fw > 0 && fh > 0 && frames > 0) {
+                // Keep memory sane: skip frames on huge GIFs (merging their delays).
+                const long long budget = 24LL * 1000 * 1000;   // pixels across all frames
+                int step = 1;
+                while ((long long)fw * fh * ((frames + step - 1) / step) > budget && step < frames) ++step;
+                int acc = 0;
+                for (int i = 0; i < frames; ++i) {
+                    int d = delays ? delays[i] : 100;
+                    if (d < 20) d = 100;   // browsers treat 0-10ms frames as 100ms
+                    acc += d;
+                    if (i % step != 0 && i != frames - 1) continue;
+                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(px + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
+                    if (!sf) continue;
+                    SDL_Texture* tx = SDL_CreateTextureFromSurface(g_renderer, sf);
+                    SDL_FreeSurface(sf);
+                    if (!tx) continue;
+                    a.frames.push_back(tx);
+                    a.total += acc; a.ends.push_back(a.total); acc = 0;
+                }
+                a.w = fw; a.h = fh; a.ok = !a.frames.empty();
+            }
+            if (px) stbi_image_free(px);
+            if (delays) stbi_image_free(delays);
+        }
+        it = g_animImages.find(url);
+    }
+    const AnimImage& a = it->second;
+    if (!a.ok) return nullptr;
+    if (w) *w = a.w;
+    if (h) *h = a.h;
+    if (a.frames.size() == 1 || a.total <= 0) return a.frames[0];
+    int t = (int)(SDL_GetTicks() % (Uint32)a.total);
+    for (std::size_t i = 0; i < a.ends.size(); ++i) if (t < a.ends[i]) return a.frames[i];
+    return a.frames.back();
+}
+
+static void DrawEmojiToken(ImDrawList* dl, ImVec2 c, float s, const std::string& tok) {
+    const int id = EmojiId(tok);
+    if (id == kEmojiUnicode) {
+        EmojiCatalogPump();
+        const std::string code = tok.substr(3, tok.size() - 4);
+        int sx = 0, sy = 0;
+        if (g_emojiState == 2 && EmojiCellFor(code, sx, sy)) { DrawEmojiCell(dl, c, s, sx, sy); return; }
+        // Not loaded (or unknown): a few common ones have drawn stand-ins.
+        static const struct { const char* code; int id; } kFallback[] = {
+            {"1F600", 1}, {"1F603", 1}, {"1F604", 1}, {"1F601", 1}, {"1F642", 0}, {"1F60A", 0}, {"263A-FE0F", 0},
+            {"1F622", 2}, {"1F61E", 2}, {"1F641", 2}, {"1F62D", 2}, {"2764-FE0F", 3}, {"2764", 3}, {"1F525", 4},
+            {"2B50", 5}, {"1F31F", 5}, {"1F602", 6}, {"1F923", 6}, {"1F606", 6}, {"1F62E", 7}, {"1F632", 7},
+            {"1F60E", 8}, {"1F44D", 9},
+        };
+        for (const auto& f : kFallback) if (code == f.code) { DrawEmoji(dl, c, s, f.id); return; }
+        DrawEmoji(dl, c, s, kEmojiUnknown);
+        return;
+    }
+    if (id == kEmojiCustom) {
+        std::size_t c2 = tok.find(':', 2);
+        std::string url = tok.substr(c2 + 1, tok.size() - c2 - 2);
+        int iw = 0, ih = 0;
+        if (SDL_Texture* t = ChatImageTexture(url, &iw, &ih)) {
+            float k = (iw > 0 && ih > 0) ? std::min(s / iw, s / ih) : 1.0f;
+            float hw = iw * k * 0.5f, hh = ih * k * 0.5f;
+            dl->AddImage((ImTextureID)(intptr_t)t, ImVec2(c.x - hw, c.y - hh), ImVec2(c.x + hw, c.y + hh));
+        } else DrawEmoji(dl, c, s, kEmojiUnknown);
+        return;
+    }
+    DrawEmoji(dl, c, s, id < 0 ? 0 : id);
+}
+
+// ---- Custom emoji / sticker library (filled by workers defined later) ----------
+static SDL_mutex* g_libMutex = nullptr;
+static std::vector<okay::Messages::LibraryItem> g_libEmoji, g_libStickers;   // (guarded)
+static bool g_libLoaded = false, g_libBusy = false;                         // (guarded / UI)
+static std::string g_libStatus;                                              // (guarded) last upload result
+static void LibraryRefresh();                                                // defined below the chat poller
+static void LibraryUpload(const std::string& path, const std::string& folder, const std::string& name);
+static void LibraryDelete(const std::string& folder, const std::string& file);
+// Replace ":name:" with my custom emoji token before sending ("<:name:url>").
+static std::string ExpandCustomEmoji(const std::string& text) {
+    if (text.find(':') == std::string::npos) return text;
+    std::vector<okay::Messages::LibraryItem> lib;
+    if (g_libMutex) { SDL_LockMutex(g_libMutex); lib = g_libEmoji; SDL_UnlockMutex(g_libMutex); }
+    if (lib.empty()) return text;
+    std::string out;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        if (text[i] == ':') {
+            std::size_t j = text.find(':', i + 1);
+            if (j != std::string::npos && j > i + 1 && j - i < 40) {
+                std::string nm = text.substr(i + 1, j - i - 1);
+                bool hit = false;
+                for (const auto& e : lib) if (e.name == nm) { out += " <:" + nm + ":" + e.url + "> "; hit = true; break; }
+                if (hit) { i = j + 1; continue; }
+            }
+        }
+        out += text[i++];
+    }
+    return out;
+}
+
+// ---- GIF search (Tenor) -----------------------------------------------------------
+std::string g_tenorKey;            // persisted (tenor_key=); empty = search off
+struct GifResult { std::string preview, full, desc; int w = 0, h = 0; };
+static SDL_mutex* g_gifMutex = nullptr;
+static std::vector<GifResult> g_gifResults;   // (guarded)
+static bool g_gifBusy = false, g_gifReady = false;
+static std::string g_gifError;                // (guarded)
+static void GifSearch(const std::string& query);   // "" = trending; defined below
+static std::vector<std::string> g_recentEmoji;     // most recent first (session)
+
+// ---- The picker -------------------------------------------------------------------
+// Emoji tab (search, categories, custom), GIFs tab, Stickers tab. Emoji are
+// inserted into `buf`; a GIF or sticker returns a message body to send now.
+static std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
+                                   const std::vector<std::string>* recentGifs, bool canSendMedia) {
+    std::string sendNow;
+    ImGui::PushID(id);
+    ImVec2 bp = ImGui::GetCursorScreenPos();
+    const float B = ImGui::GetFrameHeight();
+    if (ImGui::InvisibleButton("##mediabtn", ImVec2(B, B))) {
+        ImGui::OpenPopup("##mediapop");
+        if (canSendMedia) LibraryRefresh();
+    }
+    const bool bh = ImGui::IsItemHovered();
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (bh) dl->AddRectFilled(bp, ImVec2(bp.x + B, bp.y + B), IM_COL32(255, 255, 255, 22), 8.0f);
+        EmojiCatalogPump();
+        DrawEmojiToken(dl, ImVec2(bp.x + B * 0.5f, bp.y + B * 0.5f), B * 0.70f, "<e:1F642>");
+        if (bh) ImGui::SetTooltip(canSendMedia ? "Emoji, GIFs and stickers" : "Emoji");
+    }
+    static int tab = 0, cat = 0;               // tab: 0 emoji, 1 GIFs, 2 stickers; cat: -2 recent, -1 custom, 0.. categories
+    static char search[64] = "", gifQuery[64] = "", keyBuf[96] = "";
+    static std::string hoverName;
+    static std::string pendingPath, pendingFolder; static char pendingName[40] = "";
+    if (static bool demoOpen = false; !demoOpen && canSendMedia && std::getenv("OKAY_CHAT_DEMO_PICKER")) {   // dev screenshot hook
+        demoOpen = true; ImGui::OpenPopup("##mediapop");
+        std::string v = std::getenv("OKAY_CHAT_DEMO_PICKER");
+        tab = v == "stickers" ? 2 : v == "gifs" ? 1 : 0; cat = v == "custom" ? -1 : 0;
+    }
+    ImGui::SetNextWindowSize(ImVec2(392, 440));
+    if (ImGui::BeginPopup("##mediapop")) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+        if (!canSendMedia) tab = 0;
+        // Tabs.
+        if (canSendMedia) {
+            const char* tabs[] = {"Emoji", "GIFs", "Stickers"};
+            ImVec2 tp = ImGui::GetCursorScreenPos();
+            float x = tp.x, th = ImGui::GetTextLineHeight() + 10;
+            for (int k = 0; k < 3; ++k) {
+                ImVec2 ts = ImGui::CalcTextSize(tabs[k]);
+                float tw = ts.x + 24;
+                ImGui::SetCursorScreenPos(ImVec2(x, tp.y));
+                ImGui::PushID(k);
+                if (ImGui::InvisibleButton("##mt", ImVec2(tw, th))) {
+                    tab = k;
+                    if (k == 1 && !g_tenorKey.empty() && !g_gifReady && !g_gifBusy) GifSearch("");
+                }
+                bool h = ImGui::IsItemHovered();
+                ImGui::PopID();
+                bool on = tab == k;
+                dl->AddRectFilled(ImVec2(x, tp.y), ImVec2(x + tw, tp.y + th),
+                                  on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)) : (h ? IM_COL32(255, 255, 255, 20) : IM_COL32(255, 255, 255, 8)), th * 0.5f);
+                dl->AddText(ImVec2(x + 12, tp.y + (th - ts.y) * 0.5f), on ? ImGui::GetColorU32(accLt) : cDim, tabs[k]);
+                x += tw + 6;
+            }
+            ImGui::SetCursorScreenPos(ImVec2(tp.x, tp.y + th + 8));
+            ImGui::Dummy(ImVec2(0, 0));
+        }
+        auto searchPill = [&](const char* sid, const char* hint, char* sbuf, std::size_t scap) {
+            ImVec2 sp = ImGui::GetCursorScreenPos();
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(28, 6));
+            ImGui::SetNextItemWidth(-1);
+            bool enter = ImGui::InputTextWithHint(sid, hint, sbuf, scap, ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::PopStyleVar(2);
+            float fh = ImGui::GetItemRectSize().y;
+            ImVec2 mc(sp.x + 14.0f, sp.y + fh * 0.5f - 1.0f);
+            dl->AddCircle(mc, 4.4f, cDim, 16, 1.5f);
+            dl->AddLine(ImVec2(mc.x + 3.2f, mc.y + 3.2f), ImVec2(mc.x + 6.4f, mc.y + 6.4f), cDim, 1.7f);
+            return enter;
+        };
+        // Pending upload (custom emoji / sticker): name it, then upload.
+        auto pendingRow = [&]() {
+            if (pendingPath.empty()) return;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+            ImGui::BeginChild("##pending", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+            ImGui::TextDisabled("New %s from %s", pendingFolder == "emoji" ? "emoji" : "sticker", fs::path(pendingPath).filename().string().c_str());
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 150);
+            ImGui::InputTextWithHint("##pname", "name", pendingName, sizeof(pendingName));
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!pendingName[0] || g_libBusy);
+            if (PrimaryButton("Upload", ImVec2(70, 0))) { LibraryUpload(pendingPath, pendingFolder, pendingName); pendingPath.clear(); }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) pendingPath.clear();
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        };
+        auto pickFile = [&](const char* folder, unsigned long long maxBytes) {
+            const char* pats[] = {"*.png", "*.gif", "*.jpg", "*.jpeg"};
+            const char* pick = tinyfd_openFileDialog(folder[0] == 'e' ? "Choose an image for your emoji" : "Choose a sticker image",
+                                                     "", 4, pats, "Images (PNG, GIF, JPG)", 0);
+            if (!pick || !*pick) return;
+            std::error_code ec; auto sz = fs::file_size(fs::path(pick), ec);
+            if (ec) { Toast("Couldn't read that file", 2); return; }
+            if ((unsigned long long)sz > maxBytes) { Toast(folder[0] == 'e' ? "Emoji images are limited to 512 KB" : "Stickers are limited to 2 MB", 2); return; }
+            pendingPath = pick; pendingFolder = folder;
+            std::string stem = fs::path(pick).stem().string(), nm;
+            for (char c : stem) if (std::isalnum((unsigned char)c) || c == '_' || c == '-') nm += (char)std::tolower((unsigned char)c);
+            std::snprintf(pendingName, sizeof(pendingName), "%s", nm.substr(0, 32).c_str());
+        };
+        std::vector<okay::Messages::LibraryItem> libEmoji, libStickers; bool libLoaded = false; std::string libStatus;
+        if (g_libMutex) {
+            SDL_LockMutex(g_libMutex);
+            libEmoji = g_libEmoji; libStickers = g_libStickers; libLoaded = g_libLoaded; libStatus = g_libStatus;
+            SDL_UnlockMutex(g_libMutex);
+        }
+
+        if (tab == 0) {   // ---------------- Emoji ----------------
+            searchPill("##esearch", "Search emoji", search, sizeof(search));
+            EmojiCatalogPump();
+            const bool ready = g_emojiState == 2;
+            // Category row: recent, custom, then the Unicode categories (an emoji each as the icon).
+            static const char* kCatIcon[] = {"1F600", "1F44B", "1F43B", "1F354", "26BD", "2708-FE0F", "1F4A1", "2764-FE0F", "1F3C1"};
+            if (!search[0]) {
+                ImVec2 cp = ImGui::GetCursorScreenPos();
+                const float cs = 30.0f;
+                float x = cp.x;
+                auto catBtn = [&](int c, const char* tip) {
+                    ImGui::SetCursorScreenPos(ImVec2(x, cp.y));
+                    ImGui::PushID(c + 100);
+                    if (ImGui::InvisibleButton("##cat", ImVec2(cs, cs))) cat = c;
+                    bool h = ImGui::IsItemHovered();
+                    ImGui::PopID();
+                    if (cat == c || h) dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cs, cp.y + cs), cat == c ? IM_COL32(255, 255, 255, 30) : IM_COL32(255, 255, 255, 14), 7.0f);
+                    ImVec2 cc(x + cs * 0.5f, cp.y + cs * 0.5f);
+                    if (c == -2) {   // clock
+                        dl->AddCircle(cc, 7.0f, cDim, 16, 1.5f);
+                        dl->AddLine(cc, ImVec2(cc.x, cc.y - 4.5f), cDim, 1.5f); dl->AddLine(cc, ImVec2(cc.x + 3.5f, cc.y), cDim, 1.5f);
+                    } else if (c == -1) DrawStar(dl, cc, 7.5f, cat == c ? IM_COL32(250, 200, 70, 255) : cDim);
+                    else DrawEmojiToken(dl, cc, 20.0f, std::string("<e:") + kCatIcon[c] + ">");
+                    if (h) ImGui::SetTooltip("%s", tip);
+                    x += cs + 3;
+                };
+                if (canSendMedia) catBtn(-1, "Your custom emoji");
+                catBtn(-2, "Recently used");
+                for (int k = 0; k < kEmojiCatCount; ++k) catBtn(k, kEmojiCatNames[k]);
+                ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + cs + 6));
+                ImGui::Dummy(ImVec2(0, 0));
+            }
+            pendingRow();
+            ImGui::BeginChild("##egrid", ImVec2(0, -30), false);
+            const float cell = 38.0f, es = 26.0f;
+            const int perRow = std::max(1, (int)(ImGui::GetContentRegionAvail().x / cell));
+            hoverName.clear();
+            auto insert = [&](const std::string& text) {
+                std::size_t len = std::strlen(buf);
+                std::snprintf(buf + len, cap - len, "%s", text.c_str());
+            };
+            int col = 0;
+            auto emojiCell = [&](const std::string& tok, const std::string& name, const std::string& insertText) {
+                if (col > 0) ImGui::SameLine(0, 0);
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                ImGui::PushID(tok.c_str());
+                bool click = ImGui::InvisibleButton("##ec", ImVec2(cell, cell));
+                bool h = ImGui::IsItemHovered();
+                ImGui::PopID();
+                ImDrawList* gdl = ImGui::GetWindowDrawList();
+                if (h) { gdl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(255, 255, 255, 22), 8.0f); hoverName = name; }
+                DrawEmojiToken(gdl, ImVec2(p.x + cell * 0.5f, p.y + cell * 0.5f), h ? es + 4 : es, tok);
+                if (click) {
+                    insert(insertText);
+                    g_recentEmoji.erase(std::remove(g_recentEmoji.begin(), g_recentEmoji.end(), insertText), g_recentEmoji.end());
+                    g_recentEmoji.insert(g_recentEmoji.begin(), insertText);
+                    if (g_recentEmoji.size() > 27) g_recentEmoji.resize(27);
+                }
+                col = (col + 1) % perRow;
+            };
+            auto unicodeTok = [&](const EmojiInfo& e) { return "<e:" + e.unified + ">"; };
+            if (!ready && g_emojiState != -1) {
+                float a0 = (float)ImGui::GetTime() * 6.0f; ImVec2 c(ImGui::GetCursorScreenPos().x + 180, ImGui::GetCursorScreenPos().y + 60);
+                ImGui::GetWindowDrawList()->PathArcTo(c, 12.0f, a0, a0 + 4.6f, 24);
+                ImGui::GetWindowDrawList()->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.5f);
+                ImGui::Dummy(ImVec2(0, 84));
+                ImGui::TextDisabled("     Loading the emoji set (first time only)\xE2\x80\xA6");
+            }
+            if (g_emojiState == -1) {   // offline: the drawn set still works
+                ImGui::TextDisabled("Couldn't download the full emoji set. Basic emoji:");
+                for (const auto& e : kEmojis) emojiCell(e.code, e.code, std::string(" ") + e.code + " ");
+            }
+            if (ready) {
+                std::string q = search; for (auto& c : q) c = (char)std::tolower((unsigned char)c);
+                if (!q.empty()) {
+                    int shown = 0;
+                    if (canSendMedia) for (const auto& ce : libEmoji)
+                        if (ce.name.find(q) != std::string::npos) { emojiCell("<:" + ce.name + ":" + ce.url + ">", ":" + ce.name + ":", ":" + ce.name + ":"); ++shown; }
+                    for (const auto& e : g_emojiAll)
+                        if (e.name.find(q) != std::string::npos || e.shortName.find(q) != std::string::npos) {
+                            emojiCell(unicodeTok(e), ":" + e.shortName + ":", e.utf8);
+                            if (++shown >= 240) break;
+                        }
+                    if (shown == 0) ImGui::TextDisabled("No emoji match \"%s\".", search);
+                } else if (cat == -2) {
+                    if (g_recentEmoji.empty()) ImGui::TextDisabled("Emoji you use show up here.");
+                    for (const auto& r : g_recentEmoji) {
+                        std::string norm = NormalizeEmoji(r);
+                        std::string tok = norm; while (!tok.empty() && tok.front() == ' ') tok.erase(0, 1); while (!tok.empty() && tok.back() == ' ') tok.pop_back();
+                        if (r.size() > 2 && r.front() == ':' && r.back() == ':') {   // custom
+                            std::string nm = r.substr(1, r.size() - 2);
+                            for (const auto& ce : libEmoji) if (ce.name == nm) tok = "<:" + nm + ":" + ce.url + ">";
+                        }
+                        emojiCell(tok, r, r);
+                    }
+                } else if (cat == -1) {
+                    if (!libLoaded) ImGui::TextDisabled("Loading your emoji\xE2\x80\xA6");
+                    for (const auto& ce : libEmoji) {
+                        emojiCell("<:" + ce.name + ":" + ce.url + ">", ":" + ce.name + ":", ":" + ce.name + ":");
+                        if (ImGui::BeginPopupContextItem(("##ced" + ce.file).c_str())) {
+                            if (ImGui::MenuItem("Delete emoji")) LibraryDelete("emoji", ce.file);
+                            ImGui::EndPopup();
+                        }
+                    }
+                    // "+" tile: add your own.
+                    if (col > 0) ImGui::SameLine(0, 0);
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    if (ImGui::InvisibleButton("##addemoji", ImVec2(cell, cell))) pickFile("emoji", 512ULL * 1024ULL);
+                    bool h = ImGui::IsItemHovered();
+                    ImDrawList* gdl = ImGui::GetWindowDrawList();
+                    gdl->AddRect(ImVec2(p.x + 4, p.y + 4), ImVec2(p.x + cell - 4, p.y + cell - 4), h ? cText : cDim, 8.0f, 0, 1.4f);
+                    ImVec2 c(p.x + cell * 0.5f, p.y + cell * 0.5f);
+                    gdl->AddLine(ImVec2(c.x - 6, c.y), ImVec2(c.x + 6, c.y), h ? cText : cDim, 1.6f);
+                    gdl->AddLine(ImVec2(c.x, c.y - 6), ImVec2(c.x, c.y + 6), h ? cText : cDim, 1.6f);
+                    if (h) { hoverName = "Add a custom emoji (PNG/GIF, up to 512 KB)"; ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+                    if (libLoaded && libEmoji.empty()) { ImGui::NewLine(); ImGui::TextDisabled("Upload an image to make your own emoji."); ImGui::TextDisabled("Use it as :name: in any chat."); }
+                } else {
+                    int c0 = std::clamp(cat, 0, kEmojiCatCount - 1);
+                    ImGui::SetWindowFontScale(0.8f); ImGui::TextDisabled("%s", kEmojiCatNames[c0]); ImGui::SetWindowFontScale(1.0f);
+                    std::vector<const EmojiInfo*> items;
+                    for (const auto& e : g_emojiAll) if (e.cat == c0) items.push_back(&e);
+                    ImGuiListClipper clip;
+                    const int rows = ((int)items.size() + perRow - 1) / perRow;
+                    clip.Begin(rows, cell + ImGui::GetStyle().ItemSpacing.y);
+                    while (clip.Step())
+                        for (int r = clip.DisplayStart; r < clip.DisplayEnd; ++r) {
+                            col = 0;
+                            for (int k = r * perRow; k < std::min((int)items.size(), (r + 1) * perRow); ++k)
+                                emojiCell(unicodeTok(*items[k]), ":" + items[k]->shortName + ":", items[k]->utf8);
+                        }
+                }
+            }
+            ImGui::EndChild();
+            // Footer: hovered emoji name.
+            ImGui::TextDisabled("%s", hoverName.empty() ? (libStatus.empty() ? "Pick an emoji" : libStatus.c_str()) : hoverName.c_str());
+        } else if (tab == 1) {   // ---------------- GIFs ----------------
+            std::vector<GifResult> res; bool busy = g_gifBusy; std::string gerr;
+            if (g_gifMutex) { SDL_LockMutex(g_gifMutex); res = g_gifResults; gerr = g_gifError; SDL_UnlockMutex(g_gifMutex); }
+            if (!g_tenorKey.empty()) {
+                if (searchPill("##gsearch", "Search GIFs (Enter)", gifQuery, sizeof(gifQuery))) GifSearch(gifQuery);
+            }
+            ImGui::BeginChild("##ggrid", ImVec2(0, -30), false);
+            const float colW = (ImGui::GetContentRegionAvail().x - 8) * 0.5f;
+            auto gifGrid = [&](const std::vector<GifResult>& items) {
+                float y[2] = {0, 0};
+                ImVec2 o = ImGui::GetCursorScreenPos();
+                for (std::size_t i = 0; i < items.size(); ++i) {
+                    const GifResult& g = items[i];
+                    int c = y[0] <= y[1] ? 0 : 1;
+                    int iw = g.w, ih = g.h;
+                    SDL_Texture* t = ChatImageTexture(g.preview, iw ? nullptr : &iw, ih ? nullptr : &ih);
+                    float h = (iw > 0 && ih > 0) ? colW * ih / iw : colW * 0.7f;
+                    h = std::clamp(h, 50.0f, 220.0f);
+                    ImVec2 p(o.x + c * (colW + 8), o.y + y[c]);
+                    ImGui::SetCursorScreenPos(p);
+                    ImGui::PushID((int)i);
+                    bool click = ImGui::InvisibleButton("##gif", ImVec2(colW, h));
+                    bool hv = ImGui::IsItemHovered();
+                    ImGui::PopID();
+                    ImDrawList* gdl = ImGui::GetWindowDrawList();
+                    gdl->AddRectFilled(p, ImVec2(p.x + colW, p.y + h), IM_COL32(255, 255, 255, 12), 8.0f);
+                    if (t) gdl->AddImageRounded((ImTextureID)(intptr_t)t, p, ImVec2(p.x + colW, p.y + h), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 8.0f);
+                    if (hv) { gdl->AddRect(p, ImVec2(p.x + colW, p.y + h), ImGui::GetColorU32(kAccent), 8.0f, 0, 2.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (!g.desc.empty()) ImGui::SetTooltip("%s", g.desc.c_str()); }
+                    if (click) { sendNow = g.full.empty() ? g.preview : g.full; ImGui::CloseCurrentPopup(); }
+                    y[c] += h + 8;
+                }
+                ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(y[0], y[1])));
+                ImGui::Dummy(ImVec2(0, 0));
+            };
+            if (g_tenorKey.empty()) {
+                // Recent GIFs from this conversation (no search without a key).
+                std::vector<GifResult> recent;
+                if (recentGifs) for (const auto& u : *recentGifs) { GifResult g; g.preview = g.full = u; recent.push_back(g); }
+                if (!recent.empty()) { ImGui::SetWindowFontScale(0.8f); ImGui::TextDisabled("IN THIS CHAT"); ImGui::SetWindowFontScale(1.0f); gifGrid(recent); ImGui::Dummy(ImVec2(0, 6)); }
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                ImGui::BeginChild("##gifkey", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                ImGui::TextUnformatted("Turn on GIF search");
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("GIF search uses Tenor. Paste a free Tenor API key (Google Cloud console, \"Tenor API\") to search millions of GIFs. You can always send your own GIF with the + attach button.");
+                ImGui::PopTextWrapPos();
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 74);
+                ImGui::InputTextWithHint("##tenorkey", "Tenor API key", keyBuf, sizeof(keyBuf), ImGuiInputTextFlags_Password);
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!keyBuf[0]);
+                if (PrimaryButton("Save", ImVec2(66, 0))) { g_tenorKey = keyBuf; keyBuf[0] = '\0'; SavePrefs(); GifSearch(""); }
+                ImGui::EndDisabled();
+                if (ImGui::SmallButton("How to get a key")) OpenExternal("https://developers.google.com/tenor/guides/quickstart");
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+            } else if (busy && res.empty()) {
+                ImGui::TextDisabled("Searching\xE2\x80\xA6");
+            } else if (!gerr.empty()) {
+                ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.5f, 1), "%s", gerr.c_str());
+                if (ImGui::SmallButton("Remove key")) { g_tenorKey.clear(); SavePrefs(); }
+            } else {
+                gifGrid(res);
+                if (res.empty() && !busy) ImGui::TextDisabled("No GIFs found.");
+            }
+            ImGui::EndChild();
+            ImGui::TextDisabled(g_tenorKey.empty() ? "GIF search is off" : "Powered by Tenor");
+        } else {   // ---------------- Stickers ----------------
+            pendingRow();
+            ImGui::BeginChild("##sgrid", ImVec2(0, -30), false);
+            const float cell = 84.0f;
+            const int perRow = std::max(1, (int)(ImGui::GetContentRegionAvail().x / cell));
+            int col = 0;
+            if (!libLoaded) ImGui::TextDisabled("Loading your stickers\xE2\x80\xA6");
+            for (const auto& st : libStickers) {
+                if (col > 0) ImGui::SameLine(0, 0);
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                ImGui::PushID(st.file.c_str());
+                bool click = ImGui::InvisibleButton("##st", ImVec2(cell, cell));
+                bool h = ImGui::IsItemHovered();
+                if (ImGui::BeginPopupContextItem("##stctx")) {
+                    if (ImGui::MenuItem("Delete sticker")) LibraryDelete("stickers", st.file);
+                    ImGui::EndPopup();
+                }
+                ImGui::PopID();
+                ImDrawList* gdl = ImGui::GetWindowDrawList();
+                if (h) gdl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(255, 255, 255, 18), 10.0f);
+                int iw = 0, ih = 0;
+                if (SDL_Texture* t = ChatImageTexture(st.url, &iw, &ih)) {
+                    float s = cell - 12, k = (iw > 0 && ih > 0) ? std::min(s / iw, s / ih) : 1.0f;
+                    ImVec2 c(p.x + cell * 0.5f, p.y + cell * 0.5f);
+                    gdl->AddImage((ImTextureID)(intptr_t)t, ImVec2(c.x - iw * k * 0.5f, c.y - ih * k * 0.5f), ImVec2(c.x + iw * k * 0.5f, c.y + ih * k * 0.5f));
+                }
+                if (h) { hoverName = st.name; ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s  (right-click to delete)", st.name.c_str()); }
+                if (click) { sendNow = "[Sticker] " + st.url; ImGui::CloseCurrentPopup(); }
+                col = (col + 1) % perRow;
+            }
+            if (col > 0) ImGui::SameLine(0, 0);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton("##addsticker", ImVec2(cell, cell))) pickFile("stickers", 2ULL * 1024ULL * 1024ULL);
+            bool h = ImGui::IsItemHovered();
+            ImDrawList* gdl = ImGui::GetWindowDrawList();
+            gdl->AddRect(ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + cell - 6, p.y + cell - 6), h ? cText : cDim, 10.0f, 0, 1.5f);
+            ImVec2 c(p.x + cell * 0.5f, p.y + cell * 0.5f - 6);
+            gdl->AddLine(ImVec2(c.x - 8, c.y), ImVec2(c.x + 8, c.y), h ? cText : cDim, 1.8f);
+            gdl->AddLine(ImVec2(c.x, c.y - 8), ImVec2(c.x, c.y + 8), h ? cText : cDim, 1.8f);
+            const char* lbl = "Add";
+            ImVec2 ls = ImGui::CalcTextSize(lbl);
+            gdl->AddText(ImVec2(p.x + (cell - ls.x) * 0.5f, p.y + cell - 26), h ? cText : cDim, lbl);
+            if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (libLoaded && libStickers.empty()) { ImGui::NewLine(); ImGui::TextDisabled("Make stickers from your own images (PNG or animated GIF)."); }
+            ImGui::EndChild();
+            ImGui::TextDisabled("%s", libStatus.empty() ? "Click a sticker to send it" : libStatus.c_str());
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return sendNow;
+}
+
 // ---- Sidebar icons ---------------------------------------------------------
 // One consistent set of 1.6px line icons (Lucide-like), drawn with the draw list
 // so no icon font is needed. Ids 0..10 match the launcher tabs; the rest are
@@ -2121,6 +2857,7 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
+        else if (k == "tenor_key") g_tenorKey = v;
         else if (k == "chat_list_folded") g_chatListFolded = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
         else if (k == "online_status") { try { g_onlineStatus = std::stoi(v); } catch (...) {} }
@@ -2197,6 +2934,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
+    if (!g_tenorKey.empty()) f << "tenor_key=" << g_tenorKey << "\n";
     f << "chat_list_folded=" << (g_chatListFolded ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
     f << "online_status=" << g_onlineStatus << "\n";
@@ -2344,13 +3082,61 @@ static std::string FitText(const std::string& s, float maxW) {
     return s.substr(0, n) + ell;
 }
 
+// One line of text with emoji drawn inline (Unicode, custom, shortcodes),
+// clipped to maxW with an ellipsis — for previews (AddText alone would show
+// "?" boxes for emoji).
+static void DrawRichLine(ImDrawList* dl, ImVec2 pos, ImU32 col, const std::string& text, float maxW) {
+    const std::string t = NormalizeEmoji(text);
+    const float em = ImGui::GetTextLineHeight(), spaceW = ImGui::CalcTextSize(" ").x;
+    const float ellW = ImGui::CalcTextSize("\xE2\x80\xA6").x;
+    float x = 0.0f;
+    std::size_t i = 0, n = t.size();
+    bool first = true;
+    while (i < n) {
+        while (i < n && (t[i] == ' ' || t[i] == '\n')) ++i;
+        if (i >= n) break;
+        std::size_t j = i; while (j < n && t[j] != ' ' && t[j] != '\n') ++j;
+        std::string tok = t.substr(i, j - i); i = j;
+        const bool emo = EmojiId(tok) >= 0;
+        const float w = emo ? em : ImGui::CalcTextSize(tok.c_str()).x;
+        const float gap = first ? 0.0f : spaceW;
+        if (x + gap + w > maxW) {   // doesn't fit: squeeze what we can, then "…"
+            if (!emo) {
+                std::string part = FitText(tok, maxW - x - gap);
+                dl->AddText(ImVec2(pos.x + x + gap, pos.y), col, part.c_str());
+            } else if (x + ellW <= maxW) dl->AddText(ImVec2(pos.x + x + gap, pos.y), col, "\xE2\x80\xA6");
+            return;
+        }
+        x += gap;
+        if (emo) DrawEmojiToken(dl, ImVec2(pos.x + x + em * 0.5f, pos.y + em * 0.5f), em, tok);
+        else dl->AddText(ImVec2(pos.x + x, pos.y), col, tok.c_str());
+        x += w; first = false;
+    }
+}
+
 // Conversation-list preview: "Photo" / "File: name" instead of raw URLs.
 static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
     ChatFileInfo fi;
     if (ParseChatFile(body, fi)) return ChatPreview("File: " + fi.name, n);
     if (body.rfind("[Voice] ", 0) == 0) return "Voice message";
+    if (body.rfind("[Sticker] ", 0) == 0) return "Sticker";
     std::string t = body; while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
-    if (!t.empty() && FirstImageUrl(t) == t) return "Photo";
+    if (!t.empty() && FirstImageUrl(t) == t) {
+        std::string low = t; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+        return low.find(".gif") != std::string::npos ? "GIF" : "Photo";
+    }
+    if (t.find("<:") != std::string::npos) {   // custom emoji -> ":name:"
+        std::string o; std::size_t i = 0;
+        while (i < t.size()) {
+            std::size_t a = t.find("<:", i);
+            if (a == std::string::npos) { o += t.substr(i); break; }
+            std::size_t c2 = t.find(':', a + 2), e = t.find('>', a);
+            if (c2 == std::string::npos || e == std::string::npos || c2 > e) { o += t.substr(i); break; }
+            o += t.substr(i, a - i) + ":" + t.substr(a + 2, c2 - a - 2) + ":";
+            i = e + 1;
+        }
+        return ChatPreview(o, n);
+    }
     return ChatPreview(body, n);
 }
 
@@ -3086,6 +3872,14 @@ static void DrawGroupConversation(
             ImGui::PopStyleColor();
         }
     }
+    {   // Emoji / GIFs / stickers for the group (GIFs + stickers send straight away)
+        std::string media = ChatMediaPicker("gmedia", gInput, 1024, nullptr, true);
+        if (!media.empty()) {
+            if (dm.SendGroup(gid, media)) g_chatForceLog = true;
+            else Toast("Couldn't send that \xE2\x80\x94 check your connection", 2);
+        }
+        ImGui::SameLine(0, 4);
+    }
     {   // Attach a photo or file to the group
         float ah = ImGui::GetTextLineHeight() + 14.0f;   // matches the input pill height
         ImVec2 ap = ImGui::GetCursorScreenPos();
@@ -3126,7 +3920,7 @@ static void DrawGroupConversation(
     ImGui::PopStyleColor(2);
     if ((enter || sendBtn) && gInput[0]) {
         if (gEditId) { if (dm.EditGroup(gEditId, gInput)) { gEditId = 0; gInput[0] = '\0'; g_chatForceLog = true; } else Toast("Couldn't save the edit", 2); }
-        else if (dm.SendGroup(gid, gInput, gReplyTo)) { gInput[0] = '\0'; gReplyTo = 0; g_chatForceLog = true; }
+        else if (dm.SendGroup(gid, ExpandCustomEmoji(gInput), gReplyTo)) { gInput[0] = '\0'; gReplyTo = 0; g_chatForceLog = true; }
         else Toast("Message not sent \xE2\x80\x94 check your connection", 2);
         gRefocus = true;   // Enter deactivates a single-line input: keep typing without clicking
     }
@@ -3304,6 +4098,22 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (std::getenv("OKAY_CHAT_DEMO_FOLD")) g_chatListFolded = true;
                 g_mutedChats.insert("u-jon");
                 drafts["u-priya"] = "I'll send you the save file tonight";
+            }
+            if (std::getenv("OKAY_CHAT_DEMO_EMOJI")) {   // colour emoji, a GIF, a sticker, a custom emoji
+                const std::string rocket = "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f680.png";
+                add(11, "That's awesome \xF0\x9F\x94\xA5\xF0\x9F\x94\xA5 can't wait to try it \xF0\x9F\x98\x84 \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", 50, false);
+                add(12, "\xF0\x9F\x8E\x89\xF0\x9F\x9A\x80", 45, true);
+                add(13, "https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif", 30, false);
+                add(14, "[Sticker] https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f996.png", 20, true);
+                std::string ce = "launch day <:rocketship:" + rocket + "> let's go";
+                add(15, ce.c_str(), 10, false);
+                if (!g_libMutex) g_libMutex = SDL_CreateMutex();
+                okay::Messages::LibraryItem li; li.name = "rocketship"; li.file = "rocketship.png"; li.url = rocket;
+                g_libEmoji.push_back(li);
+                okay::Messages::LibraryItem ls; ls.name = "dino"; ls.file = "dino.png";
+                ls.url = "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f996.png";
+                g_libStickers.push_back(ls); g_libLoaded = true;
+                g_recentEmoji = {"\xF0\x9F\x94\xA5", "\xF0\x9F\x98\x84", ":rocketship:", "\xF0\x9F\x8E\x89"};
             }
             if (std::getenv("OKAY_CHAT_DEMO_MEDIA")) openMedia = true;
             peerRead = 4;   // 1..4 read (blue ticks), 6 delivered (grey ticks)
@@ -3699,7 +4509,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             } else if (sel && !r.gid && peerTyping) {
                 rdl->AddText(ImVec2(tx, y2), ImGui::GetColorU32(accLt), "typing\xE2\x80\xA6");
             } else {
-                rdl->AddText(ImVec2(tx, y2), r.unread ? IM_COL32(214, 220, 232, 255) : cDim, FitText(r.preview, pw).c_str());
+                DrawRichLine(rdl, ImVec2(tx, y2), r.unread ? IM_COL32(214, 220, 232, 255) : cDim, r.preview, pw);
             }
             ImGui::PopID();
         };
@@ -4246,11 +5056,32 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 const bool starred = g_starred.count(m.id) != 0;
                 if (starred) metaW += 14.0f;          // room for the star marker
                 bool bareEmoji = emojiOnly && !rep;   // Telegram-style big, background-less emoji
-                std::string imgUrl = (bareEmoji || isFile || isVoice) ? std::string() : FirstImageUrl(m.body);
+                // Stickers and image/GIF-only messages also go bubble-less (Messenger).
+                std::string mediaUrl; bool isSticker = false;
+                if (!rep && !isFile && !isVoice) {
+                    if (m.body.rfind("[Sticker] ", 0) == 0) { mediaUrl = m.body.substr(10); isSticker = true; }
+                    else {
+                        std::string t = m.body;
+                        while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
+                        while (!t.empty() && t.front() == ' ') t.erase(0, 1);
+                        if (!t.empty() && FirstImageUrl(t) == t) mediaUrl = t;
+                    }
+                }
+                const bool bareMedia = !mediaUrl.empty();
+                const bool bare = bareEmoji || bareMedia;
+                ImVec2 mediaSz(0, 0);
+                if (bareMedia) {
+                    int iw = 0, ih = 0; ChatImageTexture(mediaUrl, &iw, &ih);
+                    const float mw = isSticker ? 150.0f : std::min(bubbleMax - padX * 2, 260.0f), mh = isSticker ? 150.0f : 220.0f;
+                    if (iw > 0 && ih > 0) { float k = std::min(mw / iw, mh / ih); if (!isSticker) k = std::min(k, 2.0f); mediaSz = ImVec2(iw * k, ih * k); }
+                    else mediaSz = ImVec2(mw, isSticker ? mw : mh * 0.7f);
+                }
+                std::string imgUrl = (bare || isFile || isVoice) ? std::string() : FirstImageUrl(m.body);
                 // +2px slack on the body so the glyphs never butt against the
                 // content edge (absorbs wrap/measure rounding -> no "text spilling
                 // out of the bubble").
                 float contentW = bareEmoji ? std::max((float)ecount * (bigEm + 3), metaW)
+                               : bareMedia ? std::max(mediaSz.x, metaW)
                                            : std::max({bodyW + 2.0f, repW, metaW});
                 if (!imgUrl.empty()) contentW = std::max(contentW, std::min(bubbleMax - padX*2, 240.0f));
                 float boxW = contentW + padX*2;
@@ -4282,7 +5113,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 // the content natively (no draw-list channel tricks), so it always
                 // hugs what it renders and stays correct on resize.
                 ImGui::SetCursorPosX(baseX + x0);
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, bareEmoji ? ImVec4(0,0,0,0)
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, bare ? ImVec4(0,0,0,0)
                                         : (m.mine ? myBubble : ImVec4(0.204f,0.235f,0.306f,1.0f)));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
@@ -4313,19 +5144,34 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     }
                 }
                 if (bareEmoji) {                            // big, bubble-less emoji
-                    std::size_t bi = 0, bn = m.body.size();
+                    const std::string eb = NormalizeEmoji(m.body);
+                    std::size_t bi = 0, bn = eb.size();
                     bool firstTok = true;
                     while (bi < bn) {
-                        while (bi < bn && (m.body[bi]==' '||m.body[bi]=='\n')) ++bi;
+                        while (bi < bn && (eb[bi]==' '||eb[bi]=='\n')) ++bi;
                         if (bi >= bn) break;
-                        std::size_t bj = bi; while (bj < bn && m.body[bj]!=' ' && m.body[bj]!='\n') ++bj;
-                        int eid = EmojiId(m.body.substr(bi, bj-bi)); bi = bj;
+                        std::size_t bj = bi; while (bj < bn && eb[bj]!=' ' && eb[bj]!='\n') ++bj;
+                        std::string etok = eb.substr(bi, bj-bi); bi = bj;
                         if (!firstTok) ImGui::SameLine(0, 3);
                         ImVec2 ep = ImGui::GetCursorScreenPos();
-                        DrawEmoji(bdl, ImVec2(ep.x + bigEm*0.5f, ep.y + bigEm*0.5f), bigEm, eid < 0 ? 0 : eid);
+                        DrawEmojiToken(bdl, ImVec2(ep.x + bigEm*0.5f, ep.y + bigEm*0.5f), bigEm, etok);
                         ImGui::Dummy(ImVec2(bigEm, bigEm));
                         firstTok = false;
                     }
+                } else if (bareMedia) {                     // sticker / GIF / photo without a bubble
+                    ImVec2 ip = ImGui::GetCursorScreenPos();
+                    bool mclick = ImGui::InvisibleButton("##media", mediaSz);
+                    bool mhov = ImGui::IsItemHovered();
+                    if (SDL_Texture* mt = ChatImageTexture(mediaUrl))
+                        bdl->AddImageRounded((ImTextureID)(intptr_t)mt, ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y),
+                                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, isSticker ? 0.0f : 12.0f);
+                    else {   // loading placeholder
+                        bdl->AddRectFilled(ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y), IM_COL32(255, 255, 255, 14), 12.0f);
+                        float a0 = (float)ImGui::GetTime() * 6.0f;
+                        bdl->PathArcTo(ImVec2(ip.x + mediaSz.x * 0.5f, ip.y + mediaSz.y * 0.5f), 10.0f, a0, a0 + 4.6f, 20);
+                        bdl->PathStroke(IM_COL32(255, 255, 255, 120), 0, 2.0f);
+                    }
+                    if (!isSticker && mhov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (mclick) lightboxUrl = mediaUrl; }
                 } else {
                     if (isFile) RenderChatFileCard(fileInfo, ImGui::GetContentRegionAvail().x);
                     else if (isVoice) RenderChatVoice(voice, ImGui::GetContentRegionAvail().x, m.mine, myBubble);
@@ -4333,7 +5179,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 }
                 // Inline image preview for an image link in the message.
                 if (!imgUrl.empty()) {
-                    if (SDL_Texture* it = AvatarTexture(imgUrl)) {
+                    if (SDL_Texture* it = ChatImageTexture(imgUrl)) {
                         int iw = 0, ih = 0; SDL_QueryTexture(it, nullptr, nullptr, &iw, &ih);
                         float availW = ImGui::GetContentRegionAvail().x;
                         float w = (iw > 0 && iw > availW) ? availW : (float)iw;
@@ -4351,20 +5197,20 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     float av2 = ImGui::GetContentRegionAvail().x;
                     float mw2 = ImGui::CalcTextSize(meta.c_str()).x;
                     float tickRoom = m.mine ? 18.0f : 0.0f;
-                    if (!bareEmoji && mw2 + tickRoom < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2 - tickRoom));
+                    if (!bare && mw2 + tickRoom < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2 - tickRoom));
                     if (starred) {   // gold star just left of the timestamp
                         ImVec2 sp = ImGui::GetCursorScreenPos();
                         DrawStar(bdl, ImVec2(sp.x - 8.0f, sp.y + ImGui::GetTextLineHeight() * 0.5f), 5.0f,
                                  IM_COL32(250, 200, 70, 255));
                     }
                 }
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bareEmoji ? ImVec4(0.6f,0.64f,0.72f,0.9f)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bare ? ImVec4(0.6f,0.64f,0.72f,0.9f)
                                         : (m.mine ? ImVec4(0.82f,0.88f,1.0f,0.60f) : ImVec4(0.60f,0.66f,0.76f,0.70f))));
                 ImGui::TextUnformatted(meta.c_str());
                 ImGui::PopStyleColor();
                 // WhatsApp-style delivery/read ticks after my timestamp: two
                 // checks, blue once the peer has read up to this message.
-                if (m.mine && !bareEmoji) {
+                if (m.mine && !bare) {
                     ImVec2 tmin = ImGui::GetItemRectMin(), tmax = ImGui::GetItemRectMax();
                     bool read = m.id <= peerRead;
                     ImU32 tc = read ? ImGui::GetColorU32(ImVec4(0.42f, 0.70f, 1.0f, 1.0f)) : IM_COL32(205, 214, 230, 150);
@@ -4541,6 +5387,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (msFilt.empty() && (opened || !scrolledUp)) stickBottom = 4;
                 lastShown = (int)log.size(); lastConv = selUid;
             }
+            {   // Content grew while we sat at the bottom (an image/GIF/sticker finished
+                // loading, a bubble re-measured): stay pinned to the newest message.
+                static float prevMaxY = 0.0f, prevY = 0.0f;
+                const float maxY = ImGui::GetScrollMaxY();
+                if (maxY > prevMaxY + 0.5f && prevY >= prevMaxY - 4.0f && msFilt.empty()) stickBottom = std::max(stickBottom, 2);
+                prevMaxY = maxY; prevY = ImGui::GetScrollY();
+            }
             if (stickBottom > 0) { ImGui::SetScrollHereY(1.0f); --stickBottom; scrolledUp = false; }
             logRectMin = ImGui::GetWindowPos();
             logRectMax = ImVec2(logRectMin.x + ImGui::GetWindowWidth(), logRectMin.y + ImGui::GetWindowHeight());
@@ -4608,7 +5461,23 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
             // ---- Row 1: a slim, muted format toolbar (emoji + markdown helpers) ----
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0));   // flat, unobtrusive
-            EmojiPicker("cwemoji", input, sizeof(input)); ImGui::SameLine(0, 6);
+            {   // Emoji / GIFs / stickers. GIFs + stickers send straight away.
+                std::vector<std::string> gifs;   // GIFs already in this chat ("in this chat")
+                for (auto it = log.rbegin(); it != log.rend() && gifs.size() < 12; ++it) {
+                    std::string t = it->body;
+                    while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
+                    if (IsGifUrl(t) && FirstImageUrl(t) == t && std::find(gifs.begin(), gifs.end(), t) == gifs.end()) gifs.push_back(t);
+                }
+                std::string media = ChatMediaPicker("cwmedia", input, sizeof(input), &gifs, true);
+                if (!media.empty()) {
+                    if (kChatDemo) {
+                        okay::DirectMessage dmm; dmm.id = log.empty() ? 1 : log.back().id + 1; dmm.body = media;
+                        dmm.when = (long)time(nullptr); dmm.mine = true; log.push_back(dmm); wantScrollBottom = true;
+                    } else if (dm.Send(selUid, media, 0)) g_chatForceLog = true;
+                    else Toast("Couldn't send that \xE2\x80\x94 check your connection", 2);
+                }
+                ImGui::SameLine(0, 6);
+            }
             auto fmtBtn = [&](const char* lbl, const char* open, const char* close, const char* word, const char* tip) {
                 if (ImGui::SmallButton(lbl)) {
                     std::size_t len = std::char_traits<char>::length(input);
@@ -4671,12 +5540,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
             const bool micMode = !input[0] && !editId && !g_attBusy;   // empty composer -> mic (WhatsApp)
             if (!micMode && (ImGui::Button(editId ? "Save" : "Send", ImVec2(58, inH)) || send) && input[0]) {
                 if (kChatDemo) {   // demo: echo locally (no network)
-                    okay::DirectMessage dmm; dmm.id = log.empty() ? 1 : log.back().id + 1; dmm.body = input;
+                    okay::DirectMessage dmm; dmm.id = log.empty() ? 1 : log.back().id + 1; dmm.body = ExpandCustomEmoji(input);
                     dmm.when = (long)time(nullptr); dmm.mine = true; dmm.replyTo = replyTo; log.push_back(dmm);
                     input[0] = '\0'; replyTo = 0; wantScrollBottom = true;
                 }
                 else if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; g_chatForceLog = true; } else Toast("Couldn't save the edit", 2); }
-                else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; drafts.erase(selUid); g_chatForceLog = true; }
+                else if (dm.Send(selUid, ExpandCustomEmoji(input), replyTo)) { input[0] = '\0'; replyTo = 0; drafts.erase(selUid); g_chatForceLog = true; }
                 else Toast("Message not sent \xE2\x80\x94 check your connection", 2);
                 // Keep typing: refocus the message box (not the Send button, which
                 // SetKeyboardFocusHere(-1) would pick — that broke Enter-to-send
@@ -4763,7 +5632,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav)) {
             ImVec2 sz = ImGui::GetContentRegionAvail();
-            SDL_Texture* it = AvatarTexture(lightboxUrl);
+            SDL_Texture* it = ChatImageTexture(lightboxUrl);
             if (it) {
                 int iw = 0, ih = 0; SDL_QueryTexture(it, nullptr, nullptr, &iw, &ih);
                 float w = (float)iw, h = (float)ih;
@@ -5175,6 +6044,116 @@ static void StartChatUpload(const std::string& path, const std::string& toUid, l
     if (SDL_Thread* t = SDL_CreateThread(ChatUploadWorker, "okay-upload", nullptr)) SDL_DetachThread(t);
     else g_attBusy = false;
 }
+// ---- Custom emoji / sticker library + GIF search workers -------------------------
+// (state + picker UI live in the chat media section above; these need the
+// poller's account config, defined just above.)
+struct LibJob { int kind = 0; std::string path, folder, name, file; };   // 0 list, 1 upload, 2 delete
+static int LibraryWorker(void* p) {
+    LibJob* job = (LibJob*)p;
+    std::string status;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        if (!a.IsLoggedIn()) {   // signed out: nothing to list (keep whatever is shown)
+            SDL_LockMutex(g_libMutex); g_libLoaded = true; SDL_UnlockMutex(g_libMutex);
+            g_libBusy = false; delete job; return 0;
+        }
+        okay::Messages dm(a);
+        if (job->kind == 1) {
+            std::string err;
+            if (dm.UploadToLibrary(job->path, job->folder, job->name, &err).empty()) status = err.empty() ? "Upload failed." : err;
+            else status = job->folder == "emoji" ? "Added :" + job->name + ": to your emoji" : "Sticker added";
+        } else if (job->kind == 2) {
+            status = dm.DeleteFromLibrary(job->folder, job->file) ? "Deleted" : "Couldn't delete that";
+        }
+        auto em = dm.ListLibrary("emoji");
+        auto st = dm.ListLibrary("stickers");
+        SDL_LockMutex(g_libMutex);
+        g_libEmoji = em; g_libStickers = st; g_libLoaded = true;
+        if (!status.empty()) g_libStatus = status;
+        SDL_UnlockMutex(g_libMutex);
+    } catch (...) {}
+    g_libBusy = false;
+    delete job;
+    return 0;
+}
+static void LibraryStart(LibJob* job) {
+    if (!g_libMutex) g_libMutex = SDL_CreateMutex();
+    if (g_libBusy) { delete job; return; }
+    g_libBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(LibraryWorker, "okay-library", job)) SDL_DetachThread(t);
+    else { g_libBusy = false; delete job; }
+}
+static void LibraryRefresh() { LibraryStart(new LibJob{0, "", "", "", ""}); }
+static void LibraryUpload(const std::string& path, const std::string& folder, const std::string& name) {
+    if (g_libMutex) { SDL_LockMutex(g_libMutex); g_libStatus = "Uploading\xE2\x80\xA6"; SDL_UnlockMutex(g_libMutex); }
+    LibraryStart(new LibJob{1, path, folder, name, ""});
+}
+static void LibraryDelete(const std::string& folder, const std::string& file) { LibraryStart(new LibJob{2, "", folder, "", file}); }
+
+static std::string UrlEncode(const std::string& s) {
+    std::string o; char b[4];
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
+        else { std::snprintf(b, sizeof(b), "%%%02X", c); o += b; }
+    }
+    return o;
+}
+static std::string g_gifJobQuery;
+static int GifSearchWorker(void*) {
+    std::vector<GifResult> out; std::string err;
+    const std::string q = g_gifJobQuery;
+    std::string url = q.empty()
+        ? "https://tenor.googleapis.com/v2/featured?key=" + UrlEncode(g_tenorKey) + "&client_key=okayspace&limit=30&media_filter=gif,tinygif&contentfilter=medium"
+        : "https://tenor.googleapis.com/v2/search?q=" + UrlEncode(q) + "&key=" + UrlEncode(g_tenorKey) + "&client_key=okayspace&limit=30&media_filter=gif,tinygif&contentfilter=medium";
+    fs::path tmp = MediaCacheDir() / "tenor_results.json";
+    if (!Download(url, tmp.string())) err = "GIF search failed. Check the Tenor key or your connection.";
+    else {
+        std::ifstream f(tmp, std::ios::binary);
+        std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        std::size_t r = json.find("\"results\"");
+        if (r == std::string::npos) err = json.find("API key") != std::string::npos ? "That Tenor API key was rejected." : "GIF search failed.";
+        else {
+            // Split the results array into its top-level objects.
+            std::size_t i = json.find('[', r); int depth = 0; std::size_t start = 0;
+            for (; i != std::string::npos && i < json.size(); ++i) {
+                char c = json[i];
+                if (c == '{') { if (depth == 0) start = i; ++depth; }
+                else if (c == '}') {
+                    if (--depth == 0) {
+                        std::string o = json.substr(start, i - start + 1);
+                        auto urlIn = [&](const char* fmt) {
+                            std::size_t p = o.find(fmt); if (p == std::string::npos) return std::string();
+                            return okay::Messages::Field(o.substr(p, 600), "url");
+                        };
+                        GifResult g;
+                        g.preview = urlIn("\"tinygif\"");
+                        g.full = urlIn("\"gif\":");
+                        g.desc = okay::Messages::Field(o, "content_description");
+                        std::size_t tp = o.find("\"tinygif\"");
+                        if (tp != std::string::npos) {
+                            std::size_t d = o.find("\"dims\"", tp);
+                            if (d != std::string::npos) std::sscanf(o.c_str() + o.find('[', d), "[%d,%d]", &g.w, &g.h);
+                        }
+                        if (!g.preview.empty()) out.push_back(g);
+                    }
+                } else if (c == ']' && depth == 0) break;
+            }
+        }
+    }
+    SDL_LockMutex(g_gifMutex);
+    g_gifResults = out; g_gifError = err;
+    SDL_UnlockMutex(g_gifMutex);
+    g_gifReady = true; g_gifBusy = false;
+    return 0;
+}
+static void GifSearch(const std::string& query) {
+    if (g_tenorKey.empty() || g_gifBusy) return;
+    if (!g_gifMutex) g_gifMutex = SDL_CreateMutex();
+    g_gifJobQuery = query; g_gifBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(GifSearchWorker, "okay-gifs", nullptr)) SDL_DetachThread(t);
+    else g_gifBusy = false;
+}
+
 // Pick a file with the native dialog and start uploading it to a chat.
 static void PickAndSendAttachment(const std::string& toUid, long toGroup) {
     if (g_attBusy) { Toast("An upload is already in progress", 2); return; }
@@ -5688,6 +6667,44 @@ int main(int argc, char** argv) {
             else if (SDL_GetTicks() >= relaunchAt) { Launch(g_selfPath); running = false; }
         }
 
+        // Periodic update check — runs while open AND while minimized (this block
+        // sits before the minimized early-out below).
+        {
+            static Uint32 nextPoll = SDL_GetTicks() + 5u * 60u * 1000u;   // first look 5 min after start
+            if (static bool demoUp = false; !demoUp) {   // dev screenshot hook: pretend a newer version was found
+                demoUp = true;
+                if (const char* v = std::getenv("OKAY_UI_DEMO_UPDATE")) {
+                    SDL_LockMutex(g_upPollMutex ? g_upPollMutex : (g_upPollMutex = SDL_CreateMutex()));
+                    g_upPollResult = v; g_upPollDone = true;
+                    SDL_UnlockMutex(g_upPollMutex);
+                }
+            }
+            const UpState us = GetState();
+            if (SDL_GetTicks() >= nextPoll) {
+                nextPoll = SDL_GetTicks() + 20u * 60u * 1000u;
+                if (us != Up_Checking && us != Up_Downloading && us != Up_Updated) StartUpdatePoll();
+            }
+            std::string latest; bool done = false;
+            if (g_upPollMutex) {
+                SDL_LockMutex(g_upPollMutex);
+                if (g_upPollDone) { done = true; latest = g_upPollResult; g_upPollDone = false; }
+                SDL_UnlockMutex(g_upPollMutex);
+            }
+            if (done && !latest.empty() && CompareVersions(LocalVersion(), latest) < 0 && latest != g_upAvailable) {
+                g_upAvailable = latest;
+                Toast("Update available: OkaySpace v" + latest, 1);
+                UpsertNotif("update:" + latest, "Update available",
+                            "OkaySpace v" + latest + " is ready. Install it from the sidebar.", 3, -1);
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+                if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_INPUT_FOCUS)) != SDL_WINDOW_INPUT_FOCUS)
+                    SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED);   // taskbar attention while minimized/unfocused
+#endif
+            }
+            if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
+                if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) g_upAvailable.clear();
+            }
+        }
+
         // While minimized or hidden, idle cheaply instead of spinning the render
         // loop (there's nothing to draw until the window is restored).
         if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
@@ -6115,9 +7132,10 @@ int main(int argc, char** argv) {
         // short windows instead of running into it.
         const UpState st = GetState();
         const bool upBusy = (st == Up_Checking || st == Up_Downloading);
-        const bool upNote = upBusy || st == Up_Updated || st == Up_Failed;
+        const bool upAvail = !g_upAvailable.empty() && !upBusy && st != Up_Updated;
+        const bool upNote = upBusy || st == Up_Updated || st == Up_Failed || upAvail;
         const float profH = g_navCollapsed ? 44.0f : 52.0f;
-        const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : (g_upRelaunchNeeded && st == Up_Updated ? 84.0f : 58.0f)) : 0.0f;
+        const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 84.0f : 58.0f)) : 0.0f;
         const float footH = upH + (navRowH + 2.0f) * 2 + 15.0f + profH;
         ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - footH), false, ImGuiWindowFlags_NoScrollbar);
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
@@ -6145,10 +7163,12 @@ int main(int argc, char** argv) {
             const char* head = (st == Up_Downloading) ? "Updating\xE2\x80\xA6"
                              : (st == Up_Checking)    ? "Checking for updates\xE2\x80\xA6"
                              : (st == Up_Updated)     ? "Update installed"
+                             : upAvail                ? "Update available"
                                                       : "Update failed";
-            ImU32 tone = (st == Up_Failed) ? IM_COL32(240, 120, 120, 255)
+            ImU32 tone = upAvail ? IM_COL32(110, 205, 140, 255)
+                       : (st == Up_Failed) ? IM_COL32(240, 120, 120, 255)
                        : (st == Up_Updated) ? IM_COL32(110, 205, 140, 255) : navAccent;
-            std::string upMsg = GetUpMsg();
+            std::string upMsg = upAvail ? "v" + g_upAvailable + " is ready" : GetUpMsg();
             if (upNote && g_navCollapsed) {
                 ImVec2 mn = ImGui::GetCursorScreenPos();
                 float w = ImGui::GetContentRegionAvail().x;
@@ -6158,7 +7178,7 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered()) {
                     dl->AddRectFilled(mn, ImVec2(mn.x + w, mn.y + navRowH), navHover, 7.0f);
                     ImGui::SetTooltip("%s\n%s%s", head, upMsg.c_str(),
-                        st == Up_Failed ? "\nClick to retry" : (g_upRelaunchNeeded && st == Up_Updated) ? "\nClick to restart" : "");
+                        upAvail ? "\nClick to install" : st == Up_Failed ? "\nClick to retry" : (g_upRelaunchNeeded && st == Up_Updated) ? "\nClick to restart" : "");
                 }
                 if (upBusy) {
                     float a0 = (float)ImGui::GetTime() * 6.0f;
@@ -6166,7 +7186,8 @@ int main(int argc, char** argv) {
                     dl->PathStroke(tone, 0, 2.2f);
                 } else DrawNavIcon(dl, kIcoRefresh, uc, tone);
                 if (click) {
-                    if (st == Up_Failed) StartUpdateCheck();
+                    if (upAvail) StartUpdateCheck(true);
+                    else if (st == Up_Failed) StartUpdateCheck();
                     else if (g_upRelaunchNeeded && st == Up_Updated) { Launch(g_selfPath); running = false; }
                 }
                 ImGui::Dummy(ImVec2(0, 2));
@@ -6188,7 +7209,10 @@ int main(int argc, char** argv) {
                 ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 27));
                 ImGui::TextDisabled("%s", sub.c_str());
                 if (ImGui::IsItemHovered() && !upMsg.empty()) ImGui::SetTooltip("%s", upMsg.c_str());
-                if (st == Up_Failed) {
+                if (upAvail) {
+                    ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
+                    if (PrimaryButton("Install now", ImVec2(w - 48, 24))) StartUpdateCheck(true);
+                } else if (st == Up_Failed) {
                     ImGui::SameLine(0, 0);
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + w - 50, mn.y + 7));
                     if (ImGui::SmallButton("Retry")) StartUpdateCheck();

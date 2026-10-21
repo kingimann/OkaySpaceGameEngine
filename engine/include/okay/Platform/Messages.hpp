@@ -438,6 +438,72 @@ public:
         return base + "/storage/v1/object/public/chat/" + obj;
     }
 
+    // ---- Personal media library (custom emoji + stickers) --------------------
+    // Lives in the same public "chat" bucket under chat/<me>/<folder>/<name>.<ext>
+    // (folder = "emoji" or "stickers"), so no extra table is needed: the storage
+    // policies already let you write only inside your own folder, and anyone can
+    // read by URL. Messages carry the URL inline, so recipients need nothing else.
+    struct LibraryItem { std::string name, file, url; };
+
+    // Upload (or replace) an item; returns its public URL ("" on failure).
+    std::string UploadToLibrary(const std::string& localPath, const std::string& folder,
+                                const std::string& name, std::string* err = nullptr) {
+        if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return ""; }
+        std::string mine = MyId();
+        if (mine.empty()) { if (err) *err = "Couldn't resolve your account."; return ""; }
+        std::string safe;
+        for (char c : name) if (std::isalnum((unsigned char)c) || c == '_' || c == '-') safe += (char)std::tolower((unsigned char)c);
+        if (safe.empty()) { if (err) *err = "Pick a name (letters, numbers, _ or -)."; return ""; }
+        std::string ext = std::filesystem::path(localPath).extension().string();
+        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+        if (ext != ".png" && ext != ".gif" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp") {
+            if (err) *err = "Use a PNG, GIF, JPG or WebP image.";
+            return "";
+        }
+        std::string obj = mine + "/" + folder + "/" + safe + ext;
+        auto r = acct_.ApiUpload("/storage/v1/object/chat/" + obj, localPath, MimeFor(obj), "x-upsert: true");
+        if (!r.ok) {
+            if (err) *err = r.status == 404 || r.body.find("Bucket not found") != std::string::npos
+                ? "Media isn't set up on the server yet (run docs/sql/chat_media.sql)."
+                : (r.body.empty() ? std::string("Upload failed.") : r.body);
+            return "";
+        }
+        return PublicChatUrl(obj);
+    }
+
+    // My items in a folder, by name.
+    std::vector<LibraryItem> ListLibrary(const std::string& folder) {
+        std::vector<LibraryItem> out;
+        std::string mine = MyId();
+        if (mine.empty()) return out;
+        std::string body = "{\"prefix\":" + JStr(mine + "/" + folder + "/") +
+                           ",\"limit\":500,\"offset\":0,\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}";
+        auto r = acct_.Api("/storage/v1/object/list/chat", "POST", body);
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) {
+            std::string file = Field(o, "name");
+            if (file.empty() || file[0] == '.') continue;   // ".emptyFolderPlaceholder"
+            LibraryItem it;
+            it.file = file;
+            it.name = std::filesystem::path(file).stem().string();
+            it.url = PublicChatUrl(mine + "/" + folder + "/" + file);
+            out.push_back(it);
+        }
+        return out;
+    }
+
+    bool DeleteFromLibrary(const std::string& folder, const std::string& file) {
+        std::string mine = MyId();
+        if (mine.empty() || file.empty()) return false;
+        return acct_.Api("/storage/v1/object/chat/" + mine + "/" + folder + "/" + file, "DELETE").ok;
+    }
+
+    std::string PublicChatUrl(const std::string& obj) const {
+        std::string base = acct_.ServerUrl();
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        return base + "/storage/v1/object/public/chat/" + obj;
+    }
+
     // A file message: "[File] <name> (<size>) <url>". Reads as plain text + a
     // link on older clients; newer ones render it as a file card.
     static std::string FileMessageBody(const std::string& name, unsigned long long bytes, const std::string& url) {
@@ -511,6 +577,8 @@ private:
         return (long)timegm(&tm);
 #endif
     }
+public:
+    // Tiny JSON helpers (also used by the launcher's emoji/GIF code).
     static std::vector<std::string> SplitObjects(const std::string& json) {
         std::vector<std::string> out; int depth = 0; std::size_t start = std::string::npos;
         for (std::size_t i = 0; i < json.size(); ++i) {

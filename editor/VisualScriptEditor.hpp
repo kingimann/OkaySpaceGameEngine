@@ -333,6 +333,11 @@ inline void Draw(EditorState& ed, bool* open) {
     ImVec2 origin = ImGui::GetCursorScreenPos();
     ImVec2 canvasMin = origin, canvasMax = ImVec2(origin.x + ImGui::GetContentRegionAvail().x,
                                                   origin.y + ImGui::GetContentRegionAvail().y);
+    // The full-canvas catch-all button handles panning + the right-click palette,
+    // but it MUST allow overlap: without this it greedily latches the mouse-press
+    // (it's submitted before the nodes), so the pin/header buttons drawn on top of
+    // it never activate — that's why wiring nodes together did nothing.
+    ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("vscbg", ImVec2(canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool canvasHovered = ImGui::IsItemHovered();
@@ -449,9 +454,9 @@ inline void Draw(EditorState& ed, bool* open) {
         auto pinButton = [&](long long key, int kind, int side, int idx) {
             auto it = pinPos.find(key); if (it == pinPos.end()) return;
             ImVec2 pp = it->second;
-            ImGui::SetCursorScreenPos(ImVec2(pp.x - 7, pp.y - 7));
+            ImGui::SetCursorScreenPos(ImVec2(pp.x - 9, pp.y - 9));
             char id[24]; std::snprintf(id, sizeof(id), "p%d%d%d", kind, side, idx);
-            ImGui::InvisibleButton(id, ImVec2(14, 14));
+            ImGui::InvisibleButton(id, ImVec2(18, 18));
             if (ImGui::IsItemActivated()) {
                 st.dragging = true; st.dragExec = (kind == 0);
                 st.dragFromOutput = (side == 1); st.dragNode = n.id; st.dragPin = idx;
@@ -492,7 +497,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             // Find a pin under the mouse of the opposite side + same kind.
             ImVec2 m = ImGui::GetIO().MousePos;
-            int bestNode = -1, bestIdx = -1; float bestD = 14 * 14;
+            int bestNode = -1, bestIdx = -1; float bestD = 26 * 26;   // forgiving snap radius
             int wantSide = st.dragFromOutput ? 0 : 1;   // connect to an input if we came from an output
             int wantKind = st.dragExec ? 0 : 1;
             for (auto& kvp : pinPos) {

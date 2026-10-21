@@ -121,6 +121,7 @@
 #include <functional>
 #include "okay/Core/DataPack.hpp"   // transparent unpack of obfuscated game data
 #include <fstream>
+#include <filesystem>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
@@ -1769,10 +1770,33 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
 }
 
 bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path) {
-    std::ofstream f(path);
-    if (!f) return false;
-    f << Serialize(scene);
-    return static_cast<bool>(f);
+    namespace fs = std::filesystem;
+    // Atomic save: write to a temp file, then rename over the target, so a crash
+    // or full disk mid-write can never leave a truncated/corrupt scene. Keep one
+    // rolling ".bak" of the previous good file for manual recovery.
+    std::string tmp = path + ".savetmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        if (!f) return false;
+        f << Serialize(scene);
+        f.flush();
+        if (!f) { std::error_code rc; fs::remove(tmp, rc); return false; }
+    }
+    std::error_code ec;
+    if (fs::exists(path, ec)) {
+        std::string bak = path + ".bak";
+        fs::remove(bak, ec);
+        fs::rename(path, bak, ec);   // best-effort previous-version backup
+        ec.clear();
+    }
+    fs::rename(tmp, path, ec);        // atomic replace on the same filesystem
+    if (ec) {
+        // Cross-device or locked: fall back to a direct overwrite copy.
+        std::error_code ce; fs::copy_file(tmp, path, fs::copy_options::overwrite_existing, ce);
+        std::error_code rc; fs::remove(tmp, rc);
+        return !ce;
+    }
+    return true;
 }
 
 // Parse a document into `scene`. If `clear` is false, objects are appended

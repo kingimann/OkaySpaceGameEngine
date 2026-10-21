@@ -7,6 +7,7 @@
 // sitting next to it, and launches them. Built with Dear ImGui + SDL2.
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
@@ -1242,7 +1243,12 @@ bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1160, g_winH = 752;
 int g_chatWinX = -1, g_chatWinY = -1, g_chatWinW = 900, g_chatWinH = 640;   // the chat window's own geometry (persisted)
-bool g_raiseMainReq = false;             // something in the chat window wants the launcher in front  // last window size (persisted) — roomier first-launch default
+bool g_raiseMainReq = false;             // something in the chat window wants the launcher in front
+#ifndef OKAY_DEFAULT_VOICE_RELAY
+#define OKAY_DEFAULT_VOICE_RELAY ""
+#endif
+std::string g_voiceRelay = OKAY_DEFAULT_VOICE_RELAY;   // voice server "host[:port]" (persisted)
+float g_voiceGate = -46.0f;                            // mic sensitivity, dBFS (persisted)  // last window size (persisted) — roomier first-launch default
 const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
 
 // Transient toast notification (bottom-right of the window).
@@ -3400,6 +3406,8 @@ void LoadPrefs() {
         }
         else if (k == "win_w") { try { g_winW = std::stoi(v); } catch (...) {} }
         else if (k == "chat_window") g_chatSeparate = (v != "0");
+        else if (k == "voice_relay") g_voiceRelay = v;
+        else if (k == "voice_gate") { try { g_voiceGate = std::clamp(std::stof(v), -70.0f, -10.0f); } catch (...) {} }
         else if (k == "chat_win_x") { try { g_chatWinX = std::stoi(v); } catch (...) {} }
         else if (k == "chat_win_y") { try { g_chatWinY = std::stoi(v); } catch (...) {} }
         else if (k == "chat_win_w") { try { g_chatWinW = std::max(520, std::stoi(v)); } catch (...) {} }
@@ -3437,6 +3445,7 @@ void SavePrefs() {
     f << "tab=" << g_lastTab << "\n";
     f << "win_w=" << g_winW << "\n";
     f << "chat_window=" << (g_chatSeparate ? 1 : 0) << "\n";
+    f << "voice_relay=" << g_voiceRelay << "\nvoice_gate=" << g_voiceGate << "\n";
     f << "chat_win_x=" << g_chatWinX << "\nchat_win_y=" << g_chatWinY << "\nchat_win_w=" << g_chatWinW << "\nchat_win_h=" << g_chatWinH << "\n";
     f << "win_h=" << g_winH << "\n";
     f << "splash_logo=" << g_splashLogo << "\n";
@@ -3636,6 +3645,8 @@ static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
     if (body.rfind("[Voice] ", 0) == 0) return "Voice message";
     if (body.rfind("[Sticker] ", 0) == 0) return "Sticker";
     { ChatPollInfo pi; if (ParseChatPoll(body, pi)) return ChatPreview("Poll: " + pi.question, n); }
+    if (body.rfind("[Call] ", 0) == 0) return "Voice call";
+    if (body.rfind("[CallEnd] ", 0) == 0) return "Call ended";
     std::string t = body; while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
     if (!t.empty() && FirstImageUrl(t) == t) {
         std::string low = t; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
@@ -4855,6 +4866,367 @@ static void DrawGroupConversation(
     }
 }
 
+// ---- Voice calls (Discord-style; the audio engine is in VoiceChat.hpp) -------
+// DM calls ring the other person through an ordinary message ("[Call] <code>
+// <key>", answered by joining the room, closed by "[CallEnd] <code> <secs>").
+// Server voice rooms need no signalling: everyone in the server can join its
+// Lounge. Audio runs over the OkaySpace UDP relay set in Settings > Chat.
+std::string g_voiceMe;                                 // my name in rooms (set each frame by main)
+static okay::voice::Session g_voice;
+struct VoiceCall {
+    int kind = 0;                 // 0 none, 1 DM call, 2 server room
+    std::string peerUid, peerName, peerAvatar, code, title;
+    long serverId = 0;
+    bool outgoing = false, answered = false;
+    Uint32 started = 0, emptySince = 0;
+};
+static VoiceCall g_call;
+struct IncomingCall { std::string fromUid, fromName, fromAvatar, code, key; long msgId = 0; Uint32 ringStart = 0; };
+static IncomingCall g_incoming;
+static std::set<long> g_callSeen;   // call messages already rung/handled
+
+// "[Call] code key" -> kind 1; "[CallEnd] code secs" -> kind 2.
+struct CallBody { int kind = 0; std::string code, key; long secs = 0; };
+static CallBody ParseCallBody(const std::string& b) {
+    CallBody c;
+    std::istringstream in(b);
+    std::string tag; in >> tag;
+    if (tag == "[Call]") { c.kind = 1; in >> c.code >> c.key; }
+    else if (tag == "[CallEnd]") { c.kind = 2; in >> c.code >> c.secs; }
+    if (c.code.empty()) c.kind = 0;
+    return c;
+}
+static std::string RandHex(int bytes) {
+    std::random_device rd; std::string s; char h[3];
+    for (int i = 0; i < bytes; ++i) { std::snprintf(h, sizeof(h), "%02x", (unsigned)(rd() & 0xFF)); s += h; }
+    return s;
+}
+static std::string CallClock(long secs) {
+    char b[16];
+    if (secs >= 3600) std::snprintf(b, sizeof(b), "%ld:%02ld:%02ld", secs / 3600, secs / 60 % 60, secs % 60);
+    else std::snprintf(b, sizeof(b), "%ld:%02ld", secs / 60, secs % 60);
+    return b;
+}
+static bool VoiceJoin(const std::string& room, const std::string& key) {
+    std::string host = g_voiceRelay; std::uint16_t port = 45100;
+    while (!host.empty() && host.back() == ' ') host.pop_back();
+    if (host.empty()) { Toast("Voice needs a voice server \xE2\x80\x94 add one in Settings > Chat", 2); return false; }
+    if (auto c = host.rfind(':'); c != std::string::npos) { port = (std::uint16_t)std::atoi(host.c_str() + c + 1); host.erase(c); }
+    if (!EnsureAudio()) { Toast("Audio isn't available on this system", 2); return false; }
+    if (VoiceRecording()) FinishVoiceRecord(false);
+    g_voice.SetGate(g_voiceGate);
+    if (!g_voice.Start(host, port ? port : 45100, room, key, g_voiceMe, g_voiceMe)) { Toast(g_voice.Error(), 2); return false; }
+    if (!g_voice.Error().empty()) Toast(g_voice.Error(), 2);   // e.g. no microphone (listen-only)
+    return true;
+}
+static void VoiceHangup() {
+    if (g_call.kind == 1) {
+        const long secs = g_call.answered && g_voice.ConnectedSince() ? (long)(SDL_GetTicks() - g_voice.ConnectedSince()) / 1000 : 0;
+        OutboxSend(g_call.peerUid, 0, "[CallEnd] " + g_call.code + " " + std::to_string(g_call.answered ? std::max(1L, secs) : 0));
+    }
+    g_voice.Stop();
+    g_call = VoiceCall{};
+}
+static void VoiceStartDm(const std::string& uid, const std::string& name, const std::string& avatar) {
+    if (g_call.kind) VoiceHangup();
+    const std::string code = RandHex(8), key = RandHex(32);
+    if (!VoiceJoin("dm-" + code, key)) return;
+    OutboxSend(uid, 0, "[Call] " + code + " " + key);
+    g_call = VoiceCall{}; g_call.kind = 1; g_call.peerUid = uid; g_call.peerName = name; g_call.peerAvatar = avatar;
+    g_call.code = code; g_call.title = name; g_call.outgoing = true; g_call.started = SDL_GetTicks();
+}
+static void VoiceJoinDmCall(const std::string& uid, const std::string& name, const std::string& avatar,
+                            const std::string& code, const std::string& key) {
+    if (g_call.kind) VoiceHangup();
+    if (!VoiceJoin("dm-" + code, key)) return;
+    g_call = VoiceCall{}; g_call.kind = 1; g_call.peerUid = uid; g_call.peerName = name; g_call.peerAvatar = avatar;
+    g_call.code = code; g_call.title = name; g_call.answered = true; g_call.started = SDL_GetTicks();
+}
+static void VoiceJoinServer(long serverId, const std::string& serverName, const std::string& invite) {
+    if (g_call.kind == 2 && g_call.serverId == serverId) return;
+    if (g_call.kind) VoiceHangup();
+    if (!VoiceJoin("sv-" + std::to_string(serverId), "server|" + std::to_string(serverId) + "|" + invite)) return;
+    g_call = VoiceCall{}; g_call.kind = 2; g_call.serverId = serverId; g_call.title = serverName;
+    g_call.answered = true; g_call.started = SDL_GetTicks();
+}
+// Once a frame: failures, no-answer timeouts, the other side leaving.
+static void VoicePump() {
+    if (!g_call.kind) return;
+    if (g_voice.StateNow() == okay::voice::Session::Failed) {
+        const std::string why = g_voice.Error();
+        VoiceHangup();
+        Toast(why.empty() ? "Voice disconnected" : why, 2);
+        return;
+    }
+    if (g_call.kind != 1) return;
+    const Uint32 now = SDL_GetTicks();
+    const bool anyone = !g_voice.Peers().empty();
+    if (anyone && !g_call.answered) g_call.answered = true;
+    if (g_call.outgoing && !g_call.answered && now - g_call.started > 45000) { VoiceHangup(); Toast("No answer", 0); return; }
+    if (g_call.answered) {
+        if (anyone) g_call.emptySince = 0;
+        else if (!g_call.emptySince) g_call.emptySince = now;
+        else if (now - g_call.emptySince > 10000 && now - g_call.started > 15000) { VoiceHangup(); Toast("Call ended", 0); }
+    }
+}
+
+// Background ringer: recent call messages sent to me (every 3 s while signed in).
+struct CallSig { okay::Messages::CallSignal s; std::string name, avatar; };
+static SDL_mutex* g_callSigMutex = nullptr;
+static std::vector<CallSig> g_callSigs;     // (guarded)
+static bool g_callSigReady = false;         // (guarded)
+static volatile bool g_callPollRun = true;
+static std::string g_callPollCfg, g_callPollUrl, g_callPollKey;
+static int CallPollWorker(void*) {
+    std::map<std::string, std::pair<std::string, std::string>> names;   // uid -> (name, avatar)
+    while (g_callPollRun) {
+        try {
+            okay::account::AccountService a(fs::path(g_callPollCfg), g_callPollUrl, g_callPollKey);
+            if (a.IsLoggedIn()) {
+                auto sigs = okay::Messages(a).RecentCallSignals(75);
+                std::vector<CallSig> out;
+                for (auto& s : sigs) {
+                    CallSig c; c.s = s;
+                    auto it = names.find(s.from);
+                    if (it == names.end()) {
+                        std::string nm, av;
+                        auto r = a.Api("/rest/v1/profiles?select=username,display_name,avatar_url&id=eq." + s.from, "GET");
+                        if (r.ok) {
+                            auto o = okay::Messages::SplitObjects(r.body);
+                            if (!o.empty()) {
+                                nm = okay::Messages::Field(o[0], "display_name");
+                                if (nm.empty()) nm = okay::Messages::Field(o[0], "username");
+                                av = okay::Messages::Field(o[0], "avatar_url");
+                            }
+                        }
+                        it = names.emplace(s.from, std::make_pair(nm, av)).first;
+                    }
+                    c.name = it->second.first; c.avatar = it->second.second;
+                    out.push_back(c);
+                }
+                SDL_LockMutex(g_callSigMutex); g_callSigs = std::move(out); g_callSigReady = true; SDL_UnlockMutex(g_callSigMutex);
+            }
+        } catch (...) {}
+        for (int i = 0; i < 15 && g_callPollRun; ++i) SDL_Delay(200);
+    }
+    return 0;
+}
+// Turn fresh signals into a ringing call / end the current one (main thread).
+static void VoiceHandleSignals() {
+    if (!g_callSigMutex) return;
+    std::vector<CallSig> sigs;
+    SDL_LockMutex(g_callSigMutex);
+    if (g_callSigReady) { sigs = g_callSigs; g_callSigReady = false; }
+    SDL_UnlockMutex(g_callSigMutex);
+    if (sigs.empty()) return;
+    std::set<std::string> ended;
+    for (const auto& c : sigs) { CallBody b = ParseCallBody(c.s.body); if (b.kind == 2) ended.insert(b.code); }
+    if (!g_incoming.code.empty() && ended.count(g_incoming.code)) g_incoming = IncomingCall{};   // they hung up first: missed
+    if (g_call.kind == 1 && ended.count(g_call.code)) { g_voice.Stop(); g_call = VoiceCall{}; Toast("Call ended", 0); }
+    const long now = (long)std::time(nullptr);
+    for (const auto& c : sigs) {
+        CallBody b = ParseCallBody(c.s.body);
+        if (b.kind != 1 || g_callSeen.count(c.s.id) || ended.count(b.code)) continue;
+        g_callSeen.insert(c.s.id);
+        if (now - c.s.when > 45 || g_blockedUsers.count(c.s.from)) continue;
+        if (g_call.kind == 1 && g_call.code == b.code) continue;
+        g_incoming = IncomingCall{c.s.from, c.name.empty() ? std::string("Someone") : c.name, c.avatar, b.code, b.key, c.s.id, SDL_GetTicks()};
+    }
+}
+
+// ---- Little line icons for the call UI ----
+static void DrawPhoneIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col, bool hangup = false) {
+    // A handset: two ear/mouth pads joined by a curved grip (rotated for hang-up).
+    const float a0 = hangup ? 3.14159265f * 0.75f : 3.14159265f * 0.25f;
+    const ImVec2 dir(std::cos(a0), std::sin(a0)), nrm(-dir.y, dir.x);
+    auto P = [&](float u, float v) { return ImVec2(c.x + dir.x * u * s + nrm.x * v * s, c.y + dir.y * u * s + nrm.y * v * s); };
+    d->AddBezierCubic(P(-0.42f, 0.10f), P(-0.20f, -0.30f), P(0.20f, -0.30f), P(0.42f, 0.10f), col, s * 0.16f);
+    d->AddCircleFilled(P(-0.40f, 0.14f), s * 0.13f, col, 10);
+    d->AddCircleFilled(P(0.40f, 0.14f), s * 0.13f, col, 10);
+}
+static void DrawMicGlyph(ImDrawList* d, ImVec2 c, float s, ImU32 col, bool off) {
+    const float w = s * 0.26f, top = c.y - s * 0.42f, h = s * 0.44f;
+    d->AddRectFilled(ImVec2(c.x - w * 0.5f, top), ImVec2(c.x + w * 0.5f, top + h), col, w * 0.5f);
+    d->PathArcTo(ImVec2(c.x, c.y - s * 0.10f), s * 0.25f, 0.0f, 3.14159265f, 12);
+    d->PathStroke(col, 0, 1.6f);
+    d->AddLine(ImVec2(c.x, c.y + s * 0.15f), ImVec2(c.x, c.y + s * 0.32f), col, 1.6f);
+    if (off) d->AddLine(ImVec2(c.x - s * 0.36f, c.y - s * 0.40f), ImVec2(c.x + s * 0.36f, c.y + s * 0.34f), IM_COL32(240, 80, 80, 255), 2.0f);
+}
+static void DrawHeadsetGlyph(ImDrawList* d, ImVec2 c, float s, ImU32 col, bool off) {
+    d->PathArcTo(ImVec2(c.x, c.y + s * 0.05f), s * 0.34f, 3.14159265f, 3.14159265f * 2.0f, 14);
+    d->PathStroke(col, 0, 1.7f);
+    d->AddRectFilled(ImVec2(c.x - s * 0.40f, c.y), ImVec2(c.x - s * 0.24f, c.y + s * 0.30f), col, 2.0f);
+    d->AddRectFilled(ImVec2(c.x + s * 0.24f, c.y), ImVec2(c.x + s * 0.40f, c.y + s * 0.30f), col, 2.0f);
+    if (off) d->AddLine(ImVec2(c.x - s * 0.40f, c.y - s * 0.38f), ImVec2(c.x + s * 0.40f, c.y + s * 0.36f), IM_COL32(240, 80, 80, 255), 2.0f);
+}
+static void DrawSpeakerGlyph(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
+    d->AddRectFilled(ImVec2(c.x - s * 0.40f, c.y - s * 0.12f), ImVec2(c.x - s * 0.22f, c.y + s * 0.12f), col);
+    d->AddTriangleFilled(ImVec2(c.x - s * 0.24f, c.y - s * 0.12f), ImVec2(c.x + s * 0.02f, c.y - s * 0.34f), ImVec2(c.x + s * 0.02f, c.y + s * 0.34f), col);
+    d->AddTriangleFilled(ImVec2(c.x - s * 0.24f, c.y - s * 0.12f), ImVec2(c.x + s * 0.02f, c.y + s * 0.34f), ImVec2(c.x - s * 0.24f, c.y + s * 0.12f), col);
+    d->PathArcTo(ImVec2(c.x + s * 0.02f, c.y), s * 0.20f, -0.9f, 0.9f, 8); d->PathStroke(col, 0, 1.4f);
+    d->PathArcTo(ImVec2(c.x + s * 0.02f, c.y), s * 0.34f, -0.9f, 0.9f, 10); d->PathStroke(col, 0, 1.4f);
+}
+// Round icon button; returns true when clicked.
+static bool CallButton(const char* id, float d, ImU32 bg, ImU32 bgHover, const char* tip,
+                       const std::function<void(ImDrawList*, ImVec2)>& glyph) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool hit = ImGui::InvisibleButton(id, ImVec2(d, d));
+    const bool h = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddCircleFilled(ImVec2(p.x + d * 0.5f, p.y + d * 0.5f), d * 0.5f, h ? bgHover : bg, 28);
+    glyph(dl, ImVec2(p.x + d * 0.5f, p.y + d * 0.5f));
+    if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (tip && *tip) ImGui::SetTooltip("%s", tip); }
+    return hit;
+}
+// Avatar with a green ring while that person talks.
+static void VoiceAvatar(const std::string& avatar, const std::string& name, float size, bool speaking, bool muted) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    DrawAvatar(avatar, name, size);
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 c(p.x + size * 0.5f, p.y + size * 0.5f);
+    if (speaking) d->AddCircle(c, size * 0.5f + 2.0f, IM_COL32(67, 181, 129, 255), 28, 2.5f);
+    if (muted) {
+        const ImVec2 m(p.x + size - 4, p.y + size - 4);
+        d->AddCircleFilled(m, 7.0f, IM_COL32(32, 34, 40, 255), 14);
+        DrawMicGlyph(d, m, 10.0f, IM_COL32(220, 225, 235, 255), true);
+    }
+}
+
+// Incoming call card: top-centre of whichever window is drawing.
+static void DrawIncomingCall() {
+    if (g_incoming.code.empty()) return;
+    if (SDL_GetTicks() - g_incoming.ringStart > 45000) { g_incoming = IncomingCall{}; return; }   // missed
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 18), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(320, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, okaytheme::kRaised);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.26f, 0.71f, 0.51f, 0.8f));
+    if (ImGui::Begin("##incomingcall", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing)) {
+        const float pulse = 0.5f + 0.5f * std::sin((float)SDL_GetTicks() * 0.008f);
+        ImVec2 ap = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddCircle(ImVec2(ap.x + 22, ap.y + 22), 24.0f + pulse * 4.0f, IM_COL32(67, 181, 129, (int)(160 * (1.0f - pulse))), 28, 2.0f);
+        DrawAvatar(g_incoming.fromAvatar, g_incoming.fromName, 44.0f);
+        ImGui::SameLine(0, 12);
+        ImGui::BeginGroup();
+        ImGui::TextUnformatted(g_incoming.fromName.c_str());
+        ImGui::TextDisabled("Incoming voice call\xE2\x80\xA6");
+        ImGui::EndGroup();
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - 92);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+        if (CallButton("##decline", 38, IM_COL32(237, 66, 69, 255), IM_COL32(255, 90, 92, 255), "Decline",
+                       [](ImDrawList* d, ImVec2 c) { DrawPhoneIcon(d, c, 18, IM_COL32_WHITE, true); })) {
+            OutboxSend(g_incoming.fromUid, 0, "[CallEnd] " + g_incoming.code + " 0");
+            g_incoming = IncomingCall{};
+        }
+        ImGui::SameLine(0, 12);
+        if (!g_incoming.code.empty() &&
+            CallButton("##accept", 38, IM_COL32(59, 165, 93, 255), IM_COL32(76, 196, 114, 255), "Accept",
+                       [](ImDrawList* d, ImVec2 c) { DrawPhoneIcon(d, c, 18, IM_COL32_WHITE); })) {
+            const IncomingCall in = g_incoming; g_incoming = IncomingCall{};
+            VoiceJoinDmCall(in.fromUid, in.fromName, in.fromAvatar, in.code, in.key);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+}
+
+// The "Voice Connected" panel: who's in the call, mute / deafen / hang up.
+// compact = the launcher sidebar; otherwise a wider strip (chat window).
+static float VoicePanelHeight(bool compact) { return g_call.kind ? (compact ? 92.0f : 64.0f) : 0.0f; }
+static void DrawVoicePanel(float width, bool compact) {
+    if (!g_call.kind) return;
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = VoicePanelHeight(compact) - 6.0f;
+    d->AddRectFilled(p, ImVec2(p.x + width, p.y + h), ImGui::GetColorU32(okaytheme::kRaised), 10.0f);
+    const auto peers = g_voice.Peers();
+    const bool connected = g_voice.StateNow() == okay::voice::Session::Connected;
+    const bool ringing = g_call.kind == 1 && !g_call.answered;
+    const ImU32 green = IM_COL32(67, 181, 129, 255);
+    std::string status = !connected ? "Connecting\xE2\x80\xA6" : ringing ? "Calling\xE2\x80\xA6" : "Voice connected";
+    std::string where = g_call.kind == 2 ? "Lounge / " + g_call.title : g_call.title;
+    // signal bars + status
+    for (int b = 0; b < 3; ++b) d->AddRectFilled(ImVec2(p.x + 10 + b * 4.5f, p.y + 18 - 4 - b * 3.0f), ImVec2(p.x + 13 + b * 4.5f, p.y + 18), connected ? green : IM_COL32(150, 156, 170, 255), 1.0f);
+    d->AddText(ImVec2(p.x + 28, p.y + 6), connected && !ringing ? green : IM_COL32(220, 200, 120, 255), status.c_str());
+    const long secs = connected && g_voice.ConnectedSince() ? (long)(SDL_GetTicks() - g_voice.ConnectedSince()) / 1000 : 0;
+    const std::string clock = CallClock(secs);
+    const float cw = ImGui::CalcTextSize(clock.c_str()).x;
+    if (!compact) d->AddText(ImVec2(p.x + 28 + ImGui::CalcTextSize(status.c_str()).x + 8, p.y + 6), IM_COL32(150, 156, 170, 255), clock.c_str());
+    else d->AddText(ImVec2(p.x + width - cw - 10, p.y + 6), IM_COL32(150, 156, 170, 255), clock.c_str());
+    if (compact) d->AddText(ImVec2(p.x + 10, p.y + 24), IM_COL32(170, 178, 195, 255), FitText(where, width - 20).c_str());
+    // participants (me first)
+    float ax = p.x + 10, ay = p.y + (compact ? 46 : 30);
+    if (!compact) { ax = p.x + width - 150; ay = p.y + 8; }
+    auto face = [&](const std::string& av, const std::string& nm, bool speaking, bool muted) {
+        if (ax > p.x + width - (compact ? 60 : 30)) return;
+        ImGui::SetCursorScreenPos(ImVec2(ax, ay));
+        VoiceAvatar(av, nm, 26.0f, speaking, muted);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s%s", nm.c_str(), speaking ? "  (talking)" : "");
+        ax += 32;
+    };
+    if (compact) {
+        face(std::string(), g_voiceMe, g_voice.SelfSpeaking(), g_voice.Muted() || g_voice.Deafened());
+        for (const auto& pv : peers) face(pv.uid == g_call.peerUid ? g_call.peerAvatar : std::string(), pv.name, pv.speaking, pv.muted || pv.deafened);
+    }
+    // buttons
+    const float bd = 28.0f;
+    float bx = p.x + width - (bd + 6) * 3 - 4;
+    const float by = compact ? p.y + 44 : p.y + h - bd - 6;
+    if (!compact) {   // big view: faces left of the buttons
+        ax = p.x + 10; ay = p.y + h - 32;
+        face(std::string(), g_voiceMe, g_voice.SelfSpeaking(), g_voice.Muted() || g_voice.Deafened());
+        for (const auto& pv : peers) face(pv.uid == g_call.peerUid ? g_call.peerAvatar : std::string(), pv.name, pv.speaking, pv.muted || pv.deafened);
+    }
+    const ImU32 bg = IM_COL32(255, 255, 255, 16), bgh = IM_COL32(255, 255, 255, 34);
+    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+    const bool muted = g_voice.Muted();
+    if (CallButton("##vmute", bd, muted ? IM_COL32(237, 66, 69, 60) : bg, bgh, muted ? "Unmute" : "Mute",
+                   [&](ImDrawList* dd, ImVec2 c) { DrawMicGlyph(dd, c, 16, IM_COL32(225, 230, 240, 255), muted); }))
+        g_voice.SetMuted(!muted);
+    ImGui::SetCursorScreenPos(ImVec2(bx + bd + 6, by));
+    const bool deaf = g_voice.Deafened();
+    if (CallButton("##vdeaf", bd, deaf ? IM_COL32(237, 66, 69, 60) : bg, bgh, deaf ? "Undeafen" : "Deafen",
+                   [&](ImDrawList* dd, ImVec2 c) { DrawHeadsetGlyph(dd, c, 16, IM_COL32(225, 230, 240, 255), deaf); }))
+        g_voice.SetDeafened(!deaf);
+    ImGui::SetCursorScreenPos(ImVec2(bx + (bd + 6) * 2, by));
+    if (CallButton("##vhang", bd, IM_COL32(237, 66, 69, 255), IM_COL32(255, 90, 92, 255), g_call.kind == 2 ? "Disconnect" : "Hang up",
+                   [](ImDrawList* dd, ImVec2 c) { DrawPhoneIcon(dd, c, 15, IM_COL32_WHITE, true); }))
+        VoiceHangup();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 6));
+    ImGui::Dummy(ImVec2(width, 0));
+}
+
+// A call entry in the DM log: icon + "Outgoing call · 3:12" / "Missed call" / Join.
+static float ChatCallWidth(float maxW) { return std::min(maxW, 240.0f); }
+static void RenderChatCallCard(const CallBody& cb, long endSecs, bool ended, bool mine, long when,
+                               const std::string& peerUid, const std::string& peerName, const std::string& peerAvatar) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool live = g_call.kind == 1 && g_call.code == cb.code;
+    const bool missed = ended && endSecs == 0;
+    const ImU32 disc = missed ? IM_COL32(237, 66, 69, 255) : IM_COL32(59, 165, 93, 255);
+    d->AddCircleFilled(ImVec2(p.x + 17, p.y + 17), 17.0f, disc, 24);
+    DrawPhoneIcon(d, ImVec2(p.x + 17, p.y + 17), 17.0f, IM_COL32_WHITE, missed);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 44, p.y));
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted(missed ? (mine ? "No answer" : "Missed voice call") : mine ? "Outgoing voice call" : "Incoming voice call");
+    const long age = (long)std::time(nullptr) - when;
+    if (live) ImGui::TextColored(ImVec4(0.40f, 0.85f, 0.55f, 1.0f), "In progress");
+    else if (ended && endSecs > 0) ImGui::TextDisabled("%s", CallClock(endSecs).c_str());
+    else if (!ended && age < 2 * 3600) {
+        ImGui::TextDisabled(age < 50 ? "Ringing\xE2\x80\xA6" : "Ongoing");
+        ImGui::SameLine(0, 8);
+        ImGui::PushID(cb.code.c_str());
+        if (ImGui::SmallButton("Join")) VoiceJoinDmCall(peerUid, peerName, peerAvatar, cb.code, cb.key);
+        ImGui::PopID();
+    } else if (!ended) ImGui::TextDisabled("Ended");
+    ImGui::EndGroup();
+}
+
 void DrawChatWindow(okay::account::AccountService& account) {
     // Dev-only visual-test hook: OKAY_CHAT_DEMO=1 opens the chat with sample
     // messages (no login/network) so the UI can be reviewed in isolation. Inert
@@ -5732,9 +6104,20 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::TextUnformatted(sub.c_str());
             ImGui::PopStyleColor();
             ImGui::EndGroup();
-            // Right-aligned actions: conversation menu (⋯) + search toggle.
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 62);
+            // Right-aligned actions: voice call, conversation menu (⋯) + search toggle.
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 96);
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+            {
+                const bool inThisCall = g_call.kind == 1 && g_call.peerUid == selUid;
+                ImVec2 cp = ImGui::GetCursorScreenPos();
+                ImGui::BeginDisabled(selBlocked);
+                if (ImGui::Button("##callbtn", ImVec2(26, 26))) { if (inThisCall) VoiceHangup(); else VoiceStartDm(selUid, selName, selAvatar); }
+                ImGui::EndDisabled();
+                DrawPhoneIcon(ImGui::GetWindowDrawList(), ImVec2(cp.x + 13, cp.y + 13), 15.0f,
+                              inThisCall ? IM_COL32(237, 66, 69, 255) : ImGui::GetColorU32(ImGuiCol_Text), inThisCall);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(inThisCall ? "Hang up" : "Start a voice call");
+            }
+            ImGui::SameLine(0, 8);
             ImVec2 mbp = ImGui::GetCursorScreenPos();
             if (ImGui::Button("##convmenu", ImVec2(26, 26))) ImGui::OpenPopup("##convmenu_pop");
             {   // three-dots glyph
@@ -5999,6 +6382,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 static int prevClines = 1;
                 if (clines != prevClines) { prevClines = clines; wantScrollBottom = true; }
             }
+            if (g_call.kind == 1 && g_call.peerUid == selUid) {   // in a call with them: the call strip
+                const float vw = ImGui::GetContentRegionAvail().x - 20;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10);
+                DrawVoicePanel(vw, false);
+            }
             // AlwaysVerticalScrollbar reserves the scrollbar space permanently so the
             // content width is stable — otherwise the right-aligned ("mine") bubbles
             // jump sideways whenever the scrollbar appears/disappears on resize.
@@ -6017,8 +6405,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::SetCursorPosX(baseX + (avW - ImGui::CalcTextSize(bl).x) * 0.5f);
                 ImGui::TextDisabled("%s", bl);
             }
+            std::map<std::string, long> callEnds;   // call code -> seconds (0 = missed/declined)
+            for (const auto& m : log) { CallBody cb = ParseCallBody(m.body); if (cb.kind == 2) callEnds[cb.code] = cb.secs; }
             for (const auto& m : log) {
                 if (selBlocked && !m.mine) continue;
+                if (m.body.rfind("[CallEnd] ", 0) == 0) continue;   // folded into the call's card
                 if (!msFilt.empty()) {
                     std::string low = m.body; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
                     if (low.find(msFilt) == std::string::npos) continue;
@@ -6051,8 +6442,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ChatFileInfo fileInfo; const bool isFile = ParseChatFile(m.body, fileInfo);   // "[File] ..." -> card
                 ChatVoiceInfo voice; const bool isVoice = !isFile && ParseChatVoice(m.body, voice);
                 ChatPollInfo pollInfo; const bool isPoll = !isFile && !isVoice && ParseChatPoll(m.body, pollInfo);
+                const CallBody callB = (isFile || isVoice || isPoll) ? CallBody{} : ParseCallBody(m.body);
+                const bool isCall = callB.kind == 1;
                 float bodyW = isFile ? ChatFileCardWidth(fileInfo, bubbleMax - padX*2)
                             : isVoice ? ChatVoiceWidth(bubbleMax - padX*2)
+                            : isCall ? ChatCallWidth(bubbleMax - padX*2)
                             : isPoll ? ChatPollWidth(bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
                 // reply quote + time contribute to width
                 const okay::DirectMessage* rep = (m.replyTo && byId.count(m.replyTo)) ? byId[m.replyTo] : nullptr;
@@ -6184,6 +6578,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 } else {
                     if (isFile) RenderChatFileCard(fileInfo, ImGui::GetContentRegionAvail().x);
                     else if (isVoice) RenderChatVoice(voice, ImGui::GetContentRegionAvail().x, m.mine, myBubble);
+                    else if (isCall) {
+                        auto ce = callEnds.find(callB.code);
+                        RenderChatCallCard(callB, ce != callEnds.end() ? ce->second : 0, ce != callEnds.end(), m.mine, m.when,
+                                           selUid, selName, selAvatar);
+                    }
                     else if (isPoll) {
                         auto rc = reacts.find(m.id); auto mr = myReacts.find(m.id);
                         RenderChatPoll(pollInfo, false, m.id, rc != reacts.end() ? &rc->second : nullptr,
@@ -8573,6 +8972,7 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
     DrawChatWindow(account);
+    DrawIncomingCall();
     DrawToastOverlay();
     ImGui::Render();
     SDL_SetRenderDrawColor(g_chatHost.ren, 21, 23, 29, 255);
@@ -8763,6 +9163,10 @@ int main(int argc, char** argv) {
     // Start the background friends/DM poll (its own service, read from disk each
     // cycle) so the nav badges never block the UI on the network.
     g_pollCfgDir = acctCfgDir.string(); g_pollUrl = serverUrl; g_pollKey = apiKey;
+    g_callPollCfg = g_pollCfgDir; g_callPollUrl = serverUrl; g_callPollKey = apiKey;
+    if (!g_callSigMutex) g_callSigMutex = SDL_CreateMutex();
+    static SDL_Thread* callPollThread = nullptr;
+    if (!callPollThread && !serverUrl.empty()) callPollThread = SDL_CreateThread(CallPollWorker, "okay-callpoll", nullptr);
     g_pollMutex = SDL_CreateMutex();
     g_pollThread = SDL_CreateThread(PollWorker, "okay-poll", nullptr);
     // Background chat poller (messages/typing/conversations) so the Chat window
@@ -8808,6 +9212,13 @@ int main(int argc, char** argv) {
     if (g_updateOnLaunch) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
     if (std::getenv("OKAY_CHAT_DEMO")) g_chatWinOpen = true;   // dev screenshot hook: open the chat
     if (std::getenv("OKAY_CHAT_DOCKED")) g_chatSeparate = false;
+    if (const char* vr = std::getenv("OKAY_VOICE_DEMO")) {   // dev hook: join a local test call (relay at $OKAY_VOICE_DEMO)
+        g_voiceRelay = vr; g_voiceMe = "kingimann";
+        if (std::getenv("OKAY_VOICE_DEMO_SERVER")) VoiceJoinServer(1, "Game Jam Crew", "");
+        else VoiceJoinDmCall("demo-uid", "Alex Rivera", "", "test", "secret");
+    }
+    if (std::getenv("OKAY_VOICE_DEMO_RING"))
+        g_incoming = IncomingCall{"u-maya", "Maya Chen", "", "ring", "k", 1, SDL_GetTicks()};
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
@@ -9005,6 +9416,19 @@ int main(int argc, char** argv) {
 
         // While minimized or hidden, idle cheaply instead of spinning the render
         // loop (there's nothing to draw until the window is restored).
+        // Voice: ring on new calls, notice hang-ups, keep my name current.
+        if (account.IsLoggedIn()) g_voiceMe = account.CurrentSession().username;
+        VoiceHandleSignals();
+        VoicePump();
+        if (!g_incoming.code.empty()) {   // ring (and get the user's attention) while a call waits
+            static Uint32 nextRing = 0;
+            if (SDL_GetTicks() >= nextRing) {
+                PlayChatChime(); nextRing = SDL_GetTicks() + 2200;
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+                SDL_FlashWindow(g_chatHost.shown ? g_chatHost.win : window, SDL_FLASH_BRIEFLY);
+#endif
+            }
+        }
         ChatHostSync();
         if (g_raiseMainReq) { g_raiseMainReq = false; SDL_RestoreWindow(window); SDL_RaiseWindow(window); }
         if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
@@ -9708,7 +10132,8 @@ int main(int argc, char** argv) {
         const bool upNote = upBusy || st == Up_Updated || st == Up_Failed || upAvail;
         const float profH = g_navCollapsed ? 44.0f : 52.0f;
         const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 84.0f : 58.0f)) : 0.0f;
-        const float footH = upH + (navRowH + 2.0f) * 2 + 15.0f + profH;
+        const float voiceH = g_call.kind ? (g_navCollapsed ? navRowH + 2.0f : VoicePanelHeight(true) + 4.0f) : 0.0f;
+        const float footH = upH + voiceH + (navRowH + 2.0f) * 2 + 15.0f + profH;
         ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - footH), false, ImGuiWindowFlags_NoScrollbar);
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
         auto tabRow = [&](int i, int badge = 0, ImU32 badgeCol = 0) {
@@ -9797,6 +10222,20 @@ int main(int argc, char** argv) {
                     if (PrimaryButton("Restart now", ImVec2(w - 48, 24))) { Launch(g_selfPath); running = false; }
                 }
                 ImGui::SetCursorScreenPos(ImVec2(mn.x, mn.y + h + 8.0f));
+            }
+        }
+        if (g_call.kind) {   // ---- Voice connected (Discord-style) ----
+            if (g_navCollapsed) {
+                ImVec2 vp2 = ImGui::GetCursorScreenPos();
+                const float w = ImGui::GetContentRegionAvail().x;
+                ImGui::SetCursorScreenPos(ImVec2(vp2.x + (w - navRowH + 8) * 0.5f, vp2.y + 4));
+                if (CallButton("##vhangmini", navRowH - 8, IM_COL32(237, 66, 69, 255), IM_COL32(255, 90, 92, 255), "Hang up",
+                               [](ImDrawList* dd, ImVec2 c) { DrawPhoneIcon(dd, c, 15, IM_COL32_WHITE, true); }))
+                    VoiceHangup();
+                ImGui::SetCursorScreenPos(ImVec2(vp2.x, vp2.y + navRowH + 2.0f));
+                ImGui::Dummy(ImVec2(0, 0));
+            } else {
+                DrawVoicePanel(ImGui::GetContentRegionAvail().x, true);
             }
         }
         {   // ---- Notifications + Settings ----
@@ -11994,6 +12433,33 @@ int main(int argc, char** argv) {
                     });
                     cardEnd();
 
+                    cardBegin("##sc_voice", "VOICE CALLS");
+                    settingRow("Voice server", "The OkaySpace relay calls go through (host or host:port). Run okayspace-relay on any server \xE2\x80\x94 see docs/relay.md.", 260.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        static char vbuf[128] = ""; static bool vinit = false;
+                        if (!vinit) { std::snprintf(vbuf, sizeof(vbuf), "%s", g_voiceRelay.c_str()); vinit = true; }
+                        ImGui::SetNextItemWidth(std::min(w, 260.0f));
+                        if (ImGui::InputTextWithHint("##vrelay", "voice.example.com:45100", vbuf, sizeof(vbuf))) g_voiceRelay = vbuf;
+                        if (ImGui::IsItemDeactivatedAfterEdit()) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Mic sensitivity", "Sounds quieter than this aren't sent. Lower it if friends can't hear you; raise it if they hear your keyboard.", 260.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        ImGui::SetNextItemWidth(std::min(w, 260.0f));
+                        ImGui::SliderFloat("##vgate", &g_voiceGate, -70.0f, -10.0f, "%.0f dB");
+                        if (ImGui::IsItemDeactivatedAfterEdit()) { g_voice.SetGate(g_voiceGate); SavePrefs(); }
+                        if (g_call.kind) {   // live mic level against the threshold
+                            ImVec2 mp = ImGui::GetCursorScreenPos(); const float mw = std::min(w, 260.0f);
+                            ImDrawList* md = ImGui::GetWindowDrawList();
+                            md->AddRectFilled(mp, ImVec2(mp.x + mw, mp.y + 5), IM_COL32(255, 255, 255, 20), 2.0f);
+                            md->AddRectFilled(mp, ImVec2(mp.x + mw * g_voice.SelfLevel(), mp.y + 5), g_voice.SelfSpeaking() ? IM_COL32(67, 181, 129, 255) : IM_COL32(150, 156, 170, 255), 2.0f);
+                            const float gx = mp.x + mw * std::clamp((g_voiceGate + 60.0f) / 60.0f, 0.0f, 1.0f);
+                            md->AddLine(ImVec2(gx, mp.y - 2), ImVec2(gx, mp.y + 7), IM_COL32(240, 200, 90, 255), 1.5f);
+                            ImGui::Dummy(ImVec2(mw, 8));
+                        }
+                    });
+                    rowDivider();
+                    ImGui::TextDisabled("  Tip: use headphones \xE2\x80\x94 calls don't have echo cancellation yet.");
+                    cardEnd();
+
                     cardBegin("##sc_privacy", "PRIVACY");
                     settingRow("Share what I'm playing", "Friends see the game you're in on their Friends list and activity feed.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##sharepres", &g_sharePresence)) SavePrefs();
@@ -13807,6 +14273,40 @@ int main(int argc, char** argv) {
                             ImGui::PopID();
                         }
                         if (svChannels.empty()) ImGui::TextDisabled("  Loading channels\xE2\x80\xA6");
+                        // ---- VOICE: the server's Lounge room (Discord-style) ----
+                        ImGui::Dummy(ImVec2(0, 8));
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
+                        ImGui::SetWindowFontScale(0.80f);
+                        ImGui::TextDisabled("VOICE");
+                        ImGui::SetWindowFontScale(1.0f);
+                        {
+                            const bool inHere = g_call.kind == 2 && g_call.serverId == svSel;
+                            ImVec2 rp = ImGui::GetCursorScreenPos();
+                            float rw = ImGui::GetContentRegionAvail().x, rh = 32.0f;
+                            if (ImGui::InvisibleButton("##lounge", ImVec2(rw, rh)) && !inHere) {
+                                std::string invite;
+                                for (const auto& sx : svList) if (sx.id == svSel) invite = sx.invite;
+                                VoiceJoinServer(svSel, svSelName, invite);
+                            }
+                            const bool hov = ImGui::IsItemHovered();
+                            if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (!inHere) ImGui::SetTooltip("Join voice"); }
+                            if (inHere || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), inHere ? IM_COL32(255, 255, 255, 20) : IM_COL32(255, 255, 255, 11), 7.0f);
+                            const float ty = rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f;
+                            DrawSpeakerGlyph(d, ImVec2(rp.x + 16, rp.y + rh * 0.5f), 16.0f, inHere ? IM_COL32(67, 181, 129, 255) : cDim);
+                            d->AddText(ImVec2(rp.x + 30, ty), (inHere || hov) ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.72f), "Lounge");
+                            if (inHere) {   // who's in the room with me
+                                auto row = [&](const std::string& nm, bool speaking, bool muted) {
+                                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 28);
+                                    std::string av; for (const auto& mm : svMembers) if (mm.name == nm) { av = mm.avatar; break; }
+                                    VoiceAvatar(av, nm, 22.0f, speaking, muted);
+                                    ImGui::SameLine(0, 8);
+                                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2);
+                                    ImGui::TextColored(speaking ? ImVec4(0.9f, 0.95f, 1.0f, 1.0f) : ImVec4(0.65f, 0.69f, 0.77f, 1.0f), "%s", nm.c_str());
+                                };
+                                row(g_voiceMe, g_voice.SelfSpeaking(), g_voice.Muted() || g_voice.Deafened());
+                                for (const auto& pv : g_voice.Peers()) row(pv.name, pv.speaking, pv.muted || pv.deafened);
+                            }
+                        }
                     }
                     ImGui::EndChild();
                     ImGui::PopStyleVar();
@@ -15062,6 +15562,7 @@ int main(int argc, char** argv) {
         // ---- Floating Chat window (DMs), unless it has its own OS window ----
         if (!g_chatSeparate) DrawChatWindow(account);
 
+        if (!g_chatHost.shown) DrawIncomingCall();   // (shown in the chat window when that's open)
         DrawToastOverlay();
 
         ImGui::Render();
@@ -15092,7 +15593,8 @@ int main(int argc, char** argv) {
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
     // Stop the background friends/DM poll + chat poll threads.
-    g_pollRun = false; g_chatPollRun = false; g_srvPollRun = false;
+    g_pollRun = false; g_chatPollRun = false; g_srvPollRun = false; g_callPollRun = false;
+    g_voice.Stop();
     if (g_pollThread) { SDL_WaitThread(g_pollThread, nullptr); g_pollThread = nullptr; }
     if (g_chatThread) { SDL_WaitThread(g_chatThread, nullptr); g_chatThread = nullptr; }
     if (g_srvThread) { SDL_WaitThread(g_srvThread, nullptr); g_srvThread = nullptr; }

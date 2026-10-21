@@ -72,3 +72,18 @@ get there changes.
 This is a relay (TURN-style), not hole-punching (STUN): it always works,
 including under symmetric NATs, at the cost of routing traffic through the relay
 host.
+
+## Voice calls in the launcher
+
+The launcher's voice calls (DM calls and each server's **Lounge**) use the same
+relay. Point it at yours in **Settings > Chat > Voice server** (`host` or
+`host:port`, default port 45100), or bake a default into builds with
+`-DOKAY_DEFAULT_VOICE_RELAY=voice.example.com:45100`.
+
+Each call is a relay session: everyone registers as host, so the first one in
+becomes the room's hub and fans each 20 ms audio frame out to the others; if
+the hub leaves, the next hello makes someone else the hub. Audio is 16 kHz mono
+IMA ADPCM (~64 kbit/s per speaker), only sent while you're talking, and
+encrypted with ChaCha20 under a key that never reaches the relay: a random
+per-call key carried in the private "[Call]" DM, or derived from a server's
+invite code for its Lounge.

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.780.0
+    VERSION 2.781.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (e.g. tinyfiledialogs)
 
@@ -56,6 +56,12 @@ if(OKAY_DEFAULT_ACCOUNT_URL)
 endif()
 if(OKAY_DEFAULT_ACCOUNT_KEY)
     add_compile_definitions(OKAY_DEFAULT_ACCOUNT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY}")
+endif()
+# Default voice server for launcher calls ("host" or "host:port" of a running
+# okayspace-relay; see docs/relay.md). Empty = players set one in Settings > Chat.
+set(OKAY_DEFAULT_VOICE_RELAY "" CACHE STRING "Default voice relay (host[:port]) compiled into the launcher")
+if(OKAY_DEFAULT_VOICE_RELAY)
+    add_compile_definitions(OKAY_DEFAULT_VOICE_RELAY="${OKAY_DEFAULT_VOICE_RELAY}")
 endif()
 
 # ---- The engine library ----------------------------------------------

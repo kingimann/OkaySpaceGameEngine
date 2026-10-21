@@ -64,7 +64,7 @@ target_include_directories(okayspace-launcher PRIVATE
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
-    target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32)   # + tinyfd dialogs
+    target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32)   # + tinyfd dialogs, voice UDP
 endif()
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

@@ -52,6 +52,27 @@ public:
 
     // Count incoming messages (addressed to me) newer than sinceId, and report
     // the newest incoming id via newestOut. Used for an unread-DM nav badge.
+    // ---- Voice call signalling ---------------------------------------------
+    // A call is announced with an ordinary DM, "[Call] <code> <key>", and closed
+    // with "[CallEnd] <code> <seconds>"; the ringer polls the recent ones sent
+    // to me. (The audio itself goes over the UDP relay, not through here.)
+    struct CallSignal { long id = 0; std::string from, body; long when = 0; };
+    std::vector<CallSignal> RecentCallSignals(int maxAgeSecs = 90) {
+        std::vector<CallSignal> out;
+        if (!acct_.IsLoggedIn()) return out;
+        std::string mine = MyId(); if (mine.empty()) return out;
+        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at&recipient=eq." + mine +
+                           "&body=like.%5BCall*&created_at=gte." + IsoAt(std::time(nullptr) - maxAgeSecs) +
+                           "&order=id.desc&limit=10", "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) {
+            CallSignal c; c.id = std::atol(Field(o, "id").c_str()); c.from = Field(o, "sender");
+            c.body = Field(o, "body"); c.when = ParseIso(Field(o, "created_at"));
+            out.push_back(c);
+        }
+        return out;
+    }
+
     int UnreadSince(long sinceId, long& newestOut) {
         newestOut = sinceId;
         if (!acct_.IsLoggedIn()) return 0;
@@ -579,8 +600,8 @@ private:
     }
 
     // Current UTC time as an ISO-8601 string (for timestamptz columns).
-    static std::string IsoNow() {
-        std::time_t t = std::time(nullptr);
+    static std::string IsoNow() { return IsoAt(std::time(nullptr)); }
+    static std::string IsoAt(std::time_t t) {
         std::tm tm{};
 #if defined(_WIN32)
         gmtime_s(&tm, &t);

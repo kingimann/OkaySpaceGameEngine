@@ -16620,6 +16620,36 @@ static GameObject* FindBone(EditorState& ed, GameObject* root,
     return nullptr;
 }
 
+// World position of a named bone under `root`, else `fallback`. Used to seed an
+// IK target/pole helper at a sensible spot (the current hand/foot/head).
+static Vec3 IKBonePos(EditorState& ed, GameObject* root, const std::string& name, const Vec3& fallback) {
+    if (!name.empty() && root) {
+        for (const auto& up : ed.scene().Objects()) {
+            GameObject* g = up.get();
+            if (g && g->transform && g->name == name && g->IsSelfOrDescendantOf(root))
+                return g->transform->Position();
+        }
+    }
+    return fallback;
+}
+
+// Spawn a world-space IK target/pole helper object at `pos`, select it so it can
+// be dragged with the normal move gizmo, and return its (possibly uniquified)
+// name to store in the IK component's *Name field. This turns numeric-only IK
+// targets into draggable scene handles without a bespoke 3D drag tool.
+static std::string MakeIKHelper(EditorState& ed, GameObject* owner,
+                                const std::string& suffix, const Vec3& pos) {
+    std::string base = (owner ? owner->name + " " : std::string()) + suffix;
+    ed.PushUndo();
+    GameObject* g = ed.CreateEmpty(base);
+    if (!g) return {};
+    if (g->transform) g->transform->SetPosition(pos);
+    ed.Select(g);
+    ed.dirty = true;
+    ConsoleLog("Created IK helper '" + g->name + "' — drag it in the Scene view to move the target.");
+    return g->name;
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = false;
@@ -20182,6 +20212,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Bone (blank = self)##aim", bn, sizeof(bn))) { a->boneName = bn; ed.dirty = true; }
             char tn[64]; std::strncpy(tn, a->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target object##aim", tn, sizeof(tn))) { a->targetName = tn; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Create##aimtgt")) {
+                Vec3 seed = IKBonePos(ed, go, a->boneName, go->transform->Position()) + Vec3{0,0,2};
+                a->targetName = MakeIKHelper(ed, go, "Aim Target", seed); a->targetObject = nullptr;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a target object you can drag in the Scene view.");
             float t[3] = {a->target.x, a->target.y, a->target.z};
             if (ImGui::DragFloat3("Target point##aim", t, 0.1f)) { a->target = {t[0], t[1], t[2]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when no Target object is set.");
@@ -20221,6 +20257,13 @@ void DrawInspector(EditorState& ed) {
             }
             char tn[64]; std::strncpy(tn, l->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target object##look", tn, sizeof(tn))) { l->targetName = tn; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Create##looktgt")) {
+                std::string tip = l->chainNames.empty() ? std::string() : l->chainNames.back();
+                Vec3 seed = IKBonePos(ed, go, tip, go->transform->Position()) + Vec3{0,0,2};
+                l->targetName = MakeIKHelper(ed, go, "Look Target", seed); l->targetObject = nullptr;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a target object you can drag in the Scene view.");
             float t[3] = {l->target.x, l->target.y, l->target.z};
             if (ImGui::DragFloat3("Target point##look", t, 0.1f)) { l->target = {t[0], t[1], t[2]}; ed.dirty = true; }
             float fa[3] = {l->forwardAxis.x, l->forwardAxis.y, l->forwardAxis.z};
@@ -20371,6 +20414,17 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Auto: R Arm##lik")) autoArm(+1, "right arm");
                 NameField("Upper##lik", lb->upperName); NameField("Lower##lik", lb->lowerName); NameField("End##lik", lb->endName);
                 NameField("Target##lik", lb->targetName); NameField("Pole##lik", lb->poleName);
+                if (ImGui::SmallButton("Create target##liktgt")) {
+                    Vec3 seed = IKBonePos(ed, go, lb->endName, go->transform->Position());
+                    lb->targetName = MakeIKHelper(ed, go, "Limb Target", seed); lb->targetObject = nullptr;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a hand/foot target you can drag in the Scene view.");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Create pole##likpole")) {
+                    Vec3 seed = IKBonePos(ed, go, lb->lowerName, go->transform->Position()) + Vec3{0,0,1};
+                    lb->poleName = MakeIKHelper(ed, go, "Limb Pole", seed); lb->poleObject = nullptr;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn an elbow/knee pole hint you can drag to aim the bend.");
                 float t[3] = {lb->target.x, lb->target.y, lb->target.z};
                 if (ImGui::DragFloat3("Target point##lik", t, 0.1f)) { lb->target = {t[0], t[1], t[2]}; ed.dirty = true; }
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
@@ -20384,6 +20438,13 @@ void DrawInspector(EditorState& ed) {
             if (CompHeader("Chain IK", ci, &toRemove)) {
                 ImGui::TextDisabled("Long-chain IK (spider legs, tentacles). Bones root->tip.");
                 NameField("Target##cik", ci->targetName);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Create##ciktgt")) {
+                    std::string tip = ci->boneNames.empty() ? std::string() : ci->boneNames.back();
+                    Vec3 seed = IKBonePos(ed, go, tip, go->transform->Position());
+                    ci->targetName = MakeIKHelper(ed, go, "Chain Target", seed); ci->targetObject = nullptr;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a tip target you can drag in the Scene view.");
                 float t[3] = {ci->target.x, ci->target.y, ci->target.z};
                 if (ImGui::DragFloat3("Target point##cik", t, 0.1f)) { ci->target = {t[0], t[1], t[2]}; ed.dirty = true; }
                 const char* solvers[] = {"FABRIK", "CCD"};
@@ -27622,6 +27683,58 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             Transform* t = up->transform;
             Vec3 p = t->Position();
 
+            // ---- IK visualization for the selected object -------------------
+            // Draw the IK bone chain, the target (orange crosshair) and the pole
+            // hint (cyan), so an IK setup is visible and its draggable helper
+            // objects are obvious in the Scene view. Resolves bones/targets by
+            // name (component pointers are only wired at play time).
+            if (up.get() == ed.selected() &&
+                (up->GetComponent<LimbIK>() || up->GetComponent<ChainIK>() ||
+                 up->GetComponent<LookAtIK>() || up->GetComponent<AimIK>())) {
+                auto scenePos = [&](const std::string& nm, Vec3& out) -> bool {
+                    if (nm.empty()) return false;
+                    for (const auto& o : objs)
+                        if (o->transform && o->name == nm) { out = o->transform->Position(); return true; }
+                    return false;
+                };
+                auto boneP = [&](const std::string& nm, Vec3 fb) -> Vec3 { Vec3 o; return scenePos(nm, o) ? o : fb; };
+                const ImU32 kBoneCol = IM_COL32(120, 220, 160, 255);
+                const ImU32 kTgtCol  = IM_COL32(255, 170, 70, 255);
+                const ImU32 kPoleCol = IM_COL32(90, 190, 255, 255);
+                auto marker = [&](const Vec3& w, ImU32 col, float r) {
+                    ImVec2 s; if (!project(w, s)) return;
+                    dl->AddCircle(s, r, col, 20, 2.0f);
+                    dl->AddLine(ImVec2(s.x - r - 3, s.y), ImVec2(s.x + r + 3, s.y), col, 1.4f);
+                    dl->AddLine(ImVec2(s.x, s.y - r - 3), ImVec2(s.x, s.y + r + 3), col, 1.4f);
+                };
+                auto jointDot = [&](const Vec3& w) { ImVec2 s; if (project(w, s)) dl->AddCircleFilled(s, 3.5f, kBoneCol); };
+                auto chain = [&](const std::vector<std::string>& names) {
+                    Vec3 prev; bool have = false;
+                    for (const auto& bn : names) { Vec3 bp; if (scenePos(bn, bp)) {
+                        if (have) line(prev, bp, kBoneCol, 2.0f); jointDot(bp); prev = bp; have = true; } }
+                };
+                if (auto* lb = up->GetComponent<LimbIK>()) {
+                    Vec3 u = boneP(lb->upperName, p), m = boneP(lb->lowerName, p), e = boneP(lb->endName, p);
+                    line(u, m, kBoneCol, 2.0f); line(m, e, kBoneCol, 2.0f);
+                    jointDot(u); jointDot(m); jointDot(e);
+                    Vec3 tgt; marker(scenePos(lb->targetName, tgt) ? tgt : lb->target, kTgtCol, 7.0f);
+                    Vec3 pol; if (scenePos(lb->poleName, pol)) { marker(pol, kPoleCol, 5.0f); line(m, pol, kPoleCol, 1.0f); }
+                }
+                if (auto* ci = up->GetComponent<ChainIK>()) {
+                    chain(ci->boneNames);
+                    Vec3 tgt; marker(scenePos(ci->targetName, tgt) ? tgt : ci->target, kTgtCol, 7.0f);
+                }
+                if (auto* la = up->GetComponent<LookAtIK>()) {
+                    chain(la->chainNames);
+                    Vec3 tgt; marker(scenePos(la->targetName, tgt) ? tgt : la->target, kTgtCol, 7.0f);
+                }
+                if (auto* ai = up->GetComponent<AimIK>()) {
+                    Vec3 b = boneP(ai->boneName, p);
+                    Vec3 tgt; if (!scenePos(ai->targetName, tgt)) tgt = ai->target;
+                    line(b, tgt, kBoneCol, 1.5f); jointDot(b); marker(tgt, kTgtCol, 7.0f);
+                }
+            }
+
             if (up->GetComponent<Camera>()) {
                 ImU32 col = (up.get() == ed.selected()) ? IM_COL32(255, 220, 90, 255)
                                                         : IM_COL32(120, 200, 255, 255);
@@ -30601,9 +30714,12 @@ int main(int argc, char** argv) {
     SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
 
+    // Create the window HIDDEN so the OS never composites a black, uninitialized
+    // rectangle during the window + renderer setup. We paint the first splash
+    // frame while hidden and then reveal the window already showing the splash.
     SDL_Window* window = SDL_CreateWindow(
         "OkayEngine", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+        1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
     if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 
@@ -30615,10 +30731,17 @@ int main(int argc, char** argv) {
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     // Branded loading frame right away, so the editor isn't a black rectangle
-    // while fonts, GPU renderers and the project set-up run below.
-    { int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-      ImVec4 sa = AccentCol(1.0f);   // match the editor's accent (default Unity blue)
-      okay::DrawSplash(renderer, sw, sh, sa.x, sa.y, sa.z); }
+    // while fonts, GPU renderers and the project set-up run below. Draw it while
+    // hidden, reveal the window, then draw once more so the shown frame is the
+    // splash (not a black frame), whatever the platform's show/present ordering.
+    {
+        int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        ImVec4 sa = AccentCol(1.0f);   // match the editor's accent (default Unity blue)
+        okay::DrawSplash(renderer, sw, sh, sa.x, sa.y, sa.z);
+        SDL_ShowWindow(window);
+        SDL_RaiseWindow(window);
+        okay::DrawSplash(renderer, sw, sh, sa.x, sa.y, sa.z);
+    }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
 
     IMGUI_CHECKVERSION();

@@ -268,12 +268,15 @@ struct D3D11Renderer::Impl {
     ID3D11Texture2D*        resolveTex = nullptr;
     ID3D11Texture2D*        staging = nullptr;
     int reqSamples = 0;   // the MSAA count asked for (`samples` is what the device gave)
+    DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;      // colour format of the live set
+    DXGI_FORMAT wantFmt = DXGI_FORMAT_R8G8B8A8_UNORM;  // what the next EnsureTargets should build
     // Target sets for the OTHER sizes in use. The editor renders the Scene view,
     // Game view, Camera Preview and Animation preview at different sizes every
     // frame; one shared set meant destroying + re-creating MSAA, depth, resolve and
     // staging textures several times per frame. Parked sets are swapped back in.
     struct TargetSet {
         int w = 0, h = 0, samples = 0, reqSamples = 0;
+        DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
         ID3D11Texture2D* colorTex = nullptr; ID3D11RenderTargetView* rtv = nullptr;
         ID3D11Texture2D* depthTex = nullptr; ID3D11DepthStencilView* dsv = nullptr;
         ID3D11Texture2D* resolveTex = nullptr; ID3D11Texture2D* staging = nullptr;
@@ -290,6 +293,9 @@ struct D3D11Renderer::Impl {
     };
     std::unordered_map<int, Pipe> pipes;
     int stream = -1;
+    ID3D11Texture2D* directDst = nullptr;   // RenderToTexture: resolve here, skip read-back
+    bool shared = false;                    // built on a host device (InitShared)
+    bool stateSaved = false;                // host pipeline state is already backed up
     unsigned targetUse = 0;
     void ReleaseSet(TargetSet& t);
     std::unordered_map<std::string, ID3D11ShaderResourceView*> texCache;
@@ -326,17 +332,31 @@ struct D3D11Renderer::Impl {
     void DestroyTargets();
 };
 
-bool D3D11Renderer::Init() {
-    if (m_impl) return true;
+bool D3D11Renderer::InitShared(void* device) {
+    if (m_impl) return m_impl->shared;
+    if (!device) return false;
     m_impl = new Impl();
+    m_impl->dev = static_cast<ID3D11Device*>(device);
+    m_impl->dev->AddRef();
+    m_impl->dev->GetImmediateContext(&m_impl->ctx);   // AddRefs
+    m_impl->shared = true;
+    return Init();
+}
+bool D3D11Renderer::Shared() const { return m_impl && m_impl->shared && m_impl->vs; }
+
+bool D3D11Renderer::Init() {
+    if (m_impl && m_impl->vs) return true;
+    if (!m_impl) m_impl = new Impl();
     Impl* p = m_impl;
-    UINT flags = 0;
-    D3D_FEATURE_LEVEL got;
-    const D3D_FEATURE_LEVEL want[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
-    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, want, 3,
-                                 D3D11_SDK_VERSION, &p->dev, &got, &p->ctx))) {
-        Log::Error("[d3d11] device creation failed");
-        Destroy(); return false;
+    if (!p->dev) {
+        UINT flags = 0;
+        D3D_FEATURE_LEVEL got;
+        const D3D_FEATURE_LEVEL want[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, want, 3,
+                                     D3D11_SDK_VERSION, &p->dev, &got, &p->ctx))) {
+            Log::Error("[d3d11] device creation failed");
+            Destroy(); return false;
+        }
     }
     ID3DBlob* vsb = nullptr; ID3DBlob* psb = nullptr; ID3DBlob* err = nullptr;
     const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
@@ -446,11 +466,11 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     // a null rtv/dsv and the render binds a null render target (hard crash).
     ++targetUse;
     if (colorTex && rtv && dsv && resolveTex && staging &&
-        w == W && h == H && reqSamples == S) return true;
+        w == W && h == H && reqSamples == S && fmt == wantFmt) return true;
     // Park the current (complete) set, then swap in a parked one of this size.
     if (colorTex && rtv && dsv && resolveTex && staging) {
         TargetSet t;
-        t.w = w; t.h = h; t.samples = samples; t.reqSamples = reqSamples;
+        t.w = w; t.h = h; t.samples = samples; t.reqSamples = reqSamples; t.fmt = fmt;
         t.colorTex = colorTex; t.rtv = rtv; t.depthTex = depthTex; t.dsv = dsv;
         t.resolveTex = resolveTex; t.staging = staging; t.lastUse = targetUse;
         colorTex = depthTex = resolveTex = staging = nullptr; rtv = nullptr; dsv = nullptr;
@@ -458,9 +478,9 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     }
     for (std::size_t i = 0; i < parked.size(); ++i) {
         TargetSet& t = parked[i];
-        if (t.w != W || t.h != H || t.reqSamples != S) continue;
+        if (t.w != W || t.h != H || t.reqSamples != S || t.fmt != wantFmt) continue;
         DestroyTargets();
-        w = t.w; h = t.h; samples = t.samples; reqSamples = t.reqSamples;
+        w = t.w; h = t.h; samples = t.samples; reqSamples = t.reqSamples; fmt = t.fmt;
         colorTex = t.colorTex; rtv = t.rtv; depthTex = t.depthTex; dsv = t.dsv;
         resolveTex = t.resolveTex; staging = t.staging;
         parked.erase(parked.begin() + (std::ptrdiff_t)i);
@@ -478,7 +498,7 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     // starts clean (DestroyTargets nulls the resources, but the size fields linger).
     w = 0; h = 0; samples = 0;
     struct FailReset { Impl* p; bool ok = false; ~FailReset(){ if(!ok){ p->DestroyTargets(); p->w=p->h=p->samples=0; } } } fr{this};
-    w = W; h = H; reqSamples = S;
+    w = W; h = H; reqSamples = S; fmt = wantFmt;
     // Clamp the requested MSAA to what the device actually supports for BOTH the color
     // and depth formats. Creating a multisampled texture with an unsupported count is a
     // common hard-failure (and on some drivers a crash) on integrated GPUs / RDP / VMs,
@@ -487,7 +507,7 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     samples = 1;
     for (int s = want; s >= 1; --s) {
         UINT qC = 0, qD = 0;
-        if (SUCCEEDED(dev->CheckMultisampleQualityLevels(DXGI_FORMAT_R8G8B8A8_UNORM, (UINT)s, &qC)) && qC > 0 &&
+        if (SUCCEEDED(dev->CheckMultisampleQualityLevels(fmt, (UINT)s, &qC)) && qC > 0 &&
             SUCCEEDED(dev->CheckMultisampleQualityLevels(DXGI_FORMAT_D24_UNORM_S8_UINT, (UINT)s, &qD)) && qD > 0) {
             samples = s; break;
         }
@@ -495,7 +515,7 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
 
     D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
     td.Width = W; td.Height = H; td.MipLevels = 1; td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = samples;
+    td.Format = fmt; td.SampleDesc.Count = samples;
     td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_RENDER_TARGET;
     if (FAILED(dev->CreateTexture2D(&td, nullptr, &colorTex))) return false;
     if (FAILED(dev->CreateRenderTargetView(colorTex, nullptr, &rtv))) return false;
@@ -712,12 +732,90 @@ ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& nam
     return srv;
 }
 
+namespace {
+// Everything the host renderer (SDL's D3D11 backend caches its bindings) could
+// notice us changing on the shared immediate context. Mirrors the state backup
+// in Dear ImGui's DX11 backend, widened to the slots this renderer uses.
+struct D3D11StateBackup {
+    static constexpr int kSrv = 8, kSamp = 4, kCb = 2;
+    UINT scissorN = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE, viewportN = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    D3D11_RECT scissor[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+    D3D11_VIEWPORT viewport[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+    ID3D11RasterizerState* rs = nullptr;
+    ID3D11BlendState* blend = nullptr; FLOAT blendFactor[4]; UINT sampleMask = 0;
+    ID3D11DepthStencilState* ds = nullptr; UINT stencilRef = 0;
+    ID3D11ShaderResourceView* psSrv[kSrv] = {};
+    ID3D11SamplerState* psSamp[kSamp] = {};
+    ID3D11PixelShader* ps = nullptr; ID3D11VertexShader* vs = nullptr; ID3D11GeometryShader* gs = nullptr;
+    ID3D11ClassInstance* psInst[256]; ID3D11ClassInstance* vsInst[256]; ID3D11ClassInstance* gsInst[256];
+    UINT psInstN = 256, vsInstN = 256, gsInstN = 256;
+    ID3D11Buffer* vsCb[kCb] = {}; ID3D11Buffer* psCb[kCb] = {};
+    D3D11_PRIMITIVE_TOPOLOGY topo = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+    ID3D11Buffer* ib = nullptr; DXGI_FORMAT ibFmt = DXGI_FORMAT_UNKNOWN; UINT ibOff = 0;
+    ID3D11Buffer* vb = nullptr; UINT vbStride = 0, vbOff = 0;
+    ID3D11InputLayout* layout = nullptr;
+    ID3D11RenderTargetView* rtv = nullptr; ID3D11DepthStencilView* dsv = nullptr;
+
+    void Save(ID3D11DeviceContext* c) {
+        c->RSGetScissorRects(&scissorN, scissor);
+        c->RSGetViewports(&viewportN, viewport);
+        c->RSGetState(&rs);
+        c->OMGetBlendState(&blend, blendFactor, &sampleMask);
+        c->OMGetDepthStencilState(&ds, &stencilRef);
+        c->PSGetShaderResources(0, kSrv, psSrv);
+        c->PSGetSamplers(0, kSamp, psSamp);
+        c->PSGetShader(&ps, psInst, &psInstN);
+        c->VSGetShader(&vs, vsInst, &vsInstN);
+        c->GSGetShader(&gs, gsInst, &gsInstN);
+        c->VSGetConstantBuffers(0, kCb, vsCb);
+        c->PSGetConstantBuffers(0, kCb, psCb);
+        c->IAGetPrimitiveTopology(&topo);
+        c->IAGetIndexBuffer(&ib, &ibFmt, &ibOff);
+        c->IAGetVertexBuffers(0, 1, &vb, &vbStride, &vbOff);
+        c->IAGetInputLayout(&layout);
+        c->OMGetRenderTargets(1, &rtv, &dsv);
+    }
+    void Restore(ID3D11DeviceContext* c) {
+        c->RSSetScissorRects(scissorN, scissor);
+        c->RSSetViewports(viewportN, viewport);
+        c->RSSetState(rs); if (rs) rs->Release();
+        c->OMSetBlendState(blend, blendFactor, sampleMask); if (blend) blend->Release();
+        c->OMSetDepthStencilState(ds, stencilRef); if (ds) ds->Release();
+        c->PSSetShaderResources(0, kSrv, psSrv); for (auto* v : psSrv) if (v) v->Release();
+        c->PSSetSamplers(0, kSamp, psSamp); for (auto* v : psSamp) if (v) v->Release();
+        c->PSSetShader(ps, psInst, psInstN); if (ps) ps->Release();
+        for (UINT i = 0; i < psInstN; ++i) if (psInst[i]) psInst[i]->Release();
+        c->VSSetShader(vs, vsInst, vsInstN); if (vs) vs->Release();
+        for (UINT i = 0; i < vsInstN; ++i) if (vsInst[i]) vsInst[i]->Release();
+        c->GSSetShader(gs, gsInst, gsInstN); if (gs) gs->Release();
+        for (UINT i = 0; i < gsInstN; ++i) if (gsInst[i]) gsInst[i]->Release();
+        c->VSSetConstantBuffers(0, kCb, vsCb); for (auto* v : vsCb) if (v) v->Release();
+        c->PSSetConstantBuffers(0, kCb, psCb); for (auto* v : psCb) if (v) v->Release();
+        c->IASetPrimitiveTopology(topo);
+        c->IASetIndexBuffer(ib, ibFmt, ibOff); if (ib) ib->Release();
+        c->IASetVertexBuffers(0, 1, &vb, &vbStride, &vbOff); if (vb) vb->Release();
+        c->IASetInputLayout(layout); if (layout) layout->Release();
+        c->OMSetRenderTargets(1, &rtv, dsv); if (rtv) rtv->Release(); if (dsv) dsv->Release();
+    }
+};
+} // namespace
+
 const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat4& vp, const Vec3& eye,
                                                    int w, int h, int samples,
                                                    float clearR, float clearG, float clearB, float clearA,
                                                    const GameObject* ignore) {
     if (!Available() || w < 1 || h < 1) return nullptr;
     Impl* p = m_impl;
+    if (p->shared && !p->stateSaved) {   // on the host's device: leave its pipeline state as we found it
+        D3D11StateBackup* backup = new D3D11StateBackup();
+        backup->Save(p->ctx);
+        p->stateSaved = true;
+        const std::uint32_t* r = RenderToPixels(scene, vp, eye, w, h, samples, clearR, clearG, clearB, clearA, ignore);
+        p->stateSaved = false;
+        backup->Restore(p->ctx);
+        delete backup;
+        return r;
+    }
     if (!p->EnsureTargets(w, h, samples)) return nullptr;
     if (!p->rtv || !p->dsv || !p->ctx) return nullptr;   // never bind a null target
     ID3D11DeviceContext* c = p->ctx;
@@ -1019,9 +1117,16 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
     }
 
+    // RenderToTexture: resolve straight into the host's texture and stop here.
+    if (p->directDst) {
+        if (p->samples > 1) c->ResolveSubresource(p->directDst, 0, p->colorTex, 0, p->fmt);
+        else                c->CopyResource(p->directDst, p->colorTex);
+        if (shadowOn) { ID3D11ShaderResourceView* nullsrv = nullptr; c->PSSetShaderResources(4, 1, &nullsrv); }
+        return reinterpret_cast<const std::uint32_t*>(p->directDst);   // non-null = success (no pixels)
+    }
     // Resolve MSAA (or copy) -> staging -> read back. D3D textures are top-left, so
     // no row flip is needed (unlike GL).
-    if (p->samples > 1) c->ResolveSubresource(p->resolveTex, 0, p->colorTex, 0, DXGI_FORMAT_R8G8B8A8_UNORM);
+    if (p->samples > 1) c->ResolveSubresource(p->resolveTex, 0, p->colorTex, 0, p->fmt);
     else                c->CopyResource(p->resolveTex, p->colorTex);
     ID3D11Texture2D* readFrom = p->staging;
     if (p->stream >= 0) {
@@ -1064,6 +1169,46 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
 }
 
 void D3D11Renderer::SetReadbackStream(int id) { if (m_impl) m_impl->stream = id; }
+
+void* D3D11Renderer::BoundRenderTargetTexture() {
+    if (!m_impl || !m_impl->ctx) return nullptr;
+    ID3D11RenderTargetView* rtv = nullptr;
+    m_impl->ctx->OMGetRenderTargets(1, &rtv, nullptr);
+    if (!rtv) return nullptr;
+    ID3D11Resource* res = nullptr;
+    rtv->GetResource(&res);
+    rtv->Release();
+    if (!res) return nullptr;
+    ID3D11Texture2D* tex = nullptr;
+    res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
+    res->Release();
+    return tex;
+}
+void D3D11Renderer::ReleaseCom(void* unknown) { if (unknown) static_cast<IUnknown*>(unknown)->Release(); }
+
+
+bool D3D11Renderer::RenderToTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
+                                    int w, int h, int samples,
+                                    float clearR, float clearG, float clearB, float clearA,
+                                    void* dstTexture, const GameObject* ignore) {
+    if (!Available() || !dstTexture) return false;
+    Impl* p = m_impl;
+    D3D11_TEXTURE2D_DESC dd; static_cast<ID3D11Texture2D*>(dstTexture)->GetDesc(&dd);
+    if ((int)dd.Width != w || (int)dd.Height != h || dd.SampleDesc.Count != 1) return false;
+    if (dd.Format != DXGI_FORMAT_R8G8B8A8_UNORM && dd.Format != DXGI_FORMAT_B8G8R8A8_UNORM) return false;
+    auto* backup = new D3D11StateBackup();   // (large: keep it off the stack)
+    backup->Save(p->ctx);
+    p->stateSaved = true;
+    p->directDst = static_cast<ID3D11Texture2D*>(dstTexture);
+    p->wantFmt = dd.Format;
+    const bool ok = RenderToPixels(scene, vp, eye, w, h, samples, clearR, clearG, clearB, clearA, ignore) != nullptr;
+    p->directDst = nullptr;
+    p->wantFmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    p->stateSaved = false;
+    backup->Restore(p->ctx);
+    delete backup;
+    return ok;
+}
 
 void D3D11Renderer::Destroy() {
     if (!m_impl) return;

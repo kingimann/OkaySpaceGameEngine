@@ -527,6 +527,8 @@ bool          g_okayUIBack = false;      // Backspace pressed this frame (for Ok
 // when splitting Scene + Game). A texture per slot keeps them independent.
 static const int kView3DSlots = 4;   // 0=Scene view, 1=Game view, 2=Camera preview, 3=Animation preview
 SDL_Texture* g_view3DTex[kView3DSlots] = {};
+bool g_view3DIsTarget[kView3DSlots] = {};   // created as a render target (direct GPU path)
+bool g_d3dDirect = false;                   // D3D11 renderer shares SDL's device: render into the view textures
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
@@ -567,6 +569,57 @@ void SaveSettings();
 void ConsoleLog(const std::string& msg, int level = 0);   // default here so any call site can pass just a message
 static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir);   // defined below; used by the UI menu
 bool g_showVisualScript = false;   // the node graph editor window (okay::editor::vsed)
+
+// ---- Direct (zero-copy) viewport textures (Windows / D3D11) ------------------
+// The D3D11 texture behind each SDL render-target texture, found once by letting
+// SDL draw into it and reading the bound render target back off the device.
+static std::unordered_map<SDL_Texture*, void*> g_viewD3DTex;
+static void DestroyViewTexture(int slot) {
+    SDL_Texture* t = g_view3DTex[slot];
+    if (!t) return;
+#if defined(_WIN32)
+    auto it = g_viewD3DTex.find(t);
+    if (it != g_viewD3DTex.end()) { okay::D3D11Renderer::ReleaseCom(it->second); g_viewD3DTex.erase(it); }
+#endif
+    SDL_DestroyTexture(t);
+    g_view3DTex[slot] = nullptr; g_view3DW[slot] = g_view3DH[slot] = 0; g_view3DIsTarget[slot] = false;
+}
+#if defined(_WIN32)
+static SDL_Texture* EnsureViewTarget(int slot, int w, int h) {
+    if (g_view3DTex[slot] && g_view3DIsTarget[slot] && g_view3DW[slot] == w && g_view3DH[slot] == h) return g_view3DTex[slot];
+    DestroyViewTexture(slot);
+    SDL_Texture* t = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, w, h);
+    if (!t) return nullptr;
+    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+    g_view3DTex[slot] = t; g_view3DW[slot] = w; g_view3DH[slot] = h; g_view3DIsTarget[slot] = true;
+    return t;
+}
+static void* ViewTargetD3D(SDL_Texture* t) {
+    auto it = g_viewD3DTex.find(t);
+    if (it != g_viewD3DTex.end()) return it->second;
+    SDL_Texture* prev = SDL_GetRenderTarget(g_sdlRenderer);
+    if (SDL_SetRenderTarget(g_sdlRenderer, t) != 0) return nullptr;
+    Uint8 r, g, b, a; SDL_GetRenderDrawColor(g_sdlRenderer, &r, &g, &b, &a);
+    SDL_SetRenderDrawColor(g_sdlRenderer, 0, 0, 0, 0);
+    SDL_RenderDrawPoint(g_sdlRenderer, -64, -64);   // off-target: binds the RTV, draws nothing
+    SDL_RenderFlush(g_sdlRenderer);
+    void* tex = g_d3dRenderer ? g_d3dRenderer->BoundRenderTargetTexture() : nullptr;
+    SDL_SetRenderDrawColor(g_sdlRenderer, r, g, b, a);
+    SDL_SetRenderTarget(g_sdlRenderer, prev);
+    if (tex) g_viewD3DTex[t] = tex;
+    return tex;
+}
+#endif
+// SDL dropped its render targets (device lost / reset): forget every view texture.
+static void ResetViewTextures(bool deviceLost) {
+    for (int i = 0; i < kView3DSlots; ++i) DestroyViewTexture(i);
+#if defined(_WIN32)
+    if (deviceLost) g_d3dDirect = false;
+#else
+    (void)deviceLost;
+#endif
+}
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
@@ -620,6 +673,26 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     static Uint32 s_gpuRetryAt = 0;
     if (g_gpuRender && SDL_GetTicks() >= s_gpuRetryAt) {
 #if defined(_WIN32)
+        // Zero-copy: render straight into the SDL texture the panel shows.
+        if (g_d3dDirect && g_d3dRenderer) {
+            OKAY_TRACE("Render3D:d3d11-direct");
+            if (SDL_Texture* t = EnsureViewTarget(slot, rw, rh)) {
+                if (void* dst = ViewTargetD3D(t)) {
+                    SDL_RenderFlush(g_sdlRenderer);   // SDL's queued draws go first
+                    if (g_d3dRenderer->RenderToTexture(scene, vp, eye, rw, rh, 4, 0.0f, 0.0f, 0.0f, 0.0f, dst, ignore)) {
+                        okay::SceneOcclusionDepth().valid = false;
+                        Uint64 r1 = SDL_GetPerformanceCounter();
+                        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)SDL_GetPerformanceFrequency() * 1000.0);
+                        return t;
+                    }
+                }
+            }
+            static int s_directFails = 0;
+            if (++s_directFails >= 5) {   // keeps failing: go back to the read-back path for good
+                g_d3dDirect = false;
+                ConsoleLog("Direct viewport rendering failed; using the read-back path.", 1);
+            }
+        }
         if (!px && g_d3dReady && g_d3dRenderer) {
             OKAY_TRACE("Render3D:d3d11");   // crash breadcrumb: which backend faulted
             // Scene / Game view / Camera Preview redraw every frame: pipeline their read-back
@@ -673,13 +746,13 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         Uint64 r1 = SDL_GetPerformanceCounter();
         okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)SDL_GetPerformanceFrequency() * 1000.0);
     }
-    if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh) {
-        if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
+    if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh || g_view3DIsTarget[slot]) {
+        if (g_view3DTex[slot]) DestroyViewTexture(slot);
         g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
                                               SDL_TEXTUREACCESS_STREAMING, rw, rh);
         SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);  // smooth upscale
-        g_view3DW[slot] = rw; g_view3DH[slot] = rh;
+        g_view3DW[slot] = rw; g_view3DH[slot] = rh; g_view3DIsTarget[slot] = false;
     }
     SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4);
     return g_view3DTex[slot];
@@ -30873,7 +30946,16 @@ int main(int argc, char** argv) {
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
+#if defined(_WIN32)
+    // Direct3D 11 (SDL's default on Windows is Direct3D 9), so the 3D renderer can
+    // share its device and draw the viewports straight into the textures the UI
+    // shows — no GPU->CPU read-back and re-upload every frame. OKAY_RENDER_DRIVER
+    // overrides (e.g. "direct3d", "opengl", "software").
+    if (const char* rd = std::getenv("OKAY_RENDER_DRIVER")) SDL_SetHint(SDL_HINT_RENDER_DRIVER, rd);
+    else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
+#endif
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED); }
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
     // VSync off by default = uncapped FPS (no 60 Hz limit). Toggle in View > VSync.
     SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
@@ -31025,9 +31107,18 @@ int main(int argc, char** argv) {
     // selectable alongside the OpenGL path. Falls back to software if unavailable.
     {
         g_d3dRenderer = new okay::D3D11Renderer();
-        if (g_d3dRenderer->Init()) {
+        // Prefer SDL's own device (zero-copy viewports); else an isolated device.
+        bool ok = false;
+        if (ID3D11Device* sdlDev = SDL_RenderGetD3D11Device(renderer)) {
+            ok = g_d3dRenderer->InitShared(sdlDev);
+            okay::D3D11Renderer::ReleaseCom(sdlDev);   // (SDL_RenderGetD3D11Device adds a reference)
+            g_d3dDirect = ok && !std::getenv("OKAY_NO_DIRECT_VIEW");
+            if (!ok) { delete g_d3dRenderer; g_d3dRenderer = new okay::D3D11Renderer(); }
+        }
+        if (ok || g_d3dRenderer->Init()) {
             g_d3dReady = true;
-            ConsoleLog("Direct3D 11 renderer available (View > GPU renderer (Direct3D 11)).");
+            ConsoleLog(g_d3dDirect ? "Direct3D 11 renderer: viewports draw straight to the screen (no read-back)."
+                                   : "Direct3D 11 renderer available (View > GPU renderer (Direct3D 11)).");
         } else {
             delete g_d3dRenderer; g_d3dRenderer = nullptr;
             ConsoleLog("Direct3D 11 renderer unavailable; using the software/OpenGL path.", 1);
@@ -31075,7 +31166,8 @@ int main(int argc, char** argv) {
     Uint64 last = SDL_GetPerformanceCounter();
     while (running) {
         Uint64 g_frameT0 = SDL_GetPerformanceCounter();
-        okay::Prof().enabled = g_showProfiler;   // gate timers; set before BeginFrame/Tick this frame
+        static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
+        okay::Prof().enabled = g_showProfiler || kPerfDump;   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
@@ -31103,6 +31195,8 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
+            if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
+                ResetViewTextures(e.type == SDL_RENDER_DEVICE_RESET);
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
                 e.window.windowID == SDL_GetWindowID(window))
                 g_quitRequested = true;
@@ -31519,42 +31613,42 @@ int main(int argc, char** argv) {
             }
         }
 
-        DrawNewProjectPopup(ed);
-        DrawFileDialogs(ed);
-        DrawQuitPrompt(ed, running);
-        DrawUpdatePopup(ed);
-        DrawAboutPopup();
-        DrawRecoveryPopup(ed);
-        DrawProjectSettings(ed);
-        if (g_showHierarchy) DrawHierarchy(ed);
-        DrawViewport(ed);   // the "Scene" panel (always shown; UI editing is also a mode toggle in it)
-        if (g_showUIEditor) DrawViewport(ed, /*uiPanel=*/true);   // dedicated dockable "UI" tab
-        DrawDataAssetEditor();
-        DrawMaterialEditor(ed);
-        if (g_showGame)      DrawGameView(ed);
-        if (g_showProfiler)  DrawProfiler(ed);
-        if (g_showInspector) DrawInspector(ed);
-        if (g_showConsole)   DrawConsole();
-        if (g_showCrashLog)  DrawCrashLog();
-        if (g_showSpriteEditor) DrawSpriteEditor(ed);
-        if (g_showUIThemer)     DrawUIThemer(ed);
-        if (g_showProject)   DrawProject(ed);
-        if (g_showServices)  DrawServices(ed);
-        if (g_showScriptEditor) DrawScriptEditor(ed);
-        if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript);
-        if (g_showModeling)  DrawModeling(ed);
-        DrawFindInFiles(ed);
-        DrawScriptDocs();
-        DrawShortcutsWindow();
-        DrawCustomActions();
-        DrawVarWatch();
-        DrawFlowGraph(ed);
-        DrawAnimationEditor(ed);
-        DrawAnimatorGraph(ed);
-        DrawHistory(ed);
-        if (g_showStats)     DrawStats(ed);
-        if (g_showSaveManager) DrawSaveManager(ed);
-        if (g_showScenes)    DrawScenes(ed);
+        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); }
+        { OKAY_PROFILE("UI.FileDialogs"); DrawFileDialogs(ed); }
+        { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); }
+        { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }
+        { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
+        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); }
+        { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
+        { OKAY_PROFILE("UI.Hierarchy"); if (g_showHierarchy) DrawHierarchy(ed); }
+        { OKAY_PROFILE("UI.Viewport"); DrawViewport(ed); }   // the "Scene" panel (always shown; UI editing is also a mode toggle in it)
+        { OKAY_PROFILE("UI.UIPanel"); if (g_showUIEditor) DrawViewport(ed, /*uiPanel=*/true); }   // dedicated dockable "UI" tab
+        { OKAY_PROFILE("UI.DataAssetEditor"); DrawDataAssetEditor(); }
+        { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
+        { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
+        { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
+        { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
+        { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
+        { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
+        { OKAY_PROFILE("UI.SpriteEditor"); if (g_showSpriteEditor) DrawSpriteEditor(ed); }
+        { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
+        { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }
+        { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
+        { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }
+        { OKAY_PROFILE("UI.VisualScript"); if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript); }
+        { OKAY_PROFILE("UI.Modeling"); if (g_showModeling)  DrawModeling(ed); }
+        { OKAY_PROFILE("UI.FindInFiles"); DrawFindInFiles(ed); }
+        { OKAY_PROFILE("UI.ScriptDocs"); DrawScriptDocs(); }
+        { OKAY_PROFILE("UI.ShortcutsWindow"); DrawShortcutsWindow(); }
+        { OKAY_PROFILE("UI.CustomActions"); DrawCustomActions(); }
+        { OKAY_PROFILE("UI.VarWatch"); DrawVarWatch(); }
+        { OKAY_PROFILE("UI.FlowGraph"); DrawFlowGraph(ed); }
+        { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }
+        { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
+        { OKAY_PROFILE("UI.History"); DrawHistory(ed); }
+        { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
+        { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
+        { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
 
         // Play-mode tint: a colored border around the whole window so it's
         // obvious the game is running (green) or paused (amber) — like Unity.
@@ -31566,7 +31660,7 @@ int main(int argc, char** argv) {
                 c, 0.0f, 0, 3.0f);
         }
 
-        ImGui::Render();
+        { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
         SDL_RenderClear(renderer);
@@ -31581,7 +31675,7 @@ int main(int argc, char** argv) {
                         ImGui_ImplSDLRenderer2_UpdateTexture(tx);
             OkayRenderDrawData(mdd, renderer, nullptr);
         } else {
-            ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+            { OKAY_PROFILE("ImGui.Draw"); ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
         }
 #ifdef OKAY_HAVE_OKAYUI
         // Flush OkayUI here, AFTER ImGui, through the SAME SDL_Renderer — so it
@@ -31639,7 +31733,7 @@ int main(int argc, char** argv) {
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
 #endif
-        SDL_RenderPresent(renderer);
+        { OKAY_PROFILE("Present"); SDL_RenderPresent(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
         // dragged out of the editor). Also applies a runtime toggle from the
@@ -31657,6 +31751,21 @@ int main(int argc, char** argv) {
             Uint64 f1 = SDL_GetPerformanceCounter();
             double frameMs = (double)(f1 - g_frameT0) / (double)SDL_GetPerformanceFrequency() * 1000.0;
             okay::Prof().EndFrame(frameMs);
+            if (kPerfDump) {   // every ~2 s: average ms per section (inclusive), biggest first
+                static std::map<std::string, double> acc; static double accFrame = 0; static int n = 0;
+                const auto& fr = okay::Prof().Displayed();
+                for (const auto& b : fr.buckets) acc[b.name] += b.inclusive;
+                accFrame += frameMs; ++n;
+                if (n >= 120) {
+                    std::vector<std::pair<double, std::string>> v;
+                    for (auto& kv : acc) v.push_back({kv.second / n, kv.first});
+                    std::sort(v.rbegin(), v.rend());
+                    std::printf("[perf] frame %.2f ms (%.0f fps):", accFrame / n, 1000.0 / (accFrame / n));
+                    for (size_t i = 0; i < v.size() && i < 14; ++i) std::printf("  %s %.2f", v[i].second.c_str(), v[i].first);
+                    std::printf("\n"); std::fflush(stdout);
+                    acc.clear(); accFrame = 0; n = 0;
+                }
+            }
         }
 
         if (updater::pendingQuit) running = false; // auto-update relaunched

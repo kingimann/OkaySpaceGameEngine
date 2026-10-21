@@ -7773,8 +7773,9 @@ static void QueueFollowJob(int kind, const std::string& arg = std::string()) {
     if (!g_flMutex) g_flMutex = SDL_CreateMutex();
     if (g_flBusy) return;
     g_flBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(FollowWorker, "okay-follow", new FollowJob{kind, arg})) SDL_DetachThread(t);
-    else g_flBusy = false;
+    FollowJob* j = new FollowJob{kind, arg};   // (built outside: SDL_CreateThread is a macro on Windows)
+    if (SDL_Thread* t = SDL_CreateThread(FollowWorker, "okay-follow", j)) SDL_DetachThread(t);
+    else { g_flBusy = false; delete j; }
 }
 
 // Account > Profile: the editable public-profile fields, saved together on a

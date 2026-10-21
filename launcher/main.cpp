@@ -2104,10 +2104,18 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static bool peerTyping = false;                  // the other person is typing
     static long scrollToId = 0, flashId = 0;         // jump to a replied-to message
     static Uint32 flashUntil = 0;
+    static std::map<std::string,std::string> drafts;  // unsent text per conversation (kept on switch)
+    static std::string fwdBody;                       // message body queued to forward
+    static bool fwdPick = false;                      // forward: pick a conversation popup
 
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
+        // Keep the current conversation's unsent draft before switching away.
+        if (!selUid.empty()) { if (input[0]) drafts[selUid] = input; else drafts.erase(selUid); }
         selUid = uid; selName = nm; selAvatar = av; selOnline = online;
-        log.clear(); g_chatForceLog = true; editId = 0; replyTo = 0; input[0] = '\0';
+        log.clear(); g_chatForceLog = true; editId = 0; replyTo = 0;
+        // Restore this conversation's saved draft (if any).
+        auto dit = drafts.find(uid);
+        std::snprintf(input, sizeof(input), "%s", dit != drafts.end() ? dit->second.c_str() : "");
         lastShown = -1; msgSearch[0] = '\0'; showSearch = false; focusComposer = true;
         peerTyping = false; typingPollNext = 0; typingSentAt = 0;
     };
@@ -2430,8 +2438,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
                                            : std::max({bodyW, repW, metaW});
                 if (!imgUrl.empty()) contentW = std::max(contentW, std::min(bubbleMax - padX*2, 240.0f));
                 float boxW = contentW + padX*2;
+                float useW = std::max(boxW, 46.0f);   // actual bubble width (min clamp)
                 float leftPad = m.mine ? 0.0f : (avatarW + avatarGap);
-                float x0 = m.mine ? (avW - boxW) : leftPad; if (x0 < leftPad) x0 = leftPad;
+                // Right-align "mine" bubbles by the REAL bubble width (useW), not the
+                // raw content width — otherwise short bubbles ("hi"/"ok") overhang
+                // the right edge and drift when the window is resized.
+                float x0 = m.mine ? (avW - useW) : leftPad; if (x0 < leftPad) x0 = leftPad;
 
                 // Avatar for received messages (only on the first of a run).
                 if (!m.mine && !grouped) {
@@ -2453,7 +2465,6 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 // the content natively (no draw-list channel tricks), so it always
                 // hugs what it renders and stays correct on resize.
                 ImGui::SetCursorPosX(baseX + x0);
-                float useW = std::max(boxW, 46.0f);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, bareEmoji ? ImVec4(0,0,0,0)
                                         : (m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f)));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 11.0f);
@@ -2587,6 +2598,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     }
                     if (ImGui::MenuItem("Reply")) { replyTo = m.id; replyName = m.mine ? "yourself" : selName; replySnippet = ChatPreview(m.body, 40); }
                     if (ImGui::MenuItem("Copy text")) ImGui::SetClipboardText(m.body.c_str());
+                    if (ImGui::MenuItem("Forward...")) { fwdBody = m.body; fwdPick = true; }
                     if (m.mine) {
                         ImGui::Separator();
                         if (ImGui::MenuItem("Edit")) { editId = m.id; replyTo = 0; std::snprintf(input, sizeof(input), "%s", m.body.c_str()); }
@@ -2710,6 +2722,20 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (lines > 4) lines = 4;
             float inH = ImGui::GetTextLineHeight() * lines + 14;
             EmojiPicker("cwemoji", input, sizeof(input)); ImGui::SameLine();
+            // Markdown formatting helpers: insert a sample token to edit in place.
+            auto fmtBtn = [&](const char* lbl, const char* open, const char* close, const char* word, const char* tip) {
+                if (ImGui::SmallButton(lbl)) {
+                    std::size_t len = std::char_traits<char>::length(input);
+                    std::string ins = std::string(open) + word + close;
+                    std::snprintf(input + len, sizeof(input) - len, "%s", ins.c_str());
+                    focusComposer = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+                ImGui::SameLine(0, 2);
+            };
+            fmtBtn("B", "**", "**", "bold", "Bold  **text**");
+            fmtBtn("I", "*", "*", "italic", "Italic  *text*");
+            fmtBtn("</>", "`", "`", "code", "Code  `text`");
             ImVec2 inSz(ImGui::GetContentRegionAvail().x - 60, inH);
             if (focusComposer) { ImGui::SetKeyboardFocusHere(); focusComposer = false; }
             bool send = ImGui::InputTextMultiline("##cwin", input, sizeof(input), inSz,
@@ -2721,12 +2747,31 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
             if ((ImGui::Button(editId ? "Save" : "Send", ImVec2(52, inH)) || send) && input[0]) {
                 if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; g_chatForceLog = true; } }
-                else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; g_chatForceLog = true; }
+                else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; drafts.erase(selUid); g_chatForceLog = true; }
                 ImGui::SetKeyboardFocusHere(-1);
             }
             ImGui::PopStyleColor(2);
         }
         ImGui::EndChild();
+
+        // Forward a message: pick a friend to send a copy to.
+        if (fwdPick) { ImGui::OpenPopup("Forward to..."); fwdPick = false; }
+        if (ImGui::BeginPopup("Forward to...")) {
+            ImGui::TextDisabled("Forward to:");
+            ImGui::Separator();
+            int shown = 0;
+            for (const auto& f : friends) {
+                if (f.status != "accepted") continue;
+                std::string nm = f.display.empty() ? f.username : f.display;
+                if (ImGui::Selectable(nm.c_str())) {
+                    if (dm.Send(f.id, fwdBody, 0)) Toast("Forwarded to " + nm, 1);
+                    ImGui::CloseCurrentPopup();
+                }
+                ++shown;
+            }
+            if (shown == 0) ImGui::TextDisabled("No friends to forward to.");
+            ImGui::EndPopup();
+        }
     }
     ImGui::End();
 }

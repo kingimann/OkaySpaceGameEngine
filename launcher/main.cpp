@@ -202,6 +202,37 @@ void GetNews(std::string& ver, std::string& lines) {
     if (g_upMutex) SDL_UnlockMutex(g_upMutex);
 }
 
+// URLs reach curl / wget / powershell / the browser through a shell command
+// line wrapped in quotes, and many come from other people (chat links, GIFs,
+// stickers, marketplace items). Only let through an http(s) URL made of plain
+// URL characters: nothing that can close the quotes or expand inside them
+// (" ' ` $ \ spaces, control bytes), "%" only as a %XX escape, and no
+// %name% pair that cmd.exe would expand to an environment value.
+bool ShellSafeUrl(const std::string& url) {
+    if (url.size() < 8 || url.size() > 4096) return false;
+    if (url.compare(0, 7, "http://") != 0 && url.compare(0, 8, "https://") != 0) return false;
+    static const char* kOk = "-._~:/?#[]@!*+,;=&()";
+    for (std::size_t i = 0; i < url.size(); ++i) {
+        const unsigned char c = (unsigned char)url[i];
+        if (std::isalnum(c) || std::strchr(kOk, c)) continue;
+        if (c == '%' && i + 2 < url.size() &&
+            std::isxdigit((unsigned char)url[i + 1]) && std::isxdigit((unsigned char)url[i + 2])) continue;
+        return false;
+    }
+    for (std::size_t a = url.find('%'); a != std::string::npos; ) {
+        const std::size_t b = url.find('%', a + 1);
+        if (b == std::string::npos) break;
+        std::string name = url.substr(a + 1, b - a - 1), up;
+        for (char ch : name) up += (char)std::toupper((unsigned char)ch);
+        static const char* kDynamic[] = {"CD", "DATE", "TIME", "RANDOM", "ERRORLEVEL", "CMDEXTVERSION",
+                                         "CMDCMDLINE", "HIGHESTNUMANODENUMBER", "__CD__", "__APPDIR__"};
+        for (const char* dv : kDynamic) if (up == dv) return false;
+        if (!name.empty() && std::getenv(name.c_str())) return false;
+        a = b;
+    }
+    return true;
+}
+
 // Defeat the GitHub raw CDN cache (which can serve a stale VERSION.txt or .exe
 // for minutes after a release) with a unique query string per request.
 std::string BustCache(const std::string& url) {
@@ -239,6 +270,7 @@ int RunCmd(const std::string& cmd, bool wait) {
 // Download a URL to a file using whatever HTTP client is on the system.
 bool Download(const std::string& url, const std::string& out) {
     std::error_code ec; fs::remove(out, ec);
+    if (!ShellSafeUrl(url)) return false;
     std::string u = BustCache(url);
     const char* nc = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
 #if defined(_WIN32)
@@ -342,6 +374,7 @@ void ProcKill(Proc* p) {
 // hidden and parses the dumped response headers (last Content-Length wins, so a
 // redirect chain reports the final resource's size).
 long long HeadSize(const std::string& url) {
+    if (!ShellSafeUrl(url)) return 0;
     std::error_code ec;
     fs::path hdr = fs::temp_directory_path(ec) / ("okay_dlhead_" + std::to_string(SDL_GetTicks()) + ".txt");
 #if defined(_WIN32)
@@ -392,6 +425,7 @@ int DlWorker(void* data) {
     set([&]{ d->total = total; });
 
     std::error_code ec; fs::remove(d->part, ec);
+    if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
     std::string cmd = "curl -L -s -f -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
     Proc p = SpawnHidden(cmd);
     if (!p.valid()) { set([&]{ d->status = 3; }); return 0; }
@@ -586,6 +620,7 @@ std::string LocalVersion() {
 // Best-effort remote size (Content-Length) via a HEAD request, so the updater's
 // progress bar can show a percentage. Returns 0 when unknown (indeterminate).
 long long RemoteSize(const std::string& url) {
+    if (!ShellSafeUrl(url)) return 0;
     std::error_code ec;
     fs::path hf = fs::temp_directory_path(ec) / ("okay_head_" + std::to_string(SDL_GetTicks()) + ".txt");
     std::string u = BustCache(url);
@@ -996,6 +1031,14 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
 // Open a URL in the default browser, or a folder in the file manager.
 void OpenExternal(const std::string& target) {
     if (target.empty()) return;
+    // Links (often from other people) must pass the URL check; local paths
+    // just can't close the quotes. POSIX shells also expand $ and ` inside "".
+    const bool isLink = target.find("://") != std::string::npos;
+    if (isLink && !ShellSafeUrl(target)) { Toast("That link can't be opened safely", 2); return; }
+    if (target.find('"') != std::string::npos) return;
+#if !defined(_WIN32)
+    if (target.find_first_of("$`\\") != std::string::npos) return;
+#endif
 #if defined(_WIN32)
     std::string cmd = "start \"\" \"" + target + "\"";
 #elif defined(__APPLE__)
@@ -1175,6 +1218,8 @@ const AccentPreset kAccentPresets[] = {
 int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
 bool g_chatSounds = true;         // soft chime for new chat messages (persisted)
+bool g_linkPreviews = true;       // fetch title/image cards for links in chat (persisted)
+int  g_voiceSpeed = 0;            // voice-note playback speed: 0 = 1x, 1 = 1.5x, 2 = 2x (persisted)
 bool g_chatListFolded = false;    // chat conversation list folded to an avatar strip (persisted)
 // ---- Customizable loading screen (persisted) ----
 std::string g_splashLogo;                         // optional PNG shown instead of the cube
@@ -1510,6 +1555,12 @@ std::string RelTime(long when) {
         if (tm) std::strftime(out, sizeof(out), "%b %d", tm); else out[0] = '\0';
     }
     return out;
+}
+// "Last online 3h ago" for someone offline (empty when we don't know: never
+// seen, or hidden by the Invisible status).
+std::string LastOnline(long when) {
+    if (when <= 978307200) return std::string();
+    return "Last online " + RelTime(when);
 }
 
 // A centered "— Month DD, YYYY —" divider line across the chat width.
@@ -1962,10 +2013,227 @@ static float ChatCodeBlock(const std::string& code, float avail, bool draw) {
     return bw;
 }
 
+// ---- Link previews ----------------------------------------------------------
+// The first web-page link in a message gets a card (site, title, description,
+// thumbnail) like Messenger/Telegram. Pages are fetched once in the background
+// (curl, 8 s cap, first 256 KB) and their Open Graph / <title> tags parsed.
+struct LinkPreview { int state = 0; std::string site, title, desc, image; };   // 0 loading, 1 ready, 2 nothing to show
+static SDL_mutex* g_lpMutex = nullptr;
+static std::map<std::string, LinkPreview> g_linkPrev;   // (guarded) by URL
+static std::vector<std::string> g_lpQueue;              // (guarded)
+static bool g_lpWorkerRunning = false;                  // (guarded)
+static SDL_Texture* ChatImageTexture(const std::string& url, int* w, int* h);
+
+// First http(s) link in the text that isn't an image/GIF (those render inline).
+static std::string FirstPageLink(const std::string& body) {
+    std::size_t i = 0;
+    while ((i = body.find("http", i)) != std::string::npos) {
+        if (body.compare(i, 7, "http://") != 0 && body.compare(i, 8, "https://") != 0) { i += 4; continue; }
+        if (i > 0 && body[i - 1] == ':') { i += 4; continue; }   // inside a custom emoji "<:name:url>"
+        std::size_t j = i;
+        while (j < body.size() && !std::isspace((unsigned char)body[j]) && body[j] != '<' && body[j] != '>') ++j;
+        std::string u = body.substr(i, j - i);
+        while (!u.empty() && std::strchr(".,!?:;)'\"*_~|`", u.back())) u.pop_back();
+        std::string low = u; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+        const std::size_t q = low.find_first_of("?#"); if (q != std::string::npos) low.erase(q);
+        bool media = false;
+        for (const char* ext : {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".wav", ".mp3", ".ogg", ".zip", ".pdf", ".exe"})
+            if (low.size() > std::strlen(ext) && low.compare(low.size() - std::strlen(ext), std::strlen(ext), ext) == 0) media = true;
+        if (!media && low.find("/storage/v1/object/") == std::string::npos && u.size() > 10) return u;
+        i = j;
+    }
+    return std::string();
+}
+static std::string HtmlDecode(const std::string& in) {
+    std::string out; out.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        if (in[i] != '&') { out += (in[i] == '\n' || in[i] == '\r' || in[i] == '\t') ? ' ' : in[i]; continue; }
+        const std::size_t semi = in.find(';', i);
+        if (semi == std::string::npos || semi - i > 10) { out += '&'; continue; }
+        const std::string e = in.substr(i + 1, semi - i - 1);
+        unsigned long cp = 0;
+        if (e == "amp") cp = '&'; else if (e == "lt") cp = '<'; else if (e == "gt") cp = '>';
+        else if (e == "quot") cp = '"'; else if (e == "apos") cp = '\''; else if (e == "nbsp") cp = ' ';
+        else if (e.size() > 1 && e[0] == '#') cp = (e[1] == 'x' || e[1] == 'X') ? std::strtoul(e.c_str() + 2, nullptr, 16) : std::strtoul(e.c_str() + 1, nullptr, 10);
+        if (!cp || cp > 0x10FFFF) { out += '&'; continue; }
+        if (cp < 0x80) out += (char)cp;
+        else if (cp < 0x800) { out += (char)(0xC0 | (cp >> 6)); out += (char)(0x80 | (cp & 0x3F)); }
+        else if (cp < 0x10000) { out += (char)(0xE0 | (cp >> 12)); out += (char)(0x80 | ((cp >> 6) & 0x3F)); out += (char)(0x80 | (cp & 0x3F)); }
+        else { out += (char)(0xF0 | (cp >> 18)); out += (char)(0x80 | ((cp >> 12) & 0x3F)); out += (char)(0x80 | ((cp >> 6) & 0x3F)); out += (char)(0x80 | (cp & 0x3F)); }
+        i = semi;
+    }
+    std::string t; bool sp = false;   // collapse runs of spaces, trim
+    for (char c : out) { if (c == ' ') { if (!sp && !t.empty()) t += ' '; sp = true; } else { t += c; sp = false; } }
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    return t;
+}
+// Value of attribute `name` inside one tag's text (tag is lower-cased copy `low`).
+static std::string HtmlAttr(const std::string& tag, const std::string& low, const char* name) {
+    std::size_t at = 0;
+    const std::string key = std::string(name) + "=";
+    while ((at = low.find(key, at)) != std::string::npos) {
+        if (at > 0 && !std::isspace((unsigned char)low[at - 1])) { at += key.size(); continue; }
+        std::size_t v = at + key.size();
+        if (v >= tag.size()) return std::string();
+        const char qc = tag[v];
+        if (qc == '"' || qc == '\'') { const std::size_t e = tag.find(qc, v + 1); return e == std::string::npos ? std::string() : tag.substr(v + 1, e - v - 1); }
+        std::size_t e = v; while (e < tag.size() && !std::isspace((unsigned char)tag[e]) && tag[e] != '>') ++e;
+        return tag.substr(v, e - v);
+    }
+    return std::string();
+}
+static std::string Utf8Clip(std::string s, std::size_t n) {
+    if (s.size() <= n) return s;
+    std::size_t cut = n; while (cut > 0 && ((unsigned char)s[cut] & 0xC0) == 0x80) --cut;
+    s.erase(cut); while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s + "\xE2\x80\xA6";
+}
+static LinkPreview ParseLinkPreview(const std::string& url, const std::string& html) {
+    LinkPreview lp; lp.state = 2;
+    std::string low = html; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+    std::map<std::string, std::string> meta;
+    for (std::size_t at = 0; (at = low.find("<meta", at)) != std::string::npos; ) {
+        const std::size_t end = low.find('>', at); if (end == std::string::npos) break;
+        const std::string tag = html.substr(at, end - at), ltag = low.substr(at, end - at);
+        std::string k = HtmlAttr(tag, ltag, "property"); if (k.empty()) k = HtmlAttr(tag, ltag, "name");
+        for (auto& c : k) c = (char)std::tolower((unsigned char)c);
+        if (!k.empty() && !meta.count(k)) meta[k] = HtmlAttr(tag, ltag, "content");
+        at = end;
+    }
+    auto pick = [&](std::initializer_list<const char*> keys) { for (const char* k : keys) { auto it = meta.find(k); if (it != meta.end() && !it->second.empty()) return HtmlDecode(it->second); } return std::string(); };
+    lp.title = pick({"og:title", "twitter:title"});
+    if (lp.title.empty()) {
+        const std::size_t a = low.find("<title"), b = a == std::string::npos ? a : low.find('>', a), c = b == std::string::npos ? b : low.find("</title", b);
+        if (c != std::string::npos) lp.title = HtmlDecode(html.substr(b + 1, c - b - 1));
+    }
+    lp.desc = pick({"og:description", "twitter:description", "description"});
+    lp.site = pick({"og:site_name"});
+    std::string img = pick({"og:image", "og:image:url", "twitter:image", "twitter:image:src"});
+    // Origin of the page for relative image paths, and the bare host as a fallback site name.
+    const std::size_t hs = url.find("://") + 3, he = url.find_first_of("/?#", hs);
+    const std::string origin = url.substr(0, he), host = url.substr(hs, he == std::string::npos ? std::string::npos : he - hs);
+    if (img.rfind("//", 0) == 0) img = "https:" + img;
+    else if (!img.empty() && img[0] == '/') img = origin + img;
+    if (ShellSafeUrl(img)) lp.image = img;
+    if (lp.site.empty()) lp.site = host.rfind("www.", 0) == 0 ? host.substr(4) : host;
+    lp.title = Utf8Clip(lp.title, 110); lp.desc = Utf8Clip(lp.desc, 180); lp.site = Utf8Clip(lp.site, 40);
+    if (!lp.title.empty()) lp.state = 1;
+    return lp;
+}
+static int LinkPreviewWorker(void*) {
+    while (true) {
+        std::string url;
+        SDL_LockMutex(g_lpMutex);
+        if (g_lpQueue.empty()) { g_lpWorkerRunning = false; SDL_UnlockMutex(g_lpMutex); break; }
+        url = g_lpQueue.front(); g_lpQueue.erase(g_lpQueue.begin());
+        SDL_UnlockMutex(g_lpMutex);
+        LinkPreview lp; lp.state = 2;
+        if (ShellSafeUrl(url)) {
+            std::error_code ec;
+            const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
+            fs::remove(tmp, ec);
+            std::string cmd = "curl -L -s -f -m 8 --max-filesize 3000000 -r 0-262143 "
+                              "-A \"Mozilla/5.0 (compatible; OkaySpace link preview)\" -o \"" + tmp.string() + "\" \"" + url + "\"";
+#if !defined(_WIN32)
+            cmd += " 2>/dev/null";
+#endif
+            RunCmd(cmd, true);
+            std::ifstream f(tmp, std::ios::binary);
+            if (f) {
+                std::string html((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                if (html.size() > 262144) html.resize(262144);
+                lp = ParseLinkPreview(url, html);
+            }
+            f.close(); fs::remove(tmp, ec);
+        }
+        SDL_LockMutex(g_lpMutex); g_linkPrev[url] = lp; SDL_UnlockMutex(g_lpMutex);
+    }
+    return 0;
+}
+// The preview for `url` once it's ready (nullptr while loading / when there's none).
+static const LinkPreview* LinkPreviewFor(const std::string& url) {
+    if (!g_linkPreviews || url.empty()) return nullptr;
+    if (!g_lpMutex) g_lpMutex = SDL_CreateMutex();
+    static std::map<std::string, LinkPreview> ready;   // UI-thread copy (stable pointers while drawing)
+    if (auto it = ready.find(url); it != ready.end()) return it->second.state == 1 ? &it->second : nullptr;
+    SDL_LockMutex(g_lpMutex);
+    auto it = g_linkPrev.find(url);
+    if (it == g_linkPrev.end()) {
+        g_linkPrev[url] = LinkPreview{};
+        g_lpQueue.push_back(url);
+        const bool start = !g_lpWorkerRunning;
+        if (start) g_lpWorkerRunning = true;
+        SDL_UnlockMutex(g_lpMutex);
+        if (start) {
+            if (SDL_Thread* t = SDL_CreateThread(LinkPreviewWorker, "okay-linkprev", nullptr)) SDL_DetachThread(t);
+            else { SDL_LockMutex(g_lpMutex); g_lpWorkerRunning = false; SDL_UnlockMutex(g_lpMutex); }
+        }
+        return nullptr;
+    }
+    const LinkPreview lp = it->second;
+    SDL_UnlockMutex(g_lpMutex);
+    if (lp.state == 0) return nullptr;
+    auto& r = ready[url] = lp;
+    return r.state == 1 ? &r : nullptr;
+}
+static constexpr float kLinkCardMaxW = 320.0f;
+// The card: accent bar, site, bold title, two lines of description, thumbnail on top.
+static void DrawLinkPreviewCard(const std::string& url, const LinkPreview& lp, float avail) {
+    const float w = std::min(avail, kLinkCardMaxW), pad = 10.0f;
+    ImGui::Dummy(ImVec2(0, 4));
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImGui::PushID(url.c_str());
+    float y = p.y + pad;
+    int iw = 0, ih = 0;
+    SDL_Texture* tex = lp.image.empty() ? nullptr : ChatImageTexture(lp.image, &iw, &ih);
+    float imgH = 0.0f;
+    if (tex && iw > 0 && ih > 0) imgH = std::min(140.0f, (w - pad * 2 - 6) * (float)ih / (float)iw);
+    // Measure text first so the background can be drawn behind it.
+    const float tw = w - pad * 2 - 6;
+    ImFont* f = ImGui::GetFont(); const float fs = ImGui::GetFontSize();
+    const ImVec2 siteSz = f->CalcTextSizeA(fs * 0.85f, FLT_MAX, tw, lp.site.c_str());
+    const ImVec2 titleSz = f->CalcTextSizeA(fs, FLT_MAX, tw, lp.title.c_str());
+    std::string desc = lp.desc;
+    ImVec2 descSz = desc.empty() ? ImVec2(0, 0) : f->CalcTextSizeA(fs * 0.9f, FLT_MAX, tw, desc.c_str());
+    const float maxDescH = fs * 0.9f * 2.6f;   // about two lines
+    if (descSz.y > maxDescH) descSz.y = maxDescH;
+    const float h = pad + (imgH > 0 ? imgH + 8 : 0) + siteSz.y + 2 + titleSz.y + (desc.empty() ? 0 : 3 + descSz.y) + pad;
+    const bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h));
+    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? IM_COL32(0, 0, 0, 70) : IM_COL32(0, 0, 0, 50), 8.0f);
+    d->AddRectFilled(p, ImVec2(p.x + 3, p.y + h), ImGui::GetColorU32(kAccent), 8.0f, ImDrawFlags_RoundCornersLeft);
+    const float x = p.x + pad + 4;
+    if (imgH > 0) {
+        d->AddImageRounded((ImTextureID)(intptr_t)tex, ImVec2(x, y), ImVec2(x + tw, y + imgH), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 6.0f);
+        y += imgH + 8;
+    }
+    d->AddText(f, fs * 0.85f, ImVec2(x, y), IM_COL32(170, 182, 205, 255), lp.site.c_str(), nullptr, tw); y += siteSz.y + 2;
+    d->AddText(f, fs, ImVec2(x, y), IM_COL32(150, 196, 255, 255), lp.title.c_str(), nullptr, tw);
+    d->AddText(f, fs, ImVec2(x + 0.6f, y), IM_COL32(150, 196, 255, 255), lp.title.c_str(), nullptr, tw);   // faux bold
+    y += titleSz.y;
+    if (!desc.empty()) {
+        y += 3;
+        d->PushClipRect(ImVec2(x, y), ImVec2(x + tw, y + descSz.y), true);
+        d->AddText(f, fs * 0.9f, ImVec2(x, y), IM_COL32(205, 212, 226, 220), desc.c_str(), nullptr, tw);
+        d->PopClipRect();
+    }
+    ImGui::SetCursorScreenPos(p);
+    if (ImGui::InvisibleButton("##lpcard", ImVec2(w, h))) OpenExternal(url);
+    if (ImGui::IsItemHovered()) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", url.c_str()); }
+    ImGui::PopID();
+}
+
 // Render a chat message body with word-wrapping and formatting (see above).
 // maxW > 0 constrains wrapping to that pixel width (e.g. a chat bubble); 0 uses
 // the remaining content width.
+static void RenderChatBodyText(const std::string& bodyIn, float maxW);
 void RenderChatBody(const std::string& bodyIn, float maxW = 0.0f) {
+    RenderChatBodyText(bodyIn, maxW);
+    const std::string link = g_linkPreviews ? FirstPageLink(bodyIn) : std::string();
+    if (const LinkPreview* lp = LinkPreviewFor(link))
+        DrawLinkPreviewCard(link, *lp, maxW > 0.0f ? maxW : ImGui::GetContentRegionAvail().x);
+}
+static void RenderChatBodyText(const std::string& bodyIn, float maxW) {
     const std::string body = NormalizeEmoji(bodyIn);
     if (ChatBodyIsPlain(body)) {
         if (maxW > 0.0f) ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + maxW);
@@ -1996,7 +2264,13 @@ void RenderChatBody(const std::string& bodyIn, float maxW = 0.0f) {
 
 // The pixel WIDTH RenderChatBody will use for `body` wrapped at maxW — the width
 // of its longest wrapped line (<= maxW). Same tokenizer, so bubbles hug exactly.
+static float MeasureChatBodyText(const std::string& bodyIn, float maxW);
 float MeasureChatBodyWidth(const std::string& bodyIn, float maxW) {
+    float w = MeasureChatBodyText(bodyIn, maxW);
+    if (g_linkPreviews && LinkPreviewFor(FirstPageLink(bodyIn))) w = std::max(w, std::min(maxW, kLinkCardMaxW));
+    return w;
+}
+static float MeasureChatBodyText(const std::string& bodyIn, float maxW) {
     const std::string body = NormalizeEmoji(bodyIn);
     if (ChatBodyIsPlain(body)) {
         float w = ImGui::CalcTextSize(body.c_str(), nullptr, false, maxW).x;
@@ -3049,6 +3323,8 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
+        else if (k == "link_previews") g_linkPreviews = (v != "0");
+        else if (k == "voice_speed") g_voiceSpeed = std::clamp(std::atoi(v.c_str()), 0, 2);
         else if (k == "tenor_key") g_tenorKey = v;
         else if (k == "chat_list_folded") g_chatListFolded = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
@@ -3126,6 +3402,8 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
+    f << "voice_speed=" << g_voiceSpeed << "\n";
+    f << "link_previews=" << (g_linkPreviews ? 1 : 0) << "\n";
     if (!g_tenorKey.empty()) f << "tenor_key=" << g_tenorKey << "\n";
     f << "chat_list_folded=" << (g_chatListFolded ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
@@ -3306,12 +3584,33 @@ static void DrawRichLine(ImDrawList* dl, ImVec2 pos, ImU32 col, const std::strin
     }
 }
 
+// Poll message bodies (see Polls below).
+struct ChatPollInfo { std::string question; std::vector<std::string> options; };
+static bool ParseChatPoll(const std::string& body, ChatPollInfo& p) {
+    if (body.rfind("[Poll] ", 0) != 0) return false;
+    p = ChatPollInfo{};
+    std::size_t nl = body.find('\n');
+    p.question = body.substr(7, nl == std::string::npos ? std::string::npos : nl - 7);
+    while (nl != std::string::npos && p.options.size() < 10) {
+        const std::size_t next = body.find('\n', nl + 1);
+        std::string line = body.substr(nl + 1, next == std::string::npos ? std::string::npos : next - nl - 1);
+        if (line.rfind("- ", 0) == 0 && line.size() > 2) p.options.push_back(line.substr(2));
+        nl = next;
+    }
+    return !p.question.empty() && p.options.size() >= 2;
+}
+static std::string PollMessageBody(const std::string& q, const std::vector<std::string>& opts) {
+    std::string b = "[Poll] " + q;
+    for (const auto& o : opts) if (!o.empty()) b += "\n- " + o;
+    return b;
+}
 // Conversation-list preview: "Photo" / "File: name" instead of raw URLs.
 static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
     ChatFileInfo fi;
     if (ParseChatFile(body, fi)) return ChatPreview("File: " + fi.name, n);
     if (body.rfind("[Voice] ", 0) == 0) return "Voice message";
     if (body.rfind("[Sticker] ", 0) == 0) return "Sticker";
+    { ChatPollInfo pi; if (ParseChatPoll(body, pi)) return ChatPreview("Poll: " + pi.question, n); }
     std::string t = body; while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
     if (!t.empty() && FirstImageUrl(t) == t) {
         std::string low = t; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
@@ -3448,12 +3747,55 @@ struct VoiceClip {
     SDL_AudioSpec spec{};
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
+    std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
 static SDL_AudioDeviceID g_playDev = 0;
 static std::string       g_playUrl;          // clip loaded on g_playDev
 static bool              g_playPaused = false;
 static Uint32            g_playFrom = 0;     // byte offset the current queue started at
+static Uint32            g_playLen = 0;      // length of the buffer playing (the clip, or a sped-up copy)
+static const float kVoiceSpeeds[3] = {1.0f, 1.5f, 2.0f};
+static const char* const kVoiceSpeedLabels[3] = {"1x", "1.5x", "2x"};
+
+// Speed a voice note up without the chipmunk effect: WSOLA time-stretch
+// (overlap-add of 30 ms Hann windows; each window is nudged within +-10 ms to
+// the spot that best continues the previous one, so pitch is unchanged).
+static std::vector<Sint16> VoiceTimeStretch(const Sint16* in, std::size_t n, int rate, float speed) {
+    const int N = std::max(64, rate * 30 / 1000), hopS = N / 2, tol = rate / 100;
+    const float hopA = hopS * speed;
+    std::vector<float> win((std::size_t)N);
+    for (int i = 0; i < N; ++i) win[(std::size_t)i] = 0.5f - 0.5f * std::cos(6.2831853f * i / N);
+    const std::size_t outN = (std::size_t)(n / speed) + (std::size_t)N;
+    std::vector<float> acc(outN, 0.0f), norm(outN, 0.0f);
+    long prev = 0;
+    for (long k = 0;; ++k) {
+        const long nominal = (long)(k * hopA);
+        if (nominal + N + tol >= (long)n) break;
+        long pos = nominal;
+        if (k > 0) {   // best match for the natural continuation of the previous window
+            const long ref = prev + hopS;
+            float best = -1e30f;
+            for (long dlt = -tol; dlt <= tol; dlt += 2) {
+                const long c = nominal + dlt;
+                if (c < 0) continue;
+                float sum = 0.0f;
+                for (int i = 0; i < hopS; i += 4) sum += (float)in[c + i] * (float)in[ref + i];
+                if (sum > best) { best = sum; pos = c; }
+            }
+        }
+        const std::size_t o = (std::size_t)k * hopS;
+        if (o + (std::size_t)N > outN) break;
+        for (int i = 0; i < N; ++i) { acc[o + i] += in[pos + i] * win[(std::size_t)i]; norm[o + i] += win[(std::size_t)i]; }
+        prev = pos;
+    }
+    std::size_t used = outN;
+    while (used > 0 && norm[used - 1] < 1e-3f) --used;
+    std::vector<Sint16> out(used);
+    for (std::size_t i = 0; i < used; ++i)
+        out[i] = (Sint16)std::clamp(norm[i] > 1e-3f ? acc[i] / norm[i] : 0.0f, -32768.0f, 32767.0f);
+    return out;
+}
 static std::string       g_voiceWant;        // tapped play before the clip arrived
 
 // Waveform placeholder until the real clip is decoded (stable per URL).
@@ -3514,7 +3856,24 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
 }
 static void StopVoice() {
     if (g_playDev) { SDL_CloseAudioDevice(g_playDev); g_playDev = 0; }
-    g_playUrl.clear(); g_playPaused = false; g_playFrom = 0;
+    g_playUrl.clear(); g_playPaused = false; g_playFrom = 0; g_playLen = 0;
+}
+// The samples to play at the chosen speed: the clip itself at 1x, otherwise a
+// time-stretched copy (16-bit mono clips, i.e. our own recordings).
+static const Uint8* VoiceBuffer(VoiceClip& c, Uint32& len) {
+    const int si = std::clamp(g_voiceSpeed, 0, 2);
+    const bool s16mono = c.spec.format == AUDIO_S16SYS && c.spec.channels == 1;
+    if (si == 0 || !s16mono || c.len < 4) { len = c.len; return c.pcm; }
+    auto it = c.fast.find(si);
+    if (it == c.fast.end()) {
+        auto st = VoiceTimeStretch(reinterpret_cast<const Sint16*>(c.pcm), c.len / 2, c.spec.freq, kVoiceSpeeds[si]);
+        std::vector<Uint8> bytes(st.size() * 2);
+        if (!st.empty()) std::memcpy(bytes.data(), st.data(), bytes.size());
+        it = c.fast.emplace(si, std::move(bytes)).first;
+    }
+    if (it->second.empty()) { len = c.len; return c.pcm; }
+    len = (Uint32)it->second.size();
+    return it->second.data();
 }
 // Start (or restart) a clip at a fraction 0..1 of its length.
 static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
@@ -3528,19 +3887,22 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
         g_playUrl = url;
     }
     SDL_ClearQueuedAudio(g_playDev);
+    Uint32 len = 0;
+    const Uint8* buf = VoiceBuffer(c, len);
     const Uint32 frame = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
-    Uint32 off = (Uint32)(std::clamp(frac, 0.0f, 1.0f) * c.len);
+    Uint32 off = (Uint32)(std::clamp(frac, 0.0f, 1.0f) * len);
     off -= off % std::max<Uint32>(1, frame);
-    if (off >= c.len) off = 0;
-    g_playFrom = off;
-    SDL_QueueAudio(g_playDev, c.pcm + off, c.len - off);
+    if (off >= len) off = 0;
+    g_playFrom = off; g_playLen = len;
+    SDL_QueueAudio(g_playDev, buf + off, len - off);
     SDL_PauseAudioDevice(g_playDev, 0);
     g_playPaused = false;
 }
 static float VoicePlayFrac(const std::string& url, const VoiceClip& c) {   // -1 = not this clip
     if (!g_playDev || g_playUrl != url || !c.len) return -1.0f;
+    const Uint32 len = g_playLen ? g_playLen : c.len;
     Uint32 left = SDL_GetQueuedAudioSize(g_playDev);
-    return std::min(1.0f, (float)(c.len - std::min(left, c.len)) / c.len);
+    return std::min(1.0f, (float)(len - std::min(left, len)) / len);
 }
 static void PumpVoicePlayback() {   // once per frame: finish clips, start "wanted" ones
     if (g_playDev && !g_playPaused && SDL_GetQueuedAudioSize(g_playDev) == 0) StopVoice();
@@ -3607,7 +3969,8 @@ static void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVe
     const int total = clip && clip->ok ? (int)(clip->secs + 0.5f) : v.secs;
     std::string tm = VoiceClock(frac >= 0.0f && clip ? (int)(frac * clip->secs) : total);
     float tw = ImGui::CalcTextSize("0:00").x + 6;
-    float wx = p.x + r * 2 + 12, ww = width - (r * 2 + 12) - tw - 6;
+    const float pillW = 34.0f;   // playback-speed pill (1x / 1.5x / 2x), WhatsApp-style
+    float wx = p.x + r * 2 + 12, ww = width - (r * 2 + 12) - tw - 6 - pillW - 6;
     ImGui::SameLine(0, 0);
     ImGui::SetCursorScreenPos(ImVec2(wx, p.y));
     if (ImGui::InvisibleButton("##vwave", ImVec2(std::max(10.0f, ww), h)) && clip && clip->ok) {
@@ -3631,6 +3994,29 @@ static void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVe
     ImVec2 ts = ImGui::CalcTextSize(tm.c_str());
     d->AddText(ImVec2(p.x + width - ts.x, cc.y - ts.y * 0.5f),
                mine ? IM_COL32(235, 240, 255, 230) : IM_COL32(200, 208, 225, 220), tm.c_str());
+    {   // speed pill: tap to cycle; a clip that's playing continues from the same spot
+        const char* sl = kVoiceSpeedLabels[std::clamp(g_voiceSpeed, 0, 2)];
+        ImVec2 pp(wx + ww + 6, cc.y - 10);
+        ImGui::SetCursorScreenPos(pp);
+        const bool ptap = ImGui::InvisibleButton("##vspeed", ImVec2(pillW, 20));
+        const bool phov = ImGui::IsItemHovered();
+        const bool fast = g_voiceSpeed != 0;
+        ImU32 pbg = mine ? IM_COL32(255, 255, 255, fast ? 70 : (phov ? 45 : 28))
+                         : (fast ? ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, 0.85f)) : IM_COL32(255, 255, 255, phov ? 34 : 20));
+        d->AddRectFilled(pp, ImVec2(pp.x + pillW, pp.y + 20), pbg, 10.0f);
+        ImVec2 ss = ImGui::CalcTextSize(sl);
+        d->AddText(ImVec2(pp.x + (pillW - ss.x) * 0.5f, pp.y + (20 - ss.y) * 0.5f), IM_COL32(240, 244, 255, fast ? 255 : 200), sl);
+        if (phov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Playback speed"); }
+        if (ptap) {
+            g_voiceSpeed = (g_voiceSpeed + 1) % 3;
+            SavePrefs();
+            if (clip && frac >= 0.0f) {
+                const bool wasPaused = g_playPaused;
+                PlayVoiceAt(v.url, *clip, frac);
+                if (wasPaused) { SDL_PauseAudioDevice(g_playDev, 1); g_playPaused = true; }
+            }
+        }
+    }
     ImGui::PopID();
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
     ImGui::Dummy(ImVec2(width, 0));
@@ -3926,6 +4312,167 @@ static void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
     dl->AddConcavePolyFilled(pts, 10, col);
 }
 
+// ---- Polls ------------------------------------------------------------------
+// A poll is an ordinary message: "[Poll] question" then one "- option" per line
+// (older clients just see the text). A vote is a reaction "poll:<n>" on that
+// message, so no extra tables; one vote per person (voting again moves it,
+// tapping your choice again takes it back).
+static float ChatPollWidth(float maxW) { return std::min(maxW, 300.0f); }
+static void ChatReactAsync(bool group, long id, const std::string& removeKey, const std::string& addKey);   // defined with the chat workers
+// My vote as just tapped, shown until the poller's data agrees (or 15 s pass).
+struct PollLocalVote { int choice = -1; Uint32 at = 0; };
+static std::map<std::pair<int, long>, PollLocalVote> g_pollLocal;
+static void PollTally(bool group, long id, std::size_t n, const std::map<std::string, long>* counts,
+                      const std::set<std::string>* mine, std::vector<long>& out, int& myChoice) {
+    out.assign(n, 0); myChoice = -1;
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::string k = "poll:" + std::to_string(i);
+        if (counts) { auto it = counts->find(k); if (it != counts->end()) out[i] = std::max(0L, it->second); }
+        if (mine && myChoice < 0 && mine->count(k)) myChoice = (int)i;
+    }
+    auto it = g_pollLocal.find({group ? 1 : 0, id});
+    if (it == g_pollLocal.end()) return;
+    if (it->second.choice == myChoice || SDL_GetTicks() - it->second.at > 15000) { g_pollLocal.erase(it); return; }
+    if (myChoice >= 0 && out[(std::size_t)myChoice] > 0) --out[(std::size_t)myChoice];
+    myChoice = it->second.choice;
+    if (myChoice >= 0 && myChoice < (int)n) ++out[(std::size_t)myChoice];
+}
+// The poll card: question, one row per option (tap to vote) with a result bar,
+// and the vote total. Votes apply locally at once and sync in the background.
+static void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std::map<std::string, long>* counts,
+                           const std::set<std::string>* mine, float width, bool mineBubble, ImVec4 accent) {
+    std::vector<long> tally; int myChoice = -1;
+    PollTally(group, id, p.options.size(), counts, mine, tally, myChoice);
+    long total = 0; for (long v : tally) total += v;
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImGui::PushID((int)id);
+    {   // header: a little bar-chart glyph + "Poll", then the question
+        ImVec2 hp = ImGui::GetCursorScreenPos();
+        const ImU32 hc = mineBubble ? IM_COL32(230, 236, 255, 200) : IM_COL32(170, 182, 205, 230);
+        for (int b = 0; b < 3; ++b) {
+            const float bh = 5.0f + b * 3.0f, bx = hp.x + b * 4.5f;
+            d->AddRectFilled(ImVec2(bx, hp.y + 13 - bh), ImVec2(bx + 3, hp.y + 13), hc, 1.0f);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(hp.x + 18, hp.y));
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(hc), "%s", group ? "Group poll" : "Poll");
+    }
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+    ImGui::TextWrapped("%s", p.question.c_str());
+    ImGui::TextWrapped(" ");   // spacer line (keeps wrap pos)
+    ImGui::PopTextWrapPos();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetTextLineHeight() + 2);
+    const float rowH = 34.0f;
+    int clicked = -1;
+    for (std::size_t i = 0; i < p.options.size(); ++i) {
+        ImGui::PushID((int)i);
+        ImVec2 rp = ImGui::GetCursorScreenPos();
+        if (ImGui::InvisibleButton("##opt", ImVec2(width, rowH))) clicked = (int)i;
+        const bool hov = ImGui::IsItemHovered();
+        if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const bool chosen = myChoice == (int)i;
+        const float frac = total > 0 ? (float)tally[i] / (float)total : 0.0f;
+        const ImU32 track = mineBubble ? IM_COL32(255, 255, 255, hov ? 34 : 22) : IM_COL32(255, 255, 255, hov ? 22 : 12);
+        const ImU32 fill  = mineBubble ? IM_COL32(255, 255, 255, chosen ? 70 : 40)
+                                       : ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, chosen ? 0.75f : 0.40f));
+        d->AddRectFilled(rp, ImVec2(rp.x + width, rp.y + rowH - 4), track, 8.0f);
+        if (frac > 0.0f) d->AddRectFilled(rp, ImVec2(rp.x + std::max(10.0f, width * frac), rp.y + rowH - 4), fill, 8.0f);
+        // radio / check
+        const ImVec2 cc(rp.x + 14, rp.y + (rowH - 4) * 0.5f);
+        const ImU32 ink = IM_COL32(240, 244, 255, 235);
+        if (chosen) {
+            d->AddCircleFilled(cc, 7.0f, mineBubble ? IM_COL32(255, 255, 255, 240) : ImGui::GetColorU32(accent), 20);
+            const ImU32 tick = mineBubble ? ImGui::GetColorU32(accent) : IM_COL32(255, 255, 255, 255);
+            d->AddLine(ImVec2(cc.x - 3.2f, cc.y), ImVec2(cc.x - 0.8f, cc.y + 2.6f), tick, 1.6f);
+            d->AddLine(ImVec2(cc.x - 0.8f, cc.y + 2.6f), ImVec2(cc.x + 3.6f, cc.y - 2.8f), tick, 1.6f);
+        } else d->AddCircle(cc, 7.0f, IM_COL32(220, 228, 245, 170), 20, 1.5f);
+        const std::string cnt = std::to_string(tally[i]);
+        const float cw = ImGui::CalcTextSize(cnt.c_str()).x;
+        const float ty = rp.y + (rowH - 4 - ImGui::GetTextLineHeight()) * 0.5f;
+        d->PushClipRect(ImVec2(rp.x + 28, rp.y), ImVec2(rp.x + width - cw - 14, rp.y + rowH), true);
+        d->AddText(ImVec2(rp.x + 28, ty), ink, p.options[i].c_str());
+        d->PopClipRect();
+        if (total > 0) d->AddText(ImVec2(rp.x + width - cw - 8, ty), IM_COL32(230, 236, 250, 210), cnt.c_str());
+        ImGui::PopID();
+    }
+    ImGui::TextColored(mineBubble ? ImVec4(0.86f, 0.90f, 1.0f, 0.70f) : ImVec4(0.62f, 0.67f, 0.76f, 0.95f),
+                       "%ld vote%s%s", total, total == 1 ? "" : "s", myChoice >= 0 ? "  \xC2\xB7  tap your choice to undo" : "");
+    ImGui::PopID();
+    if (clicked >= 0) {
+        const int next = clicked == myChoice ? -1 : clicked;
+        ChatReactAsync(group, id, myChoice >= 0 ? "poll:" + std::to_string(myChoice) : std::string(),
+                       next >= 0 ? "poll:" + std::to_string(next) : std::string());
+        g_pollLocal[{group ? 1 : 0, id}] = PollLocalVote{next, SDL_GetTicks()};
+    }
+}
+static bool IsPollReaction(const std::string& k) { return k.rfind("poll:", 0) == 0; }
+static bool HasVisibleReactions(const std::map<std::string, long>& m) {
+    for (const auto& kv : m) if (kv.second > 0 && !IsPollReaction(kv.first)) return true;
+    return false;
+}
+// Poll creator (shared by DM + group composers): question + 2..10 options.
+static void PollCreatorPopup(const char* id, const std::string& toUid, long toGroup) {
+    static char q[200] = "";
+    static std::vector<std::array<char, 100>> opts(2);
+    ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextDisabled("QUESTION");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::InputTextWithHint("##pq", "Ask something\xE2\x80\xA6", q, sizeof(q));
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("OPTIONS");
+    int removeAt = -1;
+    for (std::size_t i = 0; i < opts.size(); ++i) {
+        ImGui::PushID((int)i);
+        ImGui::SetNextItemWidth(opts.size() > 2 ? ImGui::GetContentRegionAvail().x - 30 : -1);
+        char hint[24]; std::snprintf(hint, sizeof(hint), "Option %d", (int)i + 1);
+        ImGui::InputTextWithHint("##po", hint, opts[i].data(), opts[i].size());
+        if (opts.size() > 2) { ImGui::SameLine(0, 4); if (ImGui::Button("x", ImVec2(26, 0))) removeAt = (int)i; }
+        ImGui::PopID();
+    }
+    if (removeAt >= 0) opts.erase(opts.begin() + removeAt);
+    if (opts.size() < 10 && ImGui::SmallButton("+ Add option")) opts.push_back({});
+    ImGui::Dummy(ImVec2(0, 6));
+    std::vector<std::string> filled;
+    for (const auto& o : opts) { std::string t = o.data(); while (!t.empty() && t.back() == ' ') t.pop_back(); if (!t.empty()) filled.push_back(t); }
+    std::string qs = q; while (!qs.empty() && qs.back() == ' ') qs.pop_back();
+    const bool ok = !qs.empty() && filled.size() >= 2;
+    auto reset = [&]() { q[0] = '\0'; opts.assign(2, {}); };
+    if (ImGui::Button("Cancel", ImVec2(90, 30))) { reset(); ImGui::CloseCurrentPopup(); }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!ok);
+    if (PrimaryButton("Send poll", ImVec2(110, 30))) {
+        OutboxSend(toUid, toGroup, PollMessageBody(qs, filled));
+        reset(); ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    if (!ok) { ImGui::SameLine(); ImGui::TextDisabled("Add a question and 2+ options"); }
+    ImGui::EndPopup();
+}
+// The composer's "+" button: photo/file or a poll.
+static void ComposerPlusButton(const char* id, float size, const std::string& toUid, long toGroup) {
+    ImGui::PushID(id);
+    ImVec2 ap = ImGui::GetCursorScreenPos();
+    if (ImGui::InvisibleButton("##plus", ImVec2(size, size))) ImGui::OpenPopup("##plusmenu");
+    const bool ahov = ImGui::IsItemHovered();
+    ImDrawList* ad = ImGui::GetWindowDrawList();
+    ImVec2 c(ap.x + size * 0.5f, ap.y + size * 0.5f);
+    ImU32 acol = ahov ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 206, 220, 220);
+    ad->AddCircle(c, size * 0.35f, acol, 20, 1.6f);
+    ad->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), acol, 1.8f);
+    ad->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), acol, 1.8f);
+    if (ahov) ImGui::SetTooltip("Attach a file or create a poll");
+    bool openPoll = false;
+    if (ImGui::BeginPopup("##plusmenu")) {
+        if (ImGui::MenuItem("Photo or file\xE2\x80\xA6", "25 MB")) PickAndSendAttachment(toUid, toGroup);
+        if (ImGui::MenuItem("Poll\xE2\x80\xA6")) openPoll = true;
+        ImGui::EndPopup();
+    }
+    if (openPoll || std::getenv("OKAY_CHAT_DEMO_POLLNEW")) { if (!ImGui::IsPopupOpen("Create a poll")) ImGui::OpenPopup("Create a poll"); }
+    PollCreatorPopup("Create a poll", toUid, toGroup);
+    ImGui::PopID();
+}
+
 // Render the open group conversation (header + members menu + multi-sender
 // thread + composer). Actions run on the main thread (same as DM sends); the
 // background poller publishes glog/greacts. Kept a free function to keep the
@@ -4050,8 +4597,10 @@ static void DrawGroupConversation(
         float bubbleMax = std::min(avW * 0.72f, 460.0f); if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
         ChatFileInfo gfile; const bool gIsFile = ParseChatFile(m.body, gfile);
         ChatVoiceInfo gvoice; const bool gIsVoice = !gIsFile && ParseChatVoice(m.body, gvoice);
+        ChatPollInfo gpoll; const bool gIsPoll = !gIsFile && !gIsVoice && ParseChatPoll(m.body, gpoll);
         float bodyW = gIsFile ? ChatFileCardWidth(gfile, bubbleMax - padX*2)
-                    : gIsVoice ? ChatVoiceWidth(bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
+                    : gIsVoice ? ChatVoiceWidth(bubbleMax - padX*2)
+                    : gIsPoll ? ChatPollWidth(bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
         char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
         std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
         float metaW = ImGui::CalcTextSize(meta.c_str()).x;
@@ -4079,6 +4628,11 @@ static void DrawGroupConversation(
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
         if (gIsFile) RenderChatFileCard(gfile, ImGui::GetContentRegionAvail().x);
         else if (gIsVoice) RenderChatVoice(gvoice, ImGui::GetContentRegionAvail().x, m.mine, kAccentDim);
+        else if (gIsPoll) {
+            auto rc = greacts.find(m.id); auto mr = gmyreacts.find(m.id);
+            RenderChatPoll(gpoll, true, m.id, rc != greacts.end() ? &rc->second : nullptr,
+                           mr != gmyreacts.end() ? &mr->second : nullptr, ImGui::GetContentRegionAvail().x, m.mine, kAccentDim);
+        }
         else RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
         {   // Timestamp tucked bottom-right, small + dim.
             float av2 = ImGui::GetContentRegionAvail().x;
@@ -4134,11 +4688,11 @@ static void DrawGroupConversation(
 
         // Reaction pills under the bubble.
         auto cit = greacts.find(m.id);
-        if (cit != greacts.end() && !cit->second.empty()) {
+        if (cit != greacts.end() && HasVisibleReactions(cit->second)) {
             ImGui::SetCursorPosX(baseX + x0);
             bool firstPill = true;
             for (const auto& kv : cit->second) {
-                if (kv.second <= 0) continue;
+                if (kv.second <= 0 || IsPollReaction(kv.first)) continue;
                 if (!firstPill) ImGui::SameLine(); firstPill = false;
                 bool mineR = myit != gmyreacts.end() && myit->second.count(kv.first);
                 std::string cnt = std::to_string(kv.second);
@@ -4205,17 +4759,7 @@ static void DrawGroupConversation(
         ImGui::SameLine(0, 4);
     }
     {   // Attach a photo or file to the group
-        float ah = ImGui::GetTextLineHeight() + 14.0f;   // matches the input pill height
-        ImVec2 ap = ImGui::GetCursorScreenPos();
-        if (ImGui::InvisibleButton("##gattach", ImVec2(ah, ah))) PickAndSendAttachment(std::string(), gid);
-        bool ahov = ImGui::IsItemHovered();
-        ImDrawList* ad = ImGui::GetWindowDrawList();
-        ImVec2 c(ap.x + ah * 0.5f, ap.y + ah * 0.5f);
-        ImU32 acol = ahov ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 206, 220, 220);
-        ad->AddCircle(c, ah * 0.34f, acol, 20, 1.6f);
-        ad->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), acol, 1.8f);
-        ad->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), acol, 1.8f);
-        if (ahov) ImGui::SetTooltip("Send a photo or file (up to 25 MB)");
+        ComposerPlusButton("gplus", ImGui::GetTextLineHeight() + 14.0f, std::string(), gid);   // matches the input pill height
         ImGui::SameLine(0, 6);
     }
     if (VoiceRecording() && !VoiceRecordingFor(std::string(), gid)) FinishVoiceRecord(false);   // switched chats
@@ -4412,6 +4956,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 auto fr = [&](const char* id, const char* nm, bool on) { okay::Friend f; f.id = id; f.username = nm; f.status = "accepted"; f.online = on; friends.push_back(f); };
                 fr("demo-uid", "Alex Rivera", !std::getenv("OKAY_CHAT_DEMO_TICKS")); fr("u-maya", "Maya Chen", true); fr("u-jon", "Jonas Berg", false);
                 fr("u-priya", "Priya Natarajan", true); fr("u-leo", "Leo Martins", false); fr("u-sam", "Sam Okafor", false);
+                for (auto& f : friends) {   // recently-active tags in the list
+                    if (f.id == "u-jon") f.lastSeen = tt - 12 * 60;
+                    if (f.id == "u-leo") f.lastSeen = tt - 3 * 3600;
+                    if (f.id == "u-sam") f.lastSeen = tt - 3 * 86400;
+                }
                 auto cv = [&](const char* uid, const char* body, long ago, long id, bool mine) {
                     okay::Messages::ConversationPreview c; c.uid = uid; c.lastBody = body; c.when = tt - ago; c.lastId = id; c.lastMine = mine; convs.push_back(c); };
                 cv("demo-uid", "sure, ping me when you're free", 460, 6, true);
@@ -4443,6 +4992,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ls.url = "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f996.png";
                 g_libStickers.push_back(ls); g_libLoaded = true;
                 g_recentEmoji = {"\xF0\x9F\x94\xA5", "\xF0\x9F\x98\x84", ":rocketship:", "\xF0\x9F\x8E\x89"};
+            }
+            if (std::getenv("OKAY_CHAT_DEMO_POLL")) {   // a poll with some votes in
+                add(23, PollMessageBody("Which level do we polish first for the jam?",
+                        {"Asteroid belt", "Ice caves", "Boss arena"}).c_str(), 25, false);
+                reacts[23]["poll:0"] = 3; reacts[23]["poll:2"] = 1; reacts[23]["heart"] = 1;
+                myReacts[23].insert("poll:0");
             }
             if (std::getenv("OKAY_CHAT_DEMO_MD")) {   // formatting showcase
                 add(21, "Formatting works now: **bold**, *italic*, ~~strike~~, `inline code` and a ||secret spoiler||", 15, false);
@@ -4679,7 +5234,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         // ---- Build one list: DM conversations + groups, then friends to start.
         struct Row {
             std::string key, uid, name, avatar, preview;
-            long gid = 0, when = 0, lastId = 0;
+            long gid = 0, when = 0, lastId = 0, lastSeen = 0;
             int members = 0;
             bool mine = false, online = false, unread = false, starter = false;
         };
@@ -4690,7 +5245,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             r.preview = (c.lastMine ? "You: " : "") + ChatPreviewSmart(c.lastBody, 90);
             if (auto it = fById.find(c.uid); it != fById.end()) {
                 r.name = it->second->display.empty() ? it->second->username : it->second->display;
-                r.avatar = it->second->avatar; r.online = it->second->online;
+                r.avatar = it->second->avatar; r.online = it->second->online; r.lastSeen = it->second->lastSeen;
             } else if (auto kn = knownNames.find(c.uid); kn != knownNames.end()) r.name = kn->second;
             else r.name = (c.uid == selUid) ? selName : ChatPreview(c.uid, 10);
             bool open = g_chatSelGroup == 0 && c.uid == selUid;
@@ -4709,7 +5264,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         for (const auto& f : friends) {
             if (f.status != "accepted" || have.count(f.id)) continue;
             Row r; r.key = r.uid = f.id; r.name = f.display.empty() ? f.username : f.display;
-            r.avatar = f.avatar; r.online = f.online; r.preview = "Say hi \xF0\x9F\x91\x8B"; r.starter = true;
+            r.avatar = f.avatar; r.online = f.online; r.lastSeen = f.lastSeen; r.preview = "Say hi \xF0\x9F\x91\x8B"; r.starter = true;
             rows.push_back(r);
         }
         // Private nicknames (set from the conversation menu) replace display names.
@@ -4790,6 +5345,21 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImVec2 pd(ac.x + A * 0.35f, ac.y + A * 0.35f);
                     rdl->AddCircleFilled(pd, 7.0f, ImGui::GetColorU32(sel ? kChatSideSel : kChatSideBg), 16);
                     rdl->AddCircleFilled(pd, 5.0f, IM_COL32(76, 200, 110, 255), 16);
+                } else if (r.lastSeen > 0 && !g_blockedUsers.count(r.uid)) {
+                    // Recently active (Messenger-style): a tiny "12m" / "3h" tag on the avatar.
+                    const long ago = std::max(0L, (long)std::time(nullptr) - r.lastSeen);
+                    if (ago < 86400) {
+                        char tag[8];
+                        if (ago < 3600) std::snprintf(tag, sizeof(tag), "%ldm", std::max(1L, ago / 60));
+                        else std::snprintf(tag, sizeof(tag), "%ldh", ago / 3600);
+                        ImFont* tf = ImGui::GetFont(); const float fs = ImGui::GetFontSize() * 0.68f;
+                        const ImVec2 ts = tf->CalcTextSizeA(fs, FLT_MAX, 0.0f, tag);
+                        const ImVec2 tc(ac.x + A * 0.30f, ac.y + A * 0.36f);
+                        const ImVec2 t0(tc.x - ts.x * 0.5f - 4, tc.y - ts.y * 0.5f - 1), t1(tc.x + ts.x * 0.5f + 4, tc.y + ts.y * 0.5f + 1);
+                        rdl->AddRectFilled(ImVec2(t0.x - 2, t0.y - 2), ImVec2(t1.x + 2, t1.y + 2), ImGui::GetColorU32(sel ? kChatSideSel : kChatSideBg), 9.0f);
+                        rdl->AddRectFilled(t0, t1, IM_COL32(38, 62, 44, 255), 8.0f);
+                        rdl->AddText(tf, fs, ImVec2(tc.x - ts.x * 0.5f, tc.y - ts.y * 0.5f), IM_COL32(120, 214, 130, 255), tag);
+                    }
                 }
             }
 
@@ -5403,8 +5973,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
                 ChatFileInfo fileInfo; const bool isFile = ParseChatFile(m.body, fileInfo);   // "[File] ..." -> card
                 ChatVoiceInfo voice; const bool isVoice = !isFile && ParseChatVoice(m.body, voice);
+                ChatPollInfo pollInfo; const bool isPoll = !isFile && !isVoice && ParseChatPoll(m.body, pollInfo);
                 float bodyW = isFile ? ChatFileCardWidth(fileInfo, bubbleMax - padX*2)
-                            : isVoice ? ChatVoiceWidth(bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
+                            : isVoice ? ChatVoiceWidth(bubbleMax - padX*2)
+                            : isPoll ? ChatPollWidth(bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
                 // reply quote + time contribute to width
                 const okay::DirectMessage* rep = (m.replyTo && byId.count(m.replyTo)) ? byId[m.replyTo] : nullptr;
                 std::string repText = rep ? ChatPreview(rep->body, 36) : "";
@@ -5535,6 +6107,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 } else {
                     if (isFile) RenderChatFileCard(fileInfo, ImGui::GetContentRegionAvail().x);
                     else if (isVoice) RenderChatVoice(voice, ImGui::GetContentRegionAvail().x, m.mine, myBubble);
+                    else if (isPoll) {
+                        auto rc = reacts.find(m.id); auto mr = myReacts.find(m.id);
+                        RenderChatPoll(pollInfo, false, m.id, rc != reacts.end() ? &rc->second : nullptr,
+                                       mr != myReacts.end() ? &mr->second : nullptr, ImGui::GetContentRegionAvail().x, m.mine, myBubble);
+                    }
                     else RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
                 }
                 // Inline image preview for an image link in the message.
@@ -5678,12 +6255,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
 
                 // Reaction pills on the line under the bubble (normal layout).
                 auto cit = reacts.find(m.id);
-                if (cit != reacts.end() && !cit->second.empty()) {
+                if (cit != reacts.end() && HasVisibleReactions(cit->second)) {
                     ImGui::SetCursorPosX(baseX + x0);
                     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
                     bool firstPill = true;
                     for (const auto& kv : cit->second) {
-                        if (kv.second <= 0) continue;
+                        if (kv.second <= 0 || IsPollReaction(kv.first)) continue;
                         if (!firstPill) ImGui::SameLine();
                         firstPill = false;
                         bool mineR = myset.count(kv.first) != 0;
@@ -5896,17 +6473,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             fmtBtn("</>", "`", "`", "code", "Code  `text`");
             {   // Attach a photo or file (native picker; uploads in the background)
                 ImGui::SameLine(0, 6);
-                ImVec2 ap = ImGui::GetCursorScreenPos();
-                float ah = ImGui::GetFrameHeight();
-                if (ImGui::InvisibleButton("##attach", ImVec2(ah, ah))) PickAndSendAttachment(selUid, 0);
-                bool ahov = ImGui::IsItemHovered();
-                ImDrawList* ad = ImGui::GetWindowDrawList();
-                ImVec2 c(ap.x + ah * 0.5f, ap.y + ah * 0.5f);
-                ImU32 acol = ahov ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 206, 220, 220);
-                ad->AddCircle(c, ah * 0.36f, acol, 20, 1.6f);
-                ad->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), acol, 1.8f);
-                ad->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), acol, 1.8f);
-                if (ahov) ImGui::SetTooltip("Send a photo or file (up to 25 MB)");
+                ComposerPlusButton("dmplus", ImGui::GetFrameHeight(), selUid, 0);
                 ImGui::SameLine(0, 8);
                 if (g_attBusy) {
                     ImGui::AlignTextToFramePadding();
@@ -7563,6 +8130,26 @@ static int OutboxWorker(void*) {
         if (ok) { if (job.toChannel > 0) g_srvForce = true; else g_chatForceLog = true; }   // pull the real message in right away
     }
     return 0;
+}
+// Poll votes (and other reaction changes) without blocking the UI: remove one
+// reaction and/or add another on a DM or group message, then refresh.
+struct ChatReactJob { bool group = false; long id = 0; std::string removeKey, addKey; };
+static int ChatReactWorker(void* p) {
+    std::unique_ptr<ChatReactJob> j(static_cast<ChatReactJob*>(p));
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Messages dm(a);
+        if (!j->removeKey.empty()) { if (j->group) dm.GroupReact(j->id, j->removeKey, false); else dm.React(j->id, j->removeKey, false); }
+        if (!j->addKey.empty())    { if (j->group) dm.GroupReact(j->id, j->addKey, true);     else dm.React(j->id, j->addKey, true); }
+    } catch (...) {}
+    g_chatForceLog = true;
+    return 0;
+}
+static void ChatReactAsync(bool group, long id, const std::string& removeKey, const std::string& addKey) {
+    if (std::getenv("OKAY_CHAT_DEMO")) return;   // demo: the local vote is enough
+    auto* j = new ChatReactJob{group, id, removeKey, addKey};
+    if (SDL_Thread* t = SDL_CreateThread(ChatReactWorker, "okay-react", j)) SDL_DetachThread(t);
+    else delete j;
 }
 static void OutboxKick() {
     if (!g_outMutex) g_outMutex = SDL_CreateMutex();
@@ -11143,6 +11730,10 @@ int main(int argc, char** argv) {
                         }
                     });
                     rowDivider();
+                    settingRow("Show link previews", "Cards with the page title and image under links in chat. Loading one contacts that website.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##linkprev", &g_linkPreviews)) SavePrefs();
+                    });
+                    rowDivider();
                     settingRow("Test the chime", "Hear what a new message sounds like.", 96.0f, 30.0f, [&](float) {
                         if (ImGui::Button("Play sound", ImVec2(96, 30))) PlayChatChime();
                     });
@@ -11757,6 +12348,7 @@ int main(int argc, char** argv) {
                         mk(5, "u-leo", "leo", "Leo Martins", "accepted", false, false, "", "");
                         mk(6, "u-kai", "kai_dev", "Kai", "pending", true, true, "", "");
                         mk(7, "u-zoe", "zoe", "Zoe Park", "pending", false, false, "", "");
+                        fCache[3].lastSeen = t0 - 12 * 60; fCache[4].lastSeen = t0 - 3 * 3600 - 600;   // "Last online …"
                         fCache[0].sessionCode = "QX7-42";
                         g_favFriends.insert("u-maya");
                         auto ev = [&](const char* a, const char* k, const char* d, long ago) { okay::FriendEvent e; e.actor = a; e.kind = k; e.detail = d; e.when = t0 - ago; fFeed.push_back(e); };
@@ -11953,7 +12545,8 @@ int main(int argc, char** argv) {
                                     : kind == 2 ? "Request sent"
                                     : playing ? f->playing
                                     : !f->customStatus.empty() ? f->customStatus
-                                    : f->online ? "Online" : "Offline";
+                                    : f->online ? "Online"
+                                    : f->lastSeen > 0 ? LastOnline(f->lastSeen) : "Offline";
                     ImU32 sc = kind == 1 ? ImGui::GetColorU32(accLt) : playing ? ImGui::GetColorU32(accLt)
                              : (accepted && f->online && f->customStatus.empty()) ? cGreen : cDim;
                     dl->AddText(ImVec2(tx, ty + 20), sc, FitText(sub, right - tx - 10).c_str());
@@ -12154,7 +12747,11 @@ int main(int argc, char** argv) {
                     };
                     std::sort(favs.begin(), favs.end(), byName);
                     std::sort(online.begin(), online.end(), byName);
-                    std::sort(offline.begin(), offline.end(), byName);
+                    // Offline: most recently online first (then by name).
+                    std::sort(offline.begin(), offline.end(), [&](const okay::Friend* a, const okay::Friend* b) {
+                        if (a->lastSeen != b->lastSeen) return a->lastSeen > b->lastSeen;
+                        return byName(a, b);
+                    });
                     int shownN = 0;
                     if (fView == 0) {          // Online: favourites that are online + online
                         std::vector<const okay::Friend*> on;
@@ -12694,6 +13291,7 @@ int main(int argc, char** argv) {
                         auto mem = [&](const char* n, const char* role, bool on) { okay::ServerMember m; m.name = n; m.role = role; m.online = on; svMembers.push_back(m); };
                         mem("kingimann", "owner", true); mem("maya", "member", true); mem("alexr", "member", true);
                         mem("priya", "member", false); mem("jonas", "member", false);
+                        svMembers[3].lastSeen = t0 - 47 * 60; svMembers[4].lastSeen = t0 - 2 * 86400;
                         auto msg = [&](long id, const char* a, const char* b, long ago, long likes) {
                             okay::ChannelMessage m; m.id = id; m.author = a; m.body = b; m.when = t0 - ago; svMsgs.push_back(m); if (likes) svLikes[id] = likes; };
                         msg(1, "maya", "Morning! Theme for the jam just dropped: orbit", 5400, 3);
@@ -13289,10 +13887,18 @@ int main(int argc, char** argv) {
                             d->AddCircleFilled(pd, 4.0f, m.online ? IM_COL32(76, 200, 110, 255) : IM_COL32(110, 118, 130, 255), 12);
                             ImU32 tc = m.online ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.45f);
                             float tx = mp.x + 44;
-                            d->AddText(ImVec2(tx, mp.y + 20 - ImGui::GetTextLineHeight() * 0.5f), tc, FitText(nm, rw - 66).c_str());
+                            const bool seenLine = !m.online && m.lastSeen > 0;   // "2h ago" under offline names
+                            const float nameY = seenLine ? mp.y + 4 : mp.y + 20 - ImGui::GetTextLineHeight() * 0.5f;
+                            d->AddText(ImVec2(tx, nameY), tc, FitText(nm, rw - 66).c_str());
+                            if (seenLine) {
+                                ImFont* sf = ImGui::GetFont(); const float fs = ImGui::GetFontSize() * 0.82f;
+                                d->AddText(sf, fs, ImVec2(tx, mp.y + 22), ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.85f),
+                                           FitText(RelTime(m.lastSeen), rw - 66).c_str());
+                            }
                             if (m.role == "owner") {   // crown-ish gold star after the name
                                 float nx = tx + std::min(ImGui::CalcTextSize(nm.c_str()).x, rw - 66) + 10;
-                                DrawStar(d, ImVec2(nx, mp.y + 20), 5.5f, IM_COL32(250, 200, 70, 255));
+                                const float sy = nameY + ImGui::GetTextLineHeight() * 0.5f;
+                                DrawStar(d, ImVec2(nx, sy), 5.5f, IM_COL32(250, 200, 70, 255));
                                 if (ImGui::IsMouseHoveringRect(ImVec2(nx - 6, mp.y + 14), ImVec2(nx + 6, mp.y + 26))) ImGui::SetTooltip("Server owner");
                             }
                             ImGui::SetCursorScreenPos(ImVec2(mp.x, mp.y + 42));

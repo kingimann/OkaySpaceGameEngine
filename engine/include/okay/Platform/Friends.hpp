@@ -32,6 +32,7 @@ struct Friend {
     std::string status;      // "accepted" | "pending"
     bool incoming = false;   // pending request sent TO me (I can accept/decline)
     bool online   = false;   // last_seen within a few minutes
+    long lastSeen = 0;       // last presence heartbeat (unix seconds; 0 = never / hidden)
     std::string playing;     // presence text ("Playing Asteroids", "In the launcher", ...)
     std::string sessionCode; // relay room code if they're hosting a joinable game
     std::string display;     // friendly display name (falls back to username)
@@ -262,6 +263,7 @@ private:
         f.favoriteGame = p.favoriteGame;
         f.location     = p.location;
         f.online = p.lastSeen > 0 && std::difftime(std::time(nullptr), (std::time_t)p.lastSeen) < 180.0;
+        f.lastSeen = p.lastSeen > 978307200 ? p.lastSeen : 0;   // "Invisible" backdates to 2000
     }
 
     Profile ProfileOf(const std::string& uid) {

@@ -20,7 +20,7 @@ namespace okay {
 struct Server  { long id = 0; std::string name; std::string invite; std::string owner; };
 struct Channel { long id = 0; std::string name; };
 struct ChannelMessage { long id = 0; std::string author; std::string body; long when = 0; bool edited = false; long likes = 0; bool liked = false; };
-struct ServerMember { std::string uid, name, avatar, role; bool online = false; };
+struct ServerMember { std::string uid, name, avatar, role; bool online = false; long lastSeen = 0; };
 
 class Servers {
 public:
@@ -115,6 +115,7 @@ public:
                     m.avatar = Field(o, "avatar_url");
                     long seen = ParseIso(Field(o, "last_seen"));
                     m.online = seen > 0 && std::difftime(std::time(nullptr), (std::time_t)seen) < 180.0;
+                    m.lastSeen = seen > 978307200 ? seen : 0;   // "Invisible" backdates to 2000
                 }
             }
         }

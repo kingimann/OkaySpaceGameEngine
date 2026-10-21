@@ -37,7 +37,12 @@ struct PublicProfile {
     long lastSeen = 0, memberSince = 0;
     std::vector<std::string> showcaseAch;   // achievement ids, in display order
     std::vector<long>        showcaseGames; // workshop_items ids, in display order
+    bool verified = false;                  // staff-set blue check (profile_extras.sql)
+    std::vector<std::pair<std::string, std::string>> socials;   // ("x", "@handle" or url), in display order
 };
+
+// Time played in one game (or "editor" for time in the editor).
+struct PlaytimeEntry { std::string key, title; long seconds = 0, lastPlayed = 0; };
 
 struct ProfileBundle {
     bool found = false;              // the profile row was read
@@ -45,6 +50,9 @@ struct ProfileBundle {
     PublicProfile p;
     bool showcaseSupported = false;  // profiles.showcase_* columns exist
     bool achSupported = false;       // user_achievements table exists
+    bool extrasSupported = false;    // profile_extras.sql ran (socials, verified, badges, playtime)
+    std::vector<std::string> badges;         // staff-awarded: staff, developer, moderator, beta, partner
+    std::vector<PlaytimeEntry> playtime;     // most played first
     std::vector<Achievement> achievements;   // their public unlocks (newest first)
     std::vector<WorkshopItem> games;         // their published Workshop items
     int  friends = -1;               // -1 = unknown
@@ -80,10 +88,15 @@ public:
             "id,username,display_name,avatar_url,bio,accent,status,favorite_game,location,"
             "playing,session_code,last_seen,created_at";
         auto r = acct_.Api(std::string("/rest/v1/profiles?select=") + kBase +
-                           ",showcase_achievements,showcase_games,banner_accent&id=eq." + Url(uid), "GET");
+                           ",showcase_achievements,showcase_games,banner_accent,social_links,verified&id=eq." + Url(uid), "GET");
         b.reached = b.reached || r.reached;
-        if (r.ok) b.showcaseSupported = true;
-        else      r = acct_.Api(std::string("/rest/v1/profiles?select=") + kBase + "&id=eq." + Url(uid), "GET");
+        if (r.ok) { b.showcaseSupported = true; b.extrasSupported = true; }
+        else {
+            r = acct_.Api(std::string("/rest/v1/profiles?select=") + kBase +
+                          ",showcase_achievements,showcase_games,banner_accent&id=eq." + Url(uid), "GET");
+            if (r.ok) b.showcaseSupported = true;
+            else      r = acct_.Api(std::string("/rest/v1/profiles?select=") + kBase + "&id=eq." + Url(uid), "GET");
+        }
         if (!r.ok) return b;
         auto objs = SplitObjects(r.body);
         if (objs.empty()) return b;
@@ -110,18 +123,26 @@ public:
             std::string ba = Field(o, "banner_accent");
             p.bannerAccent = ba.empty() ? -1 : (int)std::atol(ba.c_str());
         }
+        if (b.extrasSupported) {
+            p.verified = Field(o, "verified") == "true";
+            p.socials = FlatObject(RawField(o, "social_links"));
+        }
         b.found = true;
         b.isMe = (p.username == acct_.CurrentSession().username);
 
         // Public achievements mirror (optional table).
-        auto ra = acct_.Api("/rest/v1/user_achievements?select=ach_id,label,unlocked_at"
+        auto ra = acct_.Api("/rest/v1/user_achievements?select=ach_id,label,unlocked_at,points"
                             "&owner=eq." + Url(uid) + "&order=unlocked_at.desc", "GET");
+        if (!ra.ok) ra = acct_.Api("/rest/v1/user_achievements?select=ach_id,label,unlocked_at"
+                                   "&owner=eq." + Url(uid) + "&order=unlocked_at.desc", "GET");
         if (ra.ok) {
             b.achSupported = true;
             for (const auto& x : SplitObjects(ra.body)) {
                 Achievement a; a.id = Field(x, "ach_id"); a.label = Field(x, "label");
                 if (a.label.empty()) a.label = a.id;
                 a.when = ParseIso(Field(x, "unlocked_at"));
+                const std::string pt = Field(x, "points");
+                if (!pt.empty()) a.points = Achievements::ClampPoints((int)std::atol(pt.c_str()));
                 if (!a.id.empty()) b.achievements.push_back(a);
             }
         }
@@ -136,6 +157,17 @@ public:
                 w.kind = Field(x, "kind"); w.url = Field(x, "storage_path");
                 w.downloads = std::atol(Field(x, "downloads").c_str());
                 if (w.id > 0 && !w.title.empty()) b.games.push_back(w);
+            }
+        }
+        if (b.extrasSupported) {   // staff badges + time played
+            auto rb = acct_.Api("/rest/v1/profile_badges?select=badge&owner=eq." + Url(uid) + "&order=awarded_at.asc", "GET");
+            if (rb.ok) for (const auto& x : SplitObjects(rb.body)) { std::string bd = Field(x, "badge"); if (!bd.empty()) b.badges.push_back(bd); }
+            auto rp = acct_.Api("/rest/v1/user_playtime?select=game_key,title,seconds,last_played&owner=eq." + Url(uid) +
+                                "&order=seconds.desc&limit=30", "GET");
+            if (rp.ok) for (const auto& x : SplitObjects(rp.body)) {
+                PlaytimeEntry e; e.key = Field(x, "game_key"); e.title = Field(x, "title");
+                e.seconds = std::atol(Field(x, "seconds").c_str()); e.lastPlayed = ParseIso(Field(x, "last_played"));
+                if (!e.key.empty() && e.seconds > 0) b.playtime.push_back(e);
             }
         }
         // Friend count (SECURITY DEFINER rpc; my own count works without it).
@@ -195,10 +227,62 @@ public:
             if (i) body += ",";
             body += "{\"ach_id\":" + JStr(all[i].id) + ",\"label\":" + JStr(all[i].label);
             if (all[i].when > 0) body += ",\"unlocked_at\":" + JStr(Iso(all[i].when));
+            body += ",\"points\":" + std::to_string(all[i].points);
             body += "}";
         }
         body += "]";
-        return acct_.Api("/rest/v1/user_achievements?on_conflict=owner,ach_id", "POST", body,
+        if (acct_.Api("/rest/v1/user_achievements?on_conflict=owner,ach_id", "POST", body,
+                      "Prefer: resolution=merge-duplicates").ok) return true;
+        // Before profile_extras.sql there's no points column: send without it.
+        std::string plain; std::size_t at = 0;
+        const std::string key = ",\"points\":";
+        for (std::size_t k; (k = body.find(key, at)) != std::string::npos; ) {
+            plain += body.substr(at, k - at);
+            at = body.find('}', k);
+        }
+        plain += body.substr(at);
+        return acct_.Api("/rest/v1/user_achievements?on_conflict=owner,ach_id", "POST", plain,
+                         "Prefer: resolution=merge-duplicates").ok;
+    }
+
+    // MY social links; *supported = false before profile_extras.sql ran.
+    std::vector<std::pair<std::string, std::string>> MySocialLinks(bool* supported) {
+        if (supported) *supported = false;
+        if (!acct_.IsLoggedIn()) return {};
+        std::string id = MyId(); if (id.empty()) return {};
+        auto r = acct_.Api("/rest/v1/profiles?select=social_links&id=eq." + Url(id), "GET");
+        if (!r.ok) return {};
+        if (supported) *supported = true;
+        auto o = SplitObjects(r.body);
+        return o.empty() ? std::vector<std::pair<std::string, std::string>>() : FlatObject(RawField(o[0], "social_links"));
+    }
+    // Save MY social links ({"x": "...", ...}; needs profile_extras.sql).
+    bool SaveSocialLinks(const std::vector<std::pair<std::string, std::string>>& links) {
+        if (!acct_.IsLoggedIn()) return false;
+        std::string id = MyId(); if (id.empty()) return false;
+        std::string o = "{";
+        bool first = true;
+        for (const auto& kv : links) {
+            if (kv.second.empty()) continue;
+            if (!first) o += ",";
+            o += JStr(kv.first) + ":" + JStr(kv.second.substr(0, 200)); first = false;
+        }
+        o += "}";
+        return acct_.Api("/rest/v1/profiles?id=eq." + Url(id), "PATCH", "{\"social_links\":" + o + "}").ok;
+    }
+    // Upsert my playtime totals (needs profile_extras.sql).
+    bool SyncPlaytime(const std::vector<PlaytimeEntry>& all) {
+        if (!acct_.IsLoggedIn() || all.empty()) return false;
+        std::string body = "[";
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            if (i) body += ",";
+            body += "{\"game_key\":" + JStr(all[i].key.substr(0, 200)) + ",\"title\":" + JStr(all[i].title.substr(0, 120)) +
+                    ",\"seconds\":" + std::to_string(std::max(0L, all[i].seconds));
+            if (all[i].lastPlayed > 0) body += ",\"last_played\":" + JStr(Iso(all[i].lastPlayed));
+            body += "}";
+        }
+        body += "]";
+        return acct_.Api("/rest/v1/user_playtime?on_conflict=owner,game_key", "POST", body,
                          "Prefer: resolution=merge-duplicates").ok;
     }
 
@@ -289,6 +373,33 @@ private:
         std::size_t e = p; while (e < obj.size() && obj[e] != ',' && obj[e] != '}') ++e;
         std::string v = Trim(obj.substr(p, e - p));
         return v == "null" ? "" : v;
+    }
+    // The raw text of an object-valued field ({...}), or "".
+    static std::string RawField(const std::string& obj, const std::string& key) {
+        std::size_t p = ValueAt(obj, key);
+        if (p == std::string::npos || obj[p] != '{') return "";
+        int depth = 0; bool str = false;
+        for (std::size_t i = p; i < obj.size(); ++i) {
+            const char c = obj[i];
+            if (str) { if (c == '\\') ++i; else if (c == '"') str = false; continue; }
+            if (c == '"') str = true;
+            else if (c == '{') ++depth;
+            else if (c == '}' && --depth == 0) return obj.substr(p, i - p + 1);
+        }
+        return "";
+    }
+    // {"k": "v", ...} with string values -> pairs (other values skipped).
+    static std::vector<std::pair<std::string, std::string>> FlatObject(const std::string& o) {
+        std::vector<std::pair<std::string, std::string>> out;
+        std::size_t p = o.empty() ? 0 : 1;
+        while (p < o.size()) {
+            if (o[p] != '"') { ++p; continue; }
+            std::string k = ReadString(o, p);
+            while (p < o.size() && (o[p] == ':' || std::isspace((unsigned char)o[p]))) ++p;
+            if (p < o.size() && o[p] == '"') { std::string v = ReadString(o, p); if (!k.empty() && !v.empty()) out.emplace_back(k, v); }
+            else while (p < o.size() && o[p] != ',' && o[p] != '}') ++p;
+        }
+        return out;
     }
     // A flat JSON array of strings or numbers -> strings.
     static std::vector<std::string> Array(const std::string& obj, const std::string& key) {

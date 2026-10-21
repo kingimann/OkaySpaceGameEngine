@@ -59,6 +59,7 @@
 #  include <SDL_syswm.h>  // HWND of the SDL window, for the tray
 #else
 #  include <unistd.h>
+#  include <sys/wait.h>   // waitpid: playtime tracking of launched games
 #  include <sys/wait.h>
 #  include <sys/file.h>   // flock (single-instance lock)
 #  include <fcntl.h>
@@ -931,9 +932,122 @@ std::string FindExe(std::initializer_list<const char*> names) {
     return {};
 }
 
-// Launch an executable (detached), optionally with one argument.
+// ---- Playtime: time spent in each game and in the editor -----------------------
+// Games and the editor start as child processes the launcher keeps a handle to;
+// while one runs, time is credited a minute at a time (a crash or a killed
+// launcher loses at most a minute). Totals live in playtime.txt beside the
+// achievements and sync to user_playtime (docs/sql/profile_extras.sql).
+struct PlayProc {
+    std::string key, title; Uint32 lastCredit = 0;
+#if defined(_WIN32)
+    HANDLE h = nullptr;
+#else
+    pid_t pid = -1;
+#endif
+};
+static std::vector<PlayProc> g_playProcs;
+static std::vector<okay::PlaytimeEntry> g_playtime;   // local totals
+static bool g_playtimeLoaded = false, g_playtimeDirty = false;
+static std::string PlaytimeFile() { return okay::Achievements::Dir() + "/playtime.txt"; }   // key|title|seconds|last
+static void LoadPlaytime() {
+    if (g_playtimeLoaded) return;
+    g_playtimeLoaded = true;
+    std::ifstream f(PlaytimeFile());
+    std::string line;
+    while (std::getline(f, line)) {
+        std::vector<std::string> parts; std::stringstream ss(line); std::string t;
+        while (std::getline(ss, t, '|')) parts.push_back(t);
+        if (parts.size() < 3 || parts[0].empty()) continue;
+        okay::PlaytimeEntry e; e.key = parts[0]; e.title = parts[1];
+        e.seconds = std::atol(parts[2].c_str()); e.lastPlayed = parts.size() > 3 ? std::atol(parts[3].c_str()) : 0;
+        g_playtime.push_back(e);
+    }
+}
+static void SavePlaytime() {
+    std::ofstream f(PlaytimeFile(), std::ios::trunc);
+    for (const auto& e : g_playtime) f << e.key << '|' << e.title << '|' << e.seconds << '|' << e.lastPlayed << '\n';
+}
+static void CreditPlaytime(const std::string& key, const std::string& title, long secs) {
+    if (secs <= 0) return;
+    LoadPlaytime();
+    auto it = std::find_if(g_playtime.begin(), g_playtime.end(), [&](const okay::PlaytimeEntry& e) { return e.key == key; });
+    if (it == g_playtime.end()) { okay::PlaytimeEntry e; e.key = key; e.title = title; g_playtime.push_back(e); it = g_playtime.end() - 1; }
+    it->seconds += secs; it->lastPlayed = (long)std::time(nullptr);
+    if (!title.empty()) it->title = title;
+    std::sort(g_playtime.begin(), g_playtime.end(), [](const okay::PlaytimeEntry& a, const okay::PlaytimeEntry& b) { return a.seconds > b.seconds; });
+    SavePlaytime();
+    g_playtimeDirty = true;
+}
+static std::string PlaytimeLabel(std::string s) {   // safe for the '|' file and the server
+    for (char& c : s) if (c == '|' || c == '\n' || c == '\r') c = '/';
+    return s.substr(0, 120);
+}
+// Start `exe args` and track how long it runs. False if it couldn't start.
+static bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title) {
+    PlayProc pp; pp.key = PlaytimeLabel(key); pp.title = PlaytimeLabel(title); pp.lastCredit = SDL_GetTicks();
+#if defined(_WIN32)
+    std::string cmd = "\"" + exe + "\"" + (args.empty() ? std::string() : " " + args);
+    std::vector<char> buf(cmd.begin(), cmd.end()); buf.push_back('\0');
+    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
+    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
+    if (!CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) return false;
+    CloseHandle(pi.hThread);
+    pp.h = pi.hProcess;
+#else
+    const std::string cmd = "exec \"" + exe + "\"" + (args.empty() ? std::string() : " " + args) + " >/dev/null 2>&1";
+    pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) { setsid(); execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr); _exit(127); }
+    pp.pid = pid;
+#endif
+    g_playProcs.push_back(pp);
+    return true;
+}
+// Once a second or so: credit running games, close out the ones that ended.
+static void PumpPlaytime() {
+    const Uint32 now = SDL_GetTicks();
+    for (std::size_t i = 0; i < g_playProcs.size(); ) {
+        PlayProc& pp = g_playProcs[i];
+#if defined(_WIN32)
+        const bool done = WaitForSingleObject(pp.h, 0) == WAIT_OBJECT_0;
+#else
+        int st = 0;
+        const bool done = waitpid(pp.pid, &st, WNOHANG) == pp.pid;
+#endif
+        if (done || now - pp.lastCredit >= 60000) {
+            CreditPlaytime(pp.key, pp.title, (long)(now - pp.lastCredit) / 1000);
+            pp.lastCredit = now;
+        }
+        if (done) {
+#if defined(_WIN32)
+            CloseHandle(pp.h);
+#endif
+            g_playProcs.erase(g_playProcs.begin() + (long)i);
+        } else ++i;
+    }
+}
+static bool PlaytimeRunning(const std::string& key) {
+    for (const auto& pp : g_playProcs) if (pp.key == key) return true;
+    return false;
+}
+// A readable game title from its scene path ("…/Asteroids/main.okayscene" -> "Asteroids").
+static std::string GameTitleFromPath(const std::string& path) {
+    fs::path p(path);
+    std::string stem = p.stem().string(), low = stem;
+    for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+    if ((low == "main" || low == "scene" || low == "game" || low == "index" || low == "start") && p.has_parent_path())
+        stem = p.parent_path().filename().string();
+    return stem.empty() ? std::string("Game") : stem;
+}
+
+// Launch an executable (detached), optionally with one argument. Launching a
+// game (the player with a scene) is tracked for playtime.
 void Launch(const std::string& exe, const std::string& arg = "") {
     if (exe.empty()) return;
+    if (!arg.empty() && exe != g_selfPath) {
+        const std::string title = GameTitleFromPath(arg);
+        if (SpawnTracked(exe, "\"" + arg + "\"", "game:" + title, title)) return;
+    }
 #if defined(_WIN32)
     std::string cmd = "start \"\" \"" + exe + "\"";
     if (!arg.empty()) cmd += " \"" + arg + "\"";
@@ -967,6 +1081,7 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
     // target folder and builds <folder>/Assets + the template scene headlessly.
     if (!newProjectDir.empty()) args += " --new-project \"" + newProjectDir + "\"";
     if (!openScene.empty()) args += " --open \"" + openScene + "\"";   // reopen a project
+    if (SpawnTracked(exe, args, "editor", "OkaySpace Editor")) return;   // time in the editor counts too
 #if defined(_WIN32)
     std::string cmd = "start \"\" \"" + exe + "\" " + args;
 #else
@@ -7544,6 +7659,181 @@ static void SaveLocalShowcase(const PfLocalShowcase& s) {
 }
 
 // Sample profiles for the OKAY_UI_DEMO_USER screenshot hook.
+// Social links a profile can show: key, label, URL prefix for a handle ("" =
+// the value is a full URL (website) or not a link at all (Discord tag)).
+struct SocialPlatform { const char* key; const char* label; const char* prefix; ImU32 color; };
+static const SocialPlatform kSocials[] = {
+    {"x",         "X",         "https://x.com/",          IM_COL32(230, 233, 240, 255)},
+    {"youtube",   "YouTube",   "https://youtube.com/@",   IM_COL32(255, 72, 72, 255)},
+    {"twitch",    "Twitch",    "https://twitch.tv/",      IM_COL32(160, 110, 255, 255)},
+    {"github",    "GitHub",    "https://github.com/",     IM_COL32(210, 215, 225, 255)},
+    {"tiktok",    "TikTok",    "https://tiktok.com/@",    IM_COL32(60, 220, 230, 255)},
+    {"instagram", "Instagram", "https://instagram.com/",  IM_COL32(240, 90, 160, 255)},
+    {"discord",   "Discord",   "",                        IM_COL32(110, 130, 245, 255)},
+    {"website",   "Website",   "",                        IM_COL32(120, 200, 150, 255)},
+};
+static const SocialPlatform* SocialFor(const std::string& key) {
+    for (const auto& sp : kSocials) if (key == sp.key) return &sp;
+    return nullptr;
+}
+// What a user typed -> what we store: a bare handle (no @, no URL), or a full
+// https URL for the website. Empty = invalid.
+static std::string CleanSocial(const std::string& key, std::string v) {
+    while (!v.empty() && std::isspace((unsigned char)v.back())) v.pop_back();
+    while (!v.empty() && std::isspace((unsigned char)v.front())) v.erase(0, 1);
+    if (v.empty()) return v;
+    if (key == "website") {
+        if (v.rfind("http://", 0) != 0 && v.rfind("https://", 0) != 0) v = "https://" + v;
+        return ShellSafeUrl(v) ? v.substr(0, 200) : std::string();
+    }
+    if (const SocialPlatform* sp = SocialFor(key); sp && sp->prefix[0]) {   // accept a pasted profile URL too
+        std::string host = std::string(sp->prefix).substr(8);                 // after "https://"
+        host = host.substr(0, host.find('/'));
+        if (auto at = v.find(host); at != std::string::npos) {
+            v = v.substr(at + host.size());
+            while (!v.empty() && (v[0] == '/' || v[0] == '@')) v.erase(0, 1);
+            v = v.substr(0, v.find_first_of("/?#"));
+        }
+    }
+    while (!v.empty() && v[0] == '@') v.erase(0, 1);
+    std::string out;
+    for (char c : v) if (std::isalnum((unsigned char)c) || c == '_' || c == '.' || c == '-' || (key == "discord" && c == '#')) out += c;
+    return out.substr(0, 60);
+}
+static std::string SocialUrl(const std::string& key, const std::string& v) {
+    const SocialPlatform* sp = SocialFor(key);
+    if (!sp || v.empty()) return std::string();
+    if (key == "website") return ShellSafeUrl(v) ? v : std::string();
+    if (!sp->prefix[0]) return std::string();
+    const std::string u = sp->prefix + v;
+    return ShellSafeUrl(u) ? u : std::string();
+}
+
+// The blue "verified" rosette with a white check.
+static void DrawVerifiedBadge(ImDrawList* d, ImVec2 c, float r) {
+    const int n = 16;
+    for (int i = 0; i < n; ++i) {   // scalloped edge
+        const float a0 = 6.2831853f * i / n, a1 = 6.2831853f * (i + 1) / n;
+        const float r0 = (i & 1) ? r * 0.86f : r, r1 = (i & 1) ? r : r * 0.86f;
+        d->AddTriangleFilled(c, ImVec2(c.x + std::cos(a0) * r0, c.y + std::sin(a0) * r0),
+                             ImVec2(c.x + std::cos(a1) * r1, c.y + std::sin(a1) * r1), IM_COL32(56, 151, 240, 255));
+    }
+    d->AddCircleFilled(c, r * 0.80f, IM_COL32(56, 151, 240, 255), 20);
+    d->AddLine(ImVec2(c.x - r * 0.38f, c.y + r * 0.02f), ImVec2(c.x - r * 0.10f, c.y + r * 0.32f), IM_COL32_WHITE, std::max(1.4f, r * 0.20f));
+    d->AddLine(ImVec2(c.x - r * 0.10f, c.y + r * 0.32f), ImVec2(c.x + r * 0.42f, c.y - r * 0.30f), IM_COL32_WHITE, std::max(1.4f, r * 0.20f));
+}
+
+// A badge on a profile: earned from what you've done, or awarded by staff.
+struct ProfileBadge { std::string name, desc; ImU32 color; char glyph; };
+static std::vector<ProfileBadge> ProfileBadges(const okay::ProfileBundle& b, int achN, int points, int gameN, long playSecs, long editorSecs) {
+    std::vector<ProfileBadge> out;
+    for (const auto& s : b.badges) {   // staff-awarded first
+        if (s == "staff")     out.push_back({"Staff", "Works on OkaySpace.", IM_COL32(237, 66, 69, 255), 'S'});
+        if (s == "developer") out.push_back({"Developer", "Builds the engine.", IM_COL32(150, 110, 255, 255), 'D'});
+        if (s == "moderator") out.push_back({"Moderator", "Keeps the community friendly.", IM_COL32(67, 181, 129, 255), 'M'});
+        if (s == "beta")      out.push_back({"Beta Tester", "Tested OkaySpace before release.", IM_COL32(245, 150, 60, 255), 'B'});
+        if (s == "partner")   out.push_back({"Partner", "An official OkaySpace partner.", IM_COL32(250, 200, 70, 255), 'P'});
+    }
+    const long now = (long)std::time(nullptr);
+    if (b.p.memberSince > 0 && b.p.memberSince < 1767225600L)   // joined before 2026
+        out.push_back({"Early Adopter", "Joined OkaySpace in its first year.", IM_COL32(90, 200, 230, 255), 'E'});
+    if (b.p.memberSince > 0 && now - b.p.memberSince > 365L * 86400)
+        out.push_back({"Veteran", "Member for over a year.", IM_COL32(190, 160, 110, 255), 'V'});
+    if (gameN >= 5) out.push_back({"Prolific Creator", "Published 5+ games.", IM_COL32(255, 120, 90, 255), 'C'});
+    else if (gameN >= 1) out.push_back({"Creator", "Published a game.", IM_COL32(255, 150, 110, 255), 'C'});
+    if (achN >= 10) out.push_back({"Achievement Hunter", "Unlocked 10+ achievements.", IM_COL32(250, 200, 70, 255), 'A'});
+    if (points >= 500) out.push_back({"Point Collector", "Earned 500+ achievement points.", IM_COL32(255, 220, 120, 255), '*'});
+    if (b.friends >= 10) out.push_back({"Social Butterfly", "10+ friends.", IM_COL32(240, 110, 180, 255), 'F'});
+    if (playSecs >= 100L * 3600) out.push_back({"Dedicated Player", "100+ hours played.", IM_COL32(100, 170, 255, 255), 'H'});
+    if (editorSecs >= 50L * 3600) out.push_back({"Builder", "50+ hours in the editor.", IM_COL32(130, 210, 120, 255), 'E'});
+    return out;
+}
+static std::string HoursText(long secs) {
+    char b[32];
+    if (secs < 3600) std::snprintf(b, sizeof(b), "%ld min", std::max(1L, secs / 60));
+    else if (secs < 36000) std::snprintf(b, sizeof(b), "%.1f h", secs / 3600.0);
+    else std::snprintf(b, sizeof(b), "%ld h", secs / 3600);
+    return b;
+}
+
+// Account > Customize profile: social links (loaded + saved on a worker).
+struct SocialEditJob { int kind = 0; std::vector<std::pair<std::string, std::string>> links; };   // 0 load, 1 save
+static SDL_mutex* g_socMutex = nullptr;
+static volatile bool g_socBusy = false;
+static bool g_socLoaded = false, g_socSupported = true, g_socSaved = false, g_socFailed = false;   // (guarded)
+static std::vector<std::pair<std::string, std::string>> g_socLinks;                              // (guarded)
+static int SocialLinksWorker(void* p) {
+    std::unique_ptr<SocialEditJob> j(static_cast<SocialEditJob*>(p));
+    bool ok = false, sup = true; std::vector<std::pair<std::string, std::string>> got;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Profiles pr(a);
+        if (j->kind == 0) { got = pr.MySocialLinks(&sup); ok = sup; }
+        else ok = pr.SaveSocialLinks(j->links);
+    } catch (...) {}
+    SDL_LockMutex(g_socMutex);
+    if (j->kind == 0) { g_socLinks = got; g_socSupported = sup; g_socLoaded = true; }
+    else { g_socSaved = ok; g_socFailed = !ok; }
+    SDL_UnlockMutex(g_socMutex);
+    g_socBusy = false;
+    return 0;
+}
+static void DrawSocialLinksEditor(float fieldW, float btnW) {
+    static char bufs[sizeof(kSocials) / sizeof(kSocials[0])][128];
+    static bool requested = false, filled = false;
+    if (!g_socMutex) g_socMutex = SDL_CreateMutex();
+    if (!requested && !g_socBusy && !g_pollCfgDir.empty()) {
+        requested = true; g_socBusy = true;
+        if (SDL_Thread* t = SDL_CreateThread(SocialLinksWorker, "okay-social", new SocialEditJob{})) SDL_DetachThread(t);
+        else g_socBusy = false;
+    }
+    SDL_LockMutex(g_socMutex);
+    if (g_socLoaded && !filled) {
+        filled = true;
+        for (std::size_t i = 0; i < sizeof(kSocials) / sizeof(kSocials[0]); ++i)
+            for (const auto& kv : g_socLinks) if (kv.first == kSocials[i].key) std::snprintf(bufs[i], sizeof(bufs[i]), "%s", kv.second.c_str());
+    }
+    const bool supported = g_socSupported;
+    if (g_socSaved) { g_socSaved = false; Toast("Social links saved", 1); }
+    if (g_socFailed) { g_socFailed = false; Toast("Couldn't save your links", 2); }
+    SDL_UnlockMutex(g_socMutex);
+    ImGui::Dummy(ImVec2(0, 10));
+    ImGui::SeparatorText("Social links");
+    if (!supported) { ImGui::TextDisabled("Social links need the profile_extras.sql update on the server."); return; }
+    ImGui::TextDisabled("Shown on your public profile. A handle or a link both work.");
+    for (std::size_t i = 0; i < sizeof(kSocials) / sizeof(kSocials[0]); ++i) {
+        const SocialPlatform& sp = kSocials[i];
+        ImGui::PushID((int)i);
+        ImVec2 cp = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cp.x + 6, cp.y + ImGui::GetFrameHeight() * 0.5f), 4.5f, sp.color, 12);
+        ImGui::SetCursorScreenPos(ImVec2(cp.x + 16, cp.y));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(sp.label);
+        ImGui::SameLine(110);
+        ImGui::SetNextItemWidth(fieldW - 110 + ImGui::GetStyle().WindowPadding.x);
+        const char* hint = std::string(sp.key) == "website" ? "https://your.site" : std::string(sp.key) == "discord" ? "name" : "@handle";
+        ImGui::InputTextWithHint("##soc", hint, bufs[i], sizeof(bufs[i]));
+        ImGui::PopID();
+    }
+    ImGui::BeginDisabled(g_socBusy);
+    if (ImGui::Button("Save links", ImVec2(btnW, 0))) {
+        auto* j = new SocialEditJob; j->kind = 1;
+        bool bad = false;
+        for (std::size_t i = 0; i < sizeof(kSocials) / sizeof(kSocials[0]); ++i) {
+            if (!bufs[i][0]) continue;
+            const std::string v = CleanSocial(kSocials[i].key, bufs[i]);
+            if (v.empty()) { bad = true; continue; }
+            std::snprintf(bufs[i], sizeof(bufs[i]), "%s", v.c_str());
+            j->links.emplace_back(kSocials[i].key, v);
+        }
+        if (bad) Toast("Some links weren't valid and were skipped", 2);
+        g_socBusy = true;
+        if (SDL_Thread* t = SDL_CreateThread(SocialLinksWorker, "okay-social", j)) SDL_DetachThread(t);
+        else { g_socBusy = false; delete j; }
+    }
+    ImGui::EndDisabled();
+}
+
 static okay::ProfileBundle DemoProfileBundle(const PfOpenReq& r, const std::string& me) {
     okay::ProfileBundle b;
     b.found = b.reached = b.showcaseSupported = b.achSupported = true;
@@ -7576,6 +7866,14 @@ static okay::ProfileBundle DemoProfileBundle(const PfOpenReq& r, const std::stri
         game(70, "Racer Starter Kit", "Template: car physics, laps and a HUD to start your own racer.", "template", 312);
         p.showcaseGames = {41, 57, 62, 33};
         b.friends = 23; b.isMe = true;
+        b.extrasSupported = true; p.verified = true;
+        p.socials = {{"youtube", "neondriftdev"}, {"twitch", "kingimann"}, {"x", "okayspace"}, {"github", "kingimann"}, {"website", "https://okayspace.dev"}};
+        b.badges = {"developer", "beta"};
+        auto pt = [&](const char* k, const char* t, long h, long ago) { okay::PlaytimeEntry e; e.key = k; e.title = t; e.seconds = h * 3600 + 1200; e.lastPlayed = t0 - ago; b.playtime.push_back(e); };
+        pt("editor", "OkaySpace Editor", 214, 3600); pt("game:Neon Drift", "Neon Drift", 86, 2 * 3600);
+        pt("game:Dungeon Dash", "Dungeon Dash", 31, day); pt("game:Pixel Farm", "Pixel Farm", 12, 4 * day);
+        pt("game:Asteroid Belt", "Asteroid Belt", 3, 20 * day);
+        for (auto& a : b.achievements) a.points = (a.id == "untouchable" || a.id == "perfect_lap") ? 50 : a.id == "master_builder" ? 100 : 25;
         ev("publish", "Neon Drift 2.0", 3 * 3600); ev("achievement", "Perfect Lap", 2 * 3600 + 600);
         ev("playing", "Dungeon Dash", day); ev("achievement", "Speed Demon", day + 1800);
     } else if (key == "maya" || r.uid == "u-maya") {
@@ -7840,7 +8138,14 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
     if (!gamesPinned) for (std::size_t i = 0; i < s_b.games.size() && i < 4; ++i) shownG.push_back(s_b.games[i]);
     long totalDl = 0; for (const auto& g : s_b.games) totalDl += g.downloads;
     const int achN = (int)achAll.size(), gameN = (int)s_b.games.size();
-    const int level = 1 + (int)std::sqrt((achN * 40.0 + gameN * 120.0 + std::max(0, s_b.friends) * 15.0 + totalDl / 40.0) / 20.0);
+    (void)totalDl;
+    const int achPts = okay::Achievements::TotalPoints(achAll);
+    const int level = okay::Achievements::Level(achPts) + 1;   // points from achievements level you up
+    // Time played: theirs from the server; mine from this device until the table exists.
+    if (me && !kDemo) LoadPlaytime();
+    const std::vector<okay::PlaytimeEntry>& playAll = (me && !kDemo && s_b.playtime.empty()) ? g_playtime : s_b.playtime;
+    long playSecs = 0, editorSecs = 0;
+    for (const auto& e : playAll) { if (e.key == "editor") editorSecs += e.seconds; else playSecs += e.seconds; }
     int bannerIdx = (s_edit ? e_banner : pickBanner);
     if (bannerIdx < 0 || bannerIdx >= nPresets) bannerIdx = p.accent;
     if (bannerIdx < 0 || bannerIdx >= nPresets) bannerIdx = 0;
@@ -7962,7 +8267,8 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
             ImVec2 ks = font->CalcTextSizeA(fs * 0.72f, FLT_MAX, 0.0f, "LEVEL");
             dl->AddText(font, fs * 0.72f, ImVec2(lc.x - ks.x * 0.5f, lc.y + 27.0f), IM_COL32(255, 255, 255, 190), "LEVEL");
             if (ImGui::IsMouseHoveringRect(ImVec2(lc.x - 26, lc.y - 26), ImVec2(lc.x + 26, lc.y + 40)) && ImGui::IsWindowHovered())
-                ImGui::SetTooltip("Profile level %d\nGrows with achievements, published games and friends.", level);
+                ImGui::SetTooltip("Level %d  \xC2\xB7  %d achievement points\n%d%% to level %d. Every achievement earns points.", level, achPts,
+                                  (int)(okay::Achievements::LevelProgress(achPts) * 100), level + 1);
         }
         // Avatar with a presence ring (cut out of the card).
         ImVec2 ac(hp.x + 26.0f + A * 0.5f, hp.y + bannerH - 6.0f);
@@ -8088,8 +8394,15 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
             while (nm.size() > 4 && font->CalcTextSizeA(nsz, FLT_MAX, 0.0f, nm.c_str()).x > textMaxW - (me ? 46.0f : 0.0f))
                 nm = nm.substr(0, nm.size() - 4) + "\xE2\x80\xA6";
             dl->AddText(font, nsz, ImVec2(nameX, nameY), IM_COL32(242, 244, 250, 255), nm.c_str());
+            float afterName = nameX + font->CalcTextSizeA(nsz, FLT_MAX, 0.0f, nm.c_str()).x;
+            if (p.verified) {   // blue check
+                const ImVec2 vc(afterName + 14.0f, nameY + nsz * 0.55f);
+                DrawVerifiedBadge(dl, vc, nsz * 0.36f);
+                if (ImGui::IsMouseHoveringRect(ImVec2(vc.x - 10, vc.y - 10), ImVec2(vc.x + 10, vc.y + 10))) ImGui::SetTooltip("Verified");
+                afterName += 26.0f;
+            }
             if (me) {   // "YOU" pill after the name
-                float nx = nameX + font->CalcTextSizeA(nsz, FLT_MAX, 0.0f, nm.c_str()).x + 10.0f;
+                float nx = afterName + 10.0f;
                 ImVec2 ts = font->CalcTextSizeA(fs * 0.72f, FLT_MAX, 0.0f, "YOU");
                 float py = nameY + (nsz - ts.y - 6.0f) * 0.5f + 1.0f;
                 dl->AddRectFilled(ImVec2(nx, py), ImVec2(nx + ts.x + 12.0f, py + ts.y + 6.0f), ImGui::GetColorU32(okaytheme::WithAlpha(kAccent, 0.28f)), 8.0f);
@@ -8120,13 +8433,14 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         {
             const float sy = hp.y + bannerH + infoH;
             dl->AddLine(ImVec2(hp.x + 18.0f, sy), ImVec2(he.x - 18.0f, sy), hair, 1.0f);
-            char v0s[24], v1s[24], v2s[24], v3s[24] = "\xE2\x80\x94";
+            char v0s[24], v1s[24], v2s[24], v3s[24];
             if (s_b.friends >= 0) std::snprintf(v0s, sizeof(v0s), "%d", s_b.friends); else std::snprintf(v0s, sizeof(v0s), "\xE2\x80\x94");
             std::snprintf(v1s, sizeof(v1s), "%d", gameN);
-            if (achKnown) std::snprintf(v2s, sizeof(v2s), "%d", achN); else std::snprintf(v2s, sizeof(v2s), "\xE2\x80\x94");
-            if (p.memberSince > 0) { std::time_t t = (std::time_t)p.memberSince; if (std::tm* tm = std::localtime(&t)) std::strftime(v3s, sizeof(v3s), "%b %Y", tm); }
+            if (achKnown) std::snprintf(v2s, sizeof(v2s), "%d", achPts); else std::snprintf(v2s, sizeof(v2s), "\xE2\x80\x94");
+            if (playSecs + editorSecs > 0) std::snprintf(v3s, sizeof(v3s), "%ld", (playSecs + editorSecs) / 3600);
+            else std::snprintf(v3s, sizeof(v3s), "\xE2\x80\x94");
             const char* vals[4] = {v0s, v1s, v2s, v3s};
-            const char* labs[4] = {"FRIENDS", "GAMES PUBLISHED", "ACHIEVEMENTS", "MEMBER SINCE"};
+            const char* labs[4] = {"FRIENDS", "GAMES PUBLISHED", "ACHIEVEMENT POINTS", "HOURS PLAYED"};
             const float tw = W / statCols;
             for (int i = 0; i < 4; ++i) {
                 float tx = hp.x + (i % statCols) * tw, ty = sy + 3.0f + (i / statCols) * statRowH;
@@ -8385,6 +8699,116 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         endCard();
     };
 
+    // Hours per game + time in the editor.
+    auto playtimeCard = [&](float w) {
+        if (playAll.empty()) return;
+        beginCard("##pfplay", w);
+        char right[48]; std::snprintf(right, sizeof(right), "%s total", HoursText(playSecs + editorSecs).c_str());
+        cardTitle("PLAYTIME", right, false);
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        long top = 1; for (const auto& e : playAll) top = std::max(top, e.seconds);
+        const float cw = ImGui::GetContentRegionAvail().x;
+        int n = 0;
+        for (const auto& e : playAll) {
+            if (n++ >= 6) break;
+            const bool ed = e.key == "editor";
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            const float rh = 40.0f;
+            // icon: a pad for games, a wrench-ish square for the editor
+            const ImVec2 ic(rp.x + 16, rp.y + rh * 0.5f);
+            d->AddRectFilled(ImVec2(ic.x - 15, ic.y - 15), ImVec2(ic.x + 15, ic.y + 15), ed ? IM_COL32(130, 210, 120, 40) : IM_COL32(100, 170, 255, 40), 8.0f);
+            DrawNavIcon(d, ed ? 0 : 1, ic, ed ? IM_COL32(130, 210, 120, 255) : IM_COL32(120, 180, 255, 255));
+            const float tx = rp.x + 42, tw2 = cw - 42;
+            d->AddText(ImVec2(tx, rp.y + 2), cText, FitText(ed ? std::string("In the editor") : e.title, tw2 - 90).c_str());
+            const std::string hrs = HoursText(e.seconds);
+            const float hw = ImGui::CalcTextSize(hrs.c_str()).x;
+            d->AddText(ImVec2(rp.x + cw - hw, rp.y + 2), cText, hrs.c_str());
+            const float by = rp.y + 24, frac = (float)e.seconds / (float)top;
+            d->AddRectFilled(ImVec2(tx, by), ImVec2(tx + tw2 - 100, by + 5), IM_COL32(255, 255, 255, 18), 3.0f);
+            d->AddRectFilled(ImVec2(tx, by), ImVec2(tx + std::max(4.0f, (tw2 - 100) * frac), by + 5),
+                             ed ? IM_COL32(130, 210, 120, 255) : ImGui::GetColorU32(kAccent), 3.0f);
+            if (e.lastPlayed > 0) {
+                const std::string lp = (PlaytimeRunning(e.key) && me ? std::string("now") : RelTime(e.lastPlayed));
+                const float lw = ImGui::CalcTextSize(lp.c_str()).x;
+                d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.85f, ImVec2(rp.x + cw - lw * 0.85f, by - 3), cDim, lp.c_str());
+            }
+            ImGui::Dummy(ImVec2(cw, rh));
+        }
+        endCard();
+    };
+    // Badges: staff-awarded ones and those earned from what they've done.
+    auto badgesCard = [&](float w) {
+        const auto badges = ProfileBadges(s_b, achN, achPts, gameN, playSecs, editorSecs);
+        if (badges.empty() && !p.verified) return;
+        beginCard("##pfbadges", w);
+        cardTitle("BADGES", nullptr, false);
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        const float cw = ImGui::GetContentRegionAvail().x, bs = 40.0f, g = 8.0f;
+        const int cols = std::max(1, (int)((cw + g) / (bs + g)));
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        std::vector<ProfileBadge> all = badges;
+        if (p.verified) all.insert(all.begin(), ProfileBadge{"Verified", "A verified OkaySpace account.", IM_COL32(56, 151, 240, 255), 'v'});
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            const ProfileBadge& bd = all[i];
+            const ImVec2 bp(o.x + (i % cols) * (bs + g), o.y + (i / cols) * (bs + g));
+            const ImVec2 c(bp.x + bs * 0.5f, bp.y + bs * 0.5f);
+            if (bd.glyph == 'v') DrawVerifiedBadge(d, c, bs * 0.42f);
+            else {
+                d->AddNgonFilled(c, bs * 0.46f, (bd.color & 0x00FFFFFF) | 0x40000000, 6);   // tinted fill
+                d->AddNgon(c, bs * 0.46f, bd.color, 6, 2.0f);
+                char gl[2] = {bd.glyph, 0};
+                ImGui::SetWindowFontScale(1.1f);
+                const ImVec2 gs = ImGui::CalcTextSize(gl);
+                d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(c.x - gs.x * 0.5f, c.y - gs.y * 0.5f), bd.color, gl);
+                ImGui::SetWindowFontScale(1.0f);
+            }
+            if (ImGui::IsMouseHoveringRect(bp, ImVec2(bp.x + bs, bp.y + bs)) && ImGui::IsWindowHovered())
+                ImGui::SetTooltip("%s\n%s", bd.name.c_str(), bd.desc.c_str());
+        }
+        const int rows = ((int)all.size() + cols - 1) / cols;
+        ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + rows * (bs + g) - g));
+        ImGui::Dummy(ImVec2(0, 0));
+        endCard();
+    };
+    // Social links as pills (click to open; Discord copies the tag).
+    auto linksCard = [&](float w) {
+        if (p.socials.empty()) return;
+        beginCard("##pflinks", w);
+        cardTitle("LINKS", nullptr, false);
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        const float cw = ImGui::GetContentRegionAvail().x;
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        float x = o.x, y = o.y;
+        const float ph = ImGui::GetTextLineHeight() + 12.0f;
+        for (const auto& kv : p.socials) {
+            const SocialPlatform* sp = SocialFor(kv.first);
+            if (!sp) continue;
+            std::string shown = kv.first == "website" ? kv.second.substr(kv.second.find("://") + 3) : (kv.first == "discord" ? kv.second : "@" + kv.second);
+            shown = FitText(shown, cw - 90);
+            const float pw = 22.0f + ImGui::CalcTextSize(sp->label).x + 8 + ImGui::CalcTextSize(shown.c_str()).x + 14;
+            if (x > o.x && x + pw > o.x + cw) { x = o.x; y += ph + 6; }
+            ImGui::SetCursorScreenPos(ImVec2(x, y));
+            ImGui::PushID(kv.first.c_str());
+            const bool hit = ImGui::InvisibleButton("##soc", ImVec2(pw, ph));
+            const bool h = ImGui::IsItemHovered();
+            ImGui::PopID();
+            d->AddRectFilled(ImVec2(x, y), ImVec2(x + pw, y + ph), h ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 12), ph * 0.5f);
+            d->AddCircleFilled(ImVec2(x + 13, y + ph * 0.5f), 5.0f, sp->color, 12);
+            d->AddText(ImVec2(x + 22, y + 6), cText, sp->label);
+            d->AddText(ImVec2(x + 22 + ImGui::CalcTextSize(sp->label).x + 8, y + 6), cDim, shown.c_str());
+            const std::string url = SocialUrl(kv.first, kv.second);
+            if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", url.empty() ? "Copy" : url.c_str()); }
+            if (hit) {
+                if (!url.empty()) OpenExternal(url);
+                else { ImGui::SetClipboardText(kv.second.c_str()); Toast(std::string(sp->label) + " copied", 1); }
+            }
+            x += pw + 6;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(o.x, y + ph));
+        ImGui::Dummy(ImVec2(0, 0));
+        endCard();
+    };
+
     auto activityCard = [&](float w) {
         beginCard("##pfactivity", w);
         cardTitle("RECENT ACTIVITY", nullptr, false);
@@ -8421,8 +8845,9 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
 
     ImGui::BeginGroup();
     if (s_edit) editCard(mainW);
-    if (!twoCol) aboutCard(mainW);
+    if (!twoCol) { aboutCard(mainW); badgesCard(mainW); linksCard(mainW); }
     achCard(mainW);
+    playtimeCard(mainW);
     gamesCard(mainW);
     if (!twoCol) activityCard(mainW);
     ImGui::EndGroup();
@@ -8430,6 +8855,8 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         ImGui::SameLine(0, gap);
         ImGui::BeginGroup();
         aboutCard(sideW);
+        badgesCard(sideW);
+        linksCard(sideW);
         activityCard(sideW);
         ImGui::EndGroup();
     }
@@ -8957,6 +9384,29 @@ static bool ChatHostEvent(const SDL_Event& e) {
     ImGui::SetCurrentContext(mainCtx);
     return true;
 }
+// Upload playtime totals in the background (user_playtime; profile_extras.sql).
+static std::vector<okay::PlaytimeEntry> g_playtimeJob;
+static volatile bool g_playtimeSyncing = false;
+static int PlaytimeSyncWorker(void*) {
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Profiles(a).SyncPlaytime(g_playtimeJob);
+    } catch (...) {}
+    g_playtimeSyncing = false;
+    return 0;
+}
+static void PlaytimeTick(bool loggedIn) {
+    static Uint32 nextPump = 0, nextSync = 0;
+    const Uint32 now = SDL_GetTicks();
+    if (now >= nextPump) { nextPump = now + 1000; PumpPlaytime(); }
+    if (g_playtimeDirty && loggedIn && !g_playtimeSyncing && now >= nextSync && !g_pollCfgDir.empty()) {
+        g_playtimeDirty = false; nextSync = now + 120000;   // at most every 2 minutes
+        g_playtimeJob = g_playtime; g_playtimeSyncing = true;
+        if (SDL_Thread* t = SDL_CreateThread(PlaytimeSyncWorker, "okay-playtime", nullptr)) SDL_DetachThread(t);
+        else g_playtimeSyncing = false;
+    }
+}
+
 // Draw + present one chat-window frame (call with the launcher's context current).
 static void ChatHostFrame(okay::account::AccountService& account) {
     if (!g_chatHost.shown) return;
@@ -9420,6 +9870,7 @@ int main(int argc, char** argv) {
         if (account.IsLoggedIn()) g_voiceMe = account.CurrentSession().username;
         VoiceHandleSignals();
         VoicePump();
+        PlaytimeTick(account.IsLoggedIn());
         if (!g_incoming.code.empty()) {   // ring (and get the user's attention) while a call waits
             static Uint32 nextRing = 0;
             if (SDL_GetTicks() >= nextRing) {
@@ -11938,6 +12389,7 @@ int main(int argc, char** argv) {
                         if (okay::Friends(account).SetLocation(acctLocation)) Toast("Location updated", 1);
                     }
                     ImGui::TextDisabled("These show on your profile card when friends click your name.");
+                    DrawSocialLinksEditor(kFieldW, kBtnW);
                 }
 
                 // Change username / handle (all backends).
@@ -12805,7 +13257,8 @@ int main(int argc, char** argv) {
                 if (!kAchDemo) achs = okay::Achievements::All();
                 else if (achs.empty()) {
                     const long t0 = (long)std::time(nullptr), day = 86400;
-                    auto a = [&](const char* id, const char* lb, long ago) { okay::Achievement x; x.id = id; x.label = lb; x.when = t0 - ago; achs.push_back(x); };
+                    auto a = [&](const char* id, const char* lb, long ago) { okay::Achievement x; x.id = id; x.label = lb; x.when = t0 - ago;
+                        x.points = (int)(std::hash<std::string>{}(id) % 4) == 0 ? 50 : (std::hash<std::string>{}(id) % 3 == 0 ? 25 : 10); achs.push_back(x); };
                     a("first_win", "First Victory", 120 * day); a("coin_hoarder", "Coin Hoarder", 60 * day);
                     a("speed_demon", "Speed Demon", 20 * day); a("night_owl", "Night Owl", 9 * day);
                     a("first_publish", "Published!", 3 * day); a("perfect_lap", "Perfect Lap", 2 * 3600);
@@ -12868,10 +13321,25 @@ int main(int argc, char** argv) {
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.8f, ImVec2(x, p.y + 10 + bs.y), cDim, small);
                 };
                 char m[16]; std::snprintf(m, sizeof(m), "%d", monthN);
-                char sc[16]; std::snprintf(sc, sizeof(sc), "%d / 6", (int)std::min<size_t>(6, achShow.ach.size()));
+                const int pts = okay::Achievements::TotalPoints(achs), lvl = okay::Achievements::Level(pts) + 1;
+                char ps[24]; std::snprintf(ps, sizeof(ps), "%d", pts);
                 if (ImGui::GetContentRegionAvail().x > 640) {
-                    stat(rx - bw - 230, m, "THIS MONTH");
-                    stat(rx - bw - 120, sc, "SHOWCASED");
+                    // Level badge: ring filling toward the next level.
+                    const ImVec2 lc(rx - bw - 300, p.y + 30);
+                    const float prog = okay::Achievements::LevelProgress(pts);
+                    dl->AddCircle(lc, 22.0f, IM_COL32(255, 255, 255, 30), 40, 4.0f);
+                    dl->PathArcTo(lc, 22.0f, -1.5707963f, -1.5707963f + prog * 6.2831853f, 40);
+                    dl->PathStroke(gold, 0, 4.0f);
+                    char ls[8]; std::snprintf(ls, sizeof(ls), "%d", lvl);
+                    ImGui::SetWindowFontScale(1.2f);
+                    ImVec2 lsz = ImGui::CalcTextSize(ls);
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(lc.x - lsz.x * 0.5f, lc.y - lsz.y * 0.5f), cText, ls);
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::SetCursorScreenPos(ImVec2(lc.x - 24, lc.y - 24));
+                    ImGui::InvisibleButton("##lvl", ImVec2(48, 48));
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Level %d  \xC2\xB7  %d%% to level %d\nEvery achievement earns points; games can make hard ones worth more.", lvl, (int)(prog * 100), lvl + 1);
+                    stat(rx - bw - 230, ps, "POINTS");
+                    stat(rx - bw - 120, m, "THIS MONTH");
                 }
                 ImGui::SetCursorScreenPos(ImVec2(rx - bw, p.y + 12));
                 if (ImGui::Button("View my profile", ImVec2(bw, 34)))
@@ -13014,7 +13482,11 @@ int main(int argc, char** argv) {
                     const float tx = p.x + 74, maxW = tileW - 74 - 14 - (pinned ? 16 : 0);
                     dl->AddText(ImVec2(tx, p.y + 18), cText, FitText(a.label.empty() ? PfPrettyId(a.id) : a.label, maxW).c_str());
                     std::string d = dateOf(a.when);
-                    dl->AddText(ImVec2(tx, p.y + 40), cDim, FitText(d.empty() ? std::string("Unlocked") : "Unlocked " + d, maxW).c_str());
+                    char ptxt[12]; std::snprintf(ptxt, sizeof(ptxt), "+%d", a.points);
+                    const ImVec2 pts2 = ImGui::CalcTextSize(ptxt);
+                    dl->AddRectFilled(ImVec2(tx, p.y + 40), ImVec2(tx + pts2.x + 12, p.y + 40 + pts2.y + 2), IM_COL32(250, 200, 70, a.points >= 50 ? 60 : 32), 8.0f);
+                    dl->AddText(ImVec2(tx + 6, p.y + 41), gold, ptxt);
+                    dl->AddText(ImVec2(tx + pts2.x + 20, p.y + 40), cDim, FitText(d.empty() ? std::string("Unlocked") : d, maxW - pts2.x - 20).c_str());
                     if (pinned) DrawStar(dl, ImVec2(p.x + tileW - 18, p.y + 18), 6.0f, gold);
                     if (fresh) {   // "NEW" pill on recent unlocks
                         const char* nw = "NEW";

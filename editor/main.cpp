@@ -4696,18 +4696,33 @@ static bool PathIsAncestor(const std::filesystem::path& anc, const std::filesyst
 static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::size_t bufsz,
                            char* search, bool reveal) {
     namespace fs = std::filesystem;
-    std::error_code ec;
-    std::vector<fs::path> subs;
-    for (auto& e : fs::directory_iterator(dir, ec))
-        if (e.is_directory(ec)) subs.push_back(e.path());
-    std::sort(subs.begin(), subs.end(), [](const fs::path& a, const fs::path& b) {
-        return Lower(a.filename().string()) < Lower(b.filename().string());
-    });
+    // Cache each folder's subfolder listing (+ whether each has children) so the
+    // recursive tree doesn't re-scan the disk every frame for every open folder
+    // (a real stutter on big projects). ~1s TTL picks up external changes.
+    static std::map<std::string, std::pair<Uint32, std::vector<std::pair<fs::path, bool>>>> s_treeCache;
+    std::string dkey = dir.string();
+    auto& cached = s_treeCache[dkey];
+    Uint32 nowMs = SDL_GetTicks();
+    if (nowMs >= cached.first) {
+        cached.first = nowMs + 1000;
+        cached.second.clear();
+        std::vector<fs::path> subs;
+        std::error_code se;
+        for (auto& e : fs::directory_iterator(dir, se))
+            if (e.is_directory(se)) subs.push_back(e.path());
+        std::sort(subs.begin(), subs.end(), [](const fs::path& a, const fs::path& b) {
+            return Lower(a.filename().string()) < Lower(b.filename().string());
+        });
+        for (const fs::path& s : subs) {
+            bool hk = false; std::error_code e2;
+            for (auto& c : fs::directory_iterator(s, e2)) { if (c.is_directory(e2)) { hk = true; break; } }
+            cached.second.push_back({s, hk});
+        }
+    }
     fs::path cur(dirBuf);
-    for (const fs::path& s : subs) {
-        bool hasKids = false;
-        std::error_code e2;
-        for (auto& c : fs::directory_iterator(s, e2)) { if (c.is_directory(e2)) { hasKids = true; break; } }
+    for (const auto& pr : cached.second) {
+        const fs::path& s = pr.first;
+        bool hasKids = pr.second;
         ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
                                ImGuiTreeNodeFlags_OpenOnDoubleClick;
         if (!hasKids) f |= ImGuiTreeNodeFlags_Leaf;
@@ -5077,37 +5092,53 @@ void DrawProject(EditorState& ed) {
         return true;
     };
 
-    std::vector<fs::directory_entry> entries;
-    if (fs::is_directory(dir, ec)) {
-        if (search[0] == '\0') {
-            for (auto& e : fs::directory_iterator(dir, ec)) entries.push_back(e);
-        } else {
-            // A search term looks through THIS FOLDER AND EVERYTHING BELOW it
-            // (Unity-style), capped so a giant tree can't stall the frame.
-            for (auto& e : fs::recursive_directory_iterator(
-                     dir, fs::directory_options::skip_permission_denied, ec)) {
-                entries.push_back(e);
-                if (entries.size() >= 4000) break;
+    // Cache the directory scan + sort so the Project panel doesn't hit the disk
+    // every frame (per-comparison file_size/last_write_time made that a real
+    // stutter on big asset folders). Re-scan when the folder / search / sort
+    // change, or every ~0.6s to pick up external edits.
+    static std::string s_scanDir, s_scanSearch; static int s_scanSort = -1;
+    static Uint32 s_scanNext = 0;
+    static std::vector<fs::directory_entry> s_scanEntries;
+    {
+        Uint32 nowMs = SDL_GetTicks();
+        bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort;
+        if (changed || nowMs >= s_scanNext) {
+            s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanNext = nowMs + 600;
+            s_scanEntries.clear();
+            std::error_code sec;
+            if (fs::is_directory(dir, sec)) {
+                if (search[0] == '\0') {
+                    for (auto& e : fs::directory_iterator(dir, sec)) s_scanEntries.push_back(e);
+                } else {
+                    // A search looks through THIS FOLDER AND EVERYTHING BELOW it
+                    // (Unity-style), capped so a giant tree can't stall the scan.
+                    for (auto& e : fs::recursive_directory_iterator(
+                             dir, fs::directory_options::skip_permission_denied, sec)) {
+                        s_scanEntries.push_back(e);
+                        if (s_scanEntries.size() >= 4000) break;
+                    }
+                }
             }
+            std::sort(s_scanEntries.begin(), s_scanEntries.end(), [&](const fs::directory_entry& a, const fs::directory_entry& b) {
+                bool da = a.is_directory(), db = b.is_directory();
+                if (da != db) return da;     // folders first
+                if (s_sort == 1 && !da) {    // by type (extension), then name
+                    std::string ea = Lower(a.path().extension().string()), eb = Lower(b.path().extension().string());
+                    if (ea != eb) return ea < eb;
+                } else if (s_sort == 2 && !da) {   // by size, largest first, then name
+                    std::error_code sa, sb;
+                    auto za = fs::file_size(a.path(), sa), zb = fs::file_size(b.path(), sb);
+                    if (!sa && !sb && za != zb) return za > zb;
+                } else if (s_sort == 3) {          // by modified time, newest first
+                    std::error_code ta, tb;
+                    auto wa = fs::last_write_time(a.path(), ta), wb = fs::last_write_time(b.path(), tb);
+                    if (!ta && !tb && wa != wb) return wa > wb;
+                }
+                return Lower(a.path().filename().string()) < Lower(b.path().filename().string());
+            });
         }
     }
-    std::sort(entries.begin(), entries.end(), [&](const fs::directory_entry& a, const fs::directory_entry& b) {
-        bool da = a.is_directory(), db = b.is_directory();
-        if (da != db) return da;     // folders first
-        if (s_sort == 1 && !da) {    // by type (extension), then name
-            std::string ea = Lower(a.path().extension().string()), eb = Lower(b.path().extension().string());
-            if (ea != eb) return ea < eb;
-        } else if (s_sort == 2 && !da) {   // by size, largest first, then name
-            std::error_code sa, sb;
-            auto za = fs::file_size(a.path(), sa), zb = fs::file_size(b.path(), sb);
-            if (!sa && !sb && za != zb) return za > zb;
-        } else if (s_sort == 3) {          // by modified time, newest first
-            std::error_code ta, tb;
-            auto wa = fs::last_write_time(a.path(), ta), wb = fs::last_write_time(b.path(), tb);
-            if (!ta && !tb && wa != wb) return wa > wb;
-        }
-        return Lower(a.path().filename().string()) < Lower(b.path().filename().string());
-    });
+    std::vector<fs::directory_entry>& entries = s_scanEntries;
 
     std::string needle = Lower(search);
     const float cell = s_cell;

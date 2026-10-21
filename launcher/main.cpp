@@ -977,7 +977,7 @@ int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
-int g_winW = 1040, g_winH = 680;  // last window size (persisted)
+int g_winW = 1160, g_winH = 752;  // last window size (persisted) — roomier first-launch default
 const char* kThemeNames[] = {"Dark", "Midnight", "Light"};
 
 // Transient toast notification (bottom-right of the window).
@@ -2799,6 +2799,66 @@ static int ChatPollWorker(void*) {
     return 0;
 }
 
+// ---- Background Servers poll ------------------------------------------------
+// With a server selected, the Servers tab polled channels (15s), members (20s)
+// and messages+likes (every 4s = 3 calls) on the UI thread — periodic hitches
+// ("the server tab is laggy"). A worker thread (own account service) now polls
+// the selected server/channel and publishes under a mutex. It only runs while
+// the tab is actually on screen (g_srvActiveMs is bumped each frame). User
+// actions (send/create/like) stay on the main thread and set g_srvForce.
+static SDL_mutex*  g_srvMutex = nullptr;
+static SDL_Thread* g_srvThread = nullptr;
+static volatile bool g_srvPollRun = true;
+static volatile bool g_srvForce = false;
+static volatile long g_srvSel = 0, g_srvChan = 0;    // inputs set by the main thread
+static volatile Uint32 g_srvActiveMs = 0;            // last frame the Servers tab rendered
+static bool g_srvChanReady = false, g_srvMemReady = false, g_srvMsgReady = false;  // (guarded)
+static std::vector<okay::Channel> g_srvChannels;      // (guarded)
+static std::vector<okay::ServerMember> g_srvMembers;  // (guarded)
+static std::vector<okay::ChannelMessage> g_srvMsgs;   // (guarded)
+static std::map<long,long> g_srvLikes;                // (guarded)
+static std::map<long,bool> g_srvMyLikes;              // (guarded)
+static int ServerPollWorker(void*) {
+    okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+    okay::Servers sv(a);
+    Uint32 nextChan = 0, nextMem = 0, nextMsg = 0;
+    long lastSel = 0, lastChan = 0;
+    while (g_srvPollRun) {
+        Uint32 now = SDL_GetTicks();
+        if (now - g_srvActiveMs > 2500) { SDL_Delay(200); continue; }   // only while viewing Servers
+        long sel = g_srvSel, chan = g_srvChan;
+        if (sel != lastSel)  { lastSel = sel;  nextChan = 0; nextMem = 0; }
+        if (chan != lastChan) { lastChan = chan; nextMsg = 0; }
+        if (g_srvForce) { g_srvForce = false; nextChan = 0; nextMem = 0; nextMsg = 0; }
+        try {
+            if (sel != 0) {
+                if (now >= nextChan) {
+                    auto c = sv.Channels(sel);
+                    if (g_srvMutex) { SDL_LockMutex(g_srvMutex); g_srvChannels = std::move(c); g_srvChanReady = true; SDL_UnlockMutex(g_srvMutex); }
+                    nextChan = now + 15000;
+                }
+                if (now >= nextMem) {
+                    auto m = sv.Members(sel);
+                    if (g_srvMutex) { SDL_LockMutex(g_srvMutex); g_srvMembers = std::move(m); g_srvMemReady = true; SDL_UnlockMutex(g_srvMutex); }
+                    nextMem = now + 20000;
+                }
+            }
+            if (chan != 0 && now >= nextMsg) {
+                auto ms = sv.Messages(chan); auto lk = sv.Likes(); auto ml = sv.MyLikes();
+                if (g_srvMutex) {
+                    SDL_LockMutex(g_srvMutex);
+                    g_srvMsgs = std::move(ms); g_srvLikes = std::move(lk); g_srvMyLikes = std::move(ml);
+                    g_srvMsgReady = true;
+                    SDL_UnlockMutex(g_srvMutex);
+                }
+                nextMsg = now + 4000;
+            }
+        } catch (...) { /* transient — retry next tick */ }
+        SDL_Delay(250);
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2952,6 +3012,9 @@ int main(int argc, char** argv) {
     // never blocks the UI on the network.
     g_chatMutex = SDL_CreateMutex();
     g_chatThread = SDL_CreateThread(ChatPollWorker, "okay-chat", nullptr);
+    // Background Servers poller (channels/members/messages for the open server).
+    g_srvMutex = SDL_CreateMutex();
+    g_srvThread = SDL_CreateThread(ServerPollWorker, "okay-srv", nullptr);
 
     // The account server is baked into this build (OKAY_DEFAULT_ACCOUNT_URL /
     // account_server.txt), so the launcher no longer exposes a server-URL field
@@ -6319,10 +6382,21 @@ int main(int argc, char** argv) {
                     if (svSel == 0) {
                         ImGui::TextDisabled("Pick a server");
                     } else {
-                        if (now >= svNextChan) { svChannels = sv.Channels(svSel); svNextChan = now + 15000;
-                            if (svChan == 0 && !svChannels.empty()) { svChan = svChannels[0].id; svNextMsg = 0; } }
-                        // Am I this server's owner? (drives the management controls)
-                        std::string svMyUid = sv.MyUid();
+                        // Feed the background Servers poller; read what it published.
+                        // No channels/members/messages fetch on the UI thread.
+                        g_srvActiveMs = now; g_srvSel = svSel; g_srvChan = svChan;
+                        (void)svNextChan; (void)svNextMem;
+                        if (g_srvMutex) {
+                            SDL_LockMutex(g_srvMutex);
+                            if (g_srvChanReady) { svChannels = g_srvChannels; g_srvChanReady = false; }
+                            if (g_srvMemReady)  { svMembers  = g_srvMembers;  g_srvMemReady  = false; }
+                            SDL_UnlockMutex(g_srvMutex);
+                        }
+                        if (svChan == 0 && !svChannels.empty()) svChan = svChannels[0].id;
+                        // Owner check: MyUid() is the session's id, so fetch it once.
+                        static std::string svMyUidCache; static bool svMyUidGot = false;
+                        if (!svMyUidGot) { svMyUidCache = sv.MyUid(); svMyUidGot = true; }
+                        std::string svMyUid = svMyUidCache;
                         bool svIAmOwner = false;
                         for (const auto& s : svList) if (s.id == svSel && !s.owner.empty() && s.owner == svMyUid) svIAmOwner = true;
                         ImGui::TextDisabled("%s", svSelName.c_str());
@@ -6341,7 +6415,7 @@ int main(int argc, char** argv) {
                                     svRenChanId = c.id; std::snprintf(svRenChanBuf, sizeof(svRenChanBuf), "%s", c.name.c_str()); svRenChanOpen = true;
                                 }
                                 if (svChannels.size() > 1 && ImGui::MenuItem("Delete channel")) {
-                                    if (sv.DeleteChannel(c.id)) { if (svChan == c.id) { svChan = 0; } svNextChan = 0; Toast("Channel deleted", 1); }
+                                    if (sv.DeleteChannel(c.id)) { if (svChan == c.id) { svChan = 0; } g_srvForce = true; Toast("Channel deleted", 1); }
                                 }
                                 ImGui::EndPopup();
                             }
@@ -6351,14 +6425,14 @@ int main(int argc, char** argv) {
                         ImGui::SetNextItemWidth(-1);
                         bool nc = ImGui::InputTextWithHint("##svnewchan", "new channel", svNewChan, sizeof(svNewChan), ImGuiInputTextFlags_EnterReturnsTrue);
                         if ((ImGui::SmallButton("Add channel") || nc) && svNewChan[0]) {
-                            if (sv.CreateChannel(svSel, svNewChan)) { svNewChan[0] = '\0'; svNextChan = 0; }
+                            if (sv.CreateChannel(svSel, svNewChan)) { svNewChan[0] = '\0'; g_srvForce = true; }
                         }
                         if (!svIAmOwner) {
                             if (ImGui::SmallButton("Leave server")) {
                                 if (sv.Leave(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Left server", 1); }
                             }
                         }
-                        if (now >= svNextMem) { svMembers = sv.Members(svSel); svNextMem = now + 20000; }
+                        // (members come from the background poller, read above)
                         ImGui::Dummy(ImVec2(0, 6));
                         ImGui::TextDisabled("MEMBERS - %d", (int)svMembers.size());
                         ImGui::Separator();
@@ -6385,7 +6459,13 @@ int main(int argc, char** argv) {
                         ImGui::TextDisabled("Pick a channel");
                     } else {
                         static std::map<long,long> svLikes; static std::map<long,bool> svMyLikes; static long svEditId = 0;
-                        if (now >= svNextMsg) { svMsgs = sv.Messages(svChan); svLikes = sv.Likes(); svMyLikes = sv.MyLikes(); svNextMsg = now + 4000; }
+                        // Messages + likes come from the background Servers poller.
+                        (void)svNextMsg;
+                        if (g_srvMutex) {
+                            SDL_LockMutex(g_srvMutex);
+                            if (g_srvMsgReady) { svMsgs = g_srvMsgs; svLikes = g_srvLikes; svMyLikes = g_srvMyLikes; g_srvMsgReady = false; }
+                            SDL_UnlockMutex(g_srvMutex);
+                        }
                         std::string svMe = account.CurrentSession().username;
                         // Inline per-message actions: ❤ like + count, "(edited)", and
                         // an Edit affordance on my own messages (loads it into the box).
@@ -6394,7 +6474,7 @@ int main(int argc, char** argv) {
                             bool liked = svMyLikes.count(m.id) != 0;
                             ImGui::PushID((int)m.id);
                             ImVec2 hp2 = ImGui::GetCursorScreenPos();
-                            if (ImGui::InvisibleButton("like", ImVec2(18, 16))) { sv.Like(m.id, !liked); svNextMsg = 0; }
+                            if (ImGui::InvisibleButton("like", ImVec2(18, 16))) { sv.Like(m.id, !liked); g_srvForce = true; }
                             DrawHeart(ImGui::GetWindowDrawList(), ImVec2(hp2.x+8, hp2.y+9), 6.0f,
                                       liked ? IM_COL32(232,72,92,255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
                             if (lc > 0) { ImGui::SameLine(0, 2); ImGui::TextDisabled("%ld", lc); }
@@ -6466,8 +6546,8 @@ int main(int argc, char** argv) {
                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
                         ImGui::SameLine();
                         if ((ImGui::Button(svEditId ? "Save" : "Send", ImVec2(62, inSz.y)) || send) && svMsg[0]) {
-                            if (svEditId) { if (sv.EditMessage(svEditId, svMsg)) { svEditId = 0; svMsg[0] = '\0'; svNextMsg = 0; } }
-                            else if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; svNextMsg = 0; }
+                            if (svEditId) { if (sv.EditMessage(svEditId, svMsg)) { svEditId = 0; svMsg[0] = '\0'; g_srvForce = true; } }
+                            else if (sv.Post(svChan, svMsg)) { svMsg[0] = '\0'; g_srvForce = true; }
                             ImGui::SetKeyboardFocusHere(-1);   // keep focus in the box after sending
                         }
                     }
@@ -6481,7 +6561,7 @@ int main(int argc, char** argv) {
                     ImGui::SetNextItemWidth(260);
                     bool go = ImGui::InputTextWithHint("##renchan", "channel name", svRenChanBuf, sizeof(svRenChanBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                     if ((PrimaryButton("Rename", ImVec2(120, 30)) || go) && svRenChanBuf[0]) {
-                        if (sv.RenameChannel(svRenChanId, svRenChanBuf)) { svNextChan = 0; Toast("Channel renamed", 1); }
+                        if (sv.RenameChannel(svRenChanId, svRenChanBuf)) { g_srvForce = true; Toast("Channel renamed", 1); }
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
@@ -6937,11 +7017,13 @@ int main(int argc, char** argv) {
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
     // Stop the background friends/DM poll + chat poll threads.
-    g_pollRun = false; g_chatPollRun = false;
+    g_pollRun = false; g_chatPollRun = false; g_srvPollRun = false;
     if (g_pollThread) { SDL_WaitThread(g_pollThread, nullptr); g_pollThread = nullptr; }
     if (g_chatThread) { SDL_WaitThread(g_chatThread, nullptr); g_chatThread = nullptr; }
+    if (g_srvThread) { SDL_WaitThread(g_srvThread, nullptr); g_srvThread = nullptr; }
     if (g_pollMutex) { SDL_DestroyMutex(g_pollMutex); g_pollMutex = nullptr; }
     if (g_chatMutex) { SDL_DestroyMutex(g_chatMutex); g_chatMutex = nullptr; }
+    if (g_srvMutex) { SDL_DestroyMutex(g_srvMutex); g_srvMutex = nullptr; }
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     if (g_upMutex) { SDL_DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     // Stop any in-flight downloads and join their worker threads before teardown.

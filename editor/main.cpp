@@ -543,12 +543,20 @@ bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 // Sum the triangles of all active, visible solid meshes — a cheap proxy for how
 // expensive this frame is to rasterize (used to auto-scale anti-aliasing).
 static long SceneTriangleLoad(const Scene& scene) {
+    // Memoize for the current frame: this runs up to twice per Render3DTexture and
+    // Render3DTexture runs for the Scene + Game + anim-preview views, so an
+    // uncached full-scene dynamic_cast scan here repeats several times a frame.
+    static int  s_frame = -1;
+    static long s_cached = 0;
+    int f = ImGui::GetFrameCount();
+    if (f == s_frame) return s_cached;
     long n = 0;
     for (const auto& go : scene.Objects()) {
         if (!go->active) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (mr && !mr->wireframe) n += mr->mesh.TriangleCount();
     }
+    s_frame = f; s_cached = n;
     return n;
 }
 
@@ -4254,15 +4262,28 @@ void DrawConsole() {
             for (int i = 0; i < (int)g_console.size(); ++i) { order.push_back(i); mergedCount.push_back(g_console[i].count); }
         }
 
+        // Pre-filter to the rows that actually show, so an ImGuiListClipper can
+        // skip the offscreen ones instead of building a label + Selectable for
+        // every entry each frame (the cost that grew with the log size).
+        std::vector<int> visible;
+        visible.reserve(order.size());
         for (std::size_t row = 0; row < order.size(); ++row) {
-            int i = order[row];
-            const ConsoleEntry& e = g_console[i];
+            const ConsoleEntry& e = g_console[order[row]];
             if (!levelShow[e.level]) continue;
             if (!needle.empty()) {
                 std::string low = e.text;
                 for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
                 if (low.find(needle) == std::string::npos) continue;
             }
+            visible.push_back((int)row);
+        }
+        ImGuiListClipper clipper;
+        clipper.Begin((int)visible.size());
+        while (clipper.Step())
+        for (int vi = clipper.DisplayStart; vi < clipper.DisplayEnd; ++vi) {
+            std::size_t row = (std::size_t)visible[vi];
+            int i = order[row];
+            const ConsoleEntry& e = g_console[i];
             // Drawn level dot in place of the old [i]/[!]/[x] text markers (the
             // severity bar + row wash below already tint the row itself).
             ImVec2 rp = ImGui::GetCursorScreenPos();
@@ -4311,6 +4332,7 @@ void DrawConsole() {
             cdl->AddRectFilled(rmn, ImVec2(rmn.x + 3.0f, rmx.y), ImGui::GetColorU32(levelCol[e.level]));
             ImGui::PopStyleColor();
         }
+        clipper.End();
         if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
         ImGui::EndChild();
 

@@ -2181,7 +2181,7 @@ static void DrawGroupConversation(
                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
     float avW = ImGui::GetContentRegionAvail().x;
     float baseX = ImGui::GetCursorPosX();
-    const float padX = 12.0f, padY = 7.0f;
+    const float padX = 14.0f, padY = 8.0f;
     std::string prevSender; bool firstMsg = true;
     for (const auto& m : glog) {
         bool newSender = firstMsg || m.sender != prevSender;
@@ -2193,7 +2193,7 @@ static void DrawGroupConversation(
         char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
         std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
         float metaW = ImGui::CalcTextSize(meta.c_str()).x;
-        float contentW = std::max(bodyW, metaW);
+        float contentW = std::max(bodyW + 2.0f, metaW);
         float useW = std::max(contentW + padX*2, 46.0f);
         float x0 = m.mine ? (avW - useW) : 0.0f; if (x0 < 0) x0 = 0;
 
@@ -2736,7 +2736,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             std::string msFilt = msgSearch; for (auto& ch : msFilt) ch = (char)std::tolower((unsigned char)ch);
             long prevDay = 0; bool prevMine = false; long prevWhen = 0; bool first = true;
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const float avatarW = 28.0f, avatarGap = 6.0f, padX = 12.0f, padY = 7.0f;
+            const float avatarW = 28.0f, avatarGap = 6.0f, padX = 14.0f, padY = 8.0f;
             int matches = 0;
             for (const auto& m : log) {
                 if (!msFilt.empty()) {
@@ -2778,8 +2778,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 float metaW = ImGui::CalcTextSize(meta.c_str()).x;
                 bool bareEmoji = emojiOnly && !rep;   // Telegram-style big, background-less emoji
                 std::string imgUrl = bareEmoji ? std::string() : FirstImageUrl(m.body);
+                // +2px slack on the body so the glyphs never butt against the
+                // content edge (absorbs wrap/measure rounding -> no "text spilling
+                // out of the bubble").
                 float contentW = bareEmoji ? std::max((float)ecount * (bigEm + 3), metaW)
-                                           : std::max({bodyW, repW, metaW});
+                                           : std::max({bodyW + 2.0f, repW, metaW});
                 if (!imgUrl.empty()) contentW = std::max(contentW, std::min(bubbleMax - padX*2, 240.0f));
                 float boxW = contentW + padX*2;
                 float useW = std::max(boxW, 46.0f);   // actual bubble width (min clamp)

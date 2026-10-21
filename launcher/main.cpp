@@ -1654,7 +1654,8 @@ void EmojiPicker(const char* id, char* buf, std::size_t cap) {
 void RenderChatBody(const std::string& body, float maxW = 0.0f) {
     bool hasLink  = body.find("http://") != std::string::npos || body.find("https://") != std::string::npos;
     bool hasEmoji = body.find(':') != std::string::npos || body.find("<3") != std::string::npos || body.find("xD") != std::string::npos;
-    if (!hasLink && !hasEmoji) {
+    bool hasMention = body.find('@') != std::string::npos;   // @name gets highlighted
+    if (!hasLink && !hasEmoji && !hasMention) {
         if (maxW > 0.0f) ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + maxW);
         ImGui::TextWrapped("%s", body.c_str());
         if (maxW > 0.0f) ImGui::PopTextWrapPos();
@@ -1683,7 +1684,10 @@ void RenderChatBody(const std::string& body, float maxW = 0.0f) {
             ImGui::Dummy(ImVec2(em, em));
         } else {
             bool link = tok.rfind("http://", 0) == 0 || tok.rfind("https://", 0) == 0;
-            if (link) {
+            bool mention = tok.size() > 1 && tok[0] == '@';
+            if (mention) {   // @mention: bold-ish accent text (Messenger/WhatsApp style)
+                ImGui::TextColored(ImVec4(0.55f, 0.78f, 1.0f, 1.0f), "%s", tok.c_str());
+            } else if (link) {
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(linkCol), "%s", tok.c_str());
                 ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddLine(ImVec2(mn.x, mx.y - 1), ImVec2(mx.x, mx.y - 1), linkCol, 1.0f);
@@ -1703,7 +1707,8 @@ void RenderChatBody(const std::string& body, float maxW = 0.0f) {
 float MeasureChatBodyWidth(const std::string& body, float maxW) {
     bool hasLink  = body.find("http://") != std::string::npos || body.find("https://") != std::string::npos;
     bool hasEmoji = body.find(':') != std::string::npos || body.find("<3") != std::string::npos || body.find("xD") != std::string::npos;
-    if (!hasLink && !hasEmoji) {
+    bool hasMention = body.find('@') != std::string::npos;   // must mirror RenderChatBody's routing
+    if (!hasLink && !hasEmoji && !hasMention) {
         float w = ImGui::CalcTextSize(body.c_str(), nullptr, false, maxW).x;
         return w < maxW ? w : maxW;
     }
@@ -2163,7 +2168,8 @@ static void DrawGroupConversation(
     const std::map<std::string, const okay::Friend*>& fById,
     char* gInput, long& gEditId, long& gReplyTo,
     std::string& gReplyName, std::string& gReplySnippet,
-    std::map<long,long>& gSeenId)
+    std::map<long,long>& gSeenId,
+    const std::string& myName)
 {
     long gid = g_chatSelGroup;
     const okay::Messages::GroupConvo* gp = nullptr;
@@ -2235,7 +2241,30 @@ static void DrawGroupConversation(
     if (!glog.empty()) gSeenId[gid] = glog.back().id;
 
     // ---- Thread -----------------------------------------------------------
-    float composerH = 48.0f + (gReplyTo || gEditId ? 24.0f : 0.0f);
+    // @mention autocomplete: when the word being typed starts with '@', offer
+    // matching member names (computed before layout so the composer can reserve
+    // room for the suggestion row).
+    std::size_t mentionAt = std::string::npos;
+    std::vector<std::string> mentionHits;
+    {
+        std::string cur = gInput;
+        std::size_t sp = cur.find_last_of(" \n");
+        std::size_t start = (sp == std::string::npos) ? 0 : sp + 1;
+        if (start < cur.size() && cur[start] == '@') {
+            mentionAt = start;
+            std::string pre = cur.substr(start + 1);
+            for (auto& ch : pre) ch = (char)std::tolower((unsigned char)ch);
+            std::set<std::string> names;
+            for (const auto& gm : glog) if (!gm.senderName.empty() && gm.senderName != myName) names.insert(gm.senderName);
+            for (const auto& kv : fById) if (kv.second && kv.second->status == "accepted" && !kv.second->username.empty()) names.insert(kv.second->username);
+            for (const auto& nm : names) {
+                std::string low = nm; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
+                if (low.compare(0, pre.size(), pre) == 0) mentionHits.push_back(nm);
+                if (mentionHits.size() >= 6) break;
+            }
+        }
+    }
+    float composerH = 48.0f + (gReplyTo || gEditId ? 24.0f : 0.0f) + (mentionHits.empty() ? 0.0f : 28.0f);
     ImGui::BeginChild("##glog", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false,
                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
     float avW = ImGui::GetContentRegionAvail().x;
@@ -2287,6 +2316,17 @@ static void DrawGroupConversation(
         ImGui::EndChild();
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor();
+        // A message that @mentions you gets an accent outline so it stands out.
+        if (!m.mine && !myName.empty()) {
+            std::string lb = m.body, tag = "@" + myName;
+            for (auto& ch : lb)  ch = (char)std::tolower((unsigned char)ch);
+            for (auto& ch : tag) ch = (char)std::tolower((unsigned char)ch);
+            if (lb.find(tag) != std::string::npos) {
+                ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x - 1.5f, a.y - 1.5f), ImVec2(b.x + 1.5f, b.y + 1.5f),
+                                                    ImGui::GetColorU32(kAccent), 15.0f, 0, 2.0f);
+            }
+        }
 
         // Right-click: react / reply / copy / (edit+delete if mine).
         auto myit = gmyreacts.find(m.id);
@@ -2360,11 +2400,28 @@ static void DrawGroupConversation(
         ImGui::SameLine();
         if (ImGui::SmallButton("x##gcancel")) { gReplyTo = 0; gEditId = 0; gInput[0] = '\0'; }
     }
+    static bool gRefocus = false;
+    if (!mentionHits.empty()) {   // suggestion chips: click to complete the @name
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Mention");
+        for (const auto& nm : mentionHits) {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
+            if (ImGui::SmallButton(("@" + nm + "##mh").c_str())) {
+                std::string cur = gInput;
+                cur = cur.substr(0, mentionAt) + "@" + nm + " ";
+                std::snprintf(gInput, 1024, "%s", cur.c_str());
+                gRefocus = true;
+            }
+            ImGui::PopStyleColor();
+        }
+    }
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 7));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 66);
-    bool enter = ImGui::InputTextWithHint("##ginput", "Message the group", gInput, 1024,
+    if (gRefocus) { ImGui::SetKeyboardFocusHere(); gRefocus = false; }
+    bool enter = ImGui::InputTextWithHint("##ginput", "Message the group  (@ to mention)", gInput, 1024,
                                           ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -2411,6 +2468,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static std::map<std::string, std::pair<long,std::string>> pinnedMsg;  // uid -> (msgId, preview)
     static std::string lightboxUrl;                   // image shown fullscreen (empty = none)
     static bool openStarred = false;                  // conversation menu -> "Starred messages" popup
+    static bool openMedia = false;                    // conversation menu -> "Media & links" popup
     // Group-chat composer / edit state (parallel to the DM ones above).
     static char   gInput[1024] = ""; static long gEditId = 0, gReplyTo = 0;
     static std::string gReplyName, gReplySnippet;
@@ -2464,6 +2522,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
             add(4,"ok that was really bugging me",780,true);
             add(5,"wanna test group chats later tonight?",500,false);
             add(6,"sure, ping me when you're free",460,true,true);
+            add(7,"@you the release notes are up: https://github.com/kingimann/OkaySpaceGameEngine/releases",120,false);
+            if (std::getenv("OKAY_CHAT_DEMO_MEDIA")) openMedia = true;
             peerRead = 4;   // 1..4 read (blue ticks), 6 delivered (grey ticks)
             // Showcase per-chat extras: theme colour, nickname, a starred message.
             if (const char* th = std::getenv("OKAY_CHAT_DEMO_THEME")) g_chatColor["demo-uid"] = std::atoi(th);
@@ -2672,7 +2732,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
         ImGui::BeginChild("##chatconv", ImVec2(0, 0), false);
         if (g_chatSelGroup > 0) {
             DrawGroupConversation(dm, groups, glog, greacts, gmyreacts, fById,
-                                  gInput, gEditId, gReplyTo, gReplyName, gReplySnippet, gSeenId);
+                                  gInput, gEditId, gReplyTo, gReplyName, gReplySnippet, gSeenId,
+                                  account.CurrentSession().username);
         } else
         if (selUid.empty()) {
             float cw = ImGui::GetContentRegionAvail().x, cy = ImGui::GetContentRegionAvail().y;
@@ -2777,6 +2838,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Starred messages")) openStarred = true;
+                if (ImGui::MenuItem("Media & links")) openMedia = true;
                 ImGui::Separator();
                 if (ImGui::MenuItem("Copy username")) ImGui::SetClipboardText(selName.c_str());
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
@@ -2813,6 +2875,62 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 }
                 if (unstar) { g_starred.erase(unstar); SavePrefs(); }
                 if (mine.empty()) ImGui::TextDisabled("No starred messages yet.\nRight-click a message > Star.");
+                ImGui::EndPopup();
+            }
+            // Shared media & links in this conversation (Messenger/WhatsApp
+            // "Media, links and docs"): an image grid (click -> lightbox) and a
+            // link list (click -> browser), newest first.
+            if (openMedia) { ImGui::OpenPopup("##mediapop"); openMedia = false; }
+            ImGui::SetNextWindowSizeConstraints(ImVec2(360, 0), ImVec2(460, 420));
+            if (ImGui::BeginPopup("##mediapop")) {
+                std::vector<std::string> imgs, links;
+                for (auto it = log.rbegin(); it != log.rend(); ++it) {
+                    if (selBlocked && !it->mine) continue;
+                    std::string iu = FirstImageUrl(it->body);
+                    if (!iu.empty()) imgs.push_back(iu);
+                    std::size_t i = 0, n = it->body.size();
+                    while (i < n) {   // every http(s) token that isn't the image
+                        while (i < n && (it->body[i] == ' ' || it->body[i] == '\n')) ++i;
+                        std::size_t j = i; while (j < n && it->body[j] != ' ' && it->body[j] != '\n') ++j;
+                        std::string tok = it->body.substr(i, j - i); i = j;
+                        if ((tok.rfind("http://", 0) == 0 || tok.rfind("https://", 0) == 0) && tok != iu) links.push_back(tok);
+                    }
+                }
+                ImGui::TextDisabled("Media (%d)", (int)imgs.size());
+                ImGui::Separator();
+                if (imgs.empty()) ImGui::TextDisabled("No photos shared yet.");
+                const float th = 76.0f;
+                int col = 0, perRow = std::max(1, (int)((ImGui::GetContentRegionAvail().x + 6) / (th + 6)));
+                for (std::size_t k = 0; k < imgs.size(); ++k) {
+                    ImGui::PushID((int)k);
+                    if (col > 0) ImGui::SameLine(0, 6);
+                    ImVec2 tp = ImGui::GetCursorScreenPos();
+                    if (ImGui::InvisibleButton("##thumb", ImVec2(th, th))) { lightboxUrl = imgs[k]; ImGui::CloseCurrentPopup(); }
+                    ImDrawList* md = ImGui::GetWindowDrawList();
+                    if (SDL_Texture* tx = AvatarTexture(imgs[k]))
+                        md->AddImageRounded((ImTextureID)(intptr_t)tx, tp, ImVec2(tp.x + th, tp.y + th),
+                                            ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 8.0f);
+                    else
+                        md->AddRectFilled(tp, ImVec2(tp.x + th, tp.y + th), IM_COL32(44, 48, 58, 255), 8.0f);
+                    if (ImGui::IsItemHovered()) {
+                        md->AddRect(tp, ImVec2(tp.x + th, tp.y + th), ImGui::GetColorU32(kAccent), 8.0f, 0, 2.0f);
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    }
+                    ImGui::PopID();
+                    if (++col >= perRow) col = 0;
+                }
+                ImGui::Spacing();
+                ImGui::TextDisabled("Links (%d)", (int)links.size());
+                ImGui::Separator();
+                if (links.empty()) ImGui::TextDisabled("No links shared yet.");
+                for (std::size_t k = 0; k < links.size(); ++k) {
+                    ImGui::PushID((int)(1000 + k));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
+                    if (ImGui::Selectable(ChatPreview(links[k], 52).c_str())) { OpenExternal(links[k]); ImGui::CloseCurrentPopup(); }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", links[k].c_str());
+                    ImGui::PopID();
+                }
                 ImGui::EndPopup();
             }
             ImGui::SameLine();

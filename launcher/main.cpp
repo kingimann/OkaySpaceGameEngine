@@ -2518,6 +2518,45 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::PopStyleVar(2);                      // ChildRounding, WindowPadding
                 ImGui::PopStyleColor();                     // ChildBg
                 ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
+                // Bubble tail on the first message of a run, pointing toward the
+                // sender's side (iMessage/Discord style) — only for text bubbles.
+                if (!grouped && !bareEmoji) {
+                    float ty = bmin.y + 7.0f;
+                    ImU32 tc = ImGui::GetColorU32(m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f));
+                    if (m.mine)
+                        dl->AddTriangleFilled(ImVec2(bmax.x - 1, ty - 4), ImVec2(bmax.x + 6, ty), ImVec2(bmax.x - 1, ty + 5), tc);
+                    else
+                        dl->AddTriangleFilled(ImVec2(bmin.x + 1, ty - 4), ImVec2(bmin.x - 6, ty), ImVec2(bmin.x + 1, ty + 5), tc);
+                }
+                // Quick-reaction bar on hover: thumbs-up / heart / laugh + Reply,
+                // so reacting doesn't need the right-click menu.
+                if (ImGui::IsMouseHoveringRect(bmin, bmax) && !ImGui::IsPopupOpen("##msgctx")) {
+                    float barY = bmin.y - 13.0f;
+                    float barX = m.mine ? bmax.x - 96.0f : bmin.x;
+                    ImGui::SetCursorScreenPos(ImVec2(barX, barY));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f,0.17f,0.21f,0.96f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f,0.26f,0.32f,1.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4,2));
+                    const struct { const char* key; int id; } quick[] = {
+                        {kReactions[0].key, kReactions[0].id},
+                        {kReactions[1].key, kReactions[1].id},
+                        {kReactions[2].key, kReactions[2].id} };
+                    for (int qi = 0; qi < 3; ++qi) {
+                        if (qi) ImGui::SameLine(0, 2);
+                        ImVec2 qp = ImGui::GetCursorScreenPos();
+                        if (ImGui::Button((std::string("  ##qr") + std::to_string(m.id) + quick[qi].key).c_str(), ImVec2(22, 20))) {
+                            bool have = myReacts[m.id].count(quick[qi].key) != 0;
+                            dm.React(m.id, quick[qi].key, !have); g_chatForceLog = true;
+                        }
+                        DrawEmoji(dl, ImVec2(qp.x + 11, qp.y + 10), 15, quick[qi].id);
+                    }
+                    ImGui::SameLine(0, 2);
+                    if (ImGui::Button((std::string("Reply##qr") + std::to_string(m.id)).c_str(), ImVec2(0, 20))) {
+                        replyTo = m.id; replyName = m.mine ? "yourself" : selName; replySnippet = ChatPreview(m.body, 40);
+                    }
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor(2);
+                }
                 // Jump-to-reply target: scroll this message into view, then flash it.
                 if (scrollToId == m.id) { ImGui::SetScrollHereY(0.4f); scrollToId = 0; }
                 if (flashId == m.id && now < flashUntil) {

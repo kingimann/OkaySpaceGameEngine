@@ -2281,11 +2281,21 @@ static void DrawGroupConversation(
         ImGui::SameLine();
         if (ImGui::SmallButton("x##gcancel")) { gReplyTo = 0; gEditId = 0; gInput[0] = '\0'; }
     }
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 64);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 7));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 66);
     bool enter = ImGui::InputTextWithHint("##ginput", "Message the group", gInput, 1024,
                                           ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    ImGui::SameLine(0, 8);
+    ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.36f, 0.66f, 1.0f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
     bool sendBtn = ImGui::Button("Send##g", ImVec2(-1, 0));
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
     if ((enter || sendBtn) && gInput[0]) {
         if (gEditId) { if (dm.EditGroup(gEditId, gInput)) { gEditId = 0; gInput[0] = '\0'; g_chatForceLog = true; } }
         else if (dm.SendGroup(gid, gInput, gReplyTo)) { gInput[0] = '\0'; gReplyTo = 0; g_chatForceLog = true; }
@@ -2689,8 +2699,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
             for (const auto& m : log) byId[m.id] = &m;
             long lastMineId = 0; for (const auto& m : log) if (m.mine) lastMineId = m.id;
 
-            // Reserve space for the composer (grows with reply banner + edit tag).
-            float composerH = 48.0f + (replyTo || editId ? 24.0f : 0.0f);
+            // Reserve space for the composer: a slim format toolbar row + the input
+            // pill (grows 1..4 lines) + the optional reply/edit banner.
+            int clines = 1; for (const char* c = input; *c; ++c) if (*c == '\n') ++clines;
+            if (clines > 4) clines = 4;
+            float composerH = 28.0f + (ImGui::GetTextLineHeight() * clines + 16.0f) + 12.0f
+                              + (replyTo || editId ? 22.0f : 0.0f);
             bool scrolledUp = false; ImVec2 logRectMin, logRectMax;
             // AlwaysVerticalScrollbar reserves the scrollbar space permanently so the
             // content width is stable — otherwise the right-aligned ("mine") bubbles
@@ -3034,12 +3048,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::TextDisabled("Editing message"); ImGui::SameLine();
                 if (ImGui::SmallButton("cancel##edit")) { editId = 0; input[0] = '\0'; }
             }
-            // Grow the input from 1 to 4 lines with the content.
-            int lines = 1; for (const char* c = input; *c; ++c) if (*c == '\n') ++lines;
-            if (lines > 4) lines = 4;
-            float inH = ImGui::GetTextLineHeight() * lines + 14;
-            EmojiPicker("cwemoji", input, sizeof(input)); ImGui::SameLine();
-            // Markdown formatting helpers: insert a sample token to edit in place.
+            // ---- Row 1: a slim, muted format toolbar (emoji + markdown helpers) ----
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0));   // flat, unobtrusive
+            EmojiPicker("cwemoji", input, sizeof(input)); ImGui::SameLine(0, 6);
             auto fmtBtn = [&](const char* lbl, const char* open, const char* close, const char* word, const char* tip) {
                 if (ImGui::SmallButton(lbl)) {
                     std::size_t len = std::char_traits<char>::length(input);
@@ -3048,25 +3059,38 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     focusComposer = true;
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-                ImGui::SameLine(0, 2);
+                ImGui::SameLine(0, 3);
             };
             fmtBtn("B", "**", "**", "bold", "Bold  **text**");
             fmtBtn("I", "*", "*", "italic", "Italic  *text*");
             fmtBtn("</>", "`", "`", "code", "Code  `text`");
-            ImVec2 inSz(ImGui::GetContentRegionAvail().x - 60, inH);
+            ImGui::PopStyleColor();
+            ImGui::NewLine();                                          // input starts on its own row
+
+            // ---- Row 2: the input pill + accent Send button ------------------------
+            int lines = 1; for (const char* c = input; *c; ++c) if (*c == '\n') ++lines;
+            if (lines > 4) lines = 4;
+            float inH = ImGui::GetTextLineHeight() * lines + 16;
+            if (input[0] && !editId && now - typingSentAt > 2000) { g_chatTypingReq = true; typingSentAt = now; }
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 7));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
+            ImVec2 inSz(ImGui::GetContentRegionAvail().x - 66, inH);
             if (focusComposer) { ImGui::SetKeyboardFocusHere(); focusComposer = false; }
             bool send = ImGui::InputTextMultiline("##cwin", input, sizeof(input), inSz,
                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
-            // Broadcast a typing signal while there's text (throttled to ~2s).
-            if (input[0] && !editId && now - typingSentAt > 2000) { g_chatTypingReq = true; typingSentAt = now; }
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
-            if ((ImGui::Button(editId ? "Save" : "Send", ImVec2(52, inH)) || send) && input[0]) {
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(2);
+            ImGui::SameLine(0, 8);
+            ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.36f, 0.66f, 1.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+            if ((ImGui::Button(editId ? "Save" : "Send", ImVec2(58, inH)) || send) && input[0]) {
                 if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; g_chatForceLog = true; } }
                 else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; drafts.erase(selUid); g_chatForceLog = true; }
                 ImGui::SetKeyboardFocusHere(-1);
             }
+            ImGui::PopStyleVar();
             ImGui::PopStyleColor(2);
         }
         ImGui::EndChild();

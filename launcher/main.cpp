@@ -17,6 +17,7 @@
 #include "okay/Platform/Messages.hpp"
 #include "okay/Platform/Forums.hpp"
 #include "okay/Platform/Servers.hpp"
+#include "okay/Platform/Profiles.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -1233,6 +1234,8 @@ struct Notif {
 };
 std::vector<Notif> g_notifs;        // newest first
 bool g_notifPanelOpen = false;      // UI: notifications popup shown
+std::set<std::string> g_notifFresh; // UI: keys that were unread when the panel opened (shown as new)
+ImVec2 g_notifBellMin, g_notifBellMax;   // UI: sidebar bell row (clicks there toggle, not "outside")
 
 int NotifUnread() { int c = 0; for (auto& n : g_notifs) if (!n.read) ++c; return c; }
 
@@ -6015,6 +6018,988 @@ static int AccountInfoWorker(void*) {
     return 0;
 }
 
+// ============================================================================
+// Public profiles (Steam-style). A full page that can show ANY player — me, a
+// friend, a server member or a forum author. It overlays the current tab's
+// content, so Back simply returns there. All network work runs on a worker
+// (ProfileWorker); OKAY_UI_DEMO_USER seeds sample profiles for screenshots.
+// Server side: docs/sql/social.sql + the optional docs/sql/profile_showcase.sql
+// (without it, others' showcases are hidden and mine is kept on this device).
+// ============================================================================
+struct PfOpenReq { std::string uid, username, name, avatar; int accent = 0; };
+static bool g_pfOpen = false;                  // the profile page is showing
+static PfOpenReq g_pfReq;                      // who: uid preferred, else username
+static unsigned g_pfSerial = 0;                // bumps per open (drops stale results)
+static SDL_mutex* g_pfMutex = nullptr;
+static volatile bool g_pfBusy = false;         // a profile job is in flight
+static bool g_pfReady = false;                 // (guarded) a fresh bundle is waiting
+static unsigned g_pfReadySerial = 0;           // (guarded) which open it belongs to
+static okay::ProfileBundle g_pfResult;         // (guarded)
+static int g_pfActType = 0, g_pfActResult = 0; // (guarded) last action: type, 1 ok / -1 failed
+
+static void OpenPublicProfile(const std::string& uid, const std::string& username,
+                              const std::string& name = std::string(), const std::string& avatar = std::string(),
+                              int accent = 0) {
+    if (uid.empty() && username.empty()) return;
+    if (!g_pfMutex) g_pfMutex = SDL_CreateMutex();
+    g_pfReq.uid = uid; g_pfReq.username = username; g_pfReq.name = name;
+    g_pfReq.avatar = avatar; g_pfReq.accent = accent;
+    g_pfOpen = true; ++g_pfSerial;
+}
+static void ClosePublicProfile() { g_pfOpen = false; }
+
+// type: 0 load, 1 save my showcase, 2 add friend, 3 accept, 4 remove/decline.
+// Every job ends with a fresh Load() so the page shows the server's truth.
+struct PfJob {
+    int type = 0; unsigned serial = 0;
+    std::string target; bool byName = false;   // whose profile to (re)load
+    bool syncLocal = false;                    // mirror my local achievements first
+    std::vector<std::string> ach; std::vector<long> games; int banner = -1;
+    long row = 0;
+};
+static int ProfileWorker(void* arg) {
+    PfJob* j = (PfJob*)arg;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Profiles pr(a);
+        int act = 0;
+        if (j->type == 1) {
+            pr.SyncAchievements(okay::Achievements::All());
+            act = pr.SaveShowcase(j->ach, j->games, j->banner) ? 1 : -1;
+        } else if (j->type == 2) act = pr.AddFriend(j->target) ? 1 : -1;
+        else if (j->type == 3)   act = pr.Accept(j->row) ? 1 : -1;
+        else if (j->type == 4)   act = pr.Remove(j->row) ? 1 : -1;
+        else if (j->syncLocal)   pr.SyncAchievements(okay::Achievements::All());
+        okay::ProfileBundle b = pr.Load(j->target, j->byName);
+        if (j->type == 0 && !j->syncLocal && b.isMe && pr.SyncAchievements(okay::Achievements::All()))
+            b = pr.Load(j->target, j->byName);
+        if (g_pfMutex) SDL_LockMutex(g_pfMutex);
+        g_pfResult = std::move(b); g_pfReadySerial = j->serial; g_pfReady = true;
+        if (j->type) { g_pfActType = j->type; g_pfActResult = act; }
+        if (g_pfMutex) SDL_UnlockMutex(g_pfMutex);
+    } catch (...) {}
+    g_pfBusy = false;
+    delete j;
+    return 0;
+}
+
+// My showcase picks on this device: the fallback when the server doesn't have
+// the showcase columns yet (and a cache of my last save otherwise).
+struct PfLocalShowcase { std::vector<std::string> ach; std::vector<long> games; int banner = -1; };
+static std::string PfLocalShowcasePath() { return okay::Achievements::Dir() + "/profile_showcase.txt"; }
+static PfLocalShowcase LoadLocalShowcase() {
+    PfLocalShowcase s;
+    std::ifstream f(PfLocalShowcasePath());
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.rfind("ach=", 0) == 0 && line.size() > 4) s.ach.push_back(line.substr(4));
+        else if (line.rfind("game=", 0) == 0) { long id = std::atol(line.c_str() + 5); if (id > 0) s.games.push_back(id); }
+        else if (line.rfind("banner=", 0) == 0) s.banner = std::atoi(line.c_str() + 7);
+    }
+    return s;
+}
+static void SaveLocalShowcase(const PfLocalShowcase& s) {
+    std::ofstream f(PfLocalShowcasePath(), std::ios::trunc);
+    if (!f) return;
+    for (const auto& a : s.ach) f << "ach=" << a << "\n";
+    for (long g : s.games) f << "game=" << g << "\n";
+    f << "banner=" << s.banner << "\n";
+}
+
+// Sample profiles for the OKAY_UI_DEMO_USER screenshot hook.
+static okay::ProfileBundle DemoProfileBundle(const PfOpenReq& r, const std::string& me) {
+    okay::ProfileBundle b;
+    b.found = b.reached = b.showcaseSupported = b.achSupported = true;
+    const long t0 = (long)std::time(nullptr), day = 86400;
+    okay::PublicProfile& p = b.p;
+    auto ach = [&](const char* id, const char* label, long ago) {
+        okay::Achievement a; a.id = id; a.label = label; a.when = t0 - ago; b.achievements.push_back(a); };
+    auto game = [&](long id, const char* t, const char* d, const char* k, long dls) {
+        okay::WorkshopItem w; w.id = id; w.title = t; w.description = d; w.kind = k; w.downloads = dls; b.games.push_back(w); };
+    auto ev = [&](const char* k, const char* d, long ago) {
+        okay::FriendEvent e; e.kind = k; e.detail = d; e.when = t0 - ago; b.activity.push_back(e); };
+    const std::string key = !r.username.empty() ? r.username : r.uid;
+    if (key == me || r.uid == "me") {
+        p.id = "me"; p.username = me; p.display = me; p.accent = 3; p.bannerAccent = -1;
+        p.bio = "Indie dev making small, loud arcade games in OkaySpace. Neon Drift is my baby; "
+                "Pixel Farm is the cozy one. Always up for a jam team.";
+        p.location = "Pixel City"; p.favoriteGame = "Neon Drift"; p.customStatus = "shipping Neon Drift 2.0";
+        p.online = true; p.playing = "In the launcher"; p.memberSince = t0 - 412 * day;
+        ach("perfect_lap", "Perfect Lap", 2 * 3600); ach("speed_demon", "Speed Demon", 1 * day);
+        ach("first_publish", "Published!", 3 * day); ach("coin_hoarder", "Coin Hoarder", 6 * day);
+        ach("night_owl", "Night Owl", 9 * day); ach("untouchable", "Untouchable", 14 * day);
+        ach("jam_survivor", "Jam Survivor", 21 * day); ach("explorer", "Explorer", 33 * day);
+        ach("social_butterfly", "Social Butterfly", 40 * day); ach("master_builder", "Master Builder", 58 * day);
+        ach("marathon", "Marathon Runner", 77 * day); ach("first_win", "First Victory", 120 * day);
+        p.showcaseAch = {"untouchable", "perfect_lap", "jam_survivor", "speed_demon", "master_builder", "first_win"};
+        game(41, "Neon Drift", "Synthwave arcade racer with drift combos and a ghost-lap leaderboard.", "game", 4210);
+        game(57, "Pixel Farm", "A cozy farming loop: plant, water, sell, repeat. Seasons included.", "game", 2380);
+        game(33, "Asteroid Belt", "Classic asteroids with a gravity-well twist.", "game", 1190);
+        game(62, "Dungeon Dash", "One-room roguelike dungeon runs in under 3 minutes.", "game", 640);
+        game(70, "Racer Starter Kit", "Template: car physics, laps and a HUD to start your own racer.", "template", 312);
+        p.showcaseGames = {41, 57, 62, 33};
+        b.friends = 23; b.isMe = true;
+        ev("publish", "Neon Drift 2.0", 3 * 3600); ev("achievement", "Perfect Lap", 2 * 3600 + 600);
+        ev("playing", "Dungeon Dash", day); ev("achievement", "Speed Demon", day + 1800);
+    } else if (key == "maya" || r.uid == "u-maya") {
+        p.id = "u-maya"; p.username = "maya"; p.display = "Maya Chen"; p.accent = 2;
+        p.bio = "Level designer by day, speedrunner by night. Currently holding the Neon Drift any% record (for now).";
+        p.location = "Vancouver, BC"; p.favoriteGame = "Neon Drift"; p.online = true; p.playing = "Playing Neon Drift";
+        p.sessionCode = "QX7-42"; p.memberSince = t0 - 290 * day;
+        ach("wr_holder", "World Record", 5 * 3600); ach("perfect_lap", "Perfect Lap", 2 * day);
+        ach("no_brakes", "No Brakes", 4 * day); ach("speed_demon", "Speed Demon", 9 * day);
+        ach("explorer", "Explorer", 30 * day); ach("first_win", "First Victory", 200 * day);
+        p.showcaseAch = {"wr_holder", "no_brakes", "perfect_lap", "speed_demon"};
+        game(88, "Skyline Sprint", "Rooftop parkour time trials across a neon city.", "game", 1820);
+        game(91, "Glow Garden", "A tiny relaxing light-puzzle garden.", "scene", 260);
+        b.friends = 41; b.friendRow = 1; b.friendStatus = "accepted";
+        ev("playing", "Neon Drift", 240); ev("achievement", "World Record", 5 * 3600); ev("publish", "Skyline Sprint", 6 * day);
+    } else {
+        p.username = !r.username.empty() ? r.username : (!r.name.empty() ? r.name : r.uid);
+        for (auto& c : p.username) c = (char)std::tolower((unsigned char)c);
+        p.id = !r.uid.empty() ? r.uid : "u-" + p.username;
+        p.display = !r.name.empty() ? r.name : p.username;
+        p.avatar = r.avatar;
+        unsigned h = 2166136261u; for (char c : p.username) h = (h ^ (unsigned char)c) * 16777619u;
+        p.accent = (int)(h % 7u); p.online = (h & 1u) != 0; p.lastSeen = t0 - (long)(h % 20u + 1) * 3600;
+        p.memberSince = t0 - (long)(h % 500u + 30) * day;
+        p.bio = "Making games with friends on OkaySpace.";
+        p.favoriteGame = (h & 2u) ? "Asteroid Belt" : "Pixel Farm";
+        ach("first_win", "First Victory", 3 * day); ach("explorer", "Explorer", 12 * day);
+        ach("night_owl", "Night Owl", 40 * day);
+        if (h & 4u) game(120 + (long)(h % 50u), "Untitled Platformer", "A work-in-progress platformer.", "game", (long)(h % 300u));
+        b.friends = (int)(h % 30u) + 2;
+        if (!r.uid.empty()) { b.friendRow = 9; b.friendStatus = "accepted"; ev("online", "", 3 * 3600); }
+    }
+    return b;
+}
+
+// Recolor the vertices added since v0 with a linear gradient from c0 (at p0)
+// to c1 (at p1); vertex alpha is multiplied by the gradient alpha. Lets a
+// rounded AddRectFilled become a rounded gradient.
+static void PfGradient(ImDrawList* dl, int v0, ImVec2 p0, ImVec2 p1, ImVec4 c0, ImVec4 c1) {
+    ImVec2 d(p1.x - p0.x, p1.y - p0.y);
+    float len2 = d.x * d.x + d.y * d.y; if (len2 <= 0.0f) len2 = 1.0f;
+    for (int i = v0; i < dl->VtxBuffer.Size; ++i) {
+        ImDrawVert& v = dl->VtxBuffer[i];
+        float t = ((v.pos.x - p0.x) * d.x + (v.pos.y - p0.y) * d.y) / len2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        float a = (float)((v.col >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
+        ImVec4 c(c0.x + (c1.x - c0.x) * t, c0.y + (c1.y - c0.y) * t, c0.z + (c1.z - c0.z) * t,
+                 (c0.w + (c1.w - c0.w) * t) * a);
+        v.col = ImGui::GetColorU32(c);
+    }
+}
+
+// Achievement "icon": a hexagon medal in the achievement's own hue with a
+// trophy glyph (achievements carry no artwork, so the id picks the color).
+static void DrawAchMedal(ImDrawList* dl, ImVec2 c, float r, const std::string& id, float alpha) {
+    const float PI = 3.14159265f, s = r / 15.0f;
+    ImVec4 nc = NameColor(id);
+    dl->AddCircleFilled(c, r + 3.0f, ImGui::GetColorU32(ImVec4(nc.x, nc.y, nc.z, 0.14f * alpha)), 32);
+    int v0 = dl->VtxBuffer.Size;
+    dl->AddNgonFilled(c, r, IM_COL32_WHITE, 6);
+    PfGradient(dl, v0, ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r),
+               ImVec4(nc.x * 0.62f, nc.y * 0.62f, nc.z * 0.62f, alpha), ImVec4(nc.x * 0.30f, nc.y * 0.30f, nc.z * 0.30f, alpha));
+    dl->AddNgon(c, r, ImGui::GetColorU32(ImVec4(nc.x, nc.y, nc.z, alpha)), 6, 1.8f);
+    ImU32 g = ImGui::GetColorU32(ImVec4(nc.x * 0.30f + 0.70f, nc.y * 0.30f + 0.70f, nc.z * 0.30f + 0.70f, alpha));
+    dl->PathLineTo(ImVec2(c.x - 5.6f * s, c.y - 7.5f * s));
+    dl->PathLineTo(ImVec2(c.x + 5.6f * s, c.y - 7.5f * s));
+    dl->PathArcTo(ImVec2(c.x, c.y - 2.6f * s), 5.6f * s, 0.0f, PI, 14);
+    dl->PathFillConvex(g);
+    dl->PathArcTo(ImVec2(c.x - 5.6f * s, c.y - 4.6f * s), 2.6f * s, PI * 0.5f, PI * 1.5f, 8); dl->PathStroke(g, 0, 1.5f * s);
+    dl->PathArcTo(ImVec2(c.x + 5.6f * s, c.y - 4.6f * s), 2.6f * s, -PI * 0.5f, PI * 0.5f, 8); dl->PathStroke(g, 0, 1.5f * s);
+    dl->AddRectFilled(ImVec2(c.x - 1.2f * s, c.y + 2.6f * s), ImVec2(c.x + 1.2f * s, c.y + 6.0f * s), g);
+    dl->AddRectFilled(ImVec2(c.x - 4.8f * s, c.y + 5.8f * s), ImVec2(c.x + 4.8f * s, c.y + 8.4f * s), g, 1.2f * s);
+}
+
+// "first_win" -> "First Win" (label for showcase ids we have no row for).
+static std::string PfPrettyId(const std::string& id) {
+    std::string o; bool up = true;
+    for (char c : id) {
+        if (c == '_' || c == '-') { o += ' '; up = true; continue; }
+        o += up ? (char)std::toupper((unsigned char)c) : c; up = false;
+    }
+    return o;
+}
+static std::string PfCount(long n) {   // 4210 -> "4.2k"
+    char b[32];
+    if (n >= 1000000) std::snprintf(b, sizeof(b), "%.1fM", n / 1e6);
+    else if (n >= 10000) std::snprintf(b, sizeof(b), "%ldk", n / 1000);
+    else if (n >= 1000) std::snprintf(b, sizeof(b), "%.1fk", n / 1e3);
+    else std::snprintf(b, sizeof(b), "%ld", n);
+    return b;
+}
+
+struct PfPageOut { int gotoTab = -1; std::string marketSearch; };
+
+static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int fromTab) {
+    PfPageOut out;
+    static const char* kDemoUser = std::getenv("OKAY_UI_DEMO_USER");   // dev screenshot hook
+    const bool kDemo = kDemoUser != nullptr;
+    const std::string meName = kDemo ? std::string(kDemoUser) : account.CurrentSession().username;
+    static const char* kTabNames[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements",
+                                      "Friends", "Market", "Servers", "Forums", "Downloads"};
+    const int nPresets = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+
+    // ---- Page state --------------------------------------------------------
+    static unsigned shown = 0;                 // g_pfSerial the state below belongs to
+    static okay::ProfileBundle s_b;            // what's on screen
+    static bool s_loaded = false;
+    static std::vector<PfJob*> s_queue;        // jobs waiting for the worker
+    static std::vector<okay::Achievement> s_local;   // my local unlocks (newest first)
+    static PfLocalShowcase s_localShow;        // my device-side picks
+    static bool s_edit = false;                // "Edit showcase" mode (own profile)
+    static std::vector<std::string> e_ach; static std::vector<long> e_games; static int e_banner = -1;
+    auto refreshLocal = [&]() {
+        s_local = okay::Achievements::All();
+        std::reverse(s_local.begin(), s_local.end());
+        s_localShow = LoadLocalShowcase();
+    };
+    auto queueJob = [&](int type) -> PfJob* {
+        PfJob* j = new PfJob; j->type = type; j->serial = shown;
+        j->target = !s_b.p.id.empty() ? s_b.p.id : (!g_pfReq.uid.empty() ? g_pfReq.uid : g_pfReq.username);
+        j->byName = s_b.p.id.empty() && g_pfReq.uid.empty();
+        s_queue.push_back(j);
+        return j;
+    };
+    if (shown != g_pfSerial) {                 // a (new) profile was opened
+        shown = g_pfSerial;
+        s_b = okay::ProfileBundle(); s_loaded = false; s_edit = false;
+        s_b.p.id = g_pfReq.uid; s_b.p.username = g_pfReq.username; s_b.p.avatar = g_pfReq.avatar;
+        s_b.p.display = !g_pfReq.name.empty() ? g_pfReq.name : g_pfReq.username;
+        s_b.p.accent = g_pfReq.accent;
+        s_b.isMe = !meName.empty() && g_pfReq.username == meName;
+        if (kDemo) { s_b = DemoProfileBundle(g_pfReq, meName); s_loaded = true; }
+        else if (account.IsLoggedIn()) {
+            if (s_b.isMe) refreshLocal();
+            PfJob* j = queueJob(0); j->syncLocal = s_b.isMe;
+        }
+    }
+    // Feed the worker one job at a time and pick up results (never blocks).
+    if (!kDemo) {
+        if (!g_pfBusy && !s_queue.empty()) {
+            PfJob* j = s_queue.front(); s_queue.erase(s_queue.begin());
+            g_pfBusy = true;
+            if (SDL_Thread* t = SDL_CreateThread(ProfileWorker, "okay-profile", j)) SDL_DetachThread(t);
+            else { g_pfBusy = false; delete j; }
+        }
+        if (g_pfMutex) {
+            SDL_LockMutex(g_pfMutex);
+            if (g_pfReady) {
+                if (g_pfReadySerial == shown && (g_pfResult.found || !s_loaded)) {
+                    bool wasMe = s_b.isMe;
+                    s_b = g_pfResult; s_loaded = true;
+                    if (s_b.isMe && !wasMe) refreshLocal();
+                }
+                g_pfReady = false;
+            }
+            int at = g_pfActType, ar = g_pfActResult; g_pfActType = 0; g_pfActResult = 0;
+            SDL_UnlockMutex(g_pfMutex);
+            if (at == 1) Toast(ar > 0 ? "Showcase saved" : "Showcase saved on this device (server showcases aren't enabled yet)", ar > 0 ? 1 : 2);
+            else if (at == 2) Toast(ar > 0 ? "Friend request sent" : "Couldn't send the friend request", ar > 0 ? 1 : 2);
+            else if (at == 3) Toast(ar > 0 ? "Friend request accepted" : "Couldn't accept the request", ar > 0 ? 1 : 2);
+            else if (at == 4 && ar < 0) Toast("Couldn't update the friendship", 2);
+        }
+    }
+
+    const okay::PublicProfile& p = s_b.p;
+    const bool me = s_b.isMe || (!meName.empty() && p.username == meName);
+    const std::string dispName = !p.display.empty() ? p.display : (!p.username.empty() ? p.username : std::string("Player"));
+    const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
+    const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const ImU32 cRaised = ImGui::GetColorU32(okaytheme::kRaised);
+    const ImU32 hair = IM_COL32(255, 255, 255, 16);
+    const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+    const ImU32 cGreen = IM_COL32(76, 200, 110, 255), cGrey = IM_COL32(120, 128, 140, 255);
+    const float fs = ImGui::GetFontSize();
+    ImFont* font = ImGui::GetFont();
+
+    // Back: Esc or the mouse's back button (Esc leaves edit mode first).
+    bool goBack = false;
+    if (!ImGui::GetIO().WantTextInput && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId) &&
+        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(3))) {
+        if (s_edit) s_edit = false; else goBack = true;
+    }
+
+    // ---- Top bar: "< Back to Friends" pill (+ a loading hint) ----------------
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 cp = ImGui::GetCursorScreenPos();
+        const float ch = ImGui::GetTextLineHeight() + 14.0f;
+        char lbl[64]; std::snprintf(lbl, sizeof(lbl), "Back to %s", kTabNames[std::clamp(fromTab, 0, 10)]);
+        float bw = ImGui::CalcTextSize(lbl).x + 42.0f;
+        if (ImGui::InvisibleButton("##pfback", ImVec2(bw, ch))) goBack = true;
+        bool h = ImGui::IsItemHovered();
+        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        dl->AddRectFilled(cp, ImVec2(cp.x + bw, cp.y + ch), h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9), ch * 0.5f);
+        float cy = cp.y + ch * 0.5f;
+        dl->AddLine(ImVec2(cp.x + 20.0f, cy - 4.5f), ImVec2(cp.x + 15.5f, cy), cText, 1.8f);
+        dl->AddLine(ImVec2(cp.x + 15.5f, cy), ImVec2(cp.x + 20.0f, cy + 4.5f), cText, 1.8f);
+        dl->AddText(ImVec2(cp.x + 29.0f, cp.y + (ch - ImGui::GetTextLineHeight()) * 0.5f), h ? cText : cDim, lbl);
+        if (!kDemo && (g_pfBusy || !s_queue.empty())) {
+            float a0 = (float)ImGui::GetTime() * 6.0f;
+            ImVec2 sc(cp.x + bw + 20.0f, cy);
+            dl->PathArcTo(sc, 6.0f, a0, a0 + 4.6f, 20); dl->PathStroke(ImGui::GetColorU32(accLt), 0, 2.0f);
+            dl->AddText(ImVec2(sc.x + 14.0f, cp.y + (ch - ImGui::GetTextLineHeight()) * 0.5f), cDim,
+                        s_loaded ? "Updating\xE2\x80\xA6" : "Loading profile\xE2\x80\xA6");
+        }
+        ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + 14.0f));
+        ImGui::Dummy(ImVec2(0, 0));
+    }
+    if (goBack) { ClosePublicProfile(); s_edit = false; return out; }
+
+    // Centered empty state (signed out / not found).
+    auto emptyState = [&](int icon, const char* title, const char* sub) {
+        float aw = ImGui::GetContentRegionAvail().x;
+        ImGui::Dummy(ImVec2(0, 50));
+        ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 30);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
+        DrawNavIcon(dl, icon, c, cDim);
+        ImGui::Dummy(ImVec2(0, 70));
+        for (int k = 0; k < 2; ++k) {
+            const char* s = k ? sub : title;
+            float tw = ImGui::CalcTextSize(s).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - tw) * 0.5f));
+            if (k) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
+        }
+    };
+    if (!kDemo && !account.IsLoggedIn()) {
+        emptyState(3, "Sign in to view profiles", "Profiles, showcases and friends need an OkaySpace account.");
+        return out;
+    }
+    if (s_loaded && !s_b.found) {
+        if (s_b.reached) emptyState(3, "Profile not found", "This player may have renamed or deleted their account.");
+        else             emptyState(3, "Couldn't load this profile", "Check your connection and try again.");
+        return out;
+    }
+
+    // ---- Derived data --------------------------------------------------------
+    const std::vector<okay::Achievement>& achAll = (me && !kDemo) ? s_local : s_b.achievements;
+    const bool achKnown = me || s_b.achSupported;
+    const std::vector<std::string> pickA = s_b.showcaseSupported ? p.showcaseAch : (me ? s_localShow.ach : std::vector<std::string>());
+    const std::vector<long> pickG = s_b.showcaseSupported ? p.showcaseGames : (me ? s_localShow.games : std::vector<long>());
+    const int pickBanner = s_b.showcaseSupported ? p.bannerAccent : (me ? s_localShow.banner : -1);
+    auto findAch = [&](const std::string& id) -> const okay::Achievement* {
+        for (const auto& a : achAll) if (a.id == id) return &a;
+        return nullptr;
+    };
+    auto findGame = [&](long id) -> const okay::WorkshopItem* {
+        for (const auto& g : s_b.games) if (g.id == id) return &g;
+        return nullptr;
+    };
+    std::vector<okay::Achievement> shownA;
+    for (const auto& id : pickA) {
+        if (shownA.size() >= 6) break;
+        if (const okay::Achievement* a = findAch(id)) shownA.push_back(*a);
+        else if (!achKnown) { okay::Achievement x; x.id = id; x.label = PfPrettyId(id); shownA.push_back(x); }
+    }
+    const bool achPinned = !shownA.empty();
+    if (!achPinned) for (std::size_t i = 0; i < achAll.size() && i < 6; ++i) shownA.push_back(achAll[i]);
+    std::vector<okay::WorkshopItem> shownG;
+    for (long id : pickG) { if (shownG.size() >= 4) break; if (const okay::WorkshopItem* g = findGame(id)) shownG.push_back(*g); }
+    const bool gamesPinned = !shownG.empty();
+    if (!gamesPinned) for (std::size_t i = 0; i < s_b.games.size() && i < 4; ++i) shownG.push_back(s_b.games[i]);
+    long totalDl = 0; for (const auto& g : s_b.games) totalDl += g.downloads;
+    const int achN = (int)achAll.size(), gameN = (int)s_b.games.size();
+    const int level = 1 + (int)std::sqrt((achN * 40.0 + gameN * 120.0 + std::max(0, s_b.friends) * 15.0 + totalDl / 40.0) / 20.0);
+    int bannerIdx = (s_edit ? e_banner : pickBanner);
+    if (bannerIdx < 0 || bannerIdx >= nPresets) bannerIdx = p.accent;
+    if (bannerIdx < 0 || bannerIdx >= nPresets) bannerIdx = 0;
+    const ImVec4 bc = kAccentPresets[bannerIdx].col;
+    const bool playingSomething = p.online && !p.playing.empty() && p.playing != "In OkaySpace" &&
+                                  p.playing != "In the launcher" && p.playing != "Away";
+    const ImU32 presCol = !p.online ? cGrey : playingSomething ? ImGui::GetColorU32(accLt) : cGreen;
+
+    auto enterEdit = [&]() {
+        s_edit = true; e_ach.clear(); e_games.clear();
+        for (const auto& a : shownA) if (achPinned) e_ach.push_back(a.id);
+        for (const auto& g : shownG) if (gamesPinned) e_games.push_back(g.id);
+        e_banner = pickBanner;
+    };
+    auto saveEdit = [&]() {
+        if (kDemo) {
+            s_b.p.showcaseAch = e_ach; s_b.p.showcaseGames = e_games; s_b.p.bannerAccent = e_banner;
+            Toast("Showcase saved", 1);
+        } else {
+            PfLocalShowcase ls; ls.ach = e_ach; ls.games = e_games; ls.banner = e_banner;
+            SaveLocalShowcase(ls); s_localShow = ls;
+            if (s_b.showcaseSupported) { s_b.p.showcaseAch = e_ach; s_b.p.showcaseGames = e_games; s_b.p.bannerAccent = e_banner; }
+            PfJob* j = queueJob(1); j->ach = e_ach; j->games = e_games; j->banner = e_banner;
+        }
+        s_edit = false;
+    };
+
+    // Small-caps card title with optional right-side text (clickable if link).
+    auto cardTitle = [&](const char* title, const char* right, bool link) -> bool {
+        bool hit = false;
+        const float x0 = ImGui::GetCursorPosX(), avail = ImGui::GetContentRegionAvail().x;
+        ImGui::SetWindowFontScale(0.80f);
+        ImGui::TextDisabled("%s", title);
+        if (right && *right) {
+            float rw = ImGui::CalcTextSize(right).x;
+            ImGui::SameLine(std::max(0.0f, x0 + avail - rw));
+            if (link) {
+                ImGui::PushStyleColor(ImGuiCol_Text, accLt);
+                ImGui::TextUnformatted(right);
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                hit = ImGui::IsItemClicked();
+            } else ImGui::TextDisabled("%s", right);
+        }
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::Dummy(ImVec2(0, 4));
+        return hit;
+    };
+    auto beginCard = [&](const char* id, float w) {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+        ImGui::BeginChild(id, ImVec2(w, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                          ImGuiWindowFlags_NoScrollbar);
+    };
+    auto endCard = [&]() {
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, 8));
+    };
+    // Pick badge (edit mode): numbered accent disc, or a faint "+" when unpicked.
+    auto pickBadge = [&](ImDrawList* dl, ImVec2 c, int n, bool hov) {
+        if (n > 0) {
+            dl->AddCircleFilled(c, 10.0f, ImGui::GetColorU32(kAccent), 20);
+            char t[4]; std::snprintf(t, sizeof(t), "%d", n);
+            ImVec2 ts = ImGui::CalcTextSize(t);
+            dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32_WHITE, t);
+        } else {
+            dl->AddCircle(c, 9.0f, hov ? cText : IM_COL32(255, 255, 255, 60), 20, 1.5f);
+            ImU32 pc = hov ? cText : IM_COL32(255, 255, 255, 90);
+            dl->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), pc, 1.5f);
+            dl->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), pc, 1.5f);
+        }
+    };
+
+    ImGui::BeginChild("##pfbody", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+    const float W = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // ======================= HERO: banner, avatar, name, actions, stats =======
+    {
+        const bool compact = W < 640.0f;
+        const float bannerH = W < 520.0f ? 104.0f : 132.0f;
+        const float A = W < 520.0f ? 84.0f : 104.0f;
+        const float infoH = compact ? (A * 0.5f + 14.0f + 70.0f + 36.0f + 14.0f) : 98.0f;
+        const int statCols = W < 460.0f ? 2 : 4;
+        const float statRowH = 62.0f, statsH = statRowH * (4 / statCols) + 6.0f;
+        const float heroH = bannerH + infoH + statsH;
+        ImVec2 hp = ImGui::GetCursorScreenPos();
+        ImVec2 he(hp.x + W, hp.y + heroH);
+        dl->AddRectFilled(hp, he, cRaised, 12.0f);
+        // Banner: profile-accent gradient + soft shapes, fading into the card.
+        int v0 = dl->VtxBuffer.Size;
+        dl->AddRectFilled(hp, ImVec2(he.x, hp.y + bannerH), IM_COL32_WHITE, 12.0f, ImDrawFlags_RoundCornersTop);
+        PfGradient(dl, v0, hp, ImVec2(he.x, hp.y + bannerH),
+                   okaytheme::Mix(okaytheme::kRaised, bc, 0.78f), okaytheme::Mix(okaytheme::kRaised, bc, 0.18f));
+        dl->PushClipRect(hp, ImVec2(he.x, hp.y + bannerH), true);
+        dl->AddCircleFilled(ImVec2(he.x - W * 0.16f, hp.y - bannerH * 0.15f), bannerH * 1.05f, IM_COL32(255, 255, 255, 10), 64);
+        dl->AddCircleFilled(ImVec2(he.x - W * 0.05f, hp.y + bannerH * 1.05f), bannerH * 0.65f, IM_COL32(255, 255, 255, 8), 48);
+        dl->AddCircleFilled(ImVec2(hp.x + W * 0.42f, hp.y + bannerH * 1.3f), bannerH * 0.8f, IM_COL32(0, 0, 0, 22), 48);
+        for (int k = 0; k < 7; ++k) {
+            float x = hp.x + W * 0.55f + k * 26.0f;
+            dl->AddLine(ImVec2(x, hp.y + bannerH + 10), ImVec2(x + bannerH * 0.9f, hp.y - 10), IM_COL32(255, 255, 255, 6), 9.0f);
+        }
+        dl->PopClipRect();
+        v0 = dl->VtxBuffer.Size;
+        dl->AddRectFilled(ImVec2(hp.x, hp.y + bannerH - 46.0f), ImVec2(he.x, hp.y + bannerH), IM_COL32_WHITE);
+        PfGradient(dl, v0, ImVec2(hp.x, hp.y + bannerH - 46.0f), ImVec2(hp.x, hp.y + bannerH),
+                   okaytheme::WithAlpha(okaytheme::kRaised, 0.0f), okaytheme::WithAlpha(okaytheme::kRaised, 0.85f));
+        // Level badge (top-right of the banner).
+        {
+            ImVec2 lc(he.x - 42.0f, hp.y + 38.0f);
+            dl->AddCircleFilled(lc, 24.0f, IM_COL32(0, 0, 0, 80), 40);
+            dl->AddCircle(lc, 21.0f, ImGui::GetColorU32(okaytheme::Mix(bc, ImVec4(1, 1, 1, 1), 0.35f)), 40, 2.5f);
+            char lv[8]; std::snprintf(lv, sizeof(lv), "%d", level);
+            ImVec2 ls = font->CalcTextSizeA(fs * 1.2f, FLT_MAX, 0.0f, lv);
+            dl->AddText(font, fs * 1.2f, ImVec2(lc.x - ls.x * 0.5f, lc.y - ls.y * 0.5f), IM_COL32_WHITE, lv);
+            ImVec2 ks = font->CalcTextSizeA(fs * 0.72f, FLT_MAX, 0.0f, "LEVEL");
+            dl->AddText(font, fs * 0.72f, ImVec2(lc.x - ks.x * 0.5f, lc.y + 27.0f), IM_COL32(255, 255, 255, 190), "LEVEL");
+            if (ImGui::IsMouseHoveringRect(ImVec2(lc.x - 26, lc.y - 26), ImVec2(lc.x + 26, lc.y + 40)) && ImGui::IsWindowHovered())
+                ImGui::SetTooltip("Profile level %d\nGrows with achievements, published games and friends.", level);
+        }
+        // Avatar with a presence ring (cut out of the card).
+        ImVec2 ac(hp.x + 26.0f + A * 0.5f, hp.y + bannerH - 6.0f);
+        dl->AddCircleFilled(ac, A * 0.5f + 7.0f, cRaised, 64);
+        dl->AddCircle(ac, A * 0.5f + 3.0f, presCol, 64, 3.0f);
+        if (SDL_Texture* tex = AvatarTexture(p.avatar)) {
+            dl->AddImageRounded((ImTextureID)(intptr_t)tex, ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f), ImVec2(ac.x + A * 0.5f, ac.y + A * 0.5f),
+                                ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
+        } else {
+            ImVec4 nc = NameColor(dispName);
+            dl->AddCircleFilled(ac, A * 0.5f, ImGui::GetColorU32(ImVec4(nc.x * 0.55f, nc.y * 0.55f, nc.z * 0.55f, 1)), 64);
+            char init[2] = {(char)std::toupper((unsigned char)dispName[0]), 0};
+            ImVec2 is = font->CalcTextSizeA(A * 0.44f, FLT_MAX, 0.0f, init);
+            dl->AddText(font, A * 0.44f, ImVec2(ac.x - is.x * 0.5f, ac.y - is.y * 0.5f), IM_COL32_WHITE, init);
+        }
+        ImVec2 pd(ac.x + A * 0.354f, ac.y + A * 0.354f);
+        dl->AddCircleFilled(pd, 11.0f, cRaised, 20);
+        dl->AddCircleFilled(pd, 7.5f, presCol, 20);
+
+        // Actions: right of the name on wide cards, under it on compact ones.
+        const float bh = ImGui::GetTextLineHeight() + 16.0f, rb = bh;   // button height, round "more" size
+        struct Btn { std::string label; int kind; };   // kind: 0 secondary, 1 primary
+        std::vector<Btn> btns;
+        enum { kBMsg, kBFriend, kBEdit, kBProfile, kBCancel, kBSave };
+        std::vector<int> ids;
+        if (me) {
+            if (s_edit) { btns.push_back({"Cancel", 0}); ids.push_back(kBCancel); btns.push_back({"Save showcase", 1}); ids.push_back(kBSave); }
+            else { btns.push_back({"Edit profile", 0}); ids.push_back(kBProfile); btns.push_back({"Edit showcase", 1}); ids.push_back(kBEdit); }
+        } else {
+            const bool friends = s_b.friendStatus == "accepted";
+            btns.push_back({"Message", friends ? 1 : 0}); ids.push_back(kBMsg);
+            std::string fl = friends ? "Friends" : s_b.friendStatus == "pending" ? (s_b.incoming ? "Accept request" : "Request sent") : "Add friend";
+            btns.push_back({fl, (!friends && !(s_b.friendStatus == "pending" && !s_b.incoming)) ? 1 : 0}); ids.push_back(kBFriend);
+        }
+        float actW = rb;
+        for (const auto& b : btns) actW += ImGui::CalcTextSize(b.label.c_str()).x + 30.0f + 8.0f;
+        const float nameX = compact ? hp.x + 26.0f : hp.x + 26.0f + A + 22.0f;
+        const float nameY = compact ? hp.y + bannerH + A * 0.5f + 12.0f : hp.y + bannerH + 12.0f;
+        const float textMaxW = compact ? W - 52.0f : std::max(80.0f, (he.x - 22.0f - actW) - nameX - 16.0f);
+        float bx = compact ? nameX : he.x - 22.0f - actW;
+        const float by = compact ? nameY + 74.0f : hp.y + bannerH + 16.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(15, 8));
+        for (std::size_t i = 0; i < btns.size(); ++i) {
+            const Btn& b = btns[i];
+            float w = ImGui::CalcTextSize(b.label.c_str()).x + 30.0f;
+            ImGui::SetCursorScreenPos(ImVec2(bx, by));
+            ImGui::PushID((int)i);
+            bool disabled = !kDemo && ((ids[i] == kBMsg || ids[i] == kBFriend) && p.id.empty());
+            ImGui::BeginDisabled(disabled);
+            bool hit;
+            if (b.kind == 1) hit = PrimaryButton(b.label.c_str(), ImVec2(w, bh));
+            else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.07f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.14f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.20f));
+                hit = ImGui::Button(b.label.c_str(), ImVec2(w, bh));
+                ImGui::PopStyleColor(3);
+            }
+            ImGui::EndDisabled();
+            if (ids[i] == kBFriend && ImGui::IsItemHovered() && !s_b.friendStatus.empty() && !s_b.incoming)
+                ImGui::SetTooltip(s_b.friendStatus == "accepted" ? "You're friends - click for options" : "Waiting for them to accept");
+            ImGui::PopID();
+            if (hit) {
+                switch (ids[i]) {
+                case kBMsg: OpenChatWith(p.id, dispName, p.avatar); break;
+                case kBEdit: enterEdit(); break;
+                case kBCancel: s_edit = false; break;
+                case kBSave: saveEdit(); break;
+                case kBProfile: out.gotoTab = 3; ClosePublicProfile(); break;
+                case kBFriend:
+                    if (s_b.friendStatus == "accepted" || (s_b.friendStatus == "pending" && !s_b.incoming))
+                        ImGui::OpenPopup("##pffriend");
+                    else if (s_b.friendStatus == "pending" && s_b.incoming) {
+                        if (kDemo) Toast("You're now friends with " + dispName, 1);
+                        else { PfJob* j = queueJob(3); j->row = s_b.friendRow; }
+                        s_b.friendStatus = "accepted";
+                    } else {
+                        if (kDemo) Toast("Friend request sent", 1);
+                        else queueJob(2);
+                        s_b.friendStatus = "pending"; s_b.incoming = false;
+                    }
+                    break;
+                }
+            }
+            bx += w + 8.0f;
+        }
+        ImGui::PopStyleVar(2);
+        ImGui::SetCursorScreenPos(ImVec2(bx, by + (bh - rb) * 0.5f));
+        if (RoundIconButton("##pfmore", kRibMore, rb, IM_COL32(255, 255, 255, 18), IM_COL32(255, 255, 255, 36), cText, "More"))
+            ImGui::OpenPopup("##pfmorepop");
+        if (ImGui::BeginPopup("##pffriend")) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+            if (ImGui::MenuItem(s_b.friendStatus == "accepted" ? "Remove friend" : "Cancel request")) {
+                if (!kDemo) { PfJob* j = queueJob(4); j->row = s_b.friendRow; }
+                else Toast(s_b.friendStatus == "accepted" ? "Removed from friends" : "Request cancelled", 1);
+                s_b.friendStatus.clear(); s_b.friendRow = 0;
+            }
+            ImGui::PopStyleColor();
+            ImGui::EndPopup();
+        }
+        if (ImGui::BeginPopup("##pfmorepop")) {
+            if (ImGui::MenuItem("Copy username")) { ImGui::SetClipboardText(("@" + p.username).c_str()); Toast("Username copied", 1); }
+            if (!me && p.online && !p.sessionCode.empty() && ImGui::MenuItem("Join their game")) {
+                ImGui::SetClipboardText(p.sessionCode.c_str());
+                Toast("Session code " + p.sessionCode + " copied - open the game and Join with it", 2);
+            }
+            if (me && ImGui::MenuItem("View all achievements")) { out.gotoTab = 5; ClosePublicProfile(); }
+            if (!me && s_b.friendStatus == "pending" && s_b.incoming) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Decline request")) {
+                    if (!kDemo) { PfJob* j = queueJob(4); j->row = s_b.friendRow; }
+                    s_b.friendStatus.clear(); s_b.friendRow = 0;
+                }
+            }
+            ImGui::EndPopup();
+        }
+
+        // Name, @handle + presence, custom status.
+        {
+            float nsz = fs * 1.5f;
+            std::string nm = dispName;
+            while (nm.size() > 4 && font->CalcTextSizeA(nsz, FLT_MAX, 0.0f, nm.c_str()).x > textMaxW - (me ? 46.0f : 0.0f))
+                nm = nm.substr(0, nm.size() - 4) + "\xE2\x80\xA6";
+            dl->AddText(font, nsz, ImVec2(nameX, nameY), IM_COL32(242, 244, 250, 255), nm.c_str());
+            if (me) {   // "YOU" pill after the name
+                float nx = nameX + font->CalcTextSizeA(nsz, FLT_MAX, 0.0f, nm.c_str()).x + 10.0f;
+                ImVec2 ts = font->CalcTextSizeA(fs * 0.72f, FLT_MAX, 0.0f, "YOU");
+                float py = nameY + (nsz - ts.y - 6.0f) * 0.5f + 1.0f;
+                dl->AddRectFilled(ImVec2(nx, py), ImVec2(nx + ts.x + 12.0f, py + ts.y + 6.0f), ImGui::GetColorU32(okaytheme::WithAlpha(kAccent, 0.28f)), 8.0f);
+                dl->AddText(font, fs * 0.72f, ImVec2(nx + 6.0f, py + 3.0f), ImGui::GetColorU32(accLt), "YOU");
+            }
+            float y2 = nameY + nsz + 6.0f;
+            std::string handle = p.username.empty() ? std::string() : "@" + p.username;
+            dl->AddText(ImVec2(nameX, y2), cDim, handle.c_str());
+            float hx = nameX + ImGui::CalcTextSize(handle.c_str()).x + (handle.empty() ? 0.0f : 12.0f);
+            std::string pres = !s_loaded && !kDemo ? std::string()
+                             : playingSomething ? p.playing
+                             : p.online ? std::string("Online")
+                             : p.lastSeen > 0 ? "Offline  \xC2\xB7  seen " + RelTime(p.lastSeen) : std::string("Offline");
+            if (!pres.empty()) {
+                float ly = y2 + ImGui::GetTextLineHeight() * 0.5f;
+                dl->AddCircleFilled(ImVec2(hx + 4.0f, ly), 4.0f, presCol, 12);
+                dl->AddText(ImVec2(hx + 13.0f, y2), playingSomething ? ImGui::GetColorU32(accLt) : p.online ? cGreen : cDim,
+                            FitText(pres, nameX + textMaxW - hx - 13.0f).c_str());
+            }
+            if (!p.customStatus.empty()) {
+                std::string cs = "\"" + p.customStatus + "\"";
+                dl->AddText(ImVec2(nameX, y2 + ImGui::GetTextLineHeight() + 6.0f), IM_COL32(184, 191, 209, 255),
+                            FitText(cs, textMaxW).c_str());
+            }
+        }
+
+        // Stats strip.
+        {
+            const float sy = hp.y + bannerH + infoH;
+            dl->AddLine(ImVec2(hp.x + 18.0f, sy), ImVec2(he.x - 18.0f, sy), hair, 1.0f);
+            char v0s[24], v1s[24], v2s[24], v3s[24] = "\xE2\x80\x94";
+            if (s_b.friends >= 0) std::snprintf(v0s, sizeof(v0s), "%d", s_b.friends); else std::snprintf(v0s, sizeof(v0s), "\xE2\x80\x94");
+            std::snprintf(v1s, sizeof(v1s), "%d", gameN);
+            if (achKnown) std::snprintf(v2s, sizeof(v2s), "%d", achN); else std::snprintf(v2s, sizeof(v2s), "\xE2\x80\x94");
+            if (p.memberSince > 0) { std::time_t t = (std::time_t)p.memberSince; if (std::tm* tm = std::localtime(&t)) std::strftime(v3s, sizeof(v3s), "%b %Y", tm); }
+            const char* vals[4] = {v0s, v1s, v2s, v3s};
+            const char* labs[4] = {"FRIENDS", "GAMES PUBLISHED", "ACHIEVEMENTS", "MEMBER SINCE"};
+            const float tw = W / statCols;
+            for (int i = 0; i < 4; ++i) {
+                float tx = hp.x + (i % statCols) * tw, ty = sy + 3.0f + (i / statCols) * statRowH;
+                if (i % statCols) dl->AddLine(ImVec2(tx, ty + 14.0f), ImVec2(tx, ty + statRowH - 14.0f), hair, 1.0f);
+                dl->AddText(font, fs * 1.3f, ImVec2(tx + 24.0f, ty + 11.0f), IM_COL32(242, 244, 250, 255), vals[i]);
+                dl->AddText(font, fs * 0.74f, ImVec2(tx + 24.0f, ty + 13.0f + fs * 1.3f + 2.0f), cDim, labs[i]);
+            }
+        }
+        ImGui::SetCursorScreenPos(hp);
+        ImGui::Dummy(ImVec2(W, heroH));
+        ImGui::Dummy(ImVec2(0, 8));
+    }
+
+    // ======================= Cards ============================================
+    const bool twoCol = W >= 820.0f;
+    const float gap = 16.0f;
+    const float sideW = twoCol ? std::clamp(W * 0.31f, 280.0f, 360.0f) : 0.0f;
+    const float mainW = twoCol ? W - sideW - gap : W;
+
+    auto editCard = [&](float w) {
+        beginCard("##pfeditcard", w);
+        cardTitle("EDIT SHOWCASE", nullptr, false);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Click achievements and games below to pin them (up to 6 and 4). They show in the order you pick them.");
+        ImGui::PopTextWrapPos();
+        if (!kDemo && !s_b.showcaseSupported && s_loaded)
+            ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.36f, 1), "This server hasn't enabled showcases yet, so picks stay on this device.");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextUnformatted("Banner color");
+        ImGui::Dummy(ImVec2(0, 2));
+        ImVec2 sp = ImGui::GetCursorScreenPos();
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        const float D = 26.0f;
+        for (int k = -1; k < nPresets; ++k) {
+            ImVec2 c(sp.x + D * 0.5f + (k + 1) * (D + 10.0f), sp.y + D * 0.5f);
+            ImGui::SetCursorScreenPos(ImVec2(c.x - D * 0.5f, sp.y));
+            ImGui::PushID(k + 10);
+            if (ImGui::InvisibleButton("##sw", ImVec2(D, D))) e_banner = k;
+            bool h = ImGui::IsItemHovered();
+            ImGui::PopID();
+            int pi = k < 0 ? std::clamp(p.accent, 0, nPresets - 1) : k;
+            ImVec4 col = kAccentPresets[pi].col;
+            if (k < 0) {   // "Auto": follow my profile accent (half-filled disc)
+                d->AddCircle(c, D * 0.5f - 1.0f, ImGui::GetColorU32(col), 24, 2.0f);
+                d->PathArcTo(c, D * 0.5f - 4.0f, 3.14159f * 0.5f, 3.14159f * 1.5f, 16); d->PathFillConvex(ImGui::GetColorU32(col));
+            } else d->AddCircleFilled(c, D * 0.5f - 1.0f, ImGui::GetColorU32(col), 24);
+            if (e_banner == k) d->AddCircle(c, D * 0.5f + 3.0f, IM_COL32_WHITE, 24, 2.0f);
+            else if (h) d->AddCircle(c, D * 0.5f + 3.0f, IM_COL32(255, 255, 255, 90), 24, 1.5f);
+            if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", k < 0 ? "Auto (profile color)" : kAccentPresets[k].name); }
+        }
+        ImGui::SetCursorScreenPos(ImVec2(sp.x, sp.y + D + 6.0f));
+        ImGui::Dummy(ImVec2(0, 0));
+        endCard();
+    };
+
+    auto achCard = [&](float w) {
+        if (!me && !s_edit && shownA.empty() && (s_loaded || kDemo)) return;   // nothing public to show
+        beginCard("##pfach", w);
+        char right[48];
+        if (s_edit) std::snprintf(right, sizeof(right), "%d / 6 pinned", (int)e_ach.size());
+        else if (me) std::snprintf(right, sizeof(right), "%d unlocked  \xC2\xBB", achN);
+        else if (achKnown) std::snprintf(right, sizeof(right), "%d unlocked", achN);
+        else right[0] = '\0';
+        if (cardTitle(s_edit ? "PIN ACHIEVEMENTS" : achPinned ? "ACHIEVEMENT SHOWCASE" : "RECENT ACHIEVEMENTS", right, me && !s_edit)) {
+            out.gotoTab = 5; ClosePublicProfile();
+        }
+        const std::vector<okay::Achievement>& list = s_edit ? achAll : shownA;
+        if (list.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            if (!s_loaded && !kDemo && !me) ImGui::TextDisabled("Loading\xE2\x80\xA6");
+            else if (me) ImGui::TextDisabled("No achievements yet. Play games that unlock achievements, then pin your favourites here.");
+            ImGui::PopTextWrapPos();
+        } else {
+            const float iw = ImGui::GetContentRegionAvail().x, g = 10.0f, th = 66.0f;
+            const int cols = iw >= 560.0f ? 3 : iw >= 300.0f ? 2 : 1;
+            const float tw = (iw - g * (cols - 1)) / cols;
+            ImVec2 o = ImGui::GetCursorScreenPos();
+            ImDrawList* d = ImGui::GetWindowDrawList();
+            for (std::size_t i = 0; i < list.size(); ++i) {
+                const okay::Achievement& a = list[i];
+                ImVec2 tp(o.x + (i % cols) * (tw + g), o.y + (i / cols) * (th + g));
+                ImGui::SetCursorScreenPos(tp);
+                ImGui::PushID((int)i);
+                bool click = ImGui::InvisibleButton("##achtile", ImVec2(tw, th));
+                bool h = ImGui::IsItemHovered();
+                ImGui::PopID();
+                int pick = 0;
+                if (s_edit) for (std::size_t k = 0; k < e_ach.size(); ++k) if (e_ach[k] == a.id) pick = (int)k + 1;
+                const bool faded = s_edit && pick == 0;
+                d->AddRectFilled(tp, ImVec2(tp.x + tw, tp.y + th), h ? IM_COL32(255, 255, 255, 18) : IM_COL32(255, 255, 255, 8), 10.0f);
+                if (pick) d->AddRect(tp, ImVec2(tp.x + tw, tp.y + th), ImGui::GetColorU32(kAccent), 10.0f, 0, 2.0f);
+                DrawAchMedal(d, ImVec2(tp.x + 12.0f + 21.0f, tp.y + th * 0.5f), 21.0f, a.id, faded ? 0.45f : 1.0f);
+                const float tx = tp.x + 66.0f, maxW = tw - 66.0f - (s_edit ? 28.0f : 10.0f);
+                d->AddText(ImVec2(tx, tp.y + 14.0f), faded ? ImGui::GetColorU32(ImGuiCol_Text, 0.55f) : cText, FitText(a.label, maxW).c_str());
+                char when[48] = "";
+                if (a.when > 0) { std::time_t t = (std::time_t)a.when; if (std::tm* tm = std::localtime(&t)) std::strftime(when, sizeof(when), "Unlocked %b %d, %Y", tm); }
+                d->AddText(ImVec2(tx, tp.y + 36.0f), cDim, FitText(when[0] ? when : "Unlocked", maxW).c_str());
+                if (s_edit) pickBadge(d, ImVec2(tp.x + tw - 16.0f, tp.y + 16.0f), pick, h);
+                if (h) {
+                    if (s_edit) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    else ImGui::SetTooltip("%s%s%s", a.label.c_str(), when[0] ? "\n" : "", when);
+                }
+                if (click && s_edit) {
+                    if (pick) e_ach.erase(e_ach.begin() + (pick - 1));
+                    else if (e_ach.size() < 6) e_ach.push_back(a.id);
+                    else Toast("You can pin up to 6 achievements", 2);
+                }
+            }
+            int rows = ((int)list.size() + cols - 1) / cols;
+            ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + rows * th + (rows - 1) * g));
+            ImGui::Dummy(ImVec2(0, 0));
+        }
+        endCard();
+    };
+
+    auto gamesCard = [&](float w) {
+        if (!me && !s_edit && s_b.games.empty() && (s_loaded || kDemo)) return;
+        beginCard("##pfgames", w);
+        char right[48];
+        if (s_edit) std::snprintf(right, sizeof(right), "%d / 4 pinned", (int)e_games.size());
+        else std::snprintf(right, sizeof(right), "%d published", gameN);
+        cardTitle(s_edit ? "PIN GAMES" : gamesPinned ? "FEATURED GAMES" : "PUBLISHED GAMES", right, false);
+        const std::vector<okay::WorkshopItem>& list = s_edit ? s_b.games : shownG;
+        if (list.empty()) {
+            if (!s_loaded && !kDemo) ImGui::TextDisabled("Loading\xE2\x80\xA6");
+            else {
+                ImGui::TextDisabled("You haven't published anything to the Marketplace yet.");
+                ImGui::Dummy(ImVec2(0, 2));
+                if (PrimaryButton("Publish a game", ImVec2(160, 0))) { out.gotoTab = 7; g_openPublishForm = true; ClosePublicProfile(); }
+            }
+        } else {
+            const float iw = ImGui::GetContentRegionAvail().x, g = 12.0f, coverH = 92.0f, th = coverH + 56.0f;
+            const int cols = iw >= 760.0f ? 4 : iw >= 330.0f ? 2 : 1;
+            const float tw = (iw - g * (cols - 1)) / cols;
+            ImVec2 o = ImGui::GetCursorScreenPos();
+            ImDrawList* d = ImGui::GetWindowDrawList();
+            for (std::size_t i = 0; i < list.size(); ++i) {
+                const okay::WorkshopItem& gm = list[i];
+                ImVec2 tp(o.x + (i % cols) * (tw + g), o.y + (i / cols) * (th + g));
+                ImGui::SetCursorScreenPos(tp);
+                ImGui::PushID((int)gm.id);
+                bool click = ImGui::InvisibleButton("##gametile", ImVec2(tw, th));
+                bool h = ImGui::IsItemHovered();
+                ImGui::PopID();
+                int pick = 0;
+                if (s_edit) for (std::size_t k = 0; k < e_games.size(); ++k) if (e_games[k] == gm.id) pick = (int)k + 1;
+                const bool faded = s_edit && pick == 0;
+                const float fa = faded ? 0.45f : 1.0f;
+                d->AddRectFilled(tp, ImVec2(tp.x + tw, tp.y + th), h ? IM_COL32(255, 255, 255, 18) : IM_COL32(255, 255, 255, 8), 10.0f);
+                // Cover: a gradient in the game's own hue + a play disc + kind pill.
+                ImVec4 gc = NameColor(gm.title);
+                int v0 = d->VtxBuffer.Size;
+                d->AddRectFilled(tp, ImVec2(tp.x + tw, tp.y + coverH), IM_COL32_WHITE, 10.0f, ImDrawFlags_RoundCornersTop);
+                PfGradient(d, v0, tp, ImVec2(tp.x + tw, tp.y + coverH),
+                           ImVec4(gc.x * 0.78f, gc.y * 0.78f, gc.z * 0.78f, fa), ImVec4(gc.x * 0.26f, gc.y * 0.26f, gc.z * 0.30f, fa));
+                d->PushClipRect(tp, ImVec2(tp.x + tw, tp.y + coverH), true);
+                d->AddCircleFilled(ImVec2(tp.x + tw * 0.85f, tp.y + coverH * 0.1f), coverH * 0.75f, IM_COL32(255, 255, 255, (int)(14 * fa)), 40);
+                std::string ini = gm.title.substr(0, 1);
+                float isz = coverH * 0.9f;
+                d->AddText(font, isz, ImVec2(tp.x + 12.0f, tp.y + coverH - isz * 0.86f), IM_COL32(255, 255, 255, (int)(34 * fa)), ini.c_str());
+                d->PopClipRect();
+                ImVec2 pc(tp.x + tw * 0.5f, tp.y + coverH * 0.5f);
+                d->AddCircleFilled(pc, h && !s_edit ? 20.0f : 18.0f, IM_COL32(0, 0, 0, (int)(90 * fa)), 32);
+                d->AddTriangleFilled(ImVec2(pc.x - 4.5f, pc.y - 7.0f), ImVec2(pc.x - 4.5f, pc.y + 7.0f), ImVec2(pc.x + 7.5f, pc.y),
+                                     IM_COL32(255, 255, 255, (int)(235 * fa)));
+                std::string kind = gm.kind.empty() ? std::string("GAME") : gm.kind;
+                for (auto& c : kind) c = (char)std::toupper((unsigned char)c);
+                ImVec2 ks = font->CalcTextSizeA(fs * 0.70f, FLT_MAX, 0.0f, kind.c_str());
+                d->AddRectFilled(ImVec2(tp.x + 8, tp.y + 8), ImVec2(tp.x + 8 + ks.x + 12, tp.y + 8 + ks.y + 6), IM_COL32(0, 0, 0, (int)(110 * fa)), 7.0f);
+                d->AddText(font, fs * 0.70f, ImVec2(tp.x + 14, tp.y + 11), IM_COL32(255, 255, 255, (int)(220 * fa)), kind.c_str());
+                if (pick) d->AddRect(tp, ImVec2(tp.x + tw, tp.y + th), ImGui::GetColorU32(kAccent), 10.0f, 0, 2.0f);
+                d->AddText(ImVec2(tp.x + 12.0f, tp.y + coverH + 9.0f), faded ? ImGui::GetColorU32(ImGuiCol_Text, 0.55f) : cText,
+                           FitText(gm.title, tw - 24.0f).c_str());
+                std::string sub = PfCount(gm.downloads) + (gm.downloads == 1 ? " download" : " downloads");
+                d->AddText(ImVec2(tp.x + 12.0f, tp.y + coverH + 29.0f), cDim, FitText(sub, tw - 24.0f).c_str());
+                if (s_edit) pickBadge(d, ImVec2(tp.x + tw - 16.0f, tp.y + 16.0f), pick, h);
+                if (h) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    if (!s_edit) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted(gm.title.c_str());
+                        if (!gm.description.empty()) {
+                            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
+                            ImGui::TextDisabled("%s", gm.description.c_str());
+                            ImGui::PopTextWrapPos();
+                        }
+                        ImGui::TextColored(accLt, "Click to find it in the Marketplace");
+                        ImGui::EndTooltip();
+                    }
+                }
+                if (click) {
+                    if (s_edit) {
+                        if (pick) e_games.erase(e_games.begin() + (pick - 1));
+                        else if (e_games.size() < 4) e_games.push_back(gm.id);
+                        else Toast("You can pin up to 4 games", 2);
+                    } else { out.gotoTab = 7; out.marketSearch = gm.title; ClosePublicProfile(); }
+                }
+            }
+            int rows = ((int)list.size() + cols - 1) / cols;
+            ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + rows * th + (rows - 1) * g));
+            ImGui::Dummy(ImVec2(0, 0));
+        }
+        endCard();
+    };
+
+    auto aboutCard = [&](float w) {
+        beginCard("##pfabout", w);
+        cardTitle("ABOUT", nullptr, false);
+        ImGui::PushTextWrapPos(0.0f);
+        if (!p.bio.empty()) ImGui::TextUnformatted(p.bio.c_str());
+        else if (!s_loaded && !kDemo) ImGui::TextDisabled("Loading\xE2\x80\xA6");
+        else ImGui::TextDisabled(me ? "No bio yet. Add one under Account \xC2\xBB Customize profile." : "No bio yet.");
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, 6));
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        auto row = [&](int icon, const char* label, const std::string& value) {
+            if (value.empty()) return;
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            const float lh = ImGui::GetTextLineHeight();
+            ImVec2 c(rp.x + 8.0f, rp.y + lh * 0.5f + 3.0f);
+            const ImU32 ic = cDim; const float t = 1.5f;
+            if (icon == 0) {        // location pin
+                d->AddCircle(ImVec2(c.x, c.y - 2.0f), 4.2f, ic, 16, t);
+                d->AddLine(ImVec2(c.x - 3.4f, c.y + 0.4f), ImVec2(c.x, c.y + 6.0f), ic, t);
+                d->AddLine(ImVec2(c.x + 3.4f, c.y + 0.4f), ImVec2(c.x, c.y + 6.0f), ic, t);
+            } else if (icon == 1) { // favourite game: play in a circle
+                d->AddCircle(c, 6.5f, ic, 20, t);
+                d->AddTriangleFilled(ImVec2(c.x - 2.0f, c.y - 3.2f), ImVec2(c.x - 2.0f, c.y + 3.2f), ImVec2(c.x + 3.4f, c.y), ic);
+            } else if (icon == 2) { // calendar
+                d->AddRect(ImVec2(c.x - 6.0f, c.y - 5.0f), ImVec2(c.x + 6.0f, c.y + 6.0f), ic, 2.0f, 0, t);
+                d->AddLine(ImVec2(c.x - 6.0f, c.y - 1.5f), ImVec2(c.x + 6.0f, c.y - 1.5f), ic, t);
+                d->AddLine(ImVec2(c.x - 2.8f, c.y - 7.0f), ImVec2(c.x - 2.8f, c.y - 3.5f), ic, t);
+                d->AddLine(ImVec2(c.x + 2.8f, c.y - 7.0f), ImVec2(c.x + 2.8f, c.y - 3.5f), ic, t);
+            } else {                // clock
+                d->AddCircle(c, 6.5f, ic, 20, t);
+                d->AddLine(c, ImVec2(c.x, c.y - 4.0f), ic, t);
+                d->AddLine(c, ImVec2(c.x + 3.0f, c.y + 1.5f), ic, t);
+            }
+            ImGui::SetCursorScreenPos(ImVec2(rp.x + 24.0f, rp.y + 3.0f));
+            ImGui::BeginGroup();
+            ImGui::SetWindowFontScale(0.80f);
+            ImGui::TextDisabled("%s", label);
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(value.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndGroup();
+            ImGui::Dummy(ImVec2(0, 4));
+        };
+        char since[48] = "";
+        if (p.memberSince > 0) { std::time_t t = (std::time_t)p.memberSince; if (std::tm* tm = std::localtime(&t)) std::strftime(since, sizeof(since), "%B %d, %Y", tm); }
+        row(1, "FAVOURITE GAME", p.favoriteGame);
+        row(0, "LOCATION", p.location);
+        row(2, "MEMBER SINCE", since);
+        if (!p.online && p.lastSeen > 0) row(3, "LAST ONLINE", RelTime(p.lastSeen));
+        endCard();
+    };
+
+    auto activityCard = [&](float w) {
+        beginCard("##pfactivity", w);
+        cardTitle("RECENT ACTIVITY", nullptr, false);
+        if (s_b.activity.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            if (!s_loaded && !kDemo) ImGui::TextDisabled("Loading\xE2\x80\xA6");
+            else if (!me && s_b.friendStatus != "accepted") ImGui::TextDisabled("Recent activity is visible to friends.");
+            else ImGui::TextDisabled("Nothing new lately.");
+            ImGui::PopTextWrapPos();
+        }
+        int n = 0;
+        for (const auto& e : s_b.activity) {
+            if (n++ >= 6) break;
+            ImVec2 ip = ImGui::GetCursorScreenPos();
+            ImDrawList* d = ImGui::GetWindowDrawList();
+            ImVec2 c(ip.x + 15.0f, ip.y + 15.0f);
+            int icon = e.kind == "playing" ? 1 : e.kind == "achievement" ? 5 : e.kind == "publish" ? 7 : 3;
+            d->AddCircleFilled(c, 15.0f, e.kind == "achievement" ? IM_COL32(240, 196, 92, 40) : IM_COL32(255, 255, 255, 14), 28);
+            DrawNavIcon(d, icon, c, e.kind == "achievement" ? IM_COL32(240, 196, 92, 255) : cText);
+            const char* verb = e.kind == "playing" ? "Played " : e.kind == "achievement" ? "Unlocked "
+                             : e.kind == "publish" ? "Published " : e.kind == "online" ? "Came online" : "";
+            ImGui::SetCursorScreenPos(ImVec2(ip.x + 40.0f, ip.y));
+            ImGui::BeginGroup();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextWrapped("%s%s", verb, e.detail.c_str());
+            ImGui::PopTextWrapPos();
+            std::string ago = RelTime(e.when);
+            if (!ago.empty()) ImGui::TextDisabled("%s", ago.c_str());
+            ImGui::EndGroup();
+            ImGui::Dummy(ImVec2(0, 6));
+        }
+        endCard();
+    };
+
+    ImGui::BeginGroup();
+    if (s_edit) editCard(mainW);
+    if (!twoCol) aboutCard(mainW);
+    achCard(mainW);
+    gamesCard(mainW);
+    if (!twoCol) activityCard(mainW);
+    ImGui::EndGroup();
+    if (twoCol) {
+        ImGui::SameLine(0, gap);
+        ImGui::BeginGroup();
+        aboutCard(sideW);
+        activityCard(sideW);
+        ImGui::EndGroup();
+    }
+    ImGui::EndChild();   // ##pfbody
+    return out;
+}
+
 // ---- Background chat poll (worker; state declared before DrawChatWindow) ----
 // Upload worker: own account service (thread-safe, like the pollers), upload to
 // the "chat" Storage bucket, then send — images as the bare URL (rendered
@@ -6901,73 +7886,342 @@ int main(int argc, char** argv) {
             }
         }
 
-        // ---- Notifications flyout ------------------------------------------
-        // A left-anchored panel listing the notifications feed. Opened by the
-        // sidebar bell; closes on its [x], Escape, or clicking away.
-        if (g_notifPanelOpen) {
-            ImGuiViewport* vp = ImGui::GetMainViewport();
-            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 240, vp->WorkPos.y + 62), ImGuiCond_Appearing);
-            ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_Appearing);
-            ImGui::SetNextWindowBgAlpha(0.98f);
-            bool open = true;
-            if (ImGui::Begin("Notifications", &open,
-                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-                    ImGuiWindowFlags_NoDocking)) {
-                if (g_notifs.empty()) {
-                    ImGui::Dummy(ImVec2(0, 24));
-                    float aw = ImGui::GetContentRegionAvail().x;
-                    const char* msg = "You're all caught up";
-                    ImGui::SetCursorPosX((aw - ImGui::CalcTextSize(msg).x) * 0.5f + ImGui::GetCursorPosX());
-                    ImGui::TextDisabled("%s", msg);
-                } else {
-                    ImGui::TextDisabled("%d notification%s", (int)g_notifs.size(),
-                                        g_notifs.size() == 1 ? "" : "s");
-                    ImGui::SameLine();
-                    float aw = ImGui::GetContentRegionAvail().x;
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + aw - 80);
-                    if (ImGui::SmallButton("Clear all")) g_notifs.clear();
-                    ImGui::Separator();
-                    ImGui::BeginChild("##notiflist", ImVec2(0, 0), false);
-                    int closeAfterTab = -1;
-                    for (int ni = 0; ni < (int)g_notifs.size(); ++ni) {
-                        Notif& n = g_notifs[ni];
-                        ImGui::PushID(ni);
-                        ImVec2 rp = ImGui::GetCursorScreenPos();
-                        float rw = ImGui::GetContentRegionAvail().x;
-                        bool click = ImGui::InvisibleButton("##n", ImVec2(rw, 52));
-                        bool hov = ImGui::IsItemHovered();
-                        ImDrawList* ndl = ImGui::GetWindowDrawList();
-                        if (hov) ndl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + 52), IM_COL32(255,255,255,12), 6.0f);
-                        // Kind dot.
-                        ImU32 kc = n.kind == 1 ? IM_COL32(90, 170, 250, 255) :   // friend
-                                   n.kind == 2 ? IM_COL32(120, 210, 120, 255) :  // message
-                                   n.kind == 3 ? ImGui::GetColorU32(kAccent) :    // update
-                                                 IM_COL32(200, 180, 90, 255);     // system
-                        ndl->AddCircleFilled(ImVec2(rp.x + 14, rp.y + 16), 4.0f, kc);
-                        ndl->AddText(ImVec2(rp.x + 28, rp.y + 8),
-                                     ImGui::GetColorU32(ImGuiCol_Text), n.title.c_str());
-                        ndl->AddText(ImVec2(rp.x + 28, rp.y + 27),
-                                     ImGui::GetColorU32(ImGuiCol_TextDisabled), n.body.c_str());
-                        // Relative time from session ticks.
-                        Uint32 ago = (SDL_GetTicks() - n.time) / 1000;
-                        char rt[24];
-                        if (ago < 10) std::snprintf(rt, sizeof(rt), "now");
-                        else if (ago < 60) std::snprintf(rt, sizeof(rt), "%us", ago);
-                        else if (ago < 3600) std::snprintf(rt, sizeof(rt), "%um", ago / 60);
-                        else std::snprintf(rt, sizeof(rt), "%uh", ago / 3600);
-                        ImVec2 ts = ImGui::CalcTextSize(rt);
-                        ndl->AddText(ImVec2(rp.x + rw - ts.x - 4, rp.y + 8),
-                                     ImGui::GetColorU32(ImGuiCol_TextDisabled), rt);
-                        if (click && n.gotoTab >= 0) { closeAfterTab = n.gotoTab; }
-                        ImGui::PopID();
-                    }
-                    ImGui::EndChild();
-                    if (closeAfterTab >= 0) { tab = closeAfterTab; g_notifPanelOpen = false; }
+        // ---- Notifications panel ------------------------------------------
+        // A Slate flyout anchored beside the sidebar: header (new count, Mark all
+        // read, Clear), filter chips, then the feed grouped by day. Opened by the
+        // sidebar bell; closes on its [x], Escape, the bell, or clicking away.
+        {
+            static const bool kNtDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;   // dev screenshot hook
+            static bool ntSeeded = false;
+            if (kNtDemo && !ntSeeded) {   // seed a realistic feed once (ages relative to now)
+                ntSeeded = true;
+                struct Seed { const char* key; const char* title; const char* body; int kind; Uint32 agoMin; bool unread; int go; };
+                const Seed seed[] = {
+                    {"demo:dm", "maya sent you a message", "Perfect. First playable by tonight? I can share the build link as soon as it's up.", 2, 2, true, 6},
+                    {"demo:fr", "New friend request", "alexr wants to be your friend.", 1, 14, true, 6},
+                    {"demo:upd", "Update installed", "Updated to v" OKAY_ENGINE_VERSION " \xE2\x80\x94 restart to finish.", 3, 65, true, -1},
+                    {"demo:mention", "Game Jam Crew", "You were mentioned in #game-jam: \"@kingimann can you take the menus and the pause screen?\"", 0, 190, false, 8},
+                    {"demo:acc", "priya accepted your friend request", "You can now chat and see when priya is playing.", 1, 26 * 60, false, 6},
+                    {"demo:dms", "New messages", "3 unread direct messages from jonas", 2, 30 * 60, false, 6},
+                    {"demo:news", "What's new in v2.776", "Servers get channel tabs, faster chat and a refreshed notifications panel.", 0, 3 * 1440, false, 0},
+                    {"demo:dl", "Download finished", "Orbit Hopper (42 MB) is ready to play in your Library.", 3, 5 * 1440, false, 1},
+                };
+                const Uint32 t0 = SDL_GetTicks();
+                for (const Seed& s : seed) {
+                    Notif n; n.key = s.key; n.title = s.title; n.body = s.body; n.kind = s.kind;
+                    n.time = t0 - s.agoMin * 60000u;   // may wrap: ages are always computed as (now - time) mod 2^32
+                    n.read = !s.unread; n.gotoTab = s.go;
+                    g_notifs.push_back(n);
                 }
             }
-            ImGui::End();
-            if (!open || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_notifPanelOpen = false;
         }
+        static bool ntWasOpen = false;
+        static int  ntFilter = 0;                  // 0 All, 1 Unread, 2 Friends, 3 Messages, 4 Updates, 5 System
+        static std::set<std::string> ntHidden;     // dismissed items ("key\nbody"), so re-synced ones stay gone
+        if (g_notifPanelOpen) {
+            ImGuiViewport* vp = ImGui::GetMainViewport();
+            const float navWNow = g_navCollapsed ? 64.0f : 232.0f;
+            const float pw = std::max(300.0f, std::min(480.0f, vp->WorkSize.x - navWNow - 24.0f));
+            const float ph = std::max(280.0f, std::min(640.0f, vp->WorkSize.y - 24.0f));
+            const ImVec2 pp(vp->WorkPos.x + navWNow + 10.0f, vp->WorkPos.y + vp->WorkSize.y - ph - 12.0f);
+            ImGui::SetNextWindowPos(pp, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(pw, ph), ImGuiCond_Always);
+            if (!ntWasOpen) ImGui::SetNextWindowFocus();
+            const ImVec4 panelBg = g_themeIndex == 0 ? okaytheme::kRaised : ImGui::GetStyleColorVec4(ImGuiCol_PopupBg);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(panelBg.x, panelBg.y, panelBg.z, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1, 1, 1, 0.07f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+            ImGui::Begin("##notifpanel", nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::PopStyleVar(3);
+            ImGui::PopStyleColor(2);
+            const ImVec2 wpos = ImGui::GetWindowPos(), wsz = ImGui::GetWindowSize();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            {   // Soft drop shadow just outside the panel edge.
+                const ImVec2 a = wpos, b(wpos.x + wsz.x, wpos.y + wsz.y);
+                dl->PushClipRect(ImVec2(a.x - 24, a.y - 24), ImVec2(b.x + 24, b.y + 24), false);
+                for (int i = 1; i <= 12; ++i)
+                    dl->AddRect(ImVec2(a.x - i, a.y - i * 0.5f), ImVec2(b.x + i, b.y + i * 1.5f),
+                                IM_COL32(0, 0, 0, std::max(0, 46 - i * 4)), 12.0f + i, 0, 1.0f);
+                dl->PopClipRect();
+            }
+            const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
+            const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            auto sigOf    = [](const Notif& n) { return n.key + "\n" + n.body; };
+            auto isHidden = [&](const Notif& n) { return ntHidden.count(sigOf(n)) != 0; };
+            auto isUnread = [&](const Notif& n) { return !n.read || g_notifFresh.count(n.key) != 0; };
+            auto kindOf   = [](const Notif& n) { return (n.kind >= 1 && n.kind <= 3) ? n.kind : 0; };
+            int totalN = 0, unreadN = 0, kindN[4] = {0, 0, 0, 0};
+            for (const auto& n : g_notifs)
+                if (!isHidden(n)) { ++totalN; if (isUnread(n)) ++unreadN; ++kindN[kindOf(n)]; }
+            int gotoTabReq = -1;
+            bool closeReq = false;
+
+            // ---- Header: title + "N new" pill, then Mark all read / Clear / close.
+            const ImVec2 hp = ImGui::GetCursorScreenPos();
+            const float cw = ImGui::GetContentRegionAvail().x;
+            const float hh = 28.0f;
+            ImGui::SetWindowFontScale(1.22f);
+            const ImVec2 tsz = ImGui::CalcTextSize("Notifications");
+            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(hp.x, hp.y + (hh - tsz.y) * 0.5f), cText, "Notifications");
+            ImGui::SetWindowFontScale(1.0f);
+            if (unreadN > 0) {
+                char nb[24]; std::snprintf(nb, sizeof(nb), "%d new", unreadN);
+                const ImVec2 bs = ImGui::CalcTextSize(nb);
+                const ImVec2 b0(hp.x + tsz.x + 10.0f, hp.y + hh * 0.5f - 10.0f);
+                dl->AddRectFilled(b0, ImVec2(b0.x + bs.x + 14.0f, b0.y + 20.0f), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)), 10.0f);
+                dl->AddText(ImVec2(b0.x + 7.0f, b0.y + (20.0f - bs.y) * 0.5f), ImGui::GetColorU32(accLt), nb);
+            }
+            auto textBtn = [&](const char* id, const char* label, float x, bool enabled, bool accent) -> bool {
+                const ImVec2 ts = ImGui::CalcTextSize(label);
+                const ImVec2 p(x, hp.y + (hh - 26.0f) * 0.5f), sz(ts.x + 16.0f, 26.0f);
+                ImGui::SetCursorScreenPos(p);
+                const bool c = ImGui::InvisibleButton(id, sz) && enabled;
+                const bool h = enabled && ImGui::IsItemHovered();
+                if (h) { dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), IM_COL32(255, 255, 255, 16), 7.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+                const ImU32 col = !enabled ? ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.55f)
+                                : h ? cText : accent ? ImGui::GetColorU32(accLt) : cDim;
+                dl->AddText(ImVec2(p.x + 8.0f, p.y + (sz.y - ts.y) * 0.5f), col, label);
+                return c;
+            };
+            {   // close (round x) on the far right
+                const ImVec2 xp(hp.x + cw - 26.0f, hp.y + (hh - 26.0f) * 0.5f);
+                ImGui::SetCursorScreenPos(xp);
+                if (ImGui::InvisibleButton("##ntclose", ImVec2(26, 26))) closeReq = true;
+                const bool xh = ImGui::IsItemHovered();
+                const ImVec2 xc(xp.x + 13.0f, xp.y + 13.0f);
+                if (xh) { dl->AddCircleFilled(xc, 13.0f, IM_COL32(255, 255, 255, 20), 24); ImGui::SetTooltip("Close  (Esc)"); }
+                const ImU32 xcol = xh ? cText : cDim;
+                dl->AddLine(ImVec2(xc.x - 4.5f, xc.y - 4.5f), ImVec2(xc.x + 4.5f, xc.y + 4.5f), xcol, 1.6f);
+                dl->AddLine(ImVec2(xc.x + 4.5f, xc.y - 4.5f), ImVec2(xc.x - 4.5f, xc.y + 4.5f), xcol, 1.6f);
+                const float clearW = ImGui::CalcTextSize("Clear").x + 16.0f;
+                const float markW  = ImGui::CalcTextSize("Mark all read").x + 16.0f;
+                const float clearX = xp.x - 6.0f - clearW, markX = clearX - 2.0f - markW;
+                if (textBtn("##ntmark", "Mark all read", markX, unreadN > 0, true)) {
+                    for (auto& n : g_notifs) n.read = true;
+                    g_notifFresh.clear();
+                }
+                if (textBtn("##ntclear", "Clear", clearX, totalN > 0, false)) {
+                    for (auto& n : g_notifs) { ntHidden.insert(sigOf(n)); n.read = true; }
+                    g_notifFresh.clear();
+                }
+            }
+            ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + hh + 10.0f));
+            ImGui::Dummy(ImVec2(0, 0));
+
+            // ---- Filter chips (wrap onto a second row on narrow panels).
+            {
+                const char* chipLbl[] = {"All", "Unread", "Friends", "Messages", "Updates", "System"};
+                const ImVec2 cp = ImGui::GetCursorScreenPos();
+                const float ch = ImGui::GetTextLineHeight() + 10.0f;
+                float x = cp.x, y = cp.y;
+                for (int k = 0; k < 6; ++k) {
+                    const ImVec2 ts = ImGui::CalcTextSize(chipLbl[k]);
+                    char cnt[8] = "";
+                    if (k == 1 && unreadN > 0) std::snprintf(cnt, sizeof(cnt), "%d", unreadN);
+                    const ImVec2 cs = ImGui::CalcTextSize(cnt);
+                    const float w = ts.x + 18.0f + (cnt[0] ? cs.x + 16.0f : 0.0f);
+                    if (x > cp.x && x + w > cp.x + cw) { x = cp.x; y += ch + 6.0f; }
+                    ImGui::SetCursorScreenPos(ImVec2(x, y));
+                    ImGui::PushID(k);
+                    if (ImGui::InvisibleButton("##ntchip", ImVec2(w, ch))) ntFilter = k;
+                    const bool h = ImGui::IsItemHovered();
+                    ImGui::PopID();
+                    const bool on = ntFilter == k;
+                    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + ch),
+                                      on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f))
+                                         : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9)), ch * 0.5f);
+                    dl->AddText(ImVec2(x + 9.0f, y + (ch - ts.y) * 0.5f), on ? ImGui::GetColorU32(accLt) : (h ? cText : cDim), chipLbl[k]);
+                    if (cnt[0]) {
+                        const float bx = x + 9.0f + ts.x + 6.0f, bw = cs.x + 10.0f;
+                        dl->AddRectFilled(ImVec2(bx, y + (ch - 16) * 0.5f), ImVec2(bx + bw, y + (ch + 16) * 0.5f), ImGui::GetColorU32(kAccent), 8.0f);
+                        dl->AddText(ImVec2(bx + 5.0f, y + (ch - cs.y) * 0.5f), IM_COL32_WHITE, cnt);
+                    }
+                    if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    x += w + 6.0f;
+                }
+                ImGui::SetCursorScreenPos(ImVec2(cp.x, y + ch + 12.0f));
+                const ImVec2 lp = ImGui::GetCursorScreenPos();
+                dl->AddLine(ImVec2(lp.x - 16.0f, lp.y), ImVec2(lp.x + cw + 16.0f, lp.y), IM_COL32(255, 255, 255, 16), 1.0f);
+                ImGui::Dummy(ImVec2(0, 4));
+            }
+
+            // ---- The feed, newest first, grouped Today / Yesterday / Earlier.
+            ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 6.0f);
+            ImGui::BeginChild("##ntlist", ImVec2(0, 0), ImGuiChildFlags_None);
+            ImGui::PopStyleVar();
+            {
+                ImDrawList* ld = ImGui::GetWindowDrawList();
+                const Uint32 nowT = SDL_GetTicks();
+                const long nowUnix = (long)std::time(nullptr);
+                const long today = DayKey(nowUnix), yday = DayKey(nowUnix - 86400);
+                static const int kFilterKind[] = {-1, -1, 1, 2, 3, 0};
+                std::vector<int> order;
+                for (int i = 0; i < (int)g_notifs.size(); ++i) {
+                    const Notif& n = g_notifs[(std::size_t)i];
+                    if (isHidden(n)) continue;
+                    if (ntFilter == 1 && !isUnread(n)) continue;
+                    if (ntFilter >= 2 && kindOf(n) != kFilterKind[ntFilter]) continue;
+                    order.push_back(i);
+                }
+                std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+                    return (Uint32)(nowT - g_notifs[(std::size_t)a].time) < (Uint32)(nowT - g_notifs[(std::size_t)b].time);
+                });
+                // First line that fits, then the rest ellipsized onto a second line.
+                auto wrap2 = [](const std::string& s, float maxW, std::string& l1, std::string& l2) {
+                    l1.clear(); l2.clear();
+                    if (ImGui::CalcTextSize(s.c_str()).x <= maxW) { l1 = s; return; }
+                    std::size_t cut = 0;
+                    for (std::size_t i = 0; i < s.size(); ++i)
+                        if (s[i] == ' ') { if (ImGui::CalcTextSize(s.c_str(), s.c_str() + i).x <= maxW) cut = i; else break; }
+                    if (cut == 0) { l1 = FitText(s, maxW); return; }
+                    l1 = s.substr(0, cut); l2 = FitText(s.substr(cut + 1), maxW);
+                };
+                const float th = ImGui::GetTextLineHeight();
+                int lastGroup = -1;
+                int dismissIdx = -1;
+                for (int idx : order) {
+                    Notif& n = g_notifs[(std::size_t)idx];
+                    const int kind = kindOf(n);
+                    const bool un = isUnread(n);
+                    const Uint32 ageS = (Uint32)(nowT - n.time) / 1000u;
+                    const long dk = DayKey(nowUnix - (long)ageS);
+                    const int grp = dk == today ? 0 : dk == yday ? 1 : 2;
+                    if (grp != lastGroup) {
+                        if (lastGroup != -1) ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
+                        ImGui::SetWindowFontScale(0.80f);
+                        ImGui::TextDisabled("%s", grp == 0 ? "TODAY" : grp == 1 ? "YESTERDAY" : "EARLIER");
+                        ImGui::SetWindowFontScale(1.0f);
+                        ImGui::Dummy(ImVec2(0, 1));
+                        lastGroup = grp;
+                    }
+                    ImGui::PushID(n.key.c_str());
+                    const ImVec2 rp = ImGui::GetCursorScreenPos();
+                    const float rw = ImGui::GetContentRegionAvail().x;
+                    const float icD = 36.0f, tx = rp.x + 10.0f + icD + 12.0f;
+                    const float textW = rw - (tx - rp.x) - 46.0f;
+                    std::string b1, b2; wrap2(n.body, textW, b1, b2);
+                    const int bodyLines = n.body.empty() ? 0 : (b2.empty() ? 1 : 2);
+                    const float rh = std::max(58.0f, 11.0f + th + 3.0f + bodyLines * (th + 1.0f) + 10.0f);
+                    ImGui::SetNextItemAllowOverlap();
+                    const bool click = ImGui::InvisibleButton("##ntrow", ImVec2(rw, rh));
+                    const bool hov = ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + rw, rp.y + rh)) &&
+                                          ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+                    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ld->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh),
+                                      hov ? IM_COL32(255, 255, 255, 15) : un ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.07f)) : IM_COL32(0, 0, 0, 0), 10.0f);
+                    // Kind icon on a tinted disc.
+                    const ImVec4 kc = kind == 1 ? ImVec4(0.38f, 0.68f, 0.98f, 1.0f)    // friend
+                                    : kind == 2 ? ImVec4(0.38f, 0.80f, 0.55f, 1.0f)    // message
+                                    : kind == 3 ? ImVec4(0.66f, 0.54f, 0.98f, 1.0f)    // update
+                                                : ImVec4(0.95f, 0.72f, 0.30f, 1.0f);   // system
+                    const ImVec2 ic(rp.x + 10.0f + icD * 0.5f, rp.y + 11.0f + icD * 0.5f - 2.0f);
+                    ld->AddCircleFilled(ic, icD * 0.5f, ImGui::GetColorU32(ImVec4(kc.x, kc.y, kc.z, 0.17f)), 32);
+                    const int icon = kind == 1 ? 6 : kind == 2 ? kIcoChat : kind == 3 ? kIcoRefresh : kIcoBell;
+                    DrawNavIcon(ld, icon, ic, ImGui::GetColorU32(ImVec4(kc.x * 0.8f + 0.2f, kc.y * 0.8f + 0.2f, kc.z * 0.8f + 0.2f, 1.0f)));
+                    // Title (faux-bold + brighter when unread), then up to two body lines.
+                    const std::string title = FitText(n.title.empty() ? std::string("Notification") : n.title, textW);
+                    const ImU32 tcol = un ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.80f);
+                    ld->AddText(ImVec2(tx, rp.y + 11.0f), tcol, title.c_str());
+                    if (un) ld->AddText(ImVec2(tx + 0.7f, rp.y + 11.0f), tcol, title.c_str());
+                    float by = rp.y + 11.0f + th + 3.0f;
+                    if (!b1.empty()) { ld->AddText(ImVec2(tx, by), cDim, b1.c_str()); by += th + 1.0f; }
+                    if (!b2.empty()) ld->AddText(ImVec2(tx, by), cDim, b2.c_str());
+                    // Right column: relative time (or a dismiss x on hover) + unread dot.
+                    char rt[16];
+                    if (ageS < 60) std::snprintf(rt, sizeof(rt), "now");
+                    else if (ageS < 3600) std::snprintf(rt, sizeof(rt), "%um", (unsigned)(ageS / 60));
+                    else if (ageS < 86400) std::snprintf(rt, sizeof(rt), "%uh", (unsigned)(ageS / 3600));
+                    else std::snprintf(rt, sizeof(rt), "%ud", (unsigned)(ageS / 86400));
+                    const float rx = rp.x + rw - 12.0f;
+                    if (hov) {
+                        const ImVec2 xp(rx - 22.0f, rp.y + 8.0f);
+                        ImGui::SetCursorScreenPos(xp);
+                        if (ImGui::InvisibleButton("##ntx", ImVec2(22, 22))) dismissIdx = idx;
+                        const bool xh = ImGui::IsItemHovered();
+                        const ImVec2 xc(xp.x + 11.0f, xp.y + 11.0f);
+                        ld->AddCircleFilled(xc, 11.0f, xh ? IM_COL32(255, 255, 255, 34) : IM_COL32(255, 255, 255, 14), 20);
+                        const ImU32 xcol = xh ? cText : cDim;
+                        ld->AddLine(ImVec2(xc.x - 3.5f, xc.y - 3.5f), ImVec2(xc.x + 3.5f, xc.y + 3.5f), xcol, 1.5f);
+                        ld->AddLine(ImVec2(xc.x + 3.5f, xc.y - 3.5f), ImVec2(xc.x - 3.5f, xc.y + 3.5f), xcol, 1.5f);
+                        if (xh) ImGui::SetTooltip("Dismiss");
+                    } else {
+                        const ImVec2 ts = ImGui::CalcTextSize(rt);
+                        ld->AddText(ImVec2(rx - ts.x, rp.y + 11.0f), un ? ImGui::GetColorU32(accLt) : cDim, rt);
+                    }
+                    if (un) ld->AddCircleFilled(ImVec2(rx - 5.0f, rp.y + 11.0f + th + 3.0f + th * 0.5f + 1.0f), 4.5f, ImGui::GetColorU32(kAccent), 14);
+                    if (click && dismissIdx != idx) {
+                        n.read = true; g_notifFresh.erase(n.key);
+                        if (n.gotoTab >= 0) gotoTabReq = n.gotoTab;
+                    }
+                    ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rh + 3.0f));
+                    ImGui::Dummy(ImVec2(0, 0));
+                    ImGui::PopID();
+                }
+                if (dismissIdx >= 0 && dismissIdx < (int)g_notifs.size()) {
+                    Notif& n = g_notifs[(std::size_t)dismissIdx];
+                    ntHidden.insert(sigOf(n)); n.read = true; g_notifFresh.erase(n.key);
+                }
+                // Static notifications that were dismissed can go for good; the
+                // re-synced ones (dyn:/news:) stay hidden via ntHidden.
+                for (auto it = g_notifs.begin(); it != g_notifs.end();) {
+                    const bool synced = it->key.rfind("dyn:", 0) == 0 || it->key.rfind("news:", 0) == 0;
+                    if (!synced && isHidden(*it)) { ntHidden.erase(sigOf(*it)); it = g_notifs.erase(it); }
+                    else ++it;
+                }
+                if (order.empty()) {   // ---- Empty state ----
+                    const float aw = ImGui::GetContentRegionAvail().x, ah = ImGui::GetContentRegionAvail().y;
+                    ImGui::Dummy(ImVec2(0, std::max(16.0f, ah * 0.20f)));
+                    const ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 30.0f);
+                    const bool caughtUp = totalN == 0 || ntFilter == 1;
+                    ld->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
+                    DrawNavIcon(ld, kIcoBell, c, cDim);
+                    if (caughtUp) {   // small green check badge
+                        const ImVec2 bc(c.x + 20.0f, c.y + 20.0f);
+                        ld->AddCircleFilled(bc, 10.0f, ImGui::GetColorU32(panelBg), 20);
+                        ld->AddCircleFilled(bc, 8.0f, IM_COL32(64, 186, 104, 255), 20);
+                        ld->PathLineTo(ImVec2(bc.x - 3.6f, bc.y + 0.2f)); ld->PathLineTo(ImVec2(bc.x - 1.0f, bc.y + 2.8f));
+                        ld->PathLineTo(ImVec2(bc.x + 3.8f, bc.y - 2.8f)); ld->PathStroke(IM_COL32_WHITE, 0, 1.8f);
+                    }
+                    ImGui::Dummy(ImVec2(0, 74));
+                    auto centered = [&](const char* s, bool dim) {
+                        const float tw = ImGui::CalcTextSize(s).x;
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - tw) * 0.5f));
+                        if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
+                    };
+                    const char* hint = totalN == 0 ? "Friend requests, messages and updates show up here."
+                                     : ntFilter == 1 ? "No unread notifications."
+                                     : ntFilter == 2 ? "No friend notifications."
+                                     : ntFilter == 3 ? "No message notifications."
+                                     : ntFilter == 4 ? "No update notifications."
+                                                     : "No system notifications.";
+                    ImGui::SetWindowFontScale(1.08f);
+                    centered(caughtUp ? "You're all caught up" : "Nothing here", false);
+                    ImGui::SetWindowFontScale(1.0f);
+                    centered(hint, true);
+                }
+            }
+            ImGui::EndChild();
+            ImGui::End();
+            if (gotoTabReq >= 0) { tab = gotoTabReq; closeReq = true; }
+            if (closeReq || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_notifPanelOpen = false;
+            // Clicking anywhere outside closes it (the bell itself toggles).
+            if (ntWasOpen && g_notifPanelOpen && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+                const ImVec2 m = ImGui::GetIO().MousePos;
+                const bool inPanel = m.x >= wpos.x && m.y >= wpos.y && m.x < wpos.x + wsz.x && m.y < wpos.y + wsz.y;
+                const bool inBell = m.x >= g_notifBellMin.x && m.y >= g_notifBellMin.y && m.x < g_notifBellMax.x && m.y < g_notifBellMax.y;
+                if (!inPanel && !inBell) g_notifPanelOpen = false;
+            }
+        } else {
+            g_notifFresh.clear();   // "new since you opened it" only lasts while it's open
+        }
+        ntWasOpen = g_notifPanelOpen;
 
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
@@ -7150,7 +8404,7 @@ int main(int argc, char** argv) {
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
         auto tabRow = [&](int i, int badge = 0, ImU32 badgeCol = 0) {
             char id[16]; std::snprintf(id, sizeof(id), "##nav%d", i);
-            if (navRow(id, navs[i], i, tab == i, badge, badgeCol)) tab = i;
+            if (navRow(id, navs[i], i, tab == i, badge, badgeCol)) { tab = i; ClosePublicProfile(); }
         };
         const ImU32 navSoft = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.40f));
         navSection("MENU");
@@ -7236,10 +8490,14 @@ int main(int argc, char** argv) {
         {   // ---- Notifications + Settings ----
             int unread = NotifUnread();
             if (navRow("##navbell", "Notifications", kIcoBell, g_notifPanelOpen, unread, navRed)) {
-                g_notifPanelOpen = true;
-                for (auto& n : g_notifs) n.read = true;   // opening clears unread
+                g_notifPanelOpen = !g_notifPanelOpen;
+                if (g_notifPanelOpen) {
+                    g_notifFresh.clear();
+                    for (auto& n : g_notifs) { if (!n.read) g_notifFresh.insert(n.key); n.read = true; }   // opening clears unread
+                }
             }
-            if (navRow("##nav4", navs[4], 4, tab == 4, 0, 0)) tab = 4;
+            g_notifBellMin = ImGui::GetItemRectMin(); g_notifBellMax = ImGui::GetItemRectMax();
+            if (navRow("##nav4", navs[4], 4, tab == 4, 0, 0)) { tab = 4; ClosePublicProfile(); }
         }
         {   // ---- Profile card (opens the Account tab) ----
             ImGui::Dummy(ImVec2(0, 6));
@@ -7297,7 +8555,7 @@ int main(int argc, char** argv) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 if (g_navCollapsed) ImGui::SetTooltip(navSignedIn ? "%s  \xC2\xB7  Account" : "Sign in", uname.c_str());
             }
-            if (click) { tab = 3; g_lastTab = 3; SavePrefs(); }
+            if (click) { tab = 3; g_lastTab = 3; SavePrefs(); ClosePublicProfile(); }
         }
         ImGui::PopStyleVar();   // ItemSpacing
         ImGui::EndChild();
@@ -7352,13 +8610,32 @@ int main(int argc, char** argv) {
             if (PrimaryButton("Sign in", ImVec2(180, 42))) { tab = 3; g_lastTab = 3; SavePrefs(); }
             return false;
         };
-        if (tab == 0) {                                   // ---- Create ----
+        // Public profile page: overlays the current tab (Back returns to it);
+        // switching tabs closes it.
+        {
+            static int pfTabWas = tab;
+            if (tab != pfTabWas) ClosePublicProfile();
+            pfTabWas = tab;
+            static bool pfDemoOnce = false;   // dev screenshot hook: open a profile at startup
+            if (!pfDemoOnce) {
+                pfDemoOnce = true;
+                const char* dp = std::getenv("OKAY_UI_DEMO_PROFILE");
+                if (dp && *dp && std::getenv("OKAY_UI_DEMO_USER")) OpenPublicProfile("", dp);
+            }
+        }
+        if (g_pfOpen) {
+            PfPageOut po = DrawPublicProfilePage(account, tab);
+            if (po.gotoTab >= 0) {
+                tab = po.gotoTab;
+                if (!po.marketSearch.empty()) std::snprintf(marketFilter, sizeof(marketFilter), "%s", po.marketSearch.c_str());
+            }
+        } else if (tab == 0) {                            // ---- Create ----
             sectionHeader("Create a game", nullptr);
 
             // Hero card: a flat, slightly-raised panel (no gradient wash) with the
             // one primary action — reads like a real app, not a designed banner.
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.180f, 0.180f, 0.190f, 1.0f));
-            ImGui::BeginChild("hero", ImVec2(0, 110), true, ImGuiWindowFlags_NoScrollbar);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f));
+            ImGui::BeginChild("hero", ImVec2(0, editor.empty() ? 122.0f : 110.0f), true, ImGuiWindowFlags_NoScrollbar);
             {
                 ImVec2 mn = ImGui::GetWindowPos(); ImVec2 sz = ImGui::GetWindowSize();
                 ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -8245,121 +9522,402 @@ int main(int argc, char** argv) {
                 }   // end list view
             }
         } else if (tab == 2) {                            // ---- Community ----
-            sectionHeader("Community",
-                "Play and share games, levels, scripts and models with other creators.");
-
-            // Play a shared game in place — drawn as a drop-zone banner (dashed
-            // border + drop icon) so it reads as "drag files here" at a glance.
-            {
-                ImVec2 p = ImGui::GetCursorScreenPos();
-                float w = ImGui::GetContentRegionAvail().x, h = 66.0f;
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h),
-                                  ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.07f)), 9.0f);
-                // Hand-dashed border (ImGui has no dashed-rect primitive).
-                ImU32 bc = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.55f));
-                const float dash = 8.0f, gap = 6.0f;
-                for (float x = p.x + 8; x + dash < p.x + w - 8; x += dash + gap) {
-                    dl->AddLine(ImVec2(x, p.y), ImVec2(x + dash, p.y), bc, 1.6f);
-                    dl->AddLine(ImVec2(x, p.y + h), ImVec2(x + dash, p.y + h), bc, 1.6f);
-                }
-                for (float y = p.y + 8; y + dash < p.y + h - 8; y += dash + gap) {
-                    dl->AddLine(ImVec2(p.x, y), ImVec2(p.x, y + dash), bc, 1.6f);
-                    dl->AddLine(ImVec2(p.x + w, y), ImVec2(p.x + w, y + dash), bc, 1.6f);
-                }
-                // Drop icon: circle + down arrow, left side of the banner.
-                ImVec2 cc(p.x + 33.0f, p.y + h * 0.5f);
-                dl->AddCircle(cc, 14.0f, bc, 0, 1.8f);
-                dl->AddLine(ImVec2(cc.x, cc.y - 7.0f), ImVec2(cc.x, cc.y + 5.0f), bc, 2.2f);
-                dl->AddLine(ImVec2(cc.x - 5.0f, cc.y), ImVec2(cc.x, cc.y + 5.0f), bc, 2.2f);
-                dl->AddLine(ImVec2(cc.x + 5.0f, cc.y), ImVec2(cc.x, cc.y + 5.0f), bc, 2.2f);
-                ImGui::SetCursorScreenPos(ImVec2(p.x + 58.0f, p.y + 13.0f));
-                ImGui::Text("Drop a shared game here to play it");
-                ImGui::SetCursorScreenPos(ImVec2(p.x + 58.0f, p.y + 13.0f + ImGui::GetTextLineHeightWithSpacing()));
-                ImGui::TextDisabled("Drag a game folder or .okayscene onto this window. It plays in place, nothing is copied.");
-                ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
-                ImGui::Dummy(ImVec2(0, 10));
-            }
-            if (ImGui::Button("Open community folder", ImVec2(200, 0))) OpenExternal(CommunityDir().string());
-            ImGui::SameLine();
-            if (ImGui::Button("Refresh", ImVec2(110, 0))) scenes = FindScenes();
-            ImGui::SameLine();
-            ImGui::TextDisabled("Drop shared game folders here, then Refresh.");
-            ImGui::Dummy(ImVec2(0, 12));
-
-            // Installed community content (scenes living under community/).
-            ImGui::SeparatorText("Your community library");
-            if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
-            ImGui::PushItemWidth(-1);
-            ImGui::InputTextWithHint("##commFilter", "Search your library...  (Ctrl+F)",
-                                     commFilter, sizeof(commFilter));
-            ImGui::PopItemWidth();
-            ImGui::Dummy(ImVec2(0, 4));
-            auto clower = [](std::string s) {
+            sectionHeader("Community", nullptr);
+            const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
+            const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            auto lowerStr = [](std::string s) {
                 for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
                 return s;
             };
-            std::string cneedle = clower(commFilter);
-            int cShown = 0;
+            // Dashed outline along a rounded rect (ImGui has no dashed primitive):
+            // walk the rect's path and emit alternating dash / gap pieces.
+            auto dashedRoundRect = [](ImDrawList* dl, ImVec2 a, ImVec2 b, float r, ImU32 col, float th, float dash, float gap) {
+                dl->PathRect(a, b, r);
+                ImVector<ImVec2> pts = dl->_Path;
+                dl->PathClear();
+                if (pts.Size < 2) return;
+                pts.push_back(pts[0]);
+                bool on = true; float left = dash;
+                for (int i = 0; i + 1 < pts.Size; ++i) {
+                    ImVec2 p = pts[i], q = pts[i + 1];
+                    float dx = q.x - p.x, dy = q.y - p.y, len = std::sqrt(dx * dx + dy * dy), t = 0.0f;
+                    while (len > 0.0f && t < len) {
+                        float step = std::min(left, len - t);
+                        if (on) dl->AddLine(ImVec2(p.x + dx * t / len, p.y + dy * t / len),
+                                            ImVec2(p.x + dx * (t + step) / len, p.y + dy * (t + step) / len), col, th);
+                        t += step; left -= step;
+                        if (left <= 0.001f) { on = !on; left = on ? dash : gap; }
+                    }
+                }
+            };
+            // Search pill (Friends-style): rounded field with a drawn magnifier.
+            auto searchPill = [&](const char* id, const char* hint, char* buf, size_t sz, float w) {
+                ImVec2 sp = ImGui::GetCursorScreenPos();
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(30, 7));
+                ImGui::SetNextItemWidth(w);
+                ImGui::InputTextWithHint(id, hint, buf, sz);
+                ImGui::PopStyleVar(2);
+                float fh = ImGui::GetItemRectSize().y;
+                ImVec2 mc(sp.x + 15.0f, sp.y + fh * 0.5f - 1.0f);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddCircle(mc, 4.6f, cDim, 16, 1.5f);
+                dl->AddLine(ImVec2(mc.x + 3.4f, mc.y + 3.4f), ImVec2(mc.x + 6.8f, mc.y + 6.8f), cDim, 1.8f);
+            };
+            // Section label row: "YOUR LIBRARY — 3" (small caps) + hairline.
+            auto commLabel = [&](const char* title, int n) {
+                char t[64];
+                if (n >= 0) std::snprintf(t, sizeof(t), "%s  \xE2\x80\x94  %d", title, n); else std::snprintf(t, sizeof(t), "%s", title);
+                ImGui::SetWindowFontScale(0.80f);
+                ImGui::TextDisabled("%s", t);
+                ImGui::SetWindowFontScale(1.0f);
+            };
+            auto folderGlyph = [](ImDrawList* d, ImVec2 c, ImU32 col) {
+                d->PathLineTo(ImVec2(c.x - 7.5f, c.y - 5.5f)); d->PathLineTo(ImVec2(c.x - 2.5f, c.y - 5.5f));
+                d->PathLineTo(ImVec2(c.x - 0.5f, c.y - 3.5f)); d->PathLineTo(ImVec2(c.x + 7.5f, c.y - 3.5f));
+                d->PathLineTo(ImVec2(c.x + 7.5f, c.y + 5.5f)); d->PathLineTo(ImVec2(c.x - 7.5f, c.y + 5.5f));
+                d->PathStroke(col, ImDrawFlags_Closed, 1.6f);
+            };
+            // Size + kind of each library item, computed once (folder walks are slow).
+            static std::map<std::string, std::string> s_commMeta;
+            auto itemMeta = [&](const fs::path& root, const fs::path& scene) -> const std::string& {
+                auto it = s_commMeta.find(scene.string());
+                if (it != s_commMeta.end()) return it->second;
+                std::error_code ec;
+                std::uintmax_t bytes = 0; int n = 0;
+                if (fs::is_directory(root, ec)) {
+                    for (auto f = fs::recursive_directory_iterator(root, ec); !ec && f != fs::recursive_directory_iterator() && n < 20000; f.increment(ec), ++n)
+                        if (f->is_regular_file(ec)) bytes += f->file_size(ec);
+                } else bytes = fs::file_size(root, ec);
+                char sz[32];
+                if (bytes >= 1024ull * 1024ull * 1024ull) std::snprintf(sz, sizeof(sz), "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+                else if (bytes >= 1024ull * 1024ull)      std::snprintf(sz, sizeof(sz), "%.1f MB", bytes / (1024.0 * 1024.0));
+                else                                      std::snprintf(sz, sizeof(sz), "%.0f KB", std::max(1.0, bytes / 1024.0));
+                std::string meta = std::string(IsBuiltGame(scene) ? "Game" : "Scene") + "  \xC2\xB7  " + sz;
+                return s_commMeta.emplace(scene.string(), meta).first->second;
+            };
+            auto refreshLibrary = [&]() { scenes = FindScenes(); s_commMeta.clear(); };
+
+            // Collect library items (scenes living under community/).
+            struct CommItem { std::size_t idx; fs::path root; std::string title; };
+            std::vector<CommItem> commAll, commShown;
             for (std::size_t i = 0; i < scenes.size(); ++i) {
                 fs::path croot = CommunityItemRoot(scenes[i]);
                 if (croot.empty()) continue;
-                if (!cneedle.empty() &&
-                    clower(scenes[i].filename().string() + " " + croot.filename().string())
-                        .find(cneedle) == std::string::npos) continue;
-                ++cShown;
-                std::string cpath = scenes[i].string();
-                ImGui::PushID((int)(i + 5000));
-                ImGui::BeginChild("citem", ImVec2(0, 64), true, ImGuiWindowFlags_NoScrollbar);
-                HoverRing();
-                ImGui::SetCursorPos(ImVec2(10, 10));
-                IconTile(scenes[i].filename().string(), 44.0f);
-                ImGui::SameLine();
-                ImGui::BeginGroup();
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
-                ImGui::Text("%s", scenes[i].filename().string().c_str());
-                std::string cago = ModifiedAgo(scenes[i]);
-                if (cago.empty())
-                    ImGui::TextDisabled("%s", croot.filename().string().c_str());
-                else
-                    ImGui::TextDisabled("%s  \xC2\xB7  %s", croot.filename().string().c_str(), cago.c_str());
-                ImGui::EndGroup();
-                ImGui::SameLine(ImGui::GetContentRegionAvail().x - (80 + 82 + 82 + 24));
-                ImGui::SetCursorPosY(12.0f);
-                ImGui::BeginDisabled(player.empty());
-                if (PrimaryButton("Play", ImVec2(80, 40))) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
-                ImGui::EndDisabled();
-                ImGui::SameLine();
-                if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(croot.string());
-                ImGui::SameLine();
-                // Removing deletes the game's folder from disk, so confirm first
-                // (modal rendered after the loop).
-                if (ImGui::Button("Remove", ImVec2(82, 40))) {
-                    commRemovePath = croot.string();
-                    commRemoveName = scenes[i].filename().string();
-                }
-                // Double-click plays, like the Play tab rows.
-                if (!player.empty() && ImGui::IsWindowHovered() &&
-                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    Launch(player, cpath); RecordPlayed(cpath); SavePrefs();
-                }
-                // Right-click parity with the Play tab rows.
-                if (ImGui::BeginPopupContextWindow("commctx", ImGuiPopupFlags_MouseButtonRight)) {
-                    if (!player.empty() && ImGui::MenuItem("Play")) {
-                        Launch(player, cpath); RecordPlayed(cpath); SavePrefs();
+                CommItem ci{i, croot, croot.filename().string()};
+                commAll.push_back(ci);
+                std::string cneedle = lowerStr(commFilter);
+                if (cneedle.empty() || lowerStr(scenes[i].filename().string() + " " + ci.title).find(cneedle) != std::string::npos)
+                    commShown.push_back(ci);
+            }
+
+            const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
+            ImGui::BeginChild("##commbody", ImVec2(0, bodyH), false);
+            const float W = ImGui::GetContentRegionAvail().x;
+
+            // ---- Hero: what Community is + primary actions -------------------------
+            {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 20));
+                ImGui::BeginChild("##commhero", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                                  ImGuiWindowFlags_NoScrollbar);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const float hw = ImGui::GetContentRegionAvail().x;
+                const bool art = hw >= 560.0f;
+                const float textW = art ? hw - 190.0f : hw;
+                ImVec2 hp = ImGui::GetCursorScreenPos();
+                // Decorative stack of tiles (play / grid / bag) on the right.
+                if (art) {
+                    const float S = 58.0f;
+                    struct { float dx, dy; int icon; float a; } tiles[] = {{-150, 18, 1, 0.16f}, {-104, 2, 2, 0.26f}, {-58, 22, 7, 0.18f}};
+                    for (auto& t : tiles) {
+                        ImVec2 a(hp.x + hw + t.dx, hp.y + t.dy);
+                        dl->AddRectFilled(a, ImVec2(a.x + S, a.y + S), ImGui::GetColorU32(okaytheme::kRaised), 14.0f);
+                        dl->AddRectFilled(a, ImVec2(a.x + S, a.y + S), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, t.a)), 14.0f);
+                        dl->AddRect(a, ImVec2(a.x + S, a.y + S), IM_COL32(255, 255, 255, 26), 14.0f, 0, 1.0f);
+                        DrawNavIcon(dl, t.icon, ImVec2(a.x + S * 0.5f, a.y + S * 0.5f), ImGui::GetColorU32(accLt));
                     }
-                    if (ImGui::MenuItem("Show in Explorer")) OpenExternal(croot.string());
-                    if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(cpath.c_str());
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Remove from library...")) {
-                        commRemovePath = croot.string();
-                        commRemoveName = scenes[i].filename().string();
-                    }
-                    ImGui::EndPopup();
+                }
+                ImGui::SetWindowFontScale(1.22f);
+                ImGui::TextUnformatted("Play and share community creations");
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::Dummy(ImVec2(0, 2));
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textW);
+                ImGui::TextDisabled("Games, levels, scripts and models made by other OkaySpace creators. Everything you add "
+                                    "lives in your community folder and also shows up in Play.");
+                ImGui::PopTextWrapPos();
+                ImGui::Dummy(ImVec2(0, 8));
+                // Actions: wrap onto a new line when the card is narrow.
+                const float bh = 36.0f;
+                float x = 0.0f;
+                auto place = [&](float bw) {
+                    if (x > 0 && x + 8 + bw <= hw) { ImGui::SameLine(0, 8); x += 8 + bw; }
+                    else x = bw;
+                };
+                place(206);
+                if (PrimaryButton("Publish to Marketplace", ImVec2(206, bh))) { tab = 7; g_openPublishForm = true; }
+                place(206);
+                if (ImGui::Button("Open community folder", ImVec2(206, bh))) OpenExternal(CommunityDir().string());
+                place(112);
+                {
+                    ImVec2 rp = ImGui::GetCursorScreenPos();
+                    if (ImGui::Button("      Refresh", ImVec2(112, bh))) { refreshLibrary(); Toast("Library refreshed", 1); }
+                    DrawNavIcon(ImGui::GetWindowDrawList(), kIcoRefresh, ImVec2(rp.x + 22, rp.y + bh * 0.5f), cText);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rescan the community folder");
                 }
                 ImGui::EndChild();
-                ImGui::PopID();
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
             }
+            ImGui::Dummy(ImVec2(0, 10));
+
+            // ---- Drop zone: dashed card, click opens the community folder ----------
+            {
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                const float h = 88.0f;
+                const bool clicked = ImGui::InvisibleButton("##commdrop", ImVec2(W, h));
+                const bool hov = ImGui::IsItemHovered();
+                dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, hov ? 0.10f : 0.05f)), 12.0f);
+                dashedRoundRect(dl, ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(p.x + W - 0.5f, p.y + h - 0.5f), 12.0f,
+                                ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, hov ? 0.85f : 0.50f)), 1.5f, 7.0f, 5.0f);
+                ImVec2 ic(p.x + 46.0f, p.y + h * 0.5f);
+                dl->AddCircleFilled(ic, 22.0f, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.18f)), 32);
+                DrawNavIcon(dl, 10, ic, ImGui::GetColorU32(accLt));
+                const float tx = p.x + 84.0f, tw = W - 84.0f - 18.0f;
+                const float lh = ImGui::GetTextLineHeight();
+                const char* d1 = "Drag a game folder, scene, script or model onto this window to add it to your library. "
+                                 "A dropped .okayscene plays right away.";
+                ImVec2 ds = ImGui::CalcTextSize(d1, nullptr, false, tw);
+                const float ty = p.y + (h - (lh + 4.0f + ds.y)) * 0.5f;
+                dl->AddText(ImVec2(tx, ty), cText, "Drop files here to add them to your library");
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, ty + lh + 4.0f), cDim, d1, nullptr, tw);
+                if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Open the community folder"); }
+                if (clicked) OpenExternal(CommunityDir().string());
+            }
+            ImGui::Dummy(ImVec2(0, 14));
+
+            // ---- Your library: header (label + search) and a grid of cards ---------
+            {
+                const bool pillBelow = W < 560.0f;
+                ImVec2 lp = ImGui::GetCursorScreenPos();
+                const float pillW = pillBelow ? W : std::min(300.0f, W * 0.45f);
+                ImGui::SetCursorScreenPos(ImVec2(lp.x, lp.y + (pillBelow ? 0.0f : 9.0f)));
+                commLabel("YOUR LIBRARY", (int)commAll.size());
+                if (!pillBelow) ImGui::SetCursorScreenPos(ImVec2(lp.x + W - pillW, lp.y));
+                else ImGui::Dummy(ImVec2(0, 2));
+                if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
+                searchPill("##commFilter", "Search your library  (Ctrl+F)", commFilter, sizeof(commFilter), pillW);
+                ImGui::Dummy(ImVec2(0, 6));
+            }
+            if (commShown.empty()) {
+                // Centered empty state.
+                ImGui::Dummy(ImVec2(0, 14));
+                ImVec2 c(ImGui::GetCursorScreenPos().x + W * 0.5f, ImGui::GetCursorScreenPos().y + 30);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
+                DrawNavIcon(dl, 2, c, cDim);
+                ImGui::Dummy(ImVec2(0, 70));
+                auto centered = [&](const char* s, bool dim) {
+                    float tw = ImGui::CalcTextSize(s).x;
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (W - tw) * 0.5f));
+                    if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
+                };
+                if (commFilter[0]) {
+                    centered("No matches", false);
+                    std::string m = std::string("Nothing in your library matches \"") + commFilter + "\".";
+                    centered(m.c_str(), true);
+                } else {
+                    centered("Your library is empty", false);
+                    centered("Drop a shared game onto this window, or put it in the community folder and Refresh.", true);
+                }
+                ImGui::Dummy(ImVec2(0, 18));
+            } else {
+                const float gap = 12.0f, cardH = 128.0f;
+                int cols = std::max(1, (int)((W + gap) / (270.0f + gap)));
+                const float cardW = std::floor((W - (cols - 1) * gap) / cols);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                int n = 0;
+                for (const CommItem& it : commShown) {
+                    const fs::path& scene = scenes[it.idx];
+                    const std::string cpath = scene.string();
+                    ImGui::PushID((int)(it.idx + 5000));
+                    const ImVec2 cp(g0.x + (n % cols) * (cardW + gap), g0.y + (n / cols) * (cardH + gap));
+                    ++n;
+                    ImGui::SetCursorScreenPos(cp);
+                    ImGui::SetNextItemAllowOverlap();
+                    ImGui::InvisibleButton("##ccard", ImVec2(cardW, cardH));
+                    const bool bgHov = ImGui::IsItemHovered();
+                    const bool hov = ImGui::IsMouseHoveringRect(cp, ImVec2(cp.x + cardW, cp.y + cardH)) && ImGui::IsWindowHovered();
+                    // Double-click plays, right-click opens the item menu.
+                    if (bgHov && !player.empty() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        Launch(player, cpath); RecordPlayed(cpath); SavePrefs();
+                    }
+                    if (ImGui::BeginPopupContextItem("##commctx")) {
+                        if (!player.empty() && ImGui::MenuItem("Play")) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+                        if (ImGui::MenuItem("Show in Explorer")) OpenExternal(it.root.string());
+                        if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(cpath.c_str());
+                        ImGui::Separator();
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                        if (ImGui::MenuItem("Remove from library...")) { commRemovePath = it.root.string(); commRemoveName = it.title; }
+                        ImGui::PopStyleColor();
+                        ImGui::EndPopup();
+                    }
+                    dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(okaytheme::kRaised), 10.0f);
+                    if (hov) {
+                        dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, 8), 10.0f);
+                        dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, 30), 10.0f, 0, 1.0f);
+                    }
+                    // Tile (cover art if the game ships one) + title + meta.
+                    const float A = 52.0f;
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x + 14, cp.y + 14));
+                    DrawGameIcon(cpath, it.title, A);
+                    const float tx = cp.x + 14 + A + 12, tr = cp.x + cardW - 14;
+                    dl->AddText(ImVec2(tx, cp.y + 16), cText, FitText(it.title, tr - tx).c_str());
+                    dl->AddText(ImVec2(tx, cp.y + 37), ImGui::GetColorU32(accLt), FitText(itemMeta(it.root, scene), tr - tx).c_str());
+                    std::string ago = ModifiedAgo(scene);
+                    std::string sub = scene.filename().string() + (ago.empty() ? "" : "  \xC2\xB7  " + ago);
+                    dl->AddText(ImVec2(tx, cp.y + 56), cDim, FitText(sub, tr - tx).c_str());
+                    // Actions: Play (primary) + reveal folder + more.
+                    const float d = 32.0f, by = cp.y + cardH - 14 - d;
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x + 14, by));
+                    ImGui::BeginDisabled(player.empty());
+                    if (PrimaryButton("Play", ImVec2(cardW - 28 - 2 * (d + 8), d))) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+                    ImGui::EndDisabled();
+                    if (player.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("Player runtime not found next to the launcher");
+                    const ImU32 rbg = IM_COL32(255, 255, 255, 16), rbgh = IM_COL32(255, 255, 255, 34);
+                    {
+                        ImVec2 fp(cp.x + cardW - 14 - 2 * d - 8, by);
+                        ImGui::SetCursorScreenPos(fp);
+                        if (ImGui::InvisibleButton("##reveal", ImVec2(d, d))) OpenExternal(it.root.string());
+                        const bool fh = ImGui::IsItemHovered();
+                        ImVec2 fc(fp.x + d * 0.5f, fp.y + d * 0.5f);
+                        dl->AddCircleFilled(fc, d * 0.5f, fh ? rbgh : rbg, 28);
+                        folderGlyph(dl, fc, cText);
+                        if (fh) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Show in folder"); }
+                    }
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x + cardW - 14 - d, by));
+                    if (RoundIconButton("##more", kRibMore, d, rbg, rbgh, cText, "More")) ImGui::OpenPopup("##commctx");
+                    ImGui::PopID();
+                }
+                const int rows = (n + cols - 1) / cols;
+                ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + rows * (cardH + gap) - gap));
+                ImGui::Dummy(ImVec2(W, 0));
+            }
+            ImGui::Dummy(ImVec2(0, 12));
+
+            // ---- Share your creation: numbered how-to ------------------------------
+            {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 16));
+                ImGui::BeginChild("##commshare", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                                  ImGuiWindowFlags_NoScrollbar);
+                commLabel("SHARE YOUR CREATION", -1);
+                ImGui::Dummy(ImVec2(0, 4));
+                static const struct { const char* title; const char* desc; } kSteps[] = {
+                    {"Build it",  "In the editor, File > Build Game makes a self-contained game folder."},
+                    {"Share it",  "Zip the folder and send it. Friends drop it onto their launcher to play."},
+                    {"Publish it","Or put it on the Marketplace so anyone can find and download it."},
+                };
+                const float sw = ImGui::GetContentRegionAvail().x;
+                const bool rowLayout = sw >= 620.0f;
+                const float colW = rowLayout ? (sw - 2 * 18.0f) / 3.0f : sw;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                for (int k = 0; k < 3; ++k) {
+                    if (rowLayout && k) ImGui::SameLine(0, 18);
+                    ImGui::BeginGroup();
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    ImVec2 nc(p.x + 14, p.y + 14);
+                    dl->AddCircleFilled(nc, 14.0f, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 28);
+                    char num[4]; std::snprintf(num, sizeof(num), "%d", k + 1);
+                    ImVec2 ns = ImGui::CalcTextSize(num);
+                    dl->AddText(ImVec2(nc.x - ns.x * 0.5f, nc.y - ns.y * 0.5f), ImGui::GetColorU32(accLt), num);
+                    const float tx = 40.0f, tw = colW - tx;
+                    ImGui::SetCursorScreenPos(ImVec2(p.x + tx, p.y + 2));
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(kSteps[k].title);
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+                    ImGui::TextDisabled("%s", kSteps[k].desc);
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndGroup();
+                    ImGui::EndGroup();
+                    if (!rowLayout && k < 2) ImGui::Dummy(ImVec2(0, 6));
+                }
+                ImGui::Dummy(ImVec2(0, 8));
+                if (ImGui::Button("Reveal my games folder", ImVec2(196, 32))) OpenExternal(g_exeDir);
+                if (sw >= 196 + 8 + 200) ImGui::SameLine(0, 8);
+                if (ImGui::Button("Publish to Marketplace\xE2\x80\xA6", ImVec2(200, 32))) { tab = 7; g_openPublishForm = true; }
+                ImGui::EndChild();
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0, 16));
+
+            // ---- Starter templates (grid like the Create tab) ----------------------
+            {
+                const bool pillBelow = W < 560.0f;
+                ImVec2 lp = ImGui::GetCursorScreenPos();
+                const float pillW = pillBelow ? W : std::min(300.0f, W * 0.45f);
+                ImGui::SetCursorScreenPos(ImVec2(lp.x, lp.y + (pillBelow ? 0.0f : 9.0f)));
+                commLabel("STARTER TEMPLATES", -1);
+                if (!pillBelow) ImGui::SetCursorScreenPos(ImVec2(lp.x + W - pillW, lp.y));
+                else ImGui::Dummy(ImVec2(0, 2));
+                searchPill("##marketFilter", "Search templates", marketFilter, sizeof(marketFilter), pillW);
+                ImGui::Dummy(ImVec2(0, 6));
+                std::string mneedle = lowerStr(marketFilter);
+                const float gap = 10.0f, cardH = 72.0f;
+                int cols = std::clamp((int)((W + gap) / (230.0f + gap)), 1, 4);
+                const float cardW = std::floor((W - (cols - 1) * gap) / cols);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                int shown = 0;
+                for (const auto& t : templates) {
+                    if (!mneedle.empty() && lowerStr(std::string(t.name) + " " + t.desc).find(mneedle) == std::string::npos) continue;
+                    const ImVec2 cp(g0.x + (shown % cols) * (cardW + gap), g0.y + (shown / cols) * (cardH + gap));
+                    ++shown;
+                    ImGui::PushID(t.name);
+                    ImGui::SetCursorScreenPos(cp);
+                    const bool clicked = ImGui::InvisibleButton("##tpl", ImVec2(cardW, cardH));
+                    const bool hov = ImGui::IsItemHovered() && !editor.empty();
+                    dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(okaytheme::kRaised), 10.0f);
+                    if (hov) {
+                        dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, 10), 10.0f);
+                        dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(kAccent), 10.0f, 0, 1.5f);
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        ImGui::SetTooltip("Open the editor with the %s template", t.name);
+                    } else if (editor.empty() && ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Editor not found next to the launcher");
+                    }
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x + 14, cp.y + (cardH - 40) * 0.5f));
+                    IconTile(t.name, 40.0f);
+                    const float tx = cp.x + 14 + 40 + 12, tr = cp.x + cardW - 12;
+                    const float lh = ImGui::GetTextLineHeight();
+                    const ImU32 a = editor.empty() ? IM_COL32(255, 255, 255, 110) : cText;
+                    dl->AddText(ImVec2(tx, cp.y + cardH * 0.5f - lh - 1), a, FitText(t.name, tr - tx).c_str());
+                    dl->AddText(ImVec2(tx, cp.y + cardH * 0.5f + 2), cDim, FitText(t.desc, tr - tx).c_str());
+                    if (clicked && !editor.empty()) {
+                        LaunchEditor(editor, t.tmpl);
+                        Toast(std::string("Opening the editor with ") + t.name, 1);
+                    }
+                    ImGui::PopID();
+                }
+                if (shown > 0) {
+                    const int rows = (shown + cols - 1) / cols;
+                    ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + rows * (cardH + gap) - gap));
+                    ImGui::Dummy(ImVec2(W, 0));
+                }
+                if (shown == 0) ImGui::TextDisabled("No templates match \"%s\".", marketFilter);
+                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::TextDisabled("Templates open the editor's New Project on the chosen starting point.");
+                ImGui::Dummy(ImVec2(0, 6));
+            }
+            ImGui::EndChild();   // ##commbody
+
             // Confirm before deleting a community game's folder from disk.
             if (!commRemovePath.empty() && !ImGui::IsPopupOpen("Remove from library?"))
                 ImGui::OpenPopup("Remove from library?");
@@ -8377,7 +9935,7 @@ int main(int argc, char** argv) {
                 if (doRemove) {
                     std::error_code rec; fs::remove_all(commRemovePath, rec);
                     Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
-                    scenes = FindScenes();
+                    refreshLibrary();
                     commRemovePath.clear();
                     ImGui::CloseCurrentPopup();
                 }
@@ -8388,66 +9946,6 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndPopup();
             }
-            if (cShown == 0) {
-                ImGui::Dummy(ImVec2(0, 4));
-                if (!cneedle.empty())
-                    ImGui::TextDisabled("No library items match \"%s\".", commFilter);
-                else
-                    ImGui::TextDisabled("Nothing here yet. Drop a shared game into the community folder "
-                                        "(button above) and hit Refresh, or drag a .okayscene onto the window to play it.");
-            }
-
-            // Share your own creations.
-            ImGui::Dummy(ImVec2(0, 14));
-            ImGui::SeparatorText("Share your creation");
-            ImGui::TextWrapped("Build your game in the editor (File > Build Game), then either share the "
-                "whole game folder (zip it) for friends to drop in their community folder, or "
-                "publish it to the Marketplace so anyone can find and download it.");
-            ImGui::Dummy(ImVec2(0, 4));
-            if (ImGui::Button("Reveal my games folder", ImVec2(220, 0))) OpenExternal(g_exeDir);
-            ImGui::SameLine();
-            if (PrimaryButton("Publish to the Marketplace", ImVec2(230, 0))) { tab = 7; g_openPublishForm = true; }
-
-            // Starter templates — quick starting points, opened in the editor.
-            ImGui::Dummy(ImVec2(0, 16));
-            ImGui::SeparatorText("Starter templates");
-            ImGui::PushItemWidth(-1);
-            ImGui::InputTextWithHint("##marketFilter", "Search templates...", marketFilter, sizeof(marketFilter));
-            ImGui::PopItemWidth();
-            ImGui::Dummy(ImVec2(0, 4));
-            auto mlower = [](std::string s) {
-                for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
-                return s;
-            };
-            std::string mneedle = mlower(marketFilter);
-            int mShown = 0;
-            for (const auto& t : templates) {
-                if (!mneedle.empty() &&
-                    mlower(std::string(t.name) + " " + t.desc).find(mneedle) == std::string::npos)
-                    continue;
-                ++mShown;
-                ImGui::PushID(t.name);
-                ImGui::BeginChild(t.name, ImVec2(0, 66), true, ImGuiWindowFlags_NoScrollbar);
-                HoverRing();
-                ImGui::SetCursorPos(ImVec2(10, 11));
-                IconTile(t.name, 44.0f);
-                ImGui::SameLine();
-                ImGui::BeginGroup();
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-                ImGui::Text("%s", t.name);
-                ImGui::TextDisabled("%s", t.desc);
-                ImGui::EndGroup();
-                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
-                ImGui::SetCursorPosY(11.0f);
-                ImGui::BeginDisabled(editor.empty());
-                if (ImGui::Button("Open", ImVec2(90, 44))) LaunchEditor(editor, t.tmpl);
-                ImGui::EndDisabled();
-                ImGui::EndChild();
-                ImGui::PopID();
-            }
-            if (mShown == 0) ImGui::TextDisabled("No templates match \"%s\".", marketFilter);
-            ImGui::Dummy(ImVec2(0, 8));
-            ImGui::TextDisabled("Opens the editor's New Project on the chosen template.");
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 
@@ -8565,55 +10063,11 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::Dummy(ImVec2(0, 8));
-                // View my own public profile card, exactly as friends see it.
-                static bool myProfOpen = false; static okay::Friend myProf; static int myProfAch = 0, myProfGames = 0;
-                if (account.IsOnline() && PrimaryButton("View my profile", ImVec2(200, 36))) {
-                    myProf = okay::Friends(account).MyProfile();
-                    myProfAch = (int)okay::Achievements::All().size();
-                    myProfGames = (int)scenes.size();
-                    myProfOpen = true;
-                }
+                // Open my full public profile page, exactly as other players see it.
+                if (account.IsOnline() && PrimaryButton("View my profile", ImVec2(200, 36)))
+                    OpenPublicProfile("", s.username, s.username, s_myAvatar, acctAccent);
                 if (account.IsOnline() && ImGui::IsItemHovered())
-                    ImGui::SetTooltip("See your Steam-style profile card as other players see it");
-                if (myProfOpen) { ImGui::OpenPopup("My profile"); myProfOpen = false; }
-                ImGui::SetNextWindowSize(ImVec2(360, 0));
-                if (ImGui::BeginPopup("My profile")) {
-                    const okay::Friend& pf = myProf;
-                    std::string pname = pf.display.empty() ? pf.username : pf.display;
-                    float aw = ImGui::GetContentRegionAvail().x;
-                    int pai = pf.accent; if (pai < 0 || pai >= (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]))) pai = 0;
-                    ImVec4 pac = kAccentPresets[pai].col;
-                    ImVec2 bnp = ImGui::GetCursorScreenPos(); ImDrawList* pdl = ImGui::GetWindowDrawList();
-                    pdl->AddRectFilledMultiColor(bnp, ImVec2(bnp.x + aw, bnp.y + 54),
-                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.45f)), ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.12f)),
-                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.06f)), ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.26f)));
-                    ImGui::Dummy(ImVec2(0, 30));
-                    ImGui::SetCursorPosX((aw - 76) * 0.5f + ImGui::GetCursorPosX());
-                    ImVec2 avp = ImGui::GetCursorScreenPos();
-                    DrawAvatar(pf.avatar, pname, 76.0f);
-                    pdl->AddCircle(ImVec2(avp.x+38, avp.y+38), 39.0f, IM_COL32(120,200,110,255), 40, 3.0f);
-                    auto ctr = [&](const std::string& t, ImVec4 col){
-                        float w = ImGui::CalcTextSize(t.c_str()).x;
-                        float o = (ImGui::GetContentRegionAvail().x - w) * 0.5f; if (o > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + o);
-                        ImGui::TextColored(col, "%s", t.c_str()); };
-                    ctr(pname, ImVec4(0.95f,0.96f,1,1));
-                    ctr("@" + pf.username, ImVec4(0.6f,0.63f,0.7f,1));
-                    if (!pf.customStatus.empty()) ctr("\"" + pf.customStatus + "\"", ImVec4(0.72f,0.75f,0.82f,1));
-                    ImGui::Dummy(ImVec2(0, 6));
-                    ImGui::Separator();
-                    ImGui::Text("%d achievement%s   -   %d game%s", myProfAch, myProfAch==1?"":"s", myProfGames, myProfGames==1?"":"s");
-                    if (!pf.bio.empty()) { ImGui::SeparatorText("About"); ImGui::TextWrapped("%s", pf.bio.c_str()); }
-                    if (!pf.favoriteGame.empty() || !pf.location.empty()) {
-                        ImGui::SeparatorText("Details");
-                        if (!pf.favoriteGame.empty()) { ImGui::TextColored(ImVec4(pac.x,pac.y,pac.z,1), "Favorite game"); ImGui::SameLine(); ImGui::TextWrapped(": %s", pf.favoriteGame.c_str()); }
-                        if (!pf.location.empty()) { ImGui::TextColored(ImVec4(pac.x,pac.y,pac.z,1), "Location"); ImGui::SameLine(); ImGui::TextWrapped(": %s", pf.location.c_str()); }
-                    }
-                    ImGui::Dummy(ImVec2(0, 6));
-                    ImGui::TextDisabled("Edit any of this under Customize profile below.");
-                    ImGui::Dummy(ImVec2(0, 2));
-                    if (ImGui::Button("Close", ImVec2(-1, 0))) ImGui::CloseCurrentPopup();
-                    ImGui::EndPopup();
-                }
+                    ImGui::SetTooltip("See your public profile and pick the achievements and games it shows off");
                 ImGui::Dummy(ImVec2(0, 12));
                 if (account.IsOnline() && ImGui::Button("Re-check session", ImVec2(180, 44)))
                     account.VerifySession();
@@ -8958,195 +10412,575 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
-            ImGui::SeparatorText("Account");
-            // The account server is baked into this build, so there's nothing to
-            // configure here — just a plain connection status (no URL shown).
-            if (accountPtr->IsOnline())
-                ImGui::TextDisabled("Accounts are online. Sign in from the Account tab.");
-            else
-                ImGui::TextDisabled("Using local accounts on this device.");
-
-            // ---- Appearance ----
-            ImGui::Dummy(ImVec2(0, 16));
-            ImGui::SeparatorText("Appearance");
-            ImGui::TextDisabled("Theme");
-            // Preview cards: a tiny mock window per theme (top bar, side panel,
-            // content area, accent strip) — pick by look, not by name.
-            static const struct { ImVec4 bg, panel, text; } kThemePrev[] = {
-                {okaytheme::kSunken, okaytheme::kControl, okaytheme::kText},
-                {ImVec4(0.035f, 0.040f, 0.060f, 1), ImVec4(0.120f, 0.140f, 0.200f, 1), ImVec4(0.90f, 0.93f, 0.98f, 1)},
-                {ImVec4(0.930f, 0.940f, 0.960f, 1), ImVec4(0.845f, 0.865f, 0.905f, 1), ImVec4(0.10f, 0.12f, 0.16f, 1)},
-            };
-            for (int i = 0; i < 3; ++i) {
-                if (i) ImGui::SameLine();
-                ImGui::PushID(i);
-                const ImVec2 sz(108, 76);
+            // Pill switch (Discord / iOS-style) used for every on/off setting. The knob
+            // eases between states; returns true on the frame the value flips.
+            auto ToggleSwitch = [](const char* id, bool* v) -> bool {
+                const float h = 22.0f, w = 40.0f;
                 ImVec2 p = ImGui::GetCursorScreenPos();
-                bool clicked = ImGui::InvisibleButton("##themecard", sz);
-                bool hov = ImGui::IsItemHovered();
-                bool cur = (g_themeIndex == i);
+                bool changed = false;
+                if (ImGui::InvisibleButton(id, ImVec2(w, h))) { *v = !*v; changed = true; }
+                const bool hov = ImGui::IsItemHovered();
+                float* t = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), *v ? 1.0f : 0.0f);
+                const float target = *v ? 1.0f : 0.0f;
+                *t += (target - *t) * std::min(1.0f, ImGui::GetIO().DeltaTime * 16.0f);
+                if (std::fabs(target - *t) < 0.01f) *t = target;
+                ImVec4 off = ImGui::GetStyleColorVec4(hov ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg);
+                off.x += 0.06f; off.y += 0.06f; off.z += 0.06f;
+                ImVec4 on(kAccent.x, kAccent.y, kAccent.z, 1.0f);
+                if (hov) { on.x += (1 - on.x) * 0.12f; on.y += (1 - on.y) * 0.12f; on.z += (1 - on.z) * 0.12f; }
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y),
-                                  ImGui::GetColorU32(kThemePrev[i].bg), 7.0f);
-                ImU32 pc = ImGui::GetColorU32(kThemePrev[i].panel);
-                dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8),  ImVec2(p.x + sz.x - 8, p.y + 17), pc, 3.0f);
-                dl->AddRectFilled(ImVec2(p.x + 8, p.y + 22), ImVec2(p.x + 38, p.y + sz.y - 22), pc, 3.0f);
-                dl->AddRectFilled(ImVec2(p.x + 43, p.y + 22), ImVec2(p.x + sz.x - 8, p.y + sz.y - 22), pc, 3.0f);
-                dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8),  ImVec2(p.x + 24, p.y + 11),
-                                  ImGui::GetColorU32(kAccent), 2.0f);
-                ImVec2 ts = ImGui::CalcTextSize(kThemeNames[i]);
-                dl->AddText(ImVec2(p.x + (sz.x - ts.x) * 0.5f, p.y + sz.y - 18),
-                            ImGui::GetColorU32(kThemePrev[i].text), kThemeNames[i]);
-                dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y),
-                            ImGui::GetColorU32(cur ? kAccent
-                                                   : (hov ? ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)
-                                                          : ImGui::GetStyleColorVec4(ImGuiCol_Border))),
-                            7.0f, 0, cur ? 2.5f : 1.5f);
-                if (clicked && !cur) { g_themeIndex = i; DarkTheme(); SavePrefs(); }
+                dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(okaytheme::Mix(off, on, *t)), h * 0.5f);
+                const float r = h * 0.5f - 3.0f;
+                ImVec2 kc(p.x + h * 0.5f + (w - h) * (*t), p.y + h * 0.5f);
+                dl->AddCircleFilled(ImVec2(kc.x, kc.y + 1.0f), r, IM_COL32(0, 0, 0, 50), 20);
+                dl->AddCircleFilled(kc, r, IM_COL32(250, 251, 253, 255), 20);
+                if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                return changed;
+            };
+
+            const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
+            const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            const ImVec4 colBg = okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f);
+
+            // One setting: label + one-line dim description on the left, the control
+            // right-aligned. When the card is too narrow the control drops below.
+            // `control(w)` draws the control at the cursor, w = width it may use.
+            auto settingRow = [&](const char* label, const char* desc, float ctrlW, float ctrlH, auto&& control) {
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                const float w = ImGui::GetContentRegionAvail().x;
+                const bool stack = ctrlW <= 0.0f || (w - ctrlW - 24.0f) < 200.0f;
+                const float textW = stack ? w : w - ctrlW - 24.0f;
+                const float lh = ImGui::GetTextLineHeight();
+                ImVec2 ds = (desc && *desc) ? ImGui::CalcTextSize(desc, nullptr, false, textW) : ImVec2(0, 0);
+                const float textH = lh + (ds.y > 0 ? 3.0f + ds.y : 0.0f);
+                const float rowH = stack ? textH + 10.0f + ctrlH : std::max(textH, ctrlH);
+                const float ty = stack ? p.y : p.y + (rowH - textH) * 0.5f;
+                dl->AddText(ImVec2(p.x, ty), cText, label);
+                if (ds.y > 0)
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x, ty + lh + 3.0f), cDim, desc, nullptr, textW);
+                ImGui::SetCursorScreenPos(stack ? ImVec2(p.x, p.y + textH + 10.0f)
+                                                : ImVec2(p.x + w - ctrlW, p.y + (rowH - ctrlH) * 0.5f));
+                ImGui::PushID(label);
+                control(stack ? w : ctrlW);
                 ImGui::PopID();
-            }
-            ImGui::Dummy(ImVec2(0, 6));
-            ImGui::TextDisabled("Accent color");
-            const int accentCount = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
-            for (int i = 0; i < accentCount; ++i) {
-                ImGui::PushID(i);
-                ImGui::PushStyleColor(ImGuiCol_Button, kAccentPresets[i].col);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccentPresets[i].col);
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccentPresets[i].dim);
-                bool current = (g_accentIndex == i);
-                if (ImGui::Button("##accent", ImVec2(34, 34))) {
-                    ApplyAccent(i);
-                    SavePrefs();
+                float endH = rowH;   // stacked controls may be taller than announced
+                if (stack) endH = std::max(rowH, ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y - p.y);
+                ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + endH));
+                ImGui::Dummy(ImVec2(0, 0));
+            };
+            auto rowDivider = [&]() {
+                ImGui::Dummy(ImVec2(0, 7));
+                ImVec2 lp = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y),
+                                                    IM_COL32(255, 255, 255, 14), 1.0f);
+                ImGui::Dummy(ImVec2(0, 7));
+            };
+            // Settings card: kRaised panel with a small-caps title.
+            auto cardBegin = [&](const char* id, const char* title) {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 14));
+                ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                                  ImGuiWindowFlags_NoScrollbar);
+                if (title) {
+                    ImGui::SetWindowFontScale(0.80f);
+                    ImGui::TextDisabled("%s", title);
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::Dummy(ImVec2(0, 4));
                 }
-                if (current) {   // white ring + drawn check on the active swatch
-                    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-                    ImDrawList* dl = ImGui::GetWindowDrawList();
-                    dl->AddRect(mn, mx, IM_COL32(255, 255, 255, 230),
-                                ImGui::GetStyle().FrameRounding, 0, 2.5f);
-                    ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
-                    dl->AddLine(ImVec2(c.x - 6, c.y), ImVec2(c.x - 2, c.y + 4),
-                                IM_COL32(255, 255, 255, 240), 2.5f);
-                    dl->AddLine(ImVec2(c.x - 2, c.y + 4), ImVec2(c.x + 6, c.y - 4),
-                                IM_COL32(255, 255, 255, 240), 2.5f);
+            };
+            auto cardEnd = [&]() {
+                ImGui::Dummy(ImVec2(0, 2));
+                ImGui::EndChild();
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, 10));
+            };
+            // Colour swatch that opens a picker; returns true while edited.
+            auto colorSwatch = [&](const char* id, float* col) -> bool {
+                bool changed = false;
+                ImGui::PushID(id);
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##sw", ImVec2(56, 26))) ImGui::OpenPopup("##swpick");
+                const bool hov = ImGui::IsItemHovered();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(p, ImVec2(p.x + 56, p.y + 26), ImGui::GetColorU32(ImVec4(col[0], col[1], col[2], 1)), 7.0f);
+                dl->AddRect(p, ImVec2(p.x + 56, p.y + 26), hov ? IM_COL32(255, 255, 255, 120) : IM_COL32(255, 255, 255, 40), 7.0f, 0, 1.2f);
+                if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("#%02X%02X%02X", (int)(col[0] * 255 + 0.5f), (int)(col[1] * 255 + 0.5f), (int)(col[2] * 255 + 0.5f)); }
+                if (ImGui::BeginPopup("##swpick")) {
+                    ImGui::SetNextItemWidth(220);
+                    changed = ImGui::ColorPicker3("##picker", col, ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_DisplayHex);
+                    ImGui::EndPopup();
                 }
-                ImGui::PopStyleColor(3);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kAccentPresets[i].name);
                 ImGui::PopID();
-                if (i < accentCount - 1) ImGui::SameLine();
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("  %s", kAccentPresets[g_accentIndex].name);
+                return changed;
+            };
 
-            ImGui::Dummy(ImVec2(0, 6));
-            ImGui::TextDisabled("UI scale");
-            ImGui::PushItemWidth(280);
-            if (ImGui::SliderFloat("##uiscale", &g_uiScale, 0.8f, 1.6f, "%.2fx"))
-                ImGui::GetIO().FontGlobalScale = g_uiScale;   // live preview
-            // Persist + restyle when the drag ends, so releasing the slider is
-            // enough — no separate Apply click needed.
-            if (ImGui::IsItemDeactivatedAfterEdit()) { DarkTheme(); SavePrefs(); }
-            ImGui::PopItemWidth();
-            ImGui::SameLine();
-            ImGui::TextDisabled("applies on release");
+            // ---- Category list (left) + the selected category's cards (right) ----
+            static int setCat = 0;
+            static const struct { const char* name; int icon; const char* sub; } kSetCats[] = {
+                {"Appearance",           kIcoPanel,   "Theme, accent color and interface size."},
+                {"Chat & Notifications", kIcoBell,    "Message sounds and what friends can see."},
+                {"Loading screen",       kIcoRefresh, "Customize the splash shown while OkaySpace starts."},
+                {"Behavior",             4,           "Startup, updates and maintenance."},
+                {"Game libraries",       2,           "Extra folders the launcher scans for games."},
+                {"Account",              3,           "Your OkaySpace account on this device."},
+                {"About",                9,           "Version, updates and links."},
+            };
+            const int nCats = (int)(sizeof(kSetCats) / sizeof(kSetCats[0]));
+            setCat = std::clamp(setCat, 0, nCats - 1);
+            const float availW = ImGui::GetContentRegionAvail().x;
+            const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
+            const bool iconOnly = availW < 600.0f;
+            const float listW = iconOnly ? 52.0f : (availW >= 820.0f ? 212.0f : 184.0f);
 
-            // ---- Loading screen ----
-            ImGui::Dummy(ImVec2(0, 16));
-            ImGui::SeparatorText("Loading screen");
-            ImGui::TextDisabled("Customize the startup splash. Changes apply on the next launch.");
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, colBg);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 10));
+            ImGui::BeginChild("##setnav", ImVec2(listW, bodyH), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
             {
-                char lb[260]; std::snprintf(lb, sizeof(lb), "%s", g_splashLogo.c_str());
-                ImGui::SetNextItemWidth(360);
-                if (ImGui::InputTextWithHint("##splashlogo", "Logo image path (PNG) — blank = built-in cube", lb, sizeof(lb)))
-                    { g_splashLogo = lb; SavePrefs(); }
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Clear##splashlogo")) { g_splashLogo.clear(); SavePrefs(); }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A PNG shown instead of the cube. Drag a .png onto a path field or paste its location.");
-                if (ImGui::Checkbox("Custom splash accent", &g_splashAccentOverride)) SavePrefs();
-                if (g_splashAccentOverride) {
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(220);
-                    if (ImGui::ColorEdit3("##splashaccent", g_splashAccent)) SavePrefs();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                if (!iconOnly) {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10);
+                    ImGui::SetWindowFontScale(0.80f);
+                    ImGui::TextDisabled("SETTINGS");
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::Dummy(ImVec2(0, 2));
                 }
-                ImGui::SetNextItemWidth(220);
-                if (ImGui::ColorEdit3("Background top##splash", g_splashBgTop)) SavePrefs();
-                ImGui::SetNextItemWidth(220);
-                if (ImGui::ColorEdit3("Background bottom##splash", g_splashBgBot)) SavePrefs();
-                if (ImGui::Checkbox("Show progress bar##splash", &g_splashShowBar)) SavePrefs();
-            }
-
-            // ---- Behavior ----
-            ImGui::Dummy(ImVec2(0, 16));
-            ImGui::SeparatorText("Behavior");
-            if (ImGui::Checkbox("Check for updates when the launcher starts", &g_updateOnLaunch))
-                SavePrefs();
-            if (ImGui::Checkbox("Play a sound for new chat messages", &g_chatSounds)) {
-                SavePrefs();
-                if (g_chatSounds) PlayChatChime();   // preview
-            }
-
-            // ---- About ----
-            ImGui::Dummy(ImVec2(0, 16));
-            ImGui::SeparatorText("About");
-            ImGui::Text("OkaySpace Engine");
-            ImGui::SameLine();
-            ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
-            ImGui::TextDisabled("A small Unity-inspired C++ game engine.");
-            if (ImGui::SmallButton("Documentation"))
-                OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/blob/main/README.md");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("GitHub repository"))
-                OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Copy version")) {
-                ImGui::SetClipboardText("OkaySpace v" OKAY_ENGINE_VERSION);
-                Toast("Version copied", 1);
-            }
-
-            // ---- Game libraries ----
-            ImGui::Dummy(ImVec2(0, 16));
-            ImGui::SeparatorText("Game libraries");
-            ImGui::TextDisabled("Folders scanned for games (alongside the built-in ones next to the launcher).");
-            {
-                static char libBuf[512] = "";
-                int removeIdx = -1;
-                for (std::size_t li = 0; li < g_libraryDirs.size(); ++li) {
-                    ImGui::PushID((int)li);
-                    if (ImGui::SmallButton("Remove")) removeIdx = (int)li;
-                    ImGui::SameLine();
-                    ImGui::TextUnformatted(g_libraryDirs[li].c_str());
+                for (int i = 0; i < nCats; ++i) {
+                    ImGui::PushID(i);
+                    ImVec2 rp = ImGui::GetCursorScreenPos();
+                    const float rw = ImGui::GetContentRegionAvail().x, rh = 36.0f;
+                    if (ImGui::InvisibleButton("##cat", ImVec2(rw, rh))) setCat = i;
+                    const bool hov = ImGui::IsItemHovered(), sel = (setCat == i);
+                    if (sel || hov) dl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 11), 7.0f);
+                    if (sel) dl->AddRectFilled(ImVec2(rp.x, rp.y + 10), ImVec2(rp.x + 3, rp.y + rh - 10), ImGui::GetColorU32(kAccent), 1.5f);
+                    ImVec2 ic(iconOnly ? rp.x + rw * 0.5f : rp.x + 20.0f, rp.y + rh * 0.5f);
+                    DrawNavIcon(dl, kSetCats[i].icon, ic, sel ? ImGui::GetColorU32(kAccent) : (hov ? cText : cDim));
+                    if (!iconOnly)
+                        dl->AddText(ImVec2(rp.x + 38.0f, rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f),
+                                    (sel || hov) ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.78f),
+                                    FitText(kSetCats[i].name, rw - 46.0f).c_str());
+                    if (hov) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        if (iconOnly) ImGui::SetTooltip("%s", kSetCats[i].name);
+                    }
                     ImGui::PopID();
                 }
-                if (removeIdx >= 0) {
-                    g_libraryDirs.erase(g_libraryDirs.begin() + removeIdx);
-                    SavePrefs(); scenes = FindScenes();
-                    Toast("Library folder removed", 1);
-                }
-                ImGui::SetNextItemWidth(360);
-                bool addSubmit = ImGui::InputTextWithHint("##libadd", "Paste a folder path to scan...",
-                                                          libBuf, sizeof(libBuf),
-                                                          ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::SameLine();
-                if ((ImGui::Button("Add folder") || addSubmit) && libBuf[0]) {
-                    std::error_code lec;
-                    std::string pathStr = libBuf;
-                    if (!fs::exists(fs::path(pathStr), lec) || !fs::is_directory(fs::path(pathStr), lec)) {
-                        Toast("That folder doesn't exist", 2);
-                    } else if (std::find(g_libraryDirs.begin(), g_libraryDirs.end(), pathStr) != g_libraryDirs.end()) {
-                        Toast("Already in your libraries", 2);
-                    } else {
-                        g_libraryDirs.push_back(pathStr);
-                        SavePrefs(); scenes = FindScenes();
-                        Toast("Library folder added", 1);
-                        libBuf[0] = '\0';
-                    }
-                }
             }
+            ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+            ImGui::SameLine(0, 16);
 
-            // ---- Maintenance ----
-            ImGui::Dummy(ImVec2(0, 16));
-            ImGui::SeparatorText("Maintenance");
-            if (ImGui::Button("Open config folder")) OpenExternal(g_exeDir);
-            ImGui::SameLine();
-            if (ImGui::Button("Reset preferences")) ImGui::OpenPopup("Reset preferences?");
+            static bool setOpenReset = false;
+            ImGui::BeginChild("##setbody", ImVec2(0, bodyH), false);
+            {
+                // Category title + subtitle.
+                ImGui::SetWindowFontScale(1.2f);
+                ImGui::TextUnformatted(kSetCats[setCat].name);
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", kSetCats[setCat].sub);
+                ImGui::PopTextWrapPos();
+                ImGui::Dummy(ImVec2(0, 8));
+
+                if (setCat == 0) {   // ---- Appearance ----
+                    cardBegin("##sc_theme", "THEME");
+                    settingRow("Color theme", "Slate is the default look. Changes apply instantly.", 0.0f, 0.0f, [&](float w) {
+                        // Preview cards: a tiny mock window per theme (top bar, side panel,
+                        // content area, accent strip) — pick by look, not by name.
+                        static const struct { ImVec4 bg, panel, text; } kThemePrev[] = {
+                            {okaytheme::kSunken, okaytheme::kControl, okaytheme::kText},
+                            {ImVec4(0.035f, 0.040f, 0.060f, 1), ImVec4(0.120f, 0.140f, 0.200f, 1), ImVec4(0.90f, 0.93f, 0.98f, 1)},
+                            {ImVec4(0.930f, 0.940f, 0.960f, 1), ImVec4(0.845f, 0.865f, 0.905f, 1), ImVec4(0.10f, 0.12f, 0.16f, 1)},
+                        };
+                        const float cw = std::clamp((w - 20.0f) / 3.0f, 84.0f, 132.0f), chh = std::floor(cw * 0.66f);
+                        for (int i = 0; i < 3; ++i) {
+                            if (i) ImGui::SameLine(0, 10);
+                            ImGui::PushID(i);
+                            const ImVec2 sz(cw, chh);
+                            ImVec2 p = ImGui::GetCursorScreenPos();
+                            bool clicked = ImGui::InvisibleButton("##themecard", sz);
+                            bool hov = ImGui::IsItemHovered();
+                            bool cur = (g_themeIndex == i);
+                            ImDrawList* dl = ImGui::GetWindowDrawList();
+                            dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), ImGui::GetColorU32(kThemePrev[i].bg), 8.0f);
+                            ImU32 pc = ImGui::GetColorU32(kThemePrev[i].panel);
+                            const float sideW = sz.x * 0.26f, bot = sz.y - 22.0f;
+                            dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8),  ImVec2(p.x + sz.x - 8, p.y + 16), pc, 3.0f);
+                            dl->AddRectFilled(ImVec2(p.x + 8, p.y + 21), ImVec2(p.x + 8 + sideW, p.y + bot), pc, 3.0f);
+                            dl->AddRectFilled(ImVec2(p.x + 13 + sideW, p.y + 21), ImVec2(p.x + sz.x - 8, p.y + bot), pc, 3.0f);
+                            dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8),  ImVec2(p.x + 24, p.y + 11), ImGui::GetColorU32(kAccent), 2.0f);
+                            ImVec2 ts = ImGui::CalcTextSize(kThemeNames[i]);
+                            dl->AddText(ImVec2(p.x + (sz.x - ts.x) * 0.5f, p.y + sz.y - 19), ImGui::GetColorU32(kThemePrev[i].text), kThemeNames[i]);
+                            dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y),
+                                        cur ? ImGui::GetColorU32(kAccent)
+                                            : (hov ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)) : IM_COL32(255, 255, 255, 26)),
+                                        8.0f, 0, cur ? 2.5f : 1.5f);
+                            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            if (clicked && !cur) { g_themeIndex = i; DarkTheme(); SavePrefs(); }
+                            ImGui::PopID();
+                        }
+                    });
+                    rowDivider();
+                    const int accentCount = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+                    char accDesc[96];
+                    std::snprintf(accDesc, sizeof(accDesc), "Highlights, selection and primary buttons. Current: %s.", kAccentPresets[g_accentIndex].name);
+                    settingRow("Accent color", accDesc, 0.0f, 30.0f, [&](float) {
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        for (int i = 0; i < accentCount; ++i) {
+                            if (i) ImGui::SameLine(0, 10);
+                            ImGui::PushID(i);
+                            ImVec2 p = ImGui::GetCursorScreenPos();
+                            if (ImGui::InvisibleButton("##accent", ImVec2(30, 30))) { ApplyAccent(i); SavePrefs(); }
+                            const bool hov = ImGui::IsItemHovered(), cur = (g_accentIndex == i);
+                            ImVec2 c(p.x + 15, p.y + 15);
+                            if (cur) dl->AddCircle(c, 14.5f, IM_COL32(255, 255, 255, 230), 32, 2.0f);
+                            else if (hov) dl->AddCircle(c, 14.5f, IM_COL32(255, 255, 255, 90), 32, 1.5f);
+                            dl->AddCircleFilled(c, cur ? 11.0f : 12.0f, ImGui::GetColorU32(kAccentPresets[i].col), 32);
+                            if (cur) {   // drawn check on the active swatch
+                                dl->AddLine(ImVec2(c.x - 4.5f, c.y + 0.2f), ImVec2(c.x - 1.5f, c.y + 3.2f), IM_COL32(255, 255, 255, 245), 2.2f);
+                                dl->AddLine(ImVec2(c.x - 1.5f, c.y + 3.2f), ImVec2(c.x + 4.5f, c.y - 3.0f), IM_COL32(255, 255, 255, 245), 2.2f);
+                            }
+                            if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", kAccentPresets[i].name); }
+                            ImGui::PopID();
+                        }
+                    });
+                    cardEnd();
+
+                    cardBegin("##sc_ui", "INTERFACE");
+                    settingRow("UI scale", "Make text and controls larger or smaller. Applies when you release the slider.", 220.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        ImGui::SetNextItemWidth(std::min(w, 320.0f));
+                        if (ImGui::SliderFloat("##uiscale", &g_uiScale, 0.8f, 1.6f, "%.2fx"))
+                            ImGui::GetIO().FontGlobalScale = g_uiScale;   // live preview
+                        // Persist + restyle when the drag ends — no separate Apply click.
+                        if (ImGui::IsItemDeactivatedAfterEdit()) { DarkTheme(); SavePrefs(); }
+                    });
+                    cardEnd();
+                } else if (setCat == 1) {   // ---- Chat & Notifications ----
+                    cardBegin("##sc_chat", "CHAT");
+                    settingRow("Play a sound for new chat messages", "A soft chime when a message arrives while the launcher is open.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##chatsnd", &g_chatSounds)) {
+                            SavePrefs();
+                            if (g_chatSounds) PlayChatChime();   // preview
+                        }
+                    });
+                    rowDivider();
+                    settingRow("Test the chime", "Hear what a new message sounds like.", 96.0f, 30.0f, [&](float) {
+                        if (ImGui::Button("Play sound", ImVec2(96, 30))) PlayChatChime();
+                    });
+                    cardEnd();
+
+                    cardBegin("##sc_privacy", "PRIVACY");
+                    settingRow("Share what I'm playing", "Friends see the game you're in on their Friends list and activity feed.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##sharepres", &g_sharePresence)) SavePrefs();
+                    });
+                    cardEnd();
+
+                    cardBegin("##sc_notif", "NOTIFICATIONS");
+                    settingRow("Notification center", "Friend requests, update notes and finished downloads collect here.", 96.0f, 30.0f, [&](float) {
+                        if (ImGui::Button("Open", ImVec2(96, 30))) g_notifPanelOpen = true;
+                    });
+                    cardEnd();
+                } else if (setCat == 2) {   // ---- Loading screen ----
+                    cardBegin("##sc_splprev", "PREVIEW");
+                    {
+                        // Live mock of the splash: gradient backdrop, logo (or the cube),
+                        // title and progress bar in the chosen colours.
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        const float pw = std::min(ImGui::GetContentRegionAvail().x, 420.0f), ph = std::floor(pw * 0.42f);
+                        ImVec2 p = ImGui::GetCursorScreenPos();
+                        auto c3 = [](const float* c, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(c[0], c[1], c[2], a)); };
+                        const float* acc = g_splashAccentOverride ? g_splashAccent : nullptr;
+                        ImVec4 a4 = acc ? ImVec4(acc[0], acc[1], acc[2], 1) : kAccent;
+                        dl->AddRectFilledMultiColor(p, ImVec2(p.x + pw, p.y + ph), c3(g_splashBgTop), c3(g_splashBgTop), c3(g_splashBgBot), c3(g_splashBgBot));
+                        dl->AddRect(p, ImVec2(p.x + pw, p.y + ph), IM_COL32(255, 255, 255, 22), 0.0f, 0, 1.0f);
+                        ImVec2 c(p.x + pw * 0.5f, p.y + ph * 0.40f);
+                        const float S = ph * 0.30f;
+                        if (!g_splashLogo.empty() && g_splashLogoTex) {
+                            dl->AddImage((ImTextureID)(intptr_t)g_splashLogoTex, ImVec2(c.x - S * 0.6f, c.y - S * 0.6f), ImVec2(c.x + S * 0.6f, c.y + S * 0.6f));
+                        } else if (!g_splashLogo.empty()) {   // new path: loads on next launch
+                            dl->AddRect(ImVec2(c.x - S * 0.6f, c.y - S * 0.6f), ImVec2(c.x + S * 0.6f, c.y + S * 0.6f), IM_COL32(255, 255, 255, 90), 6.0f, 0, 1.5f);
+                            const char* lt = "PNG";
+                            ImVec2 ts = ImGui::CalcTextSize(lt);
+                            dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(255, 255, 255, 150), lt);
+                        } else {   // isometric cube in the accent
+                            float hw = S * 0.62f, hh = S * 0.34f, vh = S * 0.62f;
+                            ImVec2 top(c.x, c.y - hh - vh * 0.5f), l(c.x - hw, c.y - vh * 0.5f), r(c.x + hw, c.y - vh * 0.5f), m(c.x, c.y + hh - vh * 0.5f);
+                            ImVec2 lb(l.x, l.y + vh), rb(r.x, r.y + vh), mb(m.x, m.y + vh);
+                            dl->AddQuadFilled(top, r, m, l, ImGui::GetColorU32(ImVec4(a4.x * 0.55f + 0.45f, a4.y * 0.55f + 0.45f, a4.z * 0.55f + 0.45f, 1)));
+                            dl->AddQuadFilled(l, m, mb, lb, ImGui::GetColorU32(ImVec4(a4.x * 0.70f, a4.y * 0.70f, a4.z * 0.70f, 1)));
+                            dl->AddQuadFilled(m, r, rb, mb, ImGui::GetColorU32(a4));
+                        }
+                        const char* nm = "OkaySpace";
+                        ImVec2 ts = ImGui::CalcTextSize(nm);
+                        dl->AddText(ImVec2(c.x - ts.x * 0.5f, p.y + ph * 0.66f), IM_COL32(240, 242, 246, 235), nm);
+                        if (g_splashShowBar) {
+                            float bw = pw * 0.42f, by = p.y + ph * 0.86f;
+                            dl->AddRectFilled(ImVec2(c.x - bw * 0.5f, by), ImVec2(c.x + bw * 0.5f, by + 3), IM_COL32(255, 255, 255, 30), 1.5f);
+                            dl->AddRectFilled(ImVec2(c.x - bw * 0.5f, by), ImVec2(c.x + bw * 0.12f, by + 3), ImGui::GetColorU32(a4), 1.5f);
+                        }
+                        ImGui::Dummy(ImVec2(pw, ph));
+                        ImGui::Dummy(ImVec2(0, 2));
+                        ImGui::TextDisabled("Changes apply the next time OkaySpace starts.");
+                    }
+                    cardEnd();
+
+                    cardBegin("##sc_splash", "LOGO & COLORS");
+                    settingRow("Logo image", "A PNG shown instead of the cube. Leave blank for the built-in cube.", 0.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        char lb[260]; std::snprintf(lb, sizeof(lb), "%s", g_splashLogo.c_str());
+                        ImGui::SetNextItemWidth(std::max(120.0f, w - 82.0f));
+                        if (ImGui::InputTextWithHint("##splashlogo", "Path to a .png file", lb, sizeof(lb)))
+                            { g_splashLogo = lb; SavePrefs(); }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paste the location of a PNG.");
+                        ImGui::SameLine(0, 8);
+                        ImGui::BeginDisabled(g_splashLogo.empty());
+                        if (ImGui::Button("Clear##splashlogo", ImVec2(74, 0))) { g_splashLogo.clear(); SavePrefs(); }
+                        ImGui::EndDisabled();
+                    });
+                    rowDivider();
+                    settingRow("Custom splash accent", "Tint the cube and progress bar with your own color.",
+                               g_splashAccentOverride ? 40.0f + 12.0f + 56.0f : 40.0f, 26.0f, [&](float) {
+                        if (g_splashAccentOverride) {
+                            if (colorSwatch("##splashaccent", g_splashAccent)) SavePrefs();
+                            ImGui::SameLine(0, 12);
+                            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
+                        }
+                        if (ToggleSwitch("##splashaccon", &g_splashAccentOverride)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Background top", "Color at the top of the backdrop gradient.", 56.0f, 26.0f, [&](float) {
+                        if (colorSwatch("##splashtop", g_splashBgTop)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Background bottom", "Color at the bottom of the backdrop gradient.", 56.0f, 26.0f, [&](float) {
+                        if (colorSwatch("##splashbot", g_splashBgBot)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Show progress bar", "A thin loading bar under the logo.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##splashbar", &g_splashShowBar)) SavePrefs();
+                    });
+                    cardEnd();
+                } else if (setCat == 3) {   // ---- Behavior ----
+                    cardBegin("##sc_start", "STARTUP & UPDATES");
+                    settingRow("Check for updates when the launcher starts", "Looks for a new version in the background each time you open OkaySpace.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##uponlaunch", &g_updateOnLaunch)) SavePrefs();
+                    });
+                    cardEnd();
+
+                    cardBegin("##sc_maint", "MAINTENANCE");
+                    settingRow("Configuration folder", "Preferences are stored in launcher.cfg next to the launcher.", 120.0f, 30.0f, [&](float) {
+                        if (ImGui::Button("Open folder", ImVec2(120, 30))) OpenExternal(g_exeDir);
+                    });
+                    rowDivider();
+                    settingRow("Reset preferences", "Restores theme, accent, UI scale, sorting and update settings. Favorites and recent games are kept.", 120.0f, 30.0f, [&](float) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.20f, 0.20f, 0.55f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.26f, 0.26f, 1.0f));
+                        if (ImGui::Button("Reset\xE2\x80\xA6", ImVec2(120, 30))) setOpenReset = true;
+                        ImGui::PopStyleColor(2);
+                    });
+                    cardEnd();
+                } else if (setCat == 4) {   // ---- Game libraries ----
+                    cardBegin("##sc_libs", "LIBRARY FOLDERS");
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Games in these folders show up in Play, alongside the built-in ones next to the launcher.");
+                    ImGui::PopTextWrapPos();
+                    ImGui::Dummy(ImVec2(0, 6));
+                    static char libBuf[512] = "";
+                    int removeIdx = -1;
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    for (std::size_t li = 0; li < g_libraryDirs.size(); ++li) {
+                        ImGui::PushID((int)li);
+                        ImVec2 rp = ImGui::GetCursorScreenPos();
+                        const float rw = ImGui::GetContentRegionAvail().x, rh = 44.0f;
+                        if (ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + rw, rp.y + rh)) && ImGui::IsWindowHovered())
+                            dl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), IM_COL32(255, 255, 255, 10), 8.0f);
+                        // Folder glyph.
+                        ImVec2 fc(rp.x + 20, rp.y + rh * 0.5f);
+                        dl->PathLineTo(ImVec2(fc.x - 8, fc.y - 6)); dl->PathLineTo(ImVec2(fc.x - 3, fc.y - 6));
+                        dl->PathLineTo(ImVec2(fc.x - 1, fc.y - 4)); dl->PathLineTo(ImVec2(fc.x + 8, fc.y - 4));
+                        dl->PathLineTo(ImVec2(fc.x + 8, fc.y + 6)); dl->PathLineTo(ImVec2(fc.x - 8, fc.y + 6));
+                        dl->PathStroke(ImGui::GetColorU32(accLt), ImDrawFlags_Closed, 1.6f);
+                        std::error_code lec;
+                        const bool exists = fs::is_directory(fs::path(g_libraryDirs[li]), lec);
+                        const float tx = rp.x + 40;
+                        dl->AddText(ImVec2(tx, rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f - (exists ? 0.0f : 8.0f)), cText,
+                                    FitText(g_libraryDirs[li], rw - 40 - 48).c_str());
+                        if (!exists) dl->AddText(ImVec2(tx, rp.y + rh * 0.5f + 1), IM_COL32(236, 150, 90, 255), "Folder not found");
+                        ImGui::SetCursorScreenPos(ImVec2(rp.x + rw - 36, rp.y + (rh - 30) * 0.5f));
+                        if (RoundIconButton("##rmlib", kRibClose, 30.0f, IM_COL32(255, 255, 255, 14), IM_COL32(200, 70, 70, 255), cText, "Remove folder"))
+                            removeIdx = (int)li;
+                        ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rh + 2));
+                        ImGui::Dummy(ImVec2(0, 0));
+                        ImGui::PopID();
+                    }
+                    if (g_libraryDirs.empty()) {
+                        ImGui::TextDisabled("No extra folders yet.");
+                        ImGui::Dummy(ImVec2(0, 2));
+                    }
+                    if (removeIdx >= 0) {
+                        g_libraryDirs.erase(g_libraryDirs.begin() + removeIdx);
+                        SavePrefs(); scenes = FindScenes();
+                        Toast("Library folder removed", 1);
+                    }
+                    rowDivider();
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
+                    ImGui::SetNextItemWidth(std::max(120.0f, ImGui::GetContentRegionAvail().x - 128.0f));
+                    bool addSubmit = ImGui::InputTextWithHint("##libadd", "Paste a folder path to scan...",
+                                                              libBuf, sizeof(libBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine(0, 8);
+                    ImGui::BeginDisabled(!libBuf[0]);
+                    bool addClick = PrimaryButton("Add folder", ImVec2(120, ImGui::GetFrameHeight()));
+                    ImGui::EndDisabled();
+                    ImGui::PopStyleVar(2);
+                    if ((addClick || addSubmit) && libBuf[0]) {
+                        std::error_code lec;
+                        std::string pathStr = libBuf;
+                        if (!fs::exists(fs::path(pathStr), lec) || !fs::is_directory(fs::path(pathStr), lec)) {
+                            Toast("That folder doesn't exist", 2);
+                        } else if (std::find(g_libraryDirs.begin(), g_libraryDirs.end(), pathStr) != g_libraryDirs.end()) {
+                            Toast("Already in your libraries", 2);
+                        } else {
+                            g_libraryDirs.push_back(pathStr);
+                            SavePrefs(); scenes = FindScenes();
+                            Toast("Library folder added", 1);
+                            libBuf[0] = '\0';
+                        }
+                    }
+                    cardEnd();
+                } else if (setCat == 5) {   // ---- Account ----
+                    const bool signedIn = account.IsLoggedIn() || kUiDemoUser;
+                    const std::string uname = kUiDemoUser ? std::string(kUiDemoUser)
+                                            : account.IsLoggedIn() ? account.CurrentSession().username : std::string();
+                    cardBegin("##sc_acct", "ACCOUNT");
+                    {
+                        ImVec2 p = ImGui::GetCursorScreenPos();
+                        const float w = ImGui::GetContentRegionAvail().x, A = 48.0f;
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        if (signedIn) {
+                            DrawAvatar(g_myAvatarSlot ? *g_myAvatarSlot : std::string(), uname, A);
+                        } else {
+                            ImVec2 c(p.x + A * 0.5f, p.y + A * 0.5f);
+                            dl->AddCircleFilled(c, A * 0.5f, IM_COL32(255, 255, 255, 18), 32);
+                            DrawNavIcon(dl, 3, ImVec2(c.x, c.y + 1), cDim);
+                            ImGui::Dummy(ImVec2(A, A));
+                        }
+                        const bool narrow = w < 380.0f;
+                        const float tx = p.x + A + 14.0f, tr = narrow ? p.x + w : p.x + w - 156.0f;
+                        ImGui::SetWindowFontScale(1.1f);
+                        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, p.y + 4), cText,
+                                    FitText(signedIn ? uname : std::string("Not signed in"), tr - tx).c_str());
+                        ImGui::SetWindowFontScale(1.0f);
+                        const char* sub = signedIn ? "Signed in on this device" : "Sign in for friends, chat, servers and cloud sync.";
+                        dl->AddText(ImVec2(tx, p.y + 28), cDim, FitText(sub, tr - tx).c_str());
+                        ImVec2 bp = narrow ? ImVec2(p.x, p.y + A + 10) : ImVec2(p.x + w - 146.0f, p.y + (A - 34.0f) * 0.5f);
+                        ImGui::SetCursorScreenPos(bp);
+                        if (signedIn ? ImGui::Button("Manage account", ImVec2(146, 34)) : PrimaryButton("Sign in", ImVec2(146, 34))) {
+                            tab = 3; g_lastTab = 3; SavePrefs();
+                        }
+                        ImGui::SetCursorScreenPos(ImVec2(p.x, narrow ? bp.y + 34 : p.y + A));
+                        ImGui::Dummy(ImVec2(0, 0));
+                    }
+                    rowDivider();
+                    // The account server is baked into this build, so there's nothing to
+                    // configure here — just a plain connection status (no URL shown).
+                    const bool online = accountPtr->IsOnline();
+                    settingRow("Account service", online ? "Accounts are online. Sign in and manage your profile from the Account tab."
+                                                         : "Using local accounts on this device.", 90.0f, 26.0f, [&](float) {
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        ImVec2 p = ImGui::GetCursorScreenPos();
+                        const char* lbl = online ? "Online" : "Local";
+                        ImVec2 ts = ImGui::CalcTextSize(lbl);
+                        const float pw = ts.x + 34.0f, px = p.x + 90.0f - pw;
+                        dl->AddRectFilled(ImVec2(px, p.y), ImVec2(px + pw, p.y + 26), IM_COL32(255, 255, 255, 14), 13.0f);
+                        dl->AddCircleFilled(ImVec2(px + 13, p.y + 13), 4.0f, online ? IM_COL32(76, 200, 110, 255) : IM_COL32(140, 146, 156, 255), 12);
+                        dl->AddText(ImVec2(px + 23, p.y + (26 - ts.y) * 0.5f), cText, lbl);
+                        ImGui::Dummy(ImVec2(90, 26));
+                    });
+                    cardEnd();
+                } else {   // ---- About ----
+                    cardBegin("##sc_about", nullptr);
+                    {
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        ImVec2 p = ImGui::GetCursorScreenPos();
+                        const float w = ImGui::GetContentRegionAvail().x, S = 56.0f;
+                        // Brand tile (same mark as the sidebar, larger).
+                        ImVec2 br(p.x + S, p.y + S);
+                        dl->AddRectFilled(p, br, ImGui::GetColorU32(kAccentDim), 13.0f);
+                        dl->AddRectFilled(p, ImVec2(br.x, p.y + S * 0.5f), IM_COL32(255, 255, 255, 20), 13.0f, ImDrawFlags_RoundCornersTop);
+                        ImVec2 c(p.x + S * 0.47f, p.y + S * 0.53f);
+                        dl->AddCircleFilled(c, S * 0.21f, IM_COL32(236, 240, 248, 255), 32);
+                        ImVec2 ring[36];
+                        for (int k = 0; k < 36; ++k) {
+                            float a = k * (6.2831853f / 36), rx = S * 0.375f, ry = S * 0.125f, rot = -0.5f;
+                            float ex = std::cos(a) * rx, ey = std::sin(a) * ry;
+                            ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot), c.y + ex * std::sin(rot) + ey * std::cos(rot));
+                        }
+                        dl->PushClipRect(p, br, true);
+                        dl->AddPolyline(ring, 36, IM_COL32(255, 255, 255, 235), ImDrawFlags_Closed, 2.2f);
+                        dl->PopClipRect();
+                        dl->AddCircleFilled(ImVec2(p.x + S * 0.78f, p.y + S * 0.24f), 2.2f, IM_COL32(255, 255, 255, 240));
+                        const bool narrow = w < 430.0f;
+                        const float tx = p.x + S + 16.0f, tr = narrow ? p.x + w : p.x + w - 186.0f;
+                        ImGui::SetWindowFontScale(1.2f);
+                        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, p.y + 2), cText, "OkaySpace Engine");
+                        ImGui::SetWindowFontScale(1.0f);
+                        dl->AddText(ImVec2(tx, p.y + 26), ImGui::GetColorU32(accLt), "Version " OKAY_ENGINE_VERSION);
+                        dl->AddText(ImVec2(tx, p.y + 44), cDim, FitText("A small Unity-inspired C++ game engine.", tr - tx).c_str());
+                        // Check for updates (+ live status underneath).
+                        const UpState us = GetState();
+                        const bool busy = (us == Up_Checking || us == Up_Downloading);
+                        ImVec2 bp = narrow ? ImVec2(p.x, p.y + S + 14) : ImVec2(p.x + w - 176.0f, p.y + 2);
+                        ImGui::SetCursorScreenPos(bp);
+                        ImGui::BeginDisabled(busy);
+                        if (PrimaryButton(busy ? (us == Up_Downloading ? "Downloading\xE2\x80\xA6###chkupd" : "Checking\xE2\x80\xA6###chkupd") : "Check for updates###chkupd",
+                                          ImVec2(176, 34)))
+                            StartUpdateCheck();
+                        ImGui::EndDisabled();
+                        const char* stTxt = us == Up_UpToDate ? "You're up to date"
+                                          : us == Up_Updated  ? "Update installed"
+                                          : us == Up_Failed   ? "Last check failed"
+                                          : us == Up_Checking ? "Looking for a new version\xE2\x80\xA6"
+                                          : us == Up_Downloading ? "Downloading the update\xE2\x80\xA6" : "";
+                        if (*stTxt) {
+                            ImVec2 ts = ImGui::CalcTextSize(stTxt);
+                            ImU32 sc = us == Up_Failed ? IM_COL32(236, 120, 120, 255) : us == Up_UpToDate || us == Up_Updated ? IM_COL32(110, 205, 140, 255) : cDim;
+                            dl->AddText(ImVec2(narrow ? bp.x + 186.0f : bp.x + (176.0f - ts.x) * 0.5f, narrow ? bp.y + (34 - ts.y) * 0.5f : bp.y + 40), sc, stTxt);
+                        }
+                        ImGui::SetCursorScreenPos(ImVec2(p.x, narrow ? bp.y + 34 : p.y + S + 4));
+                        ImGui::Dummy(ImVec2(0, 0));
+                    }
+                    cardEnd();
+
+                    cardBegin("##sc_links", "RESOURCES");
+                    settingRow("Documentation", "Guides for the editor, scripting and accounts.", 96.0f, 30.0f, [&](float) {
+                        if (ImGui::Button("Open", ImVec2(96, 30)))
+                            OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/blob/main/README.md");
+                    });
+                    rowDivider();
+                    settingRow("GitHub repository", "Source code, issues and release notes.", 96.0f, 30.0f, [&](float) {
+                        if (ImGui::Button("Open", ImVec2(96, 30)))
+                            OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine");
+                    });
+                    rowDivider();
+                    settingRow("Version info", "Copy the version for bug reports.", 96.0f, 30.0f, [&](float) {
+                        if (ImGui::Button("Copy", ImVec2(96, 30))) {
+                            ImGui::SetClipboardText("OkaySpace v" OKAY_ENGINE_VERSION);
+                            Toast("Version copied", 1);
+                        }
+                    });
+                    cardEnd();
+                }
+                ImGui::Dummy(ImVec2(0, 4));
+            }
+            ImGui::EndChild();   // ##setbody
+
+            // Reset confirmation (opened from Behavior > Maintenance).
+            if (setOpenReset) { ImGui::OpenPopup("Reset preferences?"); setOpenReset = false; }
             ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
                                     ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
             if (ImGui::BeginPopupModal("Reset preferences?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -9170,7 +11004,6 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
-            ImGui::TextDisabled("Preferences are stored in launcher.cfg next to the launcher.");
         } else if (tab == 5) {                            // ---- Achievements ----
             sectionHeader("Achievements", nullptr);
             if (loginGate("achievements")) {
@@ -9252,9 +11085,8 @@ int main(int argc, char** argv) {
                 static std::vector<okay::FriendEvent> fFeed;
                 static std::string fCode;
                 // Direct messages live in the floating Chat window (DrawChatWindow);
-                // the "Message" buttons call OpenChatWith().
-                static okay::Friend profFriend;   // friend whose profile card is open
-                static bool profOpen = false;
+                // the "Message" buttons call OpenChatWith(). Clicking a row opens
+                // the full public profile page (OpenPublicProfile).
                 static Uint32 fNextRefresh = 0;
                 static int fView = 0;             // 0 Online, 1 All, 2 Pending, 3 Add friend
                 Uint32 now = SDL_GetTicks();
@@ -9406,7 +11238,8 @@ int main(int argc, char** argv) {
                     ImVec2 rp = ImGui::GetCursorScreenPos();
                     const float w = ImGui::GetContentRegionAvail().x, rowH = 62.0f, A = 40.0f, d = 34.0f;
                     ImGui::SetNextItemAllowOverlap();
-                    if (ImGui::InvisibleButton("##frrow", ImVec2(w, rowH))) { profFriend = *f; profOpen = true; }
+                    if (ImGui::InvisibleButton("##frrow", ImVec2(w, rowH)))
+                        OpenPublicProfile(f->id, f->username, dispName, f->avatar, f->accent);
                     const bool rowHov = ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + w, rp.y + rowH)) && ImGui::IsWindowHovered();
                     // Right-click menu: favorite, nickname, copy, remove (Discord-style).
                     if (ImGui::BeginPopupContextItem("##frctx")) {
@@ -9433,7 +11266,7 @@ int main(int argc, char** argv) {
                             ImGui::Separator();
                         }
                         if (ImGui::MenuItem("Copy username")) { ImGui::SetClipboardText(f->username.c_str()); Toast("Username copied", 1); }
-                        if (ImGui::MenuItem("View profile")) { profFriend = *f; profOpen = true; }
+                        if (ImGui::MenuItem("View profile")) OpenPublicProfile(f->id, f->username, dispName, f->avatar, f->accent);
                         ImGui::Separator();
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
                         if (ImGui::MenuItem(kind == 1 ? "Decline request" : accepted ? "Remove friend" : "Cancel request")) {
@@ -9730,98 +11563,6 @@ int main(int argc, char** argv) {
                     if (ImGui::Button("Cancel", ImVec2(110, 0))) { nickUid.clear(); ImGui::CloseCurrentPopup(); }
                     ImGui::EndPopup();
                 }
-
-                // --- Steam-style profile card popup (opened from a friend avatar) ---
-                if (profOpen) { ImGui::OpenPopup("##profilecard"); profOpen = false; }
-                ImGui::SetNextWindowSize(ImVec2(340, 0));
-                if (ImGui::BeginPopup("##profilecard")) {
-                    const okay::Friend& pf = profFriend;
-                    std::string pname = pf.display.empty() ? pf.username : pf.display;
-                    float aw = ImGui::GetContentRegionAvail().x;
-                    // The player's chosen profile accent colors the banner (Steam-style).
-                    int pai = pf.accent; if (pai < 0 || pai >= (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]))) pai = 0;
-                    ImVec4 pac = kAccentPresets[pai].col;
-                    // Accent banner header with the avatar (ringed by presence color).
-                    ImVec2 bnp = ImGui::GetCursorScreenPos();
-                    ImDrawList* pdl = ImGui::GetWindowDrawList();
-                    pdl->AddRectFilledMultiColor(bnp, ImVec2(bnp.x + aw, bnp.y + 54),
-                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.45f)),
-                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.12f)),
-                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.06f)),
-                        ImGui::GetColorU32(ImVec4(pac.x,pac.y,pac.z,0.26f)));
-                    ImGui::Dummy(ImVec2(0, 30));
-                    ImGui::SetCursorPosX((aw - 76) * 0.5f + ImGui::GetCursorPosX());
-                    ImVec2 avp = ImGui::GetCursorScreenPos();
-                    DrawAvatar(pf.avatar, pname, 76.0f);
-                    ImU32 ring = pf.online ? IM_COL32(120,200,110,255) : IM_COL32(120,128,140,255);
-                    pdl->AddCircle(ImVec2(avp.x+38, avp.y+38), 39.0f, ring, 40, 3.0f);
-                    auto ctr = [&](const std::string& t, ImVec4 col){
-                        float w = ImGui::CalcTextSize(t.c_str()).x;
-                        float o = (ImGui::GetContentRegionAvail().x - w) * 0.5f; if (o > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + o);
-                        ImGui::TextColored(col, "%s", t.c_str());
-                    };
-                    ctr(pname, ImVec4(0.95f,0.96f,1,1));
-                    ctr("@" + pf.username, ImVec4(0.6f,0.63f,0.7f,1));
-                    std::string stx = (pf.online && !pf.playing.empty()) ? pf.playing
-                                     : pf.online ? "Online" : "Offline";
-                    ImVec4 stc = (pf.online && !pf.playing.empty()) ? kAccent
-                               : pf.online ? ImVec4(0.55f,0.9f,0.6f,1) : ImVec4(0.6f,0.63f,0.7f,1);
-                    ctr(stx, stc);
-                    // Custom status / tagline, centered under the presence line.
-                    if (!pf.customStatus.empty()) ctr("\"" + pf.customStatus + "\"", ImVec4(0.72f,0.75f,0.82f,1));
-                    ImGui::Dummy(ImVec2(0, 6));
-                    if (!pf.bio.empty()) {
-                        ImGui::SeparatorText("About");
-                        ImGui::TextWrapped("%s", pf.bio.c_str());
-                    }
-                    if (!pf.favoriteGame.empty() || !pf.location.empty()) {
-                        ImGui::SeparatorText("Details");
-                        if (!pf.favoriteGame.empty()) {
-                            ImGui::TextColored(ImVec4(pac.x,pac.y,pac.z,1), "Favorite game");
-                            ImGui::SameLine(); ImGui::TextWrapped(": %s", pf.favoriteGame.c_str());
-                        }
-                        if (!pf.location.empty()) {
-                            ImGui::TextColored(ImVec4(pac.x,pac.y,pac.z,1), "Location");
-                            ImGui::SameLine(); ImGui::TextWrapped(": %s", pf.location.c_str());
-                        }
-                    }
-                    // Their recent activity (filtered from the feed).
-                    bool anyAct = false;
-                    for (const auto& e : fFeed) if (e.actor == pf.username || e.actor == pname) { anyAct = true; break; }
-                    if (anyAct) {
-                        ImGui::SeparatorText("Recent activity");
-                        int n = 0;
-                        for (const auto& e : fFeed) {
-                            if (e.actor != pf.username && e.actor != pname) continue;
-                            if (n++ >= 4) break;
-                            const char* verb = e.kind == "playing" ? "Played " : e.kind == "achievement" ? "Unlocked "
-                                             : e.kind == "publish" ? "Published " : e.kind == "online" ? "Came online" : "";
-                            ImGui::BulletText("%s%s", verb, e.detail.c_str());
-                        }
-                    }
-                    ImGui::Dummy(ImVec2(0, 4));
-                    ImGui::Separator();
-                    // Working actions.
-                    if (ImGui::Button("Message", ImVec2(-1, 0))) {
-                        OpenChatWith(pf.id, pname, pf.avatar);
-                        ImGui::CloseCurrentPopup();
-                    }
-                    if (pf.online && !pf.sessionCode.empty()) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f,0.44f,0.26f,1));
-                        if (ImGui::Button("Join their game", ImVec2(-1, 0))) {
-                            ImGui::SetClipboardText(pf.sessionCode.c_str());
-                            Toast("Session code " + pf.sessionCode + " copied", 2);
-                        }
-                        ImGui::PopStyleColor();
-                    }
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f,0.22f,0.22f,1));
-                    if (ImGui::Button("Remove friend", ImVec2(-1, 0))) {
-                        fr.Remove(pf.rowId); fNextRefresh = 0; ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::PopStyleColor();
-                    ImGui::EndPopup();
-                }
-
             }
         } else if (tab == 7) {                            // ---- Market / Workshop ----
             sectionHeader("Marketplace", nullptr);
@@ -10286,6 +12027,10 @@ int main(int argc, char** argv) {
                 static bool svSettingsOpen = false, svRenChanOpen = false;
                 static bool svShowMembers = true, svAddOpen = false, svAddChan = false, svFocus = false;
                 static std::map<long,long> svLikes; static std::map<long,bool> svMyLikes; static long svEditId = 0;
+                // Browser-style tabs: one per opened channel, across servers.
+                struct SvTab { long sel = 0, chan = 0; std::string chanName, srvName; };
+                static std::vector<SvTab> svTabs;
+                static long svTabSkipSel = 0, svTabSkipChan = 0;   // last tab was closed: don't re-add this view
                 Uint32 now = SDL_GetTicks();
                 if (kSvDemo) {
                     static bool seeded = false;
@@ -10306,6 +12051,7 @@ int main(int argc, char** argv) {
                         msg(5, "maya", "Perfect. First playable by tonight?", 600, 0);
                         svMyLikes[4] = true;
                         svSel = 1; svSelName = "Game Jam Crew"; svChan = 11;
+                        svTabs = {{1, 11, "general", "Game Jam Crew"}, {1, 12, "game-jam", "Game Jam Crew"}, {3, 14, "help", "OkaySpace Devs"}};
                     }
                 } else {
                     // Prefetch the server list in the background so switching to this
@@ -10557,6 +12303,112 @@ int main(int argc, char** argv) {
                     ImGui::BeginChild("##svmsgs", ImVec2(showMem ? availW - leftUsed - memW - 10 : 0.0f, colH), false);
                     std::string chanName;
                     for (const auto& c : svChannels) if (c.id == svChan) { chanName = c.name; break; }
+                    // ---- Tabs: one per opened channel, across servers (like the chat window) ----
+                    {
+                        // Track the open view as a tab (skip a view whose tab was just closed).
+                        if (svChan != 0 && !chanName.empty()) {
+                            if (svSel != svTabSkipSel || svChan != svTabSkipChan) {
+                                svTabSkipSel = svTabSkipChan = 0;
+                                bool have = false;
+                                for (auto& t : svTabs) if (t.sel == svSel && t.chan == svChan) { t.chanName = chanName; t.srvName = svSelName; have = true; }
+                                if (!have) {
+                                    svTabs.push_back(SvTab{svSel, svChan, chanName, svSelName});
+                                    if (svTabs.size() > 12) svTabs.erase(svTabs.begin());
+                                }
+                            }
+                        }
+                        int curIdx = -1;
+                        for (std::size_t i = 0; i < svTabs.size(); ++i) if (svTabs[i].sel == svSel && svTabs[i].chan == svChan) curIdx = (int)i;
+                        int openIdx = -1, closeIdx = -1;
+                        // Ctrl+PgDn / Ctrl+PgUp cycle tabs, Ctrl+W closes the open one.
+                        if (!svTabs.empty() && ImGui::GetIO().KeyCtrl && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+                            const int n = (int)svTabs.size();
+                            if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) openIdx = (curIdx + 1) % n;
+                            if (ImGui::IsKeyPressed(ImGuiKey_PageUp))   openIdx = curIdx <= 0 ? n - 1 : curIdx - 1;
+                            if (ImGui::IsKeyPressed(ImGuiKey_W, false) && curIdx >= 0) closeIdx = curIdx;
+                        }
+                        if (svTabs.size() > 1 || (svTabs.size() == 1 && curIdx < 0)) {
+                            const float tabH = 30.0f;
+                            ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.0f);
+                            ImGui::BeginChild("##svtabs", ImVec2(0, tabH + 6), false,
+                                              ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                            ImGui::PopStyleVar();
+                            if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f)
+                                ImGui::SetScrollX(ImGui::GetScrollX() - ImGui::GetIO().MouseWheel * 48.0f);
+                            ImDrawList* td = ImGui::GetWindowDrawList();
+                            const ImVec2 start = ImGui::GetCursorScreenPos();
+                            const float th = ImGui::GetTextLineHeight();
+                            float x = start.x;
+                            for (std::size_t i = 0; i < svTabs.size(); ++i) {
+                                const SvTab& t = svTabs[i];
+                                const bool active = (int)i == curIdx;
+                                const std::string lbl = "#" + t.chanName;
+                                const float tw = std::clamp(ImGui::CalcTextSize(lbl.c_str()).x + 66.0f, 110.0f, 200.0f);
+                                ImVec2 p(x, start.y);
+                                ImGui::PushID((int)i);
+                                ImGui::SetCursorScreenPos(p);
+                                ImGui::SetNextItemAllowOverlap();
+                                if (ImGui::InvisibleButton("##svtab", ImVec2(tw, tabH))) openIdx = (int)i;
+                                const bool hov = ImGui::IsItemHovered();
+                                if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) closeIdx = (int)i;
+                                if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("#%s  \xC2\xB7  %s", t.chanName.c_str(), t.srvName.c_str()); }
+                                td->AddRectFilled(p, ImVec2(p.x + tw, p.y + tabH),
+                                                  active ? IM_COL32(255, 255, 255, 26) : hov ? IM_COL32(255, 255, 255, 15) : IM_COL32(255, 255, 255, 7), 8.0f);
+                                if (active) td->AddRectFilled(ImVec2(p.x + 10, p.y + tabH - 2.5f), ImVec2(p.x + tw - 10, p.y + tabH),
+                                                              ImGui::GetColorU32(kAccent), 1.5f);
+                                // Server badge: its colour + initial.
+                                ImVec2 bc(p.x + 17.0f, p.y + tabH * 0.5f);
+                                ImVec4 nc = NameColor(t.srvName);
+                                td->AddRectFilled(ImVec2(bc.x - 9, bc.y - 9), ImVec2(bc.x + 9, bc.y + 9),
+                                                  ImGui::GetColorU32(ImVec4(nc.x * 0.55f, nc.y * 0.55f, nc.z * 0.55f, 1)), 6.0f);
+                                char ini[2] = {(char)(t.srvName.empty() ? '#' : std::toupper((unsigned char)t.srvName[0])), 0};
+                                float fs = ImGui::GetFontSize() * 0.75f;
+                                ImVec2 is = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, ini);
+                                td->AddText(ImGui::GetFont(), fs, ImVec2(bc.x - is.x * 0.5f, bc.y - is.y * 0.5f), IM_COL32_WHITE, ini);
+                                const float closeW = 16.0f;
+                                td->AddText(ImVec2(p.x + 32.0f, p.y + (tabH - th) * 0.5f), (active || hov) ? cText : cDim,
+                                            FitText(lbl, tw - 32.0f - closeW - 12.0f).c_str());
+                                ImVec2 xp(p.x + tw - closeW - 6.0f, p.y + (tabH - closeW) * 0.5f);
+                                ImGui::SetCursorScreenPos(xp);
+                                if (ImGui::InvisibleButton("##x", ImVec2(closeW, closeW))) closeIdx = (int)i;
+                                const bool xh = ImGui::IsItemHovered();
+                                if (xh) ImGui::SetTooltip("Close  (Ctrl+W)");
+                                if (active || hov || xh) {
+                                    ImVec2 xc(xp.x + closeW * 0.5f, xp.y + closeW * 0.5f);
+                                    if (xh) td->AddCircleFilled(xc, closeW * 0.5f, IM_COL32(255, 255, 255, 30), 16);
+                                    td->AddLine(ImVec2(xc.x - 3.5f, xc.y - 3.5f), ImVec2(xc.x + 3.5f, xc.y + 3.5f), xh ? cText : cDim, 1.5f);
+                                    td->AddLine(ImVec2(xc.x + 3.5f, xc.y - 3.5f), ImVec2(xc.x - 3.5f, xc.y + 3.5f), xh ? cText : cDim, 1.5f);
+                                }
+                                ImGui::PopID();
+                                x += tw + 4.0f;
+                            }
+                            ImGui::SetCursorScreenPos(start);
+                            ImGui::Dummy(ImVec2(x - start.x, tabH));
+                            ImGui::EndChild();
+                            ImGui::Dummy(ImVec2(0, 2));
+                        }
+                        // Switch to a tab: same server -> just the channel; another server -> select it too.
+                        auto openTab = [&](const SvTab& t) {
+                            if (t.sel != svSel) {
+                                svSel = t.sel; svSelName = t.srvName; svNextChan = 0;
+                                if (!kSvDemo) { svChannels.clear(); svMembers.clear(); }
+                            }
+                            svChan = t.chan; svNextMsg = 0; svEditId = 0;
+                            if (!kSvDemo) svMsgs.clear();
+                        };
+                        if (closeIdx >= 0 && closeIdx < (int)svTabs.size()) {
+                            const bool wasOpen = closeIdx == curIdx;
+                            svTabs.erase(svTabs.begin() + closeIdx);
+                            if (wasOpen) {
+                                svTabSkipSel = svSel; svTabSkipChan = svChan;   // don't re-add the view we're leaving
+                                if (!svTabs.empty()) openTab(svTabs[std::min((std::size_t)closeIdx, svTabs.size() - 1)]);
+                            }
+                        } else if (openIdx >= 0 && openIdx != curIdx && openIdx < (int)svTabs.size()) {
+                            openTab(svTabs[(std::size_t)openIdx]);
+                        }
+                        chanName.clear();
+                        for (const auto& c : svChannels) if (c.id == svChan) { chanName = c.name; break; }
+                    }
                     {   // Channel header: "# name" + members toggle.
                         ImDrawList* d = ImGui::GetWindowDrawList();
                         ImVec2 hp = ImGui::GetCursorScreenPos();
@@ -10706,6 +12558,11 @@ int main(int argc, char** argv) {
                             ImVec2 mp = ImGui::GetCursorScreenPos();
                             float rw = ImGui::GetContentRegionAvail().x;
                             std::string nm = m.name.empty() ? std::string("member") : m.name;
+                            ImGui::PushID(m.uid.empty() ? nm.c_str() : m.uid.c_str());
+                            if (ImGui::InvisibleButton("##memrow", ImVec2(rw, 40)))   // open their public profile
+                                OpenPublicProfile(m.uid, m.uid.empty() ? nm : std::string(), nm, m.avatar);
+                            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            ImGui::PopID();
                             if (ImGui::IsMouseHoveringRect(mp, ImVec2(mp.x + rw, mp.y + 40)))
                                 d->AddRectFilled(mp, ImVec2(mp.x + rw, mp.y + 40), IM_COL32(255, 255, 255, 10), 8.0f);
                             ImGui::SetCursorScreenPos(ImVec2(mp.x + 4, mp.y + 5));
@@ -11032,6 +12889,11 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(); ImGui::SetCursorPosX(52);
                 ImGui::BeginGroup();
                 ImGui::TextDisabled("Posted by %s  -  %s", openAuthor.empty()?"unknown":openAuthor.c_str(), RelTime(openWhen).c_str());
+                if (!openAuthor.empty() && ImGui::IsItemHovered()) {   // author -> public profile
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ImGui::SetTooltip("View %s's profile", openAuthor.c_str());
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) OpenPublicProfile("", openAuthor, openAuthor);
+                }
                 if (!openBody.empty()) RenderChatBody(openBody);
                 else ImGui::TextDisabled("(no body)");
                 ImGui::EndGroup();
@@ -11051,6 +12913,10 @@ int main(int argc, char** argv) {
                     bool mine = !me.empty() && p.author == me;
                     ImGui::TextColored(mine ? ImVec4(0.62f,0.78f,1.0f,1) : ImVec4(0.72f,0.76f,0.84f,1),
                                        "%s", p.author.empty()?"unknown":p.author.c_str());
+                    if (!p.author.empty() && ImGui::IsItemHovered()) {   // author -> public profile
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) OpenPublicProfile("", p.author, p.author);
+                    }
                     ImGui::SameLine(0,8); ImGui::TextDisabled("%s", RelTime(p.when).c_str());
                     RenderChatBody(p.body);
                     ImGui::EndGroup();

@@ -622,8 +622,13 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
 #if defined(_WIN32)
         if (!px && g_d3dReady && g_d3dRenderer) {
             OKAY_TRACE("Render3D:d3d11");   // crash breadcrumb: which backend faulted
+            // Scene / Game view / Camera Preview redraw every frame: pipeline their read-back
+            // (show last frame's image, don't stall on the GPU). The Animation preview and
+            // one-off renders stay synchronous.
+            g_d3dRenderer->SetReadbackStream(slot <= 2 ? slot : -1);
             px = g_d3dRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
                                                0.0f, 0.0f, 0.0f, 0.0f, ignore);
+            g_d3dRenderer->SetReadbackStream(-1);
         }
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
@@ -13411,7 +13416,13 @@ static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius) {
 // A live, auto-framed 3D preview of the object being animated, embedded right in the
 // Animation tab (drag to orbit, wheel to zoom). It renders the live scene — so it
 // reflects whatever pose the editor below is authoring this frame.
-static void DrawAnimPreview(EditorState& ed, GameObject* go) {
+// `pose` / `restore` (optional) wrap the render: the caller's clip pose is only
+// applied when a new frame is actually rendered. `poseUnchanged` lets a paused
+// preview reuse its last image (no re-pose, no re-skin, no render) while the
+// camera and size stay put; it still refreshes twice a second.
+static void DrawAnimPreview(EditorState& ed, GameObject* go,
+                            const std::function<void()>& pose = {}, const std::function<void()>& restore = {},
+                            bool poseUnchanged = false) {
     if (!go || !go->transform) return;
     static std::unordered_map<void*, ImVec2> orbit;   // (yaw, pitch) degrees
     static std::unordered_map<void*, float>  zoomMul;
@@ -13431,16 +13442,27 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go) {
     Mat4 proj = Mat4::Perspective(45.0f, w / h, 0.05f, 4000.0f);
     // Show ONLY the object being animated: temporarily hide everything outside its
     // subtree (lights stay on so the shading matches the scene), render, restore.
-    std::vector<GameObject*> hidden;
-    for (const auto& up : ed.scene().Objects()) {
-        GameObject* g = up.get();
-        if (!g || !g->active || g->IsSelfOrDescendantOf(go)) continue;
-        if (g->GetComponent<Light>()) continue;
-        hidden.push_back(g);
-        g->active = false;
+    static GameObject* s_lastGo = nullptr;
+    static Vec3 s_lastEye; static float s_lastW = 0.0f; static Uint32 s_lastAt = 0;
+    const bool reuse = poseUnchanged && s_lastGo == go && s_lastW == w && g_view3DTex[3] &&
+                       (s_lastEye - eye).Magnitude() < 1e-5f && SDL_GetTicks() - s_lastAt < 500;
+    SDL_Texture* tex = nullptr;
+    if (reuse) tex = g_view3DTex[3];
+    else {
+        if (pose) pose();
+        std::vector<GameObject*> hidden;
+        for (const auto& up : ed.scene().Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->active || g->IsSelfOrDescendantOf(go)) continue;
+            if (g->GetComponent<Light>()) continue;
+            hidden.push_back(g);
+            g->active = false;
+        }
+        tex = Render3DTexture(ed.scene(), proj * view, eye, (int)w, (int)h, /*slot=*/3);
+        for (GameObject* g : hidden) g->active = true;
+        if (restore) restore();
+        s_lastGo = go; s_lastEye = eye; s_lastW = w; s_lastAt = SDL_GetTicks();
     }
-    SDL_Texture* tex = Render3DTexture(ed.scene(), proj * view, eye, (int)w, (int)h, /*slot=*/3);
-    for (GameObject* g : hidden) g->active = true;
     if (tex) {
         ImGui::Image((ImTextureID)tex, ImVec2(w, h));
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -13567,29 +13589,37 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
         if (auto* sm = g->GetComponent<SkinnedMesh>()) skins.push_back(sm);
     }
 
-    // Pose -> skin -> render the preview -> restore.
+    // Pose -> skin -> render the preview -> restore. A paused preview reuses its
+    // last image, so an idle Animation tab doesn't re-skin the model twice a frame.
     struct SavedTRS { Transform* tr; Vec3 p, s; Quat r; };
     std::vector<SavedTRS> saved;
-    saved.reserve(clip.nodes.size());
-    for (const auto& nc : clip.nodes) {
-        auto it = byName.find(nc.node);
-        if (it == byName.end() || !it->second->transform) continue;
-        Transform* tr = it->second->transform;
-        saved.push_back({tr, tr->localPosition, tr->localScale, tr->localRotation});
-        ApplyClipToTransform(nc.clip, tr, t, ma->loop);
-    }
-    for (SkinnedMesh* sm : skins) { sm->ResolveJoints(); sm->Skin(); }
-    DrawAnimPreview(ed, go);
+    const bool inScenePrev = g_maScenePrev == ma;
+    static const void* s_prevMa = nullptr; static int s_prevClip = -1; static float s_prevT = -1.0f;
+    const bool poseUnchanged = !run && !inScenePrev && s_prevMa == ma && s_prevClip == ma->active && s_prevT == t;
+    s_prevMa = ma; s_prevClip = ma->active; s_prevT = t;
+    auto pose = [&]() {
+        saved.reserve(clip.nodes.size());
+        for (const auto& nc : clip.nodes) {
+            auto it = byName.find(nc.node);
+            if (it == byName.end() || !it->second->transform) continue;
+            Transform* tr = it->second->transform;
+            saved.push_back({tr, tr->localPosition, tr->localScale, tr->localRotation});
+            ApplyClipToTransform(nc.clip, tr, t, ma->loop);
+        }
+        for (SkinnedMesh* sm : skins) { sm->ResolveJoints(); sm->Skin(); }
+    };
     // "Preview in Scene view": leave the pose applied so the model animates in
     // the Scene/Game view too; otherwise restore the scene pose (inset only).
-    if (g_maScenePrev != ma) {
+    auto restore = [&]() {
+        if (inScenePrev) return;
         for (const SavedTRS& s2 : saved) {
             s2.tr->localPosition = s2.p;
             s2.tr->localScale    = s2.s;
             s2.tr->localRotation = s2.r;
         }
         for (SkinnedMesh* sm : skins) sm->Skin();   // deform back to the scene pose
-    }
+    };
+    DrawAnimPreview(ed, go, pose, restore, poseUnchanged);
 
     // Clip picker + transport.
     ImGui::SetNextItemWidth(230);

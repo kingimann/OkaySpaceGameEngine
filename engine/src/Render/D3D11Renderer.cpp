@@ -7,7 +7,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Scene/Transform.hpp"
-#include "okay/Components/SkinnedMesh.hpp"    // per-frame CPU-deformed meshes bypass the VB cache
+#include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
 #include "okay/Components/Character.hpp"
 #include "okay/Core/Log.hpp"
 
@@ -18,6 +18,7 @@
 #include <cmath>
 #include <vector>
 #include <string>
+#include <chrono>
 #include <unordered_map>
 
 namespace okay {
@@ -266,6 +267,31 @@ struct D3D11Renderer::Impl {
     ID3D11Texture2D*        depthTex = nullptr;  ID3D11DepthStencilView* dsv = nullptr;
     ID3D11Texture2D*        resolveTex = nullptr;
     ID3D11Texture2D*        staging = nullptr;
+    int reqSamples = 0;   // the MSAA count asked for (`samples` is what the device gave)
+    // Target sets for the OTHER sizes in use. The editor renders the Scene view,
+    // Game view, Camera Preview and Animation preview at different sizes every
+    // frame; one shared set meant destroying + re-creating MSAA, depth, resolve and
+    // staging textures several times per frame. Parked sets are swapped back in.
+    struct TargetSet {
+        int w = 0, h = 0, samples = 0, reqSamples = 0;
+        ID3D11Texture2D* colorTex = nullptr; ID3D11RenderTargetView* rtv = nullptr;
+        ID3D11Texture2D* depthTex = nullptr; ID3D11DepthStencilView* dsv = nullptr;
+        ID3D11Texture2D* resolveTex = nullptr; ID3D11Texture2D* staging = nullptr;
+        unsigned lastUse = 0;
+    };
+    std::vector<TargetSet> parked;
+    // Pipelined read-back (SetReadbackStream): two staging textures per view,
+    // written on alternate frames; the one from last frame is read.
+    struct Pipe {
+        ID3D11Texture2D* st[2] = {};
+        int w = 0, h = 0, idx = 0;
+        bool filled[2] = {};
+        std::chrono::steady_clock::time_point last{};
+    };
+    std::unordered_map<int, Pipe> pipes;
+    int stream = -1;
+    unsigned targetUse = 0;
+    void ReleaseSet(TargetSet& t);
     std::unordered_map<std::string, ID3D11ShaderResourceView*> texCache;
     std::vector<float> verts;
     std::vector<std::uint32_t> pixels;
@@ -275,7 +301,8 @@ struct D3D11Renderer::Impl {
     // from GPU memory, instead of being rebuilt on the CPU and re-uploaded every
     // frame — which made large OBJ imports crawl. Revalidated per frame via an
     // allocation fingerprint + sampled content hash, exactly about once a second.
-    // Meshes deformed each frame (SkinnedMesh/Character) bypass the cache.
+    // Skinned meshes are cached too, keyed on SkinnedMesh::version (a DYNAMIC
+    // buffer rewritten in place when the pose changes); Character meshes stream.
     struct MeshVB {
         ID3D11Buffer* vbuf = nullptr;
         int vertCount = 0;
@@ -286,10 +313,12 @@ struct D3D11Renderer::Impl {
         const void* fcp = nullptr; std::size_t fcn = 0;
         std::uint64_t sampleHash = 0, fullHash = 0;
         unsigned lastUse = 0, lastFullHash = 0;
+        std::uint64_t version = 0;   // SkinnedMesh::version when skinned (0 = static)
+        int cap = 0;                 // dynamic buffers: capacity in vertices
     };
     std::unordered_map<const void*, MeshVB> meshVB;
     unsigned frame = 0;
-    MeshVB* EnsureMeshVB(const Mesh& mesh);   // expand + upload on miss
+    MeshVB* EnsureMeshVB(const Mesh& mesh, std::uint64_t version = 0);   // expand + upload on miss
     void BuildExpandedVerts(const Mesh& mesh); // fill `verts` (14 floats/vertex)
 
     ID3D11ShaderResourceView* TextureFor(const std::string& name);
@@ -390,6 +419,16 @@ bool D3D11Renderer::Init() {
 
 bool D3D11Renderer::Available() const { return m_impl && m_impl->dev && m_impl->vs; }
 
+void D3D11Renderer::Impl::ReleaseSet(TargetSet& t) {
+    if (t.rtv)        t.rtv->Release();
+    if (t.dsv)        t.dsv->Release();
+    if (t.colorTex)   t.colorTex->Release();
+    if (t.depthTex)   t.depthTex->Release();
+    if (t.resolveTex) t.resolveTex->Release();
+    if (t.staging)    t.staging->Release();
+    t = TargetSet{};
+}
+
 void D3D11Renderer::Impl::DestroyTargets() {
     if (rtv)        { rtv->Release(); rtv = nullptr; }
     if (dsv)        { dsv->Release(); dsv = nullptr; }
@@ -397,7 +436,7 @@ void D3D11Renderer::Impl::DestroyTargets() {
     if (depthTex)   { depthTex->Release(); depthTex = nullptr; }
     if (resolveTex) { resolveTex->Release(); resolveTex = nullptr; }
     if (staging)    { staging->Release(); staging = nullptr; }
-    w = h = samples = 0;
+    w = h = samples = reqSamples = 0;
 }
 
 bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
@@ -405,14 +444,41 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     // CreateTexture2D/View failure) must NOT satisfy the cache — check the views we
     // actually bind, not just colorTex. Otherwise the next call returns "ready" with
     // a null rtv/dsv and the render binds a null render target (hard crash).
+    ++targetUse;
     if (colorTex && rtv && dsv && resolveTex && staging &&
-        w == W && h == H && samples == S) return true;
+        w == W && h == H && reqSamples == S) return true;
+    // Park the current (complete) set, then swap in a parked one of this size.
+    if (colorTex && rtv && dsv && resolveTex && staging) {
+        TargetSet t;
+        t.w = w; t.h = h; t.samples = samples; t.reqSamples = reqSamples;
+        t.colorTex = colorTex; t.rtv = rtv; t.depthTex = depthTex; t.dsv = dsv;
+        t.resolveTex = resolveTex; t.staging = staging; t.lastUse = targetUse;
+        colorTex = depthTex = resolveTex = staging = nullptr; rtv = nullptr; dsv = nullptr;
+        parked.push_back(t);
+    }
+    for (std::size_t i = 0; i < parked.size(); ++i) {
+        TargetSet& t = parked[i];
+        if (t.w != W || t.h != H || t.reqSamples != S) continue;
+        DestroyTargets();
+        w = t.w; h = t.h; samples = t.samples; reqSamples = t.reqSamples;
+        colorTex = t.colorTex; rtv = t.rtv; depthTex = t.depthTex; dsv = t.dsv;
+        resolveTex = t.resolveTex; staging = t.staging;
+        parked.erase(parked.begin() + (std::ptrdiff_t)i);
+        return true;
+    }
+    // Keep a handful (a view being resized leaves a trail of stale sizes).
+    while (parked.size() > 4) {
+        std::size_t oldest = 0;
+        for (std::size_t i = 1; i < parked.size(); ++i) if (parked[i].lastUse < parked[oldest].lastUse) oldest = i;
+        ReleaseSet(parked[oldest]);
+        parked.erase(parked.begin() + (std::ptrdiff_t)oldest);
+    }
     DestroyTargets();
     // Any partial failure below returns false; reset the size cache so the next call
     // starts clean (DestroyTargets nulls the resources, but the size fields linger).
     w = 0; h = 0; samples = 0;
     struct FailReset { Impl* p; bool ok = false; ~FailReset(){ if(!ok){ p->DestroyTargets(); p->w=p->h=p->samples=0; } } } fr{this};
-    w = W; h = H;
+    w = W; h = H; reqSamples = S;
     // Clamp the requested MSAA to what the device actually supports for BOTH the color
     // and depth formats. Creating a multisampled texture with an unsupported count is a
     // common hard-failure (and on some drivers a crash) on integrated GPUs / RDP / VMs,
@@ -518,7 +584,8 @@ void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
     const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
     const bool faceCols = mesh.HasFaceColors();
     const int nv = (int)V.size();
-    verts.clear(); verts.reserve(T.size() * 14);
+    verts.resize(T.size() / 3 * 3 * 14);   // written through a raw pointer, trimmed at the end
+    float* out = verts.data();
     for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
         int a = T[i], b = T[i + 1], cc = T[i + 2];
         if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue; // skip bad tris
@@ -545,18 +612,20 @@ void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
         for (int k = 0; k < 3; ++k) {
             const Vec3& pos = V[idx[k]];
             Vec3 nrm = hasN ? mesh.normals[idx[k]] : fn;
-            verts.push_back(pos.x); verts.push_back(pos.y); verts.push_back(pos.z);
-            verts.push_back(nrm.x); verts.push_back(nrm.y); verts.push_back(nrm.z);
-            verts.push_back(uu[k]); verts.push_back(vv[k]);
-            verts.push_back(cr);    verts.push_back(cg);    verts.push_back(cb2);
-            verts.push_back(tan.x); verts.push_back(tan.y); verts.push_back(tan.z);
+            out[0] = pos.x; out[1] = pos.y; out[2] = pos.z;
+            out[3] = nrm.x; out[4] = nrm.y; out[5] = nrm.z;
+            out[6] = uu[k]; out[7] = vv[k];
+            out[8] = cr;    out[9] = cg;    out[10] = cb2;
+            out[11] = tan.x; out[12] = tan.y; out[13] = tan.z;
+            out += 14;
         }
     }
+    verts.resize((std::size_t)(out - verts.data()));
 }
 
 // Return the up-to-date cached GPU buffer for a mesh, expanding + uploading only
 // when the mesh actually changed. nullptr = mesh has no drawable triangles.
-D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh) {
+D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh, std::uint64_t version) {
     MeshVB& e = meshVB[&mesh];
     e.lastUse = frame;
     bool same = e.vbuf != nullptr &&
@@ -566,6 +635,10 @@ D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh)
         e.uvp == (const void*)mesh.uvs.data()       && e.uvn == mesh.uvs.size()       &&
         e.fcp == (const void*)mesh.triColors.data() && e.fcn == mesh.triColors.size();
     std::uint64_t sh = 0;
+    if (version) {   // skinned: the deformer says when it changed, no hashing needed
+        if (same && e.version == version) return e.vertCount > 0 ? &e : nullptr;
+        same = false;
+    }
     if (same) { sh = MeshSampleHash(mesh); if (sh != e.sampleHash) same = false; }
     if (same && frame - e.lastFullHash >= 60) {     // exact check ~once a second
         std::uint64_t fh = MeshFullHash(mesh);
@@ -579,10 +652,32 @@ D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh)
     e.np  = mesh.normals.data();   e.nn  = mesh.normals.size();
     e.uvp = mesh.uvs.data();       e.uvn = mesh.uvs.size();
     e.fcp = mesh.triColors.data(); e.fcn = mesh.triColors.size();
+    e.vertCount = (int)(verts.size() / 14);
+    if (version) {
+        // Skinned: rewrite a DYNAMIC buffer in place (re-created only to grow, or
+        // when it was a static one). One upload per pose, shared by every pass.
+        const bool wasStatic = e.vbuf && e.version == 0;
+        e.version = version;
+        if (e.vertCount == 0) return nullptr;
+        if (e.vbuf && (wasStatic || e.vertCount > e.cap)) { e.vbuf->Release(); e.vbuf = nullptr; e.cap = 0; }
+        if (!e.vbuf) {
+            const int cap = e.vertCount + e.vertCount / 8;
+            D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
+            bd.ByteWidth = (UINT)((std::size_t)cap * 14 * sizeof(float)); bd.Usage = D3D11_USAGE_DYNAMIC;
+            bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            if (FAILED(dev->CreateBuffer(&bd, nullptr, &e.vbuf))) { e.vbuf = nullptr; e.vertCount = 0; return nullptr; }
+            e.cap = cap;
+        }
+        D3D11_MAPPED_SUBRESOURCE ms;
+        if (FAILED(ctx->Map(e.vbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) { e.version = 0; e.vertCount = 0; return nullptr; }
+        std::memcpy(ms.pData, verts.data(), verts.size() * sizeof(float));
+        ctx->Unmap(e.vbuf, 0);
+        return &e;
+    }
+    e.version = 0; e.cap = 0;
     e.sampleHash = sh ? sh : MeshSampleHash(mesh);
     e.fullHash = MeshFullHash(mesh);
     e.lastFullHash = frame;
-    e.vertCount = (int)(verts.size() / 14);
     if (e.vbuf) { e.vbuf->Release(); e.vbuf = nullptr; }
     if (e.vertCount == 0) return nullptr;
     D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
@@ -681,10 +776,10 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
                 }
                 // Static meshes: draw positions straight from the cached interleaved
                 // buffer (stride 14). Per-frame-deformed meshes stream position-only.
-                const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
-                                      go->GetComponent<Character>() != nullptr;
+                const bool deformed = go->GetComponent<Character>() != nullptr;
                 if (!deformed) {
-                    Impl::MeshVB* mv = p->EnsureMeshVB(mesh);
+                    const auto* skin = go->GetComponent<SkinnedMesh>();
+                    Impl::MeshVB* mv = p->EnsureMeshVB(mesh, skin ? skin->version : 0);
                     if (!mv) continue;
                     UINT ds = 14 * sizeof(float), doff = 0;
                     c->IASetVertexBuffers(0, 1, &mv->vbuf, &ds, &doff);
@@ -784,14 +879,15 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
 
         // Geometry source: static meshes draw from the per-mesh cached GPU buffer
         // (expanded + uploaded once — see Impl::EnsureMeshVB); meshes deformed on
-        // the CPU every frame (SkinnedMesh / Character) stream through `vb`.
-        const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
-                              go->GetComponent<Character>() != nullptr;
+        // the CPU every frame by a Character stream through `vb`. SkinnedMesh is
+        // cached too, re-uploaded only when its version moves.
+        const bool deformed = go->GetComponent<Character>() != nullptr;
+        const auto* skin = go->GetComponent<SkinnedMesh>();
         Impl::MeshVB* mvb = nullptr;
         int vcount = 0;
         D3D11_MAPPED_SUBRESOURCE ms;
         if (!deformed) {
-            mvb = p->EnsureMeshVB(mesh);
+            mvb = p->EnsureMeshVB(mesh, skin ? skin->version : 0);
             if (!mvb) continue;                    // no drawable triangles
             vcount = mvb->vertCount;
         } else {
@@ -927,25 +1023,56 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     // no row flip is needed (unlike GL).
     if (p->samples > 1) c->ResolveSubresource(p->resolveTex, 0, p->colorTex, 0, DXGI_FORMAT_R8G8B8A8_UNORM);
     else                c->CopyResource(p->resolveTex, p->colorTex);
-    c->CopyResource(p->staging, p->resolveTex);
+    ID3D11Texture2D* readFrom = p->staging;
+    if (p->stream >= 0) {
+        Impl::Pipe& pp = p->pipes[p->stream];
+        const auto now = std::chrono::steady_clock::now();
+        const bool fresh = now - pp.last < std::chrono::milliseconds(250);
+        pp.last = now;
+        if (pp.w != w || pp.h != h || !pp.st[0] || !pp.st[1]) {
+            for (auto*& t : pp.st) if (t) { t->Release(); t = nullptr; }
+            pp.w = pp.h = 0; pp.filled[0] = pp.filled[1] = false; pp.idx = 0;
+            D3D11_TEXTURE2D_DESC ts; std::memset(&ts, 0, sizeof(ts));
+            ts.Width = w; ts.Height = h; ts.MipLevels = 1; ts.ArraySize = 1;
+            ts.Format = DXGI_FORMAT_R8G8B8A8_UNORM; ts.SampleDesc.Count = 1;
+            ts.Usage = D3D11_USAGE_STAGING; ts.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            if (SUCCEEDED(p->dev->CreateTexture2D(&ts, nullptr, &pp.st[0])) &&
+                SUCCEEDED(p->dev->CreateTexture2D(&ts, nullptr, &pp.st[1]))) { pp.w = w; pp.h = h; }
+        }
+        if (pp.w == w && pp.h == h) {
+            const int cur = pp.idx, prev = pp.idx ^ 1;
+            c->CopyResource(pp.st[cur], p->resolveTex);
+            pp.filled[cur] = true;
+            readFrom = (fresh && pp.filled[prev]) ? pp.st[prev] : pp.st[cur];
+            pp.idx = prev;
+        } else c->CopyResource(p->staging, p->resolveTex);   // couldn't make the ring: synchronous
+    } else {
+        c->CopyResource(p->staging, p->resolveTex);
+    }
 
     p->pixels.assign((std::size_t)w * h, 0u);
     D3D11_MAPPED_SUBRESOURCE ms;
-    if (FAILED(c->Map(p->staging, 0, D3D11_MAP_READ, 0, &ms))) return nullptr;
+    if (FAILED(c->Map(readFrom, 0, D3D11_MAP_READ, 0, &ms))) return nullptr;
     const std::uint8_t* src = (const std::uint8_t*)ms.pData;
     for (int y = 0; y < h; ++y)
         std::memcpy(p->pixels.data() + (std::size_t)y * w, src + (std::size_t)y * ms.RowPitch, (std::size_t)w * 4);
-    c->Unmap(p->staging, 0);
+    c->Unmap(readFrom, 0);
     // Release the shadow map from t4 so next frame's depth pass can bind it as a DSV
     // without a read/write hazard warning.
     if (shadowOn) { ID3D11ShaderResourceView* nullsrv = nullptr; c->PSSetShaderResources(4, 1, &nullsrv); }
     return p->pixels.data();
 }
 
+void D3D11Renderer::SetReadbackStream(int id) { if (m_impl) m_impl->stream = id; }
+
 void D3D11Renderer::Destroy() {
     if (!m_impl) return;
     Impl* p = m_impl;
     p->DestroyTargets();
+    for (auto& t : p->parked) p->ReleaseSet(t);
+    p->parked.clear();
+    for (auto& kv : p->pipes) for (auto* t : kv.second.st) if (t) t->Release();
+    p->pipes.clear();
     for (auto& kv : p->texCache) if (kv.second) kv.second->Release();
     p->texCache.clear();
     for (auto& kv : p->meshVB) if (kv.second.vbuf) kv.second.vbuf->Release();

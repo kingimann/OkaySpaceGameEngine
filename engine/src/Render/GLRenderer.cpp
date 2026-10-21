@@ -2,8 +2,9 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
 #include "okay/Scene/Transform.hpp"
-#include "okay/Components/SkinnedMesh.hpp"    // per-frame CPU-deformed meshes bypass the VB cache
+#include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
 #include "okay/Components/Character.hpp"
+#include <utility>
 #include "okay/Core/Log.hpp"
 
 #include <GL/gl.h>          // GL 1.1 types + enums only
@@ -810,8 +811,48 @@ void GLRenderer::DestroySsao() {
     m_ssaoW = m_ssaoH = 0;
 }
 
+void GLRenderer::SwapSizeSet(SizeSet& s) {
+    unsigned int* f[16] = { &m_fbo, &m_colorRb, &m_depthRb, &m_resolveFbo, &m_resolveTex,
+                            &m_bloomFboA, &m_bloomTexA, &m_bloomFboB, &m_bloomTexB,
+                            &m_ssaoDepthFbo, &m_ssaoDepthTex, &m_ssaoDepthRb,
+                            &m_ssaoFboA, &m_ssaoTexA, &m_ssaoFboB, &m_ssaoTexB };
+    for (int i = 0; i < 16; ++i) std::swap(*f[i], s.ids[i]);
+    std::swap(m_w, s.w); std::swap(m_h, s.h); std::swap(m_samples, s.samples);
+    std::swap(m_bloomW, s.bloomW); std::swap(m_bloomH, s.bloomH);
+    std::swap(m_ssaoW, s.ssaoW); std::swap(m_ssaoH, s.ssaoH);
+}
+
+void GLRenderer::DeleteSizeSet(SizeSet& s) {
+    SwapSizeSet(s);                    // live <- s
+    DestroyTargets(); DestroyBloom(); DestroySsao();
+    SwapSizeSet(s);                    // live back, s <- emptied
+}
+
 bool GLRenderer::EnsureTargets(int w, int h, int samples) {
+    ++m_targetUse;
     if (m_fbo && m_w == w && m_h == h && m_samples == samples) return true;
+    // Park the live set, then swap in a parked one of this size if there is one.
+    if (m_fbo) {
+        SizeSet park;
+        SwapSizeSet(park);
+        park.lastUse = m_targetUse;
+        m_parkedSets.push_back(park);
+    }
+    for (std::size_t i = 0; i < m_parkedSets.size(); ++i) {
+        SizeSet& ps = m_parkedSets[i];
+        if (ps.w != w || ps.h != h || ps.samples != samples) continue;
+        DestroyTargets(); DestroyBloom(); DestroySsao();   // (already empty)
+        SwapSizeSet(ps);
+        m_parkedSets.erase(m_parkedSets.begin() + (std::ptrdiff_t)i);
+        return true;
+    }
+    while (m_parkedSets.size() > 4) {   // a resized view leaves a trail of stale sizes
+        std::size_t oldest = 0;
+        for (std::size_t i = 1; i < m_parkedSets.size(); ++i)
+            if (m_parkedSets[i].lastUse < m_parkedSets[oldest].lastUse) oldest = i;
+        DeleteSizeSet(m_parkedSets[oldest]);
+        m_parkedSets.erase(m_parkedSets.begin() + (std::ptrdiff_t)oldest);
+    }
     DestroyTargets();   // size/sample change -> rebuild ONLY the render targets
     m_w = w; m_h = h; m_samples = samples < 1 ? 1 : samples;
 
@@ -914,7 +955,8 @@ void GLRenderer::BuildExpandedVerts(const Mesh& mesh) {
     const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
     const bool faceCols = mesh.HasFaceColors();
     const int nv = (int)V.size();
-    m_verts.clear(); m_verts.reserve(T.size() * 14);
+    m_verts.resize(T.size() / 3 * 3 * 14);   // written through a raw pointer, trimmed at the end
+    float* out = m_verts.data();
     for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
         int a = T[i], b = T[i + 1], c = T[i + 2];
         if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue; // skip bad tris
@@ -945,18 +987,20 @@ void GLRenderer::BuildExpandedVerts(const Mesh& mesh) {
         for (int k = 0; k < 3; ++k) {
             const Vec3& p = V[idx[k]];
             Vec3 n = hasN ? mesh.normals[idx[k]] : fn;
-            m_verts.push_back(p.x); m_verts.push_back(p.y); m_verts.push_back(p.z);
-            m_verts.push_back(n.x); m_verts.push_back(n.y); m_verts.push_back(n.z);
-            m_verts.push_back(uu[k]); m_verts.push_back(vv[k]);
-            m_verts.push_back(cr);  m_verts.push_back(cg);  m_verts.push_back(cb);
-            m_verts.push_back(tan.x); m_verts.push_back(tan.y); m_verts.push_back(tan.z);
+            out[0] = p.x;   out[1] = p.y;   out[2] = p.z;
+            out[3] = n.x;   out[4] = n.y;   out[5] = n.z;
+            out[6] = uu[k]; out[7] = vv[k];
+            out[8] = cr;    out[9] = cg;    out[10] = cb;
+            out[11] = tan.x; out[12] = tan.y; out[13] = tan.z;
+            out += 14;
         }
     }
+    m_verts.resize((std::size_t)(out - m_verts.data()));
 }
 
 // Return the (up-to-date) cached GPU buffer for a mesh, expanding + uploading only
 // when the mesh actually changed. nullptr = mesh has no drawable triangles.
-GLRenderer::MeshVB* GLRenderer::EnsureMeshVB(const Mesh& mesh) {
+GLRenderer::MeshVB* GLRenderer::EnsureMeshVB(const Mesh& mesh, std::uint64_t version) {
     MeshVB& e = m_meshVB[&mesh];
     e.lastUse = m_frame;
     bool same = e.vbo != 0 &&
@@ -966,6 +1010,10 @@ GLRenderer::MeshVB* GLRenderer::EnsureMeshVB(const Mesh& mesh) {
         e.uvp == (const void*)mesh.uvs.data()       && e.uvn == mesh.uvs.size()       &&
         e.fcp == (const void*)mesh.triColors.data() && e.fcn == mesh.triColors.size();
     std::uint64_t sh = 0;
+    if (version) {   // skinned: the deformer says when it changed, no hashing needed
+        if (same && e.version == version) return e.vertCount > 0 ? &e : nullptr;
+        same = false;
+    }
     if (same) { sh = MeshSampleHash(mesh); if (sh != e.sampleHash) same = false; }
     if (same && m_frame - e.lastFullHash >= 60) {   // exact check ~once a second
         std::uint64_t fh = MeshFullHash(mesh);
@@ -979,16 +1027,19 @@ GLRenderer::MeshVB* GLRenderer::EnsureMeshVB(const Mesh& mesh) {
     e.np  = mesh.normals.data();   e.nn  = mesh.normals.size();
     e.uvp = mesh.uvs.data();       e.uvn = mesh.uvs.size();
     e.fcp = mesh.triColors.data(); e.fcn = mesh.triColors.size();
-    e.sampleHash = sh ? sh : MeshSampleHash(mesh);
-    e.fullHash = MeshFullHash(mesh);
-    e.lastFullHash = m_frame;
+    e.version = version;
+    if (!version) {
+        e.sampleHash = sh ? sh : MeshSampleHash(mesh);
+        e.fullHash = MeshFullHash(mesh);
+        e.lastFullHash = m_frame;
+    }
     e.vertCount = (int)(m_verts.size() / 14);
     if (e.vertCount == 0) return nullptr;
     if (!e.vbo) g.GenBuffers(1, &e.vbo);
     if (!e.vbo) { e.vertCount = 0; return nullptr; }
     g.BindBuffer(GL_ARRAY_BUFFER, e.vbo);
     g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)),
-                 m_verts.data(), GL_STATIC_DRAW);
+                 m_verts.data(), version ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
     return &e;
 }
 
@@ -1044,10 +1095,11 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                 g.UniformMatrix4fv(m_uDepthMVP, 1, GL_FALSE, dmvp.m);
                 // Static meshes: draw positions straight from the cached interleaved
                 // buffer (stride 14). Per-frame-deformed meshes rebuild dynamically.
-                const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
-                                      go->GetComponent<Character>() != nullptr;
+                // Skinned meshes are cached too, keyed on SkinnedMesh::version.
+                const bool deformed = go->GetComponent<Character>() != nullptr;
                 if (!deformed) {
-                    MeshVB* mv = EnsureMeshVB(mesh);
+                    const auto* skin = go->GetComponent<SkinnedMesh>();
+                    MeshVB* mv = EnsureMeshVB(mesh, skin ? skin->version : 0);
                     if (!mv) continue;
                     g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
                     g.EnableVertexAttribArray(0);
@@ -1180,12 +1232,14 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
 
         // Geometry source: static meshes draw from the per-mesh cached GPU buffer
         // (expanded + uploaded once — see EnsureMeshVB); meshes deformed on the CPU
-        // every frame (SkinnedMesh / Character) rebuild + re-upload dynamically.
-        const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
-                              go->GetComponent<Character>() != nullptr;
+        // every frame by a Character rebuild + re-upload dynamically.
+        // SkinnedMesh is cached as well: re-expanded only when its version moves
+        // (once per animated frame, shared by every view and pass).
+        const bool deformed = go->GetComponent<Character>() != nullptr;
         MeshVB* mvb = nullptr;
         if (!deformed) {
-            mvb = EnsureMeshVB(mesh);
+            const auto* skin = go->GetComponent<SkinnedMesh>();
+            mvb = EnsureMeshVB(mesh, skin ? skin->version : 0);
             if (!mvb) continue;                    // no drawable triangles
         } else {
             BuildExpandedVerts(mesh);
@@ -1359,10 +1413,10 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             Mat4 mvp = vp * model;
             g.UniformMatrix4fv(m_usdMVP, 1, GL_FALSE, mvp.m);
             g.UniformMatrix4fv(m_usdModel, 1, GL_FALSE, model.m);
-            const bool deformed = go->GetComponent<SkinnedMesh>() != nullptr ||
-                                  go->GetComponent<Character>() != nullptr;
+            const bool deformed = go->GetComponent<Character>() != nullptr;
             if (!deformed) {
-                MeshVB* mv = EnsureMeshVB(mesh);
+                const auto* skin = go->GetComponent<SkinnedMesh>();
+                MeshVB* mv = EnsureMeshVB(mesh, skin ? skin->version : 0);
                 if (!mv) continue;
                 g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
                 g.EnableVertexAttribArray(0);
@@ -1509,6 +1563,8 @@ void GLRenderer::DestroyTargets() {
 }
 
 void GLRenderer::Destroy() {
+    for (SizeSet& ps : m_parkedSets) DeleteSizeSet(ps);
+    m_parkedSets.clear();
     DestroyTargets();
     DestroyShadow();
     DestroyBloom();

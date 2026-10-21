@@ -102,6 +102,18 @@ private:
     int m_usDepth = -1, m_usTexel = -1, m_usRadius = -1, m_usFar = -1;  // AO pass
     int m_umSrc = -1, m_umStrength = -1;                                // multiply
     int m_w = 0, m_h = 0, m_samples = 0;
+    // Render targets for the OTHER view sizes in use (Scene view, Game view, Camera
+    // Preview, Animation preview all differ): parked and swapped back in instead of
+    // deleting + re-creating the MSAA / resolve / bloom / SSAO targets every view.
+    struct SizeSet {
+        int w = 0, h = 0, samples = 0, bloomW = 0, bloomH = 0, ssaoW = 0, ssaoH = 0;
+        unsigned int ids[16] = {};
+        unsigned lastUse = 0;
+    };
+    std::vector<SizeSet> m_parkedSets;
+    unsigned m_targetUse = 0;
+    void SwapSizeSet(SizeSet& s);     // exchange the live targets with `s`
+    void DeleteSizeSet(SizeSet& s);
     int m_uMVP = -1, m_uModel = -1, m_uColor = -1, m_uLightDir = -1,
         m_uLightColor = -1, m_uAmbient = -1, m_uEmissive = -1, m_uEye = -1,
         m_uSpecular = -1, m_uShininess = -1, m_uUnlit = -1,
@@ -145,10 +157,12 @@ private:
         std::uint64_t sampleHash = 0;                     // cheap, checked every frame
         std::uint64_t fullHash = 0;                       // exact, refreshed periodically
         unsigned lastUse = 0, lastFullHash = 0;           // frame stamps
+        std::uint64_t version = 0;                        // SkinnedMesh::version when skinned
     };
     std::unordered_map<const void*, MeshVB> m_meshVB;     // key: &MeshRenderer::mesh
     unsigned m_frame = 0;
-    MeshVB* EnsureMeshVB(const Mesh& mesh);               // expand + upload on miss
+    // version != 0: a CPU-skinned mesh — rebuilt when the version changes (no hashing).
+    MeshVB* EnsureMeshVB(const Mesh& mesh, std::uint64_t version = 0);
     void BuildExpandedVerts(const Mesh& mesh);            // fill m_verts (14 floats/vertex)
 };
 

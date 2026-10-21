@@ -35,6 +35,11 @@ public:
     std::vector<std::string> jointNames;         ///< bone object names (serialized; resolved on load)
     std::vector<Mat4>        inverseBind;         ///< per-joint inverse bind matrix
 
+    /// Bumped every time Skin() rewrites the deformed mesh. The GPU renderers key
+    /// their cached vertex buffer on it: an idle rig is never re-uploaded, a moving
+    /// one is uploaded once per frame however many views / passes draw it.
+    std::uint64_t version = 1;
+
     void Start() override  { ResolveJoints(); Skin(); }
     void Update(float) override { Skin(); }
 
@@ -78,6 +83,7 @@ public:
         }
         if (m_haveHash && h == m_lastHash && !mr->mesh.vertices.empty()) return;
         m_lastHash = h; m_haveHash = true;
+        ++version;
 
         Mat4 meshInv = meshWorld.Inverse();
         for (std::size_t j = 0; j < joints.size(); ++j) {
@@ -85,7 +91,14 @@ public:
             sk[j] = meshInv * sk[j] * ib;
         }
 
-        Mesh out = bind;   // keeps triangles + uvs; positions/normals get overwritten
+        // Deform IN PLACE: after the first frame the renderer's mesh already has the
+        // bind topology, so only positions/normals are rewritten — no per-frame copy
+        // of the whole mesh, and the arrays keep their addresses (the GPU renderers
+        // then re-upload once per frame and share it across views and passes).
+        Mesh& out = mr->mesh;
+        if (out.vertices.size() != bind.vertices.size() || out.triangles.size() != bind.triangles.size() ||
+            out.normals.size() != bind.normals.size() || out.uvs.size() != bind.uvs.size())
+            out = bind;   // first deform (or the bind mesh changed): take the topology once
         const bool hasN = bind.normals.size() == bind.vertices.size();
         for (std::size_t v = 0; v < bind.vertices.size(); ++v) {
             const Vec3 p = bind.vertices[v];
@@ -111,9 +124,11 @@ public:
                     float l = std::sqrt(nn.x*nn.x + nn.y*nn.y + nn.z*nn.z);
                     out.normals[v] = l > 1e-6f ? nn * (1.0f / l) : n;
                 }
-            }   // total==0 -> leave the bind-pose vertex (unweighted)
+            } else {   // unweighted: the bind-pose vertex
+                out.vertices[v] = p;
+                if (hasN) out.normals[v] = n;
+            }
         }
-        mr->mesh = std::move(out);
     }
 
 private:

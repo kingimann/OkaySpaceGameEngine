@@ -17,6 +17,7 @@
 // calls below fall through — so nothing here breaks a build that hasn't run
 // social.sql.
 #include "okay/Platform/Account/AccountService.hpp"
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <ctime>
@@ -47,6 +48,7 @@ struct Friend {
 
 struct FriendEvent {
     std::string actor;       // who did it (username)
+    std::string actorId;     // their user id (profiles.id)
     std::string kind;        // online | playing | achievement | publish
     std::string detail;
     long        when = 0;    // unix time
@@ -205,18 +207,42 @@ public:
     std::vector<FriendEvent> Feed(int limit = 20) {
         std::vector<FriendEvent> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/activity?select=actor_name,kind,detail,created_at"
+        auto r = acct_.Api("/rest/v1/activity?select=actor,actor_name,kind,detail,created_at"
                            "&order=created_at.desc&limit=" + std::to_string(limit), "GET");
         if (!r.ok) return out;
+        std::vector<std::string> ids;
         for (const auto& obj : SplitObjects(r.body)) {
             FriendEvent e;
+            e.actorId = Field(obj, "actor");
             e.actor  = Field(obj, "actor_name");
             e.kind   = Field(obj, "kind");
             e.detail = Field(obj, "detail");
             e.when   = ParseIso(Field(obj, "created_at"));
+            if (!e.actorId.empty() && std::find(ids.begin(), ids.end(), e.actorId) == ids.end()) ids.push_back(e.actorId);
             out.push_back(e);
         }
+        ResolveActorNames(out, ids);
         return out;
+    }
+
+    /// actor_name is whatever the poster's client wrote at the time (older
+    /// clients wrote the sign-in email). Show the account's current username.
+    void ResolveActorNames(std::vector<FriendEvent>& evs, const std::vector<std::string>& ids) {
+        if (!ids.empty()) {
+            std::string in;
+            for (const auto& id : ids) { if (!in.empty()) in += ","; in += Url(id); }
+            auto r = acct_.Api("/rest/v1/profiles?select=id,username&id=in.(" + in + ")", "GET");
+            if (r.ok)
+                for (const auto& o : SplitObjects(r.body)) {
+                    const std::string id = Field(o, "id"), un = Field(o, "username");
+                    if (un.empty()) continue;
+                    for (auto& e : evs) if (e.actorId == id) e.actor = un;
+                }
+        }
+        for (auto& e : evs) {   // never show a raw email, even when the profile lookup failed
+            const auto at = e.actor.find('@');
+            if (at != std::string::npos && at > 0) e.actor = e.actor.substr(0, at);
+        }
     }
 
 private:

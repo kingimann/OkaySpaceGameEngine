@@ -40,6 +40,14 @@ public:
                                         float clearR, float clearG, float clearB, float clearA,
                                         const GameObject* ignore = nullptr);
 
+    /// Pipelined read-back for a live view redrawn every frame (Scene / Game view):
+    /// give the view a stable id (>= 0) before RenderToPixels and the call returns
+    /// that view's PREVIOUS frame instead of stalling the CPU until the GPU has
+    /// finished this one (CPU and GPU then overlap; one frame of latency). The
+    /// first frame, a resize, or a view idle for a moment reads synchronously.
+    /// -1 (the default) = synchronous, for one-off renders.
+    void SetReadbackStream(int id);
+
     /// Release all D3D resources + the device.
     void Destroy();
     ~D3D11Renderer();

@@ -196,6 +196,7 @@ public:
         if (rv.ok) {
             for (const auto& x : SplitObjects(rv.body)) {
                 FriendEvent e; e.actor = Field(x, "actor_name"); e.kind = Field(x, "kind");
+                if (!b.p.username.empty()) e.actor = b.p.username;   // never the old email
                 e.detail = Field(x, "detail"); e.when = ParseIso(Field(x, "created_at"));
                 b.activity.push_back(e);
             }

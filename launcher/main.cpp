@@ -2602,6 +2602,32 @@ void DrawAvatar(const std::string& url, const std::string& name, float size) {
 
 // Accent-filled call-to-action button — the launcher's primary action style
 // (Open Editor, Play). Secondary actions keep the default gray Button.
+// Pill switch (Discord / iOS-style) used for every on/off setting. The knob
+// eases between states; returns true on the frame the value flips.
+static bool ToggleSwitch(const char* id, bool* v) {
+    const float h = 22.0f, w = 40.0f;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool changed = false;
+    if (ImGui::InvisibleButton(id, ImVec2(w, h))) { *v = !*v; changed = true; }
+    const bool hov = ImGui::IsItemHovered();
+    float* t = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), *v ? 1.0f : 0.0f);
+    const float target = *v ? 1.0f : 0.0f;
+    *t += (target - *t) * std::min(1.0f, ImGui::GetIO().DeltaTime * 16.0f);
+    if (std::fabs(target - *t) < 0.01f) *t = target;
+    ImVec4 off = ImGui::GetStyleColorVec4(hov ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg);
+    off.x += 0.06f; off.y += 0.06f; off.z += 0.06f;
+    ImVec4 on(kAccent.x, kAccent.y, kAccent.z, 1.0f);
+    if (hov) { on.x += (1 - on.x) * 0.12f; on.y += (1 - on.y) * 0.12f; on.z += (1 - on.z) * 0.12f; }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(okaytheme::Mix(off, on, *t)), h * 0.5f);
+    const float r = h * 0.5f - 3.0f;
+    ImVec2 kc(p.x + h * 0.5f + (w - h) * (*t), p.y + h * 0.5f);
+    dl->AddCircleFilled(ImVec2(kc.x, kc.y + 1.0f), r, IM_COL32(0, 0, 0, 50), 20);
+    dl->AddCircleFilled(kc, r, IM_COL32(250, 251, 253, 255), 20);
+    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return changed;
+}
+
 bool PrimaryButton(const char* label, const ImVec2& size) {
     auto lift = [](float x) { return x + (1.0f - x) * 0.20f; };
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.92f));
@@ -7700,6 +7726,37 @@ static int AccountInfoWorker(void*) {
     return 0;
 }
 
+// Account > Profile: the editable public-profile fields, saved together on a
+// worker (only the fields that changed are sent).
+struct AcctProfileForm { std::string display, avatar, bio, status, fav, loc; int accent = 0; };
+struct AcctSaveJob { AcctProfileForm form, was; };
+static AcctProfileForm g_acOrig;               // what the server has (UI thread)
+static volatile bool g_acSaving = false;
+static bool g_acSaveDone = false, g_acSaveOk = false;   // (guarded by g_acMutex)
+static AcctProfileForm g_acSaveForm;                    // (guarded)
+static int AcctSaveWorker(void* p) {
+    std::unique_ptr<AcctSaveJob> j(static_cast<AcctSaveJob*>(p));
+    bool ok = true;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Friends fr(a);
+        const AcctProfileForm& f = j->form; const AcctProfileForm& w = j->was;
+        if (f.display != w.display) ok &= fr.SetDisplayName(f.display);
+        if (f.avatar  != w.avatar)  ok &= fr.SetAvatar(f.avatar);
+        if (f.bio     != w.bio)     ok &= fr.SetBio(f.bio);
+        if (f.status  != w.status)  ok &= fr.SetStatus(f.status);
+        if (f.fav     != w.fav)     ok &= fr.SetFavoriteGame(f.fav);
+        if (f.loc     != w.loc)     ok &= fr.SetLocation(f.loc);
+        if (f.accent  != w.accent)  ok &= fr.SetAccent(f.accent);
+    } catch (...) { ok = false; }
+    if (g_acMutex) SDL_LockMutex(g_acMutex);
+    g_acSaveOk = ok; g_acSaveForm = j->form; g_acSaveDone = true;
+    if (g_acMutex) SDL_UnlockMutex(g_acMutex);
+    g_acSaving = false;
+    return 0;
+}
+static int g_setCatJump = -1;                  // open Settings on this category next frame
+
 // ============================================================================
 // Public profiles (Steam-style). A full page that can show ANY player — me, a
 // friend, a server member or a forum author. It overlays the current tab's
@@ -7928,8 +7985,6 @@ static void DrawSocialLinksEditor(float fieldW, float btnW) {
     if (g_socSaved) { g_socSaved = false; Toast("Social links saved", 1); }
     if (g_socFailed) { g_socFailed = false; Toast("Couldn't save your links", 2); }
     SDL_UnlockMutex(g_socMutex);
-    ImGui::Dummy(ImVec2(0, 10));
-    ImGui::SeparatorText("Social links");
     if (!supported) { ImGui::TextDisabled("Social links need the profile_extras.sql update on the server."); return; }
     ImGui::TextDisabled("Shown on your public profile. A handle or a link both work.");
     for (std::size_t i = 0; i < sizeof(kSocials) / sizeof(kSocials[0]); ++i) {
@@ -12329,318 +12384,540 @@ int main(int argc, char** argv) {
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 
-            if (account.IsLoggedIn()) {
-                const auto& s = account.CurrentSession();
+            if (account.IsLoggedIn() || kUiDemoUser) {
+                const bool acDemo = !account.IsLoggedIn();   // OKAY_UI_DEMO_USER screenshots
+                const std::string myUser = acDemo ? std::string(kUiDemoUser) : account.CurrentSession().username;
+                const bool online = account.IsOnline() || acDemo;
                 // Fetch profile + avatar + code once, on a worker thread, so opening
                 // the Account tab doesn't freeze on three network calls.
                 if (!g_acMutex) g_acMutex = SDL_CreateMutex();
-                if (!g_acStarted && account.IsOnline()) {
+                if (!acDemo && !g_acStarted && account.IsOnline()) {
                     g_acStarted = true;
                     if (SDL_Thread* t = SDL_CreateThread(AccountInfoWorker, "okay-acct", nullptr))
                         SDL_DetachThread(t);
                 }
-                // Apply the fetched customization once it arrives.
-                if (!acctProfileLoaded && g_acMutex) {
-                    SDL_LockMutex(g_acMutex);
-                    if (g_acReady) {
-                        const okay::Friend& me = g_acProfile;
-                        acctAccent = me.accent;
-                        std::snprintf(acctStatus,   sizeof(acctStatus),   "%s", me.customStatus.c_str());
-                        std::snprintf(acctFavGame,  sizeof(acctFavGame),  "%s", me.favoriteGame.c_str());
-                        std::snprintf(acctLocation, sizeof(acctLocation), "%s", me.location.c_str());
-                        acctProfileLoaded = true;
-                    }
-                    SDL_UnlockMutex(g_acMutex);
-                }
-                int paIdx = acctAccent; if (paIdx < 0 || paIdx >= (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]))) paIdx = 0;
-                ImVec4 myAccent = kAccentPresets[paIdx].col;
-                ImGui::Dummy(ImVec2(0, 8));
-                // Profile card: avatar initial + name + account details. It doubles
-                // as a live preview of the player's chosen profile color/status.
-                ImGui::BeginChild("profile", ImVec2(0, 124), true);
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                ImVec2 cp = ImGui::GetCursorScreenPos();
-                float r = 30.0f;
-                ImVec2 ctr(cp.x + r + 4, cp.y + r + 6);
-                // Avatar tinted by the username (same stable hash as game tiles),
-                // so each account gets its own recognizable color.
-                ImVec4 av = NameColor(s.username);
-                // Wash the card with the chosen profile accent so it reads as a
-                // preview of what friends see.
-                ImVec2 wmn = ImGui::GetWindowPos();
-                ImVec2 wmx(wmn.x + ImGui::GetWindowSize().x, wmn.y + ImGui::GetWindowSize().y);
-                // Accent banner strip along the top + a faint full-card wash.
-                dl->AddRectFilledMultiColor(wmn, ImVec2(wmx.x, wmn.y + 46),
-                    ImGui::GetColorU32(ImVec4(myAccent.x,myAccent.y,myAccent.z,0.40f)),
-                    ImGui::GetColorU32(ImVec4(myAccent.x,myAccent.y,myAccent.z,0.14f)),
-                    ImGui::GetColorU32(ImVec4(myAccent.x,myAccent.y,myAccent.z,0.06f)),
-                    ImGui::GetColorU32(ImVec4(myAccent.x,myAccent.y,myAccent.z,0.22f)));
-                dl->AddRectFilled(ImVec2(wmn.x, wmn.y + 46), wmx,
-                    ImGui::GetColorU32(ImVec4(myAccent.x, myAccent.y, myAccent.z, 0.05f)), 6.0f);
-                // My avatar: fetched once; the "Update avatar" button refreshes it.
-                static std::string s_myAvatar; static bool s_avFetched = false;
-                if (!s_avFetched && g_acMutex) {
-                    SDL_LockMutex(g_acMutex);
-                    if (g_acReady) { s_myAvatar = g_acAvatar; s_avFetched = true; }
-                    SDL_UnlockMutex(g_acMutex);
-                }
-                g_myAvatarSlot = &s_myAvatar;   // let the editor below update it live
-                SDL_Texture* myTex = AvatarTexture(s_myAvatar);
-                if (myTex) {
-                    dl->AddImageRounded((ImTextureID)(intptr_t)myTex, ImVec2(ctr.x - r, ctr.y - r),
-                                        ImVec2(ctr.x + r, ctr.y + r), ImVec2(0,0), ImVec2(1,1), IM_COL32_WHITE, r);
-                    dl->AddCircle(ctr, r, ImGui::GetColorU32(av), 32, 2.0f);
-                } else {
-                    dl->AddCircleFilled(
-                        ctr, r, ImGui::GetColorU32(ImVec4(av.x * 0.55f, av.y * 0.55f, av.z * 0.55f, 1.0f)), 32);
-                    dl->AddCircle(ctr, r, ImGui::GetColorU32(av), 32, 2.0f);
-                    char initial[2] = { (char)(s.username.empty() ? '?' : std::toupper((unsigned char)s.username[0])), 0 };
-                    float isz = ImGui::GetFontSize() * 1.6f;
-                    ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(isz, 1e9f, 0.0f, initial);
-                    dl->AddText(ImGui::GetFont(), isz, ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f),
-                                ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), initial);
-                }
-                // Username drawn oversized next to the avatar; status underneath
-                // with a colored presence dot.
-                float tx = cp.x + r * 2 + 22;
-                float nameSz = ImGui::GetFontSize() * 1.4f;
-                dl->AddText(ImGui::GetFont(), nameSz, ImVec2(tx, cp.y + 8),
-                            ImGui::GetColorU32(ImVec4(0.94f, 0.95f, 0.99f, 1)), s.username.c_str());
-                ImVec4 stCol = account.IsOnline() ? ImVec4(0.55f, 0.9f, 0.6f, 1)
-                                                  : ImVec4(0.70f, 0.72f, 0.78f, 1);
-                ImVec2 dp(tx, cp.y + 8 + nameSz + 7);
-                float sdr = ImGui::GetFontSize() * 0.28f;
-                dl->AddCircleFilled(ImVec2(dp.x + sdr, dp.y + ImGui::GetTextLineHeight() * 0.55f),
-                                    sdr, ImGui::GetColorU32(stCol), 12);
-                ImGui::SetCursorScreenPos(ImVec2(dp.x + sdr * 2 + 7, dp.y));
-                ImGui::TextColored(stCol, "%s", account.IsOnline() ? "Online" : "Local (this device)");
-                // Custom status / tagline preview.
-                if (acctStatus[0]) {
-                    ImGui::SetCursorScreenPos(ImVec2(tx, dp.y + ImGui::GetTextLineHeight() + 4));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.72f,0.75f,0.82f,1));
-                    ImGui::Text("\"%s\"", acctStatus);
-                    ImGui::PopStyleColor();
-                }
-                ImGui::EndChild();
-                // Profile stats row: achievements, games in library, friend code.
-                {
-                    int achN = (int)okay::Achievements::All().size();
-                    int gameN = LibraryGameCount(scenes);   // built games only, not projects
-                    static std::string myCode; static bool codeFetched = false;
-                    if (!codeFetched && g_acMutex) {
-                        SDL_LockMutex(g_acMutex);
-                        if (g_acReady) { myCode = g_acCode; codeFetched = true; }
-                        SDL_UnlockMutex(g_acMutex);
-                    }
-                    ImGui::Dummy(ImVec2(0, 4));
-                    ImGui::TextDisabled("%d achievement%s   -   %d game%s in library",
-                                        achN, achN == 1 ? "" : "s", gameN, gameN == 1 ? "" : "s");
-                    if (!myCode.empty()) {
-                        ImGui::TextDisabled("Friend code:"); ImGui::SameLine();
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f,0.78f,1.0f,1)); ImGui::TextUnformatted(myCode.c_str()); ImGui::PopStyleColor();
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton("Copy##code")) { ImGui::SetClipboardText(myCode.c_str()); Toast("Friend code copied", 1); }
-                    }
-                }
-                ImGui::Dummy(ImVec2(0, 8));
-                // Open my full public profile page, exactly as other players see it.
-                if (account.IsOnline() && PrimaryButton("View my profile", ImVec2(200, 36)))
-                    OpenPublicProfile("", s.username, s.username, s_myAvatar, acctAccent);
-                if (account.IsOnline() && ImGui::IsItemHovered())
-                    ImGui::SetTooltip("See your public profile and pick the achievements and games it shows off");
-                ImGui::Dummy(ImVec2(0, 12));
-                if (account.IsOnline() && ImGui::Button("Re-check session", ImVec2(180, 44)))
-                    account.VerifySession();
-                if (account.IsOnline()) ImGui::SameLine();
-                if (ImGui::Button("Sign out", ImVec2(160, 44))) {
-                    account.Logout();
-                    acctMessage.clear();
-                    acctUser[0] = acctPass[0] = '\0';
-                    Toast("Signed out", 1);
-                }
-
-                // ---- Account details ----
-                ImGui::Dummy(ImVec2(0, 14));
-                ImGui::SeparatorText("Account details");
-                const float kFieldW = 300.0f, kBtnW = 170.0f;
-
-                // Display name (friendly name others see; online accounts only).
-                if (account.IsOnline()) {
-                    ImGui::PushItemWidth(kFieldW);
-                    ImGui::InputTextWithHint("##acctChgDisplay", "New display name", acctChgDisplay, sizeof(acctChgDisplay));
-                    ImGui::PopItemWidth();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Update display name", ImVec2(kBtnW, 0)) && acctChgDisplay[0]) {
-                        bool ok = okay::Friends(account).SetDisplayName(acctChgDisplay);
-                        acctMessageError = !ok;
-                        acctMessage = ok ? "Display name updated." : "Couldn't update display name.";
-                        if (ok) { acctChgDisplay[0] = '\0'; Toast("Display name updated", 1); }
-                    }
-                    ImGui::TextDisabled("Shown to friends. Your username (below) is your unique handle for adding friends.");
-
-                    // Profile picture (avatar) by public image URL.
-                    ImGui::PushItemWidth(kFieldW);
-                    ImGui::InputTextWithHint("##acctAvatar", "Avatar image URL (png/jpg)", acctAvatar, sizeof(acctAvatar));
-                    ImGui::PopItemWidth();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Update avatar", ImVec2(kBtnW, 0)) && acctAvatar[0]) {
-                        bool ok = okay::Friends(account).SetAvatar(acctAvatar);
-                        acctMessageError = !ok;
-                        acctMessage = ok ? "Avatar updated." : "Couldn't update avatar.";
-                        if (ok) {
-                            g_avatarCache.erase(acctAvatar);
-                            if (g_myAvatarSlot) *g_myAvatarSlot = acctAvatar;   // refresh the card now
-                            acctAvatar[0] = '\0';
-                            Toast("Avatar updated", 1);
-                        }
-                    }
-                    ImGui::TextDisabled("Paste a public link to a square PNG/JPG (e.g. an imgur/GitHub image).");
-
-                    // Bio ("about me") shown on the profile card.
-                    ImGui::TextDisabled("Bio");
-                    ImGui::InputTextMultiline("##acctBio", acctBio, sizeof(acctBio), ImVec2(kFieldW + kBtnW + 8, 60));
-                    if (ImGui::Button("Update bio", ImVec2(kBtnW, 0))) {
-                        bool ok = okay::Friends(account).SetBio(acctBio);
-                        acctMessageError = !ok;
-                        acctMessage = ok ? "Bio updated." : "Couldn't update bio.";
-                        if (ok) Toast("Bio updated", 1);
-                    }
-
-                    // ---- Customize profile (Steam-style) ----
-                    ImGui::Dummy(ImVec2(0, 10));
-                    ImGui::SeparatorText("Customize profile");
-                    // Customization is loaded once by the background worker above
-                    // (applied the moment it arrives) — never block here.
-                    if (!acctProfileLoaded && g_acMutex) {
+                // The editable copy of my public profile, and what the server has
+                // (so the page knows what changed and Discard can put it back).
+                static std::string s_myAvatar, myCode;
+                static bool codeFetched = false;
+                auto fillForm = [&]() {
+                    std::snprintf(acctChgDisplay, sizeof(acctChgDisplay), "%s", g_acOrig.display.c_str());
+                    std::snprintf(acctAvatar,     sizeof(acctAvatar),     "%s", g_acOrig.avatar.c_str());
+                    std::snprintf(acctBio,        sizeof(acctBio),        "%s", g_acOrig.bio.c_str());
+                    std::snprintf(acctStatus,     sizeof(acctStatus),     "%s", g_acOrig.status.c_str());
+                    std::snprintf(acctFavGame,    sizeof(acctFavGame),    "%s", g_acOrig.fav.c_str());
+                    std::snprintf(acctLocation,   sizeof(acctLocation),   "%s", g_acOrig.loc.c_str());
+                    acctAccent = g_acOrig.accent;
+                };
+                if (!acctProfileLoaded) {
+                    if (acDemo) {
+                        g_acOrig = {"Nova", "", "Building small, weird games. Ask me about shaders.",
+                                    "Making my dream game", "Asteroids", "Lisbon", 3};
+                        myCode = "OKAY-7Q4K"; codeFetched = true;
+                        fillForm(); acctProfileLoaded = true;
+                    } else if (g_acMutex) {
                         SDL_LockMutex(g_acMutex);
                         if (g_acReady) {
                             const okay::Friend& me = g_acProfile;
-                            acctAccent = me.accent;
-                            std::snprintf(acctStatus,   sizeof(acctStatus),   "%s", me.customStatus.c_str());
-                            std::snprintf(acctFavGame,  sizeof(acctFavGame),  "%s", me.favoriteGame.c_str());
-                            std::snprintf(acctLocation, sizeof(acctLocation), "%s", me.location.c_str());
-                            acctProfileLoaded = true;
+                            g_acOrig = {me.display == me.username ? std::string() : me.display, g_acAvatar, me.bio,
+                                        me.customStatus, me.favoriteGame, me.location, me.accent};
+                            s_myAvatar = g_acAvatar;
+                            myCode = g_acCode; codeFetched = true;
+                            fillForm(); acctProfileLoaded = true;
                         }
                         SDL_UnlockMutex(g_acMutex);
                     }
-                    // Accent color swatches — click one to set the profile theme.
-                    ImGui::TextDisabled("Profile color");
-                    const int kNAcc = (int)(sizeof(kAccentPresets)/sizeof(kAccentPresets[0]));
-                    for (int ai = 0; ai < kNAcc; ++ai) {
-                        if (ai) ImGui::SameLine();
-                        ImGui::PushID(2000 + ai);
-                        ImVec4 c = kAccentPresets[ai].col;
-                        ImVec2 sp = ImGui::GetCursorScreenPos();
-                        if (ImGui::InvisibleButton("##acc", ImVec2(30, 30))) {
-                            acctAccent = ai;
-                            if (okay::Friends(account).SetAccent(ai)) Toast("Profile color updated", 1);
+                }
+                g_myAvatarSlot = &s_myAvatar;
+                // A profile save finished on the worker.
+                if (g_acMutex && g_acSaveDone) {
+                    SDL_LockMutex(g_acMutex);
+                    const bool ok = g_acSaveOk; const AcctProfileForm saved = g_acSaveForm;
+                    g_acSaveDone = false;
+                    SDL_UnlockMutex(g_acMutex);
+                    if (ok) {
+                        if (saved.avatar != g_acOrig.avatar) { g_avatarCache.erase(saved.avatar); s_myAvatar = saved.avatar; }
+                        g_acOrig = saved;
+                        Toast("Profile saved", 1);
+                    } else Toast("Some changes couldn't be saved \xE2\x80\x94 check your connection", 2);
+                }
+
+                const int kNAcc = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+                const ImVec4 myAccent = kAccentPresets[std::clamp(acctAccent, 0, kNAcc - 1)].col;
+                const std::string shownName = acctChgDisplay[0] ? std::string(acctChgDisplay) : myUser;
+                const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                auto acc = [&](float a) { return ImGui::GetColorU32(ImVec4(myAccent.x, myAccent.y, myAccent.z, a)); };
+                // Avatar disc: the image when there is one, else the initial on a tint.
+                auto avatarDisc = [&](ImDrawList* d, ImVec2 c, float r, const std::string& url) {
+                    ImVec4 av = NameColor(myUser);
+                    if (SDL_Texture* tx = AvatarTexture(url))
+                        d->AddImageRounded((ImTextureID)(intptr_t)tx, ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r),
+                                           ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, r);
+                    else {
+                        d->AddCircleFilled(c, r, ImGui::GetColorU32(ImVec4(av.x * 0.55f, av.y * 0.55f, av.z * 0.55f, 1.0f)), 40);
+                        char ini[2] = { (char)(shownName.empty() ? '?' : std::toupper((unsigned char)shownName[0])), 0 };
+                        const float isz = r * 1.05f;
+                        ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(isz, 1e9f, 0.0f, ini);
+                        d->AddText(ImGui::GetFont(), isz, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32_WHITE, ini);
+                    }
+                };
+                // Rows + cards in the Settings page style.
+                auto acRow = [&](const char* label, const char* desc, float ctrlW, float ctrlH, auto&& control) {
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    const float w = ImGui::GetContentRegionAvail().x;
+                    const bool stack = (w - ctrlW - 24.0f) < 180.0f;
+                    const float textW = stack ? w : w - ctrlW - 24.0f;
+                    const float lh = ImGui::GetTextLineHeight();
+                    ImVec2 ds = (desc && *desc) ? ImGui::CalcTextSize(desc, nullptr, false, textW) : ImVec2(0, 0);
+                    const float textH = lh + (ds.y > 0 ? 3.0f + ds.y : 0.0f);
+                    const float rowH = stack ? textH + 8.0f + ctrlH : std::max(textH, ctrlH);
+                    const float ty = stack ? p.y : p.y + (std::min(rowH, ctrlH > textH + 30.0f ? textH : rowH) - textH) * 0.5f;
+                    dl->AddText(ImVec2(p.x, ty), cText, label);
+                    if (ds.y > 0) dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x, ty + lh + 3.0f), cDim, desc, nullptr, textW);
+                    ImGui::SetCursorScreenPos(stack ? ImVec2(p.x, p.y + textH + 8.0f) : ImVec2(p.x + w - ctrlW, p.y + (ctrlH > textH + 30.0f ? 0.0f : (rowH - ctrlH) * 0.5f)));
+                    ImGui::PushID(label);
+                    ImGui::BeginGroup();   // multi-line controls keep their column
+                    control(stack ? w : ctrlW);
+                    ImGui::EndGroup();
+                    ImGui::PopID();
+                    const float endH = std::max(rowH, ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y - p.y);
+                    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + endH));
+                    ImGui::Dummy(ImVec2(0, 0));
+                };
+                auto acDivider = [&]() {
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImVec2 lp = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), IM_COL32(255, 255, 255, 14), 1.0f);
+                    ImGui::Dummy(ImVec2(0, 6));
+                };
+                auto acCard = [&](const char* id, const char* title, float w = 0.0f) {
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 14));
+                    ImGui::BeginChild(id, ImVec2(w, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+                    if (title) {
+                        ImGui::SetWindowFontScale(0.80f); ImGui::TextDisabled("%s", title); ImGui::SetWindowFontScale(1.0f);
+                        ImGui::Dummy(ImVec2(0, 4));
+                    }
+                };
+                auto acCardEnd = [&]() {
+                    ImGui::Dummy(ImVec2(0, 2));
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar(2);
+                    ImGui::PopStyleColor();
+                    ImGui::Dummy(ImVec2(0, 10));
+                };
+
+                // ================= Hero: banner, avatar, name, stats =================
+                ImGui::Dummy(ImVec2(0, 4));
+                {
+                    const float heroH = 216.0f;
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
+                    ImGui::BeginChild("##achero", ImVec2(0, heroH), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    ImDrawList* d = ImGui::GetWindowDrawList();
+                    const ImVec2 o = ImGui::GetWindowPos();
+                    const float W = ImGui::GetWindowSize().x, bannerH = 86.0f;
+                    // Banner in the profile colour, with two soft "planets".
+                    d->AddRectFilledMultiColor(o, ImVec2(o.x + W, o.y + bannerH), acc(0.85f), acc(0.35f), acc(0.20f), acc(0.70f));
+                    d->AddRectFilled(o, ImVec2(o.x + W, o.y + bannerH), IM_COL32(0, 0, 0, 40), 14.0f, ImDrawFlags_RoundCornersTop);
+                    d->PushClipRect(o, ImVec2(o.x + W, o.y + bannerH), true);
+                    d->AddCircleFilled(ImVec2(o.x + W - 120, o.y + 18), 70.0f, IM_COL32(255, 255, 255, 18), 48);
+                    d->AddCircleFilled(ImVec2(o.x + W - 230, o.y + 74), 26.0f, IM_COL32(255, 255, 255, 14), 32);
+                    d->AddEllipse(ImVec2(o.x + W - 120, o.y + 18), ImVec2(118, 24), IM_COL32(255, 255, 255, 30), -0.25f, 48, 1.5f);
+                    d->PopClipRect();
+                    // Avatar overlapping the banner edge.
+                    const float ar = 46.0f;
+                    const ImVec2 ac(o.x + 28 + ar, o.y + bannerH + 4);
+                    d->AddCircleFilled(ac, ar + 5, ImGui::GetColorU32(okaytheme::kRaised), 48);
+                    avatarDisc(d, ac, ar, s_myAvatar);
+                    // Presence dot.
+                    const ImU32 presCol = g_onlineStatus == 2 ? IM_COL32(140, 146, 160, 255) : g_onlineStatus == 1 ? IM_COL32(240, 178, 60, 255) : IM_COL32(67, 181, 129, 255);
+                    const ImVec2 pd(ac.x + ar * 0.72f, ac.y + ar * 0.72f);
+                    d->AddCircleFilled(pd, 10.0f, ImGui::GetColorU32(okaytheme::kRaised), 20);
+                    d->AddCircleFilled(pd, 7.0f, online ? presCol : IM_COL32(140, 146, 160, 255), 20);
+                    // Name block.
+                    const float tx = ac.x + ar + 20;
+                    const float nsz = ImGui::GetFontSize() * 1.5f;
+                    d->AddText(ImGui::GetFont(), nsz, ImVec2(tx, o.y + bannerH + 8), cText, shownName.c_str());
+                    std::string sub = "@" + myUser + "   \xC2\xB7   " +
+                        (!online ? std::string("Local account on this device")
+                                 : g_onlineStatus == 2 ? std::string("Invisible") : g_onlineStatus == 1 ? std::string("Away") : std::string("Online"));
+                    d->AddText(ImVec2(tx, o.y + bannerH + 10 + nsz), cDim, sub.c_str());
+                    if (acctStatus[0]) {
+                        std::string q = std::string("\xE2\x80\x9C") + acctStatus + "\xE2\x80\x9D";
+                        d->AddText(ImVec2(tx, o.y + bannerH + 30 + nsz), ImGui::GetColorU32(ImVec4(0.80f, 0.83f, 0.90f, 1)), q.c_str());
+                    }
+                    // Actions, top-right over the banner.
+                    ImGui::SetCursorScreenPos(ImVec2(o.x + W - 16 - 132 - 8 - 104, o.y + bannerH + 12));
+                    ImGui::BeginDisabled(!account.IsOnline());
+                    if (PrimaryButton("View my profile", ImVec2(132, 32)))
+                        OpenPublicProfile("", myUser, shownName, s_myAvatar, acctAccent);
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("%s", account.IsOnline() ? "See your public profile exactly as other players do" : "Public profiles need an online account");
+                    ImGui::SameLine(0, 8);
+                    if (ImGui::Button("Sign out", ImVec2(104, 32)) && !acDemo) {
+                        account.Logout();
+                        acctMessage.clear();
+                        acctUser[0] = acctPass[0] = '\0';
+                        acctProfileLoaded = false; g_acStarted = false; g_acReady = false; codeFetched = false;
+                        Toast("Signed out", 1);
+                    }
+                    // Stat chips along the bottom.
+                    {
+                        const auto achs = okay::Achievements::All();
+                        const int pts = okay::Achievements::TotalPoints(achs);
+                        const int lvl = okay::Achievements::Level(pts) + 1;
+                        const float prog = okay::Achievements::LevelProgress(pts);
+                        const int games = LibraryGameCount(scenes);
+                        float cx = o.x + 24, cy = o.y + heroH - 46;
+                        auto chip = [&](const char* big, const char* small, float extraW) -> ImVec2 {
+                            const float bw = ImGui::CalcTextSize(big).x, sw = ImGui::CalcTextSize(small).x;
+                            const float w = std::max(bw * 1.15f, sw) + 26 + extraW;
+                            d->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + w, cy + 34), IM_COL32(255, 255, 255, 10), 9.0f);
+                            d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.1f, ImVec2(cx + 12, cy + 2), cText, big);
+                            d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.80f, ImVec2(cx + 12, cy + 19), cDim, small);
+                            const ImVec2 at(cx, cy);
+                            cx += w + 8;
+                            return at;
+                        };
+                        char b1[32], b2[32], b3[32], s1[48];
+                        std::snprintf(b1, sizeof(b1), "Level %d", lvl);
+                        std::snprintf(s1, sizeof(s1), "%d points", pts);
+                        const ImVec2 lc = chip(b1, s1, 60);
+                        // level progress ring-bar inside the level chip
+                        const float bx = lc.x + 12 + std::max(ImGui::CalcTextSize(b1).x * 1.15f, ImGui::CalcTextSize(s1).x) + 10;
+                        d->AddRectFilled(ImVec2(bx, cy + 15), ImVec2(bx + 50, cy + 19), IM_COL32(255, 255, 255, 24), 2.0f);
+                        d->AddRectFilled(ImVec2(bx, cy + 15), ImVec2(bx + 50 * prog, cy + 19), acc(1.0f), 2.0f);
+                        std::snprintf(b2, sizeof(b2), "%d", (int)achs.size());
+                        chip(b2, achs.size() == 1 ? "achievement" : "achievements", 0);
+                        std::snprintf(b3, sizeof(b3), "%d", games);
+                        chip(b3, games == 1 ? "game in library" : "games in library", 0);
+                        if (!codeFetched && g_acMutex && !acDemo) {
+                            SDL_LockMutex(g_acMutex);
+                            if (g_acReady) { myCode = g_acCode; codeFetched = true; }
+                            SDL_UnlockMutex(g_acMutex);
                         }
-                        ImDrawList* d2 = ImGui::GetWindowDrawList();
-                        d2->AddRectFilled(sp, ImVec2(sp.x+26, sp.y+26), ImGui::GetColorU32(c), 6.0f);
-                        if (ai == acctAccent)
-                            d2->AddRect(ImVec2(sp.x-2, sp.y-2), ImVec2(sp.x+28, sp.y+28),
-                                        ImGui::GetColorU32(ImVec4(1,1,1,0.9f)), 7.0f, 0, 2.0f);
+                        if (!myCode.empty()) {
+                            const ImVec2 fc = chip(myCode.c_str(), "friend code \xC2\xB7 click to copy", 0);
+                            ImGui::SetCursorScreenPos(fc);
+                            const float fw = cx - 8 - fc.x;
+                            if (ImGui::InvisibleButton("##copycode", ImVec2(fw, 34))) { ImGui::SetClipboardText(myCode.c_str()); Toast("Friend code copied", 1); }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                d->AddRect(fc, ImVec2(fc.x + fw, fc.y + 34), acc(0.8f), 9.0f, 0, 1.2f);
+                            }
+                        }
+                    }
+                    ImGui::EndChild();
+                }
+
+                // ================= Section tabs =================
+                static int acSec = std::getenv("OKAY_UI_DEMO_ACSEC") ? std::atoi(std::getenv("OKAY_UI_DEMO_ACSEC")) : 0;   // (env: dev screenshot hook)
+                ImGui::Dummy(ImVec2(0, 8));
+                {
+                    const char* secs[] = {"Profile", "Sign-in & security", "Privacy", "More"};
+                    ImDrawList* d = ImGui::GetWindowDrawList();
+                    const ImVec2 base = ImGui::GetCursorScreenPos();
+                    float x = base.x;
+                    for (int i = 0; i < 4; ++i) {
+                        if (i == 2 && !online) continue;
+                        const ImVec2 ts = ImGui::CalcTextSize(secs[i]);
+                        ImGui::SetCursorScreenPos(ImVec2(x, base.y));
+                        ImGui::PushID(i);
+                        if (ImGui::InvisibleButton("##acsec", ImVec2(ts.x + 24, 34))) acSec = i;
+                        const bool h = ImGui::IsItemHovered(), on = acSec == i;
                         ImGui::PopID();
+                        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        if (on || h) d->AddRectFilled(ImVec2(x, base.y), ImVec2(x + ts.x + 24, base.y + 34), IM_COL32(255, 255, 255, on ? 14 : 7), 8.0f);
+                        d->AddText(ImVec2(x + 12, base.y + 17 - ts.y * 0.5f), on ? cText : cDim, secs[i]);
+                        if (on) d->AddRectFilled(ImVec2(x + 12, base.y + 31), ImVec2(x + 12 + ts.x, base.y + 34), ImGui::GetColorU32(kAccent), 2.0f);
+                        x += ts.x + 24 + 6;
                     }
-                    // Custom status / tagline.
-                    ImGui::PushItemWidth(kFieldW);
-                    ImGui::InputTextWithHint("##acctStatus", "Status / tagline (e.g. \"Making my dream game\")", acctStatus, sizeof(acctStatus));
-                    ImGui::PopItemWidth();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Save status", ImVec2(kBtnW, 0))) {
-                        if (okay::Friends(account).SetStatus(acctStatus)) Toast("Status updated", 1);
-                    }
-                    // Favorite game showcase.
-                    ImGui::PushItemWidth(kFieldW);
-                    ImGui::InputTextWithHint("##acctFav", "Favorite game to show off", acctFavGame, sizeof(acctFavGame));
-                    ImGui::PopItemWidth();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Save favorite", ImVec2(kBtnW, 0))) {
-                        if (okay::Friends(account).SetFavoriteGame(acctFavGame)) Toast("Favorite game updated", 1);
-                    }
-                    // Location.
-                    ImGui::PushItemWidth(kFieldW);
-                    ImGui::InputTextWithHint("##acctLoc", "Location (optional)", acctLocation, sizeof(acctLocation));
-                    ImGui::PopItemWidth();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Save location", ImVec2(kBtnW, 0))) {
-                        if (okay::Friends(account).SetLocation(acctLocation)) Toast("Location updated", 1);
-                    }
-                    ImGui::TextDisabled("These show on your profile card when friends click your name.");
-                    DrawSocialLinksEditor(kFieldW, kBtnW);
+                    ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + 34));
+                    ImVec2 lp = ImGui::GetCursorScreenPos();
+                    d->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), IM_COL32(255, 255, 255, 18));
+                    ImGui::Dummy(ImVec2(0, 12));
                 }
+                if (acSec == 2 && !online) acSec = 0;
 
-                // Change username / handle (all backends).
-                ImGui::PushItemWidth(kFieldW);
-                ImGui::InputTextWithHint("##acctChgName", "New username (handle)", acctChgName, sizeof(acctChgName));
-                ImGui::PopItemWidth();
-                ImGui::SameLine();
-                if (ImGui::Button("Update username", ImVec2(kBtnW, 0))) {
-                    acct::Result r = account.ChangeUsername(acctChgName);
-                    acctMessageError = !r.ok;
-                    acctMessage = r.ok ? "Username updated." : r.error;
-                    if (r.ok) { acctChgName[0] = '\0'; Toast("Username updated", 1); }
-                }
-
-                // Change email (online / Supabase only).
-                if (account.UsesEmail()) {
-                    ImGui::PushItemWidth(kFieldW);
-                    ImGui::InputTextWithHint("##acctChgEmail", "New email", acctChgEmail, sizeof(acctChgEmail));
-                    ImGui::PopItemWidth();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Update email", ImVec2(kBtnW, 0))) {
-                        acct::Result r = account.ChangeEmail(acctChgEmail);
-                        acctMessageError = !r.ok;
-                        acctMessage = r.ok ? "Email change requested — confirm via the link sent to it."
-                                           : r.error;
-                        if (r.ok) { acctChgEmail[0] = '\0'; Toast("Email change requested", 1); }
+                if (acSec == 0) {   // ---------------- Profile ----------------
+                    if (!online) {
+                        acCard("##ac_local", "LOCAL ACCOUNT");
+                        ImGui::TextWrapped("This account lives only on this device. Sign in with an online OkaySpace account to get a public profile, friends, chat and the Marketplace.");
+                        acCardEnd();
+                    } else {
+                        const bool dirty = std::string(acctChgDisplay) != g_acOrig.display || std::string(acctAvatar) != g_acOrig.avatar ||
+                                           std::string(acctBio) != g_acOrig.bio || std::string(acctStatus) != g_acOrig.status ||
+                                           std::string(acctFavGame) != g_acOrig.fav || std::string(acctLocation) != g_acOrig.loc ||
+                                           acctAccent != g_acOrig.accent;
+                        const float availW = ImGui::GetContentRegionAvail().x;
+                        const bool twoCol = availW >= 880.0f;
+                        const float prevW = twoCol ? 300.0f : 0.0f;
+                        const float formW = twoCol ? availW - prevW - 14.0f : 0.0f;
+                        if (twoCol) ImGui::BeginGroup();
+                        acCard("##ac_pub", "PUBLIC PROFILE", formW);
+                        if (!acctProfileLoaded) ImGui::TextDisabled("Loading your profile\xE2\x80\xA6");
+                        const float fw = 300.0f;
+                        acRow("Display name", "What friends see. Leave empty to use your username.", fw, ImGui::GetFrameHeight(), [&](float w) {
+                            ImGui::SetNextItemWidth(w);
+                            ImGui::InputTextWithHint("##dn", myUser.c_str(), acctChgDisplay, sizeof(acctChgDisplay));
+                        });
+                        acDivider();
+                        acRow("Avatar", "A public link to a square PNG or JPG (imgur, GitHub, Discord CDN\xE2\x80\xA6).", fw, ImGui::GetFrameHeight(), [&](float w) {
+                            ImGui::SetNextItemWidth(w);
+                            ImGui::InputTextWithHint("##av", "https://\xE2\x80\xA6/me.png", acctAvatar, sizeof(acctAvatar));
+                        });
+                        acDivider();
+                        acRow("Status", "A one-line tagline under your name.", fw, ImGui::GetFrameHeight(), [&](float w) {
+                            ImGui::SetNextItemWidth(w);
+                            ImGui::InputTextWithHint("##st", "Making my dream game", acctStatus, sizeof(acctStatus));
+                        });
+                        acDivider();
+                        acRow("About me", "Shown on your profile card.", fw, 96.0f, [&](float w) {
+                            ImGui::InputTextMultiline("##bio", acctBio, sizeof(acctBio), ImVec2(w, 76));
+                            const int n = (int)std::strlen(acctBio), mx = (int)sizeof(acctBio) - 1;
+                            ImGui::TextDisabled("%d / %d", n, mx);
+                        });
+                        acDivider();
+                        acRow("Favorite game", "A game you want to show off.", fw, ImGui::GetFrameHeight(), [&](float w) {
+                            ImGui::SetNextItemWidth(w);
+                            ImGui::InputTextWithHint("##fav", "e.g. Asteroids", acctFavGame, sizeof(acctFavGame));
+                        });
+                        acDivider();
+                        acRow("Location", "Optional.", fw, ImGui::GetFrameHeight(), [&](float w) {
+                            ImGui::SetNextItemWidth(w);
+                            ImGui::InputTextWithHint("##loc", "City, country", acctLocation, sizeof(acctLocation));
+                        });
+                        acDivider();
+                        acRow("Profile colour", "Your banner and accents.", fw, 30.0f, [&](float) {
+                            ImDrawList* d2 = ImGui::GetWindowDrawList();
+                            for (int ai = 0; ai < kNAcc; ++ai) {
+                                if (ai) ImGui::SameLine(0, 6);
+                                ImGui::PushID(2000 + ai);
+                                const ImVec2 sp = ImGui::GetCursorScreenPos();
+                                if (ImGui::InvisibleButton("##acc", ImVec2(28, 28))) acctAccent = ai;
+                                if (ImGui::IsItemHovered()) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", kAccentPresets[ai].name); }
+                                d2->AddCircleFilled(ImVec2(sp.x + 14, sp.y + 14), 11.0f, ImGui::GetColorU32(kAccentPresets[ai].col), 24);
+                                if (ai == acctAccent) d2->AddCircle(ImVec2(sp.x + 14, sp.y + 14), 14.0f, IM_COL32(255, 255, 255, 230), 28, 2.0f);
+                                ImGui::PopID();
+                            }
+                        });
+                        ImGui::Dummy(ImVec2(0, 10));
+                        ImGui::BeginDisabled(!dirty || g_acSaving || !acctProfileLoaded);
+                        if (PrimaryButton(g_acSaving ? "Saving\xE2\x80\xA6" : "Save changes", ImVec2(140, 34))) {
+                            if (acDemo) { g_acOrig = {acctChgDisplay, acctAvatar, acctBio, acctStatus, acctFavGame, acctLocation, acctAccent}; Toast("Profile saved", 1); }
+                            else {
+                                auto* j = new AcctSaveJob;
+                                j->form = {acctChgDisplay, acctAvatar, acctBio, acctStatus, acctFavGame, acctLocation, acctAccent};
+                                j->was = g_acOrig;
+                                g_acSaving = true;
+                                if (SDL_Thread* t = SDL_CreateThread(AcctSaveWorker, "okay-acsave", j)) SDL_DetachThread(t);
+                                else { g_acSaving = false; delete j; Toast("Couldn't start saving", 2); }
+                            }
+                        }
+                        ImGui::SameLine(0, 8);
+                        if (ImGui::Button("Discard", ImVec2(100, 34))) fillForm();
+                        ImGui::EndDisabled();
+                        if (dirty && !g_acSaving) {
+                            ImGui::SameLine(0, 12);
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Unsaved changes");
+                        }
+                        acCardEnd();
+                        acCard("##ac_social", "SOCIAL LINKS", formW);
+                        DrawSocialLinksEditor(300.0f, 140.0f);
+                        acCardEnd();
+                        if (twoCol) {
+                            ImGui::EndGroup();
+                            ImGui::SameLine(0, 14);
+                        }
+                        // Live preview: the card friends see when they click your name.
+                        acCard("##ac_prev", "PREVIEW", prevW);
+                        {
+                            ImDrawList* d = ImGui::GetWindowDrawList();
+                            const ImVec2 p = ImGui::GetCursorScreenPos();
+                            const float w = ImGui::GetContentRegionAvail().x;
+                            d->ChannelsSplit(2);
+                            d->ChannelsSetCurrent(1);
+                            d->AddRectFilledMultiColor(p, ImVec2(p.x + w, p.y + 54), acc(0.85f), acc(0.40f), acc(0.25f), acc(0.70f));
+                            const ImVec2 c(p.x + 44, p.y + 58);
+                            d->AddCircleFilled(c, 31, IM_COL32(20, 22, 28, 255), 40);
+                            avatarDisc(d, c, 28, acctAvatar);
+                            float y = p.y + 96;
+                            d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.2f, ImVec2(p.x + 14, y), cText, shownName.c_str());
+                            y += ImGui::GetFontSize() * 1.2f + 2;
+                            d->AddText(ImVec2(p.x + 14, y), cDim, ("@" + myUser).c_str());
+                            y += ImGui::GetTextLineHeight() + 6;
+                            if (acctStatus[0]) { d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, y), acc(1.0f), acctStatus, nullptr, w - 28); y += ImGui::GetTextLineHeight() + 6; }
+                            if (acctBio[0]) {
+                                const ImVec2 bs = ImGui::CalcTextSize(acctBio, nullptr, false, w - 28);
+                                d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, y), ImGui::GetColorU32(ImVec4(0.82f, 0.84f, 0.90f, 1)), acctBio, nullptr, w - 28);
+                                y += std::min(bs.y, 80.0f) + 6;
+                            }
+                            if (acctFavGame[0]) { d->AddText(ImVec2(p.x + 14, y), cDim, (std::string("Favorite game: ") + acctFavGame).c_str()); y += ImGui::GetTextLineHeight() + 2; }
+                            if (acctLocation[0]) { d->AddText(ImVec2(p.x + 14, y), cDim, acctLocation); y += ImGui::GetTextLineHeight() + 2; }
+                            const float ph = std::max(200.0f, y - p.y + 12);
+                            d->ChannelsSetCurrent(0);
+                            d->AddRectFilled(p, ImVec2(p.x + w, p.y + ph), IM_COL32(0, 0, 0, 50), 10.0f);
+                            d->ChannelsMerge();
+                            ImGui::Dummy(ImVec2(w, ph));
+                        }
+                        ImGui::TextDisabled("Updates as you type. Save to publish it.");
+                        acCardEnd();
                     }
-                }
-
-                // Change password.
-                ImGui::PushItemWidth(kFieldW);
-                bool go = ImGui::InputTextWithHint("##acctNewPass", "New password", acctNewPass,
-                              sizeof(acctNewPass), ImGuiInputTextFlags_Password |
-                              ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::PopItemWidth();
-                ImGui::SameLine();
-                if (ImGui::Button("Update password", ImVec2(kBtnW, 0)) || go) {
-                    acct::Result r = account.ChangePassword(acctNewPass);
-                    acctMessageError = !r.ok;
-                    acctMessage = r.ok ? "Password updated." : r.error;
-                    if (r.ok) { std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0'); Toast("Password updated", 1); }
-                }
-
-                // ---- Privacy & presence ----
-                if (account.IsOnline()) {
-                    ImGui::Dummy(ImVec2(0, 14));
-                    ImGui::SeparatorText("Privacy & presence");
-                    ImGui::SetNextItemWidth(200);
-                    if (ImGui::Combo("Status", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
-                        okay::Friends pf(account);
-                        if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(g_onlineStatus == 1 ? "Away" : "In OkaySpace");
-                        SavePrefs();
+                } else if (acSec == 1) {   // ---------------- Sign-in & security ----------------
+                    acCard("##ac_signin", "SIGN-IN");
+                    const float fw = 300.0f;
+                    acRow("Username", ("Your unique handle (@" + myUser + "). Friends add you with it.").c_str(), fw, ImGui::GetFrameHeight() * 2 + 8, [&](float w) {
+                        ImGui::SetNextItemWidth(w);
+                        ImGui::InputTextWithHint("##un", "New username", acctChgName, sizeof(acctChgName));
+                        ImGui::BeginDisabled(!acctChgName[0] || acDemo);
+                        if (ImGui::Button("Change username", ImVec2(w, 0))) {
+                            acct::Result r = account.ChangeUsername(acctChgName);
+                            acctMessageError = !r.ok;
+                            acctMessage = r.ok ? "Username updated." : r.error;
+                            if (r.ok) { acctChgName[0] = '\0'; Toast("Username updated", 1); }
+                        }
+                        ImGui::EndDisabled();
+                    });
+                    if (account.UsesEmail() || acDemo) {
+                        acDivider();
+                        acRow("Email", "Used to sign in and recover your account. We send a confirmation link to the new address.", fw, ImGui::GetFrameHeight() * 2 + 8, [&](float w) {
+                            ImGui::SetNextItemWidth(w);
+                            ImGui::InputTextWithHint("##em", "new@example.com", acctChgEmail, sizeof(acctChgEmail));
+                            ImGui::BeginDisabled(!std::strchr(acctChgEmail, '@') || acDemo);
+                            if (ImGui::Button("Change email", ImVec2(w, 0))) {
+                                acct::Result r = account.ChangeEmail(acctChgEmail);
+                                acctMessageError = !r.ok;
+                                acctMessage = r.ok ? "Email change requested \xE2\x80\x94 confirm via the link sent to it." : r.error;
+                                if (r.ok) { acctChgEmail[0] = '\0'; Toast("Email change requested", 1); }
+                            }
+                            ImGui::EndDisabled();
+                        });
                     }
-                    if (ImGui::Checkbox("Share what I'm playing with friends", &g_sharePresence)) SavePrefs();
-                    ImGui::TextDisabled("When off, friends won't see the game you're playing.");
-
-                    // ---- Testing ----
-                    ImGui::Dummy(ImVec2(0, 14));
-                    ImGui::SeparatorText("Testing");
-                    ImGui::TextDisabled("Add OkayBot — a test friend that auto-accepts and replies to your DMs.");
-                    if (ImGui::Button("Add OkayBot", ImVec2(160, 0))) {
-                        std::string be;
-                        if (okay::Friends(account).Request("OkayBot", &be)) Toast("OkayBot added — open Friends", 1);
-                        else Toast(be.empty() ? "Couldn't add OkayBot" : be, 2);
+                    acDivider();
+                    static char acPass2[128] = "";
+                    acRow("Password", "At least 8 characters. A mix of letters, numbers and symbols is stronger.", fw, ImGui::GetFrameHeight() * 3 + 34, [&](float w) {
+                        ImGui::SetNextItemWidth(w);
+                        ImGui::InputTextWithHint("##np", "New password", acctNewPass, sizeof(acctNewPass), ImGuiInputTextFlags_Password);
+                        ImGui::SetNextItemWidth(w);
+                        ImGui::InputTextWithHint("##np2", "Confirm new password", acPass2, sizeof(acPass2), ImGuiInputTextFlags_Password);
+                        // Strength meter.
+                        const std::string pw = acctNewPass;
+                        int score = 0;
+                        if (pw.size() >= 8) ++score;
+                        if (pw.size() >= 12) ++score;
+                        bool lo = false, up = false, dg = false, sy = false;
+                        for (unsigned char ch : pw) { lo |= std::islower(ch) != 0; up |= std::isupper(ch) != 0; dg |= std::isdigit(ch) != 0; sy |= !std::isalnum(ch); }
+                        score += (lo && up) + dg + sy;
+                        const char* lbl = pw.empty() ? "" : score <= 1 ? "Weak" : score <= 3 ? "Okay" : "Strong";
+                        const ImU32 col = score <= 1 ? IM_COL32(230, 100, 100, 255) : score <= 3 ? IM_COL32(240, 190, 80, 255) : IM_COL32(67, 181, 129, 255);
+                        ImVec2 mp = ImGui::GetCursorScreenPos();
+                        const float segW = (w - 70 - 12) / 5.0f;
+                        for (int i = 0; i < 5; ++i)
+                            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(mp.x + i * (segW + 3), mp.y + 6), ImVec2(mp.x + i * (segW + 3) + segW, mp.y + 10),
+                                                                      !pw.empty() && i < score ? col : IM_COL32(255, 255, 255, 22), 2.0f);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(mp.x + w - 60, mp.y), pw.empty() ? cDim : col, lbl);
+                        ImGui::Dummy(ImVec2(w, 18));
+                        const bool match = pw == acPass2;
+                        ImGui::BeginDisabled(pw.size() < 8 || !match || acDemo);
+                        if (ImGui::Button(!pw.empty() && !acPass2[0] ? "Confirm it above" : !match ? "Passwords don't match" : "Change password", ImVec2(w, 0))) {
+                            acct::Result r = account.ChangePassword(acctNewPass);
+                            acctMessageError = !r.ok;
+                            acctMessage = r.ok ? "Password updated." : r.error;
+                            if (r.ok) {
+                                std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0');
+                                std::fill(acPass2, acPass2 + sizeof(acPass2), '\0');
+                                Toast("Password updated", 1);
+                            }
+                        }
+                        ImGui::EndDisabled();
+                    });
+                    if (!acctMessage.empty()) {
+                        ImGui::Dummy(ImVec2(0, 6));
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1) : ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", acctMessage.c_str());
+                        ImGui::PopTextWrapPos();
                     }
-                }
+                    acCardEnd();
 
-                if (!acctMessage.empty()) {
-                    ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1)
-                                                        : ImVec4(0.55f, 0.9f, 0.6f, 1),
-                                       "%s", acctMessage.c_str());
-                    ImGui::PopTextWrapPos();
+                    acCard("##ac_session", "THIS DEVICE");
+                    acRow("Signed in", online ? "Online OkaySpace account. Your session renews itself while the launcher is open."
+                                              : "Local account: stored only on this computer.", 250.0f, 32.0f, [&](float) {
+                        ImGui::BeginDisabled(!account.IsOnline());
+                        if (ImGui::Button("Re-check session", ImVec2(140, 32))) {
+                            if (account.VerifySession()) Toast("Session is valid", 1); else Toast("Session expired \xE2\x80\x94 sign in again", 2);
+                        }
+                        ImGui::EndDisabled();
+                        ImGui::SameLine(0, 8);
+                        if (ImGui::Button("Sign out##dev", ImVec2(102, 32)) && !acDemo) {
+                            account.Logout();
+                            acctMessage.clear();
+                            acctUser[0] = acctPass[0] = '\0';
+                            acctProfileLoaded = false; g_acStarted = false; g_acReady = false; codeFetched = false;
+                            Toast("Signed out", 1);
+                        }
+                    });
+                    acCardEnd();
+                } else if (acSec == 2) {   // ---------------- Privacy ----------------
+                    acCard("##ac_priv", "PRIVACY");
+                    acRow("Online status", "Invisible looks offline to everyone, and you can still chat.", 180.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        ImGui::SetNextItemWidth(w);
+                        if (ImGui::Combo("##ost", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
+                            if (!acDemo) {
+                                okay::Friends pf(account);
+                                if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(g_onlineStatus == 1 ? "Away" : "In OkaySpace");
+                            }
+                            SavePrefs();
+                        }
+                    });
+                    acDivider();
+                    acRow("Share what I'm playing", "Friends see the game you're in.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##shp", &g_sharePresence)) SavePrefs();
+                    });
+                    acDivider();
+                    acRow("Read receipts", "Blue ticks and \"in the chat\".", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##rr", &g_readReceipts)) SavePrefs();
+                    });
+                    acDivider();
+                    acRow("Show my playtime", "Hours per game on your public profile.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##spt", &g_sharePlaytime)) SavePrefs();
+                    });
+                    acDivider();
+                    acRow("Direct messages", "Who can message you.", 180.0f, ImGui::GetFrameHeight(), [&](float w) {
+                        int dm = g_dmFriendsOnly ? 1 : 0;
+                        ImGui::SetNextItemWidth(w);
+                        if (ImGui::Combo("##dmf", &dm, "Everyone\0Friends only\0")) { g_dmFriendsOnly = dm == 1; SavePrefs(); }
+                    });
+                    ImGui::Dummy(ImVec2(0, 8));
+                    if (ImGui::Button("All privacy & safety settings  \xE2\x86\x92", ImVec2(0, 32))) { tab = 4; g_setCatJump = 7; }
+                    acCardEnd();
+                } else {   // ---------------- More ----------------
+                    if (online) {
+                        acCard("##ac_test", "TESTING");
+                        acRow("OkayBot", "A test friend that auto-accepts and replies to your DMs. Handy for trying chat, calls and polls.", 140.0f, 32.0f, [&](float w) {
+                            if (ImGui::Button("Add OkayBot", ImVec2(w, 32)) && !acDemo) {
+                                std::string be;
+                                if (okay::Friends(account).Request("OkayBot", &be)) Toast("OkayBot added \xE2\x80\x94 open Friends", 1);
+                                else Toast(be.empty() ? "Couldn't add OkayBot" : be, 2);
+                            }
+                        });
+                        acCardEnd();
+                    }
+                    acCard("##ac_more", "SHORTCUTS");
+                    acRow("Achievements", "Everything you've unlocked, and your level.", 140.0f, 32.0f, [&](float w) {
+                        if (ImGui::Button("Open##ach", ImVec2(w, 32))) tab = 5;
+                    });
+                    acDivider();
+                    acRow("Settings", "Appearance, downloads, voice and more.", 140.0f, 32.0f, [&](float w) {
+                        if (ImGui::Button("Open##set", ImVec2(w, 32))) tab = 4;
+                    });
+                    acCardEnd();
                 }
             } else {
                 ImGui::TextWrapped(account.IsOnline()
@@ -12793,31 +13070,6 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
-            // Pill switch (Discord / iOS-style) used for every on/off setting. The knob
-            // eases between states; returns true on the frame the value flips.
-            auto ToggleSwitch = [](const char* id, bool* v) -> bool {
-                const float h = 22.0f, w = 40.0f;
-                ImVec2 p = ImGui::GetCursorScreenPos();
-                bool changed = false;
-                if (ImGui::InvisibleButton(id, ImVec2(w, h))) { *v = !*v; changed = true; }
-                const bool hov = ImGui::IsItemHovered();
-                float* t = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), *v ? 1.0f : 0.0f);
-                const float target = *v ? 1.0f : 0.0f;
-                *t += (target - *t) * std::min(1.0f, ImGui::GetIO().DeltaTime * 16.0f);
-                if (std::fabs(target - *t) < 0.01f) *t = target;
-                ImVec4 off = ImGui::GetStyleColorVec4(hov ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg);
-                off.x += 0.06f; off.y += 0.06f; off.z += 0.06f;
-                ImVec4 on(kAccent.x, kAccent.y, kAccent.z, 1.0f);
-                if (hov) { on.x += (1 - on.x) * 0.12f; on.y += (1 - on.y) * 0.12f; on.z += (1 - on.z) * 0.12f; }
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(okaytheme::Mix(off, on, *t)), h * 0.5f);
-                const float r = h * 0.5f - 3.0f;
-                ImVec2 kc(p.x + h * 0.5f + (w - h) * (*t), p.y + h * 0.5f);
-                dl->AddCircleFilled(ImVec2(kc.x, kc.y + 1.0f), r, IM_COL32(0, 0, 0, 50), 20);
-                dl->AddCircleFilled(kc, r, IM_COL32(250, 251, 253, 255), 20);
-                if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                return changed;
-            };
 
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -12901,6 +13153,7 @@ int main(int argc, char** argv) {
 
             // ---- Category list (left) + the selected category's cards (right) ----
             static int setCat = std::getenv("OKAY_UI_DEMO_SETCAT") ? std::atoi(std::getenv("OKAY_UI_DEMO_SETCAT")) : 0;   // (env: dev screenshot hook)
+            if (g_setCatJump >= 0) { setCat = g_setCatJump; g_setCatJump = -1; }
             static const struct { const char* name; int icon; const char* sub; } kSetCats[] = {
                 {"Appearance",           kIcoPanel,   "Theme, accent color and interface size."},
                 {"Chat & Notifications", kIcoBell,    "Message sounds and what friends can see."},

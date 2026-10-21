@@ -5139,11 +5139,16 @@ int main(int argc, char** argv) {
                     : "Welcome back.", true);
                 ImGui::Dummy(ImVec2(0, 10));
 
-                // Segmented Sign in / Create toggle (two half-width buttons).
+                // Segmented Sign in / Create toggle (two half-width buttons). The
+                // active mode is clearly highlighted in the accent with white text.
                 auto seg = [&](const char* label, bool active, float w) {
-                    if (active) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+                    if (active) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+                    }
                     bool c = ImGui::Button(label, ImVec2(w, 0));
-                    if (active) ImGui::PopStyleColor();
+                    if (active) ImGui::PopStyleColor(3);
                     return c;
                 };
                 float halfW = (innerW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;

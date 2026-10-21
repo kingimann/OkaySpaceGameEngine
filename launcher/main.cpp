@@ -2313,7 +2313,11 @@ static void DrawGroupConversation(
 }
 
 void DrawChatWindow(okay::account::AccountService& account) {
-    if (!g_chatWinOpen) return;
+    // Dev-only visual-test hook: OKAY_CHAT_DEMO=1 opens the chat with sample
+    // messages (no login/network) so the UI can be reviewed in isolation. Inert
+    // in normal use — the env var is never set for players.
+    static const bool kChatDemo = std::getenv("OKAY_CHAT_DEMO") != nullptr;
+    if (!g_chatWinOpen && !kChatDemo) return;
     static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
     static std::vector<okay::Messages::ConversationPreview> convs; static Uint32 convsNext = 0;
     static std::string selUid, selName, selAvatar; static bool selOnline = false;
@@ -2375,10 +2379,28 @@ void DrawChatWindow(okay::account::AccountService& account) {
         g_chatReqPending = false;
         ImGui::SetNextWindowFocus();
     }
-    ImGui::SetNextWindowSize(ImVec2(720, 500), ImGuiCond_FirstUseEver);
+    if (kChatDemo) {
+        ImGui::SetNextWindowPos(ImVec2(16, 60), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(1000, 680), ImGuiCond_Always);
+        g_chatWinOpen = true;
+        static bool di = false;
+        if (!di) { di = true; selUid = "demo-uid"; selName = "Alex Rivera"; selOnline = true;
+            long tt = (long)time(nullptr);
+            auto add = [&](long id, const char* b, long dt, bool mine, bool ed=false) {
+                okay::DirectMessage m; m.id=id; m.body=b; m.when=tt-dt; m.mine=mine; m.edited=ed; log.push_back(m); };
+            add(1,"Hey! Did you get the new build working?",900,false);
+            add(2,"yeah just pulled it",880,true);
+            add(3,"The chat bubbles actually hug the text now instead of stretching across the whole window.",820,false);
+            add(4,"ok that was really bugging me",780,true);
+            add(5,"wanna test group chats later tonight?",500,false);
+            add(6,"sure, ping me when you're free",460,true,true);
+            peerRead = 4;   // 1..4 read (blue ticks), 6 delivered (grey ticks)
+        }
+    }
+    if (!kChatDemo) ImGui::SetNextWindowSize(ImVec2(720, 500), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(FLT_MAX, FLT_MAX));
     if (ImGui::Begin("Chat", &g_chatWinOpen)) {
-        if (!account.IsLoggedIn()) {
+        if (!account.IsLoggedIn() && !kChatDemo) {
             ImGui::TextDisabled("Sign in to chat with friends.");
             ImGui::End(); return;
         }
@@ -2698,7 +2720,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // chat poller — the window never blocks on the network. We just tell the
             // worker which conversation is open and read what it has published.
             (void)logNext; (void)typingPollNext;
-            if (g_chatMutex) {
+            if (g_chatMutex && !kChatDemo) {
                 SDL_LockMutex(g_chatMutex);
                 g_chatSelUid = selUid;
                 if (g_chatLogReady) {
@@ -2776,6 +2798,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
                 std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
                 float metaW = ImGui::CalcTextSize(meta.c_str()).x;
+                if (m.mine) metaW += 18.0f;           // room for the delivery/read ticks
                 bool bareEmoji = emojiOnly && !rep;   // Telegram-style big, background-less emoji
                 std::string imgUrl = bareEmoji ? std::string() : FirstImageUrl(m.body);
                 // +2px slack on the body so the glyphs never butt against the
@@ -2871,15 +2894,30 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     }
                 }
-                {   // Timestamp: small + tucked at the bubble's bottom-right edge.
+                {   // Timestamp: small + tucked at the bubble's bottom-right edge,
+                    // leaving room for the delivery/read ticks on my own messages.
                     float av2 = ImGui::GetContentRegionAvail().x;
                     float mw2 = ImGui::CalcTextSize(meta.c_str()).x;
-                    if (!bareEmoji && mw2 < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2));
+                    float tickRoom = m.mine ? 18.0f : 0.0f;
+                    if (!bareEmoji && mw2 + tickRoom < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2 - tickRoom));
                 }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bareEmoji ? ImVec4(0.6f,0.64f,0.72f,0.9f)
                                         : (m.mine ? ImVec4(0.82f,0.88f,1.0f,0.60f) : ImVec4(0.60f,0.66f,0.76f,0.70f))));
                 ImGui::TextUnformatted(meta.c_str());
                 ImGui::PopStyleColor();
+                // WhatsApp-style delivery/read ticks after my timestamp: two
+                // checks, blue once the peer has read up to this message.
+                if (m.mine && !bareEmoji) {
+                    ImVec2 tmin = ImGui::GetItemRectMin(), tmax = ImGui::GetItemRectMax();
+                    bool read = m.id <= peerRead;
+                    ImU32 tc = read ? ImGui::GetColorU32(ImVec4(0.42f, 0.70f, 1.0f, 1.0f)) : IM_COL32(205, 214, 230, 150);
+                    float bx = tmax.x + 4.0f, by = (tmin.y + tmax.y) * 0.5f;
+                    auto tick = [&](float ox) {
+                        bdl->AddLine(ImVec2(bx + ox, by + 1), ImVec2(bx + ox + 2.5f, by + 3.5f), tc, 1.3f);
+                        bdl->AddLine(ImVec2(bx + ox + 2.5f, by + 3.5f), ImVec2(bx + ox + 7, by - 2.5f), tc, 1.3f);
+                    };
+                    tick(0.0f); tick(3.5f);
+                }
                 ImGui::PopStyleVar();                       // ItemSpacing
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);                      // ChildRounding, WindowPadding

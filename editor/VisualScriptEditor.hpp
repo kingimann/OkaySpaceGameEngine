@@ -94,6 +94,42 @@ inline const std::vector<VsDef>& Registry() {
         {"PlaySound", "Play Sound",CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"Spawn",     "Spawn",     CAT_ACTION, true, {""}, {"X","Y"}, {}, 1, "prefab"},
         {"Destroy",   "Destroy",   CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        // --- More math (data) ---
+        {"Mod",   "Mod (%)",  CAT_MATH, false, {}, {"A","B"}, {"Out"}, 0, nullptr},
+        {"Pow",   "Pow (^)",  CAT_MATH, false, {}, {"A","B"}, {"Out"}, 0, nullptr},
+        {"Abs",   "Abs",      CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Neg",   "Negate",   CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Sqrt",  "Sqrt",     CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Sin",   "Sin",      CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Cos",   "Cos",      CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Floor", "Floor",    CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Round", "Round",    CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Sign",  "Sign",     CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Clamp", "Clamp",    CAT_MATH, false, {}, {"Value","Min","Max"}, {"Out"}, 0, nullptr},
+        {"Lerp",  "Lerp",     CAT_MATH, false, {}, {"A","B","T"}, {"Out"}, 0, nullptr},
+        {"Random","Random 0-1", CAT_MATH, false, {}, {}, {"Out"}, 0, nullptr},
+        {"RandomRange","Random Range", CAT_MATH, false, {}, {"Min","Max"}, {"Out"}, 0, nullptr},
+        // --- More logic ---
+        {"Xor",       "Xor",        CAT_LOGIC, false, {}, {"A","B"}, {"Out"}, 0, nullptr},
+        {"Equals",    "Equals",     CAT_LOGIC, false, {}, {"A","B"}, {"Bool"}, 0, nullptr},
+        {"NotEquals", "Not Equals", CAT_LOGIC, false, {}, {"A","B"}, {"Bool"}, 0, nullptr},
+        // --- More input ---
+        {"KeyUp",  "Key Up",  CAT_INPUT, false, {}, {}, {"Released"}, 1, "key"},
+        {"MouseX", "Mouse X", CAT_INPUT, false, {}, {}, {"X"}, 0, nullptr},
+        {"MouseY", "Mouse Y", CAT_INPUT, false, {}, {}, {"Y"}, 0, nullptr},
+        // --- Vectors / transform getters ---
+        {"MakeVec3",    "Make Vec3",    CAT_DATA,  false, {}, {"X","Y","Z"}, {"Vec3"}, 0, nullptr},
+        {"GetPosition", "Get Position", CAT_XFORM, false, {}, {}, {"Pos"}, 0, nullptr},
+        {"GetZ",        "Get Z",        CAT_XFORM, false, {}, {}, {"Z"}, 0, nullptr},
+        // --- More transform (exec) ---
+        {"SetScale",    "Set Scale",    CAT_XFORM, true, {""}, {"X","Y","Z"}, {}, 0, nullptr},
+        {"SetRotation", "Set Rotation", CAT_XFORM, true, {""}, {"Deg"}, {}, 0, nullptr},
+        // --- More flow / actions ---
+        {"Wait",     "Wait (s)",    CAT_FLOW,   true, {""}, {}, {}, 1, "seconds"},
+        {"LogWarn",  "Log Warning", CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
+        {"LogError", "Log Error",   CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
+        {"AddForce", "Add Force",   CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
+        {"SetVelocity","Set Velocity",CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
     };
     return defs;
 }
@@ -209,6 +245,14 @@ struct VsEditState {
 
 inline VsEditState& State() { static VsEditState s; return s; }
 
+// Optional log sink (the host wires this to its console); no hard dependency on
+// the host's logging so this header can be included at global scope.
+inline void (*LogFn)(const std::string&, int) = nullptr;
+inline void Log(const std::string& m, int lv = 0) { if (LogFn) LogFn(m, lv); }
+
+// Load a .okayvs into the editor's live graph (used to open one on double-click).
+inline void OpenFile(const std::string& path) { State().g.load(path); State().selected = -1; }
+
 // Pin geometry helpers (screen positions computed during draw).
 struct PinKey { int node; int kind; int side; int index; };  // kind:0 exec,1 data; side:0 in,1 out
 
@@ -229,8 +273,8 @@ inline void Draw(EditorState& ed, bool* open) {
             std::string dir = ed.projectDir();
             p = (dir.empty() ? std::string("Script") : dir + "/Assets/Script") + ".okayvs";
         }
-        if (g.save(p)) ConsoleLog("Saved visual script " + p);
-        else ConsoleLog("Save failed: " + p, 2);
+        if (g.save(p)) Log("Saved visual script " + p);
+        else Log("Save failed: " + p, 2);
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(!ed.selected());
@@ -243,9 +287,9 @@ inline void Draw(EditorState& ed, bool* open) {
             }
             auto* vc = o->GetComponent<VisualScriptComponent>();
             if (!vc) vc = o->AddComponent<VisualScriptComponent>();
-            vc->LoadFile(g.path);
+            vc->LoadFromFile(g.path);
             ed.dirty = true;
-            ConsoleLog("Attached visual script to " + o->name);
+            Log("Attached visual script to " + o->name);
         }
     }
     ImGui::EndDisabled();

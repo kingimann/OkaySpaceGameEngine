@@ -322,6 +322,7 @@ int main(int argc, char** argv) {
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
+#include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 
 #include <vector>
 
@@ -556,6 +557,7 @@ static long SceneTriangleLoad(const Scene& scene) {
 void SaveSettings();
 void ConsoleLog(const std::string& msg, int level = 0);   // default here so any call site can pass just a message
 static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir);   // defined below; used by the UI menu
+bool g_showVisualScript = false;   // the node graph editor window (okay::editor::vsed)
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
@@ -3274,6 +3276,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::BeginMenu("Editors & Tools")) {
             ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
             ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
+            ImGui::MenuItem("Visual Script (nodes)", nullptr, &g_showVisualScript);
             ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
             ImGui::Separator();
             ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
@@ -5468,7 +5471,8 @@ void DrawProject(EditorState& ed) {
         } else if (ext == ".okay" || ext == ".lua" || ext == ".cs") {
             OpenScriptFileInEditor(full);    // edit in the in-app Script Editor
         } else if (ext == ".okayvs") {
-            extide::OpenExternal(full);
+            okay::editor::vsed::OpenFile(full);   // open in the in-app node editor
+            g_showVisualScript = true;
         } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
             // Double-click a model: import it into the scene (hierarchy, textures,
             // rig + clips, size normalization — same path as drag-drop).
@@ -30895,6 +30899,8 @@ int main(int argc, char** argv) {
     splashTick();
     // (Project settings were already loaded above, before the first splash, so
     // the loading screen could use the project's custom splash.)
+    // Route the node editor's log messages to the editor console.
+    okay::editor::vsed::LogFn = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
@@ -31463,6 +31469,7 @@ int main(int argc, char** argv) {
         if (g_showProject)   DrawProject(ed);
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);
+        if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript);
         if (g_showModeling)  DrawModeling(ed);
         DrawFindInFiles(ed);
         DrawScriptDocs();

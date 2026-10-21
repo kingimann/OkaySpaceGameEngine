@@ -2083,6 +2083,214 @@ static std::map<long, std::set<std::string>> g_chatMyReacts;           // (guard
 static long g_chatPeerRead = 0;                                         // (guarded)
 static std::vector<okay::Messages::ConversationPreview> g_chatConvs;    // (guarded)
 static std::vector<okay::Friend> g_chatFriends;                        // (guarded)
+// ---- Group chats (multi-person DMs) ----------------------------------------
+static volatile long g_chatSelGroup = 0;        // (guarded input) open group id (0 = DM mode)
+static bool g_chatGroupsReady = false, g_chatGLogReady = false;        // (guarded)
+static std::vector<okay::Messages::GroupConvo>  g_chatGroups;          // (guarded) my groups
+static std::vector<okay::Messages::GroupMessage> g_chatGLog;          // (guarded) open group thread
+static std::map<long, std::map<std::string,long>> g_chatGReacts;      // (guarded)
+static std::map<long, std::set<std::string>>      g_chatGMyReacts;    // (guarded)
+
+// Render the open group conversation (header + members menu + multi-sender
+// thread + composer). Actions run on the main thread (same as DM sends); the
+// background poller publishes glog/greacts. Kept a free function to keep the
+// huge DrawChatWindow readable.
+static void DrawGroupConversation(
+    okay::Messages& dm,
+    const std::vector<okay::Messages::GroupConvo>& groups,
+    const std::vector<okay::Messages::GroupMessage>& glog,
+    const std::map<long, std::map<std::string,long>>& greacts,
+    const std::map<long, std::set<std::string>>& gmyreacts,
+    const std::map<std::string, const okay::Friend*>& fById,
+    char* gInput, long& gEditId, long& gReplyTo,
+    std::string& gReplyName, std::string& gReplySnippet,
+    std::map<long,long>& gSeenId)
+{
+    long gid = g_chatSelGroup;
+    const okay::Messages::GroupConvo* gp = nullptr;
+    for (const auto& gg : groups) if (gg.id == gid) gp = &gg;
+    std::string title = (gp && !gp->title.empty()) ? gp->title : "Group chat";
+    int memberCount = gp ? gp->members : 0;
+
+    // ---- Header: group glyph, title, member count, options menu ----------
+    ImVec2 hp = ImGui::GetCursorScreenPos();
+    ImDrawList* hd = ImGui::GetWindowDrawList();
+    hd->AddCircleFilled(ImVec2(hp.x + 13, hp.y + 13), 11, ImGui::GetColorU32(kAccentDim), 20);
+    hd->AddCircleFilled(ImVec2(hp.x + 23, hp.y + 21), 10, IM_COL32(92, 102, 122, 255), 20);
+    ImGui::Dummy(ImVec2(38, 34));
+    ImGui::SameLine(); ImGui::BeginGroup();
+    ImGui::TextUnformatted(title.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+    ImGui::Text("%d member%s", memberCount, memberCount == 1 ? "" : "s");
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+    ImVec2 mbp = ImGui::GetCursorScreenPos();
+    if (ImGui::Button("##gmenu", ImVec2(26, 26))) ImGui::OpenPopup("##gmenu_pop");
+    { ImU32 ic = ImGui::GetColorU32(ImGuiCol_Text);
+      for (int k = -1; k <= 1; ++k) hd->AddCircleFilled(ImVec2(mbp.x + 13 + k*5.0f, mbp.y + 13), 1.6f, ic, 8); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Group options");
+    static char renameBuf[64] = "";
+    if (ImGui::BeginPopup("##gmenu_pop")) {
+        if (ImGui::BeginMenu("Add member")) {
+            int n = 0;
+            for (const auto& kv : fById) {
+                const okay::Friend* f = kv.second;
+                if (!f || f->status != "accepted") continue;
+                std::string nm = f->display.empty() ? f->username : f->display;
+                if (ImGui::MenuItem((nm + "##gaddm" + f->id).c_str())) {
+                    if (dm.AddGroupMember(gid, f->id)) { Toast("Added " + nm + " to the group", 1); g_chatForceLog = true; }
+                    else Toast("Only the group owner can add members", 2);
+                }
+                ++n;
+            }
+            if (n == 0) ImGui::TextDisabled("No friends to add.");
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Rename group")) {
+            ImGui::SetNextItemWidth(180);
+            ImGui::InputTextWithHint("##grn", "New name", renameBuf, sizeof(renameBuf));
+            if (ImGui::Button("Save##grn") && renameBuf[0]) {
+                if (dm.RenameGroup(gid, renameBuf)) { g_chatForceLog = true; Toast("Group renamed", 1); renameBuf[0] = '\0'; }
+                else Toast("Only the group owner can rename it", 2);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Leave group")) {
+            if (dm.LeaveGroup(gid)) { g_chatSelGroup = 0; g_chatForceLog = true; Toast("You left the group", 1); }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::Separator();
+    if (g_chatSelGroup == 0) return;   // left the group this frame
+
+    // Mark the newest message seen (clears the unread dot in the list).
+    if (!glog.empty()) gSeenId[gid] = glog.back().id;
+
+    // ---- Thread -----------------------------------------------------------
+    float composerH = 48.0f + (gReplyTo || gEditId ? 24.0f : 0.0f);
+    ImGui::BeginChild("##glog", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false,
+                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    float avW = ImGui::GetContentRegionAvail().x;
+    float baseX = ImGui::GetCursorPosX();
+    const float padX = 10.0f, padY = 6.0f;
+    std::string prevSender; bool firstMsg = true;
+    for (const auto& m : glog) {
+        bool newSender = firstMsg || m.sender != prevSender;
+        firstMsg = false; prevSender = m.sender;
+        ImGui::Dummy(ImVec2(0, newSender ? 6.0f : 1.0f));
+
+        float bubbleMax = avW * 0.72f; if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
+        float bodyW = MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
+        char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
+        std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
+        float metaW = ImGui::CalcTextSize(meta.c_str()).x;
+        float contentW = std::max(bodyW, metaW);
+        float useW = std::max(contentW + padX*2, 46.0f);
+        float x0 = m.mine ? (avW - useW) : 0.0f; if (x0 < 0) x0 = 0;
+
+        // Sender name above the first message of a received run.
+        if (!m.mine && newSender && !m.senderName.empty()) {
+            ImGui::SetCursorPosX(baseX + 2);
+            ImGui::PushStyleColor(ImGuiCol_Text, NameColor(m.senderName));
+            ImGui::TextUnformatted(m.senderName.c_str());
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::PushID((int)m.id);
+        ImGui::SetCursorPosX(baseX + x0);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 11.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
+        ImGui::BeginChild("##gbub", ImVec2(useW, 0), ImGuiChildFlags_AutoResizeY,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
+        RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(m.mine ? ImVec4(0.85f,0.90f,1.0f,0.75f) : ImVec4(0.65f,0.70f,0.80f,0.9f)));
+        ImGui::TextUnformatted(meta.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
+
+        // Right-click: react / reply / copy / (edit+delete if mine).
+        auto myit = gmyreacts.find(m.id);
+        if (ImGui::BeginPopupContextItem("##gmsgctx")) {
+            if (ImGui::BeginMenu("React")) {
+                for (const auto& rdef : kReactions) {
+                    bool have = myit != gmyreacts.end() && myit->second.count(rdef.key);
+                    ImVec2 mp = ImGui::GetCursorScreenPos();
+                    if (ImGui::MenuItem((std::string("     ") + (have?"remove":"add") + "##grx" + rdef.key).c_str()))
+                        { dm.GroupReact(m.id, rdef.key, !have); g_chatForceLog = true; }
+                    DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(mp.x+9, mp.y+ImGui::GetTextLineHeight()*0.5f), 18, rdef.id);
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Reply")) { gReplyTo = m.id; gReplyName = m.mine ? "yourself" : m.senderName; gReplySnippet = ChatPreview(m.body, 40); }
+            if (ImGui::MenuItem("Copy text")) ImGui::SetClipboardText(m.body.c_str());
+            if (m.mine) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Edit"))   { gEditId = m.id; gReplyTo = 0; std::snprintf(gInput, 1024, "%s", m.body.c_str()); }
+                if (ImGui::MenuItem("Delete")) { if (dm.DeleteGroup(m.id)) g_chatForceLog = true; }
+            }
+            ImGui::EndPopup();
+        }
+        // Double-click to heart.
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            bool have = myit != gmyreacts.end() && myit->second.count("heart");
+            dm.GroupReact(m.id, "heart", !have); g_chatForceLog = true;
+        }
+
+        // Reaction pills under the bubble.
+        auto cit = greacts.find(m.id);
+        if (cit != greacts.end() && !cit->second.empty()) {
+            ImGui::SetCursorPosX(baseX + x0);
+            bool firstPill = true;
+            for (const auto& kv : cit->second) {
+                if (kv.second <= 0) continue;
+                if (!firstPill) ImGui::SameLine(); firstPill = false;
+                bool mineR = myit != gmyreacts.end() && myit->second.count(kv.first);
+                std::string cnt = std::to_string(kv.second);
+                float pw = 22.0f + ImGui::CalcTextSize(cnt.c_str()).x;
+                ImGui::PushID(ReactionEmojiId(kv.first) * 131 + (int)(m.id & 0xffff));
+                ImVec2 pp = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##gpill", ImVec2(pw, 18))) { dm.GroupReact(m.id, kv.first, !mineR); g_chatForceLog = true; }
+                ImDrawList* pdl = ImGui::GetWindowDrawList();
+                pdl->AddRectFilled(pp, ImVec2(pp.x+pw, pp.y+18), mineR ? ImGui::GetColorU32(kAccentDim) : IM_COL32(40,46,58,255), 9.0f);
+                DrawEmoji(pdl, ImVec2(pp.x+10, pp.y+9), 13, ReactionEmojiId(kv.first));
+                pdl->AddText(ImVec2(pp.x+18, pp.y+2), ImGui::GetColorU32(ImGuiCol_Text), cnt.c_str());
+                ImGui::PopID();
+            }
+        }
+        ImGui::PopID();
+    }
+    if (glog.empty()) ImGui::TextDisabled("No messages yet — say hello!");
+    // Keep pinned to the newest message.
+    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 40.0f) ImGui::SetScrollHereY(1.0f);
+    ImGui::EndChild();
+
+    // ---- Composer ---------------------------------------------------------
+    if (gReplyTo || gEditId) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(kAccent));
+        ImGui::Text(gEditId ? "Editing message" : "Replying to %s", gReplyName.c_str());
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x##gcancel")) { gReplyTo = 0; gEditId = 0; gInput[0] = '\0'; }
+    }
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 64);
+    bool enter = ImGui::InputTextWithHint("##ginput", "Message the group", gInput, 1024,
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    bool sendBtn = ImGui::Button("Send##g", ImVec2(-1, 0));
+    if ((enter || sendBtn) && gInput[0]) {
+        if (gEditId) { if (dm.EditGroup(gEditId, gInput)) { gEditId = 0; gInput[0] = '\0'; g_chatForceLog = true; } }
+        else if (dm.SendGroup(gid, gInput, gReplyTo)) { gInput[0] = '\0'; gReplyTo = 0; g_chatForceLog = true; }
+    }
+}
 
 void DrawChatWindow(okay::account::AccountService& account) {
     if (!g_chatWinOpen) return;
@@ -2109,10 +2317,23 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static bool fwdPick = false;                      // forward: pick a conversation popup
     static std::map<std::string, std::pair<long,std::string>> pinnedMsg;  // uid -> (msgId, preview)
     static std::string lightboxUrl;                   // image shown fullscreen (empty = none)
+    // Group-chat composer / edit state (parallel to the DM ones above).
+    static char   gInput[1024] = ""; static long gEditId = 0, gReplyTo = 0;
+    static std::string gReplyName, gReplySnippet;
+    static std::map<long,long> gSeenId;               // newest group msg id I've viewed (unread)
+    static bool   showNewGroup = false;               // create-group dialog open
+    static std::set<std::string> newGroupPick;        // friends picked for the new group
+    static char   newGroupName[64] = "";
+    // Group data published by the chat poller (read under g_chatMutex below).
+    static std::vector<okay::Messages::GroupConvo>  groups;
+    static std::vector<okay::Messages::GroupMessage> glog;
+    static std::map<long, std::map<std::string,long>> greacts;
+    static std::map<long, std::set<std::string>>      gmyreacts;
 
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
         // Keep the current conversation's unsent draft before switching away.
         if (!selUid.empty()) { if (input[0]) drafts[selUid] = input; else drafts.erase(selUid); }
+        g_chatSelGroup = 0;                 // leave group mode
         selUid = uid; selName = nm; selAvatar = av; selOnline = online;
         log.clear(); g_chatForceLog = true; editId = 0; replyTo = 0;
         // Restore this conversation's saved draft (if any).
@@ -2120,6 +2341,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
         std::snprintf(input, sizeof(input), "%s", dit != drafts.end() ? dit->second.c_str() : "");
         lastShown = -1; msgSearch[0] = '\0'; showSearch = false; focusComposer = true;
         peerTyping = false; typingPollNext = 0; typingSentAt = 0;
+    };
+    // Open a group conversation (mutually exclusive with a 1:1 DM).
+    auto openGroup = [&](long gid) {
+        if (!selUid.empty()) { if (input[0]) drafts[selUid] = input; else drafts.erase(selUid); }
+        selUid.clear(); g_chatSelGroup = gid;
+        glog.clear(); g_chatForceLog = true; gEditId = 0; gReplyTo = 0; gInput[0] = '\0';
+        focusComposer = true;
     };
 
     if (g_chatReqPending) {                     // a "Message" button asked to open a convo
@@ -2142,6 +2370,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
             SDL_LockMutex(g_chatMutex);
             if (g_chatFriReady)  { friends = g_chatFriends; g_chatFriReady = false; }
             if (g_chatConvReady) { convs   = g_chatConvs;   g_chatConvReady = false; }
+            if (g_chatGroupsReady) { groups = g_chatGroups; g_chatGroupsReady = false; }
+            if (g_chatGLogReady) { glog = g_chatGLog; greacts = g_chatGReacts; gmyreacts = g_chatGMyReacts; g_chatGLogReady = false; }
             SDL_UnlockMutex(g_chatMutex);
         }
 
@@ -2173,6 +2403,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
             if (shownF == 0) ImGui::TextDisabled("Add friends first.");
             ImGui::EndPopup();
+        }
+        // New group button opens the multi-select create dialog.
+        if (ImGui::Button("+ New group", ImVec2(-1, 0))) {
+            showNewGroup = true; newGroupPick.clear(); newGroupName[0] = '\0';
         }
         ImGui::SetNextItemWidth(-1);
         ImGui::InputTextWithHint("##convfilter", "Search chats", convFilter, sizeof(convFilter));
@@ -2277,12 +2511,45 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 for (const auto& r : rows) if (g_archivedChats.count(r.uid)) drawConvRow(r);
             }
         }
-        if (shown == 0) ImGui::TextDisabled(convFilter[0] ? "No matches." : "Add friends to start chatting.");
+        // ---- Groups section ----------------------------------------------
+        if (!groups.empty()) {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+            ImGui::TextUnformatted("GROUPS");
+            ImGui::PopStyleColor();
+            std::string gfilt = convFilter; for (auto& c : gfilt) c = (char)std::tolower((unsigned char)c);
+            for (const auto& gc : groups) {
+                std::string label = gc.title.empty() ? ("Group (" + std::to_string(gc.members) + ")") : gc.title;
+                if (!gfilt.empty()) { std::string low = label; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+                                      if (low.find(gfilt) == std::string::npos) continue; }
+                bool gsel = (g_chatSelGroup == gc.id);
+                bool gunread = gc.lastId > 0 && gc.lastId > gSeenId[gc.id] && !gsel;
+                ImGui::PushID((int)(gc.id ^ 0x40000000));
+                ImVec2 rp = ImGui::GetCursorScreenPos();
+                if (ImGui::Selectable("##grow", gsel, 0, ImVec2(0, 46))) openGroup(gc.id);
+                ImDrawList* dl2 = ImGui::GetWindowDrawList();
+                float cy = rp.y + 23;
+                dl2->AddCircleFilled(ImVec2(rp.x + 15, cy - 4), 9, ImGui::GetColorU32(kAccentDim), 16);
+                dl2->AddCircleFilled(ImVec2(rp.x + 24, cy + 4), 9, IM_COL32(92, 102, 122, 255), 16);
+                dl2->AddText(ImVec2(rp.x + 42, rp.y + 6), ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+                std::string prev = (gc.lastSender.empty() ? "" : gc.lastSender + ": ") + ChatPreview(gc.lastBody, 18);
+                dl2->AddText(ImVec2(rp.x + 42, rp.y + 24), ImGui::GetColorU32(ImGuiCol_TextDisabled), prev.c_str());
+                if (gunread) dl2->AddCircleFilled(ImVec2(rp.x + ImGui::GetContentRegionAvail().x - 8, cy), 4,
+                                                   ImGui::GetColorU32(kAccent), 12);
+                ImGui::PopID();
+            }
+        }
+        if (shown == 0 && groups.empty())
+            ImGui::TextDisabled(convFilter[0] ? "No matches." : "Add friends to start chatting.");
         ImGui::EndChild();
         ImGui::SameLine();
 
         // ---- Right: the selected conversation ---------------------------------
         ImGui::BeginChild("##chatconv", ImVec2(0, 0), false);
+        if (g_chatSelGroup > 0) {
+            DrawGroupConversation(dm, groups, glog, greacts, gmyreacts, fById,
+                                  gInput, gEditId, gReplyTo, gReplyName, gReplySnippet, gSeenId);
+        } else
         if (selUid.empty()) {
             float cw = ImGui::GetContentRegionAvail().x, cy = ImGui::GetContentRegionAvail().y;
             ImGui::SetCursorPos(ImVec2(cw*0.5f - 90, cy*0.5f - 10));
@@ -2819,6 +3086,42 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (shown == 0) ImGui::TextDisabled("No friends to forward to.");
             ImGui::EndPopup();
         }
+
+        // New-group creation dialog: pick friends + optional name -> CreateGroup.
+        if (showNewGroup) { ImGui::OpenPopup("New group"); showNewGroup = false; }
+        ImGui::SetNextWindowSize(ImVec2(320, 400), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("New group", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::TextDisabled("Pick friends to add:");
+            ImGui::BeginChild("##ngfriends", ImVec2(0, 250), true);
+            int nf = 0;
+            for (const auto& f : friends) {
+                if (f.status != "accepted") continue;
+                std::string nm = f.display.empty() ? f.username : f.display;
+                bool picked = newGroupPick.count(f.id) != 0;
+                if (ImGui::Checkbox((nm + "##ng" + f.id).c_str(), &picked)) {
+                    if (picked) newGroupPick.insert(f.id); else newGroupPick.erase(f.id);
+                }
+                ++nf;
+            }
+            if (nf == 0) ImGui::TextDisabled("Add friends first.");
+            ImGui::EndChild();
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##ngname", "Group name (optional)", newGroupName, sizeof(newGroupName));
+            ImGui::Spacing();
+            ImGui::BeginDisabled(newGroupPick.empty());
+            if (ImGui::Button("Create group")) {
+                std::vector<std::string> uids(newGroupPick.begin(), newGroupPick.end());
+                long nid = dm.CreateGroup(newGroupName, uids);
+                if (nid > 0) { g_chatForceLog = true; openGroup(nid); Toast("Group created", 1); }
+                else Toast("Couldn't create group", 2);
+                newGroupPick.clear(); newGroupName[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) { newGroupPick.clear(); newGroupName[0] = '\0'; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
     }
     ImGui::End();
 
@@ -3215,20 +3518,39 @@ static int AccountInfoWorker(void*) {
 static int ChatPollWorker(void*) {
     okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
     okay::Messages dm(a); okay::Friends fr(a);
-    Uint32 nextLog = 0, nextTyping = 0, nextConv = 0, nextFri = 0;
-    std::string lastUid;
+    Uint32 nextLog = 0, nextTyping = 0, nextConv = 0, nextFri = 0, nextGroups = 0, nextGLog = 0;
+    std::string lastUid; long lastGid = 0;
     while (g_chatPollRun) {
         if (!g_chatWinOpen) { SDL_Delay(200); continue; }
         Uint32 now = SDL_GetTicks();
-        std::string uid;
-        if (g_chatMutex) { SDL_LockMutex(g_chatMutex); uid = g_chatSelUid; SDL_UnlockMutex(g_chatMutex); }
+        std::string uid; long gid = 0;
+        if (g_chatMutex) { SDL_LockMutex(g_chatMutex); uid = g_chatSelUid; gid = g_chatSelGroup; SDL_UnlockMutex(g_chatMutex); }
         if (uid != lastUid) { lastUid = uid; nextLog = 0; nextTyping = 0; }   // conversation changed → poll now
-        if (g_chatForceLog) { g_chatForceLog = false; nextLog = 0; nextConv = 0; }  // a user action wants a fresh view
+        if (gid != lastGid) { lastGid = gid; nextGLog = 0; }                  // group switched → poll now
+        if (g_chatForceLog) { g_chatForceLog = false; nextLog = 0; nextConv = 0; nextGLog = 0; nextGroups = 0; }  // a user action wants a fresh view
         try {
             if (now >= nextConv) {
                 auto c = dm.Conversations();
                 if (g_chatMutex) { SDL_LockMutex(g_chatMutex); g_chatConvs = std::move(c); g_chatConvReady = true; SDL_UnlockMutex(g_chatMutex); }
                 nextConv = now + 6000;
+            }
+            if (now >= nextGroups) {
+                auto gs = dm.MyGroups();
+                if (g_chatMutex) { SDL_LockMutex(g_chatMutex); g_chatGroups = std::move(gs); g_chatGroupsReady = true; SDL_UnlockMutex(g_chatMutex); }
+                nextGroups = now + 6000;
+            }
+            if (gid > 0 && now >= nextGLog) {
+                auto gl = dm.GroupThread(gid);
+                auto grc = dm.GroupReactions(); auto gmr = dm.GroupMyReactions();
+                long markId = gl.empty() ? 0 : gl.back().id;
+                if (markId) dm.MarkGroupRead(gid, markId);
+                if (g_chatMutex) {
+                    SDL_LockMutex(g_chatMutex);
+                    g_chatGLog = std::move(gl); g_chatGReacts = std::move(grc); g_chatGMyReacts = std::move(gmr);
+                    g_chatGLogReady = true;
+                    SDL_UnlockMutex(g_chatMutex);
+                }
+                nextGLog = now + 4000;
             }
             if (now >= nextFri) {
                 auto f = fr.List();

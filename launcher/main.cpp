@@ -20,6 +20,7 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — shared with the editor
+#include "tinyfiledialogs.h" // native file picker (chat attachments)
 
 // stb_image for optional per-game cover art. STATIC keeps its symbols file-local
 // (the launcher doesn't link the engine, so there's no clash, but this is tidy).
@@ -2096,6 +2097,82 @@ static std::string FirstImageUrl(const std::string& body) {
     return "";
 }
 
+// ---- File attachment messages -----------------------------------------------
+// A file message body is "[File] <name> (<size>) <url>" (okay::Messages::
+// FileMessageBody). Older clients show it as text + a link; here it renders as
+// a tappable file card.
+struct ChatFileInfo { std::string name, size, url; };
+static bool ParseChatFile(const std::string& body, ChatFileInfo& out) {
+    if (body.rfind("[File] ", 0) != 0) return false;
+    std::size_t us = body.find_last_of(' ');
+    if (us == std::string::npos || us < 7) return false;
+    out.url = body.substr(us + 1);
+    if (out.url.rfind("http", 0) != 0) return false;
+    std::string mid = body.substr(7, us - 7);               // "<name> (<size>)"
+    std::size_t lp = mid.rfind(" (");
+    if (lp != std::string::npos && !mid.empty() && mid.back() == ')') {
+        out.name = mid.substr(0, lp);
+        out.size = mid.substr(lp + 2, mid.size() - lp - 3);
+    } else { out.name = mid; out.size.clear(); }
+    return !out.name.empty();
+}
+static float ChatFileCardWidth(const ChatFileInfo& f, float maxW) {
+    float w = std::max(ImGui::CalcTextSize(f.name.c_str()).x, ImGui::CalcTextSize(f.size.c_str()).x) + 50.0f;
+    return std::min(std::max(w, 190.0f), maxW);
+}
+// Document icon + name + size; the whole card opens/downloads the file.
+static void RenderChatFileCard(const ChatFileInfo& f, float width) {
+    const float h = 44.0f;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::PushID(f.url.c_str());
+    bool clicked = ImGui::InvisibleButton("##filecard", ImVec2(width, h));
+    bool hov = ImGui::IsItemHovered();
+    ImGui::PopID();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    d->AddRectFilled(p, ImVec2(p.x + width, p.y + h), hov ? IM_COL32(255, 255, 255, 34) : IM_COL32(0, 0, 0, 46), 9.0f);
+    // Page with a folded corner.
+    ImVec2 ip(p.x + 8, p.y + 6); const float iw = 24, ih = 32, fold = 7;
+    ImU32 pageC = IM_COL32(232, 236, 244, 255), foldC = IM_COL32(170, 180, 198, 255);
+    d->AddRectFilled(ip, ImVec2(ip.x + iw - fold, ip.y + ih), pageC, 3.0f, ImDrawFlags_RoundCornersLeft);
+    d->AddRectFilled(ImVec2(ip.x + iw - fold, ip.y + fold), ImVec2(ip.x + iw, ip.y + ih), pageC, 3.0f, ImDrawFlags_RoundCornersBottomRight);
+    d->AddTriangleFilled(ImVec2(ip.x + iw - fold, ip.y), ImVec2(ip.x + iw, ip.y + fold), ImVec2(ip.x + iw - fold, ip.y + fold), foldC);
+    std::string ext = fs::path(f.name).extension().string();
+    if (!ext.empty()) ext.erase(0, 1);
+    for (auto& c : ext) c = (char)std::toupper((unsigned char)c);
+    if (ext.size() > 4) ext.resize(4);
+    ImVec2 es = ImGui::CalcTextSize(ext.c_str());
+    float sc = 0.62f;   // tiny extension label on the page
+    d->AddText(nullptr, ImGui::GetFontSize() * sc, ImVec2(ip.x + (iw - es.x * sc) * 0.5f, ip.y + ih - es.y * sc - 4),
+               IM_COL32(60, 70, 90, 255), ext.c_str());
+    float tx = p.x + 42, avail = width - 50;
+    std::string nm = f.name;
+    while (nm.size() > 4 && ImGui::CalcTextSize(nm.c_str()).x > avail) nm = nm.substr(0, nm.size() - 4) + "\xE2\x80\xA6";
+    d->AddText(ImVec2(tx, p.y + 5), IM_COL32(235, 238, 245, 255), nm.c_str());
+    d->AddText(ImVec2(tx, p.y + 24), IM_COL32(190, 198, 215, 200), (f.size.empty() ? std::string("File") : f.size + "  \xC2\xB7  Open").c_str());
+    if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Open / download\n%s", f.name.c_str()); }
+    if (clicked) OpenExternal(f.url);
+}
+// Conversation-list preview: "Photo" / "File: name" instead of raw URLs.
+static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
+    ChatFileInfo fi;
+    if (ParseChatFile(body, fi)) return ChatPreview("File: " + fi.name, n);
+    std::string t = body; while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
+    if (!t.empty() && FirstImageUrl(t) == t) return "Photo";
+    return ChatPreview(body, n);
+}
+
+// ---- Chat attachment upload (background) ---------------------------------------
+// Uploading can take seconds, so it runs on a worker (own account service) that
+// uploads to Storage and then sends the message; the composer shows progress.
+static volatile bool g_attBusy = false;   // an upload is in flight
+static std::string   g_attName;           // file being uploaded (composer status)
+static SDL_mutex*    g_attMutex = nullptr;
+static bool          g_attDone = false;   // (guarded) finished -> toast result
+static std::string   g_attError;          // (guarded) "" on success
+static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup);  // defined below
+static void PickAndSendAttachment(const std::string& toUid, long toGroup);                   // defined below
+static constexpr unsigned long long kMaxChatUpload = 25ULL * 1024ULL * 1024ULL;  // matches the bucket limit
+
 // ---- Background chat poll state ---------------------------------------------
 // The floating Chat window polled messages (every 4s), typing (every 2.5s),
 // conversations (every 6s) and the friend list (every 15s) on the UI thread —
@@ -2277,7 +2354,8 @@ static void DrawGroupConversation(
         ImGui::Dummy(ImVec2(0, newSender ? 9.0f : 2.0f));
 
         float bubbleMax = std::min(avW * 0.72f, 460.0f); if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
-        float bodyW = MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
+        ChatFileInfo gfile; const bool gIsFile = ParseChatFile(m.body, gfile);
+        float bodyW = gIsFile ? ChatFileCardWidth(gfile, bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
         char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
         std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
         float metaW = ImGui::CalcTextSize(meta.c_str()).x;
@@ -2303,7 +2381,8 @@ static void DrawGroupConversation(
                           ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
-        RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
+        if (gIsFile) RenderChatFileCard(gfile, ImGui::GetContentRegionAvail().x);
+        else RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
         {   // Timestamp tucked bottom-right, small + dim.
             float av2 = ImGui::GetContentRegionAvail().x;
             float mw2 = ImGui::CalcTextSize(meta.c_str()).x;
@@ -2416,12 +2495,28 @@ static void DrawGroupConversation(
             ImGui::PopStyleColor();
         }
     }
+    {   // Attach a photo or file to the group
+        float ah = ImGui::GetTextLineHeight() + 14.0f;   // matches the input pill height
+        ImVec2 ap = ImGui::GetCursorScreenPos();
+        if (ImGui::InvisibleButton("##gattach", ImVec2(ah, ah))) PickAndSendAttachment(std::string(), gid);
+        bool ahov = ImGui::IsItemHovered();
+        ImDrawList* ad = ImGui::GetWindowDrawList();
+        ImVec2 c(ap.x + ah * 0.5f, ap.y + ah * 0.5f);
+        ImU32 acol = ahov ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 206, 220, 220);
+        ad->AddCircle(c, ah * 0.34f, acol, 20, 1.6f);
+        ad->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), acol, 1.8f);
+        ad->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), acol, 1.8f);
+        if (ahov) ImGui::SetTooltip("Send a photo or file (up to 25 MB)");
+        ImGui::SameLine(0, 6);
+    }
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 7));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 66);
     if (gRefocus) { ImGui::SetKeyboardFocusHere(); gRefocus = false; }
-    bool enter = ImGui::InputTextWithHint("##ginput", "Message the group  (@ to mention)", gInput, 1024,
+    std::string ghint = g_attBusy ? ("Uploading " + ChatPreview(g_attName, 28) + "\xE2\x80\xA6")
+                                 : std::string("Message the group  (@ to mention)");
+    bool enter = ImGui::InputTextWithHint("##ginput", ghint.c_str(), gInput, 1024,
                                           ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -2443,6 +2538,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
     // messages (no login/network) so the UI can be reviewed in isolation. Inert
     // in normal use — the env var is never set for players.
     static const bool kChatDemo = std::getenv("OKAY_CHAT_DEMO") != nullptr;
+    // Report a finished background attachment upload (success or why it failed).
+    if (g_attMutex) {
+        std::string upErr; bool upFinished = false;
+        SDL_LockMutex(g_attMutex);
+        if (g_attDone) { upFinished = true; upErr = g_attError; g_attDone = false; }
+        SDL_UnlockMutex(g_attMutex);
+        if (upFinished) Toast(upErr.empty() ? "Sent " + g_attName : upErr, upErr.empty() ? 1 : 2);
+    }
     if (!g_chatWinOpen && !kChatDemo) return;
     static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
     static std::vector<okay::Messages::ConversationPreview> convs; static Uint32 convsNext = 0;
@@ -2523,6 +2626,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
             add(5,"wanna test group chats later tonight?",500,false);
             add(6,"sure, ping me when you're free",460,true,true);
             add(7,"@you the release notes are up: https://github.com/kingimann/OkaySpaceGameEngine/releases",120,false);
+            add(8, okay::Messages::FileMessageBody("Level_Design_v3.pdf", 2516582ULL,
+                   "https://example.com/storage/v1/object/public/chat/demo/Level_Design_v3.pdf").c_str(), 60, true);
             if (std::getenv("OKAY_CHAT_DEMO_MEDIA")) openMedia = true;
             peerRead = 4;   // 1..4 read (blue ticks), 6 delivered (grey ticks)
             // Showcase per-chat extras: theme colour, nickname, a starred message.
@@ -2599,7 +2704,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         std::set<std::string> have;
         for (const auto& c : convs) {
             Row r; r.uid = c.uid; r.lastId = c.lastId; r.when = c.when; r.mine = c.lastMine;
-            r.preview = (c.lastMine ? "You: " : "") + ChatPreview(c.lastBody, 26);
+            r.preview = (c.lastMine ? "You: " : "") + ChatPreviewSmart(c.lastBody, 26);
             if (auto it = fById.find(c.uid); it != fById.end()) {
                 r.name = it->second->display.empty() ? it->second->username : it->second->display;
                 r.avatar = it->second->avatar; r.online = it->second->online;
@@ -2716,7 +2821,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 dl2->AddCircleFilled(ImVec2(rp.x + 15, cy - 4), 9, ImGui::GetColorU32(kAccentDim), 16);
                 dl2->AddCircleFilled(ImVec2(rp.x + 24, cy + 4), 9, IM_COL32(92, 102, 122, 255), 16);
                 dl2->AddText(ImVec2(rp.x + 42, rp.y + 6), ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
-                std::string prev = (gc.lastSender.empty() ? "" : gc.lastSender + ": ") + ChatPreview(gc.lastBody, 18);
+                std::string prev = (gc.lastSender.empty() ? "" : gc.lastSender + ": ") + ChatPreviewSmart(gc.lastBody, 18);
                 dl2->AddText(ImVec2(rp.x + 42, rp.y + 24), ImGui::GetColorU32(ImGuiCol_TextDisabled), prev.c_str());
                 if (gunread) dl2->AddCircleFilled(ImVec2(rp.x + ImGui::GetContentRegionAvail().x - 8, cy), 4,
                                                    ImGui::GetColorU32(kAccent), 12);
@@ -3077,7 +3182,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 // across a wide window (Messenger/iMessage keep bubbles narrow).
                 float bubbleMax = std::min(avW * 0.72f, 460.0f);
                 if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
-                float bodyW = MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
+                ChatFileInfo fileInfo; const bool isFile = ParseChatFile(m.body, fileInfo);   // "[File] ..." -> card
+                float bodyW = isFile ? ChatFileCardWidth(fileInfo, bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
                 // reply quote + time contribute to width
                 const okay::DirectMessage* rep = (m.replyTo && byId.count(m.replyTo)) ? byId[m.replyTo] : nullptr;
                 std::string repText = rep ? ChatPreview(rep->body, 36) : "";
@@ -3089,7 +3195,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 const bool starred = g_starred.count(m.id) != 0;
                 if (starred) metaW += 14.0f;          // room for the star marker
                 bool bareEmoji = emojiOnly && !rep;   // Telegram-style big, background-less emoji
-                std::string imgUrl = bareEmoji ? std::string() : FirstImageUrl(m.body);
+                std::string imgUrl = (bareEmoji || isFile) ? std::string() : FirstImageUrl(m.body);
                 // +2px slack on the body so the glyphs never butt against the
                 // content edge (absorbs wrap/measure rounding -> no "text spilling
                 // out of the bubble").
@@ -3170,7 +3276,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         firstTok = false;
                     }
                 } else {
-                    RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
+                    if (isFile) RenderChatFileCard(fileInfo, ImGui::GetContentRegionAvail().x);
+                    else RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
                 }
                 // Inline image preview for an image link in the message.
                 if (!imgUrl.empty()) {
@@ -3463,6 +3570,26 @@ void DrawChatWindow(okay::account::AccountService& account) {
             fmtBtn("B", "**", "**", "bold", "Bold  **text**");
             fmtBtn("I", "*", "*", "italic", "Italic  *text*");
             fmtBtn("</>", "`", "`", "code", "Code  `text`");
+            {   // Attach a photo or file (native picker; uploads in the background)
+                ImGui::SameLine(0, 6);
+                ImVec2 ap = ImGui::GetCursorScreenPos();
+                float ah = ImGui::GetFrameHeight();
+                if (ImGui::InvisibleButton("##attach", ImVec2(ah, ah))) PickAndSendAttachment(selUid, 0);
+                bool ahov = ImGui::IsItemHovered();
+                ImDrawList* ad = ImGui::GetWindowDrawList();
+                ImVec2 c(ap.x + ah * 0.5f, ap.y + ah * 0.5f);
+                ImU32 acol = ahov ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 206, 220, 220);
+                ad->AddCircle(c, ah * 0.36f, acol, 20, 1.6f);
+                ad->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), acol, 1.8f);
+                ad->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), acol, 1.8f);
+                if (ahov) ImGui::SetTooltip("Send a photo or file (up to 25 MB)");
+                ImGui::SameLine(0, 8);
+                if (g_attBusy) {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("Uploading %s\xE2\x80\xA6", ChatPreview(g_attName, 28).c_str());
+                    ImGui::SameLine();
+                }
+            }
             ImGui::PopStyleColor();
             ImGui::NewLine();                                          // input starts on its own row
 
@@ -3944,6 +4071,52 @@ static int AccountInfoWorker(void*) {
 }
 
 // ---- Background chat poll (worker; state declared before DrawChatWindow) ----
+// Upload worker: own account service (thread-safe, like the pollers), upload to
+// the "chat" Storage bucket, then send — images as the bare URL (rendered
+// inline), anything else as a "[File] name (size) url" card.
+struct ChatUploadJob { std::string path, toUid; long toGroup = 0; };
+static ChatUploadJob g_attJob;
+static int ChatUploadWorker(void*) {
+    ChatUploadJob job = g_attJob;
+    std::string err;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Messages dm(a);
+        std::string url = dm.UploadChatFile(job.path, &err);
+        if (!url.empty()) {
+            std::string name = fs::path(job.path).filename().string();
+            std::error_code ec; auto sz = fs::file_size(fs::path(job.path), ec);
+            bool isImg = okay::Messages::MimeFor(name).rfind("image/", 0) == 0;
+            std::string body = isImg ? url : okay::Messages::FileMessageBody(name, ec ? 0 : (unsigned long long)sz, url);
+            bool ok = job.toGroup > 0 ? dm.SendGroup(job.toGroup, body) : dm.Send(job.toUid, body);
+            if (!ok) err = "Uploaded, but sending the message failed.";
+        } else if (err.empty()) err = "Upload failed.";
+    } catch (...) { err = "Upload failed."; }
+    if (g_attMutex) { SDL_LockMutex(g_attMutex); g_attError = err; g_attDone = true; SDL_UnlockMutex(g_attMutex); }
+    g_chatForceLog = true;
+    g_attBusy = false;
+    return 0;
+}
+static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup) {
+    if (g_attBusy || path.empty()) return;
+    if (!g_attMutex) g_attMutex = SDL_CreateMutex();
+    g_attJob = ChatUploadJob{path, toUid, toGroup};
+    g_attName = fs::path(path).filename().string();
+    g_attBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(ChatUploadWorker, "okay-upload", nullptr)) SDL_DetachThread(t);
+    else g_attBusy = false;
+}
+// Pick a file with the native dialog and start uploading it to a chat.
+static void PickAndSendAttachment(const std::string& toUid, long toGroup) {
+    if (g_attBusy) { Toast("An upload is already in progress", 2); return; }
+    const char* pick = tinyfd_openFileDialog("Send a photo or file", "", 0, nullptr, nullptr, 0);
+    if (!pick || !*pick) return;
+    std::error_code ec; auto sz = fs::file_size(fs::path(pick), ec);
+    if (ec) { Toast("Couldn't read that file", 2); return; }
+    if ((unsigned long long)sz > kMaxChatUpload) { Toast("Files are limited to 25 MB", 2); return; }
+    StartChatUpload(pick, toUid, toGroup);
+}
+
 static int ChatPollWorker(void*) {
     okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
     okay::Messages dm(a); okay::Friends fr(a);

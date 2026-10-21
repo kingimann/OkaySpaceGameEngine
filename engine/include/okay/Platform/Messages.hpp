@@ -13,6 +13,7 @@
 #include <ctime>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
 
 namespace okay {
 
@@ -409,6 +410,63 @@ public:
         for (const auto& o : SplitObjects(r.body))
             out[std::atol(Field(o,"target_id").c_str())].insert(Field(o,"emoji"));
         return out;
+    }
+
+    // ---- Attachments (Supabase Storage bucket "chat"; docs/sql/chat_media.sql) --
+    // Upload a local file to chat/<my uuid>/<random>-<name> and return its
+    // public URL ("" on failure; `err` gets the reason). Images are then sent as
+    // the bare URL (rendered inline); other files via FileMessageBody().
+    std::string UploadChatFile(const std::string& localPath, std::string* err = nullptr) {
+        if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return ""; }
+        std::string mine = MyId();
+        if (mine.empty()) { if (err) *err = "Couldn't resolve your account."; return ""; }
+        std::string name = std::filesystem::path(localPath).filename().string();
+        std::string safe;
+        for (char c : name) safe += (std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_') ? c : '_';
+        if (safe.empty()) safe = "file";
+        char rnd[24]; std::snprintf(rnd, sizeof(rnd), "%08x%08x", (unsigned)std::rand(), (unsigned)std::time(nullptr));
+        std::string obj = mine + "/" + rnd + "-" + safe;
+        auto r = acct_.ApiUpload("/storage/v1/object/chat/" + obj, localPath, MimeFor(safe), "x-upsert: true");
+        if (!r.ok) {
+            if (err) *err = r.status == 404 || r.body.find("Bucket not found") != std::string::npos
+                ? "Attachments aren't set up on the server yet (run docs/sql/chat_media.sql)."
+                : (r.body.empty() ? std::string("Upload failed.") : r.body);
+            return "";
+        }
+        std::string base = acct_.ServerUrl();
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        return base + "/storage/v1/object/public/chat/" + obj;
+    }
+
+    // A file message: "[File] <name> (<size>) <url>". Reads as plain text + a
+    // link on older clients; newer ones render it as a file card.
+    static std::string FileMessageBody(const std::string& name, unsigned long long bytes, const std::string& url) {
+        return "[File] " + name + " (" + HumanSize(bytes) + ") " + url;
+    }
+    static std::string HumanSize(unsigned long long b) {
+        char buf[32];
+        if (b < 1024ULL) std::snprintf(buf, sizeof(buf), "%llu B", b);
+        else if (b < 1024ULL * 1024ULL) std::snprintf(buf, sizeof(buf), "%.1f KB", b / 1024.0);
+        else if (b < 1024ULL * 1024ULL * 1024ULL) std::snprintf(buf, sizeof(buf), "%.1f MB", b / (1024.0 * 1024.0));
+        else std::snprintf(buf, sizeof(buf), "%.2f GB", b / (1024.0 * 1024.0 * 1024.0));
+        return buf;
+    }
+    static std::string MimeFor(const std::string& name) {
+        std::string ext = std::filesystem::path(name).extension().string();
+        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+        if (ext == ".png")  return "image/png";
+        if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+        if (ext == ".gif")  return "image/gif";
+        if (ext == ".webp") return "image/webp";
+        if (ext == ".bmp")  return "image/bmp";
+        if (ext == ".pdf")  return "application/pdf";
+        if (ext == ".txt" || ext == ".log" || ext == ".md") return "text/plain";
+        if (ext == ".json") return "application/json";
+        if (ext == ".zip")  return "application/zip";
+        if (ext == ".wav")  return "audio/wav";
+        if (ext == ".mp3")  return "audio/mpeg";
+        if (ext == ".ogg")  return "audio/ogg";
+        return "application/octet-stream";
     }
 
 private:

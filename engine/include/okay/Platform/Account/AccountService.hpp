@@ -564,6 +564,19 @@ public:
         return HttpRequest(method, url, jsonBody, /*authToken=*/{}, extraHeader);
     }
 
+    /// Upload a local file as the raw request body with the session token — e.g.
+    /// Supabase Storage `POST /storage/v1/object/<bucket>/<path>` for chat
+    /// attachments. `contentType` is the file's MIME type.
+    ApiResponse ApiUpload(const std::string& path, const std::string& localFile,
+                          const std::string& contentType, const std::string& extraHeader = {}) const {
+        if (!IsOnline() || !session_.loggedIn) return {};
+        std::string url = serverUrl_;
+        if (!url.empty() && url.back() == '/') url.pop_back();
+        url += path.empty() || path.front() == '/' ? path : ("/" + path);
+        return HttpRequest("POST", url, {}, /*authToken=*/session_.token, extraHeader,
+                           localFile, contentType.empty() ? "application/octet-stream" : contentType);
+    }
+
     /// Whether a username (profiles.username handle) is free. Online only; on a
     /// local backend or when offline it optimistically returns true.
     bool UsernameAvailable(const std::string& username) const {
@@ -1005,7 +1018,9 @@ private:
     ApiResponse HttpRequest(const std::string& method, const std::string& url,
                             const std::string& jsonBody,
                             const std::string& authToken,
-                            const std::string& extraHeader = {}) const {
+                            const std::string& extraHeader = {},
+                            const std::string& bodyFile = {},     // raw file body (uploads)
+                            const std::string& bodyType = {}) const {
         std::error_code ec;
         fs::path dir   = fs::temp_directory_path(ec);
         std::string id = detail::RandomHex(8);
@@ -1025,7 +1040,10 @@ private:
             cfg += "header = \"Authorization: Bearer " + authToken + "\"\n";
         if (!extraHeader.empty())                      // e.g. PostgREST "Prefer: ..."
             cfg += "header = \"" + extraHeader + "\"\n";
-        if (!jsonBody.empty()) {
+        if (!bodyFile.empty()) {                       // upload a file as-is
+            cfg += "header = \"Content-Type: " + bodyType + "\"\n";
+            cmd += " --data-binary @\"" + bodyFile + "\"";
+        } else if (!jsonBody.empty()) {
             std::ofstream(bodyF, std::ios::trunc) << jsonBody;
             cfg += "header = \"Content-Type: application/json\"\n";
             cmd += " --data-binary @\"" + bodyF.string() + "\"";

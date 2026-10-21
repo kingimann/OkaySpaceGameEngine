@@ -43,7 +43,10 @@ if(NOT TARGET launcher_imgui)
 endif()
 
 # Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
-set(OKAY_LAUNCHER_SOURCES main.cpp)
+set(OKAY_LAUNCHER_SOURCES main.cpp
+    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)   # native file picker (chat attachments)
+set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
+    PROPERTIES COMPILE_OPTIONS "-w")
 if(WIN32)
     enable_language(RC)
     list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)
@@ -56,11 +59,12 @@ target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
     ${CMAKE_SOURCE_DIR}/engine/include
-    ${CMAKE_SOURCE_DIR}/engine/third_party/stb)   # stb_image for game cover art
+    ${CMAKE_SOURCE_DIR}/engine/third_party/stb     # stb_image for game cover art
+    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd) # tinyfiledialogs
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
-    target_link_libraries(okayspace-launcher PRIVATE shell32)
+    target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32)   # + tinyfd dialogs
 endif()
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

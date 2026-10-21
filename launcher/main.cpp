@@ -1113,6 +1113,7 @@ const AccentPreset kAccentPresets[] = {
 int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
 bool g_chatSounds = true;         // soft chime for new chat messages (persisted)
+bool g_chatListFolded = false;    // chat conversation list folded to an avatar strip (persisted)
 // ---- Customizable loading screen (persisted) ----
 std::string g_splashLogo;                         // optional PNG shown instead of the cube
 float g_splashBgTop[3] = {0.094f, 0.094f, 0.106f};// backdrop gradient (top)
@@ -2060,6 +2061,7 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
+        else if (k == "chat_list_folded") g_chatListFolded = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
         else if (k == "online_status") { try { g_onlineStatus = std::stoi(v); } catch (...) {} }
         else if (k == "last_dm_id") { try { g_lastDmId = std::stol(v); } catch (...) {} }
@@ -2135,6 +2137,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
+    f << "chat_list_folded=" << (g_chatListFolded ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
     f << "online_status=" << g_onlineStatus << "\n";
     f << "last_dm_id=" << g_lastDmId << "\n";
@@ -3123,9 +3126,25 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static std::map<long, std::map<std::string,long>> greacts;
     static std::map<long, std::set<std::string>>      gmyreacts;
 
+    // Open conversations as tabs above the thread (DMs and groups), browser-style.
+    struct ChatTab { std::string key, uid, name, avatar; long gid = 0; };
+    static std::vector<ChatTab> chatTabs;
+    auto addTab = [&](const ChatTab& t) {
+        for (auto& x : chatTabs)
+            if (x.key == t.key) { if (!t.name.empty()) x.name = t.name; if (!t.avatar.empty()) x.avatar = t.avatar; return; }
+        chatTabs.push_back(t);
+        if (chatTabs.size() > 12) chatTabs.erase(chatTabs.begin());   // keep the strip manageable
+    };
+    // Keep the open conversation's unsent text (DM or group) before switching away.
+    auto stashDraft = [&]() {
+        if (g_chatSelGroup > 0) {
+            std::string k = "g:" + std::to_string(g_chatSelGroup);
+            if (gInput[0]) drafts[k] = gInput; else drafts.erase(k);
+        } else if (!selUid.empty()) { if (input[0]) drafts[selUid] = input; else drafts.erase(selUid); }
+    };
     auto openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool online) {
-        // Keep the current conversation's unsent draft before switching away.
-        if (!selUid.empty()) { if (input[0]) drafts[selUid] = input; else drafts.erase(selUid); }
+        stashDraft();
+        addTab(ChatTab{uid, uid, nm, av, 0});
         g_chatSelGroup = 0;                 // leave group mode
         selUid = uid; selName = nm; selAvatar = av; selOnline = online;
         log.clear(); g_chatForceLog = true; editId = 0; replyTo = 0;
@@ -3137,10 +3156,26 @@ void DrawChatWindow(okay::account::AccountService& account) {
     };
     // Open a group conversation (mutually exclusive with a 1:1 DM).
     auto openGroup = [&](long gid) {
-        if (!selUid.empty()) { if (input[0]) drafts[selUid] = input; else drafts.erase(selUid); }
+        stashDraft();
+        std::string gname;
+        for (const auto& gc : groups) if (gc.id == gid) gname = gc.title.empty() ? ("Group (" + std::to_string(gc.members) + ")") : gc.title;
+        addTab(ChatTab{"g:" + std::to_string(gid), std::string(), gname, std::string(), gid});
         selUid.clear(); g_chatSelGroup = gid;
-        glog.clear(); g_chatForceLog = true; gEditId = 0; gReplyTo = 0; gInput[0] = '\0';
+        glog.clear(); g_chatForceLog = true; gEditId = 0; gReplyTo = 0;
+        auto dit = drafts.find("g:" + std::to_string(gid));
+        std::snprintf(gInput, 1024, "%s", dit != drafts.end() ? dit->second.c_str() : "");
         focusComposer = true;
+    };
+    // Close a tab; closing the open one moves to its neighbour (or to nothing).
+    auto closeTab = [&](std::size_t i) {
+        if (i >= chatTabs.size()) return;
+        const std::string cur = g_chatSelGroup > 0 ? "g:" + std::to_string(g_chatSelGroup) : selUid;
+        const bool wasOpen = chatTabs[i].key == cur;
+        chatTabs.erase(chatTabs.begin() + (long)i);
+        if (!wasOpen) return;
+        if (chatTabs.empty()) { stashDraft(); selUid.clear(); g_chatSelGroup = 0; input[0] = '\0'; gInput[0] = '\0'; return; }
+        const ChatTab& n = chatTabs[std::min(i, chatTabs.size() - 1)];
+        if (n.gid) openGroup(n.gid); else openConv(n.uid, n.name, n.avatar, false);
     };
 
     if (g_chatReqPending) {                     // a "Message" button asked to open a convo
@@ -3203,6 +3238,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 okay::Messages::GroupConvo g; g.id = 7; g.title = "Game Jam Team"; g.members = 5; g.lastSender = "Maya";
                 g.lastBody = "Build is up on itch, 3 hours left!"; g.when = tt - 180; g.lastId = 90; groups.push_back(g);
                 g_pinnedChats.insert("g:7");
+                chatTabs.push_back(ChatTab{"demo-uid", "demo-uid", "Alex Rivera", "", 0});
+                chatTabs.push_back(ChatTab{"u-maya", "u-maya", "Maya Chen", "", 0});
+                chatTabs.push_back(ChatTab{"g:7", "", "Game Jam Team", "", 7});
+                if (std::getenv("OKAY_CHAT_DEMO_FOLD")) g_chatListFolded = true;
                 g_mutedChats.insert("u-jon");
                 drafts["u-priya"] = "I'll send you the save file tonight";
             }
@@ -3306,7 +3345,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
         // the unsent draft), and unread / muted / pinned markers.
         static int  convTab = 0;          // 0 All, 1 Unread, 2 Groups
         static bool showArchived = false;
-        float listW = ImGui::GetContentRegionAvail().x < 640 ? 214.0f : 280.0f;
+        const bool folded = g_chatListFolded;   // avatar-only strip
+        float listW = folded ? 76.0f : (ImGui::GetContentRegionAvail().x < 640 ? 214.0f : 280.0f);
         const ImU32 cText   = IM_COL32(232, 236, 244, 255);
         const ImU32 cDim    = IM_COL32(150, 158, 175, 255);
         const ImU32 cFaint  = IM_COL32(118, 126, 142, 255);
@@ -3320,13 +3360,17 @@ void DrawChatWindow(okay::account::AccountService& account) {
         {   // Header: title + round icon buttons.
             ImVec2 hp = ImGui::GetCursorScreenPos();
             float hw = ImGui::GetContentRegionAvail().x;
-            ImGui::SetCursorScreenPos(ImVec2(hp.x + 4, hp.y));
-            ImGui::SetWindowFontScale(1.30f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(cText));
-            ImGui::TextUnformatted("Chats");
-            ImGui::PopStyleColor();
-            ImGui::SetWindowFontScale(1.0f);
-            const float th = ImGui::GetItemRectSize().y, B = 30.0f;
+            float th = 30.0f;
+            if (!folded) {
+                ImGui::SetCursorScreenPos(ImVec2(hp.x + 4, hp.y));
+                ImGui::SetWindowFontScale(1.30f);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(cText));
+                ImGui::TextUnformatted("Chats");
+                ImGui::PopStyleColor();
+                ImGui::SetWindowFontScale(1.0f);
+                th = ImGui::GetItemRectSize().y;
+            }
+            const float B = 30.0f;
             auto iconBtn = [&](const char* id, ImVec2 p, int kind, const char* tip) -> bool {
                 ImGui::SetCursorScreenPos(p);
                 bool c = ImGui::InvisibleButton(id, ImVec2(B, B));
@@ -3334,7 +3378,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImVec2 cc(p.x + B * 0.5f, p.y + B * 0.5f);
                 dl->AddCircleFilled(cc, B * 0.5f, h ? IM_COL32(255, 255, 255, 36) : IM_COL32(255, 255, 255, 16), 28);
                 ImU32 ic = IM_COL32(232, 236, 244, 255);
-                if (kind == 0) {   // compose: open square + pencil
+                if (kind == 2) {   // fold / unfold the list
+                    DrawNavIcon(dl, kIcoPanel, cc, ic);
+                } else if (kind == 0) {   // compose: open square + pencil
                     dl->PathLineTo(ImVec2(cc.x + 0.5f, cc.y - 6.0f)); dl->PathLineTo(ImVec2(cc.x - 6.5f, cc.y - 6.0f));
                     dl->PathLineTo(ImVec2(cc.x - 6.5f, cc.y + 6.5f)); dl->PathLineTo(ImVec2(cc.x + 6.0f, cc.y + 6.5f));
                     dl->PathLineTo(ImVec2(cc.x + 6.0f, cc.y - 0.5f));
@@ -3348,13 +3394,25 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", tip); }
                 return c;
             };
-            float by = hp.y + (th - B) * 0.5f;
-            if (iconBtn("##newgrp", ImVec2(hp.x + hw - B, by), 1, "New group")) {
-                showNewGroup = true; newGroupPick.clear(); newGroupName[0] = '\0';
+            if (folded) {   // stacked: unfold, then compose
+                float cx = hp.x + (hw - B) * 0.5f;
+                if (iconBtn("##foldlist", ImVec2(cx, hp.y), 2, "Show chat list")) { g_chatListFolded = false; SavePrefs(); }
+                if (iconBtn("##newmsg", ImVec2(cx, hp.y + B + 8), 0, "New message")) ImGui::OpenPopup("##newchat");
+                ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + B * 2 + 8 + 10));
+                ImVec2 lp = ImGui::GetCursorScreenPos();
+                dl->AddLine(ImVec2(lp.x + 10, lp.y), ImVec2(lp.x + hw - 10, lp.y), IM_COL32(255, 255, 255, 18), 1.0f);
+                ImGui::Dummy(ImVec2(0, 8));
+            } else {
+                float by = hp.y + (th - B) * 0.5f;
+                if (iconBtn("##newgrp", ImVec2(hp.x + hw - B, by), 1, "New group")) {
+                    showNewGroup = true; newGroupPick.clear(); newGroupName[0] = '\0';
+                }
+                if (iconBtn("##newmsg", ImVec2(hp.x + hw - B * 2 - 6, by), 0, "New message"))
+                    ImGui::OpenPopup("##newchat");
+                if (iconBtn("##foldlist", ImVec2(hp.x + hw - B * 3 - 12, by), 2, "Collapse chat list"))
+                    { g_chatListFolded = true; SavePrefs(); }
+                ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + std::max(th, B) + 10));
             }
-            if (iconBtn("##newmsg", ImVec2(hp.x + hw - B * 2 - 6, by), 0, "New message"))
-                ImGui::OpenPopup("##newchat");
-            ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + std::max(th, B) + 10));
         }
         if (ImGui::BeginPopup("##newchat")) {
             ImGui::TextDisabled("New message to\xE2\x80\xA6");
@@ -3373,7 +3431,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (shownF == 0) ImGui::TextDisabled("Add friends first.");
             ImGui::EndPopup();
         }
-        {   // Search pill with a magnifier.
+        if (!folded) {   // Search pill with a magnifier.
             ImVec2 sp = ImGui::GetCursorScreenPos();
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(30, 7));
@@ -3389,7 +3447,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             dl->AddCircle(mc, 4.6f, cDim, 16, 1.5f);
             dl->AddLine(ImVec2(mc.x + 3.4f, mc.y + 3.4f), ImVec2(mc.x + 6.8f, mc.y + 6.8f), cDim, 1.8f);
         }
-        {   // Filter chips.
+        if (!folded) {   // Filter chips.
             ImGui::Dummy(ImVec2(0, 2));
             const char* chips[] = {"All", "Unread", "Groups"};
             ImVec2 cp = ImGui::GetCursorScreenPos();
@@ -3458,9 +3516,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (pa != pb) return pa;
             return a.when > b.when;
         });
+        std::set<std::string> unreadKeys;   // for the tab strip's unread dots
+        for (const auto& r : rows) if (r.unread) unreadKeys.insert(r.key);
         std::string filt = convFilter;
         for (auto& ch : filt) ch = (char)std::tolower((unsigned char)ch);
         auto passes = [&](const Row& r) {
+            if (folded) return true;
             if (convTab == 1 && !r.unread) return false;
             if (convTab == 2 && !r.gid) return false;
             if (!filt.empty()) {
@@ -3470,7 +3531,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             return true;
         };
 
-        ImGui::BeginChild("##convrows", ImVec2(0, 0), false);
+        ImGui::BeginChild("##convrows", ImVec2(0, 0), false, folded ? ImGuiWindowFlags_NoScrollbar : 0);
         ImDrawList* rdl = ImGui::GetWindowDrawList();
         auto drawRow = [&](const Row& r) {
             const bool pinned = g_pinnedChats.count(r.key) != 0;
@@ -3479,9 +3540,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
             const bool sel = r.gid ? g_chatSelGroup == r.gid : (g_chatSelGroup == 0 && r.uid == selUid);
             ImGui::PushID(r.key.c_str());
             ImVec2 rp = ImGui::GetCursorScreenPos();
-            const float w = ImGui::GetContentRegionAvail().x, rowH = 62.0f, A = 44.0f;
+            const float w = ImGui::GetContentRegionAvail().x, rowH = folded ? 56.0f : 62.0f, A = 44.0f;
             bool click = ImGui::InvisibleButton("##row", ImVec2(w, rowH));
             bool hov = ImGui::IsItemHovered();
+            if (hov && folded) ImGui::SetTooltip("%s\n%s", r.name.c_str(), r.preview.c_str());
             if (ImGui::BeginPopupContextItem("##convctx")) {   // right-click actions
                 if (ImGui::MenuItem(pinned ? "Unpin" : "Pin to top")) { if (pinned) g_pinnedChats.erase(r.key); else g_pinnedChats.insert(r.key); SavePrefs(); }
                 if (ImGui::MenuItem(muted ? "Unmute" : "Mute notifications")) { if (muted) g_mutedChats.erase(r.key); else g_mutedChats.insert(r.key); SavePrefs(); }
@@ -3496,7 +3558,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
             // Avatar (groups: two overlapping discs) + presence dot.
-            ImVec2 ac(rp.x + 8.0f + A * 0.5f, rp.y + rowH * 0.5f);
+            ImVec2 ac(folded ? rp.x + w * 0.5f : rp.x + 8.0f + A * 0.5f, rp.y + rowH * 0.5f);
             if (r.gid) {
                 ImVec4 nc = NameColor(r.name);
                 rdl->AddCircleFilled(ImVec2(ac.x - 6, ac.y - 6), A * 0.34f, ImGui::GetColorU32(kAccentDim), 24);
@@ -3525,6 +3587,16 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 }
             }
 
+            if (folded) {   // avatar only: unread badge on the top-right of the avatar
+                if (r.unread) {
+                    ImVec2 ud(ac.x + A * 0.36f, ac.y - A * 0.36f);
+                    rdl->AddCircleFilled(ud, 7.0f, ImGui::GetColorU32(sel ? kChatSideSel : kChatSideBg), 16);
+                    rdl->AddCircleFilled(ud, 5.0f, muted ? IM_COL32(120, 128, 145, 255) : ImGui::GetColorU32(kAccent), 16);
+                }
+                if (sel) rdl->AddRectFilled(ImVec2(rp.x, rp.y + 14), ImVec2(rp.x + 3, rp.y + rowH - 14), ImGui::GetColorU32(kAccent), 1.5f);
+                ImGui::PopID();
+                return;
+            }
             // Text column: name + time, then preview / draft + markers.
             const float tx = rp.x + 8.0f + A + 12.0f, right = rp.x + w - 10.0f;
             const float y1 = rp.y + 11.0f, y2 = rp.y + 33.0f;
@@ -3558,7 +3630,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 mx -= 14.0f;
             }
             const float pw = mx - tx - 6.0f;
-            auto dr = r.gid ? drafts.end() : drafts.find(r.uid);
+            auto dr = drafts.find(r.key);
             if (dr != drafts.end() && !dr->second.empty() && !sel) {
                 const char* lbl = "Draft: ";
                 float lw = ImGui::CalcTextSize(lbl).x;
@@ -3584,6 +3656,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
             bool header = false;
             for (const auto& r : rows) {
                 if (!r.starter || !passes(r)) continue;
+                if (!header && folded) {
+                    header = true;
+                    ImVec2 lp = ImGui::GetCursorScreenPos();
+                    rdl->AddLine(ImVec2(lp.x + 10, lp.y + 4), ImVec2(lp.x + ImGui::GetContentRegionAvail().x - 10, lp.y + 4), IM_COL32(255, 255, 255, 18), 1.0f);
+                    ImGui::Dummy(ImVec2(0, 10));
+                }
                 if (!header) {
                     header = true;
                     ImGui::Dummy(ImVec2(0, 6));
@@ -3597,7 +3675,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
         }
         // Archived chats (collapsed behind one row).
-        if (archivedCount > 0 && convTab == 0) {
+        if (archivedCount > 0 && convTab == 0 && !folded) {
             ImGui::Dummy(ImVec2(0, 4));
             ImVec2 ap = ImGui::GetCursorScreenPos();
             float aw = ImGui::GetContentRegionAvail().x, ah = 34.0f;
@@ -3615,7 +3693,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 for (const auto& r : rows)
                     if (!r.gid && !r.starter && g_archivedChats.count(r.uid) && passes(r)) drawRow(r);
         }
-        if (shown == 0) {   // empty state
+        if (shown == 0 && !folded) {   // empty state
             float aw = ImGui::GetContentRegionAvail().x;
             ImGui::Dummy(ImVec2(0, 28));
             ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 26);
@@ -3649,6 +3727,99 @@ void DrawChatWindow(okay::account::AccountService& account) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
         ImGui::BeginChild("##chatconv", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PopStyleVar();
+        // ---- Tabs: one per open conversation (DMs + groups) ----------------------
+        if (!chatTabs.empty()) {
+            const std::string curKey = g_chatSelGroup > 0 ? "g:" + std::to_string(g_chatSelGroup) : selUid;
+            int curIdx = -1;
+            for (std::size_t i = 0; i < chatTabs.size(); ++i) if (chatTabs[i].key == curKey) curIdx = (int)i;
+            int openIdx = -1, closeIdx = -1;
+            // Ctrl+PgDn / Ctrl+PgUp cycle tabs, Ctrl+W closes the open one.
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
+                const int n = (int)chatTabs.size();
+                if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) openIdx = (curIdx + 1) % n;
+                if (ImGui::IsKeyPressed(ImGuiKey_PageUp))   openIdx = curIdx <= 0 ? n - 1 : curIdx - 1;
+                if (ImGui::IsKeyPressed(ImGuiKey_W, false) && curIdx >= 0) closeIdx = curIdx;
+            }
+            const float tabH = 32.0f;
+            ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.0f);
+            ImGui::BeginChild("##chattabs", ImVec2(0, tabH + 6), false,
+                              ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::PopStyleVar();
+            if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f)   // wheel scrolls the strip sideways
+                ImGui::SetScrollX(ImGui::GetScrollX() - ImGui::GetIO().MouseWheel * 48.0f);
+            ImDrawList* td = ImGui::GetWindowDrawList();
+            const ImVec2 start = ImGui::GetCursorScreenPos();
+            const float th = ImGui::GetTextLineHeight();
+            float x = start.x;
+            for (std::size_t i = 0; i < chatTabs.size(); ++i) {
+                const ChatTab& t = chatTabs[i];
+                const bool active = (int)i == curIdx;
+                const bool un = !active && unreadKeys.count(t.key) != 0;
+                std::string nm = t.name.empty() ? std::string(t.gid ? "Group" : "Chat") : t.name;
+                // avatar (36) + name + unread dot (12) + close (18) + margins (24)
+                const float tw = std::clamp(ImGui::CalcTextSize(nm.c_str()).x + 80.0f + (un ? 12.0f : 0.0f), 118.0f, 220.0f);
+                ImVec2 p(x, start.y);
+                ImGui::PushID(t.key.c_str());
+                ImGui::SetCursorScreenPos(p);
+                ImGui::SetNextItemAllowOverlap();
+                if (ImGui::InvisibleButton("##tab", ImVec2(tw, tabH))) openIdx = (int)i;
+                const bool hov = ImGui::IsItemHovered();
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) closeIdx = (int)i;
+                if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                td->AddRectFilled(p, ImVec2(p.x + tw, p.y + tabH),
+                                  active ? IM_COL32(255, 255, 255, 26) : hov ? IM_COL32(255, 255, 255, 15) : IM_COL32(255, 255, 255, 7), 8.0f);
+                if (active) td->AddRectFilled(ImVec2(p.x + 10, p.y + tabH - 2.5f), ImVec2(p.x + tw - 10, p.y + tabH),
+                                              ImGui::GetColorU32(kAccent), 1.5f);
+                // Mini avatar.
+                const float A = 20.0f;
+                ImVec2 ac(p.x + 8.0f + A * 0.5f, p.y + tabH * 0.5f);
+                if (t.gid) {
+                    td->AddCircleFilled(ImVec2(ac.x - 3, ac.y - 3), 6.5f, ImGui::GetColorU32(kAccentDim), 16);
+                    ImVec4 nc = NameColor(nm);
+                    td->AddCircleFilled(ImVec2(ac.x + 3, ac.y + 3), 8.0f, ImGui::GetColorU32(kChatWinBg), 16);
+                    td->AddCircleFilled(ImVec2(ac.x + 3, ac.y + 3), 6.5f, ImGui::GetColorU32(ImVec4(nc.x * 0.6f, nc.y * 0.6f, nc.z * 0.6f, 1)), 16);
+                } else if (SDL_Texture* at = AvatarTexture(t.avatar)) {
+                    td->AddImageRounded((ImTextureID)(intptr_t)at, ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f), ImVec2(ac.x + A * 0.5f, ac.y + A * 0.5f),
+                                        ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, A * 0.5f);
+                } else {
+                    ImVec4 nc = NameColor(nm);
+                    td->AddCircleFilled(ac, A * 0.5f, ImGui::GetColorU32(ImVec4(nc.x * 0.55f, nc.y * 0.55f, nc.z * 0.55f, 1)), 20);
+                    char init[2] = {(char)std::toupper((unsigned char)nm[0]), 0};
+                    float fs = ImGui::GetFontSize() * 0.78f;
+                    ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, init);
+                    td->AddText(ImGui::GetFont(), fs, ImVec2(ac.x - ts.x * 0.5f, ac.y - ts.y * 0.5f), IM_COL32_WHITE, init);
+                }
+                // Name, unread dot, close button.
+                const float closeW = 18.0f;
+                float nameMax = tw - (A + 16.0f) - closeW - 12.0f - (un ? 12.0f : 0.0f);
+                td->AddText(ImVec2(p.x + A + 16.0f, p.y + (tabH - th) * 0.5f), (active || hov) ? cText : cDim,
+                            FitText(nm, nameMax).c_str());
+                if (un) td->AddCircleFilled(ImVec2(p.x + tw - closeW - 14.0f, p.y + tabH * 0.5f), 4.0f, ImGui::GetColorU32(kAccent), 12);
+                ImVec2 xp(p.x + tw - closeW - 6.0f, p.y + (tabH - closeW) * 0.5f);
+                ImGui::SetCursorScreenPos(xp);
+                if (ImGui::InvisibleButton("##x", ImVec2(closeW, closeW))) closeIdx = (int)i;
+                const bool xh = ImGui::IsItemHovered();
+                if (xh) ImGui::SetTooltip("Close  (Ctrl+W)");
+                if (active || hov || xh) {
+                    ImVec2 xc(xp.x + closeW * 0.5f, xp.y + closeW * 0.5f);
+                    if (xh) td->AddCircleFilled(xc, closeW * 0.5f, IM_COL32(255, 255, 255, 30), 16);
+                    ImU32 xcCol = xh ? cText : cDim;
+                    td->AddLine(ImVec2(xc.x - 3.5f, xc.y - 3.5f), ImVec2(xc.x + 3.5f, xc.y + 3.5f), xcCol, 1.5f);
+                    td->AddLine(ImVec2(xc.x + 3.5f, xc.y - 3.5f), ImVec2(xc.x - 3.5f, xc.y + 3.5f), xcCol, 1.5f);
+                }
+                ImGui::PopID();
+                x += tw + 4.0f;
+            }
+            ImGui::SetCursorScreenPos(start);
+            ImGui::Dummy(ImVec2(x - start.x, tabH));   // content width -> horizontal scrolling
+            ImGui::EndChild();
+            ImGui::Dummy(ImVec2(0, 4));
+            if (closeIdx >= 0) closeTab((std::size_t)closeIdx);
+            else if (openIdx >= 0 && openIdx != curIdx) {
+                const ChatTab t = chatTabs[(std::size_t)openIdx];
+                if (t.gid) openGroup(t.gid); else openConv(t.uid, t.name, t.avatar, false);
+            }
+        }
         if (g_chatSelGroup > 0) {
             DrawGroupConversation(dm, groups, glog, greacts, gmyreacts, fById,
                                   gInput, gEditId, gReplyTo, gReplyName, gReplySnippet, gSeenId,

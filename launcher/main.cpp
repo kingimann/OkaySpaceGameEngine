@@ -1084,6 +1084,11 @@ std::map<std::string,std::string>  g_friendNicks;  // uid -> private nickname
 std::set<std::string>              g_pinnedChats;
 std::set<std::string>              g_mutedChats;
 std::set<std::string>              g_archivedChats;
+// Messenger/WhatsApp-style per-conversation extras (client-side, persisted).
+std::set<std::string>              g_blockedUsers;   // uids I've blocked: their messages hidden, can't send
+std::map<std::string,int>          g_chatColor;      // uid -> per-chat theme colour index (0 = default)
+struct StarredMsg { std::string uid; std::string preview; long when = 0; };
+std::map<long, StarredMsg>         g_starred;        // message id -> starred ("saved") message
 bool                               g_minimizeToTray = false;  // opt-in Steam-style tray (off by default: a normal minimize always restores from the taskbar)
 
 // Shared accent so UI code can match the theme.
@@ -1953,6 +1958,26 @@ void LoadPrefs() {
         else if (k == "pinchat" && !v.empty()) g_pinnedChats.insert(v);
         else if (k == "mutechat" && !v.empty()) g_mutedChats.insert(v);
         else if (k == "archivechat" && !v.empty()) g_archivedChats.insert(v);
+        else if (k == "block" && !v.empty()) g_blockedUsers.insert(v);
+        else if (k == "chatcolor" && !v.empty()) {
+            auto bar = v.find('|');
+            if (bar != std::string::npos) { try { g_chatColor[v.substr(0, bar)] = std::stoi(v.substr(bar + 1)); } catch (...) {} }
+        }
+        else if (k == "star" && !v.empty()) {
+            // star=<id>|<uid>|<when>|<preview>  (preview may itself contain '|')
+            auto a = v.find('|');
+            auto b = (a == std::string::npos) ? a : v.find('|', a + 1);
+            auto c = (b == std::string::npos) ? b : v.find('|', b + 1);
+            if (c != std::string::npos) {
+                try {
+                    StarredMsg s; long id = std::stol(v.substr(0, a));
+                    s.uid = v.substr(a + 1, b - a - 1);
+                    s.when = std::stol(v.substr(b + 1, c - b - 1));
+                    s.preview = v.substr(c + 1);
+                    if (id > 0) g_starred[id] = s;
+                } catch (...) {}
+            }
+        }
         else if (k == "min_to_tray") g_minimizeToTray = (v != "0");
         else if (k == "nav_collapsed") g_navCollapsed = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
@@ -2015,6 +2040,10 @@ void SavePrefs() {
     for (const auto& u : g_pinnedChats)  f << "pinchat=" << u << "\n";
     for (const auto& u : g_mutedChats)   f << "mutechat=" << u << "\n";
     for (const auto& u : g_archivedChats) f << "archivechat=" << u << "\n";
+    for (const auto& u : g_blockedUsers)  f << "block=" << u << "\n";
+    for (const auto& kv : g_chatColor) if (kv.second > 0) f << "chatcolor=" << kv.first << "|" << kv.second << "\n";
+    for (const auto& kv : g_starred)
+        f << "star=" << kv.first << "|" << kv.second.uid << "|" << kv.second.when << "|" << kv.second.preview << "\n";
     f << "min_to_tray=" << (g_minimizeToTray ? 1 : 0) << "\n";
     f << "nav_collapsed=" << (g_navCollapsed ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
@@ -2090,6 +2119,36 @@ static std::vector<okay::Messages::GroupConvo>  g_chatGroups;          // (guard
 static std::vector<okay::Messages::GroupMessage> g_chatGLog;          // (guarded) open group thread
 static std::map<long, std::map<std::string,long>> g_chatGReacts;      // (guarded)
 static std::map<long, std::set<std::string>>      g_chatGMyReacts;    // (guarded)
+
+// Messenger-style per-chat theme colours: the fill of *your* bubbles in that
+// conversation. Index 0 follows the app accent.
+static const char* kChatThemeNames[] = { "Default", "Purple", "Pink", "Orange", "Green", "Teal", "Red", "Graphite" };
+static constexpr int kChatThemeCount = 8;
+static ImVec4 ChatThemeColor(int idx) {
+    static const ImVec4 pal[kChatThemeCount] = {
+        ImVec4(0.19f, 0.43f, 0.72f, 1.0f), ImVec4(0.50f, 0.30f, 0.80f, 1.0f),
+        ImVec4(0.80f, 0.30f, 0.52f, 1.0f), ImVec4(0.85f, 0.45f, 0.18f, 1.0f),
+        ImVec4(0.16f, 0.58f, 0.38f, 1.0f), ImVec4(0.11f, 0.53f, 0.60f, 1.0f),
+        ImVec4(0.76f, 0.24f, 0.24f, 1.0f), ImVec4(0.34f, 0.37f, 0.44f, 1.0f),
+    };
+    if (idx <= 0 || idx >= kChatThemeCount) return kAccentDim;
+    return pal[idx];
+}
+static ImVec4 ChatThemeFor(const std::string& uid) {
+    auto it = g_chatColor.find(uid);
+    return ChatThemeColor(it == g_chatColor.end() ? 0 : it->second);
+}
+// A small filled 5-point star (drawn as geometry, so it never depends on the
+// font having a star glyph). Used to mark starred/saved messages.
+static void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
+    ImVec2 pts[10];
+    for (int i = 0; i < 10; ++i) {
+        float a = -1.5707963f + i * 0.6283185f;            // start at the top, 36deg steps
+        float rr = (i % 2 == 0) ? r : r * 0.45f;
+        pts[i] = ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr);
+    }
+    dl->AddConcavePolyFilled(pts, 10, col);
+}
 
 // Render the open group conversation (header + members menu + multi-sender
 // thread + composer). Actions run on the main thread (same as DM sends); the
@@ -2195,7 +2254,8 @@ static void DrawGroupConversation(
         float metaW = ImGui::CalcTextSize(meta.c_str()).x;
         float contentW = std::max(bodyW + 2.0f, metaW);
         float useW = std::max(contentW + padX*2, 46.0f);
-        float x0 = m.mine ? (avW - useW) : 0.0f; if (x0 < 0) x0 = 0;
+        float x0 = m.mine ? (avW - useW - 8.0f) : 0.0f;   // 8px breathing room from the scrollbar
+        if (x0 < 0) x0 = 0;
 
         // Sender name above the first message of a received run.
         if (!m.mine && newSender && !m.senderName.empty()) {
@@ -2280,8 +2340,16 @@ static void DrawGroupConversation(
         ImGui::PopID();
     }
     if (glog.empty()) ImGui::TextDisabled("No messages yet — say hello!");
-    // Keep pinned to the newest message.
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 40.0f) ImGui::SetScrollHereY(1.0f);
+    // Keep pinned to the newest message: on opening the group, or on a new
+    // message while already near the bottom. Stick for a few frames because
+    // bubble heights settle a frame late (a one-shot scroll lands short).
+    static int gStick = 0; static long gLastGid = 0; static size_t gLastN = 0;
+    if (gid != gLastGid || glog.size() != gLastN) {
+        bool nearBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 80.0f;
+        if (gid != gLastGid || nearBottom) gStick = 4;
+        gLastGid = gid; gLastN = glog.size();
+    }
+    if (gStick > 0) { ImGui::SetScrollHereY(1.0f); --gStick; }
     ImGui::EndChild();
 
     // ---- Composer ---------------------------------------------------------
@@ -2342,6 +2410,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static bool fwdPick = false;                      // forward: pick a conversation popup
     static std::map<std::string, std::pair<long,std::string>> pinnedMsg;  // uid -> (msgId, preview)
     static std::string lightboxUrl;                   // image shown fullscreen (empty = none)
+    static bool openStarred = false;                  // conversation menu -> "Starred messages" popup
     // Group-chat composer / edit state (parallel to the DM ones above).
     static char   gInput[1024] = ""; static long gEditId = 0, gReplyTo = 0;
     static std::string gReplyName, gReplySnippet;
@@ -2381,8 +2450,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
         ImGui::SetNextWindowFocus();
     }
     if (kChatDemo) {
-        ImGui::SetNextWindowPos(ImVec2(16, 60), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(1000, 680), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(16, 40), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(1000, 600), ImGuiCond_Always);
         g_chatWinOpen = true;
         static bool di = false;
         if (!di) { di = true; selUid = "demo-uid"; selName = "Alex Rivera"; selOnline = true;
@@ -2396,6 +2465,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
             add(5,"wanna test group chats later tonight?",500,false);
             add(6,"sure, ping me when you're free",460,true,true);
             peerRead = 4;   // 1..4 read (blue ticks), 6 delivered (grey ticks)
+            // Showcase per-chat extras: theme colour, nickname, a starred message.
+            if (const char* th = std::getenv("OKAY_CHAT_DEMO_THEME")) g_chatColor["demo-uid"] = std::atoi(th);
+            if (std::getenv("OKAY_CHAT_DEMO_BLOCK")) g_blockedUsers.insert("demo-uid");
+            if (std::getenv("OKAY_CHAT_DEMO_EXTRAS")) {
+                g_friendNicks["demo-uid"] = "Alex (team lead)";
+                StarredMsg s; s.uid = "demo-uid"; s.when = tt - 820; s.preview = "The chat bubbles actually hug the text now...";
+                g_starred[3] = s;
+            }
         }
     }
     if (!kChatDemo) ImGui::SetNextWindowSize(ImVec2(720, 500), ImGuiCond_FirstUseEver);
@@ -2475,6 +2552,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
             r.avatar = f.avatar; r.online = f.online; r.preview = "Tap to chat";
             rows.push_back(r);
         }
+        // Private nicknames (set from the conversation menu) replace display names.
+        for (auto& r : rows)
+            if (auto nk = g_friendNicks.find(r.uid); nk != g_friendNicks.end() && !nk->second.empty()) r.name = nk->second;
         // Pinned conversations float to the top (stable: keeps recency order).
         std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
             return g_pinnedChats.count(a.uid) > g_pinnedChats.count(b.uid);
@@ -2494,7 +2574,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
             bool archived = g_archivedChats.count(r.uid) != 0;
             ImGui::PushID(r.uid.c_str());
             bool sel = (r.uid == selUid);
-            bool unread = r.lastId > 0 && !r.mine && r.lastId > seenId[r.uid] && !sel && !muted;
+            bool blockedRow = g_blockedUsers.count(r.uid) != 0;
+            bool unread = r.lastId > 0 && !r.mine && r.lastId > seenId[r.uid] && !sel && !muted && !blockedRow;
             ImVec2 rp = ImGui::GetCursorScreenPos();
             float rowH = 46.0f;
             if (ImGui::Selectable("##row", sel, 0, ImVec2(0, rowH))) openConv(r.uid, r.name, r.avatar, r.online);
@@ -2604,6 +2685,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 selName = it->second->display.empty() ? it->second->username : it->second->display;
                 selAvatar = it->second->avatar;
             }
+            if (auto nk = g_friendNicks.find(selUid); nk != g_friendNicks.end() && !nk->second.empty())
+                selName = nk->second;
+            const bool selBlocked = g_blockedUsers.count(selUid) != 0;
+            const ImVec4 myBubble = ChatThemeFor(selUid);   // this chat's theme colour for my bubbles
             // Header: avatar with a presence dot, name + status, and actions.
             ImVec2 avp = ImGui::GetCursorScreenPos();
             {   // Distinct header zone: a subtle strip + bottom border. Drawn first
@@ -2619,16 +2704,17 @@ void DrawChatWindow(okay::account::AccountService& account) {
             DrawAvatar(selAvatar, selName, 34.0f);
             {   // presence dot on the avatar's corner
                 ImDrawList* hd = ImGui::GetWindowDrawList();
-                ImU32 dot = selOnline ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
+                ImU32 dot = (selOnline && !selBlocked) ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
                 hd->AddCircleFilled(ImVec2(avp.x + 28, avp.y + 28), 5.5f, dot, 16);
                 hd->AddCircle(ImVec2(avp.x + 28, avp.y + 28), 5.5f,
                               ImGui::GetColorU32(ImGuiCol_WindowBg), 16, 2.0f);
             }
             ImGui::SameLine(); ImGui::BeginGroup();
             ImGui::TextUnformatted(selName.c_str());
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(peerTyping ? kAccent
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(selBlocked ? ImVec4(0.92f,0.45f,0.45f,1)
+                                        : peerTyping ? kAccent
                                         : (selOnline ? ImVec4(0.47f,0.80f,0.43f,1) : ImVec4(0.6f,0.64f,0.7f,1))));
-            ImGui::TextUnformatted(peerTyping ? "typing\xE2\x80\xA6" : (selOnline ? "Active now" : "Offline"));
+            ImGui::TextUnformatted(selBlocked ? "Blocked" : peerTyping ? "typing\xE2\x80\xA6" : (selOnline ? "Active now" : "Offline"));
             ImGui::PopStyleColor();
             ImGui::EndGroup();
             // Right-aligned actions: conversation menu (⋯) + search toggle.
@@ -2657,7 +2743,76 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     if (arc) g_archivedChats.erase(selUid); else g_archivedChats.insert(selUid); SavePrefs();
                 }
                 ImGui::Separator();
+                // Messenger-style theme: colour of your bubbles in this chat.
+                if (ImGui::BeginMenu("Theme colour")) {
+                    int cur = g_chatColor.count(selUid) ? g_chatColor[selUid] : 0;
+                    for (int ci = 0; ci < kChatThemeCount; ++ci) {
+                        ImVec2 sp = ImGui::GetCursorScreenPos();
+                        float lh = ImGui::GetTextLineHeight();
+                        if (ImGui::MenuItem((std::string("      ") + kChatThemeNames[ci] + "##th" + std::to_string(ci)).c_str(),
+                                            nullptr, cur == ci)) {
+                            if (ci == 0) g_chatColor.erase(selUid); else g_chatColor[selUid] = ci;
+                            SavePrefs();
+                        }
+                        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(sp.x + 9, sp.y + lh * 0.5f), 6.0f,
+                                                                    ImGui::GetColorU32(ChatThemeColor(ci)), 16);
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Nickname")) {
+                    static char nickBuf[48] = ""; static std::string nickFor;
+                    if (nickFor != selUid) {   // prefill with the current nickname
+                        nickFor = selUid;
+                        auto nk = g_friendNicks.find(selUid);
+                        std::snprintf(nickBuf, sizeof(nickBuf), "%s", nk != g_friendNicks.end() ? nk->second.c_str() : "");
+                    }
+                    ImGui::SetNextItemWidth(180);
+                    ImGui::InputTextWithHint("##nick", "Nickname (only you see it)", nickBuf, sizeof(nickBuf));
+                    if (ImGui::Button("Save##nick")) {
+                        if (nickBuf[0]) g_friendNicks[selUid] = nickBuf; else g_friendNicks.erase(selUid);
+                        SavePrefs(); ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear##nick")) { g_friendNicks.erase(selUid); nickBuf[0] = '\0'; SavePrefs(); }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::MenuItem("Starred messages")) openStarred = true;
+                ImGui::Separator();
                 if (ImGui::MenuItem("Copy username")) ImGui::SetClipboardText(selName.c_str());
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
+                if (ImGui::MenuItem(selBlocked ? "Unblock" : "Block")) {
+                    if (selBlocked) g_blockedUsers.erase(selUid); else g_blockedUsers.insert(selUid);
+                    SavePrefs();
+                }
+                ImGui::PopStyleColor();
+                ImGui::EndPopup();
+            }
+            // Starred messages in this conversation (WhatsApp "Starred"): click to jump.
+            if (openStarred) { ImGui::OpenPopup("##starredpop"); openStarred = false; }
+            ImGui::SetNextWindowSizeConstraints(ImVec2(280, 0), ImVec2(420, 360));
+            if (ImGui::BeginPopup("##starredpop")) {
+                ImGui::TextDisabled("Starred messages");
+                ImGui::Separator();
+                std::vector<std::pair<long, const StarredMsg*>> mine;
+                for (const auto& kv : g_starred) if (kv.second.uid == selUid) mine.push_back({kv.first, &kv.second});
+                std::sort(mine.begin(), mine.end(), [](const auto& a, const auto& b) { return a.second->when > b.second->when; });
+                long unstar = 0;
+                for (const auto& s : mine) {
+                    ImGui::PushID((int)s.first);
+                    ImVec2 sp = ImGui::GetCursorScreenPos();
+                    if (ImGui::Selectable(("      " + s.second->preview).c_str(), false, 0, ImVec2(ImGui::GetContentRegionAvail().x - 26, 0))) {
+                        scrollToId = s.first; flashId = s.first; flashUntil = now + 1400;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    DrawStar(ImGui::GetWindowDrawList(), ImVec2(sp.x + 8, sp.y + ImGui::GetTextLineHeight() * 0.5f),
+                             6.0f, IM_COL32(250, 200, 70, 255));
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x")) unstar = s.first;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unstar");
+                    ImGui::PopID();
+                }
+                if (unstar) { g_starred.erase(unstar); SavePrefs(); }
+                if (mine.empty()) ImGui::TextDisabled("No starred messages yet.\nRight-click a message > Star.");
                 ImGui::EndPopup();
             }
             ImGui::SameLine();
@@ -2746,8 +2901,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // pill (grows 1..4 lines) + the optional reply/edit banner.
             int clines = 1; for (const char* c = input; *c; ++c) if (*c == '\n') ++clines;
             if (clines > 4) clines = 4;
-            float composerH = 28.0f + (ImGui::GetTextLineHeight() * clines + 16.0f) + 12.0f
-                              + (replyTo || editId ? 22.0f : 0.0f);
+            // Measured from the style (toolbar row + spacing + input pill + bottom
+            // window padding) — the old fixed estimate was ~20px short and
+            // clipped the bottom of the input box.
+            const ImGuiStyle& cst = ImGui::GetStyle();
+            float composerH = ImGui::GetFrameHeightWithSpacing()                      // toolbar row
+                              + (ImGui::GetTextLineHeight() * clines + 16.0f)          // input pill
+                              + cst.ItemSpacing.y * 2.0f + cst.WindowPadding.y + 4.0f
+                              + (replyTo || editId ? ImGui::GetTextLineHeightWithSpacing() + 4.0f : 0.0f);
             bool scrolledUp = false; ImVec2 logRectMin, logRectMax;
             // AlwaysVerticalScrollbar reserves the scrollbar space permanently so the
             // content width is stable — otherwise the right-aligned ("mine") bubbles
@@ -2761,7 +2922,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const float avatarW = 28.0f, avatarGap = 6.0f, padX = 14.0f, padY = 8.0f;
             int matches = 0;
+            if (selBlocked) {   // blocked: their messages are hidden (only yours remain)
+                ImGui::Dummy(ImVec2(0, 6));
+                const char* bl = "You blocked this person. Their messages are hidden.";
+                ImGui::SetCursorPosX(baseX + (avW - ImGui::CalcTextSize(bl).x) * 0.5f);
+                ImGui::TextDisabled("%s", bl);
+            }
             for (const auto& m : log) {
+                if (selBlocked && !m.mine) continue;
                 if (!msFilt.empty()) {
                     std::string low = m.body; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
                     if (low.find(msFilt) == std::string::npos) continue;
@@ -2800,6 +2968,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
                 float metaW = ImGui::CalcTextSize(meta.c_str()).x;
                 if (m.mine) metaW += 18.0f;           // room for the delivery/read ticks
+                const bool starred = g_starred.count(m.id) != 0;
+                if (starred) metaW += 14.0f;          // room for the star marker
                 bool bareEmoji = emojiOnly && !rep;   // Telegram-style big, background-less emoji
                 std::string imgUrl = bareEmoji ? std::string() : FirstImageUrl(m.body);
                 // +2px slack on the body so the glyphs never butt against the
@@ -2814,7 +2984,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 // Right-align "mine" bubbles by the REAL bubble width (useW), not the
                 // raw content width — otherwise short bubbles ("hi"/"ok") overhang
                 // the right edge and drift when the window is resized.
-                float x0 = m.mine ? (avW - useW) : leftPad; if (x0 < leftPad) x0 = leftPad;
+                // (-8: a little breathing room from the scrollbar, like Messenger.)
+                float x0 = m.mine ? (avW - useW - 8.0f) : leftPad; if (x0 < leftPad) x0 = leftPad;
 
                 // Avatar for received messages (only on the first of a run).
                 if (!m.mine && !grouped) {
@@ -2837,7 +3008,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 // hugs what it renders and stays correct on resize.
                 ImGui::SetCursorPosX(baseX + x0);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, bareEmoji ? ImVec4(0,0,0,0)
-                                        : (m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f)));
+                                        : (m.mine ? myBubble : ImVec4(0.204f,0.235f,0.306f,1.0f)));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
                 // AlwaysUseWindowPadding: a border-less child ignores WindowPadding
@@ -2904,6 +3075,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     float mw2 = ImGui::CalcTextSize(meta.c_str()).x;
                     float tickRoom = m.mine ? 18.0f : 0.0f;
                     if (!bareEmoji && mw2 + tickRoom < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2 - tickRoom));
+                    if (starred) {   // gold star just left of the timestamp
+                        ImVec2 sp = ImGui::GetCursorScreenPos();
+                        DrawStar(bdl, ImVec2(sp.x - 8.0f, sp.y + ImGui::GetTextLineHeight() * 0.5f), 5.0f,
+                                 IM_COL32(250, 200, 70, 255));
+                    }
                 }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bareEmoji ? ImVec4(0.6f,0.64f,0.72f,0.9f)
                                         : (m.mine ? ImVec4(0.82f,0.88f,1.0f,0.60f) : ImVec4(0.60f,0.66f,0.76f,0.70f))));
@@ -2927,16 +3103,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::PopStyleVar(2);                      // ChildRounding, WindowPadding
                 ImGui::PopStyleColor();                     // ChildBg
                 ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
-                // Bubble tail on the first message of a run, pointing toward the
-                // sender's side (iMessage/Discord style) — only for text bubbles.
-                if (!grouped && !bareEmoji) {
-                    float ty = bmin.y + 7.0f;
-                    ImU32 tc = ImGui::GetColorU32(m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f));
-                    if (m.mine)
-                        dl->AddTriangleFilled(ImVec2(bmax.x - 1, ty - 4), ImVec2(bmax.x + 6, ty), ImVec2(bmax.x - 1, ty + 5), tc);
-                    else
-                        dl->AddTriangleFilled(ImVec2(bmin.x + 1, ty - 4), ImVec2(bmin.x - 6, ty), ImVec2(bmin.x + 1, ty + 5), tc);
-                }
+                // (No bubble "tails": with fully rounded bubbles they float detached
+                // off the corner — Messenger-style plain rounded bubbles read cleaner.)
                 // Quick-reaction bar on hover: thumbs-up / heart / laugh + Reply,
                 // so reacting doesn't need the right-click menu. Save/restore the
                 // cursor so this overlay never disturbs the message's vertical flow.
@@ -2999,6 +3167,17 @@ void DrawChatWindow(okay::account::AccountService& account) {
                             if (isPinned) pinnedMsg.erase(selUid);
                             else pinnedMsg[selUid] = {m.id, ChatPreview(m.body, 48)};
                         }
+                    }
+                    // Star = save for later (WhatsApp); listed under Conversation > Starred.
+                    if (ImGui::MenuItem(starred ? "Unstar" : "Star message")) {
+                        if (starred) g_starred.erase(m.id);
+                        else {
+                            StarredMsg s; s.uid = selUid; s.when = m.when;
+                            s.preview = ChatPreview(m.body, 60);
+                            for (auto& ch : s.preview) if (ch == '\n' || ch == '\r') ch = ' ';
+                            g_starred[m.id] = s;
+                        }
+                        SavePrefs();
                     }
                     if (m.mine) {
                         ImGui::Separator();
@@ -3074,25 +3253,57 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // Auto-scroll to the newest message on open / new message (unless the
             // user has scrolled up to read history). Jump-to-latest overrides it.
             scrolledUp = ImGui::GetScrollMaxY() > 1.0f && (ImGui::GetScrollMaxY() - ImGui::GetScrollY()) > 80.0f;
-            if (wantScrollBottom) { ImGui::SetScrollHereY(1.0f); wantScrollBottom = false; scrolledUp = false; }
+            // Bubbles are auto-height children whose final height settles a frame
+            // later, so a one-shot scroll lands short of the newest message. Keep
+            // pinned to the bottom for a few frames after opening a chat, a new
+            // message, or Jump-to-latest.
+            static int stickBottom = 0;
+            if (wantScrollBottom) { wantScrollBottom = false; stickBottom = 4; }
             else if ((int)log.size() != lastShown || selUid != lastConv) {
-                if (msFilt.empty() && !scrolledUp) ImGui::SetScrollHereY(1.0f);
+                bool opened = selUid != lastConv;
+                if (msFilt.empty() && (opened || !scrolledUp)) stickBottom = 4;
                 lastShown = (int)log.size(); lastConv = selUid;
             }
+            if (stickBottom > 0) { ImGui::SetScrollHereY(1.0f); --stickBottom; scrolledUp = false; }
             logRectMin = ImGui::GetWindowPos();
             logRectMax = ImVec2(logRectMin.x + ImGui::GetWindowWidth(), logRectMin.y + ImGui::GetWindowHeight());
-            ImGui::EndChild();
-            // Floating "jump to latest" button when scrolled up. Draw it as an
-            // overlay without disturbing the composer's normal layout below.
+            // Floating "jump to latest" button while scrolled up. It's the LAST
+            // child of the log, so it renders above the message bubbles (each
+            // bubble is itself a child window and would otherwise cover it).
             if (scrolledUp) {
-                ImVec2 keep = ImGui::GetCursorScreenPos();
-                ImGui::SetCursorScreenPos(ImVec2(logRectMax.x - 44, logRectMax.y - 44));
-                if (ImGui::Button("\xE2\x86\x93##jump", ImVec2(32, 32))) wantScrollBottom = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to latest");
-                ImGui::SetCursorScreenPos(keep);
-                ImGui::Dummy(ImVec2(0.0f, 0.0f));   // claim the restored cursor
+                ImVec2 keep = ImGui::GetCursorPos();
+                float sbw = ImGui::GetStyle().ScrollbarSize;
+                ImGui::SetCursorScreenPos(ImVec2(logRectMax.x - sbw - 48, logRectMax.y - 46));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+                ImGui::BeginChild("##jumpbtn", ImVec2(36, 36), ImGuiChildFlags_None,
+                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                                  ImGuiWindowFlags_NoBackground);
+                ImVec2 jp = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##jump", ImVec2(34, 34))) wantScrollBottom = true;
+                bool jh = ImGui::IsItemHovered();
+                {   // round button with a drawn chevron (the arrow glyph isn't in Roboto)
+                    ImDrawList* jd = ImGui::GetWindowDrawList();
+                    ImVec2 jc(jp.x + 17, jp.y + 17);
+                    jd->AddCircleFilled(jc, 16.0f, ImGui::GetColorU32(jh ? ImVec4(0.30f, 0.33f, 0.40f, 1.0f)
+                                                                         : ImVec4(0.22f, 0.24f, 0.30f, 0.97f)), 24);
+                    jd->AddCircle(jc, 16.0f, IM_COL32(255, 255, 255, 34), 24, 1.0f);
+                    ImU32 ac = IM_COL32(230, 234, 242, 255);
+                    jd->AddLine(ImVec2(jc.x - 5.5f, jc.y - 2.5f), ImVec2(jc.x, jc.y + 3.0f), ac, 2.0f);
+                    jd->AddLine(ImVec2(jc.x, jc.y + 3.0f), ImVec2(jc.x + 5.5f, jc.y - 2.5f), ac, 2.0f);
+                }
+                if (jh) ImGui::SetTooltip("Jump to latest");
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::SetCursorPos(keep);
             }
+            ImGui::EndChild();
 
+            if (selBlocked) {   // no composer while blocked — just a way back
+                ImGui::Dummy(ImVec2(0, 10));
+                ImGui::TextDisabled("You blocked %s, so you can't message them.", selName.c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Unblock")) { g_blockedUsers.erase(selUid); SavePrefs(); }
+            } else {
             // ---- Composer: reply/edit banner, emoji, growing input, send -------
             // Esc clears a pending reply/edit; Up-arrow on an empty box edits your
             // last message (Telegram/Messenger shortcuts).
@@ -3152,8 +3363,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::PopStyleColor();
             ImGui::PopStyleVar(2);
             ImGui::SameLine(0, 8);
-            ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.36f, 0.66f, 1.0f, 1.0f));
+            // Send button follows this chat's theme colour (a touch brighter).
+            auto brighten = [](ImVec4 c, float k) { return ImVec4(std::min(1.0f, c.x * k), std::min(1.0f, c.y * k), std::min(1.0f, c.z * k), 1.0f); };
+            ImGui::PushStyleColor(ImGuiCol_Button, brighten(myBubble, 1.25f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, brighten(myBubble, 1.45f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
             if ((ImGui::Button(editId ? "Save" : "Send", ImVec2(58, inH)) || send) && input[0]) {
                 if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; g_chatForceLog = true; } }
@@ -3162,6 +3375,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
             ImGui::PopStyleVar();
             ImGui::PopStyleColor(2);
+            }   // !selBlocked composer
         }
         ImGui::EndChild();
 
@@ -4172,7 +4386,7 @@ int main(int argc, char** argv) {
                     us == Up_Downloading ? "Downloading update" : "Checking for updates");
                 if (!fromV.empty()) {
                     if (!toV.empty() && toV != fromV)
-                        ImGui::TextDisabled("v%s  \xE2\x86\x92  v%s", fromV.c_str(), toV.c_str());
+                        ImGui::TextDisabled("v%s  \xC2\xBB  v%s", fromV.c_str(), toV.c_str());   // » (arrows aren't in Roboto)
                     else
                         ImGui::TextDisabled("Installed: v%s", fromV.c_str());
                 }

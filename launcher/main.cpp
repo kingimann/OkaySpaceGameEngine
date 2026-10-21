@@ -37,6 +37,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -2156,6 +2157,7 @@ static void RenderChatFileCard(const ChatFileInfo& f, float width) {
 static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
     ChatFileInfo fi;
     if (ParseChatFile(body, fi)) return ChatPreview("File: " + fi.name, n);
+    if (body.rfind("[Voice] ", 0) == 0) return "Voice message";
     std::string t = body; while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
     if (!t.empty() && FirstImageUrl(t) == t) return "Photo";
     return ChatPreview(body, n);
@@ -2169,9 +2171,363 @@ static std::string   g_attName;           // file being uploaded (composer statu
 static SDL_mutex*    g_attMutex = nullptr;
 static bool          g_attDone = false;   // (guarded) finished -> toast result
 static std::string   g_attError;          // (guarded) "" on success
-static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup);  // defined below
+static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup,
+                            int voiceSecs = -1);                                            // defined below
 static void PickAndSendAttachment(const std::string& toUid, long toGroup);                   // defined below
 static constexpr unsigned long long kMaxChatUpload = 25ULL * 1024ULL * 1024ULL;  // matches the bucket limit
+
+// ---- Voice messages ------------------------------------------------------------
+// A voice message body is "[Voice] m:ss <url>" — a 16 kHz mono WAV in the "chat"
+// bucket (older clients show it as text + a link). Recording drains SDL's
+// capture device each frame (queue mode, no callback thread); playback fetches
+// the clip once in the background (same worker as avatars) and queues it on an
+// output device.
+struct ChatVoiceInfo { int secs = 0; std::string url; };
+static bool ParseChatVoice(const std::string& body, ChatVoiceInfo& out) {
+    if (body.rfind("[Voice] ", 0) != 0) return false;
+    std::size_t sp = body.find(' ', 8);
+    int m = 0, s = 0;
+    if (sp == std::string::npos || std::sscanf(body.c_str() + 8, "%d:%d", &m, &s) != 2) return false;
+    out.secs = m * 60 + s;
+    out.url = body.substr(sp + 1);
+    return out.url.rfind("http", 0) == 0;
+}
+static std::string VoiceClock(int secs) {
+    char b[16]; std::snprintf(b, sizeof(b), "%d:%02d", secs / 60, secs % 60); return b;
+}
+static std::string VoiceMessageBody(int secs, const std::string& url) { return "[Voice] " + VoiceClock(secs) + " " + url; }
+
+static bool EnsureAudio() {
+    static int state = 0;   // 0 untried, 1 ok, -1 unavailable
+    if (state == 0) state = SDL_InitSubSystem(SDL_INIT_AUDIO) == 0 ? 1 : -1;
+    return state == 1;
+}
+
+// Microphone (Messenger-style: tap the mic, talk, then send or bin it).
+static constexpr int kVoiceRate = 16000, kVoiceMaxSecs = 120, kVoiceLevelHop = kVoiceRate / 20;
+static SDL_AudioDeviceID   g_recDev = 0;
+static bool                g_recFake = false;     // dev demo: a recording without a device
+static std::vector<Sint16> g_recPcm;
+static std::vector<float>  g_recLevels;           // loudness per 50 ms (live meter)
+static Uint32              g_recStart = 0;
+static std::string         g_recToUid;            // which chat the recording is for
+static long                g_recToGroup = 0;
+
+static bool VoiceRecording() { return g_recDev != 0 || g_recFake; }
+static bool VoiceRecordingFor(const std::string& uid, long gid) {
+    return VoiceRecording() && g_recToUid == uid && g_recToGroup == gid;
+}
+static float VoiceRecSeconds() { return VoiceRecording() ? (SDL_GetTicks() - g_recStart) / 1000.0f : 0.0f; }
+static bool StartVoiceRecord(const std::string& toUid, long toGroup) {
+    if (VoiceRecording()) return false;
+    if (g_attBusy) { Toast("An upload is already in progress", 2); return false; }
+    if (!EnsureAudio()) { Toast("Audio isn't available on this system", 2); return false; }
+    SDL_AudioSpec want{}, have{};
+    want.freq = kVoiceRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = 1024;
+    g_recDev = SDL_OpenAudioDevice(nullptr, 1, &want, &have, 0);   // SDL converts to our format
+    if (!g_recDev) { Toast("No microphone found", 2); return false; }
+    g_recPcm.clear(); g_recLevels.clear();
+    g_recToUid = toUid; g_recToGroup = toGroup; g_recStart = SDL_GetTicks();
+    SDL_PauseAudioDevice(g_recDev, 0);
+    return true;
+}
+static void PumpVoiceRecord() {   // once per frame: move captured audio into g_recPcm
+    if (!g_recDev) return;
+    Sint16 buf[2048];
+    while (Uint32 got = SDL_DequeueAudio(g_recDev, buf, sizeof(buf)))
+        g_recPcm.insert(g_recPcm.end(), buf, buf + got / sizeof(Sint16));
+    while ((g_recLevels.size() + 1) * kVoiceLevelHop <= g_recPcm.size()) {
+        const Sint16* w = g_recPcm.data() + g_recLevels.size() * kVoiceLevelHop;
+        int peak = 0;
+        for (int i = 0; i < kVoiceLevelHop; ++i) peak = std::max(peak, std::abs((int)w[i]));
+        g_recLevels.push_back(std::min(1.0f, std::sqrt(peak / 32768.0f) * 1.3f));
+    }
+}
+static bool WriteWav16(const std::string& path, const std::vector<Sint16>& pcm, int rate) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    auto u32 = [&](Uint32 v) { char b[4] = {(char)v, (char)(v >> 8), (char)(v >> 16), (char)(v >> 24)}; f.write(b, 4); };
+    auto u16 = [&](Uint16 v) { char b[2] = {(char)v, (char)(v >> 8)}; f.write(b, 2); };
+    Uint32 data = (Uint32)pcm.size() * 2;
+    f.write("RIFF", 4); u32(36 + data); f.write("WAVE", 4);
+    f.write("fmt ", 4); u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16);
+    f.write("data", 4); u32(data);
+    for (Sint16 s : pcm) u16((Uint16)s);
+    return (bool)f;
+}
+// Stop recording; send=true writes the WAV and hands it to the upload worker.
+static void FinishVoiceRecord(bool send) {
+    if (g_recDev) { PumpVoiceRecord(); SDL_CloseAudioDevice(g_recDev); g_recDev = 0; }
+    const bool fake = g_recFake; g_recFake = false;
+    std::vector<Sint16> pcm; pcm.swap(g_recPcm); g_recLevels.clear();
+    if (!send || fake) return;
+    if (pcm.size() < (std::size_t)kVoiceRate / 2) { Toast("Too short to send — hold on a little longer", 2); return; }
+    std::error_code ec;
+    fs::path dir = fs::temp_directory_path(ec) / "okayspace_voice";
+    fs::create_directories(dir, ec);
+    fs::path file = dir / ("voice-" + std::to_string(SDL_GetTicks()) + ".wav");
+    if (!WriteWav16(file.string(), pcm, kVoiceRate)) { Toast("Couldn't save the recording", 2); return; }
+    int secs = (int)((pcm.size() + kVoiceRate / 2) / kVoiceRate);
+    StartChatUpload(file.string(), g_recToUid, g_recToGroup, std::max(1, secs));
+}
+
+// Playback: decoded clips by URL + one output device for the clip playing now.
+static constexpr int kVoiceBars = 30;
+struct VoiceClip {
+    bool ok = false;                 // decoded (false = unplayable; don't retry)
+    Uint8* pcm = nullptr; Uint32 len = 0;
+    SDL_AudioSpec spec{};
+    float secs = 0, bytesPerSec = 1;
+    float bars[kVoiceBars] = {};
+};
+static std::map<std::string, VoiceClip> g_voiceClips;
+static SDL_AudioDeviceID g_playDev = 0;
+static std::string       g_playUrl;          // clip loaded on g_playDev
+static bool              g_playPaused = false;
+static Uint32            g_playFrom = 0;     // byte offset the current queue started at
+static std::string       g_voiceWant;        // tapped play before the clip arrived
+
+// Waveform placeholder until the real clip is decoded (stable per URL).
+static float VoiceBarStub(const std::string& url, int i) {
+    std::size_t h = std::hash<std::string>{}(url) ^ (std::size_t)(i * 2654435761u);
+    h ^= h >> 13; h *= 0x5bd1e995; h ^= h >> 15;
+    return 0.25f + 0.6f * (float)(h % 1000) / 1000.0f;
+}
+static fs::path VoiceCachePath(const std::string& url) {
+    std::error_code ec;
+    fs::path dir = fs::temp_directory_path(ec) / "okayspace_voice";
+    fs::create_directories(dir, ec);
+    return dir / (std::to_string(std::hash<std::string>{}(url)) + ".wav");
+}
+// The decoded clip, or nullptr while it downloads (kicked off once, in the background).
+static VoiceClip* VoiceClipFor(const std::string& url) {
+    auto it = g_voiceClips.find(url);
+    if (it != g_voiceClips.end()) return &it->second;
+    if (!g_avatarMutex) g_avatarMutex = SDL_CreateMutex();
+    SDL_LockMutex(g_avatarMutex);
+    const bool pending = g_avatarPending.count(url) != 0, failed = g_avatarFailed.count(url) != 0;
+    SDL_UnlockMutex(g_avatarMutex);
+    if (pending) return nullptr;
+    fs::path cache = VoiceCachePath(url);
+    std::error_code ec;
+    if (failed || fs::exists(cache, ec)) {
+        VoiceClip& c = g_voiceClips[url];
+        if (!failed && SDL_LoadWAV(cache.string().c_str(), &c.spec, &c.pcm, &c.len)) {
+            const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
+            c.bytesPerSec = (float)c.spec.freq * bps;
+            c.secs = c.len / c.bytesPerSec;
+            c.ok = c.len > 0;
+            // Real waveform: peak per slice (16-bit clips; anything else keeps the stub).
+            const Uint32 frames = bps ? c.len / bps : 0;
+            const bool s16 = c.spec.format == AUDIO_S16LSB || c.spec.format == AUDIO_S16MSB;
+            float top = 0.0001f;
+            for (int b = 0; b < kVoiceBars; ++b) {
+                float peak = 0;
+                if (s16 && frames) {
+                    Uint32 a = frames * b / kVoiceBars, e = frames * (b + 1) / kVoiceBars;
+                    for (Uint32 f = a; f < e; ++f) {
+                        Sint16 v; std::memcpy(&v, c.pcm + (std::size_t)f * bps, 2);
+                        if (c.spec.format == AUDIO_S16MSB) v = (Sint16)SDL_Swap16((Uint16)v);
+                        peak = std::max(peak, std::abs((float)v) / 32768.0f);
+                    }
+                } else peak = VoiceBarStub(url, b);
+                c.bars[b] = peak; top = std::max(top, peak);
+            }
+            for (float& v : c.bars) v = 0.12f + 0.88f * std::sqrt(v / top);
+        }
+        return &c;
+    }
+    SDL_LockMutex(g_avatarMutex); g_avatarPending.insert(url); SDL_UnlockMutex(g_avatarMutex);
+    AvatarDl* d = new AvatarDl{url, cache.string()};
+    if (SDL_Thread* t = SDL_CreateThread(AvatarDlWorker, "okay-voicedl", d)) SDL_DetachThread(t);
+    else { SDL_LockMutex(g_avatarMutex); g_avatarPending.erase(url); SDL_UnlockMutex(g_avatarMutex); delete d; }
+    return nullptr;
+}
+static void StopVoice() {
+    if (g_playDev) { SDL_CloseAudioDevice(g_playDev); g_playDev = 0; }
+    g_playUrl.clear(); g_playPaused = false; g_playFrom = 0;
+}
+// Start (or restart) a clip at a fraction 0..1 of its length.
+static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
+    if (!c.ok) { Toast("Couldn't play this voice message", 2); return; }
+    if (!EnsureAudio()) { Toast("Audio isn't available on this system", 2); return; }
+    if (g_playUrl != url || !g_playDev) {
+        StopVoice();
+        SDL_AudioSpec have{};
+        g_playDev = SDL_OpenAudioDevice(nullptr, 0, &c.spec, &have, 0);
+        if (!g_playDev) { Toast("No audio output device", 2); return; }
+        g_playUrl = url;
+    }
+    SDL_ClearQueuedAudio(g_playDev);
+    const Uint32 frame = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
+    Uint32 off = (Uint32)(std::clamp(frac, 0.0f, 1.0f) * c.len);
+    off -= off % std::max<Uint32>(1, frame);
+    if (off >= c.len) off = 0;
+    g_playFrom = off;
+    SDL_QueueAudio(g_playDev, c.pcm + off, c.len - off);
+    SDL_PauseAudioDevice(g_playDev, 0);
+    g_playPaused = false;
+}
+static float VoicePlayFrac(const std::string& url, const VoiceClip& c) {   // -1 = not this clip
+    if (!g_playDev || g_playUrl != url || !c.len) return -1.0f;
+    Uint32 left = SDL_GetQueuedAudioSize(g_playDev);
+    return std::min(1.0f, (float)(c.len - std::min(left, c.len)) / c.len);
+}
+static void PumpVoicePlayback() {   // once per frame: finish clips, start "wanted" ones
+    if (g_playDev && !g_playPaused && SDL_GetQueuedAudioSize(g_playDev) == 0) StopVoice();
+    if (!g_voiceWant.empty()) {
+        if (VoiceClip* c = VoiceClipFor(g_voiceWant)) { std::string u = g_voiceWant; g_voiceWant.clear(); PlayVoiceAt(u, *c, 0.0f); }
+    }
+}
+
+static void DrawMicIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
+    float w = s * 0.30f, top = c.y - s * 0.44f, h = s * 0.48f;
+    d->AddRectFilled(ImVec2(c.x - w * 0.5f, top), ImVec2(c.x + w * 0.5f, top + h), col, w * 0.5f);
+    d->PathArcTo(ImVec2(c.x, c.y - s * 0.10f), s * 0.27f, 0.0f, 3.14159265f, 16);
+    d->PathStroke(col, 0, 1.7f);
+    d->AddLine(ImVec2(c.x, c.y + s * 0.17f), ImVec2(c.x, c.y + s * 0.34f), col, 1.7f);
+    d->AddLine(ImVec2(c.x - s * 0.15f, c.y + s * 0.34f), ImVec2(c.x + s * 0.15f, c.y + s * 0.34f), col, 1.7f);
+}
+static void DrawBinIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
+    float w = s * 0.42f, top = c.y - s * 0.22f;
+    d->AddLine(ImVec2(c.x - w * 0.62f, top), ImVec2(c.x + w * 0.62f, top), col, 1.7f);
+    d->AddLine(ImVec2(c.x - w * 0.18f, top - s * 0.09f), ImVec2(c.x + w * 0.18f, top - s * 0.09f), col, 1.7f);
+    d->AddQuad(ImVec2(c.x - w * 0.5f, top + 2), ImVec2(c.x + w * 0.5f, top + 2),
+               ImVec2(c.x + w * 0.38f, c.y + s * 0.30f), ImVec2(c.x - w * 0.38f, c.y + s * 0.30f), col, 1.6f);
+}
+
+// The voice bubble body: play/pause, waveform (tap to seek), time.
+static float ChatVoiceWidth(float maxW) { return std::min(maxW, 250.0f); }
+static void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 accent) {
+    const float h = 38.0f, r = 16.0f;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    VoiceClip* clip = VoiceClipFor(v.url);
+    const float frac = clip ? VoicePlayFrac(v.url, *clip) : -1.0f;
+    const bool playing = frac >= 0.0f && !g_playPaused;
+    const bool loading = !clip || g_voiceWant == v.url;
+
+    ImGui::PushID(v.url.c_str());
+    // Play / pause disc.
+    ImVec2 cc(p.x + r + 1, p.y + h * 0.5f);
+    bool tap = ImGui::InvisibleButton("##vplay", ImVec2(r * 2 + 2, h));
+    bool hov = ImGui::IsItemHovered();
+    const float k = hov ? 1.7f : 1.5f;   // received: a brighter take on the chat colour so it pops off the grey bubble
+    ImU32 discC = mine ? IM_COL32(255, 255, 255, hov ? 255 : 235)
+                       : ImGui::GetColorU32(ImVec4(std::min(1.0f, accent.x * k), std::min(1.0f, accent.y * k), std::min(1.0f, accent.z * k), 1.0f));
+    ImU32 glyphC = mine ? ImGui::GetColorU32(accent) : IM_COL32(255, 255, 255, 255);
+    d->AddCircleFilled(cc, r, discC, 28);
+    if (loading && g_voiceWant == v.url) {   // spinner while the clip downloads
+        float t = (float)ImGui::GetTime() * 6.0f;
+        d->PathArcTo(cc, r * 0.5f, t, t + 3.14159265f * 1.3f, 16);
+        d->PathStroke(glyphC, 0, 2.0f);
+    } else if (playing) {
+        d->AddRectFilled(ImVec2(cc.x - 5, cc.y - 6), ImVec2(cc.x - 1.5f, cc.y + 6), glyphC, 1.0f);
+        d->AddRectFilled(ImVec2(cc.x + 1.5f, cc.y - 6), ImVec2(cc.x + 5, cc.y + 6), glyphC, 1.0f);
+    } else {
+        d->AddTriangleFilled(ImVec2(cc.x - 4, cc.y - 7), ImVec2(cc.x - 4, cc.y + 7), ImVec2(cc.x + 7, cc.y), glyphC);
+    }
+    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (tap) {
+        if (!clip) g_voiceWant = (g_voiceWant == v.url) ? std::string() : v.url;
+        else if (frac >= 0.0f) { g_playPaused = !g_playPaused; SDL_PauseAudioDevice(g_playDev, g_playPaused ? 1 : 0); }
+        else PlayVoiceAt(v.url, *clip, 0.0f);
+    }
+
+    // Waveform (tap/drag to seek) + time on the right.
+    const int total = clip && clip->ok ? (int)(clip->secs + 0.5f) : v.secs;
+    std::string tm = VoiceClock(frac >= 0.0f && clip ? (int)(frac * clip->secs) : total);
+    float tw = ImGui::CalcTextSize("0:00").x + 6;
+    float wx = p.x + r * 2 + 12, ww = width - (r * 2 + 12) - tw - 6;
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorScreenPos(ImVec2(wx, p.y));
+    if (ImGui::InvisibleButton("##vwave", ImVec2(std::max(10.0f, ww), h)) && clip && clip->ok) {
+        PlayVoiceAt(v.url, *clip, (ImGui::GetIO().MousePos.x - wx) / ww);
+    }
+    if (ImGui::IsItemHovered() && clip && clip->ok) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    const float step = ww / kVoiceBars, bw = std::max(2.0f, step * 0.55f);
+    ImU32 onC  = mine ? IM_COL32(255, 255, 255, 255) : ImGui::GetColorU32(ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
+    ImU32 offC = mine ? IM_COL32(255, 255, 255, 105) : IM_COL32(200, 210, 230, 95);
+    for (int b = 0; b < kVoiceBars; ++b) {
+        float a = clip && clip->ok ? clip->bars[b] : VoiceBarStub(v.url, b);
+        float bh = std::max(3.0f, a * (h - 14));
+        float x = wx + b * step;
+        bool on = frac >= 0.0f && (b + 0.5f) / kVoiceBars <= frac;
+        d->AddRectFilled(ImVec2(x, cc.y - bh * 0.5f), ImVec2(x + bw, cc.y + bh * 0.5f), on ? onC : offC, bw * 0.5f);
+    }
+    if (frac >= 0.0f) {   // playhead dot
+        float hx = wx + frac * (ww - bw) + bw * 0.5f;
+        d->AddCircleFilled(ImVec2(hx, cc.y), 5.0f, onC, 14);
+    }
+    ImVec2 ts = ImGui::CalcTextSize(tm.c_str());
+    d->AddText(ImVec2(p.x + width - ts.x, cc.y - ts.y * 0.5f),
+               mine ? IM_COL32(235, 240, 255, 230) : IM_COL32(200, 208, 225, 220), tm.c_str());
+    ImGui::PopID();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
+    ImGui::Dummy(ImVec2(width, 0));
+}
+
+// Composer while recording: [bin] ● 0:04 ▮▮▮▮ live level  [Send]
+static void DrawVoiceRecorderBar(float h, ImVec4 sendCol) {
+    if (VoiceRecSeconds() >= kVoiceMaxSecs) { FinishVoiceRecord(true); return; }
+    const float sendW = 58.0f;
+    float w = ImGui::GetContentRegionAvail().x - sendW - 8;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(41, 46, 59, 255), 12.0f);
+    // Discard.
+    ImGui::SetCursorScreenPos(p);
+    bool bin = ImGui::InvisibleButton("##vbin", ImVec2(h, h));
+    bool bhov = ImGui::IsItemHovered();
+    if (bhov) ImGui::SetTooltip("Discard recording");
+    DrawBinIcon(d, ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.9f, bhov ? IM_COL32(255, 110, 110, 255) : IM_COL32(205, 212, 228, 230));
+    // Pulsing red dot + clock.
+    float pulse = 0.55f + 0.45f * std::sin((float)ImGui::GetTime() * 5.0f);
+    float cy = p.y + h * 0.5f, x = p.x + h + 6;
+    d->AddCircleFilled(ImVec2(x + 5, cy), 5.0f, IM_COL32(240, 70, 70, (int)(255 * pulse)), 16);
+    std::string clk = VoiceClock((int)VoiceRecSeconds());
+    ImVec2 cs = ImGui::CalcTextSize(clk.c_str());
+    d->AddText(ImVec2(x + 16, cy - cs.y * 0.5f), IM_COL32(240, 243, 250, 255), clk.c_str());
+    // Live level meter: newest on the right, scrolling left.
+    float mx0 = x + 16 + ImGui::CalcTextSize("00:00").x + 10, mx1 = p.x + w - 12;
+    const float step = 5.0f;
+    int n = (int)((mx1 - mx0) / step);
+    for (int i = 0; i < n; ++i) {
+        int li = (int)g_recLevels.size() - n + i;
+        float lv = li >= 0 ? g_recLevels[li] : 0.0f;
+        float bh = std::max(2.0f, lv * (h - 12));
+        float bx = mx0 + i * step;
+        d->AddRectFilled(ImVec2(bx, cy - bh * 0.5f), ImVec2(bx + 3, cy + bh * 0.5f),
+                         li >= 0 ? IM_COL32(235, 240, 250, 220) : IM_COL32(235, 240, 250, 50), 1.5f);
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p.x + w + 8, p.y));
+    auto brighten = [](ImVec4 c, float k) { return ImVec4(std::min(1.0f, c.x * k), std::min(1.0f, c.y * k), std::min(1.0f, c.z * k), 1.0f); };
+    ImGui::PushStyleColor(ImGuiCol_Button, brighten(sendCol, 1.25f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, brighten(sendCol, 1.45f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+    bool send = ImGui::Button("Send##voice", ImVec2(sendW, h));
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+    if (bin) FinishVoiceRecord(false);
+    else if (send) FinishVoiceRecord(true);
+}
+// Round mic button that stands in for Send while the composer is empty.
+static void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const std::string& toUid, long toGroup) {
+    auto brighten = [](ImVec4 c, float k) { return ImVec4(std::min(1.0f, c.x * k), std::min(1.0f, c.y * k), std::min(1.0f, c.z * k), 1.0f); };
+    ImGui::PushStyleColor(ImGuiCol_Button, brighten(col, 1.25f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, brighten(col, 1.45f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    if (size.x <= 0) size.x = ImGui::GetContentRegionAvail().x;
+    if (size.y <= 0) size.y = ImGui::GetFrameHeight();
+    bool click = ImGui::Button(id, size);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Record a voice message");
+    DrawMicIcon(ImGui::GetWindowDrawList(), ImVec2(p.x + size.x * 0.5f, p.y + size.y * 0.5f),
+                std::min(size.y, 26.0f), IM_COL32(255, 255, 255, 255));
+    if (click) StartVoiceRecord(toUid, toGroup);
+}
 
 // ---- Background chat poll state ---------------------------------------------
 // The floating Chat window polled messages (every 4s), typing (every 2.5s),
@@ -2355,7 +2711,9 @@ static void DrawGroupConversation(
 
         float bubbleMax = std::min(avW * 0.72f, 460.0f); if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
         ChatFileInfo gfile; const bool gIsFile = ParseChatFile(m.body, gfile);
-        float bodyW = gIsFile ? ChatFileCardWidth(gfile, bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
+        ChatVoiceInfo gvoice; const bool gIsVoice = !gIsFile && ParseChatVoice(m.body, gvoice);
+        float bodyW = gIsFile ? ChatFileCardWidth(gfile, bubbleMax - padX*2)
+                    : gIsVoice ? ChatVoiceWidth(bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
         char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
         std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
         float metaW = ImGui::CalcTextSize(meta.c_str()).x;
@@ -2382,6 +2740,7 @@ static void DrawGroupConversation(
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
         if (gIsFile) RenderChatFileCard(gfile, ImGui::GetContentRegionAvail().x);
+        else if (gIsVoice) RenderChatVoice(gvoice, ImGui::GetContentRegionAvail().x, m.mine, kAccentDim);
         else RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
         {   // Timestamp tucked bottom-right, small + dim.
             float av2 = ImGui::GetContentRegionAvail().x;
@@ -2509,6 +2868,8 @@ static void DrawGroupConversation(
         if (ahov) ImGui::SetTooltip("Send a photo or file (up to 25 MB)");
         ImGui::SameLine(0, 6);
     }
+    if (VoiceRecording() && !VoiceRecordingFor(std::string(), gid)) FinishVoiceRecord(false);   // switched chats
+    if (VoiceRecordingFor(std::string(), gid)) { DrawVoiceRecorderBar(ImGui::GetTextLineHeight() + 14.0f, kAccentDim); return; }
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 7));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
@@ -2521,6 +2882,10 @@ static void DrawGroupConversation(
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
     ImGui::SameLine(0, 8);
+    if (!gInput[0] && !gEditId && !g_attBusy) {   // empty composer -> mic (WhatsApp)
+        DrawVoiceMicButton("##gmic", ImVec2(-1, 0), kAccentDim, std::string(), gid);
+        return;
+    }
     ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.36f, 0.66f, 1.0f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
@@ -2546,7 +2911,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
         SDL_UnlockMutex(g_attMutex);
         if (upFinished) Toast(upErr.empty() ? "Sent " + g_attName : upErr, upErr.empty() ? 1 : 2);
     }
-    if (!g_chatWinOpen && !kChatDemo) return;
+    PumpVoiceRecord();
+    PumpVoicePlayback();
+    if (!g_chatWinOpen && !kChatDemo) { if (VoiceRecording()) FinishVoiceRecord(false); return; }
     static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
     static std::vector<okay::Messages::ConversationPreview> convs; static Uint32 convsNext = 0;
     static std::string selUid, selName, selAvatar; static bool selOnline = false;
@@ -2628,6 +2995,30 @@ void DrawChatWindow(okay::account::AccountService& account) {
             add(7,"@you the release notes are up: https://github.com/kingimann/OkaySpaceGameEngine/releases",120,false);
             add(8, okay::Messages::FileMessageBody("Level_Design_v3.pdf", 2516582ULL,
                    "https://example.com/storage/v1/object/public/chat/demo/Level_Design_v3.pdf").c_str(), 60, true);
+            if (std::getenv("OKAY_CHAT_DEMO_VOICE")) {   // voice notes with a synthetic, speech-like clip
+                const std::string u1 = "https://example.com/storage/v1/object/public/chat/demo/voice-a.wav";
+                const std::string u2 = "https://example.com/storage/v1/object/public/chat/demo/voice-b.wav";
+                for (const auto& u : {u1, u2}) {
+                    std::vector<Sint16> pcm((std::size_t)kVoiceRate * (u == u1 ? 7 : 4));
+                    unsigned rng = (unsigned)std::hash<std::string>{}(u);
+                    for (std::size_t i = 0; i < pcm.size(); ++i) {
+                        float t = (float)i / kVoiceRate;
+                        float env = std::max(0.0f, std::sin(t * 2.3f) * std::sin(t * 7.1f + 1.0f));   // syllables
+                        rng = rng * 1664525u + 1013904223u;
+                        pcm[i] = (Sint16)(env * 20000.0f * (((rng >> 9) & 0xFFFF) / 32768.0f - 1.0f));
+                    }
+                    WriteWav16(VoiceCachePath(u).string(), pcm, kVoiceRate);
+                }
+                add(9, VoiceMessageBody(7, u1).c_str(), 40, false);
+                add(10, VoiceMessageBody(4, u2).c_str(), 20, true);
+                if (std::getenv("OKAY_CHAT_DEMO_PLAY")) {   // mid-playback state (needs SDL_AUDIODRIVER=dummy headless)
+                    if (VoiceClip* c = VoiceClipFor(u1)) { PlayVoiceAt(u1, *c, 0.42f); SDL_PauseAudioDevice(g_playDev, 1); g_playPaused = true; }
+                }
+                if (std::getenv("OKAY_CHAT_DEMO_REC")) {    // composer in recording mode
+                    g_recFake = true; g_recToUid = "demo-uid"; g_recToGroup = 0; g_recStart = SDL_GetTicks() - 4200;
+                    for (int i = 0; i < 160; ++i) g_recLevels.push_back(std::max(0.05f, std::fabs(std::sin(i * 0.37f) * std::sin(i * 0.11f + 0.4f))));
+                }
+            }
             if (std::getenv("OKAY_CHAT_DEMO_MEDIA")) openMedia = true;
             peerRead = 4;   // 1..4 read (blue ticks), 6 delivered (grey ticks)
             // Showcase per-chat extras: theme colour, nickname, a starred message.
@@ -3183,7 +3574,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 float bubbleMax = std::min(avW * 0.72f, 460.0f);
                 if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
                 ChatFileInfo fileInfo; const bool isFile = ParseChatFile(m.body, fileInfo);   // "[File] ..." -> card
-                float bodyW = isFile ? ChatFileCardWidth(fileInfo, bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
+                ChatVoiceInfo voice; const bool isVoice = !isFile && ParseChatVoice(m.body, voice);
+                float bodyW = isFile ? ChatFileCardWidth(fileInfo, bubbleMax - padX*2)
+                            : isVoice ? ChatVoiceWidth(bubbleMax - padX*2) : MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
                 // reply quote + time contribute to width
                 const okay::DirectMessage* rep = (m.replyTo && byId.count(m.replyTo)) ? byId[m.replyTo] : nullptr;
                 std::string repText = rep ? ChatPreview(rep->body, 36) : "";
@@ -3195,7 +3588,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 const bool starred = g_starred.count(m.id) != 0;
                 if (starred) metaW += 14.0f;          // room for the star marker
                 bool bareEmoji = emojiOnly && !rep;   // Telegram-style big, background-less emoji
-                std::string imgUrl = (bareEmoji || isFile) ? std::string() : FirstImageUrl(m.body);
+                std::string imgUrl = (bareEmoji || isFile || isVoice) ? std::string() : FirstImageUrl(m.body);
                 // +2px slack on the body so the glyphs never butt against the
                 // content edge (absorbs wrap/measure rounding -> no "text spilling
                 // out of the bubble").
@@ -3277,6 +3670,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     }
                 } else {
                     if (isFile) RenderChatFileCard(fileInfo, ImGui::GetContentRegionAvail().x);
+                    else if (isVoice) RenderChatVoice(voice, ImGui::GetContentRegionAvail().x, m.mine, myBubble);
                     else RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
                 }
                 // Inline image preview for an image link in the message.
@@ -3598,6 +3992,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (lines > 4) lines = 4;
             float inH = ImGui::GetTextLineHeight() * lines + 16;
             if (input[0] && !editId && now - typingSentAt > 2000) { g_chatTypingReq = true; typingSentAt = now; }
+            if (VoiceRecording() && !VoiceRecordingFor(selUid, 0)) FinishVoiceRecord(false);   // switched chats
+            if (VoiceRecordingFor(selUid, 0)) DrawVoiceRecorderBar(inH, myBubble);
+            else {
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 7));
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
@@ -3613,13 +4010,16 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::PushStyleColor(ImGuiCol_Button, brighten(myBubble, 1.25f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, brighten(myBubble, 1.45f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
-            if ((ImGui::Button(editId ? "Save" : "Send", ImVec2(58, inH)) || send) && input[0]) {
+            const bool micMode = !input[0] && !editId && !g_attBusy;   // empty composer -> mic (WhatsApp)
+            if (!micMode && (ImGui::Button(editId ? "Save" : "Send", ImVec2(58, inH)) || send) && input[0]) {
                 if (editId) { if (dm.Edit(editId, input)) { editId = 0; input[0] = '\0'; g_chatForceLog = true; } }
                 else if (dm.Send(selUid, input, replyTo)) { input[0] = '\0'; replyTo = 0; drafts.erase(selUid); g_chatForceLog = true; }
                 ImGui::SetKeyboardFocusHere(-1);
             }
             ImGui::PopStyleVar();
             ImGui::PopStyleColor(2);
+            if (micMode) DrawVoiceMicButton("##dmmic", ImVec2(58, inH), myBubble, selUid, 0);
+            }   // not recording
             }   // !selBlocked composer
         }
         ImGui::EndChild();
@@ -4074,7 +4474,7 @@ static int AccountInfoWorker(void*) {
 // Upload worker: own account service (thread-safe, like the pollers), upload to
 // the "chat" Storage bucket, then send — images as the bare URL (rendered
 // inline), anything else as a "[File] name (size) url" card.
-struct ChatUploadJob { std::string path, toUid; long toGroup = 0; };
+struct ChatUploadJob { std::string path, toUid; long toGroup = 0; int voiceSecs = -1; };
 static ChatUploadJob g_attJob;
 static int ChatUploadWorker(void*) {
     ChatUploadJob job = g_attJob;
@@ -4087,21 +4487,23 @@ static int ChatUploadWorker(void*) {
             std::string name = fs::path(job.path).filename().string();
             std::error_code ec; auto sz = fs::file_size(fs::path(job.path), ec);
             bool isImg = okay::Messages::MimeFor(name).rfind("image/", 0) == 0;
-            std::string body = isImg ? url : okay::Messages::FileMessageBody(name, ec ? 0 : (unsigned long long)sz, url);
+            std::string body = job.voiceSecs >= 0 ? VoiceMessageBody(job.voiceSecs, url)
+                             : isImg ? url : okay::Messages::FileMessageBody(name, ec ? 0 : (unsigned long long)sz, url);
             bool ok = job.toGroup > 0 ? dm.SendGroup(job.toGroup, body) : dm.Send(job.toUid, body);
             if (!ok) err = "Uploaded, but sending the message failed.";
         } else if (err.empty()) err = "Upload failed.";
     } catch (...) { err = "Upload failed."; }
+    if (job.voiceSecs >= 0) { std::error_code ec; fs::remove(fs::path(job.path), ec); }   // temp recording
     if (g_attMutex) { SDL_LockMutex(g_attMutex); g_attError = err; g_attDone = true; SDL_UnlockMutex(g_attMutex); }
     g_chatForceLog = true;
     g_attBusy = false;
     return 0;
 }
-static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup) {
+static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup, int voiceSecs) {
     if (g_attBusy || path.empty()) return;
     if (!g_attMutex) g_attMutex = SDL_CreateMutex();
-    g_attJob = ChatUploadJob{path, toUid, toGroup};
-    g_attName = fs::path(path).filename().string();
+    g_attJob = ChatUploadJob{path, toUid, toGroup, voiceSecs};
+    g_attName = voiceSecs >= 0 ? std::string("voice message") : fs::path(path).filename().string();
     g_attBusy = true;
     if (SDL_Thread* t = SDL_CreateThread(ChatUploadWorker, "okay-upload", nullptr)) SDL_DetachThread(t);
     else g_attBusy = false;

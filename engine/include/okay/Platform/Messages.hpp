@@ -237,6 +237,180 @@ public:
         return o.empty() ? 0 : std::atol(Field(o[0], "last_read_id").c_str());
     }
 
+    // ---- Group chats (multi-person DMs; see docs/sql/group_chats.sql) ------
+    // A group is a membership-gated conversation (group_convos / group_members /
+    // group_messages), modelled on the Servers stack rather than the 1:1
+    // `messages` table, so existing DMs are untouched.
+    struct GroupConvo {
+        long        id = 0;
+        std::string title;          // may be empty -> the UI derives one from members
+        std::string owner;          // owner uuid
+        int         members = 0;    // member count
+        std::string lastBody;
+        std::string lastSender;     // sender_name of the last message
+        long        when = 0;
+        long        lastId = 0;
+        long        lastRead = 0;   // my last_read marker (unread = lastId > lastRead)
+    };
+    struct GroupMessage {
+        long        id = 0;
+        std::string body;
+        std::string sender;         // sender uuid
+        std::string senderName;     // denormalized display name
+        long        when = 0;
+        bool        mine = false;
+        bool        edited = false;
+        long        replyTo = 0;
+    };
+
+    // Create a group with an initial member set (uuids, excluding me — the RPC
+    // adds me as owner). Returns the new conversation id (0 on failure).
+    long CreateGroup(const std::string& title, const std::vector<std::string>& memberUids) {
+        if (!acct_.IsLoggedIn()) return 0;
+        std::string arr = "[";
+        for (std::size_t i = 0; i < memberUids.size(); ++i) { if (i) arr += ","; arr += JStr(memberUids[i]); }
+        arr += "]";
+        auto r = acct_.Api("/rest/v1/rpc/create_group", "POST",
+                           "{\"p_title\":" + JStr(title) + ",\"p_members\":" + arr + "}");
+        if (!r.ok) return 0;
+        auto o = SplitObjects(r.body);
+        return o.empty() ? 0 : std::atol(Field(o[0], "id").c_str());
+    }
+
+    // Every group I'm in, with its last message + my unread marker, most-recent
+    // first. One RPC round-trip (my_groups).
+    std::vector<GroupConvo> MyGroups() {
+        std::vector<GroupConvo> out;
+        if (!acct_.IsLoggedIn()) return out;
+        auto r = acct_.Api("/rest/v1/rpc/my_groups", "POST", "{}");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) {
+            GroupConvo g;
+            g.id        = std::atol(Field(o, "convo_id").c_str());
+            g.title     = Field(o, "title");
+            g.owner     = Field(o, "owner");
+            g.members   = std::atoi(Field(o, "member_count").c_str());
+            g.lastId    = std::atol(Field(o, "last_id").c_str());
+            g.lastBody  = Field(o, "last_body");
+            g.lastSender= Field(o, "last_sender");
+            g.when      = ParseIso(Field(o, "last_when"));
+            g.lastRead  = std::atol(Field(o, "last_read").c_str());
+            if (g.id) out.push_back(g);
+        }
+        return out;
+    }
+
+    // Member uuids of a group.
+    std::vector<std::string> GroupMemberIds(long convoId) {
+        std::vector<std::string> out;
+        if (!acct_.IsLoggedIn() || convoId <= 0) return out;
+        auto r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
+                           "&select=member", "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) { std::string u = Field(o, "member"); if (!u.empty()) out.push_back(u); }
+        return out;
+    }
+
+    // The messages of a group, oldest first.
+    std::vector<GroupMessage> GroupThread(long convoId) {
+        std::vector<GroupMessage> out;
+        if (!acct_.IsLoggedIn() || convoId <= 0) return out;
+        std::string mine = MyId();
+        auto r = acct_.Api("/rest/v1/group_messages?convo_id=eq." + std::to_string(convoId) +
+                           "&select=id,sender,sender_name,body,created_at,edited,reply_to"
+                           "&order=created_at.asc", "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) {
+            GroupMessage m;
+            m.id        = std::atol(Field(o, "id").c_str());
+            m.sender    = Field(o, "sender");
+            m.senderName= Field(o, "sender_name");
+            m.body      = Field(o, "body");
+            m.when      = ParseIso(Field(o, "created_at"));
+            m.edited    = Field(o, "edited") == "true";
+            m.replyTo   = std::atol(Field(o, "reply_to").c_str());
+            m.mine      = !mine.empty() && m.sender == mine;
+            out.push_back(m);
+        }
+        return out;
+    }
+
+    // Send a message to a group (optionally a reply). sender_name is denormalized
+    // so the UI can show the author without a profiles join per row.
+    bool SendGroup(long convoId, const std::string& body, long replyTo = 0) {
+        if (!acct_.IsLoggedIn() || convoId <= 0 || body.empty()) return false;
+        std::string j = "{\"convo_id\":" + std::to_string(convoId) + ",\"body\":" + JStr(body) +
+                        ",\"sender_name\":" + JStr(acct_.CurrentSession().username);
+        if (replyTo > 0) j += ",\"reply_to\":" + std::to_string(replyTo);
+        j += "}";
+        return acct_.Api("/rest/v1/group_messages", "POST", j).ok;
+    }
+    bool EditGroup(long messageId, const std::string& body) {
+        if (!acct_.IsLoggedIn() || messageId <= 0 || body.empty()) return false;
+        return acct_.Api("/rest/v1/group_messages?id=eq." + std::to_string(messageId), "PATCH",
+                         "{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
+    }
+    bool DeleteGroup(long messageId) {
+        if (!acct_.IsLoggedIn() || messageId <= 0) return false;
+        return acct_.Api("/rest/v1/group_messages?id=eq." + std::to_string(messageId), "DELETE").ok;
+    }
+
+    // Membership management: add (owner only, via RPC), leave (self), rename (owner).
+    bool AddGroupMember(long convoId, const std::string& uid) {
+        if (!acct_.IsLoggedIn() || convoId <= 0 || uid.empty()) return false;
+        return acct_.Api("/rest/v1/rpc/add_group_member", "POST",
+                         "{\"p_convo\":" + std::to_string(convoId) + ",\"p_member\":" + JStr(uid) + "}").ok;
+    }
+    bool LeaveGroup(long convoId) {
+        if (!acct_.IsLoggedIn() || convoId <= 0) return false;
+        std::string mine = MyId(); if (mine.empty()) return false;
+        return acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
+                         "&member=eq." + mine, "DELETE").ok;
+    }
+    bool RenameGroup(long convoId, const std::string& title) {
+        if (!acct_.IsLoggedIn() || convoId <= 0) return false;
+        return acct_.Api("/rest/v1/group_convos?id=eq." + std::to_string(convoId), "PATCH",
+                         "{\"title\":" + JStr(title) + "}").ok;
+    }
+
+    // Mark the group read up to lastId (updates my last_read row).
+    bool MarkGroupRead(long convoId, long lastId) {
+        if (!acct_.IsLoggedIn() || convoId <= 0 || lastId <= 0) return false;
+        std::string mine = MyId(); if (mine.empty()) return false;
+        return acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
+                         "&member=eq." + mine, "PATCH",
+                         "{\"last_read\":" + std::to_string(lastId) + "}").ok;
+    }
+
+    // Group reactions (scope 'group'; shares the message_reactions table). Mirror
+    // the DM React/Reactions/MyReactions API.
+    bool GroupReact(long messageId, const std::string& emoji, bool on) {
+        if (!acct_.IsLoggedIn() || messageId <= 0 || emoji.empty()) return false;
+        if (on)
+            return acct_.Api("/rest/v1/message_reactions", "POST",
+                             "{\"scope\":\"group\",\"target_id\":" + std::to_string(messageId) +
+                             ",\"emoji\":" + JStr(emoji) + "}", "Prefer: resolution=ignore-duplicates").ok;
+        return acct_.Api("/rest/v1/message_reactions?scope=eq.group&target_id=eq." +
+                         std::to_string(messageId) + "&emoji=eq." + emoji, "DELETE").ok;
+    }
+    std::map<long, std::map<std::string,long>> GroupReactions() {
+        std::map<long, std::map<std::string,long>> out;
+        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id,emoji&scope=eq.group", "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body))
+            out[std::atol(Field(o,"target_id").c_str())][Field(o,"emoji")] += 1;
+        return out;
+    }
+    std::map<long, std::set<std::string>> GroupMyReactions() {
+        std::map<long, std::set<std::string>> out;
+        std::string mine = MyId(); if (mine.empty()) return out;
+        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id,emoji&scope=eq.group&reactor=eq." + mine, "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body))
+            out[std::atol(Field(o,"target_id").c_str())].insert(Field(o,"emoji"));
+        return out;
+    }
+
 private:
     okay::account::AccountService& acct_;
     std::string myId_;

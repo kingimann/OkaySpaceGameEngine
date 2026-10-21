@@ -2181,9 +2181,9 @@ static void DrawGroupConversation(
     for (const auto& m : glog) {
         bool newSender = firstMsg || m.sender != prevSender;
         firstMsg = false; prevSender = m.sender;
-        ImGui::Dummy(ImVec2(0, newSender ? 6.0f : 1.0f));
+        ImGui::Dummy(ImVec2(0, newSender ? 9.0f : 2.0f));
 
-        float bubbleMax = avW * 0.72f; if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
+        float bubbleMax = std::min(avW * 0.72f, 460.0f); if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
         float bodyW = MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
         char tbuf[24] = ""; if (m.when>0){ std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(tbuf,sizeof(tbuf),"%H:%M",tm); }
         std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
@@ -2726,11 +2726,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImGui::SetCursorPosX(baseX); ImGui::Dummy(ImVec2(0, 2));
                 }
                 bool grouped = !first && prevMine == m.mine && (m.when - prevWhen) < 300 && (m.when > 0);
-                ImGui::Dummy(ImVec2(0, grouped ? 1.0f : 6.0f));
+                ImGui::Dummy(ImVec2(0, grouped ? 2.0f : 9.0f));
 
                 int ecount = 0; bool emojiOnly = IsEmojiOnly(m.body, ecount);
                 const float bigEm = ImGui::GetTextLineHeight() * 2.3f;
-                float bubbleMax = avW * 0.70f; if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
+                // Cap the bubble width so it hugs its text instead of stretching
+                // across a wide window (Messenger/iMessage keep bubbles narrow).
+                float bubbleMax = std::min(avW * 0.72f, 460.0f);
+                if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
                 float bodyW = MeasureChatBodyWidth(m.body, bubbleMax - padX*2);
                 // reply quote + time contribute to width
                 const okay::DirectMessage* rep = (m.replyTo && byId.count(m.replyTo)) ? byId[m.replyTo] : nullptr;

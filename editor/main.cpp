@@ -2405,18 +2405,30 @@ const char* StarterScript(const std::string& lang) {
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    // OkayScript is its own tiny language — not C#. No class, no types, no
-    // semicolons, no boilerplate: the whole file just runs every frame, and one
-    // powerful builtin per line IS a full behaviour. Write almost nothing, do a lot.
-    return "// The whole file runs every frame. Move with the arrow keys / WASD:\n"
-           "on_key_move(5)\n"
+    // OkayScript defaults to a C#/Unity-style class: the class is your
+    // component, Start() runs once, Update(float dt) runs every frame. Types and
+    // semicolons are supported (and optional). The minimal one-liner style still
+    // works too — delete the class and just write `on_key_move(5)`.
+    return "// C#/Unity-style OkayScript. The class is your component.\n"
+           "public class NewScript : OkaySource\n"
+           "{\n"
+           "    float speed = 5f;\n"
            "\n"
-           "// More one-liners to try (each is a complete behaviour):\n"
-           "//   spin(90)                        turn forever\n"
-           "//   follow(\"Player\", 3)             chase an object\n"
-           "//   if (key_down(\"space\")) jump(8)  jump on Space\n"
-           "//\n"
-           "// Need setup or events? Add functions: start()  update(dt)  on_collision(other)\n";
+           "    // Runs once when the object starts.\n"
+           "    void Start()\n"
+           "    {\n"
+           "        transform.position.x = 0;\n"
+           "        transform.position.y = 0;\n"
+           "    }\n"
+           "\n"
+           "    // Runs every frame. Move with the arrow keys / WASD.\n"
+           "    void Update(float dt)\n"
+           "    {\n"
+           "        transform.position.x += axis_x() * speed * dt;\n"
+           "        transform.position.y += axis_y() * speed * dt;\n"
+           "        if (key_down(\"space\")) log(\"jump!\");\n"
+           "    }\n"
+           "}\n";
 }
 
 // A filename stem -> a valid class identifier (letters/digits/_, no leading digit).

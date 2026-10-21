@@ -221,11 +221,38 @@ public:
     // ---- Read receipts ----------------------------------------------------
     // Record that I've read up to message `lastId` in my conversation with
     // `peer` (upsert on (reader, peer)); drives the other side's "Seen" marker.
+    // Also stamps updated_at: re-sent every few seconds while the conversation
+    // is open and focused, that doubles as "I'm in the chat" presence.
     bool MarkRead(const std::string& peerUid, long lastId) {
         if (!acct_.IsLoggedIn() || peerUid.empty() || lastId <= 0) return false;
         return acct_.Api("/rest/v1/message_reads?on_conflict=reader,peer", "POST",
-                         "{\"peer\":" + JStr(peerUid) + ",\"last_read_id\":" + std::to_string(lastId) + "}",
+                         "{\"peer\":" + JStr(peerUid) + ",\"last_read_id\":" + std::to_string(lastId) +
+                         ",\"updated_at\":" + JStr(IsoNow()) + "}",
                          "Prefer: resolution=merge-duplicates").ok;
+    }
+    // Everything the sender side shows about `peer` in one place: how far they
+    // have read, when their read row was last refreshed (fresh = they have our
+    // chat open right now), and when their launcher was last online (a message
+    // older than that has reached them: "Delivered").
+    struct PeerState { long readId = 0; long viewingAt = 0; long lastSeen = 0; bool ok = false; };
+    PeerState PeerStateOf(const std::string& peerUid, bool withLastSeen) {
+        PeerState st;
+        if (!acct_.IsLoggedIn() || peerUid.empty()) return st;
+        std::string mine = MyId(); if (mine.empty()) return st;
+        auto r = acct_.Api("/rest/v1/message_reads?select=last_read_id,updated_at&reader=eq." + peerUid +
+                           "&peer=eq." + mine, "GET");
+        if (!r.ok) return st;
+        st.ok = true;
+        auto o = SplitObjects(r.body);
+        if (!o.empty()) {
+            st.readId = std::atol(Field(o[0], "last_read_id").c_str());
+            st.viewingAt = ParseIso(Field(o[0], "updated_at"));
+        }
+        if (withLastSeen) {
+            auto p = acct_.Api("/rest/v1/profiles?select=last_seen&id=eq." + peerUid, "GET");
+            if (p.ok) { auto po = SplitObjects(p.body); if (!po.empty()) st.lastSeen = ParseIso(Field(po[0], "last_seen")); }
+        }
+        return st;
     }
     // The id up to which `peer` has read OUR conversation (0 = not read yet).
     long PeerReadId(const std::string& peerUid) {

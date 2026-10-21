@@ -2101,9 +2101,17 @@ struct ProjectSettings {
     float ambient       = 0.30f;
     bool  skybox        = true;
     std::vector<std::string> customTags;   // project-wide user tags (Unity-style), persisted
+    // ---- Editor loading screen (per-project splash customization) ----
+    char  splashLogo[260] = "";            // optional PNG shown instead of the cube
+    float splashBgTop[3]  = {0.094f, 0.094f, 0.106f};
+    float splashBgBot[3]  = {0.051f, 0.051f, 0.059f};
+    bool  splashAccentOverride = false;
+    float splashAccent[3] = {0.235f, 0.475f, 0.800f};
+    bool  splashShowBar   = true;
 };
 ProjectSettings g_project;
 bool g_showProjectSettings = false;
+SDL_Texture* g_editorSplashLogo = nullptr;   // loaded from g_project.splashLogo at startup
 
 void SaveProjectSettings() {
     std::ofstream f("project.okayproj");
@@ -2116,6 +2124,12 @@ void SaveProjectSettings() {
     f << "gravity3d=" << g_project.gravity3D[0] << " " << g_project.gravity3D[1] << " " << g_project.gravity3D[2] << "\n";
     f << "ambient=" << g_project.ambient << "\n";
     f << "skybox=" << (g_project.skybox ? 1 : 0) << "\n";
+    f << "splash_logo=" << g_project.splashLogo << "\n";
+    f << "splash_bar=" << (g_project.splashShowBar ? 1 : 0) << "\n";
+    f << "splash_accent_on=" << (g_project.splashAccentOverride ? 1 : 0) << "\n";
+    f << "splash_bg_top=" << g_project.splashBgTop[0] << " " << g_project.splashBgTop[1] << " " << g_project.splashBgTop[2] << "\n";
+    f << "splash_bg_bot=" << g_project.splashBgBot[0] << " " << g_project.splashBgBot[1] << " " << g_project.splashBgBot[2] << "\n";
+    f << "splash_accent=" << g_project.splashAccent[0] << " " << g_project.splashAccent[1] << " " << g_project.splashAccent[2] << "\n";
     for (const std::string& t : g_project.customTags)
         if (!t.empty()) f << "tag=" << t << "\n";
 }
@@ -2136,6 +2150,12 @@ void LoadProjectSettings() {
         else if (k == "gravity3d") std::sscanf(v.c_str(), "%f %f %f", &g_project.gravity3D[0], &g_project.gravity3D[1], &g_project.gravity3D[2]);
         else if (k == "ambient") g_project.ambient = (float)std::atof(v.c_str());
         else if (k == "skybox")  g_project.skybox = std::atoi(v.c_str()) != 0;
+        else if (k == "splash_logo") std::strncpy(g_project.splashLogo, v.c_str(), sizeof(g_project.splashLogo) - 1);
+        else if (k == "splash_bar") g_project.splashShowBar = std::atoi(v.c_str()) != 0;
+        else if (k == "splash_accent_on") g_project.splashAccentOverride = std::atoi(v.c_str()) != 0;
+        else if (k == "splash_bg_top") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashBgTop[0], &g_project.splashBgTop[1], &g_project.splashBgTop[2]);
+        else if (k == "splash_bg_bot") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashBgBot[0], &g_project.splashBgBot[1], &g_project.splashBgBot[2]);
+        else if (k == "splash_accent") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashAccent[0], &g_project.splashAccent[1], &g_project.splashAccent[2]);
         else if (k == "tag") { if (!v.empty()) g_project.customTags.push_back(v); }
     }
 }
@@ -10917,6 +10937,28 @@ void DrawProjectSettings(EditorState& ed) {
                 ed.scene().renderSettings.skybox = g_project.skybox;
                 ed.dirty = true; ConsoleLog("Applied project rendering to the scene");
             }
+        }
+        if (ImGui::CollapsingHeader("Loading screen")) {
+            ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
+            const char* pngFilt[] = {"*.png"};
+            ImGui::SetNextItemWidth(360);
+            ImGui::InputTextWithHint("##pssplashlogo", "Logo image (PNG) — blank = built-in cube",
+                                     g_project.splashLogo, sizeof(g_project.splashLogo));
+            ImGui::SameLine();
+            if (ImGui::Button("...##pssplash")) {
+                if (const char* p = tinyfd_openFileDialog("Choose the splash logo", "", 1, pngFilt, "PNG image", 0))
+                    std::snprintf(g_project.splashLogo, sizeof(g_project.splashLogo), "%s", p);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear##pssplash")) g_project.splashLogo[0] = '\0';
+            ImGui::Checkbox("Custom splash accent##ps", &g_project.splashAccentOverride);
+            if (g_project.splashAccentOverride) {
+                ImGui::SameLine(); ImGui::SetNextItemWidth(220);
+                ImGui::ColorEdit3("##pssplashaccent", g_project.splashAccent);
+            }
+            ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background top##ps", g_project.splashBgTop);
+            ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background bottom##ps", g_project.splashBgBot);
+            ImGui::Checkbox("Show progress bar##ps", &g_project.splashShowBar);
         }
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
@@ -30734,17 +30776,44 @@ int main(int argc, char** argv) {
     SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
+    // Load the project's settings early (project.okayproj in the working dir) so
+    // the loading screen can show the project's custom splash — logo, colours,
+    // accent. It's a pure file read, safe before ImGui/fonts.
+    LoadProjectSettings();
+    // Decode the custom splash logo (if set) into an SDL texture for the splash.
+    if (g_project.splashLogo[0]) {
+        okay::Image img;
+        if (img.Load(g_project.splashLogo) && img.Valid()) {
+            if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
+                    (void*)img.Data(), img.Width(), img.Height(), 32, img.Width() * 4, SDL_PIXELFORMAT_ABGR8888)) {
+                g_editorSplashLogo = SDL_CreateTextureFromSurface(renderer, s);
+                SDL_FreeSurface(s);
+            }
+        }
+    }
+    // Build the splash style from the project's loading-screen settings.
+    auto splashStyle = [&]() {
+        okay::SplashStyle st;
+        ImVec4 acc = AccentCol(1.0f);
+        if (g_project.splashAccentOverride) { st.ar = g_project.splashAccent[0]; st.ag = g_project.splashAccent[1]; st.ab = g_project.splashAccent[2]; }
+        else { st.ar = acc.x; st.ag = acc.y; st.ab = acc.z; }
+        auto C = [](const float* c) -> SDL_Color {
+            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+        st.bgTop = C(g_project.splashBgTop); st.bgBottom = C(g_project.splashBgBot);
+        st.logo = g_editorSplashLogo; st.showProgress = g_project.splashShowBar;
+        return st;
+    };
     // Branded loading frame right away, so the editor isn't a black rectangle
     // while fonts, GPU renderers and the project set-up run below. Draw it while
     // hidden, reveal the window, then draw once more so the shown frame is the
     // splash (not a black frame), whatever the platform's show/present ordering.
     {
         int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-        ImVec4 sa = AccentCol(1.0f);   // match the editor's accent (default Unity blue)
-        okay::DrawSplash(renderer, sw, sh, sa.x, sa.y, sa.z);
+        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
         SDL_ShowWindow(window);
         SDL_RaiseWindow(window);
-        okay::DrawSplash(renderer, sw, sh, sa.x, sa.y, sa.z);
+        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
 
@@ -30793,12 +30862,12 @@ int main(int argc, char** argv) {
     // frame keeps moving instead of sitting frozen until the first real frame.
     auto splashTick = [&]() {
         int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-        ImVec4 sa = AccentCol(1.0f);
-        okay::DrawSplash(renderer, sw, sh, sa.x, sa.y, sa.z);
+        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
         SDL_PumpEvents();
     };
     splashTick();
-    LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
+    // (Project settings were already loaded above, before the first splash, so
+    // the loading screen could use the project's custom splash.)
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);

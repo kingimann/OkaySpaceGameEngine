@@ -2210,7 +2210,8 @@ static void DrawGroupConversation(
         ImGui::PushStyleColor(ImGuiCol_ChildBg, m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
-        ImGui::BeginChild("##gbub", ImVec2(useW, 0), ImGuiChildFlags_AutoResizeY,
+        ImGui::BeginChild("##gbub", ImVec2(useW, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
         RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
@@ -2839,8 +2840,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                                         : (m.mine ? kAccentDim : ImVec4(0.204f,0.235f,0.306f,1.0f)));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
+                // AlwaysUseWindowPadding: a border-less child ignores WindowPadding
+                // by default (ImGui 1.92), which left the text flush against the
+                // bubble edge — the rounded corner then clipped the first letter.
                 ImGui::BeginChild("##bubble", ImVec2(useW, 0),
-                                  ImGuiChildFlags_AutoResizeY,
+                                  ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
                 ImDrawList* bdl = ImGui::GetWindowDrawList();

@@ -97,6 +97,13 @@ std::string g_exeDir = ".";
 std::string g_selfPath;   // absolute path of the running launcher exe
 std::vector<std::string> g_libraryDirs;  // extra folders to scan for games (persisted)
 SDL_Renderer* g_renderer = nullptr;      // set in main(); used to upload cover-art textures
+// The chat can live in its own OS window (Steam-style) with its own SDL
+// renderer. Textures belong to one renderer, so every texture cache keeps a
+// copy per "render slot": 0 = launcher window, 1 = chat window. g_renderer and
+// g_rslot are switched while the chat window's frame is drawn.
+int  g_rslot = 0;
+bool g_chatSeparate = true;              // chat in its own window (persisted; off = floating inside the launcher)
+bool g_chatInOwnWindow = false;          // true while drawing the chat window's own frame
 
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
@@ -1233,7 +1240,9 @@ int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
-int g_winW = 1160, g_winH = 752;  // last window size (persisted) — roomier first-launch default
+int g_winW = 1160, g_winH = 752;
+int g_chatWinX = -1, g_chatWinY = -1, g_chatWinW = 900, g_chatWinH = 640;   // the chat window's own geometry (persisted)
+bool g_raiseMainReq = false;             // something in the chat window wants the launcher in front  // last window size (persisted) — roomier first-launch default
 const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
 
 // Transient toast notification (bottom-right of the window).
@@ -2311,7 +2320,8 @@ void IconTile(const std::string& name, float size) {
 // A game can ship a cover image next to its .okayscene (cover.png/.jpg, or
 // <stem>.png/.jpg). We load it once via stb_image, upload an SDL texture, and
 // cache it by game path. nullptr (cached) means "no cover — draw the initial".
-std::map<std::string, SDL_Texture*> g_coverCache;
+std::map<std::string, SDL_Texture*> g_coverCaches[2];
+#define g_coverCache g_coverCaches[g_rslot]
 
 SDL_Texture* GameCover(const std::string& gamePath) {
     auto it = g_coverCache.find(gamePath);
@@ -2354,7 +2364,8 @@ void DrawGameIcon(const std::string& gamePath, const std::string& name, float si
 // ---- Profile-picture (avatar) textures, loaded from a public URL ----------
 // Downloaded once to a per-URL cache file, decoded via stb_image, cached as an
 // SDL texture. nullptr (cached) means "no avatar — draw the initial".
-std::map<std::string, SDL_Texture*> g_avatarCache;
+std::map<std::string, SDL_Texture*> g_avatarCaches[2];
+#define g_avatarCache g_avatarCaches[g_rslot]
 std::string* g_myAvatarSlot = nullptr;   // points at the Account card's cached avatar URL
 
 // Avatar downloads used to block the render thread (a freeze the first time a
@@ -2501,7 +2512,8 @@ static const char* kEmojiCatNames[] = {"Smileys & Emotion", "People & Body", "An
 static constexpr int kEmojiCatCount = 9;
 static std::vector<EmojiInfo> g_emojiAll;                        // picker order (category, then sort_order)
 static std::map<std::string, std::pair<int, int>> g_emojiCells;  // "1F44D-1F3FB" -> sheet cell (incl. skin tones)
-static SDL_Texture* g_emojiSheet = nullptr;
+static SDL_Texture* g_emojiSheets[2] = {nullptr, nullptr};
+#define g_emojiSheet g_emojiSheets[g_rslot]
 static int g_emojiSheetW = 0, g_emojiSheetH = 0;
 static int g_emojiState = 0;   // 0 idle, 1 downloading/parsing, 2 ready, -1 unavailable
 static SDL_mutex* g_emojiMutex = nullptr;
@@ -2592,7 +2604,7 @@ static void EmojiCatalogPump() {
         if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
         g_emojiSheetW = g_emojiPxW; g_emojiSheetH = g_emojiPxH;
     }
-    if (g_emojiPixels) { stbi_image_free(g_emojiPixels); g_emojiPixels = nullptr; }
+    // (g_emojiPixels stay loaded: the chat window's renderer makes its own copy.)
     g_emojiAll.swap(g_emojiParsedList); g_emojiCells.swap(g_emojiParsedCells);
     g_emojiState = g_emojiSheet ? 2 : -1;
     if (g_emojiState < 0) {   // corrupt/partial cache: drop it so the next launch re-downloads
@@ -2603,6 +2615,11 @@ static void EmojiCatalogPump() {
 }
 // Draw sheet cell (sx,sy) into the square [c-s/2, c+s/2].
 static void DrawEmojiCell(ImDrawList* dl, ImVec2 c, float s, int sx, int sy) {
+    if (!g_emojiSheet && g_emojiPixels && g_renderer) {   // first use on this renderer
+        SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(g_emojiPixels, g_emojiPxW, g_emojiPxH, 32, g_emojiPxW * 4, SDL_PIXELFORMAT_ABGR8888);
+        if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
+    }
+    if (!g_emojiSheet) return;
     const float u0 = (float)(sx * kEmojiStride + 1) / g_emojiSheetW, v0 = (float)(sy * kEmojiStride + 1) / g_emojiSheetH;
     const float u1 = u0 + (float)kEmojiCell / g_emojiSheetW, v1 = v0 + (float)kEmojiCell / g_emojiSheetH;
     dl->AddImage((ImTextureID)(intptr_t)g_emojiSheet, ImVec2(c.x - s * 0.5f, c.y - s * 0.5f), ImVec2(c.x + s * 0.5f, c.y + s * 0.5f),
@@ -2633,7 +2650,8 @@ static bool EmojiCellFor(const std::string& code, int& sx, int& sy) {
 
 // ---- Animated / still chat images ---------------------------------------------
 struct AnimImage { std::vector<SDL_Texture*> frames; std::vector<int> ends; int total = 0, w = 0, h = 0; bool ok = false; };
-static std::map<std::string, AnimImage> g_animImages;
+static std::map<std::string, AnimImage> g_animImagesS[2];
+#define g_animImages g_animImagesS[g_rslot]
 static bool IsGifUrl(const std::string& url) {
     std::string low = url; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
     std::size_t q = low.find('?'); if (q != std::string::npos) low.erase(q);
@@ -3381,6 +3399,11 @@ void LoadPrefs() {
             }
         }
         else if (k == "win_w") { try { g_winW = std::stoi(v); } catch (...) {} }
+        else if (k == "chat_window") g_chatSeparate = (v != "0");
+        else if (k == "chat_win_x") { try { g_chatWinX = std::stoi(v); } catch (...) {} }
+        else if (k == "chat_win_y") { try { g_chatWinY = std::stoi(v); } catch (...) {} }
+        else if (k == "chat_win_w") { try { g_chatWinW = std::max(520, std::stoi(v)); } catch (...) {} }
+        else if (k == "chat_win_h") { try { g_chatWinH = std::max(380, std::stoi(v)); } catch (...) {} }
         else if (k == "win_h") { try { g_winH = std::stoi(v); } catch (...) {} }
         else if (k == "splash_logo") g_splashLogo = v;
         else if (k == "splash_bar") g_splashShowBar = (v != "0");
@@ -3413,6 +3436,8 @@ void SavePrefs() {
     f << "play_view=" << g_playView << "\n";
     f << "tab=" << g_lastTab << "\n";
     f << "win_w=" << g_winW << "\n";
+    f << "chat_window=" << (g_chatSeparate ? 1 : 0) << "\n";
+    f << "chat_win_x=" << g_chatWinX << "\nchat_win_y=" << g_chatWinY << "\nchat_win_w=" << g_chatWinW << "\nchat_win_h=" << g_chatWinH << "\n";
     f << "win_h=" << g_winH << "\n";
     f << "splash_logo=" << g_splashLogo << "\n";
     f << "splash_bar=" << (g_splashShowBar ? 1 : 0) << "\n";
@@ -4948,8 +4973,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
         ImGui::SetNextWindowFocus();
     }
     if (kChatDemo) {
-        ImGui::SetNextWindowPos(ImVec2(16, 40), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(1000, 600), ImGuiCond_Always);
+        if (!g_chatInOwnWindow) {
+            ImGui::SetNextWindowPos(ImVec2(16, 40), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(1000, 600), ImGuiCond_Always);
+        }
         g_chatWinOpen = true;
         static bool di = false;
         if (!di) { di = true; selUid = "demo-uid"; selName = "Alex Rivera"; selOnline = true;
@@ -5054,8 +5081,19 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
         }
     }
-    if (!kChatDemo) ImGui::SetNextWindowSize(ImVec2(720, 500), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(FLT_MAX, FLT_MAX));
+    ImGuiWindowFlags chatFlags = ImGuiWindowFlags_NoCollapse;
+    bool* chatClose = &g_chatWinOpen;
+    if (g_chatInOwnWindow) {   // its own OS window: fill it edge to edge, the OS draws the frame
+        const ImGuiViewport* cvp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(cvp->Pos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(cvp->Size, ImGuiCond_Always);
+        chatFlags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+        chatClose = nullptr;
+    } else {
+        if (!kChatDemo) ImGui::SetNextWindowSize(ImVec2(720, 500), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(FLT_MAX, FLT_MAX));
+    }
     // The chat window wears its own slate palette (dark themes only); popped
     // when this function returns, after End().
     struct ChatStyleScope {
@@ -5080,7 +5118,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
         chatStyle.n = 13;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));   // the list/thread manage their own padding
-    const bool chatOpen = ImGui::Begin("Chat", &g_chatWinOpen, ImGuiWindowFlags_NoCollapse);
+    if (g_chatInOwnWindow) ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    const bool chatOpen = ImGui::Begin("Chat", chatClose, chatFlags);
+    if (g_chatInOwnWindow) ImGui::PopStyleVar();
     ImGui::PopStyleVar();
     g_chatDropOk = chatOpen && (account.IsLoggedIn() || kChatDemo);
     g_chatDropMin = ImGui::GetWindowPos();
@@ -7042,6 +7082,7 @@ static void OpenPublicProfile(const std::string& uid, const std::string& usernam
     g_pfReq.uid = uid; g_pfReq.username = username; g_pfReq.name = name;
     g_pfReq.avatar = avatar; g_pfReq.accent = accent;
     g_pfOpen = true; ++g_pfSerial;
+    if (g_chatInOwnWindow) g_raiseMainReq = true;   // the profile shows in the launcher
 }
 static void ClosePublicProfile() { g_pfOpen = false; }
 
@@ -8383,6 +8424,165 @@ static void ServerActionAsync(int kind, long id, const std::string& body = std::
     else { SDL_AtomicDecRef(&g_srvActPending); delete j; }
 }
 
+// Toast notification (bottom-right, auto-fading), drawn in whichever window is
+// being rendered (the launcher, and the chat window when it has its own).
+static void DrawToastOverlay() {
+    if (SDL_GetTicks() < g_toastUntil && !g_toastMsg.empty()) {
+        float remain = (float)(g_toastUntil - SDL_GetTicks());
+        float alpha = remain > 400.0f ? 1.0f : remain / 400.0f;   // fade out
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImVec2 wp = vp->WorkPos, ws = vp->WorkSize;
+        ImVec4 tcol = g_toastKind == 1 ? ImVec4(0.45f, 0.85f, 0.52f, 1)
+                    : g_toastKind == 2 ? ImVec4(0.96f, 0.48f, 0.45f, 1)
+                                       : kAccent;
+        ImGui::SetNextWindowPos(ImVec2(wp.x + ws.x - 18, wp.y + ws.y - 18), ImGuiCond_Always, ImVec2(1, 1));
+        ImGui::SetNextWindowBgAlpha(0.92f * alpha);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.97f, 1.0f, alpha));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(tcol.x, tcol.y, tcol.z, alpha));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
+        if (ImGui::Begin("##toast", nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+            ImGuiWindowFlags_AlwaysAutoResize)) {
+            // Status dot in the toast's kind color (info/success/error).
+            float r = ImGui::GetFontSize() * 0.24f;
+            ImVec2 dp = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddCircleFilled(
+                ImVec2(dp.x + r, dp.y + ImGui::GetTextLineHeight() * 0.55f), r,
+                ImGui::GetColorU32(ImVec4(tcol.x, tcol.y, tcol.z, alpha)));
+            ImGui::Dummy(ImVec2(r * 2.0f + 2.0f, ImGui::GetTextLineHeight()));
+            ImGui::SameLine(0, 6);
+            ImGui::TextUnformatted(g_toastMsg.c_str());
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(2);
+    }
+
+}
+
+// ---- The chat's own window (Steam-style) ------------------------------------
+// A second SDL window + renderer + ImGui context hosting DrawChatWindow, so
+// chat can sit beside a game or stay open while the launcher is minimized.
+// Created on first open; closing it just hides it.
+struct ChatWindowHost {
+    SDL_Window* win = nullptr; SDL_Renderer* ren = nullptr; ImGuiContext* ctx = nullptr;
+    ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
+};
+static ChatWindowHost g_chatHost;
+static void ChatHostSaveGeometry() {
+    if (!g_chatHost.win || !g_chatHost.shown) return;
+    SDL_GetWindowPosition(g_chatHost.win, &g_chatWinX, &g_chatWinY);
+    SDL_GetWindowSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
+}
+static bool ChatHostCreate() {
+    if (g_chatHost.win) return true;
+    ImGuiContext* mainCtx = ImGui::GetCurrentContext();
+    const int x = g_chatWinX >= 0 ? g_chatWinX : (int)SDL_WINDOWPOS_CENTERED, y = g_chatWinY >= 0 ? g_chatWinY : (int)SDL_WINDOWPOS_CENTERED;
+    g_chatHost.win = SDL_CreateWindow("OkaySpace Chat", x, y, g_chatWinW, g_chatWinH,
+                                      SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+    if (!g_chatHost.win) return false;
+    SDL_SetWindowMinimumSize(g_chatHost.win, 520, 380);
+    okay::SetAppIcon(g_chatHost.win);
+    // No VSync here: the launcher's present already paces the loop.
+    g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, SDL_RENDERER_ACCELERATED);
+    if (!g_chatHost.ren) g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, 0);
+    if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; return false; }
+    g_chatHost.id = SDL_GetWindowID(g_chatHost.win);
+    g_chatHost.ctx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(g_chatHost.ctx);
+    ImGui::GetIO().IniFilename = nullptr;
+    ImGui::GetIO().ConfigDebugHighlightIdConflicts = false;
+    {   // same fonts as the launcher (each renderer needs its own atlas texture)
+        ImFontConfig fc;
+        fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
+        if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 17.0f, &fc))
+            ImGui::GetIO().Fonts->AddFontDefault();
+        g_chatHost.mono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, 16.0f, &fc);
+    }
+    ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
+    ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
+    ImGui::SetCurrentContext(mainCtx);
+    return true;
+}
+// Show/hide the window to match g_chatWinOpen (and the setting).
+static void ChatHostSync() {
+    const bool want = g_chatSeparate && g_chatWinOpen;
+    if (want && !g_chatHost.shown) {
+        if (!ChatHostCreate()) { g_chatSeparate = false; return; }   // fall back to the in-launcher window
+        SDL_ShowWindow(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win);
+        g_chatHost.shown = true;
+    } else if (!want && g_chatHost.shown) {
+        ChatHostSaveGeometry(); SavePrefs();
+        SDL_HideWindow(g_chatHost.win);
+        g_chatHost.shown = false;
+    }
+}
+static bool ChatHostFocused() {
+    return g_chatHost.shown && (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+}
+static void ChatHostRaise() { if (g_chatHost.shown) { SDL_RestoreWindow(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win); } }
+// Route an SDL event to the chat window; true when it belonged to it.
+static bool ChatHostEvent(const SDL_Event& e) {
+    if (!g_chatHost.win) return false;
+    Uint32 wid = 0;
+    switch (e.type) {
+        case SDL_WINDOWEVENT: wid = e.window.windowID; break;
+        case SDL_KEYDOWN: case SDL_KEYUP: wid = e.key.windowID; break;
+        case SDL_TEXTINPUT: wid = e.text.windowID; break;
+        case SDL_TEXTEDITING: wid = e.edit.windowID; break;
+        case SDL_MOUSEMOTION: wid = e.motion.windowID; break;
+        case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: wid = e.button.windowID; break;
+        case SDL_MOUSEWHEEL: wid = e.wheel.windowID; break;
+        case SDL_DROPFILE: case SDL_DROPBEGIN: case SDL_DROPCOMPLETE: wid = e.drop.windowID; break;
+        default: return false;
+    }
+    if (wid != g_chatHost.id) return false;
+    if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) { g_chatWinOpen = false; return true; }
+    if (e.type == SDL_DROPFILE) {   // dropped onto the chat: send it to the open conversation
+        if (!e.drop.file) return true;
+        std::string dropped = e.drop.file; SDL_free(e.drop.file);
+        if (!g_chatDropOk || (g_chatDropUid.empty() && g_chatDropGroup <= 0)) { Toast("Open a conversation to send a file", 2); return true; }
+        std::error_code fec; auto fsz = fs::file_size(fs::path(dropped), fec);
+        if (fec || fs::is_directory(dropped, fec)) Toast("Only files can be sent", 2);
+        else if ((unsigned long long)fsz > kMaxChatUpload) Toast("Files are limited to 25 MB", 2);
+        else if (g_attBusy) Toast("An upload is already in progress", 2);
+        else { StartChatUpload(dropped, g_chatDropUid, g_chatDropGroup); Toast("Sending " + fs::path(dropped).filename().string(), 1); }
+        return true;
+    }
+    ImGuiContext* mainCtx = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(g_chatHost.ctx);
+    ImGui_ImplSDL2_ProcessEvent(&e);
+    ImGui::SetCurrentContext(mainCtx);
+    return true;
+}
+// Draw + present one chat-window frame (call with the launcher's context current).
+static void ChatHostFrame(okay::account::AccountService& account) {
+    if (!g_chatHost.shown) return;
+    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;
+    ImGuiContext* mainCtx = ImGui::GetCurrentContext();
+    const ImGuiStyle style = ImGui::GetStyle();            // follow the launcher's theme/accent/scale
+    const float fontScale = ImGui::GetIO().FontGlobalScale;
+    SDL_Renderer* prevRen = g_renderer; ImFont* prevMono = g_fontMono;
+    ImGui::SetCurrentContext(g_chatHost.ctx);
+    ImGui::GetStyle() = style; ImGui::GetIO().FontGlobalScale = fontScale;
+    g_renderer = g_chatHost.ren; g_rslot = 1; g_fontMono = g_chatHost.mono; g_chatInOwnWindow = true;
+    ImGui_ImplSDLRenderer2_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+    DrawChatWindow(account);
+    DrawToastOverlay();
+    ImGui::Render();
+    SDL_SetRenderDrawColor(g_chatHost.ren, 21, 23, 29, 255);
+    SDL_RenderClear(g_chatHost.ren);
+    ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), g_chatHost.ren);
+    SDL_RenderPresent(g_chatHost.ren);
+    g_renderer = prevRen; g_rslot = 0; g_fontMono = prevMono; g_chatInOwnWindow = false;
+    ImGui::SetCurrentContext(mainCtx);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -8606,6 +8806,8 @@ int main(int argc, char** argv) {
     int tab = (g_lastTab >= 0 && g_lastTab < 10) ? g_lastTab : 0;
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
     if (g_updateOnLaunch) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
+    if (std::getenv("OKAY_CHAT_DEMO")) g_chatWinOpen = true;   // dev screenshot hook: open the chat
+    if (std::getenv("OKAY_CHAT_DOCKED")) g_chatSeparate = false;
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
@@ -8616,10 +8818,14 @@ int main(int argc, char** argv) {
         acct::AccountService& account = *accountPtr;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
             ImGui_ImplSDL2_ProcessEvent(&e);
             // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
-            // minimize, rather than quitting outright.
+            // minimize, rather than quitting outright. (With the chat window
+            // around, SDL reports the launcher's [X] as a window close, not a quit.)
             if (e.type == SDL_QUIT) closeConfirm = true;
+            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
+                     e.window.windowID == SDL_GetWindowID(window)) closeConfirm = true;
             // NOTE: minimizing does a plain Windows minimize (to the taskbar) and
             // is always restored by clicking the taskbar button. The launcher does
             // NOT hide itself to the system tray — that could trap the window with
@@ -8799,8 +9005,13 @@ int main(int argc, char** argv) {
 
         // While minimized or hidden, idle cheaply instead of spinning the render
         // loop (there's nothing to draw until the window is restored).
+        ChatHostSync();
+        if (g_raiseMainReq) { g_raiseMainReq = false; SDL_RestoreWindow(window); SDL_RaiseWindow(window); }
         if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
-            SDL_Delay(120);
+            if (g_chatHost.shown && !(SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED)) {
+                ChatHostFrame(account);   // the chat window keeps going on its own
+                SDL_Delay(ChatHostFocused() ? 15 : 45);
+            } else SDL_Delay(120);
             continue;
         }
 
@@ -9513,8 +9724,11 @@ int main(int argc, char** argv) {
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
         navSection("SOCIAL");
         tabRow(6, g_friendRequests, navRed);              // pending friend requests
-        if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, g_dmUnread, navRed))
-            g_chatWinOpen = !g_chatWinOpen;
+        if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, g_dmUnread, navRed)) {
+            // Its own window and already open behind something: bring it forward (Steam's Friends button).
+            if (g_chatSeparate && g_chatWinOpen && g_chatHost.shown && !ChatHostFocused()) ChatHostRaise();
+            else g_chatWinOpen = !g_chatWinOpen;
+        }
         tabRow(8);
         tabRow(9);
         tabRow(5);
@@ -11765,6 +11979,10 @@ int main(int argc, char** argv) {
                             SavePrefs();
                             if (g_chatSounds) PlayChatChime();   // preview
                         }
+                    });
+                    rowDivider();
+                    settingRow("Open chat in its own window", "Like Steam's Friends & Chat: a separate window you can keep beside a game. Off = a panel inside the launcher.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##chatsep", &g_chatSeparate)) SavePrefs();
                     });
                     rowDivider();
                     settingRow("Show link previews", "Cards with the page title and image under links in chat. Loading one contacts that website.", 40.0f, 22.0f, [&](float) {
@@ -14841,48 +15059,17 @@ int main(int argc, char** argv) {
         ImGui::End();
         focusSearch = false;   // Ctrl+F is consumed the frame it's pressed
 
-        // ---- Floating Chat window (DMs), available over any tab ----
-        DrawChatWindow(account);
+        // ---- Floating Chat window (DMs), unless it has its own OS window ----
+        if (!g_chatSeparate) DrawChatWindow(account);
 
-        // ---- Toast notification (bottom-right, auto-fading) ----
-        if (SDL_GetTicks() < g_toastUntil && !g_toastMsg.empty()) {
-            float remain = (float)(g_toastUntil - SDL_GetTicks());
-            float alpha = remain > 400.0f ? 1.0f : remain / 400.0f;   // fade out
-            ImVec2 wp = vp->WorkPos, ws = vp->WorkSize;
-            ImVec4 tcol = g_toastKind == 1 ? ImVec4(0.45f, 0.85f, 0.52f, 1)
-                        : g_toastKind == 2 ? ImVec4(0.96f, 0.48f, 0.45f, 1)
-                                           : kAccent;
-            ImGui::SetNextWindowPos(ImVec2(wp.x + ws.x - 18, wp.y + ws.y - 18), ImGuiCond_Always, ImVec2(1, 1));
-            ImGui::SetNextWindowBgAlpha(0.92f * alpha);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.97f, 1.0f, alpha));
-            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(tcol.x, tcol.y, tcol.z, alpha));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
-            if (ImGui::Begin("##toast", nullptr,
-                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
-                ImGuiWindowFlags_AlwaysAutoResize)) {
-                // Status dot in the toast's kind color (info/success/error).
-                float r = ImGui::GetFontSize() * 0.24f;
-                ImVec2 dp = ImGui::GetCursorScreenPos();
-                ImGui::GetWindowDrawList()->AddCircleFilled(
-                    ImVec2(dp.x + r, dp.y + ImGui::GetTextLineHeight() * 0.55f), r,
-                    ImGui::GetColorU32(ImVec4(tcol.x, tcol.y, tcol.z, alpha)));
-                ImGui::Dummy(ImVec2(r * 2.0f + 2.0f, ImGui::GetTextLineHeight()));
-                ImGui::SameLine(0, 6);
-                ImGui::TextUnformatted(g_toastMsg.c_str());
-            }
-            ImGui::End();
-            ImGui::PopStyleVar(3);
-            ImGui::PopStyleColor(2);
-        }
+        DrawToastOverlay();
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 32, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+        ChatHostFrame(account);
 
         // Cap the frame rate so the launcher never spins the GPU/CPU at full tilt
         // (which makes the whole machine feel laggy) — important if the renderer
@@ -14891,7 +15078,7 @@ int main(int argc, char** argv) {
         // frame, so the extra delay is ~0 when focused.
         {
             Uint32 flags = SDL_GetWindowFlags(window);
-            bool focused = (flags & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS)) != 0;
+            bool focused = (flags & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS)) != 0 || ChatHostFocused();
             double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
             double elapsed = (double)(SDL_GetPerformanceCounter() - frameStart) * 1000.0
                            / (double)SDL_GetPerformanceFrequency();
@@ -14900,6 +15087,7 @@ int main(int argc, char** argv) {
     }
 
     // Remember the window size for next launch.
+    ChatHostSaveGeometry();
     { int w = 0, h = 0; SDL_GetWindowSize(window, &w, &h);
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 

@@ -13,6 +13,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -247,6 +248,178 @@ struct VsEditGraph {
     }
 };
 
+// ---- Graph -> OkayScript compiler ------------------------------------------
+// Turns a node/flow graph into readable OkayScript so the two scripting
+// front-ends describe the same thing: data pins become expressions, the exec
+// chain from On Start / On Update becomes start()/update(dt) statements. The
+// output is plain OkayScript the engine already runs — people can keep wiring
+// nodes, or drop into text, whichever they prefer.
+inline const VsEditNode* VsFind(const VsEditGraph& g, int id) {
+    for (const auto& n : g.nodes) if (n.id == id) return &n;
+    return nullptr;
+}
+inline int VsExecTarget(const VsEditGraph& g, int fromNode, int pin) {
+    for (const auto& l : g.execLinks) if (l.from == fromNode && l.pin == pin) return l.to;
+    return -1;
+}
+inline std::string VsDataExpr(const VsEditGraph& g, int nodeId);
+inline std::string VsInput(const VsEditGraph& g, int consumer, int inPin, const char* dflt = "0") {
+    for (const auto& l : g.dataLinks)
+        if (l.consumer == consumer && l.inPin == inPin)
+            return VsDataExpr(g, l.producer);
+    return dflt;
+}
+inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
+    const VsEditNode* n = VsFind(g, nodeId);
+    if (!n) return "0";
+    const std::string& t = n->type;
+    auto A = [&]{ return VsInput(g, nodeId, 0); };
+    auto B = [&]{ return VsInput(g, nodeId, 1); };
+    auto C = [&]{ return VsInput(g, nodeId, 2); };
+    auto lit = [&](const char* d){ return n->arg.empty() ? std::string(d) : n->arg; };
+    auto q   = [&](const std::string& s){ return "\"" + s + "\""; };
+
+    if (t == "Const")      return n->arg.empty() ? "0" : n->arg;
+    if (t == "GetVar")     return lit("x");
+    if (t == "Add")        return "(" + A() + " + " + B() + ")";
+    if (t == "Sub")        return "(" + A() + " - " + B() + ")";
+    if (t == "Mul")        return "(" + A() + " * " + B() + ")";
+    if (t == "Div")        return "(" + A() + " / " + B() + ")";
+    if (t == "Mod")        return "(" + A() + " % " + B() + ")";
+    if (t == "Pow")        return "pow(" + A() + ", " + B() + ")";
+    if (t == "Min")        return "min(" + A() + ", " + B() + ")";
+    if (t == "Max")        return "max(" + A() + ", " + B() + ")";
+    if (t == "Abs")        return "abs(" + A() + ")";
+    if (t == "Neg")        return "(-" + A() + ")";
+    if (t == "Sqrt")       return "sqrt(" + A() + ")";
+    if (t == "Sin")        return "sin(" + A() + ")";
+    if (t == "Cos")        return "cos(" + A() + ")";
+    if (t == "Floor")      return "floor(" + A() + ")";
+    if (t == "Round")      return "round(" + A() + ")";
+    if (t == "Sign")       return "sign(" + A() + ")";
+    if (t == "Clamp")      return "clamp(" + A() + ", " + B() + ", " + C() + ")";
+    if (t == "Lerp")       return "lerp(" + A() + ", " + B() + ", " + C() + ")";
+    if (t == "Random")     return "random()";
+    if (t == "RandomRange")return "random_range(" + A() + ", " + B() + ")";
+    if (t == "Compare")    return "(" + A() + " " + lit(">") + " " + B() + ")";
+    if (t == "Equals")     return "(" + A() + " == " + B() + ")";
+    if (t == "NotEquals")  return "(" + A() + " != " + B() + ")";
+    if (t == "And")        return "(" + A() + " && " + B() + ")";
+    if (t == "Or")         return "(" + A() + " || " + B() + ")";
+    if (t == "Xor")        return "(!" + A() + " != !" + B() + ")";
+    if (t == "Not")        return "(!" + A() + ")";
+    if (t == "Approx")     return "(abs(" + A() + " - " + B() + ") < 0.0001)";
+    if (t == "Between")    return "(" + A() + " >= " + B() + " && " + A() + " <= " + C() + ")";
+    if (t == "Chance")     return "(random() < " + lit("0.5") + ")";
+    if (t == "HasVar")     return "has_var(" + q(lit("x")) + ")";
+    if (t == "Select")     return "(" + A() + " ? " + B() + " : " + C() + ")";
+    if (t == "Concat")     return "(str(" + A() + ") + str(" + B() + "))";
+    if (t == "Key")        return "key_down(" + q(lit("space")) + ")";
+    if (t == "KeyDown")    return "key_pressed(" + q(lit("space")) + ")";
+    if (t == "KeyUp")      return "key_up(" + q(lit("space")) + ")";
+    if (t == "AxisX")      return "axis_x()";
+    if (t == "AxisY")      return "axis_y()";
+    if (t == "MouseX")     return "mouse_x()";
+    if (t == "MouseY")     return "mouse_y()";
+    if (t == "Time")       return "time()";
+    if (t == "DeltaTime")  return "dt";
+    if (t == "VelX")       return "velocity_x()";
+    if (t == "VelY")       return "velocity_y()";
+    if (t == "GetX")       return "transform.position.x";
+    if (t == "GetY")       return "transform.position.y";
+    if (t == "GetZ")       return "transform.position.z";
+    if (t == "GetPosition")return "transform.position";
+    if (t == "MakeVec3")   return "vec3(" + A() + ", " + B() + ", " + C() + ")";
+    if (t == "VecX")       return "(" + A() + ").x";
+    if (t == "VecY")       return "(" + A() + ").y";
+    if (t == "VecZ")       return "(" + A() + ").z";
+    if (t == "EaseIn")     return "(" + A() + " * " + A() + ")";
+    if (t == "EaseOut")  { std::string a = A(); return "(1 - (1-" + a + ")*(1-" + a + "))"; }
+    if (t == "EaseInOut"){ std::string a = A(); return "(" + a + "*" + a + "*(3 - 2*" + a + "))"; }
+    return "0";
+}
+
+inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
+                        const std::string& ind, std::set<int>& visited);
+inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
+                       const std::string& ind, std::set<int>& visited) {
+    const VsEditNode* n = VsFind(g, nodeId); if (!n) return;
+    const std::string& t = n->type;
+    auto in  = [&](int p, const char* d = "0"){ return VsInput(g, nodeId, p, d); };
+    auto arg = [&](const char* d){ return n->arg.empty() ? std::string(d) : n->arg; };
+    auto q   = [&](const std::string& s){ return "\"" + s + "\""; };
+
+    if      (t=="SetVar")      out += ind + arg("x") + " = " + in(0) + "\n";
+    else if (t=="AddVar")      out += ind + arg("x") + " += " + in(0) + "\n";
+    else if (t=="Print")       out += ind + "log(" + in(0,"\"\"") + ")\n";
+    else if (t=="LogWarn")     out += ind + "log_warn(" + in(0,"\"\"") + ")\n";
+    else if (t=="LogError")    out += ind + "log_error(" + in(0,"\"\"") + ")\n";
+    else if (t=="Translate")   out += ind + "translate(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="SetPosition") out += ind + "set_pos(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="Rotate")      out += ind + "rotate(" + in(0) + ")\n";
+    else if (t=="SetRotation") out += ind + "set_rotation(" + in(0) + ")\n";
+    else if (t=="SetScale")    out += ind + "set_scale(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="PlaySound")   out += ind + "play_sound(" + q(arg("")) + ")\n";
+    else if (t=="Spawn")       out += ind + "spawn(" + q(arg("")) + ", " + in(0) + ", " + in(1) + ")\n";
+    else if (t=="Destroy")     out += ind + "destroy()\n";
+    else if (t=="AddForce")    out += ind + "add_force(" + in(0)+", "+in(1)+")\n";
+    else if (t=="SetVelocity") out += ind + "set_velocity(" + in(0)+", "+in(1)+")\n";
+    else if (t=="AddImpulse")  out += ind + "add_impulse(" + in(0)+", "+in(1)+")\n";
+    else if (t=="Branch") {
+        out += ind + "if (" + in(0) + ") {\n";
+        int tn = VsExecTarget(g, nodeId, 0); if (tn>=0) VsEmitChain(g, tn, out, ind+"    ", visited);
+        int fn = VsExecTarget(g, nodeId, 1);
+        if (fn>=0) { out += ind + "} else {\n"; VsEmitChain(g, fn, out, ind+"    ", visited); }
+        out += ind + "}\n";
+    }
+    else if (t=="Sequence") {
+        for (int p=0;p<2;++p){ int s=VsExecTarget(g,nodeId,p); if(s>=0) VsEmitChain(g,s,out,ind,visited); }
+    }
+    else if (t=="Once") {
+        out += ind + "if (!_once_"+std::to_string(nodeId)+") {\n";
+        out += ind + "    _once_"+std::to_string(nodeId)+" = true\n";
+        int s=VsExecTarget(g,nodeId,0); if(s>=0) VsEmitChain(g,s,out,ind+"    ",visited);
+        out += ind + "}\n";
+    }
+    else if (t=="Timer") out += ind + "// Every (" + arg("1") + "s): wire actions to this node\n";
+    else if (t=="Wait")  out += ind + "// Wait (" + arg("1") + "s): use after(t, fn) for a delay\n";
+    else                 out += ind + "// unsupported node: " + t + "\n";
+}
+inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
+                        const std::string& ind, std::set<int>& visited) {
+    int cur = nodeId;
+    while (cur >= 0) {
+        if (visited.count(cur)) break;
+        visited.insert(cur);
+        const VsEditNode* n = VsFind(g, cur); if (!n) break;
+        VsEmitNode(g, cur, out, ind, visited);
+        if (n->type=="Branch" || n->type=="Sequence" || n->type=="Once") break; // self-continued
+        cur = VsExecTarget(g, cur, 0);
+    }
+}
+inline std::string CompileToOkayScript(const VsEditGraph& g) {
+    std::string out = "// Generated from the visual graph. This is plain OkayScript —\n"
+                      "// edit it freely, or keep wiring nodes; both drive the same runtime.\n\n";
+    int startNode = -1, updateNode = -1;
+    for (const auto& n : g.nodes) { if (n.type=="OnStart") startNode=n.id; if (n.type=="OnUpdate") updateNode=n.id; }
+    std::string onceDecls;
+    for (const auto& n : g.nodes) if (n.type=="Once") onceDecls += "var _once_"+std::to_string(n.id)+" = false\n";
+    if (!onceDecls.empty()) out += onceDecls + "\n";
+    if (startNode >= 0) {
+        out += "start() {\n";
+        std::set<int> v; int s = VsExecTarget(g, startNode, 0); if (s>=0) VsEmitChain(g, s, out, "    ", v);
+        out += "}\n\n";
+    }
+    if (updateNode >= 0) {
+        out += "update(dt) {\n";
+        std::set<int> v; int s = VsExecTarget(g, updateNode, 0); if (s>=0) VsEmitChain(g, s, out, "    ", v);
+        out += "}\n";
+    }
+    if (startNode < 0 && updateNode < 0)
+        out += "// Add an On Start / On Update event node to generate runnable code.\n";
+    return out;
+}
+
 // ---- Interaction state -----------------------------------------------------
 struct VsEditState {
     VsEditGraph g;
@@ -259,6 +432,7 @@ struct VsEditState {
     int    dragNode = -1, dragPin = -1;
     bool   openPalette = false;
     ImVec2 paletteWorld{0, 0};
+    bool   showScript = false;   // "View as OkayScript" side panel open
 };
 
 inline VsEditState& State() { static VsEditState s; return s; }
@@ -312,6 +486,10 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
+    if (ImGui::Button(st.showScript ? "Hide Script" : "View as OkayScript")) st.showScript = !st.showScript;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Compile this graph to OkayScript — author with either front-end");
+    ImGui::SameLine();
     ImGui::TextDisabled("%s%s", g.path.empty() ? "(unsaved)" : g.path.c_str(), g.dirty ? " *" : "");
     ImGui::SameLine();
     ImGui::TextDisabled("  |  right-click: add node  ·  drag pins to wire  ·  Del: delete");
@@ -325,9 +503,10 @@ inline void Draw(EditorState& ed, bool* open) {
         }
     }
 
-    // Canvas.
+    // Canvas (leaves room on the right for the OkayScript preview when open).
+    const float scriptPanelW = 380.0f;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.105f, 0.105f, 0.112f, 1.0f));
-    ImGui::BeginChild("vscanvas", ImVec2(0, 0), true,
+    ImGui::BeginChild("vscanvas", ImVec2(st.showScript ? -scriptPanelW : 0.0f, 0), true,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -560,6 +739,37 @@ inline void Draw(EditorState& ed, bool* open) {
 
     ImGui::EndChild();
     ImGui::PopStyleColor();
+
+    // ---- OkayScript preview panel -----------------------------------------
+    // Live compile of the graph to OkayScript, side by side with the canvas, so
+    // the two front-ends stay legibly equivalent. Read-only here (the graph is
+    // the source of truth); Copy drops it into the clipboard to paste into the
+    // text script editor.
+    if (st.showScript) {
+        ImGui::SameLine();
+        ImGui::BeginChild("vsscript", ImVec2(0, 0), true);
+        std::string code = CompileToOkayScript(g);
+        ImGui::TextDisabled("OkayScript (generated from the graph)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(code.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Save .okay")) {
+            std::string p = g.path;
+            if (!p.empty()) { auto d = p.rfind(".okayvs"); if (d != std::string::npos) p = p.substr(0, d); }
+            else { std::string dir = ed.projectDir(); p = (dir.empty() ? std::string("Script") : dir + "/Assets/Script"); }
+            p += ".okay";
+            std::ofstream f(p, std::ios::binary);
+            if (f) { f << code; Log("Wrote " + p); } else Log("Save failed: " + p, 2);
+        }
+        ImGui::Separator();
+        // Read-only multiline view (a copy buffer; edits don't flow back).
+        static std::vector<char> buf;
+        buf.assign(code.begin(), code.end()); buf.push_back('\0');
+        ImGui::InputTextMultiline("##vsscriptview", buf.data(), buf.size(),
+                                  ImVec2(-FLT_MIN, -FLT_MIN), ImGuiInputTextFlags_ReadOnly);
+        ImGui::EndChild();
+    }
+
     ImGui::End();
 }
 

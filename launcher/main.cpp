@@ -2214,7 +2214,12 @@ static void DrawGroupConversation(
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
         RenderChatBody(m.body, ImGui::GetContentRegionAvail().x);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(m.mine ? ImVec4(0.85f,0.90f,1.0f,0.75f) : ImVec4(0.65f,0.70f,0.80f,0.9f)));
+        {   // Timestamp tucked bottom-right, small + dim.
+            float av2 = ImGui::GetContentRegionAvail().x;
+            float mw2 = ImGui::CalcTextSize(meta.c_str()).x;
+            if (mw2 < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2));
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(m.mine ? ImVec4(0.82f,0.88f,1.0f,0.60f) : ImVec4(0.60f,0.66f,0.76f,0.70f)));
         ImGui::TextUnformatted(meta.c_str());
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
@@ -2863,8 +2868,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     }
                 }
+                {   // Timestamp: small + tucked at the bubble's bottom-right edge.
+                    float av2 = ImGui::GetContentRegionAvail().x;
+                    float mw2 = ImGui::CalcTextSize(meta.c_str()).x;
+                    if (!bareEmoji && mw2 < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2));
+                }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bareEmoji ? ImVec4(0.6f,0.64f,0.72f,0.9f)
-                                        : (m.mine ? ImVec4(0.85f,0.90f,1.0f,0.75f) : ImVec4(0.65f,0.70f,0.80f,0.9f))));
+                                        : (m.mine ? ImVec4(0.82f,0.88f,1.0f,0.60f) : ImVec4(0.60f,0.66f,0.76f,0.70f))));
                 ImGui::TextUnformatted(meta.c_str());
                 ImGui::PopStyleColor();
                 ImGui::PopStyleVar();                       // ItemSpacing

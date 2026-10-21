@@ -282,7 +282,11 @@ public:
         return o.empty() ? "" : Field(o[0], "id");
     }
     // ---- Staff tools (profile_badges 'staff') ----------------------------------
+    /// Moderator, staff or admin (admin.sql's my_role_rank); falls back to the
+    /// staff badge on servers without it.
     bool AmStaff() {
+        auto rr = acct_.Api("/rest/v1/rpc/my_role_rank", "POST", "{}");
+        if (rr.ok) { const std::string t = rr.body; for (char c : t) if (c >= '1' && c <= '9') return true; return false; }
         const std::string me = MyUid(); if (me.empty()) return false;
         auto r = acct_.Api("/rest/v1/profile_badges?select=badge&badge=eq.staff&owner=eq." + me, "GET");
         return r.ok && !SplitObjects(r.body).empty();

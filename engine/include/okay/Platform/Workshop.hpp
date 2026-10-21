@@ -16,6 +16,7 @@
 #include <vector>
 #include <map>
 #include <utility>
+#include <cctype>
 #include <cstdlib>
 #include <cstdio>
 #include <ctime>
@@ -30,6 +31,13 @@ struct WorkshopItem {
     std::string kind;         // "game" | "scene" | "template"
     std::string url;          // public download URL (stored in storage_path)
     long        downloads = 0;
+    // Marketplace review (docs/sql/admin.sql); "approved" when the server has no review.
+    std::string status = "approved";   // pending | approved | rejected
+    std::string reviewNote;            // why it was rejected
+    std::string authorId;
+    bool        reviewsLocked = false;
+    bool        featured = false;
+    long        created = 0;
 };
 
 struct WorkshopReview {
@@ -48,14 +56,54 @@ public:
 
     // Everything published, newest first. Readable by anyone (RLS select=true).
     std::vector<WorkshopItem> List() {
+        return Query("&order=featured.desc,created_at.desc", "&order=created_at.desc");
+    }
+    /// Listings with a review status (mods see every status; RLS shows others
+    /// only approved ones + their own). Empty status = all.
+    std::vector<WorkshopItem> ByStatus(const std::string& status) {
+        return Query(status.empty() ? "&order=created_at.desc" : "&status=eq." + status + "&order=created_at.asc", "");
+    }
+    /// Approve / reject / re-queue a listing (moderators; RLS + trigger enforce it).
+    bool SetStatus(long id, const std::string& status, const std::string& note) {
+        return acct_.Api("/rest/v1/workshop_items?id=eq." + std::to_string(id), "PATCH",
+                         "{\"status\":" + JStr(status) + ",\"review_note\":" + JStr(note) + "}").ok;
+    }
+    bool SetFeatured(long id, bool on) {
+        return acct_.Api("/rest/v1/workshop_items?id=eq." + std::to_string(id), "PATCH",
+                         std::string("{\"featured\":") + (on ? "true" : "false") + "}").ok;
+    }
+    /// Turn reviews off / on for an item (its author or a moderator).
+    bool SetReviewsLocked(long id, bool on) {
+        return acct_.Api("/rest/v1/workshop_items?id=eq." + std::to_string(id), "PATCH",
+                         std::string("{\"reviews_locked\":") + (on ? "true" : "false") + "}").ok;
+    }
+    /// Remove one review (moderators).
+    bool RemoveReviewBy(long itemId, const std::string& reviewerName) {
+        return acct_.Api("/rest/v1/workshop_reviews?item_id=eq." + std::to_string(itemId) +
+                         "&reviewer_name=eq." + Url(reviewerName), "DELETE").ok;
+    }
+
+private:
+    // `orderA` is tried with the review columns; `orderB` (if set) without
+    // them, for servers that haven't run admin.sql.
+    std::vector<WorkshopItem> Query(const std::string& orderA, const std::string& orderB) {
         std::vector<WorkshopItem> out;
-        auto r = acct_.Api(
-            "/rest/v1/workshop_items"
-            "?select=id,author_name,title,description,kind,storage_path,downloads"
-            "&order=created_at.desc", "GET");
+        static const char* kBase = "/rest/v1/workshop_items?select=id,author,author_name,title,description,kind,storage_path,downloads,created_at";
+        bool review = true;
+        auto r = acct_.Api(std::string(kBase) + ",status,review_note,reviews_locked,featured" + orderA, "GET");
+        if (!r.ok && !orderB.empty()) { review = false; r = acct_.Api(std::string(kBase) + orderB, "GET"); }
         if (!r.ok) return out;
         for (const auto& obj : SplitObjects(r.body)) {
             WorkshopItem w;
+            w.authorId    = Field(obj, "author");
+            w.created     = ParseIso(Field(obj, "created_at"));
+            if (review) {
+                w.status        = Field(obj, "status");
+                if (w.status.empty()) w.status = "approved";
+                w.reviewNote    = Field(obj, "review_note");
+                w.reviewsLocked = Field(obj, "reviews_locked") == "true";
+                w.featured      = Field(obj, "featured") == "true";
+            }
             w.id          = std::atol(Field(obj, "id").c_str());
             w.author      = Field(obj, "author_name");
             w.title       = Field(obj, "title");
@@ -67,6 +115,7 @@ public:
         }
         return out;
     }
+public:
 
     // Publish a new item. The author uuid defaults to auth.uid() server-side,
     // so we only send the display fields. Returns true on a 2xx.
@@ -160,7 +209,8 @@ public:
                       std::string* err = nullptr) {
         if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in to review."; return false; }
         if (itemId <= 0 || rating < 1 || rating > 5) { if (err) *err = "Pick 1-5 stars."; return false; }
-        acct_.Api("/rest/v1/workshop_reviews?item_id=eq." + std::to_string(itemId), "DELETE");
+        acct_.Api("/rest/v1/workshop_reviews?item_id=eq." + std::to_string(itemId) +
+                  "&reviewer=eq." + Url(MyUid()), "DELETE");   // only mine (mods may delete any review)
         std::string payload = "{\"item_id\":" + std::to_string(itemId) +
                               ",\"rating\":" + std::to_string(rating) +
                               ",\"body\":" + JStr(body) +
@@ -173,8 +223,8 @@ public:
     // Delete my review for an item (RLS scopes to my own row).
     bool RemoveMyReview(long itemId) {
         if (!acct_.IsLoggedIn() || itemId <= 0) return false;
-        return acct_.Api("/rest/v1/workshop_reviews?item_id=eq." + std::to_string(itemId),
-                         "DELETE").ok;
+        return acct_.Api("/rest/v1/workshop_reviews?item_id=eq." + std::to_string(itemId) +
+                         "&reviewer=eq." + Url(MyUid()), "DELETE").ok;
     }
 
     // Upload a file for a listing into the public "workshop" bucket (under my
@@ -208,6 +258,25 @@ public:
 
 private:
     okay::account::AccountService& acct_;
+    std::string myUid_;
+
+    static std::string Url(const std::string& v) {
+        std::string o;
+        for (unsigned char c : v) {
+            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
+            else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", c); o += b; }
+        }
+        return o;
+    }
+    // My user id (looked up by username once). "-" when unknown, so a scoped
+    // delete matches nothing rather than everything.
+    std::string MyUid() {
+        if (myUid_.empty() && acct_.IsLoggedIn()) {
+            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(acct_.CurrentSession().username), "GET");
+            if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myUid_ = Field(o[0], "id"); }
+        }
+        return myUid_.empty() ? std::string("-") : myUid_;
+    }
 
     static long ParseIso(const std::string& ls) {
         if (ls.size() < 19) return 0;

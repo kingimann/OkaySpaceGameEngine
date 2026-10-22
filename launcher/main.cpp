@@ -3946,8 +3946,8 @@ static SDL_mutex*    g_attMutex = nullptr;
 static bool          g_attDone = false;   // (guarded) finished -> toast result
 static std::string   g_attError;          // (guarded) "" on success
 static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup,
-                            int voiceSecs = -1);                                            // defined below
-static void PickAndSendAttachment(const std::string& toUid, long toGroup);                   // defined below
+                            int voiceSecs = -1, long toChannel = 0);                        // defined below
+static void PickAndSendAttachment(const std::string& toUid, long toGroup, long toChannel = 0); // defined below
 static constexpr unsigned long long kMaxChatUpload = 25ULL * 1024ULL * 1024ULL;  // matches the bucket limit
 
 // ---- Voice messages ------------------------------------------------------------
@@ -3986,13 +3986,14 @@ static std::vector<float>  g_recLevels;           // loudness per 50 ms (live me
 static Uint32              g_recStart = 0;
 static std::string         g_recToUid;            // which chat the recording is for
 static long                g_recToGroup = 0;
+static long                g_recToChannel = 0;    // a server channel (0 = a DM / group)
 
 static bool VoiceRecording() { return g_recDev != 0 || g_recFake; }
-static bool VoiceRecordingFor(const std::string& uid, long gid) {
-    return VoiceRecording() && g_recToUid == uid && g_recToGroup == gid;
+static bool VoiceRecordingFor(const std::string& uid, long gid, long channel = 0) {
+    return VoiceRecording() && g_recToUid == uid && g_recToGroup == gid && g_recToChannel == channel;
 }
 static float VoiceRecSeconds() { return VoiceRecording() ? (SDL_GetTicks() - g_recStart) / 1000.0f : 0.0f; }
-static bool StartVoiceRecord(const std::string& toUid, long toGroup) {
+static bool StartVoiceRecord(const std::string& toUid, long toGroup, long toChannel = 0) {
     if (VoiceRecording()) return false;
     if (g_attBusy) { Toast("An upload is already in progress", 2); return false; }
     if (!EnsureAudio()) { Toast("Audio isn't available on this system", 2); return false; }
@@ -4001,7 +4002,7 @@ static bool StartVoiceRecord(const std::string& toUid, long toGroup) {
     g_recDev = SDL_OpenAudioDevice(nullptr, 1, &want, &have, 0);   // SDL converts to our format
     if (!g_recDev) { Toast("No microphone found", 2); return false; }
     g_recPcm.clear(); g_recLevels.clear();
-    g_recToUid = toUid; g_recToGroup = toGroup; g_recStart = SDL_GetTicks();
+    g_recToUid = toUid; g_recToGroup = toGroup; g_recToChannel = toChannel; g_recStart = SDL_GetTicks();
     SDL_PauseAudioDevice(g_recDev, 0);
     return true;
 }
@@ -4042,7 +4043,7 @@ static void FinishVoiceRecord(bool send) {
     fs::path file = dir / ("voice-" + std::to_string(SDL_GetTicks()) + ".wav");
     if (!WriteWav16(file.string(), pcm, kVoiceRate)) { Toast("Couldn't save the recording", 2); return; }
     int secs = (int)((pcm.size() + kVoiceRate / 2) / kVoiceRate);
-    StartChatUpload(file.string(), g_recToUid, g_recToGroup, std::max(1, secs));
+    StartChatUpload(file.string(), g_recToUid, g_recToGroup, std::max(1, secs), g_recToChannel);
 }
 
 // Playback: decoded clips by URL + one output device for the clip playing now.
@@ -4414,7 +4415,7 @@ static std::string g_chatDropUid;
 static long        g_chatDropGroup = 0;
 
 // Round mic button that stands in for Send while the composer is empty.
-static void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const std::string& toUid, long toGroup) {
+static void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const std::string& toUid, long toGroup, long toChannel = 0) {
     auto brighten = [](ImVec4 c, float k) { return ImVec4(std::min(1.0f, c.x * k), std::min(1.0f, c.y * k), std::min(1.0f, c.z * k), 1.0f); };
     ImGui::PushStyleColor(ImGuiCol_Button, brighten(col, 1.25f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, brighten(col, 1.45f));
@@ -4428,7 +4429,7 @@ static void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const st
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Record a voice message");
     DrawMicIcon(ImGui::GetWindowDrawList(), ImVec2(p.x + size.x * 0.5f, p.y + size.y * 0.5f),
                 std::min(size.y, 26.0f), IM_COL32(255, 255, 255, 255));
-    if (click) StartVoiceRecord(toUid, toGroup);
+    if (click) StartVoiceRecord(toUid, toGroup, toChannel);
 }
 
 // ---- Background chat poll state ---------------------------------------------
@@ -4792,8 +4793,9 @@ static void PollCreatorPopup(const char* id, const std::string& toUid, long toGr
     if (!ok) { ImGui::SameLine(); ImGui::TextDisabled("Add a question and 2+ options"); }
     ImGui::EndPopup();
 }
-// The composer's "+" button: photo/file or a poll.
-static void ComposerPlusButton(const char* id, float size, const std::string& toUid, long toGroup) {
+// The composer's "+" button: photo/file or a poll (polls need reactions for votes,
+// so server channels get files only).
+static void ComposerPlusButton(const char* id, float size, const std::string& toUid, long toGroup, long toChannel = 0) {
     ImGui::PushID(id);
     ImVec2 ap = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##plus", ImVec2(size, size))) ImGui::OpenPopup("##plusmenu");
@@ -4804,16 +4806,26 @@ static void ComposerPlusButton(const char* id, float size, const std::string& to
     ad->AddCircle(c, size * 0.35f, acol, 20, 1.6f);
     ad->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), acol, 1.8f);
     ad->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), acol, 1.8f);
-    if (ahov) ImGui::SetTooltip("Attach a file or create a poll");
+    if (ahov) ImGui::SetTooltip(toChannel ? "Attach a photo or file" : "Attach a file or create a poll");
     bool openPoll = false;
     if (ImGui::BeginPopup("##plusmenu")) {
-        if (ImGui::MenuItem("Photo or file\xE2\x80\xA6", "25 MB")) PickAndSendAttachment(toUid, toGroup);
-        if (ImGui::MenuItem("Poll\xE2\x80\xA6")) openPoll = true;
+        if (ImGui::MenuItem("Photo or file\xE2\x80\xA6", "25 MB")) PickAndSendAttachment(toUid, toGroup, toChannel);
+        if (!toChannel && ImGui::MenuItem("Poll\xE2\x80\xA6")) openPoll = true;
         ImGui::EndPopup();
     }
     if (openPoll || std::getenv("OKAY_CHAT_DEMO_POLLNEW")) { if (!ImGui::IsPopupOpen("Create a poll")) ImGui::OpenPopup("Create a poll"); }
     PollCreatorPopup("Create a poll", toUid, toGroup);
     ImGui::PopID();
+}
+
+// Any chat message body the same way everywhere (DMs, groups, server channels):
+// a file card, a voice note, or text (markdown, emoji, GIFs, links).
+static void RenderChatAny(const std::string& body, float width, bool mine) {
+    ChatFileInfo f;
+    if (ParseChatFile(body, f)) { RenderChatFileCard(f, std::min(width, ChatFileCardWidth(f, std::min(width, 420.0f)))); return; }
+    ChatVoiceInfo v;
+    if (ParseChatVoice(body, v)) { RenderChatVoice(v, std::min(width, ChatVoiceWidth(std::min(width, 420.0f))), mine, kAccentDim); return; }
+    RenderChatBody(body, width);
 }
 
 // Render the open group conversation (header + members menu + multi-sender
@@ -10112,7 +10124,7 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
 // Upload worker: own account service (thread-safe, like the pollers), upload to
 // the "chat" Storage bucket, then send — images as the bare URL (rendered
 // inline), anything else as a "[File] name (size) url" card.
-struct ChatUploadJob { std::string path, toUid; long toGroup = 0; int voiceSecs = -1; };
+struct ChatUploadJob { std::string path, toUid; long toGroup = 0; int voiceSecs = -1; long toChannel = 0; };
 static ChatUploadJob g_attJob;
 static int ChatUploadWorker(void*) {
     ChatUploadJob job = g_attJob;
@@ -10127,7 +10139,9 @@ static int ChatUploadWorker(void*) {
             bool isImg = okay::Messages::MimeFor(name).rfind("image/", 0) == 0;
             std::string body = job.voiceSecs >= 0 ? VoiceMessageBody(job.voiceSecs, url)
                              : isImg ? url : okay::Messages::FileMessageBody(name, ec ? 0 : (unsigned long long)sz, url);
-            bool ok = job.toGroup > 0 ? dm.SendGroup(job.toGroup, body) : dm.Send(job.toUid, body);
+            bool ok = job.toChannel > 0 ? okay::Servers(a).Post(job.toChannel, body)
+                    : job.toGroup > 0 ? dm.SendGroup(job.toGroup, body) : dm.Send(job.toUid, body);
+            if (ok && job.toChannel > 0) g_srvForce = true;   // pull it into the channel right away
             if (!ok) err = "Uploaded, but sending the message failed.";
         } else if (err.empty()) err = "Upload failed.";
     } catch (...) { err = "Upload failed."; }
@@ -10137,10 +10151,10 @@ static int ChatUploadWorker(void*) {
     g_attBusy = false;
     return 0;
 }
-static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup, int voiceSecs) {
+static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup, int voiceSecs, long toChannel) {
     if (g_attBusy || path.empty()) return;
     if (!g_attMutex) g_attMutex = SDL_CreateMutex();
-    g_attJob = ChatUploadJob{path, toUid, toGroup, voiceSecs};
+    g_attJob = ChatUploadJob{path, toUid, toGroup, voiceSecs, toChannel};
     g_attName = voiceSecs >= 0 ? std::string("voice message") : fs::path(path).filename().string();
     g_attBusy = true;
     if (SDL_Thread* t = SDL_CreateThread(ChatUploadWorker, "okay-upload", nullptr)) SDL_DetachThread(t);
@@ -10311,14 +10325,14 @@ static void OutboxKick() {
 }
 
 // Pick a file with the native dialog and start uploading it to a chat.
-static void PickAndSendAttachment(const std::string& toUid, long toGroup) {
+static void PickAndSendAttachment(const std::string& toUid, long toGroup, long toChannel) {
     if (g_attBusy) { Toast("An upload is already in progress", 2); return; }
     const char* pick = tinyfd_openFileDialog("Send a photo or file", "", 0, nullptr, nullptr, 0);
     if (!pick || !*pick) return;
     std::error_code ec; auto sz = fs::file_size(fs::path(pick), ec);
     if (ec) { Toast("Couldn't read that file", 2); return; }
     if ((unsigned long long)sz > kMaxChatUpload) { Toast("Files are limited to 25 MB", 2); return; }
-    StartChatUpload(pick, toUid, toGroup);
+    StartChatUpload(pick, toUid, toGroup, -1, toChannel);
 }
 
 static int ChatPollWorker(void*) {
@@ -16905,8 +16919,29 @@ int main(int argc, char** argv) {
                             }
                             ImGui::SetCursorScreenPos(after);
                         };
+                        // @mention suggestions while the word being typed starts with '@' (members
+                        // of this server), like group chats. Computed first: the row needs room.
+                        std::vector<std::string> svMention;
+                        std::size_t svMentionAt = std::string::npos;
+                        {
+                            const std::string cur = svMsg;
+                            const std::size_t sp = cur.find_last_of(" \n");
+                            const std::size_t st = sp == std::string::npos ? 0 : sp + 1;
+                            if (st < cur.size() && cur[st] == '@') {
+                                svMentionAt = st;
+                                std::string pre = cur.substr(st + 1);
+                                for (auto& ch : pre) ch = (char)std::tolower((unsigned char)ch);
+                                for (const auto& mm : svMembers) {
+                                    if (mm.name.empty() || mm.name == svMe) continue;
+                                    std::string low = mm.name; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
+                                    if (low.compare(0, pre.size(), pre) == 0) svMention.push_back(mm.name);
+                                    if (svMention.size() >= 6) break;
+                                }
+                            }
+                        }
                         const float composerH = (ImGui::GetTextLineHeight() + 16.0f) + 4.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f + 8.0f
-                                              + ((svEditId || svReplyTo) ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
+                                              + ((svEditId || svReplyTo) ? ImGui::GetFrameHeightWithSpacing() : 0.0f)
+                                              + (svMention.empty() ? 0.0f : ImGui::GetFrameHeightWithSpacing());
                         ImGui::BeginChild("##svscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false);
                         static int svLastShown = -1;
                         std::string prevAuthor; bool firstMsg = true; long prevDay = 0, prevWhen = 0;
@@ -16965,7 +17000,7 @@ int main(int argc, char** argv) {
                                 ImVec4 nc2 = NameColor(who);
                                 ImGui::TextColored(ImVec4(nc2.x * 0.35f + 0.65f, nc2.y * 0.35f + 0.65f, nc2.z * 0.35f + 0.65f, 1), "%s", who.c_str());
                                 ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", w);
-                                RenderChatBody(pb.text);
+                                RenderChatAny(pb.text, ImGui::GetContentRegionAvail().x, who == svMe);
                                 msgActions(m);
                                 ImGui::EndGroup();
                                 prevAuthor = who;
@@ -16974,7 +17009,7 @@ int main(int argc, char** argv) {
                                 // avatar, with a faint timestamp revealed on hover (Discord-like).
                                 ImGui::Indent(42.0f);
                                 ImVec2 rowTop = ImGui::GetCursorScreenPos();
-                                RenderChatBody(pb.text);
+                                RenderChatAny(pb.text, ImGui::GetContentRegionAvail().x, who == svMe);
                                 if (w[0] && ImGui::IsMouseHoveringRect(ImVec2(rowMin.x, rowTop.y), ImVec2(rowRight, ImGui::GetCursorScreenPos().y))) {
                                     ImVec2 tp(rowTop.x - 40.0f, rowTop.y + 1.0f);
                                     ImGui::GetWindowDrawList()->AddText(tp, ImGui::GetColorU32(ImGuiCol_TextDisabled), w);
@@ -17013,7 +17048,7 @@ int main(int argc, char** argv) {
                                     ImGui::BeginGroup();
                                 }
                                 ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * (failed ? 0.85f : 0.55f));
-                                RenderChatBody(ob.text);
+                                RenderChatAny(ob.text, ImGui::GetContentRegionAvail().x, true);
                                 ImGui::PopStyleVar();
                                 if (failed) {
                                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.55f, 1.0f), "Not sent");
@@ -17055,8 +17090,25 @@ int main(int argc, char** argv) {
                         // Composer (chat-style pill): emoji + input, Enter sends,
                         // Shift/Ctrl+Enter adds a line.
                         ImGui::Dummy(ImVec2(0, 4));
+                        if (!svMention.empty()) {
+                            ImGui::TextDisabled("Mention:"); ImGui::SameLine();
+                            for (const auto& nm : svMention) {
+                                if (ImGui::SmallButton(("@" + nm).c_str())) {
+                                    std::string cur = std::string(svMsg).substr(0, svMentionAt) + "@" + nm + " ";
+                                    std::snprintf(svMsg, sizeof(svMsg), "%s", cur.c_str());
+                                    svFocus = true;
+                                }
+                                ImGui::SameLine();
+                            }
+                            ImGui::NewLine();
+                        }
+                        // Same tools as a DM / group: emoji (+ GIFs / stickers), photo or file,
+                        // voice note (the mic shows while the box is empty).
                         EmojiPicker("svemoji", svMsg, sizeof(svMsg)); ImGui::SameLine(0, 6);
                         const float inH = ImGui::GetTextLineHeight() + 16.0f;
+                        ComposerPlusButton("svplus", inH, std::string(), 0, svChan); ImGui::SameLine(0, 6);
+                        if (VoiceRecording() && g_recToChannel && !VoiceRecordingFor(std::string(), 0, svChan)) FinishVoiceRecord(false);   // switched channel
+                        if (VoiceRecordingFor(std::string(), 0, svChan)) { DrawVoiceRecorderBar(inH, kAccentDim); } else {
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
                         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 8));
                         if (svFocus) { ImGui::SetKeyboardFocusHere(); svFocus = false; }
@@ -17071,8 +17123,12 @@ int main(int argc, char** argv) {
                         ImGui::PopStyleVar(2);
                         ImGui::SameLine(0, 8);
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
-                        bool clicked = PrimaryButton(svEditId ? "Save" : "Send", ImVec2(62, inH));
+                        const bool svMic = !svMsg[0] && !svEditId && !g_attBusy && !kSvDemo;
+                        bool clicked = false;
+                        if (svMic) DrawVoiceMicButton("##svmic", ImVec2(62, inH), kAccentDim, std::string(), 0, svChan);
+                        else clicked = PrimaryButton(svEditId ? "Save" : "Send", ImVec2(62, inH));
                         ImGui::PopStyleVar();
+                        if (g_attBusy) { ImGui::TextDisabled("Uploading %s\xE2\x80\xA6", ChatPreview(g_attName, 28).c_str()); }
                         if ((clicked || send) && svMsg[0]) {
                             if (svEditId) {   // instant: patch the local copy, save off-thread
                                 const std::string nb = svEditTag + svMsg;
@@ -17089,6 +17145,7 @@ int main(int argc, char** argv) {
                             }
                             svFocus = true;   // keep typing (refocus the box, not the Send button)
                         }
+                        }   // not recording
                     }
                     ImGui::EndChild();
 
@@ -17130,7 +17187,7 @@ int main(int argc, char** argv) {
                                 ImVec4 nc2 = NameColor(who);
                                 ImGui::TextColored(ImVec4(nc2.x * 0.35f + 0.65f, nc2.y * 0.35f + 0.65f, nc2.z * 0.35f + 0.65f, 1), "%s", who.c_str());
                                 if (m.when > 0) { ImGui::SameLine(0, 6); ImGui::TextDisabled("%s", RelTime(m.when).c_str()); }
-                                RenderChatBody(text, ImGui::GetContentRegionAvail().x);
+                                RenderChatAny(text, ImGui::GetContentRegionAvail().x, false);
                                 if (m.id > 0) {   // like pill / heart
                                     const bool liked = svMyLikes.count(m.id) != 0; const long lc = svLikes.count(m.id) ? svLikes[m.id] : 0;
                                     ImGui::PushID((int)m.id);

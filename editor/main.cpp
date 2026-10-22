@@ -28948,9 +28948,18 @@ void DrawInspector(EditorState& ed) {
     float acW = ImGui::GetContentRegionAvail().x;
     float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
     if (acPad > 0.0f) ImGui::Indent(acPad);
-    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) { acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent"); }
+    // The browser: categories on the left (plus Recent), that category's components
+    // on the right as a plain list; typing searches every category at once.
+    static std::string s_acCat;                  // selected category ("Recent" = recently added)
+    static std::vector<std::string> s_acRecent;  // labels, most recent first
+    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) {
+        acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
+        s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
+    }
     if (acPad > 0.0f) ImGui::Unindent(acPad);
     ImGui::PopStyleColor(4);
+    ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopup("AddComponent")) {
         // Centered "Component" title + search box, like Unity's Add Component.
         const char* title = "Component";
@@ -28975,9 +28984,7 @@ void DrawInspector(EditorState& ed) {
             for (auto& ch : b) ch = (char)std::tolower((unsigned char)ch);
             return a.find(b) != std::string::npos;
         };
-        // A category drills into a submenu when browsing (Unity-style), but its
-        // items render inline in a flat list while searching. Category labels are
-        // tinted to match the Inspector's component-header colors.
+        // Category labels are tinted to match the Inspector's component-header colors.
         auto catColor = [](const char* name) -> ImVec4 {
             auto is = [&](const char* k) { return std::strstr(name, k) != nullptr; };
             if (is("Rendering") || is("Lighting") || is("Camera")) return ImVec4(0.55f, 0.72f, 0.98f, 1.0f);
@@ -28989,35 +28996,52 @@ void DrawInspector(EditorState& ed) {
             if (is("Gameplay") || is("No-Code") || is("RPG"))      return ImVec4(0.92f, 0.60f, 0.66f, 1.0f);
             return ImGui::GetStyleColorVec4(ImGuiCol_Text);
         };
-        ImVec4 curCat = ImGui::GetStyleColorVec4(ImGuiCol_Text);   // category of the rows being emitted
+        // Every category block below runs each frame: BeginCat records the category
+        // (with how many of its components can still be added); item() only DRAWS a row
+        // when it belongs to the selected category, to Recent, or matches the search.
+        std::vector<std::pair<std::string, int>> acCats;
+        std::string curCatName;
+        ImVec4 curCat = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        bool catHeaderDone = false;
+        int acShown = 0, acRecentCount = 0;
+        std::set<std::string> acRecentShown;
         auto BeginCat = [&](const char* name) -> bool {
-            curCat = catColor(name);
-            if (searching) return true;
-            ImGui::PushStyleColor(ImGuiCol_Text, catColor(name));
-            bool open = ImGui::BeginMenu(name);
-            ImGui::PopStyleColor();
-            return open;
+            acCats.push_back({name, 0});
+            curCatName = name; curCat = catColor(name); catHeaderDone = false;
+            return true;
         };
-        auto EndCat = [&](bool opened) { if (!searching && opened) ImGui::EndMenu(); };
-        // One component row: shown only if absent + matches the search. While searching,
-        // pressing Enter picks the first shown row; flat search results get a small
-        // category-colored dot so the flattened list keeps its grouping context.
+        auto EndCat = [&](bool) {};
         auto item = [&](bool absent, const char* label) {
             if (!absent || !F(label)) return false;
-            bool clicked;
-            if (searching) {
-                char pad[96]; std::snprintf(pad, sizeof(pad), "    %s", label);
-                clicked = ImGui::MenuItem(pad);
-                ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-                ImGui::GetWindowDrawList()->AddCircleFilled(
-                    ImVec2(mn.x + 8.0f, (mn.y + mx.y) * 0.5f), 3.0f,
-                    ImGui::GetColorU32(curCat), 10);
-            } else {
-                clicked = ImGui::MenuItem(label);
+            if (!acCats.empty()) ++acCats.back().second;
+            const bool isRecent = std::find(s_acRecent.begin(), s_acRecent.end(), label) != s_acRecent.end();
+            if (isRecent && !acRecentShown.count(label)) ++acRecentCount;
+            bool show = searching || curCatName == s_acCat;
+            if (!searching && s_acCat == "Recent" && isRecent && !acRecentShown.count(label)) show = true;
+            if (isRecent) acRecentShown.insert(label);
+            if (!show) return false;
+            if (searching && !catHeaderDone) {   // results grouped under their category
+                ImGui::PushStyleColor(ImGuiCol_Text, curCat);
+                ImGui::TextUnformatted(curCatName.c_str());
+                ImGui::PopStyleColor();
+                catHeaderDone = true;
             }
+            ImGui::PushID(curCatName.c_str());
+            bool clicked = ImGui::Selectable(label, false, ImGuiSelectableFlags_None, ImVec2(0, 24));
+            ImGui::PopID();
             if (!clicked && searching && acEnter && !acFirstConsumed) { acFirstConsumed = true; clicked = true; }
+            ++acShown;
+            if (clicked) {
+                s_acRecent.erase(std::remove(s_acRecent.begin(), s_acRecent.end(), std::string(label)), s_acRecent.end());
+                s_acRecent.insert(s_acRecent.begin(), label);
+                if (s_acRecent.size() > 10) s_acRecent.resize(10);
+            }
             return clicked;
         };
+        const ImVec2 acBody = ImGui::GetCursorPos();
+        const float acLeftW = 180.0f, acBodyH = 400.0f;
+        ImGui::SetCursorPos(ImVec2(acBody.x + acLeftW + 8.0f, acBody.y));
+        ImGui::BeginChild("##acitems", ImVec2(0, acBodyH), ImGuiChildFlags_Borders);
 
         { bool o = BeginCat("Rendering");
           if (o) {
@@ -29125,14 +29149,14 @@ void DrawInspector(EditorState& ed) {
                     std::string full = e.path().string();
                     std::string rel = fs::relative(e.path(), assets, ec).string();
                     std::string lbl = rel + (ext == ".okayvs" ? "  (visual)" : "");
-                    if (F(rel.c_str()) && ImGui::MenuItem(lbl.c_str())) AttachScriptAsset(ed, go, full);
+                    if (item(true, lbl.c_str())) AttachScriptAsset(ed, go, full);
                 }
             }
-            if (F("New Script...") && ImGui::MenuItem("New Script...")) {
+            if (item(true, "New Script...")) {
                 g_newScriptGO = go; g_newScriptOpen = true;
                 std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
             }
-            if (F("New Visual Script") && ImGui::MenuItem("New Visual Script (nodes)")) {
+            if (item(true, "New Visual Script (nodes)")) {
                 // A starter graph (On Start + On Update), saved under Assets, attached,
                 // and opened in the node editor.
                 namespace fsn = std::filesystem;
@@ -29276,6 +29300,27 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
           } EndCat(o); }
 
+        if (!acShown)
+            ImGui::TextDisabled("%s", searching ? "No component matches that." :
+                                      s_acCat == "Recent" ? "Components you add show up here." :
+                                      "Everything in this group is already on this object.");
+        ImGui::EndChild();
+        // Categories (drawn after the list so their counts are this frame's).
+        ImGui::SetCursorPos(acBody);
+        ImGui::BeginChild("##accats", ImVec2(acLeftW, acBodyH), ImGuiChildFlags_Borders);
+        auto catRow = [&](const std::string& name, int count, ImVec4 col) {
+            const bool on = !searching && s_acCat == name;
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            char lbl[96]; std::snprintf(lbl, sizeof lbl, "%s##cat", name.c_str());
+            if (ImGui::Selectable(lbl, on, ImGuiSelectableFlags_DontClosePopups, ImVec2(0, 24))) { s_acCat = name; acFilter[0] = '\0'; }
+            ImGui::PopStyleColor();
+            ImGui::SameLine(acLeftW - 34.0f);
+            ImGui::TextDisabled("%d", count);
+        };
+        catRow("Recent", acRecentCount, ImVec4(0.86f, 0.88f, 0.94f, 1.0f));
+        ImGui::Separator();
+        for (const auto& c : acCats) if (c.second > 0 || c.first == s_acCat) catRow(c.first, c.second, catColor(c.first.c_str()));
+        ImGui::EndChild();
         // Enter added the first match (or matched nothing) — close and reset the search.
         if (acEnter) { acFilter[0] = '\0'; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();

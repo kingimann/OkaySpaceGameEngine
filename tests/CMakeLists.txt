@@ -686,3 +686,7 @@ add_test(NAME anim_core COMMAND test_anim_core)
 add_executable(test_model_import_rig test_model_import_rig.cpp)
 target_link_libraries(test_model_import_rig PRIVATE okay::engine)
 add_test(NAME model_import_rig COMMAND test_model_import_rig)
+
+add_executable(test_anim_sm_layers test_anim_sm_layers.cpp)
+target_link_libraries(test_anim_sm_layers PRIVATE okay::engine)
+add_test(NAME anim_sm_layers COMMAND test_anim_sm_layers)

@@ -346,6 +346,7 @@ public:
         if (driveStateMachine) {
             AnimLink::Frame f;
             f.speed = hSpeed; f.verticalSpeed = rb ? rb->velocity.y : 0.0f; f.grounded = grounded;
+            if (rb) f.velocity = rb->velocity;
             f.crouch = m_stance == Stance::Crouch; f.prone = m_stance == Stance::Prone;
             f.sprint = running; f.slide = m_slideT > 0.0f; f.aim = m_zoom;
             f.jumped = m_jumped; f.landed = m_landed;

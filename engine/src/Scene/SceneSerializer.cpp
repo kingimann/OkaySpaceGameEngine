@@ -395,9 +395,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << Quote(ma->landClip) << " " << ma->airUpVel << " " << ma->airDownVel << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
-        if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty())
+        if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty() || ma->rootMotionRotation || ma->rootMotionApplyTo)
             out << "  modelanimroot " << (ma->rootMotion ? 1 : 0) << " " << Quote(ma->rootMotionNode)
-                << " " << (ma->rootMotionY ? 1 : 0) << "\n";
+                << " " << (ma->rootMotionY ? 1 : 0) << " " << (ma->rootMotionRotation ? 1 : 0)
+                << " " << ma->rootMotionApplyTo << "\n";
         if (ma->smoothLocomotion)
             out << "  modelanimsmooth 1\n";
         for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {
@@ -408,7 +409,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << "\n";
         }
     }
-    if (auto* asm2 = go->GetComponent<AnimStateMachine>()) {
+    for (AnimStateMachine* asm2 : go->GetComponents<AnimStateMachine>()) {
+        // Layers (machines after the base) start with a header record; every
+        // record that follows belongs to that machine until the next header.
+        if (asm2->layer > 0)
+            out << "  animsmlayer " << asm2->layer << " " << asm2->layerWeight << " " << Quote(asm2->maskBone) << "\n";
         out << "  animsm " << Quote(asm2->entry) << " " << asm2->states.size();
         for (const auto& st : asm2->states) {
             out << " " << Quote(st.name) << " " << Quote(st.clip) << " " << st.speed
@@ -449,6 +454,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 out << " " << Quote(tr.to) << " " << (int)tr.cond << " " << Quote(tr.param)
                     << " " << tr.value << " " << tr.blend;
                 writeExt(tr);
+            }
+            out << "\n";
+        }
+        // 2D blend trees and speed parameters.
+        bool any2 = false;
+        for (const auto& st : asm2->states) if (st.blendDims != 1 || !st.speedParam.empty()) any2 = true;
+        if (any2) {
+            out << "  animsm2d " << asm2->states.size();
+            for (const auto& st : asm2->states) {
+                out << " " << st.blendDims << " " << Quote(st.blendParamY) << " " << Quote(st.speedParam) << " " << st.motions.size();
+                for (const auto& m : st.motions) out << " " << m.posY;
             }
             out << "\n";
         }
@@ -1954,6 +1970,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             GameObject* go = scene.CreateGameObject(name);
             if (firstNew && !*firstNew) *firstNew = go;
             byIndex[idx] = go;
+            // The state machine the animsm* records apply to (layers add more).
+            AnimStateMachine* curSM = nullptr;
+            auto smFor = [&]() -> AnimStateMachine* {
+                if (curSM) return curSM;
+                curSM = go->GetComponent<AnimStateMachine>();
+                if (!curSM) curSM = go->AddComponent<AnimStateMachine>();
+                return curSM;
+            };
 
             std::string field;
             while (in >> field && field != "end") {
@@ -2209,8 +2233,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->rootMotionNode = ReadQuoted(in);
                     // Optional trailing field (newer files): vertical root motion.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); int ry;
-                      if (rs >> ry) ma->rootMotionY = (ry != 0); }
+                      std::istringstream rs(rest); int ry, rr, at;
+                      if (rs >> ry) ma->rootMotionY = (ry != 0);
+                      if (rs >> rr) ma->rootMotionRotation = (rr != 0);
+                      if (rs >> at) ma->rootMotionApplyTo = at; }
                 } else if (field == "modelanimsmooth") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
@@ -2226,9 +2252,28 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (ci >= 0 && ci < (long)ma->clips.size())
                             ma->clips[ci].events.push_back(std::move(ev));
                     }
+                } else if (field == "animsmlayer") {
+                    curSM = go->AddComponent<AnimStateMachine>();
+                    in >> curSM->layer >> curSM->layerWeight;
+                    curSM->maskBone = ReadQuoted(in);
+                } else if (field == "animsm2d") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        AnimStateMachine::State dummy;
+                        AnimStateMachine::State& st = i < (long)sm2->states.size() ? sm2->states[i] : dummy;
+                        long nm = 0;
+                        in >> st.blendDims;
+                        st.blendParamY = ReadQuoted(in);
+                        st.speedParam = ReadQuoted(in);
+                        in >> nm;
+                        for (long k = 0; k < nm && in; ++k) {
+                            float y = 0; in >> y;
+                            if (k < (long)st.motions.size()) st.motions[k].posY = y;
+                        }
+                    }
                 } else if (field == "animsm") {
-                    auto* sm2 = go->GetComponent<AnimStateMachine>();
-                    if (!sm2) sm2 = go->AddComponent<AnimStateMachine>();
+                    auto* sm2 = smFor();
                     sm2->entry = ReadQuoted(in);
                     long stCnt = 0; in >> stCnt;
                     sm2->states.clear();
@@ -2251,8 +2296,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         sm2->states.push_back(std::move(st));
                     }
                 } else if (field == "animsmx" || field == "animsmany") {
-                    auto* sm2 = go->GetComponent<AnimStateMachine>();
-                    if (!sm2) sm2 = go->AddComponent<AnimStateMachine>();
+                    auto* sm2 = smFor();
                     auto readExt = [&](AnimStateMachine::Transition& tr) {
                         int he = 0, ci = 0; long nx = 0;
                         in >> he >> tr.exitTime >> ci >> nx;
@@ -2297,7 +2341,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         }
                     }
                 } else if (field == "animsmparams") {
-                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    auto* sm2 = smFor();
                     long n = 0; in >> n;
                     for (long i = 0; i < n; ++i) {
                         AnimStateMachine::Param p;
@@ -2306,7 +2350,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                 } else if (field == "animsmpos") {
                     // Animator graph node positions (index-matched to animsm's states).
-                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    auto* sm2 = smFor();
                     long n = 0; in >> n;
                     for (long i = 0; i < n; ++i) {
                         float x = 0, y = 0; in >> x >> y;

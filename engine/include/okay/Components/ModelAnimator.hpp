@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -215,6 +216,29 @@ public:
     /// new clip's pose. Runs in LateUpdate so it blends what the node Animators
     /// just wrote this frame (Update order between objects doesn't matter).
     void LateUpdate(float dt) override {
+        CrossfadeStep(dt);
+        // Layers (and anything else that poses on top of the base pose) run
+        // after the base pose and its crossfade are final.
+        for (std::size_t i = 0; i < m_postPose.size(); ++i) {
+            // Only components still on this object (a removed layer must not be called).
+            bool alive = false;
+            if (gameObject)
+                for (const auto& c : gameObject->Components()) if (c.get() == m_postPose[i].owner) { alive = true; break; }
+            if (!alive) { m_postPose.erase(m_postPose.begin() + i); --i; continue; }
+            m_postPose[i].fn(dt);
+        }
+    }
+    /// Run `fn` every frame after the base pose (layers register here).
+    void AddPostPose(const void* owner, std::function<void(float)> fn) {
+        RemovePostPose(owner);
+        m_postPose.push_back({owner, std::move(fn)});
+    }
+    void RemovePostPose(const void* owner) {
+        for (std::size_t i = 0; i < m_postPose.size(); ++i)
+            if (m_postPose[i].owner == owner) { m_postPose.erase(m_postPose.begin() + i); return; }
+    }
+
+    void CrossfadeStep(float dt) {
         if (m_blend.empty() || !gameObject) return;
         Scene* sc = gameObject->scene();
         if (!sc) { m_blend.clear(); return; }
@@ -524,6 +548,114 @@ public:
                 if (bB[nb]) blendWrite(bB[nb], -1, nb);
         return true;
     }
+    /// Pose the model as a weighted mix of any number of clips (2D blend trees),
+    /// all sampled at one shared normalized phase. Weights are normalized; root
+    /// motion is blended by the same weights; the heaviest clip fires events.
+    bool BlendMany(float dt, const std::vector<int>& clipIdx, const std::vector<float>& weights) {
+        if (!gameObject || !gameObject->scene()) return false;
+        std::vector<int> ci; std::vector<float> w; std::vector<float> len;
+        float sum = 0.0f;
+        for (std::size_t i = 0; i < clipIdx.size() && i < weights.size(); ++i) {
+            int c = clipIdx[i];
+            if (c < 0 || c >= (int)clips.size() || weights[i] <= 1e-4f) continue;
+            float l = ClipLength(c);
+            if (l <= 0.0f) continue;
+            ci.push_back(c); w.push_back(weights[i]); len.push_back(l); sum += weights[i];
+        }
+        if (ci.empty()) return false;
+        float cycle = 0.0f; int dom = 0;
+        for (std::size_t i = 0; i < w.size(); ++i) { w[i] /= sum; cycle += len[i] * w[i]; if (w[i] > w[dom]) dom = (int)i; }
+        float prevPhase = m_phase;
+        m_phase = std::fmod(m_phase + dt * speed / std::fmax(cycle, 1e-4f), 1.0f);
+        active = ci[dom];
+        if (rootMotion) {
+            Vec3 d{0, 0, 0}; float yaw = 0.0f;
+            for (std::size_t i = 0; i < ci.size(); ++i) {
+                Vec3 di; float yi;
+                if (RootDelta(ci[i], prevPhase * len[i], m_phase * len[i], len[i], di, yi)) { d = d + di * w[i]; yaw += yi * w[i]; }
+            }
+            ApplyRootMotion(d, yaw, dt);
+        }
+        {   // events of the dominant clip over this frame's phase window
+            const Clip& dc = clips[ci[dom]];
+            float L = len[dom], e0 = prevPhase * L, e1 = m_phase * L;
+            auto fire = [&](float a2, float b2) {
+                for (const ClipEvent& ev : dc.events)
+                    if (ev.time > a2 && ev.time <= b2 && !ev.name.empty()) {
+                        m_firedEvents.push_back(ev.name);
+                        if (onAnimEvent) onAnimEvent(ev.name);
+                    }
+            };
+            if (e1 < e0) { fire(e0, L); fire(0.0f, e1); } else fire(e0, e1);
+        }
+        std::vector<std::pair<int, float>> ct;
+        for (std::size_t i = 0; i < ci.size(); ++i) ct.push_back({ci[i], m_phase * len[i]});
+        PoseWeighted(ct, w, nullptr, 1.0f);
+        return true;
+    }
+
+    /// Sample several (clip, time) pairs, mix them by `weights`, and blend the
+    /// result over the current pose by `amount` — only on bones in `mask` when
+    /// given. Base for layers and multi-clip blends.
+    void PoseWeighted(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
+                      const std::unordered_set<Transform*>* mask, float amount) {
+        struct Acc { Transform* t; Vec3 p{0, 0, 0}, s{0, 0, 0}; Quat q{0, 0, 0, 0}; Quat ref; float w = 0.0f; };
+        std::vector<Acc> acc;
+        std::unordered_map<Transform*, int> at;
+        for (std::size_t k = 0; k < clipTimes.size() && k < weights.size(); ++k) {
+            int c = clipTimes[k].first;
+            float wk = weights[k];
+            if (c < 0 || c >= (int)clips.size() || wk <= 0.0f) continue;
+            const auto& b = Bind(c);
+            for (std::size_t n = 0; n < b.size(); ++n) {
+                Transform* t = b[n];
+                if (!t || (mask && !mask->count(t))) continue;
+                auto it = at.find(t);
+                int ai;
+                if (it == at.end()) { ai = (int)acc.size(); at.emplace(t, ai); acc.push_back({t}); acc.back().ref = t->localRotation; }
+                else ai = it->second;
+                Vec3 p = t->localPosition, sc = t->localScale; Quat r = t->localRotation;
+                SampleNode(c, (int)n, clipTimes[k].second, p, r, sc);
+                Acc& a = acc[ai];
+                if (a.w == 0.0f) a.ref = r;
+                if (Quat::Dot(a.ref, r) < 0.0f) r = Quat{-r.x, -r.y, -r.z, -r.w};
+                a.p = a.p + p * wk; a.s = a.s + sc * wk;
+                a.q = Quat{a.q.x + r.x * wk, a.q.y + r.y * wk, a.q.z + r.z * wk, a.q.w + r.w * wk};
+                a.w += wk;
+            }
+        }
+        for (Acc& a : acc) {
+            if (a.w <= 1e-6f) continue;
+            float iw = 1.0f / a.w;
+            Vec3 p = a.p * iw, sc = a.s * iw;
+            Quat q = Quat{a.q.x * iw, a.q.y * iw, a.q.z * iw, a.q.w * iw}.Normalized();
+            Transform* t = a.t;
+            if (amount >= 0.999f) { t->localPosition = p; t->localScale = sc; t->localRotation = q; continue; }
+            t->localPosition = t->localPosition + (p - t->localPosition) * amount;
+            t->localScale    = t->localScale + (sc - t->localScale) * amount;
+            t->localRotation = Quat::Slerp(t->localRotation, q, amount).Normalized();
+        }
+    }
+
+    /// CaptureCrossfade for any number of clips (entering a 2D blend tree).
+    void CaptureCrossfadeMany(const std::vector<int>& clipIdx, float seconds) {
+        m_blend.clear(); m_blendW = 0.0f;
+        blendTime = seconds;
+        if (seconds <= 0.001f) return;
+        if (gameObject && gameObject->scene()) m_blendVer = gameObject->scene()->StructureVersion();
+        for (int ci : clipIdx) {
+            if (ci < 0 || ci >= (int)clips.size()) continue;
+            const auto& b = Bind(ci);
+            for (std::size_t n = 0; n < b.size(); ++n) {
+                Transform* t = b[n];
+                if (!t) continue;
+                bool have = false;
+                for (const BlendFrom& bf : m_blend) if (bf.t == t) { have = true; break; }
+                if (!have) m_blend.push_back({clips[ci].nodes[n].node, t, t->localPosition, t->localRotation, t->localScale});
+            }
+        }
+    }
+
     /// Normalized phase (0..1) of the last BlendClips call.
     float BlendPhase() const { return m_phase; }
     void  ResetBlendPhase(float p = 0.0f) { m_phase = p; }
@@ -810,6 +942,8 @@ private:
     std::uint64_t m_blendVer = 0;
     Vec3  m_lastRootDelta{0, 0, 0};
     float m_lastRootYaw = 0.0f;
+    struct PostPose { const void* owner; std::function<void(float)> fn; };
+    std::vector<PostPose> m_postPose;
     std::vector<BlendFrom>   m_blend;         ///< pose at the last clip switch (crossfade source)
     float                    m_blendW = 1.0f; ///< crossfade progress (1 = done)
     std::vector<std::string> m_firedEvents;   ///< event names fired since the last consume

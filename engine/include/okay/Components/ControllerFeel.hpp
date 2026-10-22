@@ -37,6 +37,7 @@ struct AnimLink {
         float speed = 0.0f, verticalSpeed = 0.0f;
         bool grounded = true, crouch = false, prone = false, sprint = false, slide = false, aim = false;
         bool jumped = false, landed = false;
+        Vec3 velocity{0, 0, 0};   ///< world velocity: sent as moveX / moveZ in the body's frame (2D blend trees)
     };
     void Apply(GameObject* owner, const Frame& f) {
         if (!m_sm || m_owner != owner) { m_owner = owner; m_sm = FindInTree<AnimStateMachine>(owner); }
@@ -49,6 +50,11 @@ struct AnimLink {
         m_sm->SetBool("sprint", f.sprint);
         m_sm->SetBool("slide", f.slide);
         m_sm->SetBool("aim", f.aim);
+        if (owner && owner->transform) {
+            Vec3 local = owner->transform->InverseTransformDirection(f.velocity);
+            m_sm->SetFloat("moveX", local.x);
+            m_sm->SetFloat("moveZ", local.z);
+        }
         if (f.jumped) m_sm->SetTrigger("jump");
         if (f.landed) m_sm->SetTrigger("land");
     }

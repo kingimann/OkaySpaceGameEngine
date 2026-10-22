@@ -1318,6 +1318,13 @@ struct CamBookmark { bool set = false; okay::Vec3 target{}; float yaw = 0, pitch
                      float px = 0, py = 0; bool view3D = true; };
 CamBookmark g_camBookmarks[3];
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
+// Skeleton overlay in the Scene view: 0 off, 1 the selected model's rig, 2 every rig.
+int g_skeletonMode = 1;
+GameObject* g_hoverBone = nullptr;   // bone under the cursor (picked before meshes)
+// Bone shapes built with the other gizmos but drawn after the scene image (on top
+// of the meshes they're inside).
+struct SkelDraw { ImVec2 q[4]; ImVec2 head; bool shape; ImU32 fill, edge; float thick, dot; };
+static std::vector<SkelDraw> g_skelDraw;
 // Isolate mode (Unity's Isolation view): the Scene view shows ONLY this object
 // and its children (lights stay on for shading). View-only — nothing in the
 // scene is modified, and the Game view / Play mode are unaffected.
@@ -3586,6 +3593,13 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         if (ImGui::BeginMenu("Scene Overlays")) {
             ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
+            if (ImGui::BeginMenu("Skeletons")) {
+                if (ImGui::MenuItem("Selected model", nullptr, g_skeletonMode == 1)) g_skeletonMode = 1;
+                if (ImGui::MenuItem("All rigged models", nullptr, g_skeletonMode == 2)) g_skeletonMode = 2;
+                if (ImGui::MenuItem("Off", nullptr, g_skeletonMode == 0)) g_skeletonMode = 0;
+                ImGui::EndMenu();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw rigged models' bones, connected parent to child.\nClick a bone in the Scene view to select it.");
             if (ImGui::MenuItem("Gizmos (selection / camera / lights)", nullptr, &g_showGizmos)) SaveSettings();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Editor-only overlays in the Scene view\n(yellow selection box, camera frustum, light icons).\nNever appear in the Game view or a build.");
             if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
@@ -15367,6 +15381,71 @@ static void DrawAnimatorGraph(EditorState& ed) {
     ModelAnimator* ma = smObj ? smObj->GetComponent<ModelAnimator>() : nullptr;
     std::vector<std::string> clipNames = ma ? ma->ClipNames() : std::vector<std::string>{};
 
+    // ---- Layers: every machine on the object, base first; tabs pick which one
+    // the graph edits. A layer plays on part of the skeleton over the base.
+    {
+        static GameObject* s_layerObj = nullptr;
+        static int s_layer = 0, s_forceTab = -1;
+        if (s_layerObj != smObj) { s_layerObj = smObj; s_layer = 0; }
+        std::vector<AnimStateMachine*> machines = smObj->GetComponents<AnimStateMachine>();
+        if (s_layer >= (int)machines.size()) s_layer = 0;
+        if (ImGui::BeginTabBar("##aglayers", ImGuiTabBarFlags_FittingPolicyScroll)) {
+            for (int li = 0; li < (int)machines.size(); ++li) {
+                std::string lbl = li == 0 ? std::string("Base Layer") :
+                                  ("Layer " + std::to_string(li) + (machines[li]->maskBone.empty() ? std::string() : " (" + machines[li]->maskBone + ")"));
+                lbl += "##agl" + std::to_string(li);
+                if (ImGui::BeginTabItem(lbl.c_str(), nullptr, s_forceTab == li ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    if (s_forceTab < 0 || s_forceTab == li) s_layer = li;
+                    ImGui::EndTabItem();
+                }
+            }
+            if (ImGui::TabItemButton("+##agaddlayer", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) {
+                ed.PushUndo();
+                auto* lay = smObj->AddComponent<AnimStateMachine>();
+                lay->layer = (int)machines.size();
+                AnimStateMachine::State empty; empty.name = "Empty"; empty.nx = 20; empty.ny = 20;
+                lay->states.push_back(empty);
+                // A sensible default mask: the spine (upper body), if the rig has one.
+                if (ma)
+                    for (const auto& c : ma->clips)
+                        for (const auto& nc : c.nodes) {
+                            std::string lo = nc.node; for (auto& ch : lo) ch = (char)std::tolower((unsigned char)ch);
+                            if (lay->maskBone.empty() && lo.find("spine") != std::string::npos) lay->maskBone = nc.node;
+                        }
+                s_layer = (int)machines.size();
+                s_forceTab = s_layer;
+                machines.push_back(lay);
+                ed.dirty = true;
+            } else if (s_forceTab >= 0 && s_layer == s_forceTab) s_forceTab = -1;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a layer: its own states, playing on part of the skeleton\n(e.g. Spine and up) over the base layer.");
+            ImGui::EndTabBar();
+        }
+        sm = machines[s_layer];
+        if (sm->layer > 0) {
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::SliderFloat("Weight##agl", &sm->layerWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(170);
+            if (ImGui::BeginCombo("Mask bone##agl", sm->maskBone.empty() ? "(whole body)" : sm->maskBone.c_str())) {
+                if (ImGui::Selectable("(whole body)", sm->maskBone.empty())) { sm->maskBone.clear(); ed.dirty = true; }
+                std::set<std::string> seen;
+                if (ma)
+                    for (const auto& c : ma->clips)
+                        for (const auto& nc : c.nodes)
+                            if (seen.insert(nc.node).second && ImGui::Selectable(nc.node.c_str(), sm->maskBone == nc.node)) { sm->maskBone = nc.node; ed.dirty = true; }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("This layer drives this bone and everything under it.\nPick the spine for upper-body actions (attack while walking).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove layer##agl")) {
+                ed.PushUndo();
+                smObj->RemoveComponent(sm);
+                ed.dirty = true;
+                ImGui::End(); return;
+            }
+        }
+    }
+
     // Per-machine UI state.
     static void* s_key = nullptr;
     static int s_selState = -1, s_selTrFrom = -1, s_selTrIdx = -1, s_pendingFrom = -1;
@@ -15410,6 +15489,88 @@ static void DrawAnimatorGraph(EditorState& ed) {
         ed.dirty = true;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Arrange all states back into a tidy grid");
+    if (ma && sm->layer == 0 && !clipNames.empty()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Locomotion setup##ag")) ImGui::OpenPopup("##aglocosetup");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build the usual character setup from this model's clips:\n"
+                                                      "idle/walk/run blended by speed, jump, fall and land,\n"
+                                                      "with the parameters the player controllers send.");
+        if (ImGui::BeginPopup("##aglocosetup")) {
+            auto find = [&](std::initializer_list<const char*> keys) -> std::string {
+                for (const char* k : keys)
+                    for (const auto& cn : clipNames) {
+                        std::string lo = cn; for (auto& ch : lo) ch = (char)std::tolower((unsigned char)ch);
+                        if (lo.find(k) != std::string::npos) return cn;
+                    }
+                return std::string();
+            };
+            std::string idle = !ma->idleClip.empty() ? ma->idleClip : find({"idle", "stand", "breath"});
+            std::string walk = !ma->walkClip.empty() ? ma->walkClip : find({"walk"});
+            std::string run  = !ma->runClip.empty()  ? ma->runClip  : find({"run", "sprint", "jog"});
+            std::string jump = !ma->jumpClip.empty() ? ma->jumpClip : find({"jump"});
+            std::string fall = !ma->fallClip.empty() ? ma->fallClip : find({"fall", "air"});
+            std::string land = !ma->landClip.empty() ? ma->landClip : find({"land"});
+            if (idle.empty()) idle = clipNames.front();
+            ImGui::TextDisabled("Clips found:");
+            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", idle.c_str(),
+                        walk.empty() ? "-" : walk.c_str(), run.empty() ? "-" : run.c_str(), jump.empty() ? "-" : jump.c_str(),
+                        fall.empty() ? "-" : fall.c_str(), land.empty() ? "-" : land.c_str());
+            if (!sm->states.empty()) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Replaces the %d existing state(s).", (int)sm->states.size());
+            if (ImGui::Button("Build it", ImVec2(-1, 0))) {
+                ed.PushUndo();
+                using SM = AnimStateMachine;
+                sm->states.clear(); sm->anyState.clear();
+                auto addParam = [&](const char* nm, int type) {
+                    for (const auto& p : sm->params) if (p.name == nm) return;
+                    sm->params.push_back({nm, type});
+                };
+                addParam("speed", 0); addParam("grounded", 1); addParam("verticalSpeed", 0); addParam("jump", 2);
+                SM::State loco; loco.name = "Locomotion"; loco.blendTree = true; loco.blendParam = "speed";
+                loco.motions.push_back({idle, 0.0f});
+                if (!walk.empty()) loco.motions.push_back({walk, 1.5f});
+                if (!run.empty())  loco.motions.push_back({run, 5.0f});
+                loco.nx = 20; loco.ny = 120;
+                sm->states.push_back(loco);
+                auto tr = [](const std::string& to, SM::Cond c, const char* p, float v, float blend) {
+                    SM::Transition t; t.to = to; t.cond = c; t.param = p; t.value = v; t.blend = blend; return t;
+                };
+                std::string afterAir = land.empty() ? "Locomotion" : "Land";
+                if (!jump.empty()) {
+                    SM::State j; j.name = "Jump"; j.clip = jump; j.loop = false; j.nx = 260; j.ny = 20;
+                    if (!fall.empty()) j.transitions.push_back(tr("Fall", SM::Cond::OnClipEnd, "", 0, 0.15f));
+                    j.transitions.push_back(tr(afterAir, SM::Cond::BoolTrue, "grounded", 0, 0.1f));
+                    j.transitions.back().hasExitTime = true; j.transitions.back().exitTime = 0.4f;
+                    sm->states.push_back(j);
+                    SM::Transition any = tr("Jump", SM::Cond::Trigger, "jump", 0, 0.1f);
+                    sm->anyState.push_back(any);
+                }
+                if (!fall.empty()) {
+                    SM::State f; f.name = "Fall"; f.clip = fall; f.loop = true; f.nx = 500; f.ny = 20;
+                    f.transitions.push_back(tr(afterAir, SM::Cond::BoolTrue, "grounded", 0, 0.1f));
+                    sm->states.push_back(f);
+                    SM::Transition off = tr("Fall", SM::Cond::BoolFalse, "grounded", 0, 0.2f);
+                    off.extra.push_back({SM::Cond::FloatLess, "verticalSpeed", -2.0f});
+                    sm->states[0].transitions.push_back(off);
+                }
+                if (!land.empty()) {
+                    SM::State l; l.name = "Land"; l.clip = land; l.loop = false; l.nx = 500; l.ny = 140;
+                    SM::Transition back = tr("Locomotion", SM::Cond::OnClipEnd, "", 0, 0.2f);
+                    l.transitions.push_back(back);
+                    SM::Transition early = tr("Locomotion", SM::Cond::FloatGreater, "speed", 1.0f, 0.2f);
+                    early.hasExitTime = true; early.exitTime = 0.3f;
+                    l.transitions.push_back(early);
+                    sm->states.push_back(l);
+                }
+                sm->entry = "Locomotion";
+                // The machine drives the clips now; the animator's own speed switching stands down.
+                ma->driveByMovement = false;
+                ed.dirty = true;
+                ConsoleLog("Animator: built a locomotion setup with " + std::to_string(sm->states.size()) + " states");
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
     // Delete key removes the selected state (same cleanup as the context menu:
     // drop inbound transitions and clear the entry if it pointed here).
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
@@ -15581,11 +15742,18 @@ static void DrawAnimatorGraph(EditorState& ed) {
                                   ImGui::GetColorU32(ImVec4(0.25f, 0.80f, 0.35f, 1.0f)));
         ImU32 txt = isCurrent ? ImGui::GetColorU32(ImVec4(0.05f, 0.05f, 0.05f, 1.0f)) : ImGui::GetColorU32(ImGuiCol_Text);
         dl->AddText(ImVec2(p.x + 10, p.y + 6), txt, st.name.c_str());
-        std::string sub = st.blendTree ? ("Blend tree: " + (st.blendParam.empty() ? std::string("?") : st.blendParam) +
-                                          " (" + std::to_string(st.motions.size()) + ")")
+        std::string sub = st.blendTree ? (st.blendDims == 2
+                              ? "2D blend: " + st.blendParam + " / " + st.blendParamY
+                              : "Blend tree: " + (st.blendParam.empty() ? std::string("?") : st.blendParam)) +
+                                          " (" + std::to_string(st.motions.size()) + ")"
                         : st.clip.empty() ? "(no clip)" : st.clip;
         if (isEntry) sub += "   [entry]";
-        dl->AddText(ImVec2(p.x + 10, p.y + 24), ImGui::GetColorU32(ImGuiCol_TextDisabled), sub.c_str());
+        dl->AddText(ImVec2(p.x + 10, p.y + 24), isCurrent ? ImGui::GetColorU32(ImVec4(0.15f, 0.15f, 0.15f, 1.0f)) : ImGui::GetColorU32(ImGuiCol_TextDisabled), sub.c_str());
+        if (isCurrent) {   // how far through the state's clip (per loop)
+            float nt = sm->NormalizedTime(); nt -= std::floor(nt);
+            dl->AddRectFilled(ImVec2(p.x + 6, p.y + nodeSz.y - 5), ImVec2(p.x + 6 + (nodeSz.x - 12) * nt, p.y + nodeSz.y - 3),
+                              ImGui::GetColorU32(ImVec4(0.1f, 0.1f, 0.1f, 0.85f)), 1.0f);
+        }
         ImGui::PopID();
     }
 
@@ -15638,13 +15806,16 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (ImGui::InputText(id, pb, sizeof(pb))) { param = pb; ed.dirty = true; }
         }
     };
-    static const char* kConds[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger", "Always (use exit time)"};
+    static const char* kConds[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger",
+                                   "Always (use exit time)", "Int ==", "Int !="};
     auto condType = [](AnimStateMachine::Cond c) {
         return c == AnimStateMachine::Cond::Trigger ? 2
-             : (c == AnimStateMachine::Cond::BoolTrue || c == AnimStateMachine::Cond::BoolFalse) ? 1 : 0;
+             : (c == AnimStateMachine::Cond::BoolTrue || c == AnimStateMachine::Cond::BoolFalse) ? 1
+             : (c == AnimStateMachine::Cond::IntEquals || c == AnimStateMachine::Cond::IntNotEquals) ? 3 : 0;
     };
     auto needsParam = [](AnimStateMachine::Cond c) { return c != AnimStateMachine::Cond::OnClipEnd && c != AnimStateMachine::Cond::Always; };
     auto isFloatCond = [](AnimStateMachine::Cond c) { return c == AnimStateMachine::Cond::FloatGreater || c == AnimStateMachine::Cond::FloatLess; };
+    auto isIntCond = [](AnimStateMachine::Cond c) { return c == AnimStateMachine::Cond::IntEquals || c == AnimStateMachine::Cond::IntNotEquals; };
     // Shared editor for a transition (state transitions and Any State ones).
     auto editTransition = [&](AnimStateMachine::Transition& tr, bool isAny) {
         if (isAny) {
@@ -15659,6 +15830,10 @@ static void DrawAnimatorGraph(EditorState& ed) {
         if (needsParam(tr.cond)) paramPicker("Parameter##ag", tr.param, condType(tr.cond));
         if (isFloatCond(tr.cond))
             if (ImGui::DragFloat("Value##ag", &tr.value, 0.05f)) ed.dirty = true;
+        if (isIntCond(tr.cond)) {
+            int iv = (int)std::lround(tr.value);
+            if (ImGui::DragInt("Value##agi", &iv, 0.1f)) { tr.value = (float)iv; ed.dirty = true; }
+        }
         // Extra ANDed conditions.
         int delC = -1;
         for (int ci = 0; ci < (int)tr.extra.size(); ++ci) {
@@ -15668,11 +15843,12 @@ static void DrawAnimatorGraph(EditorState& ed) {
             ImGui::SameLine();
             int ccd = (int)c.cond;
             ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - 6.0f);
-            if (ImGui::Combo("##xc", &ccd, kConds, AnimStateMachine::kCondCount - 1)) { c.cond = (AnimStateMachine::Cond)ccd; ed.dirty = true; }
+            if (ImGui::Combo("##xc", &ccd, kConds, AnimStateMachine::kCondCount)) { c.cond = (AnimStateMachine::Cond)ccd; ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("x")) delC = ci;
             if (needsParam(c.cond)) paramPicker("##xp", c.param, condType(c.cond));
             if (isFloatCond(c.cond)) if (ImGui::DragFloat("##xv", &c.value, 0.05f)) ed.dirty = true;
+            if (isIntCond(c.cond)) { int iv = (int)std::lround(c.value); if (ImGui::DragInt("##xvi", &iv, 0.1f)) { c.value = (float)iv; ed.dirty = true; } }
             ImGui::PopID();
         }
         if (delC >= 0) { tr.extra.erase(tr.extra.begin() + delC); ed.dirty = true; }
@@ -15716,6 +15892,12 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (ImGui::InputText("Clip##ag", cb, sizeof(cb))) { st.clip = cb; ed.dirty = true; }
         }
         if (ImGui::DragFloat("Speed##ag", &st.speed, 0.02f, 0.05f, 5.0f)) ed.dirty = true;
+        {
+            bool useSp = !st.speedParam.empty();
+            if (ImGui::Checkbox("x parameter##agsp", &useSp)) { st.speedParam = useSp ? "speedMultiplier" : ""; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiply the speed by a float parameter (e.g. playback rate that\nfollows how fast the character moves).");
+            if (useSp) { ImGui::SameLine(); ImGui::SetNextItemWidth(-1); paramPicker("##agspp", st.speedParam, 0); }
+        }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
         // Motion: one clip, or a 1D blend tree driven by a float parameter.
         ImGui::Separator();
@@ -15728,6 +15910,86 @@ static void DrawAnimatorGraph(EditorState& ed) {
             ed.dirty = true;
         }
         if (st.blendTree) {
+            int dims = st.blendDims == 2 ? 1 : 0;
+            if (ImGui::RadioButton("1D##agbd", &dims, 0)) { st.blendDims = 1; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("2D (strafe)##agbd", &dims, 1)) {
+                st.blendDims = 2;
+                if (st.blendParam.empty() || st.blendParam == "speed") st.blendParam = "moveX";
+                if (st.blendParamY.empty()) st.blendParamY = "moveZ";
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blend over two parameters: e.g. moveX / moveZ (sideways / forward speed)\n"
+                                                          "with idle in the middle and walk forward, back, left and right around it.\n"
+                                                          "The player controllers send moveX / moveZ.");
+        }
+        if (st.blendTree && st.blendDims == 2) {
+            paramPicker("X by##ag2", st.blendParam, 0);
+            paramPicker("Y by##ag2", st.blendParamY, 0);
+            const bool live2 = ed.isPlaying() && sm->Current() == st.name;
+            const std::vector<float>& lw = sm->BlendWeights();
+            // The 2D map: motions as dots (drag to move), the live parameter point.
+            float mw = ImGui::GetContentRegionAvail().x, mh = std::min(mw, 170.0f);
+            ImVec2 mo = ImGui::GetCursorScreenPos();
+            ImDrawList* pdl = ImGui::GetWindowDrawList();
+            pdl->AddRectFilled(mo, ImVec2(mo.x + mw, mo.y + mh), ImGui::GetColorU32(ImGuiCol_FrameBg), 4.0f);
+            float ext = 1.0f;
+            for (const auto& m : st.motions) ext = std::max(ext, std::max(std::fabs(m.threshold), std::fabs(m.posY)));
+            ext *= 1.25f;
+            auto toMap = [&](float x, float y) { return ImVec2(mo.x + (x / ext * 0.5f + 0.5f) * mw, mo.y + (0.5f - y / ext * 0.5f) * mh); };
+            auto fromMap = [&](ImVec2 p) { return ImVec2(((p.x - mo.x) / mw - 0.5f) * 2.0f * ext, (0.5f - (p.y - mo.y) / mh) * 2.0f * ext); };
+            pdl->AddLine(toMap(-ext, 0), toMap(ext, 0), ImGui::GetColorU32(ImGuiCol_Border));
+            pdl->AddLine(toMap(0, -ext), toMap(0, ext), ImGui::GetColorU32(ImGuiCol_Border));
+            static int s_dragMotion = -1;
+            for (int mi = 0; mi < (int)st.motions.size(); ++mi) {
+                AnimStateMachine::Motion& m = st.motions[mi];
+                ImVec2 c = toMap(m.threshold, m.posY);
+                ImGui::SetCursorScreenPos(ImVec2(c.x - 7, c.y - 7));
+                ImGui::PushID(3000 + mi);
+                ImGui::InvisibleButton("##mdot", ImVec2(14, 14));
+                if (ImGui::IsItemActivated()) { ed.PushUndo(); s_dragMotion = mi; }
+                if (ImGui::IsItemActive() && s_dragMotion == mi) {
+                    ImVec2 v = fromMap(ImGui::GetIO().MousePos);
+                    m.threshold = std::round(v.x * 10.0f) / 10.0f; m.posY = std::round(v.y * 10.0f) / 10.0f;
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemDeactivated()) s_dragMotion = -1;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s at (%.1f, %.1f)\nDrag to move", m.clip.c_str(), m.threshold, m.posY);
+                ImGui::PopID();
+                float wgt = live2 && mi < (int)lw.size() ? lw[mi] : 0.0f;
+                pdl->AddCircleFilled(c, 4.0f + wgt * 6.0f, ImGui::GetColorU32(ImVec4(0.45f, 0.65f, 1.0f, 0.5f + wgt * 0.5f)));
+                pdl->AddText(ImVec2(c.x + 7, c.y - 7), ImGui::GetColorU32(ImGuiCol_TextDisabled), m.clip.c_str());
+            }
+            if (live2) {
+                ImVec2 lp = toMap(sm->GetFloat(st.blendParam), sm->GetFloat(st.blendParamY));
+                pdl->AddCircle(lp, 6.0f, ImGui::GetColorU32(ImVec4(1.0f, 0.75f, 0.2f, 1.0f)), 16, 2.0f);
+            }
+            ImGui::SetCursorScreenPos(ImVec2(mo.x, mo.y + mh + 4));
+            int delM = -1;
+            for (int mi = 0; mi < (int)st.motions.size(); ++mi) {
+                AnimStateMachine::Motion& m = st.motions[mi];
+                ImGui::PushID(4000 + mi);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+                if (ImGui::BeginCombo("##mc2", m.clip.empty() ? "(clip)" : m.clip.c_str())) {
+                    for (const auto& cn : clipNames)
+                        if (ImGui::Selectable(cn.c_str(), cn == m.clip)) { m.clip = cn; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                float xy[2] = {m.threshold, m.posY};
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() - 6.0f);
+                if (ImGui::DragFloat2("##mxy", xy, 0.05f)) { m.threshold = xy[0]; m.posY = xy[1]; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) delM = mi;
+                ImGui::PopID();
+            }
+            if (delM >= 0) { st.motions.erase(st.motions.begin() + delM); ed.dirty = true; }
+            if (ImGui::SmallButton("+ Motion##ag2")) {
+                st.motions.push_back({clipNames.empty() ? std::string() : clipNames.front(), 0.0f, 0.0f});
+                ed.dirty = true;
+            }
+        }
+        if (st.blendTree && st.blendDims != 2) {
             paramPicker("Blend by##ag", st.blendParam, 0);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A float parameter, e.g. speed: idle at 0, walk at 2, run at 6.");
             int lo = -1, hi = -1; float bw = 0.0f;
@@ -15831,7 +16093,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
         //      dropdowns in transitions; live values shown in Play mode. ----
         ImGui::Separator();
         ImGui::TextDisabled("Parameters:");
-        static const char* kPTypes[] = {"Float", "Bool", "Trigger"};
+        static const char* kPTypes[] = {"Float", "Bool", "Trigger", "Int"};
         int delP = -1;
         for (int pi = 0; pi < (int)sm->params.size(); ++pi) {
             AnimStateMachine::Param& p = sm->params[pi];
@@ -15840,11 +16102,14 @@ static void DrawAnimatorGraph(EditorState& ed) {
             char pb[40]; std::snprintf(pb, sizeof(pb), "%s", p.name.c_str());
             if (ImGui::InputText("##pn", pb, sizeof(pb))) { p.name = pb; ed.dirty = true; }
             ImGui::SameLine(); ImGui::SetNextItemWidth(70);
-            if (ImGui::Combo("##pt", &p.type, kPTypes, 3)) ed.dirty = true;
+            if (ImGui::Combo("##pt", &p.type, kPTypes, 4)) ed.dirty = true;
             ImGui::SameLine();
             if (ed.isPlaying()) {
-                if (p.type == 0)      ImGui::TextDisabled("%.2f", sm->GetFloat(p.name));
-                else if (p.type == 1) ImGui::TextDisabled(sm->GetBool(p.name) ? "true" : "false");
+                // Live values, editable: try the machine by hand while playing.
+                ImGui::SetNextItemWidth(-1);
+                if (p.type == 0)      { float v = sm->GetFloat(p.name); if (ImGui::DragFloat("##pv", &v, 0.05f)) sm->SetFloat(p.name, v); }
+                else if (p.type == 1) { bool b = sm->GetBool(p.name); if (ImGui::Checkbox("##pv", &b)) sm->SetBool(p.name, b); }
+                else if (p.type == 3) { int v = sm->GetInt(p.name); if (ImGui::DragInt("##pv", &v, 0.1f)) sm->SetInt(p.name, v); }
                 else                  { if (ImGui::SmallButton("fire##pf")) sm->SetTrigger(p.name); }
             } else if (ImGui::SmallButton("x##pd")) delP = pi;
             ImGui::PopID();
@@ -15855,6 +16120,8 @@ static void DrawAnimatorGraph(EditorState& ed) {
         if (ImGui::SmallButton("+ Bool##pb"))    { ed.PushUndo(); sm->params.push_back({"flag", 1}); ed.dirty = true; }
         ImGui::SameLine();
         if (ImGui::SmallButton("+ Trigger##pc")) { ed.PushUndo(); sm->params.push_back({"go", 2}); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+ Int##pi"))     { ed.PushUndo(); sm->params.push_back({"mode", 3}); ed.dirty = true; }
         if (ed.isPlaying()) {
             ImGui::Separator();
             ImGui::TextDisabled("Set from scripts:");
@@ -21848,6 +22115,56 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##fl")) toRemove = fl;
         }
     }
+    if (auto* skm = dynamic_cast<SkinnedMesh*>(curComp)) {
+        if (CompHeader("Skinned Mesh", skm, &toRemove)) {
+            skm->ResolveJoints();
+            const char* methods[] = {"Linear (fast, GPU)", "Dual quaternion (keeps volume)"};
+            ImGui::SetNextItemWidth(230);
+            if (ImGui::Combo("Skinning##skm", &skm->method, methods, 2)) { ed.dirty = true; skm->Skin(); }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Linear blends bone matrices: fastest, skinned on the GPU, but twisting\n"
+                                  "joints (wrists, forearms, shoulders) can pinch and lose volume.\n"
+                                  "Dual quaternion keeps the mesh's volume through twists and bends;\n"
+                                  "it deforms on the CPU.");
+            int missing = skm->MissingJoints(), unweighted = skm->UnweightedVertices();
+            ImGui::TextDisabled("%d bones, %d vertices, up to %d weights per vertex",
+                                (int)skm->joints.size(), (int)skm->bind.vertices.size(), skm->MaxInfluences());
+            if (missing)    ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.35f, 1), "%d bone(s) not found in the scene", missing);
+            if (unweighted) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "%d vertices have no weights (they won't move)", unweighted);
+            if (ImGui::SmallButton("Normalize weights##skm")) {
+                ed.PushUndo();
+                int n = skm->NormalizeWeights();
+                ConsoleLog("Normalized weights on " + std::to_string(n) + " vertices");
+                ed.dirty = true; skm->Skin();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make every vertex's weights add up to 1 and drop tiny (<1%%) ones\nthat drag vertices toward far-away bones.");
+            ImGui::SameLine();
+            const char* skLbl = g_skeletonMode == 0 ? "Show bones##skm" : "Hide bones##skm";
+            if (ImGui::SmallButton(skLbl)) g_skeletonMode = g_skeletonMode == 0 ? 1 : 0;
+            if (ImGui::TreeNode("Bones##skmb")) {
+                // Hierarchy of the skin's bones, indented by depth; click to select.
+                std::vector<int> counts = skm->VerticesPerJoint();
+                std::unordered_set<Transform*> set(skm->joints.begin(), skm->joints.end());
+                std::function<void(Transform*, int)> row = [&](Transform* b, int depth) {
+                    int ji = -1;
+                    for (int i = 0; i < (int)skm->joints.size(); ++i) if (skm->joints[i] == b) { ji = i; break; }
+                    ImGui::PushID(b);
+                    ImGui::Indent(depth * 10.0f);
+                    char lb[160];
+                    std::snprintf(lb, sizeof(lb), "%s  (%d verts)", b->gameObject ? b->gameObject->name.c_str() : "?", ji >= 0 ? counts[ji] : 0);
+                    if (ImGui::Selectable(lb, b->gameObject && ed.IsSelected(b->gameObject))) ed.Select(b->gameObject);
+                    ImGui::Unindent(depth * 10.0f);
+                    ImGui::PopID();
+                    for (Transform* c : b->Children()) if (set.count(c)) row(c, depth + 1);
+                };
+                ImGui::BeginChild("##skmbones", ImVec2(0, 180), ImGuiChildFlags_Borders);
+                for (Transform* b : skm->joints)
+                    if (b && (!b->Parent() || !set.count(b->Parent()))) row(b, 0);   // skeleton roots
+                ImGui::EndChild();
+                ImGui::TreePop();
+            }
+        }
+    }
     if (auto* ma = dynamic_cast<ModelAnimator*>(curComp)) {
         if (CompHeader("Model Animator", ma, &toRemove)) {
             ImGui::TextDisabled("Animation clips imported with this model. Pick one to play.");
@@ -21877,6 +22194,19 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("+ Vertical##ma", &ma->rootMotionY)) { ed.dirty = true; if (ed.isPlaying()) ma->PlayIndex(ma->active); }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Also move the object UP/DOWN with the root's Y track — jump, climb\nand vault clips really lift the character, not just its bones.");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("+ Turning##ma", &ma->rootMotionRotation)) { ed.dirty = true; if (ed.isPlaying()) ma->PlayIndex(ma->active); }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Also turn the object with the root bone's turning — turn-in-place\nand curved-walk clips really rotate the character.");
+                const char* tgts[] = {"This object", "Parent (player / controller)"};
+                ImGui::SetNextItemWidth(220);
+                if (ImGui::Combo("Moves##marm", &ma->rootMotionApplyTo, tgts, 2)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("What the root motion moves. Pick Parent when this model sits under a\nplayer object. A Rigidbody3D there gets it as velocity, so walls still stop it.");
+                if (ed.isPlaying()) {
+                    Vec3 d = ma->LastRootDelta();
+                    ImGui::TextDisabled("Root motion: %.2f m/s  turn %.0f deg/s", std::sqrt(d.x * d.x + d.z * d.z) * 60.0f, ma->LastRootYaw() * 60.0f);
+                }
             }
             if (ma->rootMotion && ma->active >= 0 && ma->active < (int)ma->clips.size()) {
                 // Bone picker: nodes of the active clip that carry position tracks.
@@ -30353,6 +30683,76 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddText(tp, col, nm);
         };
 
+        // ---- Skeletons: every bone of a skinned rig, drawn parent -> child as a
+        // tapered bone with a joint at its head. Bones under the cursor highlight
+        // and are picked before meshes (the mesh box covers the whole character).
+        g_hoverBone = nullptr;
+        g_skelDraw.clear();
+        if (g_skeletonMode > 0 && g_showGizmos) {
+            auto topOf = [](Transform* t) { while (t && t->Parent()) t = t->Parent(); return t; };
+            Transform* selTop = ed.selected() ? topOf(ed.selected()->transform) : nullptr;
+            std::unordered_set<Transform*> bones;
+            for (const auto& up : objs) {
+                auto* sm = up->GetComponent<SkinnedMesh>();
+                if (!sm || !up->active) continue;
+                if (g_skeletonMode == 1 && topOf(up->transform) != selTop) continue;
+                if (g_isolate && !up->IsSelfOrDescendantOf(g_isolate)) continue;
+                sm->ResolveJoints();
+                for (Transform* j : sm->joints) if (j && j->gameObject && j->gameObject->active) bones.insert(j);
+            }
+            if (!bones.empty()) {
+                const ImU32 kFill = IM_COL32(150, 175, 215, 70), kEdge = IM_COL32(170, 195, 235, 230);
+                const ImU32 kHot = IM_COL32(255, 255, 255, 255), kSel = IM_COL32(255, 175, 70, 255);
+                float bestD = 7.0f * 7.0f;
+                struct Seg { Transform* b; ImVec2 h, t; };
+                std::vector<Seg> segs;
+                for (Transform* b : bones) {
+                    ImVec2 hs; if (!project(b->Position(), hs)) continue;
+                    bool child = false;
+                    for (Transform* c : b->Children()) {
+                        if (!bones.count(c)) continue;
+                        ImVec2 ts; if (!project(c->Position(), ts)) continue;
+                        segs.push_back({b, hs, ts}); child = true;
+                    }
+                    if (!child) {   // leaf (head, fingertip, toe): a short stub along its parent's direction
+                        Transform* p = b->Parent();
+                        ImVec2 ps;
+                        if (p && bones.count(p) && project(p->Position(), ps)) {
+                            ImVec2 d(hs.x - ps.x, hs.y - ps.y);
+                            segs.push_back({b, hs, ImVec2(hs.x + d.x * 0.35f, hs.y + d.y * 0.35f)});
+                        } else segs.push_back({b, hs, hs});
+                    }
+                }
+                ImVec2 mp = io.MousePos;
+                for (const Seg& sg : segs) {
+                    float vx = sg.t.x - sg.h.x, vy = sg.t.y - sg.h.y, l2 = vx * vx + vy * vy;
+                    float u = l2 > 1e-4f ? ((mp.x - sg.h.x) * vx + (mp.y - sg.h.y) * vy) / l2 : 0.0f;
+                    u = u < 0.0f ? 0.0f : (u > 1.0f ? 1.0f : u);
+                    float dx = sg.h.x + vx * u - mp.x, dy = sg.h.y + vy * u - mp.y, d2 = dx * dx + dy * dy;
+                    if (hovered && d2 < bestD) { bestD = d2; g_hoverBone = sg.b->gameObject; }
+                }
+                for (const Seg& sg : segs) {
+                    bool hot = g_hoverBone == sg.b->gameObject, sel = ed.IsSelected(sg.b->gameObject);
+                    ImU32 edge = sel ? kSel : hot ? kHot : kEdge;
+                    float vx = sg.t.x - sg.h.x, vy = sg.t.y - sg.h.y, len = std::sqrt(vx * vx + vy * vy);
+                    SkelDraw d{};
+                    d.head = sg.h; d.edge = edge; d.dot = sel || hot ? 3.5f : 2.5f; d.shape = false;
+                    if (len > 2.0f) {
+                        float w = Mathf::Clamp(len * 0.12f, 2.0f, 9.0f);
+                        float nx = -vy / len * w, ny = vx / len * w;
+                        ImVec2 m(sg.h.x + vx * 0.2f, sg.h.y + vy * 0.2f);
+                        d.q[0] = sg.h; d.q[1] = ImVec2(m.x + nx, m.y + ny); d.q[2] = sg.t; d.q[3] = ImVec2(m.x - nx, m.y - ny);
+                        d.shape = true;
+                        d.fill = sel ? IM_COL32(255, 175, 70, 90) : hot ? IM_COL32(255, 255, 255, 90) : kFill;
+                        d.thick = sel || hot ? 1.8f : 1.2f;
+                    }
+                    g_skelDraw.push_back(d);
+                }
+                if (g_hoverBone && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
+                    ImGui::SetTooltip("%s", g_hoverBone->name.c_str());
+            }
+        }
+
         for (const auto& up : objs) {
             if (!up->active) continue;
             // Isolate mode: gizmos follow the render — only the isolated subtree.
@@ -30646,6 +31046,16 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                            gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
     for (GameObject* g : isoHidden) g->active = true;
+    // Skeleton overlay on top of the meshes (built with the gizmos above).
+    if (!gameView) {
+        for (const SkelDraw& d : g_skelDraw) {
+            if (d.shape) {
+                dl->AddConvexPolyFilled(d.q, 4, d.fill);
+                dl->AddPolyline(d.q, 4, d.edge, ImDrawFlags_Closed, d.thick);
+            }
+            dl->AddCircleFilled(d.head, d.dot, d.edge);
+        }
+    }
     // Banner so an "empty" viewport is never a mystery.
     if (g_isolate && !gameView) {
         char ib[128];
@@ -31585,9 +31995,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ed.dirty = true;
     } else if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && !s_vSnapDragging && !vHeld &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        GameObject* hit = nullptr;
-        float bestDepth = 1e30f;
+        GameObject* hit = g_hoverBone;   // a bone under the cursor wins over the mesh around it
+        float bestDepth = hit ? -1.0f : 1e30f;
         for (const auto& up : objs) {
+            if (hit && bestDepth < 0.0f) break;
             GameObject* go = up.get();
             auto* mr = go->GetComponent<MeshRenderer>();
             if (!mr || !go->active || go->editorLocked) continue;   // locked: Hierarchy-only selection
@@ -34098,6 +34509,19 @@ int main(int argc, char** argv) {
             // OKAY_UI_DEMO_ANIM=1: give the selection an Animator with a few keys and open
             // the Animation window (screenshots of the timeline).
             if (std::getenv("OKAY_UI_ASSETS") && s_focusFrames == 31) g_showAssetManager = true;
+            // OKAY_UI_IMPORT=model.glb: import it and select it (screenshots of rigs).
+            if (const char* imp = std::getenv("OKAY_UI_IMPORT"); imp && s_focusFrames == 31) {
+                bool okm = false;
+                if (GameObject* r = okay::ImportModelScene(ed.scene(), imp, &okm); r && okm) {
+                    r->transform->SetPosition(ed.camTarget);
+                    ed.Select(r); ed.dirty = true;
+                    LogModelReport(ed, r);
+                    if (std::getenv("OKAY_UI_ANIMGRAPH")) {
+                        r->AddComponent<AnimStateMachine>();
+                        g_showAnimatorGraph = true;
+                    }
+                }
+            }
             if (std::getenv("OKAY_UI_PLUGIN") && s_focusFrames == 33) { NewPluginFromTemplate(ed); }
             if (std::getenv("OKAY_UI_DEMO_ANIM") && s_focusFrames == 32 && ed.selected()) {
                 auto* an = ed.selected()->GetComponent<Animator>();

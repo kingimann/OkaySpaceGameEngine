@@ -149,6 +149,60 @@ inline const std::vector<VsDef>& Registry() {
         {"EaseIn",    "Ease In",     CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
         {"EaseOut",   "Ease Out",    CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
         {"EaseInOut", "Ease In-Out", CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
+        // --- More events ---
+        {"OnCollision", "On Collision", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnTrigger",   "On Trigger",   CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnClick",     "On Click",     CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OtherName",   "Other Name",   CAT_DATA,  false, {}, {}, {"Name"}, 0, nullptr},
+        {"OtherTag",    "Other Tag",    CAT_DATA,  false, {}, {}, {"Tag"}, 0, nullptr},
+        // --- More math ---
+        {"Tan",        "Tan",         CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Atan2",      "Atan2",       CAT_MATH, false, {}, {"Y","X"}, {"Rad"}, 0, nullptr},
+        {"Exp",        "Exp",         CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Log",        "Log (ln)",    CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"InverseLerp","Inverse Lerp",CAT_MATH, false, {}, {"A","B","Value"}, {"T"}, 0, nullptr},
+        {"Remap",      "Remap",       CAT_MATH, false, {}, {"Value","In Min","In Max","Out Min","Out Max"}, {"Out"}, 0, nullptr},
+        {"SmoothStep", "Smooth Step", CAT_MATH, false, {}, {"Edge0","Edge1","X"}, {"Out"}, 0, nullptr},
+        {"PingPong",   "Ping-Pong",   CAT_MATH, false, {}, {"T","Length"}, {"Out"}, 0, nullptr},
+        {"Repeat01",   "Repeat (wrap)",CAT_MATH, false, {}, {"T","Length"}, {"Out"}, 0, nullptr},
+        {"MoveTowardsValue","Move Towards (value)", CAT_MATH, false, {}, {"Current","Target","Max Step"}, {"Out"}, 0, nullptr},
+        {"DeltaAngle", "Delta Angle", CAT_MATH, false, {}, {"From","To"}, {"Deg"}, 0, nullptr},
+        // --- Vectors ---
+        {"Vec3Add",       "Vec3 Add",       CAT_MATH, false, {}, {"A","B"}, {"Vec3"}, 0, nullptr},
+        {"Vec3Sub",       "Vec3 Subtract",  CAT_MATH, false, {}, {"A","B"}, {"Vec3"}, 0, nullptr},
+        {"Vec3Scale",     "Vec3 Scale",     CAT_MATH, false, {}, {"Vec","Scale"}, {"Vec3"}, 0, nullptr},
+        {"Vec3Length",    "Vec3 Length",    CAT_MATH, false, {}, {"Vec"}, {"Length"}, 0, nullptr},
+        {"Vec3Normalize", "Vec3 Normalize", CAT_MATH, false, {}, {"Vec"}, {"Vec3"}, 0, nullptr},
+        {"Vec3Dot",       "Vec3 Dot",       CAT_MATH, false, {}, {"A","B"}, {"Dot"}, 0, nullptr},
+        {"Vec3Distance",  "Vec3 Distance",  CAT_MATH, false, {}, {"A","B"}, {"Dist"}, 0, nullptr},
+        // --- Text ---
+        {"ToString",   "To Text",     CAT_DATA, false, {}, {"Value"}, {"Text"}, 0, nullptr},
+        {"ToFixed",    "Format Number",CAT_DATA, false, {}, {"Value"}, {"Text"}, 1, "decimals"},
+        {"TextLength", "Text Length", CAT_DATA, false, {}, {"Text"}, {"Len"}, 0, nullptr},
+        {"Contains",   "Contains",    CAT_LOGIC, false, {}, {"Text","Part"}, {"Bool"}, 0, nullptr},
+        {"Upper",      "Upper Case",  CAT_DATA, false, {}, {"Text"}, {"Text"}, 0, nullptr},
+        {"Lower",      "Lower Case",  CAT_DATA, false, {}, {"Text"}, {"Text"}, 0, nullptr},
+        // --- Objects ---
+        {"ObjectExists",  "Object Exists",  CAT_XFORM, false, {}, {}, {"Bool"}, 1, "name"},
+        {"ObjectPosition","Object Position",CAT_XFORM, false, {}, {}, {"Pos"}, 1, "name / self / other"},
+        {"DistanceTo",    "Distance To",    CAT_XFORM, false, {}, {}, {"Dist"}, 1, "name / other"},
+        {"SelfName",      "Self Name",      CAT_XFORM, false, {}, {}, {"Name"}, 0, nullptr},
+        {"LookAt",        "Look At",        CAT_XFORM, true, {""}, {}, {}, 1, "name / other"},
+        {"MoveTowards",   "Move Towards",   CAT_XFORM, true, {""}, {"Speed"}, {}, 1, "name / other"},
+        {"SetActive",     "Set Active",     CAT_ACTION, true, {""}, {"On"}, {}, 1, "name / self / other"},
+        {"SetText",       "Set Text",       CAT_ACTION, true, {""}, {"Text"}, {}, 1, "text object name"},
+        {"LoadScene",     "Load Scene",     CAT_ACTION, true, {""}, {}, {}, 1, "scene name"},
+        // --- Input / flow ---
+        {"MouseButton",     "Mouse Held",    CAT_INPUT, false, {}, {}, {"Down"}, 1, "0 L / 1 R / 2 M"},
+        {"MouseButtonDown", "Mouse Pressed", CAT_INPUT, false, {}, {}, {"Pressed"}, 1, "0 L / 1 R / 2 M"},
+        {"Cooldown",        "Cooldown (s)",  CAT_FLOW,  true, {""}, {}, {}, 1, "seconds"},
+        // --- Animation & IK ---
+        {"AnimTrigger",  "Anim Trigger",   CAT_ACTION, true, {""}, {}, {}, 1, "parameter"},
+        {"AnimSetFloat", "Anim Set Float", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "parameter"},
+        {"AnimSetBool",  "Anim Set Bool",  CAT_ACTION, true, {""}, {"Value"}, {}, 1, "parameter"},
+        {"AnimState",    "Anim State",     CAT_DATA, false, {}, {}, {"State"}, 0, nullptr},
+        {"IkLook",       "IK Look At",     CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 0, nullptr},
+        {"IkHand",       "IK Hand Reach",  CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 1, "left / right"},
     };
     return defs;
 }
@@ -210,6 +264,8 @@ struct VsEditGraph {
             o << "pos " << n.id << ' ' << (int)n.x << ' ' << (int)n.y << "\n";
             if (n.type == "OnStart")  o << "entry OnStart "  << n.id << "\n";
             if (n.type == "OnUpdate") o << "entry OnUpdate " << n.id << "\n";
+            if (n.type == "OnCollision" || n.type == "OnTrigger" || n.type == "OnClick")
+                o << "entry " << n.type << " " << n.id << "\n";
         }
         for (const auto& l : execLinks) o << "exec " << l.from << ' ' << l.pin << ' ' << l.to << "\n";
         for (const auto& l : dataLinks) o << "data " << l.consumer << ' ' << l.inPin << ' ' << l.producer << ' ' << l.outPin << "\n";
@@ -336,6 +392,41 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
     if (t == "EaseIn")     return "(" + A() + " * " + A() + ")";
     if (t == "EaseOut")  { std::string a = A(); return "(1 - (1-" + a + ")*(1-" + a + "))"; }
     if (t == "EaseInOut"){ std::string a = A(); return "(" + a + "*" + a + "*(3 - 2*" + a + "))"; }
+    auto D = [&]{ return VsInput(g, nodeId, 3); };
+    auto E = [&]{ return VsInput(g, nodeId, 4); };
+    if (t == "Tan")        return "tan(" + A() + ")";
+    if (t == "Atan2")      return "atan2(" + A() + ", " + B() + ")";
+    if (t == "Exp")        return "exp(" + A() + ")";
+    if (t == "Log")        return "log(" + A() + ")";
+    if (t == "InverseLerp")return "inverse_lerp(" + A() + ", " + B() + ", " + C() + ")";
+    if (t == "Remap")      return "remap(" + A() + ", " + B() + ", " + C() + ", " + D() + ", " + E() + ")";
+    if (t == "SmoothStep") return "smoothstep(" + A() + ", " + B() + ", " + C() + ")";
+    if (t == "PingPong")   return "ping_pong(" + A() + ", " + B() + ")";
+    if (t == "Repeat01")   return "repeat(" + A() + ", " + B() + ")";
+    if (t == "MoveTowardsValue") return "move_towards(" + A() + ", " + B() + ", " + C() + ")";
+    if (t == "DeltaAngle") return "delta_angle(" + A() + ", " + B() + ")";
+    if (t == "Vec3Add")    return "(" + A() + " + " + B() + ")";
+    if (t == "Vec3Sub")    return "(" + A() + " - " + B() + ")";
+    if (t == "Vec3Scale")  return "(" + A() + " * " + B() + ")";
+    if (t == "Vec3Length") return "(" + A() + ").magnitude";
+    if (t == "Vec3Normalize") return "(" + A() + ").normalized";
+    if (t == "Vec3Dot")    return "dot(" + A() + ", " + B() + ")";
+    if (t == "Vec3Distance") return "distance(" + A() + ", " + B() + ")";
+    if (t == "ToString")   return "str(" + A() + ")";
+    if (t == "ToFixed")    return "to_fixed(" + A() + ", " + lit("2") + ")";
+    if (t == "TextLength") return "len(" + A() + ")";
+    if (t == "Contains")   return "str_contains(" + A() + ", " + B() + ")";
+    if (t == "Upper")      return "upper(" + A() + ")";
+    if (t == "Lower")      return "lower(" + A() + ")";
+    if (t == "ObjectExists")   return "exists(" + q(lit("")) + ")";
+    if (t == "ObjectPosition") return "position_of(" + q(lit("self")) + ")";
+    if (t == "DistanceTo")     return "distance_to(" + q(lit("")) + ")";
+    if (t == "SelfName")       return "gameObject.name";
+    if (t == "OtherName")      return "other";
+    if (t == "OtherTag")       return "tag_of(other)";
+    if (t == "MouseButton")    return "mouse_held(" + lit("0") + ")";
+    if (t == "MouseButtonDown")return "mouse_down(" + lit("0") + ")";
+    if (t == "AnimState")      return "anim_state()";
     return "0";
 }
 
@@ -381,6 +472,17 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         int s=VsExecTarget(g,nodeId,0); if(s>=0) VsEmitChain(g,s,out,ind+"    ",visited);
         out += ind + "}\n";
     }
+    else if (t=="LookAt")      out += ind + "face(" + q(arg("")) + ")\n";
+    else if (t=="MoveTowards") out += ind + "move_toward_object(" + q(arg("")) + ", " + in(0, "2") + ")\n";
+    else if (t=="SetActive")   out += ind + "set_active_of(" + q(arg("self")) + ", " + in(0, "true") + ")\n";
+    else if (t=="SetText")     out += ind + "set_text_of(" + q(arg("self")) + ", " + in(0, "\"\"") + ")\n";
+    else if (t=="LoadScene")   out += ind + "load_scene_name(" + q(arg("")) + ")\n";
+    else if (t=="AnimTrigger") out += ind + "anim_trigger(" + q(arg("")) + ")\n";
+    else if (t=="AnimSetFloat")out += ind + "anim_set_float(" + q(arg("")) + ", " + in(0) + ")\n";
+    else if (t=="AnimSetBool") out += ind + "anim_set_bool(" + q(arg("")) + ", " + in(0) + ")\n";
+    else if (t=="IkLook")      out += ind + "ik_look((" + in(0) + ").x, (" + in(0) + ").y, (" + in(0) + ").z, " + in(1, "1") + ")\n";
+    else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", (" + in(0) + ").x, (" + in(0) + ").y, (" + in(0) + ").z, " + in(1, "1") + ")\n";
+    else if (t=="Cooldown")    out += ind + "// Cooldown (" + arg("1") + "s): gate the actions after this with a timer\n";
     else if (t=="Timer") out += ind + "// Every (" + arg("1") + "s): wire actions to this node\n";
     else if (t=="Wait")  out += ind + "// Wait (" + arg("1") + "s): use after(t, fn) for a delay\n";
     else                 out += ind + "// unsupported node: " + t + "\n";
@@ -415,7 +517,20 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         std::set<int> v; int s = VsExecTarget(g, updateNode, 0); if (s>=0) VsEmitChain(g, s, out, "    ", v);
         out += "}\n";
     }
-    if (startNode < 0 && updateNode < 0)
+    // Collision / trigger / click events become the matching script handlers.
+    static const std::pair<const char*, const char*> kEvents[] = {
+        {"OnCollision", "on_collision(other)"}, {"OnTrigger", "on_trigger(other)"}, {"OnClick", "on_click()"}};
+    bool anyEvent = false;
+    for (const auto& ev : kEvents)
+        for (const auto& n : g.nodes)
+            if (n.type == ev.first) {
+                anyEvent = true;
+                out += std::string("\n") + ev.second + " {\n";
+                std::set<int> v; int s = VsExecTarget(g, n.id, 0); if (s >= 0) VsEmitChain(g, s, out, "    ", v);
+                out += "}\n";
+                break;
+            }
+    if (startNode < 0 && updateNode < 0 && !anyEvent)
         out += "// Add an On Start / On Update event node to generate runnable code.\n";
     return out;
 }
@@ -496,7 +611,8 @@ inline void Draw(EditorState& ed, bool* open) {
     // Lightweight validation: a graph with nodes but no event entry never runs.
     {
         bool hasEvent = false;
-        for (const auto& n : g.nodes) if (n.type == "OnStart" || n.type == "OnUpdate") { hasEvent = true; break; }
+        for (const auto& n : g.nodes)
+            if (n.type == "OnStart" || n.type == "OnUpdate" || n.type == "OnCollision" || n.type == "OnTrigger" || n.type == "OnClick") { hasEvent = true; break; }
         if (!g.nodes.empty() && !hasEvent) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.40f, 1.0f), "  \xE2\x9A\xA0 add an On Start / On Update node");

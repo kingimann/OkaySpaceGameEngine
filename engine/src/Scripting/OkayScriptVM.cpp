@@ -1783,6 +1783,22 @@ struct OkayScriptVM::Impl {
         b["mouse"] = [](std::vector<Value>& a) {
             return Value{Input::GetMouseButton(a.empty() ? 0 : (int)a[0].AsFloat())};
         };
+        b["mouse_held"] = [](std::vector<Value>& a) {
+            return Value{Input::GetMouseButton(a.empty() ? 0 : (int)a[0].AsFloat())};
+        };
+        b["move_towards"] = [](std::vector<Value>& a) {   // (current, target, maxDelta)
+            float c = a.size() > 0 ? a[0].AsFloat() : 0.0f, t = a.size() > 1 ? a[1].AsFloat() : 0.0f, m = a.size() > 2 ? a[2].AsFloat() : 0.0f;
+            return Value{std::fabs(t - c) <= m ? t : c + (t > c ? m : -m)};
+        };
+        b["dot"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            return Value{Vec3::Dot(a[0].AsVec3(), a[1].AsVec3())};
+        };
+        b["to_fixed"] = [](std::vector<Value>& a) {   // (value, decimals) -> text
+            int d = a.size() > 1 ? (int)a[1].AsFloat() : 2; d = d < 0 ? 0 : (d > 6 ? 6 : d);
+            char buf[64]; std::snprintf(buf, sizeof(buf), "%.*f", d, a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{std::string(buf)};
+        };
         b["mouse_down"] = [](std::vector<Value>& a) {
             return Value{Input::GetMouseButtonDown(a.empty() ? 0 : (int)a[0].AsFloat())};
         };
@@ -1879,6 +1895,49 @@ struct OkayScriptVM::Impl {
         b["exists"] = [sceneOf](std::vector<Value>& a) {
             if (!a.empty()) if (Scene* s = sceneOf()) return Value{s->Find(a[0].AsString()) != nullptr};
             return Value{false};
+        };
+        // ---- Named-object helpers (also what visual-graph code export uses) ----
+        auto findNamed = [this, sceneOf](const std::string& n) -> GameObject* {
+            if (n.empty() || n == "self") return rt.host ? rt.host->gameObject : nullptr;
+            Scene* s = sceneOf(); return s ? s->Find(n) : nullptr;
+        };
+        b["position_of"] = [findNamed](std::vector<Value>& a) {
+            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
+            return Value{(g && g->transform) ? g->transform->Position() : Vec3{0, 0, 0}};
+        };
+        b["tag_of"] = [findNamed](std::vector<Value>& a) {
+            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
+            return Value{g ? g->tag : std::string()};
+        };
+        b["set_active_of"] = [sceneOf](std::vector<Value>& a) {   // finds inactive objects too
+            if (a.empty()) return Value{};
+            Scene* s = sceneOf(); if (!s) return Value{};
+            std::string n = a[0].AsString();
+            for (const auto& up : s->Objects()) if (up && up->name == n) { up->active = a.size() < 2 || a[1].AsBool(); break; }
+            return Value{};
+        };
+        b["set_text_of"] = [findNamed](std::vector<Value>& a) {
+            if (GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString()))
+                if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = a.size() > 1 ? a[1].AsString() : std::string();
+            return Value{};
+        };
+        b["move_toward_object"] = [this, findNamed](std::vector<Value>& a) {   // (name, speed) in 2D or 3D
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
+            if (!me || !g || g == me || !me->transform || !g->transform) return Value{};
+            Vec3 d = g->transform->Position() - me->transform->Position();
+            float dist = d.Magnitude(), step = (a.size() > 1 ? a[1].AsFloat() : 2.0f) * rt.host->deltaTime;
+            if (dist > 1e-5f) me->transform->SetPosition(me->transform->Position() + d * ((step >= dist ? dist : step) / dist));
+            return Value{};
+        };
+        b["face"] = [this, findNamed](std::vector<Value>& a) {   // turn toward a named object (3D yaw, else 2D Z)
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
+            if (!me || !g || g == me || !me->transform || !g->transform) return Value{};
+            Vec3 d = g->transform->Position() - me->transform->Position();
+            if (std::fabs(d.z) > 1e-4f) me->transform->localRotation = Quat::LookRotation(Vec3{-d.x, 0.0f, -d.z}.Normalized());
+            else me->transform->localRotation = Quat::Euler(0, 0, std::atan2(d.y, d.x) * 57.2957795f);
+            return Value{};
         };
         b["is_active"] = [sceneOf](std::vector<Value>& a) {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) return Value{g->active};

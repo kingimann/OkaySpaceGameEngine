@@ -18,6 +18,7 @@ struct VsContext {
     GameObject* gameObject = nullptr;
     Transform*  transform  = nullptr;
     float       deltaTime  = 0.0f;
+    GameObject* other      = nullptr;   ///< the other object of a collision / trigger / click event
     std::unordered_map<std::string, VsValue> variables;
 };
 

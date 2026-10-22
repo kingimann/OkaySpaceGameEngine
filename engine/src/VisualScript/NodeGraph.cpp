@@ -75,7 +75,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (args.size() < n) { if (err) *err = type + " needs " + std::to_string(n) + " arg(s)"; return false; }
         return true;
     };
-    if (type == "OnStart" || type == "OnUpdate") return std::make_unique<EventNode>();
+    if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick")
+        return std::make_unique<EventNode>();
     if (type == "Const")   { if (!need(1)) return nullptr; return std::make_unique<ConstNode>(ParseValue(args[0])); }
     if (type == "GetVar")  { if (!need(1)) return nullptr; return std::make_unique<GetVarNode>(args[0]); }
     if (type == "SetVar")  { if (!need(1)) return nullptr; return std::make_unique<SetVarNode>(args[0]); }
@@ -207,6 +208,59 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "EaseIn")      return std::make_unique<EaseNode>(EaseNode::Mode::In);
     if (type == "EaseOut")     return std::make_unique<EaseNode>(EaseNode::Mode::Out);
     if (type == "EaseInOut")   return std::make_unique<EaseNode>(EaseNode::Mode::InOut);
+    // ---- Second wave: math, vectors, text, objects, mouse, actions ----
+    using MF = MathFn2Node::Op;
+    if (type == "Tan")        return std::make_unique<MathFn2Node>(MF::Tan);
+    if (type == "Atan2")      return std::make_unique<MathFn2Node>(MF::Atan2);
+    if (type == "Exp")        return std::make_unique<MathFn2Node>(MF::Exp);
+    if (type == "Log")        return std::make_unique<MathFn2Node>(MF::Log);
+    if (type == "PingPong")   return std::make_unique<MathFn2Node>(MF::PingPong);
+    if (type == "Repeat01")   return std::make_unique<MathFn2Node>(MF::Repeat);
+    if (type == "DeltaAngle") return std::make_unique<MathFn2Node>(MF::DeltaAngle);
+    if (type == "InverseLerp") return std::make_unique<InverseLerpNode>();
+    if (type == "Remap")       return std::make_unique<RemapNode>();
+    if (type == "SmoothStep")  return std::make_unique<SmoothStepNode>();
+    if (type == "MoveTowardsValue") return std::make_unique<MoveTowardsValueNode>();
+    using VO = Vec3OpNode::Op;
+    if (type == "Vec3Add")       return std::make_unique<Vec3OpNode>(VO::Add);
+    if (type == "Vec3Sub")       return std::make_unique<Vec3OpNode>(VO::Sub);
+    if (type == "Vec3Scale")     return std::make_unique<Vec3OpNode>(VO::Scale);
+    if (type == "Vec3Length")    return std::make_unique<Vec3OpNode>(VO::Length);
+    if (type == "Vec3Normalize") return std::make_unique<Vec3OpNode>(VO::Normalize);
+    if (type == "Vec3Dot")       return std::make_unique<Vec3OpNode>(VO::Dot);
+    if (type == "Vec3Distance")  return std::make_unique<Vec3OpNode>(VO::Distance);
+    using TO = TextOpNode::Op;
+    if (type == "ToString")   return std::make_unique<TextOpNode>(TO::ToString);
+    if (type == "TextLength") return std::make_unique<TextOpNode>(TO::Length);
+    if (type == "Contains")   return std::make_unique<TextOpNode>(TO::Contains);
+    if (type == "Upper")      return std::make_unique<TextOpNode>(TO::Upper);
+    if (type == "Lower")      return std::make_unique<TextOpNode>(TO::Lower);
+    if (type == "ToFixed")    return std::make_unique<ToFixedNode>(args.empty() ? 2 : (int)ParseValue(args[0]).AsFloat());
+    using OQ = ObjectQueryNode::Op;
+    auto argOr = [&](const char* d) { return args.empty() ? std::string(d) : args[0]; };
+    if (type == "ObjectExists")   return std::make_unique<ObjectQueryNode>(OQ::Exists, argOr(""));
+    if (type == "ObjectPosition") return std::make_unique<ObjectQueryNode>(OQ::Position, argOr("self"));
+    if (type == "DistanceTo")     return std::make_unique<ObjectQueryNode>(OQ::DistanceTo, argOr(""));
+    if (type == "SelfName")       return std::make_unique<ObjectQueryNode>(OQ::Name, "self");
+    if (type == "OtherName")      return std::make_unique<OtherNameNode>();
+    if (type == "OtherTag")       return std::make_unique<OtherTagNode>();
+    if (type == "MouseButton")     return std::make_unique<MouseButtonNode>(args.empty() ? 0 : (int)ParseValue(args[0]).AsFloat(), false);
+    if (type == "MouseButtonDown") return std::make_unique<MouseButtonNode>(args.empty() ? 0 : (int)ParseValue(args[0]).AsFloat(), true);
+    if (type == "LookAt")          return std::make_unique<LookAtNode>(argOr(""));
+    if (type == "MoveTowards")     return std::make_unique<MoveTowardsObjectNode>(argOr(""));
+    if (type == "SetActive")       return std::make_unique<SetActiveNode>(argOr("self"));
+    if (type == "SetText")         return std::make_unique<SetTextNode>(argOr("self"));
+    if (type == "LoadScene")       return std::make_unique<LoadSceneNode>(argOr(""));
+    if (type == "Cooldown")        return std::make_unique<CooldownNode>(args.empty() ? 1.0f : ParseValue(args[0]).AsFloat());
+    if (type == "AnimTrigger")     return std::make_unique<AnimParamNode>(AnimParamNode::Op::Trigger, argOr(""));
+    if (type == "AnimSetFloat")    return std::make_unique<AnimParamNode>(AnimParamNode::Op::SetFloat, argOr(""));
+    if (type == "AnimSetBool")     return std::make_unique<AnimParamNode>(AnimParamNode::Op::SetBool, argOr(""));
+    if (type == "AnimState")       return std::make_unique<AnimStateNode>();
+    if (type == "IkLook")          return std::make_unique<IkLookNode>();
+    if (type == "IkHand") {
+        std::string side = argOr("right");
+        return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));
+    }
     if (err) *err = "unknown node type '" + type + "'";
     return nullptr;
 }

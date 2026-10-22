@@ -741,6 +741,10 @@ struct EaseNode : VsNode {
     }
 };
 
+} // namespace okay::vs
+#include "okay/VisualScript/NodesExtra.hpp"
+namespace okay::vs {
+
 /// Construct a node from its text-format type name and arguments.
 /// Returns nullptr (and sets `err`) for an unknown type.
 std::unique_ptr<VsNode> MakeNode(const std::string& type,

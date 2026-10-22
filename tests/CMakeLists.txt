@@ -670,3 +670,7 @@ add_test(NAME anim_state_machine COMMAND test_anim_state_machine)
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)
+
+add_executable(test_vs_nodes test_vs_nodes.cpp)
+target_link_libraries(test_vs_nodes PRIVATE okay::engine)
+add_test(NAME vs_nodes COMMAND test_vs_nodes)

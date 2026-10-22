@@ -1,6 +1,10 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/Collider3D.hpp"
 #include <memory>
 #include <string>
 
@@ -26,8 +30,24 @@ public:
 
     void Start() override;
     void Update(float dt) override;
+    // Event entries: "OnCollision" / "OnTrigger" (2D and 3D, on enter) and
+    // "OnClick" run with the other object available to Other Name / Other Tag.
+    void OnCollisionEnter2D(const Collision2D& c) override { Fire("OnCollision", c.gameObject); }
+    void OnCollisionEnter3D(const Collision3D& c) override { Fire("OnCollision", c.gameObject); }
+    void OnTriggerEnter2D(Collider2D* other) override { Fire("OnTrigger", other ? other->gameObject : nullptr); }
+    void OnTriggerEnter3D(Collider3D* other) override { Fire("OnTrigger", other ? other->gameObject : nullptr); }
+    void OnMouseDown() override { Fire("OnClick", gameObject); }
 
 private:
+    void Fire(const char* entryName, GameObject* other) {
+        if (!m_graph) return;
+        int entry = m_graph->Entry(entryName);
+        if (entry < 0) return;
+        m_ctx.gameObject = gameObject; m_ctx.transform = transform;
+        m_ctx.other = other;
+        m_graph->Run(entry, m_ctx);
+        m_ctx.other = nullptr;
+    }
     std::unique_ptr<vs::NodeGraph> m_graph;
     vs::VsContext m_ctx;
     std::string m_source;

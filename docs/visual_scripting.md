@@ -220,3 +220,25 @@ too, plus graph-only conveniences:
 - **Templates & reuse**: **+ Template** inserts ready-made behaviours;
   the ★ Custom buttons save/insert reusable instruction or condition groups
   shared across projects.
+
+## More nodes
+
+**Events:** On Collision, On Trigger (2D and 3D, on enter) and On Click start
+chains like On Start / On Update. Inside them, **Other Name** / **Other Tag**
+give the object you hit or clicked.
+
+**Math:** Tan, Atan2, Exp, Log, Inverse Lerp, Remap, Smooth Step, Ping-Pong,
+Repeat (wrap), Move Towards (value), Delta Angle.
+
+**Vectors:** Vec3 Add / Subtract / Scale / Length / Normalize / Dot / Distance.
+
+**Text:** To Text, Format Number (decimals), Text Length, Contains, Upper / Lower Case.
+
+**Objects** (by name; `self` and `other` work too): Object Exists, Object
+Position, Distance To, Self Name, Look At, Move Towards (speed), Set Active, Set
+Text (a Text object), Load Scene.
+
+**Input / flow:** Mouse Held, Mouse Pressed (0 left, 1 right, 2 middle), Cooldown (s).
+
+**Animation & IK:** Anim Trigger, Anim Set Float, Anim Set Bool, Anim State
+(drive the Animator state machine), IK Look At and IK Hand Reach (Full Body IK).

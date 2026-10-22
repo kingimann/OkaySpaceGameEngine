@@ -136,7 +136,8 @@ see exactly where it points before you press Play.
 - **Instructions**: movement (`move`, `set_pos`, `rotate`, `set_scale(3)`,
   `move_toward`, `look_at`, `move_dir` — facing-relative movement, `follow`,
   `flee`, `orbit` — circle a named object), control (`wait`, `wait_until` —
-  hold until a variable passes a test, `goto`, `stop`), juice (`tween_move`,
+  hold until a variable passes a test, `goto`, `stop`, `if` / `else` /
+  `end_if` — structured branching without line numbers), juice (`tween_move`,
   `tween_scale`, `tween_rotate`, `shake`, `punch_scale`, `tween_color`,
   `fade`, `flash` — eased, scheduler-driven), variables
   (`set_var`, `add_var`, `mul_var`, `div_var`, `copy_var`, `rand_var`,
@@ -150,7 +151,10 @@ see exactly where it points before you press Play.
   hit in variables, see below), **multiplayer** (`net_host`,
   `net_join`, `net_send`, `net_set` synced vars, `net_spawn` replicated spawn,
   `net_disconnect`), **Steam** (`steam_unlock`, `steam_set_stat`,
-  `steam_inc_stat`), messaging (`send`), **juice** (`tween_move`,
+  `steam_inc_stat`, `steam_inc_stat_int`, `steam_store`, `steam_cloud_write`,
+  `steam_presence`, `steam_lobby_create`, `steam_lobby_join`,
+  `steam_lobby_leave`, `steam_lobby_set_data`, `steam_invite` — matchmaking,
+  Cloud saves and rich presence, no code), messaging (`send`), **juice** (`tween_move`,
   `tween_scale`, `shake`, `punch_scale` — eased motion, impact shake and
   scale punches, mirroring the script `tween_*` builtins), `comment`
   (a designer note, skipped at runtime), and `log`.
@@ -216,3 +220,155 @@ too, plus graph-only conveniences:
 - **Templates & reuse**: **+ Template** inserts ready-made behaviours;
   the ★ Custom buttons save/insert reusable instruction or condition groups
   shared across projects.
+
+## More nodes
+
+**Events:** On Collision, On Trigger (2D and 3D, on enter) and On Click start
+chains like On Start / On Update. Inside them, **Other Name** / **Other Tag**
+give the object you hit or clicked.
+
+**Math:** Tan, Atan2, Exp, Log, Inverse Lerp, Remap, Smooth Step, Ping-Pong,
+Repeat (wrap), Move Towards (value), Delta Angle.
+
+**Vectors:** Vec3 Add / Subtract / Scale / Length / Normalize / Dot / Distance.
+
+**Text:** To Text, Format Number (decimals), Text Length, Contains, Upper / Lower Case.
+
+**Objects** (by name; `self` and `other` work too): Object Exists, Object
+Position, Distance To, Self Name, Look At, Move Towards (speed), Set Active, Set
+Text (a Text object), Load Scene.
+
+**Input / flow:** Mouse Held, Mouse Pressed (0 left, 1 right, 2 middle), Cooldown (s).
+
+**Animation & IK:** Anim Trigger, Anim Set Float, Anim Set Bool, Anim State
+(drive the Animator state machine), IK Look At and IK Hand Reach (Full Body IK).
+
+## Third wave of nodes
+
+**Flow:** For Loop (First/Last; the **Index** output reads the current index, then
+**Done** runs once), Repeat N, Flip-Flop (A/B alternate), Gate (passes while Open
+is true), Do N Times (with a Count output), Switch (int) with 0 / 1 / 2 / Default
+outputs. **Toggle Var** flips a bool variable.
+
+**Math & vectors:** Random Int (both ends included), Ceil, Fraction, One Minus,
+Clamp 0-1, Asin, Acos, Deg to Rad, Rad to Deg, Vec3 Cross, Vec3 Lerp, Vec3 Negate.
+
+**Transform (3D):** Forward / Right / Up Vector, Get Scale, Get Rotation (Euler
+degrees), Set Position (Vec3), Move By (Vec3), Rotate (3D), Set Rotation (3D).
+
+**Actions:** Set Color (R, G, B, A on the sprite, text or mesh), Play Clip (by
+name on the Character or imported model), Set Time Scale, Set Blend Shape (a
+morph target's weight on every mesh under the object) and the **Blend Shape**
+data node to read one back.
+
+**Input & engine:** Raycast 2D (origin, direction, max distance; outputs Hit),
+Mouse Wheel, Time Scale, Frame Count.
+
+**Multiplayer & Steam** (its own palette category): Host Game, Join Game
+(`host port` or `host:port`), Disconnect, Is Connected / Is Server / Is Client,
+Peer Count, My Net Id, Send Message, Set / Get Net Var, Send Chat, Call RPC, Net
+Spawn / Despawn, Set Ready, Start Match, Match Started, All Ready, Steam Name,
+Achievement Unlocked, Unlock Achievement, Get / Set Steam Stat, Store Stats,
+Submit Score.
+
+**Finding nodes:** right-click the canvas and start typing; the search box
+matches titles, type names and categories, and **Enter** adds the first match.
+
+**Typed values:** every unconnected input has an inline box, so a Print node
+can print text without wiring a Const. Graphs attach from the Inspector (Add
+Component ▸ Scripts lists `.okayvs` files and **New Visual Script**), by dragging a
+`.okayvs` onto an object, or with **Attach to Selected** in the node editor.
+
+**As C#:** *View as OkayScript* shows the graph as a C#-style component class
+(`void Start()`, `void Update()`, `void OnCollisionEnter(Collision other)` ...)
+that you can copy or save as a `.okay` script.
+
+## Fourth wave: events between objects, keys, timers and more
+
+**Several event nodes of one kind.** A graph may now contain any number of
+*On Start*, *On Update* (or any other event) nodes; all of them run, in the
+order they were added. Previously only the last one did.
+
+**New events**
+
+| Node | Fires |
+|---|---|
+| On Key Pressed / On Key Released | the frame a key goes down / up (pick the key with the key picker) |
+| On Timer | every N seconds |
+| On Custom Event | when a *Send Event* / *Broadcast Event* (or a script's `send_event`) names it; its **Value** output is the value sent |
+| On Collision Exit / On Trigger Exit | when contact / overlap ends |
+| On Mouse Enter / On Mouse Exit | the pointer moves onto / off the object |
+
+**Talking between objects**
+
+- *Send Event* (event name; inputs **Target**, **Value**): runs the target object's
+  *On Custom Event* nodes with that name. Target blank = this object.
+- *Broadcast Event* (event name; input **Value**): every object listening for it.
+- *Event Value* / *Event Name*: what the current custom event carried.
+- *Set Object Var* / *Get Object Var*: read or write another object's graph
+  variable (or script global).
+- Scripts join in: `send_event("Door", "Open", 1)`, `broadcast_event("Alarm")`,
+  and a script receives an event in `void OnEvent_Open(object value)`.
+
+**Saving**: *Save Value* / *Load Value* (key) keep numbers, text and vectors
+between runs (the same store as the script `save` / `load`).
+
+**Text**: Format Text (`"Score: {0} / {1}"`), Substring, Replace Text, To Number,
+Starts With, Ends With, Trim Spaces, Index Of.
+
+**Math**: Perlin Noise (smooth, -1..1), Snap To Step, Wrap, Average, Distance 2D.
+
+**Objects + game flow**: Find / Count / Nearest With Tag, Teleport (any object,
+unset axes keep their value), Set Visible, Pause Game, Quit Game, Show Cursor.
+
+**Flow**: Random Branch (True with a chance), Counter (counts runs, with Reset),
+Every N Times.
+
+## Flow Graph editor: working faster
+
+- **Drag a wire into empty space** and the node palette opens, filtered to nodes
+  that fit; the node you pick is wired to that pin.
+- **Box select** by dragging on empty canvas; Ctrl/Shift+click adds to the
+  selection; dragging any selected node moves the whole selection.
+- **Ctrl+C / Ctrl+V / Ctrl+D** copy, paste (at the mouse) and duplicate;
+  **Del** deletes the selection; **Ctrl+A** selects everything.
+- **Ctrl+Z / Ctrl+Y** undo and redo every edit (moves, wiring, values).
+- **Alt+click a pin** to break its wires; right-click a node ▸ Break All Wires.
+- **Comments** (toolbar *Comment*, or **C**): a titled, coloured frame around the
+  selected nodes. Drag its title to move the group, drag the corner to resize,
+  double-click to rename, right-click for colour / delete.
+- **Minimap** in the corner (View ▸ Minimap): click or drag to jump around.
+- **Live debugging**: while playing, the graph of the selected object (or the
+  first one using this file) lights up each node as it runs, and every data
+  output shows its latest value beside the pin. A green *LIVE* tag in the
+  toolbar names the object being watched.
+- **Space** opens the palette at the mouse, **Home** frames the whole graph.
+
+## One graph editor (Actions merged in)
+
+The Flow Graph window and the Actions list are gone as separate editors: everything
+is built in the **Visual Script** graph.
+
+- **+ Add > Do something / Check something** lists every step the Actions component
+  had (Move, Play Sound, Set Variable, Has Tag, ...). They become `Action` and
+  `Condition` (Check, True/False) nodes; click a node's grey line to edit its
+  arguments with the same friendly fields.
+- **Action Steps** (`Actions`) keeps a whole list together: Wait, If / Repeat /
+  While blocks, jumps. The chain continues once the list finishes.
+- **Delay (s)** really pauses the chain and continues it later (once). The older
+  **Wait** node only lets a chain that runs every frame through after a while.
+- New events: On Mouse Down / Up / Over, On Collision Stay, On Late Update.
+- **Templates** adds ready-made behaviours as nodes.
+- An object that still has an Actions component keeps working. Its Inspector shows
+  what it does in sentences; **Open as Visual Script graph** turns it into an
+  equivalent `.okayvs` graph (one chain per trigger) and attaches it.
+- Actions messages (`send`, `send_to`, ...) reach graphs' On Custom Event nodes, and
+  Send / Broadcast Event reach older Actions "On Message" triggers.
+
+File format: `node <id> Action "<op> <args>"`, `node <id> Actions "<step> ; <step>"`,
+`node <id> Condition "<op> <args>"`, `node <id> Delay <seconds>`. Arguments are
+%-escaped (no spaces, quotes, `#` or `;` inside one), `%-` is an empty argument.
+OkayScript export: `run_action("...")` / `check_action("...")`.
+
+Toolbar: File, Edit, + Add, Templates ... Fit, zoom, View. The Events list on the
+left jumps to each chain; right- or middle-drag pans; F frames the selection.

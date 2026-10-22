@@ -58,19 +58,29 @@ public:
     // pointer/mouse events all flow through here; 2D and 3D map to the same names,
     // and the legacy on_trigger()/on_collision() still fire on enter (see the VM's
     // alias table) so older scripts keep working.
-    void OnTriggerEnter2D(Collider2D*) override        { Fire("on_trigger_enter"); }
-    void OnTriggerStay2D (Collider2D*) override        { Fire("on_trigger_stay"); }
-    void OnTriggerExit2D (Collider2D*) override        { Fire("on_trigger_exit"); }
-    void OnCollisionEnter2D(const Collision2D&) override{ Fire("on_collision_enter"); }
-    void OnCollisionStay2D (const Collision2D&) override{ Fire("on_collision_stay"); }
-    void OnCollisionExit2D (const Collision2D&) override{ Fire("on_collision_exit"); }
+    /// Clip events: `anim_event` holds the name, then the handler named like the
+    /// event runs (Unity-style), then on_anim_event().
+    void OnAnimationEvent(const std::string& name) override {
+        if (!m_vm) return;
+        m_vm->SetGlobal("anim_event", vs::VsValue(name));
+        if (!name.empty()) m_vm->CallEvent(name);
+        m_vm->CallEvent("on_anim_event");
+    }
+    // The other object reaches the script as `other` (its name), and as the
+    // argument of a handler that declares one: OnTriggerEnter(Collider other).
+    void OnTriggerEnter2D(Collider2D* c) override         { FireOther("on_trigger_enter", c); }
+    void OnTriggerStay2D (Collider2D* c) override         { FireOther("on_trigger_stay", c); }
+    void OnTriggerExit2D (Collider2D* c) override         { FireOther("on_trigger_exit", c); }
+    void OnCollisionEnter2D(const Collision2D& c) override { FireOther("on_collision_enter", c); }
+    void OnCollisionStay2D (const Collision2D& c) override { FireOther("on_collision_stay", c); }
+    void OnCollisionExit2D (const Collision2D& c) override { FireOther("on_collision_exit", c); }
 
-    void OnTriggerEnter3D(Collider3D*) override         { Fire("on_trigger_enter"); }
-    void OnTriggerStay3D (Collider3D*) override         { Fire("on_trigger_stay"); }
-    void OnTriggerExit3D (Collider3D*) override         { Fire("on_trigger_exit"); }
-    void OnCollisionEnter3D(const Collision3D&) override { Fire("on_collision_enter"); }
-    void OnCollisionStay3D (const Collision3D&) override { Fire("on_collision_stay"); }
-    void OnCollisionExit3D (const Collision3D&) override { Fire("on_collision_exit"); }
+    void OnTriggerEnter3D(Collider3D* c) override          { FireOther("on_trigger_enter", c); }
+    void OnTriggerStay3D (Collider3D* c) override          { FireOther("on_trigger_stay", c); }
+    void OnTriggerExit3D (Collider3D* c) override          { FireOther("on_trigger_exit", c); }
+    void OnCollisionEnter3D(const Collision3D& c) override { FireOther("on_collision_enter", c); }
+    void OnCollisionStay3D (const Collision3D& c) override { FireOther("on_collision_stay", c); }
+    void OnCollisionExit3D (const Collision3D& c) override { FireOther("on_collision_exit", c); }
 
     void OnMouseEnter() override { Fire("on_mouse_enter"); }
     void OnMouseExit()  override { Fire("on_mouse_exit"); }
@@ -81,6 +91,11 @@ public:
 
 private:
     void Fire(const char* event) { if (m_vm) m_vm->CallEvent(event); }
+    void FireOther(const char* event, Collider2D* c);
+    void FireOther(const char* event, Collider3D* c);
+    void FireOther(const char* event, const Collision2D& c);
+    void FireOther(const char* event, const Collision3D& c);
+    void FireWithObject(const char* event, GameObject* other);
 
     std::string m_language;
     std::string m_source;

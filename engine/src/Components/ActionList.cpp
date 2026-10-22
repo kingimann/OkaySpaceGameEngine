@@ -15,6 +15,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UITextBind.hpp"        // Resolve {var}/{pref} tokens in text
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"   // messages also reach node graphs
 #include "okay/Components/NativeUIActions.hpp"   // InvokeNativeUIAction (survival verbs)
 #include "okay/Components/Consumables.hpp"       // UseIndex
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -30,6 +31,7 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Platform/PlayFab/PlayFab.hpp"
+#include "okay/Platform/Achievements.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/Game.hpp"          // win / lose / quit instructions
@@ -256,6 +258,68 @@ RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size
 }
 } // namespace
 
+namespace {
+// %-escape the characters an .okayvs line can't hold inside one token.
+std::string PctEncode(const std::string& a) {
+    if (a.empty()) return "%-";
+    static const char* kHex = "0123456789ABCDEF";
+    std::string o;
+    for (unsigned char c : a) {
+        if (c <= ' ' || c == '%' || c == '"' || c == '#' || c == ';' || c == '\'' || c == '\\' || c >= 0x7F) {
+            o += '%'; o += kHex[c >> 4]; o += kHex[c & 15];
+        } else o += (char)c;
+    }
+    return o;
+}
+std::string PctDecode(const std::string& a) {
+    if (a == "%-") return {};
+    auto hex = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+    std::string o;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i] == '%' && i + 2 < a.size() && hex(a[i + 1]) >= 0 && hex(a[i + 2]) >= 0) {
+            o += (char)(hex(a[i + 1]) * 16 + hex(a[i + 2])); i += 2;
+        } else o += a[i];
+    }
+    return o;
+}
+std::vector<std::string> SplitWs(const std::string& s) {
+    std::vector<std::string> out; std::string cur;
+    for (char c : s) {
+        if (std::isspace((unsigned char)c)) { if (!cur.empty()) { out.push_back(cur); cur.clear(); } }
+        else cur += c;
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+} // namespace
+
+std::string ActionList::EncodeItem(const Item& it) {
+    std::string o = PctEncode(it.op);
+    for (const std::string& a : it.args) { o += ' '; o += PctEncode(a); }
+    return o;
+}
+ActionList::Item ActionList::DecodeItem(const std::string& line) {
+    Item it;
+    std::vector<std::string> t = SplitWs(line);
+    if (t.empty()) return it;
+    it.op = PctDecode(t[0]);
+    for (std::size_t i = 1; i < t.size(); ++i) it.args.push_back(PctDecode(t[i]));
+    return it;
+}
+std::string ActionList::EncodeItems(const std::vector<Item>& items) {
+    std::string o;
+    for (std::size_t i = 0; i < items.size(); ++i) { if (i) o += " ; "; o += EncodeItem(items[i]); }
+    return o;
+}
+std::vector<ActionList::Item> ActionList::DecodeItems(const std::string& text) {
+    std::vector<Item> out;
+    std::string cur;
+    auto flush = [&]() { Item it = DecodeItem(cur); if (!it.op.empty()) out.push_back(std::move(it)); cur.clear(); };
+    for (char c : text) { if (c == ';') flush(); else cur += c; }
+    flush();
+    return out;
+}
+
 std::string ActionList::ToText() const {
     std::string out;
     if (!name.empty()) out += "name " + name + "\n";     // optional label (may contain spaces)
@@ -371,11 +435,9 @@ void ActionList::FromText(const std::string& text) {
     }
 }
 
-void ActionList::Start() {
-    // Seed declared variables into the shared pools before anything runs, so they
-    // exist (with their starting values) for every list from frame one.
-    for (const VarDecl& v : variables) {
-        if (v.name.empty()) continue;
+void ActionList::SeedVariable(const VarDecl& v) {
+    {
+        if (v.name.empty()) return;
         // Type indices are STABLE for serialization (never renumber; only append):
         // 0 Number, 1 Text, 2 Bool, 3 Vector2, 4 Vector3, 5 Int, 6 Float, 7 Double,
         // 8 GameObject (stores an object name in StrVars), 9 Color.
@@ -413,6 +475,12 @@ void ActionList::Start() {
                 break;
         }
     }
+}
+
+void ActionList::Start() {
+    // Seed declared variables into the shared pools before anything runs, so they
+    // exist (with their starting values) for every list from frame one.
+    for (const VarDecl& v : variables) SeedVariable(v);
     if (HasTrigger(Trigger::OnStart)) Fire();
 }
 
@@ -452,6 +520,22 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "prefs_lt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) < Num(c, 1);
         else if (op == "prefs_neq")ok = !Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
         else if (op == "var_between") { float v = GetVar(Str(c, 0)); ok = v >= Num(c, 1) && v <= Num(c, 2); }
+        else if (op == "var_even")     { long n = std::lround(GetVar(Str(c, 0))); ok = (n % 2) == 0; }
+        else if (op == "var_odd")      { long n = std::lround(GetVar(Str(c, 0))); ok = (n % 2) != 0; }
+        else if (op == "var_positive") { ok = GetVar(Str(c, 0)) > 0.0f; }
+        else if (op == "var_negative") { ok = GetVar(Str(c, 0)) < 0.0f; }
+        else if (op == "var_zero")     { ok = Mathf::Approximately(GetVar(Str(c, 0)), 0.0f); }
+        else if (op == "var_multiple_of") { float d = Num(c, 1); ok = (d != 0.0f) && Mathf::Approximately(std::fmod(GetVar(Str(c, 0)), d), 0.0f); }
+        else if (op == "var_near")     { ok = std::fabs(GetVar(Str(c, 0)) - Num(c, 1)) <= Num(c, 2); }
+        else if (op == "key_any") { ok = false; for (std::size_t i = 0; i < c.args.size(); ++i) { const std::string& k = Str(c, i); if (!k.empty() && Input::GetKey(k[0])) { ok = true; break; } } }  // any of these keys held
+        else if (op == "net_relay_ready") {   // relay has paired this peer (safe to play)
+            NetworkManager* n = GetScene() ? GetScene()->FindObjectOfType<NetworkManager>() : nullptr;
+            ok = n && n->RelayReady();
+        }
+        else if (op == "net_relayed") {       // routing through a relay (host or client)
+            NetworkManager* n = GetScene() ? GetScene()->FindObjectOfType<NetworkManager>() : nullptr;
+            ok = n && n->Relayed();
+        }
         else if (op == "vars_cmp") ok = CmpPass(Str(c, 1), GetVar(Str(c, 0)), GetVar(Str(c, 2)));  // var <op> var
         else if (op == "is_moving") {   // any Rigidbody velocity above the threshold (default 0.01)
             float thr = c.args.size() > 0 ? Num(c, 0) : 0.01f, sp = 0.0f;
@@ -602,6 +686,12 @@ void ActionList::Update(float dt) {
         }
         else if (op == "stop") { m_ip = ins.size(); }
         else if (op == "label") { /* jump target marker — no-op */ }
+        // declare_var <name> <type> <value>: a Variables-panel declaration (graphs
+        // converted from Actions seed their variables with it on start).
+        else if (op == "declare_var") {
+            VarDecl vd; vd.name = Str(it, 0); vd.type = (int)Num(it, 1); vd.value = Rest(it, 2);
+            SeedVariable(vd);
+        }
         else if (op == "comment") { /* designer note — no-op at runtime */ }
         // ---- Juice: scheduler-driven tweens (mirror the script tween_* builtins).
         // They start the effect and continue immediately; add a `wait` to hold.
@@ -758,6 +848,40 @@ void ActionList::Update(float dt) {
             else if (!pass) m_ip = (std::size_t)end + 1;           // condition false: exit
             else { LoopFrame f; f.kind = 1; f.headIp = m_ip - 1; f.bodyStart = m_ip; f.endIp = (std::size_t)end; m_loops.push_back(f); }
         }
+        // ---- Branching block: if <var> <cmp> <value> ... [else ...] end_if ----
+        // Structured version of If Go To — no line numbers or labels to maintain.
+        else if (op == "if") {
+            bool pass = CmpPass(Str(it, 1), GetVar(Str(it, 0)), Num(it, 2));
+            int end = MatchingEnd(m_ip - 1, "if", "end_if");
+            if (end < 0) { /* unmatched: ignore */ }
+            else if (!pass) {
+                // False: jump past our `else` (into its body) if one exists at
+                // this nesting depth, otherwise past the whole block.
+                std::size_t target = (std::size_t)end + 1;
+                int depth = 0;
+                for (std::size_t i = m_ip; i < (std::size_t)end; ++i) {
+                    const std::string& o2 = ins[i].op;
+                    if (o2 == "if") ++depth;
+                    else if (o2 == "end_if") --depth;
+                    else if (o2 == "else" && depth == 0) { target = i + 1; break; }
+                }
+                m_ip = target;
+            }
+            // True: fall through into the then-body.
+        }
+        else if (op == "else") {
+            // Only reached by falling out of a passing then-body: skip the
+            // else-body by jumping past the matching end_if.
+            int depth = 0;
+            for (std::size_t i = m_ip; i < ins.size(); ++i) {
+                if (ins[i].op == "if") ++depth;
+                else if (ins[i].op == "end_if") {
+                    if (depth == 0) { m_ip = i + 1; break; }
+                    --depth;
+                }
+            }
+        }
+        else if (op == "end_if") { /* block marker — no-op */ }
         else if (op == "end_while") {
             if (!m_loops.empty() && m_loops.back().kind == 1) {
                 std::size_t head = m_loops.back().headIp;
@@ -904,20 +1028,31 @@ void ActionList::Update(float dt) {
         else if (op == "send") {
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>())
                 a->ReceiveMessage(Str(it, 0));
+            if (scene) for (VisualScriptComponent* v : scene->FindObjectsOfType<VisualScriptComponent>())
+                v->SendEvent(Str(it, 0), {}, gameObject);
         }
         // Events with a payload: the receiver reads `event_value` (number) and
         // `event_text` (text), set just before the message fires.
         else if (op == "send_value") {
             Vars()["event_value"] = Num(it, 1); StrVars()["event_text"].clear();
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
+            if (scene) for (VisualScriptComponent* v : scene->FindObjectsOfType<VisualScriptComponent>())
+                v->SendEvent(Str(it, 0), Num(it, 1), gameObject);
         }
         else if (op == "send_text") {
             StrVars()["event_text"] = Rest(it, 1); Vars()["event_value"] = 0.0f;
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
+            if (scene) for (VisualScriptComponent* v : scene->FindObjectsOfType<VisualScriptComponent>())
+                v->SendEvent(Str(it, 0), Rest(it, 1), gameObject);
         }
         else if (op == "move") { if (t) t->Translate({Num(it, 0), Num(it, 1), Num(it, 2)}); }
         else if (op == "set_pos") { if (t) t->localPosition = {Num(it, 0), Num(it, 1), Num(it, 2)}; }
-        else if (op == "rotate") { if (t) t->Rotate({Num(it, 1), Num(it, 2), Num(it, 0)}); }
+        else if (op == "rotate") {
+            // "rotate 45" (one value) spins in 2D around Z; "rotate x y z" uses the
+            // documented straight order. (Older builds cyclically shifted the args.)
+            if (t) { if (it.args.size() <= 1) t->Rotate({0, 0, Num(it, 0)});
+                     else                     t->Rotate({Num(it, 0), Num(it, 1), Num(it, 2)}); }
+        }
         else if (op == "set_scale") { if (t) { float v = Num(it, 0); t->localScale = {v, v, v}; } }
         else if (op == "set_scale3") { if (t) t->localScale = {Num(it, 0), Num(it, 1), Num(it, 2)}; }
         else if (op == "move_toward") {
@@ -1034,7 +1169,17 @@ void ActionList::Update(float dt) {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;
                 ct->localPosition.x = Num(it, 0); ct->localPosition.y = Num(it, 1);
+                // Optional third value = zoom (2D orthographic size), per the hint.
+                if (it.args.size() > 2) { float z = Num(it, 2); if (z > 0.0f) scene->mainCamera->orthographicSize = z; }
             }
+        }
+        else if (op == "cam_center_on") {   // snap the camera's X/Y onto a named object
+            if (scene && scene->mainCamera)
+                if (GameObject* g = scene->Find(ObjName(it, 0))) {
+                    Vec3 p = g->transform->Position();
+                    Transform* ct = scene->mainCamera->gameObject->transform;
+                    ct->localPosition.x = p.x; ct->localPosition.y = p.y;
+                }
         }
         else if (op == "set_bg") {
             if (scene && scene->mainCamera)
@@ -1082,13 +1227,24 @@ void ActionList::Update(float dt) {
         }
         else if (op == "activate")   { if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) g->active = true; }
         else if (op == "deactivate") { if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) g->active = false; }
+        else if (op == "set_name")   { if (gameObject) gameObject->name = Str(it, 0); }
+        else if (op == "destroy_all_tag") {   // clear a whole tag: every bullet, every coin
+            if (scene) { std::string tg = Str(it, 0);
+                for (auto& up : scene->Objects()) if (up && up->active && up->tag == tg) scene->Destroy(up.get()); }
+        }
+        else if (op == "activate_all_tag" || op == "deactivate_all_tag") {
+            bool on = (op == "activate_all_tag");
+            if (scene) { std::string tg = Str(it, 0);
+                for (auto& up : scene->Objects()) if (up && up->tag == tg) up->active = on; }
+        }
         else if (op == "spawn") {
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform) g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
             }
         }
-        else if (op == "net_host" || op == "net_join" || op == "net_send" || op == "net_disconnect") {
+        else if (op == "net_host" || op == "net_join" || op == "net_send" || op == "net_disconnect" ||
+                 op == "net_host_relay" || op == "net_join_relay") {
             if (scene) {
                 NetworkManager* n = scene->FindObjectOfType<NetworkManager>();
                 if (!n && op != "net_disconnect") {
@@ -1107,6 +1263,10 @@ void ActionList::Update(float dt) {
                     else if (op == "net_join") n->StartClient(Str(it, 0).empty() ? "127.0.0.1" : Str(it, 0), (std::uint16_t)Num(it, 1));
                     else if (op == "net_send") n->Send(Str(it, 0), Rest(it, 1));
                     else if (op == "net_disconnect") n->Stop();
+                    // Relay (NAT traversal): host/join through a shared relay + code, so
+                    // players behind routers connect with no port-forwarding.
+                    else if (op == "net_host_relay") n->HostViaRelay(Str(it, 0), (std::uint16_t)Num(it, 1), Rest(it, 2));
+                    else if (op == "net_join_relay") n->JoinViaRelay(Str(it, 0), (std::uint16_t)Num(it, 1), Rest(it, 2));
                 }
             }
         }
@@ -1144,6 +1304,10 @@ void ActionList::Update(float dt) {
             if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->Rpc(Str(it, 0), Rest(it, 1));
         }
         else if (op == "steam_unlock")   { Steam::Get().UnlockAchievement(Str(it, 0)); Steam::Get().StoreStats(); }
+        else if (op == "achievement")     {   // cross-game achievement (local + optional cloud), id [label...]
+            Achievements::Unlock(Str(it, 0), Rest(it, 1));
+            Steam::Get().UnlockAchievement(Str(it, 0)); Steam::Get().StoreStats();   // also fire Steam if present
+        }
         else if (op == "steam_set_stat") { Steam::Get().SetStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         else if (op == "steam_inc_stat") { Steam::Get().IncrementStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         // ---- PlayFab (Azure PlayFab) — cloud login, leaderboards, saves ----
@@ -1230,7 +1394,10 @@ void ActionList::Update(float dt) {
         }
         else if (op == "send_to") {              // message one named object's action lists
             if (scene) if (GameObject* g = scene->Find(ObjName(it, 0)))
+{
                 for (ActionList* a : g->GetComponents<ActionList>()) a->ReceiveMessage(Str(it, 1));
+                for (VisualScriptComponent* v : g->GetComponents<VisualScriptComponent>()) v->SendEvent(Str(it, 1), {}, gameObject);
+            }
         }
         else if (op == "raycast") {              // cast a ray, store the result in variables
             // Args: <direction> [distance] [prefix] [h:offset] [ig:tag]. Writes number
@@ -1268,6 +1435,46 @@ void ActionList::Update(float dt) {
             v = (v < tg) ? Mathf::Min(tg, v + st) : Mathf::Max(tg, v - st);
         }
         else if (op == "add_var_var") { Vars()[Str(it, 0)] += Vars()[Str(it, 1)]; }
+        // ---- Float math on a variable (PlayMaker "Float Operator" staples) ----
+        else if (op == "floor_var")  { Vars()[Str(it, 0)] = std::floor(GetVar(Str(it, 0))); }
+        else if (op == "round_var")  { Vars()[Str(it, 0)] = std::round(GetVar(Str(it, 0))); }
+        else if (op == "abs_var")    { Vars()[Str(it, 0)] = std::fabs(GetVar(Str(it, 0))); }
+        else if (op == "negate_var") { Vars()[Str(it, 0)] = -GetVar(Str(it, 0)); }
+        else if (op == "sign_var")   { float v = GetVar(Str(it, 0)); Vars()[Str(it, 0)] = (v > 0.0f) ? 1.0f : ((v < 0.0f) ? -1.0f : 0.0f); }
+        else if (op == "sqrt_var")   { float v = GetVar(Str(it, 0)); Vars()[Str(it, 0)] = v > 0.0f ? std::sqrt(v) : 0.0f; }
+        else if (op == "pow_var")    { Vars()[Str(it, 0)] = std::pow(GetVar(Str(it, 0)), Num(it, 1)); }
+        else if (op == "min_var")    { Vars()[Str(it, 0)] = std::fmin(GetVar(Str(it, 0)), Num(it, 1)); }
+        else if (op == "max_var")    { Vars()[Str(it, 0)] = std::fmax(GetVar(Str(it, 0)), Num(it, 1)); }
+        else if (op == "mod_var")    { float d = Num(it, 1); if (d != 0.0f) Vars()[Str(it, 0)] = std::fmod(GetVar(Str(it, 0)), d); }
+        else if (op == "swap_var")   { float t2 = GetVar(Str(it, 0)); Vars()[Str(it, 0)] = GetVar(Str(it, 1)); Vars()[Str(it, 1)] = t2; }
+        else if (op == "clamp01_var"){ float& v = Vars()[Str(it, 0)]; v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+        else if (op == "round_to_var") { float s = Num(it, 1); if (s > 0.0f) Vars()[Str(it, 0)] = std::round(GetVar(Str(it, 0)) / s) * s; }
+        else if (op == "percent_var"){ float b = Num(it, 2); Vars()[Str(it, 0)] = (b != 0.0f) ? Num(it, 1) / b * 100.0f : 0.0f; }
+        else if (op == "approach_var") {   // linear step toward a target (unlike lerp's ease)
+            float& v = Vars()[Str(it, 0)]; float tgt = Num(it, 1), st = std::fabs(Num(it, 2));
+            if (std::fabs(tgt - v) <= st) v = tgt; else v += (tgt > v ? st : -st);
+        }
+        else if (op == "wrap_var") {   // wrap a value into [min, max) — angles, cycling indices
+            float lo = Num(it, 1), hi = Num(it, 2), range = hi - lo; float& v = Vars()[Str(it, 0)];
+            if (range > 0.0f) v = lo + std::fmod(std::fmod(v - lo, range) + range, range);
+        }
+        else if (op == "map_range_var") {   // remap value from one range to another (slider -> anything)
+            float v = GetVar(Str(it, 0)), a0 = Num(it, 1), a1 = Num(it, 2), b0 = Num(it, 3), b1 = Num(it, 4);
+            float tt = (a1 - a0) != 0.0f ? (v - a0) / (a1 - a0) : 0.0f;
+            Vars()[Str(it, 0)] = b0 + tt * (b1 - b0);
+        }
+        else if (op == "dice_var") {   // random whole number 1..sides
+            int sides = (int)Num(it, 1); if (sides < 1) sides = 1;
+            int roll = 1 + (int)Random::Shared().Range(0.0f, (float)sides);
+            if (roll > sides) roll = sides;
+            Vars()[Str(it, 0)] = (float)roll;
+        }
+        else if (op == "random_sign_var") { Vars()[Str(it, 0)] = (Random::Shared().Range(0.0f, 1.0f) < 0.5f) ? -1.0f : 1.0f; }
+        else if (op == "pick_var") {   // set to one of the listed values at random
+            int n = (int)it.args.size() - 1;
+            if (n > 0) { int k = (int)Random::Shared().Range(0.0f, (float)n); if (k >= n) k = n - 1;
+                         Vars()[Str(it, 0)] = Num(it, (std::size_t)(1 + k)); }
+        }
         else if (op == "spawn_at") {                   // spawn a prefab at a named object's position
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
@@ -1282,6 +1489,7 @@ void ActionList::Update(float dt) {
         else if (op == "unparent") { if (t) t->SetParent(nullptr); }
         else if (op == "pause")  { Time::SetTimeScale(0.0f); }
         else if (op == "resume") { Time::SetTimeScale(1.0f); }
+        else if (op == "toggle_pause") { Time::SetTimeScale(Time::TimeScale() <= 0.0001f ? 1.0f : 0.0f); }
         // ---- Survival kit: drive the native survival components ----
         else if (op == "heal")   { InvokeNativeUIAction(gameObject, "Heal",   Num(it, 0)); }
         else if (op == "hurt")   { InvokeNativeUIAction(gameObject, "Damage", Num(it, 0)); }
@@ -1302,6 +1510,12 @@ void ActionList::Update(float dt) {
         else if (op == "set_y") { if (t) t->localPosition.y = Num(it, 0); }
         else if (op == "set_z") { if (t) t->localPosition.z = Num(it, 0); }
         else if (op == "flip_x") { if (t) t->localScale.x = -t->localScale.x; }   // face the other way (2D)
+        else if (op == "flip_y") { if (t) t->localScale.y = -t->localScale.y; }   // flip upside-down (2D)
+        else if (op == "add_x") { if (t) t->localPosition.x += Num(it, 0); }
+        else if (op == "add_y") { if (t) t->localPosition.y += Num(it, 0); }
+        else if (op == "add_z") { if (t) t->localPosition.z += Num(it, 0); }
+        else if (op == "reset_rotation") { if (t) t->localRotation = Quat::Euler({0, 0, 0}); }
+        else if (op == "reset_scale")    { if (t) t->localScale = {1, 1, 1}; }
         else if (op == "add_score") {                                            // add to a score-like var
             std::string v = Str(it, 0).empty() ? std::string("score") : Str(it, 0);
             Vars()[v] += (it.args.size() > 1 ? Num(it, 1) : 1.0f);

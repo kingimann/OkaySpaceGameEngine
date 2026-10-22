@@ -1953,6 +1953,28 @@ void TextEditor::Cut()
 	}
 }
 
+void TextEditor::InsertTextUndoable(const std::string& aValue)
+{
+	if (IsReadOnly() || aValue.empty())
+		return;
+	UndoRecord u;
+	u.mBefore = mState;
+	if (HasSelection())
+	{
+		u.mRemoved = GetSelectedText();
+		u.mRemovedStart = mState.mSelectionStart;
+		u.mRemovedEnd = mState.mSelectionEnd;
+		DeleteSelection();
+	}
+	u.mAdded = aValue;
+	u.mAddedStart = GetActualCursorCoordinates();
+	InsertText(aValue);
+	u.mAddedEnd = GetActualCursorCoordinates();
+	u.mAfter = mState;
+	AddUndo(u);
+	mTextChanged = true;
+}
+
 void TextEditor::Paste()
 {
 	if (IsReadOnly())

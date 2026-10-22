@@ -32,6 +32,7 @@
 #include "okay/Render/Gltf.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
+#include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Render/Lighting.hpp"
@@ -72,6 +73,7 @@
 // Animation
 #include "okay/Animation/AnimationCurve.hpp"
 #include "okay/Animation/AnimationClip.hpp"
+#include "okay/Animation/ClipPresets.hpp"
 #include "okay/Components/Animator.hpp"
 
 // More components
@@ -95,6 +97,8 @@
 #include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/ChainIK.hpp"
+#include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/IKPose.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Render/Material.hpp"

@@ -50,6 +50,13 @@ public:
     GameObject* CreateEmpty(const std::string& name = "GameObject");
     GameObject* CreateSprite(const std::string& name = "Sprite");
     GameObject* CreateCamera(const std::string& name = "Camera");
+    /// Make `cam` the camera the Game view and builds render through (clears the
+    /// main flag on the others), and remove the placeholder camera the editor
+    /// added to a camera-less scene if it's still untouched.
+    void AdoptCamera(Camera* cam);
+    /// The "Main Camera" the editor added automatically because the scene had
+    /// none (null once it's gone or the user adds their own).
+    GameObject* autoCamera = nullptr;
     GameObject* CreateCube(const std::string& name = "Cube");
     GameObject* CreatePyramid(const std::string& name = "Pyramid");
     /// Create a GameObject with a MeshRenderer for any named primitive
@@ -115,6 +122,8 @@ public:
     void PushUndo();
     bool Undo();
     bool Redo();
+    /// Load a scene snapshot, keeping the same objects selected afterwards.
+    void RestoreKeepingSelection(const std::string& snapshot);
     bool CanUndo() const { return !m_undo.empty(); }
     bool CanRedo() const { return !m_redo.empty(); }
     int  UndoDepth() const { return (int)m_undo.size(); }   ///< steps available behind

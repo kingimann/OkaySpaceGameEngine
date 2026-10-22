@@ -49,7 +49,7 @@ public:
     /// Background fill mode and the color used when SolidColor.
     ClearFlags clearFlags = ClearFlags::Skybox;
     /// Color the framebuffer is cleared to each frame.
-    Color backgroundColor = Color::Black;
+    Color backgroundColor = Color::FromBytes(49, 77, 121);   // Unity-like blue-grey (was black: 2D scenes started dark)
     /// Render/priority order: the highest-depth camera wins "main" (Unity-like).
     float depth = 0.0f;
     /// Whether this camera should become the scene's main camera on Awake.

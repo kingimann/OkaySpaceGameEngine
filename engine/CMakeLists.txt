@@ -24,7 +24,9 @@ add_library(okay_engine
     src/Net/NetTransport.cpp
     src/Net/PhotonTransport.cpp
     src/VisualScript/NodeGraph.cpp
+    src/VisualScript/ActionGraph.cpp
     src/Components/VisualScriptComponent.cpp
+    src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
     src/Scripting/ScriptVM.cpp
     src/Components/ScriptComponent.cpp
@@ -53,6 +55,7 @@ add_library(okay_engine
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
     src/Render/ModelImport.cpp
+    third_party/ufbx/ufbx.c
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
@@ -65,7 +68,15 @@ target_include_directories(okay_engine PUBLIC
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/font8x8
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
 )
+# ufbx (FBX importer, MIT/public domain) is a single C file: no warnings, optimised
+# even in debug builds (parsing big FBX files unoptimised is painfully slow).
+if(MSVC)
+    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
+else()
+    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
+endif()
 # Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
 # is required in addition to `-w`: the vendored font8x8 tables initialise `char`
 # arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
@@ -80,7 +91,7 @@ target_link_libraries(okay_engine PUBLIC Threads::Threads)
 
 # Networking needs the Windows sockets library when targeting Windows.
 if(WIN32)
-    target_link_libraries(okay_engine PUBLIC ws2_32)
+    target_link_libraries(okay_engine PUBLIC ws2_32 winhttp)   # winhttp: NativeHttp (backend calls without spawning curl)
     # The Direct3D 11 scene renderer (D3D11Renderer.cpp, guarded by _WIN32) needs the
     # D3D runtime + HLSL compiler. Off Windows the file compiles to nothing.
     target_link_libraries(okay_engine PUBLIC d3d11 d3dcompiler)
@@ -261,6 +272,11 @@ if(OKAY_USE_ASSIMP)
     set(ASSIMP_BUILD_OFF_IMPORTER       ON CACHE BOOL "" FORCE)   # Object File Format
     set(ASSIMP_BUILD_AC_IMPORTER        ON CACHE BOOL "" FORCE)   # AC3D
     set(ASSIMP_BUILD_B3D_IMPORTER       ON CACHE BOOL "" FORCE)   # Blitz3D
+    # ...and the rest of the long tail, so "any model file" just imports.
+    foreach(_fmt 3MF AMF ASE X3D OGRE OPENGEX Q3D Q3BSP IRR IRRMESH MD2 MD3 MDL HMP MDC NFF RAW COB CSM
+                 LWS BVH TERRAGEN SIB MMD IQM NDO XGL HMP)
+        set(ASSIMP_BUILD_${_fmt}_IMPORTER ON CACHE BOOL "" FORCE)
+    endforeach()
     FetchContent_Declare(assimp
         GIT_REPOSITORY https://github.com/assimp/assimp.git
         GIT_TAG        v5.4.3
@@ -268,7 +284,7 @@ if(OKAY_USE_ASSIMP)
     FetchContent_MakeAvailable(assimp)
     target_link_libraries(okay_engine PUBLIC assimp)
     target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
-    message(STATUS "OkaySpace: Assimp model import ENABLED (FBX/DAE/STL/PLY/3DS/Blend/X/MD5/SMD/MS3D/LWO/DXF/OFF/AC/B3D)")
+    message(STATUS "OkaySpace: Assimp model import ENABLED (DAE/STL/PLY/3DS/Blend/X/3MF/AMF/X3D/MD2/MD3/MD5/MDL/SMD/MS3D/LWO/DXF/OFF/AC/B3D/BVH/PMX/...)")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

@@ -22,7 +22,9 @@ class Canvas : public Behaviour {
 public:
     enum class ScaleMode { ConstantPixelSize, ScaleWithScreenSize };
 
-    ScaleMode scaleMode = ScaleMode::ConstantPixelSize;
+    // New canvases scale with the screen (a HUD that keeps its layout at any window
+    // size); saved canvases keep the mode they were saved with.
+    ScaleMode scaleMode = ScaleMode::ScaleWithScreenSize;
     Vec2  referenceResolution{1280.0f, 720.0f};
     float matchWidthOrHeight = 0.5f;   // 0 = width, 1 = height
     float scaleFactor = 1.0f;          // extra user multiplier (applied in BOTH modes)

@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <memory>
+#include <typeinfo>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -17,6 +18,11 @@ public:
     bool active = true;
     /// Optional tag for lookups (see Scene::FindWithTag).
     std::string tag;
+    /// If this object was instantiated from a .okayprefab file, the path to that
+    /// file (empty otherwise). Links the instance to its source prefab so the
+    /// editor can Apply changes back, Revert to the saved prefab, or reload every
+    /// instance when the prefab file changes. Only the instance ROOT carries it.
+    std::string prefabSource;
     /// Render/physics layer (0-31). A camera's cullingMask selects which layers it
     /// draws (bit 1<<layer); also used by the physics collision matrix.
     int layer = 0;
@@ -73,6 +79,16 @@ public:
 
     /// Iterate the attached components in their stored order.
     const std::vector<std::unique_ptr<Component>>& Components() const { return m_components; }
+    /// Free every component except the Transform (used when the scene destroys
+    /// the object: the shell stays alive so stale pointers never dangle).
+    void StripToTransform() {
+        for (std::size_t i = m_components.size(); i-- > 0;)
+            if (m_components[i].get() != static_cast<Component*>(transform)) m_components.erase(m_components.begin() + (long)i);
+        active = false;
+        m_destroyed = true;
+    }
+    /// True once the scene destroyed this object (it's only a Transform shell now).
+    bool IsDestroyed() const { return m_destroyed; }
 
     /// True if `other` is this object or any ancestor of it — used by cameras to skip
     /// a whole subtree (e.g. hiding the local player's body, rig parts included, from
@@ -108,6 +124,7 @@ private:
 
     Scene* m_scene = nullptr;
     std::vector<std::unique_ptr<Component>> m_components;
+    bool m_destroyed = false;
 };
 
 // ---- Template implementations -----------------------------------------
@@ -125,25 +142,38 @@ T* GameObject::AddComponent(Args&&... args) {
     return ptr;
 }
 
+// Component lookups run every frame all over the engine. Every object's first
+// component is its Transform, so a lookup for a type that can't be a Transform
+// starts after it (a bone object with nothing but a Transform then costs no
+// dynamic_cast at all), and an exact type match skips the dynamic_cast walk.
+template <typename T>
+inline std::size_t FirstComponentToSearch(const std::vector<std::unique_ptr<Component>>& cs, const Transform* t) {
+    if constexpr (std::is_base_of<T, Transform>::value) return 0;
+    else return (!cs.empty() && cs[0].get() == static_cast<const Component*>(t)) ? 1 : 0;
+}
+
 template <typename T>
 T* GameObject::GetComponent() const {
-    for (const auto& c : m_components)
-        if (T* casted = dynamic_cast<T*>(c.get())) return casted;
+    for (std::size_t i = FirstComponentToSearch<T>(m_components, transform); i < m_components.size(); ++i) {
+        Component* c = m_components[i].get();
+        if (typeid(*c) == typeid(T)) return static_cast<T*>(c);
+        if (T* casted = dynamic_cast<T*>(c)) return casted;
+    }
     return nullptr;
 }
 
 template <typename T>
 std::vector<T*> GameObject::GetComponents() const {
     std::vector<T*> result;
-    for (const auto& c : m_components)
-        if (T* casted = dynamic_cast<T*>(c.get())) result.push_back(casted);
+    for (std::size_t i = FirstComponentToSearch<T>(m_components, transform); i < m_components.size(); ++i)
+        if (T* casted = dynamic_cast<T*>(m_components[i].get())) result.push_back(casted);
     return result;
 }
 
 template <typename T>
 void GameObject::CollectComponents(std::vector<T*>& out) const {
-    for (const auto& c : m_components)
-        if (T* casted = dynamic_cast<T*>(c.get())) out.push_back(casted);
+    for (std::size_t i = FirstComponentToSearch<T>(m_components, transform); i < m_components.size(); ++i)
+        if (T* casted = dynamic_cast<T*>(m_components[i].get())) out.push_back(casted);
 }
 
 } // namespace okay

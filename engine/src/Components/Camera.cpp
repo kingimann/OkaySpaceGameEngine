@@ -73,7 +73,10 @@ Mat4 Camera::ProjectionMatrix(float aspect) const {
     }
     float h = orthographicSize;
     float w = orthographicSize * aspect;
-    return Mat4::Ortho(-w, w, -h, h, nearClip, farClip);
+    // An orthographic (2D) camera sees its whole rectangle whatever the depth:
+    // a camera added to an object at z = 0 used to clip away every sprite at
+    // z = 0 behind its 0.3 near plane. Depth sorting is unaffected.
+    return Mat4::Ortho(-w, w, -h, h, -farClip, farClip);
 }
 
 } // namespace okay

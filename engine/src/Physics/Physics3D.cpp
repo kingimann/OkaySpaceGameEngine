@@ -558,6 +558,11 @@ void Physics3D::Step(Scene& scene, float dt) {
                 if (pos.y <= targetY + 0.05f) {
                     rb->groundedOnTerrain = true;
                     rb->groundNormal = l2w.MultiplyVector(terr->NormalAt(lx, lz)).Normalized();
+                } else if (rb->sleeping && pos.y > targetY + 0.1f) {
+                    // The ground under a resting body was lowered (e.g. the Terrain
+                    // Digger carved a crater): wake it so gravity pulls it down into
+                    // the new hole instead of leaving it floating where it slept.
+                    rb->WakeUp();
                 }
                 if (pos.y < targetY) {                      // sank into the ground -> lift out
                     t->localPosition.y += (targetY - pos.y);
@@ -669,6 +674,20 @@ void Physics3D::Step(Scene& scene, float dt) {
                         }
                         if (n.y > 0.4f) rb->groundedOnTerrain = true;   // standing on a floor
                     }
+                }
+
+                // Grounded + wake probe: look for solid just beneath the feet. A
+                // body sitting on a cave floor is grounded even once it falls
+                // asleep (penetration alone wouldn't flag it, since a sleeping body
+                // no longer sinks in). If instead there's air below a sleeping body
+                // — the floor was dug away — wake it so it drops into the pit.
+                {
+                    Vec3 pos = t->Position();
+                    Vec3 below{pos.x - vp.x, (pos.y + footY - radius - 0.06f) - vp.y, pos.z - vp.z};
+                    bool solidBelow = vox->WithinBounds(below, 0.0f) &&
+                                      vox->SampleDensity(below) > vox->iso;
+                    if (solidBelow) rb->groundedOnTerrain = true;
+                    else if (rb->sleeping) rb->WakeUp();
                 }
             }
         }

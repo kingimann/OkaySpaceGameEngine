@@ -653,3 +653,86 @@ add_test(NAME controllers_ik COMMAND test_controllers_ik)
 add_executable(test_ecs test_ecs.cpp)
 target_link_libraries(test_ecs PRIVATE okay::engine)
 add_test(NAME ecs COMMAND test_ecs)
+
+add_executable(test_anim_playback test_anim_playback.cpp)
+target_link_libraries(test_anim_playback PRIVATE okay::engine)
+add_test(NAME anim_playback COMMAND test_anim_playback)
+
+add_executable(test_editor_plugins test_editor_plugins.cpp)
+target_link_libraries(test_editor_plugins PRIVATE okay::engine)
+target_compile_definitions(test_editor_plugins PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME editor_plugins COMMAND test_editor_plugins)
+
+add_executable(test_anim_state_machine test_anim_state_machine.cpp)
+target_link_libraries(test_anim_state_machine PRIVATE okay::engine)
+add_test(NAME anim_state_machine COMMAND test_anim_state_machine)
+
+add_executable(test_ik_core test_ik_core.cpp)
+target_link_libraries(test_ik_core PRIVATE okay::engine)
+add_test(NAME ik_core COMMAND test_ik_core)
+
+add_executable(test_vs_nodes test_vs_nodes.cpp)
+target_link_libraries(test_vs_nodes PRIVATE okay::engine)
+add_test(NAME vs_nodes COMMAND test_vs_nodes)
+
+add_executable(test_anim_clip_tools test_anim_clip_tools.cpp)
+target_link_libraries(test_anim_clip_tools PRIVATE okay::engine)
+add_test(NAME anim_clip_tools COMMAND test_anim_clip_tools)
+
+add_executable(test_anim_core test_anim_core.cpp)
+target_link_libraries(test_anim_core PRIVATE okay::engine)
+add_test(NAME anim_core COMMAND test_anim_core)
+
+add_executable(test_model_import_rig test_model_import_rig.cpp)
+target_link_libraries(test_model_import_rig PRIVATE okay::engine)
+add_test(NAME model_import_rig COMMAND test_model_import_rig)
+
+add_executable(test_anim_sm_layers test_anim_sm_layers.cpp)
+target_link_libraries(test_anim_sm_layers PRIVATE okay::engine)
+add_test(NAME anim_sm_layers COMMAND test_anim_sm_layers)
+
+add_executable(test_foot_planting test_foot_planting.cpp)
+target_link_libraries(test_foot_planting PRIVATE okay::engine)
+add_test(NAME foot_planting COMMAND test_foot_planting)
+
+add_executable(test_blend_shapes test_blend_shapes.cpp)
+target_link_libraries(test_blend_shapes PRIVATE okay::engine)
+add_test(NAME blend_shapes COMMAND test_blend_shapes)
+
+add_executable(test_frustum_culling test_frustum_culling.cpp)
+target_link_libraries(test_frustum_culling PRIVATE okay::engine)
+add_test(NAME frustum_culling COMMAND test_frustum_culling)
+
+add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
+target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
+add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
+
+# C# / Unity-style OkayScript: classes, generics, lambdas, coroutines, components.
+add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)
+target_link_libraries(test_okayscript_csharp PRIVATE okay::engine)
+add_test(NAME okayscript_csharp COMMAND test_okayscript_csharp)
+
+# Built-in animations on imported rigs: humanoid bone matching (Mixamo / UE / Rigify).
+add_executable(test_humanoid_retarget test_humanoid_retarget.cpp)
+target_link_libraries(test_humanoid_retarget PRIVATE okay::engine)
+add_test(NAME humanoid_retarget COMMAND test_humanoid_retarget)
+
+add_executable(test_character_model_setup test_character_model_setup.cpp)
+target_link_libraries(test_character_model_setup PRIVATE okay::engine)
+add_test(NAME character_model_setup COMMAND test_character_model_setup)
+
+add_executable(test_scene_defaults test_scene_defaults.cpp)
+target_link_libraries(test_scene_defaults PRIVATE okay::engine)
+add_test(NAME scene_defaults COMMAND test_scene_defaults)
+
+add_executable(test_vs_wave4 test_vs_wave4.cpp)
+target_link_libraries(test_vs_wave4 PRIVATE okay::engine)
+add_test(NAME vs_wave4 COMMAND test_vs_wave4)
+
+add_executable(test_ui_animation test_ui_animation.cpp)
+target_link_libraries(test_ui_animation PRIVATE okay::engine)
+add_test(NAME ui_animation COMMAND test_ui_animation)
+
+add_executable(test_action_graph test_action_graph.cpp)
+target_link_libraries(test_action_graph PRIVATE okay::engine)
+add_test(NAME action_graph COMMAND test_action_graph)

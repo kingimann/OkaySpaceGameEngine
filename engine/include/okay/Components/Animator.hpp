@@ -2,7 +2,9 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Animation/AnimationClip.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include <cmath>
+#include <functional>
 
 namespace okay {
 
@@ -15,19 +17,61 @@ public:
     float speed   = 1.0f;
     bool  playing = true;
 
+    /// Called for every clip event playback passes, besides OnAnimationEvent on
+    /// the object's components.
+    std::function<void(const std::string&)> onEvent;
+
     float Time() const { return m_time; }
-    void  SetTime(float t) { m_time = t; ApplyAt(t); }
+    void  SetTime(float t) { m_time = t; m_eventsPrimed = false; ApplyAt(t); }
     void  Play()  { playing = true; }
     void  Pause() { playing = false; }
-    void  Restart() { m_time = 0.0f; ApplyAt(0.0f); }
+    void  Restart() { m_time = 0.0f; m_eventsPrimed = false; ApplyAt(0.0f); }
 
     void Update(float dt) override {
         if (!playing) return;
+        float prev = m_time;
         m_time += dt * speed;
         ApplyAt(m_time);
+        if (!clip.events.empty() && speed > 0.0f) {
+            ForEachEventBetween(clip, prev, m_time, !m_eventsPrimed, [&](const std::string& n) { Dispatch(n); });
+            m_eventsPrimed = true;
+        }
+    }
+
+    /// Call `fn` for each event of `clip` passed when raw playback time goes from
+    /// `t0` to `t1` (t1 >= t0), handling loop wrap-around. `includeStart` also
+    /// fires events sitting exactly at t0 (the very first frame).
+    template <class Fn>
+    static void ForEachEventBetween(const AnimationClip& clip, float t0, float t1, bool includeStart, Fn&& fn) {
+        float len = clip.Length();
+        if (clip.events.empty() || t1 < t0) return;
+        auto span = [&](float a, float b, bool incA) {
+            for (const auto& e : clip.events)
+                if ((e.time > a || (incA && e.time >= a)) && e.time <= b) fn(e.name);
+        };
+        if (len <= 0.0f) { span(t0, t1, includeStart); return; }
+        if (!clip.loop) {
+            float a = Mathf::Clamp(t0, 0.0f, len), b = Mathf::Clamp(t1, 0.0f, len);
+            if (b > a || includeStart) span(a, b, includeStart);
+            return;
+        }
+        float c0 = std::floor(t0 / len), c1 = std::floor(t1 / len);
+        float a = t0 - c0 * len, b = t1 - c1 * len;
+        if (c1 <= c0) { span(a, b, includeStart); return; }
+        span(a, len, includeStart);                                   // rest of this cycle
+        if (c1 - c0 > 1.0f) span(0.0f, len, true);                    // a whole skipped cycle (once)
+        span(0.0f, b, true);                                          // start of the new one
     }
 
 private:
+    void Dispatch(const std::string& name) {
+        if (onEvent) onEvent(name);
+        if (!gameObject) return;
+        const auto& cs = gameObject->Components();   // by index: a handler may add components
+        for (std::size_t i = 0; i < cs.size(); ++i)
+            if (cs[i].get() != this) cs[i]->OnAnimationEvent(name);
+    }
+
     void ApplyAt(float time) {
         if (!transform) return;
         float len = clip.Length();
@@ -73,6 +117,7 @@ private:
     }
 
     float m_time = 0.0f;
+    bool  m_eventsPrimed = false;
 };
 
 } // namespace okay

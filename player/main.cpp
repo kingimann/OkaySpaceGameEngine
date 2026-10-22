@@ -9,12 +9,14 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
+#include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
 #endif
@@ -32,6 +34,16 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#if defined(_WIN32)
+// Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
+// switchable): exporting these tells the drivers to run the game on the discrete
+// NVIDIA/AMD GPU instead of the slower integrated one.
+extern "C" {
+    __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
 
 using namespace okay;
 
@@ -999,6 +1011,9 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
 
 int main(int argc, char** argv) {
     SDL_SetMainReady();
+    // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
+    // resolution instead of being bitmap-stretched (blurry) on scaled displays.
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;
@@ -1043,6 +1058,15 @@ int main(int argc, char** argv) {
         std::string splash;        // startup logo PNG (in the Data folder)
         float splashTime = 2.0f;   // seconds the splash shows
         int   splashBg[3] = {12, 12, 16};  // splash background colour
+        // Boot splash — the project's branded loading frame, shown immediately on
+        // launch (before the renderer/scene are up) so the game never flashes a
+        // black window and matches the editor/launcher loading screen.
+        std::string bootLogo;      // optional PNG (in the Data folder)
+        float bootBgTop[3] = {0.094f, 0.094f, 0.106f};
+        float bootBgBot[3] = {0.051f, 0.051f, 0.059f};
+        bool  bootAccentOn = false;
+        float bootAccent[3] = {0.235f, 0.475f, 0.800f};
+        bool  bootBar = true;
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -1094,6 +1118,11 @@ int main(int argc, char** argv) {
             else if (k == "splash")         cfg.splash = v;
             else if (k == "splash_time")    cfg.splashTime = (float)std::atof(v.c_str());
             else if (k == "splash_bg")      std::sscanf(v.c_str(), "%d,%d,%d", &cfg.splashBg[0], &cfg.splashBg[1], &cfg.splashBg[2]);
+            else if (k == "boot_logo")      cfg.bootLogo = v;
+            else if (k == "boot_bg_top")    std::sscanf(v.c_str(), "%f %f %f", &cfg.bootBgTop[0], &cfg.bootBgTop[1], &cfg.bootBgTop[2]);
+            else if (k == "boot_bg_bot")    std::sscanf(v.c_str(), "%f %f %f", &cfg.bootBgBot[0], &cfg.bootBgBot[1], &cfg.bootBgBot[2]);
+            else if (k == "boot_accent")  { std::sscanf(v.c_str(), "%f %f %f", &cfg.bootAccent[0], &cfg.bootAccent[1], &cfg.bootAccent[2]); cfg.bootAccentOn = true; }
+            else if (k == "boot_bar")       cfg.bootBar = std::atoi(v.c_str()) != 0;
         }
     }
     // Register the build's scenes so scripts can load_scene_index / load_next.
@@ -1128,12 +1157,22 @@ int main(int argc, char** argv) {
         SDL_Log("Could not load %s: %s", scenePath.c_str(), err.c_str());
         // Keep running with an empty scene rather than failing outright.
     }
+    {   // A scene without a camera would render nothing: add one.
+        bool made = false;
+        okay::EnsureSceneCamera(scene, okay::SceneLooks2D(scene), &made);
+        if (made) SDL_Log("Scene has no camera; added a Main Camera.");
+    }
 
     Uint32 winFlags = SDL_WINDOW_ALLOW_HIGHDPI;
     if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;
     if (cfg.fullscreen) winFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     if (cfg.borderless) winFlags |= SDL_WINDOW_BORDERLESS;
     if (cfg.startMaximized && cfg.resizable && !cfg.fullscreen) winFlags |= SDL_WINDOW_MAXIMIZED;
+#if !defined(__EMSCRIPTEN__)
+    // Create hidden so the game never flashes a black window during renderer /
+    // GPU setup; we draw the boot splash then reveal it (see below).
+    if (!cfg.fullscreen) winFlags |= SDL_WINDOW_HIDDEN;
+#endif
     if (!cfg.showCursor) SDL_ShowCursor(SDL_DISABLE);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
     SDL_Window* window = SDL_CreateWindow(
@@ -1153,6 +1192,36 @@ int main(int argc, char** argv) {
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+
+    // ---- Boot splash: the project's branded loading frame, shown immediately so
+    // the game doesn't flash a black window while the renderer / GPU / scene set
+    // up. Matches the editor/launcher loading screen. Reveal the window on it.
+    SDL_Texture* bootTex = nullptr;
+    if (renderer && window) {
+        okay::SplashStyle st;
+        if (cfg.bootAccentOn) { st.ar = cfg.bootAccent[0]; st.ag = cfg.bootAccent[1]; st.ab = cfg.bootAccent[2]; }
+        auto C = [](const float* c) -> SDL_Color {
+            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+        st.bgTop = C(cfg.bootBgTop); st.bgBottom = C(cfg.bootBgBot); st.showProgress = cfg.bootBar;
+        if (!cfg.bootLogo.empty()) {
+            okay::Image img;
+            if (img.Load(cfg.bootLogo) || img.Load(baseDir + cfg.bootLogo)) {
+                if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
+                        (void*)img.Data(), img.Width(), img.Height(), 32, img.Width() * 4, SDL_PIXELFORMAT_ABGR8888)) {
+                    bootTex = SDL_CreateTextureFromSurface(renderer, s);
+                    SDL_FreeSurface(s);
+                }
+            }
+        }
+        st.logo = bootTex;
+        int bw = cfg.width, bh = cfg.height; SDL_GetRendererOutputSize(renderer, &bw, &bh);
+        okay::DrawSplashStyled(renderer, bw, bh, st);
+#if !defined(__EMSCRIPTEN__)
+        SDL_ShowWindow(window); SDL_RaiseWindow(window);
+        okay::DrawSplashStyled(renderer, bw, bh, st);
+#endif
+    }
 
     // Apply the build's graphics/quality settings to the renderer + cursor.
     PerPixelLighting() = cfg.perPixel;
@@ -1301,10 +1370,17 @@ int main(int argc, char** argv) {
                 bool typing = false;
                 for (const auto& up : scene.Objects())
                     if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
-                // A PauseMenu owns Escape (it pauses instead of quitting); only hard-quit
-                // on Escape when the scene has no pause menu.
-                bool hasPause = scene.FindObjectOfType<okay::PauseMenu>() != nullptr;
-                if (!typing && cfg.quitOnEscape && !hasPause) running = false;
+                // Shift+Esc is a GUARANTEED quit: it always closes the game regardless of
+                // pause menus, fullscreen or a hidden cursor — so a player can never get
+                // trapped in a game with no visible way out.
+                bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+                if (shift && !typing) { running = false; }
+                else {
+                    // A PauseMenu owns a plain Escape (it pauses instead of quitting); only
+                    // hard-quit on Escape when the scene has no pause menu.
+                    bool hasPause = scene.FindObjectOfType<okay::PauseMenu>() != nullptr;
+                    if (!typing && cfg.quitOnEscape && !hasPause) running = false;
+                }
             }
         }
 
@@ -1501,6 +1577,24 @@ int main(int argc, char** argv) {
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
         Time::Step(tick ? dt : 0.0f);
+        // Characters skin in the vertex shader when Direct3D 11 or OpenGL draws the
+        // frame: bone matrices per frame instead of every vertex on the CPU plus a
+        // full mesh re-upload. (D3D12 and the software fallback skin on the CPU.)
+        {
+            bool gpuSkin = false; int maxJoints = okay::SkinnedMesh::kMaxGpuJoints;
+            if (cfg.gpu && gpuFails < 3) {
+#if defined(_WIN32)
+                if (d3d12Ready) gpuSkin = false;
+                else if (d3dReady && d3dRenderer) gpuSkin = d3dRenderer->SupportsGpuSkinning();
+                else
+#endif
+                if (glReady && glRenderer && glRenderer->SupportsGpuSkinning()) {
+                    gpuSkin = true; maxJoints = glRenderer->GpuSkinJoints();
+                }
+            }
+            okay::SkinnedMesh::GpuSkinning() = gpuSkin;
+            okay::SkinnedMesh::GpuMaxJoints() = maxJoints;
+        }
         if (tick) scene.Update(Time::DeltaTime());
         if (okay::Game::QuitRequested()) running = false;   // a PauseMenu / script asked to quit
 

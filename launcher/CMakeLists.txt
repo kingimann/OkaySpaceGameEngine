@@ -40,17 +40,34 @@ if(NOT TARGET launcher_imgui)
         ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
     target_link_libraries(launcher_imgui PUBLIC ${OKAY_LAUNCHER_SDL})
     target_compile_options(launcher_imgui PRIVATE -w)
+    # 32-bit ImWchar: emoji (U+1F000+) survive in text inputs instead of "??".
+    target_compile_definitions(launcher_imgui PUBLIC IMGUI_USE_WCHAR32)
 endif()
 
-add_executable(okayspace-launcher main.cpp)
+# Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
+set(OKAY_LAUNCHER_SOURCES main.cpp
+    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)   # native file picker (chat attachments)
+set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
+    PROPERTIES COMPILE_OPTIONS "-w")
+if(WIN32)
+    enable_language(RC)
+    list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)
+endif()
+add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
 target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # shared/ for the launcher's AppIcon, and the engine's public headers for the
 # (header-only) account service it shares with the engine. The launcher doesn't
 # link the engine library — the account core needs only the standard library.
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
-    ${CMAKE_SOURCE_DIR}/engine/include)
+    ${CMAKE_SOURCE_DIR}/engine/include
+    ${CMAKE_SOURCE_DIR}/engine/third_party/stb     # stb_image for game cover art
+    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd) # tinyfiledialogs
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
+# The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
+if(WIN32)
+    target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + tinyfd dialogs, voice UDP, native HTTPS
+endif()
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     OUTPUT_NAME "OkaySpace")    # the single thing the user double-clicks

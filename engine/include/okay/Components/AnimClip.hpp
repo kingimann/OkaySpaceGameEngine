@@ -81,6 +81,13 @@ struct AnimClip {
                                           const std::function<int(const std::string&)>& resolveBone,
                                           int boneCount,
                                           std::string* err = nullptr);
+
+    /// Serialize clips back to the .okayanim text format (the inverse of
+    /// ParseAll), so in-editor keyframing can be saved to the authored file.
+    /// `boneName(i)` maps a bone index to its name; bones whose pose is (0,0,0)
+    /// are omitted (ParseAll zero-initializes them), keeping the file compact.
+    static std::string WriteAll(const std::vector<AnimClip>& clips,
+                                const std::function<std::string(int)>& boneName);
 };
 
 } // namespace okay

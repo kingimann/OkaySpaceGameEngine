@@ -32,6 +32,8 @@
 
 namespace okay {
 
+class SkinnedMesh;
+
 class GLRenderer {
 public:
     using GLGetProc = void* (*)(const char*);
@@ -42,6 +44,11 @@ public:
     static bool LoadGL(GLGetProc getProc);
     /// True once LoadGL() has succeeded.
     static bool Available();
+    /// True once the program is built with GPU skinning (bone rows in the vertex
+    /// shader). The host then sets SkinnedMesh::GpuSkinning() so characters only
+    /// build their bone palette on the CPU. GpuSkinJoints: the shader's joint limit.
+    bool SupportsGpuSkinning() const;
+    int  GpuSkinJoints() const;
 
     GLRenderer() = default;
     ~GLRenderer();
@@ -102,6 +109,18 @@ private:
     int m_usDepth = -1, m_usTexel = -1, m_usRadius = -1, m_usFar = -1;  // AO pass
     int m_umSrc = -1, m_umStrength = -1;                                // multiply
     int m_w = 0, m_h = 0, m_samples = 0;
+    // Render targets for the OTHER view sizes in use (Scene view, Game view, Camera
+    // Preview, Animation preview all differ): parked and swapped back in instead of
+    // deleting + re-creating the MSAA / resolve / bloom / SSAO targets every view.
+    struct SizeSet {
+        int w = 0, h = 0, samples = 0, bloomW = 0, bloomH = 0, ssaoW = 0, ssaoH = 0;
+        unsigned int ids[16] = {};
+        unsigned lastUse = 0;
+    };
+    std::vector<SizeSet> m_parkedSets;
+    unsigned m_targetUse = 0;
+    void SwapSizeSet(SizeSet& s);     // exchange the live targets with `s`
+    void DeleteSizeSet(SizeSet& s);
     int m_uMVP = -1, m_uModel = -1, m_uColor = -1, m_uLightDir = -1,
         m_uLightColor = -1, m_uAmbient = -1, m_uEmissive = -1, m_uEye = -1,
         m_uSpecular = -1, m_uShininess = -1, m_uUnlit = -1,
@@ -117,7 +136,9 @@ private:
         m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1,
         m_uFogOn = -1, m_uFogColor = -1, m_uFogStart = -1, m_uFogEnd = -1, m_uTonemap = -1,
         m_uShadowTex = -1, m_uLightVP = -1, m_uShadowOn = -1,
-        m_uShadowTexel = -1, m_uShadowSize = -1, m_uDepthMVP = -1;
+        m_uShadowTexel = -1, m_uShadowSize = -1, m_uDepthMVP = -1,
+        m_uSkin = -1, m_uBones = -1, m_udSkin = -1, m_udBones = -1, m_usdSkin = -1, m_usdBones = -1;
+    std::vector<float> m_boneRows;          // GPU skinning: 3 rows per joint, scratch
     std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result
@@ -145,10 +166,16 @@ private:
         std::uint64_t sampleHash = 0;                     // cheap, checked every frame
         std::uint64_t fullHash = 0;                       // exact, refreshed periodically
         unsigned lastUse = 0, lastFullHash = 0;           // frame stamps
+        std::uint64_t version = 0;                        // SkinnedMesh::version when skinned
+        unsigned buildSerial = 0;                         // bumped on every re-expansion
+        unsigned int skinVbo = 0;                         // GPU skinning: joints+weights, expanded alike
+        unsigned int skinFor = 0; unsigned skinVer = 0;   // the vbo / build it was made for
     };
     std::unordered_map<const void*, MeshVB> m_meshVB;     // key: &MeshRenderer::mesh
     unsigned m_frame = 0;
-    MeshVB* EnsureMeshVB(const Mesh& mesh);               // expand + upload on miss
+    // version != 0: a CPU-skinned mesh — rebuilt when the version changes (no hashing).
+    MeshVB* EnsureMeshVB(const Mesh& mesh, std::uint64_t version = 0);
+    void BindSkin(const SkinnedMesh* skin, const Mesh& mesh, MeshVB* mv, int uSkin, int uBones);
     void BuildExpandedVerts(const Mesh& mesh);            // fill m_verts (14 floats/vertex)
 };
 

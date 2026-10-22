@@ -47,6 +47,11 @@ public:
     float maxFallSpeed = 25.0f;    // clamp downward speed (0 = no clamp)
     float extraFallGravity = 0.0f; // extra downward accel while falling (snappier arc)
     char  jumpKey     = ' ';       // jump button (Space); 'W' / Up also jump
+    // ---- Wall slide + wall jump (classic platformer) ----
+    bool  wallJump      = false;   // enable: slow-slide down walls + jump off them
+    float wallSlideSpeed = 2.5f;   // max downward speed while sliding on a wall
+    float wallJumpForce  = 9.0f;   // upward speed of a wall jump
+    float wallJumpPush   = 7.0f;   // horizontal push away from the wall
 
     /// True when standing on something (or within coyote time).
     bool IsGrounded() const { return m_grounded; }
@@ -103,10 +108,23 @@ public:
             rb->velocity.x = Approach(rb->velocity.x, target, axis.x, dt, false, ctrl);
 
             bool canCoyote = m_coyote > 0.0f;
-            if (m_jumpBuf > 0.0f && (canCoyote || m_jumpsLeft > 0)) {
-                rb->velocity.y = jumpForce;
-                m_jumpsLeft = (canCoyote ? maxJumps : m_jumpsLeft) - 1;
-                m_jumpBuf = 0.0f; m_coyote = 0.0f; m_grounded = false;
+            bool onWall = wallJump && !grounded && m_wallDir != 0;
+            if (m_jumpBuf > 0.0f) {
+                if (onWall && !canCoyote && m_jumpsLeft <= 0) {
+                    // Wall jump: up and away from the wall (restores a mid-air jump).
+                    rb->velocity.y = wallJumpForce;
+                    rb->velocity.x = -(float)m_wallDir * wallJumpPush;
+                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_jumpsLeft = maxJumps - 1;
+                } else if (canCoyote || m_jumpsLeft > 0) {
+                    rb->velocity.y = jumpForce;
+                    m_jumpsLeft = (canCoyote ? maxJumps : m_jumpsLeft) - 1;
+                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_grounded = false;
+                }
+            }
+            // Wall slide: holding toward the wall while falling slows the descent.
+            if (onWall && rb->velocity.y < 0.0f && Mathf::Abs(axis.x) > 0.1f &&
+                (axis.x < 0.0f ? -1 : 1) == m_wallDir) {
+                if (rb->velocity.y < -wallSlideSpeed) rb->velocity.y = -wallSlideSpeed;
             }
 
             // Variable jump: cut upward speed when the key is released early.
@@ -125,16 +143,19 @@ public:
         }
         Face(axis.x);
 
-        // Consume this frame's grounded reading; physics re-sets it from contacts.
+        // Consume this frame's contact readings; physics re-sets them from contacts.
         m_grounded = false;
+        m_wallDir = 0;
     }
 
-    // Grounded when a contact sits below us (works for slopes / moving platforms).
-    void OnCollisionEnter2D(const Collision2D& c) override { CheckGround(c); }
-    void OnCollisionStay2D (const Collision2D& c) override { CheckGround(c); }
+    // Grounded when a contact sits below us (works for slopes / moving platforms);
+    // a contact to the side marks a wall (for wall slide / wall jump).
+    void OnCollisionEnter2D(const Collision2D& c) override { CheckGround(c); CheckWall(c); }
+    void OnCollisionStay2D (const Collision2D& c) override { CheckGround(c); CheckWall(c); }
 
 private:
     bool  m_grounded = false;
+    int   m_wallDir  = 0;      // -1 wall on the left, +1 on the right, 0 none (this frame)
     float m_coyote   = 0.0f;
     float m_jumpBuf  = 0.0f;
     int   m_jumpsLeft = 0;
@@ -163,6 +184,14 @@ private:
         // A contact roughly below our center means we're standing on it.
         if (c.gameObject->transform->Position().y < transform->Position().y - 1e-3f)
             m_grounded = true;
+    }
+
+    void CheckWall(const Collision2D& c) {
+        if (!wallJump || !c.gameObject || !c.gameObject->transform || !transform) return;
+        Vec3 cp = c.gameObject->transform->Position(), me = transform->Position();
+        float dx = cp.x - me.x, dy = cp.y - me.y;
+        // A contact more to the side than above/below is a wall on that side.
+        if (Mathf::Abs(dx) > Mathf::Abs(dy)) m_wallDir = dx > 0.0f ? 1 : -1;
     }
 };
 

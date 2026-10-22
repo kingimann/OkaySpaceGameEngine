@@ -67,6 +67,33 @@ void EditorState::Achievement(const std::string& id) {
     if (m_steam) m_steam->UnlockAchievement(id);
 }
 
+// Undo/redo rebuild every object, so the selection is carried across by position
+// in the scene's object list (names double-check it) — the Inspector and the
+// Animation tab stay on what you were editing instead of going blank.
+void EditorState::RestoreKeepingSelection(const std::string& snapshot) {
+    std::vector<std::pair<int, std::string>> keep;
+    auto indexOf = [&](GameObject* g) {
+        int i = 0;
+        for (const auto& up : m_scene.Objects()) { if (up.get() == g) return i; ++i; }
+        return -1;
+    };
+    for (GameObject* g : m_multi) if (g) keep.push_back({indexOf(g), g->name});
+    int primary = m_selected ? indexOf(m_selected) : -1;
+    SceneSerializer::Deserialize(m_scene, snapshot);
+    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
+    const auto& objs = m_scene.Objects();
+    GameObject* prim = nullptr;
+    for (const auto& k : keep) {
+        GameObject* g = nullptr;
+        if (k.first >= 0 && k.first < (int)objs.size() && objs[k.first]->name == k.second) g = objs[k.first].get();
+        if (!g) continue;
+        if (m_multi.empty()) Select(g); else ToggleSelect(g);
+        if (k.first == primary) prim = g;
+    }
+    if (prim) m_selected = prim;
+    dirty = true;
+}
+
 void EditorState::PushUndo() {
     if (m_suppressUndo) return;
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
@@ -79,9 +106,7 @@ bool EditorState::Undo() {
     m_redo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_undo.back(); m_undo.pop_back();
     StopNetwork();
-    SceneSerializer::Deserialize(m_scene, s);
-    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
-    dirty = true;
+    RestoreKeepingSelection(s);
     return true;
 }
 
@@ -90,9 +115,7 @@ bool EditorState::Redo() {
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_redo.back(); m_redo.pop_back();
     StopNetwork();
-    SceneSerializer::Deserialize(m_scene, s);
-    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
-    dirty = true;
+    RestoreKeepingSelection(s);
     return true;
 }
 
@@ -118,10 +141,52 @@ GameObject* EditorState::CreateSprite(const std::string& name) {
 GameObject* EditorState::CreateCamera(const std::string& name) {
     PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
-    go->AddComponent<Camera>();
+    auto* cam = go->AddComponent<Camera>();
+    if (view3D) {
+        // Start where the Scene view is looking from, so the new camera shows
+        // what you were just looking at (instead of sitting inside the ground
+        // at the origin). Cameras look down their local -Z.
+        const float yr = camYaw * Mathf::Deg2Rad, pr = camPitch * Mathf::Deg2Rad;
+        const Vec3 dir{Mathf::Cos(pr) * Mathf::Sin(yr), Mathf::Sin(pr), Mathf::Cos(pr) * Mathf::Cos(yr)};
+        go->transform->localPosition = camTarget + dir * camDist;
+        go->transform->localRotation = Quat::LookRotation(dir);
+        cam->projection = Camera::Projection::Perspective;
+    } else {
+        go->transform->localPosition = Vec3{camTarget.x, camTarget.y, 10.0f};
+        cam->projection = Camera::Projection::Orthographic;
+    }
+    AdoptCamera(cam);
     m_selected = go;
     dirty = true;
     return go;
+}
+
+void EditorState::AdoptCamera(Camera* cam) {
+    if (!cam) return;
+    // Drop the placeholder "Main Camera" if it's still exactly as the editor made it.
+    if (autoCamera && autoCamera != cam->gameObject) {
+        bool alive = false;
+        for (const auto& up : m_scene.Objects()) if (up.get() == autoCamera) { alive = true; break; }
+        // Untouched = only Transform + Camera, no children or parent, and still at
+        // the spot EnsureSceneCamera put it ((0,2,10) in 3D, (0,0,10) in 2D).
+        auto untouched = [&]() {
+            Transform* t = autoCamera->transform;
+            if (!t || autoCamera->Components().size() > 2 || !t->Children().empty() || t->Parent()) return false;
+            const Vec3 p = t->localPosition;
+            return (p - Vec3{0, 2, 10}).Magnitude() < 1e-3f || (p - Vec3{0, 0, 10}).Magnitude() < 1e-3f;
+        };
+        if (alive && untouched()) {
+            if (m_selected == autoCamera) m_selected = nullptr;
+            m_scene.Destroy(autoCamera);
+            m_scene.FlushDestroyed();
+        }
+        autoCamera = nullptr;
+    }
+    for (const auto& up : m_scene.Objects())
+        if (up)
+            if (auto* c = up->GetComponent<Camera>()) c->main = (c == cam);
+    m_scene.mainCamera = cam;
+    dirty = true;
 }
 
 GameObject* EditorState::CreateCube(const std::string& name) {
@@ -247,7 +312,10 @@ void EditorState::NewScene2D() {
     NewScene();
     m_suppressUndo = true; // batch the template objects into one undo step
     m_scene.SetName("Untitled 2D");
-    if (Camera* c = m_scene.mainCamera) c->projection = Camera::Projection::Orthographic;
+    if (Camera* c = m_scene.mainCamera) {   // a 2D camera looks straight at the origin
+        c->projection = Camera::Projection::Orthographic;
+        if (c->transform) c->transform->localPosition = {0, 0, 10};
+    }
     GameObject* sp = CreateSprite("Sprite");
     sp->GetComponent<SpriteRenderer>()->color = Color::Green;
     m_suppressUndo = false;

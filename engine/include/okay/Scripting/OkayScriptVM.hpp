@@ -1,6 +1,9 @@
 #pragma once
 #include "okay/Scripting/ScriptVM.hpp"
+#include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace okay {
 
@@ -26,8 +29,14 @@ public:
     void CallStart() override;
     void CallUpdate(float deltaTime) override;
     void CallEvent(const std::string& function) override;
+    void CallEventWith(const std::string& function, const vs::VsValue& arg) override;
     vs::VsValue GetGlobal(const std::string& name) const override;
     void SetGlobal(const std::string& name, const vs::VsValue& v) override;
+
+    /// Add (or replace) a host-defined builtin callable from this VM's scripts —
+    /// how embedders (e.g. editor plugins) expose their own API. Call before Load.
+    using Builtin = std::function<vs::VsValue(std::vector<vs::VsValue>&)>;
+    void AddBuiltin(const std::string& name, Builtin fn);
 
 private:
     struct Impl;

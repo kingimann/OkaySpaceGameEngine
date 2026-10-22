@@ -37,6 +37,7 @@ GameObject* Scene::CreateGameObject(const std::string& name) {
     auto go = std::unique_ptr<GameObject>(new GameObject(this, name));
     GameObject* ptr = go.get();
     m_objects.push_back(std::move(go));
+    ++m_structureVersion;
     ptr->transform = ptr->AddComponent<Transform>();
     return ptr;
 }
@@ -49,6 +50,8 @@ void Scene::Clear() {
     m_physics.Clear();
     mainCamera = nullptr;
     m_objects.clear();
+    m_graveyard.clear();
+    ++m_structureVersion;
     renderSettings = RenderSettings{};   // back to default sky/ambient
 }
 
@@ -72,10 +75,20 @@ void Scene::FlushPending() {
     std::vector<Component*> batch;
     batch.swap(m_pending);
 
+    bool ordered = false;
     for (Component* c : batch) {
         if (!c) continue;                 // removed before it was flushed
         c->Awake();
         m_active.push_back(c);
+        if (c->ExecutionOrder() != 0) ordered = true;
+    }
+    // Keep components with an execution order where they belong (IK after
+    // animation); creation order holds among equals.
+    if (ordered || m_hasOrdered) {
+        m_hasOrdered = true;
+        std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
+            return (a ? a->ExecutionOrder() : 0) < (b ? b->ExecutionOrder() : 0);
+        });
     }
     for (Component* c : batch) {
         if (c && !c->m_started && c->enabled) {
@@ -114,7 +127,7 @@ void Scene::Update(float deltaTime) {
 
     // Keep auto-fit colliders matched to their renderer before the physics step.
     for (const auto& go : m_objects)
-        if (go->active) FitColliders(go.get(), /*onlyAuto*/ true);
+        if (go->active && go->Components().size() > 1) FitColliders(go.get(), /*onlyAuto*/ true);
 
     if (physicsEnabled) {
         { OKAY_PROFILE("Physics.2D"); m_physics.Step(*this, deltaTime); }
@@ -276,6 +289,15 @@ void Scene::Destroy(GameObject* go) {
 
 void Scene::FlushDestroyed() {
     if (m_destroyQueue.empty()) return;
+    // Survivors get to drop references to what's going away (skinned meshes to
+    // their bones, IK to its targets, ...) before anything is freed.
+    const std::unordered_set<const GameObject*> dying(m_destroyQueue.begin(), m_destroyQueue.end());
+    {
+        std::vector<Component*> survivors;
+        for (Component* c : m_active)  if (c && !dying.count(c->gameObject)) survivors.push_back(c);
+        for (Component* c : m_pending) if (c && !dying.count(c->gameObject)) survivors.push_back(c);
+        for (Component* c : survivors) c->OnObjectsDestroyed(dying);
+    }
     for (GameObject* go : m_destroyQueue) {
         // Run OnDestroy and drop the object's components from the lists.
         for (auto& obj : m_objects) {
@@ -290,11 +312,24 @@ void Scene::FlushDestroyed() {
         if (mainCamera && mainCamera->gameObject == go) mainCamera = nullptr;
         if (m_mouseHover == go) m_mouseHover = nullptr;
         if (m_mousePress == go) m_mousePress = nullptr;
-        m_objects.erase(std::remove_if(m_objects.begin(), m_objects.end(),
-                                       [go](const std::unique_ptr<GameObject>& o) { return o.get() == go; }),
-                        m_objects.end());
+        // Keep the shell (GameObject + Transform) in the graveyard; free the rest.
+        for (auto it = m_objects.begin(); it != m_objects.end(); ++it)
+            if (it->get() == go) {
+                // Unlink the shell from a surviving parent, or it lingers in the
+                // Hierarchy as an empty, inactive child (a deleted camera showed up
+                // as "a camera with no Camera component").
+                if (Transform* t = go->transform)
+                    if (Transform* par = t->Parent(); par && par->gameObject && !dying.count(par->gameObject))
+                        t->SetParent(nullptr, /*worldPositionStays=*/true);
+                (*it)->StripToTransform();
+                m_graveyard.push_back(std::move(*it));
+                m_objects.erase(it);
+                break;
+            }
     }
     m_destroyQueue.clear();
+    if (m_graveyard.size() > 20000) m_graveyard.erase(m_graveyard.begin(), m_graveyard.begin() + 10000);   // bullets etc.: oldest shells go
+    ++m_structureVersion;
 }
 
 GameObject* Scene::Find(const std::string& name) const {

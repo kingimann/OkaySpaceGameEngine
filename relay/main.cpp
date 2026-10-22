@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::cout << "OkaySpace relay running on UDP " << relay.Port()
-              << " — Ctrl+C to stop.\n";
+              << " — Ctrl+C to stop." << std::endl;   // flush: shows up in docker/journal logs
 
     // Poll at ~120 Hz: cheap, and snappy enough to forward without adding latency.
     const auto tick = std::chrono::milliseconds(8);

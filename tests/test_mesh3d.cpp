@@ -581,7 +581,9 @@ int main() {
             Mesh m = Mesh::FromName(nm);
             CHECK(m.TriangleCount() > 0);
             CHECK(m.HasFaceColors());   // every face tinted (bark/leaf/stone)
-            CHECK(m.HasNormals());      // smooth-shaded
+            // The leafy props are smooth-shaded; Rock is intentionally flat-faceted
+            // (no stored normals — the renderer computes per-face normals).
+            if (std::string(nm) != "Rock") CHECK(m.HasNormals());
             CHECK(m.name == nm);
             // Rests on/above the ground plane (base near y=0, nothing far below).
             Vec3 lo, hi; m.Bounds(lo, hi);

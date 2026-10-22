@@ -261,6 +261,8 @@ public:
 
 	void InsertText(const std::string& aValue);
 	void InsertText(const char* aValue);
+	// Like InsertText, but one Ctrl+Z step (replaces the selection, if any). OkaySpace addition.
+	void InsertTextUndoable(const std::string& aValue);
 
 	void MoveUp(int aAmount = 1, bool aSelect = false);
 	void MoveDown(int aAmount = 1, bool aSelect = false);

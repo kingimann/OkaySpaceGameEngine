@@ -35,6 +35,12 @@ inline void FitColliders(GameObject* go, bool onlyAuto = false) {
 
     // ---- 3D: fit to the MeshRenderer's local bounds ----
     if (auto* mr = go->GetComponent<MeshRenderer>()) {
+        // Nothing to fit: skip the bounds pass over every vertex (this runs per
+        // frame for every object). Animated (skinned) meshes aren't refit per
+        // frame either — the collider would change size with every pose.
+        std::vector<Collider3D*> cols;
+        for (auto* c : go->GetComponents<Collider3D>()) if (!onlyAuto || c->autoFit) cols.push_back(c);
+        if (cols.empty() || (onlyAuto && mr->deformed)) return;
         Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
         // Never collapse a dimension to exactly 0 — a flat plane / a face extruded flat
         // would otherwise get a zero-thickness collider that nothing can land on.
@@ -52,8 +58,7 @@ inline void FitColliders(GameObject* go, bool onlyAuto = false) {
             offs = go->transform->LocalToWorldMatrix().MultiplyPoint(center) - go->transform->Position();
         float maxXZ = Mathf::Max(size.x, size.z);
         float maxXYZ = Mathf::Max(size.x, Mathf::Max(size.y, size.z));
-        for (auto* c : go->GetComponents<Collider3D>()) {
-            if (onlyAuto && !c->autoFit) continue;
+        for (auto* c : cols) {
             c->offset = offs;
             if (auto* b = dynamic_cast<BoxCollider3D*>(c)) b->size = size;
             else if (auto* sp = dynamic_cast<SphereCollider3D*>(c)) sp->radius = maxXYZ * 0.5f;

@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include "okay/VisualScript/VsValue.hpp"
 #include <memory>
 #include <string>
@@ -18,6 +19,7 @@ struct VsContext {
     GameObject* gameObject = nullptr;
     Transform*  transform  = nullptr;
     float       deltaTime  = 0.0f;
+    GameObject* other      = nullptr;   ///< the other object of a collision / trigger / click event
     std::unordered_map<std::string, VsValue> variables;
 };
 
@@ -31,6 +33,12 @@ public:
     virtual ~VsNode() = default;
 
     int id = -1;
+    int fileId = -1;            ///< the node's id in the .okayvs file / editor (-1 = built in code)
+
+    // Debug trace (only recorded while NodeGraph::Tracing() is on — the editor
+    // turns it on so a running graph can light up and show live values).
+    unsigned execCount = 0;                  ///< times this node has run
+    std::vector<VsValue> lastOut;            ///< last value produced per data output pin
 
     /// Number of execution output pins (0 means this is a pure data node).
     virtual int ExecOutCount() const { return 0; }
@@ -43,6 +51,21 @@ public:
     struct DataLink { int node = -1; int pin = 0; };
     std::vector<DataLink> dataIn;   // [inputPin] -> producer
     std::vector<int>      execOut;  // [execOutPin] -> next node id (-1 = none)
+    /// Values typed into unconnected data inputs (the editor's inline boxes):
+    /// used when nothing is wired into that pin.
+    std::vector<VsValue>  inDefault;
+    std::vector<char>     hasDefault;
+    void SetDefault(int inPin, const VsValue& v) {
+        if (inPin < 0) return;
+        if (inPin >= (int)inDefault.size()) { inDefault.resize(inPin + 1); hasDefault.resize(inPin + 1, 0); }
+        inDefault[inPin] = v; hasDefault[inPin] = 1;
+    }
+
+    /// True when something feeds data input `inPin` (a wire or a typed value).
+    bool HasInput(int inPin) const {
+        if (inPin >= 0 && inPin < (int)dataIn.size() && dataIn[inPin].node >= 0) return true;
+        return inPin >= 0 && inPin < (int)hasDefault.size() && hasDefault[inPin];
+    }
 
 protected:
     /// Pull the value wired into data input pin `inPin` (or a default).
@@ -86,14 +109,60 @@ public:
 
     /// Evaluate a data node's output pin.
     VsValue Pull(int nodeId, int outPin, VsContext& ctx);
-    /// Execute an exec chain starting at `entryNode`.
-    void Run(int entryNode, VsContext& ctx);
+    /// Execute an exec chain starting at `entryNode`. With `resume`, the first node
+    /// is a suspended one being picked up again (it sees Resuming() == true).
+    void Run(int entryNode, VsContext& ctx, bool resume = false);
 
-    /// Name an entry node (e.g. "OnStart", "OnUpdate") for later lookup.
-    void SetEntry(const std::string& name, int nodeId) { m_entries[name] = nodeId; }
+    /// An Exec() result meaning "not done yet - park this chain and call me again
+    /// next frame" (Delay, Action blocks with a Wait inside). Resume() picks every
+    /// parked chain up again; the chain continues from that node once it returns a pin.
+    static constexpr int kSuspend = -2;
+    /// Continue parked chains (called once per frame by the owning component).
+    void Resume(VsContext& ctx) {
+        if (m_suspended.empty()) return;
+        std::vector<int> ids; ids.swap(m_suspended);
+        for (int id : ids) Run(id, ctx, true);
+    }
+    /// True while a parked node is being resumed (only for that node's own Exec).
+    bool Resuming() const { return m_resuming; }
+    /// True when node `id` is parked waiting to resume.
+    bool IsSuspended(int id) const { return std::find(m_suspended.begin(), m_suspended.end(), id) != m_suspended.end(); }
+
+    /// Register an entry node under an event name ("OnStart", "OnUpdate",
+    /// "OnKey:space", ...). A graph may hold several nodes for the same event —
+    /// all of them run, in the order they were added.
+    void SetEntry(const std::string& name, int nodeId) {
+        auto& v = m_entries[name];
+        if (std::find(v.begin(), v.end(), nodeId) == v.end()) v.push_back(nodeId);
+    }
+    /// The first entry node for `name` (-1 if none).
     int  Entry(const std::string& name) const {
         auto it = m_entries.find(name);
-        return it != m_entries.end() ? it->second : -1;
+        return (it != m_entries.end() && !it->second.empty()) ? it->second.front() : -1;
+    }
+    /// Every entry node registered for `name`.
+    const std::vector<int>& Entries(const std::string& name) const {
+        static const std::vector<int> none;
+        auto it = m_entries.find(name);
+        return it != m_entries.end() ? it->second : none;
+    }
+    /// Run every entry registered for `name`. Returns how many ran.
+    int RunEntries(const std::string& name, VsContext& ctx) {
+        auto it = m_entries.find(name);
+        if (it == m_entries.end()) return 0;
+        const std::vector<int> ids = it->second;   // copy: a chain could reload the graph
+        for (int id : ids) Run(id, ctx);
+        return (int)ids.size();
+    }
+    /// All registered event names (for timers / key events that need polling).
+    const std::unordered_map<std::string, std::vector<int>>& AllEntries() const { return m_entries; }
+
+    /// Record execution counts + last data values on the nodes (editor debugging).
+    static bool& Tracing() { static bool on = false; return on; }
+    /// Look a node up by its file / editor id (-1 when absent).
+    int NodeByFileId(int fileId) const {
+        for (const auto& n : m_nodes) if (n && n->fileId == fileId) return n->id;
+        return -1;
     }
 
     /// Parse a graph from the simple OkayVS text format (see docs/visual_scripting.md).
@@ -101,8 +170,10 @@ public:
 
 private:
     std::vector<std::unique_ptr<VsNode>> m_nodes;
-    std::unordered_map<std::string, int> m_entries;
+    std::unordered_map<std::string, std::vector<int>> m_entries;
     int m_execGuard = 0; // guards against runaway loops
+    std::vector<int> m_suspended;   // parked chains (node ids), resumed next frame
+    bool m_resuming = false;
 };
 
 } // namespace okay::vs

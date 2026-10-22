@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
 
@@ -59,6 +60,30 @@ inline void SolveTwoBoneIK(const Vec3& root, float upperLen, float lowerLen,
 
     outMid = root + axis * d + bend * h;
     outEnd = end;
+}
+
+/// Soft IK: as a target approaches full reach, ease the reached distance in
+/// instead of snapping the limb straight (the "pop" at full extension). Returns
+/// the softened root->target distance for a limb of total length `reach`;
+/// `soft` is the easing band in world units (0 = off).
+inline float SoftReachDistance(float dist, float reach, float soft) {
+    if (soft <= 1e-5f) return dist;
+    const float da = reach - soft;
+    if (dist <= da) return dist;
+    return da + soft * (1.0f - std::exp(-(dist - da) / soft));
+}
+
+/// SolveTwoBoneIK with soft reach: the target is pulled in along the limb axis
+/// by SoftReachDistance before solving.
+inline void SolveTwoBoneIKSoft(const Vec3& root, float upperLen, float lowerLen,
+                               const Vec3& target, const Vec3& pole, float soft,
+                               Vec3& outMid, Vec3& outEnd,
+                               float minBendDeg = 0.0f, float maxBendDeg = 180.0f) {
+    Vec3 d = target - root;
+    float dist = d.Magnitude();
+    Vec3 t = target;
+    if (dist > 1e-6f) t = root + d * (SoftReachDistance(dist, upperLen + lowerLen, soft) / dist);
+    SolveTwoBoneIK(root, upperLen, lowerLen, t, pole, outMid, outEnd, minBendDeg, maxBendDeg);
 }
 
 } // namespace okay

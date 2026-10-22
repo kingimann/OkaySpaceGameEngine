@@ -35,6 +35,11 @@ public:
     /// How many of the 15 humanoid bones the last Wire() mapped (0 = not wired).
     int MappedBones() const { return m_mapped; }
     bool Wired() const { return m_init; }
+    /// The imported bone mapped to engine bone `b` (nullptr if none).
+    GameObject* MappedNode(int b) const {
+        for (const MapEntry& e : m_map) if (e.bone == b) return e.go;
+        return nullptr;
+    }
     /// Drop the wiring so the next frame re-detects (after a model swap).
     void Rewire() { m_init = false; m_mapped = 0; m_map.clear(); }
 
@@ -47,7 +52,7 @@ public:
         if (!ch || !ch->enabled) return;
         if (!m_init) { Wire(*sc); m_init = true; }
         if (m_map.empty()) return;
-        GameObject* rig = sc->Find(m_rigRootName);
+        GameObject* rig = (m_rig && !m_rig->IsDestroyed()) ? m_rig : sc->Find(m_rigRootName);
         if (!rig || !rig->transform) return;
         // The model's own clips take priority while a one-shot plays
         // (play_clip_once from a script — attack, emote from the file).
@@ -68,8 +73,8 @@ public:
         // Write the mapped imported bones top-down (parents first — the local
         // conversion below reads the ancestors' just-written rotations).
         for (const MapEntry& e : m_map) {
-            GameObject* g = sc->Find(e.node);
-            if (!g || !g->transform || !g->IsSelfOrDescendantOf(rig)) continue;
+            GameObject* g = e.go;
+            if (!g || g->IsDestroyed() || !g->transform || !g->IsSelfOrDescendantOf(rig)) continue;
             Quat desired = Re[e.bone] * e.align * e.restRootRel;      // root-frame target
             Quat rp = ChainRotation(g->transform->Parent(), rig);     // parent chain, current
             Quat local = rp.Inverse() * desired;
@@ -79,8 +84,12 @@ public:
         }
         // Crouch / prone / landing dip: lower the whole model like the blocky
         // rig lowers its root (StanceOffset is in player-local units already).
-        Vec3 so = ch->StanceOffset();
-        rig->transform->localPosition = m_rigRestPos + Vec3{0.0f, so.y * weight, 0.0f};
+        // (When the rig IS this object — built-in animations on a standalone
+        // model — leave its position alone: that's where you placed it.)
+        if (rig != gameObject) {
+            Vec3 so = ch->StanceOffset();
+            rig->transform->localPosition = m_rigRestPos + Vec3{0.0f, so.y * weight, 0.0f};
+        }
     }
 
     /// Detect the humanoid bones by name under `rigRoot` and capture the rest
@@ -91,51 +100,34 @@ public:
         Character* ch = gameObject->GetComponent<Character>();
         if (!ch) return 0;
         m_rigRootName = rigRoot->name;
+        m_rig = rigRoot;
         m_rigRestPos  = rigRoot->transform->localPosition;
 
         // ---- 1. name-match the imported bones ----------------------------
+        // Mixamo (mixamorig:LeftUpLeg), Unreal UE4/UE5 Mannequin (thigh_l,
+        // upperarm_l, spine_01..05 — Quaternius' newer packs use it), Blender /
+        // Rigify (upper_arm.L, DEF-thigh.L) and plain names. Helper bones that
+        // only LOOK similar (ik_hand_l, upperarm_twist_01_l, ball_l, thumb_01_l,
+        // *_end, poles, controls) are skipped, and an exact canonical name beats
+        // a substring hit, so node order in the file doesn't matter.
         const int N = Character::BoneCount();
         std::vector<GameObject*> node(N, nullptr);
-        std::vector<int> depth(N, -1);
-        auto lower = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
+        std::vector<int> depth(N, -1), score(N, -1);
         for (const auto& up : s.Objects()) {
             GameObject* g = up.get();
             if (!g || g == rigRoot || !g->IsSelfOrDescendantOf(rigRoot) || !g->transform) continue;
-            std::string nm = lower(g->name);
-            auto has = [&](const char* k) { return nm.find(k) != std::string::npos; };
-            auto endsW = [&](const char* k) {
-                std::size_t kl = std::char_traits<char>::length(k);
-                return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
-            };
-            bool isLeft  = has("left")  || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l");
-            bool isRight = has("right") || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r");
-            int bone = -1;
-            if (!isLeft && !isRight) {
-                if (has("hips") || has("pelvis")) bone = 0;                                   // B_HIPS
-                else if (has("spine") || has("chest")) bone = 1;                              // B_TORSO (deepest wins below)
-                else if (has("head") && !has("top") && !has("end")) bone = 2;                 // B_HEAD
-            } else {
-                int side = isLeft ? 0 : 1;   // engine: L block first (3..5, 9..11), R next
-                if (has("hand") && !has("thumb") && !has("index") && !has("middle") &&
-                    !has("ring") && !has("pinky") && !has("finger") && !has("end"))            bone = 5 + side * 3;
-                else if (has("forearm") || has("lowerarm") || has("elbow") ||
-                         (has("fore") && has("arm")))                                          bone = 4 + side * 3;
-                else if (has("upperarm") || has("uparm") ||
-                         (has("arm") && !has("fore") && !has("lower") && !has("hand")))        bone = 3 + side * 3;
-                else if (has("upleg") || has("upperleg") || has("thigh"))                      bone = 9 + side * 3;
-                else if (has("foot") || has("ankle"))                                          { if (!has("toe")) bone = 11 + side * 3; }
-                else if (has("knee") || has("calf") || has("shin") || has("lowerleg") ||
-                         has("leg"))                                                           bone = 10 + side * 3;
-            }
+            int sc = 0;
+            const int bone = ClassifyBone(g->name, sc);
             if (bone < 0) continue;
-            // shoulders/clavicles must not steal the upper-arm slot
-            if ((bone == 3 || bone == 6) && (has("shoulder") || has("clavicle") || has("collar"))) continue;
             int d = 0;
             for (Transform* t = g->transform->Parent(); t && t != rigRoot->transform; t = t->Parent()) ++d;
-            // torso: keep the DEEPEST spine/chest link (Spine2 over Spine) —
-            // everything else: first match wins.
-            if (node[bone] && !(bone == 1 && d > depth[bone])) continue;
-            node[bone] = g; depth[bone] = d;
+            // Better score wins; on a tie the torso keeps the DEEPEST spine link
+            // (spine_03 over spine_01), everything else the shallowest.
+            if (node[bone]) {
+                if (sc < score[bone]) continue;
+                if (sc == score[bone] && (bone == 1 ? d <= depth[bone] : d >= depth[bone])) continue;
+            }
+            node[bone] = g; depth[bone] = d; score[bone] = sc;
         }
 
         // ---- 2. capture rest + build the alignment -----------------------
@@ -174,6 +166,7 @@ public:
             MapEntry e;
             e.bone = b;
             e.node = node[b]->name;
+            e.go = node[b];
             e.restLocal = node[b]->transform->localRotation;
             e.restRootRel = ChainRotation(node[b]->transform->Parent(), rigRoot) *
                             node[b]->transform->localRotation;
@@ -184,16 +177,88 @@ public:
         return m_mapped;
     }
 
+public:
+    /// Which engine humanoid bone (0 hips, 1 torso, 2 head, 3-5 left arm,
+    /// 6-8 right arm, 9-11 left leg, 12-14 right leg) a bone name stands for,
+    /// or -1. `score` = 2 for an exact canonical name, 1 for a looser match.
+    static int ClassifyBone(const std::string& rawName, int& score) {
+        score = 0;
+        std::string nm;
+        {   // drop "mixamorig:" / "Armature|" / "DEF-" style prefixes, lowercase
+            std::string s0 = rawName;
+            std::size_t cut = s0.find_last_of(":|");
+            if (cut != std::string::npos) s0 = s0.substr(cut + 1);
+            for (char c : s0) nm += (char)std::tolower((unsigned char)c);
+            for (const char* pre : {"def-", "def_", "org-", "mch-", "bip01 ", "bip01_", "bip001 ", "bip001_", "b_", "bone_"})
+                if (nm.rfind(pre, 0) == 0) { nm = nm.substr(std::char_traits<char>::length(pre)); break; }
+            if (nm.rfind("mixamorig", 0) == 0) nm = nm.substr(9);
+        }
+        auto has = [&](const char* k) { return nm.find(k) != std::string::npos; };
+        // Helpers that are never the deforming limb bone itself.
+        static const char* kSkip[] = {"ik_", "_ik", "ik.", ".ik", "twist", "roll", "ball", "toe", "thumb",
+            "index", "middle", "ring", "pinky", "finger", "_end", ".end", "end_", "tip", "pole", "target",
+            "ctrl", "control", "helper", "corrective", "weapon", "prop", "socket", "attach", "center_of_mass",
+            "interaction", "dummy", "nub", "jaw", "eye", "tongue", "breast", "hair"};
+        for (const char* k : kSkip) if (has(k)) return -1;
+        // Normalise separators so "upper_arm.l", "upperarm_l", "UpperArm L" compare equal.
+        std::string key;
+        for (char c : nm) if (std::isalnum((unsigned char)c)) key += c;
+        static const std::pair<const char*, int> kExact[] = {
+            {"hips", 0}, {"pelvis", 0}, {"hip", 0},
+            {"head", 2},
+            {"leftarm", 3}, {"upperarml", 3}, {"larm", 3}, {"arml", 3}, {"lupperarm", 3}, {"leftupperarm", 3},
+            {"leftforearm", 4}, {"lowerarml", 4}, {"forearml", 4}, {"lforearm", 4}, {"lelbow", 4}, {"leftlowerarm", 4},
+            {"lefthand", 5}, {"handl", 5}, {"lhand", 5},
+            {"rightarm", 6}, {"upperarmr", 6}, {"rarm", 6}, {"armr", 6}, {"rupperarm", 6}, {"rightupperarm", 6},
+            {"rightforearm", 7}, {"lowerarmr", 7}, {"forearmr", 7}, {"rforearm", 7}, {"relbow", 7}, {"rightlowerarm", 7},
+            {"righthand", 8}, {"handr", 8}, {"rhand", 8},
+            {"leftupleg", 9}, {"thighl", 9}, {"lthigh", 9}, {"leftupperleg", 9}, {"leftthigh", 9}, {"upperlegl", 9},
+            {"leftleg", 10}, {"calfl", 10}, {"shinl", 10}, {"lcalf", 10}, {"lshin", 10}, {"leftlowerleg", 10}, {"lowerlegl", 10}, {"leftknee", 10},
+            {"leftfoot", 11}, {"footl", 11}, {"lfoot", 11}, {"leftankle", 11},
+            {"rightupleg", 12}, {"thighr", 12}, {"rthigh", 12}, {"rightupperleg", 12}, {"rightthigh", 12}, {"upperlegr", 12},
+            {"rightleg", 13}, {"calfr", 13}, {"shinr", 13}, {"rcalf", 13}, {"rshin", 13}, {"rightlowerleg", 13}, {"lowerlegr", 13}, {"rightknee", 13},
+            {"rightfoot", 14}, {"footr", 14}, {"rfoot", 14}, {"rightankle", 14},
+        };
+        for (const auto& e : kExact) if (key == e.first) { score = 2; return e.second; }
+        // Torso: any spine / chest link (the deepest one wins in the caller).
+        if (key.rfind("spine", 0) == 0 || key.rfind("chest", 0) == 0 || key == "upperchest" || key == "torso") { score = 2; return 1; }
+        // Looser matches.
+        auto endsW = [&](const char* k) {
+            std::size_t kl = std::char_traits<char>::length(k);
+            return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
+        };
+        const bool isLeft  = has("left")  || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l") || endsW(" l");
+        const bool isRight = has("right") || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r") || endsW(" r");
+        score = 1;
+        if (!isLeft && !isRight) {
+            if (has("hips") || has("pelvis")) return 0;
+            if (has("spine") || has("chest")) return 1;
+            if (has("head") && !has("top")) return 2;
+            return -1;
+        }
+        const int side = isLeft ? 0 : 1;
+        if (has("shoulder") || has("clavicle") || has("collar")) return -1;
+        if (has("hand") || has("wrist")) return 5 + side * 3;
+        if (has("forearm") || has("lowerarm") || has("elbow") || (has("fore") && has("arm"))) return 4 + side * 3;
+        if (has("upperarm") || has("uparm") || (has("arm") && !has("lower"))) return 3 + side * 3;
+        if (has("upleg") || has("upperleg") || has("thigh")) return 9 + side * 3;
+        if (has("foot") || has("ankle")) return 11 + side * 3;
+        if (has("knee") || has("calf") || has("shin") || has("lowerleg") || has("leg")) return 10 + side * 3;
+        return -1;
+    }
+
 private:
     struct MapEntry {
         int  bone = -1;          ///< engine bone index (Character::BoneIndex order)
         std::string node;        ///< imported bone object name
+        GameObject* go = nullptr;  ///< that bone (resolved once; immune to same-named bones elsewhere)
         Quat restLocal;          ///< bind local rotation (weight blend target)
         Quat restRootRel;        ///< bind rotation relative to the rig root
         Quat align;              ///< rest-stance alignment (imported dir -> engine dir)
     };
     std::vector<MapEntry> m_map;
     std::string m_rigRootName;
+    GameObject* m_rig = nullptr;
     Vec3 m_rigRestPos{0, 0, 0};
     int  m_mapped = 0;
     bool m_init = false;

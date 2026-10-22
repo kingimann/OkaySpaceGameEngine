@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.623.0
+    VERSION 2.793.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (e.g. tinyfiledialogs)
 
@@ -43,16 +43,25 @@ endif()
 #   cmake -DOKAY_DEFAULT_ACCOUNT_URL=https://xyz.supabase.co \
 #         -DOKAY_DEFAULT_ACCOUNT_KEY=sb_publishable_...
 # A Supabase publishable/anon key is safe to ship (protect data with RLS).
-# Empty by default, so normal dev builds are unaffected. Applied to all targets
-# created below (engine reads it via okay::Account; the launcher via its own
-# OKAY_DEFAULT_ACCOUNT_* fallback).
-set(OKAY_DEFAULT_ACCOUNT_URL "" CACHE STRING "Default account server URL compiled into builds")
-set(OKAY_DEFAULT_ACCOUNT_KEY "" CACHE STRING "Default account API key compiled into builds")
+# Defaults point at the OkaySpace project so every build is online out of the
+# box (accounts, Friends, Marketplace) even without CI secrets; override at
+# configure time (or via the ACCOUNT_SERVER_URL/ACCOUNT_API_KEY CI secrets) to
+# point a build at a different server.
+set(OKAY_DEFAULT_ACCOUNT_URL "https://tgthoueacrlanpojxoen.supabase.co"
+    CACHE STRING "Default account server URL compiled into builds")
+set(OKAY_DEFAULT_ACCOUNT_KEY "sb_publishable_VYrh0rGNcTNTJRe1CovsoA_sP9ia4yn"
+    CACHE STRING "Default account API key compiled into builds")
 if(OKAY_DEFAULT_ACCOUNT_URL)
     add_compile_definitions(OKAY_DEFAULT_ACCOUNT_URL="${OKAY_DEFAULT_ACCOUNT_URL}")
 endif()
 if(OKAY_DEFAULT_ACCOUNT_KEY)
     add_compile_definitions(OKAY_DEFAULT_ACCOUNT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY}")
+endif()
+# Default voice server for launcher calls ("host" or "host:port" of a running
+# okayspace-relay; see docs/relay.md). Empty = players set one in Settings > Chat.
+set(OKAY_DEFAULT_VOICE_RELAY "" CACHE STRING "Default voice relay (host[:port]) compiled into the launcher")
+if(OKAY_DEFAULT_VOICE_RELAY)
+    add_compile_definitions(OKAY_DEFAULT_VOICE_RELAY="${OKAY_DEFAULT_VOICE_RELAY}")
 endif()
 
 # ---- The engine library ----------------------------------------------

@@ -95,6 +95,17 @@ inline void ApplySceneLight(const Scene& scene) {
         SceneLights::SetAmbient(scene.renderSettings.ambient);
         SceneLight::SetDirection(DefaultLightDir());
         SceneLight::SetAmbient(scene.renderSettings.ambient);
+        // ...and a default sun, like Unity's default lighting: the GPU paths shade
+        // only from the gathered list, so a scene without a Light object (a new
+        // empty scene, an imported level) otherwise rendered almost black under
+        // the 0.15 ambient. Adding any Light replaces it.
+        LightSample sun;
+        sun.type = (int)Light::Type::Directional;
+        sun.dir = SceneLight::Direction();
+        sun.pos = Vec3{0, 0, 0};
+        sun.color = Vec3{1.0f, 0.97f, 0.92f};
+        sun.range = 0.0f; sun.cosOuter = sun.cosInner = 1.0f;
+        SceneLights::Add(sun);
     }
 }
 

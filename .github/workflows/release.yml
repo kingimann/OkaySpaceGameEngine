@@ -16,17 +16,32 @@ jobs:
   windows-exe:
     name: Cross-compile Windows exes (MinGW)
     runs-on: ubuntu-latest
+    # A normal release takes ~11 min; never let a stuck download hold one for hours.
+    timeout-minutes: 45
     env:
       SDL2_VERSION: 2.30.9
     steps:
       - uses: actions/checkout@v4
 
+      # Ubuntu mirrors occasionally hang (one release sat here 45 min): bounded
+      # attempts with apt's own timeouts, retried a few times.
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build mingw-w64 zip
+        timeout-minutes: 15
+        run: |
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for i in 1 2 3; do
+            if timeout 240 sudo apt-get $APT update && \
+               timeout 420 sudo apt-get $APT install -y cmake ninja-build mingw-w64 zip nsis; then
+              exit 0
+            fi
+            echo "apt attempt $i failed or timed out; retrying"
+            sleep 10
+          done
+          exit 1
 
       - name: Fetch SDL2 (MinGW dev)
         run: |
-          curl -sSL -o sdl2-mingw.tar.gz \
+          curl -sSL --retry 3 --retry-delay 5 --max-time 300 -o sdl2-mingw.tar.gz \
             "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
           mkdir -p sdl2-mingw
           tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
@@ -36,19 +51,19 @@ jobs:
         # Statically linked into the exes for authenticated packet encryption — no
         # extra DLL ships. If this step is removed, the build is simply unencrypted.
         run: |
-          curl -sSL -o libsodium-mingw.tar.gz \
+          curl -sSL --retry 3 --retry-delay 5 --max-time 300 -o libsodium-mingw.tar.gz \
             "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz"
           mkdir -p libsodium-mingw
           tar xzf libsodium-mingw.tar.gz -C libsodium-mingw
           echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"
 
       - name: Build Windows distribution
-        # Bake the account server into the binaries from repo secrets (if set),
-        # so released builds are online by default with no key file shipped.
-        # GitHub masks secret values in logs.
-        env:
-          OKAY_DEFAULT_ACCOUNT_URL: ${{ secrets.ACCOUNT_SERVER_URL }}
-          OKAY_DEFAULT_ACCOUNT_KEY: ${{ secrets.ACCOUNT_API_KEY }}
+        # The account server + public key are baked into the build as the CMake
+        # defaults (see the top-level CMakeLists), pointing at the OkaySpace
+        # Supabase project. We intentionally do NOT override them from CI secrets
+        # anymore: a stale/empty secret used to silently misconfigure the build
+        # and break sign-in. To point a fork at a different server, change the
+        # CMake defaults instead.
         run: scripts/build-windows-dist.sh
 
       - name: Package zip
@@ -57,11 +72,23 @@ jobs:
           VER=$(cat build-win-dist/VERSION.txt 2>/dev/null || echo dev)
           NAME="OkaySpace-windows-v${VER}"
           mkdir -p "$NAME"
-          cp build-win-dist/* "$NAME"/
+          cp -r build-win-dist/* "$NAME"/
           zip -r "${NAME}.zip" "$NAME"
           echo "zip=${NAME}.zip" >> "$GITHUB_OUTPUT"
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
           echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Windows installer (NSIS)
+        # One-click setup .exe that installs or updates in place (see the .nsi).
+        # This is what the launcher's "download the installer" flow hands users.
+        run: |
+          # NSIS resolves a relative File path against the .nsi's own directory,
+          # not the workspace, so pass an absolute DISTDIR (and OUTFILE).
+          makensis -DVERSION="${{ steps.pkg.outputs.ver }}" \
+                   -DDISTDIR="$PWD/build-win-dist" \
+                   -DOUTFILE="$PWD/OkaySpace-Setup.exe" \
+                   scripts/okayspace-installer.nsi
+          ls -la OkaySpace-Setup.exe
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -84,6 +111,7 @@ jobs:
           # basename as the asset name, so these resolve to the URLs the updater uses.
           files: |
             ${{ steps.pkg.outputs.zip }}
+            OkaySpace-Setup.exe
             build-win-dist/OkaySpace.exe
             build-win-dist/Tools/OkayEngine.exe
             build-win-dist/Tools/OkaySpacePlayer.exe

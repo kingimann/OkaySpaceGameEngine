@@ -76,6 +76,8 @@ public:
         std::string value;            // stringified initial value
     };
     std::vector<VarDecl> variables;
+    /// Put one declared variable's starting value into the shared pools.
+    static void SeedVariable(const VarDecl& v);
 
     /// Saved Flow-Graph node positions so a hand-arranged layout survives save/load
     /// (the editor writes these when you drag a block). Key = "<hidx>:<role>:<idx>"
@@ -148,6 +150,21 @@ public:
     /// Set by the editor's Flow Graph; runtime-only (never serialized). When the
     /// interpreter is about to run a marked instruction it flips DebugPaused().
     static std::vector<std::pair<const void*, int>>& Breakpoints();
+
+    // ---- Visual-script bridge ------------------------------------------------
+    // The node graph's Action / Condition / Action Block nodes run the same step
+    // library through a private ActionList that is never added to a scene.
+    /// Start running `instructions` now, whatever the trigger (false if already running).
+    bool BeginRun() { m_fired = false; return FireHandler(conditions, instructions, m_fired, false); }
+    /// True when every condition in `conds` passes for this list's object.
+    bool TestConditions(const std::vector<Item>& conds) { return EvalConditions(conds); }
+    /// One step as a single token-safe line: "op arg arg" with each arg %-escaped
+    /// (no spaces, quotes or '#'), so it can sit in an .okayvs node line.
+    static std::string EncodeItem(const Item& it);
+    static Item DecodeItem(const std::string& line);
+    /// Several steps joined by " ; ".
+    static std::string EncodeItems(const std::vector<Item>& items);
+    static std::vector<Item> DecodeItems(const std::string& text);
 
 private:
     void Fire();   // fire handler 0 (used by Start for On Start)

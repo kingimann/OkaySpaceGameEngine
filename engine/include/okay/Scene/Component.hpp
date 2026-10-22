@@ -1,4 +1,6 @@
 #pragma once
+#include <unordered_set>
+#include <string>
 
 namespace okay {
 
@@ -38,6 +40,9 @@ public:
     virtual void OnRender(IRenderer& /*renderer*/) {}
     /// Called when the component or its GameObject is destroyed.
     virtual void OnDestroy() {}
+    /// Objects in `dying` are about to be destroyed (this component survives):
+    /// drop any pointers to them or their transforms.
+    virtual void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& /*dying*/) {}
 
     // ---- 2D physics messages (dispatched by Physics2D) ----------------
     virtual void OnCollisionEnter2D(const Collision2D& /*collision*/) {}
@@ -64,6 +69,14 @@ public:
     virtual void OnMouseDown()  {}   // a press began over it
     virtual void OnMouseUp()    {}   // the button released after pressing on it
     virtual void OnMouseClick() {}   // press + release both on it (a full click)
+
+    /// An Animator on this object passed a clip event (see AnimationClip::events).
+    virtual void OnAnimationEvent(const std::string& /*name*/) {}
+
+    /// When this component runs relative to others each frame (lower first,
+    /// creation order within the same value). IK returns 100 so it corrects the
+    /// pose after every animation driver, crossfade and layer has written it.
+    virtual int ExecutionOrder() const { return 0; }
 
     Scene* GetScene() const;
 

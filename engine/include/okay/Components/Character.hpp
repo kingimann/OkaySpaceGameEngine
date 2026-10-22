@@ -237,6 +237,9 @@ public:
     /// BoneIndex() (e.g. "r_uparm", "torso").
     int  LoadClips(const std::string& text, std::string* error = nullptr);
     bool LoadClipsFromFile(const std::string& path, std::string* error = nullptr);
+    /// Write all registered custom clips back to a .okayanim file (so in-editor
+    /// keyframing can be saved to the authored format it loaded from).
+    bool SaveClipsToFile(const std::string& path, std::string* error = nullptr) const;
     /// Play a registered clip by name (resets its clock). While a clip plays it
     /// drives the whole body, overriding the built-in `anim`. Returns false if no
     /// such clip. Pass "" (or call StopClip) to return to the built-in animations.

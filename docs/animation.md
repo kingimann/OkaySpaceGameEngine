@@ -285,10 +285,19 @@ Any imported model can BE your playable character — no rigging setup:
 - **Drop a model asset** (.glb/.gltf/.fbx/.obj...) from the Project panel
   **onto a player in the Hierarchy** (any object with a controller or a
   Character), or press **Set Character Model...** on the Character /
-  Third-Person Controller in the Inspector.
+  First-Person / Third-Person Controller in the Inspector.
 - The model imports as a child of the player, auto-sized to the
-  character's height, feet grounded on the capsule's origin, and turned
-  to face the way the body faces.
+  character's height and feet grounded on the capsule's origin.
+- **Facing is read from the skeleton** (its left/right thighs, arms and
+  feet), so a model exported facing +Z, -Z or sideways all end up facing
+  the way the controller walks. Next to the button: **Fix Facing**
+  re-detects it, **Turn 180** / **90** turn it by hand (models with no
+  recognisable left/right bones).
+- **The collider follows the model**: the player's Box / Capsule Collider
+  is refitted around the model you see (a capsule + Rigidbody 3D are added
+  when the player had none). **Fit Collider** redoes it after you rescale.
+  Adding a First/Third-Person (or other) controller from *Add Component*
+  also gives the object a fitted collider + rigidbody straight away.
 - Its animation clips are wired to locomotion automatically: clips named
   *idle/stand*, *walk*, and *run/sprint/jog* map to the auto
   idle/walk/run switching (smooth 1D blend), driven by how fast the
@@ -318,3 +327,297 @@ select it and Add Component > Mesh Collider 3D).
   preview.
 - Multi-take files import one clip per take; single-take files can be cut
   apart with **Split…**.
+
+## State machines: blend trees, exit time, Any State
+
+The **Animator** window (select an object with an `AnimStateMachine`) edits states
+and transitions. Beyond single conditions:
+
+- **Blend tree states** — switch a state's Motion to *Blend tree*, pick a float
+  parameter (e.g. `speed`) and add motions with thresholds (idle at 0, walk at 2,
+  run at 6). The two neighbouring clips play in phase, weighted by the parameter.
+  In Play mode each motion shows a live weight bar.
+- **Several conditions** — `+ Condition` adds more tests to a transition; all must pass.
+- **Exit time** — a transition can wait until the state is a fraction through its
+  clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
+  returning to locomotion when it's nearly done.
+- **Any State** — transitions checked from every state first (hit reactions, death).
+
+Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
+`anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.
+
+## IK
+
+| Component | Use |
+| --- | --- |
+| Full Body IK | Hands, feet and head reach goals on any humanoid rig; bones auto-map (Mixamo, Unity/Blender names, built-in Character). Out-of-reach goals pull the hips and bend the spine; soft reach stops limbs snapping straight. |
+| Limb IK | One arm or leg reaching a target with a pole and bend limits. |
+| Chain IK | Long chains (tails, tentacles, spider legs) with FABRIK or CCD, a pole to set the curl direction and per-joint bend limits. |
+| Foot IK | Plant both feet on uneven ground and adjust the pelvis. |
+| Look-At IK / Aim IK | Head/spine tracking; point a bone (gun, torch) at a target. |
+
+Every IK component has **IK Active** and **Fade** so switching IK on or off blends
+instead of popping. Scripts: `ik_enable(on)`, `ik_set_weight(w)`,
+`ik_set_target(x, y, z)`, `ik_set_pole(x, y, z)`, and for Full Body IK
+`ik_hand("left", x, y, z [, weight])`, `ik_foot(...)`, `ik_look(x, y, z)`,
+`ik_release()`.
+
+## Animating any object (the Animation tab)
+
+Select an object with an **Animator** (or press *Add Animator*) and open
+**Animation**. The tab docks under the Scene view and grows to a usable height
+the first time it opens.
+
+- **Presets (star button).** One click gives a starting animation built around
+  the object's current pose: Bob, Hover, Spin, Spin (2D), Pulse, Shake, Sway,
+  Bounce, Pop In, Slide In. Set an amount and a length, then press *Apply
+  preset*. A preset only replaces the tracks it animates; your other keys stay.
+- **Record (red dot).** Move, rotate or scale the object with the Scene gizmos or
+  the fields beside each row, and a key lands at the playhead.
+- **Rows.** Position, Rotation and Scale each get a row. The arrow expands a
+  row into one row per axis, each with its own keys and its value at the
+  playhead. Double-click a row to key it at that time.
+- **Selecting keys.** Click a key to select it, Shift+click to add to the
+  selection, or drag across empty space to box-select. Drag any selected key to
+  move them all. **Del** deletes, **Ctrl+C / Ctrl+V** copy and paste at the
+  playhead, **Ctrl+A** selects everything, and **Ctrl+Z** undoes.
+- **Curves (wave button).** Draws each track as a graph. Drag a point to change
+  its time and value; hold Shift to change only the value. Click a row name to
+  show just that group's curves.
+- **Length.** The field next to *Loop* sets the clip length. Tracks hold their
+  first and last values instead of repeating, so a key at 2 s doesn't make a 1 s
+  track loop twice.
+- **More (⋯).** Playback speed, frame snapping (24, 30 or 60 fps, or off; hold
+  Alt while dragging for free time), smooth or linear interpolation per group,
+  *Make loop seamless*, Reverse, Twice as fast, Half speed, and Trim to the
+  playhead.
+- **Navigation.** The mouse wheel zooms the timeline. Shift+wheel, or the wheel
+  over the row names, scrolls the rows. Middle-drag pans, **F** fits the view,
+  **Space** plays, **K** keys everything, and **[ ]** jump between keys.
+
+### Animation events
+
+The **Events** lane under the ruler holds named moments in the clip. Add one
+with the flag button, **E**, or a double-click on the lane. Drag a flag to move
+it, double-click it to rename it, or right-click it for more options. Events
+are saved with the scene.
+
+When playback passes an event, every component on the object gets
+`OnAnimationEvent(name)`:
+
+- **OkayScript:** the global `anim_event` holds the name. Then a function with
+  the event's name runs (Unity-style, e.g. `footstep()`), followed by
+  `on_anim_event()`.
+- **Visual scripts:** an **On Anim Event** node runs. Give it a name to react to
+  only that event, or leave it blank to react to all of them. **Anim Event
+  Name** outputs the event that fired.
+- **C++:** set `Animator::onEvent`, or override `OnAnimationEvent` in a
+  component.
+
+```
+footstep() {
+    play_sound("step.wav")
+}
+on_anim_event() {
+    log("event: " + anim_event)
+}
+```
+
+## Imported characters: skeleton, skinning, import report
+
+**What import keeps.** glTF, FBX and the Assimp formats come in with their full
+node hierarchy, so bones are connected exactly as in the source. Skins keep their
+joints, inverse bind matrices and weights. Animations become clips on a **Model
+Animator** on the model root.
+
+- **glTF details:**
+  - Up to 8 influences per vertex are read; the strongest 4 are kept and
+    renormalized.
+  - Quantized (normalized integer) UVs, weights and rotations are read correctly.
+  - Nodes stored as a 4x4 `matrix` are decomposed, so Z-up exports stand up.
+  - Multi-material skinned characters keep every material.
+  - STEP and LINEAR keys play back exactly as authored.
+- **Bone names:** duplicate node names are made unique, so clips and skins always
+  bind to the right bone.
+- **Import report:** after an import the Console prints:
+  - meshes, vertices and bones, and the skeleton's root bone;
+  - weights per vertex and the clips;
+  - warnings for anything that will look wrong: missing bones, vertices with no
+    weights, or a skeleton split into separate trees.
+
+**Skeleton overlay.** Rigged models show their bones in the Scene view, connected
+parent to child (View > Scene Overlays > Skeletons: Selected model / All / Off).
+Hovering a bone names it; clicking it selects it.
+
+**Skinned Mesh inspector:**
+- **Skinning:** *Linear* (fastest, skinned on the GPU) or *Dual quaternion*, which
+  keeps volume at twisting joints (wrists, forearms, shoulders) and runs on the
+  CPU.
+- Bone and weight statistics, and **Normalize weights**, which makes weights sum
+  to 1 and drops tiny ones.
+- A bone tree with how many vertices each bone moves.
+
+Skinned meshes also deform in edit mode, so posing bones in the Scene view bends
+the mesh.
+
+**Sparse accessors.** glTF accessors stored sparse (common for morph targets) are
+read: the dense base, or zeros, with the listed values written over it.
+
+## Blend shapes (morph targets)
+
+Facial expressions, lip-sync visemes and corrective shapes come in with the
+model as a **Blend Shapes** component on each mesh that has them:
+
+- **glTF:** every primitive's `targets` (positions and normals), names from
+  `extras.targetNames`, default weights from `mesh.weights`, and `weights`
+  animation channels.
+- **FBX:** blend shape channels and their animated `DeformPercent`.
+- Clips drive them with `weights.<n>` tracks on the mesh's node. They play in the
+  Animation tab preview, through crossfades and blend trees, and in Play.
+- The inspector has one slider per shape, a filter box for faces with dozens of
+  shapes, and **Reset all**.
+- Scripts: `blend_shape("Smile", 0.8)` sets a shape on every mesh under the
+  object; `blend_shape_get("Smile")` reads it back.
+- The morph is applied before skinning, so a morphed face still follows the
+  skeleton. Shapes are stored sparse (only the vertices they move) and saved with
+  the scene; the mesh is only rebuilt when a weight changes.
+
+## Root motion
+
+Turn on **Root Motion** in the Model Animator. The root bone's travel moves the
+character, and the bone stays over it.
+
+- Travel is measured through the bone's parent, so centimetre (0.01) and rotated
+  (Blender) armatures move the right distance in the right direction.
+- **+ Vertical** also lifts the object; **+ Turning** also rotates it (turn-in-place
+  and curved walks).
+- **Moves: Parent** applies it to the player object the model sits under. A
+  `Rigidbody3D` there gets it as velocity, so walls still stop the character.
+- Works through crossfades and blend trees. The inspector shows the live root
+  speed in Play mode.
+- Scripts can take over with `ModelAnimator::onRootMotion`.
+
+## State machine: layers, 2D blend trees, ints
+
+- **Locomotion setup** (Animator toolbar) builds a full setup from the model's
+  clips:
+  - idle / walk / run blended by `speed`;
+  - Jump (Any State on the `jump` trigger), Fall and Land, using `grounded` and
+    `verticalSpeed`.
+
+  These are the parameters the player controllers already send.
+- **2D blend trees:** pick *2D (strafe)* on a blend tree. Motions sit on a map;
+  drag them, and watch live weights in Play. The controllers send `moveX` / `moveZ`
+  (velocity in the body's frame) for strafing sets.
+- **Layers:** the **+** tab adds a layer, its own states playing over the base
+  layer on part of the skeleton. Pick a **Mask bone** (e.g. the spine for
+  upper-body actions) and a **Weight**. Layers share the base layer's parameters,
+  so `anim_trigger("attack")` drives both.
+- **Int parameters** with `Int ==` / `Int !=` conditions, and a per-state **speed
+  multiplier** parameter.
+- Parameters can be edited live while playing, and the running state shows a
+  progress bar.
+
+**Per state and per transition:**
+- **On enter / On exit events:** an animation event fired when the machine enters
+  or leaves the state. It reaches `anim_event()` in scripts and the visual
+  scripts' animation event handlers, like clip events. Use it for jump and land
+  sounds or to open a hit window.
+- **IK weight:** how much Foot IK and Full Body IK apply in that state, eased
+  over the transition. Set it to 0 for jumps, rolls and falls so the feet aren't
+  pulled to the ground mid-air. Locomotion setup does this for Jump and Fall.
+- **Start at** on a transition starts the target part-way into its clip, to line
+  up the feet between walk and run cycles.
+
+Clip events from imported models now also reach visual scripts.
+
+**Graph editor:**
+- **Zoom** with the mouse wheel (around the cursor); **Frame** (F) fits every
+  state.
+- **Labels** shows each transition's conditions on its arrow, e.g.
+  `speed > 0.1 & grounded @80%`.
+- **Find state** lights up matching states; Enter selects and centres the first.
+- **Ctrl+D** duplicates a state; **Ctrl+C / Ctrl+V** copy and paste one, keeping
+  its transitions to states that exist. Both are also in the right-click menus.
+- Nodes show a marker when the state fires events, and its IK weight when it
+  isn't 100%.
+
+## IK: feet, hands, posing
+
+- **Set up humanoid IK** (Model Animator inspector) adds, from the bone names:
+  - **Foot IK:** legs bend to put the feet on the ground, feet tilt to slopes, the
+    pelvis drops for lower ground, and feet are locked while planted so they don't
+    slide.
+  - **Full Body IK**, with *LeftHand / RightHand IK Target* objects. Move them, or
+    parent them to a weapon or a door handle, and enable the hand effectors.
+- **Foot locking** (`footLock`) pins a planted foot where it landed until the
+  animation lifts it.
+- All IK components now run after animation, crossfades and layers, so nothing
+  overwrites their correction.
+- **IK posing:** with the **IK** toggle in the Scene toolbar, moving a hand, foot
+  or any bone turns the two bones above it to reach, keeping bone lengths. Undo
+  works as usual.
+
+## Performance
+
+- Transforms cache their world matrix, so world positions and rotations are no
+  longer rebuilt up the whole parent chain on every call.
+- The Model Animator samples clips straight into cached bone bindings: no per-bone
+  components, no clip copies when switching, and no name lookups per frame.
+- Skinned meshes only re-skin when a bone actually moved.
+
+- Skinning sums the weighted bone matrices once per vertex (3x4 affine) and runs
+  after IK, once per frame.
+- Imported clips get keyframe reduction: keys that lie on the line between
+  their neighbours (within a tiny tolerance) are dropped, so baked 30 fps FBX
+  takes sample far fewer keys.
+- Auto-fitted colliders skip meshes that deform every frame, and `GetComponent`
+  takes an exact-type fast path.
+
+A 60-bone mocap clip costs about 0.015 ms per frame to pose. The Khronos Fox
+(24 bones, 1,728 vertices) animates and CPU-skins in about 0.06 ms per frame. A
+stress scene with 20 animated Foxes and 60 physics cubes went from 1.66 ms to
+about 0.65 ms per frame.
+
+### GPU skinning and frustum culling
+
+- Skinned meshes deform on the GPU in the OpenGL editor viewport and in the
+  player (OpenGL and Direct3D 11). The bone limit comes from the GPU's uniform
+  space (up to 256 bones per mesh); bigger rigs fall back to CPU skinning. The
+  Stats panel shows `skinning: GPU` or `CPU`.
+- Every renderer skips objects outside the camera (and outside the shadow
+  light's view for shadows) before any draw call. Skinned meshes are tested
+  around their bones, so animated characters don't pop at the screen edges. The
+  Stats panel shows **Drawn** / **Culled** counts and a **Frustum culling**
+  checkbox for debugging.
+- In a 400-object test scene with the camera looking at a quarter of it, about
+  74% of objects were culled and the frame time dropped by about a third.
+
+## IK: smoothing and limits
+
+- **Full Body IK** blends effectors in and out instead of snapping: *Blend Speed*
+  (default 8 per second; 0 = instant), *Goal Smoothing* (follows a moving target
+  without jitter), and look-at *Smoothing*. The inspector shows each effector's
+  live weight and whether it **reached** its target (`ik_reached("left")` in
+  scripts).
+- **Joint limits:** *Elbow / Knee Min Bend* keep arms and legs from locking
+  straight or folding backwards.
+- Reach is spread over the lower spine and chest, so leaning for a far target
+  looks natural.
+- A partial weight blends the *goal* rather than the final pose, so limbs keep
+  their length at any weight.
+- **Set up humanoid IK** also creates a *Look IK Target*.
+- State machine states have an **IK Weight**, so IK can fade out during a roll or
+  a climb and back in afterwards.
+
+## State machine: events, mute, history
+
+- States have **Enter / Exit events** (sent like clip events, so `OnAnimEvent`
+  nodes and script handlers receive them).
+- Transitions have an **Offset** (start the next clip part-way through) and a
+  **Mute** checkbox (muted transitions are dimmed and never fire). Outgoing
+  transitions are listed in priority order with up/down buttons.
+- In Play mode the graph flashes the transition that just fired and lists the
+  **recent state changes** with times.
+- **Thresholds from clip speed** sets a 1D blend tree's thresholds from how fast
+  each clip's root actually moves.

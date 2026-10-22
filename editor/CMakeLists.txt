@@ -62,6 +62,10 @@ set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfi
 set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
 if(WIN32)
+    # Embed the OkaySpace app icon so OkayEngine.exe shows a real taskbar /
+    # Explorer / shortcut icon (same icon as the launcher, so they match).
+    enable_language(RC)
+    target_sources(okay-editor PRIVATE okayspace.rc)
     target_link_libraries(okay-editor PRIVATE comdlg32 ole32 shell32 user32)
     # dbghelp: the crash handler resolves each backtrace frame to a function name
     # (and file:line where available) so okay_crash.txt is human-readable.

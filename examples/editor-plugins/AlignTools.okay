@@ -1,0 +1,59 @@
+// @name Align Tools
+// @description Line up, space out and drop the selected objects.
+// @window
+
+gap = 2
+
+on_gui() {
+    n = editor_selection_count()
+    if (n < 2) { editor_hint("Select two or more objects (Ctrl+click in the Hierarchy).") return }
+    ui_text(n + " objects selected")
+    ui_separator()
+    editor_heading("Align to the first object")
+    if (ui_button("X")) align("x")
+    ui_sameline()
+    if (ui_button("Y")) align("y")
+    ui_sameline()
+    if (ui_button("Z")) align("z")
+    ui_separator()
+    editor_heading("Distribute along X")
+    gap = ui_slider("Gap", gap, 0.1, 10)
+    if (ui_button("Space evenly")) distribute()
+    ui_separator()
+    if (ui_button("Drop to ground (y = 0)")) drop()
+}
+
+align(axis) {
+    editor_undo_point()
+    first = editor_selection_name(0)
+    v = editor_get_pos(first, axis)
+    for (i = 1; i < editor_selection_count(); i = i + 1) {
+        o = editor_selection_name(i)
+        x = editor_get_pos(o, "x")
+        y = editor_get_pos(o, "y")
+        z = editor_get_pos(o, "z")
+        if (axis == "x") x = v
+        if (axis == "y") y = v
+        if (axis == "z") z = v
+        editor_set_pos(o, x, y, z)
+    }
+}
+
+distribute() {
+    editor_undo_point()
+    first = editor_selection_name(0)
+    x0 = editor_get_pos(first, "x")
+    for (i = 1; i < editor_selection_count(); i = i + 1) {
+        o = editor_selection_name(i)
+        editor_set_pos(o, x0 + i * gap, editor_get_pos(o, "y"), editor_get_pos(o, "z"))
+    }
+}
+
+drop() {
+    editor_undo_point()
+    for (i = 0; i < editor_selection_count(); i = i + 1) {
+        o = editor_selection_name(i)
+        editor_set_pos(o, editor_get_pos(o, "x"), 0, editor_get_pos(o, "z"))
+    }
+    editor_log("Dropped " + editor_selection_count() + " objects")
+}

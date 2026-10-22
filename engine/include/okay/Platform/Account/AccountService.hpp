@@ -22,9 +22,11 @@
 #pragma once
 
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -35,6 +37,7 @@
 #if defined(_WIN32)
 #  include <windows.h>
 #endif
+#include "okay/Platform/NativeHttp.hpp"
 
 namespace okay::account {
 
@@ -321,7 +324,8 @@ inline std::vector<long> JsonNumberValues(const std::string& json, const std::st
 struct Session {
     bool        loggedIn = false;
     std::string username;
-    std::string token;
+    std::string token;         // access token (short-lived for Supabase)
+    std::string refreshToken;  // used to renew the access token (Supabase)
 };
 
 /// Result of a register/login attempt. On failure `error` carries a short,
@@ -548,7 +552,83 @@ public:
         std::string url = serverUrl_;
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += path.empty() || path.front() == '/' ? path : ("/" + path);
-        return HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+        ApiResponse r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+        // Expired access token: the launcher refreshes it (RefreshIfExpiring) and
+        // saves it; workers built from the saved session pick that up and retry
+        // once. (Workers never refresh themselves: Supabase rotates refresh
+        // tokens, and racing refreshes can revoke the whole session.)
+        if (r.status == 401 && provider_ == Provider::Supabase && ReloadSessionToken())
+            r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+        return r;
+    }
+
+    /// Re-read the access token saved by another instance (same account).
+    /// True when it changed.
+    bool ReloadSessionToken() const {
+        std::ifstream f(SessionPath());
+        if (!f) return false;
+        std::string user, token, refresh;
+        std::getline(f, user); std::getline(f, token); std::getline(f, refresh);
+        while (!token.empty() && (token.back() == '\r' || token.back() == '\n')) token.pop_back();
+        while (!refresh.empty() && (refresh.back() == '\r' || refresh.back() == '\n')) refresh.pop_back();
+        if (token.empty() || token == session_.token) return false;
+        session_.token = token;
+        if (!refresh.empty()) session_.refreshToken = refresh;
+        return true;
+    }
+
+    /// The signed-in account's id (the JWT "sub"), "" when unknown. Profiles
+    /// use the same id, so this finds MY profile even if the shown name differs.
+    std::string UserId() const { return JwtClaim(session_.token, "sub"); }
+    /// When the access token expires (unix seconds), 0 when unknown.
+    long TokenExpiresAt() const { return std::atol(JwtClaim(session_.token, "exp").c_str()); }
+    /// Renew the access token when it expires within `marginSec` (Supabase).
+    /// Call from ONE place (the launcher's main session). True if refreshed.
+    bool RefreshIfExpiring(long marginSec = 600) {
+        if (provider_ != Provider::Supabase || !session_.loggedIn) return false;
+        const long exp = TokenExpiresAt();
+        if (exp > 0 && exp - (long)std::time(nullptr) > marginSec) return false;
+        ReloadSessionToken();   // someone else may already have renewed it
+        if (TokenExpiresAt() - (long)std::time(nullptr) > marginSec) return true;
+        return RefreshSupabaseToken();
+    }
+
+    /// Anonymous request (apikey only, no bearer) — for public reads that don't
+    /// need a session, e.g. checking username availability before sign-up.
+    ApiResponse ApiAnon(const std::string& path, const std::string& method = "GET",
+                        const std::string& jsonBody = {}, const std::string& extraHeader = {}) const {
+        if (!IsOnline()) return {};
+        std::string url = serverUrl_;
+        if (!url.empty() && url.back() == '/') url.pop_back();
+        url += path.empty() || path.front() == '/' ? path : ("/" + path);
+        return HttpRequest(method, url, jsonBody, /*authToken=*/{}, extraHeader);
+    }
+
+    /// Upload a local file as the raw request body with the session token — e.g.
+    /// Supabase Storage `POST /storage/v1/object/<bucket>/<path>` for chat
+    /// attachments. `contentType` is the file's MIME type.
+    ApiResponse ApiUpload(const std::string& path, const std::string& localFile,
+                          const std::string& contentType, const std::string& extraHeader = {}) const {
+        if (!IsOnline() || !session_.loggedIn) return {};
+        std::string url = serverUrl_;
+        if (!url.empty() && url.back() == '/') url.pop_back();
+        url += path.empty() || path.front() == '/' ? path : ("/" + path);
+        return HttpRequest("POST", url, {}, /*authToken=*/session_.token, extraHeader,
+                           localFile, contentType.empty() ? "application/octet-stream" : contentType);
+    }
+
+    /// Whether a username (profiles.username handle) is free. Online only; on a
+    /// local backend or when offline it optimistically returns true.
+    bool UsernameAvailable(const std::string& username) const {
+        if (provider_ != Provider::Supabase || username.empty()) return true;
+        std::string enc; char b[4];
+        for (unsigned char c : username) {
+            if (std::isalnum(c) || c=='-'||c=='_'||c=='.'||c=='~') enc += (char)c;
+            else { std::snprintf(b, sizeof(b), "%%%02X", c); enc += b; }
+        }
+        ApiResponse r = ApiAnon("/rest/v1/profiles?select=id&username=eq." + enc);
+        if (!r.ok) return true;                       // couldn't check -> don't block
+        return r.body.find('{') == std::string::npos; // no rows -> available
     }
 
     /// Confirm the saved session is still valid with the server (GET /verify
@@ -563,7 +643,10 @@ public:
         // uses /verify.
         ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
         if (!r.reached) return true;                 // offline: keep the session
-        if (r.status == 401 || r.status == 403) {    // token revoked/expired
+        if (r.status == 401 || r.status == 403) {    // token expired/revoked
+            // Try to renew from the refresh token before giving up — a 1-hour
+            // Supabase access token expiring shouldn't sign the player out.
+            if (RefreshSupabaseToken()) return true;
             Logout();
             return false;
         }
@@ -709,9 +792,32 @@ private:
     std::string serverUrl_;
     std::string apiKey_;
     Provider    provider_;
-    Session     session_;
+    mutable Session session_;   // mutable: Api() picks up a token refreshed by another instance
 
     fs::path SessionPath() const { return configDir_ / "session.txt"; }
+
+    // A claim from a JWT's payload (base64url JSON), without verifying it — we
+    // only read our own token's id / expiry.
+    static std::string JwtClaim(const std::string& jwt, const std::string& key) {
+        const std::size_t a = jwt.find('.'), b = a == std::string::npos ? a : jwt.find('.', a + 1);
+        if (b == std::string::npos) return "";
+        const std::string part = jwt.substr(a + 1, b - a - 1);
+        std::string json; unsigned acc = 0; int bits = 0;
+        for (char c : part) {
+            int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52
+                  : (c == '-' || c == '+') ? 62 : (c == '_' || c == '/') ? 63 : -1;
+            if (v < 0) continue;
+            acc = (acc << 6) | (unsigned)v; bits += 6;
+            if (bits >= 8) { bits -= 8; json += (char)((acc >> bits) & 0xFF); }
+        }
+        const std::string k = "\"" + key + "\"";
+        std::size_t p = json.find(k); if (p == std::string::npos) return "";
+        p = json.find(':', p + k.size()); if (p == std::string::npos) return "";
+        ++p; while (p < json.size() && json[p] == ' ') ++p;
+        if (p < json.size() && json[p] == '"') { const std::size_t e = json.find('"', p + 1); return e == std::string::npos ? "" : json.substr(p + 1, e - p - 1); }
+        std::size_t e = p; while (e < json.size() && (std::isdigit((unsigned char)json[e]) || json[e] == '-')) ++e;
+        return json.substr(p, e - p);
+    }
     fs::path DbPath() const { return configDir_ / "accounts.db"; }
 
     // Turn Provider::Auto into a concrete backend from what's configured.
@@ -755,31 +861,62 @@ private:
     void LoadSession() {
         std::ifstream f(SessionPath());
         if (!f) return;
-        std::string user, token;
+        std::string user, token, refresh;
         std::getline(f, user);
         std::getline(f, token);
+        std::getline(f, refresh);   // optional 3rd line (older files won't have it)
         auto trim = [](std::string& s) {
             while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
         };
-        trim(user); trim(token);
+        trim(user); trim(token); trim(refresh);
         if (!user.empty() && !token.empty()) {
+            // Older sessions may have been saved with the email as the display
+            // name; show only the local-part so the UI never shows a raw email.
+            if (provider_ == Provider::Supabase) {
+                std::size_t at = user.find('@');
+                if (at != std::string::npos) user = user.substr(0, at);
+            }
             session_.loggedIn = true;
             session_.username = user;
             session_.token    = token;
+            session_.refreshToken = refresh;
         }
     }
 
     void SaveSession() {
         std::ofstream f(SessionPath(), std::ios::trunc);
-        f << session_.username << "\n" << session_.token << "\n";
+        f << session_.username << "\n" << session_.token << "\n" << session_.refreshToken << "\n";
     }
 
-    Result Succeed(const std::string& username, const std::string& token) {
+    Result Succeed(const std::string& username, const std::string& token,
+                   const std::string& refresh = {}) {
         session_.loggedIn = true;
         session_.username = username;
         session_.token    = token;
+        session_.refreshToken = refresh;
         SaveSession();
         Result r; r.ok = true; r.session = session_; return r;
+    }
+
+    // Renew the Supabase access token from the stored refresh token. Returns
+    // true and updates the session on success. Used by VerifySession so a
+    // signed-in player isn't kicked out just because the 1-hour token expired.
+    bool RefreshSupabaseToken() {
+        if (provider_ != Provider::Supabase || session_.refreshToken.empty() || !IsOnline())
+            return false;
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        ApiResponse r = HttpRequest("POST", base + "/auth/v1/token?grant_type=refresh_token",
+                                    "{\"refresh_token\":\"" + detail::JsonEscape(session_.refreshToken) + "\"}",
+                                    /*authToken=*/{});
+        if (!r.ok) return false;
+        std::string tok = detail::JsonField(r.body, "access_token");
+        if (tok.empty()) return false;
+        session_.token = tok;
+        std::string nr = detail::JsonField(r.body, "refresh_token");
+        if (!nr.empty()) session_.refreshToken = nr;   // Supabase rotates refresh tokens
+        SaveSession();
+        return true;
     }
 
     // ---- local backend -------------------------------------------------
@@ -876,9 +1013,26 @@ private:
                         const std::string& username = {}) {
         std::string base = serverUrl_;
         if (!base.empty() && base.back() == '/') base.pop_back();
+        // Sign in with a username OR an email: if the identifier isn't an email,
+        // resolve it to the account's email via a SECURITY DEFINER RPC that only
+        // returns the email when the password is correct (no email enumeration).
+        std::string loginId = email;
+        if (!signUp && loginId.find('@') == std::string::npos) {
+            ApiResponse rr = HttpRequest("POST", base + "/rest/v1/rpc/email_for_login",
+                "{\"p_username\":\"" + detail::JsonEscape(loginId) +
+                "\",\"p_password\":\"" + detail::JsonEscape(password) + "\"}", /*authToken=*/{});
+            std::string resolved;   // the RPC returns a JSON string (the email) or null
+            if (rr.ok) { std::string b = rr.body;
+                std::size_t q = b.find('"');
+                if (q != std::string::npos) { std::size_t e2 = b.find('"', q + 1);
+                    if (e2 != std::string::npos) resolved = b.substr(q + 1, e2 - q - 1); } }
+            if (resolved.empty())
+                return Fail("Invalid username/email or password.");
+            loginId = resolved;
+        }
         std::string url = base + (signUp ? "/auth/v1/signup"
                                          : "/auth/v1/token?grant_type=password");
-        std::string body = "{\"email\":\"" + detail::JsonEscape(email) +
+        std::string body = "{\"email\":\"" + detail::JsonEscape(loginId) +
                            "\",\"password\":\"" + detail::JsonEscape(password) + "\"";
         if (signUp && !username.empty())   // store the display name in user metadata
             body += ",\"data\":{\"username\":\"" + detail::JsonEscape(username) + "\"}";
@@ -905,9 +1059,17 @@ private:
                             "(Turn off email confirmation in Supabase for instant sign-in.)");
             return Fail("Server response was missing an access token.");
         }
-        // Display the username from user metadata when present; else the email.
+        // Prefer the username from user metadata; never surface the raw email as
+        // the display name. When no handle was stored (e.g. an account made
+        // before usernames, or a bare email sign-up), derive a friendly handle
+        // from the email's local-part ("alex.doe@x.com" -> "alex.doe").
         std::string display = detail::JsonField(r.body, "username");
-        return Succeed(display.empty() ? email : display, token);
+        if (display.empty()) {
+            std::size_t at = loginId.find('@');
+            display = at == std::string::npos ? loginId : loginId.substr(0, at);
+        }
+        std::string refresh = detail::JsonField(r.body, "refresh_token");
+        return Succeed(display, token, refresh);
     }
 
     // Perform one HTTP request via the system `curl` so the launcher/engine need
@@ -919,7 +1081,27 @@ private:
     ApiResponse HttpRequest(const std::string& method, const std::string& url,
                             const std::string& jsonBody,
                             const std::string& authToken,
-                            const std::string& extraHeader = {}) const {
+                            const std::string& extraHeader = {},
+                            const std::string& bodyFile = {},     // raw file body (uploads)
+                            const std::string& bodyType = {}) const {
+        // Native client first (Windows: WinHTTP, kept-alive connections, no
+        // process spawn); fall back to curl if it can't reach the server.
+        if (okay::http::NativeAvailable()) {
+            std::vector<std::string> hdrs;
+            if (!apiKey_.empty())      hdrs.push_back("apikey: " + apiKey_);
+            if (!authToken.empty())    hdrs.push_back("Authorization: Bearer " + authToken);
+            if (!extraHeader.empty())  hdrs.push_back(extraHeader);
+            if (!bodyFile.empty())     hdrs.push_back("Content-Type: " + bodyType);
+            else if (!jsonBody.empty()) hdrs.push_back("Content-Type: application/json");
+            okay::http::Result nr = okay::http::Request(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile);
+            if (nr.reached) {
+                ApiResponse out;
+                out.status = nr.status; out.body = std::move(nr.body);
+                out.reached = true;
+                out.ok = out.status >= 200 && out.status < 300;
+                return out;
+            }
+        }
         std::error_code ec;
         fs::path dir   = fs::temp_directory_path(ec);
         std::string id = detail::RandomHex(8);
@@ -939,7 +1121,10 @@ private:
             cfg += "header = \"Authorization: Bearer " + authToken + "\"\n";
         if (!extraHeader.empty())                      // e.g. PostgREST "Prefer: ..."
             cfg += "header = \"" + extraHeader + "\"\n";
-        if (!jsonBody.empty()) {
+        if (!bodyFile.empty()) {                       // upload a file as-is
+            cfg += "header = \"Content-Type: " + bodyType + "\"\n";
+            cmd += " --data-binary @\"" + bodyFile + "\"";
+        } else if (!jsonBody.empty()) {
             std::ofstream(bodyF, std::ios::trunc) << jsonBody;
             cfg += "header = \"Content-Type: application/json\"\n";
             cmd += " --data-binary @\"" + bodyF.string() + "\"";

@@ -1424,6 +1424,154 @@ static bool AccentToggleButton(const char* label, bool active, const ImVec2& siz
     if (active) ImGui::PopStyleColor(4);
     return clicked;
 }
+
+// Compact square toolbar buttons with drawn vector glyphs (the UI font has no
+// icon glyphs). Panels use these instead of rows of text buttons and checkboxes:
+// the primary actions stay one click away and everything else lives in a "more"
+// menu, so toolbars fit on one line like Unity/Unreal.
+enum class TbIcon { More, Plus, Move, Rotate, Scale, Global, Local, Snap, Frame, Search, Clear, Expand, Collapse, Sort };
+static void DrawTbIcon(ImDrawList* dl, TbIcon ic, ImVec2 c, float s, ImU32 col) {
+    const float t = 1.6f;
+    switch (ic) {
+    case TbIcon::More:
+        for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(ImVec2(c.x + i * s * 0.36f, c.y), s * 0.1f, col);
+        break;
+    case TbIcon::Plus:
+        dl->AddLine(ImVec2(c.x - s * 0.4f, c.y), ImVec2(c.x + s * 0.4f, c.y), col, t + 0.4f);
+        dl->AddLine(ImVec2(c.x, c.y - s * 0.4f), ImVec2(c.x, c.y + s * 0.4f), col, t + 0.4f);
+        break;
+    case TbIcon::Move: {
+        float r = s * 0.48f, a = s * 0.16f;
+        dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), col, t);
+        dl->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), col, t);
+        dl->AddTriangleFilled(ImVec2(c.x + r + 1, c.y), ImVec2(c.x + r - a, c.y - a), ImVec2(c.x + r - a, c.y + a), col);
+        dl->AddTriangleFilled(ImVec2(c.x - r - 1, c.y), ImVec2(c.x - r + a, c.y + a), ImVec2(c.x - r + a, c.y - a), col);
+        dl->AddTriangleFilled(ImVec2(c.x, c.y - r - 1), ImVec2(c.x + a, c.y - r + a), ImVec2(c.x - a, c.y - r + a), col);
+        dl->AddTriangleFilled(ImVec2(c.x, c.y + r + 1), ImVec2(c.x - a, c.y + r - a), ImVec2(c.x + a, c.y + r - a), col);
+        break; }
+    case TbIcon::Rotate: {
+        float r = s * 0.38f;
+        dl->PathArcTo(c, r, IM_PI * 0.15f, IM_PI * 1.75f, 18);
+        dl->PathStroke(col, 0, t);
+        ImVec2 e(c.x + r * std::cos(IM_PI * 0.15f), c.y + r * std::sin(IM_PI * 0.15f));
+        float a = s * 0.17f;
+        dl->AddTriangleFilled(ImVec2(e.x - a, e.y - a * 0.2f), ImVec2(e.x + a, e.y - a * 0.2f), ImVec2(e.x, e.y + a * 1.1f), col);
+        break; }
+    case TbIcon::Scale: {
+        float r = s * 0.42f;
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.1f), ImVec2(c.x + r * 0.1f, c.y + r), col, 1.0f, 0, t);
+        dl->AddLine(ImVec2(c.x - r * 0.1f, c.y + r * 0.1f), ImVec2(c.x + r, c.y - r), col, t);
+        dl->AddLine(ImVec2(c.x + r, c.y - r), ImVec2(c.x + r * 0.35f, c.y - r), col, t);
+        dl->AddLine(ImVec2(c.x + r, c.y - r), ImVec2(c.x + r, c.y - r * 0.35f), col, t);
+        break; }
+    case TbIcon::Global: {
+        float r = s * 0.42f;
+        dl->AddCircle(c, r, col, 20, t);
+        dl->AddEllipse(c, ImVec2(r * 0.42f, r), col, 0.0f, 16, t * 0.8f);
+        dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), col, t * 0.8f);
+        break; }
+    case TbIcon::Local: {   // isometric cube outline
+        float r = s * 0.42f, h = r * 0.5f;
+        ImVec2 top(c.x, c.y - r), lft(c.x - r, c.y - h), rgt(c.x + r, c.y - h), mid(c.x, c.y);
+        ImVec2 bl(c.x - r, c.y + h), br(c.x + r, c.y + h), bot(c.x, c.y + r);
+        ImVec2 hex[6] = {top, rgt, br, bot, bl, lft};
+        dl->AddPolyline(hex, 6, col, ImDrawFlags_Closed, t);
+        dl->AddLine(lft, mid, col, t); dl->AddLine(rgt, mid, col, t); dl->AddLine(mid, bot, col, t);
+        break; }
+    case TbIcon::Snap: {    // magnet
+        float r = s * 0.3f, top = c.y - s * 0.4f;
+        dl->PathArcTo(ImVec2(c.x, c.y + s * 0.05f), r, 0.0f, IM_PI, 14);
+        dl->PathStroke(col, 0, t + 1.6f);
+        dl->AddLine(ImVec2(c.x - r, c.y + s * 0.05f), ImVec2(c.x - r, top), col, t + 1.6f);
+        dl->AddLine(ImVec2(c.x + r, c.y + s * 0.05f), ImVec2(c.x + r, top), col, t + 1.6f);
+        dl->AddLine(ImVec2(c.x - r, top + s * 0.18f), ImVec2(c.x - r, top), IM_COL32(230, 90, 90, 255), t + 1.8f);
+        dl->AddLine(ImVec2(c.x + r, top + s * 0.18f), ImVec2(c.x + r, top), IM_COL32(230, 90, 90, 255), t + 1.8f);
+        break; }
+    case TbIcon::Frame: {   // corner brackets around a dot
+        float r = s * 0.44f, k = s * 0.2f;
+        for (int sx = -1; sx <= 1; sx += 2)
+            for (int sy = -1; sy <= 1; sy += 2) {
+                ImVec2 p(c.x + sx * r, c.y + sy * r);
+                dl->AddLine(p, ImVec2(p.x - sx * k, p.y), col, t);
+                dl->AddLine(p, ImVec2(p.x, p.y - sy * k), col, t);
+            }
+        dl->AddCircleFilled(c, s * 0.12f, col);
+        break; }
+    case TbIcon::Search: {
+        float r = s * 0.27f;
+        ImVec2 o(c.x - s * 0.08f, c.y - s * 0.08f);
+        dl->AddCircle(o, r, col, 14, t);
+        dl->AddLine(ImVec2(o.x + r * 0.7f, o.y + r * 0.7f), ImVec2(c.x + s * 0.4f, c.y + s * 0.4f), col, t + 0.6f);
+        break; }
+    case TbIcon::Clear: {   // circle with a slash ("clear all")
+        float r = s * 0.38f;
+        dl->AddCircle(c, r, col, 18, t);
+        dl->AddLine(ImVec2(c.x - r * 0.7f, c.y + r * 0.7f), ImVec2(c.x + r * 0.7f, c.y - r * 0.7f), col, t);
+        break; }
+    case TbIcon::Expand: case TbIcon::Collapse: {
+        float r = s * 0.3f, d = (ic == TbIcon::Expand) ? 1.0f : -1.0f;
+        for (int k = 0; k < 2; ++k) {
+            float y = c.y + (k ? s * 0.22f : -s * 0.22f);
+            dl->AddLine(ImVec2(c.x - r, y - d * r * 0.5f), ImVec2(c.x, y + d * r * 0.5f), col, t);
+            dl->AddLine(ImVec2(c.x, y + d * r * 0.5f), ImVec2(c.x + r, y - d * r * 0.5f), col, t);
+        }
+        break; }
+    case TbIcon::Sort: {
+        for (int k = 0; k < 3; ++k) {
+            float y = c.y - s * 0.3f + k * s * 0.3f, w = s * (0.25f + 0.2f * k);
+            dl->AddLine(ImVec2(c.x - s * 0.42f, y), ImVec2(c.x - s * 0.42f + w, y), col, t);
+        }
+        break; }
+    }
+}
+// Square icon button (frame-height); accent-tinted while `active`. `tip` shows on hover.
+static bool IconButton(const char* id, TbIcon ic, const char* tip = nullptr, bool active = false) {
+    float h = ImGui::GetFrameHeight();
+    bool clicked = AccentToggleButton(id, active, ImVec2(h, h));
+    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImU32 col = ImGui::GetColorU32(active ? ImVec4(1, 1, 1, 1)
+                                          : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    if (!active && !ImGui::IsItemHovered()) col = ImGui::GetColorU32(ImGuiCol_Text, 0.8f);
+    DrawTbIcon(ImGui::GetWindowDrawList(), ic, ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f),
+               h * 0.5f, col);
+    if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return clicked;
+}
+// A search field with a drawn magnifier inside and a clear (x) affordance when it
+// has text. `width` <= 0 fills the remaining width minus |width|.
+static bool SearchField(const char* id, char* buf, std::size_t bufSize, const char* hint, float width) {
+    ImGuiStyle& st = ImGui::GetStyle();
+    float h = ImGui::GetFrameHeight();
+    float w = width > 0.0f ? width : ImGui::GetContentRegionAvail().x + width;
+    if (w < h * 3.0f) w = h * 3.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(h * 0.95f, st.FramePadding.y));
+    ImGui::SetNextItemWidth(w);
+    bool changed = ImGui::InputTextWithHint(id, hint, buf, bufSize);
+    ImGui::PopStyleVar();
+    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    DrawTbIcon(dl, TbIcon::Search, ImVec2(mn.x + h * 0.5f, (mn.y + mx.y) * 0.5f), h * 0.42f,
+               ImGui::GetColorU32(ImGuiCol_TextDisabled));
+    if (buf[0]) {   // clear button drawn over the right edge of the field
+        ImVec2 xc(mx.x - h * 0.5f, (mn.y + mx.y) * 0.5f);
+        ImVec2 mp = ImGui::GetIO().MousePos;
+        bool hot = std::fabs(mp.x - xc.x) < h * 0.45f && std::fabs(mp.y - xc.y) < h * 0.45f &&
+                   ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        float r = h * 0.17f;
+        ImU32 xcCol = ImGui::GetColorU32(hot ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+        dl->AddLine(ImVec2(xc.x - r, xc.y - r), ImVec2(xc.x + r, xc.y + r), xcCol, 1.6f);
+        dl->AddLine(ImVec2(xc.x - r, xc.y + r), ImVec2(xc.x + r, xc.y - r), xcCol, 1.6f);
+        if (hot && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            buf[0] = '\0'; changed = true;
+            ImGui::ClearActiveID();
+        }
+    }
+    return changed;
+}
+// Right-align the next `w` pixels of items on the current line.
+static void SameLineRight(float w) {
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - w);
+}
 // A vector3 drag field with per-axis colour cues (X=red, Y=green, Z=blue) — a
 // 3px coloured bar down each component, like Unity/Godot/Blender. `activated` is
 // set when a drag begins on any field (so the caller can push one undo step).
@@ -1942,6 +2090,7 @@ char  g_newScriptName[96] = "";
 
 // Extra panels / tools.
 bool  g_showStats = true;
+bool  g_showSceneSettings = true;   // sky / lighting / post FX / debug view (split from Stats)
 bool  g_showSaveManager = false;   // browse/edit .okaysave files
 // Script Editor tabs: one per open ScriptComponent (an object can have several).
 std::vector<okay::ScriptComponent*> g_scriptTabs;
@@ -3158,6 +3307,7 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderDockWindow("Services", down);
     ImGui::DockBuilderDockWindow("Script Editor", down);
     ImGui::DockBuilderDockWindow("Stats", right);
+    ImGui::DockBuilderDockWindow("Lighting", right);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);   // tab alongside Scene (Unity-style)
     ImGui::DockBuilderFinish(dockId);
@@ -3325,6 +3475,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::Separator();
             ImGui::MenuItem("History", nullptr, &g_showHistory);
             ImGui::MenuItem("Stats", nullptr, &g_showStats);
+            ImGui::MenuItem("Lighting", nullptr, &g_showSceneSettings);
             ImGui::MenuItem("Profiler", nullptr, &g_showProfiler);
             ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
@@ -3879,91 +4030,92 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::EndMenu();
     }
 
-    // Centered Play / Stop / Step controls (Unity-style toolbar), color-coded,
-    // with real drawn transport icons (the UI font has no media glyphs).
-    // (defined later in this file; entering Play must clear any editor previews)
-    auto drawPlayTri = [](ImU32 col) {
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        float h = mx.y - mn.y, s = h * 0.24f;
-        ImVec2 c(mn.x + h * 0.52f, (mn.y + mx.y) * 0.5f);
-        ImGui::GetWindowDrawList()->AddTriangleFilled(
-            ImVec2(c.x - s * 0.6f, c.y - s), ImVec2(c.x - s * 0.6f, c.y + s),
-            ImVec2(c.x + s * 0.9f, c.y), col);
-    };
-    auto drawStopSq = [](ImU32 col) {
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        float h = mx.y - mn.y, s = h * 0.20f;
-        ImVec2 c(mn.x + h * 0.52f, (mn.y + mx.y) * 0.5f);
-        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(c.x - s, c.y - s),
-                                                  ImVec2(c.x + s, c.y + s), col, 1.5f);
-    };
-    auto drawPauseBars = [](ImU32 col) {
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        float h = mx.y - mn.y, s = h * 0.22f, w = h * 0.085f;
-        ImVec2 c(mn.x + h * 0.52f, (mn.y + mx.y) * 0.5f);
-        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(c.x - w * 2.2f, c.y - s),
-                                                  ImVec2(c.x - w * 0.5f, c.y + s), col, 1.0f);
-        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(c.x + w * 0.5f, c.y - s),
-                                                  ImVec2(c.x + w * 2.2f, c.y + s), col, 1.0f);
-    };
+    // Transport: one compact segmented pill of icon buttons, centered —
+    // [play/stop][pause][step] — then a quiet Build button. Colour only marks
+    // state (green while playing, amber while paused), like Unity's toolbar.
     const ImU32 kIconWhite = IM_COL32(255, 255, 255, 235);
-    float btnW = 72.0f;
-    ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - btnW);
-    if (!ed.isPlaying()) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
-        bool hit = ImGui::Button("    Play", ImVec2(btnW, 0));
-        drawPlayTri(kIconWhite);
-        if (hit) {
+    const float tb = ImGui::GetFrameHeight();
+    const float bw = tb * 1.45f;                 // transport button width
+    const float buildW = ImGui::CalcTextSize("Build").x + tb * 0.9f + 10.0f;
+    ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - (bw * 3.0f) * 0.5f);
+    {
+        ImVec2 gp = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddRectFilled(gp, ImVec2(gp.x + bw * 3.0f, gp.y + tb),
+            ImGui::GetColorU32(ImGuiCol_FrameBg), tb * 0.3f);
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, tb * 0.3f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    auto iconC = [] { ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                      return ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f); };
+    const bool playing = ed.isPlaying();
+    // Play / Stop
+    if (playing) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.56f, 0.30f, 1.0f));
+    bool playHit = ImGui::Button("##tplay", ImVec2(bw, tb));
+    if (playing) ImGui::PopStyleColor();
+    {
+        ImVec2 c = iconC(); float s = tb * 0.22f;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (playing) dl->AddRectFilled(ImVec2(c.x - s * 0.85f, c.y - s * 0.85f), ImVec2(c.x + s * 0.85f, c.y + s * 0.85f), kIconWhite, 1.5f);
+        else dl->AddTriangleFilled(ImVec2(c.x - s * 0.7f, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s),
+                                   ImVec2(c.x + s, c.y), IM_COL32(110, 220, 130, 255));
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(playing ? "Stop (Ctrl+P)" : "Play (Ctrl+P)");
+    if (playHit) {
+        if (!playing) {
             if (g_clearConsoleOnPlay) ConsoleClear();
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
-        }
-        ImGui::PopStyleColor(2);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play (Ctrl+P) — runs the scene in the Game view");
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        bool hit = ImGui::Button("    Stop", ImVec2(btnW, 0));
-        drawStopSq(kIconWhite);
-        if (hit) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
-        ImGui::PopStyleColor(2);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop (Ctrl+P) — return to the edit state");
-        ImGui::SameLine();
-        if (g_paused) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.45f, 0.15f, 1.0f));
-            bool rhit = ImGui::Button("    Resume", ImVec2(88, 0));
-            drawPlayTri(kIconWhite);
-            if (rhit) g_paused = false;
-            ImGui::PopStyleColor();
-        } else {
-            bool phit = ImGui::Button("    Pause", ImVec2(88, 0));
-            drawPauseBars(kIconWhite);
-            if (phit) g_paused = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause / Resume the simulation");
+        } else { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
     }
+    // Pause (toggle; usable before Play too, so Play starts paused like Unity)
     ImGui::SameLine();
+    if (g_paused) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.48f, 0.14f, 1.0f));
+    bool pauseHit = ImGui::Button("##tpause", ImVec2(bw, tb));
+    if (g_paused) ImGui::PopStyleColor();
     {
-        bool stepHit = ImGui::Button("    Step", ImVec2(66, 0));
-        // Step-forward icon: small triangle + bar.
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        float h = mx.y - mn.y, s = h * 0.20f;
-        ImVec2 ic(mn.x + h * 0.48f, (mn.y + mx.y) * 0.5f);
-        ImDrawList* tdl = ImGui::GetWindowDrawList();
-        tdl->AddTriangleFilled(ImVec2(ic.x - s, ic.y - s), ImVec2(ic.x - s, ic.y + s),
-                               ImVec2(ic.x + s * 0.5f, ic.y), kIconWhite);
-        tdl->AddRectFilled(ImVec2(ic.x + s * 0.8f, ic.y - s),
-                           ImVec2(ic.x + s * 0.8f + h * 0.085f, ic.y + s), kIconWhite, 1.0f);
-        if (stepHit) { g_paused = true; ed.Tick(1.0f / 60.0f); }
+        ImVec2 c = iconC(); float s = tb * 0.2f, w = tb * 0.075f;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImU32 col = playing || g_paused ? kIconWhite : IM_COL32(200, 204, 212, 200);
+        dl->AddRectFilled(ImVec2(c.x - w * 2.4f, c.y - s), ImVec2(c.x - w * 0.6f, c.y + s), col, 1.0f);
+        dl->AddRectFilled(ImVec2(c.x + w * 0.6f, c.y - s), ImVec2(c.x + w * 2.4f, c.y + s), col, 1.0f);
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
+    if (pauseHit && playing) g_paused = !g_paused;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(!playing ? "Pause (while playing)" : g_paused ? "Resume" : "Pause");
+    // Step one frame
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.34f, 0.62f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.52f, 0.42f, 0.75f, 1.0f));
-    if (ImGui::Button("Build", ImVec2(54, 0))) g_showBuildGame = true;
+    bool stepHit = ImGui::Button("##tstep", ImVec2(bw, tb));
+    {
+        ImVec2 c = iconC(); float s = tb * 0.19f;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImU32 col = IM_COL32(200, 204, 212, 220);
+        dl->AddTriangleFilled(ImVec2(c.x - s * 1.1f, c.y - s), ImVec2(c.x - s * 1.1f, c.y + s), ImVec2(c.x + s * 0.5f, c.y), col);
+        dl->AddRectFilled(ImVec2(c.x + s * 0.75f, c.y - s), ImVec2(c.x + s * 0.75f + tb * 0.075f, c.y + s), col, 1.0f);
+    }
+    if (stepHit) { g_paused = true; ed.Tick(1.0f / 60.0f); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    // Build: a quiet outlined button beside the transport.
+    ImGui::SameLine(0, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_Separator));
+    if (ImGui::Button("  Build", ImVec2(buildW, tb))) g_showBuildGame = true;
+    {   // little hammer-ish box glyph: a package outline
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        float s = tb * 0.17f;
+        ImVec2 c(mn.x + tb * 0.45f, (mn.y + mx.y) * 0.5f);
+        ImU32 col = ImGui::GetColorU32(ImGuiCol_Text, 0.85f);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRect(ImVec2(c.x - s, c.y - s * 0.7f), ImVec2(c.x + s, c.y + s), col, 1.0f, 0, 1.4f);
+        dl->AddLine(ImVec2(c.x - s, c.y - s * 0.7f), ImVec2(c.x - s * 0.6f, c.y - s * 1.3f), col, 1.4f);
+        dl->AddLine(ImVec2(c.x + s, c.y - s * 0.7f), ImVec2(c.x + s * 0.6f, c.y - s * 1.3f), col, 1.4f);
+        dl->AddLine(ImVec2(c.x - s * 0.6f, c.y - s * 1.3f), ImVec2(c.x + s * 0.6f, c.y - s * 1.3f), col, 1.4f);
+    }
     ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build Game (Ctrl+B) — export a standalone exe");
 
     // Right-aligned status: a coloured state dot + a v<version> · MODE · FPS readout.
@@ -4124,7 +4276,7 @@ void DrawDockSpace(EditorState& ed) {
         if (g_resetLayout) {
             // Reopen every panel so a reset always restores the full workspace.
             g_showHierarchy = g_showInspector = g_showConsole = g_showProject =
-                g_showServices = g_showScriptEditor = g_showStats = g_showGame = true;
+                g_showServices = g_showScriptEditor = g_showStats = g_showSceneSettings = g_showGame = true;
             g_resetLayout = false;
         }
     }
@@ -4240,51 +4392,71 @@ void DrawConsole() {
     if (s_errorPause && g_consoleCounts[2] > s_lastErrCount) g_paused = true;   // halt Play on new errors
     s_lastErrCount = g_consoleCounts[2];
     if (ImGui::Begin(conTitle, &g_showConsole)) {
-        if (ImGui::Button("Clear")) { ConsoleClear(); selected = -1; }
-        ImGui::SameLine();
-        ImGui::Checkbox("Error Pause", &s_errorPause);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause Play mode whenever a new error is logged");
-        ImGui::SameLine();
-        if (ImGui::Button("Save")) {   // dump the whole log to a file beside the exe
-            std::ofstream lf("console_log.txt");
-            for (const auto& e : g_console)
-                lf << (e.level == 2 ? "[x] " : e.level == 1 ? "[!] " : "[i] ")
-                   << e.time << "  " << e.text << "\n";
-            ConsoleLog("Console saved to console_log.txt");
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the full log to console_log.txt");
-        ImGui::SameLine();
-        ImGui::Checkbox("Collapse", &collapse);
-        ImGui::SameLine();
-        ImGui::Checkbox("Clear on Play", &g_clearConsoleOnPlay);
-        ImGui::SameLine();
-        ImGui::Checkbox("Auto-scroll", &autoScroll);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(160);
-        ImGui::InputTextWithHint("##cfilter", "Search", filter, sizeof(filter));
-        if (filter[0]) {
-            ImGui::SameLine(0, 2);
-            if (ImGui::SmallButton("x##cfclear")) filter[0] = '\0';
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear the search");
-        }
-
-        // Right-aligned per-level toggle buttons with counts (like Unity).
+        // One clean row: [Clear] [search..........] [● 3][● 1][● 0] [...]
+        // The level pills filter the log; the rarely-changed switches (collapse,
+        // clear on play, error pause, auto-scroll) and Save/Copy live in "...".
         const ImVec4 cInfo(0.82f, 0.84f, 0.88f, 1.0f);
         const ImVec4 cWarn(0.95f, 0.80f, 0.35f, 1.0f);
         const ImVec4 cErr (0.96f, 0.45f, 0.42f, 1.0f);
-        auto toggle = [](const char* label, bool& on, const ImVec4& col, int count) {
-            char buf[32]; std::snprintf(buf, sizeof(buf), "%s %d", label, count);
-            ImGui::PushStyleColor(ImGuiCol_Text, col);
-            ImVec4 bg = ImGui::GetStyleColorVec4(on ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg);
-            ImGui::PushStyleColor(ImGuiCol_Button, bg);
-            if (ImGui::Button(buf)) on = !on;
-            ImGui::PopStyleColor(2);
+        const ImGuiStyle& cst = ImGui::GetStyle();
+        if (IconButton("##cclear", TbIcon::Clear, "Clear the console")) { ConsoleClear(); selected = -1; }
+        ImGui::SameLine();
+        // Level pill: a coloured dot + count, highlighted while that level shows.
+        auto pillW = [&](int count) {
+            char b[16]; std::snprintf(b, sizeof(b), "%d", count);
+            return ImGui::CalcTextSize(b).x + ImGui::GetFontSize() * 0.9f + cst.FramePadding.x * 2.0f;
         };
-        float btnW = 168.0f;
-        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - btnW);
-        toggle("i", showInfo, cInfo, g_consoleCounts[0]); ImGui::SameLine();
-        toggle("!", showWarn, cWarn, g_consoleCounts[1]); ImGui::SameLine();
-        toggle("x", showError, cErr, g_consoleCounts[2]);
+        float pillsW = pillW(g_consoleCounts[0]) + pillW(g_consoleCounts[1]) + pillW(g_consoleCounts[2]) +
+                       cst.ItemSpacing.x * 0.5f * 2.0f;
+        float moreW = ImGui::GetFrameHeight();
+        SearchField("##cfilter", filter, sizeof(filter), "Search log",
+                    -(pillsW + moreW + cst.ItemSpacing.x * 2.0f));
+        auto pill = [&](const char* id, bool& on, const ImVec4& col, int count, const char* tip) {
+            char buf[32]; std::snprintf(buf, sizeof(buf), "%d%s", count, id);
+            float dotR = ImGui::GetFontSize() * 0.2f;
+            ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(1.0f, 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(on ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg));
+            ImGui::PushStyleColor(ImGuiCol_Text, on ? col : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            if (ImGui::Button(buf, ImVec2(pillW(count), 0))) on = !on;
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar();
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddCircleFilled(
+                ImVec2(mn.x + cst.FramePadding.x + dotR, (mn.y + mx.y) * 0.5f), dotR,
+                ImGui::GetColorU32(on ? col : ImVec4(col.x, col.y, col.z, 0.35f)));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        };
+        ImGui::SameLine();
+        pill("##cinfo", showInfo,  cInfo, g_consoleCounts[0], "Show / hide messages");
+        ImGui::SameLine(0, cst.ItemSpacing.x * 0.5f);
+        pill("##cwarn", showWarn,  cWarn, g_consoleCounts[1], "Show / hide warnings");
+        ImGui::SameLine(0, cst.ItemSpacing.x * 0.5f);
+        pill("##cerr",  showError, cErr,  g_consoleCounts[2], "Show / hide errors");
+        ImGui::SameLine();
+        if (IconButton("##cmore", TbIcon::More, "Console options")) ImGui::OpenPopup("##conopts");
+        if (ImGui::BeginPopup("##conopts")) {
+            ImGui::MenuItem("Collapse duplicates", nullptr, &collapse);
+            ImGui::MenuItem("Auto-scroll", nullptr, &autoScroll);
+            ImGui::MenuItem("Clear on Play", nullptr, &g_clearConsoleOnPlay);
+            ImGui::MenuItem("Pause on error", nullptr, &s_errorPause);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause Play mode whenever a new error is logged");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Copy all")) {
+                std::string all;
+                for (const auto& e : g_console)
+                    all += std::string(e.level == 2 ? "[x] " : e.level == 1 ? "[!] " : "[i] ") +
+                           e.time + "  " + e.text + "\n";
+                ImGui::SetClipboardText(all.c_str());
+            }
+            if (ImGui::MenuItem("Save to console_log.txt")) {   // dump the whole log beside the exe
+                std::ofstream lf("console_log.txt");
+                for (const auto& e : g_console)
+                    lf << (e.level == 2 ? "[x] " : e.level == 1 ? "[!] " : "[i] ")
+                       << e.time << "  " << e.text << "\n";
+                ConsoleLog("Console saved to console_log.txt");
+            }
+            ImGui::EndPopup();
+        }
         ImGui::Separator();
 
         std::string needle = filter;
@@ -6406,50 +6578,93 @@ void DrawStats(EditorState& ed) {
     static float hist[120] = {0};
     static int hi = 0;
     hist[hi] = io.Framerate; hi = (hi + 1) % 120;
-    // Window stats + an auto-scaled plot (the old fixed 0-240 scale flattened
-    // everything under 100 FPS into an unreadable ribbon).
+    // Big FPS readout + frame time, then an auto-scaled plot with a 60 FPS guide.
     float fmin = 1e9f, fmax = 0.0f, fsum = 0.0f; int fcnt = 0;
     for (float v : hist) if (v > 0.0f) { fmin = std::min(fmin, v); fmax = std::max(fmax, v); fsum += v; ++fcnt; }
     float fscale = fmax * 1.2f < 75.0f ? 75.0f : fmax * 1.2f;
-    ImGui::Text("FPS: %.0f  (%.2f ms)", io.Framerate, io.Framerate > 0 ? 1000.0f / io.Framerate : 0.0f);
-    ImGui::SameLine();
-    ImGui::TextDisabled("avg %.0f   min %.0f", fcnt ? fsum / fcnt : 0.0f, fcnt ? fmin : 0.0f);
-    ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, fscale, ImVec2(-1, 60));
+    {
+        ImVec4 fpsCol = io.Framerate >= 55.0f ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
+                      : io.Framerate >= 30.0f ? ImVec4(0.95f, 0.78f, 0.35f, 1.0f)
+                                              : ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
+        if (g_headingFont) ImGui::PushFont(g_headingFont);
+        ImGui::TextColored(fpsCol, "%.0f", io.Framerate);
+        if (g_headingFont) ImGui::PopFont();
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("FPS   %.2f ms", io.Framerate > 0 ? 1000.0f / io.Framerate : 0.0f);
+        char mm[48]; std::snprintf(mm, sizeof(mm), "avg %.0f  min %.0f", fcnt ? fsum / fcnt : 0.0f, fcnt ? fmin : 0.0f);
+        SameLineRight(ImGui::CalcTextSize(mm).x);
+        ImGui::TextDisabled("%s", mm);
+    }
+    ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.45f, 0.70f, 1.0f, 1.0f));
+    ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, fscale, ImVec2(-1, 48));
+    ImGui::PopStyleColor();
     {   // 60 FPS guide line over the plot
         ImVec2 gmn = ImGui::GetItemRectMin(), gmx = ImGui::GetItemRectMax();
         if (fscale > 60.0f) {
             float gy = gmx.y - (60.0f / fscale) * (gmx.y - gmn.y);
             ImGui::GetWindowDrawList()->AddLine(ImVec2(gmn.x, gy), ImVec2(gmx.x, gy),
-                                                IM_COL32(110, 220, 130, 150), 1.0f);
-            ImGui::GetWindowDrawList()->AddText(ImVec2(gmn.x + 4.0f, gy - ImGui::GetTextLineHeight()),
-                                                IM_COL32(110, 220, 130, 170), "60");
+                                                IM_COL32(110, 220, 130, 110), 1.0f);
         }
     }
-    ImGui::Separator();
-    ImGui::Text("Mode: %s", ed.isPlaying() ? "PLAYING" : "EDIT");
-    // Scene census (active triangles/particles counted live).
+    ImGui::Spacing();
+    // Scene census as a tidy two-column grid; zero counts are dimmed so the
+    // numbers that matter stand out.
     int stTris = 0, stParts = 0;
     for (const auto& up : ed.scene().Objects()) {
         if (!up || !up->active) continue;
         if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->mesh.TriangleCount();
         if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
     }
-    ImGui::Text("GameObjects: %d", (int)ed.scene().Objects().size());
-    ImGui::Text("Sprites: %d    Meshes: %d    Triangles: %d",
-                (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size(),
-                (int)ed.scene().FindObjectsOfType<MeshRenderer>().size(), stTris);
-    ImGui::Text("Colliders: %d (2D)  %d (3D)    Lights: %d",
-                (int)ed.scene().FindObjectsOfType<Collider2D>().size(),
-                (int)ed.scene().FindObjectsOfType<Collider3D>().size(),
-                (int)ed.scene().FindObjectsOfType<Light>().size());
-    ImGui::Text("Scripts: %d    NPCs: %d    Particles alive: %d",
-                (int)ed.scene().FindObjectsOfType<ScriptComponent>().size(),
-                (int)ed.scene().FindObjectsOfType<NPCController>().size(), stParts);
+    struct StatRow { const char* name; int v; };
+    const StatRow rows[] = {
+        {"Objects",    (int)ed.scene().Objects().size()},
+        {"Triangles",  stTris},
+        {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
+        {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
+        {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
+        {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
+        {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
+        {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
+        {"Particles",  stParts},
+    };
+    if (ImGui::BeginTable("##statgrid", 4, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("n1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        ImGui::TableSetupColumn("n2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        for (int i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); ++i) {
+            if (i % 2 == 0) ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", rows[i].name);
+            ImGui::TableNextColumn();
+            char num[24];
+            if (rows[i].v >= 1000000)   std::snprintf(num, sizeof(num), "%.1fM", rows[i].v / 1e6);
+            else if (rows[i].v >= 10000) std::snprintf(num, sizeof(num), "%.1fk", rows[i].v / 1e3);
+            else                         std::snprintf(num, sizeof(num), "%d", rows[i].v);
+            if (rows[i].v == 0) ImGui::TextDisabled("%s", num);
+            else                ImGui::TextUnformatted(num);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Sky, lighting, post FX and debug view moved to the Lighting tab.");
+    ImGui::PopStyleColor();
+    ImGui::End();
+}
 
+// Lighting: the scene's look (UI font, sky, fog, lightmaps) plus the global
+// render pipeline switches and Scene-view debug overlays. Split out of Stats so
+// Stats stays a clean read-out.
+void DrawSceneSettings(EditorState& ed) {
+    if (ImGuiWindow* insp = ImGui::FindWindowByName("Inspector"))
+        if (insp->DockId) ImGui::SetNextWindowDockID(insp->DockId, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Lighting", &g_showSceneSettings, ImGuiWindowFlags_NoFocusOnAppearing)) { ImGui::End(); return; }
     // Default UI font for this scene: every button/label/widget without its own
     // font uses it (saved with the scene, so the built game matches). Drag a .ttf
     // from the Project panel onto the field, Unity-style.
-    if (ImGui::CollapsingHeader("UI")) {
+    if (ImGui::CollapsingHeader("UI Font")) {
         std::string& uf = ed.scene().uiFont;
         ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Default UI Font"); ImGui::SameLine();
         if (AssetSlot("scenefont", uf, "Font", {".ttf", ".otf"})) ed.dirty = true;
@@ -6460,7 +6675,7 @@ void DrawStats(EditorState& ed) {
 
     // Environment: the scene's skybox + ambient, saved with the scene so the
     // built game renders the same sky and base light.
-    if (ImGui::CollapsingHeader("Environment (Sky & Light)")) {
+    if (ImGui::CollapsingHeader("Environment (Sky & Light)", ImGuiTreeNodeFlags_DefaultOpen)) {
         auto& rs = ed.scene().renderSettings;
         if (ImGui::Checkbox("Skybox", &rs.skybox)) ed.dirty = true;
         // Sky presets: one click sets the three gradient colors (and matching fog)
@@ -6611,8 +6826,6 @@ void DrawStats(EditorState& ed) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Renders the 3D view at this fraction of resolution and\nupscales. Lower = much faster (softer image). The biggest\nFPS lever for the software renderer.");
         SectionHeader("Effects");
-        ImGui::TextDisabled("Toggle any effect on/off. On by default: Hemisphere\nambient, Tone mapping, Anti-aliasing. The rest are opt-in.");
-        ImGui::Spacing();
         ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
 
         ImGui::Checkbox("Hemisphere ambient", &HemisphereAmbient());
@@ -6675,7 +6888,8 @@ void DrawStats(EditorState& ed) {
         // Debug View: Scene-view overlays and camera knobs to inspect 3D geometry
         // yourself. These are editor-only (Scene view) and never affect the Game
         // view or a build. All persist across sessions.
-        SectionHeader("Debug view (Scene only)");
+    }
+    if (ImGui::CollapsingHeader("Debug View (Scene only)")) {
         if (ImGui::Checkbox("Ground grid", &g_showGrid)) SaveSettings();
         if (ImGui::Checkbox("Sky gradient", &g_sceneSkybox)) SaveSettings();
         if (ImGui::IsItemHovered())
@@ -11324,10 +11538,34 @@ void DrawHierarchy(EditorState& ed) {
     // Skip the per-frame root-list build + sort + per-row component scans when the
     // Hierarchy panel is collapsed or a hidden background tab.
     if (!ImGui::Begin("Hierarchy", &g_showHierarchy)) { ImGui::End(); return; }
-    ImGui::TextDisabled("Scene: %s%s", ed.scene().Name().c_str(), ed.dirty ? " *" : "");
-    ImGui::SameLine(ImGui::GetWindowWidth() - 70);
-    ImGui::TextDisabled("%d obj", (int)ed.scene().Objects().size());
-    if (ImGui::Button("+ Create")) ImGui::OpenPopup("HierCreate");
+    // One toolbar row: [+] [search.............] [...]
+    if (IconButton("##hcreate", TbIcon::Plus, "Create object")) ImGui::OpenPopup("HierCreate");
+    ImGui::SameLine();
+    SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search (name or type)",
+                -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
+    if (ImGui::IsItemHovered() && !g_hierFilter[0])
+        ImGui::SetTooltip("Search by name, or by type: camera, light, mesh, script, ui...");
+    ImGui::SameLine();
+    if (IconButton("##hmore", TbIcon::More, "Hierarchy options", g_hierSort)) ImGui::OpenPopup("##hieropts");
+    if (ImGui::BeginPopup("##hieropts")) {
+        if (ImGui::MenuItem("Expand all"))   g_hierExpand = 1;
+        if (ImGui::MenuItem("Collapse all")) g_hierExpand = 2;
+        ImGui::Separator();
+        ImGui::MenuItem("Sort A-Z", nullptr, &g_hierSort);
+        ImGui::EndPopup();
+    }
+    // Scene header: name (with unsaved marker) and object count, as a quiet strip.
+    {
+        ImGui::Spacing();
+        char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d", (int)ed.scene().Objects().size());
+        std::string sname = ed.scene().Name().empty() ? std::string("Untitled") : ed.scene().Name();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextUnformatted((sname + (ed.dirty ? " *" : "")).c_str());
+        ImGui::PopStyleColor();
+        SameLineRight(ImGui::CalcTextSize(cnt).x);
+        ImGui::TextDisabled("%s", cnt);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Objects in the scene");
+    }
     if (ImGui::BeginPopup("HierCreate")) {
         if (ImGui::MenuItem("Empty"))  ed.Select(ed.CreateEmpty());
         if (ImGui::MenuItem("Sprite")) ed.Select(ed.CreateSprite());
@@ -11357,24 +11595,6 @@ void DrawHierarchy(EditorState& ed) {
         }
         ImGui::EndPopup();
     }
-    // Keep the toolbar buttons on the same row only while they fit; otherwise wrap to
-    // a new line. Lets the Hierarchy panel narrow down without the buttons clipping.
-    float availR = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-    auto sameLineIfRoom = [&](float w) {
-        float next = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + w;
-        if (next < availR) ImGui::SameLine(); // else: fall to the next line
-    };
-    sameLineIfRoom(ImGui::CalcTextSize("Expand").x + ImGui::GetStyle().FramePadding.x * 2);
-    if (ImGui::SmallButton("Expand"))   g_hierExpand = 1;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Expand all");
-    sameLineIfRoom(ImGui::CalcTextSize("Collapse").x + ImGui::GetStyle().FramePadding.x * 2);
-    if (ImGui::SmallButton("Collapse")) g_hierExpand = 2;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse all");
-    sameLineIfRoom(ImGui::CalcTextSize("Sort: None").x + ImGui::GetStyle().FramePadding.x * 2);
-    if (ImGui::SmallButton(g_hierSort ? "Sort: A-Z" : "Sort: None")) g_hierSort = !g_hierSort;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle alphabetical sorting of siblings");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##hfilter", "search objects... (or a type: camera, light, script)", g_hierFilter, sizeof(g_hierFilter));
     ImGui::Separator();
 
     // When searching, show a flat list of every matching object. The search also
@@ -29275,21 +29495,120 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     }
     const bool uiOnly = uiPanel || g_uiOnlyMode;   // the UI panel is always UI-only
 
-    // 2D / 3D toggle + frame the selection.
-    if (ImGui::Button(ed.view3D ? "3D" : "2D")) ed.view3D = !ed.view3D;
+    // ---- One compact toolbar row ------------------------------------------------
+    //   [3D] | [move][rotate][scale] [global] [snap v] [frame]        [isolated x] [...]
+    // Tools are icon buttons (tooltips carry the names + shortcuts); view toggles,
+    // camera alignment and help live in the "..." menu so the row never wraps.
+    const ImGuiStyle& vst = ImGui::GetStyle();
+    if (ImGui::Button(ed.view3D ? "3D" : "2D", ImVec2(ImGui::GetFrameHeight() * 1.35f, 0))) ed.view3D = !ed.view3D;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch between the 2D and 3D scene view");
+    auto toolGap = [&] {   // a hairline divider between toolbar groups
+        ImGui::SameLine(0, vst.ItemSpacing.x * 1.5f);
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float h = ImGui::GetFrameHeight();
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y + h * 0.2f), ImVec2(p.x, p.y + h * 0.8f),
+                                            ImGui::GetColorU32(ImGuiCol_Separator));
+        ImGui::Dummy(ImVec2(1, h));
+        ImGui::SameLine(0, vst.ItemSpacing.x * 1.5f);
+    };
+    toolGap();
+    // Transform tools as a tight segmented group (W/E/R), plus Local/Global (X).
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, vst.ItemSpacing.y));
+    if (IconButton("##tmove",   TbIcon::Move,   "Move (W)",   g_tool == Tool::Move))   g_tool = Tool::Move;
     ImGui::SameLine();
-    if (ImGui::Button("Frame") && ed.selected()) {
-        Vec3 p = ed.selected()->transform->Position();
-        ed.camTarget = p;
-        ed.cameraPos = {p.x, p.y};
+    if (IconButton("##trot",    TbIcon::Rotate, "Rotate (E)", g_tool == Tool::Rotate)) g_tool = Tool::Rotate;
+    ImGui::SameLine();
+    if (IconButton("##tscale",  TbIcon::Scale,  "Scale (R)",  g_tool == Tool::Scale))  g_tool = Tool::Scale;
+    ImGui::PopStyleVar();
+    ImGui::SameLine();
+    if (IconButton("##tspace", g_gizmoLocal ? TbIcon::Local : TbIcon::Global,
+                   g_gizmoLocal ? "Handles: Local (object axes). Click or X for Global"
+                                : "Handles: Global (world axes). Click or X for Local"))
+        g_gizmoLocal = !g_gizmoLocal;
+    // Snap: the magnet toggles it; the little arrow holds the increments.
+    ImGui::SameLine();
+    if (IconButton("##tsnap", TbIcon::Snap, "Snap to increments (or hold Ctrl while dragging)", g_snap)) g_snap = !g_snap;
+    ImGui::SameLine(0, 1);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, vst.FramePadding.y));
+    if (ImGui::ArrowButton("##snapsettings", ImGuiDir_Down)) ImGui::OpenPopup("##snapsettingspop");
+    ImGui::PopStyleVar();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap settings");
+    if (ImGui::BeginPopup("##snapsettingspop")) {
+        ImGui::TextDisabled("SNAP INCREMENTS");
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(130);
+        ImGui::DragFloat("Move / Scale", &g_snapSize, 0.05f, 0.05f, 100.0f, "%.2f");
+        ImGui::SetNextItemWidth(130);
+        ImGui::DragFloat("Rotate (deg)", &g_rotSnapDeg, 1.0f, 1.0f, 180.0f, "%.0f");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextDisabled("UI (2D screen)");
+        ImGui::Separator();
+        if (ImGui::Checkbox("Smart guides", &g_uiSmartSnap)) SaveSettings();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "While you drag a UI edge/center, blue guides appear where it lines up\nwith a sibling, the parent or the canvas, and it snaps there.");
+        ImGui::SetNextItemWidth(130);
+        ImGui::DragInt("Grid (px)", &g_uiGrid, 1, 1, 256);
+        ImGui::SetNextItemWidth(130);
+        ImGui::DragFloat("Guide snap (px)", &g_uiSnapDist, 0.5f, 1.0f, 40.0f, "%.0f");
+        ImGui::EndPopup();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Center the view on the selected object (F)");
-    // Align a selected Camera to the current scene view (Unity's Align With View):
-    // snap its position/orientation to the editor eye so the Game view matches.
-    if (ed.view3D && ed.selected() && ed.selected()->GetComponent<Camera>()) {
-        ImGui::SameLine();
-        if (ImGui::Button("Align Cam to View")) {
+    ImGui::SameLine();
+    if (IconButton("##tframe", TbIcon::Frame, "Frame selected (F)") && ed.selected()) {
+        if (uiOnly && g_lastUICanvas.x > 1.0f && g_lastUICanvas.y > 1.0f) {
+            // UI view: zoom + center the canvas on the widget (uses last frame's canvas size).
+            Vec2 fo, fsz;
+            if (GetUIScreenRect(ed.selected(), g_lastUICanvas.x, g_lastUICanvas.y, fo, fsz) &&
+                fsz.x > 1.0f && fsz.y > 1.0f) {
+                float zx = (g_lastUICanvas.x * 0.7f) / fsz.x, zy = (g_lastUICanvas.y * 0.7f) / fsz.y;
+                g_uiEditZoom = Mathf::Clamp(Mathf::Min(zx, zy), 0.25f, 4.0f);
+                Vec2 wc{fo.x + fsz.x * 0.5f, fo.y + fsz.y * 0.5f};
+                Vec2 cc{g_lastUICanvas.x * 0.5f, g_lastUICanvas.y * 0.5f};
+                g_uiEditPan = ImVec2((cc.x - wc.x) * g_uiEditZoom, (cc.y - wc.y) * g_uiEditZoom);
+            }
+        } else {
+            Vec3 p = ed.selected()->transform->Position();
+            ed.camTarget = p;
+            ed.cameraPos = {p.x, p.y};
+        }
+    }
+    // Right side: an "isolated" chip while isolation is on, then the view menu.
+    {
+        float moreW = ImGui::GetFrameHeight();
+        float chipW = 0.0f;
+        std::string chip;
+        if (g_isolate && !uiPanel) {
+            chip = "Isolated: " + g_isolate->name + "  x";
+            chipW = ImGui::CalcTextSize(chip.c_str()).x + vst.FramePadding.x * 2.0f + vst.ItemSpacing.x;
+        } else if (uiPanel) {
+            chip = "UI Editing";
+            chipW = ImGui::CalcTextSize(chip.c_str()).x + vst.ItemSpacing.x;
+        }
+        float rightW = moreW + chipW;
+        float curX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + vst.ItemSpacing.x;
+        float wantX = ImGui::GetWindowContentRegionMax().x - rightW;
+        ImGui::SameLine(wantX > curX ? wantX : 0.0f);
+        if (g_isolate && !uiPanel) {
+            if (AccentToggleButton(chip.c_str(), true)) g_isolate = nullptr;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit isolation (Shift+I)");
+            ImGui::SameLine();
+        } else if (uiPanel) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%s", chip.c_str());
+            ImGui::SameLine();
+        }
+        if (IconButton("##viewmore", TbIcon::More, "View options", !uiPanel && g_uiOnlyMode))
+            ImGui::OpenPopup("##viewopts");
+    }
+    if (ImGui::BeginPopup("##viewopts")) {
+        if (!uiPanel) {
+            if (ImGui::MenuItem("UI only view", nullptr, g_uiOnlyMode)) g_uiOnlyMode = !g_uiOnlyMode;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the scene hidden.\nTip: View > UI Editor opens this as its own tab.");
+            if (ImGui::MenuItem("Isolate selection", "Shift+I", g_isolate != nullptr, g_isolate || ed.selected()))
+                g_isolate = g_isolate ? nullptr : ed.selected();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show ONLY the selected object and its children in the Scene view.\nView-only: the Game view and Play mode are unaffected.");
+        }
+        bool camSel = ed.view3D && ed.selected() && ed.selected()->GetComponent<Camera>();
+        // Unity's Align With View: snap the selected Camera to the editor eye.
+        if (ImGui::MenuItem("Align camera to view", nullptr, false, camSel)) {
             float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
             Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
                      Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
@@ -29299,113 +29618,39 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             t->localRotation = Quat::LookRotation((ed.camTarget - eye).Normalized(), Vec3::Up);
             ed.dirty = true;
         }
-    }
-    // Transform tools (W/E/R), highlighting the active one.
-    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    auto toolBtn = [&](const char* lbl, Tool t, const char* tip) {
-        if (AccentToggleButton(lbl, g_tool == t)) g_tool = t;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        ImGui::SameLine();
-    };
-    toolBtn("Move", Tool::Move, "Move tool (W)");
-    toolBtn("Rotate", Tool::Rotate, "Rotate tool (E)");
-    toolBtn("Scale", Tool::Scale, "Scale tool (R)");
-    // Local/Global handle orientation (Unity's toggle); X toggles it. Tinted when Local.
-    if (AccentToggleButton(g_gizmoLocal ? "Local" : "Global", g_gizmoLocal)) g_gizmoLocal = !g_gizmoLocal;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gizmo orientation: Local (object) vs Global (world). Shortcut: X");
-    // UI section (Unity-style): a "UI Only" mode that hides the 3D/2D scene and shows
-    // just the Canvas on a flat screen. UI is NEVER overlaid on the 3D/2D scene — it
-    // has its own section (this mode + the dockable UI tab), so there's no scene
-    // "UI overlay" toggle anymore.
-    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    if (!uiPanel) {
-        ImGui::SameLine();
-        if (AccentToggleButton("UI Only", g_uiOnlyMode)) g_uiOnlyMode = !g_uiOnlyMode;   // flat UI view draws directly; never force the scene overlay on
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (like Unity's UI view).\nTip: View > UI Editor opens this as its own tab.");
-        ImGui::SameLine();
-        if (AccentToggleButton("Isolate", g_isolate != nullptr))
-            g_isolate = g_isolate ? nullptr : ed.selected();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(g_isolate
-                ? "Exit isolation and show the whole scene again (Shift+I)"
-                : "Show ONLY the selected object and its children in the Scene view (Shift+I).\nView-only: the scene, Game view and Play mode are unaffected.");
-    } else {
-        ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "UI Editing");
-    }
-    // Anchor presets: a 3x3 quick-picker to snap the selected UI element to a canvas
-    // corner / edge / center (Unity's anchor presets). Only when a UI widget is selected.
-    if (ed.selected()) {
-        UIRect ar = GetUIRect(ed.selected());
-        if (ar.anchorPtr && ar.position) {
-            ImGui::SameLine();
-            if (ImGui::Button("Anchor")) ImGui::OpenPopup("##anchorpreset");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap this UI element to a canvas anchor (corner / edge / center)");
-            if (ImGui::BeginPopup("##anchorpreset")) {
-                ImGui::TextDisabled("Anchor presets");
-                for (int row = 0; row < 3; ++row) {
-                    for (int col = 0; col < 3; ++col) {
-                        int idx = row * 3 + col;
-                        if (col > 0) ImGui::SameLine();
-                        ImGui::PushID(idx);
-                        bool cur = (int)*ar.anchorPtr == idx;
-                        if (ImGui::Selectable("##cell", cur, 0, ImVec2(26, 26))) {
-                            ed.PushUndo();
-                            *ar.anchorPtr = (UIAnchor)idx;
-                            ar.position->x = 0.0f; ar.position->y = 0.0f;   // snap flush to the anchor
-                            ed.dirty = true;
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-                        float fx = col * 0.5f, fy = row * 0.5f;
-                        ImVec2 dot(mn.x + 5 + (mx.x - mn.x - 10) * fx, mn.y + 5 + (mx.y - mn.y - 10) * fy);
-                        ImGui::GetWindowDrawList()->AddCircleFilled(dot, 3.0f,
-                            cur ? IM_COL32(90, 170, 240, 255) : IM_COL32(180, 180, 190, 200));
-                        ImGui::PopID();
-                    }
-                }
-                ImGui::EndPopup();
-            }
+        if (!camSel && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Select a Camera in a 3D view first");
+        ImGui::Separator();
+        ImGui::TextDisabled("Controls");
+        if (uiOnly) {
+            ImGui::TextDisabled("  drag: move   middle-drag: pan   Ctrl+Wheel: zoom");
+            ImGui::TextDisabled("  resize: Shift = keep ratio, Alt = from center");
+            ImGui::TextDisabled("  double-click a button to edit its text");
+        } else if (ed.view3D) {
+            ImGui::TextDisabled("  drag: orbit   wheel: zoom   F: frame");
+        } else {
+            ImGui::TextDisabled("  drag: move   right-drag: pan   wheel: zoom");
         }
+        ImGui::EndPopup();
     }
-    // ---- UI-Only tool row: zoom, layout guides, grid snap, safe area -----------
+    // ---- UI view row: zoom, screen size, overlays, anchors, align -----------------
     if (uiOnly) {
-        ImGui::TextDisabled("UI:"); ImGui::SameLine();
-        if (ImGui::SmallButton("-")) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom - 0.1f, 0.25f, 4.0f);
-        ImGui::SameLine(); ImGui::TextDisabled("%.0f%%", g_uiEditZoom * 100.0f); ImGui::SameLine();
-        if (ImGui::SmallButton("+")) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom + 0.1f, 0.25f, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, vst.ItemSpacing.y));
+        if (ImGui::Button("-##uizm", ImVec2(ImGui::GetFrameHeight(), 0))) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom - 0.1f, 0.25f, 4.0f);
         ImGui::SameLine();
-        if (ImGui::SmallButton("Fit")) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0, 0); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset zoom & pan to the true 1:1 layout");
-        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-        if (AccentToggleButton("Guides", g_uiShowGuides)) g_uiShowGuides = !g_uiShowGuides;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Thirds + center alignment guides");
+        char zl[24]; std::snprintf(zl, sizeof(zl), "%.0f%%##uizr", g_uiEditZoom * 100.0f);
+        if (ImGui::Button(zl, ImVec2(ImGui::GetFrameHeight() * 2.0f, 0))) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0, 0); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to reset zoom & pan to 1:1 (Ctrl+Wheel zooms)");
         ImGui::SameLine();
-        if (AccentToggleButton("All Bounds", g_uiShowAllBounds)) g_uiShowAllBounds = !g_uiShowAllBounds;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Outline every UI element's rect so you can see the whole layout");
+        if (ImGui::Button("+##uizp", ImVec2(ImGui::GetFrameHeight(), 0))) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom + 0.1f, 0.25f, 4.0f);
+        ImGui::PopStyleVar();
         ImGui::SameLine();
-        if (AccentToggleButton("Safe Area", g_uiShowSafeArea)) g_uiShowSafeArea = !g_uiShowSafeArea;
-        // NOTE: pass the text via "%s" — the literal contains a '%' ("5%"), and handing
-        // it to SetTooltip as the FORMAT string makes vsnprintf read a vararg that was
-        // never passed (the "5% s..." parses as %s), which crashes MinGW's CRT on
-        // Windows (a different vararg ABI than the Linux glibc where it happened to
-        // survive). This is why opening the UI view crashed only on Windows.
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Show a 5% safe-area inset (TV overscan / phone notch margin)");
-        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-        if (AccentToggleButton("Smart Snap", g_uiSmartSnap)) { g_uiSmartSnap = !g_uiSmartSnap; SaveSettings(); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Unity-style alignment snapping: while you drag an edge/center, blue guide lines appear\nwhere it lines up with a sibling, the parent, or the canvas edges/centers, and it snaps there.");
-        ImGui::SameLine();
-        if (AccentToggleButton("Snap", g_snap)) g_snap = !g_snap;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap UI drags/resizes to the pixel grid");
-        ImGui::SameLine(); ImGui::SetNextItemWidth(70);
-        ImGui::DragInt("grid##ui", &g_uiGrid, 1.0f, 1, 128, "%dpx");
-        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
         // The screen the UI is laid out against = the SAME resolution the Game view
-        // renders at. Editing g_gameResPreset here keeps the two tabs perfectly in sync
-        // (pick a resolution once; the UI editor and the Game tab both use it).
-        ImGui::SetNextItemWidth(150);
+        // renders at, so the UI editor and the Game tab always agree.
+        ImGui::SetNextItemWidth(140);
         {
             int gi = g_gameResPreset; if (gi < 0 || gi >= kGameResCount) gi = 0;
-            if (ImGui::BeginCombo("screen##ui", kGameResPresets[gi].name)) {
+            if (ImGui::BeginCombo("##uiscreen", kGameResPresets[gi].name)) {
                 for (int i = 0; i < kGameResCount; ++i) {
                     if (i == 1 || i == 8 || i == kGameResCustomIdx) ImGui::Separator();  // aspects / fixed / custom
                     if (ImGui::Selectable(kGameResPresets[i].name, g_gameResPreset == i)) { g_gameResPreset = i; SaveSettings(); }
@@ -29413,7 +29658,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 ImGui::EndCombo();
             }
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The game screen the UI is laid out against — the SAME resolution as the Game view.\nWhat you see here is exactly what ships; widgets that run off-screen are outlined red.\n'Free Aspect' uses the whole panel.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The game screen the UI is laid out against (same as the Game view).\nWidgets that run off-screen are outlined red. 'Free Aspect' uses the whole panel.");
         if (g_gameResPreset == kGameResCustomIdx) {   // custom W/H, mirrored from the Game tab
             ImGui::SameLine(); ImGui::SetNextItemWidth(64);
             if (ImGui::DragInt("##uicw", &g_gameCustomW, 1.0f, 16, 8192, "W %d")) SaveSettings();
@@ -29422,78 +29667,82 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             g_gameCustomW = g_gameCustomW < 16 ? 16 : g_gameCustomW;
             g_gameCustomH = g_gameCustomH < 16 ? 16 : g_gameCustomH;
         }
-        // Subdivision grid (like subdividing a 3D model): split the game screen into
-        // N×M cells you can snap UI edges/centers to, for laying out clean grids fast.
-        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-        if (AccentToggleButton("Subdivide", g_uiShowSubdiv)) { g_uiShowSubdiv = !g_uiShowSubdiv; SaveSettings(); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Divide the game screen into an even grid of cells (with Snap on, UI edges/centers snap to it).\nLike subdividing a 3D model, then resizing UI to the divisions.");
-        if (g_uiShowSubdiv) {
-            ImGui::SameLine(); ImGui::SetNextItemWidth(54);
-            if (ImGui::DragInt("##subx", &g_uiSubdivX, 0.1f, 1, 32, "%d cols")) SaveSettings();
-            ImGui::SameLine(); ImGui::SetNextItemWidth(54);
-            if (ImGui::DragInt("##suby", &g_uiSubdivY, 0.1f, 1, 32, "%d rows")) SaveSettings();
-            g_uiSubdivX = g_uiSubdivX < 1 ? 1 : (g_uiSubdivX > 32 ? 32 : g_uiSubdivX);
-            g_uiSubdivY = g_uiSubdivY < 1 ? 1 : (g_uiSubdivY > 32 ? 32 : g_uiSubdivY);
+        // Overlays (guides, bounds, safe area, subdivision grid) in one dropdown.
+        ImGui::SameLine();
+        bool anyOverlay = g_uiShowGuides || g_uiShowAllBounds || g_uiShowSafeArea || g_uiShowSubdiv;
+        if (AccentToggleButton("Overlays", anyOverlay)) ImGui::OpenPopup("##uioverlays");
+        if (ImGui::BeginPopup("##uioverlays")) {
+            ImGui::Checkbox("Guides (thirds + center)", &g_uiShowGuides);
+            ImGui::Checkbox("All bounds", &g_uiShowAllBounds);
+            // NOTE: pass text containing '%' via "%s" (a bare "5%" as a format crashes MinGW's CRT).
+            ImGui::Checkbox("Safe area", &g_uiShowSafeArea);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Show a 5% safe-area inset (TV overscan / phone notch margin)");
+            if (ImGui::Checkbox("Subdivide screen", &g_uiShowSubdiv)) SaveSettings();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Divide the game screen into an even grid of cells (with Snap on, UI edges/centers snap to it).");
+            if (g_uiShowSubdiv) {
+                ImGui::SetNextItemWidth(60);
+                if (ImGui::DragInt("##subx", &g_uiSubdivX, 0.1f, 1, 32, "%d cols")) SaveSettings();
+                ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                if (ImGui::DragInt("##suby", &g_uiSubdivY, 0.1f, 1, 32, "%d rows")) SaveSettings();
+                g_uiSubdivX = g_uiSubdivX < 1 ? 1 : (g_uiSubdivX > 32 ? 32 : g_uiSubdivX);
+                g_uiSubdivY = g_uiSubdivY < 1 ? 1 : (g_uiSubdivY > 32 ? 32 : g_uiSubdivY);
+            }
+            ImGui::EndPopup();
+        }
+        // Anchor presets: a 3x3 quick-picker to snap the selected UI element to a canvas
+        // corner / edge / center (Unity's anchor presets). Only when a UI widget is selected.
+        if (ed.selected()) {
+            UIRect ar = GetUIRect(ed.selected());
+            if (ar.anchorPtr && ar.position) {
+                ImGui::SameLine();
+                if (ImGui::Button("Anchor")) ImGui::OpenPopup("##anchorpreset");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap this UI element to a canvas anchor (corner / edge / center)");
+                if (ImGui::BeginPopup("##anchorpreset")) {
+                    ImGui::TextDisabled("Anchor presets");
+                    for (int row = 0; row < 3; ++row) {
+                        for (int col = 0; col < 3; ++col) {
+                            int idx = row * 3 + col;
+                            if (col > 0) ImGui::SameLine();
+                            ImGui::PushID(idx);
+                            bool cur = (int)*ar.anchorPtr == idx;
+                            if (ImGui::Selectable("##cell", cur, 0, ImVec2(26, 26))) {
+                                ed.PushUndo();
+                                *ar.anchorPtr = (UIAnchor)idx;
+                                ar.position->x = 0.0f; ar.position->y = 0.0f;   // snap flush to the anchor
+                                ed.dirty = true;
+                                ImGui::CloseCurrentPopup();
+                            }
+                            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                            float fx = col * 0.5f, fy = row * 0.5f;
+                            ImVec2 dot(mn.x + 5 + (mx.x - mn.x - 10) * fx, mn.y + 5 + (mx.y - mn.y - 10) * fy);
+                            ImGui::GetWindowDrawList()->AddCircleFilled(dot, 3.0f,
+                                cur ? IM_COL32(90, 170, 240, 255) : IM_COL32(180, 180, 190, 200));
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
+            }
         }
         // Align & distribute the multi-selection (Ctrl/Shift-click widgets to build it).
         if (ed.MultiSelection().size() >= 2) {
-            float aw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
-            float ah = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
-            ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-            ImGui::TextDisabled("Align:"); ImGui::SameLine();
-            struct AB { const char* lbl; int mode; const char* tip; };
-            static const AB kAlign[] = {
-                {"L", 0, "Align left edges"}, {"C", 1, "Align horizontal centers"}, {"R", 2, "Align right edges"},
-                {"T", 3, "Align top edges"},  {"M", 4, "Align vertical centers"},   {"B", 5, "Align bottom edges"} };
-            for (int i = 0; i < 6; ++i) {
-                if (i) ImGui::SameLine(0, 2);
-                ImGui::PushID(3200 + i);
-                if (ImGui::SmallButton(kAlign[i].lbl)) AlignUISelection(ed, kAlign[i].mode, aw, ah);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kAlign[i].tip);
-                ImGui::PopID();
-            }
-            if (ed.MultiSelection().size() >= 3) {
-                ImGui::SameLine(); ImGui::TextDisabled("Dist:"); ImGui::SameLine();
-                if (ImGui::SmallButton("H")) DistributeUISelection(ed, true, aw, ah);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distribute horizontally (even spacing)");
-                ImGui::SameLine(0, 2);
-                if (ImGui::SmallButton("V")) DistributeUISelection(ed, false, aw, ah);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distribute vertically (even spacing)");
-            }
-        }
-        // Frame the selected widget: center + fit it in the view (zoom/pan the canvas).
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Frame Sel") && ed.selected() &&
-            g_lastUICanvas.x > 1.0f && g_lastUICanvas.y > 1.0f) {
-            Vec2 fo, fsz;   // use last frame's canvas size (this row runs before this frame's is known)
-            if (GetUIScreenRect(ed.selected(), g_lastUICanvas.x, g_lastUICanvas.y, fo, fsz) &&
-                fsz.x > 1.0f && fsz.y > 1.0f) {
-                float zx = (g_lastUICanvas.x * 0.7f) / fsz.x, zy = (g_lastUICanvas.y * 0.7f) / fsz.y;
-                g_uiEditZoom = Mathf::Clamp(Mathf::Min(zx, zy), 0.25f, 4.0f);
-                // Pan so the widget's center sits at the canvas center.
-                Vec2 wc{fo.x + fsz.x * 0.5f, fo.y + fsz.y * 0.5f};
-                Vec2 cc{g_lastUICanvas.x * 0.5f, g_lastUICanvas.y * 0.5f};
-                g_uiEditPan = ImVec2((cc.x - wc.x) * g_uiEditZoom, (cc.y - wc.y) * g_uiEditZoom);
-            }
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom & center the view on the selected widget");
-        // Compact rect editor for the selected widget (fast edits without the Inspector).
-        if (ed.selected()) {
-            UIRect qr = GetUIRect(ed.selected());
-            if (qr.valid && qr.position) {
-                ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-                ImGui::SetNextItemWidth(96);
-                float pos[2] = {qr.position->x, qr.position->y};
-                if (ImGui::DragFloat2("pos##uiquick", pos, 1.0f, 0, 0, "%.0f")) {
-                    ed.PushUndo(); qr.position->x = pos[0]; qr.position->y = pos[1]; ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Button("Align")) ImGui::OpenPopup("##uialign");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Align / distribute the selected widgets");
+            if (ImGui::BeginPopup("##uialign")) {
+                float aw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
+                float ah = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
+                static const char* kAlign[] = {"Left edges", "Horizontal centers", "Right edges",
+                                               "Top edges", "Vertical centers", "Bottom edges"};
+                for (int i = 0; i < 6; ++i) {
+                    if (i == 3) ImGui::Separator();
+                    if (ImGui::MenuItem(kAlign[i])) AlignUISelection(ed, i, aw, ah);
                 }
-                if (qr.sizePtr) {
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(96);
-                    float sza[2] = {qr.sizePtr->x, qr.sizePtr->y};
-                    if (ImGui::DragFloat2("size##uiquick", sza, 1.0f, 0, 0, "%.0f")) {
-                        ed.PushUndo(); qr.sizePtr->x = sza[0]; qr.sizePtr->y = sza[1]; ed.dirty = true;
-                    }
-                }
+                ImGui::Separator();
+                bool three = ed.MultiSelection().size() >= 3;
+                if (ImGui::MenuItem("Distribute horizontally", nullptr, false, three)) DistributeUISelection(ed, true, aw, ah);
+                if (ImGui::MenuItem("Distribute vertically", nullptr, false, three)) DistributeUISelection(ed, false, aw, ah);
+                ImGui::EndPopup();
             }
         }
     }
@@ -29519,46 +29768,6 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             }
         }
     }
-    // Unity-style snap: a toolbar toggle plus a "Snap settings" dropdown holding
-    // the increments, so the toolbar stays clean. (Holding Ctrl while dragging a
-    // gizmo also snaps momentarily — see the gizmo handlers.)
-    ImGui::Checkbox("Snap", &g_snap);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap moves / rotations / scales to increments (or hold Ctrl)");
-    ImGui::SameLine(0, 3);
-    if (ImGui::ArrowButton("##snapsettings", ImGuiDir_Down)) ImGui::OpenPopup("##snapsettingspop");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap settings");
-    if (ImGui::BeginPopup("##snapsettingspop")) {
-        ImGui::TextDisabled("SNAP INCREMENTS");
-        ImGui::Separator();
-        ImGui::SetNextItemWidth(130);
-        ImGui::DragFloat("Move / Scale", &g_snapSize, 0.05f, 0.05f, 100.0f, "%.2f");
-        ImGui::SetNextItemWidth(130);
-        ImGui::DragFloat("Rotate (deg)", &g_rotSnapDeg, 1.0f, 1.0f, 180.0f, "%.0f");
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::TextDisabled("UI (2D screen)");
-        ImGui::Separator();
-        ImGui::SetNextItemWidth(130);
-        ImGui::DragInt("Grid (px)", &g_uiGrid, 1, 1, 256);
-        ImGui::SetNextItemWidth(130);
-        ImGui::DragFloat("Guide snap (px)", &g_uiSnapDist, 0.5f, 1.0f, 40.0f, "%.0f");
-        ImGui::EndPopup();
-    }
-    // UI authoring zoom readout + reset (Ctrl+Wheel to zoom, middle-drag to pan).
-    ImGui::SameLine();
-    if (g_uiEditZoom != 1.0f || g_uiEditPan.x != 0.0f || g_uiEditPan.y != 0.0f) {
-        if (ImGui::SmallButton("UI 1:1")) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0, 0); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset UI zoom/pan (now %.0f%%)", g_uiEditZoom * 100.0f);
-    } else {
-        ImGui::TextDisabled("UI zoom: Ctrl+Wheel");
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"
-                                  : "drag: move  right-drag: pan  wheel: zoom");
-    if (uiOnly) {   // surface the resize modifiers so they're discoverable
-        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-        ImGui::TextDisabled("resize: Shift=ratio  Alt=center  (dbl-click a button = edit its text)");
-    }
-
     ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
     // ---- View-axis gizmo (top-right corner, 3D view): shows the camera
@@ -31718,6 +31927,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
         { OKAY_PROFILE("UI.History"); DrawHistory(ed); }
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
+        { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
 

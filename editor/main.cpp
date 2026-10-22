@@ -9904,6 +9904,8 @@ static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string&
 // no object has to be selected (attach it later by dropping it on one, or tick
 // the box to attach it to the selected object now).
 static bool g_seNewReq = false;
+// Requests from Search Everywhere to the editor's own tools (consumed next frame).
+static bool g_seSearchReq = false, g_seGotoReq = false, g_seFindReq = false, g_sePaletteReq = false;
 static void ScriptEditorNewScriptPopup(EditorState& ed) {
     static char name[96] = "NewScript";
     static bool attach = false;
@@ -10268,6 +10270,7 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Go")) {
+                if (ImGui::MenuItem("Search Everywhere", "Double Shift")) g_seSearchReq = true;
                 if (ImGui::MenuItem("Go to Line...", "Ctrl+G")) rqGoto = true;
                 if (ImGui::MenuItem("Go to Symbol...")) rqOutline = true;
                 if (ImGui::MenuItem("Go to Definition", "F12")) rqDef = true;
@@ -10325,6 +10328,10 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::SetTooltip(s_isDocked ? "Open the Script Editor in its own large window" : "Dock it back as a tab");
             ImGui::EndMenuBar();
         }
+        // Search Everywhere's actions reuse the menu's own tools.
+        if (g_seGotoReq)    { g_seGotoReq = false; rqGoto = true; }
+        if (g_seFindReq)    { g_seFindReq = false; s_showFind = true; }
+        if (g_sePaletteReq) { g_sePaletteReq = false; s_palReq = true; }
         if (rqReload) {
             std::string src = extide::ReadFile(sc->Path());
             SetCodeBuffer(sc, src);
@@ -11120,6 +11127,201 @@ void DrawScriptEditor(EditorState& ed) {
                 prev == '{' && next == '}')
                 braceEnter = true;
         }
+        // ---- Tool windows on the left, JetBrains-style: a thin strip of toggles
+        // (Project = Alt+1, Structure = Alt+7) and the open tool window beside the
+        // code. Project lists the project's scripts; Structure the classes and
+        // methods of this file - click one to go there.
+        {
+            static int s_toolWin = 1;   // 0 closed, 1 Project, 2 Structure
+            const bool seFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+            ImGuiIO& tio = ImGui::GetIO();
+            if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1, false)) { s_toolWin = s_toolWin == 1 ? 0 : 1; tio.InputQueueCharacters.resize(0); }
+            if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_7, false)) { s_toolWin = s_toolWin == 2 ? 0 : 2; tio.InputQueueCharacters.resize(0); }   // (don't also type the digit)
+            // The strip: two short vertical-ish toggles.
+            ImGui::BeginChild("##setoolstrip", ImVec2(30, av.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+            // A tall toggle with its name written top-to-bottom (like an IDE's side bar).
+            auto stripBtn = [&](const char* lbl, int which, const char* tip) {
+                const bool on = s_toolWin == which;
+                const float lh = ImGui::GetFontSize() * 0.92f;
+                const ImVec2 sz(28, lh * (float)std::strlen(lbl) + 12);
+                const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton(lbl, sz)) s_toolWin = on ? 0 : which;
+                ImDrawList* sdl = ImGui::GetWindowDrawList();
+                if (on || ImGui::IsItemHovered())
+                    sdl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), on ? IM_COL32(66, 92, 143, 255) : IM_COL32(255, 255, 255, 18), 4.0f);
+                for (std::size_t i = 0; lbl[i]; ++i) {
+                    char ch[2] = {lbl[i], 0};
+                    const float w = ImGui::CalcTextSize(ch).x;
+                    sdl->AddText(ImVec2(p0.x + (sz.x - w) * 0.5f, p0.y + 6 + lh * (float)i),
+                                 on ? IM_COL32(240, 244, 250, 255) : IM_COL32(170, 176, 188, 255), ch);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+                ImGui::Dummy(ImVec2(0, 4));
+            };
+            stripBtn("PROJECT", 1, "Project (Alt+1): the project's scripts");
+            stripBtn("STRUCTURE", 2, "Structure (Alt+7): classes and methods in this file");
+            ImGui::EndChild();
+            ImGui::SameLine(0, 2);
+            if (s_toolWin) {
+                ImGui::BeginChild("##setool", ImVec2(230, av.y), ImGuiChildFlags_Borders);
+                ImGui::TextDisabled(s_toolWin == 1 ? "PROJECT" : "STRUCTURE");
+                ImGui::Separator();
+                if (s_toolWin == 1) {
+                    // Assets as a folder tree (scripts only); the open file is highlighted.
+                    namespace fs = std::filesystem;
+                    const fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+                    std::function<void(const fs::path&)> tree = [&](const fs::path& dir) {
+                        std::error_code ec;
+                        std::vector<fs::path> dirs, files;
+                        for (auto& e : fs::directory_iterator(dir, ec)) {
+                            if (e.is_directory(ec)) dirs.push_back(e.path());
+                            else {
+                                const std::string ext = e.path().extension().string();
+                                if (ext == ".okay" || ext == ".cs" || ext == ".lua") files.push_back(e.path());
+                            }
+                        }
+                        std::sort(dirs.begin(), dirs.end()); std::sort(files.begin(), files.end());
+                        for (const auto& d : dirs) {
+                            if (ImGui::TreeNodeEx(d.filename().string().c_str(), ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen)) { tree(d); ImGui::TreePop(); }
+                        }
+                        for (const auto& f : files) {
+                            const bool cur = !sc->Path().empty() && fs::equivalent(f, sc->Path(), ec);
+                            ImGui::TreeNodeEx(f.string().c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                                              ImGuiTreeNodeFlags_SpanAvailWidth | (cur ? ImGuiTreeNodeFlags_Selected : 0),
+                                              "%s", f.filename().string().c_str());
+                            if (ImGui::IsItemClicked() && !cur) OpenScriptFileInEditor(f.string());
+                        }
+                    };
+                    std::error_code ec;
+                    if (fs::is_directory(assets, ec)) {
+                        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+                        if (ImGui::TreeNodeEx("Assets", ImGuiTreeNodeFlags_SpanAvailWidth)) { tree(assets); ImGui::TreePop(); }
+                    } else ImGui::TextDisabled("No Assets folder.");
+                    // Scripts that live only inside the scene (no file).
+                    bool header = false;
+                    for (ScriptComponent* t : g_scriptTabs) {
+                        if (!t->Path().empty()) continue;
+                        if (!header) { ImGui::Spacing(); ImGui::TextDisabled("In the scene"); header = true; }
+                        GameObject* og = owner.count(t) ? owner[t] : nullptr;
+                        std::string nm = (og ? og->name : std::string("script")) + ".okay";
+                        ImGui::PushID(t);
+                        if (ImGui::Selectable(nm.c_str(), t == sc)) { g_activeScriptTab = t; g_focusScriptTab = t; }
+                        ImGui::PopID();
+                    }
+                    ImGui::Spacing();
+                    if (ImGui::Button("+ New Script", ImVec2(-1, 0))) g_seNewReq = true;
+                } else {
+                    // Structure: classes and methods; the one the caret is in is highlighted.
+                    static std::size_t s_stHash = 0; static std::vector<std::pair<int, std::string>> s_st;
+                    const std::size_t h = std::hash<std::string>{}(std::string(buf.data()));
+                    if (h != s_stHash) { s_stHash = h; s_st = ScriptOutline(buf.data()); }
+                    int curIdx = -1;
+                    for (int i = 0; i < (int)s_st.size(); ++i) if (s_st[i].first <= caret.line && s_st[i].second[0] == 'f') curIdx = i;
+                    if (s_st.empty()) ImGui::TextDisabled("Nothing to list yet.");
+                    for (int i = 0; i < (int)s_st.size(); ++i) {
+                        const bool isClass = s_st[i].second[0] == 'C';
+                        const std::string nm = s_st[i].second.size() > 3 ? s_st[i].second.substr(3) : s_st[i].second;
+                        ImGui::PushID(i);
+                        if (!isClass) ImGui::Indent(12);
+                        ImGui::PushStyleColor(ImGuiCol_Text, isClass ? ImVec4(0.85f, 0.72f, 0.45f, 1.0f) : ImVec4(0.80f, 0.84f, 0.92f, 1.0f));
+                        std::string lbl = (isClass ? "class " : "") + nm + (isClass ? "" : "()");
+                        if (ImGui::Selectable(lbl.c_str(), i == curIdx)) jumpTo(s_st[i].first);
+                        ImGui::PopStyleColor();
+                        if (!isClass) ImGui::Unindent(12);
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::SameLine();
+            }
+        }
+
+        // ---- Search Everywhere (double Shift): files, this file's symbols, actions ----
+        {
+            static double s_lastShift = -10.0;
+            static bool s_seOpen = false;
+            ImGuiIO& sio = ImGui::GetIO();
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !sio.KeyCtrl && !sio.KeyAlt &&
+                (ImGui::IsKeyPressed(ImGuiKey_LeftShift, false) || ImGui::IsKeyPressed(ImGuiKey_RightShift, false))) {
+                if (ImGui::GetTime() - s_lastShift < 0.4) { s_seOpen = true; s_lastShift = -10.0; }
+                else s_lastShift = ImGui::GetTime();
+            } else if (sio.InputQueueCharacters.Size > 0) s_lastShift = -10.0;   // typing in between: not a double tap
+            if (g_seSearchReq) { g_seSearchReq = false; s_seOpen = true; }
+            if (s_seOpen) { ImGui::OpenPopup("##searchall"); s_seOpen = false; }
+            ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() * 0.5f, ImGui::GetWindowPos().y + 70), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
+            if (ImGui::BeginPopup("##searchall")) {
+                static char q[96] = "";
+                static std::vector<std::string> s_files;
+                if (ImGui::IsWindowAppearing()) {
+                    q[0] = '\0'; ImGui::SetKeyboardFocusHere();
+                    s_files.clear();
+                    namespace fs = std::filesystem;
+                    fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+                    std::error_code ec;
+                    if (fs::is_directory(assets, ec))
+                        for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                            const std::string ext = e.path().extension().string();
+                            if (e.is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua")) s_files.push_back(e.path().string());
+                            if (s_files.size() > 2000) break;
+                        }
+                }
+                ImGui::TextDisabled("Search Everywhere");
+                ImGui::SetNextItemWidth(-1);
+                const bool go = ImGui::InputTextWithHint("##saq", "Files, classes, methods, actions...", q, sizeof q, ImGuiInputTextFlags_EnterReturnsTrue);
+                std::string ql = q; for (auto& c : ql) c = (char)std::tolower((unsigned char)c);
+                auto hit = [&](const std::string& x) { std::string l = x; for (auto& c : l) c = (char)std::tolower((unsigned char)c); return ql.empty() || l.find(ql) != std::string::npos; };
+                bool first = true; int shown = 0;
+                auto row = [&](const std::string& lbl, const char* kind) {
+                    ImGui::TextDisabled("%-8s", kind); ImGui::SameLine(80);
+                    const bool pick = ImGui::Selectable(lbl.c_str()) || (go && first);
+                    first = false; ++shown;
+                    return pick;
+                };
+                ImGui::BeginChild("##sares", ImVec2(0, 300));
+                for (const auto& f : s_files) {
+                    const std::string nm = std::filesystem::path(f).filename().string();
+                    if (!hit(nm) || shown >= 12) continue;
+                    ImGui::PushID(f.c_str());
+                    if (row(nm, "File")) { OpenScriptFileInEditor(f); ImGui::CloseCurrentPopup(); }
+                    ImGui::PopID();
+                }
+                const auto syms = ScriptOutline(buf.data());
+                for (int i = 0; i < (int)syms.size(); ++i) {
+                    const std::string nm = syms[i].second.size() > 3 ? syms[i].second.substr(3) : syms[i].second;
+                    if (!hit(nm) || shown >= 24) continue;
+                    ImGui::PushID(i);
+                    if (row(nm + (syms[i].second[0] == 'C' ? "" : "()"), syms[i].second[0] == 'C' ? "Class" : "Method")) { jumpTo(syms[i].first); ImGui::CloseCurrentPopup(); }
+                    ImGui::PopID();
+                }
+                struct Act { const char* name; int id; };
+                static const Act kActs[] = {{"New Script", 1}, {"Save", 2}, {"Format Document", 3}, {"Go to Line", 4},
+                                            {"Find / Replace", 5}, {"Command Palette", 6}, {"Run Script", 7}, {"Toggle Comment", 8}};
+                for (const auto& a : kActs) {
+                    if (!hit(a.name) || shown >= 32) continue;
+                    ImGui::PushID(a.id);
+                    if (row(a.name, "Action")) {
+                        switch (a.id) {
+                            case 1: g_seNewReq = true; break;
+                            case 2: s_tbSave = true; break;
+                            case 3: s_tbFormat = true; break;
+                            case 4: g_seGotoReq = true; break;
+                            case 5: g_seFindReq = true; break;
+                            case 6: g_sePaletteReq = true; break;
+                            case 7: s_tbRun = true; break;
+                            case 8: caret.toggleComment = true; break;
+                        }
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::PopID();
+                }
+                if (!shown) ImGui::TextDisabled("Nothing matches \"%s\".", q);
+                ImGui::EndChild();
+                ImGui::TextDisabled("Enter opens the first   Double Shift opens this");
+                ImGui::EndPopup();
+            }
+        }
+
         // Tab (indent / accept a suggestion) and Esc (dismiss) belong to the code.
         // Otherwise ImGui's keyboard nav also acts on them - Tab jumps focus to the
         // next widget, Esc "leaves" the child window - focus drops off the code and

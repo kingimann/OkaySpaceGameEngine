@@ -1,0 +1,10 @@
+# docker compose -f deploy/voice-server/docker-compose.yml up -d --build
+services:
+  voice:
+    build:
+      context: ../..
+      dockerfile: deploy/voice-server/Dockerfile
+    image: okayspace-voice
+    restart: unless-stopped
+    ports:
+      - "45100:45100/udp"

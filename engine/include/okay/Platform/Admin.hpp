@@ -145,6 +145,20 @@ public:
         return m;
     }
 
+    /// Site-wide settings (docs/sql/app_config.sql): anyone can read, admins write.
+    /// Returns "" when unset or the table doesn't exist yet.
+    std::string GetConfig(const std::string& key) {
+        auto r = acct_.Api("/rest/v1/app_config?select=value&key=eq." + Url(key), "GET");
+        if (!r.ok) return std::string();
+        auto o = SplitObjects(r.body);
+        return o.empty() ? std::string() : Field(o[0], "value");
+    }
+    bool SetConfig(const std::string& key, const std::string& value) {
+        return acct_.Api("/rest/v1/app_config?on_conflict=key", "POST",
+                         "{\"key\":" + JStr(key) + ",\"value\":" + JStr(value) + "}",
+                         "Prefer: resolution=merge-duplicates").ok;
+    }
+
 private:
     okay::account::AccountService& acct_;
     std::string myUid_;

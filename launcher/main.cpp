@@ -1376,6 +1376,7 @@ bool g_raiseMainReq = false;             // something in the chat window wants t
 #define OKAY_DEFAULT_VOICE_RELAY ""
 #endif
 std::string g_voiceRelay = OKAY_DEFAULT_VOICE_RELAY;   // voice server "host[:port]" (persisted)
+std::string g_siteVoiceRelay;   // the site-wide voice server (app_config "voice_relay"), used when g_voiceRelay is empty
 float g_voiceGate = -46.0f;                            // mic sensitivity, dBFS (persisted)
 std::string g_voiceInDev, g_voiceOutDev;               // audio devices by name ("" = default) (persisted)
 float g_voiceInGain = 1.0f, g_voiceOutVol = 1.0f;      // mic volume / call volume (persisted)
@@ -5124,7 +5125,9 @@ static std::string CallClock(long secs) {
 static bool VoiceJoin(const std::string& room, const std::string& key) {
     std::string host = g_voiceRelay; std::uint16_t port = 45100;
     while (!host.empty() && host.back() == ' ') host.pop_back();
-    if (host.empty()) { Toast("Voice needs a voice server \xE2\x80\x94 add one in Settings > Chat", 2); return false; }
+    if (host.empty()) host = g_siteVoiceRelay;   // the site-wide voice server
+    while (!host.empty() && host.back() == ' ') host.pop_back();
+    if (host.empty()) { Toast("No voice server is set up yet \xE2\x80\x94 add one in Settings > Chat", 2); return false; }
     if (auto c = host.rfind(':'); c != std::string::npos) { port = (std::uint16_t)std::atoi(host.c_str() + c + 1); host.erase(c); }
     if (!EnsureAudio()) { Toast("Audio isn't available on this system", 2); return false; }
     if (VoiceRecording()) FinishVoiceRecord(false);
@@ -8167,16 +8170,19 @@ static okay::MyBanInfo g_myBan;                 // my own site ban, if any
 static volatile bool g_roleCheckBusy = false;
 static SDL_mutex* g_roleMutex = nullptr;
 static int g_roleRankNew = -1; static okay::MyBanInfo g_roleBanNew; static bool g_roleReady = false;   // (guarded)
+static std::string g_roleSiteRelayNew;   // (guarded) app_config voice_relay
+static int g_siteRelaySaveResult = 0;    // (guarded) 1 saved, 2 failed
 static int RoleCheckWorker(void*) {
-    int rank = -1; okay::MyBanInfo ban;
+    int rank = -1; okay::MyBanInfo ban; std::string siteRelay;
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         okay::Admin ad(a);
         rank = ad.MyRank();
         if (rank >= 0) ban = ad.MyBan();
+        siteRelay = ad.GetConfig("voice_relay");
     } catch (...) {}
     SDL_LockMutex(g_roleMutex);
-    g_roleRankNew = rank; g_roleBanNew = ban; g_roleReady = true;
+    g_roleRankNew = rank; g_roleBanNew = ban; g_roleSiteRelayNew = siteRelay; g_roleReady = true;
     SDL_UnlockMutex(g_roleMutex);
     g_roleCheckBusy = false;
     return 0;
@@ -8221,10 +8227,33 @@ static void PumpRoleCheck(bool signedIn) {
         else g_roleCheckBusy = false;
     }
     SDL_LockMutex(g_roleMutex);
-    if (g_roleReady) { g_roleReady = false; g_myRank = g_roleRankNew; g_myBan = g_roleBanNew; }
+    if (g_roleReady) { g_roleReady = false; g_myRank = g_roleRankNew; g_myBan = g_roleBanNew; g_siteVoiceRelay = g_roleSiteRelayNew; }
+    if (g_siteRelaySaveResult) {
+        if (g_siteRelaySaveResult == 1) { g_siteVoiceRelay = g_roleSiteRelayNew; Toast("Voice server saved for everyone", 1); }
+        else Toast("Couldn't save the voice server (is docs/sql/app_config.sql set up?)", 2);
+        g_siteRelaySaveResult = 0;
+    }
     SDL_UnlockMutex(g_roleMutex);
 }
 
+// Admin: store the site-wide voice server (app_config "voice_relay") off the UI thread.
+static int SiteRelayWorker(void* p) {
+    std::unique_ptr<std::string> v(static_cast<std::string*>(p));
+    bool ok = false;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        ok = okay::Admin(a).SetConfig("voice_relay", *v);
+    } catch (...) {}
+    SDL_LockMutex(g_roleMutex);
+    if (ok) g_roleSiteRelayNew = *v;
+    g_siteRelaySaveResult = ok ? 1 : 2;
+    SDL_UnlockMutex(g_roleMutex);
+    return 0;
+}
+static void SaveSiteVoiceRelay(const std::string& value) {
+    if (!g_roleMutex) g_roleMutex = SDL_CreateMutex();
+    if (SDL_Thread* t = SDL_CreateThread(SiteRelayWorker, "okay-cfg", new std::string(value))) SDL_DetachThread(t);
+}
 struct AdminJob { int kind = 0; std::string s1, s2, s3; long n1 = 0, n2 = 0; };
 // kind: 1 overview, 2 find players(s1), 3 role(uid s1, badge s2, on n1; reload s3),
 //       4 verify(uid s1, on n1; s3), 5 ban(uid s1, reason s2, hours n1; s3), 6 unban(uid s1; s3),
@@ -14411,13 +14440,35 @@ int main(int argc, char** argv) {
                     cardEnd();
 
                     cardBegin("##sc_voice", "VOICE SERVER");
-                    settingRow("Voice server", "The OkaySpace relay calls go through (host or host:port). Run okayspace-relay on any server \xE2\x80\x94 see docs/relay.md.", 260.0f, ImGui::GetFrameHeight(), [&](float w) {
+                    settingRow("Custom voice server", g_siteVoiceRelay.empty()
+                                   ? "The relay calls go through (host or host:port). Run okayspace-relay on any server \xE2\x80\x94 see docs/voice-server.md."
+                                   : "Leave empty to use the OkaySpace voice server. Only set this to use your own relay.",
+                               260.0f, ImGui::GetFrameHeight(), [&](float w) {
                         static char vbuf[128] = ""; static bool vinit = false;
                         if (!vinit) { std::snprintf(vbuf, sizeof(vbuf), "%s", g_voiceRelay.c_str()); vinit = true; }
                         ImGui::SetNextItemWidth(std::min(w, 260.0f));
-                        if (ImGui::InputTextWithHint("##vrelay", "voice.example.com:45100", vbuf, sizeof(vbuf))) g_voiceRelay = vbuf;
+                        if (ImGui::InputTextWithHint("##vrelay", g_siteVoiceRelay.empty() ? "voice.example.com:45100" : g_siteVoiceRelay.c_str(), vbuf, sizeof(vbuf))) g_voiceRelay = vbuf;
                         if (ImGui::IsItemDeactivatedAfterEdit()) SavePrefs();
                     });
+                    rowDivider();
+                    {
+                        const std::string inUse = !g_voiceRelay.empty() ? g_voiceRelay : g_siteVoiceRelay;
+                        if (inUse.empty()) ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.35f, 1.0f), "  No voice server yet \xE2\x80\x94 calls can't connect until one is set.");
+                        else ImGui::TextDisabled("  Calls use: %s%s", inUse.c_str(), g_voiceRelay.empty() ? "  (OkaySpace server)" : "  (custom)");
+                    }
+                    // Admins set the site-wide voice server every launcher uses by default.
+                    if (g_myRank >= 3) {
+                        rowDivider();
+                        settingRow("Voice server for everyone", "Admin: the default voice server every OkaySpace launcher uses (stored on the server).",
+                                   260.0f, ImGui::GetFrameHeight(), [&](float w) {
+                            static char sbuf[128] = ""; static bool sinit = false;
+                            if (!sinit && !g_siteVoiceRelay.empty()) { std::snprintf(sbuf, sizeof(sbuf), "%s", g_siteVoiceRelay.c_str()); sinit = true; }
+                            ImGui::SetNextItemWidth(std::min(w, 260.0f) - 70.0f);
+                            ImGui::InputTextWithHint("##vsite", "voice.yourdomain.com:45100", sbuf, sizeof(sbuf));
+                            ImGui::SameLine();
+                            if (ImGui::Button("Save##vsite", ImVec2(62, 0))) SaveSiteVoiceRelay(sbuf);
+                        });
+                    }
                     rowDivider();
                     ImGui::TextDisabled("  Tip: use headphones \xE2\x80\x94 calls don't have echo cancellation yet.");
                     cardEnd();

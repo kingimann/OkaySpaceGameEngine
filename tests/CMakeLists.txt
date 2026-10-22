@@ -653,3 +653,7 @@ add_test(NAME controllers_ik COMMAND test_controllers_ik)
 add_executable(test_ecs test_ecs.cpp)
 target_link_libraries(test_ecs PRIVATE okay::engine)
 add_test(NAME ecs COMMAND test_ecs)
+
+add_executable(test_anim_playback test_anim_playback.cpp)
+target_link_libraries(test_anim_playback PRIVATE okay::engine)
+add_test(NAME anim_playback COMMAND test_anim_playback)

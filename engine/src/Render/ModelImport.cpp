@@ -13,6 +13,9 @@
 #include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
+#include "ufbx.h"
+#include <filesystem>
+#include <fstream>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -41,7 +44,7 @@ std::string ImportableExtensions() {
 #ifdef OKAY_HAVE_ASSIMP
     return ".obj .gltf .glb .fbx .dae .stl .ply .3ds .blend .x .md5mesh .smd .ms3d .lwo .dxf .off .ac .b3d";
 #else
-    return ".obj .gltf .glb";
+    return ".obj .gltf .glb .fbx";   // FBX is built in (ufbx)
 #endif
 }
 
@@ -52,6 +55,13 @@ static std::string Lower(std::string s) {
 static bool EndsWith(const std::string& s, const char* suf) {
     std::string t = suf;
     return s.size() >= t.size() && s.compare(s.size() - t.size(), t.size(), t) == 0;
+}
+static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture);   // (FBX section below)
+// Imported clips: every node track spans the whole clip (see ModelAnimator::NormalizeClip).
+static void NormalizeImportedClips(GameObject* root) {
+    if (!root) return;
+    if (auto* ma = root->GetComponent<ModelAnimator>())
+        for (auto& c : ma->clips) ModelAnimator::NormalizeClip(c);
 }
 
 #ifdef OKAY_HAVE_ASSIMP
@@ -187,6 +197,11 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     std::string p = Lower(path);
     if (EndsWith(p, ".obj"))                          return Mesh::LoadOBJ(path, ok, outTexture);
     if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok, outTexture);
+    if (EndsWith(p, ".fbx")) {
+        bool fok = false;
+        Mesh m = ImportFbxMerged(path, &fok, outTexture);
+        if (fok) { if (ok) *ok = true; return m; }
+    }
 #ifdef OKAY_HAVE_ASSIMP
     return ViaAssimp(path, ok, outTexture);
 #else
@@ -472,17 +487,369 @@ static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path,
         if (!ma->clips.empty()) { ma->active = 0; ma->autoPlay = true; }
     }
 
+    NormalizeImportedClips(root);
     AutoNormalizeImportScale(scene, root);
     if (ok) *ok = true;
     return root;
 }
 #endif // OKAY_HAVE_ASSIMP
 
+// ============================================================================
+// FBX (built in, via the vendored ufbx — no Assimp needed). Mixamo characters,
+// Blender/Maya/3ds Max exports: node hierarchy, meshes split per material,
+// skinning (top 4 weights per vertex), PBR/Phong materials with external or
+// embedded textures, and every animation take baked to per-node TRS keys.
+// Converted on load to Y-up, meters (ufbx does the axis/unit math).
+// ============================================================================
+namespace {
+
+Mat4 UfbxToMat4(const ufbx_matrix& a) {
+    Mat4 r = Mat4::Identity();
+    r.at(0, 0) = (float)a.m00; r.at(0, 1) = (float)a.m10; r.at(0, 2) = (float)a.m20;
+    r.at(1, 0) = (float)a.m01; r.at(1, 1) = (float)a.m11; r.at(1, 2) = (float)a.m21;
+    r.at(2, 0) = (float)a.m02; r.at(2, 1) = (float)a.m12; r.at(2, 2) = (float)a.m22;
+    r.at(3, 0) = (float)a.m03; r.at(3, 1) = (float)a.m13; r.at(3, 2) = (float)a.m23;
+    return r;
+}
+std::string UfbxStr(const ufbx_string& s) { return std::string(s.data, s.length); }
+
+ufbx_scene* LoadFbx(const std::string& path, std::string* err) {
+    ufbx_load_opts opts{};
+    opts.target_axes = ufbx_axes_right_handed_y_up;
+    opts.target_unit_meters = 1.0f;
+    opts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;   // bake units/axes into the data, not extra nodes
+    // Maya/MotionBuilder scale-inheritance modes the engine's transforms don't
+    // model: ufbx folds them into the transforms (helper nodes only if it must).
+    opts.inherit_mode_handling = UFBX_INHERIT_MODE_HANDLING_COMPENSATE;
+    opts.generate_missing_normals = true;
+    opts.ignore_missing_external_files = true;
+    opts.evaluate_skinning = false;
+    ufbx_error e{};
+    ufbx_scene* sc = ufbx_load_file(path.c_str(), &opts, &e);
+    if (!sc && err) { char buf[512]; ufbx_format_error(buf, sizeof(buf), &e); *err = buf; }
+    return sc;
+}
+
+// A texture as a file the renderer can load: the referenced file when it's on
+// disk (next to the model, then the absolute path), else the embedded bytes
+// written beside the model.
+std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath, int serial) {
+    if (!tex) return {};
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::path(modelPath).parent_path();
+    for (const ufbx_string* s : {&tex->filename, &tex->relative_filename, &tex->absolute_filename}) {
+        if (!s->length) continue;
+        fs::path p(UfbxStr(*s));
+        if (fs::exists(p, ec)) return p.string();
+        if (fs::exists(dir / p, ec)) return (dir / p).string();
+        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).string();
+        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).string();
+    }
+    if (tex->content.size > 0 && tex->content.data) {
+        std::string ext = fs::path(UfbxStr(tex->filename)).extension().string();
+        if (ext.empty()) {
+            const unsigned char* d = (const unsigned char*)tex->content.data;
+            ext = (tex->content.size > 2 && d[0] == 0xFF && d[1] == 0xD8) ? ".jpg" : ".png";
+        }
+        const fs::path out = dir / (fs::path(modelPath).stem().string() + "_tex" + std::to_string(serial) + ext);
+        if (!fs::exists(out, ec)) {
+            std::ofstream of(out, std::ios::binary);
+            if (!of) return {};
+            of.write((const char*)tex->content.data, (std::streamsize)tex->content.size);
+        }
+        return out.string();
+    }
+    return {};
+}
+
+void ApplyFbxMaterial(MeshRenderer& mr, const ufbx_material* m, const std::string& modelPath, int serial) {
+    if (!m) return;
+    const ufbx_material_map& bc = m->pbr.base_color.has_value || m->pbr.base_color.texture ? m->pbr.base_color : m->fbx.diffuse_color;
+    if (const ufbx_texture* t = bc.texture ? bc.texture : m->fbx.diffuse_color.texture) {
+        std::string p = FbxTexturePath(t, modelPath, serial);
+        if (!p.empty()) mr.texture = p;
+    }
+    if (bc.has_value) {
+        // With a texture the factor is a tint; Mixamo exports often carry a grey
+        // 0.8 diffuse factor that would just darken the texture, so only use it
+        // untextured.
+        if (mr.texture.empty())
+            mr.color = Color((float)bc.value_vec4.x, (float)bc.value_vec4.y, (float)bc.value_vec4.z, 1.0f);
+    }
+    const ufbx_material_map& nm = m->pbr.normal_map.texture ? m->pbr.normal_map : m->fbx.normal_map;
+    if (nm.texture) { std::string p = FbxTexturePath(nm.texture, modelPath, serial + 1000); if (!p.empty()) mr.normalMap = p; }
+    if (m->pbr.emission_color.has_value) {
+        const float f = m->pbr.emission_factor.has_value ? (float)m->pbr.emission_factor.value_real : 1.0f;
+        const ufbx_vec4& e = m->pbr.emission_color.value_vec4;
+        if (e.x + e.y + e.z > 0.0) mr.emissive = Color((float)e.x * f, (float)e.y * f, (float)e.z * f, 1.0f);
+    }
+    if (m->pbr.roughness.has_value || m->pbr.metalness.has_value) {
+        const float rough = m->pbr.roughness.has_value ? (float)m->pbr.roughness.value_real : 0.6f;
+        const float metal = m->pbr.metalness.has_value ? (float)m->pbr.metalness.value_real : 0.0f;
+        const float smooth = 1.0f - std::fmin(1.0f, std::fmax(0.0f, rough));
+        mr.metallic = metal;
+        mr.shininess = 4.0f + smooth * 124.0f;
+        mr.specular = 0.15f + smooth * 0.85f;
+        mr.reflectivity = metal * smooth;
+    }
+}
+
+// One vertex as ufbx_generate_indices dedups it (plain-old-data, compared bytewise).
+struct FbxVert {
+    float px, py, pz, nx, ny, nz, u, v;
+    int   j[4];
+    float w[4];
+};
+
+// Build one material part of a mesh: triangulated, deduplicated, optionally
+// with skin influences (indices into the skin's clusters).
+Mesh BuildFbxPart(const ufbx_mesh* mesh, const ufbx_mesh_part& part, const ufbx_skin_deformer* skin,
+                  std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt) {
+    Mesh out;
+    std::vector<uint32_t> tri(mesh->max_face_triangles * 3);
+    std::vector<FbxVert> verts;
+    verts.reserve(part.num_triangles * 3);
+    for (uint32_t fi : part.face_indices) {
+        const ufbx_face face = mesh->faces.data[fi];
+        const uint32_t nt = ufbx_triangulate_face(tri.data(), tri.size(), mesh, face);
+        for (uint32_t k = 0; k < nt * 3; ++k) {
+            const uint32_t ix = tri[k];
+            FbxVert fv{};
+            const ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, ix);
+            fv.px = (float)p.x; fv.py = (float)p.y; fv.pz = (float)p.z;
+            if (mesh->vertex_normal.exists) {
+                const ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, ix);
+                fv.nx = (float)n.x; fv.ny = (float)n.y; fv.nz = (float)n.z;
+            }
+            if (mesh->vertex_uv.exists) {
+                const ufbx_vec2 uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, ix);
+                fv.u = (float)uv.x; fv.v = 1.0f - (float)uv.y;   // FBX UVs are bottom-up
+            }
+            fv.w[0] = 1.0f;
+            if (skin) {
+                const uint32_t vi = mesh->vertex_indices.data[ix];
+                if (vi < skin->vertices.count) {
+                    const ufbx_skin_vertex sv = skin->vertices.data[vi];
+                    float sum = 0.0f;
+                    fv.w[0] = 0.0f;
+                    const uint32_t nw = sv.num_weights < 4 ? sv.num_weights : 4;   // ufbx sorts by weight
+                    for (uint32_t wi = 0; wi < nw; ++wi) {
+                        const ufbx_skin_weight sw = skin->weights.data[sv.weight_begin + wi];
+                        fv.j[wi] = (int)sw.cluster_index; fv.w[wi] = (float)sw.weight; sum += fv.w[wi];
+                    }
+                    if (sum > 1e-6f) for (float& w : fv.w) w /= sum;   // (no weights: stays at the bind pose)
+                }
+            }
+            verts.push_back(fv);
+        }
+    }
+    if (verts.empty()) return out;
+    std::vector<uint32_t> indices(verts.size());
+    ufbx_vertex_stream stream{verts.data(), verts.size(), sizeof(FbxVert)};
+    ufbx_error e{};
+    const size_t nv = ufbx_generate_indices(&stream, 1, indices.data(), indices.size(), nullptr, &e);
+    if (e.type != UFBX_ERROR_NONE) return out;
+    const bool hasN = mesh->vertex_normal.exists, hasUV = mesh->vertex_uv.exists;
+    out.vertices.reserve(nv);
+    for (size_t i = 0; i < nv; ++i) {
+        const FbxVert& v = verts[i];
+        out.vertices.push_back(Vec3{v.px, v.py, v.pz});
+        if (hasN) out.normals.push_back(Vec3{v.nx, v.ny, v.nz});
+        if (hasUV) out.uvs.push_back(Vec2{v.u, v.v});
+        if (jIdx) { jIdx->push_back({v.j[0], v.j[1], v.j[2], v.j[3]}); jWt->push_back({v.w[0], v.w[1], v.w[2], v.w[3]}); }
+    }
+    out.triangles.reserve(indices.size());
+    for (uint32_t ix : indices) out.triangles.push_back((int)ix);
+    return out;
+}
+
+Mesh TransformedMesh(Mesh m, const Mat4& t) {
+    for (auto& v : m.vertices) v = t.MultiplyPoint(v);
+    for (auto& n : m.normals) { n = t.MultiplyVector(n); const float l = n.Magnitude(); if (l > 1e-8f) n = n * (1.0f / l); }
+    return m;
+}
+bool IsIdentity(const ufbx_matrix& m) {
+    const double id[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    const double* v = &m.m00;
+    for (int i = 0; i < 12; ++i) if (std::fabs(v[i] - id[i]) > 1e-6) return false;
+    return true;
+}
+
+} // namespace
+
+// Every mesh flattened into one (world space) — the single-mesh ImportModel path.
+static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
+    Mesh merged;
+    ufbx_scene* sc = LoadFbx(path, nullptr);
+    if (!sc) { if (ok) *ok = false; return merged; }
+    for (const ufbx_node* node : sc->nodes) {
+        if (!node->mesh) continue;
+        const Mat4 g2w = UfbxToMat4(node->geometry_to_world);
+        for (const ufbx_mesh_part& part : node->mesh->material_parts) {
+            Mesh m = TransformedMesh(BuildFbxPart(node->mesh, part, nullptr, nullptr, nullptr), g2w);
+            const int base = (int)merged.vertices.size();
+            const bool keepN = merged.normals.size() == merged.vertices.size() && m.normals.size() == m.vertices.size();
+            const bool keepUV = merged.uvs.size() == merged.vertices.size() && m.uvs.size() == m.vertices.size();
+            merged.vertices.insert(merged.vertices.end(), m.vertices.begin(), m.vertices.end());
+            if (keepN) merged.normals.insert(merged.normals.end(), m.normals.begin(), m.normals.end()); else merged.normals.clear();
+            if (keepUV) merged.uvs.insert(merged.uvs.end(), m.uvs.begin(), m.uvs.end()); else merged.uvs.clear();
+            for (int t : m.triangles) merged.triangles.push_back(base + t);
+            if (outTexture && outTexture->empty() && part.index < node->mesh->materials.count) {
+                MeshRenderer tmp; ApplyFbxMaterial(tmp, node->mesh->materials.data[part.index], path, 0);
+                *outTexture = tmp.texture;
+            }
+        }
+    }
+    ufbx_free_scene(sc);
+    if (ok) *ok = !merged.vertices.empty();
+    return merged;
+}
+
+static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err) {
+    ufbx_scene* sc = LoadFbx(path, err);
+    if (!sc) { if (ok) *ok = false; return nullptr; }
+
+    GameObject* root = scene.CreateGameObject(BaseName(path));
+    std::vector<GameObject*> goOf(sc->nodes.count, nullptr);   // by node typed_id
+    std::unordered_map<std::string, int> nameUse;
+    int texSerial = 0;
+
+    // Hierarchy: one GameObject per FBX node (names made unique: clips and
+    // skins refer to nodes by name).
+    std::function<void(const ufbx_node*, Transform*)> build = [&](const ufbx_node* n, Transform* parent) {
+        std::string nm = UfbxStr(n->name);
+        if (nm.empty()) nm = n->mesh ? "mesh" : "node";
+        if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
+        GameObject* g = scene.CreateGameObject(nm);
+        goOf[n->typed_id] = g;
+        const ufbx_transform& t = n->local_transform;
+        g->transform->localPosition = Vec3{(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
+        g->transform->localRotation = Quat{(float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w};
+        g->transform->localScale    = Vec3{(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
+        g->transform->SetParent(parent, false);
+        for (const ufbx_node* c : n->children) build(c, g->transform);
+    };
+    for (const ufbx_node* c : sc->root_node->children) build(c, root->transform);
+
+    // Meshes (after the hierarchy, so skins can find every bone).
+    for (const ufbx_node* node : sc->nodes) {
+        if (!node->mesh || !goOf[node->typed_id]) continue;
+        const ufbx_mesh* mesh = node->mesh;
+        GameObject* host = goOf[node->typed_id];
+        const ufbx_skin_deformer* skin = mesh->skin_deformers.count ? mesh->skin_deformers.data[0] : nullptr;
+        if (skin && skin->clusters.count == 0) skin = nullptr;
+        const bool geomOffset = !IsIdentity(node->geometry_to_node);
+        const Mat4 g2n = UfbxToMat4(node->geometry_to_node);
+        const size_t parts = mesh->material_parts.count;
+        int made = 0;
+        for (size_t pi = 0; pi < parts; ++pi) {
+            const ufbx_mesh_part& part = mesh->material_parts.data[pi];
+            if (part.num_triangles == 0) continue;
+            std::vector<std::array<int, 4>> jIdx; std::vector<std::array<float, 4>> jWt;
+            Mesh bind = BuildFbxPart(mesh, part, skin, skin ? &jIdx : nullptr, skin ? &jWt : nullptr);
+            if (bind.vertices.empty()) continue;
+            GameObject* g = host;
+            if (made++ > 0 || (parts > 1)) {   // one child per material when there are several
+                const ufbx_material* mat = part.index < mesh->materials.count ? mesh->materials.data[part.index] : nullptr;
+                g = scene.CreateGameObject(host->name + "_" + (mat ? UfbxStr(mat->name) : ("mat" + std::to_string(pi))));
+                g->transform->SetParent(host->transform, false);
+            }
+            auto* mr = g->AddComponent<MeshRenderer>();
+            mr->doubleSided = true;
+            ApplyFbxMaterial(*mr, part.index < mesh->materials.count ? mesh->materials.data[part.index] : nullptr, path, texSerial);
+            texSerial += 2;
+            if (!skin) {
+                mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+                continue;
+            }
+            // Skinned: vertices stay in geometry space; each cluster's
+            // geometry_to_bone is its inverse bind. The renderer shows the
+            // bind pose (in node space) until the first Skin().
+            mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+            auto* sm = g->AddComponent<SkinnedMesh>();
+            sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
+            for (const ufbx_skin_cluster* cl : skin->clusters) {
+                GameObject* bg = cl->bone_node ? goOf[cl->bone_node->typed_id] : nullptr;
+                sm->joints.push_back(bg ? bg->transform : nullptr);
+                sm->jointNames.push_back(bg ? bg->name : std::string());
+                // geometry_to_bone maps the SKINNED geometry (this part's mesh,
+                // which may sit under a child object) into bone space.
+                sm->inverseBind.push_back(UfbxToMat4(cl->geometry_to_bone));
+            }
+            if (g != host) {   // the part's object is a child of the mesh node: same space
+                g->transform->localPosition = Vec3{0, 0, 0};
+            }
+        }
+    }
+
+    // Animation takes -> a ModelAnimator clip library on the root.
+    if (sc->anim_stacks.count > 0) {
+        auto* ma = root->AddComponent<ModelAnimator>();
+        for (const ufbx_anim_stack* st : sc->anim_stacks) {
+            ufbx_bake_opts bo{};
+            bo.trim_start_time = true;
+            bo.resample_rate = 30.0;
+            ufbx_error be{};
+            ufbx_baked_anim* bake = ufbx_bake_anim(sc, st->anim, &bo, &be);
+            if (!bake) continue;
+            ModelAnimator::Clip clip;
+            std::string cn = UfbxStr(st->name);
+            { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
+            if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
+                cn = std::filesystem::path(path).stem().string();   // Mixamo: the file name says what it is
+                if (sc->anim_stacks.count > 1) cn += "_" + std::to_string(ma->clips.size());
+            }
+            clip.name = cn;
+            for (const ufbx_baked_node& bn : bake->nodes) {
+                if (bn.typed_id >= goOf.size() || !goOf[bn.typed_id]) continue;
+                clip.nodes.push_back({goOf[bn.typed_id]->name, AnimationClip{}});
+                AnimationClip& ac = clip.nodes.back().clip;
+                ac.smoothKeys = false;   // baked for linear playback
+                for (const ufbx_baked_vec3& k : bn.translation_keys) {
+                    const float t = (float)k.time;
+                    ac.AddKey("position.x", t, (float)k.value.x); ac.AddKey("position.y", t, (float)k.value.y); ac.AddKey("position.z", t, (float)k.value.z);
+                }
+                ufbx_quat prev{0, 0, 0, 1}; bool hasPrev = false;
+                for (const ufbx_baked_quat& k : bn.rotation_keys) {
+                    ufbx_quat q = k.value;
+                    if (hasPrev && q.x * prev.x + q.y * prev.y + q.z * prev.z + q.w * prev.w < 0.0) { q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w; }
+                    prev = q; hasPrev = true;
+                    const float t = (float)k.time;
+                    ac.AddKey("rotation.qx", t, (float)q.x); ac.AddKey("rotation.qy", t, (float)q.y);
+                    ac.AddKey("rotation.qz", t, (float)q.z); ac.AddKey("rotation.qw", t, (float)q.w);
+                }
+                for (const ufbx_baked_vec3& k : bn.scale_keys) {
+                    const float t = (float)k.time;
+                    ac.AddKey("scale.x", t, (float)k.value.x); ac.AddKey("scale.y", t, (float)k.value.y); ac.AddKey("scale.z", t, (float)k.value.z);
+                }
+                if (ac.Tracks().empty()) clip.nodes.pop_back();
+            }
+            ufbx_free_baked_anim(bake);
+            if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
+        }
+        if (ma->clips.empty()) root->RemoveComponent<ModelAnimator>();
+        else { ma->active = 0; ma->autoPlay = true; }
+    }
+
+    ufbx_free_scene(sc);
+    NormalizeImportedClips(root);
+    AutoNormalizeImportScale(scene, root);
+    if (ok) *ok = true;
+    return root;
+}
+
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
     bool isGltf = EndsWith(p, ".gltf") || EndsWith(p, ".glb");
 
+    // FBX: built in (ufbx), full hierarchy + skins + animations. Assimp (when
+    // compiled in) is the fallback for files ufbx can't read.
+    if (EndsWith(p, ".fbx")) {
+        std::string ferr;
+        if (GameObject* r = ImportFbxSceneGraph(scene, path, ok, &ferr)) return r;
+    }
     // Non-glTF (OBJ / Assimp): bring it in as one mesh object.
     if (!isGltf) {
 #ifdef OKAY_HAVE_ASSIMP
@@ -684,9 +1051,126 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
             ma->active = 0; ma->autoPlay = true;
         }
     }
+    NormalizeImportedClips(root);
     AutoNormalizeImportScale(scene, root);
     if (ok) *ok = true;
     return root;
+}
+
+// ---- Adding clips from another file (Mixamo animation downloads) ----------
+// "mixamorig9:LeftUpLeg" / "Armature|LeftUpLeg" / "Left_Up_Leg" -> "leftupleg".
+static std::string NormBoneName(const std::string& n) {
+    std::string s = n;
+    const std::size_t cut = s.find_last_of(":|");
+    if (cut != std::string::npos) s = s.substr(cut + 1);
+    std::string o;
+    for (char c : s) if (std::isalnum((unsigned char)c)) o += (char)std::tolower((unsigned char)c);
+    if (o.rfind("mixamorig", 0) == 0) o = o.substr(9);
+    return o;
+}
+static GameObject* FindHips(GameObject* root, const std::vector<GameObject*>& sub) {
+    for (GameObject* g : sub) { std::string k = NormBoneName(g->name); if (k == "hips" || k == "pelvis") return g; }
+    for (GameObject* g : sub) { std::string k = NormBoneName(g->name); if (k.find("hips") != std::string::npos || k.find("pelvis") != std::string::npos) return g; }
+    (void)root; return nullptr;
+}
+static std::vector<GameObject*> Subtree(Scene& scene, GameObject* root) {
+    std::vector<GameObject*> out;
+    for (const auto& up : scene.Objects()) if (up->IsSelfOrDescendantOf(root)) out.push_back(up.get());
+    return out;
+}
+// Hips height above the model root, in the root's own (unscaled) space.
+static float RestHipsHeight(GameObject* root, GameObject* hips) {
+    if (!root || !hips) return 0.0f;
+    Vec3 p = root->transform->LocalToWorldMatrix().Inverse().MultiplyPoint(hips->transform->Position());
+    return std::fabs(p.y);
+}
+static void AutoMapLocomotion(ModelAnimator* ma) {
+    if (!ma) return;
+    auto low = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
+    for (const auto& c : ma->clips) {
+        std::string n = low(c.name);
+        auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
+        if (ma->idleClip.empty() && (has("idle") || has("stand") || has("breath"))) ma->idleClip = c.name;
+        else if (ma->walkClip.empty() && has("walk")) ma->walkClip = c.name;
+        else if (ma->runClip.empty() && (has("run") || has("sprint") || has("jog"))) ma->runClip = c.name;
+        else if (ma->jumpClip.empty() && (has("jump") || has("leap"))) ma->jumpClip = c.name;
+        else if (ma->fallClip.empty() && (has("fall") || has("air") || has("drop"))) ma->fallClip = c.name;
+        else if (ma->landClip.empty() && has("land")) ma->landClip = c.name;
+    }
+}
+
+int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string& path, std::string* outLog) {
+    auto say = [&](const std::string& m) { if (outLog) *outLog = m; };
+    if (!modelRoot) { say("Pick the model to add animations to."); return 0; }
+    Scene tmp;
+    bool ok = false;
+    GameObject* src = ImportModelScene(tmp, path, &ok);
+    if (!ok || !src) { say("Couldn't read " + BaseName(path) + "."); return 0; }
+    ModelAnimator* sma = src->GetComponent<ModelAnimator>();
+    if (!sma || sma->clips.empty()) { say(BaseName(path) + " has no animations in it."); return 0; }
+
+    // Target bones by normalized name.
+    std::vector<GameObject*> tsub = Subtree(scene, modelRoot);
+    std::unordered_map<std::string, std::string> tName;   // norm -> real name in this model
+    for (GameObject* g : tsub) tName.emplace(NormBoneName(g->name), g->name);
+    ModelAnimator* ma = modelRoot->GetComponent<ModelAnimator>();
+    if (!ma) for (GameObject* g : tsub) if ((ma = g->GetComponent<ModelAnimator>())) break;
+    if (!ma) ma = modelRoot->AddComponent<ModelAnimator>();
+
+    // Proportions: same skeleton (Mixamo clip downloaded for THIS character) ->
+    // copy everything; different -> rotations + scaled hips motion.
+    std::vector<GameObject*> ssub = Subtree(tmp, src);
+    GameObject* sHips = FindHips(src, ssub);
+    GameObject* tHips = FindHips(modelRoot, tsub);
+    // Compare the hips' offset in their parent's space: the same space the hips
+    // position track lives in (so the ratio scales it directly).
+    float sh = sHips ? sHips->transform->localPosition.Magnitude() : 0.0f;
+    float th = tHips ? tHips->transform->localPosition.Magnitude() : 0.0f;
+    if (sh < 1e-5f || th < 1e-5f) { sh = RestHipsHeight(src, sHips); th = RestHipsHeight(modelRoot, tHips); }
+    float ratio = (sh > 1e-5f && th > 1e-5f) ? th / sh : 1.0f;
+    const bool retarget = std::fabs(ratio - 1.0f) > 0.03f;
+    const std::string sHipsKey = sHips ? NormBoneName(sHips->name) : std::string();
+
+    int added = 0, matched = 0, total = 0;
+    std::string names;
+    for (const ModelAnimator::Clip& c : sma->clips) {
+        ModelAnimator::Clip out;
+        out.name = c.name;
+        for (int n = 2; ; ++n) {   // unique within the target library
+            bool clash = false;
+            for (const auto& e : ma->clips) if (e.name == out.name) { clash = true; break; }
+            if (!clash) break;
+            out.name = c.name + " " + std::to_string(n);
+        }
+        out.events = c.events;
+        for (const ModelAnimator::NodeClip& nc : c.nodes) {
+            ++total;
+            const std::string key = NormBoneName(nc.node);
+            auto it = tName.find(key);
+            if (it == tName.end()) continue;
+            ++matched;
+            const bool isHips = !sHipsKey.empty() && key == sHipsKey;
+            if (!retarget) { out.nodes.push_back({it->second, nc.clip}); continue; }
+            AnimationClip ac; ac.smoothKeys = false;
+            for (const auto& kv : nc.clip.Tracks()) {
+                const bool pos = kv.first.rfind("position.", 0) == 0, scl = kv.first.rfind("scale.", 0) == 0;
+                if (scl || (pos && !isHips)) continue;   // other bones keep this model's lengths
+                for (const auto& k : kv.second.Keys()) ac.AddKey(kv.first, k.time, pos ? k.value * ratio : k.value);
+            }
+            if (!ac.Tracks().empty()) out.nodes.push_back({it->second, std::move(ac)});
+        }
+        if (out.nodes.empty()) continue;
+        ModelAnimator::NormalizeClip(out);
+        names += (names.empty() ? "" : ", ") + out.name;
+        ma->clips.push_back(std::move(out));
+        ++added;
+    }
+    if (!added) { say("None of the bones in " + BaseName(path) + " match this model's skeleton."); return 0; }
+    AutoMapLocomotion(ma);
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), " (%d/%d bone tracks matched%s)", matched, total, retarget ? ", retargeted to this model's proportions" : "");
+    say("Added " + std::to_string(added) + " clip" + (added == 1 ? "" : "s") + ": " + names + buf);
+    return added;
 }
 
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,

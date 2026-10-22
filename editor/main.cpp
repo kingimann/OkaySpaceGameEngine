@@ -3240,7 +3240,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
         ImGui::Separator();
         if (ImGui::MenuItem("Import Model...")) g_showImportObj = true;   // glTF/GLB/OBJ/FBX/...
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", FBX, DAE, STL, ..." : "");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", DAE, STL, ..." : "");
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
             for (const std::string& p : g_recent) {
@@ -4793,7 +4793,7 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
     GameObject* root = okay::AttachCharacterModel(ed.scene(), target, path, &log);
     if (!root) {
         ConsoleLog("Character model import failed: " + path +
-                   (okay::AssimpAvailable() ? "" : " (this build lacks Assimp; use .obj/.gltf/.glb)"), 2);
+                   (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.gltf/.glb; other formats need Assimp)"), 2);
         return;
     }
     ed.Select(target); ed.dirty = true;
@@ -10220,7 +10220,7 @@ void DrawFileDialogs(EditorState& ed) {
     if (ImGui::BeginPopupModal("Import Model", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Import a model. Supported: %s", okay::ImportableExtensions().c_str());
         if (!okay::AssimpAvailable())
-            ImGui::TextDisabled("(.fbx/.dae/... need a build with -DOKAY_USE_ASSIMP=ON.)");
+            ImGui::TextDisabled("(FBX is built in. .dae/.stl/... need a build with -DOKAY_USE_ASSIMP=ON.)");
         ImGui::TextDisabled("Tip: export from Blender / Mixamo / Sketchfab as glTF or OBJ.");
         ImGui::SetNextItemWidth(320);
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
@@ -13617,6 +13617,28 @@ static void StopModelScenePreview(EditorState& ed) {
     g_maScenePrevBase.clear();
 }
 
+// "Add animations from file..." (Mixamo-style: one character + one file per
+// animation). Opens a multi-select picker and adds every clip to `modelRoot`.
+static void AddAnimationsFromFilesUI(EditorState& ed, GameObject* modelRoot) {
+    const char* filt[4] = {"*.fbx", "*.glb", "*.gltf", "*.dae"};
+    const char* picked = tinyfd_openFileDialog("Add animations (Mixamo FBX, glTF...)", "", 4, filt, "Animation files", 1);
+    if (!picked || !*picked) return;
+    ed.PushUndo();
+    std::string all = picked; int total = 0;
+    std::size_t start = 0;
+    while (start <= all.size()) {   // tinyfd separates multiple picks with '|'
+        std::size_t bar = all.find('|', start);
+        std::string one = all.substr(start, bar == std::string::npos ? std::string::npos : bar - start);
+        start = bar == std::string::npos ? all.size() + 1 : bar + 1;
+        if (one.empty()) continue;
+        std::string log;
+        int n = okay::AddAnimationsFromFile(ed.scene(), modelRoot, one, &log);
+        total += n;
+        ConsoleLog(std::filesystem::path(one).filename().string() + ": " + log, n > 0 ? 0 : 1);
+    }
+    if (total > 0) { ed.dirty = true; ConsoleLog("Added " + std::to_string(total) + " animation" + (total == 1 ? "" : "s") + " — pick them in the Clip list."); }
+}
+
 static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     static std::unordered_map<void*, float> s_time;
     static std::unordered_map<void*, bool>  s_run;
@@ -13744,6 +13766,11 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
 
     // ---- Manage the clip library: rename / duplicate / delete ----
     ImGui::Separator();
+    if (ImGui::Button("+ Add animations from file\xE2\x80\xA6##maed")) AddAnimationsFromFilesUI(ed, go);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Add clips from other files to this model: Mixamo animations\n"
+                          "(download them \"Without Skin\"), or any FBX / glTF with takes.\n"
+                          "Bones are matched by name; other characters' clips are retargeted.");
     {
         char nb[64];
         std::snprintf(nb, sizeof(nb), "%s", ma->clips[ma->active].name.c_str());
@@ -14511,6 +14538,20 @@ static void DrawAnimationEditor(EditorState& ed) {
             if (g_maScenePrev && g_maScenePrev != ma) StopModelScenePreview(ed);
             DrawModelAnim(ed, maObj, ma);
             ImGui::End(); return;
+        }
+        // A rigged model with no clips yet: the import root is the topmost ancestor
+        // that owns a SkinnedMesh somewhere below it.
+        bool rigged = false; GameObject* modelRoot = go;
+        for (Transform* pt = go->transform; pt; pt = pt->Parent())
+            if (pt->gameObject) {
+                for (const auto& up : ed.scene().Objects())
+                    if (up->IsSelfOrDescendantOf(pt->gameObject) && up->GetComponent<SkinnedMesh>()) { rigged = true; modelRoot = pt->gameObject; break; }
+            }
+        if (rigged) {
+            ImGui::TextWrapped("'%s' is a rigged model with no animations yet.", modelRoot->name.c_str());
+            if (ImGui::Button("+ Add animations from file\xE2\x80\xA6", ImVec2(260, 0))) AddAnimationsFromFilesUI(ed, modelRoot);
+            ImGui::TextDisabled("Mixamo: download each animation as FBX \"Without Skin\" and add them here.");
+            ImGui::Separator();
         }
     }
     StopModelScenePreview(ed);
@@ -29617,7 +29658,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = okay::ImportModelScene(ed.scene(), path, &ok);
                 if (!ok || !placed)
                     ConsoleLog("Model import failed: " + path +
-                               (okay::AssimpAvailable() ? "" : " (this build lacks Assimp; use .obj/.gltf/.glb)"), 2);
+                               (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.gltf/.glb; other formats need Assimp)"), 2);
             }
             if (placed) {
                 placed->transform->SetPosition(drop);
@@ -31539,6 +31580,13 @@ int main(int argc, char** argv) {
 
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
+        // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
+        // views (one upload of the bind pose, bone matrices per frame) instead of
+        // every vertex on the CPU + a full mesh re-upload each frame.
+#if defined(_WIN32)
+        okay::SkinnedMesh::GpuSkinning() = g_gpuRender && g_d3dReady && g_d3dRenderer && g_d3dRenderer->SupportsGpuSkinning() &&
+                                           !std::getenv("OKAY_CPU_SKINNING");
+#endif
         ImGui::NewFrame();
 
         // Clear editor globals still pointing at an object deleted last frame (hierarchy

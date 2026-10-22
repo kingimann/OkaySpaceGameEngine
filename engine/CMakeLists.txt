@@ -53,6 +53,7 @@ add_library(okay_engine
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
     src/Render/ModelImport.cpp
+    third_party/ufbx/ufbx.c
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
@@ -65,7 +66,15 @@ target_include_directories(okay_engine PUBLIC
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/font8x8
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
 )
+# ufbx (FBX importer, MIT/public domain) is a single C file: no warnings, optimised
+# even in debug builds (parsing big FBX files unoptimised is painfully slow).
+if(MSVC)
+    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
+else()
+    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
+endif()
 # Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
 # is required in addition to `-w`: the vendored font8x8 tables initialise `char`
 # arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR

@@ -47,4 +47,15 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok = n
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog = nullptr);
 
+/// Add the animation clips stored in `path` (Mixamo "without skin" downloads,
+/// any FBX/glTF with takes) to the model under `modelRoot`. Bones are matched
+/// by name, ignoring rig prefixes ("mixamorig:LeftArm" == "LeftArm"). When the
+/// source skeleton is proportioned differently, only rotations transfer plus the
+/// hips' motion scaled to this model's height (humanoid retargeting), so a clip
+/// made for another character doesn't stretch this one. Idle/walk/run/jump are
+/// mapped from the clip names if not set yet. Returns how many clips were added;
+/// `outLog` gets a one-line summary (or why nothing was added).
+int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string& path,
+                          std::string* outLog = nullptr);
+
 } // namespace okay

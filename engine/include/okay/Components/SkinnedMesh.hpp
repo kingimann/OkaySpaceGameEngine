@@ -40,6 +40,20 @@ public:
     /// one is uploaded once per frame however many views / passes draw it.
     std::uint64_t version = 1;
 
+    /// Skin matrices from the last Skin(): meshNode^-1 * jointWorld * inverseBind,
+    /// one per joint. A GPU renderer that skins in its vertex shader draws `bind`
+    /// with these instead of the CPU-deformed mesh.
+    std::vector<Mat4> palette;
+    /// Max joints a GPU skinning shader takes; bigger rigs deform on the CPU.
+    static constexpr int kMaxGpuJoints = 256;
+
+    /// Set by the host when every view it draws goes through a renderer that
+    /// skins on the GPU: Skin() then only builds the palette (no per-vertex CPU
+    /// work, no mesh re-upload) and MeshRenderer::mesh keeps the bind pose.
+    static bool& GpuSkinning() { static bool on = false; return on; }
+    /// Whether this mesh is being skinned on the GPU right now.
+    bool UsesGpuSkinning() const { return GpuSkinning() && (int)joints.size() <= kMaxGpuJoints && Ready(); }
+
     void Start() override  { ResolveJoints(); Skin(); }
     void Update(float) override { Skin(); }
 
@@ -81,7 +95,10 @@ public:
             mix(jw);
             sk[j] = jw;   // finished below once we know we're not skipping
         }
-        if (m_haveHash && h == m_lastHash && !mr->mesh.vertices.empty()) return;
+        const bool gpu = UsesGpuSkinning();
+        // Skip when nothing moved — unless we're switching between CPU and GPU
+        // skinning (the mesh must go back to / leave the bind pose).
+        if (m_haveHash && h == m_lastHash && gpu == m_lastGpu && !mr->mesh.vertices.empty()) return;
         m_lastHash = h; m_haveHash = true;
         ++version;
 
@@ -90,6 +107,15 @@ public:
             Mat4 ib = j < inverseBind.size() ? inverseBind[j] : Mat4::Identity();
             sk[j] = meshInv * sk[j] * ib;
         }
+        palette = sk;
+        if (gpu) {
+            // The vertex shader deforms; leave the bind pose in the renderer's mesh
+            // (restored once when switching over from CPU skinning).
+            if (!m_lastGpu || mr->mesh.vertices.size() != bind.vertices.size()) mr->mesh = bind;
+            m_lastGpu = true;
+            return;
+        }
+        m_lastGpu = false;
 
         // Deform IN PLACE: after the first frame the renderer's mesh already has the
         // bind topology, so only positions/normals are rewritten — no per-frame copy
@@ -134,6 +160,7 @@ public:
 private:
     std::uint64_t m_lastHash = 0;    ///< pose hash of the last deform (skip when equal)
     bool          m_haveHash = false;
+    bool          m_lastGpu = false;     ///< the last Skin() left the deform to the GPU
 };
 
 } // namespace okay

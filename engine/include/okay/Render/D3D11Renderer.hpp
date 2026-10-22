@@ -55,6 +55,8 @@ public:
     bool InitShared(void* device);
     /// True when built on a shared device (InitShared).
     bool Shared() const;
+    /// The GPU skinning shaders compiled and are ready (see SkinnedMesh::GpuSkinning).
+    bool SupportsGpuSkinning() const;
     /// Render like RenderToPixels, but resolve into `dstTexture` (an
     /// ID3D11Texture2D* of the shared device, w*h, R8G8B8A8_UNORM, not
     /// multisampled) instead of reading back. Every piece of pipeline state the

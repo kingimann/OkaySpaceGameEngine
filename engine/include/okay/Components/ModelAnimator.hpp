@@ -28,7 +28,7 @@ public:
     /// A named marker on a clip's timeline; fires as playback crosses it
     /// (footstep sounds, hit windows) — same idea as Character's AnimEvents.
     struct ClipEvent { float time = 0.0f; std::string name; };
-    struct Clip      { std::string name; std::vector<NodeClip> nodes; std::vector<ClipEvent> events; };
+    struct Clip      { std::string name; std::vector<NodeClip> nodes; std::vector<ClipEvent> events; bool normalized = false; };
 
     std::vector<Clip> clips;
     int   active   = 0;      ///< index of the clip to play
@@ -221,7 +221,7 @@ public:
         m_blendW = blendTime > 0.001f ? std::fmin(1.0f, m_blendW + dt / blendTime) : 1.0f;
         float w = m_blendW * m_blendW * (3.0f - 2.0f * m_blendW);   // smoothstep ease
         for (const BlendFrom& s : m_blend) {
-            GameObject* g = sc->Find(s.node);
+            GameObject* g = FindNode(s.node);
             if (!g || !g->transform) continue;
             Transform* t = g->transform;
             t->localPosition = s.pos + (t->localPosition - s.pos) * w;
@@ -296,14 +296,15 @@ public:
         m_blend.clear(); m_blendW = 0.0f;
         if (blendTime > 0.001f) {
             for (const NodeClip& nc : clips[i].nodes)
-                if (GameObject* g = sc->Find(nc.node); g && g->transform)
+                if (GameObject* g = FindNode(nc.node); g && g->transform)
                     m_blend.push_back({nc.node, g->transform->localPosition,
                                        g->transform->localRotation, g->transform->localScale});
         }
         m_clock = 0.0f;   // the event clock restarts with the node Animators
         const NodeClip* rootNC = (rootMotion || inPlace) ? RootMotionClip() : nullptr;
+        NormalizeClip(clips[i]);
         for (NodeClip& nc : clips[i].nodes) {
-            GameObject* g = sc->Find(nc.node);
+            GameObject* g = FindNode(nc.node);
             if (!g) continue;
             Animator* an = g->GetComponent<Animator>();
             if (!an) an = g->AddComponent<Animator>();
@@ -521,7 +522,7 @@ public:
             return nullptr;
         };
         auto drive = [&](const std::string& name, const NodeClip* a, const NodeClip* b) {
-            GameObject* g = sc->Find(name);
+            GameObject* g = FindNode(name);
             if (!g || !g->transform) return;
             if (Animator* an = g->GetComponent<Animator>()) an->playing = false;
             Transform* t = g->transform;
@@ -579,6 +580,32 @@ public:
             if (range > bestRange) { bestRange = range; best = &nc; }
         }
         return bestRange > 1e-5f ? best : nullptr;   // nothing travels = nothing to strip
+    }
+
+    /// The object named `name` inside THIS model (two characters share bone
+    /// names like "mixamorig:Hips" — a scene-wide lookup would let one animate
+    /// the other). Falls back to the whole scene for rigs outside the subtree.
+    GameObject* FindNode(const std::string& name) const {
+        if (!gameObject || !gameObject->transform) return nullptr;
+        std::vector<Transform*> stack{gameObject->transform};
+        while (!stack.empty()) {
+            Transform* t = stack.back(); stack.pop_back();
+            if (t->gameObject && t->gameObject->name == name) return t->gameObject;
+            for (Transform* c : t->Children()) stack.push_back(c);
+        }
+        Scene* sc = gameObject->scene();
+        return sc ? sc->Find(name) : nullptr;
+    }
+
+    /// Every node track spans the whole clip: a bone whose keys end early holds
+    /// its last value instead of looping on its own (per-node clips used to loop
+    /// at their own length, desyncing limbs after the first cycle).
+    static void NormalizeClip(Clip& c) {
+        if (c.normalized) return;
+        float len = 0.0f;
+        for (const auto& nc : c.nodes) len = std::fmax(len, nc.clip.Length());
+        for (auto& nc : c.nodes) nc.clip.SpanTracks(len);
+        c.normalized = true;
     }
 
 private:

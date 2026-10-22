@@ -13,10 +13,14 @@ class AnimationClip {
 public:
     std::string name = "Clip";
     bool  loop = true;
+    /// Interpolation for tracks AddKey creates: smooth (monotone cubic) for
+    /// hand-placed keys; importers set false so baked/sampled data (FBX, glTF
+    /// LINEAR) plays back exactly as authored.
+    bool  smoothKeys = true;
 
     void SetCurve(const std::string& track, AnimationCurve curve) {
         if (curve.Duration() > m_length) m_length = curve.Duration();
-        if (loop) curve.wrap = AnimationCurve::Wrap::Loop;
+        if (loop && !m_spanned) curve.wrap = AnimationCurve::Wrap::Loop;
         m_tracks[track] = std::move(curve);
     }
 
@@ -26,17 +30,30 @@ public:
     /// the old rebuild-the-whole-track-per-key made one Mixamo FBX clip take
     /// over a minute to import (the editor read as frozen).
     void AddKey(const std::string& track, float time, float value) {
-        AnimationCurve& c = m_tracks[track];
-        if (loop) c.wrap = AnimationCurve::Wrap::Loop;
-        c.AddOrReplaceKey(time, value, 1e-4f);
+        auto it = m_tracks.find(track);
+        if (it == m_tracks.end()) { it = m_tracks.emplace(track, AnimationCurve{}).first; it->second.smooth = smoothKeys; }
+        AnimationCurve& c = it->second;
+        if (loop && !m_spanned) c.wrap = AnimationCurve::Wrap::Loop;
+        // Appending in time order is O(1); only out-of-order keys need the replace search.
+        if (c.Empty() || time > c.Keys().back().time + 1e-4f) c.AddKey(time, value);
+        else c.AddOrReplaceKey(time, value, 1e-4f);
         if (c.Duration() > m_length) m_length = c.Duration();
     }
     void RemoveTrack(const std::string& track) { m_tracks.erase(track); Recompute(); }
+    /// Make the clip `length` long with every track CLAMPED (held at its ends):
+    /// the player wraps time over the whole clip, so tracks must not loop on
+    /// their own shorter spans.
+    void SpanTracks(float length) {
+        for (auto& kv : m_tracks) kv.second.wrap = AnimationCurve::Wrap::Clamp;
+        m_spanLength = length;
+        if (length > m_length) m_length = length;
+        m_spanned = true;
+    }
     AnimationCurve* Track(const std::string& track) {
         auto it = m_tracks.find(track); return it == m_tracks.end() ? nullptr : &it->second;
     }
     void Recompute() {
-        m_length = 0.0f;
+        m_length = m_spanLength;   // a spanned clip keeps its full length (e.g. after RemoveTrack)
         for (auto& kv : m_tracks) if (kv.second.Duration() > m_length) m_length = kv.second.Duration();
     }
 
@@ -68,6 +85,7 @@ public:
     /// exact values instead of snapping to the nearest surviving key.
     void Trim(float t0, float t1) {
         if (t1 <= t0) return;
+        m_spanLength = 0.0f;   // the cut defines the new length
         for (auto& kv : m_tracks) {
             AnimationCurve& c = kv.second;
             AnimationCurve nc; nc.wrap = c.wrap; nc.smooth = c.smooth;
@@ -83,6 +101,7 @@ public:
     /// Stretch/compress the clip in time: factor 2 = twice as long (half speed),
     /// 0.5 = twice as fast. Key values are untouched - only their times move.
     void ScaleTime(float factor) {
+        m_spanLength *= factor > 0.0f ? factor : 1.0f;
         if (factor <= 1e-4f) return;
         for (auto& kv : m_tracks) {
             AnimationCurve nc; nc.wrap = kv.second.wrap; nc.smooth = kv.second.smooth;
@@ -95,6 +114,8 @@ public:
 private:
     std::unordered_map<std::string, AnimationCurve> m_tracks;
     float m_length = 0.0f;
+    float m_spanLength = 0.0f;   // SpanTracks: the whole clip's length
+    bool  m_spanned = false;     // tracks are clamped to one clip-wide span
 };
 
 } // namespace okay

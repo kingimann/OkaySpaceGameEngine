@@ -1680,6 +1680,10 @@ static void TurnModel(GameObject* player, GameObject* modelRoot, const Quat& fix
     }
 }
 
+bool ModelBounds(Scene& scene, GameObject* root, Vec3& lo, Vec3& hi) {
+    return root && SubtreeBounds(scene, root, Mat4::Identity(), lo, hi);
+}
+
 GameObject* FindCharacterModelRoot(Scene& scene, GameObject* player) {
     if (!player || !player->transform) return nullptr;
     auto hasModel = [&](GameObject* root) {

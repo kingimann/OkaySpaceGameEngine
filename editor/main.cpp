@@ -2169,8 +2169,23 @@ void SaveAllBeforeExit(EditorState& ed) {
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false, g_showImportObj = false;
-bool g_importAutoRig = false;    // Import Model dialog: auto-rig the model as a humanoid after import
-char g_objPathBuf[256] = "model.obj";
+// ---- Import Model: the OS file picker opens first, then a settings dialog --
+// The picked file is pre-imported into a throwaway scene so the dialog can say
+// what's inside (meshes, skeleton, clips, size) and pick a sensible setup.
+struct ImportScan {
+    std::string path;
+    bool ok = false;
+    okay::ModelReport rep;
+    int humanoid = 0;        // humanoid bones recognised (>= 8: built-in anims can drive it)
+    float height = 0.0f;     // as imported, in world units
+    bool hasLoco = false;    // carries its own idle + walk clips
+};
+ImportScan g_importScan;
+int   g_importMode = 0;      // 0 as is, 1 built-in anims on its own skeleton, 2 auto-rig (merge + bind)
+bool  g_importCopy = true;   // copy the file into the project's Assets first
+bool  g_importResize = false;
+float g_importHeight = 1.8f;
+static void PickAndImportModel();   // file picker -> settings dialog (defined with the importers)
 // 2D sprite-sheet character wizard.
 bool g_showSpriteChar = false;
 char g_ssPathBuf[256] = "";
@@ -3552,7 +3567,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("New 2D Scene")) { ed.NewScene2D(); ConsoleLog("New 2D project"); }
         if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
         ImGui::Separator();
-        if (ImGui::MenuItem("Import Model...")) g_showImportObj = true;   // glTF/GLB/OBJ/FBX/...
+        if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", DAE, STL, ..." : "");
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
@@ -5123,6 +5138,38 @@ static const char* OpenModelFileDialog(const char* title, bool multi = false) {
     std::vector<const char*> filt;
     for (const auto& f : ModelFilterPatterns()) filt.push_back(f.c_str());
     return tinyfd_openFileDialog(title, "", (int)filt.size(), filt.data(), "3D models", multi ? 1 : 0);
+}
+// Pre-import `path` into a scratch scene and open the Import Model settings
+// dialog on what was found.
+static void ScanModelForImport(const std::string& path) {
+    ImportScan sc; sc.path = path;
+    okay::Scene tmp; tmp.physicsEnabled = false;
+    bool ok = false;
+    if (GameObject* r = okay::ImportModelScene(tmp, path, &ok); r && ok) {
+        sc.ok = true;
+        sc.rep = okay::AnalyzeModel(tmp, r);
+        sc.humanoid = okay::CountHumanoidBones(tmp, r);
+        Vec3 lo, hi;
+        if (okay::ModelBounds(tmp, r, lo, hi)) sc.height = hi.y - lo.y;
+        bool idle = false, walk = false;
+        for (std::string n : sc.rep.clipNames) {
+            n = Lower(n);
+            idle |= n.find("idle") != std::string::npos || n.find("stand") != std::string::npos;
+            walk |= n.find("walk") != std::string::npos;
+        }
+        sc.hasLoco = idle && walk;
+    }
+    g_importScan = sc;
+    // A rigged humanoid without its own idle/walk would sit in T-pose: default
+    // to the built-in animations on its own skeleton.
+    g_importMode = (sc.humanoid >= 8 && sc.rep.skinnedMeshes > 0 && !sc.hasLoco) ? 1 : 0;
+    // Centimetre exports (180 units tall) and tiny ones get resized by default.
+    g_importResize = sc.height > 0.0f && (sc.height > 20.0f || sc.height < 0.05f);
+    g_importHeight = sc.humanoid >= 8 ? 1.8f : 1.0f;
+    g_showImportObj = true;
+}
+static void PickAndImportModel() {
+    if (const char* p = OpenModelFileDialog("Import model")) ScanModelForImport(p);
 }
 static const char* ImportKindLabel(const std::string& extLower) {
     if (extLower==".png"||extLower==".jpg"||extLower==".jpeg"||extLower==".bmp"||extLower==".tga"||extLower==".gif") return "texture";
@@ -12074,46 +12121,116 @@ void DrawFileDialogs(EditorState& ed) {
 
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Import Model", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("Import a model. Supported: %s", okay::ImportableExtensions().c_str());
-        if (!okay::AssimpAvailable())
-            ImGui::TextDisabled("(FBX, glTF and OBJ are built in. Other formats need a build with -DOKAY_USE_ASSIMP=ON.)");
-        ImGui::TextDisabled("Tip: from Blender 2.8+, export FBX or glTF (.blend files from newer Blender versions don't import).");
-        ImGui::SetNextItemWidth(320);
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        bool objGo = ImGui::InputText("##objpath", g_objPathBuf, sizeof(g_objPathBuf),
-                                      ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::SameLine(0, 4);
-        if (ImGui::Button("...##objbrowse")) {
-            std::vector<const char*> filt;
-            for (const auto& f : ModelFilterPatterns()) filt.push_back(f.c_str());
-            if (const char* p = tinyfd_openFileDialog("Import model", "", (int)filt.size(), filt.data(),
-                                                      "3D models (FBX, glTF, OBJ, DAE, STL, 3DS, Blend...)", 0))
-                std::snprintf(g_objPathBuf, sizeof(g_objPathBuf), "%s", p);
-        }
-        // One-step character import: rig the model to the humanoid skeleton right
-        // after importing, so it can play every built-in animation immediately.
-        ImGui::Checkbox("Auto-rig as a humanoid character (for people/animals you want to animate)", &g_importAutoRig);
-        if (g_importAutoRig)
-            ImGui::TextDisabled("Nearest-bone auto-weights fit the engine's humanoid rig; texture and clips carry over.");
-        if (ImGui::Button("Import", ImVec2(120, 0)) || objGo) {
-            // Scene import: a glTF brings in its node hierarchy + meshes + animation;
-            // OBJ/Assimp come in as a single mesh object.
-            bool okl = false;
-            GameObject* root = okay::ImportModelScene(ed.scene(), g_objPathBuf, &okl);
-            if (okl && root) {
-                ed.Select(root); ed.view3D = true; ed.dirty = true;
-                if (g_importAutoRig) {
-                    RigModelHumanoid(ed, root);     // import + auto-rig in one action
-                    ConsoleLog("Imported + auto-rigged " + std::string(g_objPathBuf));
-                } else {
-                    ConsoleLog("Imported " + std::string(g_objPathBuf));
+        const ImportScan& sc = g_importScan;
+        namespace fs = std::filesystem;
+        ImGui::Text("%s", fs::path(sc.path).filename().string().c_str());
+        ImGui::TextDisabled("%s", sc.path.c_str());
+        bool chooseAgain = false;
+        if (!sc.ok) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
+            ImGui::TextWrapped("Couldn't read this file.");
+            ImGui::PopStyleColor();
+            ImGui::TextWrapped("Supported: %s", okay::ImportableExtensions().c_str());
+            ImGui::TextDisabled("Tip: from Blender 2.8+, export FBX or glTF (.blend files from newer Blender versions don't import).");
+            if (ImGui::Button("Choose Another...", ImVec2(150, 0))) chooseAgain = true;
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::SeparatorText("Found");
+            const okay::ModelReport& r = sc.rep;
+            ImGui::BulletText("%d mesh%s, %d vertices, %d triangles", r.meshes, r.meshes == 1 ? "" : "es", r.vertices, r.triangles);
+            if (r.skinnedMeshes > 0)
+                ImGui::BulletText("Skeleton: %d bones%s%s", r.bones, r.rootBone.empty() ? "" : ", root ", r.rootBone.c_str());
+            else
+                ImGui::BulletText("No skeleton (static model)");
+            if (sc.humanoid >= 8) ImGui::BulletText("Humanoid: %d/15 body bones recognised", sc.humanoid);
+            if (r.clips > 0) {
+                std::string names;
+                for (std::size_t i = 0; i < r.clipNames.size() && i < 6; ++i) names += (i ? ", " : "") + r.clipNames[i];
+                if (r.clipNames.size() > 6) names += ", ...";
+                ImGui::BulletText("%d animation clip%s: %s", r.clips, r.clips == 1 ? "" : "s", names.c_str());
+            } else {
+                ImGui::BulletText("No animation clips");
+            }
+            if (r.blendShapes > 0) ImGui::BulletText("%d blend shapes", r.blendShapes);
+            if (sc.height > 0.0f) ImGui::BulletText("Size: %.2f units tall%s", sc.height,
+                                                    sc.height > 20.0f ? " (probably centimetres)" : "");
+            for (std::size_t i = 0; i < r.warnings.size() && i < 4; ++i)
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.35f, 1.0f), "! %s", r.warnings[i].c_str());
+
+            ImGui::SeparatorText("Setup");
+            ImGui::RadioButton("Keep as is", &g_importMode, 0);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import the hierarchy, meshes, materials and the file's own clips unchanged.");
+            const bool canBuiltin = sc.humanoid >= 8 && r.skinnedMeshes > 0;
+            ImGui::BeginDisabled(!canBuiltin);
+            ImGui::RadioButton("Use built-in animations (keeps the model's own skin)", &g_importMode, 1);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(canBuiltin ? "The engine's idle / walk / run / jump / gesture animations play on this\nmodel's own skeleton (bones matched by name). Best for rigged characters\nwithout clips of their own."
+                                             : "Needs a skinned humanoid skeleton (8+ recognisable body bones).");
+            ImGui::RadioButton("Auto-rig to the built-in humanoid (merges meshes)", &g_importMode, 2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("For UNRIGGED people/animals: merge the meshes and bind them to the engine's\nhumanoid skeleton with automatic weights. Stand it upright facing +Z.");
+            if (g_importMode == 1 && !canBuiltin) g_importMode = 0;
+            ImGui::Checkbox("Resize to", &g_importResize);
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            ImGui::BeginDisabled(!g_importResize);
+            ImGui::DragFloat("units tall##imph", &g_importHeight, 0.05f, 0.05f, 500.0f, "%.2f");
+            ImGui::EndDisabled();
+            ImGui::Checkbox("Copy the file into the project's Assets (recommended)", &g_importCopy);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene then keeps working if the original file moves,\nand the model ships with your game.");
+
+            ImGui::Spacing();
+            if (ImGui::Button("Import", ImVec2(120, 0))) {
+                std::string src = sc.path;
+                if (g_importCopy) {
+                    std::error_code ec;
+                    fs::path assets = g_assetImportDir.empty() ? fs::path("Assets") : fs::path(g_assetImportDir);
+                    std::string a = fs::weakly_canonical(assets, ec).string(), f = fs::weakly_canonical(src, ec).string();
+                    if (a.empty() || f.rfind(a, 0) != 0) {   // not already inside the project
+                        std::string copied = ImportAssetFile(src, {});
+                        if (!copied.empty()) src = copied;
+                    }
                 }
-                LogModelReport(ed, root);
-            } else ConsoleLog("Import failed: couldn't read " + std::string(g_objPathBuf), 2);
-            ImGui::CloseCurrentPopup();
+                bool okl = false;
+                ed.PushUndo();
+                GameObject* root = okay::ImportModelScene(ed.scene(), src, &okl);
+                if (okl && root) {
+                    // Drop it where the Scene view is looking, standing on the ground plane.
+                    root->transform->SetPosition({ed.camTarget.x, 0.0f, ed.camTarget.z});
+                    Vec3 lo, hi;
+                    if (g_importResize && okay::ModelBounds(ed.scene(), root, lo, hi) && hi.y - lo.y > 1e-5f)
+                        root->transform->localScale = root->transform->localScale * (g_importHeight / (hi.y - lo.y));
+                    if (okay::ModelBounds(ed.scene(), root, lo, hi))   // feet on y = 0
+                        root->transform->SetPosition(root->transform->Position() + Vec3{0.0f, -lo.y, 0.0f});
+                    ed.Select(root); ed.view3D = true; ed.dirty = true;
+                    ConsoleLog("Imported " + fs::path(src).filename().string());
+                    if (g_importMode == 1) {
+                        std::string log;
+                        okay::EnableBuiltinAnimations(ed.scene(), root, &log);
+                        ConsoleLog(log + " - press Play to see it move");
+                    } else if (g_importMode == 2) {
+                        RigModelHumanoid(ed, root);
+                    }
+                    LogModelReport(ed, root);
+                    // Frame the whole model (its root has no mesh of its own to focus on).
+                    if (okay::ModelBounds(ed.scene(), root, lo, hi)) {
+                        Vec3 size = hi - lo;
+                        float ext = std::fmax(size.y, std::fmax(size.x, size.z));
+                        ed.camTarget = (lo + hi) * 0.5f;
+                        ed.camDist = std::fmax(1.0f, ext * 1.8f);
+                    }
+                } else ConsoleLog("Import failed: couldn't read " + src, 2);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Choose Another...", ImVec2(150, 0))) chooseAgain = true;
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        if (chooseAgain) {
+            ImGui::CloseCurrentPopup();
+            PickAndImportModel();
+        }
         ImGui::EndPopup();
     }
 
@@ -13587,6 +13704,17 @@ void DrawHierarchy(EditorState& ed) {
                 if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
                 if (!node->GetComponent<Character>()) {
                     ImGui::Separator();
+                    // A skinned humanoid keeps its own mesh + weights: the built-in
+                    // animations play straight on its skeleton (retargeted by bone name).
+                    const int hb = okay::CountHumanoidBones(ed.scene(), node);
+                    if (hb >= 8 && ImGui::MenuItem("Use Built-in Animations")) {
+                        ed.PushUndo();
+                        std::string log;
+                        int found = okay::EnableBuiltinAnimations(ed.scene(), node, &log);
+                        ConsoleLog(log + (found >= 8 ? " - press Play, or pick a clip on its Character" : ""), found >= 8 ? 0 : 1);
+                        ed.Select(node); ed.dirty = true;
+                    }
+                    if (hb >= 8 && ImGui::IsItemHovered()) ImGui::SetTooltip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin (%d/15 humanoid bones recognised:\nMixamo, Unreal/Quaternius, Blender names). Best for rigged models with\nno clips of their own.", hb);
                     if (ImGui::MenuItem("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
                 }
@@ -35546,6 +35674,9 @@ int main(int argc, char** argv) {
                 ed.camYaw = 215.0f; ed.camPitch = 12.0f; ed.camDist = 4.5f;
                 ed.camTarget = p->transform->Position() + Vec3{0, 0.9f, 0};
             }
+            // OKAY_UI_IMPORTDLG=model.glb: the Import Model settings dialog on that file
+            // (what the OS file picker hands it).
+            if (const char* idl = std::getenv("OKAY_UI_IMPORTDLG"); idl && s_focusFrames == 31) ScanModelForImport(idl);
             // OKAY_UI_IMPORT=model.glb: import it and select it (screenshots of rigs).
             if (const char* imp = std::getenv("OKAY_UI_IMPORT"); imp && s_focusFrames == 31) {
                 bool okm = false;

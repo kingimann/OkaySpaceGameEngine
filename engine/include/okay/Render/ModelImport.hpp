@@ -56,13 +56,6 @@ struct ModelReport {
 };
 ModelReport AnalyzeModel(Scene& scene, GameObject* root);
 
-/// Make an imported model THE playable character of `player` (a controller
-/// object): import `path` as a child, scale it to the character's height,
-/// ground its feet on the player's origin, face it the way the body faces,
-/// wire its ModelAnimator locomotion (idle/walk/run auto-switch from movement,
-/// mapped from the clip names), and hide the default blocky Character body.
-/// Returns the imported model root (or nullptr on failure). `outLog`, when
-/// given, receives a one-line human-readable summary of what was wired.
 /// Make an imported humanoid play the engine's BUILT-IN animations (idle,
 /// walk, run, jump, gestures, emotions, authored clips) on its OWN skeleton and
 /// skin: adds a Character (drive-external) + HumanoidRetarget to `modelRoot`,
@@ -73,6 +66,9 @@ int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* ou
 /// How many of the 15 humanoid bones a model's skeleton has (0 = not a humanoid rig).
 int CountHumanoidBones(Scene& scene, GameObject* modelRoot);
 
+/// World-space bounds of every mesh under `root` as currently posed (skinned
+/// meshes deformed from their joints, whatever the renderer's skinning mode).
+bool ModelBounds(Scene& scene, GameObject* root, Vec3& lo, Vec3& hi);
 /// The imported model shown as `player`'s body: a child holding meshes /
 /// a skeleton (not the blocky "Rig", not a camera), or the player itself when
 /// a controller was added straight onto an imported model. nullptr if none.
@@ -88,6 +84,13 @@ int FaceCharacterModel(Scene& scene, GameObject* player, GameObject* modelRoot =
 /// you see. Returns a short summary for the console.
 std::string FitCharacterCollider(Scene& scene, GameObject* player, GameObject* modelRoot = nullptr);
 
+/// Make an imported model THE playable character of `player` (a controller
+/// object): import `path` as a child, scale it to the character's height,
+/// ground its feet on the player's origin, face it the way the body faces,
+/// wire its ModelAnimator locomotion (idle/walk/run auto-switch from movement,
+/// mapped from the clip names), and hide the default blocky Character body.
+/// Returns the imported model root (or nullptr on failure). `outLog`, when
+/// given, receives a one-line human-readable summary of what was wired.
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog = nullptr);
 

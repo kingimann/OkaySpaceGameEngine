@@ -79,6 +79,16 @@ public:
 
     /// Iterate the attached components in their stored order.
     const std::vector<std::unique_ptr<Component>>& Components() const { return m_components; }
+    /// Free every component except the Transform (used when the scene destroys
+    /// the object: the shell stays alive so stale pointers never dangle).
+    void StripToTransform() {
+        for (std::size_t i = m_components.size(); i-- > 0;)
+            if (m_components[i].get() != static_cast<Component*>(transform)) m_components.erase(m_components.begin() + (long)i);
+        active = false;
+        m_destroyed = true;
+    }
+    /// True once the scene destroyed this object (it's only a Transform shell now).
+    bool IsDestroyed() const { return m_destroyed; }
 
     /// True if `other` is this object or any ancestor of it — used by cameras to skip
     /// a whole subtree (e.g. hiding the local player's body, rig parts included, from
@@ -114,6 +124,7 @@ private:
 
     Scene* m_scene = nullptr;
     std::vector<std::unique_ptr<Component>> m_components;
+    bool m_destroyed = false;
 };
 
 // ---- Template implementations -----------------------------------------

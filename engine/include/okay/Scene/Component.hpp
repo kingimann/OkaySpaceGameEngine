@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_set>
 #include <string>
 
 namespace okay {
@@ -39,6 +40,9 @@ public:
     virtual void OnRender(IRenderer& /*renderer*/) {}
     /// Called when the component or its GameObject is destroyed.
     virtual void OnDestroy() {}
+    /// Objects in `dying` are about to be destroyed (this component survives):
+    /// drop any pointers to them or their transforms.
+    virtual void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& /*dying*/) {}
 
     // ---- 2D physics messages (dispatched by Physics2D) ----------------
     virtual void OnCollisionEnter2D(const Collision2D& /*collision*/) {}

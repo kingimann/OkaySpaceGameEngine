@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_set>
 // ---------------------------------------------------------------------------
 // SkinnedMesh — CPU skinning. Deforms a bind-pose mesh by a set of bone (joint)
 // Transforms each frame and writes the result into the sibling MeshRenderer, so a
@@ -110,6 +111,12 @@ public:
     // ---- Rig checks (inspector / import report) ----
     /// Joints whose bone object couldn't be found.
     int MissingJoints() const { int n = 0; for (Transform* t : joints) if (!t) ++n; return n; }
+    /// A deleted bone (the armature removed while the mesh stays) holds its last
+    /// pose rather than leaving a pointer to a dead transform.
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        for (Transform*& t : joints)
+            if (t && dying.count(t->gameObject)) t = nullptr;
+    }
     /// Vertices with no weight at all (they stay in the bind pose).
     int UnweightedVertices() const {
         int n = 0;

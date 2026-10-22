@@ -711,3 +711,8 @@ add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
 add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)
 target_link_libraries(test_okayscript_csharp PRIVATE okay::engine)
 add_test(NAME okayscript_csharp COMMAND test_okayscript_csharp)
+
+# Built-in animations on imported rigs: humanoid bone matching (Mixamo / UE / Rigify).
+add_executable(test_humanoid_retarget test_humanoid_retarget.cpp)
+target_link_libraries(test_humanoid_retarget PRIVATE okay::engine)
+add_test(NAME humanoid_retarget COMMAND test_humanoid_retarget)

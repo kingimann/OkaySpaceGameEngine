@@ -35469,6 +35469,13 @@ int main(int argc, char** argv) {
                 ed.Select(ed.CreateCamera());
                 ImGui::SetWindowFocus("Game");
             }
+            // OKAY_UI_DELETE=1 (with OKAY_UI_IMPORT): delete the imported model a moment
+            // later, the way the Delete key does (crash repro).
+            if (const char* dn = std::getenv("OKAY_UI_DELETE"); dn && s_focusFrames == 70) {
+                if (std::string(dn) != "1")   // a name: select that object first
+                    for (const auto& up : ed.scene().Objects()) if (up->name == dn) { ed.Select(up.get()); break; }
+                if (ed.selected()) { ConsoleLog("Dev: deleting " + ed.selected()->name); ed.DeleteSelected(); }
+            }
             if (std::getenv("OKAY_UI_VS") && s_focusFrames == 42) {
                 auto& vg = okay::editor::vsed::State().g;
                 vg = okay::editor::vsed::VsEditGraph{};

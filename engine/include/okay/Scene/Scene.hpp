@@ -193,6 +193,10 @@ private:
     Physics2D   m_physics;
     Physics3D   m_physics3d;
     std::vector<std::unique_ptr<GameObject>> m_objects;
+    /// Destroyed objects, stripped to their Transform. Kept until the scene is
+    /// cleared so a component still pointing at a deleted bone / target / follow
+    /// object reads a frozen transform instead of freed memory.
+    std::vector<std::unique_ptr<GameObject>> m_graveyard;
     std::uint64_t m_structureVersion = 1;
     bool m_hasOrdered = false;   // some component has a non-zero ExecutionOrder
     std::vector<Component*>  m_pending;   // awaiting Awake/Start

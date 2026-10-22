@@ -50,6 +50,7 @@ void Scene::Clear() {
     m_physics.Clear();
     mainCamera = nullptr;
     m_objects.clear();
+    m_graveyard.clear();
     ++m_structureVersion;
     renderSettings = RenderSettings{};   // back to default sky/ambient
 }
@@ -288,6 +289,15 @@ void Scene::Destroy(GameObject* go) {
 
 void Scene::FlushDestroyed() {
     if (m_destroyQueue.empty()) return;
+    // Survivors get to drop references to what's going away (skinned meshes to
+    // their bones, IK to its targets, ...) before anything is freed.
+    {
+        std::unordered_set<const GameObject*> dying(m_destroyQueue.begin(), m_destroyQueue.end());
+        std::vector<Component*> survivors;
+        for (Component* c : m_active)  if (c && !dying.count(c->gameObject)) survivors.push_back(c);
+        for (Component* c : m_pending) if (c && !dying.count(c->gameObject)) survivors.push_back(c);
+        for (Component* c : survivors) c->OnObjectsDestroyed(dying);
+    }
     for (GameObject* go : m_destroyQueue) {
         // Run OnDestroy and drop the object's components from the lists.
         for (auto& obj : m_objects) {
@@ -302,11 +312,17 @@ void Scene::FlushDestroyed() {
         if (mainCamera && mainCamera->gameObject == go) mainCamera = nullptr;
         if (m_mouseHover == go) m_mouseHover = nullptr;
         if (m_mousePress == go) m_mousePress = nullptr;
-        m_objects.erase(std::remove_if(m_objects.begin(), m_objects.end(),
-                                       [go](const std::unique_ptr<GameObject>& o) { return o.get() == go; }),
-                        m_objects.end());
+        // Keep the shell (GameObject + Transform) in the graveyard; free the rest.
+        for (auto it = m_objects.begin(); it != m_objects.end(); ++it)
+            if (it->get() == go) {
+                (*it)->StripToTransform();
+                m_graveyard.push_back(std::move(*it));
+                m_objects.erase(it);
+                break;
+            }
     }
     m_destroyQueue.clear();
+    if (m_graveyard.size() > 20000) m_graveyard.erase(m_graveyard.begin(), m_graveyard.begin() + 10000);   // bullets etc.: oldest shells go
     ++m_structureVersion;
 }
 

@@ -11030,7 +11030,7 @@ void DrawScriptEditor(EditorState& ed) {
         // widget's changed-flag), so pull the result straight back into the buffer here
         // rather than relying on IsTextChanged() after Render.
         if (!caret.insert.empty()) {
-            te.InsertText(caret.insert); caret.insert.clear(); caret.insertReplaceLen = 0;
+            te.InsertTextUndoable(caret.insert); caret.insert.clear(); caret.insertReplaceLen = 0;
             std::string t = te.GetText(); if (!t.empty() && t.back() == '\n') t.pop_back();
             SetCodeBuffer(sc, t); g_teHash[sc] = std::hash<std::string>{}(std::string(buf.data()));
             ed.dirty = true;
@@ -11078,6 +11078,15 @@ void DrawScriptEditor(EditorState& ed) {
         bool acKeyEsc   = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         if (acKeyTab || acKeyEnter || acKeyUp || acKeyDown || acKeyEsc)
             te.SetHandleKeyboardInputs(false);
+        // Tab with no suggestion and no selection indents with spaces (the file's
+        // style, shown as "Spaces" in the status bar), as one undo step.
+        bool tabSpaces = false;
+        if (!acWasOpen && !te.HasSelection() && !ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyCtrl &&
+            GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") &&
+            ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+            te.SetHandleKeyboardInputs(false);
+            tabSpaces = true;
+        }
 
         // Render. ImGui 1.92 dynamic fonts rasterise on demand, so the code font is
         // crisp at any zoom straight from PushFont(size) — no atlas-bake trick needed.
@@ -11111,10 +11120,23 @@ void DrawScriptEditor(EditorState& ed) {
                 prev == '{' && next == '}')
                 braceEnter = true;
         }
+        // Tab (indent / accept a suggestion) and Esc (dismiss) belong to the code.
+        // Otherwise ImGui's keyboard nav also acts on them - Tab jumps focus to the
+        // next widget, Esc "leaves" the child window - focus drops off the code and
+        // every key after (Ctrl+Z, Ctrl+V, arrows...) is ignored until a click.
+        if (s_codeFocus) {
+            const ImGuiID codeKeys = ImGui::GetID("##codeKeys");
+            ImGui::SetKeyOwner(ImGuiKey_Escape, codeKeys);
+            ImGui::SetKeyOwner(ImGuiKey_Tab, codeKeys);
+        }
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
         te.Render("##code", ImVec2(showMap ? -(mmW + 6.0f) : 0.0f, av.y), true);
         if (g_codeFont) ImGui::PopFont();
         te.SetHandleKeyboardInputs(true);
+        if (tabSpaces) {
+            const int col = te.GetCursorPosition().mColumn;
+            te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
+        }
         s_codeFocus = GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr;
         if (stepOver) {
             TextEditor::Coordinates c = te.GetCursorPosition();
@@ -11123,7 +11145,7 @@ void DrawScriptEditor(EditorState& ed) {
         if (pairOpen) {
             const char close = pairOpen == '(' ? ')' : pairOpen == '[' ? ']' : pairOpen == '{' ? '}' : pairOpen;
             TextEditor::Coordinates c = te.GetCursorPosition();
-            te.InsertText(std::string(1, close));
+            te.InsertTextUndoable(std::string(1, close));
             te.SetCursorPosition(c);
         }
         if (braceEnter) {
@@ -11132,7 +11154,7 @@ void DrawScriptEditor(EditorState& ed) {
             TextEditor::Coordinates c = te.GetCursorPosition();
             const std::string ln = te.GetCurrentLineText();
             std::string ind; for (char ch : ln) { if (ch == ' ' || ch == '\t') ind += ch; else break; }
-            te.InsertText("    \n" + ind);
+            te.InsertTextUndoable("    \n" + ind);
             te.SetCursorPosition(TextEditor::Coordinates(c.mLine, c.mColumn + 4));
         }
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
@@ -11541,12 +11563,17 @@ void DrawScriptEditor(EditorState& ed) {
             }
             // Only pop while actually TYPING: clicking the caret into an existing
             // word (reading/navigating) shouldn't open a popup that grabs keys.
-            static std::size_t s_acLastHash = 0; static double s_acLastEdit = -100.0;
+            // "Typing" = the caret is still where the last edit left it: the list stays
+            // up while you read it (no timeout) and goes away once you move the caret.
+            static std::size_t s_acLastHash = 0; static int s_acEditPos = -1;
             {
                 std::size_t h = std::hash<std::string>{}(std::string(t));
-                if (h != s_acLastHash) { s_acLastHash = h; s_acLastEdit = ImGui::GetTime(); }
+                static const void* s_acSc = nullptr;
+                if (s_acSc != (const void*)sc) { s_acSc = sc; s_acLastHash = h; s_acEditPos = -1; }   // switched script: not an edit
+                // Undo / redo / paste / cut (Ctrl held) change text too, but aren't typing.
+                if (h != s_acLastHash) { s_acLastHash = h; s_acEditPos = ImGui::GetIO().KeyCtrl ? -1 : p; }
             }
-            bool recentlyTyping = (ImGui::GetTime() - s_acLastEdit) < 4.0;
+            bool recentlyTyping = p == s_acEditPos;
             // Ctrl+Space: open suggestions right now, even for an empty / 1-letter word.
             static bool s_acForce = false;
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl &&
@@ -11600,7 +11627,7 @@ void DrawScriptEditor(EditorState& ed) {
                     if (w.size() < prefix.size()) continue;
                     if (memberMode && (w.back() == '(' || w.back() == '<') && w.size() - 1 == prefix.size() &&
                         w.compare(0, prefix.size(), prefix) == 0) continue;   // already typed in full
-                    if (!memberMode && w == prefix) continue;
+                    if (w == prefix) continue;   // already typed in full: nothing to complete
                     if (w.compare(0, prefix.size(), prefix) == 0) { exact.push_back({&w, false, 0}); continue; }
                     std::string lw = w; for (auto& ch : lw) ch = (char)std::tolower((unsigned char)ch);
                     if (lw.compare(0, lp.size(), lp) == 0) { ci.push_back({&w, false, 0}); continue; }
@@ -11627,21 +11654,21 @@ void DrawScriptEditor(EditorState& ed) {
                         int l0 = caret.line - 1;
                         int cEnd = caret.col - 1, cStart = cEnd - (int)prefix.size();
                         if (cStart < 0) cStart = 0;
+                        // Select the typed prefix so the insert replaces it as ONE undo step.
                         if (cEnd > cStart) {
+                            te.SetCursorPosition(TextEditor::Coordinates(l0, cEnd));
                             te.SetSelection(TextEditor::Coordinates(l0, cStart), TextEditor::Coordinates(l0, cEnd));
-                            te.Delete();
-                        }
-                        te.SetCursorPosition(TextEditor::Coordinates(l0, cStart));
+                        } else te.SetCursorPosition(TextEditor::Coordinates(l0, cStart));
                         const std::string* sg = memberMode ? nullptr : ScriptSignature(word);
                         bool zeroArg = sg && sg->find("()") != std::string::npos;
                         if (memberMode && !word.empty() && (word.back() == '(' || word.back() == '<')) {
                             // A method: Name() with the caret inside; a generic: GetComponent<|>()
                             const std::string nm = word.substr(0, word.size() - 1);
-                            if (word.back() == '(') te.InsertText(nm + "()");
-                            else te.InsertText(nm + "<>()");
+                            if (word.back() == '(') te.InsertTextUndoable(nm + "()");
+                            else te.InsertTextUndoable(nm + "<>()");
                             te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)nm.size() + 1));
                         } else {
-                            te.InsertText(sg ? word + "()" : word);
+                            te.InsertTextUndoable(sg ? word + "()" : word);
                             if (sg && !zeroArg)
                                 te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)word.size() + 1));
                         }
@@ -11794,7 +11821,7 @@ void DrawScriptEditor(EditorState& ed) {
                                 TextEditor::Coordinates(l1, te.LineLength(l1)));
                 if (l0 != l1 || te.LineLength(l1) > 0) te.Delete();
                 te.SetCursorPosition(TextEditor::Coordinates(l0, 0));
-                te.InsertText(repl);
+                te.InsertTextUndoable(repl);
                 te.SetCursorPosition(TextEditor::Coordinates(curL, curC));
                 syncFromWidget();
             };
@@ -12094,10 +12121,22 @@ static bool AnimationTabFocused() {
     return std::strstr(w->Name, "###AnimationDock") != nullptr;
 }
 
+// Windows with their own Ctrl+Z / C / V / D / S (the code editor, the graph editor):
+// while one has focus the scene's undo / copy / paste must stay out of the way. The
+// code editor widget isn't an ImGui text field, so WantTextInput doesn't cover it.
+static bool OwnShortcutsWindowFocused() {
+    ImGuiWindow* w = GImGui->NavWindow;
+    if (!w) return false;
+    if (w->RootWindow) w = w->RootWindow;
+    for (ImGuiWindow* c = GImGui->NavWindow; c; c = c->ParentWindow)
+        if (std::strncmp(c->Name, "Script Editor", 13) == 0 || std::strncmp(c->Name, "Visual Script", 13) == 0) return true;
+    return std::strncmp(w->Name, "Script Editor", 13) == 0 || std::strncmp(w->Name, "Visual Script", 13) == 0;
+}
+
 // Global keyboard shortcuts (ignored while typing in a field).
 void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput) return;
+    if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
     const bool animKeys = AnimationTabFocused();
     // Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. (Guard the undo with !Shift
@@ -35956,6 +35995,24 @@ int main(int argc, char** argv) {
             if (std::getenv("OKAY_UI_ASSETS") && s_focusFrames == 31) g_showAssetManager = true;
             // OKAY_UI_SCRIPT=1: give the selection a starter C# script and open the Script
             // Editor; OKAY_UI_VS=1: open the node editor on a small demo graph (screenshots).
+            // OKAY_UI_TYPE="text": type it into whatever has focus, a character every 3
+            // frames after ~13 s ('~' = Enter). Xvfb test displays don't deliver SDL text input.
+            if (const char* ty = std::getenv("OKAY_UI_TYPE")) {
+                static int s_tf = 0; ++s_tf;
+                static std::size_t s_ti = 0;
+                static bool s_go = false;
+                if (!s_go && (s_tf % 10) == 0) {   // OKAY_UI_TYPE_GO=<file>: wait for it to exist
+                    const char* goF = std::getenv("OKAY_UI_TYPE_GO");
+                    std::error_code gec;
+                    s_go = goF ? std::filesystem::exists(goF, gec) : s_tf >= 400;
+                }
+                const std::size_t n = std::strlen(ty);
+                if (s_go && s_ti < n && (s_tf % 3) == 0) {
+                    const char c = ty[s_ti++];
+                    if (c == '~') { ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, true); ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, false); }
+                    else ImGui::GetIO().AddInputCharacter((unsigned)c);
+                }
+            }
             // OKAY_UI_SCRIPTNEW=1: the Script Editor with nothing open (=2: + the New Script dialog).
             if (const char* sn = std::getenv("OKAY_UI_SCRIPTNEW"); sn && s_focusFrames == 42) {
                 ed.Select(nullptr);

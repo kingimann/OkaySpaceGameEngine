@@ -674,7 +674,9 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     if (g_gpuRender && SDL_GetTicks() >= s_gpuRetryAt) {
 #if defined(_WIN32)
         // Zero-copy: render straight into the SDL texture the panel shows.
-        if (g_d3dDirect && g_d3dRenderer) {
+        // (The small Animation preview, slot 3, keeps the read-back path: it renders
+        // with most of the scene hidden mid-frame and reads back cheaply.)
+        if (g_d3dDirect && g_d3dRenderer && slot != 3) {
             OKAY_TRACE("Render3D:d3d11-direct");
             if (SDL_Texture* t = EnsureViewTarget(slot, rw, rh)) {
                 if (void* dst = ViewTargetD3D(t)) {
@@ -3306,6 +3308,7 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderDockWindow("Project", down);
     ImGui::DockBuilderDockWindow("Services", down);
     ImGui::DockBuilderDockWindow("Script Editor", down);
+    ImGui::DockBuilderDockWindow("Animation###AnimationDock", down);
     ImGui::DockBuilderDockWindow("Stats", right);
     ImGui::DockBuilderDockWindow("Lighting", right);
     ImGui::DockBuilderDockWindow("Scene", center);
@@ -13733,7 +13736,7 @@ static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius) {
 // camera and size stay put; it still refreshes twice a second.
 static void DrawAnimPreview(EditorState& ed, GameObject* go,
                             const std::function<void()>& pose = {}, const std::function<void()>& restore = {},
-                            bool poseUnchanged = false) {
+                            bool poseUnchanged = false, ImVec2 size = ImVec2(0, 0)) {
     if (!go || !go->transform) return;
     static std::unordered_map<void*, ImVec2> orbit;   // (yaw, pitch) degrees
     static std::unordered_map<void*, float>  zoomMul;
@@ -13749,6 +13752,7 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
     float w = ImGui::GetContentRegionAvail().x;
     if (w > 420.0f) w = 420.0f; if (w < 80.0f) w = 80.0f;
     float h = w * 0.6f;
+    if (size.x > 0.0f && size.y > 0.0f) { w = std::max(80.0f, size.x); h = std::max(60.0f, size.y); }
     Mat4 view = Mat4::LookAt(eye, center, Vec3::Up);
     Mat4 proj = Mat4::Perspective(45.0f, w / h, 0.05f, 4000.0f);
     // Show ONLY the object being animated: temporarily hide everything outside its
@@ -13775,6 +13779,12 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
         s_lastGo = go; s_lastEye = eye; s_lastW = w; s_lastAt = SDL_GetTicks();
     }
     if (tex) {
+        {   // a soft backdrop so the transparent clear never reads as a black hole
+            ImVec2 bp = ImGui::GetCursorScreenPos();
+            ImDrawList* bdl = ImGui::GetWindowDrawList();
+            bdl->AddRectFilledMultiColor(bp, ImVec2(bp.x + w, bp.y + h),
+                IM_COL32(58, 66, 84, 255), IM_COL32(58, 66, 84, 255), IM_COL32(30, 33, 40, 255), IM_COL32(30, 33, 40, 255));
+        }
         ImGui::Image((ImTextureID)tex, ImVec2(w, h));
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             ImVec2 d = ImGui::GetIO().MouseDelta;
@@ -14695,9 +14705,15 @@ static void DrawAnimatorGraph(EditorState& ed) {
     ImGui::End();
 }
 
+static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an);
 static void DrawAnimationEditor(EditorState& ed) {
     if (!g_showAnimation) { StopAnimPreview(); StopModelScenePreview(ed); StopLivePreview(ed); return; }
-    if (!ImGui::Begin("Animation", &g_showAnimation)) { ImGui::End(); return; }
+    // Docked with the bottom panels (Console / Project) on first open, never floating
+    // over the Scene view. The ### id is new so older layouts that saved it floating
+    // pick up the docked default once.
+    if (ImGuiWindow* con = ImGui::FindWindowByName("###Console"))
+        if (con->DockId) ImGui::SetNextWindowDockID(con->DockId, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Animation###AnimationDock", &g_showAnimation)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
     if (!go || !go->transform) {
         StopAnimPreview();
@@ -14799,84 +14815,388 @@ static void DrawAnimationEditor(EditorState& ed) {
         ImGui::TextDisabled("Tip: separate a Character into parts, then animate each part here.");
         ImGui::End(); return;
     }
-    DrawAnimPreview(ed, go);   // live, auto-framed preview of this object
-
-    // Per-object editor state: the playhead time + the rotation euler we're authoring
-    // (the Transform stores a quaternion, so the editor owns the euler we key).
-    static std::unordered_map<void*, float> playhead;
-    static std::unordered_map<void*, Vec3>  euler;
-    float& t = playhead[(void*)an];
-    Vec3&  rot = euler[(void*)an];
-
-    char nm[64]; std::snprintf(nm, sizeof(nm), "%s", an->clip.name.c_str());
-    if (ImGui::InputText("Clip##anim", nm, sizeof(nm))) { an->clip.name = nm; ed.dirty = true; }
-    ImGui::SameLine(); if (ImGui::Checkbox("Loop##anim", &an->clip.loop)) ed.dirty = true;
-    ImGui::SliderFloat("Speed##anim", &an->speed, 0.1f, 4.0f);
-
-    float len = an->clip.Length();
-    // Edit mode: pause auto-play and drive the pose from the scrubber so you can
-    // see each frame; Play previews it running.
-    if (!an->playing) { an->SetTime(t); }
-    if (ImGui::Button(an->playing ? "Pause##anim" : "Play##anim")) an->playing = !an->playing;
-    ImGui::SameLine(); if (ImGui::Button("Stop##anim")) { an->playing = false; t = 0.0f; an->SetTime(0.0f); }
-    ImGui::SameLine(); ImGui::Text("len %.2fs", len);
-    if (an->playing) t = an->Time();
-    if (ImGui::SliderFloat("Time##anim", &t, 0.0f, len > 0.1f ? len : 2.0f)) { an->playing = false; an->SetTime(t); }
-
-    ImGui::Separator();
-    // Author rotation here (the editor owns euler); position/scale are read live from
-    // the Transform when you Key, so move/scale the object in the viewport first.
-    if (ImGui::DragFloat3("Rotation (deg)##anim", &rot.x, 0.5f)) {
-        go->transform->localRotation = Quat::Euler(rot.x, rot.y, rot.z);
-        ed.dirty = true;
-    }
-    ImGui::TextDisabled("Move/scale the object in the viewport, set rotation above, then Key it.");
-
-    auto keyVec = [&](const char* base, const Vec3& v) {
-        an->clip.AddKey(std::string(base) + ".x", t, v.x);
-        an->clip.AddKey(std::string(base) + ".y", t, v.y);
-        an->clip.AddKey(std::string(base) + ".z", t, v.z);
-    };
-    if (ImGui::Button("Key All##anim")) {
-        keyVec("position", go->transform->localPosition);
-        keyVec("rotation", rot);
-        keyVec("scale", go->transform->localScale);
-        ed.dirty = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Key Pose (rot)##anim")) { keyVec("rotation", rot); ed.dirty = true; }
-    ImGui::SameLine();
-    if (ImGui::Button("Key Position##anim")) { keyVec("position", go->transform->localPosition); ed.dirty = true; }
-
-    ImGui::Separator();
-    ImGui::TextDisabled("Tracks");
-    std::string removeTrack;
-    for (const auto& kv : an->clip.Tracks()) {
-        ImGui::PushID(kv.first.c_str());
-        ImGui::Text("%s", kv.first.c_str()); ImGui::SameLine(140);
-        ImGui::TextDisabled("%d keys", (int)kv.second.Count());
-        ImGui::SameLine(); if (ImGui::SmallButton("x")) removeTrack = kv.first;
-        // Mini timeline: a bar with a diamond per key + the playhead.
-        ImVec2 p0 = ImGui::GetCursorScreenPos();
-        float w = ImGui::GetContentRegionAvail().x - 8.0f; if (w < 40.0f) w = 40.0f;
-        float h = 14.0f;
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(40, 44, 54, 255), 3.0f);
-        float span = len > 0.1f ? len : 1.0f;
-        for (const auto& k : kv.second.Keys()) {
-            float kx = p0.x + (k.time / span) * w;
-            dl->AddCircleFilled(ImVec2(kx, p0.y + h * 0.5f), 4.0f, IM_COL32(120, 200, 255, 255));
-        }
-        float px = p0.x + (t / span) * w;
-        dl->AddLine(ImVec2(px, p0.y), ImVec2(px, p0.y + h), IM_COL32(255, 210, 0, 255), 1.5f);
-        ImGui::Dummy(ImVec2(w, h + 4.0f));
-        ImGui::PopID();
-    }
-    if (!removeTrack.empty()) { an->clip.RemoveTrack(removeTrack); ed.dirty = true; }
-    if (an->clip.Tracks().empty())
-        ImGui::TextDisabled("No keys yet — scrub the Time, pose the object, and press Key.");
-
+    DrawObjectAnimTimeline(ed, go, an);
     ImGui::End();
+}
+
+// ---- Object Animator timeline (Unity-style Animation window) ---------------------
+// Edit-mode authoring for a plain Animator: the editor owns the playhead and plays
+// the clip itself (scene Update doesn't run outside Play), the pose is sampled only
+// when the playhead moves (so gizmo edits in the Scene view stick), and Record mode
+// keys whatever you change — move/rotate/scale with the Scene gizmos or the fields
+// here and a key lands at the playhead. Layout: [preview] [controls + tracks] [timeline].
+struct AnimEdState {
+    float t = 0.0f;
+    bool  playing = false;
+    bool  record = false;
+    bool  preview = true;
+    float lastApplied = -1.0f;      // playhead time last sampled onto the transform
+    std::size_t lastSig = 0;        // clip signature at that sample (keys edited -> resample)
+    bool  haveSnap = false;
+    Vec3  snapPos, snapScale; Quat snapRot;
+    float viewLen = 0.0f;           // visible seconds on the timeline (0 = fit)
+    int   dragGroup = -1; float dragFrom = 0.0f, dragTo = 0.0f;
+    int   menuGroup = -1; float menuTime = 0.0f;
+};
+static std::size_t AnimClipSig(const AnimationClip& c) {
+    std::size_t h = c.Tracks().size() * 1315423911u;
+    for (const auto& kv : c.Tracks())
+        for (const auto& k : kv.second.Keys()) {
+            std::uint32_t a, b; std::memcpy(&a, &k.time, 4); std::memcpy(&b, &k.value, 4);
+            h ^= (std::size_t)a * 2654435761u + (std::size_t)b + (h << 6) + (h >> 2);
+        }
+    return h;
+}
+static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an) {
+    static std::unordered_map<void*, AnimEdState> s_state;
+    AnimEdState& st = s_state[(void*)an];
+    Transform* tr = go->transform;
+    AnimationClip& clip = an->clip;
+    const ImGuiStyle& sty = ImGui::GetStyle();
+    const bool playMode = ed.isPlaying();
+    float len = clip.Length();
+
+    // Track groups shown as timeline rows (prefix match on the track name).
+    struct Grp { const char* label; const char* prefix; ImU32 col; };
+    static const Grp kGroups[] = {
+        {"Position", "position.", IM_COL32(110, 170, 255, 255)},
+        {"Rotation", "rotation.", IM_COL32(120, 210, 140, 255)},
+        {"Scale",    "scale.",    IM_COL32(235, 180,  90, 255)},
+    };
+    const int nG = 3;
+    auto groupKeyTimes = [&](const char* prefix) {
+        std::vector<float> ts;
+        for (const auto& kv : clip.Tracks())
+            if (kv.first.rfind(prefix, 0) == 0)
+                for (const auto& k : kv.second.Keys()) ts.push_back(k.time);
+        std::sort(ts.begin(), ts.end());
+        std::vector<float> out;
+        for (float v : ts) if (out.empty() || v - out.back() > 1e-3f) out.push_back(v);
+        return out;
+    };
+    auto hasEulerRot = [&] { return clip.HasTrack("rotation.x") || clip.HasTrack("rotation.y") || clip.HasTrack("rotation.z"); };
+    auto hasQuatRot  = [&] { return clip.HasTrack("rotation.qw"); };
+    // Keying helpers (at the playhead).
+    auto keyPos = [&] { clip.AddKey("position.x", st.t, tr->localPosition.x); clip.AddKey("position.y", st.t, tr->localPosition.y); clip.AddKey("position.z", st.t, tr->localPosition.z); };
+    auto keyScale = [&] { clip.AddKey("scale.x", st.t, tr->localScale.x); clip.AddKey("scale.y", st.t, tr->localScale.y); clip.AddKey("scale.z", st.t, tr->localScale.z); };
+    auto keyRot = [&] {
+        if (hasEulerRot() && !hasQuatRot()) {   // keep an existing euler clip euler
+            Vec3 e = tr->localRotation.ToEuler();
+            clip.AddKey("rotation.x", st.t, e.x); clip.AddKey("rotation.y", st.t, e.y); clip.AddKey("rotation.z", st.t, e.z);
+            return;
+        }
+        Quat q = tr->localRotation;
+        // Stay in the hemisphere of the existing curve so interpolation takes the short way.
+        bool f; float pw = clip.Evaluate("rotation.qw", st.t, f);
+        if (f) {
+            bool f2; float px = clip.Evaluate("rotation.qx", st.t, f2), py = clip.Evaluate("rotation.qy", st.t, f2),
+                           pz = clip.Evaluate("rotation.qz", st.t, f2);
+            if (px * q.x + py * q.y + pz * q.z + pw * q.w < 0.0f) q = Quat{-q.x, -q.y, -q.z, -q.w};
+        }
+        clip.AddKey("rotation.qx", st.t, q.x); clip.AddKey("rotation.qy", st.t, q.y);
+        clip.AddKey("rotation.qz", st.t, q.z); clip.AddKey("rotation.qw", st.t, q.w);
+    };
+    auto keyGroup = [&](int g) { if (g == 0) keyPos(); else if (g == 1) keyRot(); else keyScale(); };
+    auto snapshot = [&] { st.snapPos = tr->localPosition; st.snapRot = tr->localRotation; st.snapScale = tr->localScale; st.haveSnap = true; };
+
+    // ---- Edit-mode playback / sampling / record -------------------------------
+    if (playMode) {
+        st.playing = false;
+        st.t = an->Time();
+        if (len > 0.0f && clip.loop) st.t = std::fmod(st.t, len);
+    } else {
+        if (st.playing) {
+            st.t += ImGui::GetIO().DeltaTime * an->speed;
+            if (len <= 0.0f) st.t = 0.0f;
+            else if (st.t > len) { if (clip.loop) st.t = std::fmod(st.t, len); else { st.t = len; st.playing = false; } }
+        }
+        // Record: anything the user changed since the last sample gets keyed here.
+        if (st.record && st.haveSnap && !st.playing) {
+            bool any = false;
+            if ((tr->localPosition - st.snapPos).Magnitude() > 1e-5f) { keyPos(); any = true; }
+            Quat a = tr->localRotation, b = st.snapRot;
+            if (std::fabs(a.x - b.x) + std::fabs(a.y - b.y) + std::fabs(a.z - b.z) + std::fabs(a.w - b.w) > 1e-5f) { keyRot(); any = true; }
+            if ((tr->localScale - st.snapScale).Magnitude() > 1e-5f) { keyScale(); any = true; }
+            if (any) { ed.dirty = true; snapshot(); st.lastSig = AnimClipSig(clip); }
+        }
+        std::size_t sig = AnimClipSig(clip);
+        if (!clip.Tracks().empty() && (st.playing || std::fabs(st.t - st.lastApplied) > 1e-6f || sig != st.lastSig)) {
+            ApplyClipToTransform(clip, tr, st.t, clip.loop);
+            st.lastApplied = st.t; st.lastSig = sig;
+            snapshot();
+        }
+        if (!st.haveSnap) snapshot();
+        len = clip.Length();
+    }
+
+    // ---- Toolbar ----------------------------------------------------------------
+    const float fh = ImGui::GetFrameHeight();
+    auto glyphBtn = [&](const char* id, int kind, const char* tip, bool active, ImU32 activeCol = 0) {
+        if (active && activeCol) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(activeCol));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(activeCol));
+        }
+        bool hit = (active && !activeCol) ? AccentToggleButton(id, true, ImVec2(fh, fh)) : ImGui::Button(id, ImVec2(fh, fh));
+        if (active && activeCol) ImGui::PopStyleColor(2);
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
+        float s = fh * 0.22f;
+        ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        switch (kind) {
+        case 0: dl->AddCircleFilled(c, s * 1.05f, active ? IM_COL32(255, 255, 255, 255) : IM_COL32(230, 80, 80, 255)); break;   // record
+        case 1: dl->AddTriangleFilled(ImVec2(c.x - s * 0.7f, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s), ImVec2(c.x + s, c.y), col); break; // play
+        case 2: dl->AddRectFilled(ImVec2(c.x - s * 0.8f, c.y - s), ImVec2(c.x - s * 0.25f, c.y + s), col, 1.0f);
+                dl->AddRectFilled(ImVec2(c.x + s * 0.25f, c.y - s), ImVec2(c.x + s * 0.8f, c.y + s), col, 1.0f); break;           // pause
+        case 3: dl->AddRectFilled(ImVec2(c.x - s, c.y - s), ImVec2(c.x - s * 0.65f, c.y + s), col);                               // first
+                dl->AddTriangleFilled(ImVec2(c.x + s, c.y - s), ImVec2(c.x + s, c.y + s), ImVec2(c.x - s * 0.5f, c.y), col); break;
+        case 4: dl->AddTriangleFilled(ImVec2(c.x + s * 0.6f, c.y - s), ImVec2(c.x + s * 0.6f, c.y + s), ImVec2(c.x - s * 0.6f, c.y), col);   // prev key
+                dl->AddRectFilled(ImVec2(c.x - s, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s), col); break;
+        case 5: dl->AddTriangleFilled(ImVec2(c.x - s * 0.6f, c.y - s), ImVec2(c.x - s * 0.6f, c.y + s), ImVec2(c.x + s * 0.6f, c.y), col);   // next key
+                dl->AddRectFilled(ImVec2(c.x + s * 0.7f, c.y - s), ImVec2(c.x + s, c.y + s), col); break;
+        case 6: { ImVec2 d[4] = {{c.x, c.y - s * 1.1f}, {c.x + s * 1.1f, c.y}, {c.x, c.y + s * 1.1f}, {c.x - s * 1.1f, c.y}};   // add key
+                  dl->AddConvexPolyFilled(d, 4, col); break; }
+        case 7: dl->AddRect(ImVec2(c.x - s * 1.2f, c.y - s * 0.85f), ImVec2(c.x + s * 1.2f, c.y + s * 0.85f), col, 2.0f, 0, 1.4f);   // preview
+                dl->AddCircleFilled(c, s * 0.4f, col); break;
+        }
+        if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        return hit;
+    };
+    std::vector<float> allKeys = groupKeyTimes("");
+    ImGui::BeginDisabled(playMode);
+    if (glyphBtn("##arec", 0, st.record ? "Recording: changes to the object are keyed at the playhead (click to stop)"
+                                        : "Record: move / rotate / scale the object and keys are added automatically",
+                 st.record, IM_COL32(200, 50, 50, 255))) { st.record = !st.record; snapshot(); }
+    ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, sty.ItemSpacing.y));
+    if (glyphBtn("##afirst", 3, "Go to start", false)) { st.t = 0.0f; st.playing = false; }
+    ImGui::SameLine();
+    if (glyphBtn("##aprev", 4, "Previous key", false)) {
+        float best = 0.0f; for (float k : allKeys) if (k < st.t - 1e-3f) best = k;
+        st.t = best; st.playing = false;
+    }
+    ImGui::SameLine();
+    if (glyphBtn("##aplay", st.playing ? 2 : 1, st.playing ? "Pause (Space)" : "Play (Space)", st.playing)) st.playing = !st.playing;
+    ImGui::SameLine();
+    if (glyphBtn("##anext", 5, "Next key", false)) {
+        for (float k : allKeys) if (k > st.t + 1e-3f) { st.t = k; break; }
+        st.playing = false;
+    }
+    ImGui::PopStyleVar();
+    ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+    ImGui::SetNextItemWidth(fh * 2.6f);
+    if (ImGui::DragFloat("##atime", &st.t, 0.01f, 0.0f, 600.0f, "%.2fs")) st.playing = false;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playhead time (drag or type)");
+    ImGui::SameLine();
+    if (glyphBtn("##akey", 6, "Add a key for position, rotation and scale at the playhead (K)", false)) {
+        keyPos(); keyRot(); keyScale(); ed.dirty = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+    if (glyphBtn("##aprevw", 7, st.preview ? "Hide the preview pane" : "Show the preview pane", st.preview)) st.preview = !st.preview;
+    ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+    {
+        char nm[64]; std::snprintf(nm, sizeof(nm), "%s", clip.name.c_str());
+        ImGui::SetNextItemWidth(fh * 5.0f);
+        if (ImGui::InputTextWithHint("##aclip", "Clip name", nm, sizeof(nm))) { clip.name = nm; ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Loop##aloop", &clip.loop)) ed.dirty = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(fh * 2.6f);
+        ImGui::DragFloat("##aspeed", &an->speed, 0.01f, 0.05f, 8.0f, "x%.2f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback speed");
+    }
+    // Keyboard: Space plays/pauses, K keys everything, [ ] jump between keys.
+    if (!playMode && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) st.playing = !st.playing;
+        if (ImGui::IsKeyPressed(ImGuiKey_K, false)) { keyPos(); keyRot(); keyScale(); ed.dirty = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true)) { float b = 0.0f; for (float k : allKeys) if (k < st.t - 1e-3f) b = k; st.t = b; st.playing = false; }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) { for (float k : allKeys) if (k > st.t + 1e-3f) { st.t = k; break; } st.playing = false; }
+    }
+    if (playMode) ImGui::TextDisabled("Play mode: the Animator plays the clip live. Stop to edit keys.");
+    else if (st.record) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.42f, 1.0f));
+        ImGui::TextUnformatted("Recording - move, rotate or scale the object (Scene gizmos or fields below) to key it.");
+        ImGui::PopStyleColor();
+    }
+    ImGui::Separator();
+
+    // ---- Body: [preview] [properties + track names] [timeline] -------------------
+    float bodyH = ImGui::GetContentRegionAvail().y;
+    if (bodyH < fh * 4.0f) bodyH = fh * 4.0f;
+    if (st.preview) {
+        float pw = std::min(ImGui::GetContentRegionAvail().x * 0.3f, bodyH * 1.4f);
+        if (pw < 120.0f) pw = 120.0f;
+        ImGui::BeginChild("##aprevpane", ImVec2(pw, bodyH), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+        DrawAnimPreview(ed, go, {}, {}, !st.playing && !ImGui::IsMouseDown(ImGuiMouseButton_Left),
+                        ImVec2(pw, bodyH - sty.ItemSpacing.y * 2.0f));
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
+    const float rowH = fh + 2.0f;
+    const float rulerH = fh;
+    float leftW = std::max(200.0f, fh * 9.5f);
+    // Left column: per-group rows lined up with the timeline rows.
+    ImGui::BeginChild("##aleft", ImVec2(leftW, bodyH), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    ImGui::Dummy(ImVec2(0, rulerH - sty.ItemSpacing.y));
+    {
+        Vec3 pos = tr->localPosition, scl = tr->localScale;
+        Vec3 eul = tr->localRotation.ToEuler();
+        for (int g = 0; g < nG; ++g) {
+            ImGui::PushID(g);
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(rp.x, rp.y + rowH * 0.2f), ImVec2(rp.x + 3.0f, rp.y + rowH * 0.8f), kGroups[g].col, 1.0f);
+            ImGui::SetCursorScreenPos(ImVec2(rp.x + 8.0f, rp.y + 1.0f));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(kGroups[g].label);
+            ImGui::SameLine(fh * 3.6f);
+            float fieldW = leftW - fh * 3.6f - fh - sty.ItemSpacing.x * 2.0f;
+            ImGui::SetNextItemWidth(fieldW);
+            ImGui::BeginDisabled(playMode);
+            if (g == 0 && ImGui::DragFloat3("##p", &pos.x, 0.01f, 0, 0, "%.2f")) { tr->localPosition = pos; ed.dirty = true; }
+            if (g == 1 && ImGui::DragFloat3("##r", &eul.x, 0.5f, 0, 0, "%.0f")) { tr->localRotation = Quat::Euler(eul); ed.dirty = true; }
+            if (g == 2 && ImGui::DragFloat3("##s", &scl.x, 0.01f, 0, 0, "%.2f")) { tr->localScale = scl; ed.dirty = true; }
+            ImGui::SameLine();
+            if (glyphBtn("##gk", 6, "Key this property at the playhead", false)) { keyGroup(g); ed.dirty = true; }
+            ImGui::EndDisabled();
+            ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH));
+            ImGui::PopID();
+        }
+        // Any other tracks (custom properties) are listed read-only.
+        int other = 0;
+        for (const auto& kv : clip.Tracks())
+            if (kv.first.rfind("position.", 0) && kv.first.rfind("rotation.", 0) && kv.first.rfind("scale.", 0)) ++other;
+        if (other) ImGui::TextDisabled("+ %d other track(s)", other);
+        ImGui::Spacing();
+        if (clip.Tracks().empty())
+            ImGui::TextWrapped("No keys yet. Turn on Record and move the object, or press the diamond to key it.");
+    }
+    ImGui::EndChild();
+    ImGui::SameLine();
+
+    // Timeline: ruler + one row per group, keys as diamonds, playhead line.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::BeginChild("##atl", ImVec2(0, bodyH), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        float W = ImGui::GetContentRegionAvail().x, H = ImGui::GetContentRegionAvail().y;
+        if (W < 40.0f) W = 40.0f;
+        if (st.viewLen <= 0.0f) st.viewLen = std::max(2.0f, len * 1.15f);
+        if (len * 1.05f > st.viewLen && !st.playing) st.viewLen = len * 1.15f;
+        const float pad = 10.0f;
+        auto tToX = [&](float t) { return o.x + pad + (t / st.viewLen) * (W - pad * 2.0f); };
+        auto xToT = [&](float x) { return std::max(0.0f, (x - o.x - pad) / (W - pad * 2.0f) * st.viewLen); };
+        // Snap scrubbing/dragging to 1/30 s frames (hold Alt for free time).
+        auto snapT = [&](float t) { return ImGui::GetIO().KeyAlt ? t : std::round(t * 30.0f) / 30.0f; };
+
+        // Ruler
+        dl->AddRectFilled(o, ImVec2(o.x + W, o.y + rulerH), ImGui::GetColorU32(ImGuiCol_FrameBg));
+        float pxPerSec = (W - pad * 2.0f) / st.viewLen;
+        float step = 0.1f;
+        for (float cand : {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 5.0f, 10.0f, 30.0f, 60.0f}) { step = cand; if (cand * pxPerSec >= 60.0f) break; }
+        for (float t = 0.0f; t <= st.viewLen + 1e-4f; t += step) {
+            float x = tToX(t);
+            dl->AddLine(ImVec2(x, o.y + rulerH * 0.55f), ImVec2(x, o.y + rulerH), ImGui::GetColorU32(ImGuiCol_TextDisabled));
+            dl->AddLine(ImVec2(x, o.y + rulerH), ImVec2(x, o.y + H), ImGui::GetColorU32(ImGuiCol_Separator, 0.35f));
+            char lb[16]; std::snprintf(lb, sizeof(lb), step < 1.0f ? "%.2f" : "%.0fs", t);
+            dl->AddText(ImVec2(x + 3.0f, o.y + 1.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), lb);
+        }
+        // Clip end marker
+        if (len > 0.0f) {
+            float xe = tToX(len);
+            dl->AddRectFilled(ImVec2(xe, o.y + rulerH), ImVec2(o.x + W, o.y + H), IM_COL32(0, 0, 0, 40));
+        }
+        ImGui::SetCursorScreenPos(o);
+        ImGui::InvisibleButton("##aruler", ImVec2(W, rulerH));
+        if (!playMode && ImGui::IsItemActive()) { st.t = snapT(xToT(ImGui::GetIO().MousePos.x)); st.playing = false; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click or drag to scrub (frames snap to 1/30 s; hold Alt for free)");
+
+        // Rows
+        for (int g = 0; g < nG; ++g) {
+            float y0 = o.y + rulerH + g * rowH;
+            if (g % 2 == 0) dl->AddRectFilled(ImVec2(o.x, y0), ImVec2(o.x + W, y0 + rowH), ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
+            ImGui::SetCursorScreenPos(ImVec2(o.x, y0));
+            ImGui::PushID(100 + g);
+            ImGui::InvisibleButton("##row", ImVec2(W, rowH));
+            bool rowHover = ImGui::IsItemHovered();
+            // Click empty row: scrub there; double-click: key this property there.
+            if (!playMode && ImGui::IsItemClicked(ImGuiMouseButton_Left) && st.dragGroup < 0) {
+                st.t = snapT(xToT(ImGui::GetIO().MousePos.x)); st.playing = false;
+            }
+            if (!playMode && rowHover && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                st.t = snapT(xToT(ImGui::GetIO().MousePos.x));
+                ApplyClipToTransform(clip, tr, st.t, clip.loop); st.lastApplied = st.t;
+                keyGroup(g); ed.dirty = true;
+            }
+            ImGui::PopID();
+            std::vector<float> keys = groupKeyTimes(kGroups[g].prefix);
+            float cy = y0 + rowH * 0.5f, r = rowH * 0.28f;
+            for (std::size_t ki = 0; ki < keys.size(); ++ki) {
+                float kt = keys[ki];
+                bool dragging = st.dragGroup == g && std::fabs(st.dragFrom - kt) < 1e-4f;
+                float x = tToX(dragging ? st.dragTo : kt);
+                ImGui::SetCursorScreenPos(ImVec2(x - r - 2.0f, cy - r - 2.0f));
+                ImGui::PushID((int)(g * 10000 + ki));
+                ImGui::InvisibleButton("##key", ImVec2(r * 2.0f + 4.0f, r * 2.0f + 4.0f));
+                bool hov = ImGui::IsItemHovered();
+                bool atHead = std::fabs(kt - st.t) < 1e-3f;
+                if (!playMode && ImGui::IsItemActivated()) { st.dragGroup = g; st.dragFrom = kt; st.dragTo = kt; st.t = kt; st.playing = false; }
+                if (!playMode && ImGui::IsItemActive() && st.dragGroup == g && std::fabs(st.dragFrom - kt) < 1e-4f) {
+                    st.dragTo = snapT(xToT(ImGui::GetIO().MousePos.x));
+                    ImGui::SetTooltip("%.2fs", st.dragTo);
+                }
+                if (ImGui::IsItemDeactivated() && st.dragGroup == g && std::fabs(st.dragFrom - kt) < 1e-4f) {
+                    if (std::fabs(st.dragTo - st.dragFrom) > 1e-4f) {
+                        clip.MoveKeysAt(st.dragFrom, st.dragTo, kGroups[g].prefix);
+                        st.t = st.dragTo; ed.dirty = true;
+                    }
+                    st.dragGroup = -1;
+                }
+                if (!playMode && ImGui::IsItemClicked(ImGuiMouseButton_Right)) { st.menuGroup = g; st.menuTime = kt; ImGui::OpenPopup("##akeymenu"); }
+                if (hov && st.dragGroup < 0) ImGui::SetTooltip("%s key at %.2fs\nDrag to move, right-click for options", kGroups[g].label, kt);
+                ImGui::PopID();
+                ImVec2 d[4] = {{x, cy - r}, {x + r, cy}, {x, cy + r}, {x - r, cy}};
+                ImU32 kc = (hov || dragging) ? IM_COL32(255, 255, 255, 255) : kGroups[g].col;
+                dl->AddConvexPolyFilled(d, 4, kc);
+                if (atHead) dl->AddPolyline(d, 4, IM_COL32(255, 255, 255, 230), ImDrawFlags_Closed, 1.5f);
+            }
+        }
+        // Key context menu (opened from a key's right-click).
+        if (ImGui::BeginPopup("##akeymenu")) {
+            if (st.menuGroup >= 0 && st.menuGroup < nG) {
+                ImGui::TextDisabled("%s key  %.2fs", kGroups[st.menuGroup].label, st.menuTime);
+                if (ImGui::MenuItem("Delete key")) { clip.RemoveKeysAt(st.menuTime, kGroups[st.menuGroup].prefix); ed.dirty = true; }
+                if (ImGui::MenuItem("Delete keys at this time (all)")) { clip.RemoveKeysAt(st.menuTime, ""); ed.dirty = true; }
+                if (ImGui::MenuItem("Re-key from current pose")) { float keep = st.t; st.t = st.menuTime; keyGroup(st.menuGroup); st.t = keep; ed.dirty = true; }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Clear all keys")) {
+                    std::vector<std::string> names; for (const auto& kv : clip.Tracks()) names.push_back(kv.first);
+                    for (const auto& n : names) clip.RemoveTrack(n);
+                    ed.dirty = true;
+                }
+            }
+            ImGui::EndPopup();
+        }
+        // Playhead
+        float px = tToX(st.t);
+        dl->AddLine(ImVec2(px, o.y), ImVec2(px, o.y + H), st.record ? IM_COL32(235, 70, 70, 255) : IM_COL32(255, 200, 60, 255), 1.5f);
+        dl->AddTriangleFilled(ImVec2(px - 5.0f, o.y), ImVec2(px + 5.0f, o.y), ImVec2(px, o.y + 7.0f),
+                              st.record ? IM_COL32(235, 70, 70, 255) : IM_COL32(255, 200, 60, 255));
+        // Wheel zooms the visible time range.
+        if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f)
+            st.viewLen = Mathf::Clamp(st.viewLen * (ImGui::GetIO().MouseWheel > 0 ? 0.85f : 1.18f), 0.25f, 600.0f);
+        // Hint along the bottom when empty.
+        if (clip.Tracks().empty()) {
+            const char* hint = "Double-click a row to add a key  -  wheel to zoom";
+            ImVec2 ts = ImGui::CalcTextSize(hint);
+            dl->AddText(ImVec2(o.x + (W - ts.x) * 0.5f, o.y + rulerH + rowH * nG + 10.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + H - 1.0f));
+        ImGui::Dummy(ImVec2(1, 1));
+    }
+    ImGui::EndChild();
 }
 
 // Defined below (the Inspector's per-Action editor: op dropdown + friendly args).
@@ -31893,6 +32213,20 @@ int main(int argc, char** argv) {
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && s_focusFrames == 31)
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
+            // OKAY_UI_DEMO_ANIM=1: give the selection an Animator with a few keys and open
+            // the Animation window (screenshots of the timeline).
+            if (std::getenv("OKAY_UI_DEMO_ANIM") && s_focusFrames == 32 && ed.selected()) {
+                auto* an = ed.selected()->GetComponent<Animator>();
+                if (!an) an = ed.selected()->AddComponent<Animator>();
+                an->clip.name = "Bounce";
+                for (float t : {0.0f, 0.5f, 1.0f}) {
+                    an->clip.AddKey("position.y", t, t == 0.5f ? 2.0f : 0.5f);
+                    an->clip.AddKey("position.x", t, 0.0f); an->clip.AddKey("position.z", t, 0.0f);
+                }
+                an->clip.AddKey("scale.x", 0.5f, 1.3f); an->clip.AddKey("scale.y", 0.5f, 0.8f); an->clip.AddKey("scale.z", 0.5f, 1.3f);
+                an->playing = false;
+                g_showAnimation = true;
+            }
         }
         { OKAY_PROFILE("UI.FileDialogs"); DrawFileDialogs(ed); }
         { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); }

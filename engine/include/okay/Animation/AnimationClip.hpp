@@ -40,6 +40,43 @@ public:
         if (c.Duration() > m_length) m_length = c.Duration();
     }
     void RemoveTrack(const std::string& track) { m_tracks.erase(track); Recompute(); }
+    /// Remove the key nearest `time` (within eps) from every track whose name
+    /// starts with `prefix` ("" = all tracks). Tracks left empty are dropped.
+    /// Returns how many keys were removed.
+    int RemoveKeysAt(float time, const std::string& prefix = "", float eps = 1e-3f) {
+        int removed = 0;
+        for (auto it = m_tracks.begin(); it != m_tracks.end();) {
+            if (it->first.compare(0, prefix.size(), prefix) == 0) {
+                const auto& ks = it->second.Keys();
+                for (std::size_t i = 0; i < ks.size(); ++i)
+                    if (std::fabs(ks[i].time - time) < eps) { it->second.RemoveKey(i); ++removed; break; }
+                if (it->second.Empty()) { it = m_tracks.erase(it); continue; }
+            }
+            ++it;
+        }
+        if (removed) Recompute();
+        return removed;
+    }
+    /// Move the key at `from` (within eps) to `to` on every track matching
+    /// `prefix`, replacing any key already at `to`. Returns keys moved.
+    int MoveKeysAt(float from, float to, const std::string& prefix = "", float eps = 1e-3f) {
+        if (to < 0.0f) to = 0.0f;
+        int moved = 0;
+        for (auto& kv : m_tracks) {
+            if (kv.first.compare(0, prefix.size(), prefix) != 0) continue;
+            const auto& ks = kv.second.Keys();
+            for (std::size_t i = 0; i < ks.size(); ++i)
+                if (std::fabs(ks[i].time - from) < eps) {
+                    float v = ks[i].value;
+                    kv.second.RemoveKey(i);
+                    kv.second.AddOrReplaceKey(to, v, eps);
+                    ++moved;
+                    break;
+                }
+        }
+        if (moved) Recompute();
+        return moved;
+    }
     /// Make the clip `length` long with every track CLAMPED (held at its ends):
     /// the player wraps time over the whole clip, so tracks must not loop on
     /// their own shorter spans.

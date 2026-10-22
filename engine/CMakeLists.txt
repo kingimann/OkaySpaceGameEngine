@@ -270,6 +270,11 @@ if(OKAY_USE_ASSIMP)
     set(ASSIMP_BUILD_OFF_IMPORTER       ON CACHE BOOL "" FORCE)   # Object File Format
     set(ASSIMP_BUILD_AC_IMPORTER        ON CACHE BOOL "" FORCE)   # AC3D
     set(ASSIMP_BUILD_B3D_IMPORTER       ON CACHE BOOL "" FORCE)   # Blitz3D
+    # ...and the rest of the long tail, so "any model file" just imports.
+    foreach(_fmt 3MF AMF ASE X3D OGRE OPENGEX Q3D Q3BSP IRR IRRMESH MD2 MD3 MDL HMP MDC NFF RAW COB CSM
+                 LWS BVH TERRAGEN SIB MMD IQM NDO XGL HMP)
+        set(ASSIMP_BUILD_${_fmt}_IMPORTER ON CACHE BOOL "" FORCE)
+    endforeach()
     FetchContent_Declare(assimp
         GIT_REPOSITORY https://github.com/assimp/assimp.git
         GIT_TAG        v5.4.3
@@ -277,7 +282,7 @@ if(OKAY_USE_ASSIMP)
     FetchContent_MakeAvailable(assimp)
     target_link_libraries(okay_engine PUBLIC assimp)
     target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
-    message(STATUS "OkaySpace: Assimp model import ENABLED (FBX/DAE/STL/PLY/3DS/Blend/X/MD5/SMD/MS3D/LWO/DXF/OFF/AC/B3D)")
+    message(STATUS "OkaySpace: Assimp model import ENABLED (DAE/STL/PLY/3DS/Blend/X/3MF/AMF/X3D/MD2/MD3/MD5/MDL/SMD/MS3D/LWO/DXF/OFF/AC/B3D/BVH/PMX/...)")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

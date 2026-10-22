@@ -22,7 +22,8 @@ class GameObject;
 /// True if this build includes the Assimp importer (compiled with OKAY_USE_ASSIMP).
 bool AssimpAvailable();
 
-/// Space-separated list of extensions this build can import (depends on Assimp).
+/// Space-separated, lower-case list of extensions this build can import
+/// (".obj .gltf .glb .fbx" built in, plus every format the Assimp build reads).
 std::string ImportableExtensions();
 
 /// Import a model file into one merged Mesh, routing by extension (see header notes).

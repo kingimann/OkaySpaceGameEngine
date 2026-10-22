@@ -42,7 +42,23 @@ bool AssimpAvailable() {
 
 std::string ImportableExtensions() {
 #ifdef OKAY_HAVE_ASSIMP
-    return ".obj .gltf .glb .fbx .dae .stl .ply .3ds .blend .x .md5mesh .smd .ms3d .lwo .dxf .off .ac .b3d";
+    // Built-in (.obj .gltf .glb .fbx) + everything this Assimp build can read.
+    static const std::string list = [] {
+        std::string out = ".obj .gltf .glb .fbx";
+        Assimp::Importer imp; aiString exts; imp.GetExtensionList(exts);   // "*.3ds;*.dae;..."
+        std::string e = exts.C_Str(), cur;
+        auto flush = [&]() {
+            if (cur.size() > 1 && cur[0] == '.' && (" " + out + " ").find(" " + cur + " ") == std::string::npos) out += " " + cur;
+            cur.clear();
+        };
+        for (char c : e) {
+            if (c == ';') flush();
+            else if (c != '*') cur += (char)std::tolower((unsigned char)c);
+        }
+        flush();
+        return out;
+    }();
+    return list;
 #else
     return ".obj .gltf .glb .fbx";   // FBX is built in (ufbx)
 #endif
@@ -451,6 +467,7 @@ static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path,
                 if (nodeName.empty() || !byName.count(nodeName)) continue;
                 clip.nodes.push_back({nodeName, AnimationClip{}});
                 AnimationClip& ac = clip.nodes.back().clip;
+                ac.smoothKeys = false;   // sampled data: play back linearly, as authored
                 for (unsigned k = 0; k < ch->mNumPositionKeys; ++k) {
                     float t = (float)(ch->mPositionKeys[k].mTime / tps);
                     const aiVector3D& v = ch->mPositionKeys[k].mValue;

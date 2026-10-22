@@ -4760,14 +4760,31 @@ static void ToggleFavFolder(const std::string& p) {
 
 // A friendly category for a file extension, for import logging / quick validation.
 // "etc" types (anything not recognized) still import — this is just for the message.
+// Every model format this build can import (built-in + Assimp's own list).
+static bool IsModelExt(const std::string& extLower) {
+    static const std::string list = " " + okay::ImportableExtensions() + " ";
+    return list.find(" " + extLower + " ") != std::string::npos;
+}
+// "*.fbx", "*.glb", ... for file pickers, built from the same list.
+static const std::vector<std::string>& ModelFilterPatterns() {
+    static std::vector<std::string> pats;
+    if (pats.empty()) {
+        std::string l = okay::ImportableExtensions(), cur;
+        for (char c : l + " ") { if (c == ' ') { if (!cur.empty()) pats.push_back("*" + cur); cur.clear(); } else cur += c; }
+    }
+    return pats;
+}
+// File picker for any importable model (multi-select returns '|'-separated paths).
+static const char* OpenModelFileDialog(const char* title, bool multi = false) {
+    std::vector<const char*> filt;
+    for (const auto& f : ModelFilterPatterns()) filt.push_back(f.c_str());
+    return tinyfd_openFileDialog(title, "", (int)filt.size(), filt.data(), "3D models", multi ? 1 : 0);
+}
 static const char* ImportKindLabel(const std::string& extLower) {
     if (extLower==".png"||extLower==".jpg"||extLower==".jpeg"||extLower==".bmp"||extLower==".tga"||extLower==".gif") return "texture";
     if (extLower==".ttf"||extLower==".otf"||extLower==".fnt") return "font";
     if (extLower==".wav"||extLower==".ogg"||extLower==".mp3"||extLower==".flac") return "audio";
-    if (extLower==".obj"||extLower==".gltf"||extLower==".glb"||extLower==".fbx"||extLower==".dae"||
-        extLower==".stl"||extLower==".ply"||extLower==".3ds"||extLower==".blend"||extLower==".x"||
-        extLower==".md5mesh"||extLower==".smd"||extLower==".ms3d"||extLower==".lwo"||extLower==".dxf"||
-        extLower==".off"||extLower==".ac"||extLower==".b3d") return "model";
+    if (!extLower.empty() && IsModelExt(extLower)) return "model";
     if (extLower==".okay"||extLower==".lua"||extLower==".cs"||extLower==".okayvs") return "script";
     return nullptr;
 }
@@ -10218,19 +10235,20 @@ void DrawFileDialogs(EditorState& ed) {
 
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Import Model", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Import a model. Supported: %s", okay::ImportableExtensions().c_str());
+        ImGui::TextWrapped("Import a model. Supported: %s", okay::ImportableExtensions().c_str());
         if (!okay::AssimpAvailable())
-            ImGui::TextDisabled("(FBX is built in. .dae/.stl/... need a build with -DOKAY_USE_ASSIMP=ON.)");
-        ImGui::TextDisabled("Tip: export from Blender / Mixamo / Sketchfab as glTF or OBJ.");
+            ImGui::TextDisabled("(FBX, glTF and OBJ are built in. Other formats need a build with -DOKAY_USE_ASSIMP=ON.)");
+        ImGui::TextDisabled("Tip: from Blender 2.8+, export FBX or glTF (.blend files from newer Blender versions don't import).");
         ImGui::SetNextItemWidth(320);
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         bool objGo = ImGui::InputText("##objpath", g_objPathBuf, sizeof(g_objPathBuf),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, 4);
         if (ImGui::Button("...##objbrowse")) {
-            const char* filt[6] = {"*.gltf", "*.glb", "*.obj", "*.fbx", "*.dae", "*.stl"};
-            if (const char* p = tinyfd_openFileDialog("Import model", "", 6, filt,
-                                                      "3D model (glTF/GLB/OBJ/FBX...)", 0))
+            std::vector<const char*> filt;
+            for (const auto& f : ModelFilterPatterns()) filt.push_back(f.c_str());
+            if (const char* p = tinyfd_openFileDialog("Import model", "", (int)filt.size(), filt.data(),
+                                                      "3D models (FBX, glTF, OBJ, DAE, STL, 3DS, Blend...)", 0))
                 std::snprintf(g_objPathBuf, sizeof(g_objPathBuf), "%s", p);
         }
         // One-step character import: rig the model to the humanoid skeleton right
@@ -13620,8 +13638,7 @@ static void StopModelScenePreview(EditorState& ed) {
 // "Add animations from file..." (Mixamo-style: one character + one file per
 // animation). Opens a multi-select picker and adds every clip to `modelRoot`.
 static void AddAnimationsFromFilesUI(EditorState& ed, GameObject* modelRoot) {
-    const char* filt[4] = {"*.fbx", "*.glb", "*.gltf", "*.dae"};
-    const char* picked = tinyfd_openFileDialog("Add animations (Mixamo FBX, glTF...)", "", 4, filt, "Animation files", 1);
+    const char* picked = OpenModelFileDialog("Add animations (Mixamo FBX, glTF, DAE, BVH...)", true);
     if (!picked || !*picked) return;
     ed.PushUndo();
     std::string all = picked; int total = 0;
@@ -19921,9 +19938,7 @@ void DrawInspector(EditorState& ed) {
             // (sized, grounded, faced, locomotion wired; blocky body hidden). Same
             // as dropping a model asset onto this object in the Hierarchy.
             if (ImGui::Button("Set Character Model...##char")) {
-                const char* filt[3] = {"*.gltf", "*.glb", "*.fbx"};
-                if (const char* p = tinyfd_openFileDialog("Set character model", "", 3, filt,
-                                                          "3D model (glTF/GLB/FBX...)", 0))
+                if (const char* p = OpenModelFileDialog("Set character model"))
                     EditorAttachCharacterModel(ed, go, p);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this character's body:\nauto-sized to the capsule, feet grounded, facing matched, and its\nidle/walk/run clips wired to movement. You can also just DROP a model\nasset onto this object in the Hierarchy.");
@@ -22397,9 +22412,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
         if (CompHeader("Third Person Controller", tp, &toRemove)) {
             if (ImGui::Button("Set Character Model...##tp")) {
-                const char* filt[3] = {"*.gltf", "*.glb", "*.fbx"};
-                if (const char* p = tinyfd_openFileDialog("Set character model", "", 3, filt,
-                                                          "3D model (glTF/GLB/FBX...)", 0))
+                if (const char* p = OpenModelFileDialog("Set character model"))
                     EditorAttachCharacterModel(ed, go, p);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body (auto-sized,\ngrounded, locomotion clips wired). Or drop a model asset onto this\nobject in the Hierarchy.");
@@ -31662,6 +31675,16 @@ int main(int argc, char** argv) {
         }
 
         { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); }
+        {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
+            static int s_focusFrames = 0;
+            if (s_focusFrames < 90) ++s_focusFrames;
+            if (const char* f = std::getenv("OKAY_UI_FOCUS"); f && s_focusFrames > 30 && s_focusFrames < 90) {
+                std::string all = f, cur;
+                for (char c : all + ",") { if (c == ',') { if (!cur.empty()) ImGui::SetWindowFocus(cur.c_str()); cur.clear(); } else cur += c; }
+            }
+            if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && s_focusFrames == 31)
+                for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
+        }
         { OKAY_PROFILE("UI.FileDialogs"); DrawFileDialogs(ed); }
         { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); }
         { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }

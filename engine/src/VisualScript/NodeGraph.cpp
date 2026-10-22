@@ -75,7 +75,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (args.size() < n) { if (err) *err = type + " needs " + std::to_string(n) + " arg(s)"; return false; }
         return true;
     };
-    if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick")
+    if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent")
         return std::make_unique<EventNode>();
     if (type == "Const")   { if (!need(1)) return nullptr; return std::make_unique<ConstNode>(ParseValue(args[0])); }
     if (type == "GetVar")  { if (!need(1)) return nullptr; return std::make_unique<GetVarNode>(args[0]); }
@@ -243,6 +243,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "DistanceTo")     return std::make_unique<ObjectQueryNode>(OQ::DistanceTo, argOr(""));
     if (type == "SelfName")       return std::make_unique<ObjectQueryNode>(OQ::Name, "self");
     if (type == "OtherName")      return std::make_unique<OtherNameNode>();
+    if (type == "AnimEventName")  return std::make_unique<AnimEventNameNode>();
     if (type == "OtherTag")       return std::make_unique<OtherTagNode>();
     if (type == "MouseButton")     return std::make_unique<MouseButtonNode>(args.empty() ? 0 : (int)ParseValue(args[0]).AsFloat(), false);
     if (type == "MouseButtonDown") return std::make_unique<MouseButtonNode>(args.empty() ? 0 : (int)ParseValue(args[0]).AsFloat(), true);

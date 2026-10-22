@@ -67,6 +67,33 @@ void EditorState::Achievement(const std::string& id) {
     if (m_steam) m_steam->UnlockAchievement(id);
 }
 
+// Undo/redo rebuild every object, so the selection is carried across by position
+// in the scene's object list (names double-check it) — the Inspector and the
+// Animation tab stay on what you were editing instead of going blank.
+void EditorState::RestoreKeepingSelection(const std::string& snapshot) {
+    std::vector<std::pair<int, std::string>> keep;
+    auto indexOf = [&](GameObject* g) {
+        int i = 0;
+        for (const auto& up : m_scene.Objects()) { if (up.get() == g) return i; ++i; }
+        return -1;
+    };
+    for (GameObject* g : m_multi) if (g) keep.push_back({indexOf(g), g->name});
+    int primary = m_selected ? indexOf(m_selected) : -1;
+    SceneSerializer::Deserialize(m_scene, snapshot);
+    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
+    const auto& objs = m_scene.Objects();
+    GameObject* prim = nullptr;
+    for (const auto& k : keep) {
+        GameObject* g = nullptr;
+        if (k.first >= 0 && k.first < (int)objs.size() && objs[k.first]->name == k.second) g = objs[k.first].get();
+        if (!g) continue;
+        if (m_multi.empty()) Select(g); else ToggleSelect(g);
+        if (k.first == primary) prim = g;
+    }
+    if (prim) m_selected = prim;
+    dirty = true;
+}
+
 void EditorState::PushUndo() {
     if (m_suppressUndo) return;
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
@@ -79,9 +106,7 @@ bool EditorState::Undo() {
     m_redo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_undo.back(); m_undo.pop_back();
     StopNetwork();
-    SceneSerializer::Deserialize(m_scene, s);
-    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
-    dirty = true;
+    RestoreKeepingSelection(s);
     return true;
 }
 
@@ -90,9 +115,7 @@ bool EditorState::Redo() {
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_redo.back(); m_redo.pop_back();
     StopNetwork();
-    SceneSerializer::Deserialize(m_scene, s);
-    Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
-    dirty = true;
+    RestoreKeepingSelection(s);
     return true;
 }
 

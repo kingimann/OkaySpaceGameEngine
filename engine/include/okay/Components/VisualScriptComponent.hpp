@@ -37,6 +37,13 @@ public:
     void OnTriggerEnter2D(Collider2D* other) override { Fire("OnTrigger", other ? other->gameObject : nullptr); }
     void OnTriggerEnter3D(Collider3D* other) override { Fire("OnTrigger", other ? other->gameObject : nullptr); }
     void OnMouseDown() override { Fire("OnClick", gameObject); }
+    /// Clip events run "OnAnimEvent:<name>" (an On Anim Event node filtered to
+    /// that name) and then the unfiltered "OnAnimEvent" entry.
+    void OnAnimationEvent(const std::string& name) override {
+        m_ctx.variables["anim_event"] = vs::VsValue(name);
+        Fire(("OnAnimEvent:" + name).c_str(), nullptr);
+        Fire("OnAnimEvent", nullptr);
+    }
 
 private:
     void Fire(const char* entryName, GameObject* other) {

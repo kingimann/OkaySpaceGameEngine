@@ -153,6 +153,8 @@ inline const std::vector<VsDef>& Registry() {
         {"OnCollision", "On Collision", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnTrigger",   "On Trigger",   CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnClick",     "On Click",     CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnAnimEvent", "On Anim Event", CAT_EVENT, false, {""}, {}, {}, 1, "event (blank = any)"},
+        {"AnimEventName", "Anim Event Name", CAT_DATA, false, {}, {}, {"Name"}, 0, nullptr},
         {"OtherName",   "Other Name",   CAT_DATA,  false, {}, {}, {"Name"}, 0, nullptr},
         {"OtherTag",    "Other Tag",    CAT_DATA,  false, {}, {}, {"Tag"}, 0, nullptr},
         // --- More math ---
@@ -266,6 +268,9 @@ struct VsEditGraph {
             if (n.type == "OnUpdate") o << "entry OnUpdate " << n.id << "\n";
             if (n.type == "OnCollision" || n.type == "OnTrigger" || n.type == "OnClick")
                 o << "entry " << n.type << " " << n.id << "\n";
+            // An On Anim Event node with a name only runs for that clip event.
+            if (n.type == "OnAnimEvent")
+                o << "entry OnAnimEvent" << (n.arg.empty() ? std::string() : ":" + n.arg) << " " << n.id << "\n";
         }
         for (const auto& l : execLinks) o << "exec " << l.from << ' ' << l.pin << ' ' << l.to << "\n";
         for (const auto& l : dataLinks) o << "data " << l.consumer << ' ' << l.inPin << ' ' << l.producer << ' ' << l.outPin << "\n";
@@ -423,6 +428,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
     if (t == "DistanceTo")     return "distance_to(" + q(lit("")) + ")";
     if (t == "SelfName")       return "gameObject.name";
     if (t == "OtherName")      return "other";
+    if (t == "AnimEventName")  return "anim_event";
     if (t == "OtherTag")       return "tag_of(other)";
     if (t == "MouseButton")    return "mouse_held(" + lit("0") + ")";
     if (t == "MouseButtonDown")return "mouse_down(" + lit("0") + ")";
@@ -530,6 +536,22 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
                 out += "}\n";
                 break;
             }
+    // Clip events: one on_anim_event() handler; named nodes check anim_event.
+    {
+        bool open = false;
+        for (const auto& n : g.nodes) {
+            if (n.type != "OnAnimEvent") continue;
+            if (!open) { out += "\non_anim_event() {\n"; open = true; anyEvent = true; }
+            std::set<int> v; int s = VsExecTarget(g, n.id, 0);
+            if (n.arg.empty()) { if (s >= 0) VsEmitChain(g, s, out, "    ", v); }
+            else {
+                out += "    if (anim_event == \"" + n.arg + "\") {\n";
+                if (s >= 0) VsEmitChain(g, s, out, "        ", v);
+                out += "    }\n";
+            }
+        }
+        if (open) out += "}\n";
+    }
     if (startNode < 0 && updateNode < 0 && !anyEvent)
         out += "// Add an On Start / On Update event node to generate runnable code.\n";
     return out;
@@ -612,7 +634,7 @@ inline void Draw(EditorState& ed, bool* open) {
     {
         bool hasEvent = false;
         for (const auto& n : g.nodes)
-            if (n.type == "OnStart" || n.type == "OnUpdate" || n.type == "OnCollision" || n.type == "OnTrigger" || n.type == "OnClick") { hasEvent = true; break; }
+            if (n.type == "OnStart" || n.type == "OnUpdate" || n.type == "OnCollision" || n.type == "OnTrigger" || n.type == "OnClick" || n.type == "OnAnimEvent") { hasEvent = true; break; }
         if (!g.nodes.empty() && !hasEvent) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.40f, 1.0f), "  \xE2\x9A\xA0 add an On Start / On Update node");

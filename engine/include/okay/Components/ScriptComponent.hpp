@@ -58,6 +58,14 @@ public:
     // pointer/mouse events all flow through here; 2D and 3D map to the same names,
     // and the legacy on_trigger()/on_collision() still fire on enter (see the VM's
     // alias table) so older scripts keep working.
+    /// Clip events: `anim_event` holds the name, then the handler named like the
+    /// event runs (Unity-style), then on_anim_event().
+    void OnAnimationEvent(const std::string& name) override {
+        if (!m_vm) return;
+        m_vm->SetGlobal("anim_event", vs::VsValue(name));
+        if (!name.empty()) m_vm->CallEvent(name);
+        m_vm->CallEvent("on_anim_event");
+    }
     void OnTriggerEnter2D(Collider2D*) override        { Fire("on_trigger_enter"); }
     void OnTriggerStay2D (Collider2D*) override        { Fire("on_trigger_stay"); }
     void OnTriggerExit2D (Collider2D*) override        { Fire("on_trigger_exit"); }

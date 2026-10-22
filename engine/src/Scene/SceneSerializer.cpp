@@ -1392,6 +1392,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& k : tr.second.Keys()) out << " " << k.time << " " << k.value;
         }
         out << "\n";
+        // Clip length, per-track interpolation and events (separate record so
+        // older builds still load the animator line).
+        const AnimationClip& ac = anim->clip;
+        bool anyLinear = false;
+        for (const auto& tr : ac.Tracks()) if (!tr.second.smooth) anyLinear = true;
+        if (ac.Spanned() || anyLinear || !ac.events.empty()) {
+            out << "  animx " << (ac.Spanned() ? ac.SpanLength() : -1.0f) << " " << ac.events.size();
+            for (const auto& e : ac.events) out << " " << e.time << " " << Quote(e.name);
+            int nl = 0; for (const auto& tr : ac.Tracks()) if (!tr.second.smooth) ++nl;
+            out << " " << nl;
+            for (const auto& tr : ac.Tracks()) if (!tr.second.smooth) out << " " << Quote(tr.first);
+            out << "\n";
+        }
     }
     if (auto* tm = go->GetComponent<Tilemap>()) {
         out << "  tilemap " << tm->tileSize << " " << tm->Width() << " " << tm->Height();
@@ -3649,6 +3662,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             anim->clip.AddKey(tn, kt, kv);
                         }
                     }
+                } else if (field == "animx") {
+                    float span = -1.0f; int ne = 0, nl = 0;
+                    in >> span >> ne;
+                    auto* anim = go->GetComponent<Animator>();
+                    for (int e = 0; e < ne; ++e) {
+                        float et = 0; in >> et; std::string en = ReadQuoted(in);
+                        if (anim) anim->clip.AddEvent(et, en);
+                    }
+                    in >> nl;
+                    for (int l = 0; l < nl; ++l) {
+                        std::string tn = ReadQuoted(in);
+                        if (anim) if (auto* c = anim->clip.Track(tn)) c->smooth = false;
+                    }
+                    if (anim && span >= 0.0f) anim->clip.SpanTracks(span);
                 } else if (field == "tilemap") {
                     float ts = 1.0f; int tw = 0, th = 0;
                     in >> ts >> tw >> th;

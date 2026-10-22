@@ -115,6 +115,8 @@ public:
     void PushUndo();
     bool Undo();
     bool Redo();
+    /// Load a scene snapshot, keeping the same objects selected afterwards.
+    void RestoreKeepingSelection(const std::string& snapshot);
     bool CanUndo() const { return !m_undo.empty(); }
     bool CanRedo() const { return !m_redo.empty(); }
     int  UndoDepth() const { return (int)m_undo.size(); }   ///< steps available behind

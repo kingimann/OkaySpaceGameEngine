@@ -138,6 +138,12 @@ struct ObjectQueryNode : VsNode {   // arg = object name ("self", "other" or a n
 struct OtherNameNode : VsNode {   // the object a collision / trigger / click event is about
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override { return ctx.other ? ctx.other->name : std::string(); }
 };
+struct AnimEventNameNode : VsNode {   // the clip event an On Anim Event chain is running for
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto it = ctx.variables.find("anim_event");
+        return it != ctx.variables.end() ? it->second : VsValue(std::string());
+    }
+};
 struct OtherTagNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override { return ctx.other ? ctx.other->tag : std::string(); }
 };

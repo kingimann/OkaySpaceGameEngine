@@ -2,6 +2,8 @@
 #include "okay/Animation/AnimationCurve.hpp"
 #include <string>
 #include <unordered_map>
+#include <vector>
+#include <algorithm>
 #include <cmath>
 
 namespace okay {
@@ -17,6 +19,15 @@ public:
     /// hand-placed keys; importers set false so baked/sampled data (FBX, glTF
     /// LINEAR) plays back exactly as authored.
     bool  smoothKeys = true;
+
+    /// A named moment in the clip ("footstep", "hit"). The Animator calls
+    /// OnAnimationEvent(name) on its object's components when playback passes it.
+    struct Event { float time = 0.0f; std::string name; };
+    std::vector<Event> events;
+    void AddEvent(float time, const std::string& n) {
+        events.push_back({time < 0.0f ? 0.0f : time, n});
+        std::stable_sort(events.begin(), events.end(), [](const Event& a, const Event& b) { return a.time < b.time; });
+    }
 
     void SetCurve(const std::string& track, AnimationCurve curve) {
         if (curve.Duration() > m_length) m_length = curve.Duration();
@@ -82,9 +93,56 @@ public:
     /// their own shorter spans.
     void SpanTracks(float length) {
         for (auto& kv : m_tracks) kv.second.wrap = AnimationCurve::Wrap::Clamp;
-        m_spanLength = length;
-        if (length > m_length) m_length = length;
+        m_spanLength = length > 0.0f ? length : 0.0f;
         m_spanned = true;
+        Recompute();
+    }
+    /// Set the clip's length explicitly (editor "Length" field): tracks hold their
+    /// first/last values instead of looping on their own spans. Keys past the new
+    /// length still extend it.
+    void SetLength(float length) { SpanTracks(length); }
+    bool  Spanned() const { return m_spanned; }
+    float SpanLength() const { return m_spanLength; }
+
+    /// Interpolation for every track starting with `prefix`: smooth (cubic) or linear.
+    void SetSmooth(const std::string& prefix, bool smooth) {
+        for (auto& kv : m_tracks)
+            if (kv.first.compare(0, prefix.size(), prefix) == 0) kv.second.smooth = smooth;
+    }
+    /// True when any track under `prefix` is smooth (false if there are none).
+    bool IsSmooth(const std::string& prefix) const {
+        for (const auto& kv : m_tracks)
+            if (kv.first.compare(0, prefix.size(), prefix) == 0 && kv.second.smooth) return true;
+        return false;
+    }
+
+    /// Keys copied out of a clip (editor copy/paste): times are relative to the
+    /// earliest copied key.
+    struct KeyCopy { std::string track; float time; float value; };
+    /// Copy every key on tracks under `prefix` whose time is in [t0, t1].
+    std::vector<KeyCopy> CopyKeys(float t0, float t1, const std::string& prefix = "") const {
+        std::vector<KeyCopy> out;
+        float first = 1e30f;
+        for (const auto& kv : m_tracks) {
+            if (kv.first.compare(0, prefix.size(), prefix) != 0) continue;
+            for (const auto& k : kv.second.Keys())
+                if (k.time >= t0 - 1e-4f && k.time <= t1 + 1e-4f) { out.push_back({kv.first, k.time, k.value}); first = std::min(first, k.time); }
+        }
+        for (auto& k : out) k.time -= first;
+        return out;
+    }
+    /// Paste copied keys starting at `at`, replacing keys already at those times.
+    void PasteKeys(const std::vector<KeyCopy>& keys, float at) {
+        for (const auto& k : keys) {
+            auto it = m_tracks.find(k.track);
+            if (it == m_tracks.end()) {
+                it = m_tracks.emplace(k.track, AnimationCurve{}).first;
+                it->second.smooth = smoothKeys;
+                if (loop && !m_spanned) it->second.wrap = AnimationCurve::Wrap::Loop;
+            }
+            it->second.AddOrReplaceKey(at + k.time, k.value, 1e-3f);
+        }
+        Recompute();
     }
     AnimationCurve* Track(const std::string& track) {
         auto it = m_tracks.find(track); return it == m_tracks.end() ? nullptr : &it->second;
@@ -114,6 +172,8 @@ public:
             for (const auto& k : kv.second.Keys()) nc.AddKey(m_length - k.time, k.value);
             kv.second = std::move(nc);
         }
+        for (auto& e : events) e.time = m_length - e.time;
+        std::reverse(events.begin(), events.end());
         Recompute();
     }
 
@@ -132,6 +192,9 @@ public:
             nc.AddKey(t1 - t0, c.Evaluate(t1));
             kv.second = std::move(nc);
         }
+        std::vector<Event> kept;
+        for (const auto& e : events) if (e.time >= t0 && e.time <= t1) kept.push_back({e.time - t0, e.name});
+        events = std::move(kept);
         Recompute();
     }
 
@@ -145,6 +208,7 @@ public:
             for (const auto& k : kv.second.Keys()) nc.AddKey(k.time * factor, k.value);
             kv.second = std::move(nc);
         }
+        for (auto& e : events) e.time *= factor;
         Recompute();
     }
 

@@ -72,6 +72,7 @@
 // Animation
 #include "okay/Animation/AnimationCurve.hpp"
 #include "okay/Animation/AnimationClip.hpp"
+#include "okay/Animation/ClipPresets.hpp"
 #include "okay/Components/Animator.hpp"
 
 // More components

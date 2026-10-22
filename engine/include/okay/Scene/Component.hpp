@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 
 namespace okay {
 
@@ -64,6 +65,9 @@ public:
     virtual void OnMouseDown()  {}   // a press began over it
     virtual void OnMouseUp()    {}   // the button released after pressing on it
     virtual void OnMouseClick() {}   // press + release both on it (a full click)
+
+    /// An Animator on this object passed a clip event (see AnimationClip::events).
+    virtual void OnAnimationEvent(const std::string& /*name*/) {}
 
     Scene* GetScene() const;
 

@@ -352,3 +352,64 @@ instead of popping. Scripts: `ik_enable(on)`, `ik_set_weight(w)`,
 `ik_set_target(x, y, z)`, `ik_set_pole(x, y, z)`, and for Full Body IK
 `ik_hand("left", x, y, z [, weight])`, `ik_foot(...)`, `ik_look(x, y, z)`,
 `ik_release()`.
+
+## Animating any object (the Animation tab)
+
+Select an object with an **Animator** (or press *Add Animator*) and open
+**Animation**. The tab docks under the Scene view and grows to a usable height
+the first time it opens.
+
+- **Presets (star button).** One click gives a starting animation built around
+  the object's current pose: Bob, Hover, Spin, Spin (2D), Pulse, Shake, Sway,
+  Bounce, Pop In, Slide In. Set an amount and a length, then press *Apply
+  preset*. A preset only replaces the tracks it animates; your other keys stay.
+- **Record (red dot).** Move, rotate or scale the object with the Scene gizmos or
+  the fields beside each row, and a key lands at the playhead.
+- **Rows.** Position, Rotation and Scale each get a row. The arrow expands a
+  row into one row per axis, each with its own keys and its value at the
+  playhead. Double-click a row to key it at that time.
+- **Selecting keys.** Click a key to select it, Shift+click to add to the
+  selection, or drag across empty space to box-select. Drag any selected key to
+  move them all. **Del** deletes, **Ctrl+C / Ctrl+V** copy and paste at the
+  playhead, **Ctrl+A** selects everything, and **Ctrl+Z** undoes.
+- **Curves (wave button).** Draws each track as a graph. Drag a point to change
+  its time and value; hold Shift to change only the value. Click a row name to
+  show just that group's curves.
+- **Length.** The field next to *Loop* sets the clip length. Tracks hold their
+  first and last values instead of repeating, so a key at 2 s doesn't make a 1 s
+  track loop twice.
+- **More (⋯).** Playback speed, frame snapping (24, 30 or 60 fps, or off; hold
+  Alt while dragging for free time), smooth or linear interpolation per group,
+  *Make loop seamless*, Reverse, Twice as fast, Half speed, and Trim to the
+  playhead.
+- **Navigation.** The mouse wheel zooms the timeline. Shift+wheel, or the wheel
+  over the row names, scrolls the rows. Middle-drag pans, **F** fits the view,
+  **Space** plays, **K** keys everything, and **[ ]** jump between keys.
+
+### Animation events
+
+The **Events** lane under the ruler holds named moments in the clip. Add one
+with the flag button, **E**, or a double-click on the lane. Drag a flag to move
+it, double-click it to rename it, or right-click it for more options. Events
+are saved with the scene.
+
+When playback passes an event, every component on the object gets
+`OnAnimationEvent(name)`:
+
+- **OkayScript:** the global `anim_event` holds the name. Then a function with
+  the event's name runs (Unity-style, e.g. `footstep()`), followed by
+  `on_anim_event()`.
+- **Visual scripts:** an **On Anim Event** node runs. Give it a name to react to
+  only that event, or leave it blank to react to all of them. **Anim Event
+  Name** outputs the event that fired.
+- **C++:** set `Animator::onEvent`, or override `OnAnimationEvent` in a
+  component.
+
+```
+footstep() {
+    play_sound("step.wav")
+}
+on_anim_event() {
+    log("event: " + anim_event)
+}
+```

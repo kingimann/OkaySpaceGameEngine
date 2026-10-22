@@ -1,6 +1,7 @@
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
+#include "okay/VisualScript/NodesActions.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <cctype>
@@ -47,14 +48,20 @@ VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     return v;
 }
 
-void NodeGraph::Run(int entryNode, VsContext& ctx) {
+void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
     int cur = entryNode;
     int guard = 0;
     while (cur >= 0 && guard++ < 100000) {
         VsNode* n = Node(cur);
         if (!n) break;
-        if (Tracing()) ++n->execCount;
+        if (Tracing() && !(resume && guard == 1)) ++n->execCount;
+        m_resuming = resume && guard == 1;
         int outPin = n->Exec(*this, ctx);
+        m_resuming = false;
+        if (outPin == kSuspend) {   // park here; Resume() continues from this node
+            if (!IsSuspended(cur)) m_suspended.push_back(cur);
+            break;
+        }
         if (outPin < 0) break;
         cur = (outPin < (int)n->execOut.size()) ? n->execOut[outPin] : -1;
     }
@@ -95,9 +102,25 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     };
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
-        type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit")
+        type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
+        type == "OnMouseDown" || type == "OnMouseUp" || type == "OnMouseOver" ||
+        type == "OnCollisionStay" || type == "OnLateUpdate")
         return std::make_unique<EventNode>();
     if (type == "OnEvent") return std::make_unique<CustomEventNode>();
+    // ---- Actions steps (the no-code library) ----
+    // The editor writes the encoded steps as one quoted arg; hand-written files may
+    // split them into tokens, so join everything back up first.
+    if (type == "Action" || type == "Actions" || type == "Condition") {
+        std::string enc;
+        for (const auto& a : args) { if (!enc.empty()) enc += ' '; enc += a; }
+        if (type == "Condition") {
+            ActionList::Item c = ActionList::DecodeItem(enc);
+            if (c.op.empty()) c.op = "always";
+            return std::make_unique<ActionConditionNode>(std::vector<ActionList::Item>{c});
+        }
+        return std::make_unique<ActionStepsNode>(ActionList::DecodeItems(enc));
+    }
+    if (type == "Delay") return std::make_unique<DelayNode>(args.empty() ? 1.0f : ParseValue(args[0]).AsFloat());
     // ---- Fourth wave ----
     {
         auto a0 = [&](const char* d) { return args.empty() || args[0].empty() ? std::string(d) : args[0]; };
@@ -423,8 +446,14 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
 
     while (std::getline(in, line)) {
         ++lineNo;
-        // Strip comments starting with '#'.
-        if (auto h = line.find('#'); h != std::string::npos) line.erase(h);
+        // Strip comments starting with '#' (a '#' inside "quotes" is text: Format "#{0}").
+        {
+            bool q = false;
+            for (std::size_t i = 0; i < line.size(); ++i) {
+                if (line[i] == '"') q = !q;
+                else if (line[i] == '#' && !q) { line.erase(i); break; }
+            }
+        }
         auto tok = Tokenize(line);
         if (tok.empty()) continue;
 

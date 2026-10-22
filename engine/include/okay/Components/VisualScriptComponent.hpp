@@ -53,7 +53,12 @@ public:
     void OnCollisionExit3D(const Collision3D& c) override { Fire("OnCollisionExit", c.gameObject); }
     void OnTriggerExit2D(Collider2D* other) override { Fire("OnTriggerExit", other ? other->gameObject : nullptr); }
     void OnTriggerExit3D(Collider3D* other) override { Fire("OnTriggerExit", other ? other->gameObject : nullptr); }
-    void OnMouseDown() override { Fire("OnClick", gameObject); }
+    void OnMouseDown() override { Fire("OnClick", gameObject); Fire("OnMouseDown", gameObject); }
+    void OnMouseUp() override   { Fire("OnMouseUp", gameObject); }
+    void OnMouseOver() override { Fire("OnMouseOver", gameObject); }
+    void OnCollisionStay2D(const Collision2D& c) override { Fire("OnCollisionStay", c.gameObject); }
+    void OnCollisionStay3D(const Collision3D& c) override { Fire("OnCollisionStay", c.gameObject); }
+    void LateUpdate(float dt) override;
     void OnMouseEnter() override { Fire("OnMouseEnter", gameObject); }
     void OnMouseExit() override { Fire("OnMouseExit", gameObject); }
     /// Clip events run "OnAnimEvent:<name>" (an On Anim Event node filtered to

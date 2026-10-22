@@ -5573,6 +5573,25 @@ struct OkayScriptVM::Impl {
             deliverEvent(evTarget(a[0].AsString()), a[1].AsString(), a.size() > 2 ? a[2] : Value{});
             return Value{};
         };
+        // run_action("move 1 0 0") / check_action("var_gt hp 0"): one step of the
+        // no-code Actions library, run on this object (what a graph's Action /
+        // Condition node exports to).
+        b["run_action"] = [this](std::vector<Value>& a) {
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            if (a.empty() || !me) return Value{};
+            ActionList runner;
+            runner.gameObject = me; runner.transform = me->transform;
+            runner.instructions = ActionList::DecodeItems(a[0].AsString());
+            if (runner.BeginRun()) runner.Update(0.0f);
+            return Value{};
+        };
+        b["check_action"] = [this](std::vector<Value>& a) {
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            if (a.empty() || !me) return Value{false};
+            ActionList tester;
+            tester.gameObject = me; tester.transform = me->transform;
+            return Value{tester.TestConditions({ActionList::DecodeItem(a[0].AsString())})};
+        };
         b["broadcast_event"] = [this, deliverEvent](std::vector<Value>& a) {
             GameObject* me = rt.host ? rt.host->gameObject : nullptr;
             if (a.empty() || !me || !me->scene()) return Value{};

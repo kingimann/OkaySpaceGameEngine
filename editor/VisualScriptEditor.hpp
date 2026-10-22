@@ -7,6 +7,8 @@
 #include "imgui.h"
 #include "EditorState.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Components/ActionList.hpp"
+#include "okay/VisualScript/ActionGraph.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -287,6 +289,16 @@ inline const std::vector<VsDef>& Registry() {
         {"OnCollisionExit", "On Collision Exit", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnTriggerExit",   "On Trigger Exit",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnMouseEnter",    "On Mouse Enter",   CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnMouseDown",     "On Mouse Down",    CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnMouseUp",       "On Mouse Up",      CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnMouseOver",     "On Mouse Over",    CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnCollisionStay", "On Collision Stay",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnLateUpdate",    "On Late Update",   CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        // The Actions step library as nodes (the arg is the encoded step / steps).
+        {"Action",          "Action",           CAT_ACTION, true, {""}, {}, {}, 3, nullptr},
+        {"Actions",         "Action Steps",     CAT_ACTION, true, {""}, {}, {}, 4, nullptr},
+        {"Condition",       "Check",            CAT_LOGIC,  true, {"True", "False"}, {}, {}, 5, nullptr},
+        {"Delay",           "Delay (s)",        CAT_FLOW,   true, {""}, {}, {}, 1, "seconds"},
         {"OnMouseExit",     "On Mouse Exit",    CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"SendEvent",       "Send Event",       CAT_ACTION, true, {""}, {"Target", "Value"}, {}, 1, "event name"},
         {"BroadcastEvent",  "Broadcast Event",  CAT_ACTION, true, {""}, {"Value"}, {}, 1, "event name"},
@@ -450,7 +462,8 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     };
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" ||
         type == "OnClick" || type == "OnCollisionExit" || type == "OnTriggerExit" ||
-        type == "OnMouseEnter" || type == "OnMouseExit") return type;
+        type == "OnMouseEnter" || type == "OnMouseExit" || type == "OnMouseDown" || type == "OnMouseUp" ||
+        type == "OnMouseOver" || type == "OnCollisionStay" || type == "OnLateUpdate") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
@@ -479,7 +492,8 @@ struct VsEditGraph {
             {"SetObjectVar", "hp"}, {"GetObjectVar", "hp"}, {"SaveValue", "score"}, {"LoadValue", "score"},
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"},
             {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
-            {"ShowUI", "self"}, {"HideUI", "self"}};
+            {"ShowUI", "self"}, {"HideUI", "self"}, {"Delay", "1"}, {"Action", "log Hello"},
+            {"Condition", "always"}, {"Actions", "log Hello"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
         nodes.push_back(n); dirty = true; return n.id;
     }
@@ -973,6 +987,15 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     }
     else if (t=="Timer") out += ind + "// Every (" + arg("1") + "s): wire actions to this node\n";
     else if (t=="Wait")  out += ind + "// Wait (" + arg("1") + "s): use after(t, fn) for a delay\n";
+    else if (t=="Delay") out += ind + "// Delay (" + arg("1") + "s): put what follows in after(" + arg("1") + ", fn)\n";
+    else if (t=="Action" || t=="Actions") out += ind + "run_action(" + q(n->arg) + ")\n";
+    else if (t=="Condition") {
+        out += ind + "if (check_action(" + q(n->arg) + ")) {\n";
+        int tn = VsExecTarget(g, nodeId, 0); if (tn>=0) VsEmitChain(g, tn, out, ind+"    ", visited);
+        int fn = VsExecTarget(g, nodeId, 1);
+        if (fn>=0) { out += ind + "} else {\n"; VsEmitChain(g, fn, out, ind+"    ", visited); }
+        out += ind + "}\n";
+    }
     else                 out += ind + "// unsupported node: " + t + "\n";
 }
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
@@ -985,7 +1008,7 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
         VsEmitNode(g, cur, out, ind, visited);
         static const std::set<std::string> kSelfContinued = {
             "Branch", "Sequence", "Once", "ForLoop", "Repeat", "FlipFlop", "Gate", "DoN", "SwitchInt",
-            "ChanceBranch", "EveryN"};
+            "ChanceBranch", "EveryN", "Condition"};
         if (kSelfContinued.count(n->type)) break;
         cur = VsExecTarget(g, cur, 0);
     }
@@ -1074,10 +1097,21 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         {"OnTriggerExit",   "void OnTriggerExit(Collider other)"},
         {"OnClick",         "void OnMouseDown()"},
         {"OnMouseEnter",    "void OnMouseEnter()"},
-        {"OnMouseExit",     "void OnMouseExit()"}};
+        {"OnMouseExit",     "void OnMouseExit()"},
+        {"OnMouseDown",     "void OnMouseDown()"},
+        {"OnMouseUp",       "void OnMouseUp()"},
+        {"OnMouseOver",     "void OnMouseOver()"},
+        {"OnCollisionStay", "void OnCollisionStay(Collision other)"},
+        {"OnLateUpdate",    "void LateUpdate()"}};
+    // Events sharing a handler (On Click + On Mouse Down) go into one method.
+    std::set<std::string> doneSig;
     for (const auto& ev : kEvents) {
-        auto v = ofType(ev.first);
+        if (doneSig.count(ev.second)) continue;
+        std::vector<const VsEditNode*> v;
+        for (const auto& ev2 : kEvents)
+            if (std::strcmp(ev2.second, ev.second) == 0) for (auto* n : ofType(ev2.first)) v.push_back(n);
         if (v.empty()) continue;
+        doneSig.insert(ev.second);
         open(ev.second);
         for (auto* n : v) chain(n->id, "        ");
         out += "    }\n";
@@ -1165,6 +1199,12 @@ struct VsEditState {
     std::map<int, float> flash;
     bool   showMinimap = true;
     bool   liveValues = true;
+    bool   showOutline = true;   // the events list on the left (click to jump)
+    int    focusNode = -1;       // centre the view on this node next frame
+    bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
+    bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
+    bool   frameSel = false;     // fit the selected nodes (F)
+    bool   needsEvent = false;   // nodes but no event node: hint on the canvas
 };
 
 inline VsEditState& State() { static VsEditState s; return s; }
@@ -1173,6 +1213,58 @@ inline VsEditState& State() { static VsEditState s; return s; }
 // the host's logging so this header can be included at global scope.
 inline void (*LogFn)(const std::string&, int) = nullptr;
 inline void Log(const std::string& m, int lv = 0) { if (LogFn) LogFn(m, lv); }
+
+// ---- The Actions step library (the editor fills these in) -------------------
+// One graph editor covers both styles: wired nodes, and the no-code steps
+// (Move, Play Sound, Set Variable, Has Tag...) that the Actions component had.
+struct VsStepInfo { std::string op, label, group, desc; bool listOnly = false; };   // listOnly: only inside Action Steps
+/// Every instruction (cond = false) or condition (cond = true) step, grouped.
+inline const std::vector<VsStepInfo>* (*StepCatalog)(bool cond) = nullptr;
+/// Draw the friendly editor row for one step. Returns 0, or 1 remove / 2 up / 3 down.
+inline int (*StepEditor)(okay::ActionList::Item& it, bool cond, int id, bool& changed) = nullptr;
+/// "score += 1", "toward Player @ 3": a one-line reading of a step's arguments.
+inline std::string (*StepSummary)(const okay::ActionList::Item& it) = nullptr;
+/// Ready-made behaviours: draw the picker popup `popupId`; fills `out` when one is chosen.
+inline bool (*TemplatePicker)(const char* popupId, okay::ActionList& out) = nullptr;
+
+inline std::string StepLabel(const std::string& op, bool cond) {
+    if (op == "declare_var") return "Starting Value";
+    if (StepCatalog) if (const auto* cat = StepCatalog(cond))
+        for (const auto& si : *cat) if (si.op == op) return si.label;
+    return op;
+}
+/// The header title a node shows: steps read as what they do ("Move", "If Has Tag").
+inline std::string VsNodeTitle(const VsEditNode& n, const VsDef& d) {
+    if (n.type == "Action") {
+        okay::ActionList::Item it = okay::ActionList::DecodeItem(n.arg);
+        return it.op.empty() ? std::string(d.title) : StepLabel(it.op, false);
+    }
+    if (n.type == "Condition") {
+        okay::ActionList::Item it = okay::ActionList::DecodeItem(n.arg);
+        return "If " + (it.op.empty() ? std::string("...") : StepLabel(it.op, true));
+    }
+    if (n.type == "Actions") {
+        std::size_t c = okay::ActionList::DecodeItems(n.arg).size();
+        return "Steps (" + std::to_string(c) + ")";
+    }
+    return d.title;
+}
+/// The grey line under a step node's title (its arguments, read as a sentence).
+inline std::string VsStepLine(const VsEditNode& n) {
+    if (n.type == "Actions") {
+        auto list = okay::ActionList::DecodeItems(n.arg);
+        std::string s;
+        for (std::size_t i = 0; i < list.size() && i < 3; ++i) { if (i) s += ", "; s += StepLabel(list[i].op, false); }
+        if (list.size() > 3) s += ", ...";
+        return s.empty() ? std::string("(no steps)") : s;
+    }
+    okay::ActionList::Item it = okay::ActionList::DecodeItem(n.arg);
+    if (it.op == "declare_var")   // name type value
+        return (it.args.empty() ? std::string("?") : it.args[0]) + " = " + (it.args.size() > 2 ? it.args[2] : std::string());
+    std::string s = StepSummary ? StepSummary(it) : std::string();
+    if (s.empty()) for (const auto& a : it.args) { if (!s.empty()) s += ' '; s += a; }
+    return s.empty() ? std::string("(click to set up)") : s;
+}
 
 // Forget selection / undo history (a different graph was loaded).
 inline void ResetEditState(VsEditState& st) {
@@ -1258,17 +1350,16 @@ inline void Draw(EditorState& ed, bool* open) {
     const bool winFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     const bool typing = io.WantTextInput;
 
-    // ---- Toolbar ----------------------------------------------------------------
-    if (ImGui::Button("New")) { g.clear(); ResetEditState(st); }
-    ImGui::SameLine();
-    const bool ctrlS = winFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false);
-    if (ImGui::Button("Save") || ctrlS) {
-        std::string p = g.path;
-        if (p.empty()) {
-            // default into the project Assets folder.
-            std::string dir = ed.projectDir();
-            p = (dir.empty() ? std::string("Script") : dir + "/Assets/Script") + ".okayvs";
-        }
+    // ---- Toolbar: File / Edit / + Add / Templates ... Fit / zoom / View --------------
+    // Kept short on purpose: everything else is a shortcut, the right-click menu,
+    // or one of these menus.
+    auto savePath = [&](const std::string& stemHint) {
+        if (!g.path.empty()) return g.path;
+        std::string dir = ed.projectDir();
+        return (dir.empty() ? std::string("Script") : dir + "/Assets/" + stemHint) + ".okayvs";
+    };
+    auto doSave = [&]() {
+        std::string p = savePath("Script");
         if (g.save(p)) {
             // Objects already using this graph pick the change up right away.
             int n = 0;
@@ -1277,98 +1368,106 @@ inline void Draw(EditorState& ed, bool* open) {
                     if (vc->Path() == p) { vc->Reload(); ++n; }
             Log("Saved visual script " + p + (n ? " (updated " + std::to_string(n) + " object(s))" : std::string()));
         } else Log("Save failed: " + p, 2);
-    }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!ed.selected());
-    if (ImGui::Button("Attach to Selected")) {
-        if (GameObject* o = ed.selected()) {
-            // Save what's on screen first: attaching loads the file, and an unsaved
-            // edit would otherwise silently not be what runs.
-            std::string p = g.path;
-            if (p.empty()) {
-                std::string dir = ed.projectDir();
-                p = (dir.empty() ? std::string("Script") : dir + "/Assets/" + o->name + "_vs") + ".okayvs";
-            }
-            if (!g.save(p)) Log("Couldn't save " + p, 2);
-            for (const auto& up : ed.scene().Objects())   // others using the file follow the edit
-                for (auto* other : up->GetComponents<VisualScriptComponent>())
-                    if (other->Path() == p) other->Reload();
-            auto* vc = o->GetComponent<VisualScriptComponent>();
-            if (!vc) vc = o->AddComponent<VisualScriptComponent>();
-            vc->LoadFromFile(g.path);
-            ed.dirty = true;
-            Log("Attached visual script to " + o->name);
+    };
+    auto doAttach = [&](GameObject* o) {
+        // Save what's on screen first: attaching loads the file, and an unsaved
+        // edit would otherwise silently not be what runs.
+        std::string p = savePath(o->name + "_vs");
+        if (!g.save(p)) { Log("Couldn't save " + p, 2); return; }
+        for (const auto& up : ed.scene().Objects())   // others using the file follow the edit
+            for (auto* other : up->GetComponents<VisualScriptComponent>())
+                if (other->Path() == p) other->Reload();
+        auto* vc = o->GetComponent<VisualScriptComponent>();
+        if (!vc) vc = o->AddComponent<VisualScriptComponent>();
+        vc->LoadFromFile(g.path);
+        ed.dirty = true;
+        Log("Attached visual script to " + o->name);
+    };
+    bool addComment = false;
+    if (ImGui::Button("File")) ImGui::OpenPopup("##vsfile");
+    if (ImGui::BeginPopup("##vsfile")) {
+        if (ImGui::MenuItem("New graph")) { g.clear(); ResetEditState(st); }
+        if (ImGui::BeginMenu("Open")) {
+            // Every graph in the project's Assets.
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            std::error_code ec; int shown = 0;
+            if (fs::exists(assets, ec))
+                for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                    if (!e.is_regular_file() || e.path().extension() != ".okayvs") continue;
+                    ++shown;
+                    if (ImGui::MenuItem(fs::relative(e.path(), assets, ec).string().c_str())) { g.load(e.path().string()); ResetEditState(st); }
+                }
+            if (!shown) ImGui::TextDisabled("No graphs in Assets yet.");
+            ImGui::EndMenu();
         }
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button(st.showScript ? "Hide Script" : "View as OkayScript")) st.showScript = !st.showScript;
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Compile this graph to OkayScript - author with either front-end");
-    ImGui::SameLine();
-    if (ImGui::Button("Open...")) ImGui::OpenPopup("##vsopen");
-    if (ImGui::BeginPopup("##vsopen")) {
-        // Every graph in the project's Assets.
-        namespace fs = std::filesystem;
-        fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-        std::error_code ec; int shown = 0;
-        if (fs::exists(assets, ec))
-            for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
-                if (!e.is_regular_file() || e.path().extension() != ".okayvs") continue;
-                ++shown;
-                if (ImGui::MenuItem(fs::relative(e.path(), assets, ec).string().c_str())) { g.load(e.path().string()); ResetEditState(st); }
-            }
-        if (!shown) ImGui::TextDisabled("No .okayvs graphs in Assets yet.");
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    ImGui::BeginDisabled(st.undo.empty());
-    if (ImGui::Button("Undo")) doUndo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Undo (Ctrl+Z)");
-    ImGui::SameLine();
-    ImGui::BeginDisabled(st.redo.empty());
-    if (ImGui::Button("Redo")) doRedo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Redo (Ctrl+Y / Ctrl+Shift+Z)");
-    ImGui::SameLine();
-    bool addComment = ImGui::Button("Comment");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame the selected nodes in a titled comment box (C).\nDrag its title to move the whole group; drag the corner to resize.");
-    // Zoom controls (wheel over the canvas zooms too; Home frames every node).
-    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    if (ImGui::Button(" - ##vszo")) st.zoom = std::max(0.4f, st.zoom / 1.15f);
-    ImGui::SameLine();
-    ImGui::Text("%d%%", (int)std::lround(st.zoom * 100.0f));
-    if (ImGui::IsItemClicked()) st.zoom = 1.0f;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to reset to 100%%. Mouse wheel over the graph zooms.");
-    ImGui::SameLine();
-    if (ImGui::Button(" + ##vszi")) st.zoom = std::min(2.0f, st.zoom * 1.15f);
-    ImGui::SameLine();
-    if (ImGui::Button("Frame All")) st.frameAll = true;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit every node in view (Home)");
-    ImGui::SameLine();
-    if (ImGui::Button("View")) ImGui::OpenPopup("##vsview");
-    if (ImGui::BeginPopup("##vsview")) {
-        ImGui::MenuItem("Minimap", nullptr, &st.showMinimap);
-        ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
+        if (ImGui::MenuItem("Save", "Ctrl+S")) doSave();
         ImGui::Separator();
-        ImGui::TextDisabled("Shortcuts");
-        ImGui::TextDisabled("  Right-click / Space: add node      Drag a wire into space: add + connect");
-        ImGui::TextDisabled("  Drag on empty space: box select   Ctrl+click: add to selection");
-        ImGui::TextDisabled("  Ctrl+C / Ctrl+V / Ctrl+D: copy / paste / duplicate   Del: delete");
-        ImGui::TextDisabled("  Ctrl+Z / Ctrl+Y: undo / redo      Ctrl+A: select all      C: comment");
-        ImGui::TextDisabled("  Alt+click a pin: break its wires   Middle-drag: pan   Wheel: zoom   Home: frame");
+        GameObject* selObj = ed.selected();
+        std::string attachLbl = selObj ? "Attach to " + selObj->name : std::string("Attach to selected object");
+        if (ImGui::MenuItem(attachLbl.c_str(), nullptr, false, selObj != nullptr)) doAttach(selObj);
         ImGui::EndPopup();
+    }
+    if (winFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) doSave();
+    ImGui::SameLine();
+    if (ImGui::Button("Edit")) ImGui::OpenPopup("##vsedit");
+    if (ImGui::BeginPopup("##vsedit")) {
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !st.undo.empty())) doUndo();
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !st.redo.empty())) doRedo();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Select all", "Ctrl+A")) { st.sel.clear(); for (const auto& n : g.nodes) st.sel.insert(n.id); }
+        if (ImGui::MenuItem("Comment around selection", "C", false, !st.sel.empty())) addComment = true;
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("+ Add")) st.addAtCenter = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a node or an action step (or right-click / Space on the graph)");
+    ImGui::SameLine();
+    if (TemplatePicker) {
+        if (ImGui::Button("Templates")) ImGui::OpenPopup("##vstemplates");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready-made behaviours (jump, follow, spawn timer...) added as nodes you can tweak");
+        okay::ActionList tmp;
+        if (TemplatePicker("##vstemplates", tmp)) {
+            st.templateText = okay::vs::ActionListToGraph(tmp);
+            st.pasteTemplate = true;
+        }
+        ImGui::SameLine();
+    }
+    ImGui::TextDisabled("%s%s", g.path.empty() ? "(unsaved)" : std::filesystem::path(g.path).filename().string().c_str(), g.dirty ? " *" : "");
+    // Right side: Fit, zoom readout (click = 100%), View.
+    {
+        const float rightW = 230.0f;
+        const float avail = ImGui::GetWindowContentRegionMax().x;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f, avail - rightW));
+        if (ImGui::Button("Fit")) st.frameAll = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every node (Home). F frames the selection.");
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("%d%%", (int)std::lround(st.zoom * 100.0f));
+        if (ImGui::IsItemClicked()) st.zoom = 1.0f;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse wheel zooms. Click for 100%%.");
+        ImGui::SameLine();
+        if (ImGui::Button("View")) ImGui::OpenPopup("##vsview");
+        if (ImGui::BeginPopup("##vsview")) {
+            ImGui::MenuItem("Events list", nullptr, &st.showOutline);
+            ImGui::MenuItem("Minimap", nullptr, &st.showMinimap);
+            ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
+            ImGui::MenuItem("Show as OkayScript", nullptr, &st.showScript);
+            ImGui::Separator();
+            ImGui::TextDisabled("Shortcuts");
+            ImGui::TextDisabled("  Right-click / Space: add      Drag a wire into space: add + connect");
+            ImGui::TextDisabled("  Drag empty space: box select   Right- or middle-drag: pan   Wheel: zoom");
+            ImGui::TextDisabled("  Home: show all   F: frame selection   Ctrl+C/V/D: copy/paste/duplicate");
+            ImGui::TextDisabled("  Del: delete   Ctrl+Z/Y: undo/redo   C: comment   Alt+click a pin: unwire");
+            ImGui::EndPopup();
+        }
     }
     // Lightweight validation + live status.
     {
         bool hasEvent = false;
         for (const auto& n : g.nodes)
             if (!VsEntryName(n.type, n.arg).empty()) { hasEvent = true; break; }
-        if (!g.nodes.empty() && !hasEvent) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.40f, 1.0f), "  \xE2\x9A\xA0 add an event node (On Start, On Update...)");
-        }
+        st.needsEvent = !g.nodes.empty() && !hasEvent;   // shown on the canvas
     }
     // The running instance of this graph (Play mode): the selected object's if it
     // uses this file, else the first object that does.
@@ -1385,12 +1484,6 @@ inline void Draw(EditorState& ed, bool* open) {
         if (!vc) for (const auto& up : ed.scene().Objects()) if ((vc = usesThis(up.get()))) break;
         if (vc) { live = vc->Graph(); liveName = vc->gameObject ? vc->gameObject->name : std::string(); }
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s%s", g.path.empty() ? "(unsaved)" : std::filesystem::path(g.path).filename().string().c_str(), g.dirty ? " *" : "");
-    if (live) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "  \xE2\x97\x8F LIVE: %s", liveName.c_str());
-    }
 
     // ---- Keyboard shortcuts (canvas focused, not typing) -------------------------
     if (winFocused && !typing) {
@@ -1401,6 +1494,32 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && !st.sel.empty())
             ImGui::SetClipboardText(VsSelectionText(g, st.sel).c_str());
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) addComment = true;
+    }
+
+    // ---- Events list: every event chain in the graph; click one to jump to it ----
+    if (st.showOutline) {
+        ImGui::BeginChild("vsoutline", ImVec2(176, 0), true);
+        ImGui::TextDisabled("EVENTS");
+        ImGui::Separator();
+        int shown = 0;
+        for (const auto& n : g.nodes) {
+            if (VsEntryName(n.type, n.arg).empty()) continue;
+            const VsDef* d = FindDef(n.type);
+            std::string lbl = d ? d->title : n.type;
+            if (!n.arg.empty() && n.type != "OnStart" && n.type != "OnUpdate") lbl += ": " + (IsKeyNode(n.type) ? VsKeyLabel(n.arg) : n.arg);
+            // How many steps hang off it (follow the first exec pin).
+            int steps = 0;
+            for (int cur = VsExecTarget(g, n.id, 0); cur >= 0 && steps < 99; cur = VsExecTarget(g, cur, 0)) ++steps;
+            ImGui::PushID(n.id);
+            const bool on = st.sel.count(n.id) > 0;
+            if (ImGui::Selectable(lbl.c_str(), on)) { st.sel = {n.id}; st.selected = n.id; st.focusNode = n.id; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%d step(s) after it. Click to jump there.", steps);
+            ImGui::PopID();
+            ++shown;
+        }
+        if (!shown) ImGui::TextWrapped("No events yet. Add one with + Add > Events (On Start, On Key...).");
+        ImGui::EndChild();
+        ImGui::SameLine();
     }
 
     // Canvas (leaves room on the right for the OkayScript preview when open).
@@ -1436,11 +1555,24 @@ inline void Draw(EditorState& ed, bool* open) {
         st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);
     }
     if (winFocused && !typing && ImGui::IsKeyPressed(ImGuiKey_Home, false)) st.frameAll = true;
-    if (st.frameAll) {
-        st.frameAll = false;
-        if (!g.nodes.empty()) {
+    if (winFocused && !typing && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && !st.sel.empty()) st.frameSel = true;
+    if (st.focusNode >= 0) {   // centre on one node, keeping the zoom readable
+        if (const VsEditNode* fn = g.find(st.focusNode)) {
+            z = std::max(z, 0.8f);
+            st.pan = ImVec2((canvasMax.x - canvasMin.x) * 0.35f - fn->x * kLayout * z,
+                            (canvasMax.y - canvasMin.y) * 0.45f - fn->y * kLayout * z);
+        }
+        st.focusNode = -1;
+    }
+    if (st.frameAll || st.frameSel) {
+        const bool onlySel = st.frameSel && !st.frameAll;
+        st.frameAll = st.frameSel = false;
+        bool any = false;
+        for (const auto& n : g.nodes) if (!onlySel || st.sel.count(n.id)) { any = true; break; }
+        if (any) {
             float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
             for (const auto& n : g.nodes) {   // rough node extents in world units
+                if (onlySel && !st.sel.count(n.id)) continue;
                 x0 = std::min(x0, n.x * kLayout); y0 = std::min(y0, n.y * kLayout);
                 x1 = std::max(x1, n.x * kLayout + 260.0f); y1 = std::max(y1, n.y * kLayout + 170.0f);
             }
@@ -1467,8 +1599,9 @@ inline void Draw(EditorState& ed, bool* open) {
             dl->AddLine(ImVec2(canvasMin.x, canvasMin.y + y), ImVec2(canvasMax.x, canvasMin.y + y), (j % 4 == 0) ? gridMajor : gridMinor);
     }
 
-    // Pan with middle drag (anywhere on the canvas).
-    if (canvasWindowHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    // Pan with middle or right drag (anywhere on the canvas); a right CLICK
+    // without dragging still opens the add menu.
+    if (canvasWindowHovered && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 6.0f))) {
         st.pan.x += io.MouseDelta.x; st.pan.y += io.MouseDelta.y;
     }
 
@@ -1615,7 +1748,11 @@ inline void Draw(EditorState& ed, bool* open) {
         for (const char* lbl : d->dataIn) inLabelW = std::max(inLabelW, ImGui::CalcTextSize(lbl).x);
         for (const char* lbl : d->dataOut) outLabelW = std::max(outLabelW, ImGui::CalcTextSize(lbl).x);
         for (const char* lbl : d->execOut) outLabelW = std::max(outLabelW, ImGui::CalcTextSize(lbl).x);
-        float titleW = ImGui::CalcTextSize(d->title).x + PAD * 2.0f;
+        const std::string title = VsNodeTitle(n, *d);
+        const bool isStep = d->param >= 3;
+        const std::string stepLine = isStep ? VsStepLine(n) : std::string();
+        float titleW = ImGui::CalcTextSize(title.c_str()).x + PAD * 2.0f;
+        if (isStep) titleW = std::max(titleW, std::min(ImGui::CalcTextSize(stepLine.c_str()).x, 320.0f * z) + PAD * 2.0f);
         const float NODE_W = std::max({NODE_W_BASE, titleW,
             d->dataIn.empty() ? 0.0f : PAD + inLabelW + 8.0f * z + BOX_W + PAD + outLabelW + PAD});
         ImVec2 p0 = W2S(n.x, n.y), p1 = ImVec2(p0.x + NODE_W, p0.y + h);
@@ -1645,7 +1782,7 @@ inline void Draw(EditorState& ed, bool* open) {
         } else {
             dl->AddRect(p0, p1, hovered ? IM_COL32(150, 154, 166, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
         }
-        text(ImVec2(p0.x + PAD, p0.y + (HEADER_H - fs) * 0.5f), IM_COL32(244, 246, 250, 255), d->title);
+        text(ImVec2(p0.x + PAD, p0.y + (HEADER_H - fs) * 0.5f), IM_COL32(244, 246, 250, 255), title.c_str());
 
         // Node drag handle: an invisible button over the header.
         ImGui::SetCursorScreenPos(p0);
@@ -1661,7 +1798,7 @@ inline void Draw(EditorState& ed, bool* open) {
             startNodeDrag = true;   // move every selected node together (after the loop)
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && d->cat != CAT_EVENT && !ImGui::IsItemActive())
-            ImGui::SetTooltip("%s  (%s)", d->title, d->type);
+            ImGui::SetTooltip("%s  (%s)", title.c_str(), d->type);
         if (ImGui::BeginPopupContextItem("##nctx")) {
             if (!st.sel.count(n.id)) { st.sel.clear(); st.sel.insert(n.id); st.selected = n.id; }
             // Applied after the loop: the node list mustn't change while it's iterated.
@@ -1761,7 +1898,46 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD, py));
             ImGui::SetNextItemWidth(NODE_W - PAD * 2);
             char buf[96]; std::snprintf(buf, sizeof(buf), "%s", n.arg.c_str());
-            if (d->param == 2) {   // compare op combo
+            if (isStep) {
+                // A step node: its arguments as a sentence; click to edit with the
+                // same friendly fields the Actions component had (no typing code).
+                const bool cond = d->param == 5;
+                std::string shown = stepLine;
+                const float maxW = NODE_W - PAD * 2 - 12 * z;
+                while (shown.size() > 4 && ImGui::CalcTextSize(shown.c_str()).x > maxW) shown = shown.substr(0, shown.size() - 4) + "..";
+                if (ImGui::Button((shown + "##stepbtn").c_str(), ImVec2(NODE_W - PAD * 2, 0))) ImGui::OpenPopup("##stepedit");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to edit");
+                ImGui::SetNextWindowSizeConstraints(ImVec2(440, 0), ImVec2(720, 520));
+                if (ImGui::BeginPopup("##stepedit")) {
+                    ImGui::SetWindowFontScale(1.0f);
+                    if (d->param == 4) {   // a list of steps
+                        auto list = okay::ActionList::DecodeItems(n.arg);
+                        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "Steps (run top to bottom; Wait pauses)");
+                        ImGui::Separator();
+                        bool ch = false; int act = 0, actAt = -1;
+                        for (std::size_t i = 0; i < list.size(); ++i) {
+                            ImGui::TextDisabled("%d", (int)i + 1); ImGui::SameLine(26);
+                            int a = StepEditor ? StepEditor(list[i], false, (int)i, ch) : 0;
+                            if (a) { act = a; actAt = (int)i; }
+                        }
+                        if (act == 1 && actAt >= 0) { list.erase(list.begin() + actAt); ch = true; }
+                        if (act == 2 && actAt > 0) { std::swap(list[actAt], list[actAt - 1]); ch = true; }
+                        if (act == 3 && actAt >= 0 && actAt + 1 < (int)list.size()) { std::swap(list[actAt], list[actAt + 1]); ch = true; }
+                        if (ImGui::Button("+ Add step")) { list.push_back({"log", {"Hello"}}); ch = true; }
+                        if (ch) { n.arg = okay::ActionList::EncodeItems(list); g.dirty = true; }
+                    } else {
+                        okay::ActionList::Item it = okay::ActionList::DecodeItem(n.arg);
+                        if (it.op.empty()) it.op = cond ? "always" : "log";
+                        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), cond ? "Check" : "Action");
+                        ImGui::Separator();
+                        bool ch = false;
+                        if (StepEditor) StepEditor(it, cond, 0, ch);
+                        if (ch) { n.arg = okay::ActionList::EncodeItem(it); g.dirty = true; }
+                    }
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::EndPopup();
+                }
+            } else if (d->param == 2) {   // compare op combo
                 const char* ops[] = {">", "<", ">=", "<=", "==", "!="};
                 if (ImGui::BeginCombo("##op", n.arg.c_str())) {
                     for (const char* o : ops) if (ImGui::Selectable(o, n.arg == o)) { n.arg = o; g.dirty = true; }
@@ -1975,16 +2151,28 @@ inline void Draw(EditorState& ed, bool* open) {
     }
 
     // Right-click empty canvas (or Space): node palette.
-    if ((canvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !st.dragging) ||
-        (winFocused && !typing && canvasWindowHovered && ImGui::IsKeyPressed(ImGuiKey_Space, false)) || openPaletteNow) {
+    if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 36.0f && !st.dragging) ||
+        (winFocused && !typing && canvasWindowHovered && ImGui::IsKeyPressed(ImGuiKey_Space, false)) || openPaletteNow || st.addAtCenter) {
         st.openPalette = true;
         if (!openPaletteNow) st.linkPending = false;
-        st.paletteWorld = S2W(io.MousePos);
+        st.paletteWorld = st.addAtCenter ? S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f - 100.0f, (canvasMin.y + canvasMax.y) * 0.5f - 40.0f))
+                                         : S2W(io.MousePos);
+        st.addAtCenter = false;
         ImGui::OpenPopup("##vspalette");
     }
+    // A template picked in the toolbar: drop its nodes in the middle of the view.
+    if (st.pasteTemplate) {
+        st.pasteTemplate = false;
+        ImVec2 c = S2W(ImVec2(canvasMin.x + 60.0f, (canvasMin.y + canvasMax.y) * 0.5f - 60.0f));
+        std::set<int> made = VsPasteText(g, st.templateText, c.x, c.y);
+        st.sel = made; st.selected = made.empty() ? -1 : *made.begin();
+        st.frameSel = !made.empty();
+        st.templateText.clear();
+    }
     // Add a node from the palette; wire it to the dropped pin when there is one.
-    auto addFromPalette = [&](const VsDef& d) {
+    auto addFromPalette = [&](const VsDef& d, const std::string& arg = std::string()) {
         int nid = g.add(d.type, st.paletteWorld.x, st.paletteWorld.y);
+        if (!arg.empty()) if (VsEditNode* nn = g.find(nid)) nn->arg = arg;
         st.selected = nid; st.sel = {nid};
         if (st.linkPending) {
             if (st.linkExec) {
@@ -2029,6 +2217,30 @@ inline void Draw(EditorState& ed, bool* open) {
                 }
                 if (++shown >= 40) break;
             }
+            // ...and every Actions step (Move, Play Sound, Has Tag...).
+            for (int pass = 0; pass < 2 && shown < 60; ++pass) {
+                const bool cond = pass == 1;
+                const VsDef* sd = FindDef(cond ? "Condition" : "Action");
+                if (!StepCatalog || !sd || !fits(*sd)) continue;
+                if (const auto* cat = StepCatalog(cond))
+                    for (const auto& si : *cat) {
+                        if (si.listOnly) continue;
+                        const std::string hay = lower(si.label + " " + si.op + " " + si.group);
+                        if (hay.find(needle) == std::string::npos) continue;
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                        ImGui::TextUnformatted(cond ? "Check" : "Do");
+                        ImGui::PopStyleColor();
+                        ImGui::SameLine(150);
+                        ImGui::PushID(si.op.c_str()); ImGui::PushID(pass);
+                        if (ImGui::Selectable(si.label.c_str(), shown == 0 && enter) || (shown == 0 && enter)) {
+                            addFromPalette(*sd, okay::ActionList::EncodeItem({si.op, {}}));
+                            ImGui::CloseCurrentPopup();
+                        }
+                        if (ImGui::IsItemHovered() && !si.desc.empty()) ImGui::SetTooltip("%s", si.desc.c_str());
+                        ImGui::PopID(); ImGui::PopID();
+                        if (++shown >= 60) break;
+                    }
+            }
             if (shown == 0) ImGui::TextDisabled("No node matches \"%s\"", search);
         } else {
             for (int c = 0; c < CAT_COUNT; ++c) {
@@ -2041,6 +2253,30 @@ inline void Draw(EditorState& ed, bool* open) {
                     ImGui::EndMenu();
                 }
             }
+            // The Actions library: every no-code step, grouped like the old Actions menus.
+            for (int pass = 0; pass < 2; ++pass) {
+                const bool cond = pass == 1;
+                const VsDef* sd = FindDef(cond ? "Condition" : "Action");
+                if (!StepCatalog || !sd || !fits(*sd)) continue;
+                const auto* cat = StepCatalog(cond);
+                if (!cat || cat->empty()) continue;
+                if (pass == 0) ImGui::Separator();
+                if (ImGui::BeginMenu(cond ? "Check something" : "Do something")) {
+                    std::vector<std::string> groups;
+                    for (const auto& si : *cat)
+                        if (!si.listOnly && std::find(groups.begin(), groups.end(), si.group) == groups.end()) groups.push_back(si.group);
+                    for (const auto& gname : groups) {
+                        if (!ImGui::BeginMenu(gname.empty() ? "Other" : gname.c_str())) continue;
+                        for (const auto& si : *cat) {
+                            if (si.group != gname || si.listOnly) continue;
+                            if (ImGui::MenuItem(si.label.c_str())) addFromPalette(*sd, okay::ActionList::EncodeItem({si.op, {}}));
+                            if (ImGui::IsItemHovered() && !si.desc.empty()) ImGui::SetTooltip("%s", si.desc.c_str());
+                        }
+                        ImGui::EndMenu();
+                    }
+                    ImGui::EndMenu();
+                }
+            }
         }
         ImGui::EndPopup();
     } else if (st.linkPending && !openPaletteNow) {
@@ -2049,7 +2285,15 @@ inline void Draw(EditorState& ed, bool* open) {
 
     if (g.nodes.empty())
         dl->AddText(ImVec2(canvasMin.x + 18, canvasMin.y + 16), IM_COL32(150, 152, 160, 255),
-                    "Right-click (or press Space) to add a node. Start with an event: On Start, On Update, On Key Pressed...");
+                    "Click + Add (or right-click) to start with an event: On Start, On Update, On Key... or pick a Template.");
+    else if (st.needsEvent)
+        dl->AddText(ImVec2(canvasMin.x + 18, canvasMin.y + 16), IM_COL32(240, 184, 102, 255),
+                    "Nothing runs yet: add an event node (On Start, On Update, On Key...) and wire it in.");
+    if (live) {
+        std::string lv = "\xE2\x97\x8F LIVE: " + liveName;
+        ImVec2 ts = ImGui::CalcTextSize(lv.c_str());
+        dl->AddText(ImVec2(canvasMax.x - ts.x - 16, canvasMin.y + 12), IM_COL32(115, 230, 140, 255), lv.c_str());
+    }
 
     ImGui::EndChild();
     ImGui::PopStyleColor();

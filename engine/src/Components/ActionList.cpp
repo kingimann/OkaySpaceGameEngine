@@ -15,6 +15,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UITextBind.hpp"        // Resolve {var}/{pref} tokens in text
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"   // messages also reach node graphs
 #include "okay/Components/NativeUIActions.hpp"   // InvokeNativeUIAction (survival verbs)
 #include "okay/Components/Consumables.hpp"       // UseIndex
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -257,6 +258,68 @@ RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size
 }
 } // namespace
 
+namespace {
+// %-escape the characters an .okayvs line can't hold inside one token.
+std::string PctEncode(const std::string& a) {
+    if (a.empty()) return "%-";
+    static const char* kHex = "0123456789ABCDEF";
+    std::string o;
+    for (unsigned char c : a) {
+        if (c <= ' ' || c == '%' || c == '"' || c == '#' || c == ';' || c == '\'' || c == '\\' || c >= 0x7F) {
+            o += '%'; o += kHex[c >> 4]; o += kHex[c & 15];
+        } else o += (char)c;
+    }
+    return o;
+}
+std::string PctDecode(const std::string& a) {
+    if (a == "%-") return {};
+    auto hex = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+    std::string o;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i] == '%' && i + 2 < a.size() && hex(a[i + 1]) >= 0 && hex(a[i + 2]) >= 0) {
+            o += (char)(hex(a[i + 1]) * 16 + hex(a[i + 2])); i += 2;
+        } else o += a[i];
+    }
+    return o;
+}
+std::vector<std::string> SplitWs(const std::string& s) {
+    std::vector<std::string> out; std::string cur;
+    for (char c : s) {
+        if (std::isspace((unsigned char)c)) { if (!cur.empty()) { out.push_back(cur); cur.clear(); } }
+        else cur += c;
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+} // namespace
+
+std::string ActionList::EncodeItem(const Item& it) {
+    std::string o = PctEncode(it.op);
+    for (const std::string& a : it.args) { o += ' '; o += PctEncode(a); }
+    return o;
+}
+ActionList::Item ActionList::DecodeItem(const std::string& line) {
+    Item it;
+    std::vector<std::string> t = SplitWs(line);
+    if (t.empty()) return it;
+    it.op = PctDecode(t[0]);
+    for (std::size_t i = 1; i < t.size(); ++i) it.args.push_back(PctDecode(t[i]));
+    return it;
+}
+std::string ActionList::EncodeItems(const std::vector<Item>& items) {
+    std::string o;
+    for (std::size_t i = 0; i < items.size(); ++i) { if (i) o += " ; "; o += EncodeItem(items[i]); }
+    return o;
+}
+std::vector<ActionList::Item> ActionList::DecodeItems(const std::string& text) {
+    std::vector<Item> out;
+    std::string cur;
+    auto flush = [&]() { Item it = DecodeItem(cur); if (!it.op.empty()) out.push_back(std::move(it)); cur.clear(); };
+    for (char c : text) { if (c == ';') flush(); else cur += c; }
+    flush();
+    return out;
+}
+
 std::string ActionList::ToText() const {
     std::string out;
     if (!name.empty()) out += "name " + name + "\n";     // optional label (may contain spaces)
@@ -372,11 +435,9 @@ void ActionList::FromText(const std::string& text) {
     }
 }
 
-void ActionList::Start() {
-    // Seed declared variables into the shared pools before anything runs, so they
-    // exist (with their starting values) for every list from frame one.
-    for (const VarDecl& v : variables) {
-        if (v.name.empty()) continue;
+void ActionList::SeedVariable(const VarDecl& v) {
+    {
+        if (v.name.empty()) return;
         // Type indices are STABLE for serialization (never renumber; only append):
         // 0 Number, 1 Text, 2 Bool, 3 Vector2, 4 Vector3, 5 Int, 6 Float, 7 Double,
         // 8 GameObject (stores an object name in StrVars), 9 Color.
@@ -414,6 +475,12 @@ void ActionList::Start() {
                 break;
         }
     }
+}
+
+void ActionList::Start() {
+    // Seed declared variables into the shared pools before anything runs, so they
+    // exist (with their starting values) for every list from frame one.
+    for (const VarDecl& v : variables) SeedVariable(v);
     if (HasTrigger(Trigger::OnStart)) Fire();
 }
 
@@ -619,6 +686,12 @@ void ActionList::Update(float dt) {
         }
         else if (op == "stop") { m_ip = ins.size(); }
         else if (op == "label") { /* jump target marker — no-op */ }
+        // declare_var <name> <type> <value>: a Variables-panel declaration (graphs
+        // converted from Actions seed their variables with it on start).
+        else if (op == "declare_var") {
+            VarDecl vd; vd.name = Str(it, 0); vd.type = (int)Num(it, 1); vd.value = Rest(it, 2);
+            SeedVariable(vd);
+        }
         else if (op == "comment") { /* designer note — no-op at runtime */ }
         // ---- Juice: scheduler-driven tweens (mirror the script tween_* builtins).
         // They start the effect and continue immediately; add a `wait` to hold.
@@ -955,16 +1028,22 @@ void ActionList::Update(float dt) {
         else if (op == "send") {
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>())
                 a->ReceiveMessage(Str(it, 0));
+            if (scene) for (VisualScriptComponent* v : scene->FindObjectsOfType<VisualScriptComponent>())
+                v->SendEvent(Str(it, 0), {}, gameObject);
         }
         // Events with a payload: the receiver reads `event_value` (number) and
         // `event_text` (text), set just before the message fires.
         else if (op == "send_value") {
             Vars()["event_value"] = Num(it, 1); StrVars()["event_text"].clear();
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
+            if (scene) for (VisualScriptComponent* v : scene->FindObjectsOfType<VisualScriptComponent>())
+                v->SendEvent(Str(it, 0), Num(it, 1), gameObject);
         }
         else if (op == "send_text") {
             StrVars()["event_text"] = Rest(it, 1); Vars()["event_value"] = 0.0f;
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
+            if (scene) for (VisualScriptComponent* v : scene->FindObjectsOfType<VisualScriptComponent>())
+                v->SendEvent(Str(it, 0), Rest(it, 1), gameObject);
         }
         else if (op == "move") { if (t) t->Translate({Num(it, 0), Num(it, 1), Num(it, 2)}); }
         else if (op == "set_pos") { if (t) t->localPosition = {Num(it, 0), Num(it, 1), Num(it, 2)}; }
@@ -1315,7 +1394,10 @@ void ActionList::Update(float dt) {
         }
         else if (op == "send_to") {              // message one named object's action lists
             if (scene) if (GameObject* g = scene->Find(ObjName(it, 0)))
+{
                 for (ActionList* a : g->GetComponents<ActionList>()) a->ReceiveMessage(Str(it, 1));
+                for (VisualScriptComponent* v : g->GetComponents<VisualScriptComponent>()) v->SendEvent(Str(it, 1), {}, gameObject);
+            }
         }
         else if (op == "raycast") {              // cast a ray, store the result in variables
             // Args: <direction> [distance] [prefix] [h:offset] [ig:tag]. Writes number

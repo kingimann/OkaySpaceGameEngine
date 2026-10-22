@@ -2757,6 +2757,33 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     return false;
 }
 
+// One graph editor: an Actions component becomes an .okayvs graph that does the same
+// thing (ActionListToGraph), attached to the object and opened in the graph editor.
+// The caller removes the Actions component afterwards.
+static bool ConvertActionsToGraph(okay::editor::EditorState& ed, okay::ActionList* al) {
+    okay::GameObject* go = al ? al->gameObject : nullptr;
+    if (!go) return false;
+    namespace fsn = std::filesystem;
+    fsn::path dir = ed.projectDir().empty() ? fsn::path("Assets") : fsn::path(ed.projectDir()) / "Assets";
+    std::error_code mk; fsn::create_directories(dir, mk);
+    std::string stem;
+    for (char c : go->name + (al->name.empty() ? std::string() : "_" + al->name))
+        stem += (std::isalnum((unsigned char)c) || c == '_' || c == '-') ? c : '_';
+    if (stem.empty()) stem = "Object";
+    fsn::path p = dir / (stem + "Graph.okayvs");
+    for (int k = 2; fsn::exists(p, mk); ++k) p = dir / (stem + "Graph" + std::to_string(k) + ".okayvs");
+    {
+        std::ofstream f(p, std::ios::binary);
+        if (!f) { ConsoleLog("Couldn't write " + p.string(), 2); return false; }
+        f << okay::vs::ActionListToGraph(*al);
+    }
+    if (!AttachScriptAsset(ed, go, p.string())) return false;
+    okay::editor::vsed::OpenFile(p.string());
+    g_showVisualScript = true;
+    ConsoleLog("Turned " + go->name + "'s Actions into the graph " + p.filename().string());
+    return true;
+}
+
 // External-IDE helpers: write/read script files and open them in the system editor.
 namespace extide {
 namespace fs = std::filesystem;
@@ -3664,9 +3691,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         // Editors & Tools — the bigger authoring surfaces.
         if (ImGui::BeginMenu("Editors & Tools")) {
-            ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
             ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
-            ImGui::MenuItem("Visual Script (nodes)", nullptr, &g_showVisualScript);
+            ImGui::MenuItem("Visual Script", nullptr, &g_showVisualScript);
             ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
             ImGui::Separator();
             ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
@@ -8390,12 +8416,14 @@ void DrawShortcutsWindow() {
         {"Ctrl+Alt+L",    "Format document"},
         {"F2",            "Next warning"},
     });
-    section("Flow Graph", {
-        {"Ctrl+C / Ctrl+V","Copy / paste node"},
-        {"Ctrl+D",        "Duplicate node"},
-        {"Delete",        "Delete node"},
-        {"Scroll",        "Zoom (drag empty space to pan)"},
-        {"Right-click",   "Node menu / add nodes / breakpoint"},
+    section("Visual Script graph", {
+        {"Right-click / Space", "Add a node or an action step"},
+        {"Right- / middle-drag", "Pan"},
+        {"Scroll",        "Zoom"},
+        {"Home / F",      "Show all / frame selection"},
+        {"Ctrl+C / Ctrl+V / Ctrl+D","Copy / paste / duplicate"},
+        {"Delete",        "Delete selection"},
+        {"C",             "Comment around selection"},
     });
     section("Sprite Editor", {
         {"P / E / F / I", "Pencil / Eraser / Fill / Pick tool"},
@@ -8496,15 +8524,16 @@ void DrawScriptDocs() {
 
     // ---- Visual scripting: the no-code path (Actions / Flow Graph) ----
     if (ImGui::CollapsingHeader("Visual scripting (no code)")) {
-        ImGui::TextWrapped("Prefer no code? Add an Actions component (Add Component > "
-            "Scripts > Actions, or open the Flow Graph window). An Actions script is three "
-            "parts, read top to bottom:");
+        ImGui::TextWrapped("Prefer no code? Add a Visual Script (Add Component > Scripts > "
+            "Visual Script) and build it in the graph: an event node, then Check and Do "
+            "steps picked from menus (+ Add > Do something / Check something). Older Actions "
+            "lists still run and open as a graph from the Inspector. Each chain reads:");
         ImGui::Spacing();
         ImGui::BulletText("Trigger");
         ImGui::Indent();
         ImGui::TextWrapped("WHEN it runs: On Start, On Update (every frame), On Key, On "
-            "Click, On Collision, On Trigger Enter/Exit, or the On Mouse events. Click the "
-            "trigger node in the Flow Graph (or the Trigger dropdown in the Inspector) to change it.");
+            "Click, On Collision, On Trigger Enter/Exit, or the On Mouse events: the event "
+            "node at the start of the chain.");
         ImGui::Unindent();
         ImGui::BulletText("Conditions (optional gate)");
         ImGui::Indent();
@@ -15320,7 +15349,21 @@ static const char* ActionOpRequires(const std::string& op) {
 // Tracks which Character is being live-previewed so we can clear it when the
 // window closes / selection changes (otherwise it stays frozen in the edited pose).
 static Character* g_animPreview = nullptr;
-static void StopAnimPreview() { if (g_animPreview) { g_animPreview->StopPreview(); g_animPreview = nullptr; } }
+static EditorState* g_previewEd = nullptr;   // the editor whose scene the preview lives in (set in main)
+// The previewed Character can vanish under us (scene switched / closed, object
+// deleted): only touch it while it's still in the editor's scene.
+static bool CharacterInScene(Character* ch) {
+    if (!ch || !g_previewEd) return false;
+    for (const auto& up : g_previewEd->scene().Objects())
+        if (up) for (Character* c : up->GetComponents<Character>()) if (c == ch) return true;
+    return false;
+}
+static void StopAnimPreview() {
+    if (!g_animPreview) return;
+    Character* ch = g_animPreview;
+    g_animPreview = nullptr;
+    if (CharacterInScene(ch)) ch->StopPreview();
+}
 
 // ---- Live built-in animation preview (edit mode) ---------------------------
 // One click on a Character-panel button plays a BUILT-IN animation live in the
@@ -18636,7 +18679,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
     if (newRule) { ActionList::Handler nh; nh.trigger=T::OnUpdate; al->extraHandlers.push_back(nh); ed.dirty=true; }
 }
 
-static void DrawFlowGraph(EditorState& ed) {
+[[maybe_unused]] static void DrawFlowGraph(EditorState& ed) {   // retired: the Visual Script graph replaces it
     if (!g_showFlowGraph) return;
     g_pickerProjectDir = ed.projectDir();   // so in-place object/prefab pickers can list prefabs
     if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
@@ -26647,154 +26690,29 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* al = dynamic_cast<ActionList*>(curComp)) {
-        ImGui::PushID(al);   // each visual script gets its own ImGui ID scope
-        // Show the user's name in the header so stacked scripts are tellable apart.
-        std::string alHdr = al->name.empty() ? std::string("Actions (Visual Script)")
-                                             : ("Actions: " + al->name);
+        ImGui::PushID(al);
+        // Behaviours are built in the Visual Script graph now (one graph editor).
+        // An older Actions list still runs as it is; here it reads as sentences and
+        // turns into an equivalent graph with one click. No editing in the Inspector.
+        std::string alHdr = al->name.empty() ? std::string("Actions (older visual script)") : ("Actions: " + al->name);
         if (CompHeader(alHdr.c_str(), al, &toRemove)) {
-            // Compact spacing for the whole Actions block — the visual script gets dense
-            // (many rows), so it uses tighter rows than the rest of the roomy Inspector.
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(5, 3));
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 3));
-            // Editable label, saved in the project (serialized in ToText).
-            char nb[64]; std::strncpy(nb, al->name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputTextWithHint("##alname", "Script name (e.g. \"Open Door\")", nb, sizeof(nb))) { al->name = nb; ed.dirty = true; }
-            // Trigger -> Conditions -> Instructions, Game-Creator style.
-            const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision",
-                                   "On Click", "On Key Up", "On Message",
-                                   "On Trigger Enter", "On Trigger Exit", "On Mouse Enter",
-                                   "On Mouse Exit", "On Mouse Down", "On Mouse Up", "On Mouse Over",
-                                   "On Collision Exit", "On Collision Stay", "On Interval", "On Late Update"};
-            g_pickerProjectDir = ed.projectDir();   // so object/prefab pickers can list prefabs
-            // Draw one numbered "card" row (faint frame + index) around an action.
-            auto cardRow = [&](std::vector<ActionList::Item>& list, std::size_t i, const ActionOpInfo* ops, int nops, int idBase) -> int {
-                ImGui::PushID(idBase + (int)i);
-                ImDrawList* rdl = ImGui::GetWindowDrawList();
-                ImVec2 p0 = ImGui::GetCursorScreenPos();
-                float w = ImGui::GetContentRegionAvail().x;
-                ImGui::BeginGroup();
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextDisabled("%d", (int)i + 1); ImGui::SameLine(26.0f);
-                int act = DrawActionItem(list[i], ops, nops, idBase + (int)i, ed.dirty, &ed.scene());
-                ImGui::EndGroup();
-                ImVec2 p1 = ImGui::GetItemRectMax();
-                rdl->AddRect(ImVec2(p0.x - 3, p0.y - 2), ImVec2(p0.x + w, p1.y + 2), IM_COL32(255, 255, 255, 22), 4.0f);
-                ImGui::PopID();
-                ImGui::Spacing();
-                return act;
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("Made with the older Actions list. It still runs; edit it as a Visual Script graph.");
+            ImGui::PopTextWrapPos();
+            auto line = [&](ActionList::Trigger t, const std::string& k, const std::vector<ActionList::Item>& c,
+                            const std::vector<ActionList::Item>& i) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::BulletText("%s", HandlerSentence(t, k, c, i).c_str());
+                ImGui::PopTextWrapPos();
             };
-
-            // One event handler = a trigger + its OWN conditions + instructions (like a
-            // separate function in the same script). Drawn for the primary and each extra.
-            int hRemove = -1;
-            auto drawHandler = [&](int hidx, ActionList::Trigger& trg, std::string& key, bool& once,
-                                   std::vector<ActionList::Item>& conds, std::vector<ActionList::Item>& ins, int idBase) {
-                ImGui::PushID(idBase);
-                ImGui::Spacing();
-                // ---- Handler = one foldable, framed BLOCK per trigger ----------------
-                // Title carries the number + a live plain-English summary; "###" keeps the
-                // fold state stable while that summary text changes as you edit.
-                std::string tnum = hidx < 0 ? std::string("Trigger 1") : ("Trigger " + std::to_string(hidx + 2));
-                std::string htitle = tnum + "  -  " + HandlerSentence(trg, key, conds, ins) + "###handler";
-                ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.22f, 0.25f, 0.31f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.28f, 0.32f, 0.40f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.30f, 0.35f, 0.44f, 1.0f));
-                bool visible = true;
-                ImGuiTreeNodeFlags hflags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth;
-                // Extra handlers get an [x] on the header to remove the whole trigger.
-                bool open = (hidx >= 0) ? ImGui::CollapsingHeader(htitle.c_str(), &visible, hflags)
-                                        : ImGui::CollapsingHeader(htitle.c_str(), hflags);
-                ImGui::PopStyleColor(3);
-                if (hidx >= 0 && !visible) hRemove = hidx;
-                if (open) {
-                    // Framed body so the whole handler reads as a distinct card.
-                    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.16f, 0.19f, 1.0f));
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(7, 5));
-                    ImGui::BeginChild("##hbody", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
-
-                    // --- Trigger row (its own little block) ---
-                    int ti = (int)trg;
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), "When"); ImGui::SameLine();
-                    ImGui::SetNextItemWidth(150);
-                    if (ImGui::Combo("##trg", &ti, trigs, IM_ARRAYSIZE(trigs))) { trg = (ActionList::Trigger)ti; ed.dirty = true; }
-                    if (trg == ActionList::Trigger::OnKey || trg == ActionList::Trigger::OnKeyUp) {
-                        ImGui::SameLine(); ImGui::TextUnformatted("Key"); ImGui::SameLine();
-                        KeyPicker("k", key, ed.dirty);
-                    } else if (trg == ActionList::Trigger::OnMessage) {
-                        ImGui::SameLine();
-                        char mb[64]; std::strncpy(mb, key.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
-                        ImGui::SetNextItemWidth(110);
-                        if (ImGui::InputTextWithHint("##msg", "message", mb, sizeof(mb))) { key = mb; ed.dirty = true; }
-                    } else if (trg == ActionList::Trigger::OnInterval) {
-                        ImGui::SameLine(); ImGui::TextUnformatted("Every"); ImGui::SameLine();
-                        float sec = (float)std::atof(key.c_str()); ImGui::SetNextItemWidth(80);
-                        if (ImGui::DragFloat("##iv", &sec, 0.05f, 0.0f, 3600.0f, "%.2f s")) { char b[32]; std::snprintf(b, sizeof(b), "%g", sec < 0.0f ? 0.0f : sec); key = b; ed.dirty = true; }
-                    }
-                    ImGui::SameLine(); if (ImGui::Checkbox("Once", &once)) ed.dirty = true;
-                    if (trg >= ActionList::Trigger::OnMouseEnter && trg <= ActionList::Trigger::OnMouseOver) {
-                        bool has2D = go->GetComponent<SpriteRenderer>() || go->GetComponent<BoxCollider2D>();
-                        bool has3D = go->GetComponent<Collider3D>();
-                        if (!has2D && !has3D)
-                            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Mouse triggers need a Collider / Sprite to be clickable.");
-                    }
-
-                    // --- Conditions block (foldable) ---
-                    ImGui::Spacing();
-                    char cl[48]; std::snprintf(cl, sizeof(cl), "Conditions (%d)  -  all must pass###conds", (int)conds.size());
-                    ImGuiTreeNodeFlags sflags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth;
-                    if (ImGui::TreeNodeEx(cl, sflags)) {
-                        if (conds.empty()) ImGui::TextDisabled("No conditions - always runs. Add one to gate it.");
-                        for (std::size_t i = 0; i < conds.size();) {
-                            int act = cardRow(conds, i, kCondOps, IM_ARRAYSIZE(kCondOps), 0);
-                            i = ApplyItemAction(conds, i, act, ed.dirty);
-                        }
-                        if (ImGui::SmallButton("+ Condition")) { conds.push_back({"always", {}}); ed.dirty = true; }
-                        ImGui::SameLine(); CustomActionButton("cc", /*cond*/true, conds, ed.dirty);
-                        ImGui::SameLine(); SaveAsCustomButton("cs", /*cond*/true, conds);
-                        ImGui::TreePop();
-                    }
-
-                    // --- Instructions block (foldable) ---
-                    ImGui::Spacing();
-                    char il[56]; std::snprintf(il, sizeof(il), "Instructions (%d)  -  top to bottom###ins", (int)ins.size());
-                    if (ImGui::TreeNodeEx(il, sflags)) {
-                        if (ins.empty()) ImGui::TextDisabled("Nothing happens yet - add an instruction below.");
-                        for (std::size_t i = 0; i < ins.size();) {
-                            int act = cardRow(ins, i, kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000);
-                            i = ApplyItemAction(ins, i, act, ed.dirty);
-                        }
-                        if (ImGui::SmallButton("+ Instruction")) { ins.push_back({"move", {}}); ed.dirty = true; }
-                        ImGui::SameLine(); CustomActionButton("ic", /*cond*/false, ins, ed.dirty);
-                        ImGui::SameLine(); SaveAsCustomButton("is", /*cond*/false, ins);
-                        ImGui::TreePop();
-                    }
-
-                    ImGui::EndChild();
-                    ImGui::PopStyleVar();
-                    ImGui::PopStyleColor();
-                }
-                ImGui::PopID();
-            };
-
-            drawHandler(-1, al->trigger, al->triggerKey, al->once, al->conditions, al->instructions, 1);
-            for (std::size_t h = 0; h < al->extraHandlers.size(); ++h) {
-                auto& H = al->extraHandlers[h];
-                drawHandler((int)h, H.trigger, H.triggerKey, H.once, H.conditions, H.instructions, 100 + (int)h);
-            }
-            if (hRemove >= 0) { al->extraHandlers.erase(al->extraHandlers.begin() + hRemove); ed.dirty = true; }
-
-            ImGui::Spacing(); ImGui::Separator();
-            if (ImGui::SmallButton("+ Template")) ImGui::OpenPopup("##insprecipes");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a ready-made behaviour (Jump, Follow, Spawn timer, ...) you can tweak.");
-            ScriptRecipePicker("##insprecipes", al, ed.dirty);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("+ Trigger")) { al->extraHandlers.push_back({}); ed.dirty = true; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another trigger to THIS script with its own conditions and instructions.");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Remove##al")) toRemove = al;
-            ImGui::PopStyleVar(2);   // compact ItemSpacing + FramePadding
+            line(al->trigger, al->triggerKey, al->conditions, al->instructions);
+            for (const auto& h : al->extraHandlers) line(h.trigger, h.triggerKey, h.conditions, h.instructions);
+            ImGui::Spacing();
+            if (ImGui::Button("Open as Visual Script graph", ImVec2(-1, 0)))
+                if (ConvertActionsToGraph(ed, al)) toRemove = al;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Turns these triggers and steps into nodes that do the same thing,\n"
+                                  "attaches the graph to this object and opens it in the graph editor.");
         }
         ImGui::PopID();
     }
@@ -28914,7 +28832,6 @@ void DrawInspector(EditorState& ed) {
                     g_showVisualScript = true;
                 } else ConsoleLog("Couldn't create " + p.string(), 2);
             }
-            if (item(true, "Actions (Visual Script)")) { go->AddComponent<ActionList>(); ed.dirty = true; }  // multiple allowed
           } EndCat(o); }
 
 
@@ -35097,6 +35014,37 @@ static void OkayVpInstall() {
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
 }
 
+// ---- One graph editor: the Actions step library inside the Visual Script graph ----
+// Single-step nodes skip the list-only flow steps (jumps, block openers, Wait):
+// the graph has its own Branch / loops / Delay, and an "Action Steps" node keeps
+// whole lists that need them.
+static const std::vector<okay::editor::vsed::VsStepInfo>* VsStepCatalog(bool cond) {
+    static std::vector<okay::editor::vsed::VsStepInfo> ins, cnd;
+    static const std::set<std::string> kListOnly = {
+        "wait", "wait_until", "goto", "if_goto", "label", "repeat", "end_repeat", "while", "end_while",
+        "if", "else", "end_if", "for_each", "end_for", "for_each_tag", "end_for_tag", "break", "continue",
+        "gosub", "return_sub", "stop", "comment"};
+    auto fill = [](std::vector<okay::editor::vsed::VsStepInfo>& v, const ActionOpInfo* ops, int n, bool skipFlow) {
+        if (!v.empty()) return;
+        for (int i = 0; i < n; ++i) {
+            v.push_back({ops[i].op, ops[i].label, ops[i].group ? ops[i].group : "", ops[i].desc ? ops[i].desc : "",
+                         skipFlow && kListOnly.count(ops[i].op) > 0});
+        }
+    };
+    if (cond) { fill(cnd, kCondOps, IM_ARRAYSIZE(kCondOps), false); return &cnd; }
+    fill(ins, kInstrOps, IM_ARRAYSIZE(kInstrOps), true);
+    return &ins;
+}
+static int VsStepEditor(ActionList::Item& it, bool cond, int id, bool& changed) {
+    if (g_previewEd) g_pickerProjectDir = g_previewEd->projectDir();   // prefab / object pickers
+    Scene* sc = g_previewEd ? &g_previewEd->scene() : nullptr;
+    bool d = false;
+    int a = cond ? DrawActionItem(it, kCondOps, IM_ARRAYSIZE(kCondOps), 90000 + id, d, sc)
+                 : DrawActionItem(it, kInstrOps, IM_ARRAYSIZE(kInstrOps), 91000 + id, d, sc);
+    if (d) changed = true;
+    return a;
+}
+
 int main(int argc, char** argv) {
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
@@ -35269,6 +35217,10 @@ int main(int argc, char** argv) {
     // the loading screen could use the project's custom splash.)
     // Route the node editor's log messages to the editor console.
     okay::editor::vsed::LogFn = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+    okay::editor::vsed::StepCatalog = VsStepCatalog;
+    okay::editor::vsed::StepEditor = VsStepEditor;
+    okay::editor::vsed::StepSummary = [](const ActionList::Item& it) { return ActionOpSummary(it); };
+    okay::editor::vsed::TemplatePicker = [](const char* id, ActionList& out) { bool d = false; return ScriptRecipePicker(id, &out, d); };
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
@@ -35342,6 +35294,7 @@ int main(int argc, char** argv) {
 
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
+    g_previewEd = &ed;
     LoadRecent();
     LoadSettings();
     // Brand-new install on a high-DPI display (common on Windows 11 laptops at
@@ -35487,6 +35440,7 @@ int main(int argc, char** argv) {
             // parts are real, selectable objects, not spawned at Play) and drive the
             // Animation window's preview pose onto the rig (Update() doesn't run while
             // stopped). Gather first — BuildParts() adds objects to the scene.
+            if (g_animPreview && !CharacterInScene(g_animPreview)) g_animPreview = nullptr;   // gone with its scene
             for (okay::Character* ch : chars) {
                 if (ch->separateParts && !ch->PartsBuilt()) ch->BuildParts();
                 if (ch == g_animPreview) ch->EditorPreviewTick();
@@ -35906,6 +35860,20 @@ int main(int argc, char** argv) {
                 int pc = vg.add("PlayClip", 820, 300); vg.find(pc)->arg = "Run";
                 vg.linkExec(st, 0, pr); vg.linkExec(up, 0, fl); vg.linkExec(fl, 0, sc); vg.linkExec(fl, 1, ff);
                 vg.linkExec(ff, 0, pc); vg.linkData(sc, 1, ri, 0);
+                if (std::string(std::getenv("OKAY_UI_VS")) == "2") {   // an Actions list turned into a graph
+                    ActionList demo;
+                    demo.trigger = ActionList::Trigger::OnKey; demo.triggerKey = "e";
+                    demo.conditions = {{"var_gt", {"coins", "0"}}};
+                    demo.instructions = {{"add_var", {"coins", "-1"}}, {"play_sound", {}}, {"wait", {"0.5"}},
+                                         {"tween_scale", {"1.4", "0.3", "back_out"}}};
+                    ActionList::Handler h; h.trigger = ActionList::Trigger::OnCollision;
+                    h.conditions = {{"cooldown", {"1"}}};
+                    h.instructions = {{"add_var", {"hp", "-10"}}, {"shake", {"0.2", "0.3"}}};
+                    demo.extraHandlers.push_back(h);
+                    demo.variables.push_back({"coins", 0, "3"});
+                    vg.fromText(okay::vs::ActionListToGraph(demo));
+                    okay::editor::vsed::State().frameAll = true;
+                }
                 g_showVisualScript = true;
             }
             // OKAY_UI_CHARMODEL=model.glb: a Third Person player wearing that model,
@@ -36022,7 +35990,6 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.ShortcutsWindow"); DrawShortcutsWindow(); }
         { OKAY_PROFILE("UI.CustomActions"); DrawCustomActions(); }
         { OKAY_PROFILE("UI.VarWatch"); DrawVarWatch(); }
-        { OKAY_PROFILE("UI.FlowGraph"); DrawFlowGraph(ed); }
         { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
         { OKAY_PROFILE("UI.History"); DrawHistory(ed); }

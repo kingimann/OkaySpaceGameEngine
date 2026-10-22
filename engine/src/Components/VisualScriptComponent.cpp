@@ -3,6 +3,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Components/UIButton.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -80,7 +81,13 @@ void VisualScriptComponent::Update(float dt) {
     m_ctx.deltaTime = dt;
     m_ctx.gameObject = gameObject;
     m_ctx.transform = transform;
+    m_graph->Resume(m_ctx);   // chains parked by Delay / Actions steps carry on
+    if (!m_graph) return;
     m_graph->RunEntries("OnUpdate", m_ctx);
+    // On Click also covers UI buttons (they don't get scene mouse picks).
+    if (!m_graph->Entries("OnClick").empty())
+        if (auto* b = gameObject ? gameObject->GetComponent<UIButton>() : nullptr)
+            if (b->WasClicked()) Fire("OnClick", gameObject);
     // On Key Pressed / Released.
     for (const KeyEntry& k : m_keyEntries)
         if (k.up ? Input::GetKeyUp(k.key) : Input::GetKeyDown(k.key)) Fire(k.entry.c_str(), nullptr);
@@ -91,6 +98,12 @@ void VisualScriptComponent::Update(float dt) {
         while (t.acc >= t.period && guard++ < 4) { t.acc -= t.period; Fire(t.entry.c_str(), nullptr); }
         if (t.acc > t.period) t.acc = 0.0f;
     }
+}
+
+void VisualScriptComponent::LateUpdate(float dt) {
+    if (!m_graph || m_graph->Entries("OnLateUpdate").empty()) return;
+    m_ctx.deltaTime = dt;
+    m_graph->RunEntries("OnLateUpdate", m_ctx);
 }
 
 } // namespace okay

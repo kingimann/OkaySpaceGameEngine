@@ -8,6 +8,7 @@
 #include "okay/VisualScript/NodesExtra.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/ActionList.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Core/SaveData.hpp"
@@ -25,6 +26,12 @@ namespace okay::vs {
 inline void VsDeliverEvent(GameObject* o, const std::string& name, const VsValue& v, GameObject* sender) {
     if (!o) return;
     for (auto* vc : o->GetComponents<VisualScriptComponent>()) vc->SendEvent(name, v, sender);
+    // Older Actions components listening with "On Message <name>".
+    for (auto* al : o->GetComponents<ActionList>()) {
+        if (v.IsNumber()) ActionList::Vars()["event_value"] = v.AsFloat();
+        else if (v.IsString()) ActionList::StrVars()["event_text"] = v.AsString();
+        al->ReceiveMessage(name);
+    }
     for (auto* sc : o->GetComponents<ScriptComponent>())
         if (sc->VM()) sc->VM()->CallEventWith("OnEvent_" + name, v);
 }

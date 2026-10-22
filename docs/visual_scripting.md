@@ -343,3 +343,32 @@ Every N Times.
   output shows its latest value beside the pin. A green *LIVE* tag in the
   toolbar names the object being watched.
 - **Space** opens the palette at the mouse, **Home** frames the whole graph.
+
+## One graph editor (Actions merged in)
+
+The Flow Graph window and the Actions list are gone as separate editors: everything
+is built in the **Visual Script** graph.
+
+- **+ Add > Do something / Check something** lists every step the Actions component
+  had (Move, Play Sound, Set Variable, Has Tag, ...). They become `Action` and
+  `Condition` (Check, True/False) nodes; click a node's grey line to edit its
+  arguments with the same friendly fields.
+- **Action Steps** (`Actions`) keeps a whole list together: Wait, If / Repeat /
+  While blocks, jumps. The chain continues once the list finishes.
+- **Delay (s)** really pauses the chain and continues it later (once). The older
+  **Wait** node only lets a chain that runs every frame through after a while.
+- New events: On Mouse Down / Up / Over, On Collision Stay, On Late Update.
+- **Templates** adds ready-made behaviours as nodes.
+- An object that still has an Actions component keeps working. Its Inspector shows
+  what it does in sentences; **Open as Visual Script graph** turns it into an
+  equivalent `.okayvs` graph (one chain per trigger) and attaches it.
+- Actions messages (`send`, `send_to`, ...) reach graphs' On Custom Event nodes, and
+  Send / Broadcast Event reach older Actions "On Message" triggers.
+
+File format: `node <id> Action "<op> <args>"`, `node <id> Actions "<step> ; <step>"`,
+`node <id> Condition "<op> <args>"`, `node <id> Delay <seconds>`. Arguments are
+%-escaped (no spaces, quotes, `#` or `;` inside one), `%-` is an empty argument.
+OkayScript export: `run_action("...")` / `check_action("...")`.
+
+Toolbar: File, Edit, + Add, Templates ... Fit, zoom, View. The Events list on the
+left jumps to each chain; right- or middle-drag pans; F frames the selection.

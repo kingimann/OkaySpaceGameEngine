@@ -109,8 +109,24 @@ public:
 
     /// Evaluate a data node's output pin.
     VsValue Pull(int nodeId, int outPin, VsContext& ctx);
-    /// Execute an exec chain starting at `entryNode`.
-    void Run(int entryNode, VsContext& ctx);
+    /// Execute an exec chain starting at `entryNode`. With `resume`, the first node
+    /// is a suspended one being picked up again (it sees Resuming() == true).
+    void Run(int entryNode, VsContext& ctx, bool resume = false);
+
+    /// An Exec() result meaning "not done yet - park this chain and call me again
+    /// next frame" (Delay, Action blocks with a Wait inside). Resume() picks every
+    /// parked chain up again; the chain continues from that node once it returns a pin.
+    static constexpr int kSuspend = -2;
+    /// Continue parked chains (called once per frame by the owning component).
+    void Resume(VsContext& ctx) {
+        if (m_suspended.empty()) return;
+        std::vector<int> ids; ids.swap(m_suspended);
+        for (int id : ids) Run(id, ctx, true);
+    }
+    /// True while a parked node is being resumed (only for that node's own Exec).
+    bool Resuming() const { return m_resuming; }
+    /// True when node `id` is parked waiting to resume.
+    bool IsSuspended(int id) const { return std::find(m_suspended.begin(), m_suspended.end(), id) != m_suspended.end(); }
 
     /// Register an entry node under an event name ("OnStart", "OnUpdate",
     /// "OnKey:space", ...). A graph may hold several nodes for the same event —
@@ -156,6 +172,8 @@ private:
     std::vector<std::unique_ptr<VsNode>> m_nodes;
     std::unordered_map<std::string, std::vector<int>> m_entries;
     int m_execGuard = 0; // guards against runaway loops
+    std::vector<int> m_suspended;   // parked chains (node ids), resumed next frame
+    bool m_resuming = false;
 };
 
 } // namespace okay::vs

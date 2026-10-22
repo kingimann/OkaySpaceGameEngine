@@ -24,6 +24,7 @@ add_library(okay_engine
     src/Net/NetTransport.cpp
     src/Net/PhotonTransport.cpp
     src/VisualScript/NodeGraph.cpp
+    src/VisualScript/ActionGraph.cpp
     src/Components/VisualScriptComponent.cpp
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp

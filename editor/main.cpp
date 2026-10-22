@@ -9900,6 +9900,49 @@ static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string&
     return out;
 }
 
+// Script Editor "New Script": a fresh .okay in Assets/Scripts, opened right away -
+// no object has to be selected (attach it later by dropping it on one, or tick
+// the box to attach it to the selected object now).
+static bool g_seNewReq = false;
+static void ScriptEditorNewScriptPopup(EditorState& ed) {
+    static char name[96] = "NewScript";
+    static bool attach = false;
+    if (g_seNewReq) { g_seNewReq = false; std::snprintf(name, sizeof(name), "NewScript"); attach = false; ImGui::OpenPopup("New Script##se"); }
+    if (!ImGui::BeginPopupModal("New Script##se", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    namespace fs = std::filesystem;
+    fs::path dir = (ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets") / "Scripts";
+    std::string stem;
+    for (const char* c = name; *c; ++c)
+        if (std::isalnum((unsigned char)*c) || *c == '_') stem += *c;
+    if (stem.size() > 5 && stem.substr(stem.size() - 4) == "okay") stem.erase(stem.size() - 4);
+    if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
+    fs::path p = dir / (stem + ".okay");
+    ImGui::TextDisabled("A new script file you can attach to any object.");
+    ImGui::Spacing();
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(320);
+    bool enter = ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::TextDisabled("Assets/Scripts/%s.okay", stem.c_str());
+    std::error_code ec;
+    const bool exists = fs::exists(p, ec);
+    if (exists) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "That file exists - it will be opened.");
+    GameObject* sel = ed.selected();
+    if (sel) { std::string lbl = "Also attach it to " + sel->name; ImGui::Checkbox(lbl.c_str(), &attach); }
+    ImGui::Spacing();
+    bool create = ImGui::Button(exists ? "Open" : "Create", ImVec2(140, 0)) || enter;
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    if (create) {
+        fs::create_directories(dir, ec);
+        if (!exists) std::ofstream(p) << extide::StarterScriptNamed("okayscript", stem);
+        if (attach && sel) AttachScriptAsset(ed, sel, p.string());   // its tab opens with the selection
+        else OpenScriptFileInEditor(p.string());
+        ConsoleLog((exists ? "Opened " : "Created ") + p.string());
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void DrawScriptEditor(EditorState& ed) {
     // Float/Dock request from the toolbar (applied for one frame before Begin):
     // 1 = undock into a floating window, 2 = dock back into the main area as a tab.
@@ -9949,11 +9992,41 @@ void DrawScriptEditor(EditorState& ed) {
     s_lastSel = sel; s_lastSelScripts = selScripts;
 
     if (g_scriptTabs.empty()) {
-        ImGui::TextDisabled("Select an object with a Script component.");
-        ImGui::TextDisabled("Add one via Inspector > Add Component > Scripts.");
+        // Nothing open: start a new script or open one from the project - no
+        // object needs to be selected.
+        ImGui::Dummy(ImVec2(0, 18));
+        ImGui::Indent(18);
+        ImGui::TextUnformatted("No script open");
+        ImGui::TextDisabled("Start a new script, or open one from your project.");
+        ImGui::Spacing();
+        if (ImGui::Button("+ New Script", ImVec2(180, 34))) g_seNewReq = true;
+        ImGui::Spacing(); ImGui::Spacing();
+        ImGui::TextDisabled("Scripts in this project");
+        {
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            std::error_code ec; int shown = 0;
+            ImGui::BeginChild("##sefiles", ImVec2(std::min(460.0f, ImGui::GetContentRegionAvail().x - 18), 220), ImGuiChildFlags_Borders);
+            if (fs::exists(assets, ec))
+                for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                    if (!e.is_regular_file()) continue;
+                    std::string ext = e.path().extension().string();
+                    if (ext != ".okay" && ext != ".lua" && ext != ".cs") continue;
+                    if (ImGui::Selectable(fs::relative(e.path(), assets, ec).string().c_str()))
+                        OpenScriptFileInEditor(e.path().string());
+                    if (++shown >= 200) break;
+                }
+            if (!shown) ImGui::TextDisabled("None yet.");
+            ImGui::EndChild();
+        }
+        ImGui::Spacing();
+        ImGui::TextDisabled("Selecting an object that has a Script also opens it here.");
+        ImGui::Unindent(18);
+        ScriptEditorNewScriptPopup(ed);
         ImGui::End();
         return;
     }
+    ScriptEditorNewScriptPopup(ed);
 
     // One tab per open script; the selected tab drives the editor below.
     if (ImGui::BeginTabBar("##scripttabs",
@@ -9974,6 +10047,8 @@ void DrawScriptEditor(EditorState& ed) {
             }
             if (!open) closeTab = t;
         }
+        if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) g_seNewReq = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("New script");
         ImGui::EndTabBar();
         g_focusScriptTab = nullptr;
         if (closeTab) {
@@ -10160,6 +10235,7 @@ void DrawScriptEditor(EditorState& ed) {
              rqDef = false, rqCheat = false;
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("New Script...")) g_seNewReq = true;
                 if (ImGui::MenuItem("Save", "Ctrl+S")) doSave();
                 if (ImGui::MenuItem("Reload from Disk", nullptr, false, !sc->Path().empty())) rqReload = true;
                 if (ImGui::MenuItem("Open in External IDE")) rqIde = true;
@@ -35820,6 +35896,12 @@ int main(int argc, char** argv) {
             if (std::getenv("OKAY_UI_ASSETS") && s_focusFrames == 31) g_showAssetManager = true;
             // OKAY_UI_SCRIPT=1: give the selection a starter C# script and open the Script
             // Editor; OKAY_UI_VS=1: open the node editor on a small demo graph (screenshots).
+            // OKAY_UI_SCRIPTNEW=1: the Script Editor with nothing open (=2: + the New Script dialog).
+            if (const char* sn = std::getenv("OKAY_UI_SCRIPTNEW"); sn && s_focusFrames == 42) {
+                ed.Select(nullptr);
+                g_showScriptEditor = true; g_scriptDockReq = 1;
+                if (sn[0] == '2') g_seNewReq = true;
+            }
             if (std::getenv("OKAY_UI_SCRIPT") && s_focusFrames == 42)
                 if (GameObject* g = ed.selected()) {
                     auto* scr = g->AddComponent<ScriptComponent>();

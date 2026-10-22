@@ -1,5 +1,6 @@
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/Nodes.hpp"
+#include "okay/VisualScript/NodesWave4.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <cctype>
@@ -39,6 +40,10 @@ VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     VsNode* n = Node(nodeId);
     VsValue v = n ? n->Eval(outPin, *this, ctx) : VsValue{};
     --m_execGuard;
+    if (n && Tracing() && outPin >= 0 && outPin < 16) {
+        if ((int)n->lastOut.size() <= outPin) n->lastOut.resize(outPin + 1);
+        n->lastOut[outPin] = v;
+    }
     return v;
 }
 
@@ -48,6 +53,7 @@ void NodeGraph::Run(int entryNode, VsContext& ctx) {
     while (cur >= 0 && guard++ < 100000) {
         VsNode* n = Node(cur);
         if (!n) break;
+        if (Tracing()) ++n->execCount;
         int outPin = n->Exec(*this, ctx);
         if (outPin < 0) break;
         cur = (outPin < (int)n->execOut.size()) ? n->execOut[outPin] : -1;
@@ -87,8 +93,47 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         (void)err;
         return true;
     };
-    if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent")
+    if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
+        type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
+        type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit")
         return std::make_unique<EventNode>();
+    if (type == "OnEvent") return std::make_unique<CustomEventNode>();
+    // ---- Fourth wave ----
+    {
+        auto a0 = [&](const char* d) { return args.empty() || args[0].empty() ? std::string(d) : args[0]; };
+        if (type == "SendEvent")      return std::make_unique<SendEventNode>(a0("Event"));
+        if (type == "BroadcastEvent") return std::make_unique<BroadcastEventNode>(a0("Event"));
+        if (type == "EventValue")     return std::make_unique<EventValueNode>(false);
+        if (type == "EventName")      return std::make_unique<EventValueNode>(true);
+        if (type == "SetObjectVar")   return std::make_unique<SetObjectVarNode>(a0("x"));
+        if (type == "GetObjectVar")   return std::make_unique<GetObjectVarNode>(a0("x"));
+        if (type == "SaveValue")      return std::make_unique<SaveValueNode>(a0("score"));
+        if (type == "LoadValue")      return std::make_unique<LoadValueNode>(a0("score"));
+        if (type == "Format")         return std::make_unique<FormatNode>(args.empty() ? std::string("{0}") : args[0]);
+        if (type == "Substring")      return std::make_unique<TextFnNode>(TextFnNode::Op::Substring);
+        if (type == "Replace")        return std::make_unique<TextFnNode>(TextFnNode::Op::Replace);
+        if (type == "ToNumber")       return std::make_unique<TextFnNode>(TextFnNode::Op::ToNumber);
+        if (type == "StartsWith")     return std::make_unique<TextFnNode>(TextFnNode::Op::StartsWith);
+        if (type == "EndsWith")       return std::make_unique<TextFnNode>(TextFnNode::Op::EndsWith);
+        if (type == "Trim")           return std::make_unique<TextFnNode>(TextFnNode::Op::Trim);
+        if (type == "IndexOf")        return std::make_unique<TextFnNode>(TextFnNode::Op::IndexOf);
+        if (type == "Noise")          return std::make_unique<MathFn4Node>(MathFn4Node::Op::Noise);
+        if (type == "Snap")           return std::make_unique<MathFn4Node>(MathFn4Node::Op::Snap);
+        if (type == "Wrap")           return std::make_unique<MathFn4Node>(MathFn4Node::Op::Wrap);
+        if (type == "Average")        return std::make_unique<MathFn4Node>(MathFn4Node::Op::Average);
+        if (type == "Distance2D")     return std::make_unique<MathFn4Node>(MathFn4Node::Op::Distance2D);
+        if (type == "FindWithTag")    return std::make_unique<TagQueryNode>(TagQueryNode::Op::FindWithTag, a0("Player"));
+        if (type == "CountWithTag")   return std::make_unique<TagQueryNode>(TagQueryNode::Op::CountWithTag, a0("Enemy"));
+        if (type == "NearestWithTag") return std::make_unique<TagQueryNode>(TagQueryNode::Op::NearestWithTag, a0("Enemy"));
+        if (type == "Teleport")       return std::make_unique<TeleportNode>(a0("self"));
+        if (type == "SetVisible")     return std::make_unique<SetVisibleNode>();
+        if (type == "QuitGame")       return std::make_unique<GameControlNode>(GameControlNode::Op::Quit);
+        if (type == "PauseGame")      return std::make_unique<GameControlNode>(GameControlNode::Op::Pause);
+        if (type == "ShowCursor")     return std::make_unique<GameControlNode>(GameControlNode::Op::ShowCursor);
+        if (type == "ChanceBranch")   return std::make_unique<ChanceBranchNode>();
+        if (type == "Counter")        return std::make_unique<CounterNode>();
+        if (type == "EveryN")         return std::make_unique<EveryNNode>();
+    }
     if (type == "Const")   { if (!need(1)) return nullptr; return std::make_unique<ConstNode>(ParseValue(args[0])); }
     if (type == "GetVar")  { if (!need(1)) return nullptr; return std::make_unique<GetVarNode>(args[0]); }
     if (type == "SetVar")  { if (!need(1)) return nullptr; return std::make_unique<SetVarNode>(args[0]); }
@@ -396,6 +441,7 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             auto node = MakeNode(type, args, &e);
             if (!node) return fail(e);
             VsNode* added = graph->AddNode(std::move(node));
+            added->fileId = fileId;
             fileToGraph[fileId] = added->id;
         } else if (kind == "exec") {
             if (tok.size() < 4) return fail("exec needs <from> <pin> <to>");
@@ -411,8 +457,8 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             // default <node> <inPin> <value>: an unconnected input's typed value.
             if (tok.size() < 4) return fail("default needs <node> <pin> <value>");
             defaults.push_back({std::stoi(tok[1]), std::stoi(tok[2]), ParseValue(tok[3])});
-        } else if (kind == "pos") {
-            // Editor layout (node positions): nothing to run.
+        } else if (kind == "pos" || kind == "comment") {
+            // Editor layout (node positions, comment frames): nothing to run.
         } else {
             // A directive from a newer editor: skip it rather than refusing the
             // whole graph.

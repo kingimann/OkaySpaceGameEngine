@@ -724,3 +724,7 @@ add_test(NAME character_model_setup COMMAND test_character_model_setup)
 add_executable(test_scene_defaults test_scene_defaults.cpp)
 target_link_libraries(test_scene_defaults PRIVATE okay::engine)
 add_test(NAME scene_defaults COMMAND test_scene_defaults)
+
+add_executable(test_vs_wave4 test_vs_wave4.cpp)
+target_link_libraries(test_vs_wave4 PRIVATE okay::engine)
+add_test(NAME vs_wave4 COMMAND test_vs_wave4)

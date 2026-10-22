@@ -282,3 +282,64 @@ Component ▸ Scripts lists `.okayvs` files and **New Visual Script**), by dragg
 **As C#:** *View as OkayScript* shows the graph as a C#-style component class
 (`void Start()`, `void Update()`, `void OnCollisionEnter(Collision other)` ...)
 that you can copy or save as a `.okay` script.
+
+## Fourth wave: events between objects, keys, timers and more
+
+**Several event nodes of one kind.** A graph may now contain any number of
+*On Start*, *On Update* (or any other event) nodes; all of them run, in the
+order they were added. Previously only the last one did.
+
+**New events**
+
+| Node | Fires |
+|---|---|
+| On Key Pressed / On Key Released | the frame a key goes down / up (pick the key with the key picker) |
+| On Timer | every N seconds |
+| On Custom Event | when a *Send Event* / *Broadcast Event* (or a script's `send_event`) names it; its **Value** output is the value sent |
+| On Collision Exit / On Trigger Exit | when contact / overlap ends |
+| On Mouse Enter / On Mouse Exit | the pointer moves onto / off the object |
+
+**Talking between objects**
+
+- *Send Event* (event name; inputs **Target**, **Value**): runs the target object's
+  *On Custom Event* nodes with that name. Target blank = this object.
+- *Broadcast Event* (event name; input **Value**): every object listening for it.
+- *Event Value* / *Event Name*: what the current custom event carried.
+- *Set Object Var* / *Get Object Var*: read or write another object's graph
+  variable (or script global).
+- Scripts join in: `send_event("Door", "Open", 1)`, `broadcast_event("Alarm")`,
+  and a script receives an event in `void OnEvent_Open(object value)`.
+
+**Saving**: *Save Value* / *Load Value* (key) keep numbers, text and vectors
+between runs (the same store as the script `save` / `load`).
+
+**Text**: Format Text (`"Score: {0} / {1}"`), Substring, Replace Text, To Number,
+Starts With, Ends With, Trim Spaces, Index Of.
+
+**Math**: Perlin Noise (smooth, -1..1), Snap To Step, Wrap, Average, Distance 2D.
+
+**Objects + game flow**: Find / Count / Nearest With Tag, Teleport (any object,
+unset axes keep their value), Set Visible, Pause Game, Quit Game, Show Cursor.
+
+**Flow**: Random Branch (True with a chance), Counter (counts runs, with Reset),
+Every N Times.
+
+## Flow Graph editor: working faster
+
+- **Drag a wire into empty space** and the node palette opens, filtered to nodes
+  that fit; the node you pick is wired to that pin.
+- **Box select** by dragging on empty canvas; Ctrl/Shift+click adds to the
+  selection; dragging any selected node moves the whole selection.
+- **Ctrl+C / Ctrl+V / Ctrl+D** copy, paste (at the mouse) and duplicate;
+  **Del** deletes the selection; **Ctrl+A** selects everything.
+- **Ctrl+Z / Ctrl+Y** undo and redo every edit (moves, wiring, values).
+- **Alt+click a pin** to break its wires; right-click a node ▸ Break All Wires.
+- **Comments** (toolbar *Comment*, or **C**): a titled, coloured frame around the
+  selected nodes. Drag its title to move the group, drag the corner to resize,
+  double-click to rename, right-click for colour / delete.
+- **Minimap** in the corner (View ▸ Minimap): click or drag to jump around.
+- **Live debugging**: while playing, the graph of the selected object (or the
+  first one using this file) lights up each node as it runs, and every data
+  output shows its latest value beside the pin. A green *LIVE* tag in the
+  toolbar names the object being watched.
+- **Space** opens the palette at the mouse, **Home** frames the whole graph.

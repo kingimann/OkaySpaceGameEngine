@@ -1,4 +1,8 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Core/Game.hpp"
+#include "okay/Input/Cursor.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -5546,6 +5550,68 @@ struct OkayScriptVM::Impl {
                     al->ReceiveMessage(a[0].AsString());
             return Value{};
         };
+
+        // --- Custom events + object variables shared with visual-script graphs ---
+        // send_event("Target", "Hit", value): runs the target's On Custom Event "Hit"
+        // graph nodes and its scripts' OnEvent_Hit(value). "" / "self" = this object.
+        auto evTarget = [this](const std::string& name) -> GameObject* {
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            if (!me) return nullptr;
+            if (name.empty() || name == "self") return me;
+            return me->scene() ? me->scene()->Find(name) : nullptr;
+        };
+        auto deliverEvent = [this](GameObject* o, const std::string& ev, const Value& v) {
+            if (!o) return;
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            for (auto* vc : o->GetComponents<VisualScriptComponent>()) vc->SendEvent(ev, v, me);
+            for (auto* sc : o->GetComponents<ScriptComponent>())
+                if (sc->VM()) sc->VM()->CallEventWith("OnEvent_" + ev, v);
+        };
+        b["send_event"] = [evTarget, deliverEvent](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{};
+            deliverEvent(evTarget(a[0].AsString()), a[1].AsString(), a.size() > 2 ? a[2] : Value{});
+            return Value{};
+        };
+        b["broadcast_event"] = [this, deliverEvent](std::vector<Value>& a) {
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            if (a.empty() || !me || !me->scene()) return Value{};
+            std::vector<GameObject*> all;
+            for (const auto& up : me->scene()->Objects()) if (up && up->active) all.push_back(up.get());
+            for (GameObject* o : all) deliverEvent(o, a[0].AsString(), a.size() > 1 ? a[1] : Value{});
+            return Value{};
+        };
+        // set_object_var("Enemy", "hp", 10) / get_object_var("Enemy", "hp"): a graph's
+        // blackboard variable or a script's global on another object.
+        b["set_object_var"] = [evTarget](std::vector<Value>& a) {
+            if (a.size() < 3) return Value{};
+            if (GameObject* o = evTarget(a[0].AsString())) {
+                for (auto* vc : o->GetComponents<VisualScriptComponent>()) vc->SetVariable(a[1].AsString(), a[2]);
+                for (auto* sc : o->GetComponents<ScriptComponent>()) if (sc->VM()) sc->VM()->SetGlobal(a[1].AsString(), a[2]);
+            }
+            return Value{};
+        };
+        b["get_object_var"] = [evTarget](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{};
+            if (GameObject* o = evTarget(a[0].AsString())) {
+                if (auto* vc = o->GetComponent<VisualScriptComponent>()) return vc->GetVariable(a[1].AsString());
+                if (auto* sc = o->GetComponent<ScriptComponent>()) if (sc->VM()) return sc->VM()->GetGlobal(a[1].AsString());
+            }
+            return Value{};
+        };
+        // set_object_position("Door", x, y, z): a non-number axis keeps its value.
+        b["set_object_position"] = [evTarget](std::vector<Value>& a) {
+            if (a.empty()) return Value{};
+            GameObject* o = evTarget(a[0].AsString());
+            if (!o || !o->transform) return Value{};
+            Vec3 p = o->transform->Position();
+            if (a.size() > 1 && !a[1].IsString()) p.x = a[1].AsFloat();
+            if (a.size() > 2 && !a[2].IsString()) p.y = a[2].AsFloat();
+            if (a.size() > 3 && !a[3].IsString()) p.z = a[3].AsFloat();
+            o->transform->SetPosition(p);
+            return Value{};
+        };
+        b["pause_game"] = [](std::vector<Value>& a) { Game::SetPaused(a.empty() || a[0].AsBool()); return Value{}; };
+        b["show_cursor"] = [](std::vector<Value>& a) { Cursor::Capture(!(a.empty() || a[0].AsBool())); return Value{}; };
 
         // --- Sprite glyph/size on a sibling SpriteRenderer ---
         b["set_glyph"] = [go](std::vector<Value>& a) {

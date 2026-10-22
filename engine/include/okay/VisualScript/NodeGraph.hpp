@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include "okay/VisualScript/VsValue.hpp"
 #include <memory>
 #include <string>
@@ -32,6 +33,12 @@ public:
     virtual ~VsNode() = default;
 
     int id = -1;
+    int fileId = -1;            ///< the node's id in the .okayvs file / editor (-1 = built in code)
+
+    // Debug trace (only recorded while NodeGraph::Tracing() is on — the editor
+    // turns it on so a running graph can light up and show live values).
+    unsigned execCount = 0;                  ///< times this node has run
+    std::vector<VsValue> lastOut;            ///< last value produced per data output pin
 
     /// Number of execution output pins (0 means this is a pure data node).
     virtual int ExecOutCount() const { return 0; }
@@ -105,11 +112,41 @@ public:
     /// Execute an exec chain starting at `entryNode`.
     void Run(int entryNode, VsContext& ctx);
 
-    /// Name an entry node (e.g. "OnStart", "OnUpdate") for later lookup.
-    void SetEntry(const std::string& name, int nodeId) { m_entries[name] = nodeId; }
+    /// Register an entry node under an event name ("OnStart", "OnUpdate",
+    /// "OnKey:space", ...). A graph may hold several nodes for the same event —
+    /// all of them run, in the order they were added.
+    void SetEntry(const std::string& name, int nodeId) {
+        auto& v = m_entries[name];
+        if (std::find(v.begin(), v.end(), nodeId) == v.end()) v.push_back(nodeId);
+    }
+    /// The first entry node for `name` (-1 if none).
     int  Entry(const std::string& name) const {
         auto it = m_entries.find(name);
-        return it != m_entries.end() ? it->second : -1;
+        return (it != m_entries.end() && !it->second.empty()) ? it->second.front() : -1;
+    }
+    /// Every entry node registered for `name`.
+    const std::vector<int>& Entries(const std::string& name) const {
+        static const std::vector<int> none;
+        auto it = m_entries.find(name);
+        return it != m_entries.end() ? it->second : none;
+    }
+    /// Run every entry registered for `name`. Returns how many ran.
+    int RunEntries(const std::string& name, VsContext& ctx) {
+        auto it = m_entries.find(name);
+        if (it == m_entries.end()) return 0;
+        const std::vector<int> ids = it->second;   // copy: a chain could reload the graph
+        for (int id : ids) Run(id, ctx);
+        return (int)ids.size();
+    }
+    /// All registered event names (for timers / key events that need polling).
+    const std::unordered_map<std::string, std::vector<int>>& AllEntries() const { return m_entries; }
+
+    /// Record execution counts + last data values on the nodes (editor debugging).
+    static bool& Tracing() { static bool on = false; return on; }
+    /// Look a node up by its file / editor id (-1 when absent).
+    int NodeByFileId(int fileId) const {
+        for (const auto& n : m_nodes) if (n && n->fileId == fileId) return n->id;
+        return -1;
     }
 
     /// Parse a graph from the simple OkayVS text format (see docs/visual_scripting.md).
@@ -117,7 +154,7 @@ public:
 
 private:
     std::vector<std::unique_ptr<VsNode>> m_nodes;
-    std::unordered_map<std::string, int> m_entries;
+    std::unordered_map<std::string, std::vector<int>> m_entries;
     int m_execGuard = 0; // guards against runaway loops
 };
 

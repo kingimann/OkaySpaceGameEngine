@@ -2,6 +2,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Input/Input.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -46,20 +47,50 @@ vs::VsValue VisualScriptComponent::GetVariable(const std::string& name) const {
     return it != m_ctx.variables.end() ? it->second : vs::VsValue{};
 }
 
+void VisualScriptComponent::ScanPolledEvents() {
+    m_scanned = m_graph.get();
+    m_keyEntries.clear();
+    m_timerEntries.clear();
+    if (!m_graph) return;
+    for (const auto& kv : m_graph->AllEntries()) {
+        const std::string& n = kv.first;
+        if (n.rfind("OnKey:", 0) == 0)
+            m_keyEntries.push_back({n, Input::KeyFromName(n.substr(6)), false});
+        else if (n.rfind("OnKeyUp:", 0) == 0)
+            m_keyEntries.push_back({n, Input::KeyFromName(n.substr(8)), true});
+        else if (n.rfind("OnTimer:", 0) == 0) {
+            float p = 1.0f;
+            try { p = std::stof(n.substr(8)); } catch (...) {}
+            m_timerEntries.push_back({n, p > 0.001f ? p : 0.001f, 0.0f});
+        }
+    }
+}
+
 void VisualScriptComponent::Start() {
     m_ctx.gameObject = gameObject;
     m_ctx.transform  = transform;
     if (!m_graph) return;
-    int entry = m_graph->Entry("OnStart");
-    if (entry >= 0) m_graph->Run(entry, m_ctx);
+    ScanPolledEvents();
+    m_graph->RunEntries("OnStart", m_ctx);
 }
 
 void VisualScriptComponent::Update(float dt) {
     if (!m_graph) return;
+    if (m_scanned != m_graph.get()) ScanPolledEvents();   // reloaded since the last frame
     m_ctx.deltaTime = dt;
+    m_ctx.gameObject = gameObject;
     m_ctx.transform = transform;
-    int entry = m_graph->Entry("OnUpdate");
-    if (entry >= 0) m_graph->Run(entry, m_ctx);
+    m_graph->RunEntries("OnUpdate", m_ctx);
+    // On Key Pressed / Released.
+    for (const KeyEntry& k : m_keyEntries)
+        if (k.up ? Input::GetKeyUp(k.key) : Input::GetKeyDown(k.key)) Fire(k.entry.c_str(), nullptr);
+    // On Timer: fire every `period` seconds (catching up at most a few per frame).
+    for (TimerEntry& t : m_timerEntries) {
+        t.acc += dt;
+        int guard = 0;
+        while (t.acc >= t.period && guard++ < 4) { t.acc -= t.period; Fire(t.entry.c_str(), nullptr); }
+        if (t.acc > t.period) t.acc = 0.0f;
+    }
 }
 
 } // namespace okay

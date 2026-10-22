@@ -239,12 +239,7 @@ inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
         Vec2 sc; float k;
         return UIWorldCanvasMap(cv, sc, k) ? k : 0.0f;
     }
-    if (cv) return cv->ScaleFactor(screenW, screenH);
-    // No Canvas at all: behave like a default (scale-with-screen, 1280x720) canvas
-    // so a loose widget grows and shrinks with the window like the rest of the UI,
-    // instead of staying a fixed pixel size. At 1280x720 it's unchanged.
-    static const Canvas kDefaultCanvas;
-    return kDefaultCanvas.ScaleFactor(screenW, screenH);
+    return cv ? cv->ScaleFactor(screenW, screenH) : 1.0f;
 }
 
 /// True when the widget's owning Canvas is hidden (Canvas.visible == false) —

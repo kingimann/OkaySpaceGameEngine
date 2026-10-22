@@ -9909,7 +9909,9 @@ void DrawScriptEditor(EditorState& ed) {
         if (rqGoto)    ImGui::OpenPopup("##gotolinepop");
         if (rqSwitch)  ImGui::OpenPopup("##tabswitcher");
         if (rqCheat)   ImGui::OpenPopup("##cscheat");
-        ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
+        // Centred on the editor so it never runs off-screen; descriptions wrap.
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(std::min(760.0f, ImGui::GetMainViewport()->Size.x - 40.0f), 0), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("##cscheat")) {
             ImGui::TextColored(AccentCol(), "C# in OkayScript");
             ImGui::TextDisabled("Write Unity-style C#; these all work:");
@@ -9931,10 +9933,18 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Invoke(\"Fire\", 1f), InvokeRepeating(..), Debug.Log(..)", "timers + logging"},
             };
             if (ImGui::BeginTable("##cst", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("code", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+                ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthStretch, 0.4f);
                 for (auto& r : kRows) {
                     ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0); ImGui::TextColored(ImVec4(0.80f, 0.86f, 1.0f, 1.0f), "%s", r[0]);
-                    ImGui::TableSetColumnIndex(1); ImGui::TextDisabled("%s", r[1]);
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.86f, 1.0f, 1.0f));
+                    ImGui::TextWrapped("%s", r[0]);
+                    ImGui::PopStyleColor();
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                    ImGui::TextWrapped("%s", r[1]);
+                    ImGui::PopStyleColor();
                 }
                 ImGui::EndTable();
             }

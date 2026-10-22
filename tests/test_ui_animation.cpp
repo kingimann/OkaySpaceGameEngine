@@ -43,7 +43,7 @@ int main() {
         s.Start();
         Vec2 o, sz;
         GetUIScreenRect(go, 1280, 720, o, sz);
-        float homeX = 1280.0f - 20.0f - 200.0f;
+        float homeX = 1280.0f - 200.0f + 20.0f;   // TopRight: x = W - width + offset
         CHECK(std::fabs(o.x - (homeX - 100.0f)) < 1.0f);   // held at the start pose during the delay
         s.Update(0.1f);
         GetUIScreenRect(go, 1280, 720, o, sz);

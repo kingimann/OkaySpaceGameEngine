@@ -89,7 +89,7 @@ target_link_libraries(okay_engine PUBLIC Threads::Threads)
 
 # Networking needs the Windows sockets library when targeting Windows.
 if(WIN32)
-    target_link_libraries(okay_engine PUBLIC ws2_32)
+    target_link_libraries(okay_engine PUBLIC ws2_32 winhttp)   # winhttp: NativeHttp (backend calls without spawning curl)
     # The Direct3D 11 scene renderer (D3D11Renderer.cpp, guarded by _WIN32) needs the
     # D3D runtime + HLSL compiler. Off Windows the file compiles to nothing.
     target_link_libraries(okay_engine PUBLIC d3d11 d3dcompiler)

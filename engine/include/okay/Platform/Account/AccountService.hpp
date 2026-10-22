@@ -37,6 +37,7 @@
 #if defined(_WIN32)
 #  include <windows.h>
 #endif
+#include "okay/Platform/NativeHttp.hpp"
 
 namespace okay::account {
 
@@ -1083,6 +1084,24 @@ private:
                             const std::string& extraHeader = {},
                             const std::string& bodyFile = {},     // raw file body (uploads)
                             const std::string& bodyType = {}) const {
+        // Native client first (Windows: WinHTTP, kept-alive connections, no
+        // process spawn); fall back to curl if it can't reach the server.
+        if (okay::http::NativeAvailable()) {
+            std::vector<std::string> hdrs;
+            if (!apiKey_.empty())      hdrs.push_back("apikey: " + apiKey_);
+            if (!authToken.empty())    hdrs.push_back("Authorization: Bearer " + authToken);
+            if (!extraHeader.empty())  hdrs.push_back(extraHeader);
+            if (!bodyFile.empty())     hdrs.push_back("Content-Type: " + bodyType);
+            else if (!jsonBody.empty()) hdrs.push_back("Content-Type: application/json");
+            okay::http::Result nr = okay::http::Request(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile);
+            if (nr.reached) {
+                ApiResponse out;
+                out.status = nr.status; out.body = std::move(nr.body);
+                out.reached = true;
+                out.ok = out.status >= 200 && out.status < 300;
+                return out;
+            }
+        }
         std::error_code ec;
         fs::path dir   = fs::temp_directory_path(ec);
         std::string id = detail::RandomHex(8);

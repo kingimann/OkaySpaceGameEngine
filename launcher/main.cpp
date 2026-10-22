@@ -283,6 +283,12 @@ bool Download(const std::string& url, const std::string& out) {
     std::error_code ec; fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
     std::string u = BustCache(url);
+    // Native first (no curl process per file; pooled TLS connections).
+    if (okay::http::NativeAvailable()) {
+        okay::http::Result r = okay::http::Request("GET", u, {"Cache-Control: no-cache", "Pragma: no-cache"}, {}, {}, out);
+        if (r.reached && r.status >= 200 && r.status < 300 && fs::exists(out, ec)) return true;
+        fs::remove(out, ec);
+    }
     const char* nc = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
 #if defined(_WIN32)
     std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\"";
@@ -10789,7 +10795,14 @@ int main(int argc, char** argv) {
     // player out if so. Offline or local accounts are left as-is.
     // Run it on a worker thread and keep animating the splash so startup stays
     // smooth instead of freezing on the network round-trip.
-    {
+    // Only when the saved token has expired (or is about to) is a round-trip
+    // needed before the UI: a still-valid token goes straight in, and the
+    // background refresher (PumpTokenRefresh) renews it before it lapses. That
+    // removes the network wait from every normal startup.
+    const long tokExp = accountPtr->IsLoggedIn() && accountPtr->IsOnline() ? accountPtr->TokenExpiresAt() : 0;
+    const bool needVerify = accountPtr->IsLoggedIn() && accountPtr->IsOnline() &&
+                            (tokExp <= 0 || tokExp - (long)std::time(nullptr) < 120);
+    if (needVerify) {
         VerifyJob vj{ accountPtr.get(), false };
         SDL_Thread* vt = SDL_CreateThread(VerifySessionWorker, "okay-verify", &vj);
         while (!vj.done) {

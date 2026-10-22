@@ -5976,6 +5976,54 @@ static bool ProjectFilterMatches(int f, const std::string& ext) {
     }
     return true;
 }
+// ---- Asset color labels (per project, stored in <project>/.okaylabels) ----------
+static const char* kAssetLabelNames[] = {"None", "Red", "Orange", "Yellow", "Green", "Blue", "Purple"};
+static const ImU32 kAssetLabelCols[] = {0, IM_COL32(230, 80, 80, 255), IM_COL32(240, 150, 60, 255), IM_COL32(235, 205, 70, 255),
+                                        IM_COL32(100, 200, 110, 255), IM_COL32(90, 150, 240, 255), IM_COL32(170, 110, 230, 255)};
+static const int kAssetLabelCount = 7;
+static std::map<std::string, int> g_assetLabels;   // project-relative path -> label index
+static std::string g_assetLabelsProj = "\x01";
+static void EnsureAssetLabels(const std::string& proj) {
+    if (proj == g_assetLabelsProj) return;
+    g_assetLabelsProj = proj; g_assetLabels.clear();
+    std::ifstream f(std::filesystem::path(proj) / ".okaylabels");
+    std::string line;
+    while (std::getline(f, line)) {
+        auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        int idx = std::atoi(line.substr(0, tab).c_str());
+        if (idx > 0 && idx < kAssetLabelCount) g_assetLabels[line.substr(tab + 1)] = idx;
+    }
+}
+static std::string AssetLabelKey(const std::string& proj, const std::string& full) {
+    std::error_code ec;
+    auto rel = std::filesystem::relative(full, proj, ec);
+    return ec ? full : rel.generic_string();
+}
+static int AssetLabelOf(const std::string& proj, const std::string& full) {
+    if (g_assetLabels.empty()) return 0;
+    auto it = g_assetLabels.find(AssetLabelKey(proj, full));
+    return it == g_assetLabels.end() ? 0 : it->second;
+}
+static void SetAssetLabel(const std::string& proj, const std::string& full, int idx) {
+    std::string k = AssetLabelKey(proj, full);
+    if (idx <= 0) g_assetLabels.erase(k); else g_assetLabels[k] = idx;
+    std::ofstream f(std::filesystem::path(proj) / ".okaylabels", std::ios::trunc);
+    for (const auto& kv : g_assetLabels) f << kv.second << "\t" << kv.first << "\n";
+}
+// Search words "t:model", "t:folder"... -> a project filter id (-2 folder, -1 unknown).
+static int ProjectTypeWord(const std::string& w) {
+    if (w == "model" || w == "models" || w == "mesh" || w == "fbx") return 8;
+    if (w == "texture" || w == "textures" || w == "image" || w == "images" || w == "sprite") return 2;
+    if (w == "audio" || w == "sound" || w == "sounds" || w == "music") return 7;
+    if (w == "script" || w == "scripts" || w == "code") return 1;
+    if (w == "scene" || w == "scenes" || w == "level") return 3;
+    if (w == "material" || w == "materials" || w == "mat") return 4;
+    if (w == "prefab" || w == "prefabs") return 5;
+    if (w == "data") return 6;
+    if (w == "folder" || w == "dir") return -2;
+    return -1;
+}
 void DrawProject(EditorState& ed) {
     namespace fs = std::filesystem;
     static char dirBuf[512] = ".";
@@ -5990,7 +6038,11 @@ void DrawProject(EditorState& ed) {
     auto smartName = [](int id) -> const char* {
         switch (id) { case 8: return "All Models"; case 2: return "All Textures"; case 7: return "All Audio";
                       case 1: return "All Scripts"; case 3: return "All Scenes"; case 5: return "All Prefabs";
-                      case 4: return "All Materials"; case 6: return "All Data"; case 100: return "Recently Changed"; }
+                      case 4: return "All Materials"; case 6: return "All Data"; case 100: return "Recently Changed";
+                      case 101: return "Unused Assets"; }
+        if (id >= 200 && id < 200 + kAssetLabelCount) {
+            static std::string lb; lb = std::string("Label: ") + kAssetLabelNames[id - 200]; return lb.c_str();
+        }
         return "";
     };
     if (!ImGui::Begin("Project", &g_showProject)) { ImGui::End(); return; }
@@ -6022,6 +6074,8 @@ void DrawProject(EditorState& ed) {
         std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
     }
     fs::path dir(dirBuf);
+    const std::string labelProj = ed.projectDir().empty() ? root.string() : ed.projectDir();
+    EnsureAssetLabels(labelProj);
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -6151,6 +6205,36 @@ void DrawProject(EditorState& ed) {
             char cnt[12]; std::snprintf(cnt, sizeof(cnt), "%d", n);
             sdl->AddText(ImVec2(mx.x - ImGui::CalcTextSize(cnt).x - 4.0f, mn.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), cnt);
             ImGui::PopID();
+        }
+        {   // Unused Assets: models/textures/sounds/materials/prefabs/fonts nothing references.
+            if (ImGui::Selectable("     Unused Assets", s_smart == 101)) { s_smart = s_smart == 101 ? -1 : 101; search[0] = '\0'; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Assets no scene, prefab, material or script mentions.\nCheck before deleting: code can load files by building names at runtime.");
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            float cy = (mn.y + mx.y) * 0.5f, r = ImGui::GetFontSize() * 0.26f;
+            ImGui::GetWindowDrawList()->AddCircle(ImVec2(mn.x + 8.0f, cy), r, IM_COL32(160, 160, 170, 255), 12, 1.5f);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(mn.x + 8.0f - r * 0.7f, cy + r * 0.7f), ImVec2(mn.x + 8.0f + r * 0.7f, cy - r * 0.7f), IM_COL32(160, 160, 170, 255), 1.5f);
+        }
+        // Labels in use (right-click an asset > Label to add one).
+        {
+            int lc[kAssetLabelCount] = {0};
+            for (const auto& kv : g_assetLabels) if (kv.second > 0 && kv.second < kAssetLabelCount) lc[kv.second]++;
+            bool any = false;
+            for (int i = 1; i < kAssetLabelCount; ++i) if (lc[i]) any = true;
+            if (any || s_smart >= 200) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("LABELS");
+                for (int i = 1; i < kAssetLabelCount; ++i) {
+                    if (!lc[i] && s_smart != 200 + i) continue;
+                    ImGui::PushID(500 + i);
+                    std::string lbl = std::string("     ") + kAssetLabelNames[i];
+                    if (ImGui::Selectable(lbl.c_str(), s_smart == 200 + i)) { s_smart = s_smart == 200 + i ? -1 : 200 + i; search[0] = '\0'; }
+                    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mn.x + 8.0f, (mn.y + mx.y) * 0.5f), ImGui::GetFontSize() * 0.26f, kAssetLabelCols[i]);
+                    char cnt[12]; std::snprintf(cnt, sizeof(cnt), "%d", lc[i]);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(mx.x - ImGui::CalcTextSize(cnt).x - 4.0f, mn.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), cnt);
+                    ImGui::PopID();
+                }
+            }
         }
         ImGui::Separator();
     }
@@ -6283,6 +6367,12 @@ void DrawProject(EditorState& ed) {
     auto mkScript = [&]{ fs::path p = uniquePath("NewScript", ".okay"); std::ofstream(p) << extide::StarterScript("okayscript"); ConsoleLog("Created " + p.string()); nameOnCreate(p); };
     auto mkMaterial = [&]{ fs::path p = uniquePath("New Material", ".okaymat"); if (Material{}.SaveToFile(p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); } };
     auto mkScene = [&]{ fs::path p = uniquePath("New Scene", ".okayscene"); okay::Scene empty("New Scene"); if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); } };
+    auto mkStdFolders = [&]{
+        int made = 0; std::error_code ce;
+        for (const char* f : {"Scenes", "Scripts", "Prefabs", "Materials", "Models", "Textures", "Audio"})
+            if (!fs::exists(dir / f, ce) && fs::create_directory(dir / f, ce)) ++made;
+        ConsoleLog("Created " + std::to_string(made) + " standard folder(s) in " + dir.filename().string());
+    };
     auto mkData = [&]{ fs::path p = uniquePath("NewData", ".okaydata");
         std::ofstream(p) << "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n";
         ConsoleLog("Created " + p.string()); nameOnCreate(p); };
@@ -6305,7 +6395,7 @@ void DrawProject(EditorState& ed) {
     auto passFilter = [&](const std::string& ext, bool isDir) -> bool {
         if (s_smart >= 0) {   // smart view: files only, of the smart type (recent: any type)
             if (isDir) return false;
-            return s_smart == kSmartRecent || ProjectFilterMatches(s_smart, ext);
+            return s_smart >= kSmartRecent || ProjectFilterMatches(s_smart, ext);   // recent/unused/labels pre-filtered by the scan
         }
         if (isDir || s_filter == 0) return true;
         return ProjectFilterMatches(s_filter, ext);
@@ -6331,9 +6421,33 @@ void DrawProject(EditorState& ed) {
             if (s_smart >= 0 && fs::is_directory(root, sec)) {
                 // Whole project, flat. "Recently changed" keeps the last week, newest first.
                 const auto weekAgo = fs::file_time_type::clock::now() - std::chrono::hours(24 * 7);
+                // Unused Assets: one lower-cased corpus of every file that can reference
+                // an asset by name (scenes, prefabs, materials, scripts, data).
+                std::string corpus;
+                if (s_smart == 101) {
+                    std::error_code ce;
+                    for (auto& e : fs::recursive_directory_iterator(fs::path(labelProj), fs::directory_options::skip_permission_denied, ce)) {
+                        if (!e.is_regular_file(ce)) continue;
+                        std::string x = Lower(e.path().extension().string());
+                        if (x != ".okayscene" && x != ".okayprefab" && x != ".okaymat" && x != ".okay" && x != ".lua" && x != ".cs" &&
+                            x != ".okayvs" && x != ".okayanim" && x != ".okaydata" && x != ".json" && x != ".okayproj" && x != ".txt") continue;
+                        std::error_code se2;
+                        if (e.file_size(se2) > (4u << 20) || corpus.size() > (96u << 20)) continue;
+                        corpus += Lower(extide::ReadFile(e.path().string()));
+                        corpus += '\n';
+                    }
+                }
                 for (auto& e : fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, sec)) {
                     if (!e.is_regular_file(sec)) continue;
                     if (s_smart == kSmartRecent) { auto wt = e.last_write_time(sec); if (sec || wt < weekAgo) { sec.clear(); continue; } }
+                    else if (s_smart == 101) {
+                        std::string x = Lower(e.path().extension().string());
+                        bool referenceable = ProjectFilterMatches(2, x) || ProjectFilterMatches(7, x) || ProjectFilterMatches(8, x) ||
+                                             ProjectFilterMatches(4, x) || ProjectFilterMatches(5, x) || x == ".ttf" || x == ".otf";
+                        if (!referenceable) continue;
+                        if (corpus.find(Lower(e.path().filename().string())) != std::string::npos) continue;
+                    }
+                    else if (s_smart >= 200) { if (AssetLabelOf(labelProj, e.path().string()) != s_smart - 200) continue; }
                     else if (!ProjectFilterMatches(s_smart, Lower(e.path().extension().string()))) continue;
                     s_scanEntries.push_back(e);
                     if (s_scanEntries.size() >= 4000) break;
@@ -6380,6 +6494,22 @@ void DrawProject(EditorState& ed) {
     std::vector<fs::directory_entry>& entries = s_scanEntries;
 
     std::string needle = Lower(search);
+    // Search syntax (Unity-style): plain words match names; "t:model" (model,
+    // texture, audio, script, scene, material, prefab, data, folder), "l:red"
+    // (a color label) and "ext:png" narrow it down. Combine freely.
+    int qType = -1, qLabel = -1; std::string qExt, qText;
+    {
+        std::istringstream qs(needle); std::string w;
+        while (qs >> w) {
+            if (w.rfind("t:", 0) == 0) qType = ProjectTypeWord(w.substr(2));
+            else if (w.rfind("l:", 0) == 0) {
+                std::string ln = w.substr(2);
+                for (int i = 1; i < kAssetLabelCount; ++i) if (Lower(kAssetLabelNames[i]) == ln) qLabel = i;
+            }
+            else if (w.rfind("ext:", 0) == 0) { qExt = w.substr(4); if (!qExt.empty() && qExt[0] != '.') qExt = "." + qExt; }
+            else { if (!qText.empty()) qText += ' '; qText += w; }
+        }
+    }
     const float cell = s_cell;
     float availW = ImGui::GetContentRegionAvail().x;
     int cols = (int)(availW / (cell + ImGui::GetStyle().ItemSpacing.x));
@@ -6474,6 +6604,21 @@ void DrawProject(EditorState& ed) {
             if (!s_assetClip.empty() && ImGui::MenuItem(isDir ? "Paste Into" : "Paste"))
                 pasteInto(isDir ? fs::path(full) : dir);
             if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(full.c_str());
+            if (ImGui::BeginMenu("Label")) {
+                int cur = AssetLabelOf(labelProj, full);
+                for (int li = 0; li < kAssetLabelCount; ++li) {
+                    if (li > 0) {   // colour swatch before the name
+                        ImVec2 cp = ImGui::GetCursorScreenPos();
+                        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cp.x + 6.0f, cp.y + ImGui::GetTextLineHeight() * 0.5f), 4.5f, kAssetLabelCols[li]);
+                    }
+                    std::string ln = std::string("    ") + kAssetLabelNames[li];
+                    if (ImGui::MenuItem(ln.c_str(), nullptr, cur == li)) {
+                        if (s_multi.size() > 1) for (const auto& m : s_multi) SetAssetLabel(labelProj, m, li);
+                        else SetAssetLabel(labelProj, full, li);
+                    }
+                }
+                ImGui::EndMenu();
+            }
             // Find every scene object that references this asset (texture, mesh, font,
             // script) and select the first — Unity's "Find References In Scene".
             if (!isDir && ImGui::MenuItem("Find References in Scene")) {
@@ -6533,8 +6678,12 @@ void DrawProject(EditorState& ed) {
         std::error_code de;
         bool isDir = e.is_directory(de);
         std::string name = e.path().filename().string();
-        if (!needle.empty() && Lower(name).find(needle) == std::string::npos) continue;
+        if (!qText.empty() && Lower(name).find(qText) == std::string::npos) continue;
         std::string ext = Lower(e.path().extension().string());
+        if (qType > 0 && (isDir || !ProjectFilterMatches(qType, ext))) continue;
+        if (qType == -2 && !isDir) continue;
+        if (!qExt.empty() && ext != qExt) continue;
+        if (qLabel > 0 && AssetLabelOf(labelProj, e.path().string()) != qLabel) continue;
         if (!passFilter(ext, isDir)) continue;
         AssetKind k = KindOf(ext, isDir);
         std::string full = e.path().string();
@@ -6579,6 +6728,11 @@ void DrawProject(EditorState& ed) {
                 ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddRect(mn, mx, ImGui::GetColorU32(AccentCol(1.0f)),
                                                     4.0f, 0, 2.5f);
+            }
+            if (int lb = AssetLabelOf(labelProj, full)) {   // color label dot (top-right)
+                ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, kAssetLabelCols[lb]);
+                ImGui::GetWindowDrawList()->AddCircle(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, IM_COL32(20, 22, 26, 200), 12, 1.2f);
             }
             if (ImGui::IsItemClicked()) pickItem(full);
             // Drag from the tile (which has an ID) so the payload attaches cleanly.
@@ -6693,6 +6847,11 @@ void DrawProject(EditorState& ed) {
                 if (ImGui::MenuItem("Material"))   mkMaterial();
                 if (ImGui::MenuItem("Scene"))      mkScene();
                 if (ImGui::MenuItem("Data Asset")) mkData();
+                ImGui::Separator();
+                if (ImGui::MenuItem("Prefab from Selection", nullptr, false, ed.selected() != nullptr)) SavePrefabInto(ed.selected(), dir);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Save the selected object (and its children) here as a prefab.");
+                if (ImGui::MenuItem("Standard Folders")) mkStdFolders();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here.");
                 ImGui::EndMenu();
             }
             if (!s_assetClip.empty() && ImGui::MenuItem("Paste")) pasteInto(dir);
@@ -6942,6 +7101,11 @@ void DrawProject(EditorState& ed) {
             if (ImGui::MenuItem("Material"))   mkMaterial();
             if (ImGui::MenuItem("Scene"))      mkScene();
             if (ImGui::MenuItem("Data Asset")) mkData();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Prefab from Selection", nullptr, false, ed.selected() != nullptr)) SavePrefabInto(ed.selected(), dir);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Save the selected object (and its children) here as a prefab.");
+            if (ImGui::MenuItem("Standard Folders")) mkStdFolders();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here.");
             ImGui::EndPopup();
         }
         ImGui::SameLine();

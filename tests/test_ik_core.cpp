@@ -1,0 +1,165 @@
+#include "test_framework.hpp"
+#include <Okay.hpp>
+#include "okay/Math/Fabrik.hpp"
+#include "okay/Math/TwoBoneIK.hpp"
+#include "okay/Math/IKFade.hpp"
+#include "okay/Components/ChainIK.hpp"
+#include "okay/Components/FullBodyIK.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scripting/OkayScriptVM.hpp"
+#include <cmath>
+
+using namespace okay;
+
+static float Dist(const Vec3& a, const Vec3& b) { return (a - b).Magnitude(); }
+static float BendDeg(const Vec3& a, const Vec3& b, const Vec3& c) {
+    Vec3 u = (b - a).Normalized(), v = (c - b).Normalized();
+    float d = Vec3::Dot(u, v); d = d > 1 ? 1 : (d < -1 ? -1 : d);
+    return std::acos(d) * 57.29578f;
+}
+
+int main() {
+    RUN_SUITE("ik_core");
+
+    // ---- FABRIK pole: a 3-bone chain reaching a near target bends toward the pole.
+    {
+        std::vector<Vec3> j = {{0, 0, 0}, {0, 1, 0}, {0, 2, 0}, {0, 3, 0}};
+        std::vector<float> len = {1, 1, 1};
+        Vec3 pole{0, 1.5f, 5.0f};
+        float err = SolveFabrikConstrained(j, len, {0, 1.5f, 0.5f}, 30, 1e-3f, &pole, 0.0f);
+        CHECK(err < 0.01f);
+        CHECK(j[1].z > 0.1f && j[2].z > 0.1f);                       // bent toward +Z (the pole)
+        for (int i = 0; i < 3; ++i) CHECK_NEAR(Dist(j[i], j[i + 1]), 1.0f, 1e-3f);   // lengths kept
+        // Pole on the other side flips the bend.
+        std::vector<Vec3> k = {{0, 0, 0}, {0, 1, 0}, {0, 2, 0}, {0, 3, 0}};
+        Vec3 back{0, 1.5f, -5.0f};
+        SolveFabrikConstrained(k, len, {0, 1.5f, 0.5f}, 30, 1e-3f, &back, 0.0f);
+        CHECK(k[1].z < -0.05f);
+    }
+    // ---- Bend limits: no joint bends more than the limit.
+    {
+        std::vector<Vec3> j = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {3, 0, 0}, {4, 0, 0}};
+        std::vector<float> len = {1, 1, 1, 1};
+        SolveFabrikConstrained(j, len, {0.5f, 0.5f, 0}, 40, 1e-3f, nullptr, 45.0f);
+        for (int i = 1; i < 4; ++i) CHECK(BendDeg(j[i - 1], j[i], j[i + 1]) <= 45.5f);
+        for (int i = 0; i < 4; ++i) CHECK_NEAR(Dist(j[i], j[i + 1]), 1.0f, 1e-3f);
+    }
+    // ---- Soft IK: eases toward full reach instead of snapping straight.
+    {
+        CHECK_NEAR(SoftReachDistance(1.0f, 2.0f, 0.1f), 1.0f, 1e-6f);       // well inside: untouched
+        float a = SoftReachDistance(1.95f, 2.0f, 0.1f), b = SoftReachDistance(2.5f, 2.0f, 0.1f);
+        CHECK(a < 1.95f && a > 1.9f);
+        CHECK(b < 2.0f && b > a);                                            // never fully straight
+        Vec3 mid, end;
+        SolveTwoBoneIKSoft({0, 0, 0}, 1, 1, {0, -3, 0}, {0, 0, 1}, 0.1f, mid, end);
+        CHECK(Dist({0, 0, 0}, end) < 2.0f);
+        CHECK(mid.z > 0.0f);                                                  // still slightly bent, toward the pole
+    }
+    // ---- IKFade eases in over fadeTime with a smoothstep.
+    {
+        IKFade f;
+        CHECK(f.Step(false, 0.5f, 0.016f) == 0.0f);   // starts at the target state
+        float v1 = f.Step(true, 0.5f, 0.25f), v2 = f.Step(true, 0.5f, 0.25f);
+        CHECK_NEAR(v1, 0.5f, 1e-4f);
+        CHECK_NEAR(v2, 1.0f, 1e-4f);
+    }
+    // ---- ChainIK with a pole object via the scene.
+    {
+        Scene sc;
+        std::vector<GameObject*> g;
+        for (int i = 0; i < 4; ++i) { g.push_back(sc.CreateGameObject("b" + std::to_string(i))); g.back()->transform->SetPosition({0, (float)i, 0}); }
+        GameObject* tgt = sc.CreateGameObject("tgt"); tgt->transform->SetPosition({0, 1.5f, 0.6f});
+        GameObject* pl = sc.CreateGameObject("pole"); pl->transform->SetPosition({0, 1.5f, 4});
+        auto* ci = g[0]->AddComponent<ChainIK>();
+        for (auto* x : g) ci->bones.push_back(x->transform);
+        ci->targetObject = tgt->transform; ci->poleObject = pl->transform; ci->iterations = 30;
+        sc.Start(); sc.Update(1.0f / 60.0f);
+        CHECK(ci->Error() < 0.02f);
+        CHECK(g[1]->transform->Position().z > 0.05f);
+    }
+    // ---- FullBodyIK: auto-maps a Mixamo-style rig and plants a hand on a target.
+    {
+        CHECK(FullBodyIK::Classify("mixamorig:LeftArm") == FullBodyIK::LUpperArm);
+        CHECK(FullBodyIK::Classify("mixamorig:RightForeArm") == FullBodyIK::RForeArm);
+        CHECK(FullBodyIK::Classify("UpperArm.L") == FullBodyIK::LUpperArm);
+        CHECK(FullBodyIK::Classify("thigh_r") == FullBodyIK::RThigh);
+        CHECK(FullBodyIK::Classify("calf_l") == FullBodyIK::LShin);
+        CHECK(FullBodyIK::Classify("L Hand") == FullBodyIK::LHand);
+        CHECK(FullBodyIK::Classify("mixamorig:LeftHandIndex1") == -1);
+        CHECK(FullBodyIK::Classify("mixamorig:Hips") == FullBodyIK::Hips);
+        CHECK(FullBodyIK::Classify("mixamorig:Head") == FullBodyIK::Head);
+
+        Scene sc;
+        GameObject* root = sc.CreateGameObject("Rig");
+        auto mk = [&](const char* n, GameObject* parent, Vec3 local) {
+            GameObject* o = sc.CreateGameObject(n);
+            o->transform->SetParent(parent->transform, false);
+            o->transform->localPosition = local;
+            return o;
+        };
+        GameObject* hips = mk("mixamorig:Hips", root, {0, 1, 0});
+        GameObject* spine = mk("mixamorig:Spine", hips, {0, 0.2f, 0});
+        GameObject* chest = mk("mixamorig:Spine2", spine, {0, 0.3f, 0});
+        GameObject* lua = mk("mixamorig:LeftArm", chest, {0.2f, 0.1f, 0});
+        GameObject* lfa = mk("mixamorig:LeftForeArm", lua, {0.3f, 0, 0});
+        GameObject* lh  = mk("mixamorig:LeftHand", lfa, {0.3f, 0, 0});
+        GameObject* lth = mk("mixamorig:LeftUpLeg", hips, {0.1f, 0, 0});
+        GameObject* lsh = mk("mixamorig:LeftLeg", lth, {0, -0.45f, 0.01f});
+        mk("mixamorig:LeftFoot", lsh, {0, -0.45f, -0.01f});
+        auto* fb = root->AddComponent<FullBodyIK>();
+        sc.Start();
+        CHECK(fb->bones[FullBodyIK::Hips] == hips->transform);
+        CHECK(fb->bones[FullBodyIK::Chest] == chest->transform);
+        CHECK(fb->bones[FullBodyIK::LHand] == lh->transform);
+        CHECK(fb->bones[FullBodyIK::LShin] == lsh->transform);
+
+        // Reachable hand target: the hand gets there, bone lengths unchanged.
+        Vec3 shoulder = lua->transform->Position();
+        Vec3 goal = shoulder + Vec3{0.3f, -0.2f, 0.25f};
+        auto& eh = fb->effectors[FullBodyIK::LeftHand];
+        eh.enabled = true; eh.position = goal;
+        fb->softness = 0.0f; fb->bodyPull = 0.0f; fb->spineReach = 0.0f;
+        sc.Update(1.0f / 60.0f);
+        CHECK(Dist(lh->transform->Position(), goal) < 0.01f);
+        CHECK_NEAR(Dist(lua->transform->Position(), lfa->transform->Position()), 0.3f, 1e-3f);
+        CHECK_NEAR(Dist(lfa->transform->Position(), lh->transform->Position()), 0.3f, 1e-3f);
+
+        // Far target: body pull moves the hips toward it (and stays clamped).
+        Vec3 hips0 = hips->transform->Position();
+        eh.position = shoulder + Vec3{2.0f, 0, 0};
+        fb->bodyPull = 1.0f; fb->maxBodyOffset = 0.3f;
+        sc.Update(1.0f / 60.0f);
+        Vec3 moved = hips->transform->Position() - hips0;
+        CHECK(moved.x > 0.05f);
+        CHECK(moved.Magnitude() <= 0.3001f);
+        // No animation re-poses the hips: the offset must not compound over frames.
+        for (int i = 0; i < 30; ++i) sc.Update(1.0f / 60.0f);
+        CHECK((hips->transform->Position() - hips0).Magnitude() <= 0.3001f);
+
+        // Scripts drive goals: ik_hand / ik_look / ik_release.
+        OkayScriptVM vm; ScriptHost host; host.gameObject = root; host.transform = root->transform;
+        vm.Bind(&host);
+        CHECK(vm.Load("ik_hand(\"right\", 1, 2, 3, 0.5)\nik_look(0, 1.7, 5)\n"));
+        CHECK(fb->effectors[FullBodyIK::RightHand].enabled);
+        CHECK_NEAR(fb->effectors[FullBodyIK::RightHand].position.z, 3.0f, 1e-5f);
+        CHECK_NEAR(fb->effectors[FullBodyIK::RightHand].positionWeight, 0.5f, 1e-5f);
+        CHECK(fb->lookEnabled && std::fabs(fb->lookPosition.z - 5.0f) < 1e-5f);
+
+        // Round trip through the scene format.
+        fb->effectors[FullBodyIK::LeftFoot].hintName = "KneeHint";
+        fb->maxSpineAngle = 22.0f;
+        Scene loaded;
+        CHECK(SceneSerializer::Deserialize(loaded, SceneSerializer::Serialize(sc)));
+        FullBodyIK* fb2 = nullptr;
+        for (const auto& up : loaded.Objects()) if (auto* f = up->GetComponent<FullBodyIK>()) fb2 = f;
+        CHECK(fb2 != nullptr);
+        if (fb2) {
+            CHECK(fb2->boneNames[FullBodyIK::LHand] == "mixamorig:LeftHand");
+            CHECK(fb2->effectors[FullBodyIK::LeftFoot].hintName == "KneeHint");
+            CHECK(fb2->effectors[FullBodyIK::RightHand].enabled);
+            CHECK_NEAR(fb2->maxSpineAngle, 22.0f, 1e-5f);
+            CHECK(fb2->lookEnabled);
+        }
+    }
+    TEST_MAIN_RESULT();
+}

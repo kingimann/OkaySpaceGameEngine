@@ -103,6 +103,7 @@ public:
     }
 
     void Update(float dt) override {
+        if (externalDrive) return;   // a state machine blend tree is posing the model
         // Locomotion speed (world XZ units/sec) + vertical speed, measured from
         // how the object moved.
         float spd = -1.0f, vy = 0.0f;
@@ -451,8 +452,7 @@ public:
     /// One frame of continuous locomotion blending. Returns false when it can't
     /// run (no scene / no usable clips) so the caller falls back to discrete mode.
     bool SmoothBlendStep(float dt, float spd) {
-        Scene* sc = gameObject ? gameObject->scene() : nullptr;
-        if (!sc) return false;
+        if (!gameObject || !gameObject->scene()) return false;
         // The two clips around this speed + the blend weight between them.
         int A, B; float w;
         if (spd <= walkThreshold) {
@@ -463,6 +463,23 @@ public:
             w = (spd - walkThreshold) / std::fmax(runThreshold - walkThreshold, 1e-4f);
         }
         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+        return BlendClips(dt, A, B, w);
+    }
+
+    /// Set by a driver (e.g. an AnimStateMachine blend-tree state) that poses the
+    /// model itself through BlendClips each frame: Update then skips its own clip
+    /// logic so the two don't fight. Crossfades (LateUpdate) still apply.
+    bool externalDrive = false;
+
+    /// Pose the model as a weighted mix of clips A and B (w = 0 -> A, 1 -> B),
+    /// both sampled at one shared normalized phase so footfalls line up. Drives
+    /// the bones directly (their Animators pause), blends root motion and fires
+    /// the dominant clip's events. Returns false if neither clip exists.
+    bool BlendClips(float dt, int A, int B, float w) {
+        if (!gameObject || !gameObject->scene()) return false;
+        if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+        if (A >= (int)clips.size()) A = -1;
+        if (B >= (int)clips.size()) B = -1;
         if (A < 0 && B < 0) return false;
         if (A < 0) { A = B; w = 1.0f; }
         if (B < 0) { B = A; w = 0.0f; }
@@ -547,6 +564,28 @@ public:
             for (const auto& nc : clips[B].nodes)
                 if (!findIn(clips[A], nc.node)) drive(nc.node, nullptr, &nc);
         return true;
+    }
+    /// Normalized phase (0..1) of the last BlendClips call.
+    float BlendPhase() const { return m_phase; }
+    void  ResetBlendPhase(float p = 0.0f) { m_phase = p; }
+    /// Capture the current pose of every node clips A and B animate, so the next
+    /// `seconds` ease from it (the same crossfade Play uses) — call when switching
+    /// into a BlendClips-driven state.
+    void CaptureCrossfade(int A, int B, float seconds) {
+        m_blend.clear(); m_blendW = 0.0f;
+        blendTime = seconds;
+        if (seconds <= 0.001f) return;
+        auto grab = [&](int ci) {
+            if (ci < 0 || ci >= (int)clips.size()) return;
+            for (const NodeClip& nc : clips[ci].nodes) {
+                bool have = false;
+                for (const BlendFrom& b : m_blend) if (b.node == nc.node) { have = true; break; }
+                if (have) continue;
+                if (GameObject* g = FindNode(nc.node); g && g->transform)
+                    m_blend.push_back({nc.node, g->transform->localPosition, g->transform->localRotation, g->transform->localScale});
+            }
+        };
+        grab(A); grab(B);
     }
 
     /// The active clip's root-motion source: the named node, else — auto — the

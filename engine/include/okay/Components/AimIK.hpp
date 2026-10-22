@@ -12,6 +12,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/IKFade.hpp"
 #include <cmath>
 #include <string>
 
@@ -27,6 +28,8 @@ public:
     Vec3  aimAxis = Vec3::Forward;     ///< the bone-local axis that should point at the target
     Vec3  upAxis  = Vec3::Up;          ///< keeps the bone from rolling around the aim axis
     float weight  = 1.0f;
+    bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
+    float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float maxAngle = 180.0f;           ///< clamp the turn from the rest pose (degrees)
     /// Ease speed (per second) toward the aim: >0 swings the bone smoothly onto a
     /// moved target instead of snapping. 0 = exact/instant (turret-style default).
@@ -45,7 +48,8 @@ public:
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
-        if (weight <= 0.0f) return;
+        const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        if (w <= 0.0f) return;
         Transform* b = bone ? bone : transform;
         if (!b) return;
         Vec3 tgt = targetObject ? targetObject->Position() : target;
@@ -63,10 +67,12 @@ public:
         // The rotation persists between frames, so easing a fraction per frame
         // converges on the aim — smooth tracking of a moving target when set.
         float ease = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
-        float t = weight * ease;
+        float t = w * ease;
         if (ang > maxAngle && ang > 1e-4f) t *= maxAngle / ang;
         b->SetRotation(Quat::Slerp(b->Rotation(), desired, t));
     }
+private:
+    IKFade m_fade;
 };
 
 } // namespace okay

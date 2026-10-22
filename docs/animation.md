@@ -318,3 +318,37 @@ select it and Add Component > Mesh Collider 3D).
   preview.
 - Multi-take files import one clip per take; single-take files can be cut
   apart with **Split…**.
+
+## State machines: blend trees, exit time, Any State
+
+The **Animator** window (select an object with an `AnimStateMachine`) edits states
+and transitions. Beyond single conditions:
+
+- **Blend tree states** — switch a state's Motion to *Blend tree*, pick a float
+  parameter (e.g. `speed`) and add motions with thresholds (idle at 0, walk at 2,
+  run at 6). The two neighbouring clips play in phase, weighted by the parameter.
+  In Play mode each motion shows a live weight bar.
+- **Several conditions** — `+ Condition` adds more tests to a transition; all must pass.
+- **Exit time** — a transition can wait until the state is a fraction through its
+  clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
+  returning to locomotion when it's nearly done.
+- **Any State** — transitions checked from every state first (hit reactions, death).
+
+Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
+`anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.
+
+## IK
+
+| Component | Use |
+| --- | --- |
+| Full Body IK | Hands, feet and head reach goals on any humanoid rig; bones auto-map (Mixamo, Unity/Blender names, built-in Character). Out-of-reach goals pull the hips and bend the spine; soft reach stops limbs snapping straight. |
+| Limb IK | One arm or leg reaching a target with a pole and bend limits. |
+| Chain IK | Long chains (tails, tentacles, spider legs) with FABRIK or CCD, a pole to set the curl direction and per-joint bend limits. |
+| Foot IK | Plant both feet on uneven ground and adjust the pelvis. |
+| Look-At IK / Aim IK | Head/spine tracking; point a bone (gun, torch) at a target. |
+
+Every IK component has **IK Active** and **Fade** so switching IK on or off blends
+instead of popping. Scripts: `ik_enable(on)`, `ik_set_weight(w)`,
+`ik_set_target(x, y, z)`, `ik_set_pole(x, y, z)`, and for Full Body IK
+`ik_hand("left", x, y, z [, weight])`, `ik_foot(...)`, `ik_look(x, y, z)`,
+`ik_release()`.

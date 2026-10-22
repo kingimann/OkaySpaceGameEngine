@@ -14,6 +14,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/IKFade.hpp"
 #include <cmath>
 #include <vector>
 #include <string>
@@ -29,6 +30,8 @@ public:
     Vec3  target{0, 0, 0};             ///< world point to look at (if no targetObject)
     Vec3  forwardAxis = Vec3::Forward; ///< the bones' local "forward"
     float weight   = 1.0f;             ///< 0 = off, 1 = full look
+    bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
+    float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float maxAngle = 80.0f;            ///< max turn per bone (degrees), keeps it natural
     /// Ease speed (per second) toward the look target: heads swing smoothly to a
     /// new target instead of snapping the frame it changes. 0 = instant (old
@@ -49,7 +52,8 @@ public:
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
-        if (weight <= 0.0f || chain.empty()) return;
+        const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        if (w <= 0.0f || chain.empty()) return;
         Vec3 tgt = targetObject ? targetObject->Position() : target;
         // Bone rotations persist between frames, so applying `ease` of the way per
         // frame converges on the target — a smooth swing instead of a snap when
@@ -65,11 +69,13 @@ public:
             Vec3 fwd = (b->Rotation() * forwardAxis).Normalized();
             Quat desired = (Quat::FromToRotation(fwd, dir) * b->Rotation()).Normalized();
             float ang = Quat::Angle(b->Rotation(), desired);
-            float t = weight * ease;
+            float t = w * ease;
             if (ang > maxAngle && ang > 1e-4f) t *= maxAngle / ang;   // clamp the turn
             b->SetRotation(Quat::Slerp(b->Rotation(), desired, t));
         }
     }
+private:
+    IKFade m_fade;
 };
 
 } // namespace okay

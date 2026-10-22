@@ -16,6 +16,7 @@
 #include "okay/Math/TwoBoneIK.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Math/IKFade.hpp"
 #include <string>
 
 namespace okay {
@@ -36,6 +37,8 @@ public:
     std::string upperName, lowerName, endName, targetName, poleName;
 
     float weight   = 1.0f;
+    bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
+    float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float minBend  = 0.0f;             ///< joint limits (interior angle, degrees)
     float maxBend  = 180.0f;
     bool  matchTargetRotation = false; ///< align the end bone to the target's rotation (grab)
@@ -56,8 +59,9 @@ public:
     // Solve in LateUpdate so the correction lands AFTER every animation driver
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
-    void LateUpdate(float) override {
-        if (weight <= 0.0f || !upper || !lower || !end) return;
+    void LateUpdate(float dt) override {
+        const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        if (w <= 0.0f || !upper || !lower || !end) return;
         if (!m_init) {
             m_up = (lower->Position() - upper->Position()).Magnitude();
             m_lo = (end->Position() - lower->Position()).Magnitude();
@@ -73,8 +77,8 @@ public:
         Vec3 oldEnd = end->Position();
         Vec3 mid, e;
         SolveTwoBoneIK(root, m_up, m_lo, tgt, poleDir, mid, e, minBend, maxBend);
-        Vec3 newMid = Vec3::Lerp(oldMid, mid, weight);
-        Vec3 newEnd = Vec3::Lerp(oldEnd, e, weight);
+        Vec3 newMid = Vec3::Lerp(oldMid, mid, w);
+        Vec3 newEnd = Vec3::Lerp(oldEnd, e, w);
 
         // Optional: rotate the bones so a mesh skinned to them bends with the
         // joint, not just the joint positions moving. Do this BEFORE pinning the
@@ -95,12 +99,13 @@ public:
         end->SetPosition(newEnd);
 
         if (matchTargetRotation && targetObject)
-            end->SetRotation(Quat::Slerp(end->Rotation(), targetObject->Rotation(), weight));
+            end->SetRotation(Quat::Slerp(end->Rotation(), targetObject->Rotation(), w));
     }
 
 private:
     bool  m_init = false;
     float m_up = 0.0f, m_lo = 0.0f;
+    IKFade m_fade;
 };
 
 } // namespace okay

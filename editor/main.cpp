@@ -15184,9 +15184,12 @@ static void DrawAnimatorGraph(EditorState& ed) {
     // Per-machine UI state.
     static void* s_key = nullptr;
     static int s_selState = -1, s_selTrFrom = -1, s_selTrIdx = -1, s_pendingFrom = -1;
+    static int s_selAny = -1;   // selected Any State transition (side panel)
     static ImVec2 s_pan{40.0f, 40.0f};
     static bool s_dragPushed = false;
-    if (s_key != (void*)sm) { s_key = (void*)sm; s_selState = -1; s_selTrFrom = -1; s_selTrIdx = -1; s_pendingFrom = -1; s_pan = ImVec2(40, 40); }
+    if (s_key != (void*)sm) { s_key = (void*)sm; s_selState = -1; s_selTrFrom = -1; s_selTrIdx = -1; s_pendingFrom = -1; s_selAny = -1; s_pan = ImVec2(40, 40); }
+    if (s_selState >= 0 || s_selTrFrom >= 0) s_selAny = -1;
+    if (s_selAny >= (int)sm->anyState.size()) s_selAny = -1;
     int n = (int)sm->states.size();
     if (s_selState >= n) s_selState = -1;
     if (s_selTrFrom >= n) { s_selTrFrom = -1; s_selTrIdx = -1; }
@@ -15392,7 +15395,9 @@ static void DrawAnimatorGraph(EditorState& ed) {
                                   ImGui::GetColorU32(ImVec4(0.25f, 0.80f, 0.35f, 1.0f)));
         ImU32 txt = isCurrent ? ImGui::GetColorU32(ImVec4(0.05f, 0.05f, 0.05f, 1.0f)) : ImGui::GetColorU32(ImGuiCol_Text);
         dl->AddText(ImVec2(p.x + 10, p.y + 6), txt, st.name.c_str());
-        std::string sub = st.clip.empty() ? "(no clip)" : st.clip;
+        std::string sub = st.blendTree ? ("Blend tree: " + (st.blendParam.empty() ? std::string("?") : st.blendParam) +
+                                          " (" + std::to_string(st.motions.size()) + ")")
+                        : st.clip.empty() ? "(no clip)" : st.clip;
         if (isEntry) sub += "   [entry]";
         dl->AddText(ImVec2(p.x + 10, p.y + 24), ImGui::GetColorU32(ImGuiCol_TextDisabled), sub.c_str());
         ImGui::PopID();
@@ -15432,6 +15437,72 @@ static void DrawAnimatorGraph(EditorState& ed) {
     ImGui::SameLine();
     ImGui::BeginChild("##agside", ImVec2(sideW, avail.y), true);
     n = (int)sm->states.size();
+    // Parameter picker (declared params of the wanted type, else free text).
+    auto paramPicker = [&](const char* id, std::string& param, int wantType) {
+        bool anyOfType = false;
+        for (const auto& p : sm->params) if (p.type == wantType) { anyOfType = true; break; }
+        if (anyOfType) {
+            if (ImGui::BeginCombo(id, param.empty() ? "(pick)" : param.c_str())) {
+                for (const auto& p : sm->params)
+                    if (p.type == wantType && ImGui::Selectable(p.name.c_str(), param == p.name)) { param = p.name; ed.dirty = true; }
+                ImGui::EndCombo();
+            }
+        } else {
+            char pb[48]; std::snprintf(pb, sizeof(pb), "%s", param.c_str());
+            if (ImGui::InputText(id, pb, sizeof(pb))) { param = pb; ed.dirty = true; }
+        }
+    };
+    static const char* kConds[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger", "Always (use exit time)"};
+    auto condType = [](AnimStateMachine::Cond c) {
+        return c == AnimStateMachine::Cond::Trigger ? 2
+             : (c == AnimStateMachine::Cond::BoolTrue || c == AnimStateMachine::Cond::BoolFalse) ? 1 : 0;
+    };
+    auto needsParam = [](AnimStateMachine::Cond c) { return c != AnimStateMachine::Cond::OnClipEnd && c != AnimStateMachine::Cond::Always; };
+    auto isFloatCond = [](AnimStateMachine::Cond c) { return c == AnimStateMachine::Cond::FloatGreater || c == AnimStateMachine::Cond::FloatLess; };
+    // Shared editor for a transition (state transitions and Any State ones).
+    auto editTransition = [&](AnimStateMachine::Transition& tr, bool isAny) {
+        if (isAny) {
+            if (ImGui::BeginCombo("To##agany", tr.to.empty() ? "(pick)" : tr.to.c_str())) {
+                for (const auto& st : sm->states)
+                    if (ImGui::Selectable(st.name.c_str(), tr.to == st.name)) { tr.to = st.name; ed.dirty = true; }
+                ImGui::EndCombo();
+            }
+        }
+        int cd = (int)tr.cond;
+        if (ImGui::Combo("Condition##ag", &cd, kConds, AnimStateMachine::kCondCount)) { tr.cond = (AnimStateMachine::Cond)cd; ed.dirty = true; }
+        if (needsParam(tr.cond)) paramPicker("Parameter##ag", tr.param, condType(tr.cond));
+        if (isFloatCond(tr.cond))
+            if (ImGui::DragFloat("Value##ag", &tr.value, 0.05f)) ed.dirty = true;
+        // Extra ANDed conditions.
+        int delC = -1;
+        for (int ci = 0; ci < (int)tr.extra.size(); ++ci) {
+            AnimStateMachine::Condition& c = tr.extra[ci];
+            ImGui::PushID(1000 + ci);
+            ImGui::TextDisabled("and");
+            ImGui::SameLine();
+            int ccd = (int)c.cond;
+            ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - 6.0f);
+            if (ImGui::Combo("##xc", &ccd, kConds, AnimStateMachine::kCondCount - 1)) { c.cond = (AnimStateMachine::Cond)ccd; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) delC = ci;
+            if (needsParam(c.cond)) paramPicker("##xp", c.param, condType(c.cond));
+            if (isFloatCond(c.cond)) if (ImGui::DragFloat("##xv", &c.value, 0.05f)) ed.dirty = true;
+            ImGui::PopID();
+        }
+        if (delC >= 0) { tr.extra.erase(tr.extra.begin() + delC); ed.dirty = true; }
+        if (ImGui::SmallButton("+ Condition##ag")) { tr.extra.push_back({AnimStateMachine::Cond::BoolTrue, "", 0.0f}); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every condition must pass for the transition to fire.");
+        ImGui::Separator();
+        if (ImGui::Checkbox("Exit time##ag", &tr.hasExitTime)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only fire once the current state is this far through its clip\n(0.9 = 90%; on looping states, within each loop).");
+        if (tr.hasExitTime) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::SliderFloat("##agexit", &tr.exitTime, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+        }
+        if (ImGui::DragFloat("Blend (s)##ag", &tr.blend, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+        if (isAny && ImGui::Checkbox("Can re-enter itself##ag", &tr.canInterruptSelf)) ed.dirty = true;
+    };
     if (s_selState >= 0 && s_selState < n) {
         AnimStateMachine::State& st = sm->states[s_selState];
         ImGui::TextDisabled("State");
@@ -15443,6 +15514,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 st.name = newName;
                 for (auto& s2 : sm->states)
                     for (auto& tr : s2.transitions) if (tr.to == oldName) tr.to = newName;
+                for (auto& tr : sm->anyState) if (tr.to == oldName) tr.to = newName;
                 if (sm->entry == oldName) sm->entry = newName;
                 ed.dirty = true;
             }
@@ -15458,7 +15530,57 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (ImGui::InputText("Clip##ag", cb, sizeof(cb))) { st.clip = cb; ed.dirty = true; }
         }
         if (ImGui::DragFloat("Speed##ag", &st.speed, 0.02f, 0.05f, 5.0f)) ed.dirty = true;
-        if (ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
+        if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
+        // Motion: one clip, or a 1D blend tree driven by a float parameter.
+        ImGui::Separator();
+        int mode = st.blendTree ? 1 : 0;
+        if (ImGui::RadioButton("Single clip##ag", &mode, 0)) { st.blendTree = false; ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Blend tree##ag", &mode, 1)) {
+            st.blendTree = true;
+            if (st.motions.empty() && !st.clip.empty()) st.motions.push_back({st.clip, 0.0f});
+            ed.dirty = true;
+        }
+        if (st.blendTree) {
+            paramPicker("Blend by##ag", st.blendParam, 0);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A float parameter, e.g. speed: idle at 0, walk at 2, run at 6.");
+            int lo = -1, hi = -1; float bw = 0.0f;
+            const bool live = ed.isPlaying() && sm->Current() == st.name;
+            if (live) sm->BlendInfo(lo, hi, bw);
+            int delM = -1;
+            for (int mi = 0; mi < (int)st.motions.size(); ++mi) {
+                AnimStateMachine::Motion& m = st.motions[mi];
+                ImGui::PushID(2000 + mi);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+                if (!clipNames.empty()) {
+                    if (ImGui::BeginCombo("##mc", m.clip.empty() ? "(clip)" : m.clip.c_str())) {
+                        for (const auto& cn : clipNames)
+                            if (ImGui::Selectable(cn.c_str(), cn == m.clip)) { m.clip = cn; ed.dirty = true; }
+                        ImGui::EndCombo();
+                    }
+                } else {
+                    char cb[48]; std::snprintf(cb, sizeof(cb), "%s", m.clip.c_str());
+                    if (ImGui::InputText("##mc", cb, sizeof(cb))) { m.clip = cb; ed.dirty = true; }
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() - 6.0f);
+                if (ImGui::DragFloat("##mt", &m.threshold, 0.05f, 0.0f, 0.0f, "at %.2f")) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) delM = mi;
+                if (live) {   // live weight bar
+                    float wt = mi == lo && mi == hi ? 1.0f : mi == lo ? 1.0f - bw : mi == hi ? bw : 0.0f;
+                    ImGui::ProgressBar(wt, ImVec2(-1, 4.0f), "");
+                }
+                ImGui::PopID();
+            }
+            if (delM >= 0) { st.motions.erase(st.motions.begin() + delM); ed.dirty = true; }
+            if (ImGui::SmallButton("+ Motion##ag")) {
+                float next = st.motions.empty() ? 0.0f : st.motions.back().threshold + 1.0f;
+                st.motions.push_back({clipNames.empty() ? std::string() : clipNames.front(), next});
+                ed.dirty = true;
+            }
+            if (live) ImGui::TextDisabled("%s = %.2f", st.blendParam.c_str(), sm->GetFloat(st.blendParam));
+        }
         ImGui::Separator();
         if (ImGui::Button("Add Transition##ag")) s_pendingFrom = s_selState;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Then click the target state in the graph.");
@@ -15469,32 +15591,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
         AnimStateMachine::Transition& tr = from.transitions[s_selTrIdx];
         ImGui::TextDisabled("Transition");
         ImGui::Text("%s -> %s", from.name.c_str(), tr.to.c_str());
-        static const char* kConds[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
-        int cd = (int)tr.cond;
-        if (ImGui::Combo("Condition##ag", &cd, kConds, 6)) { tr.cond = (AnimStateMachine::Cond)cd; ed.dirty = true; }
-        if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
-            // Prefer picking from the DECLARED parameter list (see below);
-            // free-typing still works for undeclared names.
-            int wantType = (tr.cond == AnimStateMachine::Cond::Trigger) ? 2
-                         : (tr.cond == AnimStateMachine::Cond::BoolTrue ||
-                            tr.cond == AnimStateMachine::Cond::BoolFalse) ? 1 : 0;
-            bool anyOfType = false;
-            for (const auto& p : sm->params) if (p.type == wantType) { anyOfType = true; break; }
-            if (anyOfType) {
-                if (ImGui::BeginCombo("Parameter##ag", tr.param.empty() ? "(pick)" : tr.param.c_str())) {
-                    for (const auto& p : sm->params)
-                        if (p.type == wantType &&
-                            ImGui::Selectable(p.name.c_str(), tr.param == p.name)) { tr.param = p.name; ed.dirty = true; }
-                    ImGui::EndCombo();
-                }
-            } else {
-                char pb[48]; std::snprintf(pb, sizeof(pb), "%s", tr.param.c_str());
-                if (ImGui::InputText("Parameter##ag", pb, sizeof(pb))) { tr.param = pb; ed.dirty = true; }
-            }
-        }
-        if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess)
-            if (ImGui::DragFloat("Value##ag", &tr.value, 0.05f)) ed.dirty = true;
-        if (ImGui::DragFloat("Blend (s)##ag", &tr.blend, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+        editTransition(tr, false);
         ImGui::Separator();
         if (ImGui::Button("Delete Transition##ag")) {
             ed.PushUndo();
@@ -15502,8 +15599,38 @@ static void DrawAnimatorGraph(EditorState& ed) {
             s_selTrFrom = -1; s_selTrIdx = -1;
             ed.dirty = true;
         }
+    } else if (s_selAny >= 0) {
+        AnimStateMachine::Transition& tr = sm->anyState[s_selAny];
+        ImGui::TextDisabled("Any State transition");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Checked every frame from whatever state is playing.");
+        editTransition(tr, true);
+        ImGui::Separator();
+        if (ImGui::Button("Delete##agany")) {
+            ed.PushUndo();
+            sm->anyState.erase(sm->anyState.begin() + s_selAny);
+            s_selAny = -1; ed.dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Done##agany")) s_selAny = -1;
     } else {
         ImGui::TextDisabled("Click a state or a transition\narrow to edit it here.");
+        // Any State transitions (hit reactions, death...): fire from every state.
+        ImGui::Separator();
+        ImGui::TextDisabled("Any State transitions:");
+        for (int ai = 0; ai < (int)sm->anyState.size(); ++ai) {
+            const auto& tr = sm->anyState[ai];
+            std::string lbl = "Any -> " + (tr.to.empty() ? std::string("?") : tr.to) +
+                              (tr.param.empty() ? std::string() : "  (" + tr.param + ")") + "##any" + std::to_string(ai);
+            if (ImGui::Selectable(lbl.c_str(), false)) s_selAny = ai;
+        }
+        if (ImGui::SmallButton("+ Any State transition##ag")) {
+            ed.PushUndo();
+            AnimStateMachine::Transition tr;
+            if (!sm->states.empty()) tr.to = sm->states.front().name;
+            sm->anyState.push_back(tr);
+            s_selAny = (int)sm->anyState.size() - 1;
+            ed.dirty = true;
+        }
         ImGui::Separator();
         ImGui::TextDisabled("Entry state:");
         const char* cur = sm->entry.empty() ? "(first state)" : sm->entry.c_str();
@@ -21936,7 +22063,8 @@ void DrawInspector(EditorState& ed) {
         // Shared name-field helper for the IK component inspectors.
         auto NameField = [&](const char* label, std::string& s) {
             char buf[64]; std::strncpy(buf, s.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
-            if (ImGui::InputText(label, buf, sizeof(buf))) { s = buf; ed.dirty = true; }
+            if (ImGui::InputText(label, buf, sizeof(buf))) { s = buf; ed.dirty = true; return true; }
+            return false;
         };
         if (auto* f = dynamic_cast<FootIK*>(curComp)) {
             if (CompHeader("Foot IK", f, &toRemove)) {
@@ -22080,6 +22208,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
                 ImGui::Checkbox("Match Target Rotation##lik", &lb->matchTargetRotation);
                 ImGui::Checkbox("Orient Bones##lik", &lb->orient);
+                ImGui::Checkbox("IK Active##lik", &lb->ikActive); ImGui::SameLine();
+                ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##lik", &lb->fadeTime, 0.01f, 0.0f, 3.0f);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to blend IK in/out when IK Active changes (scripts: ik_enable).");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the upper/lower bones to follow the solved joints,\nso a mesh skinned to the limb bends with it (not just the joints moving).");
                 if (ImGui::SmallButton("Remove##lik")) toRemove = lb;
             }
@@ -22102,6 +22233,19 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragInt("Iterations##cik", &ci->iterations, 0.2f, 1, 50);
                 ImGui::DragFloat("Weight##cik", &ci->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::Checkbox("Orient Bones##cik", &ci->orient);
+                NameField("Pole##cik", ci->poleName);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Create##cikpole")) {
+                    std::string mid = ci->boneNames.size() > 1 ? ci->boneNames[ci->boneNames.size() / 2] : std::string();
+                    Vec3 seed = IKBonePos(ed, go, mid, go->transform->Position()) + Vec3{0, 0, 1};
+                    ci->poleName = MakeIKHelper(ed, go, "Chain Pole", seed); ci->poleObject = nullptr;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a pole the chain bends toward (knee / elbow / curl direction).");
+                ImGui::DragFloat("Max Joint Bend##cik", &ci->maxJointBend, 1.0f, 0.0f, 180.0f, ci->maxJointBend <= 0.0f ? "unlimited" : "%.0f deg");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). FABRIK only.");
+                ImGui::Checkbox("IK Active##cik", &ci->ikActive); ImGui::SameLine();
+                ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##cik", &ci->fadeTime, 0.01f, 0.0f, 3.0f);
+                if (ed.isPlaying()) ImGui::TextDisabled("Tip error: %.3f", ci->Error());
                 ImGui::Separator();
                 ImGui::Text("Bones root->tip (%d)", (int)ci->boneNames.size());
                 for (std::size_t i = 0; i < ci->boneNames.size(); ++i) {
@@ -22114,6 +22258,85 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::SmallButton("+ Bone##cik")) { ci->boneNames.push_back(""); ed.dirty = true; }
                 if (ImGui::SmallButton("Remove##cik")) toRemove = ci;
+            }
+        }
+        if (auto* fb = dynamic_cast<FullBodyIK*>(curComp)) {
+            if (CompHeader("Full Body IK", fb, &toRemove)) {
+                ImGui::TextDisabled("Hands, feet and head reach goals on top of the animation.");
+                int mapped = 0; for (const auto& n : fb->boneNames) if (!n.empty()) ++mapped;
+                if (ImGui::Button("Auto-map bones##fbik")) {
+                    ed.PushUndo();
+                    for (auto*& b : fb->bones) b = nullptr;
+                    int n = fb->MapBones(true);
+                    ed.dirty = true;
+                    ConsoleLog("Full Body IK: mapped " + std::to_string(n) + "/" + std::to_string((int)FullBodyIK::BoneCount) + " bones under " + go->name,
+                               n >= 11 ? 0 : 1);
+                }
+                ImGui::SameLine();
+                ImGui::TextColored(mapped >= 11 ? ImVec4(0.45f, 0.85f, 0.55f, 1) : ImVec4(0.95f, 0.7f, 0.35f, 1), "%d/%d bones", mapped, (int)FullBodyIK::BoneCount);
+                if (ImGui::TreeNode("Bones##fbikb")) {
+                    for (int i = 0; i < FullBodyIK::BoneCount; ++i)
+                        if (NameField((std::string(FullBodyIK::BoneLabel(i)) + "##fbb" + std::to_string(i)).c_str(), fb->boneNames[i])) fb->bones[i] = nullptr;
+                    ImGui::TreePop();
+                }
+                ImGui::DragFloat("Weight##fbik", &fb->weight, 0.01f, 0.0f, 1.0f);
+                ImGui::Checkbox("IK Active##fbik", &fb->ikActive); ImGui::SameLine();
+                ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##fbik", &fb->fadeTime, 0.01f, 0.0f, 3.0f);
+                ImGui::DragFloat("Soft Reach##fbik", &fb->softness, 0.005f, 0.0f, 0.3f, "%.3f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease limbs into full stretch instead of snapping straight (fraction of limb length).");
+                ImGui::DragFloat("Body Pull##fbik", &fb->bodyPull, 0.01f, 0.0f, 1.0f);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far out-of-reach goals drag the hips toward them (crouch, lean).");
+                ImGui::DragFloat("Max Body Offset##fbik", &fb->maxBodyOffset, 0.01f, 0.0f, 3.0f);
+                ImGui::DragFloat("Spine Reach##fbik", &fb->spineReach, 0.01f, 0.0f, 1.0f);
+                ImGui::DragFloat("Max Spine Angle##fbik", &fb->maxSpineAngle, 0.5f, 0.0f, 90.0f);
+                static const char* kLimb[] = {"Left Hand", "Right Hand", "Left Foot", "Right Foot"};
+                static const int kEndBone[] = {FullBodyIK::LHand, FullBodyIK::RHand, FullBodyIK::LFoot, FullBodyIK::RFoot};
+                static const int kMidBone[] = {FullBodyIK::LForeArm, FullBodyIK::RForeArm, FullBodyIK::LShin, FullBodyIK::RShin};
+                for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+                    FullBodyIK::Effector& e = fb->effectors[l];
+                    ImGui::PushID(3000 + l);
+                    ImGui::Checkbox("##en", &e.enabled); ImGui::SameLine();
+                    if (ImGui::TreeNode(kLimb[l])) {
+                        NameField("Target##fe", e.targetName);
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Create##fet")) {
+                            Vec3 seed = IKBonePos(ed, go, fb->boneNames[kEndBone[l]], go->transform->Position());
+                            e.targetName = MakeIKHelper(ed, go, std::string(kLimb[l]) + " Target", seed); e.target = nullptr; e.enabled = true;
+                        }
+                        NameField("Hint##fe", e.hintName);
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Create##feh")) {
+                            Vec3 seed = IKBonePos(ed, go, fb->boneNames[kMidBone[l]], go->transform->Position()) + Vec3{0, 0, l >= 2 ? 1.0f : -1.0f};
+                            e.hintName = MakeIKHelper(ed, go, std::string(kLimb[l]) + " Hint", seed); e.hint = nullptr;
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional elbow/knee direction. Without one the animation's own bend is kept.");
+                        float pp[3] = {e.position.x, e.position.y, e.position.z};
+                        if (e.targetName.empty() && ImGui::DragFloat3("Point##fe", pp, 0.05f)) { e.position = {pp[0], pp[1], pp[2]}; ed.dirty = true; }
+                        ImGui::DragFloat("Position Weight##fe", &e.positionWeight, 0.01f, 0.0f, 1.0f);
+                        ImGui::DragFloat("Rotation Weight##fe", &e.rotationWeight, 0.01f, 0.0f, 1.0f);
+                        ImGui::DragFloat("Body Pull##fe", &e.pull, 0.01f, 0.0f, 1.0f);
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::Checkbox("##lookon", &fb->lookEnabled); ImGui::SameLine();
+                if (ImGui::TreeNode("Look At##fbik")) {
+                    NameField("Target##fbl", fb->lookTargetName);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Create##fblt")) {
+                        Vec3 seed = IKBonePos(ed, go, fb->boneNames[FullBodyIK::Head], go->transform->Position()) + Vec3{0, 0, 2};
+                        fb->lookTargetName = MakeIKHelper(ed, go, "Look Target", seed); fb->lookTarget = nullptr; fb->lookEnabled = true;
+                    }
+                    ImGui::DragFloat("Weight##fbl", &fb->lookWeight, 0.01f, 0.0f, 1.0f);
+                    ImGui::DragFloat("Head Share##fbl", &fb->lookHeadShare, 0.01f, 0.0f, 1.0f);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The head turns this share; the chest turns the rest.");
+                    ImGui::DragFloat("Max Angle##fbl", &fb->maxLookAngle, 0.5f, 0.0f, 180.0f);
+                    float hf[3] = {fb->headForward.x, fb->headForward.y, fb->headForward.z};
+                    if (ImGui::DragFloat3("Head Forward##fbl", hf, 0.05f, -1.0f, 1.0f)) { fb->headForward = {hf[0], hf[1], hf[2]}; ed.dirty = true; }
+                    ImGui::TreePop();
+                }
+                ImGui::TextDisabled("Scripts: ik_hand(\"left\", x, y, z), ik_foot(...), ik_look(x, y, z)");
+                if (ImGui::SmallButton("Remove##fbik")) toRemove = fb;
             }
         }
         if (auto* rm = dynamic_cast<RootMotion*>(curComp)) {
@@ -26211,6 +26434,12 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<FullBodyIK>(), "Full Body IK (hands, feet, head, body pull)")) {
+                auto* fb = go->AddComponent<FullBodyIK>();
+                int n = fb->MapBones(true);
+                ConsoleLog("Full Body IK: mapped " + std::to_string(n) + "/" + std::to_string((int)FullBodyIK::BoneCount) + " bones", n >= 11 ? 0 : 1);
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<RootMotion>(), "Root Motion (anim drives the body)")) { go->AddComponent<RootMotion>(); ed.dirty = true; }
           } EndCat(o); }
 
@@ -29346,7 +29575,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             // objects are obvious in the Scene view. Resolves bones/targets by
             // name (component pointers are only wired at play time).
             if (up.get() == ed.selected() &&
-                (up->GetComponent<LimbIK>() || up->GetComponent<ChainIK>() ||
+                (up->GetComponent<LimbIK>() || up->GetComponent<ChainIK>() || up->GetComponent<FullBodyIK>() ||
                  up->GetComponent<LookAtIK>() || up->GetComponent<AimIK>())) {
                 auto scenePos = [&](const std::string& nm, Vec3& out) -> bool {
                     if (nm.empty()) return false;
@@ -29380,6 +29609,20 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (auto* ci = up->GetComponent<ChainIK>()) {
                     chain(ci->boneNames);
                     Vec3 tgt; marker(scenePos(ci->targetName, tgt) ? tgt : ci->target, kTgtCol, 7.0f);
+                    Vec3 pol; if (scenePos(ci->poleName, pol)) marker(pol, kPoleCol, 5.0f);
+                }
+                if (auto* fb = up->GetComponent<FullBodyIK>()) {
+                    const auto& bn = fb->boneNames;
+                    chain({bn[FullBodyIK::Hips], bn[FullBodyIK::Spine], bn[FullBodyIK::Chest], bn[FullBodyIK::Neck], bn[FullBodyIK::Head]});
+                    for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+                        int base = l == 0 ? FullBodyIK::LUpperArm : l == 1 ? FullBodyIK::RUpperArm : l == 2 ? FullBodyIK::LThigh : FullBodyIK::RThigh;
+                        chain({bn[base], bn[base + 1], bn[base + 2]});
+                        const auto& e = fb->effectors[l];
+                        if (!e.enabled) continue;
+                        Vec3 tgt; marker(scenePos(e.targetName, tgt) ? tgt : e.position, kTgtCol, 6.0f);
+                        Vec3 h; if (scenePos(e.hintName, h)) marker(h, kPoleCol, 4.0f);
+                    }
+                    if (fb->lookEnabled) { Vec3 lt; if (scenePos(fb->lookTargetName, lt)) marker(lt, IM_COL32(230, 120, 230, 255), 6.0f); }
                 }
                 if (auto* la = up->GetComponent<LookAtIK>()) {
                     chain(la->chainNames);

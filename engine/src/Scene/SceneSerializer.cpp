@@ -103,6 +103,7 @@
 #include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
+#include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
@@ -426,6 +427,30 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& p : asm2->params) out << " " << Quote(p.name) << " " << p.type;
             out << "\n";
         }
+        // Extended transition/state data (exit time, extra conditions, blend trees)
+        // and Any State transitions — separate records so older builds still load.
+        auto writeExt = [&](const AnimStateMachine::Transition& tr) {
+            out << " " << (tr.hasExitTime ? 1 : 0) << " " << tr.exitTime << " " << (tr.canInterruptSelf ? 1 : 0)
+                << " " << tr.extra.size();
+            for (const auto& c : tr.extra) out << " " << (int)c.cond << " " << Quote(c.param) << " " << c.value;
+        };
+        out << "  animsmx " << asm2->states.size();
+        for (const auto& st : asm2->states) {
+            out << " " << (st.blendTree ? 1 : 0) << " " << Quote(st.blendParam) << " " << st.motions.size();
+            for (const auto& m : st.motions) out << " " << Quote(m.clip) << " " << m.threshold;
+            out << " " << st.transitions.size();
+            for (const auto& tr : st.transitions) writeExt(tr);
+        }
+        out << "\n";
+        if (!asm2->anyState.empty()) {
+            out << "  animsmany " << asm2->anyState.size();
+            for (const auto& tr : asm2->anyState) {
+                out << " " << Quote(tr.to) << " " << (int)tr.cond << " " << Quote(tr.param)
+                    << " " << tr.value << " " << tr.blend;
+                writeExt(tr);
+            }
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -670,6 +695,33 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ci->target.x << " " << ci->target.y << " " << ci->target.z
             << " " << ci->boneNames.size();
         for (const std::string& n : ci->boneNames) out << " " << Quote(n);
+        out << "\n";
+    }
+    // IK fade + ChainIK constraints (separate records so older builds still load).
+    auto ikFade = [&](const char* kind, bool active, float fade) {
+        out << "  ikx " << kind << " " << (active ? 1 : 0) << " " << fade;
+    };
+    if (auto* a = go->GetComponent<AimIK>())    { ikFade("aim", a->ikActive, a->fadeTime); out << "\n"; }
+    if (auto* l = go->GetComponent<LookAtIK>()) { ikFade("look", l->ikActive, l->fadeTime); out << "\n"; }
+    if (auto* lb = go->GetComponent<LimbIK>())  { ikFade("limb", lb->ikActive, lb->fadeTime); out << "\n"; }
+    if (auto* ci = go->GetComponent<ChainIK>()) {
+        ikFade("chain", ci->ikActive, ci->fadeTime);
+        out << " " << Quote(ci->poleName) << " " << (ci->usePole ? 1 : 0) << " " << ci->pole.x << " " << ci->pole.y
+            << " " << ci->pole.z << " " << ci->maxJointBend << " " << ci->tolerance << "\n";
+    }
+    if (auto* fb = go->GetComponent<FullBodyIK>()) {
+        out << "  fbik " << fb->weight << " " << (fb->ikActive ? 1 : 0) << " " << fb->fadeTime << " " << fb->softness
+            << " " << fb->bodyPull << " " << fb->maxBodyOffset << " " << fb->spineReach << " " << fb->maxSpineAngle
+            << " " << (fb->autoMap ? 1 : 0)
+            << " " << (fb->lookEnabled ? 1 : 0) << " " << Quote(fb->lookTargetName) << " " << fb->lookPosition.x << " "
+            << fb->lookPosition.y << " " << fb->lookPosition.z << " " << fb->lookWeight << " " << fb->lookHeadShare << " "
+            << fb->maxLookAngle << " " << fb->headForward.x << " " << fb->headForward.y << " " << fb->headForward.z
+            << " " << (int)FullBodyIK::BoneCount;
+        for (const auto& n : fb->boneNames) out << " " << Quote(n);
+        out << " " << (int)FullBodyIK::LimbCount;
+        for (const auto& e : fb->effectors)
+            out << " " << (e.enabled ? 1 : 0) << " " << Quote(e.targetName) << " " << e.position.x << " " << e.position.y
+                << " " << e.position.z << " " << e.positionWeight << " " << e.rotationWeight << " " << Quote(e.hintName) << " " << e.pull;
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -2165,6 +2217,52 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         }
                         sm2->states.push_back(std::move(st));
                     }
+                } else if (field == "animsmx" || field == "animsmany") {
+                    auto* sm2 = go->GetComponent<AnimStateMachine>();
+                    if (!sm2) sm2 = go->AddComponent<AnimStateMachine>();
+                    auto readExt = [&](AnimStateMachine::Transition& tr) {
+                        int he = 0, ci = 0; long nx = 0;
+                        in >> he >> tr.exitTime >> ci >> nx;
+                        tr.hasExitTime = he != 0; tr.canInterruptSelf = ci != 0;
+                        for (long k = 0; k < nx && in; ++k) {
+                            AnimStateMachine::Condition c; int cd = 0;
+                            in >> cd; c.cond = (AnimStateMachine::Cond)cd;
+                            c.param = ReadQuoted(in); in >> c.value;
+                            tr.extra.push_back(std::move(c));
+                        }
+                    };
+                    long n = 0; in >> n;
+                    if (field == "animsmany") {
+                        sm2->anyState.clear();
+                        for (long i = 0; i < n && in; ++i) {
+                            AnimStateMachine::Transition tr;
+                            tr.to = ReadQuoted(in);
+                            int cd = 0; in >> cd; tr.cond = (AnimStateMachine::Cond)cd;
+                            tr.param = ReadQuoted(in);
+                            in >> tr.value >> tr.blend;
+                            readExt(tr);
+                            sm2->anyState.push_back(std::move(tr));
+                        }
+                    } else {
+                        for (long i = 0; i < n && in; ++i) {
+                            AnimStateMachine::State dummy;
+                            AnimStateMachine::State& st = i < (long)sm2->states.size() ? sm2->states[i] : dummy;
+                            int bt = 0; long nm = 0;
+                            in >> bt; st.blendTree = bt != 0;
+                            st.blendParam = ReadQuoted(in);
+                            in >> nm;
+                            st.motions.clear();
+                            for (long k = 0; k < nm && in; ++k) {
+                                AnimStateMachine::Motion m; m.clip = ReadQuoted(in); in >> m.threshold;
+                                st.motions.push_back(std::move(m));
+                            }
+                            long nt = 0; in >> nt;
+                            for (long k = 0; k < nt && in; ++k) {
+                                AnimStateMachine::Transition tmp;
+                                readExt(k < (long)st.transitions.size() ? st.transitions[k] : tmp);
+                            }
+                        }
+                    }
                 } else if (field == "animsmparams") {
                     auto* sm2 = go->GetComponent<AnimStateMachine>();
                     long n = 0; in >> n;
@@ -2427,6 +2525,43 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ci->orient = (orient != 0);
                     std::size_t bn = 0; in >> bn;
                     for (std::size_t k = 0; k < bn; ++k) ci->boneNames.push_back(ReadQuoted(in));
+                } else if (field == "fbik") {
+                    auto* fb = go->AddComponent<FullBodyIK>();
+                    int act = 1, am = 1, le = 0;
+                    in >> fb->weight >> act >> fb->fadeTime >> fb->softness >> fb->bodyPull >> fb->maxBodyOffset
+                       >> fb->spineReach >> fb->maxSpineAngle >> am >> le;
+                    fb->ikActive = act != 0; fb->autoMap = am != 0; fb->lookEnabled = le != 0;
+                    fb->lookTargetName = ReadQuoted(in);
+                    in >> fb->lookPosition.x >> fb->lookPosition.y >> fb->lookPosition.z >> fb->lookWeight >> fb->lookHeadShare
+                       >> fb->maxLookAngle >> fb->headForward.x >> fb->headForward.y >> fb->headForward.z;
+                    int nb = 0; in >> nb;
+                    for (int i = 0; i < nb && in; ++i) { std::string n = ReadQuoted(in); if (i < FullBodyIK::BoneCount) fb->boneNames[i] = n; }
+                    int ne = 0; in >> ne;
+                    for (int i = 0; i < ne && in; ++i) {
+                        FullBodyIK::Effector tmp;
+                        FullBodyIK::Effector& e = i < FullBodyIK::LimbCount ? fb->effectors[i] : tmp;
+                        int en = 0; in >> en; e.enabled = en != 0;
+                        e.targetName = ReadQuoted(in);
+                        in >> e.position.x >> e.position.y >> e.position.z >> e.positionWeight >> e.rotationWeight;
+                        e.hintName = ReadQuoted(in);
+                        in >> e.pull;
+                    }
+                } else if (field == "ikx") {
+                    std::string kind; int act = 1; float fade = 0.0f;
+                    in >> kind >> act >> fade;
+                    if (kind == "aim")  { if (auto* a = go->GetComponent<AimIK>())    { a->ikActive = act != 0; a->fadeTime = fade; } }
+                    else if (kind == "look") { if (auto* l = go->GetComponent<LookAtIK>()) { l->ikActive = act != 0; l->fadeTime = fade; } }
+                    else if (kind == "limb") { if (auto* lb = go->GetComponent<LimbIK>()) { lb->ikActive = act != 0; lb->fadeTime = fade; } }
+                    else if (kind == "chain") {
+                        std::string poleName = ReadQuoted(in);
+                        int up = 0; Vec3 pl{0, 0, 1}; float mb = 0.0f, tol = 1e-3f;
+                        in >> up >> pl.x >> pl.y >> pl.z >> mb >> tol;
+                        if (auto* ci = go->GetComponent<ChainIK>()) {
+                            ci->ikActive = act != 0; ci->fadeTime = fade;
+                            ci->poleName = poleName; ci->usePole = up != 0; ci->pole = pl;
+                            ci->maxJointBend = mb; ci->tolerance = tol;
+                        }
+                    }
                 } else if (field == "rootmotion") {
                     auto* rm = go->AddComponent<RootMotion>();
                     rm->rootNodeName = ReadQuoted(in);

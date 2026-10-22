@@ -17,6 +17,11 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/LimbIK.hpp"
+#include "okay/Components/ChainIK.hpp"
+#include "okay/Components/LookAtIK.hpp"
+#include "okay/Components/AimIK.hpp"
+#include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -2896,6 +2901,96 @@ struct OkayScriptVM::Impl {
         };
         b["anim_state"] = [smSelf](std::vector<Value>&) {
             AnimStateMachine* m = smSelf(); return Value{m ? m->Current() : std::string{}};
+        };
+        // Previous state, seconds in the current state, and normalized clip time
+        // (0..1 per loop; keeps counting past 1 on loops) — for gameplay timing.
+        // ---- IK control on this object (any of LimbIK / ChainIK / LookAtIK / AimIK) ----
+        //   ik_enable(on)            switch IK on/off (eases over each component's fadeTime)
+        //   ik_set_weight(w)         0..1 influence
+        //   ik_set_target(x, y, z)   world point to reach / look at / aim at
+        //   ik_set_pole(x, y, z)     bend direction point (LimbIK pole / ChainIK pole)
+        auto ikEach = [this](auto fn) {
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!g) return;
+            if (auto* c = g->GetComponent<LimbIK>())   fn(c);
+            if (auto* c = g->GetComponent<ChainIK>())  fn(c);
+            if (auto* c = g->GetComponent<LookAtIK>()) fn(c);
+            if (auto* c = g->GetComponent<AimIK>())    fn(c);
+        };
+        auto ikToggle = [this](auto fn) {   // ik_enable / ik_set_weight also reach Full Body IK
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (g) if (auto* c = g->GetComponent<FullBodyIK>()) fn(c);
+        };
+        b["ik_enable"] = [ikEach, ikToggle](std::vector<Value>& a) {
+            bool on = a.empty() || a[0].AsFloat() != 0.0f;
+            ikEach([&](auto* c) { c->ikActive = on; });
+            ikToggle([&](auto* c) { c->ikActive = on; });
+            return Value{};
+        };
+        b["ik_set_weight"] = [ikEach, ikToggle](std::vector<Value>& a) {
+            float w = a.empty() ? 1.0f : a[0].AsFloat();
+            ikEach([&](auto* c) { c->weight = w; });
+            ikToggle([&](auto* c) { c->weight = w; });
+            return Value{};
+        };
+        b["ik_set_target"] = [ikEach](std::vector<Value>& a) {
+            Vec3 t{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
+            ikEach([&](auto* c) { c->targetObject = nullptr; c->target = t; });
+            return Value{};
+        };
+        // Full Body IK goals on this object:
+        //   ik_hand("left"|"right", x, y, z [, weight])   reach a point (weight 0 releases)
+        //   ik_foot("left"|"right", x, y, z [, weight])
+        //   ik_look(x, y, z [, weight])                   turn head + chest toward a point
+        //   ik_release()                                  drop every goal
+        auto fbik = [this]() -> FullBodyIK* {
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            return g ? g->GetComponent<FullBodyIK>() : nullptr;
+        };
+        auto setGoal = [fbik](std::vector<Value>& a, bool hand) {
+            FullBodyIK* f = fbik();
+            if (!f || a.empty()) return Value{};
+            std::string side = a[0].AsString();
+            bool left = !side.empty() && (side[0] == 'l' || side[0] == 'L');
+            int l = hand ? (left ? FullBodyIK::LeftHand : FullBodyIK::RightHand) : (left ? FullBodyIK::LeftFoot : FullBodyIK::RightFoot);
+            FullBodyIK::Effector& e = f->effectors[l];
+            e.target = nullptr;
+            e.position = {a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f, a.size() > 3 ? a[3].AsFloat() : 0.0f};
+            float w = a.size() > 4 ? a[4].AsFloat() : 1.0f;
+            e.positionWeight = w; e.enabled = w > 0.0f;
+            return Value{};
+        };
+        b["ik_hand"] = [setGoal](std::vector<Value>& a) { return setGoal(a, true); };
+        b["ik_foot"] = [setGoal](std::vector<Value>& a) { return setGoal(a, false); };
+        b["ik_look"] = [fbik](std::vector<Value>& a) {
+            if (FullBodyIK* f = fbik()) {
+                f->lookTarget = nullptr;
+                f->lookPosition = {a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
+                f->lookWeight = a.size() > 3 ? a[3].AsFloat() : 1.0f;
+                f->lookEnabled = f->lookWeight > 0.0f;
+            }
+            return Value{};
+        };
+        b["ik_release"] = [fbik](std::vector<Value>&) {
+            if (FullBodyIK* f = fbik()) { for (auto& e : f->effectors) e.enabled = false; f->lookEnabled = false; }
+            return Value{};
+        };
+        b["ik_set_pole"] = [this](std::vector<Value>& a) {
+            Vec3 p{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
+            if (GameObject* g = rt.host ? rt.host->gameObject : nullptr) {
+                if (auto* l = g->GetComponent<LimbIK>())  { l->poleObject = nullptr; l->pole = p - (l->upper ? l->upper->Position() : Vec3{0, 0, 0}); }
+                if (auto* c = g->GetComponent<ChainIK>()) { c->poleObject = nullptr; c->usePole = true; c->pole = p; }
+            }
+            return Value{};
+        };
+        b["anim_prev_state"] = [smSelf](std::vector<Value>&) {
+            AnimStateMachine* m = smSelf(); return Value{m ? m->Previous() : std::string{}};
+        };
+        b["anim_state_time"] = [smSelf](std::vector<Value>&) {
+            AnimStateMachine* m = smSelf(); return Value{m ? m->StateTime() : 0.0f};
+        };
+        b["anim_normalized_time"] = [smSelf](std::vector<Value>&) {
+            AnimStateMachine* m = smSelf(); return Value{m ? m->NormalizedTime() : 0.0f};
         };
         b["anim_goto"] = [smSelf](std::vector<Value>& a) {
             AnimStateMachine* m = smSelf();

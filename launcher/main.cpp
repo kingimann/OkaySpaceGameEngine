@@ -46,6 +46,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <ctime>
 #include <functional>
 #include <map>
 #include <memory>
@@ -483,7 +484,11 @@ std::string FileNameFromUrl(const std::string& url, const std::string& fallback)
 }
 
 // Queue a download; returns its id (0 if the manager isn't ready).
-int StartDownload(const std::string& url, const std::string& title) {
+// Writes a "<file>.okayasset" sidecar (title / author / kind / item id) so the
+// editor's Asset Manager can list marketplace downloads with real names and types.
+int StartDownload(const std::string& url, const std::string& title,
+                  const std::string& kind = "", const std::string& author = "",
+                  const std::string& itemId = "") {
     if (!g_dlMutex || url.empty()) return 0;
     std::error_code ec;
     fs::path dir = fs::path(g_exeDir) / "downloads";
@@ -498,6 +503,13 @@ int StartDownload(const std::string& url, const std::string& title) {
     d->id = g_dlNextId++;
     d->url = url; d->title = title.empty() ? base : title;
     d->dest = dest.string(); d->part = dest.string() + ".part";
+    {
+        std::ofstream meta(dest.string() + ".okayasset");
+        auto clean = [](std::string v) { for (char& c : v) if (c == '\n' || c == '\r') c = ' '; return v; };
+        meta << "title=" << clean(d->title) << "\n" << "author=" << clean(author) << "\n"
+             << "kind=" << clean(kind) << "\n" << "id=" << clean(itemId) << "\n"
+             << "url=" << clean(url) << "\n" << "time=" << (long long)std::time(nullptr) << "\n";
+    }
     g_dls.push_back(d);
     SDL_UnlockMutex(g_dlMutex);
     d->th = SDL_CreateThread(DlWorker, "okay-dl", d.get());
@@ -15628,7 +15640,7 @@ int main(int argc, char** argv) {
             // Download-safety confirm (community downloads are untrusted).
             static bool getConfirmOpen = false;
             static long getId = 0, getDl = 0;
-            static std::string getUrl, getTitle, getAuthor;
+            static std::string getUrl, getTitle, getAuthor, getKind;
             // Edit-my-item popup.
             static bool edOpen = false;
             static long edId = 0;
@@ -15959,7 +15971,7 @@ int main(int argc, char** argv) {
                         ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
                         if (ImGui::Button("Get", ImVec2(90, 30))) {
                             getId = w.id; getUrl = w.url; getTitle = w.title;
-                            getAuthor = w.author; getDl = w.downloads; getConfirmOpen = true;
+                            getAuthor = w.author; getKind = w.kind; getDl = w.downloads; getConfirmOpen = true;
                         }
                         ImGui::PopStyleColor();
                     } else ImGui::TextDisabled("no link");
@@ -16067,7 +16079,7 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("%s", getUrl.c_str());
                 ImGui::Dummy(ImVec2(0, 6));
                 if (PrimaryButton("Download", ImVec2(150, 34))) {
-                    StartDownload(getUrl, getTitle);
+                    StartDownload(getUrl, getTitle, getKind, getAuthor, std::to_string(getId));
                     okay::Workshop(account).NoteDownload(getId, getDl);
                     wNextRefresh = 0;
                     Toast("Added to Downloads", 1);

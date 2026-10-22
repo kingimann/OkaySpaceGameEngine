@@ -18,6 +18,31 @@ public:
     static constexpr char KeyShift = 16;
     static constexpr char KeyCtrl  = 17;
 
+    /// Map a friendly key NAME to the char code this layer uses ("space",
+    /// "enter", "shift", "up", "a", "7"...). A single character is taken as-is
+    /// (lowercased); arrows fold onto WASD exactly as the runtimes feed them.
+    /// Unknown multi-char names fall back to their first letter. Shared by
+    /// OkayScript's key("...") builtins and the visual-script key nodes.
+    static char KeyFromName(const std::string& s) {
+        if (s.empty()) return 0;
+        auto lower1 = [](char c) { return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c; };
+        if (s.size() == 1) return lower1(s[0]);
+        std::string k; k.reserve(s.size());
+        for (char c : s) k += lower1(c);
+        if (k == "space")                    return ' ';
+        if (k == "up")                       return 'w';   // arrows are fed as WASD
+        if (k == "down")                     return 's';
+        if (k == "left")                     return 'a';
+        if (k == "right")                    return 'd';
+        if (k == "enter" || k == "return")   return '\r';
+        if (k == "escape" || k == "esc")     return (char)27;
+        if (k == "backspace")                return (char)8;
+        if (k == "tab")                      return '\t';
+        if (k == "shift")                    return KeyShift;
+        if (k == "ctrl" || k == "control")   return KeyCtrl;
+        return lower1(s[0]);
+    }
+
     /// True while the key is held down.
     static bool GetKey(char key);
     /// True only on the frame the key was first pressed.

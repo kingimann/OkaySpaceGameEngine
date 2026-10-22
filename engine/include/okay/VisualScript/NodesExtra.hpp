@@ -171,8 +171,11 @@ struct LookAtNode : VsNode {   // turn to face the named object (3D: yaw; 2D: z 
         GameObject* o = VsFindObject(ctx, name);
         if (o && o->transform && ctx.transform && o != ctx.gameObject) {
             Vec3 d = o->transform->Position() - ctx.transform->Position();
-            if (std::fabs(d.z) > 1e-4f || std::fabs(d.x) > 1e-4f) {
-                if (std::fabs(d.z) > 1e-4f)   // 3D: face it horizontally (forward = -Z)
+            // 2D objects (sprites / 2D bodies) turn about Z; everything else is 3D
+            // and yaws to face it — even a target lying exactly along X.
+            const bool is2D = ctx.gameObject->GetComponent<SpriteRenderer>() || ctx.gameObject->GetComponent<Rigidbody2D>();
+            if (std::fabs(d.z) > 1e-4f || std::fabs(d.x) > 1e-4f || (is2D && std::fabs(d.y) > 1e-4f)) {
+                if (!is2D)                    // 3D: face it horizontally (forward = -Z)
                     ctx.transform->localRotation = Quat::LookRotation(Vec3{-d.x, 0.0f, -d.z}.Normalized());
                 else                          // 2D: rotate about Z toward it
                     ctx.transform->localRotation = Quat::Euler(0, 0, std::atan2(d.y, d.x) * 57.29578f);

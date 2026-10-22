@@ -8,6 +8,7 @@
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Core/Time.hpp"
@@ -274,8 +275,8 @@ struct BreakVec3Node : VsNode {  // in0 = vec -> one component
     }
 };
 
-// Input query data nodes. Keys are single characters, matching OkayScript
-// (e.g. "a", "w", " " for space).
+// Input query data nodes. The key comes from Input::KeyFromName, matching
+// OkayScript ("a", "space", "shift", "enter", "up"...).
 struct KeyNode : VsNode {
     char key;
     explicit KeyNode(char k) : key(k) {}
@@ -689,36 +690,47 @@ struct PlaySoundNode : VsNode {
 };
 
 // ---- Physics (sibling Rigidbody2D) ------------------------------------
-struct AddForceNode : VsNode {     // in0=x, in1=y (continuous force)
+// Rigidbody nodes: drive this object's Rigidbody2D, or its Rigidbody3D when it
+// has no 2D body (in2 = z, optional) — the same graph works in 2D and 3D games.
+struct AddForceNode : VsNode {     // in0=x, in1=y, in2=z (continuous force)
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject) if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
-            rb->AddForce({In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat()});
+        if (!ctx.gameObject) return 0;
+        float x = In(0, g, ctx).AsFloat(), y = In(1, g, ctx).AsFloat();
+        if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>()) rb->AddForce({x, y});
+        else if (auto* r3 = ctx.gameObject->GetComponent<Rigidbody3D>()) r3->AddForce(Vec3{x, y, In(2, g, ctx).AsFloat()});
         return 0;
     }
 };
-struct AddImpulseNode : VsNode {   // in0=x, in1=y (instant kick — jumps/knockback)
+struct AddImpulseNode : VsNode {   // in0=x, in1=y, in2=z (instant kick — jumps/knockback)
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject) if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
-            rb->AddImpulse({In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat()});
+        if (!ctx.gameObject) return 0;
+        float x = In(0, g, ctx).AsFloat(), y = In(1, g, ctx).AsFloat();
+        if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>()) rb->AddImpulse({x, y});
+        else if (auto* r3 = ctx.gameObject->GetComponent<Rigidbody3D>()) r3->AddImpulse(Vec3{x, y, In(2, g, ctx).AsFloat()});
         return 0;
     }
 };
-struct SetVelocityNode : VsNode {  // in0=x, in1=y
+struct SetVelocityNode : VsNode {  // in0=x, in1=y, in2=z
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject) if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
-            rb->velocity = {In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat()};
+        if (!ctx.gameObject) return 0;
+        float x = In(0, g, ctx).AsFloat(), y = In(1, g, ctx).AsFloat();
+        if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>()) rb->velocity = {x, y};
+        else if (auto* r3 = ctx.gameObject->GetComponent<Rigidbody3D>()) { r3->velocity = {x, y, In(2, g, ctx).AsFloat()}; r3->WakeUp(); }
         return 0;
     }
 };
-struct VelAxisNode : VsNode {      // 0=x, 1=y of this object's Rigidbody2D velocity
+struct VelAxisNode : VsNode {      // 0=x, 1=y, 2=z of this object's Rigidbody2D / Rigidbody3D velocity
     int axis;
     explicit VelAxisNode(int a) : axis(a) {}
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
-        if (ctx.gameObject) if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
-            return axis == 0 ? rb->velocity.x : rb->velocity.y;
+        if (!ctx.gameObject) return 0.0f;
+        if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
+            return axis == 0 ? rb->velocity.x : axis == 1 ? rb->velocity.y : 0.0f;
+        if (auto* r3 = ctx.gameObject->GetComponent<Rigidbody3D>())
+            return axis == 0 ? r3->velocity.x : axis == 1 ? r3->velocity.y : r3->velocity.z;
         return 0.0f;
     }
 };

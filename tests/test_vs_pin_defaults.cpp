@@ -192,5 +192,30 @@ int main() {
         CHECK(std::fabs(Time::TimeScale() - 0.5f) < 1e-5f);
         Time::SetTimeScale(1.0f);
     }
+    {   // Key nodes resolve key NAMES ("space" used to mean the S key), mouse
+        // buttons accept names, and the rigidbody nodes drive a Rigidbody3D.
+        CHECK(Input::KeyFromName("space") == ' ');
+        CHECK(Input::KeyFromName("Shift") == Input::KeyShift);
+        CHECK(Input::KeyFromName("E") == 'e');
+        Scene s; s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("K");
+        auto* rb = go->AddComponent<Rigidbody3D>();
+        auto* vc = go->AddComponent<VisualScriptComponent>();
+        CHECK(vc->LoadFromText(
+            "node 1 OnUpdate\nentry OnUpdate 1\n"
+            "node 2 SetVar down\nnode 3 KeyDown space\nexec 1 0 2\ndata 2 0 3 0\n"
+            "node 4 SetVelocity\ndefault 4 0 1\ndefault 4 1 2\ndefault 4 2 3\nexec 2 0 4\n"
+            "node 5 SetVar vz\nnode 6 VelZ\nexec 4 0 5\ndata 5 0 6 0\n"
+            "node 7 SetVar mb\nnode 8 MouseButton right\nexec 5 0 7\ndata 7 0 8 0\n"));
+        s.Start();
+        Input::FeedKeys({' '}); s.Update(0.016f);
+        CHECK(vc->GetVariable("down").AsBool());
+        Input::FeedKeys({'s'}); s.Update(0.016f);
+        CHECK(!vc->GetVariable("down").AsBool());   // S is not Space any more
+        CHECK(std::fabs(rb->velocity.z - 3.0f) < 1e-4f && std::fabs(rb->velocity.x - 1.0f) < 1e-4f);
+        CHECK(std::fabs(vc->GetVariable("vz").AsFloat() - 3.0f) < 1e-4f);
+        CHECK(!vc->GetVariable("mb").AsBool());
+        Input::FeedKeys({});
+    }
     TEST_MAIN_RESULT();
 }

@@ -143,7 +143,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "Between")   return std::make_unique<BetweenNode>();
     if (type == "Chance")    { if (!need(1)) return nullptr; return std::make_unique<ChanceNode>(ParseValue(args[0]).AsFloat()); }
     if (type == "HasVar")    { if (!need(1)) return nullptr; return std::make_unique<HasVarNode>(args[0]); }
-    if (type == "KeyUp")     { if (!need(1)) return nullptr; return std::make_unique<KeyUpNode>(args[0].empty() ? ' ' : args[0][0]); }
+    if (type == "KeyUp")     { if (!need(1)) return nullptr; return std::make_unique<KeyUpNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
     if (type == "Select") return std::make_unique<SelectNode>();
     if (type == "Concat") return std::make_unique<ConcatNode>();
     // Vectors.
@@ -152,8 +152,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "VecY") return std::make_unique<BreakVec3Node>(1);
     if (type == "VecZ") return std::make_unique<BreakVec3Node>(2);
     // Input.
-    if (type == "Key")     { if (!need(1)) return nullptr; return std::make_unique<KeyNode>(args[0].empty() ? ' ' : args[0][0]); }
-    if (type == "KeyDown") { if (!need(1)) return nullptr; return std::make_unique<KeyDownNode>(args[0].empty() ? ' ' : args[0][0]); }
+    if (type == "Key")     { if (!need(1)) return nullptr; return std::make_unique<KeyNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
+    if (type == "KeyDown") { if (!need(1)) return nullptr; return std::make_unique<KeyDownNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
     if (type == "MouseX") return std::make_unique<MouseXNode>();
     if (type == "MouseY") return std::make_unique<MouseYNode>();
     // Transform getters.
@@ -227,6 +227,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "SetVelocity") return std::make_unique<SetVelocityNode>();
     if (type == "VelX")        return std::make_unique<VelAxisNode>(0);
     if (type == "VelY")        return std::make_unique<VelAxisNode>(1);
+    if (type == "VelZ")        return std::make_unique<VelAxisNode>(2);
     if (type == "Raycast")     return std::make_unique<RaycastNode>();
     if (type == "EaseIn")      return std::make_unique<EaseNode>(EaseNode::Mode::In);
     if (type == "EaseOut")     return std::make_unique<EaseNode>(EaseNode::Mode::Out);
@@ -268,8 +269,16 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "OtherName")      return std::make_unique<OtherNameNode>();
     if (type == "AnimEventName")  return std::make_unique<AnimEventNameNode>();
     if (type == "OtherTag")       return std::make_unique<OtherTagNode>();
-    if (type == "MouseButton")     return std::make_unique<MouseButtonNode>(args.empty() ? 0 : (int)ParseValue(args[0]).AsFloat(), false);
-    if (type == "MouseButtonDown") return std::make_unique<MouseButtonNode>(args.empty() ? 0 : (int)ParseValue(args[0]).AsFloat(), true);
+    if (type == "MouseButton" || type == "MouseButtonDown") {
+        // 0/1/2 or left/right/middle (what the editor's button picker writes is 0/1/2).
+        int b = 0;
+        if (!args.empty()) {
+            std::string a = args[0];
+            for (auto& ch : a) ch = (char)std::tolower((unsigned char)ch);
+            b = a == "left" ? 0 : a == "right" ? 1 : (a == "middle" || a == "wheel") ? 2 : (int)ParseValue(a).AsFloat();
+        }
+        return std::make_unique<MouseButtonNode>(b, type == "MouseButtonDown");
+    }
     if (type == "LookAt")          return std::make_unique<LookAtNode>(argOr(""));
     if (type == "MoveTowards")     return std::make_unique<MoveTowardsObjectNode>(argOr(""));
     if (type == "SetActive")       return std::make_unique<SetActiveNode>(argOr("self"));

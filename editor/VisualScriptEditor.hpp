@@ -132,9 +132,9 @@ inline const std::vector<VsDef>& Registry() {
         {"Wait",     "Wait (s)",    CAT_FLOW,   true, {""}, {}, {}, 1, "seconds"},
         {"LogWarn",  "Log Warning", CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
         {"LogError", "Log Error",   CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
-        {"AddForce", "Add Force",   CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
-        {"SetVelocity","Set Velocity",CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
-        {"AddImpulse","Add Impulse", CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
+        {"AddForce", "Add Force",   CAT_ACTION, true, {""}, {"X","Y","Z"}, {}, 0, nullptr},
+        {"SetVelocity","Set Velocity",CAT_ACTION, true, {""}, {"X","Y","Z"}, {}, 0, nullptr},
+        {"AddImpulse","Add Impulse", CAT_ACTION, true, {""}, {"X","Y","Z"}, {}, 0, nullptr},
         // --- Logic / selection ---
         {"Approx",  "Approx Equal", CAT_LOGIC, false, {}, {"A","B"}, {"Bool"}, 0, nullptr},
         {"Between", "Between",      CAT_LOGIC, false, {}, {"Value","Min","Max"}, {"Bool"}, 0, nullptr},
@@ -149,6 +149,7 @@ inline const std::vector<VsDef>& Registry() {
         // --- Physics reads + tween ---
         {"VelX", "Velocity X", CAT_INPUT, false, {}, {}, {"X"}, 0, nullptr},
         {"VelY", "Velocity Y", CAT_INPUT, false, {}, {}, {"Y"}, 0, nullptr},
+        {"VelZ", "Velocity Z", CAT_INPUT, false, {}, {}, {"Z"}, 0, nullptr},
         {"EaseIn",    "Ease In",     CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
         {"EaseOut",   "Ease Out",    CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
         {"EaseInOut", "Ease In-Out", CAT_MATH, false, {}, {"T"}, {"Out"}, 0, nullptr},
@@ -279,6 +280,82 @@ inline const std::vector<VsDef>& Registry() {
         {"SteamLeaderboard","Submit Score",  CAT_NET, true, {""}, {"Score"}, {}, 1, "leaderboard"},
     };
     return defs;
+}
+
+// ---- Key picker for the Key Held / Key Down / Key Up nodes ------------------
+// Stores the friendly name the runtime resolves (Input::KeyFromName): "space",
+// "shift", "a", "7"... Typing a name into a tiny box was guesswork; this is a
+// button that captures the next key press, plus a list to pick from.
+inline bool IsKeyNode(const std::string& t) { return t == "Key" || t == "KeyDown" || t == "KeyUp"; }
+struct VsKeyName { const char* name; const char* label; };
+inline const std::vector<VsKeyName>& VsNamedKeys() {
+    static const std::vector<VsKeyName> k = {
+        {"space", "Space"}, {"enter", "Enter"}, {"escape", "Escape"}, {"tab", "Tab"},
+        {"backspace", "Backspace"}, {"shift", "Shift"}, {"ctrl", "Ctrl"},
+        {"up", "Up Arrow (same as W)"}, {"down", "Down Arrow (same as S)"},
+        {"left", "Left Arrow (same as A)"}, {"right", "Right Arrow (same as D)"}};
+    return k;
+}
+inline std::string VsKeyLabel(std::string arg) {
+    for (auto& c : arg) c = (char)std::tolower((unsigned char)c);
+    if (arg.empty() || arg == " ") return "Space";
+    for (const auto& k : VsNamedKeys()) if (arg == k.name) {
+        std::string l = k.label; auto p = l.find(" ("); return p == std::string::npos ? l : l.substr(0, p);
+    }
+    if (arg.size() == 1) return std::string(1, (char)std::toupper((unsigned char)arg[0]));
+    return arg;
+}
+// The key pressed this frame, as a runtime name ("" if none).
+inline std::string VsCapturedKey() {
+    for (int i = 0; i < 26; ++i)
+        if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_A + i), false)) return std::string(1, (char)('a' + i));
+    for (int i = 0; i < 10; ++i)
+        if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_0 + i), false) ||
+            ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_Keypad0 + i), false)) return std::string(1, (char)('0' + i));
+    struct M { ImGuiKey k; const char* n; };
+    const M named[] = {{ImGuiKey_Space, "space"}, {ImGuiKey_Enter, "enter"}, {ImGuiKey_KeypadEnter, "enter"},
+                       {ImGuiKey_Tab, "tab"}, {ImGuiKey_Backspace, "backspace"},
+                       {ImGuiKey_LeftShift, "shift"}, {ImGuiKey_RightShift, "shift"},
+                       {ImGuiKey_LeftCtrl, "ctrl"}, {ImGuiKey_RightCtrl, "ctrl"},
+                       {ImGuiKey_UpArrow, "up"}, {ImGuiKey_DownArrow, "down"},
+                       {ImGuiKey_LeftArrow, "left"}, {ImGuiKey_RightArrow, "right"}};
+    for (const M& m : named) if (ImGui::IsKeyPressed(m.k, false)) return m.n;
+    return {};
+}
+inline bool KeyPicker(std::string& arg, float width) {
+    bool changed = false;
+    std::string lbl = "Key: " + VsKeyLabel(arg) + "##keypick";
+    if (ImGui::Button(lbl.c_str(), ImVec2(width, 0))) ImGui::OpenPopup("##keypickpop");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click, then press the key you want (or pick it from the list).");
+    if (ImGui::BeginPopup("##keypickpop")) {
+        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Press any key...");
+        ImGui::TextDisabled("or pick one below (Esc closes)");
+        if (!ImGui::IsWindowAppearing()) {   // not the click that opened it
+            std::string got = VsCapturedKey();
+            if (!got.empty()) { arg = got; changed = true; ImGui::CloseCurrentPopup(); }
+        }
+        ImGui::Separator();
+        ImGui::BeginChild("##keylist", ImVec2(250, 230));
+        for (const auto& k : VsNamedKeys())
+            if (ImGui::Selectable(k.label, arg == k.name)) { arg = k.name; changed = true; ImGui::CloseCurrentPopup(); }
+        ImGui::Separator();
+        auto grid = [&](char from, char to) {
+            int col = 0;
+            for (char c = from; c <= to; ++c) {
+                char nm[2] = {c, 0}, shown[2] = {(char)std::toupper((unsigned char)c), 0};
+                if (col++ % 8) ImGui::SameLine();
+                ImGui::PushID(c);
+                if (ImGui::Selectable(shown, arg == nm, 0, ImVec2(20, 20))) { arg = nm; changed = true; ImGui::CloseCurrentPopup(); }
+                ImGui::PopID();
+            }
+        };
+        grid('a', 'z');
+        ImGui::Separator();
+        grid('0', '9');
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    return changed;
 }
 
 inline const VsDef* FindDef(const std::string& type) {
@@ -496,6 +573,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
     if (t == "DeltaTime")  return "Time.deltaTime";
     if (t == "VelX")       return "velocity_x()";
     if (t == "VelY")       return "velocity_y()";
+    if (t == "VelZ")       return "velocity_z()";
     if (t == "GetX")       return "transform.position.x";
     if (t == "GetY")       return "transform.position.y";
     if (t == "GetZ")       return "transform.position.z";
@@ -606,9 +684,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="PlaySound")   out += ind + "play_sound(" + q(arg("")) + ")\n";
     else if (t=="Spawn")       out += ind + "spawn3(" + q(arg("")) + ", " + in(0, "transform.position.x") + ", " + in(1, "transform.position.y") + ", " + in(2, "transform.position.z") + ")\n";
     else if (t=="Destroy")     out += ind + "destroy()\n";
-    else if (t=="AddForce")    out += ind + "add_force(" + in(0)+", "+in(1)+")\n";
-    else if (t=="SetVelocity") out += ind + "set_velocity(" + in(0)+", "+in(1)+")\n";
-    else if (t=="AddImpulse")  out += ind + "add_impulse(" + in(0)+", "+in(1)+")\n";
+    else if (t=="AddForce")    out += ind + "add_force(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="SetVelocity") out += ind + "set_velocity(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="AddImpulse")  out += ind + "add_impulse(" + in(0)+", "+in(1)+", "+in(2)+")\n";
     else if (t=="Branch") {
         out += ind + "if (" + in(0) + ") {\n";
         int tn = VsExecTarget(g, nodeId, 0); if (tn>=0) VsEmitChain(g, tn, out, ind+"    ", visited);
@@ -1069,6 +1147,14 @@ inline void Draw(EditorState& ed, bool* open) {
                     for (const char* o : ops) if (ImGui::Selectable(o, n.arg == o)) { n.arg = o; g.dirty = true; }
                     ImGui::EndCombo();
                 }
+            } else if (IsKeyNode(n.type)) {
+                if (KeyPicker(n.arg, NODE_W - 16)) g.dirty = true;
+            } else if (n.type == "MouseButton" || n.type == "MouseButtonDown") {
+                const char* btns[] = {"Left button", "Right button", "Middle button"};
+                int b = std::atoi(n.arg.c_str());
+                if (n.arg == "right") b = 1; else if (n.arg == "middle") b = 2;
+                if (b < 0 || b > 2) b = 0;
+                if (ImGui::Combo("##mbtn", &b, btns, 3)) { n.arg = std::to_string(b); g.dirty = true; }
             } else {
                 if (ImGui::InputTextWithHint("##arg", d->paramHint ? d->paramHint : "", buf, sizeof(buf)))
                     { n.arg = buf; g.dirty = true; }

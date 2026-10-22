@@ -78,30 +78,8 @@ namespace {
 
 using Value = vs::VsValue;
 
-// Map a friendly key NAME to the char code the Input layer uses, so scripts can
-// write key("space") / key_down("up") instead of guessing the internal char. A
-// single character is taken as-is (lowercased); named keys map to their code
-// (arrows fold onto WASD exactly as the runtime feeds them). Unknown multi-char
-// names fall back to their first letter.
-static char KeyCharFromName(const std::string& s) {
-    if (s.empty()) return 0;
-    auto lower1 = [](char c) { return (char)std::tolower((unsigned char)c); };
-    if (s.size() == 1) return lower1(s[0]);
-    std::string k; k.reserve(s.size());
-    for (char c : s) k += lower1(c);
-    if (k == "space")                    return ' ';
-    if (k == "up")                       return 'w';   // arrows are fed as WASD
-    if (k == "down")                     return 's';
-    if (k == "left")                     return 'a';
-    if (k == "right")                    return 'd';
-    if (k == "enter" || k == "return")   return '\r';
-    if (k == "escape" || k == "esc")     return (char)27;
-    if (k == "backspace")                return (char)8;
-    if (k == "tab")                      return '\t';
-    if (k == "shift")                    return Input::KeyShift;
-    if (k == "ctrl" || k == "control")   return Input::KeyCtrl;
-    return lower1(s[0]);
-}
+// Friendly key name -> Input char code (shared with the visual-script nodes).
+static char KeyCharFromName(const std::string& s) { return Input::KeyFromName(s); }
 
 // ===================== JSON (for to_json / from_json builtins) =====================
 // A compact, dependency-free JSON writer/reader over VsValue. Numbers, bools,
@@ -3424,27 +3402,41 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         // Sibling Rigidbody2D control (jump, dash, knockback, top-down movement).
+        // (No Rigidbody2D? The same calls drive a Rigidbody3D, with an optional z.)
+        auto arg3 = [](std::vector<Value>& a, std::size_t i) { return a.size() > i ? a[i].AsFloat() : 0.0f; };
         b["velocity_x"] = [go](std::vector<Value>&) -> Value {
-            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>()) return Value{rb->velocity.x};
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) return Value{rb->velocity.x};
+                if (auto* r3 = g->GetComponent<Rigidbody3D>()) return Value{r3->velocity.x};
+            }
             return Value{0.0f};
         };
         b["velocity_y"] = [go](std::vector<Value>&) -> Value {
-            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>()) return Value{rb->velocity.y};
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) return Value{rb->velocity.y};
+                if (auto* r3 = g->GetComponent<Rigidbody3D>()) return Value{r3->velocity.y};
+            }
             return Value{0.0f};
         };
-        b["set_velocity"] = [go](std::vector<Value>& a) {
-            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
-                rb->velocity = {a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f};
+        b["set_velocity"] = [go, arg3](std::vector<Value>& a) {
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->velocity = {arg3(a, 0), arg3(a, 1)};
+                else if (auto* r3 = g->GetComponent<Rigidbody3D>()) { r3->velocity = {arg3(a, 0), arg3(a, 1), arg3(a, 2)}; r3->WakeUp(); }
+            }
             return Value{};
         };
         b["set_vx"] = [go](std::vector<Value>& a) {
-            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
-                rb->velocity.x = a.empty() ? 0.0f : a[0].AsFloat();
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->velocity.x = a.empty() ? 0.0f : a[0].AsFloat();
+                else if (auto* r3 = g->GetComponent<Rigidbody3D>()) { r3->velocity.x = a.empty() ? 0.0f : a[0].AsFloat(); r3->WakeUp(); }
+            }
             return Value{};
         };
         b["set_vy"] = [go](std::vector<Value>& a) {
-            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
-                rb->velocity.y = a.empty() ? 0.0f : a[0].AsFloat();
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->velocity.y = a.empty() ? 0.0f : a[0].AsFloat();
+                else if (auto* r3 = g->GetComponent<Rigidbody3D>()) { r3->velocity.y = a.empty() ? 0.0f : a[0].AsFloat(); r3->WakeUp(); }
+            }
             return Value{};
         };
         // ---- Stay-in-bounds helpers (rectangle minX,minY,maxX,maxY) ----
@@ -3477,14 +3469,18 @@ struct OkayScriptVM::Impl {
             if ((p.y <= y0 && rb->velocity.y < 0) || (p.y >= y1 && rb->velocity.y > 0)) rb->velocity.y = -rb->velocity.y;
             return Value{};
         };
-        b["add_force"] = [go](std::vector<Value>& a) {
-            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
-                rb->AddForce({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f});
+        b["add_force"] = [go, arg3](std::vector<Value>& a) {
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->AddForce({arg3(a, 0), arg3(a, 1)});
+                else if (auto* r3 = g->GetComponent<Rigidbody3D>()) r3->AddForce(Vec3{arg3(a, 0), arg3(a, 1), arg3(a, 2)});
+            }
             return Value{};
         };
-        b["add_impulse"] = [go](std::vector<Value>& a) {
-            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
-                rb->AddImpulse({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f});
+        b["add_impulse"] = [go, arg3](std::vector<Value>& a) {
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->AddImpulse({arg3(a, 0), arg3(a, 1)});
+                else if (auto* r3 = g->GetComponent<Rigidbody3D>()) r3->AddImpulse(Vec3{arg3(a, 0), arg3(a, 1), arg3(a, 2)});
+            }
             return Value{};
         };
         // Set a sibling UIImage's texture from script (swap icons, states).

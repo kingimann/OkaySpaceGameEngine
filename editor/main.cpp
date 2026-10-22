@@ -14047,20 +14047,140 @@ void DrawHierarchy(EditorState& ed) {
     ImGui::End();
 }
 
-// A 9-way anchor dropdown shared by every UI widget inspector.
+// Re-anchor a widget WITHOUT moving it: solve the new anchor's position/size so
+// the widget keeps its on-screen rect (Unity keeps the visual placement too).
+// The anchor maps (position, size) to (origin, extent) affinely, so the four
+// unknowns come from a small linear solve; works for fixed and stretch anchors.
+static bool ReanchorKeepRect(GameObject* go, okay::UIAnchor newAnchor, bool snapToAnchor) {
+    okay::UIRect r = okay::GetUIRect(go);
+    if (!r.valid || !r.position || !r.anchorPtr) return false;
+    float W = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : okay::UICanvas::Width();
+    float H = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : okay::UICanvas::Height();
+    okay::Vec2 o, sz;
+    if (!okay::GetUIScreenRect(go, W, H, o, sz)) { *r.anchorPtr = newAnchor; return true; }
+    okay::Vec2 fo{0, 0}, fs{W, H};   // the frame the widget anchors to: its UI parent, else the canvas
+    if (GameObject* par = okay::OwningUIParent(go)) {
+        okay::Vec2 po, ps;
+        if (okay::GetUIScreenRect(par, W, H, po, ps)) { fo = po; fs = ps; }
+    }
+    float s = okay::UIScaleFor(go, W, H); if (s < 1e-3f) s = 1.0f;
+    *r.anchorPtr = newAnchor;
+    if (snapToAnchor) {   // Shift: sit right at the anchor (zero offset / zero margins)
+        *r.position = {0.0f, 0.0f};
+        if (r.sizePtr && okay::AnchorIsStretch(newAnchor)) {
+            okay::Vec2 keep = *r.sizePtr;
+            if (newAnchor == okay::UIAnchor::StretchFull) *r.sizePtr = {0.0f, 0.0f};
+            else if (newAnchor == okay::UIAnchor::StretchHorizontal) *r.sizePtr = {0.0f, keep.y};
+            else *r.sizePtr = {keep.x, 0.0f};
+        }
+        return true;
+    }
+    // f(v) = (origin.x, origin.y, extent.x, extent.y) for v = (pos.x, pos.y, size.x, size.y), in screen px.
+    const bool hasSize = r.sizePtr != nullptr;
+    okay::Vec2 baseSize = hasSize ? *r.sizePtr * s : sz;
+    auto f = [&](const float v[4], float out[4]) {
+        okay::Vec2 oo, ss;
+        okay::ResolveAnchorRect(newAnchor, okay::Vec2{v[0], v[1]}, hasSize ? okay::Vec2{v[2], v[3]} : baseSize, fs.x, fs.y, oo, ss);
+        out[0] = oo.x; out[1] = oo.y; out[2] = ss.x; out[3] = ss.y;
+    };
+    const float zero[4] = {0, 0, hasSize ? baseSize.x : 0.0f, hasSize ? baseSize.y : 0.0f};
+    float f0[4]; f(zero, f0);
+    const int n = hasSize ? 4 : 2;
+    float J[4][5] = {};
+    for (int c = 0; c < n; ++c) {
+        float v[4] = {zero[0], zero[1], zero[2], zero[3]}; v[c] += 1.0f;
+        float fv[4]; f(v, fv);
+        for (int rr = 0; rr < n; ++rr) J[rr][c] = fv[rr] - f0[rr];
+    }
+    const float want[4] = {o.x - fo.x, o.y - fo.y, sz.x, sz.y};
+    for (int rr = 0; rr < n; ++rr) J[rr][n] = want[rr] - f0[rr];
+    for (int c = 0; c < n; ++c) {   // Gaussian elimination with partial pivoting
+        int piv = c;
+        for (int rr = c + 1; rr < n; ++rr) if (std::fabs(J[rr][c]) > std::fabs(J[piv][c])) piv = rr;
+        if (std::fabs(J[piv][c]) < 1e-6f) return true;   // degenerate: keep the anchor change only
+        if (piv != c) for (int k = 0; k <= n; ++k) std::swap(J[c][k], J[piv][k]);
+        for (int rr = 0; rr < n; ++rr) {
+            if (rr == c) continue;
+            float m = J[rr][c] / J[c][c];
+            for (int k = c; k <= n; ++k) J[rr][k] -= m * J[c][k];
+        }
+    }
+    float d[4] = {0, 0, 0, 0};
+    for (int c = 0; c < n; ++c) d[c] = J[c][n] / J[c][c];
+    *r.position = okay::Vec2{(zero[0] + d[0]) / s, (zero[1] + d[1]) / s};
+    if (hasSize) *r.sizePtr = okay::Vec2{(zero[2] + d[2]) / s, (zero[3] + d[3]) / s};
+    return true;
+}
+
+// The anchor picker shared by every UI widget inspector: a button showing the
+// current anchor that opens a visual 3x3 grid + stretch options. Picking one keeps
+// the widget where it is on screen; Shift+pick moves it onto the anchor instead.
 static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed) {
     static const char* kAnchors[] = {
         "Top-Left", "Top", "Top-Right", "Left", "Center", "Right",
         "Bottom-Left", "Bottom", "Bottom-Right",
         "Stretch Horizontal", "Stretch Vertical", "Stretch (Fill)"};
-    int ai = (int)anchor;
-    if (ImGui::Combo(id, &ai, kAnchors, 12)) { anchor = (okay::UIAnchor)ai; ed.dirty = true; }
-    if (ImGui::IsItemHovered() && okay::AnchorIsStretch(anchor))
-        ImGui::SetTooltip("Stretch: the widget fills the canvas on the stretched axis.\n"
-                          "Position/Size become MARGINS (like Unity's Left/Right/Top/Bottom):\n"
-                          " • Fill: Position = (left, top), Size = (right, bottom) margins\n"
-                          " • Horizontal: Position = (left, top), Size = (right margin, height)\n"
-                          " • Vertical: Position = (left, top), Size = (width, bottom margin)");
+    int ai = (int)anchor; if (ai < 0 || ai > 11) ai = 0;
+    std::string label(id), name = label.substr(0, label.find("##")), suffix = label.find("##") != std::string::npos ? label.substr(label.find("##")) : "";
+    // The widget whose anchor this is (so a change can keep its on-screen rect).
+    GameObject* owner = nullptr;
+    if (GameObject* sel = ed.selected()) { okay::UIRect r = okay::GetUIRect(sel); if (r.valid && r.anchorPtr == &anchor) owner = sel; }
+    // Draw a tiny diagram of anchor `a` into [p0, p1].
+    auto diagram = [&](ImDrawList* dl, ImVec2 p0, ImVec2 p1, int a, bool active) {
+        const ImU32 frame = active ? IM_COL32(150, 190, 255, 255) : IM_COL32(150, 154, 166, 255);
+        const ImU32 fill  = active ? IM_COL32(110, 160, 255, 255) : IM_COL32(205, 208, 216, 255);
+        dl->AddRect(p0, p1, frame, 2.0f, 0, 1.2f);
+        float w = p1.x - p0.x, h = p1.y - p0.y;
+        if (a <= 8) {
+            float cx = p0.x + w * (0.18f + 0.32f * (a % 3)), cy = p0.y + h * (0.18f + 0.32f * (a / 3));
+            dl->AddRectFilled(ImVec2(cx - w * 0.13f, cy - h * 0.13f), ImVec2(cx + w * 0.13f, cy + h * 0.13f), fill, 1.5f);
+        } else if (a == 9)  dl->AddRectFilled(ImVec2(p0.x + 3, p0.y + h * 0.36f), ImVec2(p1.x - 3, p1.y - h * 0.36f), fill, 1.5f);
+        else if (a == 10)   dl->AddRectFilled(ImVec2(p0.x + w * 0.36f, p0.y + 3), ImVec2(p1.x - w * 0.36f, p1.y - 3), fill, 1.5f);
+        else                dl->AddRectFilled(ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3), fill, 1.5f);
+    };
+    ImGui::AlignTextToFramePadding();
+    const float sz = ImGui::GetFrameHeight();
+    std::string btnId = "##anchorbtn" + suffix, popId = "##anchorpop" + suffix;
+    ImVec2 bp = ImGui::GetCursorScreenPos();
+    if (ImGui::Button((std::string(kAnchors[ai]) + btnId).c_str(), ImVec2(ImGui::CalcItemWidth(), 0))) ImGui::OpenPopup(popId.c_str());
+    diagram(ImGui::GetWindowDrawList(), ImVec2(bp.x + 4, bp.y + 3), ImVec2(bp.x + sz - 2, bp.y + sz - 3), ai, false);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(okay::AnchorIsStretch(anchor)
+            ? "Stretch: the widget fills its parent / the canvas on the stretched axis;\nPosition and Size become margins (like Unity). Click to change."
+            : "Which point of its parent / the screen this widget sticks to when the\nwindow resizes. Click to change.");
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x); ImGui::TextUnformatted(name.c_str());
+    if (ImGui::BeginPopup(popId.c_str())) {
+        ImGui::TextDisabled("ANCHOR");
+        ImGui::SameLine(); ImGui::TextDisabled("(Shift+click: also move it there)");
+        const float cell = 40.0f;
+        auto cellButton = [&](int a, ImVec2 size) {
+            ImGui::PushID(a);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            bool clicked = ImGui::InvisibleButton("##a", size);
+            bool hov = ImGui::IsItemHovered();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), hov ? IM_COL32(70, 76, 92, 255) : IM_COL32(44, 46, 54, 255), 4.0f);
+            diagram(dl, ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + size.x - 6, p.y + size.y - 6), a, a == ai);
+            if (hov) ImGui::SetTooltip("%s", kAnchors[a]);
+            ImGui::PopID();
+            if (clicked) {
+                ed.PushUndo();
+                bool shift = ImGui::GetIO().KeyShift;
+                if (!owner || !ReanchorKeepRect(owner, (okay::UIAnchor)a, shift)) anchor = (okay::UIAnchor)a;
+                ed.dirty = true;
+                ImGui::CloseCurrentPopup();
+            }
+        };
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) { if (col) ImGui::SameLine(0, 4); cellButton(row * 3 + col, ImVec2(cell, cell)); }
+            ImGui::SameLine(0, 10);
+            if (row == 1) cellButton(9, ImVec2(cell * 1.4f, cell)); else ImGui::Dummy(ImVec2(cell * 1.4f, cell));
+        }
+        cellButton(10, ImVec2(cell, cell * 1.4f)); ImGui::SameLine(0, 4);
+        cellButton(11, ImVec2(cell * 1.4f, cell * 1.4f));
+        ImGui::SameLine(); ImGui::TextDisabled("Stretch vertical / Fill");
+        ImGui::EndPopup();
+    }
 }
 
 /// Labels for the Position/Size drag fields that adapt to a stretch anchor, so the
@@ -27661,6 +27781,70 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
         }
     }
+    if (auto* ua = dynamic_cast<UIAnimation*>(curComp)) {
+        if (CompHeader("UI Animation", ua, &toRemove)) {
+            static const char* kIntro[] = {"None", "Fade In", "Slide In from Left", "Slide In from Right", "Slide In from Top",
+                                           "Slide In from Bottom", "Pop", "Drop (bounce)", "Grow"};
+            static const char* kLoop[]  = {"None", "Pulse", "Bob (up/down)", "Sway (side to side)", "Blink", "Breathe"};
+            static const char* kOutro[] = {"Fade Out", "Slide Out Left", "Slide Out Right", "Slide Out Top", "Slide Out Bottom", "Shrink"};
+            static const char* kEase[]  = {"Linear", "Quad In", "Quad Out", "Quad In-Out", "Cubic In", "Cubic Out", "Cubic In-Out",
+                                           "Sine In", "Sine Out", "Sine In-Out", "Expo In", "Expo Out", "Expo In-Out",
+                                           "Back In", "Back Out (overshoot)", "Back In-Out", "Elastic Out", "Bounce Out"};
+            int v = (int)ua->intro;
+            if (ImGui::Combo("Intro##uan", &v, kIntro, IM_ARRAYSIZE(kIntro))) { ua->intro = (UIAnimation::Intro)v; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays when the scene starts and whenever the object is shown again.\nA fading panel fades everything under it.");
+            v = (int)ua->loop;
+            if (ImGui::Combo("Loop##uan", &v, kLoop, IM_ARRAYSIZE(kLoop))) { ua->loop = (UIAnimation::Loop)v; ed.dirty = true; }
+            v = (int)ua->outro;
+            if (ImGui::Combo("Outro##uan", &v, kOutro, IM_ARRAYSIZE(kOutro))) { ua->outro = (UIAnimation::Outro)v; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays from a script (ui_hide) or the Hide UI node, then hides the object.");
+            v = (int)ua->ease;
+            if (ImGui::Combo("Easing##uan", &v, kEase, IM_ARRAYSIZE(kEase))) { ua->ease = (Ease)v; ed.dirty = true; }
+            if (ImGui::DragFloat("Duration##uan", &ua->duration, 0.01f, 0.02f, 5.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Delay##uan", &ua->delay, 0.01f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wait before the intro: give each button of a menu a bigger delay\nso they come in one after another.");
+            if (ua->intro >= UIAnimation::Intro::SlideLeft && ua->intro <= UIAnimation::Intro::SlideBottom || ua->intro == UIAnimation::Intro::Drop ||
+                ua->outro >= UIAnimation::Outro::SlideLeft && ua->outro <= UIAnimation::Outro::SlideBottom)
+                if (ImGui::DragFloat("Slide Distance##uan", &ua->distance, 1.0f, 0.0f, 2000.0f, "%.0f px")) ed.dirty = true;
+            if (ua->loop != UIAnimation::Loop::None) {
+                if (ImGui::DragFloat("Loop Speed##uan", &ua->loopSpeed, 0.01f, 0.05f, 10.0f, "%.2f /s")) ed.dirty = true;
+                if (ImGui::DragFloat("Loop Amount##uan", &ua->loopAmount, 0.005f, 0.0f, 1.0f, "%.3f")) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Play on Start##uan", &ua->playOnStart)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Replay when shown##uan", &ua->replayOnShow)) ed.dirty = true;
+            if (ImGui::Checkbox("Hide after Outro##uan", &ua->hideAfterOutro)) ed.dirty = true;
+            // Preview in edit mode: tick the animation here, then put the layout back.
+            static UIAnimation* s_prevAnim = nullptr;
+            static float s_prevLeft = 0.0f;
+            const bool previewing = s_prevAnim == ua;
+            if (ImGui::Button(previewing ? "Stop Preview##uan" : "Preview##uan")) {
+                if (previewing) { ua->Stop(); s_prevAnim = nullptr; }
+                else {
+                    if (s_prevAnim) s_prevAnim->Stop();
+                    s_prevAnim = ua; ua->Play();
+                    s_prevLeft = ua->delay + ua->duration + (ua->loop != UIAnimation::Loop::None ? 2.5f : 0.15f);
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Watch it in the Game / UI view (the layout is restored afterwards)");
+            ImGui::SameLine();
+            if (ImGui::Button("Preview Outro##uan")) {
+                if (s_prevAnim) s_prevAnim->Stop();
+                bool hide = ua->hideAfterOutro; ua->hideAfterOutro = false;   // never hide while previewing
+                s_prevAnim = ua; ua->PlayOut(); ua->hideAfterOutro = hide;
+                s_prevLeft = ua->duration + 0.2f;
+            }
+            if (s_prevAnim == ua && !ed.isPlaying()) {
+                float dt = ImGui::GetIO().DeltaTime;
+                bool hide = ua->hideAfterOutro; ua->hideAfterOutro = false;
+                ua->Update(dt);
+                ua->hideAfterOutro = hide;
+                s_prevLeft -= dt;
+                if (s_prevLeft <= 0.0f) { ua->Stop(); s_prevAnim = nullptr; }
+            }
+            if (ImGui::SmallButton("Remove##uan")) { if (s_prevAnim == ua) { ua->Stop(); s_prevAnim = nullptr; } toRemove = ua; }
+        }
+    }
     if (auto* tt = dynamic_cast<UITooltip*>(curComp)) {
         if (CompHeader("UI Tooltip", tt, &toRemove)) {
             char tb[256]; std::strncpy(tb, tt->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
@@ -28832,6 +29016,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkSync>(), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkPlayerSpawner>(), "Network Player Spawner")) { go->AddComponent<NetworkPlayerSpawner>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAnimation>(), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
@@ -29175,8 +29360,24 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // with the UIWorld() context the CALLER installed — the 2D ortho map in the
     // Scene 2D view, the perspective camera in the 3D/Game view — so in-world UI
     // lines up with the objects and gizmos in whatever view you're looking at.
+    // Fade each widget by its Canvas opacity and any UI Animation fade (its own or
+    // an ancestor's): scale the alpha of every vertex the widget's block adds, on
+    // scope exit so every `continue` below is covered.
+    struct UIFadeGuard {
+        ImDrawList* d; int v0; float a;
+        ~UIFadeGuard() {
+            if (a >= 0.999f) return;
+            for (int i = v0; i < d->VtxBuffer.Size; ++i) {
+                ImU32& c = d->VtxBuffer[i].col;
+                unsigned al = (c >> IM_COL32_A_SHIFT) & 0xFF;
+                al = (unsigned)(al * (a < 0.0f ? 0.0f : a) + 0.5f);
+                c = (c & ~IM_COL32_A_MASK) | (al << IM_COL32_A_SHIFT);
+            }
+        }
+    };
     for (const UIDrawItem& _it : edItems) {
         const auto& up = objs[_it.index];
+        UIFadeGuard _fade{dl, dl->VtxBuffer.Size, UIOpacity(up.get())};
         if (_it.kind == K_Scroll) {   // Scroll View backgrounds (behind content) + scrollbar
         auto* sv = up->GetComponent<UIScrollView>();
         if (!sv || !up->active || UIHidden(up.get())) continue;

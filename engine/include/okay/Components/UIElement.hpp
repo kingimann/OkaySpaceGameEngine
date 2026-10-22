@@ -18,6 +18,7 @@
 #include "okay/Components/UITabs.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
+#include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIDraggable.hpp"   // UIDropTarget
@@ -388,7 +389,13 @@ inline int UIDefaultLayer(GameObject* go) {
 /// or 1 if none). Multiply each widget's color alpha by this.
 inline float UIOpacity(GameObject* go) {
     Canvas* cv = OwningCanvas(go);
-    return cv ? (cv->opacity < 0.0f ? 0.0f : (cv->opacity > 1.0f ? 1.0f : cv->opacity)) : 1.0f;
+    float op = cv ? (cv->opacity < 0.0f ? 0.0f : (cv->opacity > 1.0f ? 1.0f : cv->opacity)) : 1.0f;
+    // UI Animation fades: this widget's own and every animated ancestor's (a panel
+    // fading in carries its buttons and labels with it).
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject)
+            if (auto* an = t->gameObject->GetComponent<UIAnimation>()) op *= an->Alpha();
+    return op;
 }
 
 /// The Scroll View a widget lives in (nearest ancestor), or nullptr — used to

@@ -133,6 +133,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "ChanceBranch")   return std::make_unique<ChanceBranchNode>();
         if (type == "Counter")        return std::make_unique<CounterNode>();
         if (type == "EveryN")         return std::make_unique<EveryNNode>();
+        if (type == "ShowUI")         return std::make_unique<ShowHideUINode>(true, a0("self"));
+        if (type == "HideUI")         return std::make_unique<ShowHideUINode>(false, a0("self"));
     }
     if (type == "Const")   { if (!need(1)) return nullptr; return std::make_unique<ConstNode>(ParseValue(args[0])); }
     if (type == "GetVar")  { if (!need(1)) return nullptr; return std::make_unique<GetVarNode>(args[0]); }

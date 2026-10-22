@@ -11,6 +11,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Components/UIAnimation.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include <algorithm>
@@ -280,6 +281,23 @@ struct GameControlNode : VsNode {
             case Op::Pause:      Game::SetPaused(In(0, g, ctx, VsValue{true}).AsBool()); break;
             case Op::ShowCursor: Cursor::Capture(!In(0, g, ctx, VsValue{true}).AsBool()); break;
         }
+        return 0;
+    }
+};
+
+// Show UI: activate a UI object (blank = self) and play its UI Animation intro.
+// Hide UI: play its outro, then hide it (instantly with no UI Animation).
+struct ShowHideUINode : VsNode {
+    bool show; std::string name;
+    ShowHideUINode(bool s, std::string n) : show(s), name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        GameObject* o = VsFindObject(ctx, name);
+        if (!o) return 0;
+        auto* ua = o->GetComponent<UIAnimation>();
+        if (show) { o->active = true; if (ua) ua->Play(); }
+        else if (ua && o->active) ua->PlayOut();
+        else o->active = false;
         return 0;
     }
 };

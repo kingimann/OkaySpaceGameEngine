@@ -74,6 +74,7 @@
 #include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIDraggable.hpp"
@@ -1642,6 +1643,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tt->background.r << " " << tt->background.g << " " << tt->background.b << " " << tt->background.a << " "
             << tt->textColor.r << " " << tt->textColor.g << " " << tt->textColor.b << " " << tt->textColor.a << " "
             << tt->borderColor.r << " " << tt->borderColor.g << " " << tt->borderColor.b << " " << tt->borderColor.a << "\n";
+    }
+    if (auto* ua = go->GetComponent<UIAnimation>()) {
+        out << "  uianim " << (int)ua->intro << " " << (int)ua->loop << " " << (int)ua->outro << " "
+            << ua->duration << " " << ua->delay << " " << ua->distance << " " << (int)ua->ease << " "
+            << ua->loopSpeed << " " << ua->loopAmount << " " << (ua->playOnStart ? 1 : 0) << " "
+            << (ua->replayOnShow ? 1 : 0) << " " << (ua->hideAfterOutro ? 1 : 0) << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
@@ -4294,6 +4301,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* dz = go->AddComponent<DropZone>();
                     in >> std::ws;
                     if (in.peek() == '"') dz->acceptTag = ReadQuoted(in);
+                } else if (field == "uianim") {
+                    auto* ua = go->AddComponent<UIAnimation>();
+                    int it = 1, lp = 0, ot = 0, es = (int)Ease::CubicOut, pos = 1, ros = 1, hao = 1;
+                    in >> it >> lp >> ot >> ua->duration >> ua->delay >> ua->distance >> es
+                       >> ua->loopSpeed >> ua->loopAmount >> pos >> ros >> hao;
+                    ua->intro = (UIAnimation::Intro)it; ua->loop = (UIAnimation::Loop)lp; ua->outro = (UIAnimation::Outro)ot;
+                    ua->ease = (Ease)es; ua->playOnStart = pos != 0; ua->replayOnShow = ros != 0; ua->hideAfterOutro = hao != 0;
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
                     tt->text = ReadQuoted(in);

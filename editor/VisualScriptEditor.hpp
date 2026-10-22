@@ -325,6 +325,8 @@ inline const std::vector<VsDef>& Registry() {
         {"ChanceBranch",    "Random Branch",    CAT_FLOW,   true, {"True", "False"}, {"Chance"}, {}, 0, nullptr},
         {"Counter",         "Counter",          CAT_FLOW,   true, {""}, {"Reset"}, {"Count"}, 0, nullptr},
         {"EveryN",          "Every N Times",    CAT_FLOW,   true, {""}, {"N"}, {}, 0, nullptr},
+        {"ShowUI",          "Show UI",          CAT_ACTION, true, {""}, {}, {}, 1, "UI object (self)"},
+        {"HideUI",          "Hide UI",          CAT_ACTION, true, {""}, {}, {}, 1, "UI object (self)"},
     };
     return defs;
 }
@@ -476,7 +478,8 @@ struct VsEditGraph {
             {"OnTimer", "1"}, {"OnEvent", "Event"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
             {"SetObjectVar", "hp"}, {"GetObjectVar", "hp"}, {"SaveValue", "score"}, {"LoadValue", "score"},
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"},
-            {"NearestWithTag", "Enemy"}, {"Teleport", "self"}};
+            {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
+            {"ShowUI", "self"}, {"HideUI", "self"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
         nodes.push_back(n); dirty = true; return n.id;
     }
@@ -946,6 +949,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetVisible")    out += ind + "set_visible(" + in(0, "true") + ")\n";
     else if (t=="PauseGame")     out += ind + "pause_game(" + in(0, "true") + ")\n";
     else if (t=="QuitGame")      out += ind + "quit()\n";
+    else if (t=="ShowUI")        out += ind + "ui_show(" + q(arg("self")) + ")\n";
+    else if (t=="HideUI")        out += ind + "ui_hide(" + q(arg("self")) + ")\n";
     else if (t=="ShowCursor")    out += ind + "show_cursor(" + in(0, "true") + ")\n";
     else if (t=="ChanceBranch") {
         out += ind + "if (random() < " + in(0, "0.5") + ") {\n";

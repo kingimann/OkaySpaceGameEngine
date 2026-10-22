@@ -1,5 +1,6 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -5610,7 +5611,30 @@ struct OkayScriptVM::Impl {
             o->transform->SetPosition(p);
             return Value{};
         };
+        // UI Animation: ui_show("Menu") activates it and plays its intro, ui_hide("Menu")
+        // plays its outro then hides it (instantly when it has no UI Animation),
+        // ui_play("Menu") replays the intro.
+        b["ui_show"] = [evTarget](std::vector<Value>& a) {
+            if (GameObject* o = evTarget(a.empty() ? std::string() : a[0].AsString())) {
+                o->active = true;
+                if (auto* ua = o->GetComponent<UIAnimation>()) ua->Play();
+            }
+            return Value{};
+        };
+        b["ui_hide"] = [evTarget](std::vector<Value>& a) {
+            if (GameObject* o = evTarget(a.empty() ? std::string() : a[0].AsString())) {
+                if (auto* ua = o->GetComponent<UIAnimation>(); ua && o->active) ua->PlayOut();
+                else o->active = false;
+            }
+            return Value{};
+        };
+        b["ui_play"] = [evTarget](std::vector<Value>& a) {
+            if (GameObject* o = evTarget(a.empty() ? std::string() : a[0].AsString()))
+                if (auto* ua = o->GetComponent<UIAnimation>()) ua->Play();
+            return Value{};
+        };
         b["pause_game"] = [](std::vector<Value>& a) { Game::SetPaused(a.empty() || a[0].AsBool()); return Value{}; };
+        if (!b.count("quit")) b["quit"] = [](std::vector<Value>&) { Game::RequestQuit(); return Value{}; };   // Application.Quit()
         b["show_cursor"] = [](std::vector<Value>& a) { Cursor::Capture(!(a.empty() || a[0].AsBool())); return Value{}; };
 
         // --- Sprite glyph/size on a sibling SpriteRenderer ---

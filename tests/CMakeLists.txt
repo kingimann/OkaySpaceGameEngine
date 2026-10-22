@@ -728,3 +728,7 @@ add_test(NAME scene_defaults COMMAND test_scene_defaults)
 add_executable(test_vs_wave4 test_vs_wave4.cpp)
 target_link_libraries(test_vs_wave4 PRIVATE okay::engine)
 add_test(NAME vs_wave4 COMMAND test_vs_wave4)
+
+add_executable(test_ui_animation test_ui_animation.cpp)
+target_link_libraries(test_ui_animation PRIVATE okay::engine)
+add_test(NAME ui_animation COMMAND test_ui_animation)

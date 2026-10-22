@@ -78,6 +78,7 @@ public:
         float       exitTime = 1.0f;    ///< normalized state time it may fire from (0.75 = 75% through)
         bool        canInterruptSelf = false;   ///< Any State only: may re-enter the current state
         float       offset = 0.0f;      ///< normalized time the target state starts at (0..1)
+        bool        muted = false;      ///< never fires (try the machine without it, keep it for later)
     };
 
     /// A blend-tree motion: a clip and where it's fully on — `threshold` on the
@@ -215,12 +216,21 @@ public:
     /// The IK weight currently applied (eases to the state's ikWeight).
     float IKWeight() const { return m_ikW; }
 
+    /// The last state changes, oldest first (Play-mode debugging: "why did it
+    /// go to Fall?"). `time` is seconds since the machine started.
+    struct HistoryEntry { std::string from, to; float time = 0.0f; };
+    const std::vector<HistoryEntry>& History() const { return m_history; }
+    /// Seconds since the machine started (the clock History() times are on).
+    float Clock() const { return m_clock; }
+    static constexpr int kHistoryMax = 12;
+
     void Start() override { m_current.clear(); }
     void OnDestroy() override { if (ModelAnimator* ma = Anim()) ma->RemovePostPose(this); }
 
     void Update(float dt) override {
         ModelAnimator* ma = Anim();
         if (!ma || states.empty()) return;
+        m_clock += dt;
         if (layer > 0) { LayerUpdate(dt, ma); return; }
         // Enter the entry state once the ModelAnimator is alive.
         if (m_current.empty()) {
@@ -448,7 +458,7 @@ private:
         return true;
     }
     bool Try(const Transition& tr, ModelAnimator* ma, const State* cur) {
-        if (!Satisfied(tr, ma, cur)) return false;
+        if (tr.muted || !Satisfied(tr, ma, cur)) return false;
         const State* to = FindState(tr.to);
         if (!to) return false;
         auto consume = [&](Cond c, const std::string& p) { if (c == Cond::Trigger) Base()->m_triggers[p] = false; };
@@ -467,6 +477,8 @@ private:
         const bool first = m_current.empty();
         m_previous = m_current;
         m_current = st.name;
+        m_history.push_back({m_previous, m_current, m_clock});
+        if ((int)m_history.size() > kHistoryMax) m_history.erase(m_history.begin());
         offset = std::fmin(std::fmax(offset, 0.0f), 0.999f);
         m_stateTime = 0.0f; m_normTime = offset;
         m_ikBlend = blend;
@@ -518,6 +530,8 @@ private:
     std::unordered_map<std::string, bool>  m_triggers;
     std::vector<float> m_bWeights;
     float m_ikW = 1.0f, m_ikBlend = 0.25f;
+    float m_clock = 0.0f;
+    std::vector<HistoryEntry> m_history;
     // layer playback
     LayerPlay m_lCur, m_lPrev;
     float m_fadeT = 0.0f, m_fadeDur = 0.0f;

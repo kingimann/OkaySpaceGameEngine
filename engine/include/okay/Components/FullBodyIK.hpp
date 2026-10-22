@@ -11,6 +11,10 @@
 //   * spine reach: what the hips can't cover, the chest bends toward;
 //   * look-at: head (and some chest) turn toward a point, clamped per bone.
 //
+// Goals ease in and out (`blendSpeed`) when they're switched on or off, and can
+// follow moving targets smoothly (`goalSmoothing`); elbows and knees never fold
+// tighter than their limit; the chest bend is spread over the spine bones.
+//
 // Bones are found automatically from common rig names (Mixamo "mixamorig:LeftArm",
 // Unity/Blender "UpperArm.L", "thigh_l", the built-in Character parts "L Hand"...)
 // under this object, or assigned by name. Bones are ROTATED (so a skinned mesh
@@ -79,6 +83,10 @@ public:
     float maxBodyOffset = 0.6f;      ///< clamp on the hip shift (world units)
     float spineReach = 0.4f;         ///< 0..1: chest bend toward hand goals still out of reach
     float maxSpineAngle = 35.0f;     ///< degrees
+    float blendSpeed = 8.0f;         ///< how fast goals fade in/out when enabled/disabled or reweighted (per second, 0 = instant)
+    float goalSmoothing = 0.0f;      ///< follow moving goals smoothly (per second, 0 = exact)
+    float armMinBend = 20.0f;        ///< elbows: the tightest fold allowed (interior angle, degrees)
+    float legMinBend = 25.0f;        ///< knees: likewise
 
     // Look-at.
     bool        lookEnabled = false;
@@ -89,6 +97,16 @@ public:
     float       lookHeadShare = 0.7f;     ///< the head turns this share, the chest the rest
     float       maxLookAngle = 70.0f;
     Vec3        headForward{0, 0, 1};     ///< the head bone's local forward axis
+    float       lookSmoothing = 10.0f;    ///< head swings toward a new look point (per second, 0 = snap)
+
+    /// Weight an effector is applied with right now (eases toward its target weight).
+    float EffectiveWeight(int l) const { return (l >= 0 && l < LimbCount) ? m_effW[l] : 0.0f; }
+    /// True when the limb's end is within `tolerance` of its goal (enabled goals only).
+    bool Reached(int l, float tolerance = 0.05f) const {
+        if (l < 0 || l >= LimbCount || !effectors[l].enabled) return false;
+        Transform *a, *b, *c; LimbBones(l, a, b, c);
+        return c && (c->Position() - Goal(effectors[l])).Magnitude() <= tolerance;
+    }
 
     void Start() override {
         Scene* s = GetScene();
@@ -161,21 +179,46 @@ public:
         // bone since our last solve (no animation on it), take last frame's correction
         // off first so it doesn't compound frame after frame.
         Transform* spineBone = bones[Chest] ? bones[Chest] : bones[Spine];
-        m_hips.Undo(); m_spine.Undo(); m_head.Undo();
+        Transform* lowSpine = (bones[Chest] && bones[Spine]) ? bones[Spine] : nullptr;   // shares the chest bend
+        m_hips.Undo(); m_spine.Undo(); m_head.Undo(); m_lowSpine.Undo();
+        // Per-goal weights ease toward their targets: switching a goal on/off (or a
+        // script reaching then releasing) fades instead of popping.
+        const float k = blendSpeed > 0.0f ? std::min(1.0f, blendSpeed * dt) : 1.0f;
+        const float gk = goalSmoothing > 0.0f ? std::min(1.0f, goalSmoothing * dt) : 1.0f;
+        for (int l = 0; l < LimbCount; ++l) {
+            const Effector& e = effectors[l];
+            const float want = e.enabled ? e.positionWeight : 0.0f;
+            m_effW[l] += (want - m_effW[l]) * k;
+            if (std::fabs(want - m_effW[l]) < 1e-3f) m_effW[l] = want;
+            const Vec3 g = Goal(e);
+            if (!m_goalValid[l] || gk >= 1.0f || m_effW[l] <= 1e-4f) m_goal[l] = g;
+            else m_goal[l] = m_goal[l] + (g - m_goal[l]) * gk;
+            m_goalValid[l] = true;
+        }
+        {
+            const float want = lookEnabled ? lookWeight : 0.0f;
+            m_lookW += (want - m_lookW) * k;
+            if (std::fabs(want - m_lookW) < 1e-3f) m_lookW = want;
+            const Vec3 g = lookTarget ? lookTarget->Position() : lookPosition;
+            const float lk = lookSmoothing > 0.0f ? std::min(1.0f, lookSmoothing * dt) : 1.0f;
+            if (!m_lookValid || m_lookW <= 1e-4f) m_lookGoal = g;
+            else m_lookGoal = m_lookGoal + (g - m_lookGoal) * lk;
+            m_lookValid = true;
+        }
         const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
-        m_hips.Begin(bones[Hips]); m_spine.Begin(spineBone); m_head.Begin(bones[Head]);
-        if (w <= 0.0f) { m_hips.End(); m_spine.End(); m_head.End(); return; }
+        m_hips.Begin(bones[Hips]); m_spine.Begin(spineBone); m_head.Begin(bones[Head]); m_lowSpine.Begin(lowSpine);
+        if (w <= 0.0f) { m_hips.End(); m_spine.End(); m_head.End(); m_lowSpine.End(); return; }
         // 1) Body pull: effectors beyond their limb's reach drag the hips toward them.
         if (bodyPull > 0.0f && bones[Hips]) {
             Vec3 sum{0, 0, 0}; float wsum = 0.0f;
             for (int l = 0; l < LimbCount; ++l) {
                 const Effector& e = effectors[l];
                 Transform *a, *b, *c; LimbBones(l, a, b, c);
-                if (!e.enabled || e.positionWeight <= 0.0f || !a || !b || !c) continue;
+                if (m_effW[l] <= 0.0f || !a || !b || !c) continue;
                 const float reach = LimbLength(l) * 0.995f;
-                const Vec3 goal = Goal(e), d = goal - a->Position();
+                const Vec3 goal = m_goal[l], d = goal - a->Position();
                 const float dist = d.Magnitude();
-                float ew = e.positionWeight * e.pull;
+                float ew = m_effW[l] * e.pull;
                 if (dist > reach && dist > 1e-5f) sum = sum + d * ((dist - reach) / dist) * ew;
                 // Feet also pull DOWN onto lower ground (crouch to reach a low step).
                 wsum += ew;
@@ -188,33 +231,41 @@ public:
             }
         }
         // 2) Spine reach: bend the chest toward hand goals still out of reach.
+        // Spread over the spine bones (lower spine, then chest) so the back curves
+        // instead of hinging at one joint.
         if (spineReach > 0.0f && spineBone) {
             for (int l = LeftHand; l <= RightHand; ++l) {
-                const Effector& e = effectors[l];
                 Transform *a, *b, *c; LimbBones(l, a, b, c);
-                if (!e.enabled || e.positionWeight <= 0.0f || !a) continue;
-                const Vec3 goal = Goal(e), sp = spineBone->Position();
+                if (m_effW[l] <= 0.0f || !a) continue;
+                const Vec3 goal = m_goal[l];
                 const float reach = LimbLength(l);
                 const float dist = (goal - a->Position()).Magnitude();
                 if (dist <= reach) continue;
-                Vec3 from = a->Position() - sp, to = goal - sp;
-                if (from.SqrMagnitude() < 1e-8f || to.SqrMagnitude() < 1e-8f) continue;
-                Quat q = Quat::FromToRotation(from.Normalized(), to.Normalized());
-                float ang = Quat::Angle(Quat::Identity, q);
-                float t = spineReach * w * e.positionWeight * std::min(1.0f, (dist - reach) / std::max(reach, 1e-3f) * 2.0f);
-                if (ang * t > maxSpineAngle && ang > 1e-4f) t = maxSpineAngle / ang;
-                spineBone->SetRotation((Quat::Slerp(Quat::Identity, q, t) * spineBone->Rotation()).Normalized());
+                Transform* parts[2] = {lowSpine, spineBone};
+                const int nParts = lowSpine ? 2 : 1;
+                for (int pi = lowSpine ? 0 : 1; pi < 2; ++pi) {
+                    Transform* sb = parts[pi];
+                    const Vec3 sp = sb->Position();
+                    Vec3 from = a->Position() - sp, to = goal - sp;
+                    if (from.SqrMagnitude() < 1e-8f || to.SqrMagnitude() < 1e-8f) continue;
+                    Quat q = Quat::FromToRotation(from.Normalized(), to.Normalized());
+                    float ang = Quat::Angle(Quat::Identity, q);
+                    float t = spineReach * w * m_effW[l] * std::min(1.0f, (dist - reach) / std::max(reach, 1e-3f) * 2.0f) / (float)nParts;
+                    const float cap = maxSpineAngle / (float)nParts;
+                    if (ang * t > cap && ang > 1e-4f) t = cap / ang;
+                    sb->SetRotation((Quat::Slerp(Quat::Identity, q, t) * sb->Rotation()).Normalized());
+                }
             }
         }
         // 3) Limbs.
         for (int l = 0; l < LimbCount; ++l) SolveLimb(l, w);
         // 4) Look-at.
-        if (lookEnabled && lookWeight > 0.0f && bones[Head]) {
-            const Vec3 goal = lookTarget ? lookTarget->Position() : lookPosition;
-            if (spineBone && lookHeadShare < 1.0f) TurnToward(spineBone, bones[Head], goal, (1.0f - lookHeadShare) * lookWeight * w);
-            TurnToward(bones[Head], bones[Head], goal, lookHeadShare * lookWeight * w, true);
+        if (m_lookW > 0.0f && bones[Head]) {
+            const Vec3 goal = m_lookGoal;
+            if (spineBone && lookHeadShare < 1.0f) TurnToward(spineBone, bones[Head], goal, (1.0f - lookHeadShare) * m_lookW * w);
+            TurnToward(bones[Head], bones[Head], goal, lookHeadShare * m_lookW * w, true);
         }
-        m_hips.End(); m_spine.End(); m_head.End();
+        m_hips.End(); m_spine.End(); m_head.End(); m_lowSpine.End();
     }
 
     /// World goal of an effector (its target object, else its position).
@@ -246,8 +297,8 @@ private:
     void SolveLimb(int l, float w) {
         const Effector& e = effectors[l];
         Transform *a, *b, *c; LimbBones(l, a, b, c);
-        if (!e.enabled || !a || !b || !c) return;
-        const float pw = e.positionWeight * w;
+        if (m_effW[l] <= 0.0f || !a || !b || !c) return;
+        const float pw = m_effW[l] * w;
         if (pw > 0.0f) {
             const Vec3 root = a->Position(), oldMid = b->Position(), oldEnd = c->Position();
             const float up = (oldMid - root).Magnitude(), lo = (oldEnd - oldMid).Magnitude();
@@ -261,9 +312,13 @@ private:
                 Vec3 perp = pole - ax * Vec3::Dot(pole, ax);
                 if (perp.SqrMagnitude() < 1e-6f) pole = (l >= LeftFoot) ? Vec3{0, 0, 1} : Vec3{0, 0, -1};
             }
+            // Partial weight blends the GOAL (from where the animation put the hand),
+            // then solves exactly — blending joint positions would stretch the bones.
             Vec3 mid, end;
-            SolveTwoBoneIKSoft(root, up, lo, Goal(e), pole, softness * (up + lo), mid, end);
-            const Vec3 newMid = Vec3::Lerp(oldMid, mid, pw), newEnd = Vec3::Lerp(oldEnd, end, pw);
+            const float minBend = l >= LeftFoot ? legMinBend : armMinBend;
+            const Vec3 goal = pw >= 1.0f ? m_goal[l] : Vec3::Lerp(oldEnd, m_goal[l], pw);
+            SolveTwoBoneIKSoft(root, up, lo, goal, pole, softness * (up + lo), mid, end, std::max(0.0f, minBend), 180.0f);
+            const Vec3 newMid = mid, newEnd = end;
             // Rotate the bones (a skinned mesh follows), then pin positions for rigs
             // whose joints aren't children of each other.
             Vec3 o1 = oldMid - root, n1 = newMid - root;
@@ -276,8 +331,8 @@ private:
             if ((b->Position() - newMid).SqrMagnitude() > 1e-6f) b->SetPosition(newMid);
             if ((c->Position() - newEnd).SqrMagnitude() > 1e-6f) c->SetPosition(newEnd);
         }
-        if (e.target && e.rotationWeight > 0.0f)
-            c->SetRotation(Quat::Slerp(c->Rotation(), e.target->Rotation(), e.rotationWeight * w));
+        if (e.target && e.rotationWeight > 0.0f && e.positionWeight > 1e-4f)
+            c->SetRotation(Quat::Slerp(c->Rotation(), e.target->Rotation(), e.rotationWeight * w * std::min(1.0f, m_effW[l] / e.positionWeight)));
     }
     // Rotate `bone` so `aimFrom`'s forward turns toward `goal` by fraction t, clamped.
     void TurnToward(Transform* bone, Transform* aimFrom, const Vec3& goal, float t, bool clamp = false) {
@@ -306,8 +361,14 @@ private:
             if (same) { t->SetRotation(rb); t->SetPosition(pb); }
         }
     };
-    Snap m_hips, m_spine, m_head;
+    Snap m_hips, m_spine, m_head, m_lowSpine;
     IKFade m_fade;
+    float m_effW[LimbCount] = {};             ///< eased effector weights
+    Vec3  m_goal[LimbCount];                  ///< smoothed goals
+    bool  m_goalValid[LimbCount] = {};
+    float m_lookW = 0.0f;
+    Vec3  m_lookGoal{0, 0, 0};
+    bool  m_lookValid = false;
 };
 
 } // namespace okay

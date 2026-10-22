@@ -179,6 +179,22 @@ int main() {
         Tick(s2, 20);
         CHECK(m2sm->IKWeight() < 1e-4f && fik->stateWeight < 1e-4f);
         CHECK(a2->ConsumeAnimEvents().size() == 3);              // queued for anim_event() too
+        // History: start -> Idle -> Jump, with times.
+        CHECK(m2sm->History().size() == 2);
+        if (m2sm->History().size() == 2) {
+            CHECK(m2sm->History()[0].from.empty() && m2sm->History()[0].to == "Idle");
+            CHECK(m2sm->History()[1].from == "Idle" && m2sm->History()[1].to == "Jump");
+            CHECK(m2sm->History()[1].time > m2sm->History()[0].time);
+        }
+        // A muted transition never fires.
+        m2sm->GoTo("Idle", 0.0f);
+        m2sm->states[0].transitions[0].muted = true;
+        m2sm->SetTrigger("jump");
+        Tick(s2, 3);
+        CHECK(m2sm->Current() == "Idle");
+        m2sm->states[0].transitions[0].muted = false;
+        Tick(s2, 1);
+        CHECK(m2sm->Current() == "Jump");                          // the trigger was still set
         // Saved and loaded.
         Scene s3;
         CHECK(SceneSerializer::Deserialize(s3, SceneSerializer::Serialize(s2)));
@@ -186,6 +202,7 @@ int main() {
             if (auto* ld = mm->GetComponent<AnimStateMachine>()) {
                 CHECK(ld->states.size() == 2 && ld->states[0].enterEvent == "idle_in" && ld->states[0].exitEvent == "idle_out");
                 CHECK(ld->states[1].ikWeight == 0.0f && std::fabs(ld->states[0].transitions[0].offset - 0.5f) < 1e-5f);
+                CHECK(!ld->states[0].transitions[0].muted);
             }
     }
     TEST_MAIN_RESULT();

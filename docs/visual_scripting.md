@@ -242,3 +242,43 @@ Text (a Text object), Load Scene.
 
 **Animation & IK:** Anim Trigger, Anim Set Float, Anim Set Bool, Anim State
 (drive the Animator state machine), IK Look At and IK Hand Reach (Full Body IK).
+
+## Third wave of nodes
+
+**Flow:** For Loop (First/Last; the **Index** output reads the current index, then
+**Done** runs once), Repeat N, Flip-Flop (A/B alternate), Gate (passes while Open
+is true), Do N Times (with a Count output), Switch (int) with 0 / 1 / 2 / Default
+outputs. **Toggle Var** flips a bool variable.
+
+**Math & vectors:** Random Int (both ends included), Ceil, Fraction, One Minus,
+Clamp 0-1, Asin, Acos, Deg to Rad, Rad to Deg, Vec3 Cross, Vec3 Lerp, Vec3 Negate.
+
+**Transform (3D):** Forward / Right / Up Vector, Get Scale, Get Rotation (Euler
+degrees), Set Position (Vec3), Move By (Vec3), Rotate (3D), Set Rotation (3D).
+
+**Actions:** Set Color (R, G, B, A on the sprite, text or mesh), Play Clip (by
+name on the Character or imported model), Set Time Scale, Set Blend Shape (a
+morph target's weight on every mesh under the object) and the **Blend Shape**
+data node to read one back.
+
+**Input & engine:** Raycast 2D (origin, direction, max distance; outputs Hit),
+Mouse Wheel, Time Scale, Frame Count.
+
+**Multiplayer & Steam** (its own palette category): Host Game, Join Game
+(`host port` or `host:port`), Disconnect, Is Connected / Is Server / Is Client,
+Peer Count, My Net Id, Send Message, Set / Get Net Var, Send Chat, Call RPC, Net
+Spawn / Despawn, Set Ready, Start Match, Match Started, All Ready, Steam Name,
+Achievement Unlocked, Unlock Achievement, Get / Set Steam Stat, Store Stats,
+Submit Score.
+
+**Finding nodes:** right-click the canvas and start typing; the search box
+matches titles, type names and categories, and **Enter** adds the first match.
+
+**Typed values:** every unconnected input has an inline box, so a Print node
+can print text without wiring a Const. Graphs attach from the Inspector (Add
+Component ▸ Scripts lists `.okayvs` files and **New Visual Script**), by dragging a
+`.okayvs` onto an object, or with **Attach to Selected** in the node editor.
+
+**As C#:** *View as OkayScript* shows the graph as a C#-style component class
+(`void Start()`, `void Update()`, `void OnCollisionEnter(Collision other)` ...)
+that you can copy or save as a `.okay` script.

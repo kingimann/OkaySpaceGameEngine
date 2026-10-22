@@ -7,6 +7,7 @@
 #include "okay/Physics/Collider3D.hpp"
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 namespace okay {
 
@@ -25,6 +26,16 @@ public:
     vs::NodeGraph* Graph() const { return m_graph.get(); }
     /// The last OkayVS text loaded (retained for editing and serialization).
     const std::string& Source() const { return m_source; }
+    /// The .okayvs file this graph came from ("" = embedded text only). Saving
+    /// the graph in the editor reloads every object that uses the file.
+    const std::string& Path() const { return m_path; }
+    void SetPath(const std::string& p) { m_path = p; }
+    /// Re-read the file (keeps variables). False if there's no file or it doesn't parse.
+    bool Reload(std::string* error = nullptr);
+    /// The last load error ("" = the graph loaded fine).
+    const std::string& LastError() const { return m_error; }
+    /// The graph's blackboard (live values in Play mode).
+    const std::unordered_map<std::string, vs::VsValue>& Variables() const { return m_ctx.variables; }
     /// Read back a blackboard variable (handy for tests/gameplay glue).
     vs::VsValue GetVariable(const std::string& name) const;
 
@@ -58,6 +69,8 @@ private:
     std::unique_ptr<vs::NodeGraph> m_graph;
     vs::VsContext m_ctx;
     std::string m_source;
+    std::string m_path;
+    std::string m_error;
 };
 
 } // namespace okay

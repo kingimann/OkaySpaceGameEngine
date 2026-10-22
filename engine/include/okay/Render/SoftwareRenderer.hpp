@@ -7,6 +7,8 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Render/Culling.hpp"
+#include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
 #include "okay/Core/Time.hpp"
@@ -1502,9 +1504,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Pre-warm the texture / mip caches single-threaded: the lazy caches insert
     // into shared unordered_maps, which is not safe to do from the worker threads
     // below. After this, the parallel band render only READS them.
+    // Frustum culling is decided here too (its bounds cache isn't thread-safe);
+    // the bands only read the result.
+    const Frustum viewFrustum = Frustum::FromVP(vp);
+    std::unordered_set<const GameObject*> swCulled;
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr) continue;
+        if (CulledByFrustum(viewFrustum, go.get(), mr)) { swCulled.insert(go.get()); continue; }
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
         if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
@@ -1564,24 +1571,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                         nrmX.z * n.x + nrmY.z * n.y + nrmZ.z * n.z};
         };
 
-        // --- Per-mesh frustum cull: project the 8 AABB corners to clip space and
-        // skip the whole mesh when every corner is outside one frustum plane
-        // (all behind the near plane, or all off one screen edge). A cheap test
-        // that drops off-screen meshes before any per-triangle work. ---
-        {
-            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
-            int outL = 0, outR = 0, outB = 0, outT = 0, outN = 0;
-            for (int c = 0; c < 8; ++c) {
-                Vec3 corner{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
-                Vec4 cp = vp * Vec4{model.MultiplyPoint(corner), 1.0f};
-                if (cp.w <= 1e-4f) { ++outN; continue; }
-                if (cp.x < -cp.w) ++outL;
-                if (cp.x >  cp.w) ++outR;
-                if (cp.y < -cp.w) ++outB;
-                if (cp.y >  cp.w) ++outT;
-            }
-            if (outN == 8 || outL == 8 || outR == 8 || outB == 8 || outT == 8) continue;
-        }
+        // --- Per-mesh frustum cull: drop off-screen meshes before any
+        // per-triangle work. ---
+        // (A bounding sphere from bounds cached per mesh — recomputing the box of
+        // every mesh every frame cost a full pass over its vertices.)
+        if (swCulled.count(go.get())) continue;
         // Inverted-hull outline pre-pass: draw an expanded shell of BACK faces in a
         // flat outline color behind the mesh, so only a clean silhouette edge survives
         // the main pass. A cosmetic pass — triangles crossing the near plane are

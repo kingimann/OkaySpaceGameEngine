@@ -75,6 +75,9 @@ public:
     /// (e.g. "on_trigger", "on_collision"). Default: no-op, so backends that
     /// don't implement events still compile.
     virtual void CallEvent(const std::string& /*function*/) {}
+    /// Same, passing one argument when the handler declares a parameter — e.g. the
+    /// other object's name to OnTriggerEnter(Collider other). Default: drops it.
+    virtual void CallEventWith(const std::string& function, const vs::VsValue& /*arg*/) { CallEvent(function); }
 
     /// Read back a global the script defined (for tests and gameplay glue).
     virtual vs::VsValue GetGlobal(const std::string& name) const = 0;

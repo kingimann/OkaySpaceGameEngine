@@ -44,6 +44,21 @@ public:
     struct DataLink { int node = -1; int pin = 0; };
     std::vector<DataLink> dataIn;   // [inputPin] -> producer
     std::vector<int>      execOut;  // [execOutPin] -> next node id (-1 = none)
+    /// Values typed into unconnected data inputs (the editor's inline boxes):
+    /// used when nothing is wired into that pin.
+    std::vector<VsValue>  inDefault;
+    std::vector<char>     hasDefault;
+    void SetDefault(int inPin, const VsValue& v) {
+        if (inPin < 0) return;
+        if (inPin >= (int)inDefault.size()) { inDefault.resize(inPin + 1); hasDefault.resize(inPin + 1, 0); }
+        inDefault[inPin] = v; hasDefault[inPin] = 1;
+    }
+
+    /// True when something feeds data input `inPin` (a wire or a typed value).
+    bool HasInput(int inPin) const {
+        if (inPin >= 0 && inPin < (int)dataIn.size() && dataIn[inPin].node >= 0) return true;
+        return inPin >= 0 && inPin < (int)hasDefault.size() && hasDefault[inPin];
+    }
 
 protected:
     /// Pull the value wired into data input pin `inPin` (or a default).

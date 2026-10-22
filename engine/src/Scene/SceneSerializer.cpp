@@ -501,6 +501,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& tr : asm2->anyState) out << " " << tr.offset;
             out << "\n";
         }
+        // Muted transitions.
+        bool anyMute = false;
+        for (const auto& st : asm2->states) for (const auto& tr : st.transitions) anyMute = anyMute || tr.muted;
+        for (const auto& tr : asm2->anyState) anyMute = anyMute || tr.muted;
+        if (anyMute) {
+            out << "  animsmmute " << asm2->states.size();
+            for (const auto& st : asm2->states) {
+                out << " " << st.transitions.size();
+                for (const auto& tr : st.transitions) out << " " << (tr.muted ? 1 : 0);
+            }
+            out << " " << asm2->anyState.size();
+            for (const auto& tr : asm2->anyState) out << " " << (tr.muted ? 1 : 0);
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -773,6 +787,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << (e.enabled ? 1 : 0) << " " << Quote(e.targetName) << " " << e.position.x << " " << e.position.y
                 << " " << e.position.z << " " << e.positionWeight << " " << e.rotationWeight << " " << Quote(e.hintName) << " " << e.pull;
         out << "\n";
+        // Easing, smoothing and joint limits (separate record: older builds skip it).
+        out << "  fbikx " << fb->blendSpeed << " " << fb->goalSmoothing << " " << fb->lookSmoothing
+            << " " << fb->armMinBend << " " << fb->legMinBend << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
         out << "  rootmotion " << Quote(rm->rootNodeName) << " " << rm->mode
@@ -816,6 +833,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
+        if (!vsc->Path().empty()) out << "  visualscriptpath " << Quote(vsc->Path()) << "\n";
     }
     for (auto* al : go->GetComponents<ActionList>()) {
         out << "  actions " << Quote(al->ToText()) << "\n";
@@ -2391,6 +2409,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             }
                         }
                     }
+                } else if (field == "animsmmute") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        long nt = 0; in >> nt;
+                        for (long k = 0; k < nt && in; ++k) {
+                            int m = 0; in >> m;
+                            if (i < (long)sm2->states.size() && k < (long)sm2->states[i].transitions.size()) sm2->states[i].transitions[k].muted = m != 0;
+                        }
+                    }
+                    long na = 0; in >> na;
+                    for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
                 } else if (field == "animsmev") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -2693,6 +2723,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         e.hintName = ReadQuoted(in);
                         in >> e.pull;
                     }
+                } else if (field == "fbikx") {
+                    if (auto* fb = go->GetComponent<FullBodyIK>())
+                        in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
                 } else if (field == "ikx") {
                     std::string kind; int act = 1; float fade = 0.0f;
                     in >> kind >> act >> fade;
@@ -2789,6 +2822,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     std::string src = ReadQuoted(in);
                     auto* vsc = go->AddComponent<VisualScriptComponent>();
                     vsc->LoadFromText(src);
+                } else if (field == "visualscriptpath") {
+                    // Prefer the file (it may have been edited since the scene was saved).
+                    std::string p = ReadQuoted(in);
+                    if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
+                        vsc->SetPath(p);
+                        std::ifstream probe(p);
+                        if (probe) vsc->Reload();
+                    }
                 } else if (field == "actions") {
                     go->AddComponent<ActionList>()->FromText(ReadQuoted(in));
                 } else if (field == "charctrl2d") {

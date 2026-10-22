@@ -29,6 +29,7 @@ public:
     void CallStart() override;
     void CallUpdate(float deltaTime) override;
     void CallEvent(const std::string& function) override;
+    void CallEventWith(const std::string& function, const vs::VsValue& arg) override;
     vs::VsValue GetGlobal(const std::string& name) const override;
     void SetGlobal(const std::string& name, const vs::VsValue& v) override;
 

@@ -569,3 +569,46 @@ A 60-bone mocap clip costs about 0.015 ms per frame to pose. The Khronos Fox
 (24 bones, 1,728 vertices) animates and CPU-skins in about 0.06 ms per frame. A
 stress scene with 20 animated Foxes and 60 physics cubes went from 1.66 ms to
 about 0.65 ms per frame.
+
+### GPU skinning and frustum culling
+
+- Skinned meshes deform on the GPU in the OpenGL editor viewport and in the
+  player (OpenGL and Direct3D 11). The bone limit comes from the GPU's uniform
+  space (up to 256 bones per mesh); bigger rigs fall back to CPU skinning. The
+  Stats panel shows `skinning: GPU` or `CPU`.
+- Every renderer skips objects outside the camera (and outside the shadow
+  light's view for shadows) before any draw call. Skinned meshes are tested
+  around their bones, so animated characters don't pop at the screen edges. The
+  Stats panel shows **Drawn** / **Culled** counts and a **Frustum culling**
+  checkbox for debugging.
+- In a 400-object test scene with the camera looking at a quarter of it, about
+  74% of objects were culled and the frame time dropped by about a third.
+
+## IK: smoothing and limits
+
+- **Full Body IK** blends effectors in and out instead of snapping: *Blend Speed*
+  (default 8 per second; 0 = instant), *Goal Smoothing* (follows a moving target
+  without jitter), and look-at *Smoothing*. The inspector shows each effector's
+  live weight and whether it **reached** its target (`ik_reached("left")` in
+  scripts).
+- **Joint limits:** *Elbow / Knee Min Bend* keep arms and legs from locking
+  straight or folding backwards.
+- Reach is spread over the lower spine and chest, so leaning for a far target
+  looks natural.
+- A partial weight blends the *goal* rather than the final pose, so limbs keep
+  their length at any weight.
+- **Set up humanoid IK** also creates a *Look IK Target*.
+- State machine states have an **IK Weight**, so IK can fade out during a roll or
+  a climb and back in afterwards.
+
+## State machine: events, mute, history
+
+- States have **Enter / Exit events** (sent like clip events, so `OnAnimEvent`
+  nodes and script handlers receive them).
+- Transitions have an **Offset** (start the next clip part-way through) and a
+  **Mute** checkbox (muted transitions are dimmed and never fire). Outgoing
+  transitions are listed in priority order with up/down buttons.
+- In Play mode the graph flashes the transition that just fired and lists the
+  **recent state changes** with times.
+- **Thresholds from clip speed** sets a 1D blend tree's thresholds from how fast
+  each clip's root actually moves.

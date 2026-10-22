@@ -323,7 +323,7 @@ struct SetVarNode : VsNode {
 struct PrintNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        Log::Info("[vs] ", In(0, g, ctx).AsString());
+        Log::Info(In(0, g, ctx).AsString());   // exactly what was typed / wired in
         return 0;
     }
 };
@@ -333,7 +333,7 @@ struct TranslateNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (ctx.transform)
             ctx.transform->Translate({In(0, g, ctx).AsFloat(),
-                                      In(1, g, ctx).AsFloat(), 0.0f});
+                                      In(1, g, ctx).AsFloat(), In(2, g, ctx).AsFloat()});
         return 0;
     }
 };
@@ -343,7 +343,8 @@ struct SetPositionNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (ctx.transform)
             ctx.transform->localPosition = {In(0, g, ctx).AsFloat(),
-                                            In(1, g, ctx).AsFloat(), 0.0f};
+                                            In(1, g, ctx).AsFloat(),
+                                            HasInput(2) ? In(2, g, ctx).AsFloat() : ctx.transform->localPosition.z};
         return 0;
     }
 };
@@ -504,10 +505,17 @@ struct SpawnPrefabNode : VsNode {
     std::string path;
     explicit SpawnPrefabNode(std::string p) : path(std::move(p)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
+    // Spawns at X/Y/Z when any of them is given (wired or typed), else where this object is.
+    int Exec(NodeGraph& gr, VsContext& ctx) override {
         if (ctx.gameObject && ctx.gameObject->scene()) {
             GameObject* g = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), path);
-            if (g && g->transform && ctx.transform) g->transform->localPosition = ctx.transform->localPosition;
+            if (g && g->transform) {
+                Vec3 at = ctx.transform ? ctx.transform->Position() : Vec3{0, 0, 0};
+                if (HasInput(0)) at.x = In(0, gr, ctx).AsFloat();
+                if (HasInput(1)) at.y = In(1, gr, ctx).AsFloat();
+                if (HasInput(2)) at.z = In(2, gr, ctx).AsFloat();
+                g->transform->SetPosition(at);
+            }
         }
         return 0;
     }

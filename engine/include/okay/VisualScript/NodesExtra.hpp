@@ -11,6 +11,11 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/Character.hpp"
+#include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
 #include <cmath>
 #include <cstdio>
@@ -288,6 +293,192 @@ struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = we
                 e.positionWeight = In(1, g, ctx, VsValue{1.0f}).AsFloat(); e.enabled = e.positionWeight > 0.0f;
             }
         return 0;
+    }
+};
+
+// ---- Third wave: loops, switch, gate, 3D transform, colour, clips, shapes ----
+// Run "Body" once per index from First to Last (inclusive; counts down when
+// Last < First), then "Done". The Index output reads the current index.
+struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
+    int index = 0;
+    int ExecOutCount() const override { return 2; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)index; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const int first = (int)std::lround(In(0, g, ctx, VsValue{0.0f}).AsFloat());
+        const int last  = (int)std::lround(In(1, g, ctx, VsValue{9.0f}).AsFloat());
+        const int step = last >= first ? 1 : -1;
+        const int body = Next(0);
+        int guard = 0;
+        for (index = first; body >= 0 && guard < 100000; index += step, ++guard) {
+            g.Run(body, ctx);
+            if (index == last) break;
+        }
+        return 1;
+    }
+};
+// Only lets the flow through while Open is true.
+struct GateNode : VsNode {   // in0 = open
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { return In(0, g, ctx, VsValue{true}).AsBool() ? 0 : -1; }
+};
+// Passes the first N times only; Count reads how many times it has passed.
+struct DoNNode : VsNode {
+    int n, count = 0;
+    explicit DoNNode(int c) : n(c < 0 ? 0 : c) {}
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)count; }
+    int Exec(NodeGraph&, VsContext&) override { if (count >= n) return -1; ++count; return 0; }
+};
+// Pick an exec output by a whole number: 0, 1, 2, or Default for anything else.
+struct SwitchIntNode : VsNode {   // in0 = value
+    int ExecOutCount() const override { return 4; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const int v = (int)std::lround(In(0, g, ctx).AsFloat());
+        return (v >= 0 && v <= 2) ? v : 3;
+    }
+};
+// Integer in [min, max], both ends included.
+struct RandomIntNode : VsNode {   // in0 = min, in1 = max
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        int lo = (int)std::lround(In(0, g, ctx, VsValue{0.0f}).AsFloat());
+        int hi = (int)std::lround(In(1, g, ctx, VsValue{10.0f}).AsFloat());
+        if (hi < lo) std::swap(lo, hi);
+        int v = lo + (int)std::floor(VsRandom01() * (float)(hi - lo + 1));
+        return (float)(v > hi ? hi : v);
+    }
+};
+struct MathFn3Node : VsNode {   // one-input math: in0 -> out
+    enum class Op { Ceil, Asin, Acos, Deg2Rad, Rad2Deg, Frac, OneMinus, Saturate } op;
+    explicit MathFn3Node(Op o) : op(o) {}
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        const float x = In(0, g, ctx).AsFloat();
+        auto c1 = [](float v) { return v < -1.0f ? -1.0f : (v > 1.0f ? 1.0f : v); };
+        switch (op) {
+            case Op::Ceil:     return std::ceil(x);
+            case Op::Asin:     return std::asin(c1(x));
+            case Op::Acos:     return std::acos(c1(x));
+            case Op::Deg2Rad:  return x * 0.017453292519943295f;
+            case Op::Rad2Deg:  return x * 57.29577951308232f;
+            case Op::Frac:     return x - std::floor(x);
+            case Op::OneMinus: return 1.0f - x;
+            case Op::Saturate: return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
+        }
+        return x;
+    }
+};
+struct Vec3MoreNode : VsNode {
+    enum class Op { Cross, Lerp, Negate, Up, Forward, Right } op;
+    explicit Vec3MoreNode(Op o) : op(o) {}
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        switch (op) {
+            case Op::Cross:  return Vec3::Cross(In(0, g, ctx).AsVec3(), In(1, g, ctx).AsVec3());
+            case Op::Lerp: {
+                Vec3 a = In(0, g, ctx).AsVec3(), b = In(1, g, ctx).AsVec3();
+                return a + (b - a) * In(2, g, ctx, VsValue{0.5f}).AsFloat();
+            }
+            case Op::Negate: return In(0, g, ctx).AsVec3() * -1.0f;
+            case Op::Up:      return ctx.transform ? ctx.transform->Up()      : Vec3::Up;
+            case Op::Forward: return ctx.transform ? ctx.transform->Forward() : Vec3::Forward;
+            case Op::Right:   return ctx.transform ? ctx.transform->Right()   : Vec3::Right;
+        }
+        return Vec3::Zero;
+    }
+};
+struct TransformReadNode : VsNode {   // this object's scale / rotation (Euler degrees)
+    bool rotation;
+    explicit TransformReadNode(bool r) : rotation(r) {}
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        if (!ctx.transform) return rotation ? Vec3::Zero : Vec3{1, 1, 1};
+        return rotation ? ctx.transform->localRotation.ToEuler() : ctx.transform->localScale;
+    }
+};
+// 3D transform actions with one Vec3 input (or X/Y/Z).
+struct Transform3Node : VsNode {
+    enum class Op { SetPosition, MoveBy, Rotate, SetRotation } op;
+    explicit Transform3Node(Op o) : op(o) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (!ctx.transform) return 0;
+        Vec3 v;
+        if (op == Op::SetPosition || op == Op::MoveBy) v = In(0, g, ctx).AsVec3();
+        else v = {In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat(), In(2, g, ctx).AsFloat()};
+        switch (op) {
+            case Op::SetPosition: ctx.transform->localPosition = v; break;
+            case Op::MoveBy:      ctx.transform->localPosition = ctx.transform->localPosition + v; break;
+            case Op::Rotate:      ctx.transform->Rotate(v); break;
+            case Op::SetRotation: ctx.transform->localRotation = Quat::Euler(v); break;
+        }
+        return 0;
+    }
+};
+// Tint this object's sprite / text / mesh (R, G, B, A in 0..1; blank = 1).
+struct SetColorNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (!ctx.gameObject) return 0;
+        const Color c{In(0, g, ctx, VsValue{1.0f}).AsFloat(), In(1, g, ctx, VsValue{1.0f}).AsFloat(),
+                      In(2, g, ctx, VsValue{1.0f}).AsFloat(), In(3, g, ctx, VsValue{1.0f}).AsFloat()};
+        if (auto* sr = ctx.gameObject->GetComponent<SpriteRenderer>()) sr->color = c;
+        if (auto* tr = ctx.gameObject->GetComponent<TextRenderer>()) tr->color = c;
+        if (auto* mr = ctx.gameObject->GetComponent<MeshRenderer>()) mr->color = c;
+        return 0;
+    }
+};
+// Play a clip by name on this object's Character, or the imported model's
+// ModelAnimator (this object or a parent).
+struct PlayClipNode : VsNode {
+    std::string clip;
+    explicit PlayClipNode(std::string c) : clip(std::move(c)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (!ctx.gameObject || clip.empty()) return 0;
+        if (auto* c = ctx.gameObject->GetComponent<Character>(); c && c->PlayClip(clip)) return 0;
+        for (Transform* t = ctx.transform; t; t = t->Parent())
+            if (t->gameObject)
+                if (auto* m = t->gameObject->GetComponent<ModelAnimator>()) { m->Play(clip); break; }
+        return 0;
+    }
+};
+struct SetTimeScaleNode : VsNode {   // in0 = scale (1 = normal, 0 = paused)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        float s = In(0, g, ctx, VsValue{1.0f}).AsFloat();
+        Time::SetTimeScale(s < 0.0f ? 0.0f : s);
+        return 0;
+    }
+};
+// Blend shape (morph target) weight on every mesh under this object.
+struct BlendShapeNode : VsNode {   // arg = shape name; in0 = weight (exec) / out = weight (data)
+    std::string shape; bool set;
+    BlendShapeNode(std::string s, bool st) : shape(std::move(s)), set(st) {}
+    int ExecOutCount() const override { return set ? 1 : 0; }
+    template <class F> void Each(VsContext& ctx, F fn) {
+        if (!ctx.gameObject || !ctx.gameObject->scene()) return;
+        for (const auto& up : ctx.gameObject->scene()->Objects())
+            if (up && up->IsSelfOrDescendantOf(ctx.gameObject))
+                if (auto* bs = up->GetComponent<BlendShapes>()) fn(bs);
+    }
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        float w = 0.0f;
+        Each(ctx, [&](BlendShapes* bs) { if (bs->Find(shape) >= 0) w = bs->Weight(shape); });
+        return w;
+    }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const float w = In(0, g, ctx, VsValue{1.0f}).AsFloat();
+        Each(ctx, [&](BlendShapes* bs) { bs->SetWeight(shape, w); });
+        return 0;
+    }
+};
+struct EngineReadNode : VsNode {   // frame-level values
+    enum class Op { MouseWheel, TimeScale, FrameCount } op;
+    explicit EngineReadNode(Op o) : op(o) {}
+    VsValue Eval(int, NodeGraph&, VsContext&) override {
+        switch (op) {
+            case Op::MouseWheel: return Input::MouseWheel();
+            case Op::TimeScale:  return Time::TimeScale();
+            case Op::FrameCount: return (float)Time::FrameCount();
+        }
+        return 0.0f;
     }
 };
 

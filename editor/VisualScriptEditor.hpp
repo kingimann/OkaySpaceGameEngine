@@ -8,9 +8,11 @@
 #include "EditorState.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
@@ -21,7 +23,7 @@
 namespace okay::editor::vsed {
 
 // ---- Node registry: describes each node type the editor can place ----------
-enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_COUNT };
+enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_NET, CAT_COUNT };
 
 inline ImU32 CatColor(int cat) {
     switch (cat) {
@@ -33,6 +35,7 @@ inline ImU32 CatColor(int cat) {
         case CAT_INPUT:  return IM_COL32(104, 96, 72, 255);
         case CAT_XFORM:  return IM_COL32(78, 104, 104, 255);
         case CAT_ACTION: return IM_COL32(108, 88, 72, 255);
+        case CAT_NET:    return IM_COL32(72, 92, 120, 255);
         default:         return IM_COL32(88, 88, 96, 255);
     }
 }
@@ -93,7 +96,7 @@ inline const std::vector<VsDef>& Registry() {
         // Actions
         {"Print",     "Print",     CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
         {"PlaySound", "Play Sound",CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
-        {"Spawn",     "Spawn",     CAT_ACTION, true, {""}, {"X","Y"}, {}, 1, "prefab"},
+        {"Spawn",     "Spawn",     CAT_ACTION, true, {""}, {"X","Y","Z"}, {}, 1, "prefab"},
         {"Destroy",   "Destroy",   CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         // --- More math (data) ---
         {"Mod",   "Mod (%)",  CAT_MATH, false, {}, {"A","B"}, {"Out"}, 0, nullptr},
@@ -205,6 +208,75 @@ inline const std::vector<VsDef>& Registry() {
         {"AnimState",    "Anim State",     CAT_DATA, false, {}, {}, {"State"}, 0, nullptr},
         {"IkLook",       "IK Look At",     CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 0, nullptr},
         {"IkHand",       "IK Hand Reach",  CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 1, "left / right"},
+        // --- Flow: loops, gates, switches ---
+        {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
+        {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
+        {"FlipFlop",  "Flip-Flop",     CAT_FLOW, true, {"A","B"}, {}, {}, 0, nullptr},
+        {"Gate",      "Gate",          CAT_FLOW, true, {""}, {"Open"}, {}, 0, nullptr},
+        {"DoN",       "Do N Times",    CAT_FLOW, true, {""}, {}, {"Count"}, 1, "N"},
+        {"SwitchInt", "Switch (int)",  CAT_FLOW, true, {"0","1","2","Default"}, {"Value"}, {}, 0, nullptr},
+        {"Toggle",    "Toggle Var",    CAT_VAR,  true, {""}, {}, {}, 1, "name"},
+        // --- Math ---
+        {"RandomInt", "Random Int",    CAT_MATH, false, {}, {"Min","Max"}, {"Out"}, 0, nullptr},
+        {"Ceil",      "Ceil",          CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Frac",      "Fraction",      CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"OneMinus",  "One Minus",     CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Saturate",  "Clamp 0-1",     CAT_MATH, false, {}, {"In"}, {"Out"}, 0, nullptr},
+        {"Asin",      "Asin",          CAT_MATH, false, {}, {"In"}, {"Rad"}, 0, nullptr},
+        {"Acos",      "Acos",          CAT_MATH, false, {}, {"In"}, {"Rad"}, 0, nullptr},
+        {"Deg2Rad",   "Deg to Rad",    CAT_MATH, false, {}, {"Deg"}, {"Rad"}, 0, nullptr},
+        {"Rad2Deg",   "Rad to Deg",    CAT_MATH, false, {}, {"Rad"}, {"Deg"}, 0, nullptr},
+        {"Vec3Cross", "Vec3 Cross",    CAT_MATH, false, {}, {"A","B"}, {"Vec3"}, 0, nullptr},
+        {"Vec3Lerp",  "Vec3 Lerp",     CAT_MATH, false, {}, {"A","B","T"}, {"Vec3"}, 0, nullptr},
+        {"Vec3Negate","Vec3 Negate",   CAT_MATH, false, {}, {"Vec"}, {"Vec3"}, 0, nullptr},
+        // --- Transform (3D) ---
+        {"ForwardVector", "Forward Vector", CAT_XFORM, false, {}, {}, {"Vec3"}, 0, nullptr},
+        {"RightVector",   "Right Vector",   CAT_XFORM, false, {}, {}, {"Vec3"}, 0, nullptr},
+        {"UpVector",      "Up Vector",      CAT_XFORM, false, {}, {}, {"Vec3"}, 0, nullptr},
+        {"GetScale",      "Get Scale",      CAT_XFORM, false, {}, {}, {"Scale"}, 0, nullptr},
+        {"GetRotation",   "Get Rotation",   CAT_XFORM, false, {}, {}, {"Euler"}, 0, nullptr},
+        {"SetPositionVec","Set Position (Vec3)", CAT_XFORM, true, {""}, {"Pos"}, {}, 0, nullptr},
+        {"MoveBy",        "Move By (Vec3)", CAT_XFORM, true, {""}, {"Offset"}, {}, 0, nullptr},
+        {"Rotate3",       "Rotate (3D)",    CAT_XFORM, true, {""}, {"X","Y","Z"}, {}, 0, nullptr},
+        {"SetRotation3",  "Set Rotation (3D)", CAT_XFORM, true, {""}, {"X","Y","Z"}, {}, 0, nullptr},
+        // --- Actions ---
+        {"SetColor",      "Set Color",      CAT_ACTION, true, {""}, {"R","G","B","A"}, {}, 0, nullptr},
+        {"PlayClip",      "Play Clip",      CAT_ACTION, true, {""}, {}, {}, 1, "clip name"},
+        {"SetTimeScale",  "Set Time Scale", CAT_ACTION, true, {""}, {"Scale"}, {}, 0, nullptr},
+        {"SetBlendShape", "Set Blend Shape",CAT_ACTION, true, {""}, {"Weight"}, {}, 1, "shape name"},
+        {"GetBlendShape", "Blend Shape",    CAT_DATA,  false, {}, {}, {"Weight"}, 1, "shape name"},
+        // --- Input / engine ---
+        {"Raycast",    "Raycast 2D",   CAT_INPUT, false, {}, {"Origin X","Origin Y","Dir X","Dir Y","Max Dist"}, {"Hit"}, 0, nullptr},
+        {"MouseWheel", "Mouse Wheel",  CAT_INPUT, false, {}, {}, {"Delta"}, 0, nullptr},
+        {"TimeScale",  "Time Scale",   CAT_INPUT, false, {}, {}, {"Scale"}, 0, nullptr},
+        {"FrameCount", "Frame Count",  CAT_INPUT, false, {}, {}, {"Frame"}, 0, nullptr},
+        // --- Multiplayer ---
+        {"NetHost",        "Host Game",      CAT_NET, true, {""}, {}, {}, 1, "port (45000)"},
+        {"NetJoin",        "Join Game",      CAT_NET, true, {""}, {}, {}, 1, "host [port]"},
+        {"NetDisconnect",  "Disconnect",     CAT_NET, true, {""}, {}, {}, 0, nullptr},
+        {"NetConnected",   "Is Connected",   CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetIsServer",    "Is Server",      CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetIsClient",    "Is Client",      CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetPeers",       "Peer Count",     CAT_NET, false, {}, {}, {"Count"}, 0, nullptr},
+        {"NetId",          "My Net Id",      CAT_NET, false, {}, {}, {"Id"}, 0, nullptr},
+        {"NetSend",        "Send Message",   CAT_NET, true, {""}, {"Data"}, {}, 1, "channel"},
+        {"NetSetVar",      "Set Net Var",    CAT_NET, true, {""}, {"Value"}, {}, 1, "name"},
+        {"NetGetVar",      "Get Net Var",    CAT_NET, false, {}, {}, {"Value"}, 1, "name"},
+        {"NetChat",        "Send Chat",      CAT_NET, true, {""}, {"Text"}, {}, 0, nullptr},
+        {"NetRpc",         "Call RPC",       CAT_NET, true, {""}, {"Data"}, {}, 1, "rpc name"},
+        {"NetSpawnOwned",  "Net Spawn",      CAT_NET, true, {""}, {}, {}, 1, "prefab"},
+        {"NetDespawn",     "Net Despawn",    CAT_NET, true, {""}, {"Net Id"}, {}, 0, nullptr},
+        {"NetReady",       "Set Ready",      CAT_NET, true, {""}, {"Ready"}, {}, 0, nullptr},
+        {"NetStartMatch",  "Start Match",    CAT_NET, true, {""}, {}, {}, 0, nullptr},
+        {"NetMatchStarted","Match Started",  CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetAllReady",    "All Ready",      CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"SteamName",      "Steam Name",     CAT_NET, false, {}, {}, {"Name"}, 0, nullptr},
+        {"SteamIsUnlocked","Achievement Unlocked", CAT_NET, false, {}, {}, {"Bool"}, 1, "achievement id"},
+        {"SteamUnlock",    "Unlock Achievement",   CAT_NET, true, {""}, {}, {}, 1, "achievement id"},
+        {"SteamGetStat",   "Get Steam Stat", CAT_NET, false, {}, {}, {"Value"}, 1, "stat"},
+        {"SteamSetStat",   "Set Steam Stat", CAT_NET, true, {""}, {"Value"}, {}, 1, "stat"},
+        {"SteamStore",     "Store Stats",    CAT_NET, true, {""}, {}, {}, 0, nullptr},
+        {"SteamLeaderboard","Submit Score",  CAT_NET, true, {""}, {"Score"}, {}, 1, "leaderboard"},
     };
     return defs;
 }
@@ -215,7 +287,26 @@ inline const VsDef* FindDef(const std::string& type) {
 }
 
 // ---- Editable graph model --------------------------------------------------
-struct VsEditNode { int id; std::string type; std::string arg; float x = 0, y = 0; };
+struct VsEditNode {
+    int id; std::string type; std::string arg; float x = 0, y = 0;
+    /// Values typed into unconnected data inputs (pin -> text as typed).
+    std::map<int, std::string> pinDefault;
+};
+
+// A typed value as it goes into the file / OkayScript: numbers and true/false
+// as-is, anything else as a "quoted string".
+inline bool VsIsNumberOrBool(const std::string& v) {
+    if (v == "true" || v == "false") return true;
+    if (v.empty()) return false;
+    char* end = nullptr;
+    std::strtod(v.c_str(), &end);
+    return end && *end == '\0';
+}
+inline std::string VsQuoted(std::string v) {
+    for (char& c : v) if (c == '"') c = '\'';   // the file format has no escapes
+    return "\"" + v + "\"";
+}
+inline std::string VsLiteral(const std::string& v) { return VsIsNumberOrBool(v) ? v : VsQuoted(v); }
 struct VsExecLink { int from, pin, to; };
 struct VsDataLink { int consumer, inPin, producer, outPin; };
 
@@ -261,8 +352,10 @@ struct VsEditGraph {
         o << "# OkayVS graph (edited in the Visual Script editor)\n";
         for (const auto& n : nodes) {
             o << "node " << n.id << ' ' << n.type;
-            if (!n.arg.empty()) o << ' ' << n.arg;
+            if (!n.arg.empty()) o << ' ' << (n.arg.find(' ') != std::string::npos ? VsQuoted(n.arg) : n.arg);
             o << "\n";
+            for (const auto& kv : n.pinDefault)
+                if (!kv.second.empty()) o << "default " << n.id << ' ' << kv.first << ' ' << VsLiteral(kv.second) << "\n";
             o << "pos " << n.id << ' ' << (int)n.x << ' ' << (int)n.y << "\n";
             if (n.type == "OnStart")  o << "entry OnStart "  << n.id << "\n";
             if (n.type == "OnUpdate") o << "entry OnUpdate " << n.id << "\n";
@@ -292,9 +385,21 @@ struct VsEditGraph {
         while (std::getline(f, line)) {
             if (auto h = line.find('#'); h != std::string::npos) line.erase(h);
             std::istringstream ls(line); std::string kind; ls >> kind;
+            auto restOf = [&](std::istringstream& is) {   // the rest of the line, unquoted
+                std::string r; std::getline(is, r);
+                std::size_t a = r.find_first_not_of(" \t"); if (a == std::string::npos) return std::string();
+                r = r.substr(a);
+                while (!r.empty() && (r.back() == ' ' || r.back() == '\t' || r.back() == '\r')) r.pop_back();
+                if (r.size() >= 2 && r.front() == '"' && r.back() == '"') r = r.substr(1, r.size() - 2);
+                return r;
+            };
             if (kind == "node") {
-                VsEditNode n; ls >> n.id >> n.type; std::string a; if (ls >> a) n.arg = a;
+                VsEditNode n; ls >> n.id >> n.type; n.arg = restOf(ls);
                 nodes.push_back(n); maxId = std::max(maxId, n.id);
+            } else if (kind == "default") {
+                int id = 0, pin = 0; ls >> id >> pin;
+                std::string v = restOf(ls);
+                if (auto* n = find(id)) n->pinDefault[pin] = v;
             } else if (kind == "pos") {
                 int id; float x, y; ls >> id >> x >> y;
                 if (auto* n = find(id)) { n->x = x; n->y = y; }
@@ -324,10 +429,15 @@ inline int VsExecTarget(const VsEditGraph& g, int fromNode, int pin) {
     return -1;
 }
 inline std::string VsDataExpr(const VsEditGraph& g, int nodeId);
+inline const VsEditNode* VsFind(const VsEditGraph& g, int id);
 inline std::string VsInput(const VsEditGraph& g, int consumer, int inPin, const char* dflt = "0") {
     for (const auto& l : g.dataLinks)
         if (l.consumer == consumer && l.inPin == inPin)
             return VsDataExpr(g, l.producer);
+    if (const VsEditNode* n = VsFind(g, consumer)) {
+        auto it = n->pinDefault.find(inPin);
+        if (it != n->pinDefault.end() && !it->second.empty()) return VsLiteral(it->second);
+    }
     return dflt;
 }
 inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
@@ -383,7 +493,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
     if (t == "MouseX")     return "mouse_x()";
     if (t == "MouseY")     return "mouse_y()";
     if (t == "Time")       return "time()";
-    if (t == "DeltaTime")  return "dt";
+    if (t == "DeltaTime")  return "Time.deltaTime";
     if (t == "VelX")       return "velocity_x()";
     if (t == "VelY")       return "velocity_y()";
     if (t == "GetX")       return "transform.position.x";
@@ -391,9 +501,9 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
     if (t == "GetZ")       return "transform.position.z";
     if (t == "GetPosition")return "transform.position";
     if (t == "MakeVec3")   return "vec3(" + A() + ", " + B() + ", " + C() + ")";
-    if (t == "VecX")       return "(" + A() + ").x";
-    if (t == "VecY")       return "(" + A() + ").y";
-    if (t == "VecZ")       return "(" + A() + ").z";
+    if (t == "VecX")       return "vec_x(" + A() + ")";
+    if (t == "VecY")       return "vec_y(" + A() + ")";
+    if (t == "VecZ")       return "vec_z(" + A() + ")";
     if (t == "EaseIn")     return "(" + A() + " * " + A() + ")";
     if (t == "EaseOut")  { std::string a = A(); return "(1 - (1-" + a + ")*(1-" + a + "))"; }
     if (t == "EaseInOut"){ std::string a = A(); return "(" + a + "*" + a + "*(3 - 2*" + a + "))"; }
@@ -413,8 +523,8 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
     if (t == "Vec3Add")    return "(" + A() + " + " + B() + ")";
     if (t == "Vec3Sub")    return "(" + A() + " - " + B() + ")";
     if (t == "Vec3Scale")  return "(" + A() + " * " + B() + ")";
-    if (t == "Vec3Length") return "(" + A() + ").magnitude";
-    if (t == "Vec3Normalize") return "(" + A() + ").normalized";
+    if (t == "Vec3Length") return "vec_length(" + A() + ")";
+    if (t == "Vec3Normalize") return "vec_normalize(" + A() + ")";
     if (t == "Vec3Dot")    return "dot(" + A() + ", " + B() + ")";
     if (t == "Vec3Distance") return "distance(" + A() + ", " + B() + ")";
     if (t == "ToString")   return "str(" + A() + ")";
@@ -433,6 +543,43 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
     if (t == "MouseButton")    return "mouse_held(" + lit("0") + ")";
     if (t == "MouseButtonDown")return "mouse_down(" + lit("0") + ")";
     if (t == "AnimState")      return "anim_state()";
+    // Third wave.
+    const std::string id = std::to_string(nodeId);
+    if (t == "ForLoop")    return "_i" + id;
+    if (t == "DoN")        return "_don_" + id;
+    if (t == "RandomInt")  return "randi(" + VsInput(g, nodeId, 0, "0") + ", " + VsInput(g, nodeId, 1, "10") + ")";
+    if (t == "Ceil")       return "ceil(" + A() + ")";
+    if (t == "Frac")       return "fract(" + A() + ")";
+    if (t == "OneMinus")   return "(1 - " + A() + ")";
+    if (t == "Saturate")   return "clamp01(" + A() + ")";
+    if (t == "Asin")       return "asin(" + A() + ")";
+    if (t == "Acos")       return "acos(" + A() + ")";
+    if (t == "Deg2Rad")    return "deg2rad(" + A() + ")";
+    if (t == "Rad2Deg")    return "rad2deg(" + A() + ")";
+    if (t == "Vec3Cross")  return "vec_cross(" + A() + ", " + B() + ")";
+    if (t == "Vec3Lerp")   return "vec_lerp(" + A() + ", " + B() + ", " + VsInput(g, nodeId, 2, "0.5") + ")";
+    if (t == "Vec3Negate") return "(" + A() + " * -1)";
+    if (t == "ForwardVector") return "transform.forward";
+    if (t == "RightVector")   return "transform.right";
+    if (t == "UpVector")      return "transform.up";
+    if (t == "GetScale")      return "transform.localScale";
+    if (t == "GetRotation")   return "rotation_euler()";
+    if (t == "GetBlendShape") return "blend_shape_get(" + q(lit("")) + ")";
+    if (t == "Raycast")       return "raycast_hit(" + A() + ", " + B() + ", " + C() + ", " + D() + ", " + VsInput(g, nodeId, 4, "1000000") + ")";
+    if (t == "MouseWheel")    return "mouse_wheel()";
+    if (t == "TimeScale")     return "timescale()";
+    if (t == "FrameCount")    return "frame_count()";
+    if (t == "NetConnected")  return "net_connected()";
+    if (t == "NetIsServer")   return "net_is_server()";
+    if (t == "NetIsClient")   return "net_is_client()";
+    if (t == "NetPeers")      return "net_peers()";
+    if (t == "NetId")         return "net_id()";
+    if (t == "NetGetVar")     return "net_get(" + q(lit("x")) + ")";
+    if (t == "NetMatchStarted") return "net_match_started()";
+    if (t == "NetAllReady")   return "net_all_ready()";
+    if (t == "SteamName")     return "steam_name()";
+    if (t == "SteamIsUnlocked") return "steam_is_unlocked(" + q(lit("")) + ")";
+    if (t == "SteamGetStat")  return "steam_get_stat(" + q(lit("stat")) + ")";
     return "0";
 }
 
@@ -448,16 +595,16 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
 
     if      (t=="SetVar")      out += ind + arg("x") + " = " + in(0) + "\n";
     else if (t=="AddVar")      out += ind + arg("x") + " += " + in(0) + "\n";
-    else if (t=="Print")       out += ind + "log(" + in(0,"\"\"") + ")\n";
-    else if (t=="LogWarn")     out += ind + "log_warn(" + in(0,"\"\"") + ")\n";
-    else if (t=="LogError")    out += ind + "log_error(" + in(0,"\"\"") + ")\n";
-    else if (t=="Translate")   out += ind + "translate(" + in(0)+", "+in(1)+", "+in(2)+")\n";
-    else if (t=="SetPosition") out += ind + "set_pos(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="Print")       out += ind + "Debug.Log(" + in(0,"\"\"") + ")\n";
+    else if (t=="LogWarn")     out += ind + "Debug.LogWarning(" + in(0,"\"\"") + ")\n";
+    else if (t=="LogError")    out += ind + "Debug.LogError(" + in(0,"\"\"") + ")\n";
+    else if (t=="Translate")   out += ind + "move3(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="SetPosition") out += ind + "set_pos3(" + in(0)+", "+in(1)+", "+in(2, "transform.localPosition.z")+")\n";
     else if (t=="Rotate")      out += ind + "rotate(" + in(0) + ")\n";
-    else if (t=="SetRotation") out += ind + "set_rotation(" + in(0) + ")\n";
-    else if (t=="SetScale")    out += ind + "set_scale(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="SetRotation") out += ind + "transform.eulerAngles.z = " + in(0) + "\n";
+    else if (t=="SetScale")    out += ind + "set_scale3(" + in(0,"1")+", "+in(1,"1")+", "+in(2,"1")+")\n";
     else if (t=="PlaySound")   out += ind + "play_sound(" + q(arg("")) + ")\n";
-    else if (t=="Spawn")       out += ind + "spawn(" + q(arg("")) + ", " + in(0) + ", " + in(1) + ")\n";
+    else if (t=="Spawn")       out += ind + "spawn3(" + q(arg("")) + ", " + in(0, "transform.position.x") + ", " + in(1, "transform.position.y") + ", " + in(2, "transform.position.z") + ")\n";
     else if (t=="Destroy")     out += ind + "destroy()\n";
     else if (t=="AddForce")    out += ind + "add_force(" + in(0)+", "+in(1)+")\n";
     else if (t=="SetVelocity") out += ind + "set_velocity(" + in(0)+", "+in(1)+")\n";
@@ -486,9 +633,83 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="AnimTrigger") out += ind + "anim_trigger(" + q(arg("")) + ")\n";
     else if (t=="AnimSetFloat")out += ind + "anim_set_float(" + q(arg("")) + ", " + in(0) + ")\n";
     else if (t=="AnimSetBool") out += ind + "anim_set_bool(" + q(arg("")) + ", " + in(0) + ")\n";
-    else if (t=="IkLook")      out += ind + "ik_look((" + in(0) + ").x, (" + in(0) + ").y, (" + in(0) + ").z, " + in(1, "1") + ")\n";
-    else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", (" + in(0) + ").x, (" + in(0) + ").y, (" + in(0) + ").z, " + in(1, "1") + ")\n";
+    else if (t=="IkLook")      out += ind + "ik_look(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
+    else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + arg("1") + "s): gate the actions after this with a timer\n";
+    else if (t=="ForLoop") {
+        const std::string v = "_i" + std::to_string(nodeId);
+        out += ind + "for (var " + v + " = " + in(0, "0") + "; " + v + " <= " + in(1, "9") + "; " + v + " += 1) {\n";
+        int b = VsExecTarget(g, nodeId, 0); if (b >= 0) { std::set<int> vb = visited; VsEmitChain(g, b, out, ind + "    ", vb); }
+        out += ind + "}\n";
+        int d = VsExecTarget(g, nodeId, 1); if (d >= 0) VsEmitChain(g, d, out, ind, visited);
+    }
+    else if (t=="Repeat") {
+        const std::string v = "_r" + std::to_string(nodeId);
+        out += ind + "for (var " + v + " = 0; " + v + " < " + arg("1") + "; " + v + " += 1) {\n";
+        int b = VsExecTarget(g, nodeId, 0); if (b >= 0) VsEmitChain(g, b, out, ind + "    ", visited);
+        out += ind + "}\n";
+    }
+    else if (t=="FlipFlop") {
+        const std::string v = "_ff_" + std::to_string(nodeId);
+        out += ind + v + " = !" + v + "\n";
+        out += ind + "if (" + v + ") {\n";
+        int a = VsExecTarget(g, nodeId, 0); if (a >= 0) VsEmitChain(g, a, out, ind + "    ", visited);
+        int b = VsExecTarget(g, nodeId, 1);
+        if (b >= 0) { out += ind + "} else {\n"; VsEmitChain(g, b, out, ind + "    ", visited); }
+        out += ind + "}\n";
+    }
+    else if (t=="Gate") {
+        out += ind + "if (" + in(0, "true") + ") {\n";
+        int a = VsExecTarget(g, nodeId, 0); if (a >= 0) VsEmitChain(g, a, out, ind + "    ", visited);
+        out += ind + "}\n";
+    }
+    else if (t=="DoN") {
+        const std::string v = "_don_" + std::to_string(nodeId);
+        out += ind + "if (" + v + " < " + arg("1") + ") {\n" + ind + "    " + v + " += 1\n";
+        int a = VsExecTarget(g, nodeId, 0); if (a >= 0) VsEmitChain(g, a, out, ind + "    ", visited);
+        out += ind + "}\n";
+    }
+    else if (t=="SwitchInt") {
+        out += ind + "switch (round(" + in(0) + ")) {\n";
+        static const char* kCase[4] = {"case 0:", "case 1:", "case 2:", "default:"};
+        for (int p = 0; p < 4; ++p) {
+            int c = VsExecTarget(g, nodeId, p);
+            if (c < 0) continue;
+            out += ind + "    " + kCase[p] + "\n";
+            VsEmitChain(g, c, out, ind + "        ", visited);
+            out += ind + "        break\n";
+        }
+        out += ind + "}\n";
+    }
+    else if (t=="Toggle")        out += ind + arg("x") + " = !" + arg("x") + "\n";
+    else if (t=="SetPositionVec"){ std::string p = in(0, "vec3(0, 0, 0)"); out += ind + "transform.localPosition = " + p + "\n"; }
+    else if (t=="MoveBy")        out += ind + "transform.localPosition = transform.localPosition + " + in(0, "vec3(0, 0, 0)") + "\n";
+    else if (t=="Rotate3")       out += ind + "rotate3(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="SetRotation3")  out += ind + "set_rot3(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="SetColor")      out += ind + "set_color(" + in(0,"1")+", "+in(1,"1")+", "+in(2,"1")+", "+in(3,"1")+")\n";
+    else if (t=="PlayClip")      out += ind + "play_clip(" + q(arg("")) + ")\n";
+    else if (t=="SetTimeScale")  out += ind + "set_timescale(" + in(0, "1") + ")\n";
+    else if (t=="SetBlendShape") out += ind + "blend_shape(" + q(arg("")) + ", " + in(0, "1") + ")\n";
+    else if (t=="NetHost")       out += ind + "net_host(" + arg("45000") + ")\n";
+    else if (t=="NetJoin") {
+        std::string h = arg("127.0.0.1"), port = "45000";
+        size_t cut = h.find_first_of(" :");
+        if (cut != std::string::npos) { port = h.substr(cut + 1); h = h.substr(0, cut); }
+        out += ind + "net_join(" + q(h) + ", " + port + ")\n";
+    }
+    else if (t=="NetDisconnect") out += ind + "net_disconnect()\n";
+    else if (t=="NetSend")       out += ind + "net_send(" + q(arg("")) + ", str(" + in(0, "\"\"") + "))\n";
+    else if (t=="NetSetVar")     out += ind + "net_set(" + q(arg("x")) + ", str(" + in(0, "\"\"") + "))\n";
+    else if (t=="NetChat")       out += ind + "net_chat(" + in(0, "\"\"") + ")\n";
+    else if (t=="NetRpc")        out += ind + "net_rpc(" + q(arg("")) + ", str(" + in(0, "\"\"") + "))\n";
+    else if (t=="NetSpawnOwned") out += ind + "net_spawn_owned(" + q(arg("")) + ", transform.position.x, transform.position.y, transform.position.z)\n";
+    else if (t=="NetDespawn")    out += ind + "net_despawn(" + in(0, "\"\"") + ")\n";
+    else if (t=="NetReady")      out += ind + "net_ready(" + in(0, "true") + ")\n";
+    else if (t=="NetStartMatch") out += ind + "net_start_match()\n";
+    else if (t=="SteamUnlock")   out += ind + "steam_unlock(" + q(arg("")) + ")\n";
+    else if (t=="SteamSetStat")  out += ind + "steam_set_stat(" + q(arg("stat")) + ", " + in(0) + ")\n";
+    else if (t=="SteamStore")    out += ind + "steam_store()\n";
+    else if (t=="SteamLeaderboard") out += ind + "steam_leaderboard(" + q(arg("")) + ", " + in(0) + ")\n";
     else if (t=="Timer") out += ind + "// Every (" + arg("1") + "s): wire actions to this node\n";
     else if (t=="Wait")  out += ind + "// Wait (" + arg("1") + "s): use after(t, fn) for a delay\n";
     else                 out += ind + "// unsupported node: " + t + "\n";
@@ -501,60 +722,88 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
         visited.insert(cur);
         const VsEditNode* n = VsFind(g, cur); if (!n) break;
         VsEmitNode(g, cur, out, ind, visited);
-        if (n->type=="Branch" || n->type=="Sequence" || n->type=="Once") break; // self-continued
+        static const std::set<std::string> kSelfContinued = {
+            "Branch", "Sequence", "Once", "ForLoop", "Repeat", "FlipFlop", "Gate", "DoN", "SwitchInt"};
+        if (kSelfContinued.count(n->type)) break;
         cur = VsExecTarget(g, cur, 0);
     }
 }
 inline std::string CompileToOkayScript(const VsEditGraph& g) {
-    std::string out = "// Generated from the visual graph. This is plain OkayScript —\n"
-                      "// edit it freely, or keep wiring nodes; both drive the same runtime.\n\n";
+    // C#-style output: the graph becomes a component class; its events become
+    // Start / Update / OnCollisionEnter / OnTriggerEnter / OnMouseDown methods.
+    std::string cls = "VisualGraph";
+    if (!g.path.empty()) {
+        std::string stem = std::filesystem::path(g.path).stem().string(), id;
+        for (char c : stem) id += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+        if (!id.empty() && !std::isdigit((unsigned char)id[0])) cls = id;
+    }
+    std::string out = "// Generated from the visual graph. Plain C#-style OkayScript:\n"
+                      "// edit it freely, or keep wiring nodes; both drive the same runtime.\n"
+                      "using UnityEngine;\n\n"
+                      "public class " + cls + " : MonoBehaviour\n{\n";
     int startNode = -1, updateNode = -1;
     for (const auto& n : g.nodes) { if (n.type=="OnStart") startNode=n.id; if (n.type=="OnUpdate") updateNode=n.id; }
-    std::string onceDecls;
-    for (const auto& n : g.nodes) if (n.type=="Once") onceDecls += "var _once_"+std::to_string(n.id)+" = false\n";
-    if (!onceDecls.empty()) out += onceDecls + "\n";
-    if (startNode >= 0) {
-        out += "start() {\n";
-        std::set<int> v; int s = VsExecTarget(g, startNode, 0); if (s>=0) VsEmitChain(g, s, out, "    ", v);
-        out += "}\n\n";
+    std::string fields;
+    for (const auto& n : g.nodes) {
+        if (n.type=="Once")     fields += "    bool _once_"+std::to_string(n.id)+" = false;\n";
+        if (n.type=="FlipFlop") fields += "    bool _ff_"+std::to_string(n.id)+" = false;\n";
+        if (n.type=="DoN")      fields += "    int _don_"+std::to_string(n.id)+" = 0;\n";
     }
-    if (updateNode >= 0) {
-        out += "update(dt) {\n";
-        std::set<int> v; int s = VsExecTarget(g, updateNode, 0); if (s>=0) VsEmitChain(g, s, out, "    ", v);
-        out += "}\n";
-    }
-    // Collision / trigger / click events become the matching script handlers.
+    if (!fields.empty()) out += fields + "\n";
+    bool first = true;
+    auto method = [&](const std::string& sig, int entry) {
+        if (!first) out += "\n";
+        first = false;
+        out += "    " + sig + "\n    {\n";
+        std::set<int> v; int s = VsExecTarget(g, entry, 0); if (s >= 0) VsEmitChain(g, s, out, "        ", v);
+        out += "    }\n";
+    };
+    if (startNode >= 0)  method("void Start()", startNode);
+    if (updateNode >= 0) method("void Update()", updateNode);
+    // Collision / trigger / click events become the matching handlers.
     static const std::pair<const char*, const char*> kEvents[] = {
-        {"OnCollision", "on_collision(other)"}, {"OnTrigger", "on_trigger(other)"}, {"OnClick", "on_click()"}};
+        {"OnCollision", "void OnCollisionEnter(Collision other)"},
+        {"OnTrigger",   "void OnTriggerEnter(Collider other)"},
+        {"OnClick",     "void OnMouseDown()"}};
     bool anyEvent = false;
     for (const auto& ev : kEvents)
         for (const auto& n : g.nodes)
-            if (n.type == ev.first) {
-                anyEvent = true;
-                out += std::string("\n") + ev.second + " {\n";
-                std::set<int> v; int s = VsExecTarget(g, n.id, 0); if (s >= 0) VsEmitChain(g, s, out, "    ", v);
-                out += "}\n";
-                break;
-            }
-    // Clip events: one on_anim_event() handler; named nodes check anim_event.
+            if (n.type == ev.first) { anyEvent = true; method(ev.second, n.id); break; }
+    // Clip events: one OnAnimEvent() handler; named nodes check anim_event.
     {
         bool open = false;
         for (const auto& n : g.nodes) {
             if (n.type != "OnAnimEvent") continue;
-            if (!open) { out += "\non_anim_event() {\n"; open = true; anyEvent = true; }
+            if (!open) { out += std::string(first ? "" : "\n") + "    void on_anim_event()\n    {\n"; open = true; anyEvent = true; first = false; }
             std::set<int> v; int s = VsExecTarget(g, n.id, 0);
-            if (n.arg.empty()) { if (s >= 0) VsEmitChain(g, s, out, "    ", v); }
+            if (n.arg.empty()) { if (s >= 0) VsEmitChain(g, s, out, "        ", v); }
             else {
-                out += "    if (anim_event == \"" + n.arg + "\") {\n";
-                if (s >= 0) VsEmitChain(g, s, out, "        ", v);
-                out += "    }\n";
+                out += "        if (anim_event == \"" + n.arg + "\")\n        {\n";
+                if (s >= 0) VsEmitChain(g, s, out, "            ", v);
+                out += "        }\n";
             }
         }
-        if (open) out += "}\n";
+        if (open) out += "    }\n";
     }
     if (startNode < 0 && updateNode < 0 && !anyEvent)
-        out += "// Add an On Start / On Update event node to generate runnable code.\n";
-    return out;
+        out += "    // Add an On Start / On Update event node to generate runnable code.\n";
+    out += "}\n";
+    // C# statement terminators inside method bodies (8+ spaces of indent).
+    std::string fin; fin.reserve(out.size() + 64);
+    std::size_t a = 0;
+    while (a < out.size()) {
+        std::size_t e = out.find('\n', a); if (e == std::string::npos) e = out.size();
+        std::string line = out.substr(a, e - a);
+        const std::size_t ind = line.find_first_not_of(' ');
+        if (ind != std::string::npos && ind >= 8) {
+            const char last = line.back();
+            const bool comment = line.compare(ind, 2, "//") == 0;
+            if (!comment && last != '{' && last != '}' && last != ':' && last != ';') line += ';';
+        }
+        fin += line; if (e < out.size()) fin += '\n';
+        a = e + 1;
+    }
+    return fin;
 }
 
 // ---- Interaction state -----------------------------------------------------
@@ -588,32 +837,51 @@ struct PinKey { int node; int kind; int side; int index; };  // kind:0 exec,1 da
 // ---- The editor window -----------------------------------------------------
 // Returns nothing; manages its own state. `ed` is used for "Attach to selected".
 inline void Draw(EditorState& ed, bool* open) {
+    ImGui::SetNextWindowSize(ImVec2(980, 600), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Visual Script", open)) { ImGui::End(); return; }
+    // A floating window remembered tiny (or squashed to its toolbar) has no room
+    // for the canvas: give it a usable size.
+    if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().y < 300.0f || ImGui::GetWindowSize().x < 500.0f))
+        ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 980.0f), 600.0f));
     VsEditState& st = State();
     VsEditGraph& g = st.g;
 
     // Toolbar.
     if (ImGui::Button("New")) { g.clear(); st.selected = -1; }
     ImGui::SameLine();
-    if (ImGui::Button("Save")) {
+    const bool ctrlS = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl &&
+                       ImGui::IsKeyPressed(ImGuiKey_S, false);
+    if (ImGui::Button("Save") || ctrlS) {
         std::string p = g.path;
         if (p.empty()) {
             // default into the project Assets folder.
             std::string dir = ed.projectDir();
             p = (dir.empty() ? std::string("Script") : dir + "/Assets/Script") + ".okayvs";
         }
-        if (g.save(p)) Log("Saved visual script " + p);
-        else Log("Save failed: " + p, 2);
+        if (g.save(p)) {
+            // Objects already using this graph pick the change up right away.
+            int n = 0;
+            for (const auto& up : ed.scene().Objects())
+                for (auto* vc : up->GetComponents<VisualScriptComponent>())
+                    if (vc->Path() == p) { vc->Reload(); ++n; }
+            Log("Saved visual script " + p + (n ? " (updated " + std::to_string(n) + " object(s))" : std::string()));
+        } else Log("Save failed: " + p, 2);
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(!ed.selected());
     if (ImGui::Button("Attach to Selected")) {
         if (GameObject* o = ed.selected()) {
-            if (g.path.empty()) {
+            // Save what's on screen first: attaching loads the file, and an unsaved
+            // edit would otherwise silently not be what runs.
+            std::string p = g.path;
+            if (p.empty()) {
                 std::string dir = ed.projectDir();
-                std::string p = (dir.empty() ? std::string("Script") : dir + "/Assets/" + o->name + "_vs") + ".okayvs";
-                g.save(p);
+                p = (dir.empty() ? std::string("Script") : dir + "/Assets/" + o->name + "_vs") + ".okayvs";
             }
+            if (!g.save(p)) Log("Couldn't save " + p, 2);
+            for (const auto& up : ed.scene().Objects())   // others using the file follow the edit
+                for (auto* other : up->GetComponents<VisualScriptComponent>())
+                    if (other->Path() == p) other->Reload();
             auto* vc = o->GetComponent<VisualScriptComponent>();
             if (!vc) vc = o->AddComponent<VisualScriptComponent>();
             vc->LoadFromFile(g.path);
@@ -626,6 +894,22 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::Button(st.showScript ? "Hide Script" : "View as OkayScript")) st.showScript = !st.showScript;
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Compile this graph to OkayScript — author with either front-end");
+    ImGui::SameLine();
+    if (ImGui::Button("Open...")) ImGui::OpenPopup("##vsopen");
+    if (ImGui::BeginPopup("##vsopen")) {
+        // Every graph in the project's Assets.
+        namespace fs = std::filesystem;
+        fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+        std::error_code ec; int shown = 0;
+        if (fs::exists(assets, ec))
+            for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                if (!e.is_regular_file() || e.path().extension() != ".okayvs") continue;
+                ++shown;
+                if (ImGui::MenuItem(fs::relative(e.path(), assets, ec).string().c_str())) { g.load(e.path().string()); st.selected = -1; }
+            }
+        if (!shown) ImGui::TextDisabled("No .okayvs graphs in Assets yet.");
+        ImGui::EndPopup();
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("%s%s", g.path.empty() ? "(unsaved)" : g.path.c_str(), g.dirty ? " *" : "");
     ImGui::SameLine();
@@ -680,7 +964,12 @@ inline void Draw(EditorState& ed, bool* open) {
         return ((long long)node << 20) | ((long long)kind << 18) | ((long long)side << 16) | idx;
     };
 
-    const float NODE_W = 172.0f, HEADER_H = 24.0f, ROW_H = 20.0f, PIN_R = 5.0f;
+    const float NODE_W_BASE = 172.0f, HEADER_H = 24.0f, ROW_H = 20.0f, PIN_R = 5.0f;
+    const float BOX_W = 96.0f;   // inline value box on an unconnected data input
+    auto inputLinked = [&](int node, int pin) {
+        for (const auto& l : g.dataLinks) if (l.consumer == node && l.inPin == pin) return true;
+        return false;
+    };
 
     // Lay out + draw each node.
     for (auto& n : g.nodes) {
@@ -691,6 +980,11 @@ inline void Draw(EditorState& ed, bool* open) {
         int rows = std::max(leftRows, rightRows);
         float bodyH = rows * ROW_H + (d->param ? ROW_H + 4 : 0) + 8;
         float h = HEADER_H + bodyH;
+        // Wider when it has data inputs: their value boxes sit between the input
+        // labels and the output labels.
+        float inLabelW = 0.0f;
+        for (const char* lbl : d->dataIn) inLabelW = std::max(inLabelW, ImGui::CalcTextSize(lbl).x);
+        const float NODE_W = d->dataIn.empty() ? NODE_W_BASE : std::max(NODE_W_BASE, 10.0f + inLabelW + 6.0f + BOX_W + 70.0f);
         ImVec2 p0 = W2S(n.x, n.y), p1 = ImVec2(p0.x + NODE_W, p0.y + h);
 
         // Body + header.
@@ -728,6 +1022,20 @@ inline void Draw(EditorState& ed, bool* open) {
             dl->AddCircleFilled(pp, PIN_R, IM_COL32(150, 190, 150, 255), 12);
             dl->AddText(ImVec2(p0.x + 10, pp.y - 8), IM_COL32(190, 194, 200, 255), d->dataIn[i]);
             pinPos[pk(n.id, 1, 0, i)] = pp;
+            // Nothing wired in: type the value right here (text, number, true/false).
+            if (!inputLinked(n.id, i)) {
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + 10 + inLabelW + 6, pp.y - 9));
+                ImGui::SetNextItemWidth(BOX_W);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 1));
+                std::string& dv = n.pinDefault[i];
+                char vb[128]; std::snprintf(vb, sizeof(vb), "%s", dv.c_str());
+                char bid[16]; std::snprintf(bid, sizeof(bid), "##pd%d", i);
+                if (ImGui::InputTextWithHint(bid, "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                ImGui::PopStyleVar();
+                if (dv.empty()) n.pinDefault.erase(i);
+            }
         }
         // Right pins (exec-out then data-out).
         int ri = 0;
@@ -848,9 +1156,35 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::OpenPopup("##vspalette");
     }
     if (ImGui::BeginPopup("##vspalette")) {
-        ImGui::TextDisabled("Add node");
+        static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam"};
+        // Type to search every node by title, type name or category; Enter adds
+        // the first match.
+        static char search[64] = "";
+        if (ImGui::IsWindowAppearing()) { search[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
+        ImGui::SetNextItemWidth(240);
+        const bool enter = ImGui::InputTextWithHint("##vssearch", "Search nodes...", search, sizeof search,
+                                                    ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::Separator();
-        static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data"};
+        auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
+        const std::string needle = lower(search);
+        if (!needle.empty()) {
+            int shown = 0;
+            for (const auto& d : Registry()) {
+                const std::string hay = lower(std::string(d.title) + " " + d.type + " " + catNames[d.cat]);
+                if (hay.find(needle) == std::string::npos) continue;
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextUnformatted(catNames[d.cat]);
+                ImGui::PopStyleColor();
+                ImGui::SameLine(150);
+                if (ImGui::Selectable(d.title, shown == 0 && enter) || (shown == 0 && enter)) {
+                    st.selected = g.add(d.type, st.paletteWorld.x, st.paletteWorld.y);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (++shown >= 40) break;
+            }
+            if (shown == 0) ImGui::TextDisabled("No node matches \"%s\"", search);
+            ImGui::EndPopup();
+        } else {
         for (int c = 0; c < CAT_COUNT; ++c) {
             bool any = false;
             for (const auto& d : Registry()) if (d.cat == c) { any = true; break; }
@@ -863,6 +1197,7 @@ inline void Draw(EditorState& ed, bool* open) {
             }
         }
         ImGui::EndPopup();
+        }
     }
 
     // Delete selected node with the Del key when the canvas is focused.

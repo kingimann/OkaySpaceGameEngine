@@ -4,6 +4,7 @@
 #if defined(_WIN32)
 
 #include "okay/Render/D3D11Renderer.hpp"
+#include "okay/Render/Culling.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Scene/Transform.hpp"
@@ -983,6 +984,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             c->OMSetDepthStencilState(p->depth, 0);
             const float bf0[4] = {0, 0, 0, 0};
             c->OMSetBlendState(nullptr, bf0, 0xffffffff);
+            const Frustum lightFr = Frustum::FromVP(lightVP);   // only casters inside the shadow box
             for (const auto& up : scene.Objects()) {
                 GameObject* go = up.get();
                 if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
@@ -992,6 +994,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
                 const Mesh& mesh = mr->mesh;
                 const auto& V = mesh.vertices; const auto& T = mesh.triangles;
                 if (V.empty() || T.size() < 3) continue;
+                if (CulledByFrustum(lightFr, go, mr)) continue;
                 Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
                 CB dcb; std::memset(&dcb, 0, sizeof(dcb));
                 std::memcpy(dcb.mvp, dmvp.m, sizeof(dcb.mvp));
@@ -1107,6 +1110,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
     }
 
+    // Skip what the camera can't see.
+    const Frustum viewFr = Frustum::FromVP(vp);
+    int drawnN = 0, culledN = 0;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
@@ -1116,6 +1122,8 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         const Mesh& mesh = mr->mesh;
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
+        if (CulledByFrustum(viewFr, go, mr)) { ++culledN; continue; }
+        ++drawnN;
         ID3D11ShaderResourceView* srv = p->TextureFor(mr->texture);
 
         // Geometry source: static meshes draw from the per-mesh cached GPU buffer
@@ -1277,6 +1285,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         if (svb) { c->IASetInputLayout(p->layout); c->VSSetShader(p->vs, nullptr, 0); }
     }
+    LastCullCounters().drawn = drawnN; LastCullCounters().culled = culledN;
 
     // RenderToTexture: resolve straight into the host's texture and stop here.
     if (p->directDst) {

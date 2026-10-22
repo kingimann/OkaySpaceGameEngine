@@ -1,6 +1,10 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Physics3D.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -86,5 +90,16 @@ void ScriptComponent::Update(float dt) {
     m_host.deltaTime = dt;
     m_vm->CallUpdate(dt);
 }
+
+void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
+    if (!m_vm) return;
+    vs::VsValue name(other ? other->name : std::string());
+    m_vm->SetGlobal("other", name);
+    m_vm->CallEventWith(event, name);
+}
+void ScriptComponent::FireOther(const char* event, Collider2D* c)          { FireWithObject(event, c ? c->gameObject : nullptr); }
+void ScriptComponent::FireOther(const char* event, Collider3D* c)          { FireWithObject(event, c ? c->gameObject : nullptr); }
+void ScriptComponent::FireOther(const char* event, const Collision2D& c)   { FireWithObject(event, c.gameObject); }
+void ScriptComponent::FireOther(const char* event, const Collision3D& c)   { FireWithObject(event, c.gameObject); }
 
 } // namespace okay

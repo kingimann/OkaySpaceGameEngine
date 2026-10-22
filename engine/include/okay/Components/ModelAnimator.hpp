@@ -867,6 +867,17 @@ public:
         }
     }
 
+    /// How fast clip `ci` travels on the ground (root bone, world units per
+    /// second at speed 1) — blend-tree thresholds from real clip speeds. 0 when
+    /// the clip is in place or has no root bone.
+    float ClipRootSpeed(int ci) const {
+        if (ci < 0 || ci >= (int)clips.size()) return 0.0f;
+        const float len = ClipLength(ci);
+        Vec3 d; float yaw;
+        if (len <= 1e-4f || !RootDelta(ci, 0.0f, len, len, d, yaw)) return 0.0f;
+        return std::sqrt(d.x * d.x + d.z * d.z) / len;
+    }
+
     /// World-space root travel (ground plane unless rootMotionY) and yaw change
     /// of clip `ci` between clip times e0 and e1 (e1 < e0 = wrapped a loop).
     bool RootDelta(int ci, float e0, float e1, float len, Vec3& outD, float& outYaw) const {

@@ -13,11 +13,13 @@ bool VisualScriptComponent::LoadFromText(const std::string& text, std::string* e
     auto graph = vs::NodeGraph::Parse(text, &err);
     if (!graph) {
         if (error) *error = err;
+        m_error = err;
         OKAY_ERROR("VisualScript parse error: ", err);
         return false;
     }
     m_graph = std::move(graph);
     m_source = text;
+    m_error.clear();
     return true;
 }
 
@@ -25,11 +27,18 @@ bool VisualScriptComponent::LoadFromFile(const std::string& path, std::string* e
     std::ifstream f(path);
     if (!f) {
         if (error) *error = "cannot open " + path;
+        m_error = "cannot open " + path;
         return false;
     }
     std::stringstream ss;
     ss << f.rdbuf();
+    m_path = path;
     return LoadFromText(ss.str(), error);
+}
+
+bool VisualScriptComponent::Reload(std::string* error) {
+    if (m_path.empty()) { if (error) *error = "no file"; return false; }
+    return LoadFromFile(m_path, error);
 }
 
 vs::VsValue VisualScriptComponent::GetVariable(const std::string& name) const {

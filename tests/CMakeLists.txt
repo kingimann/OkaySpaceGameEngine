@@ -698,3 +698,16 @@ add_test(NAME foot_planting COMMAND test_foot_planting)
 add_executable(test_blend_shapes test_blend_shapes.cpp)
 target_link_libraries(test_blend_shapes PRIVATE okay::engine)
 add_test(NAME blend_shapes COMMAND test_blend_shapes)
+
+add_executable(test_frustum_culling test_frustum_culling.cpp)
+target_link_libraries(test_frustum_culling PRIVATE okay::engine)
+add_test(NAME frustum_culling COMMAND test_frustum_culling)
+
+add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
+target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
+add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
+
+# C# / Unity-style OkayScript: classes, generics, lambdas, coroutines, components.
+add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)
+target_link_libraries(test_okayscript_csharp PRIVATE okay::engine)
+add_test(NAME okayscript_csharp COMMAND test_okayscript_csharp)

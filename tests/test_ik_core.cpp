@@ -107,6 +107,7 @@ int main() {
         GameObject* lsh = mk("mixamorig:LeftLeg", lth, {0, -0.45f, 0.01f});
         mk("mixamorig:LeftFoot", lsh, {0, -0.45f, -0.01f});
         auto* fb = root->AddComponent<FullBodyIK>();
+        fb->blendSpeed = 0.0f;   // goals apply at once (easing is tested below)
         sc.Start();
         CHECK(fb->bones[FullBodyIK::Hips] == hips->transform);
         CHECK(fb->bones[FullBodyIK::Chest] == chest->transform);
@@ -159,7 +160,69 @@ int main() {
             CHECK(fb2->effectors[FullBodyIK::RightHand].enabled);
             CHECK_NEAR(fb2->maxSpineAngle, 22.0f, 1e-5f);
             CHECK(fb2->lookEnabled);
+            CHECK_NEAR(fb2->blendSpeed, 0.0f, 1e-5f);
+            CHECK_NEAR(fb2->armMinBend, 20.0f, 1e-5f);
         }
+    }
+
+    // ---- FullBodyIK: goals ease in/out, bones keep their length mid-blend,
+    //      elbows don't fold flat, the chest bend spreads over the spine.
+    {
+        Scene sc;
+        GameObject* root = sc.CreateGameObject("Rig");
+        auto mk = [&](const char* n, GameObject* parent, Vec3 local) {
+            GameObject* o = sc.CreateGameObject(n);
+            o->transform->SetParent(parent->transform, false);
+            o->transform->localPosition = local;
+            return o;
+        };
+        GameObject* hips = mk("Hips", root, {0, 1, 0});
+        GameObject* spine = mk("Spine", hips, {0, 0.2f, 0});
+        GameObject* chest = mk("Chest", spine, {0, 0.3f, 0});
+        GameObject* lua = mk("LeftArm", chest, {0.2f, 0.1f, 0});
+        GameObject* lfa = mk("LeftForeArm", lua, {0.3f, 0, 0});
+        GameObject* lh  = mk("LeftHand", lfa, {0.3f, 0, 0});
+        auto* fb = root->AddComponent<FullBodyIK>();
+        fb->softness = 0.0f; fb->bodyPull = 0.0f; fb->spineReach = 0.0f;
+        sc.Start();
+        const Vec3 shoulder = lua->transform->Position();
+        const Vec3 handRest = lh->transform->Position();
+        auto& e = fb->effectors[FullBodyIK::LeftHand];
+        e.enabled = true; e.position = shoulder + Vec3{0.3f, -0.25f, 0.25f};
+        // Default blendSpeed: one frame applies only part of the goal...
+        sc.Update(1.0f / 60.0f);
+        CHECK(fb->EffectiveWeight(FullBodyIK::LeftHand) > 0.05f && fb->EffectiveWeight(FullBodyIK::LeftHand) < 0.5f);
+        CHECK(Dist(lh->transform->Position(), e.position) > 0.02f);
+        // ...with bone lengths intact mid-blend...
+        CHECK_NEAR(Dist(lua->transform->Position(), lfa->transform->Position()), 0.3f, 1e-3f);
+        CHECK_NEAR(Dist(lfa->transform->Position(), lh->transform->Position()), 0.3f, 1e-3f);
+        // ...and gets there.
+        for (int i = 0; i < 60; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(fb->Reached(FullBodyIK::LeftHand, 0.01f));
+        // Releasing eases back out (no pop to the animated pose in one frame).
+        e.enabled = false;
+        sc.Update(1.0f / 60.0f);
+        CHECK(!fb->Reached(FullBodyIK::LeftHand));
+        CHECK(fb->EffectiveWeight(FullBodyIK::LeftHand) > 0.5f);
+        for (int i = 0; i < 90; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(fb->EffectiveWeight(FullBodyIK::LeftHand) == 0.0f);
+
+        // A goal at the shoulder can't fold the elbow tighter than armMinBend.
+        fb->blendSpeed = 0.0f;
+        e.enabled = true; e.position = shoulder + Vec3{0.001f, 0, 0};
+        sc.Update(1.0f / 60.0f);
+        Vec3 u = lua->transform->Position() - lfa->transform->Position(), v = lh->transform->Position() - lfa->transform->Position();
+        float ang = std::acos(std::fmax(-1.0f, std::fmin(1.0f, Vec3::Dot(u.Normalized(), v.Normalized())))) * 57.29578f;
+        CHECK(ang >= fb->armMinBend - 0.5f);
+
+        // Out-of-reach hand: spine AND chest both bend toward it.
+        fb->spineReach = 1.0f; fb->maxSpineAngle = 40.0f;
+        e.position = shoulder + Vec3{0.2f, 1.2f, 0.0f};   // far overhead
+        Quat sp0 = spine->transform->localRotation, ch0 = chest->transform->localRotation;
+        sc.Update(1.0f / 60.0f);
+        CHECK(Quat::Angle(sp0, spine->transform->localRotation) > 1.0f);
+        CHECK(Quat::Angle(ch0, chest->transform->localRotation) > 1.0f);
+        (void)handRest;
     }
     TEST_MAIN_RESULT();
 }

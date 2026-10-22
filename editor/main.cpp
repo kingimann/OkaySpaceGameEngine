@@ -11,6 +11,7 @@
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
@@ -998,6 +999,19 @@ static void SetupHumanoidIK(EditorState& ed, GameObject* root) {
         eff.enabled = false;            // switch on in the Full Body IK inspector when needed
         eff.rotationWeight = 1.0f;
         ++targets;
+    }
+    // A look target in front of the head (switch Look At on to use it).
+    if (fb->lookTargetName.empty()) {
+        Transform* head = fb->bones[FullBodyIK::Head];
+        if (!head && !fb->boneNames[FullBodyIK::Head].empty())
+            if (GameObject* g = fb->FindBone(fb->boneNames[FullBodyIK::Head])) head = g->transform;
+        if (head) {
+            GameObject* lt = ed.scene().CreateGameObject("Look IK Target");
+            lt->transform->SetParent(root->transform, false);
+            lt->transform->SetPosition(head->Position() + root->transform->Rotation() * Vec3{0, 0, 2.0f});
+            fb->lookTargetName = lt->name; fb->lookTarget = lt->transform;
+            fb->lookEnabled = false;
+        }
     }
     ed.dirty = true;
     ConsoleLog("Humanoid IK on " + root->name + ": " + std::to_string(legs) + "/6 leg bones, " +
@@ -2693,6 +2707,38 @@ void SetCodeBuffer(void* key, const std::string& text) {
     std::strncpy(b.data(), text.c_str(), b.size() - 1);
 }
 
+// Attach a script asset to an object: a .okay text script becomes a Script
+// component, a .okayvs node graph a Visual Script. Every drop target and menu
+// goes through here, so all of them accept both kinds. False when `path` isn't
+// a script (the caller handles other asset types).
+static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* go, const std::string& path) {
+    if (!go) return false;
+    std::string ext;
+    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext == ".okay") {
+        ed.PushUndo();
+        // Always a new component (objects can hold several, even the same script twice).
+        auto* nsc = go->AddComponent<okay::ScriptComponent>("okayscript");
+        std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+        if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
+        SetCodeBuffer(nsc, nsc->Source());
+        ConsoleLog("Attached script " + std::filesystem::path(path).filename().string() + " to " + go->name);
+        ed.dirty = true;
+        return true;
+    }
+    if (ext == ".okayvs") {
+        ed.PushUndo();
+        auto* vc = go->AddComponent<okay::VisualScriptComponent>();
+        std::string err;
+        if (!vc->LoadFromFile(path, &err)) ConsoleLog("Visual script error in " + path + ": " + err, 2);
+        ConsoleLog("Attached visual script " + std::filesystem::path(path).filename().string() + " to " + go->name);
+        ed.dirty = true;
+        return true;
+    }
+    return false;
+}
+
 // External-IDE helpers: write/read script files and open them in the system editor.
 namespace extide {
 namespace fs = std::filesystem;
@@ -2746,28 +2792,49 @@ const char* StarterScript(const std::string& lang) {
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    // OkayScript defaults to a C#/Unity-style class: the class is your
-    // component, Start() runs once, Update(float dt) runs every frame. Types and
-    // semicolons are supported (and optional). The minimal one-liner style still
-    // works too — delete the class and just write `on_key_move(5)`.
-    return "// C#/Unity-style OkayScript. The class is your component.\n"
-           "public class NewScript : OkaySource\n"
-           "{\n"
-           "    float speed = 5f;\n"
+    // OkayScript defaults to C#/Unity style: the class is your component,
+    // public fields show in the Inspector, Start() runs once and Update() every
+    // frame, coroutines pause at `yield return`. (No "class " in the comments
+    // above the declaration: StarterScriptNamed renames the first one.)
+    return "using UnityEngine;\n"
+           "using System.Collections;\n"
+           "using System.Collections.Generic;\n"
            "\n"
-           "    // Runs once when the object starts.\n"
+           "// This script is a component: attach it to an object in the scene.\n"
+           "public class NewScript : MonoBehaviour\n"
+           "{\n"
+           "    [Header(\"Movement\")]\n"
+           "    public float speed = 5f;\n"
+           "    public float hopHeight = 1f;\n"
+           "\n"
+           "    private int hops = 0;\n"
+           "\n"
+           "    // Runs once, before the first frame.\n"
            "    void Start()\n"
            "    {\n"
-           "        transform.position.x = 0;\n"
-           "        transform.position.y = 0;\n"
+           "        Debug.Log($\"{gameObject.name} is ready\");\n"
            "    }\n"
            "\n"
-           "    // Runs every frame. Move with the arrow keys / WASD.\n"
-           "    void Update(float dt)\n"
+           "    // Runs every frame. Move with WASD / the arrow keys, hop with Space.\n"
+           "    void Update()\n"
            "    {\n"
-           "        transform.position.x += axis_x() * speed * dt;\n"
-           "        transform.position.y += axis_y() * speed * dt;\n"
-           "        if (key_down(\"space\")) log(\"jump!\");\n"
+           "        float h = Input.GetAxis(\"Horizontal\");\n"
+           "        float v = Input.GetAxis(\"Vertical\");\n"
+           "        transform.position += new Vector3(h, v, 0) * speed * Time.deltaTime;\n"
+           "\n"
+           "        if (Input.GetKeyDown(KeyCode.Space))\n"
+           "        {\n"
+           "            hops++;\n"
+           "            StartCoroutine(Hop());\n"
+           "        }\n"
+           "    }\n"
+           "\n"
+           "    // A coroutine runs across frames, pausing at each yield.\n"
+           "    IEnumerator Hop()\n"
+           "    {\n"
+           "        transform.position += Vector3.up * hopHeight;\n"
+           "        yield return new WaitForSeconds(0.25f);\n"
+           "        transform.position -= Vector3.up * hopHeight;\n"
            "    }\n"
            "}\n";
 }
@@ -7714,6 +7781,8 @@ void DrawStats(EditorState& ed) {
         {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
         {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
         {"Particles",  stParts},
+        {"Drawn",      okay::LastCullCounters().drawn},    // last GPU frame, after frustum culling
+        {"Culled",     okay::LastCullCounters().culled},
     };
     if (ImGui::BeginTable("##statgrid", 4, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("n1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -7734,6 +7803,13 @@ void DrawStats(EditorState& ed) {
         }
         ImGui::EndTable();
     }
+    ImGui::Spacing();
+    ImGui::Checkbox("Frustum culling", &okay::FrustumCullingEnabled());
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Skip meshes the camera (or the sun's shadow map) can't see.\n"
+                          "Turn off only to check whether culling hides something it shouldn't.");
+    ImGui::SameLine();
+    ImGui::TextDisabled("| skinning: %s", okay::SkinnedMesh::GpuSkinning() ? "GPU" : "CPU");
     ImGui::Spacing();
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Sky, lighting, post FX and debug view moved to the Lighting tab.");
@@ -9246,11 +9322,27 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
     static TextEditor::LanguageDefinition d;
     if (!inited) {
         static const char* kw[] = {
-            "if","else","for","while","do","return","break","continue","switch","case",
-            "var","let","const","function","func","def","class","new","public","private",
-            "true","false","null","this","foreach","in","and","or","not","try","catch","throw",
+            "if","else","for","while","do","return","break","continue","switch","case","default",
+            "var","let","const","function","func","def","class","struct","enum","interface","new",
+            "public","private","protected","internal","static","readonly","override","virtual","abstract",
+            "sealed","ref","out","is","as","typeof","base","get","set","yield","using","namespace",
+            "void","int","float","double","bool","string","char","long","byte","uint","object",
+            "true","false","null","this","foreach","in","and","or","not","try","catch","finally","throw",
         };
         for (auto* k : kw) d.mKeywords.insert(k);
+        // C# / Unity type names OkayScript understands, coloured like known identifiers.
+        static const char* kTypes[] = {
+            "MonoBehaviour","OkaySource","GameObject","Transform","Vector3","Vector2","Quaternion","Color",
+            "Mathf","Time","Input","KeyCode","Debug","Random","Space","Screen","List","Dictionary",
+            "KeyValuePair","HashSet","Queue","Stack","IEnumerator","Coroutine","WaitForSeconds",
+            "WaitForEndOfFrame","Rigidbody","Rigidbody2D","SpriteRenderer","MeshRenderer","Renderer",
+            "Animator","AudioSource","Collider","Collider2D","Collision","Collision2D","ForceMode2D",
+            "SerializeField","Header","Range","Tooltip","Action","Func",
+        };
+        for (auto* t : kTypes) {
+            TextEditor::Identifier id; id.mDeclaration = std::string(t) + " (C# / Unity type)";
+            d.mIdentifiers.insert(std::make_pair(std::string(t), id));
+        }
         // Every completion name (curated API + all VM builtins) becomes a known
         // identifier; attach the signature + doc so hovering shows it (widget tooltip).
         for (const auto& name : ScriptCompletions()) {
@@ -9270,8 +9362,8 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             "[a-zA-Z_][a-zA-Z0-9_]*", TextEditor::PaletteIndex::Identifier));
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
             "[\\[\\]\\{\\}\\!\\%\\^\\&\\*\\(\\)\\-\\+\\=\\~\\|\\<\\>\\?\\/\\;\\,\\.]", TextEditor::PaletteIndex::Punctuation));
-        d.mCommentStart = "/*";       // OkayScript has no block comments, but the widget
-        d.mCommentEnd = "*/";          // needs a non-empty pair (empty matches everything).
+        d.mCommentStart = "/*";       // C#-style block comments
+        d.mCommentEnd = "*/";
         d.mSingleLineComment = "//";
         d.mCaseSensitive = true;
         d.mAutoIndentation = true;
@@ -9452,14 +9544,18 @@ void DrawScriptEditor(EditorState& ed) {
     // 1 = undock into a floating window, 2 = dock back into the main area as a tab.
     if (g_scriptDockReq == 1) {
         ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_Always);
+        const ImVec2 vs = ImGui::GetMainViewport()->Size;
+        ImGui::SetNextWindowSize(ImVec2(std::max(760.0f, vs.x * 0.62f), std::max(560.0f, vs.y * 0.78f)), ImGuiCond_Always);
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         g_scriptDockReq = 0;
     } else if (g_scriptDockReq == 2 && g_dockspaceId) {
         ImGui::SetNextWindowDockID(g_dockspaceId, ImGuiCond_Always);
         g_scriptDockReq = 0;
     }
-    if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
+    // The menu bar (File / Edit / View / Go / Insert / Help) holds every tool, so the
+    // toolbar row stays at Run / Save / Format. Shown once a script is open.
+    const ImGuiWindowFlags sewFlags = g_scriptTabs.empty() ? 0 : ImGuiWindowFlags_MenuBar;
+    if (!ImGui::Begin("Script Editor", &g_showScriptEditor, sewFlags)) { ImGui::End(); return; }
     bool s_isDocked = ImGui::IsWindowDocked();
 
     // Gather every live ScriptComponent (an object can have several), and prune
@@ -9620,10 +9716,9 @@ void DrawScriptEditor(EditorState& ed) {
         }
 
         // --- Toolbar (VS Code-style title row): file + Run / Save / Reload ----
-        std::string fname = sc->Path().empty() ? (go->name + "." + extide::ExtFor(sc->Language()))
-                                               : std::filesystem::path(sc->Path()).filename().string();
-        ImGui::TextColored(ImVec4(0.82f, 0.82f, 0.88f, 1.0f), "%s", fname.c_str());
-        ImGui::SameLine();
+        // Run / Save / Format sit at the right end of the menu bar (drawn further down,
+        // so their clicks land here on the next frame) — no separate toolbar row.
+        static bool s_tbRun = false, s_tbSave = false, s_tbFormat = false;
         static bool s_highlight = true;
         static std::string s_error;     // last compile error (shown red in status)
         static std::vector<ScriptDiagnostic> s_diags;   // all live syntax problems (Problems panel)
@@ -9634,7 +9729,8 @@ void DrawScriptEditor(EditorState& ed) {
         static bool s_showFind = false; // Rider-style: the find bar is hidden until Ctrl+F
         static int  s_findCursor = -1;  // search position — advances on each Enter/F3 even
                                         // while the editor is unfocused (its caret is frozen)
-        if (ImGui::SmallButton("Run")) {           // compile + test-run in a sandbox
+        const bool runClicked = s_tbRun; s_tbRun = false;
+        if (runClicked) {           // compile + test-run in a sandbox
             bool ok = sc->LoadSource(buf.data(), &s_error);
             if (!ok) { ConsoleLog("Compile error: " + s_error, 2); }
             else {
@@ -9659,9 +9755,6 @@ void DrawScriptEditor(EditorState& ed) {
             }
             ed.dirty = true;
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Compile and test-run the script in a sandbox object.\nprint()/log() output shows in the console below.\nUse Save to just write the file without running.");
-        ImGui::SameLine();
         // Save the current script to disk (button + Ctrl+S). One place so both agree.
         auto doSave = [&]() {
             std::string p = filePath();
@@ -9683,105 +9776,169 @@ void DrawScriptEditor(EditorState& ed) {
             } else ConsoleLog("Save failed: " + p, 2);
             ed.dirty = true;
         };
-        if (ImGui::SmallButton("Save")) doSave();
+        if (s_tbSave) { s_tbSave = false; doSave(); }
         // Ctrl+S saves the script even while the text box has focus (the global
         // shortcut handler skips text fields, so it never reached here before).
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
             ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift &&
             ImGui::IsKeyPressed(ImGuiKey_S, false))
             doSave();
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Format")) {          // re-indent by brace depth
+        if (s_tbFormat) {          // re-indent by brace depth
+            s_tbFormat = false;
             caret.replaceAll = FormatOkayScript(buf.data());   // applied via callback / leftover path
             ed.dirty = true; ConsoleLog("Formatted script");
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-indent the whole document (4 spaces / level)");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
 
         // Statics that outlive the toolbar (used by the editor body further below).
         static bool  s_minimap = true;
         static float s_zoom = 1.0f;
-        static int   s_gotoLine = 1;
 
-        // Everything past Run / Save / Format / Docs / Templates lives behind ONE
-        // "More" toggle, so the toolbar stays clean and the power tools are a single
-        // click away instead of always crowding the row.
-        static bool s_moreTools = false;
-        ImGui::SameLine();
-        if (ImGui::SmallButton(s_moreTools ? "Less \xc2\xab" : "More \xc2\xbb")) s_moreTools = !s_moreTools;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reload, Open in IDE, zoom, minimap, outline, comment, go-to-line, ...");
-        if (s_moreTools) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reload")) {
-                if (!sc->Path().empty()) {
-                    std::string src = extide::ReadFile(sc->Path());
-                    SetCodeBuffer(sc, src);
-                    std::string e; sc->LoadSource(src, &e);
-                    g_scriptSaved[sc] = src;
-                    std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(sc->Path(), mec);
-                    s_extConflict[sc] = false;
-                    ConsoleLog("Reloaded " + sc->Path());
-                } else ConsoleLog("No file to reload (Save first)");
+        // ---- Menu bar: every tool, grouped the way IDEs do -------------------------
+        bool rqReload = false, rqIde = false, rqOutline = false, rqMarks = false, rqTemplates = false,
+             rqInsert = false, rqRename = false, rqRefs = false, rqGoto = false, rqSwitch = false,
+             rqDef = false, rqCheat = false;
+        if (ImGui::BeginMenuBar()) {
+            if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("Save", "Ctrl+S")) doSave();
+                if (ImGui::MenuItem("Reload from Disk", nullptr, false, !sc->Path().empty())) rqReload = true;
+                if (ImGui::MenuItem("Open in External IDE")) rqIde = true;
+                ImGui::MenuItem("Live Sync External Edits", nullptr, &s_liveSync);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Switch Script...", "Ctrl+E")) rqSwitch = true;
+                if (ImGui::MenuItem(s_isDocked ? "Float Window" : "Dock Window")) g_scriptDockReq = s_isDocked ? 1 : 2;
+                ImGui::EndMenu();
             }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Open in IDE")) {
-                std::string p = filePath();
-                extide::WriteFile(p, buf.data()); sc->SetPath(p);
-                std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(p, mec);
-                s_liveSync = true;                 // seamless: adopt saves from the outside editor
-                extide::OpenExternal(p);
-                ConsoleLog("Opened " + p + " in external IDE (live-sync on)");
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Format Document", "Ctrl+Alt+L")) { caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }
+                if (ImGui::MenuItem("Toggle Comment", "Ctrl+/")) caret.toggleComment = true;
+                if (ImGui::MenuItem("Find / Replace", "Ctrl+F")) s_showFind = true;
+                ImGui::Separator();
+                if (ImGui::MenuItem("Rename Symbol...")) rqRename = true;
+                if (ImGui::MenuItem("Find All References")) rqRefs = true;
+                ImGui::Separator();
+                if (ImGui::MenuItem("Command Palette", "Ctrl+Shift+P")) s_palReq = true;
+                ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("View")) {
+                ImGui::MenuItem("Syntax Colors", nullptr, &s_highlight);
+                ImGui::MenuItem("Minimap", nullptr, &s_minimap);
+                ImGui::MenuItem("Problems Panel", nullptr, &s_showProblems);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Zoom In", "Ctrl+Wheel")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
+                if (ImGui::MenuItem("Zoom Out")) s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f);
+                if (ImGui::MenuItem("Reset Zoom", nullptr, false, s_zoom != 1.0f)) s_zoom = 1.0f;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Go")) {
+                if (ImGui::MenuItem("Go to Line...", "Ctrl+G")) rqGoto = true;
+                if (ImGui::MenuItem("Go to Symbol...")) rqOutline = true;
+                if (ImGui::MenuItem("Go to Definition", "F12")) rqDef = true;
+                if (ImGui::MenuItem("Bookmarks...", "F11", false, !bookmarks.empty())) rqMarks = true;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Insert")) {
+                if (ImGui::MenuItem("Behaviour Template...")) rqTemplates = true;
+                if (ImGui::MenuItem("API Command...")) rqInsert = true;
+                ImGui::Separator();
+                ImGui::TextDisabled("C# snippets");
+                static const std::pair<const char*, const char*> kCs[] = {
+                    {"Public Field",      "public float speed = 5f;\n"},
+                    {"Start + Update",    "void Start()\n{\n}\n\nvoid Update()\n{\n}\n"},
+                    {"Coroutine",         "IEnumerator Routine()\n{\n    yield return new WaitForSeconds(1f);\n}\n"},
+                    {"Trigger Handler",   "void OnTriggerEnter2D(Collider2D other)\n{\n    if (other.CompareTag(\"Player\"))\n    {\n    }\n}\n"},
+                    {"Collision Handler", "void OnCollisionEnter(Collision other)\n{\n    Debug.Log(other.name);\n}\n"},
+                    {"GetComponent",      "var rb = GetComponent<Rigidbody2D>();\n"},
+                    {"List",              "List<int> items = new List<int>();\n"},
+                    {"Dictionary",        "Dictionary<string, int> scores = new Dictionary<string, int>();\n"},
+                    {"foreach Loop",      "foreach (var item in items)\n{\n}\n"},
+                    {"Enum",              "public enum State { Idle, Run, Jump }\n"},
+                    {"Auto Property",     "public int Lives { get; set; } = 3;\n"},
+                    {"Repeating Timer",   "InvokeRepeating(\"Tick\", 1f, 1f);\n"},
+                };
+                for (const auto& cs : kCs)
+                    if (ImGui::MenuItem(cs.first)) { caret.insert = cs.second; ed.dirty = true; }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Help")) {
+                if (ImGui::MenuItem("C# Quick Reference")) rqCheat = true;
+                if (ImGui::MenuItem("Scripting Docs")) g_showScriptDocs = true;
+                ImGui::EndMenu();
+            }
+            // Right end: the everyday actions as buttons.
+            const ImGuiStyle& mst = ImGui::GetStyle();
+            auto bw = [&](const char* l) { return ImGui::CalcTextSize(l).x + mst.FramePadding.x * 2.0f + mst.ItemSpacing.x; };
+            const char* popLbl = s_isDocked ? "Pop Out" : "Dock";
+            float right = bw(" Run ") + bw("Save") + bw("Format") + bw(popLbl) + 6.0f;
+            float x = ImGui::GetWindowContentRegionMax().x - right;
+            if (x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(x);
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.18f, 0.42f, 0.26f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.52f, 0.32f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.16f, 0.36f, 0.22f, 1.0f));
+            if (ImGui::SmallButton(" Run ")) s_tbRun = true;
+            ImGui::PopStyleColor(3);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Edit this script in your own editor (VS Code / OS default).\n"
-                                  "With Live Sync on, every save out there reloads here automatically.");
-            ImGui::SameLine();
-            ImGui::Checkbox("Live Sync", &s_liveSync);
+                ImGui::SetTooltip("Compile and test-run the script in a sandbox object.\nDebug.Log / print output shows in the Console.");
+            if (ImGui::SmallButton("Save")) s_tbSave = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save (Ctrl+S)");
+            if (ImGui::SmallButton("Format")) s_tbFormat = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-indent the whole document (Ctrl+Alt+L)");
+            if (ImGui::SmallButton(popLbl)) g_scriptDockReq = s_isDocked ? 1 : 2;
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Auto-reload this script whenever its file changes on disk\n"
-                                  "(edits from an external editor). Off = reload manually.");
-            ImGui::SameLine();
-            // Float / Dock: pop the editor out into its own window, or dock it back.
-            if (ImGui::SmallButton(s_isDocked ? "Float" : "Dock"))
-                g_scriptDockReq = s_isDocked ? 1 : 2;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(s_isDocked ? "Pop the Script Editor out into its own window"
-                                             : "Dock the Script Editor back as a tab");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Cmds")) s_palReq = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Command palette (Ctrl+Shift+P)");
-            ImGui::SameLine();
-            ImGui::Checkbox("Syntax", &s_highlight);
-            ImGui::SameLine();
-            ImGui::Checkbox("Map", &s_minimap);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the code minimap (click it to scroll)");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("A-")) s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("A+")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom code (Ctrl+scroll in the editor)");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("//")) caret.toggleComment = true;   // comment/uncomment line
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle // comment on the current line (Ctrl+/)");
-            ImGui::SameLine(); ImGui::TextDisabled("Go");
-            ImGui::SameLine(); ImGui::SetNextItemWidth(54);
-            bool goEnter = ImGui::InputInt("##goto", &s_gotoLine, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("->") || goEnter) {
-                jumpTo(s_gotoLine < 1 ? 1 : s_gotoLine);
-                s_scrollToLine = caret.gotoLine;
+                ImGui::SetTooltip(s_isDocked ? "Open the Script Editor in its own large window" : "Dock it back as a tab");
+            ImGui::EndMenuBar();
+        }
+        if (rqReload) {
+            std::string src = extide::ReadFile(sc->Path());
+            SetCodeBuffer(sc, src);
+            std::string e; sc->LoadSource(src, &e);
+            g_scriptSaved[sc] = src;
+            std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(sc->Path(), mec);
+            s_extConflict[sc] = false;
+            ConsoleLog("Reloaded " + sc->Path());
+        }
+        if (rqIde) {
+            std::string p = filePath();
+            extide::WriteFile(p, buf.data()); sc->SetPath(p);
+            std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(p, mec);
+            s_liveSync = true;                 // seamless: adopt saves from the outside editor
+            extide::OpenExternal(p);
+            ConsoleLog("Opened " + p + " in external IDE (live-sync on)");
+        }
+        if (rqOutline) ImGui::OpenPopup("##outline");
+        if (rqMarks)   ImGui::OpenPopup("##bookmarks");
+        if (rqGoto)    ImGui::OpenPopup("##gotolinepop");
+        if (rqSwitch)  ImGui::OpenPopup("##tabswitcher");
+        if (rqCheat)   ImGui::OpenPopup("##cscheat");
+        ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopup("##cscheat")) {
+            ImGui::TextColored(AccentCol(), "C# in OkayScript");
+            ImGui::TextDisabled("Write Unity-style C#; these all work:");
+            ImGui::Separator();
+            static const char* kRows[][2] = {
+                {"public class Player : MonoBehaviour { }", "the class is your component"},
+                {"public float speed = 5f;  [Header(\"Move\")]", "Inspector fields + attributes"},
+                {"void Start() / void Update() / Awake()", "lifecycle (Time.deltaTime inside)"},
+                {"transform.position += Vector3.up * 2;", "Vector3 maths, transform.Translate/Rotate"},
+                {"Input.GetAxis(\"Horizontal\"), GetKeyDown(KeyCode.Space)", "input"},
+                {"List<int>, Dictionary<string,int>, int[]", "collections + Add/Remove/Count/..."},
+                {"xs.Where(x => x > 2).Select(x => x * 10)", "lambdas + LINQ-style helpers"},
+                {"(int)f, $\"hp {hp}\", s.ToUpper(), n.ToString(\"F2\")", "casts, strings"},
+                {"enum State { Idle, Run }  switch (state) { case State.Run: }", "enums + switch"},
+                {"IEnumerator Blink() { yield return new WaitForSeconds(1f); }", "coroutines (StartCoroutine)"},
+                {"GetComponent<Rigidbody2D>().velocity = v;", "components: Rigidbody(2D), Animator, Renderer, Text, AudioSource"},
+                {"void OnTriggerEnter2D(Collider2D other) { other.CompareTag(..) }", "physics events"},
+                {"Destroy(gameObject, 2f), Instantiate(prefab, pos, rot)", "objects"},
+                {"Invoke(\"Fire\", 1f), InvokeRepeating(..), Debug.Log(..)", "timers + logging"},
+            };
+            if (ImGui::BeginTable("##cst", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                for (auto& r : kRows) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); ImGui::TextColored(ImVec4(0.80f, 0.86f, 1.0f, 1.0f), "%s", r[0]);
+                    ImGui::TableSetColumnIndex(1); ImGui::TextDisabled("%s", r[1]);
+                }
+                ImGui::EndTable();
             }
-            // Outline: jump to any function/class in the file (VS Code's symbol list).
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Outline")) ImGui::OpenPopup("##outline");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to a function or class");
-            // Marks: list of bookmarked lines (F11 toggles; click the number gutter).
-            if (!bookmarks.empty()) {
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Marks")) ImGui::OpenPopup("##bookmarks");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to a bookmark (F11 toggles one on the caret line)");
-            }
+            ImGui::EndPopup();
         }
         if (ImGui::BeginPopup("##outline")) {
             auto syms = ScriptOutline(buf.data());
@@ -9880,8 +10037,8 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::EndPopup();
         }
         // Go to Definition (F12): jump to the function/class under the caret.
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-            ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
+        if (rqDef || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                      ImGui::IsKeyPressed(ImGuiKey_F12, false))) {
             const char* t = buf.data(); int len = (int)std::strlen(t);
             int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
             auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
@@ -9898,9 +10055,7 @@ void DrawScriptEditor(EditorState& ed) {
         }
         // Templates: insert a ready-made, plain-English behaviour at the caret — the
         // code-side of the visual "Starter Scripts", so beginners never face a blank file.
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Templates")) ImGui::OpenPopup("##snippets");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Insert a ready-made behaviour (Move, Jump, Follow, Spawn timer, ...) written in plain OkayScript.");
+        if (rqTemplates) ImGui::OpenPopup("##snippets");
         if (ImGui::BeginPopup("##snippets")) {
             struct Snip { const char* group; const char* name; const char* desc; const char* text; };
             static const Snip snips[] = {
@@ -10093,11 +10248,7 @@ void DrawScriptEditor(EditorState& ed) {
         // builtin's signature + one-line description), click to splice a call at the
         // caret. The fast way to discover "how do I do X" without leaving the editor.
         static char s_insQuery[64] = ""; static bool s_insFocus = false;
-        if (s_moreTools) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Insert...")) { s_insQuery[0] = '\0'; s_insFocus = true; ImGui::OpenPopup("##insertbrowser"); }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Browse & insert any script command (searchable API)");
-        }
+        if (rqInsert) { s_insQuery[0] = '\0'; s_insFocus = true; ImGui::OpenPopup("##insertbrowser"); }
         ImGui::SetNextWindowSize(ImVec2(480, 440), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("##insertbrowser")) {
             ImGui::TextDisabled("Insert command  —  type to search names, params, or descriptions");
@@ -10151,9 +10302,8 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Rename: change the identifier under the caret everywhere in the file.
         static char s_renameTo[64] = ""; static std::string s_renameFrom;
-        if (s_moreTools) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Rename")) {
+        {
+            if (rqRename) {
                 const char* t = buf.data(); int len = (int)std::strlen(t);
                 int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
                 auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
@@ -10165,7 +10315,6 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::OpenPopup("##rename");
                 }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rename the symbol under the caret everywhere in this file");
         }
         if (ImGui::BeginPopup("##rename")) {
             ImGui::Text("Rename '%s' to:", s_renameFrom.c_str());
@@ -10184,9 +10333,8 @@ void DrawScriptEditor(EditorState& ed) {
         // Find All References: list every whole-word use of the symbol under the caret.
         static std::string s_refsSym;
         static std::vector<std::pair<int, std::string>> s_refs;
-        if (s_moreTools) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Refs")) {
+        {
+            if (rqRefs) {
                 const char* t = buf.data(); int len = (int)std::strlen(t);
                 int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
                 auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
@@ -10198,7 +10346,6 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::OpenPopup("##refs");
                 }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find all references to the symbol under the caret");
         }
         if (ImGui::BeginPopup("##refs")) {
             ImGui::TextColored(AccentCol(), "%d reference%s to '%s'",
@@ -10226,7 +10373,7 @@ void DrawScriptEditor(EditorState& ed) {
             for (auto& s : avail) items.push_back(s.c_str());
             int li = 0;
             for (int i = 0; i < (int)avail.size(); ++i) if (avail[i] == sc->Language()) li = i;
-            ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+            ImGui::SetNextItemWidth(110);
             if (ImGui::Combo("##lang", &li, items.data(), (int)items.size())) {
                 std::string oldLang = sc->Language(), newLang = avail[li];
                 sc->SetLanguage(newLang);
@@ -11223,7 +11370,7 @@ void DrawScriptEditor(EditorState& ed) {
         }
 
         // --- Status bar (VS Code-style) --------------------------------------
-        const char* langLbl = sc->Language() == "okayscript" ? "OkayScript"
+        const char* langLbl = sc->Language() == "okayscript" ? "C# (OkayScript)"
                             : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
         char selInfo[32] = "";
         if (caret.selLen > 0) std::snprintf(selInfo, sizeof(selInfo), " (%d sel)", caret.selLen);
@@ -12988,12 +13135,9 @@ void DrawHierarchy(EditorState& ed) {
                         else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = path;
                         else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
                         ed.dirty = true; ConsoleLog("Set texture on " + node->name);
-                    } else if (ext == ".okay") {           // attach a script (Unity-style)
-                        ed.PushUndo();
-                        auto* nsc = node->AddComponent<ScriptComponent>("okayscript");
-                        std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
-                        if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
-                        ed.dirty = true; ConsoleLog("Attached script to " + node->name);
+                    } else if (ext == ".okay" || ext == ".okayvs") {   // attach a script (Unity-style)
+                        AttachScriptAsset(ed, node, path);
+                        ed.Select(node);
                     } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
                         ed.PushUndo();
                         if (auto* tr = node->GetComponent<TextRenderer>())   tr->fontPath = path;
@@ -15826,6 +15970,12 @@ static void DrawAnimatorGraph(EditorState& ed) {
             ImVec2 c1(a.x + 70.0f * Z, a.y + off * Z), c2(b.x - 70.0f * Z, b.y + off * Z);
             if (i == j) { c1 = ImVec2(a.x + 120 * Z, a.y - 70 * Z); c2 = ImVec2(a.x - 120 * Z, a.y - 70 * Z); }   // self loop
             bool sel = (s_selTrFrom == i && s_selTrIdx == t);
+            // Just fired (Play): flash for a moment so you see what happened.
+            bool fired = false;
+            if (ed.isPlaying() && !sm->History().empty()) {
+                const auto& h = sm->History().back();
+                fired = h.from == sm->states[i].name && h.to == tr.to && sm->Clock() - h.time < 0.6f;
+            }
             // hit test along the curve
             bool hov = false;
             for (int sIt = 0; sIt <= 24 && !hov; ++sIt) {
@@ -15837,10 +15987,12 @@ static void DrawAnimatorGraph(EditorState& ed) {
             }
             if (hov) { hovTrFrom = i; hovTrIdx = t; }
             ImU32 col = sel ? ImGui::GetColorU32(ImVec4(1.0f, 0.8f, 0.2f, 1.0f))
+                      : fired ? ImGui::GetColorU32(ImVec4(0.35f, 0.95f, 0.55f, 1.0f))
                       : hov ? ImGui::GetColorU32(ImGuiCol_Text)
+                      : tr.muted ? ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.35f)
                       : i == curIdx ? ImGui::GetColorU32(ImVec4(0.95f, 0.70f, 0.20f, 0.85f))
                                     : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            dl->AddBezierCubic(a, c1, c2, b, col, sel || i == curIdx ? 3.0f : 2.0f);
+            dl->AddBezierCubic(a, c1, c2, b, col, sel || fired || i == curIdx ? 3.0f : 2.0f);
             // arrowhead at the middle of the curve
             float u = 0.55f, v = 1.0f - u;
             ImVec2 p(v*v*v*a.x + 3*v*v*u*c1.x + 3*v*u*u*c2.x + u*u*u*b.x,
@@ -15858,7 +16010,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
                                       ImVec2(p.x - nrm.x * 5, p.y - nrm.y * 5), col);
                 // What makes it fire, next to the arrow.
                 if ((s_labels && Z >= 0.6f) || sel || hov) {
-                    std::string lb = TransitionSummary(tr);
+                    std::string lb = tr.muted ? "(muted) " + TransitionSummary(tr) : TransitionSummary(tr);
                     const float lfs = gFs * 0.85f;
                     ImVec2 ts = gFont->CalcTextSizeA(lfs, FLT_MAX, 0.0f, lb.c_str());
                     // Centred beside the arrowhead, on the side its normal points to.
@@ -16093,6 +16245,8 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (ImGui::SliderFloat("##agexit", &tr.exitTime, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
         }
         if (ImGui::DragFloat("Blend (s)##ag", &tr.blend, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+        if (ImGui::Checkbox("Mute##ag", &tr.muted)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Never fire: try the machine without this transition, keep it for later.");
         if (ImGui::SliderFloat("Start at##ag", &tr.offset, 0.0f, 0.99f, "%.2f")) ed.dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start the target state part-way into its clip (0.5 = halfway).\n"
                                                       "Line up the feet when switching between walk/run cycles.");
@@ -16266,6 +16420,25 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 ImGui::PopID();
             }
             if (delM >= 0) { st.motions.erase(st.motions.begin() + delM); ed.dirty = true; }
+            if (ma && !st.motions.empty()) {
+                if (ImGui::SmallButton("Thresholds from clip speed##ag")) {
+                    ed.PushUndo();
+                    int set = 0;
+                    for (auto& m : st.motions) {
+                        int ci = ma->FindClip(m.clip);
+                        if (ci < 0) continue;
+                        float v = ma->ClipRootSpeed(ci);
+                        m.threshold = std::round(v * 100.0f) / 100.0f; ++set;
+                    }
+                    ed.dirty = true;
+                    ConsoleLog("Blend tree '" + st.name + "': thresholds set from " + std::to_string(set) + " clip(s)' root speed (m/s)");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Set each motion's threshold to how fast its clip actually moves (root\n"
+                                      "bone, m/s), so 'speed' = your character's real velocity plays the clip\n"
+                                      "whose feet match it: no sliding. In-place clips read 0.");
+                ImGui::SameLine();
+            }
             if (ImGui::SmallButton("+ Motion##ag")) {
                 float next = st.motions.empty() ? 0.0f : st.motions.back().threshold + 1.0f;
                 st.motions.push_back({clipNames.empty() ? std::string() : clipNames.front(), next});
@@ -16276,7 +16449,29 @@ static void DrawAnimatorGraph(EditorState& ed) {
         ImGui::Separator();
         if (ImGui::Button("Add Transition##ag")) s_pendingFrom = s_selState;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Then click the target state in the graph.");
-        ImGui::TextDisabled("%d outgoing transition(s)", (int)st.transitions.size());
+        // Outgoing transitions in the order they're tested (the first that passes wins).
+        if (!st.transitions.empty()) {
+            ImGui::TextDisabled("Outgoing (tested top to bottom):");
+            int moveFrom = -1, moveTo = -1;
+            for (int ti = 0; ti < (int)st.transitions.size(); ++ti) {
+                const auto& tr = st.transitions[ti];
+                ImGui::PushID(5000 + ti);
+                if (ImGui::SmallButton("^") && ti > 0) { moveFrom = ti; moveTo = ti - 1; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("v") && ti + 1 < (int)st.transitions.size()) { moveFrom = ti; moveTo = ti + 1; }
+                ImGui::SameLine();
+                std::string lbl = "-> " + tr.to + "  " + TransitionSummary(tr);
+                if (tr.muted) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                if (ImGui::Selectable(lbl.c_str(), false)) { s_selTrFrom = s_selState; s_selTrIdx = ti; }
+                if (tr.muted) ImGui::PopStyleColor();
+                ImGui::PopID();
+            }
+            if (moveFrom >= 0) {
+                ed.PushUndo();
+                std::swap(st.transitions[moveFrom], st.transitions[moveTo]);
+                ed.dirty = true;
+            }
+        }
     } else if (s_selTrFrom >= 0 && s_selTrFrom < n &&
                s_selTrIdx >= 0 && s_selTrIdx < (int)sm->states[s_selTrFrom].transitions.size()) {
         AnimStateMachine::State& from = sm->states[s_selTrFrom];
@@ -16366,6 +16561,17 @@ static void DrawAnimatorGraph(EditorState& ed) {
         if (ImGui::SmallButton("+ Trigger##pc")) { ed.PushUndo(); sm->params.push_back({"go", 2}); ed.dirty = true; }
         ImGui::SameLine();
         if (ImGui::SmallButton("+ Int##pi"))     { ed.PushUndo(); sm->params.push_back({"mode", 3}); ed.dirty = true; }
+        if (ed.isPlaying() && !sm->History().empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Recent state changes:");
+            const auto& hist = sm->History();
+            for (int hi = (int)hist.size() - 1; hi >= 0 && hi >= (int)hist.size() - 8; --hi) {
+                const auto& h = hist[hi];
+                ImGui::TextDisabled("%6.2fs", h.time);
+                ImGui::SameLine();
+                ImGui::Text("%s -> %s", h.from.empty() ? "(start)" : h.from.c_str(), h.to.c_str());
+            }
+        }
         if (ed.isPlaying()) {
             ImGui::Separator();
             ImGui::TextDisabled("Set from scripts:");
@@ -21248,15 +21454,8 @@ void DrawInspector(EditorState& ed) {
             std::string path((const char*)p->Data), ext;
             if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
             for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-            if (ext == ".okay") {
-                ed.PushUndo();
-                // Always add a new script (objects can hold several, including
-                // multiple instances of the same one — like Unity).
-                auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
-                std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
-                if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
-                SetCodeBuffer(nsc, nsc->Source());   // fresh editor buffer for it
-                ConsoleLog("Attached script " + path); ed.dirty = true;
+            if (ext == ".okay" || ext == ".okayvs") {
+                AttachScriptAsset(ed, go, path);
             } else if (ext == ".okaymat") {
                 if (auto* mr = go->GetComponent<MeshRenderer>()) {
                     Material m; if (Material::LoadFromFile(path, m)) {
@@ -22357,6 +22556,42 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit3("Color##fl", c)) { fl->color = {c[0],c[1],c[2],1.0f}; ed.dirty = true; }
             ImGui::TextDisabled("Mount on the player or its camera; the beam aims where you look.");
             if (ImGui::SmallButton("Remove##fl")) toRemove = fl;
+        }
+    }
+    if (auto* vsc = dynamic_cast<VisualScriptComponent*>(curComp)) {
+        if (CompHeader("Visual Script", vsc, &toRemove)) {
+            const std::string nm = vsc->Path().empty() ? std::string("(embedded graph)")
+                                                       : std::filesystem::path(vsc->Path()).filename().string();
+            ImGui::TextUnformatted(nm.c_str());
+            if (!vsc->Path().empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", vsc->Path().c_str());
+            if (!vsc->LastError().empty())
+                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "Error: %s", vsc->LastError().c_str());
+            else if (vsc->Graph())
+                ImGui::TextDisabled("%d nodes", vsc->Graph()->NodeCount());
+            if (ImGui::SmallButton("Open in node editor##vsc")) {
+                std::string path = vsc->Path();
+                if (path.empty()) {   // embedded only: give it a file so it can be edited
+                    std::filesystem::path dir = ed.projectDir().empty() ? std::filesystem::path("Assets")
+                                                                         : std::filesystem::path(ed.projectDir()) / "Assets";
+                    std::error_code mk; std::filesystem::create_directories(dir, mk);
+                    path = (dir / (go->name + "Graph.okayvs")).string();
+                    std::ofstream(path) << vsc->Source();
+                    vsc->SetPath(path); ed.dirty = true;
+                }
+                okay::editor::vsed::OpenFile(path);
+                g_showVisualScript = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reload##vsc")) {
+                std::string err;
+                if (vsc->Reload(&err)) ConsoleLog("Reloaded " + nm);
+                else ConsoleLog("Reload failed: " + err, 2);
+            }
+            if (ed.isPlaying() && !vsc->Variables().empty() && ImGui::TreeNode("Variables##vsc")) {
+                for (const auto& kv : vsc->Variables())
+                    ImGui::Text("%s = %s", kv.first.c_str(), kv.second.AsString().c_str());
+                ImGui::TreePop();
+            }
         }
     }
     if (auto* skm = dynamic_cast<SkinnedMesh*>(curComp)) {
@@ -23649,6 +23884,17 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Max Body Offset##fbik", &fb->maxBodyOffset, 0.01f, 0.0f, 3.0f);
                 ImGui::DragFloat("Spine Reach##fbik", &fb->spineReach, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Max Spine Angle##fbik", &fb->maxSpineAngle, 0.5f, 0.0f, 90.0f);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spread over the spine and chest bones when both are mapped.");
+                if (ImGui::TreeNode("Smoothing & limits##fbiks")) {
+                    ImGui::DragFloat("Blend Speed##fbik", &fb->blendSpeed, 0.1f, 0.0f, 50.0f, "%.1f /s");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast goals fade in and out when switched on/off or reweighted\n(ik_hand / ik_release in scripts). 0 = instant.");
+                    ImGui::DragFloat("Goal Smoothing##fbik", &fb->goalSmoothing, 0.1f, 0.0f, 50.0f, "%.1f /s");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Follow moving targets smoothly instead of exactly (removes jitter\nfrom physics-driven targets). 0 = exact.");
+                    ImGui::DragFloat("Elbow Min Bend##fbik", &fb->armMinBend, 0.5f, 0.0f, 120.0f, "%.0f deg");
+                    ImGui::DragFloat("Knee Min Bend##fbik", &fb->legMinBend, 0.5f, 0.0f, 120.0f, "%.0f deg");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The tightest the joint may fold (inside angle). Goals too close to\nthe shoulder or hip stop short instead of crushing the limb.");
+                    ImGui::TreePop();
+                }
                 static const char* kLimb[] = {"Left Hand", "Right Hand", "Left Foot", "Right Foot"};
                 static const int kEndBone[] = {FullBodyIK::LHand, FullBodyIK::RHand, FullBodyIK::LFoot, FullBodyIK::RFoot};
                 static const int kMidBone[] = {FullBodyIK::LForeArm, FullBodyIK::RForeArm, FullBodyIK::LShin, FullBodyIK::RShin};
@@ -23656,7 +23902,13 @@ void DrawInspector(EditorState& ed) {
                     FullBodyIK::Effector& e = fb->effectors[l];
                     ImGui::PushID(3000 + l);
                     ImGui::Checkbox("##en", &e.enabled); ImGui::SameLine();
-                    if (ImGui::TreeNode(kLimb[l])) {
+                    const bool open = ImGui::TreeNode(kLimb[l]);
+                    if (ed.isPlaying()) {   // live: how strongly it's applied, and whether it got there
+                        ImGui::SameLine(160.0f);
+                        ImGui::ProgressBar(fb->EffectiveWeight(l), ImVec2(60.0f, 0.0f), "");
+                        if (fb->Reached(l)) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "reached"); }
+                    }
+                    if (open) {
                         NameField("Target##fe", e.targetName);
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Create##fet")) {
@@ -23691,11 +23943,13 @@ void DrawInspector(EditorState& ed) {
                     ImGui::DragFloat("Head Share##fbl", &fb->lookHeadShare, 0.01f, 0.0f, 1.0f);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The head turns this share; the chest turns the rest.");
                     ImGui::DragFloat("Max Angle##fbl", &fb->maxLookAngle, 0.5f, 0.0f, 180.0f);
+                    ImGui::DragFloat("Smoothing##fbl", &fb->lookSmoothing, 0.1f, 0.0f, 50.0f, "%.1f /s");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The head swings toward a new point at this rate (0 = snap).");
                     float hf[3] = {fb->headForward.x, fb->headForward.y, fb->headForward.z};
                     if (ImGui::DragFloat3("Head Forward##fbl", hf, 0.05f, -1.0f, 1.0f)) { fb->headForward = {hf[0], hf[1], hf[2]}; ed.dirty = true; }
                     ImGui::TreePop();
                 }
-                ImGui::TextDisabled("Scripts: ik_hand(\"left\", x, y, z), ik_foot(...), ik_look(x, y, z)");
+                ImGui::TextDisabled("Scripts: ik_hand(\"left\", x, y, z), ik_foot(...), ik_look(x, y, z),\nik_reached(\"left_hand\"), ik_release()");
                 if (ImGui::SmallButton("Remove##fbik")) toRemove = fb;
             }
         }
@@ -27906,21 +28160,33 @@ void DrawInspector(EditorState& ed) {
                     if (!e.is_regular_file()) continue;
                     std::string ext = e.path().extension().string();
                     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-                    if (ext != ".okay") continue;
+                    if (ext != ".okay" && ext != ".okayvs") continue;
                     std::string full = e.path().string();
                     std::string rel = fs::relative(e.path(), assets, ec).string();
-                    if (F(rel.c_str()) && ImGui::MenuItem(rel.c_str())) {
-                        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
-                        std::string err; sc->LoadFile(full, &err); sc->SetPath(full);
-                        if (!err.empty()) ConsoleLog("Script error in " + full + ": " + err, 2);
-                        ConsoleLog("Attached script " + full);
-                        ed.dirty = true;
-                    }
+                    std::string lbl = rel + (ext == ".okayvs" ? "  (visual)" : "");
+                    if (F(rel.c_str()) && ImGui::MenuItem(lbl.c_str())) AttachScriptAsset(ed, go, full);
                 }
             }
             if (F("New Script...") && ImGui::MenuItem("New Script...")) {
                 g_newScriptGO = go; g_newScriptOpen = true;
                 std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
+            }
+            if (F("New Visual Script") && ImGui::MenuItem("New Visual Script (nodes)")) {
+                // A starter graph (On Start + On Update), saved under Assets, attached,
+                // and opened in the node editor.
+                namespace fsn = std::filesystem;
+                fsn::path dir = ed.projectDir().empty() ? fsn::path("Assets") : fsn::path(ed.projectDir()) / "Assets";
+                std::error_code mk; fsn::create_directories(dir, mk);
+                fsn::path p = dir / (go->name + "Graph.okayvs");
+                for (int k = 2; fsn::exists(p, mk); ++k) p = dir / (go->name + "Graph" + std::to_string(k) + ".okayvs");
+                auto& vg = okay::editor::vsed::State().g;
+                vg.clear();
+                vg.add("OnStart", 40, 40);
+                vg.add("OnUpdate", 40, 160);
+                if (vg.save(p.string())) {
+                    AttachScriptAsset(ed, go, p.string());
+                    g_showVisualScript = true;
+                } else ConsoleLog("Couldn't create " + p.string(), 2);
             }
             if (item(true, "Actions (Visual Script)")) { go->AddComponent<ActionList>(); ed.dirty = true; }  // multiple allowed
           } EndCat(o); }
@@ -28114,15 +28380,8 @@ void DrawInspector(EditorState& ed) {
                 std::string path((const char*)p->Data), ext;
                 if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
                 for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-                if (ext == ".okay") {
-                    ed.PushUndo();
-                    // Always attach a new Script (objects can hold several, even
-                    // multiple instances of the same script) — like Unity.
-                    auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
-                    std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
-                    if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
-                    SetCodeBuffer(nsc, nsc->Source());   // fresh editor buffer for it
-                    ConsoleLog("Attached script " + path); ed.dirty = true;
+                if (ext == ".okay" || ext == ".okayvs") {
+                    AttachScriptAsset(ed, go, path);
                 } else if (ext == ".okaymat") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Material m; if (Material::LoadFromFile(path, m)) {
@@ -32774,7 +33033,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             Vec3 drop = ed.view3D ? ed.camTarget
                                   : Vec3{ed.cameraPos.x, ed.cameraPos.y, 0.0f};
             GameObject* placed = nullptr;
-            if (ext == ".okayprefab") {
+            if (ext == ".okay" || ext == ".okayvs") {
+                // A script dropped on the view goes on the selected object.
+                if (ed.selected()) AttachScriptAsset(ed, ed.selected(), path);
+                else ConsoleLog("Select an object first (or drop the script onto it in the Hierarchy).", 1);
+            } else if (ext == ".okayprefab") {
                 ed.PushUndo();
                 std::string err;
                 placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
@@ -34722,10 +34985,27 @@ int main(int argc, char** argv) {
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
         // every vertex on the CPU + a full mesh re-upload each frame.
+        // OpenGL does the same when it draws the views (Linux / macOS, or when
+        // Direct3D isn't available).
+        {
+            bool gpuSkin = false; int maxJoints = okay::SkinnedMesh::kMaxGpuJoints;
 #if defined(_WIN32)
-        okay::SkinnedMesh::GpuSkinning() = g_gpuRender && g_d3dReady && g_d3dRenderer && g_d3dRenderer->SupportsGpuSkinning() &&
-                                           !std::getenv("OKAY_CPU_SKINNING");
+            if (g_gpuRender && g_d3dReady && g_d3dRenderer) gpuSkin = g_d3dRenderer->SupportsGpuSkinning();
+            else
 #endif
+            if (g_gpuRender && g_glReady && g_glRenderer && g_glRenderer->SupportsGpuSkinning()) {
+                gpuSkin = true; maxJoints = g_glRenderer->GpuSkinJoints();
+            }
+            okay::SkinnedMesh::GpuSkinning() = gpuSkin && !std::getenv("OKAY_CPU_SKINNING");
+            okay::SkinnedMesh::GpuMaxJoints() = maxJoints;
+            static int s_skinWas = -1;   // say once when it changes
+            const int now = okay::SkinnedMesh::GpuSkinning() ? 1 : 0;
+            if (now != s_skinWas) {
+                if (now) ConsoleLog("Skinned meshes deform on the GPU (up to " + std::to_string(maxJoints) + " bones per mesh).");
+                else if (s_skinWas == 1) ConsoleLog("Skinned meshes deform on the CPU.");
+                s_skinWas = now;
+            }
+        }
         ImGui::NewFrame();
 
         // Clear editor globals still pointing at an object deleted last frame (hierarchy
@@ -34813,6 +35093,30 @@ int main(int argc, char** argv) {
             // OKAY_UI_DEMO_ANIM=1: give the selection an Animator with a few keys and open
             // the Animation window (screenshots of the timeline).
             if (std::getenv("OKAY_UI_ASSETS") && s_focusFrames == 31) g_showAssetManager = true;
+            // OKAY_UI_SCRIPT=1: give the selection a starter C# script and open the Script
+            // Editor; OKAY_UI_VS=1: open the node editor on a small demo graph (screenshots).
+            if (std::getenv("OKAY_UI_SCRIPT") && s_focusFrames == 42)
+                if (GameObject* g = ed.selected()) {
+                    auto* scr = g->AddComponent<ScriptComponent>();
+                    std::string src = extide::StarterScriptNamed("okayscript", "Player");
+                    scr->SetSource(src); scr->LoadSource(src);
+                    g_showScriptEditor = true; ImGui::SetWindowFocus("Script Editor");
+                    g_scriptDockReq = 1;   // its own large window
+                }
+            if (std::getenv("OKAY_UI_VS") && s_focusFrames == 42) {
+                auto& vg = okay::editor::vsed::State().g;
+                vg = okay::editor::vsed::VsEditGraph{};
+                int st = vg.add("OnStart", 30, 30), up = vg.add("OnUpdate", 30, 170);
+                int pr = vg.add("Print", 260, 30); vg.find(pr)->pinDefault[0] = "Hello OkaySpace";
+                int fl = vg.add("ForLoop", 260, 170); vg.find(fl)->pinDefault[1] = "3";
+                int sc = vg.add("SetColor", 560, 150); vg.find(sc)->pinDefault[0] = "1";
+                int ri = vg.add("RandomInt", 260, 360);
+                int ff = vg.add("FlipFlop", 560, 330);
+                int pc = vg.add("PlayClip", 820, 300); vg.find(pc)->arg = "Run";
+                vg.linkExec(st, 0, pr); vg.linkExec(up, 0, fl); vg.linkExec(fl, 0, sc); vg.linkExec(fl, 1, ff);
+                vg.linkExec(ff, 0, pc); vg.linkData(sc, 1, ri, 0);
+                g_showVisualScript = true;
+            }
             // OKAY_UI_IMPORT=model.glb: import it and select it (screenshots of rigs).
             if (const char* imp = std::getenv("OKAY_UI_IMPORT"); imp && s_focusFrames == 31) {
                 bool okm = false;

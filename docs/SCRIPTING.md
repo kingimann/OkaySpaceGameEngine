@@ -10,6 +10,69 @@ panel. The same reference is available inside the editor under
 > Lua-style `function ... end`. The starter script the editor inserts is already
 > in the right form.
 
+
+## C# / Unity style
+
+If you know Unity C#, write that: OkayScript reads it directly. New scripts start
+as a C# component class:
+
+```csharp
+using UnityEngine;
+using System.Collections;
+using System.Collections.Generic;
+
+public class Player : MonoBehaviour
+{
+    [Header("Movement")]
+    public float speed = 5f;          // public fields show in the Inspector
+    private int hops = 0;
+
+    void Start() { Debug.Log($"{gameObject.name} is ready"); }
+
+    void Update()
+    {
+        float h = Input.GetAxis("Horizontal");
+        transform.position += new Vector3(h, 0, 0) * speed * Time.deltaTime;
+        if (Input.GetKeyDown(KeyCode.Space)) StartCoroutine(Hop());
+    }
+
+    IEnumerator Hop()
+    {
+        transform.position += Vector3.up;
+        yield return new WaitForSeconds(0.25f);
+        transform.position -= Vector3.up;
+    }
+
+    void OnTriggerEnter2D(Collider2D other)
+    {
+        if (other.CompareTag("Coin")) { hops++; Destroy(other.gameObject); }
+    }
+}
+```
+
+What works:
+
+| Area | Supported |
+|---|---|
+| Structure | `using ...;`, `namespace X { }`, `class`/`struct` with base types, `[Attributes]`, modifiers (`public`, `private`, `static`, `override`, ...), `enum`s (with explicit values), auto-properties `{ get; set; } = 3`, `/* block comments */` |
+| Types | `int`/`float`/`bool`/`string`/`char`, `var`, `List<T>`, `Dictionary<K,V>`, arrays `int[]` (`new int[3]`, `new[] {1, 2}`, `{1, 2, 3}` initializers), multiple declarators `int a = 1, b = 2;` |
+| Expressions | casts `(int)x`, `$"interpolated {strings}"`, `?:`, `%=`, bitwise `& \| ^`, `++x`, Vector3 maths (`v + w`, `v * 2`, `-v`, `v / 2`), `(a - b).normalized`, `this.field` |
+| Methods on values | strings: `ToUpper`, `ToLower`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `Substring`, `Replace`, `Split`, `Trim`, `PadLeft`...; numbers: `ToString("F2")`; lists: `Add`, `Remove`, `RemoveAt`, `Insert`, `Contains`, `IndexOf`, `Clear`, `Sort`, `Reverse`, `Count`; dictionaries: `Add`, `ContainsKey`, `Remove`, `Keys`, `Values`, `GetValueOrDefault`, `foreach (KeyValuePair<K,V> kv in d)` |
+| Lambdas | `x => x * 2`, `(a, b) => { ... }` with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)`; `Action` variables you can call |
+| Lifecycle | `Awake`, `Start`, `Update()` (with or without `dt`), `LateUpdate`, `OnCollisionEnter/Stay/Exit`, `OnTriggerEnter/Stay/Exit` (2D and 3D; the parameter is the other object, so `other.name`, `other.tag`, `other.CompareTag(..)`, `other.transform.position` work), `OnMouseDown/Up/Enter/Exit` |
+| Coroutines | `IEnumerator` methods, `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
+| Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text`/`TMP_Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
+| Unity API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
+
+Objects are referenced by name under the hood, so `GameObject.Find("Enemy")`
+returns a reference you can pass to `Destroy`, compare with `null`, or read
+`.tag` / `.transform.position` from. Not supported (yet): user-defined classes
+as types you `new`, generics you declare yourself, `ref`/`out` parameters, LINQ
+query syntax, and properties with bodies.
+
+In the Script Editor, **Insert ▸ C# snippets** adds fields, handlers, coroutines
+and collections, and **Help ▸ C# Quick Reference** shows this list.
+
 ## Lifecycle
 
 Two functions drive every script, the same way Unity uses `MonoBehaviour`

@@ -47,6 +47,10 @@ public:
     /// their cached vertex buffer on it: an idle rig is never re-uploaded, a moving
     /// one is uploaded once per frame however many views / passes draw it.
     std::uint64_t version = 1;
+    /// Bumped when the bind-pose mesh handed to a GPU-skinning renderer changes
+    /// (switching to GPU skinning, blend shapes). Its vertex buffer is keyed on
+    /// this, so a moving GPU-skinned character is never re-uploaded.
+    std::uint64_t bindVersion = 1;
 
     /// Skin matrices from the last Skin(): meshNode^-1 * jointWorld * inverseBind,
     /// one per joint. A GPU renderer that skins in its vertex shader draws `bind`
@@ -59,9 +63,13 @@ public:
     /// skins on the GPU: Skin() then only builds the palette (no per-vertex CPU
     /// work, no mesh re-upload) and MeshRenderer::mesh keeps the bind pose.
     static bool& GpuSkinning() { static bool on = false; return on; }
+    /// Joints the active GPU renderer's shader takes (<= kMaxGpuJoints); set by
+    /// the host with GpuSkinning. Bigger rigs keep deforming on the CPU.
+    static int& GpuMaxJoints() { static int n = kMaxGpuJoints; return n; }
     /// Whether this mesh is being skinned on the GPU right now.
     bool UsesGpuSkinning() const {
-        return GpuSkinning() && method == (int)Method::Linear && (int)joints.size() <= kMaxGpuJoints && Ready();
+        return GpuSkinning() && method == (int)Method::Linear && (int)joints.size() <= GpuMaxJoints() &&
+               (int)joints.size() <= kMaxGpuJoints && Ready();
     }
 
     void Start() override  { ResolveJoints(); Skin(); }
@@ -180,7 +188,7 @@ public:
         if (gpu) {
             // The vertex shader deforms; leave the bind pose in the renderer's mesh
             // (restored once when switching over from CPU skinning).
-            if (!m_lastGpu || m_bindDirty || mr->mesh.vertices.size() != bind.vertices.size()) mr->mesh = bind;
+            if (!m_lastGpu || m_bindDirty || mr->mesh.vertices.size() != bind.vertices.size()) { mr->mesh = bind; ++bindVersion; }
             m_bindDirty = false;
             m_lastGpu = true;
             mr->deformed = false;

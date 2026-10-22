@@ -1,5 +1,6 @@
 #include "okay/Render/GLRenderer.hpp"
 #include "okay/Render/Lighting.hpp"
+#include "okay/Render/Culling.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
@@ -9,6 +10,8 @@
 
 #include <GL/gl.h>          // GL 1.1 types + enums only
 #include <cmath>
+#include <cstring>
+#include <string>
 #include <cstring>
 
 // ---- Modern GL enums/types not in gl.h (1.1) ------------------------------------
@@ -90,6 +93,8 @@ typedef void   (*PFNUniform3f)(GLint, GLfloat, GLfloat, GLfloat);
 typedef void   (*PFNUniform1f)(GLint, GLfloat);
 typedef void   (*PFNUniform3fv)(GLint, GLsizei, const GLfloat*);
 typedef void   (*PFNUniform1fv)(GLint, GLsizei, const GLfloat*);
+typedef void   (*PFNUniform4fv)(GLint, GLsizei, const GLfloat*);
+typedef void   (*PFNGetIntegerv)(GLenum, GLint*);
 typedef void   (*PFNGenBuffers)(GLsizei, GLuint*);
 typedef void   (*PFNBindBuffer)(GLenum, GLuint);
 typedef void   (*PFNBufferData)(GLenum, GLsizeiptrOK, const void*, GLenum);
@@ -150,6 +155,7 @@ struct GL {
     PFNGetUniformLocation GetUniformLocation; PFNUniformMatrix4fv UniformMatrix4fv;
     PFNUniform3f Uniform3f; PFNUniform1f Uniform1f;
     PFNUniform3fv Uniform3fv; PFNUniform1fv Uniform1fv;
+    PFNUniform4fv Uniform4fv = nullptr; PFNGetIntegerv GetIntegerv = nullptr;   // GPU skinning
     PFNGenBuffers GenBuffers; PFNBindBuffer BindBuffer; PFNBufferData BufferData; PFNDeleteBuffers DeleteBuffers;
     PFNVertexAttribPointer VertexAttribPointer; PFNEnableVertexAttribArray EnableVertexAttribArray;
     PFNDisableVertexAttribArray DisableVertexAttribArray;
@@ -177,17 +183,45 @@ template <class F> bool load(F& fn, GLRenderer::GLGetProc gp, const char* name) 
     return fn != nullptr;
 }
 
+// GPU skinning, shared by every vertex shader that draws meshes: uBones holds
+// each joint's skin matrix (meshNode^-1 * jointWorld * inverseBind) as three
+// rows; a vertex blends its four joints' rows by weight and applies them once.
+// SKIN_BONES is defined when the program is built (from the GPU's uniform limit).
+const char* kSkinGlsl =
+    "uniform float uSkin; uniform vec4 uBones[SKIN_BONES * 3];\n"
+    "attribute vec4 aJoints; attribute vec4 aWeights;\n"
+    "void skinRows(out vec4 r0, out vec4 r1, out vec4 r2){\n"
+    "  int j0 = int(aJoints.x + 0.5) * 3, j1 = int(aJoints.y + 0.5) * 3;\n"
+    "  int j2 = int(aJoints.z + 0.5) * 3, j3 = int(aJoints.w + 0.5) * 3;\n"
+    "  r0 = uBones[j0] * aWeights.x + uBones[j1] * aWeights.y + uBones[j2] * aWeights.z + uBones[j3] * aWeights.w;\n"
+    "  r1 = uBones[j0+1] * aWeights.x + uBones[j1+1] * aWeights.y + uBones[j2+1] * aWeights.z + uBones[j3+1] * aWeights.w;\n"
+    "  r2 = uBones[j0+2] * aWeights.x + uBones[j1+2] * aWeights.y + uBones[j2+2] * aWeights.z + uBones[j3+2] * aWeights.w;\n"
+    "}\n"
+    "vec3 skinPos(vec3 p){\n"
+    "  if (uSkin < 0.5) return p;\n"
+    "  vec4 r0, r1, r2; skinRows(r0, r1, r2); vec4 h = vec4(p, 1.0);\n"
+    "  return vec3(dot(r0, h), dot(r1, h), dot(r2, h));\n"
+    "}\n";
+
 const char* kVert =
     "#version 120\n"
+    "SKIN\n"
     "uniform mat4 uMVP; uniform mat4 uModel; uniform vec2 uTiling; uniform vec2 uTexOffset;\n"
     "attribute vec3 aPos; attribute vec3 aNormal; attribute vec2 aUV; attribute vec3 aColor;\n"
     "attribute vec3 aTan;\n"
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
     "void main(){\n"
-    "  gl_Position = uMVP * vec4(aPos,1.0);\n"
-    "  vN = mat3(uModel) * aNormal;\n"
-    "  vTan = mat3(uModel) * aTan;\n"
-    "  vWorld = (uModel * vec4(aPos,1.0)).xyz;\n"
+    "  vec3 P = aPos, Nn = aNormal, Tt = aTan;\n"
+    "  if (uSkin > 0.5) {\n"
+    "    vec4 r0, r1, r2; skinRows(r0, r1, r2); vec4 h = vec4(aPos, 1.0);\n"
+    "    P = vec3(dot(r0, h), dot(r1, h), dot(r2, h));\n"
+    "    Nn = vec3(dot(r0.xyz, aNormal), dot(r1.xyz, aNormal), dot(r2.xyz, aNormal));\n"
+    "    Tt = vec3(dot(r0.xyz, aTan), dot(r1.xyz, aTan), dot(r2.xyz, aTan));\n"
+    "  }\n"
+    "  gl_Position = uMVP * vec4(P,1.0);\n"
+    "  vN = mat3(uModel) * Nn;\n"
+    "  vTan = mat3(uModel) * Tt;\n"
+    "  vWorld = (uModel * vec4(P,1.0)).xyz;\n"
     "  vUV = aUV * uTiling + uTexOffset;\n"
     "  vCol = aColor;\n"
     "}\n";
@@ -356,14 +390,33 @@ const char* kFrag =
 // buffer it fills IS the shadow map the main shader samples. No colour output.
 const char* kDepthVert =
     "#version 120\n"
+    "SKIN\n"
     "attribute vec3 aPos;\n"
     "uniform mat4 uDepthMVP;\n"
-    "void main(){ gl_Position = uDepthMVP * vec4(aPos, 1.0); }\n";
+    "void main(){ gl_Position = uDepthMVP * vec4(skinPos(aPos), 1.0); }\n";
 const char* kDepthFrag =
     "#version 120\n"
     "void main(){ }\n";   // depth is written automatically; no colour
 
+// Joints the skinning shaders take (from the GPU's vertex uniform limit; set once).
+int g_skinBones = 0;
+
 GLuint compile(GLenum type, const char* src) {
+    // A "SKIN" line expands to the skinning helpers sized for this GPU.
+    std::string expanded;
+    if (const char* at = std::strstr(src, "SKIN\n")) {
+        if (g_skinBones == 0) {
+            GLint comps = 1024;   // GL guarantees at least this many vertex uniform components
+            if (g.GetIntegerv) g.GetIntegerv(0x8B4A /*GL_MAX_VERTEX_UNIFORM_COMPONENTS*/, &comps);
+            int n = (comps - 160) / 12;   // leave room for the other uniforms; 12 floats per joint
+            g_skinBones = n > 256 ? 256 : (n < 1 ? 1 : n);
+        }
+        expanded.assign(src, at);
+        expanded += "#define SKIN_BONES " + std::to_string(g_skinBones) + "\n";
+        expanded += kSkinGlsl;
+        expanded += at + 5;
+        src = expanded.c_str();
+    }
     GLuint s = g.CreateShader(type);
     g.ShaderSource(s, 1, &src, nullptr);
     g.CompileShader(s);
@@ -445,6 +498,9 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     // If absent, shadow mapping is skipped (renderer still works without cast shadows).
     load(g.DrawBuffer, gp, "glDrawBuffer");
     load(g.ReadBuffer, gp, "glReadBuffer");
+    // Optional: GPU skinning (bone matrices as a vec4 uniform array).
+    load(g.Uniform4fv, gp, "glUniform4fv");
+    load(g.GetIntegerv, gp, "glGetIntegerv");
     g.ok = r;
     if (!r) Log::Error("[gl] required OpenGL entry points missing — using software renderer");
     return r;
@@ -465,11 +521,15 @@ bool GLRenderer::EnsureProgram() {
     g.BindAttribLocation(m_prog, 2, "aUV");
     g.BindAttribLocation(m_prog, 3, "aColor");
     g.BindAttribLocation(m_prog, 4, "aTan");
+    g.BindAttribLocation(m_prog, 5, "aJoints");
+    g.BindAttribLocation(m_prog, 6, "aWeights");
     g.LinkProgram(m_prog);
     GLint ok = 0; g.GetProgramiv(m_prog, GL_LINK_STATUS, &ok);
     g.DeleteShader(vs); g.DeleteShader(fs);
     if (!ok) { char log[512]; g.GetProgramInfoLog(m_prog, 512, nullptr, log); Log::Error("[gl] link: ", log); g.DeleteProgram(m_prog); m_prog = 0; return false; }
     m_uMVP = g.GetUniformLocation(m_prog, "uMVP");
+    m_uSkin = g.GetUniformLocation(m_prog, "uSkin");
+    m_uBones = g.GetUniformLocation(m_prog, "uBones");
     m_uModel = g.GetUniformLocation(m_prog, "uModel");
     m_uColor = g.GetUniformLocation(m_prog, "uColor");
     m_uLightDir = g.GetUniformLocation(m_prog, "uLightDir");
@@ -540,11 +600,15 @@ bool GLRenderer::EnsureDepthProgram() {
     m_depthProg = g.CreateProgram();
     g.AttachShader(m_depthProg, vs); g.AttachShader(m_depthProg, fs);
     g.BindAttribLocation(m_depthProg, 0, "aPos");
+    g.BindAttribLocation(m_depthProg, 5, "aJoints");
+    g.BindAttribLocation(m_depthProg, 6, "aWeights");
     g.LinkProgram(m_depthProg);
     GLint ok = 0; g.GetProgramiv(m_depthProg, GL_LINK_STATUS, &ok);
     g.DeleteShader(vs); g.DeleteShader(fs);
     if (!ok) { g.DeleteProgram(m_depthProg); m_depthProg = 0; return false; }
     m_uDepthMVP = g.GetUniformLocation(m_depthProg, "uDepthMVP");
+    m_udSkin = g.GetUniformLocation(m_depthProg, "uSkin");
+    m_udBones = g.GetUniformLocation(m_depthProg, "uBones");
     return true;
 }
 
@@ -692,8 +756,9 @@ namespace {
 const float kSsaoFar = 150.0f;   // linear-depth range; AO fades out beyond this
 const char* kSsaoDepthVert =
     "#version 120\n"
+    "SKIN\n"
     "attribute vec3 aPos; uniform mat4 uMVP; uniform mat4 uModel; varying vec3 vWorld;\n"
-    "void main(){ vWorld = (uModel * vec4(aPos, 1.0)).xyz; gl_Position = uMVP * vec4(aPos, 1.0); }\n";
+    "void main(){ vec3 P = skinPos(aPos); vWorld = (uModel * vec4(P, 1.0)).xyz; gl_Position = uMVP * vec4(P, 1.0); }\n";
 const char* kSsaoDepthFrag =
     "#version 120\n"
     "uniform vec3 uEye; uniform float uFar; varying vec3 vWorld;\n"
@@ -744,6 +809,8 @@ bool GLRenderer::EnsureSsaoProgs() {
         prog = g.CreateProgram();
         g.AttachShader(prog, vs); g.AttachShader(prog, fs);
         g.BindAttribLocation(prog, 0, "aPos");
+        g.BindAttribLocation(prog, 5, "aJoints");
+        g.BindAttribLocation(prog, 6, "aWeights");
         g.LinkProgram(prog);
         GLint ok = 0; g.GetProgramiv(prog, GL_LINK_STATUS, &ok);
         g.DeleteShader(vs); g.DeleteShader(fs);
@@ -754,6 +821,8 @@ bool GLRenderer::EnsureSsaoProgs() {
     if (!build(kQuadVert, kSsaoFrag, m_ssaoProg)) return false;
     if (!build(kQuadVert, kMulFrag, m_mulProg)) return false;
     m_usdMVP = g.GetUniformLocation(m_ssaoDepthProg, "uMVP");
+    m_usdSkin = g.GetUniformLocation(m_ssaoDepthProg, "uSkin");
+    m_usdBones = g.GetUniformLocation(m_ssaoDepthProg, "uBones");
     m_usdModel = g.GetUniformLocation(m_ssaoDepthProg, "uModel");
     m_usdEye = g.GetUniformLocation(m_ssaoDepthProg, "uEye");
     m_usdFar = g.GetUniformLocation(m_ssaoDepthProg, "uFar");
@@ -1034,6 +1103,7 @@ GLRenderer::MeshVB* GLRenderer::EnsureMeshVB(const Mesh& mesh, std::uint64_t ver
         e.lastFullHash = m_frame;
     }
     e.vertCount = (int)(m_verts.size() / 14);
+    ++e.buildSerial;
     if (e.vertCount == 0) return nullptr;
     if (!e.vbo) g.GenBuffers(1, &e.vbo);
     if (!e.vbo) { e.vertCount = 0; return nullptr; }
@@ -1041,6 +1111,64 @@ GLRenderer::MeshVB* GLRenderer::EnsureMeshVB(const Mesh& mesh, std::uint64_t ver
     g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)),
                  m_verts.data(), version ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
     return &e;
+}
+
+bool GLRenderer::SupportsGpuSkinning() const {
+    return g.ok && g.Uniform4fv && m_prog && m_uSkin >= 0 && m_uBones >= 0 && g_skinBones >= 32;
+}
+int GLRenderer::GpuSkinJoints() const { return g_skinBones; }
+
+// Which version keys a mesh's cached buffer: a GPU-skinned mesh draws its bind
+// pose (changes only with bindVersion); a CPU-skinned one changes every frame.
+static std::uint64_t MeshKey(const SkinnedMesh* skin) {
+    if (!skin) return 0;
+    return skin->UsesGpuSkinning() ? skin->bindVersion : skin->version;
+}
+
+// Feed (or stop feeding) GPU skinning for the next draw in the current program:
+// per-vertex joints/weights from a static buffer expanded like the mesh's, and
+// the bone rows. Leaves GL_ARRAY_BUFFER bound to the skin buffer when skinning.
+void GLRenderer::BindSkin(const SkinnedMesh* skin, const Mesh& mesh, MeshVB* mv, int uSkin, int uBones) {
+    const bool on = skin && mv && skin->UsesGpuSkinning() && g.Uniform4fv && uBones >= 0 &&
+                    (int)skin->palette.size() <= g_skinBones && !skin->palette.empty() &&
+                    skin->jointIdx.size() == mesh.vertices.size() && skin->jointWt.size() == mesh.vertices.size();
+    if (!on) {
+        g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);
+        if (uSkin >= 0) g.Uniform1f(uSkin, 0.0f);
+        return;
+    }
+    // Joints + weights in the same expanded order as BuildExpandedVerts (8 floats per vertex).
+    if (!mv->skinVbo || mv->skinFor != mv->vbo || mv->skinVer != mv->buildSerial) {
+        const auto& T = mesh.triangles;
+        const int nv = (int)mesh.vertices.size();
+        std::vector<float> sv;
+        sv.reserve((std::size_t)mv->vertCount * 8);
+        for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+            int a = T[i], b = T[i + 1], c = T[i + 2];
+            if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
+            for (int v : {a, b, c}) {
+                const auto& ji = skin->jointIdx[v]; const auto& jw = skin->jointWt[v];
+                for (int k = 0; k < 4; ++k) sv.push_back((float)ji[k]);
+                for (int k = 0; k < 4; ++k) sv.push_back(jw[k]);
+            }
+        }
+        if (!mv->skinVbo) g.GenBuffers(1, &mv->skinVbo);
+        g.BindBuffer(GL_ARRAY_BUFFER, mv->skinVbo);
+        g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(sv.size() * sizeof(float)), sv.data(), GL_STATIC_DRAW);
+        mv->skinFor = mv->vbo; mv->skinVer = mv->buildSerial;
+    }
+    g.BindBuffer(GL_ARRAY_BUFFER, mv->skinVbo);
+    g.EnableVertexAttribArray(5);
+    g.VertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void*)0);
+    g.EnableVertexAttribArray(6);
+    g.VertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void*)(4 * sizeof(float)));
+    // Bone rows (Mat4 is column-major: row r = m[r], m[4+r], m[8+r], m[12+r]).
+    m_boneRows.resize(skin->palette.size() * 12);
+    float* o = m_boneRows.data();
+    for (const Mat4& M : skin->palette)
+        for (int r = 0; r < 3; ++r) { *o++ = M.m[r]; *o++ = M.m[4 + r]; *o++ = M.m[8 + r]; *o++ = M.m[12 + r]; }
+    g.Uniform4fv(uBones, (GLsizei)(skin->palette.size() * 3), m_boneRows.data());
+    g.Uniform1f(uSkin, 1.0f);
 }
 
 const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& vp, const Vec3& eye,
@@ -1058,6 +1186,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         for (auto it = m_meshVB.begin(); it != m_meshVB.end();) {
             if (m_frame - it->second.lastUse > 300u) {
                 if (it->second.vbo) g.DeleteBuffers(1, &it->second.vbo);
+                if (it->second.skinVbo) g.DeleteBuffers(1, &it->second.skinVbo);
                 it = m_meshVB.erase(it);
             } else ++it;
         }
@@ -1082,6 +1211,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             // arrays from a previous frame get fetched against the position buffer.
             g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
             g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
+            const Frustum lightFr = Frustum::FromVP(lightVP);   // only casters inside the shadow box
             for (const auto& up : scene.Objects()) {
                 GameObject* go = up.get();
                 if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
@@ -1091,6 +1221,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                 const Mesh& mesh = mr->mesh;
                 const auto& V = mesh.vertices; const auto& T = mesh.triangles;
                 if (V.empty() || T.size() < 3) continue;
+                if (CulledByFrustum(lightFr, go, mr)) continue;
                 Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
                 g.UniformMatrix4fv(m_uDepthMVP, 1, GL_FALSE, dmvp.m);
                 // Static meshes: draw positions straight from the cached interleaved
@@ -1099,14 +1230,16 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                 const bool deformed = go->GetComponent<Character>() != nullptr;
                 if (!deformed) {
                     const auto* skin = go->GetComponent<SkinnedMesh>();
-                    MeshVB* mv = EnsureMeshVB(mesh, skin ? skin->version : 0);
+                    MeshVB* mv = EnsureMeshVB(mesh, MeshKey(skin));
                     if (!mv) continue;
                     g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
                     g.EnableVertexAttribArray(0);
                     g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), (const void*)0);
+                    BindSkin(skin, mesh, mv, m_udSkin, m_udBones);
                     g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
                     continue;
                 }
+                BindSkin(nullptr, mesh, nullptr, m_udSkin, m_udBones);
                 const int nv = (int)V.size();
                 m_verts.clear(); m_verts.reserve(T.size() * 3);
                 for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
@@ -1124,6 +1257,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                 g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
                 g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 3));
             }
+            g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);   // skin inputs off
             shadowOn = true;
         }
     }
@@ -1219,6 +1353,9 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         }
     }
 
+    // Skip what the camera can't see (main pass and the SSAO depth pass below).
+    const Frustum viewFr = Frustum::FromVP(vp);
+    int drawn = 0, culled = 0;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
@@ -1228,6 +1365,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         const Mesh& mesh = mr->mesh;
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
+        if (CulledByFrustum(viewFr, go, mr)) { ++culled; continue; }
+        ++drawn;
         unsigned int tex = TextureFor(mr->texture);
 
         // Geometry source: static meshes draw from the per-mesh cached GPU buffer
@@ -1237,9 +1376,11 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // (once per animated frame, shared by every view and pass).
         const bool deformed = go->GetComponent<Character>() != nullptr;
         MeshVB* mvb = nullptr;
+        const SkinnedMesh* gpuSkin = nullptr;
         if (!deformed) {
             const auto* skin = go->GetComponent<SkinnedMesh>();
-            mvb = EnsureMeshVB(mesh, skin ? skin->version : 0);
+            gpuSkin = skin;
+            mvb = EnsureMeshVB(mesh, MeshKey(skin));
             if (!mvb) continue;                    // no drawable triangles
         } else {
             BuildExpandedVerts(mesh);
@@ -1343,6 +1484,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(8 * sizeof(float)));
         g.EnableVertexAttribArray(4);
         g.VertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(11 * sizeof(float)));
+        BindSkin(mvb ? gpuSkin : nullptr, mesh, mvb, m_uSkin, m_uBones);
         // Transparency: a material alpha < 1 (water, glass) alpha-blends over the
         // scene and doesn't write depth, so geometry behind shows through. (Objects
         // draw in scene order — keep transparent meshes after opaque ones.)
@@ -1379,6 +1521,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         }
     }
 
+    LastCullCounters().drawn = drawn; LastCullCounters().culled = culled;
+    g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);   // skin inputs off for the post passes
     // Resolve MSAA into the single-sample texture, then read it back.
     g.BindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo);
     g.BindFramebuffer(GL_DRAW_FRAMEBUFFER, m_resolveFbo);
@@ -1409,6 +1553,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             if (mr->color.a < 0.999f) continue;           // transparents don't occlude
             const Mesh& mesh = mr->mesh;
             if (mesh.vertices.empty() || mesh.triangles.size() < 3) continue;
+            if (CulledByFrustum(viewFr, go, mr)) continue;
             Mat4 model = go->transform->LocalToWorldMatrix();
             Mat4 mvp = vp * model;
             g.UniformMatrix4fv(m_usdMVP, 1, GL_FALSE, mvp.m);
@@ -1416,14 +1561,16 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             const bool deformed = go->GetComponent<Character>() != nullptr;
             if (!deformed) {
                 const auto* skin = go->GetComponent<SkinnedMesh>();
-                MeshVB* mv = EnsureMeshVB(mesh, skin ? skin->version : 0);
+                MeshVB* mv = EnsureMeshVB(mesh, MeshKey(skin));
                 if (!mv) continue;
                 g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
                 g.EnableVertexAttribArray(0);
                 g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), (const void*)0);
+                BindSkin(skin, mesh, mv, m_usdSkin, m_usdBones);
                 g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
                 continue;
             }
+            BindSkin(nullptr, mesh, nullptr, m_usdSkin, m_usdBones);
             const auto& V = mesh.vertices; const auto& T = mesh.triangles;
             const int nv = (int)V.size();
             m_verts.clear(); m_verts.reserve(T.size() * 3);
@@ -1442,6 +1589,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
             g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 3));
         }
+        g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);
         // 2) AO estimate from the depth texture (fullscreen quad)
         g.Disable(GL_DEPTH_TEST);
         g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);

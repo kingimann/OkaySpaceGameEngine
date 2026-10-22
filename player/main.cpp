@@ -1577,6 +1577,24 @@ int main(int argc, char** argv) {
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
         Time::Step(tick ? dt : 0.0f);
+        // Characters skin in the vertex shader when Direct3D 11 or OpenGL draws the
+        // frame: bone matrices per frame instead of every vertex on the CPU plus a
+        // full mesh re-upload. (D3D12 and the software fallback skin on the CPU.)
+        {
+            bool gpuSkin = false; int maxJoints = okay::SkinnedMesh::kMaxGpuJoints;
+            if (cfg.gpu && gpuFails < 3) {
+#if defined(_WIN32)
+                if (d3d12Ready) gpuSkin = false;
+                else if (d3dReady && d3dRenderer) gpuSkin = d3dRenderer->SupportsGpuSkinning();
+                else
+#endif
+                if (glReady && glRenderer && glRenderer->SupportsGpuSkinning()) {
+                    gpuSkin = true; maxJoints = glRenderer->GpuSkinJoints();
+                }
+            }
+            okay::SkinnedMesh::GpuSkinning() = gpuSkin;
+            okay::SkinnedMesh::GpuMaxJoints() = maxJoints;
+        }
         if (tick) scene.Update(Time::DeltaTime());
         if (okay::Game::QuitRequested()) running = false;   // a PauseMenu / script asked to quit
 

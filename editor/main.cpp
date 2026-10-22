@@ -317,9 +317,10 @@ int main(int argc, char** argv) {
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
-#include "imgui_internal.h"
+#include "imgui_internal.h" // DockBuilder for the default layout
 #include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
-#include "okay/Scripting/ScriptUI.hpp" // DockBuilder for the default layout
+#include "okay/Scripting/ScriptUI.hpp"
+#include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
@@ -24014,6 +24015,27 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Lean Angle##fp", &fp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
             if (ImGui::DragFloat("Lean Offset##fp", &fp->leanOffset, 0.02f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Lean Ease##fp", &fp->leanSpeed, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+            SectionHeader("Feel");
+            if (ImGui::DragFloat("Look Smoothing##fp", &fp->lookSmoothing, 0.002f, 0.0f, 0.2f, fp->lookSmoothing <= 0 ? "raw" : "%.3f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Sprint FOV Boost##fp", &fp->sprintFovBoost, 0.2f, 0.0f, 30.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::Checkbox("Right-mouse Zoom##fp", &fp->zoomWithRightMouse)) ed.dirty = true;
+            if (fp->zoomWithRightMouse) {
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                if (ImGui::DragFloat("FOV##fpz", &fp->zoomFov, 0.5f, 5.0f, 90.0f, "%.0f")) ed.dirty = true;
+                if (ImGui::DragFloat("Zoom Sensitivity##fp", &fp->zoomSensitivity, 0.01f, 0.05f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::DragFloat("Landing Dip##fp", &fp->landDip, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+            SectionHeader("Slide (sprint + crouch)");
+            if (ImGui::Checkbox("Can Slide##fp", &fp->canSlide)) ed.dirty = true;
+            if (fp->canSlide) {
+                if (ImGui::DragFloat("Slide Speed##fp", &fp->slideSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Slide Time##fp", &fp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Slide Eye Height##fp", &fp->slideEyeHeight, 0.01f, 0.1f, 2.0f)) ed.dirty = true;
+            }
+            SectionHeader("Animation & IK");
+            if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
+            if (ImGui::Checkbox("Full Body IK looks with camera##fp", &fp->ikLook)) ed.dirty = true;
 
             ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");
             if (ImGui::SmallButton("Remove##fp")) toRemove = fp;
@@ -24127,6 +24149,35 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Lean Angle##tp", &tp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
             if (ImGui::DragFloat("Lean Offset##tp", &tp->leanOffset, 0.02f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Lean Ease##tp", &tp->leanSpeed, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+            SectionHeader("Feel");
+            if (ImGui::DragFloat("Look Smoothing##tp", &tp->lookSmoothing, 0.002f, 0.0f, 0.2f, tp->lookSmoothing <= 0 ? "raw" : "%.3f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Sprint FOV Boost##tp", &tp->sprintFovBoost, 0.2f, 0.0f, 30.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Landing Shake##tp", &tp->landShake, 0.005f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stride Length##tp", &tp->strideLength, 0.02f, 0.2f, 5.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance per footstep event (onFootstep) at walking speed.");
+            SectionHeader("Aim (hold right mouse)");
+            if (ImGui::Checkbox("Right-mouse Aim##tp", &tp->aimWithRightMouse)) ed.dirty = true;
+            if (tp->aimWithRightMouse) {
+                if (ImGui::DragFloat("Aim Distance##tp", &tp->aimDistance, 0.05f, 0.5f, 10.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Aim Shoulder##tp", &tp->aimShoulder, 0.02f, -3.0f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Aim FOV##tp", &tp->aimFov, 0.5f, 10.0f, 90.0f, "%.0f")) ed.dirty = true;
+                if (ImGui::DragFloat("Aim Sensitivity##tp", &tp->aimSensitivity, 0.01f, 0.05f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Auto-recenter Camera##tp", &tp->autoRecenter)) ed.dirty = true;
+            if (tp->autoRecenter) {
+                if (ImGui::DragFloat("Recenter Delay##tp", &tp->recenterDelay, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Recenter Speed##tp", &tp->recenterSpeed, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+            }
+            SectionHeader("Slide (sprint + crouch)");
+            if (ImGui::Checkbox("Can Slide##tp", &tp->canSlide)) ed.dirty = true;
+            if (tp->canSlide) {
+                if (ImGui::DragFloat("Slide Speed##tp", &tp->slideSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Slide Time##tp", &tp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
+            }
+            SectionHeader("Animation & IK");
+            if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
+            if (ImGui::Checkbox("Full Body IK looks with camera##tp", &tp->ikLook)) ed.dirty = true;
 
             ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");
             if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
@@ -33338,6 +33389,19 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
         { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }
+        {   // Every scene needs a camera (the Game view and builds render through it):
+            // put one back if the scene has none. Checked a few times a second.
+            static int s_camCheck = 0;
+            if (!ed.isPlaying() && ++s_camCheck >= 20) {
+                s_camCheck = 0;
+                bool made = false;
+                okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made);
+                if (made) {
+                    ed.dirty = true;
+                    ConsoleLog("This scene had no camera, so a Main Camera was added (every scene needs one to render).", 1);
+                }
+            }
+        }
         { OKAY_PROFILE("UI.SpriteEditor"); if (g_showSpriteEditor) DrawSpriteEditor(ed); }
         { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }

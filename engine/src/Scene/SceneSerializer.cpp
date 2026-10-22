@@ -1153,6 +1153,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << fp->maxJumps
             << " " << (fp->footIK ? 1 : 0) << "\n";
     }
+    if (auto* fp = go->GetComponent<FirstPersonController>()) {
+        // Feel / slide / hooks (separate record: older builds skip it).
+        out << "  fpfeel " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
+            << " " << (fp->zoomWithRightMouse ? 1 : 0) << " " << fp->zoomFov << " " << fp->zoomSensitivity
+            << " " << fp->landDip << " " << (fp->canSlide ? 1 : 0) << " " << fp->slideSpeed << " " << fp->slideTime
+            << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0) << "\n";
+    }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
             << tp->mouseSensitivity << " " << tp->turnSpeed << " " << tp->distance << " "
@@ -1179,6 +1186,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->leanAngle << " " << tp->leanOffset << " " << tp->leanSpeed
             << " " << tp->maxJumps
             << " " << (tp->footIK ? 1 : 0) << "\n";
+    }
+    if (auto* tp = go->GetComponent<ThirdPersonController>()) {
+        out << "  tpfeel " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
+            << " " << (tp->aimWithRightMouse ? 1 : 0) << " " << tp->aimDistance << " " << tp->aimShoulder
+            << " " << tp->aimFov << " " << tp->aimSensitivity << " " << tp->aimLerp
+            << " " << (tp->autoRecenter ? 1 : 0) << " " << tp->recenterDelay << " " << tp->recenterSpeed
+            << " " << tp->landShake << " " << tp->strideLength << " " << (tp->canSlide ? 1 : 0)
+            << " " << tp->slideSpeed << " " << tp->slideTime << " " << (tp->driveStateMachine ? 1 : 0)
+            << " " << (tp->ikLook ? 1 : 0) << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
@@ -3232,6 +3248,22 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             r.inputs.push_back(ing);
                         }
                         c->recipes.push_back(std::move(r));
+                    }
+                } else if (field == "fpfeel") {
+                    if (auto* fp = go->GetComponent<FirstPersonController>()) {
+                        int z = 1, sl = 1, sm = 1, ik = 1;
+                        in >> fp->lookSmoothing >> fp->sprintFovBoost >> fp->fovLerp >> z >> fp->zoomFov >> fp->zoomSensitivity
+                           >> fp->landDip >> sl >> fp->slideSpeed >> fp->slideTime >> fp->slideEyeHeight >> sm >> ik;
+                        fp->zoomWithRightMouse = z != 0; fp->canSlide = sl != 0; fp->driveStateMachine = sm != 0; fp->ikLook = ik != 0;
+                    }
+                } else if (field == "tpfeel") {
+                    if (auto* tp = go->GetComponent<ThirdPersonController>()) {
+                        int a = 1, rc = 0, sl = 1, sm = 1, ik = 1;
+                        in >> tp->lookSmoothing >> tp->sprintFovBoost >> tp->fovLerp >> a >> tp->aimDistance >> tp->aimShoulder
+                           >> tp->aimFov >> tp->aimSensitivity >> tp->aimLerp >> rc >> tp->recenterDelay >> tp->recenterSpeed
+                           >> tp->landShake >> tp->strideLength >> sl >> tp->slideSpeed >> tp->slideTime >> sm >> ik;
+                        tp->aimWithRightMouse = a != 0; tp->autoRecenter = rc != 0; tp->canSlide = sl != 0;
+                        tp->driveStateMachine = sm != 0; tp->ikLook = ik != 0;
                     }
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;

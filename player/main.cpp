@@ -9,6 +9,7 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
@@ -1155,6 +1156,11 @@ int main(int argc, char** argv) {
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
         SDL_Log("Could not load %s: %s", scenePath.c_str(), err.c_str());
         // Keep running with an empty scene rather than failing outright.
+    }
+    {   // A scene without a camera would render nothing: add one.
+        bool made = false;
+        okay::EnsureSceneCamera(scene, okay::SceneLooks2D(scene), &made);
+        if (made) SDL_Log("Scene has no camera; added a Main Camera.");
     }
 
     Uint32 winFlags = SDL_WINDOW_ALLOW_HIGHDPI;

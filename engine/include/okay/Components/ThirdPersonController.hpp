@@ -17,6 +17,7 @@
 #include "okay/Components/StepUp.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
+#include "okay/Components/ControllerFeel.hpp"
 
 namespace okay {
 
@@ -106,6 +107,42 @@ public:
 
     float yaw = 0.0f, pitch = 18.0f;    // camera orbit angles (degrees)
 
+    // ---- Feel ----
+    float lookSmoothing = 0.0f;         // mouse smoothing time (s); 0 = raw input
+    float sprintFovBoost = 6.0f;        // FOV widens this much while sprinting (0 = off)
+    float fovLerp = 7.0f;
+    // Aim (hold right mouse): over-the-shoulder close-up, the body faces where the
+    // camera looks (strafe), lower sensitivity, no sprinting — shooter / bow aiming.
+    bool  aimWithRightMouse = true;
+    float aimDistance = 2.2f;
+    float aimShoulder = 0.65f;
+    float aimFov = 48.0f;
+    float aimSensitivity = 0.6f;
+    float aimLerp = 10.0f;
+    // Auto-recenter: after a moment without mouse input, the camera swings back
+    // behind the way the character is running.
+    bool  autoRecenter = false;
+    float recenterDelay = 1.5f;
+    float recenterSpeed = 2.5f;
+    float landShake = 0.25f;            // camera bump on hard landings (world units, max)
+    float strideLength = 1.5f;          // distance per footstep event at walk speed
+
+    // ---- Slide (sprint, then crouch) ----
+    bool  canSlide = true;
+    float slideSpeed = 10.0f;
+    float slideTime  = 0.75f;
+
+    // ---- Hooks ----
+    bool  driveStateMachine = true;     // feed an AnimStateMachine speed/grounded/crouch/aim/... + jump/land triggers
+    bool  ikLook = true;                // a Full Body IK on the body looks where the camera aims
+    std::function<void(bool left)> onFootstep;
+    std::function<void()>          onJump;
+    std::function<void(float impactSpeed)> onLand;
+    int   FootstepCount() const { return m_steps; }
+    bool  IsAiming() const { return m_aim; }
+    bool  IsSliding() const { return m_slideT > 0.0f; }
+    bool  IsGrounded() const { return m_grounded; }
+
 
     /// Safety net: falling below this world Y teleports the player back to its
     /// spawn point (fell off the map / through a floor with no collider).
@@ -145,9 +182,15 @@ public:
         // right). Flip per-axis with invertX / invertY.
         Vec2 mp = Input::MousePosition();
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
+        m_aim = aimWithRightMouse && !uiBlocked && Input::GetMouseButton(1);
         if (m_haveMouse && !uiBlocked) {
-            yaw   += (invertX ? 1.0f : -1.0f) * (mp.x - m_lastMouse.x) * mouseSensitivity;
-            pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
+            float sens = mouseSensitivity * (m_aim ? aimSensitivity : 1.0f);
+            float dx = (mp.x - m_lastMouse.x) * sens, dy = (mp.y - m_lastMouse.y) * sens;
+            m_smooth.Step(dx, dy, lookSmoothing, dt);
+            if (std::fabs(mp.x - m_lastMouse.x) + std::fabs(mp.y - m_lastMouse.y) > 0.5f) m_mouseIdle = 0.0f;
+            else m_mouseIdle += dt;
+            yaw   += (invertX ? 1.0f : -1.0f) * dx;
+            pitch += (invertY ? -1.0f : 1.0f) * dy;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
@@ -170,7 +213,7 @@ public:
         // Stance (crouch / prone) + lean (Q/E peek) + run (no sprint while crouched/prone).
         UpdateStance();
         UpdateLean(dt);
-        bool running = m_stance == Stance::Stand && moving && IsRunHeld();
+        bool running = m_stance == Stance::Stand && moving && IsRunHeld() && !m_aim;
         float speed = m_stance == Stance::Prone  ? proneSpeed
                     : m_stance == Stance::Crouch ? crouchSpeed
                     : (running ? runSpeed : walkSpeed);
@@ -189,6 +232,16 @@ public:
         // the jump apex can't grant another jump (no more endless jumping). maxJumps
         // enables double (or more) jumps.
         if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
+        m_grounded = grounded;
+        // Slide: crouch while sprinting on the ground -> a burst that decays to a crouch.
+        if (canSlide && rb && grounded && m_wasRunning && m_slideT <= 0.0f &&
+            m_stance == Stance::Crouch && m_prevStance == Stance::Stand) {
+            m_slideT = slideTime;
+            m_slideDir = moving ? dir : (transform->localRotation * Vec3{0, 0, -1});
+            m_slideDir.y = 0.0f;
+        }
+        m_prevStance = m_stance;
+        if (m_slideT > 0.0f) { m_slideT -= dt; if (m_stance != Stance::Crouch) m_slideT = 0.0f; }
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
@@ -209,6 +262,13 @@ public:
             if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
             rb->velocity.x = cur.x + dv.x;
             rb->velocity.z = cur.z + dv.z;
+            if (m_slideT > 0.0f && grounded) {
+                float k = Mathf::Clamp(m_slideT / Mathf::Max(0.01f, slideTime), 0.0f, 1.0f);
+                float sp = crouchSpeed + (slideSpeed - crouchSpeed) * k * k;
+                float sl = std::sqrt(m_slideDir.x * m_slideDir.x + m_slideDir.z * m_slideDir.z);
+                if (sl > 1e-4f) { rb->velocity.x = m_slideDir.x / sl * sp; rb->velocity.z = m_slideDir.z / sl * sp; }
+                if (canJump && m_jumpBuf > 0.0f) { m_slideT = 0.0f; m_stance = Stance::Stand; m_prevStance = Stance::Stand; }
+            }
             // Jump: first jump needs ground/coyote; extra jumps (double-jump) up to maxJumps.
             if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
@@ -216,6 +276,8 @@ public:
                 if (firstOk || extraOk) {
                     rb->velocity.y = jumpForce;
                     ++m_jumpsUsed;
+                    m_jumped = true;
+                    if (onJump) onJump();
                     m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f;
                     grounded = false; airborne = true;
                 }
@@ -250,7 +312,7 @@ public:
         // The character mesh faces -Z (engine camera/controller convention).
         Quat want;
         bool turn = false;
-        if (faceMode == FaceMode::Camera) {
+        if (faceMode == FaceMode::Camera || m_aim) {
             want = Quat::Euler(0, yaw, 0);   // mesh -Z aligns with the camera's forward
             turn = true;
         } else if (moving) {
@@ -262,6 +324,29 @@ public:
             float t = 1.0f - std::exp(-turnSpeed * dt);
             transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
         }
+
+        // ---- Landing, footsteps, auto-recenter ----
+        float hSpeed = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z)
+                          : (moving ? speed : 0.0f);
+        {
+            float impact = 0.0f;
+            m_landing.SetDt(dt);
+            m_landed = m_landing.Step(grounded, rb ? rb->velocity.y : 0.0f, impact);
+            if (m_landed) { m_shake = Mathf::Min(landShake, impact * 0.02f); if (onLand) onLand(impact); }
+            if (grounded && hSpeed > 0.3f && m_slideT <= 0.0f) {
+                float stride = strideLength * Mathf::Max(0.6f, Mathf::Sqrt(Mathf::Max(0.1f, hSpeed / Mathf::Max(0.1f, walkSpeed))));
+                m_stepDist += hSpeed * dt;
+                if (m_stepDist >= stride) { m_stepDist -= stride; ++m_steps; if (onFootstep) onFootstep((m_steps & 1) != 0); }
+            }
+            if (autoRecenter && moving && !m_aim && m_mouseIdle > recenterDelay) {
+                Vec3 f = transform->localRotation * Vec3{0, 0, -1};
+                float bodyYaw = Mathf::Atan2(-f.x, -f.z) * Mathf::Rad2Deg;
+                float d = std::fmod(bodyYaw - yaw + 540.0f, 360.0f) - 180.0f;
+                yaw += d * (1.0f - std::exp(-recenterSpeed * dt));
+            }
+        }
+        m_wasRunning = running && hSpeed > walkSpeed * 0.8f;
+        m_lastSpeed = hSpeed; m_lastVy = rb ? rb->velocity.y : 0.0f; m_running = running;
 
         // ---- Animation ----
         if (driveAnimation)
@@ -299,6 +384,15 @@ public:
                 }
                 ch->bodyLean  = m_lean * leanAngle;   // body leans (camera stays put)
             }
+        if (driveStateMachine) {
+            AnimLink::Frame f;
+            f.speed = hSpeed; f.verticalSpeed = rb ? rb->velocity.y : 0.0f; f.grounded = grounded;
+            f.crouch = m_stance == Stance::Crouch; f.prone = m_stance == Stance::Prone;
+            f.sprint = running; f.slide = m_slideT > 0.0f; f.aim = m_aim;
+            f.jumped = m_jumped; f.landed = m_landed;
+            m_anim.Apply(gameObject, f);
+        }
+        m_jumped = false;
     }
 
     void LateUpdate(float dt) override {
@@ -317,6 +411,14 @@ public:
 
         Vec3 target = transform->Position();
         target.y += cameraHeight - m_stanceDrop;
+        // Aim blend (0 = normal orbit, 1 = over-the-shoulder aim).
+        {
+            float at = aimLerp > 0.0f ? (1.0f - std::exp(-aimLerp * dt)) : 1.0f;
+            m_aimT += ((m_aim ? 1.0f : 0.0f) - m_aimT) * at;
+        }
+        const float useDistance = distance + (aimDistance - distance) * m_aimT;
+        const float useShoulder = shoulderOffset + (aimShoulder - shoulderOffset) * m_aimT;
+        m_shake += (0.0f - m_shake) * Mathf::Min(1.0f, 8.0f * dt);
 
         // Place the camera BEHIND the player (+Z of its facing at yaw 0), lifted by
         // pitch so a positive pitch looks DOWN at the player from above. (The old
@@ -325,13 +427,13 @@ public:
         Vec3 behind = Quat::Euler(0, yaw, 0) * Vec3{0, 0, 1};   // horizontal, behind the facing
         float cp = Mathf::Cos(pr);
         Vec3 offset{behind.x * cp, Mathf::Sin(pr), behind.z * cp};
-        Vec3 desired = target + offset * distance;
+        Vec3 desired = target + offset * useDistance;
 
         // Over-the-shoulder: shift the camera sideways along its horizontal right.
         // The rotation stays level (built from yaw/pitch below), so the view is a
         // parallel offset — no roll.
-        if (shoulderOffset != 0.0f)
-            desired = desired + (Quat::Euler(0, yaw, 0) * Vec3::Right) * shoulderOffset;
+        if (useShoulder != 0.0f)
+            desired = desired + (Quat::Euler(0, yaw, 0) * Vec3::Right) * useShoulder;
 
         // Smooth the follow when damping is on (frame-rate independent).
         if (cameraDamping > 0.0f && m_haveCamPos) {
@@ -379,11 +481,19 @@ public:
         float minY = target.y - cameraHeight;
         if (m_camPos.y < minY) m_camPos.y = minY;
 
-        cam->SetPosition(m_camPos);
+        cam->SetPosition(m_camPos - Vec3{0, m_shake, 0});
         // Build the rotation straight from yaw/pitch with NO roll component (z = 0)
         // so the horizon is always level. Regular third person does NOT move the
         // camera when leaning — the character's body leans instead (see Update).
         cam->localRotation = Quat::Euler(-pitch, yaw, 0.0f);
+        m_fov.Update(sc->mainCamera, m_running && m_lastSpeed > walkSpeed * 0.9f, sprintFovBoost,
+                     m_aimT > 0.5f, aimFov, fovLerp, dt);
+        // Full Body IK: look where the camera looks (a point well ahead of it).
+        if (ikLook)
+            if (FullBodyIK* fb = FindInTree<FullBodyIK>(gameObject)) {
+                fb->lookEnabled = true; fb->lookTarget = nullptr;
+                fb->lookPosition = cam->Position() + (cam->Rotation() * Vec3{0, 0, -1}) * 20.0f;
+            }
     }
 
     // Grounded detection: a contact counts as ground when it's a roughly-vertical
@@ -445,6 +555,16 @@ private:
     float m_groundContact = 0.0f;   // time-to-live of the last ground contact
     float m_coyote = 0.0f;          // remaining coyote-time window
     float m_jumpBuf = 0.0f;         // remaining jump-buffer window
+    LookSmoother m_smooth;
+    FovKick m_fov;
+    Landing m_landing;
+    AnimLink m_anim;
+    bool  m_aim = false, m_grounded = true, m_wasRunning = false, m_jumped = false, m_landed = false, m_running = false;
+    float m_aimT = 0.0f, m_mouseIdle = 0.0f, m_shake = 0.0f, m_stepDist = 0.0f, m_lastSpeed = 0.0f, m_lastVy = 0.0f;
+    Stance m_prevStance = Stance::Stand;
+    float m_slideT = 0.0f;
+    Vec3  m_slideDir{0, 0, -1};
+    int   m_steps = 0;
 
     Character* FindCharacter() const {
         if (gameObject) if (auto* ch = gameObject->GetComponent<Character>()) return ch;

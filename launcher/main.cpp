@@ -8170,6 +8170,31 @@ static int RoleCheckWorker(void*) {
     return 0;
 }
 // Call every frame: re-checks my rank / ban at sign-in and every few minutes.
+// Keep the Supabase access token fresh (it lasts an hour). A worker renews it
+// from the saved session a few minutes before expiry and saves it; the main
+// session and every worker (on a 401) then pick the new token up from disk.
+static volatile bool g_tokRefreshBusy = false;
+static int TokenRefreshWorker(void*) {
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        a.RefreshIfExpiring(600);
+    } catch (...) {}
+    g_tokRefreshBusy = false;
+    return 0;
+}
+static void PumpTokenRefresh(okay::account::AccountService& account) {
+    static Uint32 next = 0;
+    const Uint32 now = SDL_GetTicks();
+    if (now < next || g_tokRefreshBusy || !account.IsLoggedIn() || !account.UsesEmail() || g_pollCfgDir.empty()) return;
+    next = now + 30000;
+    account.ReloadSessionToken();   // a finished refresh (ours or the editor's) lands here
+    const long exp = account.TokenExpiresAt();
+    if (exp <= 0 || exp - (long)std::time(nullptr) > 600) return;
+    g_tokRefreshBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(TokenRefreshWorker, "okay-token", nullptr)) SDL_DetachThread(t);
+    else g_tokRefreshBusy = false;
+}
+
 static void PumpRoleCheck(bool signedIn) {
     static Uint32 next = 0; static bool wasIn = false;
     if (std::getenv("OKAY_UI_DEMO_USER")) { g_myRank = 3; return; }
@@ -9081,7 +9106,7 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         s_b.p.id = g_pfReq.uid; s_b.p.username = g_pfReq.username; s_b.p.avatar = g_pfReq.avatar;
         s_b.p.display = !g_pfReq.name.empty() ? g_pfReq.name : g_pfReq.username;
         s_b.p.accent = g_pfReq.accent;
-        s_b.isMe = !meName.empty() && g_pfReq.username == meName;
+        s_b.isMe = (!meName.empty() && g_pfReq.username == meName) || (!g_pfReq.uid.empty() && g_pfReq.uid == account.UserId());
         if (kDemo) { s_b = DemoProfileBundle(g_pfReq, meName); s_loaded = true; }
         else if (account.IsLoggedIn()) {
             if (s_b.isMe) refreshLocal();
@@ -9184,8 +9209,13 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         return out;
     }
     if (s_loaded && !s_b.found) {
-        if (s_b.reached) emptyState(3, "Profile not found", "This player may have renamed or deleted their account.");
-        else             emptyState(3, "Couldn't load this profile", "Check your connection and try again.");
+        if (s_b.reached && !s_b.failed) emptyState(3, "Profile not found", "This player may have renamed or deleted their account.");
+        else emptyState(3, "Couldn't load this profile", "The server didn't answer properly. Check your connection and try again.");
+        if (!s_b.reached || s_b.failed) {
+            const float bw = 120.0f;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+            if (PrimaryButton("Retry", ImVec2(bw, 34))) { account.ReloadSessionToken(); ++g_pfSerial; }
+        }
         return out;
     }
 
@@ -11540,6 +11570,7 @@ int main(int argc, char** argv) {
             focusSearch = true;
         g_lastTab = tab == 11 ? 0 : tab;   // persisted on exit (and every SavePrefs)
         PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
+        PumpTokenRefresh(account);
         if (tab == 11 && g_myRank == 0) tab = 0;   // lost the role
 
         ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -13450,7 +13481,7 @@ int main(int argc, char** argv) {
                     ImGui::SetCursorScreenPos(ImVec2(o.x + W - 16 - 132 - 8 - 104, o.y + bannerH + 12));
                     ImGui::BeginDisabled(!account.IsOnline());
                     if (PrimaryButton("View my profile", ImVec2(132, 32)))
-                        OpenPublicProfile("", myUser, shownName, s_myAvatar, acctAccent);
+                        OpenPublicProfile(acDemo ? std::string() : account.UserId(), myUser, shownName, s_myAvatar, acctAccent);   // by id: the saved name can lag the real one
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("%s", account.IsOnline() ? "See your public profile exactly as other players do" : "Public profiles need an online account");
@@ -14798,7 +14829,8 @@ int main(int argc, char** argv) {
                 }
                 ImGui::SetCursorScreenPos(ImVec2(rx - bw, p.y + 12));
                 if (ImGui::Button("View my profile", ImVec2(bw, 34)))
-                    OpenPublicProfile("", account.IsLoggedIn() ? account.CurrentSession().username : std::string(kAchDemo ? std::getenv("OKAY_UI_DEMO_USER") : ""));
+                    OpenPublicProfile(account.IsLoggedIn() ? account.UserId() : std::string(),
+                                      account.IsLoggedIn() ? account.CurrentSession().username : std::string(kAchDemo ? std::getenv("OKAY_UI_DEMO_USER") : ""));
                 ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 66));
                 ImGui::Dummy(ImVec2(0, 0));
                 ImGui::EndChild();

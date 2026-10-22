@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -550,7 +551,45 @@ public:
         std::string url = serverUrl_;
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += path.empty() || path.front() == '/' ? path : ("/" + path);
-        return HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+        ApiResponse r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+        // Expired access token: the launcher refreshes it (RefreshIfExpiring) and
+        // saves it; workers built from the saved session pick that up and retry
+        // once. (Workers never refresh themselves: Supabase rotates refresh
+        // tokens, and racing refreshes can revoke the whole session.)
+        if (r.status == 401 && provider_ == Provider::Supabase && ReloadSessionToken())
+            r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+        return r;
+    }
+
+    /// Re-read the access token saved by another instance (same account).
+    /// True when it changed.
+    bool ReloadSessionToken() const {
+        std::ifstream f(SessionPath());
+        if (!f) return false;
+        std::string user, token, refresh;
+        std::getline(f, user); std::getline(f, token); std::getline(f, refresh);
+        while (!token.empty() && (token.back() == '\r' || token.back() == '\n')) token.pop_back();
+        while (!refresh.empty() && (refresh.back() == '\r' || refresh.back() == '\n')) refresh.pop_back();
+        if (token.empty() || token == session_.token) return false;
+        session_.token = token;
+        if (!refresh.empty()) session_.refreshToken = refresh;
+        return true;
+    }
+
+    /// The signed-in account's id (the JWT "sub"), "" when unknown. Profiles
+    /// use the same id, so this finds MY profile even if the shown name differs.
+    std::string UserId() const { return JwtClaim(session_.token, "sub"); }
+    /// When the access token expires (unix seconds), 0 when unknown.
+    long TokenExpiresAt() const { return std::atol(JwtClaim(session_.token, "exp").c_str()); }
+    /// Renew the access token when it expires within `marginSec` (Supabase).
+    /// Call from ONE place (the launcher's main session). True if refreshed.
+    bool RefreshIfExpiring(long marginSec = 600) {
+        if (provider_ != Provider::Supabase || !session_.loggedIn) return false;
+        const long exp = TokenExpiresAt();
+        if (exp > 0 && exp - (long)std::time(nullptr) > marginSec) return false;
+        ReloadSessionToken();   // someone else may already have renewed it
+        if (TokenExpiresAt() - (long)std::time(nullptr) > marginSec) return true;
+        return RefreshSupabaseToken();
     }
 
     /// Anonymous request (apikey only, no bearer) — for public reads that don't
@@ -752,9 +791,32 @@ private:
     std::string serverUrl_;
     std::string apiKey_;
     Provider    provider_;
-    Session     session_;
+    mutable Session session_;   // mutable: Api() picks up a token refreshed by another instance
 
     fs::path SessionPath() const { return configDir_ / "session.txt"; }
+
+    // A claim from a JWT's payload (base64url JSON), without verifying it — we
+    // only read our own token's id / expiry.
+    static std::string JwtClaim(const std::string& jwt, const std::string& key) {
+        const std::size_t a = jwt.find('.'), b = a == std::string::npos ? a : jwt.find('.', a + 1);
+        if (b == std::string::npos) return "";
+        const std::string part = jwt.substr(a + 1, b - a - 1);
+        std::string json; unsigned acc = 0; int bits = 0;
+        for (char c : part) {
+            int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52
+                  : (c == '-' || c == '+') ? 62 : (c == '_' || c == '/') ? 63 : -1;
+            if (v < 0) continue;
+            acc = (acc << 6) | (unsigned)v; bits += 6;
+            if (bits >= 8) { bits -= 8; json += (char)((acc >> bits) & 0xFF); }
+        }
+        const std::string k = "\"" + key + "\"";
+        std::size_t p = json.find(k); if (p == std::string::npos) return "";
+        p = json.find(':', p + k.size()); if (p == std::string::npos) return "";
+        ++p; while (p < json.size() && json[p] == ' ') ++p;
+        if (p < json.size() && json[p] == '"') { const std::size_t e = json.find('"', p + 1); return e == std::string::npos ? "" : json.substr(p + 1, e - p - 1); }
+        std::size_t e = p; while (e < json.size() && (std::isdigit((unsigned char)json[e]) || json[e] == '-')) ++e;
+        return json.substr(p, e - p);
+    }
     fs::path DbPath() const { return configDir_ / "accounts.db"; }
 
     // Turn Provider::Auto into a concrete backend from what's configured.

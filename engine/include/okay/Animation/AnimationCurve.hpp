@@ -18,7 +18,7 @@ class AnimationCurve {
 public:
     enum class Wrap { Clamp, Loop, PingPong };
     Wrap wrap = Wrap::Clamp;
-    bool smooth = true; // smoothstep between keys vs linear
+    bool smooth = true; // smooth (monotone cubic through the keys) vs linear
 
     void AddKey(float time, float value) {
         // Appending in time order (how importers and bakers add keys) is O(1);
@@ -74,8 +74,36 @@ public:
         const Keyframe& b = *it;
         float seg = b.time - a.time;
         float u = seg > Mathf::Epsilon ? (t - a.time) / seg : 0.0f;
-        if (smooth) u = u * u * (3.0f - 2.0f * u);
-        return a.value + (b.value - a.value) * u;
+        if (!smooth) return a.value + (b.value - a.value) * u;
+        // Monotone cubic Hermite (Fritsch-Butland tangents): the curve passes
+        // smoothly THROUGH every key instead of easing to a stop at each one (the
+        // old smoothstep-per-segment made dense mocap stutter 30 times a second),
+        // never overshoots, and flattens only at real peaks. With two keys the
+        // end tangents are 0, i.e. exactly the old ease-in/ease-out.
+        const std::size_t i = (std::size_t)(it - m_keys.begin()) - 1;   // a = key i, b = key i+1
+        const float s = seg > Mathf::Epsilon ? (b.value - a.value) / seg : 0.0f;
+        auto tangent = [&](std::size_t k, float sRight, bool rightSide) -> float {
+            // Slope at key k from its two neighbouring secants.
+            if (rightSide ? (k + 1 >= m_keys.size()) : (k == 0)) return 0.0f;
+            float other;
+            if (rightSide) {
+                const Keyframe& n = m_keys[k + 1];
+                const float h = n.time - m_keys[k].time;
+                other = h > Mathf::Epsilon ? (n.value - m_keys[k].value) / h : 0.0f;
+            } else {
+                const Keyframe& p0 = m_keys[k - 1];
+                const float h = m_keys[k].time - p0.time;
+                other = h > Mathf::Epsilon ? (m_keys[k].value - p0.value) / h : 0.0f;
+            }
+            if (sRight * other <= 0.0f) return 0.0f;       // a peak/valley (or flat): no overshoot
+            return 2.0f * sRight * other / (sRight + other); // harmonic mean
+        };
+        const float m0 = tangent(i, s, false);       // at a: secants (i-1,i) and (i,i+1)
+        const float m1 = tangent(i + 1, s, true);    // at b: secants (i,i+1) and (i+1,i+2)
+        const float u2 = u * u, u3 = u2 * u;
+        const float h00 = 2.0f * u3 - 3.0f * u2 + 1.0f, h10 = u3 - 2.0f * u2 + u;
+        const float h01 = -2.0f * u3 + 3.0f * u2,      h11 = u3 - u2;
+        return h00 * a.value + h10 * seg * m0 + h01 * b.value + h11 * seg * m1;
     }
 
     /// Convenience: a curve from a to b over `duration` seconds.

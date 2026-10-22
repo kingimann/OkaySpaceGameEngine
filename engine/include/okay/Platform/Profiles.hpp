@@ -50,6 +50,7 @@ struct PlaytimeEntry { std::string key, title; long seconds = 0, lastPlayed = 0;
 struct ProfileBundle {
     bool found = false;              // the profile row was read
     bool reached = false;            // the server answered at all
+    bool failed = false;             // it answered with an error (not "no such player")
     PublicProfile p;
     bool showcaseSupported = false;  // profiles.showcase_* columns exist
     bool achSupported = false;       // user_achievements table exists
@@ -86,7 +87,7 @@ public:
         if (byUsername) {
             auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(target), "GET");
             b.reached = r.reached;
-            if (!r.ok) return b;
+            if (!r.ok) { b.failed = r.reached; return b; }
             auto o = SplitObjects(r.body);
             if (o.empty()) return b;
             uid = Field(o[0], "id");
@@ -104,7 +105,7 @@ public:
             if (r.ok) b.showcaseSupported = true;
             else      r = acct_.Api(std::string("/rest/v1/profiles?select=") + kBase + "&id=eq." + Url(uid), "GET");
         }
-        if (!r.ok) return b;
+        if (!r.ok) { b.failed = r.reached; return b; }
         auto objs = SplitObjects(r.body);
         if (objs.empty()) return b;
         const std::string& o = objs[0];
@@ -135,7 +136,7 @@ public:
             p.socials = FlatObject(RawField(o, "social_links"));
         }
         b.found = true;
-        b.isMe = (p.username == acct_.CurrentSession().username);
+        b.isMe = (p.id == acct_.UserId()) || (p.username == acct_.CurrentSession().username);
 
         // Public achievements mirror (optional table).
         auto ra = acct_.Api("/rest/v1/user_achievements?select=ach_id,label,unlocked_at,points"

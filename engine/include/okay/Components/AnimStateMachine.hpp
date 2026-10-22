@@ -79,6 +79,12 @@ public:
         bool        canInterruptSelf = false;   ///< Any State only: may re-enter the current state
         float       offset = 0.0f;      ///< normalized time the target state starts at (0..1)
         bool        muted = false;      ///< never fires (try the machine without it, keep it for later)
+        /// While this transition is blending, which state's transitions may cut it
+        /// short (Unity's Interruption Source). NextState = the target's own
+        /// transitions (the engine's long-standing behaviour); None = nothing but
+        /// Any State until the blend ends; CurrentState = the state being left.
+        enum class Interrupt { NextState = 0, None, CurrentState, CurrentThenNext, NextThenCurrent };
+        Interrupt   interruption = Interrupt::NextState;
     };
 
     /// A blend-tree motion: a clip and where it's fully on — `threshold` on the
@@ -223,6 +229,15 @@ public:
     /// Seconds since the machine started (the clock History() times are on).
     float Clock() const { return m_clock; }
     static constexpr int kHistoryMax = 12;
+    /// True while a transition's blend is running; `left` = seconds until it ends.
+    bool InTransition(float* left = nullptr) const {
+        if (left) *left = m_trLeft;
+        return m_trActive;
+    }
+    /// The state the running transition is leaving ("" when not in a transition).
+    const std::string& TransitionSource() const { return m_trFrom; }
+    /// How many transitions were cut short by another one (Play-mode debugging).
+    int Interruptions() const { return m_interruptions; }
 
     void Start() override { m_current.clear(); }
     void OnDestroy() override { if (ModelAnimator* ma = Anim()) ma->RemovePostPose(this); }
@@ -287,13 +302,7 @@ public:
             m_normTime += len > 1e-5f ? dt * std::fabs(spd) / len : 0.0f;
         }
 
-        // Any State first, then the state's own transitions; first match wins.
-        for (const Transition& tr : anyState) {
-            if (tr.to == m_current && !tr.canInterruptSelf) continue;
-            if (Try(tr, ma, cur)) return;
-        }
-        for (const Transition& tr : cur->transitions)
-            if (Try(tr, ma, cur)) return;
+        EvaluateTransitions(dt, ma, cur);
     }
 
     /// The machine that owns the parameters: the base layer on this object.
@@ -386,12 +395,56 @@ private:
         }
         for (std::size_t i = 0; i < ctPrev.size(); ++i) { m_lCT.push_back(ctPrev[i]); m_lW.push_back(wPrev[i] * (1.0f - f)); }
         for (std::size_t i = 0; i < ctCur.size(); ++i)  { m_lCT.push_back(ctCur[i]);  m_lW.push_back(wCur[i] * f); }
+        EvaluateTransitions(dt, ma, cur);
+    }
+    /// Any State first, then the current state's own transitions (first match
+    /// wins). While a transition is still blending, its interruption setting
+    /// decides which of the target's / source's transitions may cut it short.
+    void EvaluateTransitions(float dt, ModelAnimator* ma, const State* cur) {
+        if (m_trActive) {
+            m_trLeft -= dt;
+            if (const State* src = FindState(m_trFrom)) {   // the source keeps its own clock
+                int c = src->blendTree ? -1 : ClipIndex(ma, src->clip);
+                float len = c >= 0 ? ma->ClipLength(c) : 1.0f;
+                m_trSrcNorm += len > 1e-5f ? dt * std::fabs(StateSpeed(*src)) / len : 0.0f;
+            }
+            if (m_trLeft <= 0.0f) m_trActive = false;
+        }
         for (const Transition& tr : anyState) {
             if (tr.to == m_current && !tr.canInterruptSelf) continue;
             if (Try(tr, ma, cur)) return;
         }
-        for (const Transition& tr : cur->transitions)
-            if (Try(tr, ma, cur)) return;
+        if (!m_trActive) {
+            for (const Transition& tr : cur->transitions)
+                if (Try(tr, ma, cur)) return;
+            return;
+        }
+        using I = Transition::Interrupt;
+        const I rule = m_trRule;
+        const State* src = FindState(m_trFrom);
+        auto tryNext = [&]() {
+            for (const Transition& tr : cur->transitions) if (Try(tr, ma, cur)) return true;
+            return false;
+        };
+        auto trySource = [&]() {
+            if (!src) return false;
+            // Exit times on the source's transitions use the source's own clock.
+            const float keep = m_normTime; m_normTime = m_trSrcNorm;
+            bool fired = false;
+            for (const Transition& tr : src->transitions) {
+                if (tr.to == m_current) continue;   // that's the blend already running
+                if (Satisfied(tr, ma, src)) { m_normTime = keep; fired = Try(tr, ma, src, true); break; }
+            }
+            if (!fired) m_normTime = keep;
+            return fired;
+        };
+        switch (rule) {
+            case I::None: break;
+            case I::NextState:       tryNext(); break;
+            case I::CurrentState:    trySource(); break;
+            case I::CurrentThenNext: if (!trySource()) tryNext(); break;
+            case I::NextThenCurrent: if (!tryNext()) trySource(); break;
+        }
     }
     /// Pose the layer over the base on the masked bones (runs after the base pose).
     void LayerPose() {
@@ -457,19 +510,28 @@ private:
         for (const Condition& c : tr.extra) if (!Test(c.cond, c.param, c.value, ma, cur)) return false;
         return true;
     }
-    bool Try(const Transition& tr, ModelAnimator* ma, const State* cur) {
-        if (tr.muted || !Satisfied(tr, ma, cur)) return false;
+    bool Try(const Transition& tr, ModelAnimator* ma, const State* cur, bool presatisfied = false) {
+        if (tr.muted || (!presatisfied && !Satisfied(tr, ma, cur))) return false;
         const State* to = FindState(tr.to);
         if (!to) return false;
         auto consume = [&](Cond c, const std::string& p) { if (c == Cond::Trigger) Base()->m_triggers[p] = false; };
         consume(tr.cond, tr.param);
         for (const Condition& c : tr.extra) consume(c.cond, c.param);
+        if (m_trActive) ++m_interruptions;
+        const std::string from = m_current;
+        const float fromNorm = m_normTime;
         Enter(*to, tr.blend, tr.offset);
+        m_trActive = tr.blend > 0.0f;
+        m_trLeft = tr.blend;
+        m_trFrom = from;
+        m_trSrcNorm = fromNorm;
+        m_trRule = tr.interruption;
         return true;
     }
     void Enter(const State& st, float blend, float offset = 0.0f) {
         ModelAnimator* ma = Anim();
         if (!ma) return;
+        m_trActive = false;   // Try() re-arms it for a conditional transition
         if (!m_current.empty()) {
             if (onStateExit) onStateExit(m_current);
             if (const State* old = FindState(m_current)) if (!old->exitEvent.empty()) ma->FireEvent(old->exitEvent);
@@ -532,6 +594,12 @@ private:
     float m_ikW = 1.0f, m_ikBlend = 0.25f;
     float m_clock = 0.0f;
     std::vector<HistoryEntry> m_history;
+    // the transition currently blending (interruption rules)
+    bool  m_trActive = false;
+    float m_trLeft = 0.0f, m_trSrcNorm = 0.0f;
+    std::string m_trFrom;
+    Transition::Interrupt m_trRule = Transition::Interrupt::NextState;
+    int   m_interruptions = 0;
     // layer playback
     LayerPlay m_lCur, m_lPrev;
     float m_fadeT = 0.0f, m_fadeDur = 0.0f;

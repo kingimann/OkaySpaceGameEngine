@@ -16261,6 +16261,20 @@ static void DrawAnimatorGraph(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start the target state part-way into its clip (0.5 = halfway).\n"
                                                       "Line up the feet when switching between walk/run cycles.");
         if (isAny && ImGui::Checkbox("Can re-enter itself##ag", &tr.canInterruptSelf)) ed.dirty = true;
+        if (!isAny) {
+            static const char* kInt[] = {"Next State", "None", "Current State", "Current, then Next", "Next, then Current"};
+            int iv = (int)tr.interruption;
+            ImGui::SetNextItemWidth(-90);
+            if (ImGui::Combo("Interruption##ag", &iv, kInt, IM_ARRAYSIZE(kInt))) {
+                tr.interruption = (AnimStateMachine::Transition::Interrupt)iv; ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("While this blend runs, whose transitions may cut it short:\n"
+                                  "  Next State - the target state's (default)\n"
+                                  "  None - nothing but Any State until the blend ends\n"
+                                  "  Current State - the state being left (e.g. cancel a dodge back to Idle)\n"
+                                  "  Current, then Next / Next, then Current - both, in that order");
+        }
     };
     if (s_selState >= 0 && s_selState < n) {
         AnimStateMachine::State& st = sm->states[s_selState];
@@ -16571,6 +16585,15 @@ static void DrawAnimatorGraph(EditorState& ed) {
         if (ImGui::SmallButton("+ Trigger##pc")) { ed.PushUndo(); sm->params.push_back({"go", 2}); ed.dirty = true; }
         ImGui::SameLine();
         if (ImGui::SmallButton("+ Int##pi"))     { ed.PushUndo(); sm->params.push_back({"mode", 3}); ed.dirty = true; }
+        if (ed.isPlaying()) {
+            float left = 0.0f;
+            if (sm->InTransition(&left))
+                ImGui::TextColored(AccentCol(), "Blending %s -> %s  (%.2fs left)", sm->TransitionSource().c_str(),
+                                   sm->Current().c_str(), left);
+            else
+                ImGui::TextDisabled("In %s (no transition running)", sm->Current().c_str());
+            if (sm->Interruptions() > 0) ImGui::TextDisabled("%d transition%s interrupted", sm->Interruptions(), sm->Interruptions() == 1 ? "" : "s");
+        }
         if (ed.isPlaying() && !sm->History().empty()) {
             ImGui::Separator();
             ImGui::TextDisabled("Recent state changes:");
@@ -28147,7 +28170,11 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Camera");
           if (o) {
-            if (item(!go->GetComponent<Camera>(), "Camera")) { go->AddComponent<Camera>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Camera>(), "Camera")) {
+                auto* cam = go->AddComponent<Camera>();
+                if (!ed.view3D) cam->projection = Camera::Projection::Orthographic;
+                ed.AdoptCamera(cam);   // the camera you add is the one the Game view uses
+            }
             if (item(!go->GetComponent<CameraFollow>(), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
             if (item(!go->GetComponent<VirtualCamera>(), "Virtual Camera")) { go->AddComponent<VirtualCamera>(); ed.dirty = true; }
             if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
@@ -35113,6 +35140,19 @@ int main(int argc, char** argv) {
                     g_showScriptEditor = true; ImGui::SetWindowFocus("Script Editor");
                     g_scriptDockReq = 1;   // its own large window
                 }
+            // OKAY_UI_CAMTEST=1: remove every camera (the editor puts a placeholder
+            // back), then add one as GameObject > Camera would and show the Game view.
+            if (std::getenv("OKAY_UI_CAMTEST") && s_focusFrames == 42) {
+                std::vector<GameObject*> cams;
+                for (const auto& up : ed.scene().Objects()) if (up->GetComponent<Camera>()) cams.push_back(up.get());
+                for (GameObject* c : cams) ed.scene().Destroy(c);
+                ed.scene().FlushDestroyed();
+            }
+            if (std::getenv("OKAY_UI_CAMTEST") && s_focusFrames == 85) {
+                ed.camYaw = -30.0f; ed.camPitch = 30.0f; ed.camDist = 9.0f;
+                ed.Select(ed.CreateCamera());
+                ImGui::SetWindowFocus("Game");
+            }
             if (std::getenv("OKAY_UI_VS") && s_focusFrames == 42) {
                 auto& vg = okay::editor::vsed::State().g;
                 vg = okay::editor::vsed::VsEditGraph{};
@@ -35210,8 +35250,9 @@ int main(int argc, char** argv) {
             if (!ed.isPlaying() && ++s_camCheck >= 20) {
                 s_camCheck = 0;
                 bool made = false;
-                okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made);
+                Camera* ensured = okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made);
                 if (made) {
+                    ed.autoCamera = ensured ? ensured->gameObject : nullptr;
                     ed.dirty = true;
                     ConsoleLog("This scene had no camera, so a Main Camera was added (every scene needs one to render).", 1);
                 }

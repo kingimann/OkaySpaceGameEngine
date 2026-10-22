@@ -515,6 +515,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& tr : asm2->anyState) out << " " << (tr.muted ? 1 : 0);
             out << "\n";
         }
+        bool anyInt = false;
+        for (const auto& st : asm2->states) for (const auto& tr : st.transitions)
+            anyInt = anyInt || tr.interruption != AnimStateMachine::Transition::Interrupt::NextState;
+        if (anyInt) {   // interruption source per state transition
+            out << "  animsmint " << asm2->states.size();
+            for (const auto& st : asm2->states) {
+                out << " " << st.transitions.size();
+                for (const auto& tr : st.transitions) out << " " << (int)tr.interruption;
+            }
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -2421,6 +2432,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
+                } else if (field == "animsmint") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        long nt = 0; in >> nt;
+                        for (long k = 0; k < nt && in; ++k) {
+                            int m = 0; in >> m;
+                            if (m < 0 || m > 4) m = 0;
+                            if (i < (long)sm2->states.size() && k < (long)sm2->states[i].transitions.size())
+                                sm2->states[i].transitions[k].interruption = (AnimStateMachine::Transition::Interrupt)m;
+                        }
+                    }
                 } else if (field == "animsmev") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;

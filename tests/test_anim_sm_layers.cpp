@@ -205,5 +205,69 @@ int main() {
                 CHECK(!ld->states[0].transitions[0].muted);
             }
     }
+
+    // ---- Transition interruption (per transition, like Unity's Interruption Source).
+    {
+        using I = AnimStateMachine::Transition::Interrupt;
+        auto run = [](I rule, const char* fire2, int framesBetween) {
+            Scene sc; sc.physicsEnabled = false;
+            GameObject* m = sc.CreateGameObject("M");
+            GameObject* b = sc.CreateGameObject("B"); b->transform->SetParent(m->transform, false);
+            auto* a = m->AddComponent<ModelAnimator>();
+            a->autoPlay = false; a->blendTime = 0.0f;
+            a->clips = {Hold("idle", {{"B", 0}}), Hold("dodge", {{"B", 1}}), Hold("attack", {{"B", 2}}), Hold("hit", {{"B", 3}})};
+            auto* f = m->AddComponent<AnimStateMachine>();
+            AnimStateMachine::State idle;   idle.name = "Idle";     idle.clip = "idle";
+            AnimStateMachine::State dodge;  dodge.name = "Dodge";   dodge.clip = "dodge";
+            AnimStateMachine::State attack; attack.name = "Attack"; attack.clip = "attack";
+            AnimStateMachine::State hit;    hit.name = "Hit";       hit.clip = "hit";
+            AnimStateMachine::Transition toDodge; toDodge.to = "Dodge"; toDodge.cond = AnimStateMachine::Cond::Trigger;
+            toDodge.param = "dodge"; toDodge.blend = 0.5f; toDodge.interruption = rule;
+            AnimStateMachine::Transition toHit; toHit.to = "Hit"; toHit.cond = AnimStateMachine::Cond::Trigger; toHit.param = "hit"; toHit.blend = 0.1f;
+            AnimStateMachine::Transition toAttack; toAttack.to = "Attack"; toAttack.cond = AnimStateMachine::Cond::Trigger; toAttack.param = "attack"; toAttack.blend = 0.1f;
+            idle.transitions = {toDodge, toHit};
+            dodge.transitions = {toAttack};
+            f->states = {idle, dodge, attack, hit};
+            f->entry = "Idle";
+            sc.Start(); Tick(sc, 2);
+            f->SetTrigger("dodge"); Tick(sc, 1);
+            Tick(sc, framesBetween);
+            f->SetTrigger(fire2); Tick(sc, 1);
+            return std::make_pair(f->Current(), f->Interruptions());
+        };
+        // Next State (default): the target's transitions cut in straight away.
+        auto r1 = run(I::NextState, "attack", 2);
+        CHECK(r1.first == "Attack"); CHECK(r1.second == 1);
+        // None: Dodge plays its 0.5 s blend out first...
+        auto r2 = run(I::None, "attack", 2);
+        CHECK(r2.first == "Dodge"); CHECK(r2.second == 0);
+        // ...and the trigger still fires once the blend is over.
+        auto r3 = run(I::None, "attack", 40);
+        CHECK(r3.first == "Attack"); CHECK(r3.second == 0);
+        // Current State: the state being left (Idle) can cancel the dodge.
+        auto r4 = run(I::CurrentState, "hit", 2);
+        CHECK(r4.first == "Hit"); CHECK(r4.second == 1);
+        auto r5 = run(I::CurrentState, "attack", 2);   // ...but the target's can't, yet
+        CHECK(r5.first == "Dodge");
+        auto r6 = run(I::CurrentThenNext, "attack", 2);
+        CHECK(r6.first == "Attack");
+        // Saved and loaded with the scene.
+        Scene sc; sc.physicsEnabled = false;
+        GameObject* m = sc.CreateGameObject("M");
+        m->AddComponent<ModelAnimator>();
+        auto* f = m->AddComponent<AnimStateMachine>();
+        AnimStateMachine::State a; a.name = "A";
+        AnimStateMachine::Transition t; t.to = "A"; t.interruption = I::NextThenCurrent;
+        a.transitions = {t};
+        f->states = {a};
+        std::string text = SceneSerializer::Serialize(sc);
+        Scene back;
+        CHECK(SceneSerializer::Deserialize(back, text));
+        AnimStateMachine* f2 = nullptr;
+        for (const auto& up : back.Objects()) if (auto* x = up->GetComponent<AnimStateMachine>()) f2 = x;
+        CHECK(f2 && !f2->states.empty() && !f2->states[0].transitions.empty() &&
+              f2->states[0].transitions[0].interruption == I::NextThenCurrent);
+    }
+
     TEST_MAIN_RESULT();
 }

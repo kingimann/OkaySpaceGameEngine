@@ -141,10 +141,52 @@ GameObject* EditorState::CreateSprite(const std::string& name) {
 GameObject* EditorState::CreateCamera(const std::string& name) {
     PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
-    go->AddComponent<Camera>();
+    auto* cam = go->AddComponent<Camera>();
+    if (view3D) {
+        // Start where the Scene view is looking from, so the new camera shows
+        // what you were just looking at (instead of sitting inside the ground
+        // at the origin). Cameras look down their local -Z.
+        const float yr = camYaw * Mathf::Deg2Rad, pr = camPitch * Mathf::Deg2Rad;
+        const Vec3 dir{Mathf::Cos(pr) * Mathf::Sin(yr), Mathf::Sin(pr), Mathf::Cos(pr) * Mathf::Cos(yr)};
+        go->transform->localPosition = camTarget + dir * camDist;
+        go->transform->localRotation = Quat::LookRotation(dir);
+        cam->projection = Camera::Projection::Perspective;
+    } else {
+        go->transform->localPosition = Vec3{camTarget.x, camTarget.y, 10.0f};
+        cam->projection = Camera::Projection::Orthographic;
+    }
+    AdoptCamera(cam);
     m_selected = go;
     dirty = true;
     return go;
+}
+
+void EditorState::AdoptCamera(Camera* cam) {
+    if (!cam) return;
+    // Drop the placeholder "Main Camera" if it's still exactly as the editor made it.
+    if (autoCamera && autoCamera != cam->gameObject) {
+        bool alive = false;
+        for (const auto& up : m_scene.Objects()) if (up.get() == autoCamera) { alive = true; break; }
+        // Untouched = only Transform + Camera, no children or parent, and still at
+        // the spot EnsureSceneCamera put it ((0,2,10) in 3D, (0,0,10) in 2D).
+        auto untouched = [&]() {
+            Transform* t = autoCamera->transform;
+            if (!t || autoCamera->Components().size() > 2 || !t->Children().empty() || t->Parent()) return false;
+            const Vec3 p = t->localPosition;
+            return (p - Vec3{0, 2, 10}).Magnitude() < 1e-3f || (p - Vec3{0, 0, 10}).Magnitude() < 1e-3f;
+        };
+        if (alive && untouched()) {
+            if (m_selected == autoCamera) m_selected = nullptr;
+            m_scene.Destroy(autoCamera);
+            m_scene.FlushDestroyed();
+        }
+        autoCamera = nullptr;
+    }
+    for (const auto& up : m_scene.Objects())
+        if (up)
+            if (auto* c = up->GetComponent<Camera>()) c->main = (c == cam);
+    m_scene.mainCamera = cam;
+    dirty = true;
 }
 
 GameObject* EditorState::CreateCube(const std::string& name) {

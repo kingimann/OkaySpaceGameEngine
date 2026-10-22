@@ -26,6 +26,7 @@ namespace okay {
 
 class ChainIK : public Component {
 public:
+    int ExecutionOrder() const override { return 100; }   // after animation
     enum class Solver { FABRIK, CCD };
 
     std::vector<Transform*> bones;     ///< root..tip

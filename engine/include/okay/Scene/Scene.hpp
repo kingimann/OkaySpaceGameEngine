@@ -194,6 +194,7 @@ private:
     Physics3D   m_physics3d;
     std::vector<std::unique_ptr<GameObject>> m_objects;
     std::uint64_t m_structureVersion = 1;
+    bool m_hasOrdered = false;   // some component has a non-zero ExecutionOrder
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame
     std::vector<GameObject*> m_destroyQueue;

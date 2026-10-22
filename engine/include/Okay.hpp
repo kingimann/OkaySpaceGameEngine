@@ -97,6 +97,7 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/IKPose.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Render/Material.hpp"

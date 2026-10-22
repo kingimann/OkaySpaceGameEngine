@@ -69,6 +69,11 @@ public:
     /// An Animator on this object passed a clip event (see AnimationClip::events).
     virtual void OnAnimationEvent(const std::string& /*name*/) {}
 
+    /// When this component runs relative to others each frame (lower first,
+    /// creation order within the same value). IK returns 100 so it corrects the
+    /// pose after every animation driver, crossfade and layer has written it.
+    virtual int ExecutionOrder() const { return 0; }
+
     Scene* GetScene() const;
 
 private:

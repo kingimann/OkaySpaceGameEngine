@@ -93,7 +93,9 @@ int main() {
         "\"materials\":[{\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,0,0,1]}},"
                        "{\"pbrMetallicRoughness\":{\"baseColorFactor\":[0,0,1,1]}}],"
         "\"meshes\":[{\"primitives\":[" + attrs(pos0, ",\"material\":0") + "," + attrs(pos1, ",\"material\":1") + "]}],"
-        "\"nodes\":[{\"name\":\"Bone\",\"children\":[1]},{\"name\":\"Bone\"},{\"name\":\"Body\",\"mesh\":0,\"skin\":0}],"
+        "\"nodes\":[{\"name\":\"Bone\",\"children\":[1]},{\"name\":\"Bone\"},{\"name\":\"Body\",\"mesh\":0,\"skin\":0},"
+                   // a Z-up -> Y-up style node given as a matrix (-90 deg about X, lifted 2)
+                   "{\"name\":\"Z_UP\",\"children\":[0],\"matrix\":[1,0,0,0, 0,0,-1,0, 0,1,0,0, 0,2,0,1]}],"
         "\"skins\":[{\"joints\":[0,1],\"inverseBindMatrices\":" + std::to_string(ib) + "}],"
         "\"animations\":[{\"name\":\"Wave\",\"samplers\":["
             "{\"input\":" + std::to_string(tt) + ",\"output\":" + std::to_string(tv) + ",\"interpolation\":\"STEP\"},"
@@ -115,6 +117,17 @@ int main() {
     GameObject* bone1 = s.Find("Bone_1");
     CHECK(bone0 && bone1);
     if (bone0 && bone1) CHECK(bone1->transform->Parent() == bone0->transform);
+
+    // A node given as a matrix: decomposed into position / rotation / scale.
+    GameObject* zup = s.Find("Z_UP");
+    CHECK(zup != nullptr);
+    if (zup && bone0) {
+        CHECK(std::fabs(zup->transform->localPosition.y - 2.0f) < 1e-4f);
+        Vec3 up = zup->transform->localRotation * Vec3{0, 1, 0};
+        CHECK(std::fabs(up.z + 1.0f) < 1e-3f);                          // local +Y -> world -Z
+        CHECK(bone0->transform->Parent() == zup->transform);
+        CHECK(std::fabs(zup->transform->localScale.x - 1.0f) < 1e-4f);
+    }
 
     // Multi-material skinned mesh: one skinned part per material, colors kept.
     GameObject* body = s.Find("Body");

@@ -36,6 +36,7 @@ namespace okay {
 
 class FullBodyIK : public Component {
 public:
+    int ExecutionOrder() const override { return 100; }   // after animation
     enum BoneId {
         Hips, Spine, Chest, Neck, Head,
         LUpperArm, LForeArm, LHand, RUpperArm, RForeArm, RHand,
@@ -94,7 +95,8 @@ public:
         for (int i = 0; i < BoneCount; ++i)
             if (!bones[i] && !boneNames[i].empty()) if (GameObject* g = FindUnder(boneNames[i])) bones[i] = g->transform;
         if (autoMap) MapBones(false);
-        auto R = [&](Transform*& t, const std::string& n) { if (!t && !n.empty()) if (GameObject* g = s->Find(n)) t = g->transform; };
+        // Targets resolve inside this character first (copies share names), then the scene.
+        auto R = [&](Transform*& t, const std::string& n) { if (!t && !n.empty()) if (GameObject* g = FindUnder(n)) t = g->transform; };
         for (auto& e : effectors) { R(e.target, e.targetName); R(e.hint, e.hintName); }
         R(lookTarget, lookTargetName);
     }
@@ -119,6 +121,9 @@ public:
         for (Transform* b : bones) if (b) ++n;
         return n;
     }
+
+    /// An object by name inside this character (else anywhere in the scene).
+    GameObject* FindBone(const std::string& name) const { return FindUnder(name); }
 
     /// Classify a bone name into a BoneId (-1 = not a humanoid bone we drive).
     static int Classify(const std::string& raw) {

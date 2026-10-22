@@ -965,6 +965,47 @@ static SDL_Texture* GetModelThumb(const std::string& path) {
     return tex;
 }
 
+// One click for an imported humanoid: Foot IK (feet on the ground, bending the leg
+// bones, tilting to slopes, pelvis drop, foot locking) and Full Body IK with hand
+// targets you can move (or parent to a weapon / door handle) and switch on.
+static void SetupHumanoidIK(EditorState& ed, GameObject* root) {
+    if (!root) return;
+    ed.PushUndo();
+    auto* foot = root->GetComponent<FootIK>();
+    if (!foot) foot = root->AddComponent<FootIK>();
+    int legs = foot->DetectHumanoidBones(ed.scene(), root);
+    foot->orient = true; foot->alignToGround = true; foot->footLock = true;
+    foot->adjustPelvis = !foot->pelvisName.empty();
+    auto* fb = root->GetComponent<FullBodyIK>();
+    if (!fb) fb = root->AddComponent<FullBodyIK>();
+    int mapped = fb->MapBones(true);
+    // Hand targets: empties at the hands' current spots, children of the model.
+    int targets = 0;
+    const int hands[2] = {FullBodyIK::LHand, FullBodyIK::RHand};
+    const char* names[2] = {"LeftHand IK Target", "RightHand IK Target"};
+    for (int h = 0; h < 2; ++h) {
+        Transform* hb = fb->bones[hands[h]];
+        if (!hb && !fb->boneNames[hands[h]].empty())
+            if (GameObject* g = fb->FindBone(fb->boneNames[hands[h]])) hb = g->transform;
+        if (!hb) continue;
+        auto& eff = fb->effectors[h == 0 ? FullBodyIK::LeftHand : FullBodyIK::RightHand];
+        if (!eff.targetName.empty()) continue;
+        GameObject* tg = ed.scene().CreateGameObject(names[h]);
+        tg->transform->SetParent(root->transform, false);
+        tg->transform->SetPosition(hb->Position());
+        tg->transform->SetRotation(hb->Rotation());
+        eff.targetName = tg->name; eff.target = tg->transform;
+        eff.enabled = false;            // switch on in the Full Body IK inspector when needed
+        eff.rotationWeight = 1.0f;
+        ++targets;
+    }
+    ed.dirty = true;
+    ConsoleLog("Humanoid IK on " + root->name + ": " + std::to_string(legs) + "/6 leg bones, " +
+               std::to_string(mapped) + "/" + std::to_string((int)FullBodyIK::BoneCount) + " body bones, " +
+               std::to_string(targets) + " hand target(s) (enable the hand effectors in Full Body IK to use them)",
+               legs >= 6 && mapped >= 11 ? 0 : 1);
+}
+
 // After an interactive import: what came in (rig, weights, clips) and anything
 // that will look wrong, in the Console.
 static void LogModelReport(EditorState& ed, GameObject* root) {
@@ -2488,6 +2529,13 @@ enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, 3=view, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+// IK posing: with Move, dragging a bone keeps it attached and turns its parent and
+// grandparent (shoulder->elbow->hand, hip->knee->foot) so the limb reaches.
+bool  g_ikPose = false;
+Vec3  g_ikTarget, g_ikEndLocal;
+static bool IkPoseable(Transform* t) {
+    return t && t->Parent() && t->Parent()->Parent() && t->gameObject && !t->gameObject->GetComponent<MeshRenderer>();
+}
 int   g_gizmoHover = -1;    // axis the mouse is hovering this frame (for highlight)
 float g_rotAccum = 0.0f;    // raw degrees this rotate-drag (for 15-deg snap detents)
 float g_rotApplied = 0.0f;  // snapped degrees already applied this drag
@@ -22168,6 +22216,12 @@ void DrawInspector(EditorState& ed) {
     if (auto* ma = dynamic_cast<ModelAnimator*>(curComp)) {
         if (CompHeader("Model Animator", ma, &toRemove)) {
             ImGui::TextDisabled("Animation clips imported with this model. Pick one to play.");
+            if (!ma->gameObject->GetComponent<FootIK>() || !ma->gameObject->GetComponent<FullBodyIK>()) {
+                if (ImGui::SmallButton("Set up humanoid IK##ma")) SetupHumanoidIK(ed, ma->gameObject);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Feet on the ground (bending the legs, tilting to slopes, no sliding)\n"
+                                      "and Full Body IK with hand targets, mapped from the bone names.");
+            }
             std::vector<std::string> names = ma->ClipNames();
             if (names.empty()) {
                 ImGui::TextDisabled("No clips.");
@@ -31838,7 +31892,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                              g_rotTotal = 0.0f; g_rotStartAng = pickAng;
                              // Seed pre-snap accumulators from the object so grid
                              // snapping doesn't discard sub-grid drag motion.
-                             g_dragRawPos = t->localPosition; g_dragRawScale = t->localScale; }
+                             g_dragRawPos = t->localPosition; g_dragRawScale = t->localScale;
+                             g_ikTarget = t->Position(); g_ikEndLocal = t->localPosition; }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; }
 
@@ -31877,10 +31932,20 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (slen > 1e-3f) {
                     float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
                     float amt = along * (L / slen);       // screen px -> world units along axis
-                    if (tool == Tool::Move) {
+                    // The handles are world-space directions; a child's position is in
+                    // its parent's space (rotated / scaled), so convert the drag.
+                    Vec3 worldStep = axis[i] * amt;
+                    Vec3 localStep = t->Parent() ? t->Parent()->LocalToWorldMatrix().Inverse().MultiplyVector(worldStep) : worldStep;
+                    if (tool == Tool::Move && g_ikPose && IkPoseable(t)) {
+                        // IK posing: move the goal, keep the bone attached, bend the limb.
+                        g_ikTarget += worldStep;
+                        t->localPosition = g_ikEndLocal;
+                        g_dragRawPos = g_ikEndLocal;
+                        okay::PoseTwoBoneChain(t, g_ikTarget);
+                    } else if (tool == Tool::Move) {
                         // Accumulate the true position; snap only the output so the
                         // handle tracks the cursor and snaps cleanly at grid lines.
-                        g_dragRawPos += axis[i] * amt;
+                        g_dragRawPos += localStep;
                         if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {
                             t->localPosition.x = Mathf::Round(g_dragRawPos.x / g_snapSize) * g_snapSize;
                             t->localPosition.y = Mathf::Round(g_dragRawPos.y / g_snapSize) * g_snapSize;
@@ -32132,6 +32197,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     ImGui::SameLine();
     if (IconButton("##tscale",  TbIcon::Scale,  "Scale (R)",  g_tool == Tool::Scale))  g_tool = Tool::Scale;
     ImGui::PopStyleVar();
+    ImGui::SameLine();
+    if (AccentToggleButton("IK##tikpose", g_ikPose, ImVec2(0, ImGui::GetFrameHeight()))) { g_ikPose = !g_ikPose; if (g_ikPose) g_tool = Tool::Move; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(g_ikPose ? "IK posing on: moving a hand, foot or any bone bends the two bones\nabove it to reach (elbow / knee), instead of pulling the bone loose."
+                                                           : "IK posing: drag a hand or foot and the arm / leg bends to follow.");
     ImGui::SameLine();
     if (IconButton("##tspace", g_gizmoLocal ? TbIcon::Local : TbIcon::Global,
                    g_gizmoLocal ? "Handles: Local (object axes). Click or X for Global"
@@ -34504,7 +34573,7 @@ int main(int argc, char** argv) {
                 std::string all = f, cur;
                 for (char c : all + ",") { if (c == ',') { if (!cur.empty()) ImGui::SetWindowFocus(cur.c_str()); cur.clear(); } else cur += c; }
             }
-            if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && s_focusFrames == 31)
+            if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
             // OKAY_UI_DEMO_ANIM=1: give the selection an Animator with a few keys and open
             // the Animation window (screenshots of the timeline).
@@ -34544,6 +34613,15 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); }
         { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
         { OKAY_PROFILE("UI.Hierarchy"); if (g_showHierarchy) DrawHierarchy(ed); }
+        {   // Edit mode: keep skinned meshes deformed by their bones (scripts don't
+            // run, so nothing else skins them). Shows imported characters in their
+            // real pose (glTF ignores a skinned mesh node's own transform) and makes
+            // posing bones in the Scene view bend the mesh. Idle rigs skip cheaply.
+            OKAY_PROFILE("UI.EditSkinning");
+            if (!ed.isPlaying())
+                for (const auto& up : ed.scene().Objects())
+                    if (auto* sm = up->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
+        }
         { OKAY_PROFILE("UI.Viewport"); DrawViewport(ed); }   // the "Scene" panel (always shown; UI editing is also a mode toggle in it)
         { OKAY_PROFILE("UI.UIPanel"); if (g_showUIEditor) DrawViewport(ed, /*uiPanel=*/true); }   // dedicated dockable "UI" tab
         { OKAY_PROFILE("UI.DataAssetEditor"); DrawDataAssetEditor(); }

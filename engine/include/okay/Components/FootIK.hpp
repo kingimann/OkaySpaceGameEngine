@@ -24,6 +24,7 @@ namespace okay {
 
 class FootIK : public Component {
 public:
+    int ExecutionOrder() const override { return 100; }   // after animation
     // Left leg chain.
     Transform* leftHip = nullptr;  Transform* leftKnee = nullptr;  Transform* leftFoot = nullptr;
     // Right leg chain.
@@ -58,11 +59,38 @@ public:
     bool  orient = false;          ///< also rotate the thigh/shin bones to follow the planted
                                    ///< knee/foot, so leg meshes bend with the joints
 
+    // ---- Foot locking (no sliding) ----
+    /// While the animation has a foot planted (barely moving, on the ground), pin it
+    /// where it landed in the world until the animation lifts it — feet stop
+    /// skating when the clip's stride doesn't match how fast the body moves.
+    bool  footLock = false;
+    float lockSpeed = 0.35f;       ///< foot slower than this (units/s) counts as planted
+    float lockHeight = 0.08f;      ///< ... and within this height of the ground
+    float lockRelease = 0.3f;      ///< let go once the animated foot is this far from the pin
+    /// Whether each foot is pinned right now (0 left, 1 right) — for debugging / UI.
+    bool FootLocked(int leg) const { return leg == 0 ? m_leg[0].locked : m_leg[1].locked; }
+
     void Start() override {
         Scene* s = GetScene();
         if (!s) return;
+        // Bones resolve inside this character first (two copies of one model share
+        // bone names), then anywhere in the scene.
+        Transform* top = transform;
+        while (top && top->Parent()) top = top->Parent();
+        auto inTree = [&](const std::string& n) -> Transform* {
+            if (!top) return nullptr;
+            std::vector<Transform*> stack{top};
+            while (!stack.empty()) {
+                Transform* t = stack.back(); stack.pop_back();
+                if (t->gameObject && t->gameObject->name == n) return t;
+                for (Transform* c : t->Children()) stack.push_back(c);
+            }
+            return nullptr;
+        };
         auto R = [&](Transform*& t, const std::string& n) {
-            if (!t && !n.empty()) if (GameObject* g = s->Find(n)) t = g->transform;
+            if (t || n.empty()) return;
+            t = inTree(n);
+            if (!t) if (GameObject* g = s->Find(n)) t = g->transform;
         };
         R(leftHip, leftHipName);   R(leftKnee, leftKneeName);   R(leftFoot, leftFootName);
         R(rightHip, rightHipName); R(rightKnee, rightKneeName); R(rightFoot, rightFootName);
@@ -144,17 +172,32 @@ public:
         if (!m_init) { Learn(); m_init = true; }
         Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;
         Scene* s = GetScene();
-        // Frame-rate-independent ease factor: each frame applies this fraction of
-        // the REMAINING correction (exponential approach). The bone offsets persist
-        // in the rig between frames, so the correction converges over a few frames
-        // and then holds — smooth engage with no pop, no accumulation.
+        // Corrections are smoothed as persistent offsets (frame-rate independent
+        // exponential ease) and re-applied on top of the pose each frame. Whether
+        // the pose was re-written this frame (an animated rig) or still holds last
+        // frame's correction (a static rig) is detected per bone, so both work.
         float k = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
         if (adjustPelvis && pelvis) AdjustPelvis(s, k);
-        SolveLeg(leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k);
-        SolveLeg(rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k);
+        SolveLeg(m_leg[0], leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k, dt);
+        SolveLeg(m_leg[1], rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k, dt);
     }
 
 private:
+    struct LegState {
+        Vec3 written;            ///< foot position we left last frame
+        Vec3 applied{0, 0, 0};   ///< correction we added on top of the animated foot
+        bool have = false;
+        float lift = 0.0f;       ///< smoothed vertical correction
+        bool  locked = false;
+        Vec3  lockPos;
+        float lockW = 0.0f;      ///< eased lock weight
+        Vec3  prevAnim; bool havePrev = false;
+    };
+    LegState m_leg[2];
+    Vec3  m_pelvisWritten, m_pelvisApplied{0, 0, 0};
+    bool  m_havePelvis = false;
+    float m_pelvisOff = 0.0f;
+
     void Learn() {
         if (leftHip && leftKnee && leftFoot) {
             m_lUp = (leftKnee->Position() - leftHip->Position()).Magnitude();
@@ -178,33 +221,41 @@ private:
         return groundY;
     }
 
+    static bool Same(const Vec3& a, const Vec3& b) { return (a - b).SqrMagnitude() < 1e-8f; }
+
     // Lower the pelvis so the foot wanting to go lowest can still reach the ground;
-    // the other foot drops with the body and the per-leg IK re-plants it. Applies
-    // `ease` of the remaining shift per frame so stepping onto a ledge sinks the
-    // body over a few frames instead of teleporting it (the shift persists in the
-    // rig, so the fractional steps converge on the full correction and hold).
+    // the other foot drops with the body and the per-leg IK re-plants it. The
+    // shift eases in over a few frames instead of teleporting the body.
     void AdjustPelvis(Scene* s, float ease) {
+        Vec3 cur = pelvis->Position();
+        // The animated pelvis: this frame's pose, or (unchanged since we wrote it)
+        // the pose minus our own shift.
+        Vec3 animP = (m_havePelvis && Same(cur, m_pelvisWritten)) ? cur - m_pelvisApplied : cur;
+        Vec3 shift0 = cur - animP;   // currently applied
         float off = 0.0f; bool any = false;
         auto consider = [&](Transform* foot) {
             if (!foot) return;
-            Vec3 p = foot->Position();
+            Vec3 p = foot->Position() - shift0;      // the foot as the animation put it
             float g = GroundAt(s, p);
             if (g < p.y - maxRayDown) return;          // no ground in range
             float d = (g + footOffset) - p.y;          // + lift, - drop
             off = any ? Mathf::Min(off, d) : d; any = true;
         };
         consider(leftFoot); consider(rightFoot);
-        if (!any) return;
-        off = Mathf::Clamp(off, -maxPelvisShift, maxPelvisShift) * weight * ease;
-        if (Mathf::Abs(off) < 1e-5f) return;
-        pelvis->SetPosition(pelvis->Position() + Vec3{0, off, 0});
+        float want = any ? Mathf::Clamp(Mathf::Min(off, 0.0f), -maxPelvisShift, maxPelvisShift) * weight : 0.0f;
+        m_pelvisOff += (want - m_pelvisOff) * ease;
+        Vec3 applied{0, m_pelvisOff, 0};
+        pelvis->SetPosition(animP + applied);
+        m_pelvisApplied = applied; m_pelvisWritten = pelvis->Position(); m_havePelvis = true;
     }
 
-    void SolveLeg(Transform* hip, Transform* knee, Transform* foot,
+    void SolveLeg(LegState& L, Transform* hip, Transform* knee, Transform* foot,
                   float upLen, float loLen, const Vec3& pole, Scene* s,
-                  float ease) {
+                  float ease, float dt) {
         if (!hip || !knee || !foot || upLen <= 0.0f || loLen <= 0.0f) return;
-        Vec3 animFoot = foot->Position();
+        Vec3 cur = foot->Position();
+        // The foot as the animation placed it this frame (see LateUpdate).
+        Vec3 animFoot = (L.have && Same(cur, L.written)) ? cur - L.applied : cur;
         Vec3 normal;
         float g = GroundAt(s, animFoot, &normal);
         float targetY = g + footOffset;
@@ -212,14 +263,35 @@ private:
         // also press it DOWN onto lower ground). Ignore ground out of reach below.
         bool down = plantDown || adjustPelvis;
         bool apply = !((!down && targetY <= animFoot.y) || g < animFoot.y - maxRayDown);
-        // Smoothing: place the foot `ease` of the way toward the plant target. The
-        // offset persists in the rig, so repeating this each frame converges on the
-        // planted pose — a smooth engage instead of the old one-frame pop at step
-        // edges — and holds there (the remaining correction shrinks to zero).
-        float remaining = apply ? (targetY - animFoot.y) * ease : 0.0f;
-        if (Mathf::Abs(remaining) < 1e-4f) return;
+        float wantLift = apply ? targetY - animFoot.y : 0.0f;
+        L.lift += (wantLift - L.lift) * ease;
 
-        Vec3 target{animFoot.x, animFoot.y + remaining, animFoot.z};
+        // Foot locking: pin a planted foot where it landed.
+        if (footLock && dt > 0.0f) {
+            float spd = 0.0f;
+            if (L.havePrev) { Vec3 d = animFoot - L.prevAnim; d.y = 0.0f; spd = d.Magnitude() / dt; }
+            L.prevAnim = animFoot; L.havePrev = true;
+            bool onGround = g > animFoot.y - maxRayDown && animFoot.y - targetY < lockHeight;
+            if (!L.locked && onGround && spd < lockSpeed) {
+                L.locked = true;
+                L.lockPos = Vec3{animFoot.x, targetY, animFoot.z};
+            } else if (L.locked) {
+                Vec3 d = animFoot - L.lockPos; d.y = 0.0f;
+                if (!onGround || spd > lockSpeed * 2.5f || d.Magnitude() > lockRelease) L.locked = false;
+            }
+            L.lockW += ((L.locked ? 1.0f : 0.0f) - L.lockW) * (1.0f - std::exp(-15.0f * dt));
+        } else { L.locked = false; L.lockW = 0.0f; }
+
+        Vec3 target{animFoot.x, animFoot.y + L.lift, animFoot.z};
+        if (L.lockW > 1e-3f) {
+            target.x += (L.lockPos.x - target.x) * L.lockW;
+            target.z += (L.lockPos.z - target.z) * L.lockW;
+        }
+        if ((target - animFoot).SqrMagnitude() < 1e-8f && (cur - animFoot).SqrMagnitude() < 1e-8f) {
+            L.have = false;   // nothing to correct: the pose stays the animation's own
+            return;
+        }
+
         Vec3 oldMid = knee->Position(), oldEnd = foot->Position();
         Vec3 mid, end;
         SolveTwoBoneIK(hip->Position(), upLen, loLen, target, pole, mid, end,
@@ -249,6 +321,9 @@ private:
             Quat desired = (tilt * foot->Rotation()).Normalized();
             foot->SetRotation(Quat::Slerp(foot->Rotation(), desired, weight));
         }
+        L.written = foot->Position();
+        L.applied = L.written - animFoot;
+        L.have = true;
     }
 
     bool  m_init = false;

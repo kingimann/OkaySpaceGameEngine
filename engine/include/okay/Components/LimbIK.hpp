@@ -23,6 +23,7 @@ namespace okay {
 
 class LimbIK : public Component {
 public:
+    int ExecutionOrder() const override { return 100; }   // after animation
     Transform* upper = nullptr;        ///< shoulder / hip
     Transform* lower = nullptr;        ///< elbow / knee
     Transform* end   = nullptr;        ///< hand / foot

@@ -955,6 +955,24 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
         g->transform->localPosition = { vec(T,0,0), vec(T,1,0), vec(T,2,0) };
         if (R) g->transform->localRotation = Quat{ vec(R,0,0), vec(R,1,0), vec(R,2,0), vec(R,3,1) };
         g->transform->localScale = { vec(S,0,1), vec(S,1,1), vec(S,2,1) };
+        // A node may give its transform as a column-major 4x4 "matrix" instead
+        // (exporters' Z-up -> Y-up and armature nodes often do): decompose it.
+        if (const JVal* M = n.Find("matrix"); M && M->type == JVal::Arr && M->arr.size() == 16) {
+            float m[16];
+            for (int e = 0; e < 16; ++e) m[e] = (float)M->arr[e].Number(e % 5 == 0 ? 1.0 : 0.0);
+            Vec3 c0{m[0], m[1], m[2]}, c1{m[4], m[5], m[6]}, c2{m[8], m[9], m[10]};
+            Vec3 sc{c0.Magnitude(), c1.Magnitude(), c2.Magnitude()};
+            // A mirrored matrix (negative determinant) keeps a proper rotation by
+            // flipping one axis' scale.
+            Vec3 cr = Vec3::Cross(c0, c1);
+            if (cr.x * c2.x + cr.y * c2.y + cr.z * c2.z < 0.0f) sc.x = -sc.x;
+            if (std::fabs(sc.x) > 1e-8f) c0 = c0 * (1.0f / sc.x);
+            if (sc.y > 1e-8f) c1 = c1 * (1.0f / sc.y);
+            if (sc.z > 1e-8f) c2 = c2 * (1.0f / sc.z);
+            g->transform->localPosition = Vec3{m[12], m[13], m[14]};
+            g->transform->localRotation = Quat::FromRotationMatrix(c0.x, c1.x, c2.x, c0.y, c1.y, c2.y, c0.z, c1.z, c2.z);
+            g->transform->localScale = sc;
+        }
         if (const JVal* M = n.Find("mesh")) {
             if (n.Find("skin")) {
                 skinnedNodes.push_back(i);   // deformed in the skin pass below

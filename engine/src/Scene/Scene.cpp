@@ -74,10 +74,20 @@ void Scene::FlushPending() {
     std::vector<Component*> batch;
     batch.swap(m_pending);
 
+    bool ordered = false;
     for (Component* c : batch) {
         if (!c) continue;                 // removed before it was flushed
         c->Awake();
         m_active.push_back(c);
+        if (c->ExecutionOrder() != 0) ordered = true;
+    }
+    // Keep components with an execution order where they belong (IK after
+    // animation); creation order holds among equals.
+    if (ordered || m_hasOrdered) {
+        m_hasOrdered = true;
+        std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
+            return (a ? a->ExecutionOrder() : 0) < (b ? b->ExecutionOrder() : 0);
+        });
     }
     for (Component* c : batch) {
         if (c && !c->m_started && c->enabled) {

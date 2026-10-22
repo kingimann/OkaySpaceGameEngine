@@ -413,3 +413,103 @@ on_anim_event() {
     log("event: " + anim_event)
 }
 ```
+
+## Imported characters: skeleton, skinning, import report
+
+**What import keeps.** glTF, FBX and the Assimp formats come in with their full
+node hierarchy, so bones are connected exactly as in the source. Skins keep their
+joints, inverse bind matrices and weights. Animations become clips on a **Model
+Animator** on the model root.
+
+- **glTF details:**
+  - Up to 8 influences per vertex are read; the strongest 4 are kept and
+    renormalized.
+  - Quantized (normalized integer) UVs, weights and rotations are read correctly.
+  - Nodes stored as a 4x4 `matrix` are decomposed, so Z-up exports stand up.
+  - Multi-material skinned characters keep every material.
+  - STEP and LINEAR keys play back exactly as authored.
+- **Bone names:** duplicate node names are made unique, so clips and skins always
+  bind to the right bone.
+- **Import report:** after an import the Console prints:
+  - meshes, vertices and bones, and the skeleton's root bone;
+  - weights per vertex and the clips;
+  - warnings for anything that will look wrong: missing bones, vertices with no
+    weights, or a skeleton split into separate trees.
+
+**Skeleton overlay.** Rigged models show their bones in the Scene view, connected
+parent to child (View > Scene Overlays > Skeletons: Selected model / All / Off).
+Hovering a bone names it; clicking it selects it.
+
+**Skinned Mesh inspector:**
+- **Skinning:** *Linear* (fastest, skinned on the GPU) or *Dual quaternion*, which
+  keeps volume at twisting joints (wrists, forearms, shoulders) and runs on the
+  CPU.
+- Bone and weight statistics, and **Normalize weights**, which makes weights sum
+  to 1 and drops tiny ones.
+- A bone tree with how many vertices each bone moves.
+
+Skinned meshes also deform in edit mode, so posing bones in the Scene view bends
+the mesh.
+
+## Root motion
+
+Turn on **Root Motion** in the Model Animator. The root bone's travel moves the
+character, and the bone stays over it.
+
+- Travel is measured through the bone's parent, so centimetre (0.01) and rotated
+  (Blender) armatures move the right distance in the right direction.
+- **+ Vertical** also lifts the object; **+ Turning** also rotates it (turn-in-place
+  and curved walks).
+- **Moves: Parent** applies it to the player object the model sits under. A
+  `Rigidbody3D` there gets it as velocity, so walls still stop the character.
+- Works through crossfades and blend trees. The inspector shows the live root
+  speed in Play mode.
+- Scripts can take over with `ModelAnimator::onRootMotion`.
+
+## State machine: layers, 2D blend trees, ints
+
+- **Locomotion setup** (Animator toolbar) builds a full setup from the model's
+  clips:
+  - idle / walk / run blended by `speed`;
+  - Jump (Any State on the `jump` trigger), Fall and Land, using `grounded` and
+    `verticalSpeed`.
+
+  These are the parameters the player controllers already send.
+- **2D blend trees:** pick *2D (strafe)* on a blend tree. Motions sit on a map;
+  drag them, and watch live weights in Play. The controllers send `moveX` / `moveZ`
+  (velocity in the body's frame) for strafing sets.
+- **Layers:** the **+** tab adds a layer, its own states playing over the base
+  layer on part of the skeleton. Pick a **Mask bone** (e.g. the spine for
+  upper-body actions) and a **Weight**. Layers share the base layer's parameters,
+  so `anim_trigger("attack")` drives both.
+- **Int parameters** with `Int ==` / `Int !=` conditions, and a per-state **speed
+  multiplier** parameter.
+- Parameters can be edited live while playing, and the running state shows a
+  progress bar.
+
+## IK: feet, hands, posing
+
+- **Set up humanoid IK** (Model Animator inspector) adds, from the bone names:
+  - **Foot IK:** legs bend to put the feet on the ground, feet tilt to slopes, the
+    pelvis drops for lower ground, and feet are locked while planted so they don't
+    slide.
+  - **Full Body IK**, with *LeftHand / RightHand IK Target* objects. Move them, or
+    parent them to a weapon or a door handle, and enable the hand effectors.
+- **Foot locking** (`footLock`) pins a planted foot where it landed until the
+  animation lifts it.
+- All IK components now run after animation, crossfades and layers, so nothing
+  overwrites their correction.
+- **IK posing:** with the **IK** toggle in the Scene toolbar, moving a hand, foot
+  or any bone turns the two bones above it to reach, keeping bone lengths. Undo
+  works as usual.
+
+## Performance
+
+- Transforms cache their world matrix, so world positions and rotations are no
+  longer rebuilt up the whole parent chain on every call.
+- The Model Animator samples clips straight into cached bone bindings: no per-bone
+  components, no clip copies when switching, and no name lookups per frame.
+- Skinned meshes only re-skin when a bone actually moved.
+
+A 60-bone mocap clip costs about 0.015 ms per frame to pose. The Khronos Fox
+(24 bones, 1,728 vertices) animates and CPU-skins in about 0.06 ms per frame.

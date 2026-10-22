@@ -657,3 +657,8 @@ add_test(NAME ecs COMMAND test_ecs)
 add_executable(test_anim_playback test_anim_playback.cpp)
 target_link_libraries(test_anim_playback PRIVATE okay::engine)
 add_test(NAME anim_playback COMMAND test_anim_playback)
+
+add_executable(test_editor_plugins test_editor_plugins.cpp)
+target_link_libraries(test_editor_plugins PRIVATE okay::engine)
+target_compile_definitions(test_editor_plugins PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME editor_plugins COMMAND test_editor_plugins)

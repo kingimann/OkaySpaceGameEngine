@@ -317,7 +317,9 @@ int main(int argc, char** argv) {
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
-#include "imgui_internal.h" // DockBuilder for the default layout
+#include "imgui_internal.h"
+#include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
+#include "okay/Scripting/ScriptUI.hpp" // DockBuilder for the default layout
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
@@ -1276,6 +1278,9 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
 bool g_showAssetManager = false;   // Asset Manager: marketplace downloads -> project
+bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
+static void DrawPluginsMenu(EditorState& ed);
+static void NewPluginFromTemplate(EditorState& ed);
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
@@ -4049,6 +4054,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         ImGui::EndMenu();
     }
+    DrawPluginsMenu(ed);
     if (ImGui::BeginMenu("Help")) {
         if (ImGui::MenuItem("Scripting Reference")) g_showScriptDocs = true;
         if (ImGui::MenuItem("Keyboard Shortcuts")) g_showShortcuts = true;
@@ -5543,6 +5549,397 @@ static void DrawAssetManager(EditorState& ed) {
     }
     if (vis.empty()) ImGui::TextDisabled("Nothing matches.");
     ImGui::EndChild();
+    ImGui::End();
+}
+
+// ---- Editor plugins ------------------------------------------------------------
+// User-made editor extensions written in OkayScript. A plugin is a .okay file in
+// <project>/EditorPlugins/ (that project only) or <editor>/plugins/ (every
+// project). Header comments describe it:
+//     // @name Align Tools
+//     // @description Line up the selection.
+//     // @window            (give it a dockable panel that calls on_gui())
+// Hooks (all optional): start() once after loading, on_gui() every frame while
+// its window is open (draw with ui_text / ui_button / ui_slider / ui_checkbox /
+// ui_sameline / ui_separator / ui_progress plus editor_input / editor_heading /
+// editor_hint), on_menu() when
+// its Plugins-menu entry is clicked (plugins without a window), on_selection()
+// when the selection changes and on_tick() every editor frame.
+// The editor_* builtins below give plugins the scene, selection, undo and console.
+// Files are watched: saving a plugin reloads it.
+struct EditorPlugin {
+    std::string path, name, description, error;
+    bool user = false;          // from <editor>/plugins (all projects) vs the project
+    bool window = false;        // declares @window (or defines on_gui)
+    bool open = false;          // its window is showing
+    bool enabled = true;
+    std::filesystem::file_time_type mtime{};
+    std::unique_ptr<okay::OkayScriptVM> vm;
+    okay::ScriptHost host;
+};
+static std::vector<std::unique_ptr<EditorPlugin>> g_plugins;
+static std::set<std::string> g_pluginsDisabled;     // paths turned off in the manager (persisted)
+static std::string g_pluginsProject = "\x01";       // project the list was scanned for
+static EditorState* g_pluginEd = nullptr;           // the editor a running plugin acts on
+
+// ImGui-backed ui_* bridge, swapped in only while a plugin's on_gui() runs.
+struct PluginUIBridge : okay::ScriptUIBridge {
+    int n = 0;   // per-call widget ids so identical labels don't collide
+    std::string id(const char* label) { return std::string(label) + "##pw" + std::to_string(n++); }
+    void Text(const char* s) override { ImGui::TextWrapped("%s", s); }
+    bool Button(const char* label) override { return ImGui::Button(id(label).c_str()); }
+    bool Checkbox(const char* label, bool v) override { ImGui::Checkbox(id(label).c_str(), &v); return v; }
+    float Slider(const char* label, float v, float lo, float hi) override {
+        ImGui::SetNextItemWidth(-ImGui::CalcTextSize(label).x - 12.0f);
+        ImGui::SliderFloat(id(label).c_str(), &v, lo, hi); return v;
+    }
+    void ProgressBar(float t) override { ImGui::ProgressBar(t, ImVec2(-1, 0)); }
+    void SameLine() override { ImGui::SameLine(); }
+    void Separator() override { ImGui::Separator(); }
+};
+static PluginUIBridge g_pluginUI;
+
+static GameObject* PluginFind(const std::string& name) {
+    if (!g_pluginEd) return nullptr;
+    if (name.empty()) return g_pluginEd->selected();
+    for (const auto& up : g_pluginEd->scene().Objects()) if (up->name == name) return up.get();
+    return nullptr;
+}
+// The editor_* API a plugin can call. `nm` = the object's name ("" = selection).
+static void RegisterPluginBuiltins(okay::OkayScriptVM& vm) {
+    using V = okay::vs::VsValue;
+    auto str = [](std::vector<V>& a, std::size_t i) { return i < a.size() ? a[i].AsString() : std::string(); };
+    auto num = [](std::vector<V>& a, std::size_t i, float d = 0.0f) { return i < a.size() ? a[i].AsFloat() : d; };
+    auto ed = [] { return g_pluginEd; };
+    vm.AddBuiltin("editor_log",   [str](std::vector<V>& a) { ConsoleLog("[plugin] " + str(a, 0)); return V{}; });
+    vm.AddBuiltin("editor_warn",  [str](std::vector<V>& a) { ConsoleLog("[plugin] " + str(a, 0), 1); return V{}; });
+    vm.AddBuiltin("editor_error", [str](std::vector<V>& a) { ConsoleLog("[plugin] " + str(a, 0), 2); return V{}; });
+    vm.AddBuiltin("editor_selected", [](std::vector<V>&) { GameObject* g = PluginFind(""); return V{g ? g->name : std::string()}; });
+    vm.AddBuiltin("editor_selection_count", [ed](std::vector<V>&) { return V{ed() ? (float)ed()->MultiSelection().size() : 0.0f}; });
+    vm.AddBuiltin("editor_selection_name", [ed, num](std::vector<V>& a) {
+        int i = (int)num(a, 0); if (!ed()) return V{std::string()};
+        const auto& m = ed()->MultiSelection();
+        return V{i >= 0 && i < (int)m.size() && m[i] ? m[i]->name : std::string()};
+    });
+    vm.AddBuiltin("editor_select", [ed, str](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); if (g && ed()) ed()->Select(g); return V{g ? 1.0f : 0.0f};
+    });
+    vm.AddBuiltin("editor_object_count", [ed](std::vector<V>&) { return V{ed() ? (float)ed()->scene().Objects().size() : 0.0f}; });
+    vm.AddBuiltin("editor_object_name", [ed, num](std::vector<V>& a) {
+        int i = (int)num(a, 0); if (!ed()) return V{std::string()};
+        const auto& o = ed()->scene().Objects();
+        return V{i >= 0 && i < (int)o.size() ? o[i]->name : std::string()};
+    });
+    vm.AddBuiltin("editor_exists", [str](std::vector<V>& a) { return V{PluginFind(str(a, 0)) ? 1.0f : 0.0f}; });
+    vm.AddBuiltin("editor_create", [ed, str](std::vector<V>& a) {
+        if (!ed()) return V{std::string()};
+        std::string kind = str(a, 0), name = str(a, 1);
+        for (auto& c : kind) c = (char)std::tolower((unsigned char)c);
+        ed()->PushUndo();
+        GameObject* prevSel = ed()->selected();   // creating shouldn't steal the user's selection
+        std::vector<GameObject*> prevMulti = ed()->MultiSelection();
+        GameObject* g = nullptr;
+        if (kind == "camera") g = ed()->CreateCamera();
+        else if (kind == "sprite") g = ed()->CreateSprite();
+        else if (kind == "cube" || kind == "sphere" || kind == "plane" || kind == "cylinder" || kind == "capsule" || kind == "cone" || kind == "pyramid") {
+            std::string m = kind; m[0] = (char)std::toupper((unsigned char)m[0]); g = ed()->CreateMesh(m);
+        } else if (kind == "light") { g = ed()->CreateEmpty("Light"); g->AddComponent<Light>(); }
+        else g = ed()->CreateEmpty();
+        if (g && !name.empty()) g->name = name;
+        ed()->Select(nullptr);
+        for (GameObject* m : prevMulti) if (m != prevSel) ed()->ToggleSelect(m);
+        if (prevSel) ed()->ToggleSelect(prevSel);
+        ed()->dirty = true;
+        return V{g ? g->name : std::string()};
+    });
+    vm.AddBuiltin("editor_delete", [ed, str](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); if (!g || !ed()) return V{0.0f};
+        ed()->PushUndo(); ed()->Deselect(g); ed()->scene().Destroy(g); ed()->scene().FlushDestroyed(); ed()->dirty = true;
+        return V{1.0f};
+    });
+    vm.AddBuiltin("editor_rename", [ed, str](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
+        g->name = str(a, 1); if (ed()) ed()->dirty = true; return V{1.0f};
+    });
+    vm.AddBuiltin("editor_set_active", [ed, str, num](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
+        g->active = num(a, 1, 1.0f) != 0.0f; if (ed()) ed()->dirty = true; return V{1.0f};
+    });
+    vm.AddBuiltin("editor_set_parent", [ed, str](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); GameObject* p = str(a, 1).empty() ? nullptr : PluginFind(str(a, 1));
+        if (!g || !g->transform) return V{0.0f};
+        g->transform->SetParent(p ? p->transform : nullptr, true); if (ed()) ed()->dirty = true; return V{1.0f};
+    });
+    // Transform get/set: (name, axis "x"/"y"/"z") and (name, x, y, z).
+    auto axis = [](const Vec3& v, const std::string& ax) { return ax == "y" ? v.y : ax == "z" ? v.z : v.x; };
+    vm.AddBuiltin("editor_get_pos", [str, axis](std::vector<V>& a) { GameObject* g = PluginFind(str(a, 0)); return V{g ? axis(g->transform->localPosition, str(a, 1)) : 0.0f}; });
+    vm.AddBuiltin("editor_get_rot", [str, axis](std::vector<V>& a) { GameObject* g = PluginFind(str(a, 0)); return V{g ? axis(g->transform->localRotation.ToEuler(), str(a, 1)) : 0.0f}; });
+    vm.AddBuiltin("editor_get_scale", [str, axis](std::vector<V>& a) { GameObject* g = PluginFind(str(a, 0)); return V{g ? axis(g->transform->localScale, str(a, 1)) : 0.0f}; });
+    vm.AddBuiltin("editor_set_pos", [ed, str, num](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
+        g->transform->localPosition = {num(a, 1), num(a, 2), num(a, 3)}; if (ed()) ed()->dirty = true; return V{1.0f};
+    });
+    vm.AddBuiltin("editor_set_rot", [ed, str, num](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
+        g->transform->localRotation = Quat::Euler(num(a, 1), num(a, 2), num(a, 3)); if (ed()) ed()->dirty = true; return V{1.0f};
+    });
+    vm.AddBuiltin("editor_set_scale", [ed, str, num](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
+        g->transform->localScale = {num(a, 1, 1.0f), num(a, 2, 1.0f), num(a, 3, 1.0f)}; if (ed()) ed()->dirty = true; return V{1.0f};
+    });
+    vm.AddBuiltin("editor_undo_point", [ed](std::vector<V>&) { if (ed()) ed()->PushUndo(); return V{}; });
+    vm.AddBuiltin("editor_frame", [ed, str](std::vector<V>& a) {
+        GameObject* g = PluginFind(str(a, 0)); if (!g || !ed()) return V{0.0f};
+        Vec3 p = g->transform->Position(); ed()->camTarget = p; ed()->cameraPos = {p.x, p.y}; return V{1.0f};
+    });
+    vm.AddBuiltin("editor_scene_name", [ed](std::vector<V>&) { return V{ed() ? ed()->scene().Name() : std::string()}; });
+    vm.AddBuiltin("editor_project_dir", [ed](std::vector<V>&) { return V{ed() ? ed()->projectDir() : std::string()}; });
+    vm.AddBuiltin("editor_is_playing", [ed](std::vector<V>&) { return V{ed() && ed()->isPlaying() ? 1.0f : 0.0f}; });
+    // Extra widgets for on_gui(): a text field and a colour picker (returns "r,g,b").
+    vm.AddBuiltin("editor_input", [str](std::vector<V>& a) {
+        static std::unordered_map<std::string, std::string> bufs;
+        std::string label = str(a, 0), val = str(a, 1);
+        char b[256]; std::snprintf(b, sizeof(b), "%s", val.c_str());
+        ImGui::SetNextItemWidth(-ImGui::CalcTextSize(label.c_str()).x - 12.0f);
+        ImGui::InputText(g_pluginUI.id(label.c_str()).c_str(), b, sizeof(b));
+        return V{std::string(b)};
+    });
+    vm.AddBuiltin("editor_heading", [str](std::vector<V>& a) { SectionHeader(str(a, 0).c_str()); return V{}; });
+    vm.AddBuiltin("editor_hint", [str](std::vector<V>& a) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", str(a, 0).c_str()); ImGui::PopStyleColor(); return V{};
+    });
+}
+static std::string PluginUserDir() { return (std::filesystem::path(OkayExeDir()) / "plugins").string(); }
+static std::string PluginProjectDir(EditorState& ed) {
+    return ed.projectDir().empty() ? std::string() : (std::filesystem::path(ed.projectDir()) / "EditorPlugins").string();
+}
+static void LoadPlugin(EditorPlugin& p) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    p.mtime = fs::last_write_time(p.path, ec);
+    p.error.clear(); p.vm.reset(); p.window = false;
+    p.name = fs::path(p.path).stem().string(); p.description.clear();
+    std::string src = extide::ReadFile(p.path);
+    // Header metadata from leading // comments.
+    std::istringstream ss(src); std::string line;
+    while (std::getline(ss, line)) {
+        std::size_t b = line.find_first_not_of(" \t");
+        if (b == std::string::npos) continue;
+        if (line.compare(b, 2, "//") != 0) break;
+        std::string t = line.substr(b + 2);
+        auto tag = [&](const char* k, std::string& out) {
+            std::size_t at = t.find(k); if (at == std::string::npos) return false;
+            out = t.substr(at + std::strlen(k));
+            while (!out.empty() && (out[0] == ' ' || out[0] == ':')) out.erase(0, 1);
+            while (!out.empty() && (out.back() == ' ' || out.back() == '\r')) out.pop_back();
+            return true;
+        };
+        std::string v;
+        if (tag("@name", v) && !v.empty()) p.name = v;
+        else if (tag("@description", v)) p.description = v;
+        else if (t.find("@window") != std::string::npos) p.window = true;
+    }
+    if (src.find("on_gui") != std::string::npos) p.window = true;
+    if (!p.enabled) return;
+    p.vm = std::make_unique<okay::OkayScriptVM>();
+    RegisterPluginBuiltins(*p.vm);
+    p.vm->Bind(&p.host);
+    std::string err;
+    if (!p.vm->Load(src, &err)) { p.error = err.empty() ? "failed to load" : err; p.vm.reset(); ConsoleLog("Plugin '" + p.name + "': " + p.error, 2); return; }
+    p.vm->CallStart();
+}
+// Rescan both plugin folders: add new files, drop deleted ones, reload edited ones.
+static void ScanPlugins(EditorState& ed, bool force = false) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::vector<std::pair<std::string, bool>> files;
+    for (int pass = 0; pass < 2; ++pass) {
+        std::string dir = pass == 0 ? PluginUserDir() : PluginProjectDir(ed);
+        if (dir.empty() || !fs::is_directory(dir, ec)) continue;
+        for (const auto& de : fs::directory_iterator(dir, ec))
+            if (de.is_regular_file(ec) && de.path().extension() == ".okay") files.push_back({de.path().string(), pass == 0});
+    }
+    std::sort(files.begin(), files.end());
+    g_pluginsProject = ed.projectDir();
+    // Drop plugins whose file is gone.
+    g_plugins.erase(std::remove_if(g_plugins.begin(), g_plugins.end(), [&](const std::unique_ptr<EditorPlugin>& p) {
+        return std::none_of(files.begin(), files.end(), [&](const auto& f) { return f.first == p->path; });
+    }), g_plugins.end());
+    g_pluginEd = &ed;
+    for (const auto& f : files) {
+        EditorPlugin* p = nullptr;
+        for (auto& up : g_plugins) if (up->path == f.first) p = up.get();
+        if (!p) {
+            g_plugins.push_back(std::make_unique<EditorPlugin>());
+            p = g_plugins.back().get(); p->path = f.first; p->user = f.second;
+            p->enabled = !g_pluginsDisabled.count(f.first);
+            LoadPlugin(*p);
+            if (p->vm) ConsoleLog("Loaded editor plugin: " + p->name);
+            continue;
+        }
+        auto mt = fs::last_write_time(p->path, ec);
+        if (force || (!ec && mt != p->mtime)) {
+            bool wasOpen = p->open;
+            LoadPlugin(*p);
+            p->open = wasOpen && p->window;
+            if (p->vm) ConsoleLog("Reloaded editor plugin: " + p->name);
+        }
+    }
+}
+static void SavePluginPrefs() {
+    std::ofstream f(std::filesystem::path(OkayExeDir()) / "plugins_disabled.txt");
+    for (const auto& s : g_pluginsDisabled) f << s << "\n";
+}
+static void LoadPluginPrefs() {
+    std::ifstream f(std::filesystem::path(OkayExeDir()) / "plugins_disabled.txt");
+    std::string l; while (std::getline(f, l)) if (!l.empty()) g_pluginsDisabled.insert(l);
+}
+// Create a starter plugin in the project (or user folder) and open it in the Script Editor.
+static void NewPluginFromTemplate(EditorState& ed) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::string dir = PluginProjectDir(ed);
+    if (dir.empty()) dir = PluginUserDir();
+    fs::create_directories(dir, ec);
+    fs::path p;
+    for (int i = 1; ; ++i) { p = fs::path(dir) / (i == 1 ? "MyPlugin.okay" : "MyPlugin" + std::to_string(i) + ".okay"); if (!fs::exists(p, ec)) break; }
+    extide::WriteFile(p.string(),
+        "// @name My Plugin\n"
+        "// @description Scatter copies of the selected object.\n"
+        "// @window\n"
+        "\n"
+        "count = 5\n"
+        "spread = 4\n"
+        "\n"
+        "on_gui() {\n"
+        "    sel = editor_selected()\n"
+        "    if (sel == \"\") { editor_hint(\"Select an object in the Hierarchy.\") return }\n"
+        "    ui_text(\"Selected: \" + sel)\n"
+        "    count = ui_slider(\"Copies\", count, 1, 50)\n"
+        "    spread = ui_slider(\"Spread\", spread, 0.5, 20)\n"
+        "    if (ui_button(\"Scatter\")) scatter(sel)\n"
+        "}\n"
+        "\n"
+        "scatter(name) {\n"
+        "    editor_undo_point()\n"
+        "    for (i = 0; i < count; i = i + 1) {\n"
+        "        n = editor_create(\"cube\", name + \" \" + (i + 1))\n"
+        "        editor_set_pos(n, editor_get_pos(name, \"x\") + random_range(-spread, spread),\n"
+        "                          editor_get_pos(name, \"y\"),\n"
+        "                          editor_get_pos(name, \"z\") + random_range(-spread, spread))\n"
+        "    }\n"
+        "    editor_log(\"Scattered \" + count + \" copies\")\n"
+        "}\n");
+    ScanPlugins(ed);
+    for (auto& up : g_plugins) if (up->path == p.string()) up->open = true;
+    OpenScriptFileInEditorAt(p.string(), 1);
+    ConsoleLog("Created plugin " + p.string());
+}
+// Per frame: watch for changes, fire on_tick / on_selection, draw plugin windows.
+static void TickPlugins(EditorState& ed) {
+    static bool prefs = false;
+    if (!prefs) { LoadPluginPrefs(); prefs = true; }
+    static Uint32 nextScan = 0;
+    if (g_pluginsProject != ed.projectDir() || SDL_GetTicks() >= nextScan) { ScanPlugins(ed); nextScan = SDL_GetTicks() + 1000; }
+    g_pluginEd = &ed;
+    static GameObject* lastSel = nullptr;
+    const bool selChanged = ed.selected() != lastSel;
+    lastSel = ed.selected();
+    okay::ScriptUIBridge* prevUI = okay::GetScriptUI();
+    for (auto& up : g_plugins) {
+        EditorPlugin& p = *up;
+        if (!p.vm) continue;
+        if (selChanged) p.vm->CallEvent("on_selection");
+        p.vm->CallEvent("on_tick");
+        if (!p.window || !p.open) continue;
+        {   // first appearance: float near the middle of the main window, cascaded per plugin
+            const ImGuiViewport* vp = ImGui::GetMainViewport();
+            float off = 28.0f * (float)(&up - &g_plugins[0]);
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.55f + off, vp->WorkPos.y + vp->WorkSize.y * 0.18f + off), ImGuiCond_FirstUseEver);
+        }
+        ImGui::SetNextWindowSize(ImVec2(320, 260), ImGuiCond_FirstUseEver);
+        std::string title = p.name + "###plugin:" + p.path;
+        if (ImGui::Begin(title.c_str(), &p.open)) {
+            g_pluginUI.n = 0;
+            okay::SetScriptUI(&g_pluginUI);
+            ImGui::PushID(p.path.c_str());
+            p.vm->CallEvent("on_gui");
+            ImGui::PopID();
+            okay::SetScriptUI(prevUI);
+        }
+        ImGui::End();
+    }
+}
+static void DrawPluginsMenu(EditorState& ed) {
+    if (!ImGui::BeginMenu("Plugins")) return;
+    int shown = 0;
+    for (auto& up : g_plugins) {
+        EditorPlugin& p = *up;
+        if (!p.enabled) continue;
+        ++shown;
+        if (!p.vm) { ImGui::BeginDisabled(); ImGui::MenuItem((p.name + "  (error)").c_str()); ImGui::EndDisabled(); continue; }
+        if (p.window) { if (ImGui::MenuItem(p.name.c_str(), nullptr, p.open)) p.open = !p.open; }
+        else if (ImGui::MenuItem(p.name.c_str())) { g_pluginEd = &ed; p.vm->CallEvent("on_menu"); }
+        if (!p.description.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.description.c_str());
+    }
+    if (!shown) ImGui::TextDisabled("No plugins yet");
+    ImGui::Separator();
+    if (ImGui::MenuItem("New Plugin...")) NewPluginFromTemplate(ed);
+    if (ImGui::MenuItem("Plugin Manager...")) g_showPluginManager = true;
+    if (ImGui::MenuItem("Reload All")) ScanPlugins(ed, true);
+    ImGui::EndMenu();
+}
+static void DrawPluginManager(EditorState& ed) {
+    if (!g_showPluginManager) return;
+    ImGui::SetNextWindowSize(ImVec2(560, 360), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Plugin Manager", &g_showPluginManager)) { ImGui::End(); return; }
+    if (ImGui::Button("+ New Plugin")) NewPluginFromTemplate(ed);
+    ImGui::SameLine();
+    if (ImGui::Button("Reload All")) ScanPlugins(ed, true);
+    ImGui::SameLine();
+    if (ImGui::Button("Open Folder")) {
+        std::string d = PluginProjectDir(ed); if (d.empty()) d = PluginUserDir();
+        std::error_code ec; std::filesystem::create_directories(d, ec);
+        extide::RevealInFiles(d);
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Plugins are OkayScript files in EditorPlugins/ (this project) or the editor's plugins/ folder "
+                       "(all projects). Saving a plugin reloads it. See docs/editor-plugins.md.");
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+    if (g_plugins.empty()) ImGui::TextDisabled("No plugins found. Click + New Plugin to start one.");
+    if (ImGui::BeginTable("##plugins", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed, 34.0f);
+        ImGui::TableSetupColumn("Plugin", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn("Scope", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableHeadersRow();
+        for (auto& up : g_plugins) {
+            EditorPlugin& p = *up;
+            ImGui::PushID(p.path.c_str());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            bool en = p.enabled;
+            if (ImGui::Checkbox("##en", &en)) {
+                p.enabled = en;
+                if (en) g_pluginsDisabled.erase(p.path); else { g_pluginsDisabled.insert(p.path); p.open = false; }
+                SavePluginPrefs();
+                LoadPlugin(p);
+            }
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(p.name.c_str());
+            if (!p.error.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1.0f), "%s", p.error.c_str());
+            else if (!p.description.empty()) ImGui::TextDisabled("%s", p.description.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", p.user ? "All projects" : "This project");
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("Edit")) OpenScriptFileInEditorAt(p.path, 1);
+            if (p.window && p.vm) { ImGui::SameLine(); if (ImGui::SmallButton(p.open ? "Close" : "Open")) p.open = !p.open; }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
     ImGui::End();
 }
 
@@ -32532,6 +32929,7 @@ int main(int argc, char** argv) {
             // OKAY_UI_DEMO_ANIM=1: give the selection an Animator with a few keys and open
             // the Animation window (screenshots of the timeline).
             if (std::getenv("OKAY_UI_ASSETS") && s_focusFrames == 31) g_showAssetManager = true;
+            if (std::getenv("OKAY_UI_PLUGIN") && s_focusFrames == 33) { NewPluginFromTemplate(ed); }
             if (std::getenv("OKAY_UI_DEMO_ANIM") && s_focusFrames == 32 && ed.selected()) {
                 auto* an = ed.selected()->GetComponent<Animator>();
                 if (!an) an = ed.selected()->AddComponent<Animator>();
@@ -32562,6 +32960,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
+        { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }
         { OKAY_PROFILE("UI.SpriteEditor"); if (g_showSpriteEditor) DrawSpriteEditor(ed); }
         { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }

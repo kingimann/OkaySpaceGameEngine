@@ -5308,6 +5308,10 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
     }
 }
 
+void OkayScriptVM::AddBuiltin(const std::string& name, Builtin fn) {
+    m_impl->rt.builtins[name] = std::move(fn);
+}
+
 std::vector<std::string> OkayScriptVM::BuiltinNames() const {
     std::vector<std::string> out;
     out.reserve(m_impl->rt.builtins.size());

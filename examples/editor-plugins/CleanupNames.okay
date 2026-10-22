@@ -1,0 +1,17 @@
+// @name Clean Up Names
+// @description Strip trailing numbers like "Cube (3)" from every object's name.
+// (No @window and no on_gui: it's a one-click command in the Plugins menu.)
+
+on_menu() {
+    editor_undo_point()
+    changed = 0
+    for (i = 0; i < editor_object_count(); i = i + 1) {
+        n = editor_object_name(i)
+        p = str_find(n, " (")
+        if (p > 0) {
+            editor_rename(n, substr(n, 0, p))
+            changed = changed + 1
+        }
+    }
+    editor_log("Renamed " + changed + " objects")
+}

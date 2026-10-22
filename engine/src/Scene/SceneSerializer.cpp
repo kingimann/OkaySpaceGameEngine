@@ -365,6 +365,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << sm->inverseBind.size();
         for (const Mat4& M : sm->inverseBind) for (int e = 0; e < 16; ++e) out << " " << M.m[e];
         out << "\n";
+        if (sm->method != 0) out << "  skinx " << sm->method << "\n";   // separate record: older builds skip it
     }
     // Model animation library: every imported clip (idle/walk/run) as per-node tracks,
     // so a saved model keeps all its animations and the picker still works on reload.
@@ -2147,6 +2148,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sm->bind = bm;
                     sm->joints.clear();   // re-resolved from names in Start()
                     if (auto* mr = go->GetComponent<MeshRenderer>()) mr->mesh = bm;   // show bind pose until skinned
+                } else if (field == "skinx") {
+                    int m = 0; in >> m;
+                    if (auto* sm = go->GetComponent<SkinnedMesh>()) sm->method = m;
                 } else if (field == "modelanim") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();

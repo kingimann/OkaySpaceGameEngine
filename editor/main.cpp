@@ -965,6 +965,15 @@ static SDL_Texture* GetModelThumb(const std::string& path) {
     return tex;
 }
 
+// After an interactive import: what came in (rig, weights, clips) and anything
+// that will look wrong, in the Console.
+static void LogModelReport(EditorState& ed, GameObject* root) {
+    if (!root) return;
+    okay::ModelReport rep = okay::AnalyzeModel(ed.scene(), root);
+    ConsoleLog("  " + root->name + ": " + rep.Summary());
+    for (const std::string& w : rep.warnings) ConsoleLog("  " + root->name + ": " + w, 1);
+}
+
 // Draw a shaded material ball (albedo sphere with a highlight) into a rect —
 // the Project browser's stand-in for a rendered material preview.
 static void DrawMaterialBall(ImDrawList* dl, const ImVec2& mn, const ImVec2& mx, const ImVec4& col) {
@@ -6669,6 +6678,7 @@ void DrawProject(EditorState& ed) {
                 r->transform->SetPosition(ed.camTarget);
                 ed.Select(r); ed.dirty = true;
                 ConsoleLog("Imported " + full);
+                LogModelReport(ed, r);
             } else ConsoleLog("Model import failed: " + full, 2);
         }
     };
@@ -11508,6 +11518,7 @@ void DrawFileDialogs(EditorState& ed) {
                 } else {
                     ConsoleLog("Imported " + std::string(g_objPathBuf));
                 }
+                LogModelReport(ed, root);
             } else ConsoleLog("Import failed: couldn't read " + std::string(g_objPathBuf), 2);
             ImGui::CloseCurrentPopup();
         }
@@ -32076,6 +32087,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed->transform->SetPosition(drop);
                 ed.Select(placed); ed.dirty = true;
                 ConsoleLog("Placed " + placed->name);
+                if (placed->GetComponent<MeshRenderer>() || placed->transform->ChildCount() > 0) LogModelReport(ed, placed);
             }
         }
         ImGui::EndDragDropTarget();

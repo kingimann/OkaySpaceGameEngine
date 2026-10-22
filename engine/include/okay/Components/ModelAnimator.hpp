@@ -4,9 +4,10 @@
 // carry several animations (idle / walk / run); this holds them all and plays one at a
 // time across the model's nodes. Lives on the import root.
 //
-// Each clip is a set of (nodeName -> AnimationClip) tracks. Play(name) pushes those
-// clips onto an Animator on each target node (creating one if needed), so the tested
-// Animator does the actual driving and switching is just "load a different clip". The
+// Each clip is a set of (nodeName -> AnimationClip) tracks. The animator binds every
+// node name to its Transform once (re-resolved only when objects are created or
+// destroyed) and samples the playing clip straight into those transforms each frame —
+// no per-bone components, no clip copies on a switch, no name lookups per frame. The
 // library serializes, so a saved model keeps all its animations.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
@@ -15,7 +16,10 @@
 #include "okay/Components/Animator.hpp"
 #include "okay/Animation/AnimationClip.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
+#include <cstdint>
 #include <functional>
+#include <unordered_map>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -49,6 +53,19 @@ public:
     /// With rootMotion: also move the object VERTICALLY by the root's Y track
     /// (jump/climb/vault clips really lift the object, not just the bone).
     bool        rootMotionY = false;
+    /// With rootMotion: also turn the object by the root bone's turning (yaw) —
+    /// turn-in-place and curved-walk clips really rotate the character.
+    bool        rootMotionRotation = false;
+    /// What root motion moves: 0 = this object, 1 = its parent (the player /
+    /// controller object the model sits under). A Rigidbody3D on the target gets
+    /// the motion as velocity so collisions still apply.
+    int         rootMotionApplyTo = 0;
+    /// When set, root motion is handed here (world-space move, yaw degrees)
+    /// instead of being applied — for custom controllers.
+    std::function<void(const Vec3&, float)> onRootMotion;   // not serialized
+    /// The root motion applied during the last update (world units / degrees).
+    Vec3  LastRootDelta() const { return m_lastRootDelta; }
+    float LastRootYaw() const { return m_lastRootYaw; }
     /// Animate IN PLACE: strip the root bone's ground translation WITHOUT moving
     /// the object — for models driven by a controller (the controller moves the
     /// capsule; the clip should only cycle the limbs). Without this, a walk/run
@@ -162,37 +179,19 @@ public:
                 if (loop && !m_once && t1 > len) { fire(t0, len); fire(0.0f, std::fmod(t1, len)); }
                 else                             fire(t0, t1);
             }
-            // Root motion: the ground translation the root bone would have made
-            // this frame becomes movement of the whole object (world space, so it
-            // respects the model's rotation and import scale).
-            if (rootMotion && transform && len > 0.0f) {
-                if (const NodeClip* rn = RootMotionClip()) {
-                    auto posAt = [&](float tm) {
-                        // Sample just INSIDE the end: looping curves wrap t==len back
-                        // to t==0, which would cancel each loop's translation in the
-                        // wrap delta below.
-                        float cap = len - std::fmax(1e-5f, len * 1e-6f);
-                        if (tm > cap) tm = cap;
-                        bool f; Vec3 p{0, 0, 0};
-                        float v = rn->clip.Evaluate("position.x", tm, f); if (f) p.x = v;
-                        v = rn->clip.Evaluate("position.z", tm, f);       if (f) p.z = v;
-                        if (rootMotionY) { v = rn->clip.Evaluate("position.y", tm, f); if (f) p.y = v; }
-                        return p;
-                    };
-                    float e0 = loop ? std::fmod(std::fmod(t0, len) + len, len) : std::fmin(t0, len);
-                    float e1 = loop ? std::fmod(std::fmod(t1, len) + len, len) : std::fmin(t1, len);
-                    Vec3 d;
-                    if (loop && e1 < e0)   // wrapped: end-of-clip stretch + start stretch
-                        d = (posAt(len) - posAt(e0)) + (posAt(e1) - posAt(0.0f));
-                    else
-                        d = posAt(e1) - posAt(e0);
-                    if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f) {
-                        Vec3 wd = transform->LocalToWorldMatrix().MultiplyVector(d);
-                        transform->SetPosition(transform->Position() + wd);
-                    }
-                }
+            // Root motion: what the root bone travelled this frame moves the object
+            // instead (measured in world space through the bone's parent, so FBX
+            // armature scales and rotated armatures come out right).
+            if (rootMotion && len > 0.0f) {
+                const bool wrapLoop = loop && !m_once;
+                float e0 = wrapLoop ? std::fmod(std::fmod(t0, len) + len, len) : std::fmin(t0, len);
+                float e1 = wrapLoop ? std::fmod(std::fmod(t1, len) + len, len) : std::fmin(t1, len);
+                Vec3 d; float yaw = 0.0f;
+                RootDelta(active, e0, e1, len, d, yaw);   // none (idle clip): a zero move stops a rigidbody
+                ApplyRootMotion(d, yaw, dt);
             }
             m_clock = len > 0.0f ? ((loop && !m_once) ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
+            ApplyPose(active, m_clock);
             // A finished one-shot returns to the clip that was playing before it
             // (crossfaded like any switch).
             if (m_once && len > 0.0f && m_clock >= len) {
@@ -221,10 +220,11 @@ public:
         if (!sc) { m_blend.clear(); return; }
         m_blendW = blendTime > 0.001f ? std::fmin(1.0f, m_blendW + dt / blendTime) : 1.0f;
         float w = m_blendW * m_blendW * (3.0f - 2.0f * m_blendW);   // smoothstep ease
-        for (const BlendFrom& s : m_blend) {
-            GameObject* g = FindNode(s.node);
-            if (!g || !g->transform) continue;
-            Transform* t = g->transform;
+        const bool fresh = sc->StructureVersion() == m_blendVer;
+        for (BlendFrom& s : m_blend) {
+            if (!fresh) s.t = NodeT(s.node);   // objects came or went: re-resolve by name
+            Transform* t = s.t;
+            if (!t) continue;
             t->localPosition = s.pos + (t->localPosition - s.pos) * w;
             t->localScale    = s.scl + (t->localScale    - s.scl) * w;
             Quat b = t->localRotation;
@@ -234,6 +234,7 @@ public:
                    s.rot.z + (b.z - s.rot.z) * w, s.rot.w + (b.w - s.rot.w) * w};
             t->localRotation = r.Normalized();
         }
+        m_blendVer = sc->StructureVersion();
         if (m_blendW >= 1.0f) m_blend.clear();
     }
 
@@ -281,6 +282,14 @@ public:
 
     /// Playback time (seconds) into the current clip.
     float Time() const { return m_clock; }
+    /// Seek the current clip to `t` seconds and pose the model there.
+    void SetTime(float t) {
+        if (active < 0 || active >= (int)clips.size()) return;
+        float len = ClipLength(active);
+        if (len > 0.0f) t = (loop && !m_once) ? std::fmod(std::fmod(t, len) + len, len) : std::fmin(std::fmax(t, 0.0f), len);
+        m_clock = t;
+        ApplyPose(active, t);
+    }
 
     /// Switch to a clip by index: push each node's tracks onto that node's Animator.
     /// With blendTime > 0 the current pose is captured first and eased into the new
@@ -292,43 +301,26 @@ public:
         active = i;
         Scene* sc = gameObject->scene();
         if (!sc) return;
-        // Capture the CURRENT pose of every node the new clip animates, by name
-        // (names survive object churn; a missing node just stops blending).
+        // Capture the CURRENT pose of every node the new clip animates (a missing
+        // node just stops blending).
         m_blend.clear(); m_blendW = 0.0f;
+        m_blendVer = sc->StructureVersion();
         if (blendTime > 0.001f) {
-            for (const NodeClip& nc : clips[i].nodes)
-                if (GameObject* g = FindNode(nc.node); g && g->transform)
-                    m_blend.push_back({nc.node, g->transform->localPosition,
-                                       g->transform->localRotation, g->transform->localScale});
+            const auto& b = Bind(i);
+            for (std::size_t n = 0; n < b.size(); ++n)
+                if (Transform* t = b[n])
+                    m_blend.push_back({clips[i].nodes[n].node, t, t->localPosition, t->localRotation, t->localScale});
         }
-        m_clock = 0.0f;   // the event clock restarts with the node Animators
-        const NodeClip* rootNC = (rootMotion || inPlace) ? RootMotionClip() : nullptr;
+        m_clock = 0.0f;
         NormalizeClip(clips[i]);
-        for (NodeClip& nc : clips[i].nodes) {
-            GameObject* g = FindNode(nc.node);
-            if (!g) continue;
-            Animator* an = g->GetComponent<Animator>();
-            if (!an) an = g->AddComponent<Animator>();
-            nc.clip.loop = loop;
-            an->clip = nc.clip;
-            if (once) an->clip.loop = false;   // a one-shot holds its final pose
-            // Root motion: the object moves instead of the bone — strip the bone's
-            // ground translation from what the Animator plays (Y bounce stays).
-            // For jump/fall clips in in-place mode the Y track goes too: the
-            // CONTROLLER's capsule already flies the jump arc, and the clip's own
-            // root rise would stack on top of it (a double-height jump).
-            if (rootNC == &nc) {
-                an->clip.RemoveTrack("position.x");
-                an->clip.RemoveTrack("position.z");
-                if ((rootMotion && rootMotionY) ||
-                    (inPlace && !clips[i].name.empty() &&
-                     (clips[i].name == jumpClip || clips[i].name == fallClip)))
-                    an->clip.RemoveTrack("position.y");
-            }
-            an->speed = speed;
-            an->playing = true;
-            an->Restart();
-        }
+        for (NodeClip& nc : clips[i].nodes) nc.clip.loop = loop;
+        // Root motion / in place: the object moves instead of the root bone, so the
+        // bone's travel is stripped when the pose is sampled (see SampleNode). For
+        // jump/fall clips in in-place mode the rise goes too: the CONTROLLER's
+        // capsule already flies the jump arc, and the clip's own root rise would
+        // stack on top of it (a double-height jump).
+        DisableLegacyBoneAnimators(i);
+        ApplyPose(i, 0.0f);
     }
 
     /// Sample a clip's ground translation (X/Z position tracks) at `tm`, capped
@@ -355,35 +347,14 @@ public:
     /// Evaluate a clip's TRS tracks at `t` into pos/rot/scl (untouched components
     /// keep their incoming values). Mirrors Animator::ApplyAt — keep in sync.
     static void EvalClipInto(const AnimationClip& c, float t, Vec3& pos, Quat& rot, Vec3& scl) {
-        bool f; float v;
-        v = c.Evaluate("position.x", t, f); if (f) pos.x = v;
-        v = c.Evaluate("position.y", t, f); if (f) pos.y = v;
-        v = c.Evaluate("position.z", t, f); if (f) pos.z = v;
-        v = c.Evaluate("scale.x", t, f);    if (f) scl.x = v;
-        v = c.Evaluate("scale.y", t, f);    if (f) scl.y = v;
-        v = c.Evaluate("scale.z", t, f);    if (f) scl.z = v;
-        bool qx, qy, qz, qw;
-        float vqx = c.Evaluate("rotation.qx", t, qx);
-        float vqy = c.Evaluate("rotation.qy", t, qy);
-        float vqz = c.Evaluate("rotation.qz", t, qz);
-        float vqw = c.Evaluate("rotation.qw", t, qw);
-        if (qx || qy || qz || qw) {
-            float ln = std::sqrt(vqx*vqx + vqy*vqy + vqz*vqz + vqw*vqw);
-            if (ln < 1e-8f) { vqw = 1.0f; ln = 1.0f; }
-            rot = Quat{vqx/ln, vqy/ln, vqz/ln, vqw/ln};
-        } else {
-            bool fx, fy, fz;
-            float rx = c.Evaluate("rotation.x", t, fx);
-            float ry = c.Evaluate("rotation.y", t, fy);
-            float rz = c.Evaluate("rotation.z", t, fz);
-            if (fx || fy || fz) rot = Quat::Euler(fx ? rx : 0.0f, fy ? ry : 0.0f, fz ? rz : 0.0f);
-        }
+        c.SampleTRS(t, pos, rot, scl);
     }
 
     // ---- Clip surgery (the editor's animation tools) ----
     /// Reverse a clip in time (plays backwards); event times flip with it.
     void ReverseClip(int i) {
         if (i < 0 || i >= (int)clips.size()) return;
+        InvalidateBindings();
         float len = ClipLength(i);
         for (auto& nc : clips[i].nodes) nc.clip.Reverse();
         for (auto& ev : clips[i].events) ev.time = len - ev.time;
@@ -392,6 +363,7 @@ public:
     /// the window drop, the rest shift to the new zero.
     void TrimClip(int i, float t0, float t1) {
         if (i < 0 || i >= (int)clips.size() || t1 <= t0) return;
+        InvalidateBindings();
         for (auto& nc : clips[i].nodes) nc.clip.Trim(t0, t1);
         std::vector<ClipEvent> kept;
         for (auto& ev : clips[i].events)
@@ -401,6 +373,7 @@ public:
     /// Stretch/compress a clip in time (2 = twice as long / half speed).
     void ScaleClipTime(int i, float factor) {
         if (i < 0 || i >= (int)clips.size() || factor <= 1e-4f) return;
+        InvalidateBindings();
         for (auto& nc : clips[i].nodes) nc.clip.ScaleTime(factor);
         for (auto& ev : clips[i].events) ev.time *= factor;
     }
@@ -410,6 +383,7 @@ public:
     /// Returns true if a travelling root was found and stripped.
     bool BakeClipInPlace(int i, bool stripY = false) {
         if (i < 0 || i >= (int)clips.size()) return false;
+        InvalidateBindings();
         int keep = active; active = i;
         const NodeClip* rn = RootMotionClip();
         active = keep;
@@ -428,6 +402,7 @@ public:
     /// to cut a long take into pieces without losing the original.
     int DuplicateClip(int i) {
         if (i < 0 || i >= (int)clips.size()) return -1;
+        InvalidateBindings();
         Clip copy = clips[i];
         copy.name += " copy";
         clips.push_back(std::move(copy));
@@ -437,6 +412,7 @@ public:
     /// editor clears them).
     void RemoveClip(int i) {
         if (i < 0 || i >= (int)clips.size()) return;
+        InvalidateBindings();
         clips.erase(clips.begin() + i);
         if (active >= (int)clips.size()) active = (int)clips.size() - 1;
         if (active < 0) active = 0;
@@ -496,24 +472,14 @@ public:
         float tA = m_phase * lenA, tB = m_phase * lenB;
         active = w < 0.5f ? A : B;   // the dominant clip (UI + events)
 
-        // Root-motion source bone of each blended clip (fetched once; also pins
-        // that bone's X/Z during the drive pass below).
-        const NodeClip* rmA = nullptr;
-        const NodeClip* rmB = nullptr;
-        if (rootMotion || inPlace) {
-            int keep = active;
-            active = A; rmA = RootMotionClip();
-            active = B; rmB = RootMotionClip();
-            active = keep;
-        }
-        // Root motion: blend both clips' ground deltas by the same weight.
-        if (rootMotion && transform) {
-            Vec3 d{0, 0, 0};
-            if (rmA) d = d + GroundDelta(*rmA, prevPhase * lenA, tA, lenA) * (1.0f - w);
-            if (rmB) d = d + GroundDelta(*rmB, prevPhase * lenB, tB, lenB) * w;
-            if (d.x != 0.0f || d.z != 0.0f)
-                transform->SetPosition(transform->Position() +
-                                       transform->LocalToWorldMatrix().MultiplyVector(d));
+        // Root motion: both clips' root deltas, blended by the same weight.
+        if (rootMotion) {
+            Vec3 d{0, 0, 0}, dA, dB; float yaw = 0.0f, yA = 0.0f, yB = 0.0f;
+            bool any = false;
+            if (RootDelta(A, prevPhase * lenA, tA, lenA, dA, yA)) { d = d + dA * (1.0f - w); yaw += yA * (1.0f - w); any = true; }
+            if (RootDelta(B, prevPhase * lenB, tB, lenB, dB, yB)) { d = d + dB * w; yaw += yB * w; any = true; }
+            (void)any;
+            ApplyRootMotion(d, yaw, dt);
         }
 
         // Events: the dominant clip's markers, over this frame's phase window.
@@ -532,37 +498,30 @@ public:
             else fire(e0, e1);
         }
 
-        // Drive the union of both clips' nodes directly (their Animators pause so
-        // nothing fights the blend). Nodes in only one clip use it unblended.
-        auto findIn = [](const Clip& c, const std::string& n) -> const NodeClip* {
-            for (const auto& nc : c.nodes) if (nc.node == n) return &nc;
-            return nullptr;
-        };
-        auto drive = [&](const std::string& name, const NodeClip* a, const NodeClip* b) {
-            GameObject* g = FindNode(name);
-            if (!g || !g->transform) return;
-            if (Animator* an = g->GetComponent<Animator>()) an->playing = false;
-            Transform* t = g->transform;
+        // Drive the union of both clips' nodes directly. Nodes in only one clip
+        // use it unblended. The A->B node pairing is cached per clip pair.
+        const PairMap& pm = Pair(A, B);
+        const auto& bA = Bind(A);
+        const auto& bB = Bind(B);
+        auto blendWrite = [&](Transform* t, int ia, int ib) {
             Vec3 pA = t->localPosition, sA = t->localScale; Quat rA = t->localRotation;
             Vec3 pB = pA, sB = sA; Quat rB = rA;
-            if (a) EvalClipInto(a->clip, tA, pA, rA, sA);
-            if (b) EvalClipInto(b->clip, tB, pB, rB, sB);
-            float bw = (a && b) ? w : (b ? 1.0f : 0.0f);
-            Vec3 p = pA + (pB - pA) * bw;
-            Vec3 s = sA + (sB - sA) * bw;
+            if (ia >= 0) SampleNode(A, ia, tA, pA, rA, sA);
+            if (ib >= 0) SampleNode(B, ib, tB, pB, rB, sB);
+            float bw = (ia >= 0 && ib >= 0) ? w : (ib >= 0 ? 1.0f : 0.0f);
             float dq = rA.x*rB.x + rA.y*rB.y + rA.z*rB.z + rA.w*rB.w;
             if (dq < 0.0f) { rB.x = -rB.x; rB.y = -rB.y; rB.z = -rB.z; rB.w = -rB.w; }
             Quat r{rA.x + (rB.x - rA.x) * bw, rA.y + (rB.y - rA.y) * bw,
                    rA.z + (rB.z - rA.z) * bw, rA.w + (rB.w - rA.w) * bw};
-            if ((rootMotion || inPlace) && ((a && a == rmA) || (b && b == rmB))) { p.x = t->localPosition.x; p.z = t->localPosition.z; }
-            t->localPosition = p;
-            t->localScale    = s;
+            t->localPosition = pA + (pB - pA) * bw;
+            t->localScale    = sA + (sB - sA) * bw;
             t->localRotation = r.Normalized();
         };
-        for (const auto& nc : clips[A].nodes) drive(nc.node, &nc, findIn(clips[B], nc.node));
+        for (std::size_t n = 0; n < bA.size(); ++n)
+            if (bA[n]) blendWrite(bA[n], (int)n, A != B ? pm.aToB[n] : (int)n);
         if (A != B)
-            for (const auto& nc : clips[B].nodes)
-                if (!findIn(clips[A], nc.node)) drive(nc.node, nullptr, &nc);
+            for (int nb : pm.onlyB)
+                if (bB[nb]) blendWrite(bB[nb], -1, nb);
         return true;
     }
     /// Normalized phase (0..1) of the last BlendClips call.
@@ -575,14 +534,16 @@ public:
         m_blend.clear(); m_blendW = 0.0f;
         blendTime = seconds;
         if (seconds <= 0.001f) return;
+        if (gameObject && gameObject->scene()) m_blendVer = gameObject->scene()->StructureVersion();
         auto grab = [&](int ci) {
             if (ci < 0 || ci >= (int)clips.size()) return;
-            for (const NodeClip& nc : clips[ci].nodes) {
+            const auto& b = Bind(ci);
+            for (std::size_t n = 0; n < b.size(); ++n) {
+                Transform* t = b[n];
+                if (!t) continue;
                 bool have = false;
-                for (const BlendFrom& b : m_blend) if (b.node == nc.node) { have = true; break; }
-                if (have) continue;
-                if (GameObject* g = FindNode(nc.node); g && g->transform)
-                    m_blend.push_back({nc.node, g->transform->localPosition, g->transform->localRotation, g->transform->localScale});
+                for (const BlendFrom& bf : m_blend) if (bf.t == t) { have = true; break; }
+                if (!have) m_blend.push_back({clips[ci].nodes[n].node, t, t->localPosition, t->localRotation, t->localScale});
             }
         };
         grab(A); grab(B);
@@ -594,7 +555,26 @@ public:
     /// position track" used to pick a random joint and leave the real root
     /// sliding the model out of its collider. Null when nothing travels.
     const NodeClip* RootMotionClip() const {
-        if (active < 0 || active >= (int)clips.size()) return nullptr;
+        int idx = RootIndex(active);
+        return idx >= 0 ? &clips[active].nodes[idx] : nullptr;
+    }
+    /// Index (into clips[ci].nodes) of a clip's root-motion bone, -1 = none.
+    /// Cached: the auto search scans every key of every node.
+    int RootIndex(int ci) const {
+        if (ci < 0 || ci >= (int)clips.size()) return -1;
+        if (m_rootCache.size() != clips.size() || m_rootCacheNode != rootMotionNode) {
+            m_rootCache.assign(clips.size(), -2);
+            m_rootCacheNode = rootMotionNode;
+        }
+        int& slot = m_rootCache[ci];
+        if (slot == -2 || slot >= (int)clips[ci].nodes.size()) {
+            const NodeClip* nc = FindRootMotionClip(ci);
+            slot = nc ? (int)(nc - clips[ci].nodes.data()) : -1;
+        }
+        return slot;
+    }
+    const NodeClip* FindRootMotionClip(int ci) const {
+        const int active = ci;
         if (!rootMotionNode.empty()) {
             for (const NodeClip& nc : clips[active].nodes)
                 if (nc.node == rootMotionNode &&
@@ -625,15 +605,166 @@ public:
     /// names like "mixamorig:Hips" — a scene-wide lookup would let one animate
     /// the other). Falls back to the whole scene for rigs outside the subtree.
     GameObject* FindNode(const std::string& name) const {
+        Transform* t = NodeT(name);
+        return t ? t->gameObject : nullptr;
+    }
+    /// The Transform for a node name (cached; see FindNode).
+    Transform* NodeT(const std::string& name) const {
         if (!gameObject || !gameObject->transform) return nullptr;
-        std::vector<Transform*> stack{gameObject->transform};
-        while (!stack.empty()) {
-            Transform* t = stack.back(); stack.pop_back();
-            if (t->gameObject && t->gameObject->name == name) return t->gameObject;
-            for (Transform* c : t->Children()) stack.push_back(c);
-        }
         Scene* sc = gameObject->scene();
-        return sc ? sc->Find(name) : nullptr;
+        const std::uint64_t ver = sc ? sc->StructureVersion() : 0;
+        if (ver != m_nodeVer || m_nodeMap.empty()) {
+            m_nodeMap.clear(); m_extMap.clear(); m_bind.clear(); m_pairs.clear();
+            m_nodeVer = ver;
+            // Depth-first, first name wins (the order the old lookup used).
+            std::vector<Transform*> stack{gameObject->transform};
+            while (!stack.empty()) {
+                Transform* t = stack.back(); stack.pop_back();
+                if (t->gameObject) m_nodeMap.emplace(t->gameObject->name, t);
+                const auto& ch = t->Children();
+                for (auto it = ch.rbegin(); it != ch.rend(); ++it) stack.push_back(*it);
+            }
+        }
+        auto it = m_nodeMap.find(name);
+        if (it != m_nodeMap.end()) return it->second;
+        // Outside the model: fall back to the whole scene (cached, misses too).
+        auto ex = m_extMap.find(name);
+        if (ex != m_extMap.end()) return ex->second;
+        GameObject* g = sc ? sc->Find(name) : nullptr;
+        Transform* t = g ? g->transform : nullptr;
+        m_extMap.emplace(name, t);
+        return t;
+    }
+    /// Drop cached node bindings (after renaming bones or editing clip node lists).
+    void InvalidateBindings() { m_nodeMap.clear(); m_bind.clear(); m_pairs.clear(); m_rootCache.clear(); }
+
+    /// The Transform each node track of clip `ci` drives (null = node missing).
+    const std::vector<Transform*>& Bind(int ci) const {
+        static const std::vector<Transform*> none;
+        if (ci < 0 || ci >= (int)clips.size()) return none;
+        NodeT(std::string());   // refresh the name map if the scene changed
+        if (m_bind.size() != clips.size()) m_bind.assign(clips.size(), {});
+        auto& b = m_bind[ci];
+        if (b.size() != clips[ci].nodes.size()) {
+            b.resize(clips[ci].nodes.size());
+            for (std::size_t n = 0; n < b.size(); ++n) b[n] = NodeT(clips[ci].nodes[n].node);
+        }
+        return b;
+    }
+
+    /// Sample clip `ci` at time `t` onto every bound node.
+    void ApplyPose(int ci, float t) {
+        if (ci < 0 || ci >= (int)clips.size()) return;
+        const auto& b = Bind(ci);
+        for (std::size_t n = 0; n < b.size(); ++n) {
+            Transform* tr = b[n];
+            if (!tr) continue;
+            Vec3 p = tr->localPosition, sc = tr->localScale; Quat r = tr->localRotation;
+            SampleNode(ci, (int)n, t, p, r, sc);
+            tr->localPosition = p; tr->localRotation = r; tr->localScale = sc;
+        }
+    }
+
+    /// Sample one node of a clip. The root-motion bone has its travel (and, with
+    /// rootMotionRotation, its turning) removed when root motion or in-place is
+    /// on: that part moves the object instead (or nothing, in place).
+    void SampleNode(int ci, int n, float t, Vec3& p, Quat& r, Vec3& s) const {
+        const NodeClip& nc = clips[ci].nodes[n];
+        nc.clip.SampleTRS(t, p, r, s);
+        if (!(rootMotion || inPlace) || n != RootIndex(ci)) return;
+        Transform* bone = Bind(ci)[n];
+        if (!bone) return;
+        const bool stripY = (rootMotion && rootMotionY) ||
+                            (inPlace && !rootMotion && !clips[ci].name.empty() &&
+                             (clips[ci].name == jumpClip || clips[ci].name == fallClip));
+        // Work in world axes so a rotated / scaled armature strips the right axes.
+        Mat4 P = bone->Parent() ? bone->Parent()->LocalToWorldMatrix() : Mat4::Identity();
+        Vec3 p0 = p; Quat r0dummy = r; Vec3 s0 = s;
+        nc.clip.SampleTRS(0.0f, p0, r0dummy, s0, AnimationClip::kPosX | AnimationClip::kPosY | AnimationClip::kPosZ);
+        Vec3 w = P.MultiplyVector(p - p0);
+        Vec3 keep{0.0f, stripY ? 0.0f : w.y, 0.0f};
+        p = p0 + P.Inverse().MultiplyVector(keep);
+        if (rootMotion && rootMotionRotation) {
+            Quat pr = bone->Parent() ? bone->Parent()->Rotation() : Quat::Identity;
+            Quat q0 = r; Vec3 dp, ds;
+            nc.clip.SampleTRS(0.0f, dp, q0, ds, AnimationClip::kRot);
+            float dyaw = YawOf(pr * r) - YawOf(pr * q0);
+            r = (pr.Conjugate() * Quat::AngleAxis(-dyaw, Vec3::Up) * pr * r).Normalized();
+        }
+    }
+
+    /// World-space root travel (ground plane unless rootMotionY) and yaw change
+    /// of clip `ci` between clip times e0 and e1 (e1 < e0 = wrapped a loop).
+    bool RootDelta(int ci, float e0, float e1, float len, Vec3& outD, float& outYaw) const {
+        outD = Vec3{0, 0, 0}; outYaw = 0.0f;
+        int idx = RootIndex(ci);
+        if (idx < 0 || len <= 0.0f) return false;
+        Transform* bone = Bind(ci)[idx];
+        const AnimationClip& c = clips[ci].nodes[idx].clip;
+        const float cap = len - std::fmax(1e-5f, len * 1e-6f);
+        auto at = [&](float tm, Vec3& p, Quat& q) {
+            if (tm > cap) tm = cap;
+            Vec3 s; p = Vec3{0, 0, 0}; q = Quat::Identity;
+            c.SampleTRS(tm, p, q, s, AnimationClip::kPosX | AnimationClip::kPosY | AnimationClip::kPosZ | AnimationClip::kRot);
+        };
+        Vec3 pa, pb; Quat qa, qb; Vec3 dLocal; float dyaw = 0.0f;
+        Quat pr = (bone && bone->Parent()) ? bone->Parent()->Rotation() : Quat::Identity;
+        auto yawSpan = [&](float a, float b) {
+            Vec3 x, y; Quat u, v; at(a, x, u); at(b, y, v);
+            float d = YawOf(pr * v) - YawOf(pr * u);
+            while (d > 180.0f) d -= 360.0f;
+            while (d < -180.0f) d += 360.0f;
+            return d;
+        };
+        if (e1 < e0) {
+            at(e0, pa, qa); at(len, pb, qb); dLocal = pb - pa;
+            at(0.0f, pa, qa); at(e1, pb, qb); dLocal = dLocal + (pb - pa);
+            if (rootMotionRotation) dyaw = yawSpan(e0, len) + yawSpan(0.0f, e1);
+        } else {
+            at(e0, pa, qa); at(e1, pb, qb); dLocal = pb - pa;
+            if (rootMotionRotation) dyaw = yawSpan(e0, e1);
+        }
+        Mat4 P = (bone && bone->Parent()) ? bone->Parent()->LocalToWorldMatrix() : Mat4::Identity();
+        Vec3 w = P.MultiplyVector(dLocal);
+        if (!rootMotionY) w.y = 0.0f;
+        outD = w; outYaw = dyaw;
+        return true;
+    }
+
+    /// Move (and turn) the root-motion target by a world delta.
+    void ApplyRootMotion(const Vec3& d, float yaw, float dt) {
+        m_lastRootDelta = d; m_lastRootYaw = yaw;
+        if (onRootMotion) { onRootMotion(d, yaw); return; }
+        Transform* tgt = transform;
+        if (rootMotionApplyTo == 1 && transform && transform->Parent()) tgt = transform->Parent();
+        if (!tgt) return;
+        Rigidbody3D* rb = tgt->gameObject ? tgt->gameObject->GetComponent<Rigidbody3D>() : nullptr;
+        if (rb && dt > 0.0f) {
+            rb->velocity.x = d.x / dt; rb->velocity.z = d.z / dt;   // Y stays with gravity / jumps
+            if (rootMotionY) rb->velocity.y = d.y / dt;
+        } else if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f) {
+            tgt->SetPosition(tgt->Position() + d);
+        }
+        if (yaw != 0.0f) tgt->SetRotation((Quat::AngleAxis(yaw, Vec3::Up) * tgt->Rotation()).Normalized());
+    }
+
+    /// Heading (degrees about world up) of a rotation's forward axis.
+    static float YawOf(const Quat& q) {
+        Vec3 f = q * Vec3::Forward;
+        if (f.x * f.x + f.z * f.z < 1e-8f) f = q * Vec3::Up;   // forward points straight up/down
+        return std::atan2(f.x, f.z) * 57.2957795f;
+    }
+
+    /// Scenes saved by older builds carried an Animator on every bone holding a
+    /// copy of the clip; those would fight the pose — switch them off.
+    void DisableLegacyBoneAnimators(int ci) {
+        const auto& b = Bind(ci);
+        for (Transform* t : b) {
+            if (!t || !t->gameObject) continue;
+            Animator* an = t->gameObject->GetComponent<Animator>();
+            if (!an || !an->playing) continue;
+            for (const Clip& c : clips) if (c.name == an->clip.name || an->clip.name.empty()) { an->playing = false; break; }
+        }
     }
 
     /// Every node track spans the whole clip: a bone whose keys end early holds
@@ -648,7 +779,37 @@ public:
     }
 
 private:
-    struct BlendFrom { std::string node; Vec3 pos; Quat rot; Vec3 scl; };
+    struct BlendFrom { std::string node; Transform* t; Vec3 pos; Quat rot; Vec3 scl; };
+    /// Node pairing between two clips for BlendClips: for each node of A, its
+    /// index in B (-1 = none); and B's nodes that A doesn't have.
+    struct PairMap { int a = -1, b = -1; std::vector<int> aToB, onlyB; };
+    const PairMap& Pair(int A, int B) const {
+        for (const PairMap& p : m_pairs)
+            if (p.a == A && p.b == B && p.aToB.size() == clips[A].nodes.size()) return p;
+        PairMap pm; pm.a = A; pm.b = B;
+        std::unordered_map<std::string, int> inB;
+        for (std::size_t n = 0; n < clips[B].nodes.size(); ++n) inB.emplace(clips[B].nodes[n].node, (int)n);
+        std::vector<char> usedB(clips[B].nodes.size(), 0);
+        for (const NodeClip& nc : clips[A].nodes) {
+            auto it = inB.find(nc.node);
+            int ib = it == inB.end() ? -1 : it->second;
+            pm.aToB.push_back(ib);
+            if (ib >= 0) usedB[ib] = 1;
+        }
+        for (std::size_t n = 0; n < usedB.size(); ++n) if (!usedB[n]) pm.onlyB.push_back((int)n);
+        if (m_pairs.size() > 8) m_pairs.erase(m_pairs.begin());
+        m_pairs.push_back(std::move(pm));
+        return m_pairs.back();
+    }
+    mutable std::unordered_map<std::string, Transform*> m_nodeMap, m_extMap;
+    mutable std::uint64_t m_nodeVer = 0;
+    mutable std::vector<std::vector<Transform*>> m_bind;
+    mutable std::vector<PairMap> m_pairs;
+    mutable std::vector<int> m_rootCache;
+    mutable std::string m_rootCacheNode;
+    std::uint64_t m_blendVer = 0;
+    Vec3  m_lastRootDelta{0, 0, 0};
+    float m_lastRootYaw = 0.0f;
     std::vector<BlendFrom>   m_blend;         ///< pose at the last clip switch (crossfade source)
     float                    m_blendW = 1.0f; ///< crossfade progress (1 = done)
     std::vector<std::string> m_firedEvents;   ///< event names fired since the last consume

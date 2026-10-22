@@ -18,6 +18,7 @@
 // metallic-roughness *texture* and the emissive *texture*.
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
+#include <cmath>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Vec2.hpp"
 #include <cstdint>
@@ -223,6 +224,10 @@ inline std::vector<float> ReadAccessor(const GltfDoc& doc, int ai, int& outComps
     int comps = TypeComps(a.Find("type") ? a.Find("type")->Text() : "SCALAR");
     int aoff = a.Find("byteOffset") ? a.Find("byteOffset")->Int(0) : 0;
     outComps = comps; outCount = count;
+    // "normalized" integer data (quantized UVs, weights, rotations) maps to
+    // 0..1 (unsigned) or -1..1 (signed) per the glTF spec.
+    const JVal* nz = a.Find("normalized");
+    const bool norm = nz && nz->type == JVal::Bool && nz->boolean;
     if (viIdx < 0 || viIdx >= (int)views->arr.size()) return out;
     const JVal& v = views->arr[viIdx];
     int buf = v.Find("buffer") ? v.Find("buffer")->Int(-1) : -1;
@@ -242,10 +247,10 @@ inline std::vector<float> ReadAccessor(const GltfDoc& doc, int ai, int& outComps
             switch (ct) {
                 case 5126: { float t; std::memcpy(&t, d, 4); fv = t; break; }
                 case 5125: { std::uint32_t t; std::memcpy(&t, d, 4); fv = (float)t; break; }
-                case 5123: { std::uint16_t t; std::memcpy(&t, d, 2); fv = (float)t; break; }
-                case 5121: fv = (float)d[0]; break;
-                case 5122: { std::int16_t t; std::memcpy(&t, d, 2); fv = (float)t; break; }
-                case 5120: fv = (float)(std::int8_t)d[0]; break;
+                case 5123: { std::uint16_t t; std::memcpy(&t, d, 2); fv = norm ? t / 65535.0f : (float)t; break; }
+                case 5121: fv = norm ? d[0] / 255.0f : (float)d[0]; break;
+                case 5122: { std::int16_t t; std::memcpy(&t, d, 2); fv = norm ? std::fmax(t / 32767.0f, -1.0f) : (float)t; break; }
+                case 5120: fv = norm ? std::fmax((std::int8_t)d[0] / 127.0f, -1.0f) : (float)(std::int8_t)d[0]; break;
                 default: break;
             }
             out.push_back(fv);

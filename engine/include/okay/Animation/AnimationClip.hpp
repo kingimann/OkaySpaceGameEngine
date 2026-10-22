@@ -1,5 +1,7 @@
 #pragma once
 #include "okay/Animation/AnimationCurve.hpp"
+#include "okay/Math/Vec3.hpp"
+#include "okay/Math/Quat.hpp"
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -33,6 +35,7 @@ public:
         if (curve.Duration() > m_length) m_length = curve.Duration();
         if (loop && !m_spanned) curve.wrap = AnimationCurve::Wrap::Loop;
         m_tracks[track] = std::move(curve);
+        m_chan.valid = false;
     }
 
     /// Add/update a single keyframe on a track (creates the track if needed).
@@ -42,7 +45,7 @@ public:
     /// over a minute to import (the editor read as frozen).
     void AddKey(const std::string& track, float time, float value) {
         auto it = m_tracks.find(track);
-        if (it == m_tracks.end()) { it = m_tracks.emplace(track, AnimationCurve{}).first; it->second.smooth = smoothKeys; }
+        if (it == m_tracks.end()) { it = m_tracks.emplace(track, AnimationCurve{}).first; it->second.smooth = smoothKeys; m_chan.valid = false; }
         AnimationCurve& c = it->second;
         if (loop && !m_spanned) c.wrap = AnimationCurve::Wrap::Loop;
         // Appending in time order is O(1); only out-of-order keys need the replace search.
@@ -50,7 +53,7 @@ public:
         else c.AddOrReplaceKey(time, value, 1e-4f);
         if (c.Duration() > m_length) m_length = c.Duration();
     }
-    void RemoveTrack(const std::string& track) { m_tracks.erase(track); Recompute(); }
+    void RemoveTrack(const std::string& track) { m_tracks.erase(track); m_chan.valid = false; Recompute(); }
     /// Remove the key nearest `time` (within eps) from every track whose name
     /// starts with `prefix` ("" = all tracks). Tracks left empty are dropped.
     /// Returns how many keys were removed.
@@ -61,7 +64,7 @@ public:
                 const auto& ks = it->second.Keys();
                 for (std::size_t i = 0; i < ks.size(); ++i)
                     if (std::fabs(ks[i].time - time) < eps) { it->second.RemoveKey(i); ++removed; break; }
-                if (it->second.Empty()) { it = m_tracks.erase(it); continue; }
+                if (it->second.Empty()) { it = m_tracks.erase(it); m_chan.valid = false; continue; }
             }
             ++it;
         }
@@ -139,6 +142,7 @@ public:
                 it = m_tracks.emplace(k.track, AnimationCurve{}).first;
                 it->second.smooth = smoothKeys;
                 if (loop && !m_spanned) it->second.wrap = AnimationCurve::Wrap::Loop;
+                m_chan.valid = false;
             }
             it->second.AddOrReplaceKey(at + k.time, k.value, 1e-3f);
         }
@@ -163,6 +167,64 @@ public:
     }
 
     const std::unordered_map<std::string, AnimationCurve>& Tracks() const { return m_tracks; }
+
+    /// The transform channels resolved to their curves once (null = no track),
+    /// so sampling a pose doesn't hash track names for every bone every frame.
+    struct Channels {
+        const AnimationCurve* p[3] = {nullptr, nullptr, nullptr};          ///< position x/y/z
+        const AnimationCurve* q[4] = {nullptr, nullptr, nullptr, nullptr}; ///< rotation qx/qy/qz/qw
+        const AnimationCurve* e[3] = {nullptr, nullptr, nullptr};          ///< euler rotation x/y/z
+        const AnimationCurve* s[3] = {nullptr, nullptr, nullptr};          ///< scale x/y/z
+        bool anyPos = false, anyQuat = false, anyEuler = false, anyScale = false;
+    };
+    const Channels& Chan() const {
+        if (!m_chan.valid) {
+            Channels c;
+            auto get = [&](const char* n) -> const AnimationCurve* {
+                auto it = m_tracks.find(n);
+                return it == m_tracks.end() ? nullptr : &it->second;
+            };
+            c.p[0] = get("position.x"); c.p[1] = get("position.y"); c.p[2] = get("position.z");
+            c.q[0] = get("rotation.qx"); c.q[1] = get("rotation.qy"); c.q[2] = get("rotation.qz"); c.q[3] = get("rotation.qw");
+            c.e[0] = get("rotation.x"); c.e[1] = get("rotation.y"); c.e[2] = get("rotation.z");
+            c.s[0] = get("scale.x"); c.s[1] = get("scale.y"); c.s[2] = get("scale.z");
+            c.anyPos = c.p[0] || c.p[1] || c.p[2];
+            c.anyQuat = c.q[0] || c.q[1] || c.q[2] || c.q[3];
+            c.anyEuler = c.e[0] || c.e[1] || c.e[2];
+            c.anyScale = c.s[0] || c.s[1] || c.s[2];
+            m_chan.c = c; m_chan.valid = true;
+        }
+        return m_chan.c;
+    }
+    /// Which parts of a pose SampleTRS writes.
+    enum : unsigned { kPosX = 1, kPosY = 2, kPosZ = 4, kRot = 8, kScale = 16, kAll = 31 };
+    /// Sample the transform tracks at `t` into pos/rot/scl; channels without a
+    /// track (or masked out) keep their incoming values. Quaternion tracks win
+    /// over euler ones (imported clips key quaternions).
+    void SampleTRS(float t, Vec3& pos, Quat& rot, Vec3& scl, unsigned mask = kAll) const {
+        const Channels& c = Chan();
+        if (c.anyPos) {
+            if (c.p[0] && (mask & kPosX)) pos.x = c.p[0]->Evaluate(t);
+            if (c.p[1] && (mask & kPosY)) pos.y = c.p[1]->Evaluate(t);
+            if (c.p[2] && (mask & kPosZ)) pos.z = c.p[2]->Evaluate(t);
+        }
+        if ((mask & kScale) && c.anyScale) {
+            if (c.s[0]) scl.x = c.s[0]->Evaluate(t);
+            if (c.s[1]) scl.y = c.s[1]->Evaluate(t);
+            if (c.s[2]) scl.z = c.s[2]->Evaluate(t);
+        }
+        if (!(mask & kRot)) return;
+        if (c.anyQuat) {
+            float x = c.q[0] ? c.q[0]->Evaluate(t) : 0.0f, y = c.q[1] ? c.q[1]->Evaluate(t) : 0.0f;
+            float z = c.q[2] ? c.q[2]->Evaluate(t) : 0.0f, w = c.q[3] ? c.q[3]->Evaluate(t) : 0.0f;
+            float ln = std::sqrt(x * x + y * y + z * z + w * w);
+            if (ln < 1e-8f) { w = 1.0f; ln = 1.0f; }
+            rot = Quat{x / ln, y / ln, z / ln, w / ln};
+        } else if (c.anyEuler) {
+            rot = Quat::Euler(c.e[0] ? c.e[0]->Evaluate(t) : 0.0f, c.e[1] ? c.e[1]->Evaluate(t) : 0.0f,
+                              c.e[2] ? c.e[2]->Evaluate(t) : 0.0f);
+        }
+    }
 
     // ---- Clip surgery (editor tools) ----
     /// Reverse the clip in time (plays backwards). Length is preserved.
@@ -213,7 +275,16 @@ public:
     }
 
 private:
+    // Copies of a clip must rebuild their own channel table (the pointers point
+    // into the source's track map).
+    struct ChanCache {
+        Channels c; bool valid = false;
+        ChanCache() = default;
+        ChanCache(const ChanCache&) {}
+        ChanCache& operator=(const ChanCache&) { valid = false; return *this; }
+    };
     std::unordered_map<std::string, AnimationCurve> m_tracks;
+    mutable ChanCache m_chan;
     float m_length = 0.0f;
     float m_spanLength = 0.0f;   // SpanTracks: the whole clip's length
     bool  m_spanned = false;     // tracks are clamped to one clip-wide span

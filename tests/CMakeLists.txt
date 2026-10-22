@@ -678,3 +678,11 @@ add_test(NAME vs_nodes COMMAND test_vs_nodes)
 add_executable(test_anim_clip_tools test_anim_clip_tools.cpp)
 target_link_libraries(test_anim_clip_tools PRIVATE okay::engine)
 add_test(NAME anim_clip_tools COMMAND test_anim_clip_tools)
+
+add_executable(test_anim_core test_anim_core.cpp)
+target_link_libraries(test_anim_core PRIVATE okay::engine)
+add_test(NAME anim_core COMMAND test_anim_core)
+
+add_executable(test_model_import_rig test_model_import_rig.cpp)
+target_link_libraries(test_model_import_rig PRIVATE okay::engine)
+add_test(NAME model_import_rig COMMAND test_model_import_rig)

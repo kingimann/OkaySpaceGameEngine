@@ -43,6 +43,9 @@ public:
 
     // ---- Matrices ------------------------------------------------------
     Mat4 LocalToWorldMatrix() const;
+    /// Changes whenever this transform's world matrix changes (its own local
+    /// values or any parent's). Cheap "did it move?" check for caches.
+    unsigned long long WorldVersion() const { WorldCache(); return m_wStamp; }
 
     // ---- Hierarchy -----------------------------------------------------
     Transform* Parent() const { return m_parent; }
@@ -87,6 +90,16 @@ private:
     friend class GameObject;
     Transform* m_parent = nullptr;
     std::vector<Transform*> m_children;
+
+    // World-matrix cache (see WorldCache in Transform.cpp).
+    const Mat4& WorldCache() const;
+    mutable Mat4 m_world;
+    mutable Quat m_wRot = Quat::Identity;
+    mutable Vec3 m_wP, m_wS;
+    mutable Quat m_wR;
+    mutable const Transform* m_wParent = nullptr;
+    mutable unsigned long long m_wParentStamp = 0, m_wStamp = 0;
+    mutable bool m_wValid = false;
 };
 
 } // namespace okay

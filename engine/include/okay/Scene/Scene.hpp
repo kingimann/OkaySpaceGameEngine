@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Physics/Physics2D.hpp"
@@ -61,6 +62,9 @@ public:
     GameObject* Find(const std::string& name) const;
     GameObject* FindWithTag(const std::string& tag) const;
     const std::vector<std::unique_ptr<GameObject>>& Objects() const { return m_objects; }
+    /// Bumped whenever objects are created or destroyed (or the scene is cleared):
+    /// components that cache GameObject/Transform pointers re-resolve when it changes.
+    std::uint64_t StructureVersion() const { return m_structureVersion; }
 
     /// Layer a widget frontmost/backmost. UI draws in hierarchy order, so a parented
     /// object moves to the last/first slot among its SIBLINGS (last = on top); a root
@@ -189,6 +193,7 @@ private:
     Physics2D   m_physics;
     Physics3D   m_physics3d;
     std::vector<std::unique_ptr<GameObject>> m_objects;
+    std::uint64_t m_structureVersion = 1;
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame
     std::vector<GameObject*> m_destroyQueue;

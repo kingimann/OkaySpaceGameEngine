@@ -121,12 +121,12 @@ int main() {
 
         ma->Play("slideX");
         CHECK(ma->CurrentName() == "slideX");
-        if (auto* an = bone->GetComponent<Animator>()) { an->SetTime(0.5f); }   // mid: x=2
-        CHECK(bone->GetComponent<Animator>() != nullptr);
+        ma->SetTime(0.5f);                                                     // mid: x=2
+        CHECK(bone->GetComponent<Animator>() == nullptr);   // bones are posed directly, no per-bone components
         CHECK(std::fabs(bone->transform->localPosition.x - 2.0f) < 0.05f);
 
         ma->Play("slideY");
-        bone->GetComponent<Animator>()->SetTime(0.5f);                          // mid: y=3
+        ma->SetTime(0.5f);                                                     // mid: y=3
         CHECK(std::fabs(bone->transform->localPosition.y - 3.0f) < 0.05f);
 
         // Save/reload keeps both clips.
@@ -139,10 +139,9 @@ int main() {
         if (lma) {
             CHECK(lma->Play("slideY"));
             GameObject* lb = b.Find("B");
-            if (lb && lb->GetComponent<Animator>()) {
-                lb->GetComponent<Animator>()->SetTime(0.5f);
-                CHECK(std::fabs(lb->transform->localPosition.y - 3.0f) < 0.05f);
-            }
+            CHECK(lb != nullptr);
+            lma->SetTime(0.5f);
+            if (lb) CHECK(std::fabs(lb->transform->localPosition.y - 3.0f) < 0.05f);
         }
     }
 

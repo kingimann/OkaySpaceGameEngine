@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -37,6 +38,21 @@ Mesh ImportModel(const std::string& path, bool* ok = nullptr, std::string* outTe
 /// non-glTF formats it falls back to a single mesh object. Use this from the editor's
 /// import so a rigged glTF brings its parts + animation in, not just one static mesh.
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok = nullptr);
+
+/// What an imported model came in with, for the editor's import message:
+/// meshes, skinned meshes, bones (and whether they form one connected
+/// skeleton), weights, and clips. `warnings` lists anything that will look
+/// wrong (missing bones, unweighted vertices, a split skeleton...).
+struct ModelReport {
+    int objects = 0, meshes = 0, skinnedMeshes = 0, bones = 0, vertices = 0, triangles = 0;
+    int maxInfluences = 0, unweightedVertices = 0, missingBones = 0, skeletonRoots = 0;
+    int clips = 0;
+    std::string rootBone;               ///< top of the skeleton ("" if not rigged)
+    std::vector<std::string> clipNames;
+    std::vector<std::string> warnings;
+    std::string Summary() const;        ///< one line for the console
+};
+ModelReport AnalyzeModel(Scene& scene, GameObject* root);
 
 /// Make an imported model THE playable character of `player` (a controller
 /// object): import `path` as a child, scale it to the character's height,

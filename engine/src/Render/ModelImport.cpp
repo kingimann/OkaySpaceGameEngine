@@ -235,16 +235,22 @@ static std::string BaseName(const std::string& path) {
 
 // Build a glTF mesh that also carries per-vertex skin data (JOINTS_0 / WEIGHTS_0),
 // kept aligned with the merged vertices. `jIdx`/`jWt` index into the skin's joint list.
+// Up to 8 influences (JOINTS_0/1 + WEIGHTS_0/1) are read; the 4 strongest are kept
+// and renormalized to sum to 1. `onlyPrim` >= 0 builds just that primitive (one
+// material of a multi-material character).
 static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
                              std::vector<std::array<int, 4>>& jIdx,
-                             std::vector<std::array<float, 4>>& jWt) {
+                             std::vector<std::array<float, 4>>& jWt, int onlyPrim = -1) {
     using namespace gltf_detail;
     Mesh mesh; jIdx.clear(); jWt.clear();
     const JVal* meshes = doc.root.Find("meshes");
     if (!meshes || meshIndex < 0 || meshIndex >= (int)meshes->arr.size()) return mesh;
     const JVal* prims = meshes->arr[meshIndex].Find("primitives");
     if (!prims) return mesh;
+    int primNo = -1;
     for (const JVal& prim : prims->arr) {
+        ++primNo;
+        if (onlyPrim >= 0 && primNo != onlyPrim) continue;
         const JVal* attr = prim.Find("attributes"); if (!attr) continue;
         int base = (int)mesh.vertices.size(), pc = 0, pn = 0;
         if (const JVal* P = attr->Find("POSITION")) {
@@ -259,14 +265,31 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
             int tc = 0, tn = 0; auto uv = ReadAccessor(doc, T->Int(-1), tc, tn);
             for (int i = 0; i < tn; ++i) mesh.uvs.push_back(Vec2{uv[i*2+0], uv[i*2+1]});
         }
-        std::vector<float> jv, wv; int jc = 0, jn = 0, wc = 0, wn = 0;
-        if (const JVal* J = attr->Find("JOINTS_0"))  jv = ReadAccessor(doc, J->Int(-1), jc, jn);
-        if (const JVal* W = attr->Find("WEIGHTS_0")) wv = ReadAccessor(doc, W->Int(-1), wc, wn);
+        std::vector<float> jv[2], wv[2]; int jc[2] = {0, 0}, jn[2] = {0, 0}, wc[2] = {0, 0}, wn[2] = {0, 0};
+        for (int set = 0; set < 2; ++set) {
+            std::string js = "JOINTS_" + std::to_string(set), ws = "WEIGHTS_" + std::to_string(set);
+            if (const JVal* J = attr->Find(js.c_str())) jv[set] = ReadAccessor(doc, J->Int(-1), jc[set], jn[set]);
+            if (const JVal* W = attr->Find(ws.c_str())) wv[set] = ReadAccessor(doc, W->Int(-1), wc[set], wn[set]);
+        }
         for (int i = 0; i < pn; ++i) {
+            // Gather every influence, keep the strongest 4, renormalize.
+            std::pair<float, int> inf[8]; int ni = 0;
+            for (int set = 0; set < 2; ++set) {
+                if (jc[set] < 4 || wc[set] < 4 || i >= jn[set] || i >= wn[set]) continue;
+                for (int k = 0; k < 4; ++k) {
+                    float w = wv[set][(std::size_t)i * wc[set] + k];
+                    if (w > 0.0f) inf[ni++] = {w, (int)(jv[set][(std::size_t)i * jc[set] + k] + 0.5f)};
+                }
+            }
+            std::sort(inf, inf + ni, [](const std::pair<float, int>& a, const std::pair<float, int>& b) { return a.first > b.first; });
             std::array<int, 4>   idx{0, 0, 0, 0};
-            std::array<float, 4> w{1, 0, 0, 0};   // default: fully bound to joint 0
-            if (jc >= 4 && i < jn) for (int k = 0; k < 4; ++k) idx[k] = (int)(jv[i*jc+k] + 0.5f);
-            if (wc >= 4 && i < wn) for (int k = 0; k < 4; ++k) w[k] = wv[i*wc+k];
+            std::array<float, 4> w{1, 0, 0, 0};   // no weights at all: bound to joint 0
+            if (ni > 0) {
+                float sum = 0.0f;
+                for (int k = 0; k < 4 && k < ni; ++k) sum += inf[k].first;
+                w = {0, 0, 0, 0};
+                for (int k = 0; k < 4 && k < ni; ++k) { idx[k] = inf[k].second; w[k] = sum > 0.0f ? inf[k].first / sum : 0.0f; }
+            }
             jIdx.push_back(idx); jWt.push_back(w);
         }
         if (const JVal* I = prim.Find("indices")) {
@@ -396,9 +419,12 @@ static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path,
     struct MeshSite { GameObject* go; const aiMesh* am; };
     std::vector<MeshSite> sites;
 
+    std::unordered_map<std::string, int> nameUse;   // later duplicates get a suffix (first keeps the name bones/channels use)
     std::function<void(const aiNode*, Transform*)> build = [&](const aiNode* n, Transform* parent) {
         std::string nm = n->mName.C_Str();
-        GameObject* g = scene.CreateGameObject(nm.empty() ? "node" : nm);
+        std::string objName = nm.empty() ? "node" : nm;
+        if (int c = nameUse[objName]++) objName += "_" + std::to_string(c);
+        GameObject* g = scene.CreateGameObject(objName);
         aiVector3D s, t; aiQuaternion r;
         n->mTransformation.Decompose(s, r, t);
         g->transform->localPosition = Vec3{t.x, t.y, t.z};
@@ -913,10 +939,15 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     // deferred to a second pass (they reference joint nodes that must all exist first).
     std::vector<GameObject*> go(nodeCount, nullptr);
     std::vector<int> skinnedNodes;
+    // Names are made unique: clips and skins bind to nodes by name, and two
+    // "Bone" nodes would otherwise animate / skin to the same one.
+    std::unordered_map<std::string, int> nameUse;
     for (int i = 0; i < nodeCount; ++i) {
         const JVal& n = nodes->arr[i];
         std::string nm = n.Find("name") ? n.Find("name")->Text() : ("node" + std::to_string(i));
-        GameObject* g = scene.CreateGameObject(nm.empty() ? ("node" + std::to_string(i)) : nm);
+        if (nm.empty()) nm = "node" + std::to_string(i);
+        if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
+        GameObject* g = scene.CreateGameObject(nm);
         go[i] = g;
         const JVal* T = n.Find("translation");
         const JVal* R = n.Find("rotation");
@@ -977,31 +1008,47 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
         const JVal* jts = skin.Find("joints");
         if (!jts) continue;
 
-        std::vector<std::array<int, 4>>   jIdx;
-        std::vector<std::array<float, 4>> jWt;
-        Mesh bind = BuildSkinnedMesh(doc, meshIdx, jIdx, jWt);
-        if (bind.vertices.empty()) continue;
-
-        auto* mr = go[ni]->AddComponent<MeshRenderer>();
-        mr->mesh = bind; mr->doubleSided = true;
-        ApplyGltfMaterial(*mr, ResolveMeshMaterial(doc, meshIdx, path));   // texture animated characters too
-        auto* sm = go[ni]->AddComponent<SkinnedMesh>();
-        sm->bind = bind; sm->jointIdx = jIdx; sm->jointWt = jWt;
-
+        // Shared by every material part of this skinned mesh.
+        std::vector<Transform*> jointTs; std::vector<std::string> jointNs; std::vector<Mat4> invBind;
         for (const JVal& jn : jts->arr) {
             int jnode = jn.Int(-1);
             GameObject* jg = (jnode >= 0 && jnode < nodeCount) ? go[jnode] : nullptr;
-            sm->joints.push_back(jg ? jg->transform : nullptr);
-            sm->jointNames.push_back(jg ? jg->name : std::string{});   // for save/reload
+            jointTs.push_back(jg ? jg->transform : nullptr);
+            jointNs.push_back(jg ? jg->name : std::string{});   // for save/reload
         }
         if (const JVal* IB = skin.Find("inverseBindMatrices")) {
             int c = 0, cnt = 0; auto fv = ReadAccessor(doc, IB->Int(-1), c, cnt);
             for (int j = 0; j < cnt; ++j) {
                 Mat4 M; for (int e = 0; e < 16; ++e) M.m[e] = fv[(std::size_t)j*16 + e];
-                sm->inverseBind.push_back(M);
+                invBind.push_back(M);
             }
-        } else {
-            sm->inverseBind.assign(sm->joints.size(), Mat4::Identity());
+        }
+        if (invBind.size() != jointTs.size()) invBind.assign(jointTs.size(), Mat4::Identity());
+
+        // One material: skin it on the node itself. Several: one child per
+        // material, each its own SkinnedMesh over the same joints, so every
+        // texture of a multi-material character comes through.
+        int pc = MeshPrimitiveCount(doc, meshIdx);
+        std::set<int> matset;
+        for (int pi = 0; pi < pc; ++pi) matset.insert(PrimitiveMaterial(doc, meshIdx, pi));
+        const bool split = pc > 1 && matset.size() > 1;
+        for (int pi = split ? 0 : -1; pi < (split ? pc : 0); ++pi) {
+            std::vector<std::array<int, 4>>   jIdx;
+            std::vector<std::array<float, 4>> jWt;
+            Mesh bind = BuildSkinnedMesh(doc, meshIdx, jIdx, jWt, pi);
+            if (bind.vertices.empty()) continue;
+            GameObject* host = go[ni];
+            if (split) {
+                host = scene.CreateGameObject(go[ni]->name + "_mat" + std::to_string(pi));
+                host->transform->SetParent(go[ni]->transform, false);
+            }
+            auto* mr = host->AddComponent<MeshRenderer>();
+            mr->mesh = bind; mr->doubleSided = true;
+            ApplyGltfMaterial(*mr, split ? ResolveMaterial(doc, PrimitiveMaterial(doc, meshIdx, pi), path)
+                                         : ResolveMeshMaterial(doc, meshIdx, path));
+            auto* sm = host->AddComponent<SkinnedMesh>();
+            sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
+            sm->joints = jointTs; sm->jointNames = jointNs; sm->inverseBind = invBind;
         }
     }
 
@@ -1035,30 +1082,45 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                         // take the middle (value) block. LINEAR/STEP store one block per key.
                         std::string interp = s.Find("interpolation") ? s.Find("interpolation")->Text() : "LINEAR";
                         bool cubic = (interp == "CUBICSPLINE");
+                        bool step  = (interp == "STEP");
 
                         const std::string& nodeName = go[node]->name;
                         ModelAnimator::NodeClip* ncp = nullptr;
                         for (auto& ncx : clip.nodes) if (ncx.node == nodeName) { ncp = &ncx; break; }
                         if (!ncp) { clip.nodes.push_back({nodeName, AnimationClip{}}); ncp = &clip.nodes.back(); }
                         AnimationClip& ac = ncp->clip;
+                        // LINEAR / STEP data plays back exactly; CUBICSPLINE keeps
+                        // the smooth curve (its tangents aren't imported).
+                        ac.smoothKeys = cubic;
+                        float prevQ[4] = {0, 0, 0, 1}; bool haveQ = false;
+                        auto put = [&](float t, const float* v) {
+                            if (tpath == "translation" && oc >= 3) {
+                                ac.AddKey("position.x", t, v[0]); ac.AddKey("position.y", t, v[1]); ac.AddKey("position.z", t, v[2]);
+                            } else if (tpath == "scale" && oc >= 3) {
+                                ac.AddKey("scale.x", t, v[0]); ac.AddKey("scale.y", t, v[1]); ac.AddKey("scale.z", t, v[2]);
+                            } else if (tpath == "rotation" && oc >= 4) {
+                                // Keep neighbouring keys in one hemisphere: the curves
+                                // interpolate components, and a sign flip reads as a spin.
+                                float q[4] = {v[0], v[1], v[2], v[3]};
+                                if (haveQ && q[0]*prevQ[0] + q[1]*prevQ[1] + q[2]*prevQ[2] + q[3]*prevQ[3] < 0.0f)
+                                    for (float& c : q) c = -c;
+                                for (int c = 0; c < 4; ++c) prevQ[c] = q[c];
+                                haveQ = true;
+                                ac.AddKey("rotation.qx", t, q[0]); ac.AddKey("rotation.qy", t, q[1]);
+                                ac.AddKey("rotation.qz", t, q[2]); ac.AddKey("rotation.qw", t, q[3]);
+                            }
+                        };
                         for (int k = 0; k < tn; ++k) {
                             float t = times[k];
                             int vbase = (cubic ? (k * 3 + 1) : k) * oc;   // value block for this key
                             if (vbase + oc > on * oc) break;              // guard against short data
-                            if (tpath == "translation" && oc >= 3) {
-                                ac.AddKey("position.x", t, vals[vbase+0]);
-                                ac.AddKey("position.y", t, vals[vbase+1]);
-                                ac.AddKey("position.z", t, vals[vbase+2]);
-                            } else if (tpath == "scale" && oc >= 3) {
-                                ac.AddKey("scale.x", t, vals[vbase+0]);
-                                ac.AddKey("scale.y", t, vals[vbase+1]);
-                                ac.AddKey("scale.z", t, vals[vbase+2]);
-                            } else if (tpath == "rotation" && oc >= 4) {
-                                ac.AddKey("rotation.qx", t, vals[vbase+0]);
-                                ac.AddKey("rotation.qy", t, vals[vbase+1]);
-                                ac.AddKey("rotation.qz", t, vals[vbase+2]);
-                                ac.AddKey("rotation.qw", t, vals[vbase+3]);
+                            // STEP: hold this value until just before the next key.
+                            if (step && k > 0) {
+                                int pbase = (k - 1) * oc;
+                                float hold = t - std::fmax(1e-4f, (t - times[k - 1]) * 1e-3f);
+                                if (hold > times[k - 1]) put(hold, &vals[pbase]);
                             }
+                            put(t, &vals[vbase]);
                         }
                     }
                 }
@@ -1072,6 +1134,69 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     AutoNormalizeImportScale(scene, root);
     if (ok) *ok = true;
     return root;
+}
+
+// ---- Import report ----------------------------------------------------------
+ModelReport AnalyzeModel(Scene& scene, GameObject* root) {
+    ModelReport r;
+    if (!root || !root->transform) return r;
+    std::vector<GameObject*> sub;
+    for (const auto& up : scene.Objects())
+        if (up && up->IsSelfOrDescendantOf(root)) sub.push_back(up.get());
+    r.objects = (int)sub.size();
+    std::set<Transform*> bones;
+    for (GameObject* g : sub) {
+        if (auto* mr = g->GetComponent<MeshRenderer>()) {
+            ++r.meshes;
+            r.vertices += (int)mr->mesh.vertices.size();
+            r.triangles += (int)mr->mesh.triangles.size() / 3;
+        }
+        if (auto* sm = g->GetComponent<SkinnedMesh>()) {
+            ++r.skinnedMeshes;
+            sm->ResolveJoints();
+            for (Transform* t : sm->joints) if (t) bones.insert(t);
+            r.missingBones += sm->MissingJoints();
+            r.unweightedVertices += sm->UnweightedVertices();
+            r.maxInfluences = std::max(r.maxInfluences, sm->MaxInfluences());
+        }
+    }
+    r.bones = (int)bones.size();
+    // Skeleton roots: bones whose parent isn't a bone. One connected skeleton
+    // has exactly one (the hips / root bone).
+    for (Transform* b : bones) {
+        Transform* p = b->Parent();
+        if (!p || !bones.count(p)) {
+            ++r.skeletonRoots;
+            if (r.rootBone.empty() && b->gameObject) r.rootBone = b->gameObject->name;
+        }
+        if (b->gameObject && !b->gameObject->IsSelfOrDescendantOf(root))
+            r.warnings.push_back("bone '" + b->gameObject->name + "' sits outside the model");
+    }
+    if (auto* ma = root->GetComponent<ModelAnimator>()) {
+        r.clips = ma->ClipCount();
+        r.clipNames = ma->ClipNames();
+    }
+    if (r.missingBones)        r.warnings.push_back(std::to_string(r.missingBones) + " bone(s) referenced by a skin weren't found");
+    if (r.unweightedVertices)  r.warnings.push_back(std::to_string(r.unweightedVertices) + " vertices have no bone weights (they won't move)");
+    if (r.skeletonRoots > 1)   r.warnings.push_back("the skeleton is split into " + std::to_string(r.skeletonRoots) + " separate bone trees");
+    if (r.skinnedMeshes == 0 && r.clips > 0 && r.meshes > 0)
+        r.warnings.push_back("animations but no skin: parts move rigidly (no mesh deformation)");
+    return r;
+}
+
+std::string ModelReport::Summary() const {
+    std::string s = std::to_string(meshes) + " mesh" + (meshes == 1 ? "" : "es") + ", " +
+                    std::to_string(vertices) + " verts";
+    if (skinnedMeshes)
+        s += ", skinned (" + std::to_string(bones) + " bones" +
+             (rootBone.empty() ? "" : ", root '" + rootBone + "'") +
+             ", up to " + std::to_string(maxInfluences) + " weights/vertex)";
+    if (clips) {
+        s += ", " + std::to_string(clips) + " clip" + (clips == 1 ? "" : "s") + ":";
+        for (int i = 0; i < (int)clipNames.size() && i < 5; ++i) s += (i ? ", " : " ") + clipNames[i];
+        if ((int)clipNames.size() > 5) s += ", ...";
+    }
+    return s;
 }
 
 // ---- Adding clips from another file (Mixamo animation downloads) ----------

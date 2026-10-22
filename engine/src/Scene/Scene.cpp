@@ -37,6 +37,7 @@ GameObject* Scene::CreateGameObject(const std::string& name) {
     auto go = std::unique_ptr<GameObject>(new GameObject(this, name));
     GameObject* ptr = go.get();
     m_objects.push_back(std::move(go));
+    ++m_structureVersion;
     ptr->transform = ptr->AddComponent<Transform>();
     return ptr;
 }
@@ -49,6 +50,7 @@ void Scene::Clear() {
     m_physics.Clear();
     mainCamera = nullptr;
     m_objects.clear();
+    ++m_structureVersion;
     renderSettings = RenderSettings{};   // back to default sky/ambient
 }
 
@@ -295,6 +297,7 @@ void Scene::FlushDestroyed() {
                         m_objects.end());
     }
     m_destroyQueue.clear();
+    ++m_structureVersion;
 }
 
 GameObject* Scene::Find(const std::string& name) const {

@@ -5189,7 +5189,8 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
     // Cache each folder's subfolder listing (+ whether each has children) so the
     // recursive tree doesn't re-scan the disk every frame for every open folder
     // (a real stutter on big projects). ~1s TTL picks up external changes.
-    static std::map<std::string, std::pair<Uint32, std::vector<std::pair<fs::path, bool>>>> s_treeCache;
+    struct TreeSub { fs::path path; bool hasKids = false; int items = 0; };
+    static std::map<std::string, std::pair<Uint32, std::vector<TreeSub>>> s_treeCache;
     std::string dkey = dir.string();
     auto& cached = s_treeCache[dkey];
     Uint32 nowMs = SDL_GetTicks();
@@ -5204,22 +5205,38 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
             return Lower(a.filename().string()) < Lower(b.filename().string());
         });
         for (const fs::path& s : subs) {
-            bool hk = false; std::error_code e2;
-            for (auto& c : fs::directory_iterator(s, e2)) { if (c.is_directory(e2)) { hk = true; break; } }
-            cached.second.push_back({s, hk});
+            TreeSub ts; ts.path = s; std::error_code e2;
+            for (auto& c : fs::directory_iterator(s, e2)) {
+                if (c.is_directory(e2)) ts.hasKids = true;
+                if (++ts.items >= 999) break;
+            }
+            cached.second.push_back(ts);
         }
     }
     fs::path cur(dirBuf);
     for (const auto& pr : cached.second) {
-        const fs::path& s = pr.first;
-        bool hasKids = pr.second;
+        const fs::path& s = pr.path;
+        bool hasKids = pr.hasKids;
         ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
                                ImGuiTreeNodeFlags_OpenOnDoubleClick;
         if (!hasKids) f |= ImGuiTreeNodeFlags_Leaf;
         bool isCur = (cur == s);
         if (isCur) f |= ImGuiTreeNodeFlags_Selected;
         if (reveal && PathIsAncestor(s, cur)) ImGui::SetNextItemOpen(true);
-        bool open = ImGui::TreeNodeEx(s.filename().string().c_str(), f);
+        bool open = ImGui::TreeNodeEx(s.string().c_str(), f, "     %s", s.filename().string().c_str());
+        {   // drawn folder glyph in the label's leading space + a dim item count on the right
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            float fs = ImGui::GetFontSize();
+            float ix = mn.x + ImGui::GetTreeNodeToLabelSpacing() + fs * 0.5f;
+            DrawTbIcon(ImGui::GetWindowDrawList(), TbIcon::Folder, ImVec2(ix, (mn.y + mx.y) * 0.5f), fs * 0.95f,
+                       isCur ? IM_COL32(250, 210, 110, 255) : IM_COL32(214, 178, 96, 230));
+            if (pr.items > 0) {
+                char cnt[8]; std::snprintf(cnt, sizeof(cnt), "%d", pr.items);
+                float cw = ImGui::CalcTextSize(cnt).x;
+                ImGui::GetWindowDrawList()->AddText(ImVec2(mx.x - cw - 6.0f, mn.y + (mx.y - mn.y - fs) * 0.5f),
+                                                    ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.8f), cnt);
+            }
+        }
         if (isCur && reveal) ImGui::SetScrollHereY(0.5f);   // bring the highlight into view
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
             std::strncpy(dirBuf, s.string().c_str(), bufsz - 1);
@@ -5943,6 +5960,21 @@ static void DrawPluginManager(EditorState& ed) {
     ImGui::End();
 }
 
+// Project type filters (g_projFilter ids): 1 scripts, 2 images, 3 scenes,
+// 4 materials, 5 prefabs, 6 data, 7 audio, 8 models.
+static bool ProjectFilterMatches(int f, const std::string& ext) {
+    switch (f) {
+        case 1: return ext==".okay"||ext==".lua"||ext==".cs"||ext==".okayvs";
+        case 2: return ext==".png"||ext==".jpg"||ext==".jpeg"||ext==".bmp"||ext==".tga"||ext==".gif"||ext==".hdr";
+        case 3: return ext==".okayscene";
+        case 4: return ext==".okaymat";
+        case 5: return ext==".okayprefab";
+        case 6: return ext==".okaydata";
+        case 7: return ext==".wav"||ext==".ogg"||ext==".mp3"||ext==".flac";
+        case 8: { const char* k = ImportKindLabel(ext); return k && std::strcmp(k, "model") == 0; }
+    }
+    return true;
+}
 void DrawProject(EditorState& ed) {
     namespace fs = std::filesystem;
     static char dirBuf[512] = ".";
@@ -5950,6 +5982,16 @@ void DrawProject(EditorState& ed) {
     static std::string selected;        // currently selected asset path (the "active" one)
     static std::set<std::string> s_multi;  // extra Ctrl-clicked items (multi-select)
     static std::string lastProject;     // re-home the browser when a project opens
+    // Smart filter (sidebar): -1 off; else a type filter id (as g_projFilter) or 100 =
+    // recently changed — lists matching assets from the WHOLE project, flat.
+    static int s_smart = -1;
+    static const int kSmartRecent = 100;
+    auto smartName = [](int id) -> const char* {
+        switch (id) { case 8: return "All Models"; case 2: return "All Textures"; case 7: return "All Audio";
+                      case 1: return "All Scripts"; case 3: return "All Scenes"; case 5: return "All Prefabs";
+                      case 4: return "All Materials"; case 6: return "All Data"; case 100: return "Recently Changed"; }
+        return "";
+    };
     if (!ImGui::Begin("Project", &g_showProject)) { ImGui::End(); return; }
     // Persisted view prefs + favorites — load once, before anything reads them.
     static bool s_prefsLoaded = false;
@@ -5996,6 +6038,7 @@ void DrawProject(EditorState& ed) {
             if (!s_navSuppress) { s_navBack.push_back(s_navLast); s_navFwd.clear(); }
             s_navLast = cur;
             revealTree = true;
+            s_smart = -1;   // browsing a folder leaves the smart view
             // Navigating clears a stale search (Unity behaviour) — a leftover
             // filter made every other folder look empty ("the panel is broken").
             if (!s_keepSearchOnce) search[0] = '\0';
@@ -6023,7 +6066,7 @@ void DrawProject(EditorState& ed) {
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forward");
     ImGui::SameLine();
-    if (ImGui::SmallButton("Assets")) std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
+    if (ImGui::SmallButton("Assets")) { std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1); s_smart = -1; }
     {   // breadcrumb of folders between root and the current dir
         fs::path rel = fs::relative(dir, root, ec);
         if (!ec && !rel.empty() && rel.native()[0] != '.') {
@@ -6036,16 +6079,80 @@ void DrawProject(EditorState& ed) {
             }
         }
     }
-    ImGui::SameLine();
-    float sw = 180.0f;
-    ImGui::SameLine(ImGui::GetContentRegionMax().x - sw);
-    ImGui::SetNextItemWidth(sw);
-    ImGui::InputTextWithHint("##search", "search...", search, sizeof(search));
+    if (s_smart >= 0) {   // smart view: "Assets / All Models  x"
+        ImGui::SameLine(0, 4); ImGui::TextDisabled("/"); ImGui::SameLine(0, 4);
+        AccentToggleButton(smartName(s_smart), true, ImVec2(0, ImGui::GetFrameHeight() - 6.0f));
+        ImGui::SameLine(0, 2);
+        if (ImGui::SmallButton("x##smartoff")) s_smart = -1;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to folder view");
+    }
+    // The right-hand toolbar (create, import, type filter, view, options, search)
+    // needs the asset actions defined further down, so reserve its spot on this
+    // row now and draw it at the end of the function.
+    const float tbFh = ImGui::GetFrameHeight();
+    const float tbSearchW = 170.0f, tbFilterW = 104.0f;
+    const float tbImportW = ImGui::CalcTextSize("Import").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float tbRightW = tbFh * 3.0f + tbImportW + tbFilterW + tbSearchW + ImGui::GetStyle().ItemSpacing.x * 5.0f;
+    {
+        float curX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetStyle().ItemSpacing.x;
+        float wantX = ImGui::GetWindowContentRegionMax().x - tbRightW;
+        ImGui::SameLine(wantX > curX ? wantX : 0.0f);
+    }
+    const ImVec2 tbPos = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(tbRightW, tbFh));
     ImGui::Separator();
 
     // ---- Two panes: folder tree (left) + asset grid (right), with a
     //      draggable splitter between them (width persists) --------------
     ImGui::BeginChild("tree", ImVec2(g_projTreeW, 0), true);
+    // Smart filters: every model / texture / sound / script / ... in the project at
+    // once, with counts (a cached whole-project scan, refreshed every few seconds).
+    {
+        static std::string s_cntRoot; static Uint32 s_cntNext = 0;
+        static int s_cnt[9] = {0}; static int s_cntRecent = 0;
+        if (s_cntRoot != root.string() || SDL_GetTicks() >= s_cntNext) {
+            s_cntRoot = root.string(); s_cntNext = SDL_GetTicks() + 3000;
+            for (int& c : s_cnt) c = 0;
+            s_cntRecent = 0;
+            std::error_code ce;
+            const auto weekAgo = fs::file_time_type::clock::now() - std::chrono::hours(24 * 7);
+            int seen = 0;
+            for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ce);
+                 !ce && it != fs::recursive_directory_iterator(); it.increment(ce)) {
+                if (++seen > 20000) break;
+                if (!it->is_regular_file(ce)) continue;
+                std::string x = Lower(it->path().extension().string());
+                for (int f = 1; f <= 8; ++f) if (ProjectFilterMatches(f, x)) s_cnt[f]++;
+                auto wt = it->last_write_time(ce);
+                if (!ce && wt >= weekAgo) ++s_cntRecent;
+            }
+        }
+        ImGui::TextDisabled("SMART FILTERS");
+        struct SF { int id; ImU32 col; };
+        static const SF kSF[] = {{8, IM_COL32(110, 170, 255, 255)}, {2, IM_COL32(235, 160, 90, 255)},
+                                 {7, IM_COL32(120, 210, 140, 255)}, {1, IM_COL32(230, 205, 90, 255)},
+                                 {3, IM_COL32(175, 135, 240, 255)}, {5, IM_COL32(90, 200, 210, 255)},
+                                 {4, IM_COL32(220, 130, 180, 255)}, {100, IM_COL32(200, 200, 210, 255)}};
+        for (const SF& sf : kSF) {
+            int n = sf.id == kSmartRecent ? s_cntRecent : s_cnt[sf.id];
+            if (n == 0 && sf.id != kSmartRecent && s_smart != sf.id) continue;   // hide empty categories
+            ImGui::PushID(sf.id);
+            std::string lbl = std::string("     ") + smartName(sf.id);
+            if (ImGui::Selectable(lbl.c_str(), s_smart == sf.id)) { s_smart = s_smart == sf.id ? -1 : sf.id; search[0] = '\0'; }
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            ImDrawList* sdl = ImGui::GetWindowDrawList();
+            float r = ImGui::GetFontSize() * 0.22f, cy = (mn.y + mx.y) * 0.5f;
+            if (sf.id == kSmartRecent) {   // little clock
+                sdl->AddCircle(ImVec2(mn.x + 8.0f, cy), r * 1.5f, sf.col, 12, 1.4f);
+                sdl->AddLine(ImVec2(mn.x + 8.0f, cy), ImVec2(mn.x + 8.0f, cy - r * 1.1f), sf.col, 1.4f);
+                sdl->AddLine(ImVec2(mn.x + 8.0f, cy), ImVec2(mn.x + 8.0f + r * 0.9f, cy), sf.col, 1.4f);
+            } else sdl->AddCircleFilled(ImVec2(mn.x + 8.0f, cy), r * 1.2f, sf.col);
+            char cnt[12]; std::snprintf(cnt, sizeof(cnt), "%d", n);
+            sdl->AddText(ImVec2(mx.x - ImGui::CalcTextSize(cnt).x - 4.0f, mn.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), cnt);
+            ImGui::PopID();
+        }
+        ImGui::Separator();
+    }
     // Favorites: pinned folders for one-click navigation (right-click a folder to
     // pin). Stale entries (deleted folders) are pruned as they're encountered.
     if (!g_favFolders.empty()) {
@@ -6179,69 +6286,12 @@ void DrawProject(EditorState& ed) {
         std::ofstream(p) << "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n";
         ConsoleLog("Created " + p.string()); nameOnCreate(p); };
     bool canEdit = fs::is_directory(dir, ec);
-    ImGui::BeginDisabled(!canEdit);
-    // One consolidated Create menu (Unity's "+ Create" button) instead of a row of
-    // per-type buttons — keeps the toolbar tidy and leaves room for more types.
-    bool openCreate = ImGui::SmallButton("+ Create");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a new asset in this folder");
-    ImGui::SameLine();
-    // Import external files: opens the OS file picker (multi-select), copies the
-    // chosen files into this folder. Any file type is accepted ("All files").
-    if (ImGui::SmallButton("Import...")) {
-        const char* picks = tinyfd_openFileDialog(
-            "Import asset(s)", "", 0, nullptr, "All files", /*multiSelect=*/1);
-        if (picks && picks[0]) {
-            // tinyfd returns multiple selections separated by '|'.
-            std::string all(picks), one; int n = 0;
-            auto importOne = [&](const std::string& path) {
-                if (path.empty()) return;
-                std::string out = ImportAssetFile(path, dir);
-                if (!out.empty()) { selected = out; ++n; }
-            };
-            for (char ch : all) { if (ch == '|') { importOne(one); one.clear(); } else one += ch; }
-            importOne(one);
-            ConsoleLog("Imported " + std::to_string(n) + " file(s) into " + dir.filename().string());
-        }
-    }
-    bool importHovered = ImGui::IsItemHovered();
-    ImGui::EndDisabled();
-    if (importHovered) ImGui::SetTooltip("Open the file picker to copy textures, fonts, audio, models, etc. into this folder.\nTip: you can also drag files from your file explorer onto the window.");
-    // The Create dropdown (opened above; drawn outside BeginDisabled so its items
-    // are always interactive once open).
-    if (openCreate) ImGui::OpenPopup("createmenu");
-    if (ImGui::BeginPopup("createmenu")) {
-        if (ImGui::MenuItem("Folder"))     mkFolder();
-        ImGui::Separator();
-        if (ImGui::MenuItem("Script"))     mkScript();
-        if (ImGui::MenuItem("Material"))   mkMaterial();
-        if (ImGui::MenuItem("Scene"))      mkScene();
-        if (ImGui::MenuItem("Data Asset")) mkData();
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(F2 or right-click to Rename)");
-
-    // ---- View options: type filter, sort, view mode, thumbnail size ----------
-    // Persisted across restarts (with the favorites) in okay_projectview.txt.
+    // View options (type filter, sort, view mode, tile size) are persisted with the
+    // favorites in okay_projectview.txt; the toolbar for them is drawn at the end.
     int&   s_filter = g_projFilter;
     int&   s_sort   = g_projSort;
     int&   s_view   = g_projView;
     float& s_cell   = g_projCell;
-    bool prefsChanged = false;
-    ImGui::SetNextItemWidth(110);
-    prefsChanged |= ImGui::Combo("##filter", &s_filter, "All\0Scripts\0Images\0Scenes\0Materials\0Prefabs\0Data\0Audio\0Models\0");
-    ImGui::SameLine(); ImGui::SetNextItemWidth(110);
-    prefsChanged |= ImGui::Combo("##sort", &s_sort, "Name\0Type\0Size\0Date\0");
-    ImGui::SameLine();
-    if (ImGui::SmallButton(s_view == 0 ? "List view" : "Grid view")) { s_view ^= 1; prefsChanged = true; }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch between tile grid and detail list");
-    if (s_view == 0) {   // tile size only matters for the grid
-        ImGui::SameLine(); ImGui::SetNextItemWidth(100);
-        ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
-        prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();   // save once, after the drag
-    }
-    if (prefsChanged) SaveProjectViewPrefs();
-    ImGui::Separator();
 
     // Reserve room at the bottom for the selected-asset details strip and scroll
     // only the tile grid, so the "inspector" footer stays pinned in view even when
@@ -6252,18 +6302,12 @@ void DrawProject(EditorState& ed) {
 
     // Map the filter to a set of extensions ("" = always show, dirs always show).
     auto passFilter = [&](const std::string& ext, bool isDir) -> bool {
-        if (isDir || s_filter == 0) return true;
-        switch (s_filter) {
-            case 1: return ext==".okay"||ext==".lua"||ext==".cs"||ext==".okayvs";
-            case 2: return ext==".png"||ext==".jpg"||ext==".jpeg"||ext==".bmp";
-            case 3: return ext==".okayscene";
-            case 4: return ext==".okaymat";
-            case 5: return ext==".okayprefab";
-            case 6: return ext==".okaydata";
-            case 7: return ext==".wav";
-            case 8: { const char* k = ImportKindLabel(ext); return k && std::strcmp(k, "model") == 0; }
+        if (s_smart >= 0) {   // smart view: files only, of the smart type (recent: any type)
+            if (isDir) return false;
+            return s_smart == kSmartRecent || ProjectFilterMatches(s_smart, ext);
         }
-        return true;
+        if (isDir || s_filter == 0) return true;
+        return ProjectFilterMatches(s_filter, ext);
     };
 
     // Cache the directory scan + sort so the Project panel doesn't hit the disk
@@ -6275,12 +6319,31 @@ void DrawProject(EditorState& ed) {
     static std::vector<fs::directory_entry> s_scanEntries;
     {
         Uint32 nowMs = SDL_GetTicks();
-        bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort;
+        static int s_scanSmart = -2;
+        bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort ||
+                       s_scanSmart != s_smart;
         if (changed || nowMs >= s_scanNext) {
-            s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanNext = nowMs + 600;
+            s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanSmart = s_smart;
+            s_scanNext = nowMs + (s_smart >= 0 ? 2000 : 600);
             s_scanEntries.clear();
             std::error_code sec;
-            if (fs::is_directory(dir, sec)) {
+            if (s_smart >= 0 && fs::is_directory(root, sec)) {
+                // Whole project, flat. "Recently changed" keeps the last week, newest first.
+                const auto weekAgo = fs::file_time_type::clock::now() - std::chrono::hours(24 * 7);
+                for (auto& e : fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, sec)) {
+                    if (!e.is_regular_file(sec)) continue;
+                    if (s_smart == kSmartRecent) { auto wt = e.last_write_time(sec); if (sec || wt < weekAgo) { sec.clear(); continue; } }
+                    else if (!ProjectFilterMatches(s_smart, Lower(e.path().extension().string()))) continue;
+                    s_scanEntries.push_back(e);
+                    if (s_scanEntries.size() >= 4000) break;
+                }
+                if (s_smart == kSmartRecent) {
+                    std::sort(s_scanEntries.begin(), s_scanEntries.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
+                        std::error_code x, y; return a.last_write_time(x) > b.last_write_time(y);
+                    });
+                    if (s_scanEntries.size() > 200) s_scanEntries.resize(200);
+                }
+            } else if (fs::is_directory(dir, sec)) {
                 if (search[0] == '\0') {
                     for (auto& e : fs::directory_iterator(dir, sec)) s_scanEntries.push_back(e);
                 } else {
@@ -6293,6 +6356,7 @@ void DrawProject(EditorState& ed) {
                     }
                 }
             }
+            if (s_smart != kSmartRecent)
             std::sort(s_scanEntries.begin(), s_scanEntries.end(), [&](const fs::directory_entry& a, const fs::directory_entry& b) {
                 bool da = a.is_directory(), db = b.is_directory();
                 if (da != db) return da;     // folders first
@@ -6841,6 +6905,76 @@ void DrawProject(EditorState& ed) {
     }
 
     ImGui::EndChild();
+
+    // ---- Toolbar (drawn into the spot reserved on the top row) -------------------
+    //   [+] [Import] [type filter] [grid/list] [...] [search........]
+    {
+        const ImVec2 keepCursor = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(tbPos);
+        bool prefsChanged = false;
+        ImGui::BeginDisabled(!canEdit || s_smart >= 0);
+        bool openCreate = IconButton("##pcreate", TbIcon::Plus, "Create an asset in this folder");
+        ImGui::SameLine();
+        if (ImGui::Button("Import")) {
+            const char* picks = tinyfd_openFileDialog("Import asset(s)", "", 0, nullptr, "All files", /*multiSelect=*/1);
+            if (picks && picks[0]) {
+                // tinyfd returns multiple selections separated by '|'.
+                std::string all(picks), one; int n = 0;
+                auto importOne = [&](const std::string& path) {
+                    if (path.empty()) return;
+                    std::string out = ImportAssetFile(path, dir);
+                    if (!out.empty()) { selected = out; ++n; }
+                };
+                for (char ch : all) { if (ch == '|') { importOne(one); one.clear(); } else one += ch; }
+                importOne(one);
+                ConsoleLog("Imported " + std::to_string(n) + " file(s) into " + dir.filename().string());
+            }
+        }
+        bool importHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+        ImGui::EndDisabled();
+        if (importHovered) ImGui::SetTooltip("Copy textures, fonts, audio, models... into this folder.\nTip: you can also drag files from your file explorer onto the window.");
+        if (openCreate) ImGui::OpenPopup("createmenu");
+        if (ImGui::BeginPopup("createmenu")) {
+            if (ImGui::MenuItem("Folder"))     mkFolder();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Script"))     mkScript();
+            if (ImGui::MenuItem("Material"))   mkMaterial();
+            if (ImGui::MenuItem("Scene"))      mkScene();
+            if (ImGui::MenuItem("Data Asset")) mkData();
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(tbFilterW);
+        ImGui::BeginDisabled(s_smart >= 0);
+        prefsChanged |= ImGui::Combo("##filter", &s_filter, "All types\0Scripts\0Images\0Scenes\0Materials\0Prefabs\0Data\0Audio\0Models\0");
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show only one type of asset in this folder");
+        ImGui::SameLine();
+        if (IconButton("##pview", s_view == 0 ? TbIcon::List : TbIcon::Grid, s_view == 0 ? "List view" : "Grid view")) { s_view ^= 1; prefsChanged = true; }
+        ImGui::SameLine();
+        if (IconButton("##pmore", TbIcon::More, "View options")) ImGui::OpenPopup("##projopts");
+        if (ImGui::BeginPopup("##projopts")) {
+            ImGui::TextDisabled("Sort by");
+            const char* sorts[] = {"Name", "Type", "Size", "Date modified"};
+            for (int i = 0; i < 4; ++i) if (ImGui::MenuItem(sorts[i], nullptr, s_sort == i)) { s_sort = i; prefsChanged = true; }
+            ImGui::Separator();
+            ImGui::TextDisabled("Tile size");
+            ImGui::SetNextItemWidth(160);
+            ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
+            prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(dir.string());
+            if (ImGui::MenuItem(IsFavFolder(dir.string()) ? "Remove folder from Favorites" : "Add folder to Favorites"))
+                ToggleFavFolder(dir.string());
+            ImGui::TextDisabled("F2 renames, Del deletes, Ctrl+C/X/V copy, cut, paste");
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        SearchField("##search", search, 96, s_smart >= 0 ? "Search all" : "Search", tbSearchW);
+        if (prefsChanged) SaveProjectViewPrefs();
+        ImGui::SetCursorScreenPos(keepCursor);
+        ImGui::Dummy(ImVec2(0, 0));   // (ImGui requires an item after moving the cursor)
+    }
     ImGui::PopStyleVar(2);
     ImGui::End();
 }

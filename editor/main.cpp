@@ -21350,13 +21350,60 @@ static std::vector<std::string> ScriptPublicFunctions(GameObject* go) {
 // mesh ops (subdivide/smooth/weld/recenter), import OBJ, and sculpt terrain — all
 // in one place. Operates on the current selection's MeshRenderer/Terrain.
 void DrawModeling(EditorState& ed) {
+    ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Modeling", &g_showModeling)) { ImGui::End(); return; }
+    // A floating window remembered tiny has no room for the sidebar + page.
+    if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().x < 640.0f || ImGui::GetWindowSize().y < 420.0f))
+        ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 900.0f), std::max(ImGui::GetWindowSize().y, 640.0f)));
+
+    // One page at a time, picked from a sidebar (instead of a tab strip under an
+    // always-open Add library): Add, then the mesh tools in the order you use them.
+    struct MdlPage { const char* name; const char* desc; bool needsMesh; };
+    static const MdlPage kPages[] = {
+        {"Add",       "Create a shape or prop",           false},
+        {"Shape",     "Primitive, color, collision",      true},
+        {"Edit",      "Subdivide, loop cut, UVs",         true},
+        {"Modifiers", "Array, remesh, smooth...",         true},
+        {"Generate",  "Procedural shapes, pipes",         true},
+        {"Edit Mesh", "Select, move, sculpt, paint",      true},
+        {"Import",    "Bring in a model file",            true},
+    };
+    static int s_mdlPage = 0;
+    if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
+    GameObject* selGo = ed.selected();
+    const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
+    ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
+    ImGui::Dummy(ImVec2(0, 4));
+    for (int i = 0; i < (int)(sizeof(kPages) / sizeof(kPages[0])); ++i) {
+        const MdlPage& pg = kPages[i];
+        const bool usable = !pg.needsMesh || haveMesh;
+        ImGui::PushID(i);
+        ImGui::BeginDisabled(!usable);
+        const ImVec2 r0 = ImGui::GetCursorScreenPos();
+        if (ImGui::Selectable("##pg", s_mdlPage == i, 0, ImVec2(0, 44))) s_mdlPage = i;
+        ImGui::EndDisabled();
+        if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select a mesh object first.");
+        ImDrawList* ndl = ImGui::GetWindowDrawList();
+        const ImU32 tc = usable ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pg.name);
+        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pg.desc);
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    if (kPages[s_mdlPage].needsMesh && !haveMesh) s_mdlPage = 0;
+    ImGui::SameLine();
+    ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
+    ImGui::TextUnformatted(kPages[s_mdlPage].name);
+    ImGui::TextDisabled("%s", kPages[s_mdlPage].desc);
+    ImGui::Separator();
+    if (s_mdlPage == 0) {
 
     // --- Create a new object (drops it into the scene, selects it) ---
     // Organized Blender-style into an "Add" library: Primitives / Nature / Props /
     // Structures, each a collapsible category, with a quick text filter (Blender's
     // F3 search). A button spawns that mesh by name via FromName().
-    SectionHeader("Add");
     struct Cat { const char* name; std::vector<const char*> items; };
     static const std::vector<Cat> kCats = {
         {"Primitives", {"Cube", "Sphere", "Cylinder", "Cone", "Pyramid", "Wedge", "Quad",
@@ -21416,16 +21463,13 @@ void DrawModeling(EditorState& ed) {
         }
     }
 
+    } else {
     GameObject* go = ed.selected();
+    auto* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
     if (!go) {
         EmptyState("\xE2\x9C\xB1", "No mesh selected",
-                   "Create a primitive above, or select a mesh object to model it.");
-        ImGui::End();
-        return;
-    }
-
-    auto* mr = go->GetComponent<MeshRenderer>();
-    if (mr) {
+                   "Create a shape on the Add page, or select a mesh object to model it.");
+    } else if (mr) {
         // Auto-refit this object's colliders when its mesh changed since last frame
         // (subdivide / extrude / any deform), so physics tracks the new shape instead
         // of the original primitive's bounds. Signature = tri/vert counts + bounds.
@@ -21443,8 +21487,8 @@ void DrawModeling(EditorState& ed) {
         ImGui::Spacing();
         // Grouped into tabs so the long modeling toolset is easy to navigate
         // (Shape / Edit / Modifiers / Edit Mesh / Import) instead of one long scroll.
-        if (ImGui::BeginTabBar("ModelTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
-        if (ImGui::BeginTabItem("Shape")) {
+        {
+        if (s_mdlPage == 1) {
         // Swap the primitive shape.
         const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
                                 "Cylinder", "Cone", "Tube", "Torus", "TorusKnot", "Capsule", "Icosphere", "Grid",
@@ -21505,10 +21549,11 @@ void DrawModeling(EditorState& ed) {
             }
         }
 
-        ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Edit")) {
+        }
+        if (s_mdlPage == 2) {
         ImGui::TextDisabled("%d verts, %d triangles",
                             (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
+        SectionHeader("Detail");
         if (ImGui::Button("Subdivide##model")) {
             ed.PushUndo();
             if (!g_meshSelFaces.empty()) mr->mesh.SubdivideFaces(g_meshSelFaces);   // just the picked face(s)
@@ -21545,7 +21590,8 @@ void DrawModeling(EditorState& ed) {
             ed.dirty = true;
         }
         static float s_relax = 0.5f;
-        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##rlx", &s_relax, 0.05f, 1.0f, "%.2f");
+        SectionHeader("Clean up");
+        ImGui::SetNextItemWidth(130); ImGui::SliderFloat("##rlx", &s_relax, 0.05f, 1.0f, "strength %.2f");
         ImGui::SameLine();
         if (ImGui::Button("Relax##model")) { ed.PushUndo(); mr->mesh.Smooth(s_relax); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian smooth: relax every vertex toward its neighbours without adding triangles (evens out sculpts and lumpy imports).");
@@ -21565,6 +21611,7 @@ void DrawModeling(EditorState& ed) {
             ed.dirty = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Connect two open boundaries with a wall — delete two facing faces (even on a Combined mesh) and bridge them into a tunnel.");
+        SectionHeader("Shape");
         ImGui::TextDisabled("Symmetrize (keep + half, mirror):");
         ImGui::SameLine();
         auto symAxis = [&](const char* lbl, int axis) {
@@ -21580,24 +21627,25 @@ void DrawModeling(EditorState& ed) {
         symAxis("Z##sym", 2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the mesh perfectly symmetric: keep the positive half (about the pivot) and mirror it over the other side.");
         static float s_snapAll = 0.25f;
-        ImGui::SetNextItemWidth(90); ImGui::DragFloat("##snapall", &s_snapAll, 0.01f, 0.01f, 5.0f, "%.2f");
+        ImGui::SetNextItemWidth(130); ImGui::DragFloat("##snapall", &s_snapAll, 0.01f, 0.01f, 5.0f, "grid %.2f");
         ImGui::SameLine();
         if (ImGui::Button("Snap Grid##model")) { ed.PushUndo(); mr->mesh.SnapToGrid(s_snapAll); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize every vertex to this grid step — crisp low-poly look, modular kit alignment.");
-        ImGui::SameLine();
+        SectionHeader("Shading");
         if (ImGui::Button("Shade Smooth##model")) { mr->mesh.ComputeSmoothNormals(); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blend lighting across faces (organic shapes). Saved with the scene.");
         ImGui::SameLine();
         if (ImGui::Button("Flat##shade")) { mr->mesh.normals.clear(); mr->mesh.autoSmoothAngle = 0.0f; ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faceted lighting per face (crisp low-poly look).");
         static float s_autoSmooth = 30.0f;
-        ImGui::SetNextItemWidth(70);
-        ImGui::DragFloat("##asang", &s_autoSmooth, 1.0f, 5.0f, 89.0f, "%.0f\xC2\xB0");
+        ImGui::SetNextItemWidth(120);
+        ImGui::DragFloat("##asang", &s_autoSmooth, 1.0f, 5.0f, 89.0f, "angle %.0f\xC2\xB0");
         ImGui::SameLine();
         if (ImGui::Button("Auto Smooth##model")) { ed.PushUndo(); mr->mesh.ComputeAutoSmoothNormals(s_autoSmooth); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blender's Auto Smooth: smooth across shallow edges, crisp across sharp ones\n(above this angle). A cylinder gets a smooth barrel + hard cap rims in one click.\nSaved with the scene.");
         static float s_jitter = 0.05f; static int s_jitterSeed = 1;
-        ImGui::SetNextItemWidth(90); ImGui::DragFloat("##jit", &s_jitter, 0.005f, 0.0f, 2.0f, "%.3f");
+        SectionHeader("Deform");
+        ImGui::SetNextItemWidth(130); ImGui::DragFloat("##jit", &s_jitter, 0.005f, 0.0f, 2.0f, "amount %.3f");
         ImGui::SameLine();
         if (ImGui::Button("Jitter##model")) {
             ed.PushUndo(); mr->mesh.JitterVertices({}, s_jitter, s_jitterSeed++); ed.dirty = true;
@@ -21605,12 +21653,13 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nudge every vertex by a random offset — instant hand-made / rocky look (each click varies).");
         static float s_shear = 0.3f;
         ImGui::SameLine(); ImGui::SetNextItemWidth(80);
-        ImGui::DragFloat("##shr", &s_shear, 0.01f, -3.0f, 3.0f, "%.2f");
+        ImGui::DragFloat("##shr", &s_shear, 0.01f, -3.0f, 3.0f, "shear %.2f");
         ImGui::SameLine();
         if (ImGui::Button("Shear X##model")) { ed.PushUndo(); mr->mesh.Shear(0, 1, s_shear); ed.dirty = true; }
         ImGui::SameLine();
         if (ImGui::Button("Z##shear")) { ed.PushUndo(); mr->mesh.Shear(2, 1, s_shear); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slant the mesh: slide along the axis proportionally to height — leaning towers, italic props.");
+        SectionHeader("Pivot & export");
         if (ImGui::Button("Weld##model")) {
             int n = mr->mesh.WeldVertices();
             ConsoleLog("Welded " + std::to_string(n) + " duplicate verts"); ed.dirty = true;
@@ -21679,8 +21728,8 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Curve the mesh into an arc along X (degrees over its length).");
 
         // ---- Modifiers (Blender-style: array / remesh / decimate / boolean) ----
-        ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Modifiers")) {
+        }
+        if (s_mdlPage == 3) {
         static int   s_arrayN = 3; static float s_arrayDX = 1.5f;
         ImGui::SetNextItemWidth(70); ImGui::DragInt("##arrn", &s_arrayN, 0.1f, 1, 64);
         ImGui::SameLine(); ImGui::SetNextItemWidth(80); ImGui::DragFloat("##arrdx", &s_arrayDX, 0.05f, -50.0f, 50.0f, "dx %.2f");
@@ -21826,8 +21875,8 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale along one axis about the mesh centre (stretch/squash).");
 
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
-        ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Generate")) {
+        }
+        if (s_mdlPage == 4) {
         // Profile-driven surfaces: edit a 2D (radius, height) point list, then revolve
         // it (Lathe), sweep it into a helix (Screw), or extrude it as a flat outline.
         static std::vector<Vec2> s_profile = {
@@ -21939,8 +21988,8 @@ void DrawModeling(EditorState& ed) {
             ed.dirty = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sweep a round cross-section along a path — pipes, rails, cables, springs. Frames are twist-free at bends.");
-        ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Edit Mesh")) {
+        }
+        if (s_mdlPage == 5) {
         bool editing = g_meshEdit && g_meshEditObj == go;
         if (ImGui::Checkbox("Edit Mesh##model", &editing)) {
             if (editing) {
@@ -22229,8 +22278,8 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove all face colors (back to the plain material color).");
         }
 
-        ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Import")) {
+        }
+        if (s_mdlPage == 6) {
         static char objPath[256] = "";
         std::strncpy(objPath, mr->meshPath.c_str(), sizeof(objPath) - 1);
         objPath[sizeof(objPath) - 1] = '\0';
@@ -22254,8 +22303,7 @@ void DrawModeling(EditorState& ed) {
                 ed.dirty = true; ConsoleLog("Added Rigidbody3D + fitted BoxCollider3D");
             }
         }
-        ImGui::EndTabItem(); }
-        ImGui::EndTabBar();
+        }
         }
     } else if (go->GetComponent<Terrain>()) {
         SectionHeader("Terrain");
@@ -22271,6 +22319,9 @@ void DrawModeling(EditorState& ed) {
             go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true;
         }
     }
+    }   // mesh pages
+    ImGui::PopStyleVar(2);
+    ImGui::EndChild();
     ImGui::End();
 }
 
@@ -36260,6 +36311,7 @@ int main(int argc, char** argv) {
                     else ImGui::GetIO().AddInputCharacter((unsigned)c);
                 }
             }
+            if (std::getenv("OKAY_UI_MODELPAGE") && s_focusFrames == 42) g_showModeling = true;   // + that page
             // OKAY_UI_SCRIPTNEW=1: the Script Editor with nothing open (=2: + the New Script dialog).
             if (const char* sn = std::getenv("OKAY_UI_SCRIPTNEW"); sn && s_focusFrames == 42) {
                 ed.Select(nullptr);

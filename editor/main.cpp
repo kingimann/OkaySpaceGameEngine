@@ -1405,6 +1405,7 @@ Vec2 g_lastUICanvas{0, 0};
 bool g_captureScene = false;
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into it)
+bool g_scriptAutoPair = true;      // Script Editor: auto-close ( [ { " '
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
@@ -8819,6 +8820,15 @@ static const std::vector<std::string>& ScriptCompletions() {
         "if","else","for","while","do","return","break","continue","switch","case",
         "var","function","class","new","public","private","true","false","foreach","in",
         "try","catch","throw",
+        // C# keywords + types
+        "void","int","float","double","bool","string","char","static","const","readonly","override",
+        "virtual","protected","using","namespace","enum","struct","yield","null","this","default",
+        "MonoBehaviour","IEnumerator","WaitForSeconds","StartCoroutine","StopCoroutine","StopAllCoroutines",
+        "GetComponent","Instantiate","Destroy","Invoke","InvokeRepeating","CancelInvoke","CompareTag",
+        "List","Dictionary","KeyValuePair","Rigidbody2D","Rigidbody","SpriteRenderer","Animator",
+        "AudioSource","Collider2D","Collision2D","Collider","Collision","KeyCode","GameObject","Transform",
+        "Start","Update","Awake","LateUpdate","OnTriggerEnter2D","OnTriggerEnter","OnCollisionEnter2D",
+        "OnCollisionEnter","OnMouseDown","SerializeField","Header","Range","Tooltip",
         // Unity-style API
         "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
         "SceneManager","Quaternion","transform","gameObject","OkaySource",
@@ -9067,11 +9077,16 @@ static AcKind ClassifyCompletion(const std::string& name) {
     static const std::unordered_set<std::string> kw = {
         "if","else","for","while","do","return","break","continue","switch","case",
         "var","function","class","new","public","private","true","false","foreach","in",
-        "try","catch","throw","and","or","not","null","this","const","let","then","end"
+        "try","catch","throw","and","or","not","null","this","const","let","then","end",
+        "void","int","float","double","bool","string","char","static","readonly","override",
+        "virtual","protected","using","namespace","enum","struct","yield","default"
     };
     static const std::unordered_set<std::string> types = {
         "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
-        "SceneManager","Quaternion","transform","gameObject","OkaySource"
+        "SceneManager","Quaternion","transform","gameObject","OkaySource",
+        "MonoBehaviour","IEnumerator","WaitForSeconds","List","Dictionary","KeyValuePair","Rigidbody2D",
+        "Rigidbody","SpriteRenderer","Animator","AudioSource","Collider2D","Collision2D","Collider",
+        "Collision","KeyCode","GameObject","Transform","SerializeField","Header","Range","Tooltip"
     };
     if (kw.count(name))    return AcKind::Keyword;
     if (types.count(name)) return AcKind::Type;
@@ -9281,6 +9296,208 @@ static const std::vector<std::string>& ScriptMembers(const std::string& receiver
     static const std::vector<std::string> empty;
     auto it = M.find(receiver);
     return it == M.end() ? empty : it->second;
+}
+
+// ---- C#-aware member completion ---------------------------------------------
+// After `expr.` the popup lists what `expr` actually has: we work out its type
+// from the script itself (declarations `Type name`, `var x = new T(..)`,
+// `GetComponent<T>()`, method parameters, enums) or from well-known Unity
+// properties (`transform.position` is a Vector3). Methods carry a trailing '('
+// so the popup can show "()" and put the caret inside on accept.
+static const std::vector<std::string>* CsTypeMembers(const std::string& type) {
+    static const std::unordered_map<std::string, std::vector<std::string>> T = {
+        {"string", {"Length", "ToUpper(", "ToLower(", "Contains(", "StartsWith(", "EndsWith(", "IndexOf(",
+                    "LastIndexOf(", "Substring(", "Replace(", "Split(", "Trim(", "TrimStart(", "TrimEnd(",
+                    "PadLeft(", "PadRight(", "Insert(", "Remove(", "Equals(", "ToString("}},
+        {"List", {"Count", "Add(", "AddRange(", "Insert(", "Remove(", "RemoveAt(", "RemoveAll(", "Contains(",
+                  "IndexOf(", "Clear(", "Sort(", "Reverse(", "Find(", "FindIndex(", "FindAll(", "ForEach(",
+                  "Where(", "Select(", "Any(", "All(", "First(", "Last(", "Sum(", "Max(", "Min(", "Average(",
+                  "OrderBy(", "OrderByDescending(", "ToArray(", "ToList("}},
+        {"Array", {"Length", "Contains(", "IndexOf(", "Where(", "Select(", "Any(", "All(", "First(", "Last(",
+                   "Sum(", "Max(", "Min(", "OrderBy(", "ToList("}},
+        {"Dictionary", {"Count", "Keys", "Values", "Add(", "TryAdd(", "ContainsKey(", "ContainsValue(", "Remove(",
+                        "Clear(", "GetValueOrDefault("}},
+        {"Vector3", {"x", "y", "z", "magnitude", "sqrMagnitude", "normalized"}},
+        {"Transform", {"position", "localPosition", "localScale", "rotation", "eulerAngles", "localEulerAngles",
+                       "forward", "up", "right", "Translate(", "Rotate(", "LookAt("}},
+        {"GameObject", {"name", "tag", "activeSelf", "transform", "SetActive(", "CompareTag(", "GetComponent<"}},
+        {"Other", {"name", "tag", "gameObject", "transform", "CompareTag(", "GetComponent<"}},
+        {"Rigidbody2D", {"velocity", "gravityScale", "AddForce(", "MovePosition("}},
+        {"Rigidbody", {"velocity", "AddForce(", "MovePosition("}},
+        {"SpriteRenderer", {"color", "enabled", "flipX"}},
+        {"Renderer", {"color", "enabled", "material"}},
+        {"Animator", {"SetTrigger(", "SetBool(", "SetFloat(", "SetInteger(", "Play(", "CrossFade("}},
+        {"AudioSource", {"volume", "Play(", "Stop("}},
+        {"Text", {"text", "color"}},
+        {"Lambda", {"Invoke("}},
+    };
+    auto it = T.find(type);
+    return it == T.end() ? nullptr : &it->second;
+}
+// Normalise a declared C# type name to a CsTypeMembers key ("" = unknown).
+static std::string CsTypeKey(std::string ty) {
+    if (ty.empty()) return "";
+    if (ty.size() > 2 && ty.compare(ty.size() - 2, 2, "[]") == 0) return "Array";
+    if (auto lt = ty.find('<'); lt != std::string::npos) ty = ty.substr(0, lt);
+    static const std::unordered_map<std::string, std::string> alias = {
+        {"string", "string"}, {"String", "string"}, {"char", "string"},
+        {"List", "List"}, {"HashSet", "List"}, {"Queue", "List"}, {"Stack", "List"}, {"IEnumerable", "List"},
+        {"Dictionary", "Dictionary"}, {"SortedDictionary", "Dictionary"},
+        {"Vector3", "Vector3"}, {"Vector2", "Vector3"}, {"Color", "Vector3"},
+        {"Transform", "Transform"}, {"GameObject", "GameObject"},
+        {"Collider", "Other"}, {"Collider2D", "Other"}, {"Collision", "Other"}, {"Collision2D", "Other"},
+        {"Rigidbody2D", "Rigidbody2D"}, {"Rigidbody", "Rigidbody"}, {"SpriteRenderer", "SpriteRenderer"},
+        {"Renderer", "Renderer"}, {"MeshRenderer", "Renderer"}, {"SkinnedMeshRenderer", "Renderer"},
+        {"Animator", "Animator"}, {"AudioSource", "AudioSource"},
+        {"Text", "Text"}, {"TMP_Text", "Text"}, {"TextMeshPro", "Text"}, {"TextMeshProUGUI", "Text"},
+        {"Action", "Lambda"}, {"Func", "Lambda"},
+    };
+    auto it = alias.find(ty);
+    return it == alias.end() ? "" : it->second;
+}
+// The declared type of `var` in `src` ("" if unknown): `Type var`, `Type<..> var`,
+// `Type[] var`, `var var = new Type(..)` / `GetComponent<Type>()` / "text" / { .. }.
+static std::string CsDeclaredType(const std::string& src, const std::string& var) {
+    auto isW = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    const std::size_t n = src.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        if (src.compare(i, var.size(), var) != 0) continue;
+        if (i > 0 && isW(src[i - 1])) continue;
+        const std::size_t e = i + var.size();
+        if (e < n && isW(src[e])) continue;
+        // What follows must look like a declaration: '=', ';', ',', ')' or ' in '.
+        std::size_t a = e; while (a < n && (src[a] == ' ' || src[a] == '\t')) ++a;
+        if (a >= n) continue;
+        const bool declEnd = src[a] == '=' || src[a] == ';' || src[a] == ',' || src[a] == ')' ||
+                             src.compare(a, 3, "in ") == 0 || src[a] == '{';
+        if (!declEnd || (src[a] == '=' && a + 1 < n && src[a + 1] == '=')) continue;
+        // The type just before the name (skip spaces, then a generic / array suffix).
+        std::size_t b = i; while (b > 0 && (src[b - 1] == ' ' || src[b - 1] == '\t')) --b;
+        if (b == i) continue;   // no space between type and name
+        std::size_t te = b;
+        if (b > 0 && (src[b - 1] == '>' || src[b - 1] == ']')) {
+            int depth = 0; std::size_t k = b;
+            while (k > 0) {
+                char c = src[k - 1];
+                if (c == '>' || c == ']') ++depth;
+                else if (c == '<' || c == '[') { if (--depth == 0) { --k; break; } }
+                --k;
+            }
+            b = k;
+        }
+        std::size_t ts = b; while (ts > 0 && isW(src[ts - 1])) --ts;
+        if (ts == b) continue;
+        std::string ty = src.substr(ts, te - ts);
+        ty.erase(std::remove(ty.begin(), ty.end(), ' '), ty.end());
+        static const std::unordered_set<std::string> notTypes = {
+            "return", "new", "else", "case", "in", "out", "ref", "public", "private", "static", "const"};
+        if (notTypes.count(ty)) continue;
+        if (ty == "var") {   // infer from the initializer
+            if (src[a] != '=') continue;
+            std::size_t v = a + 1; while (v < n && src[v] == ' ') ++v;
+            if (v < n && (src[v] == '"' || (src[v] == '$' && v + 1 < n && src[v + 1] == '"'))) return "string";
+            if (v < n && src[v] == '{') return "Array";
+            if (src.compare(v, 4, "new ") == 0) {
+                std::size_t w = v + 4; std::size_t w2 = w; while (w2 < n && (isW(src[w2]) || src[w2] == '.')) ++w2;
+                std::string nt = src.substr(w, w2 - w);
+                if (w2 < n && src[w2] == '[') return "Array";
+                return CsTypeKey(nt);
+            }
+            if (src.compare(v, 13, "GetComponent<") == 0) {
+                std::size_t w = v + 13, w2 = src.find('>', w);
+                if (w2 != std::string::npos) return CsTypeKey(src.substr(w, w2 - w));
+            }
+            if (src.compare(v, 15, "GameObject.Find") == 0) return "GameObject";
+            continue;
+        }
+        if (std::string k = CsTypeKey(ty); !k.empty()) return k;
+        return ty;   // maybe an enum / class declared in this file
+    }
+    return "";
+}
+// Enum members declared in `src` for enum `name` (empty if not an enum).
+static std::vector<std::string> CsEnumMembers(const std::string& src, const std::string& name) {
+    std::vector<std::string> out;
+    auto p = src.find("enum " + name);
+    if (p == std::string::npos) return out;
+    auto lb = src.find('{', p), rb = src.find('}', p);
+    if (lb == std::string::npos || rb == std::string::npos || rb < lb) return out;
+    std::string body = src.substr(lb + 1, rb - lb - 1), cur;
+    auto flush = [&]() {
+        auto a = cur.find_first_not_of(" \t\r\n"); if (a == std::string::npos) { cur.clear(); return; }
+        std::string t = cur.substr(a); auto e = t.find_first_of(" =\t\r\n"); if (e != std::string::npos) t = t.substr(0, e);
+        if (!t.empty()) out.push_back(t);
+        cur.clear();
+    };
+    for (char c : body) { if (c == ',') flush(); else cur += c; }
+    flush();
+    return out;
+}
+// The fields and methods this script declares (for `this.`).
+static std::vector<std::string> CsOwnMembers(const std::string& src) {
+    std::vector<std::string> out;
+    std::unordered_set<std::string> have;
+    std::istringstream in(src); std::string line; int depth = 0;
+    while (std::getline(in, line)) {
+        const int d0 = depth;
+        for (char c : line) { if (c == '{') ++depth; else if (c == '}') --depth; }
+        if (d0 > 1) continue;   // only class-level declarations
+        auto cm = line.find("//"); if (cm != std::string::npos) line = line.substr(0, cm);
+        {
+            auto f = line.find_first_not_of(" \t");
+            if (f == std::string::npos) continue;
+            static const char* skip[] = {"using ", "namespace ", "[", "}"};
+            bool sk = false; for (const char* k : skip) sk = sk || line.compare(f, std::strlen(k), k) == 0;
+            if (sk || line.find(" enum ") != std::string::npos || line.compare(f, 5, "enum ") == 0 ||
+                line.find(" class ") != std::string::npos || line.compare(f, 6, "class ") == 0) continue;
+        }
+        auto paren = line.find('('), eq = line.find('='), semi = line.find(';');
+        std::size_t endName = std::min({paren, eq, semi});
+        if (endName == std::string::npos || endName == 0) continue;
+        std::size_t e = endName; while (e > 0 && line[e - 1] == ' ') --e;
+        std::size_t b = e; while (b > 0 && (std::isalnum((unsigned char)line[b - 1]) || line[b - 1] == '_')) --b;
+        if (b == e || b == 0) continue;   // needs a type before the name
+        std::string nm = line.substr(b, e - b);
+        static const std::unordered_set<std::string> kw = {"if", "for", "while", "switch", "foreach", "return", "using", "new"};
+        if (kw.count(nm) || have.count(nm)) continue;
+        have.insert(nm);
+        out.push_back(paren == endName ? nm + "(" : nm);
+    }
+    return out;
+}
+// Everything to offer after `receiver.` (receiver = the expression before the dot).
+static std::vector<std::string> CsMembersFor(const std::string& src, const std::string& receiver) {
+    if (receiver.empty()) return {};
+    if (receiver == "this") return CsOwnMembers(src);
+    std::string last = receiver;
+    if (auto d = receiver.rfind('.'); d != std::string::npos) last = receiver.substr(d + 1);
+    std::string key;
+    if (receiver.rfind("GetComponent<", 0) == 0 || last.rfind("GetComponent<", 0) == 0) {
+        auto lt = receiver.find('<'), gt = receiver.find('>');
+        if (lt != std::string::npos && gt != std::string::npos) key = CsTypeKey(receiver.substr(lt + 1, gt - lt - 1));
+    } else if (receiver == "transform" || last == "transform") key = "Transform";
+    else if (receiver == "gameObject" || last == "gameObject") key = "GameObject";
+    else if (receiver.find('.') != std::string::npos) {
+        static const std::unordered_set<std::string> vec = {"position", "localPosition", "localScale", "eulerAngles",
+            "localEulerAngles", "forward", "up", "right", "velocity", "normalized", "mousePosition"};
+        static const std::unordered_set<std::string> str = {"name", "tag", "text"};
+        if (vec.count(last)) key = "Vector3";
+        else if (str.count(last)) key = "string";
+    } else if (receiver.back() == ']') {
+        key = "";
+    } else {
+        std::string ty = CsDeclaredType(src, receiver);
+        if (!ty.empty()) {
+            if (CsTypeMembers(ty)) key = ty;
+            else { auto em = CsEnumMembers(src, ty); if (!em.empty()) return {}; }
+        }
+        if (key.empty()) {   // an enum type used directly: State.
+            auto em = CsEnumMembers(src, receiver);
+            if (!em.empty()) return em;
+        }
+    }
+    if (const auto* m = CsTypeMembers(key)) return *m;
+    return {};
 }
 
 // ---- ImGuiColorTextEdit integration ----------------------------------------
@@ -9822,6 +10039,7 @@ void DrawScriptEditor(EditorState& ed) {
             if (ImGui::BeginMenu("View")) {
                 ImGui::MenuItem("Syntax Colors", nullptr, &s_highlight);
                 ImGui::MenuItem("Minimap", nullptr, &s_minimap);
+                ImGui::MenuItem("Auto-close Brackets", nullptr, &g_scriptAutoPair);
                 ImGui::MenuItem("Problems Panel", nullptr, &s_showProblems);
                 ImGui::Separator();
                 if (ImGui::MenuItem("Zoom In", "Ctrl+Wheel")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
@@ -10646,10 +10864,57 @@ void DrawScriptEditor(EditorState& ed) {
         // A negative width reserves the minimap column on the right.
         const float mmW = 92.0f;
         bool showMap = s_minimap && av.x > 300.0f;
+        // Bracket / quote pairing (decided before the widget eats this frame's
+        // typing): ( [ { " ' get their closer, typing a closer that's already
+        // next to the caret steps over it, and Enter between { } opens a block.
+        static bool s_codeFocus = false;
+        const bool s_autoPair = g_scriptAutoPair;
+        char pairOpen = 0; bool stepOver = false, braceEnter = false;
+        if (s_autoPair && s_codeFocus && !acWasOpen && !te.HasSelection()) {
+            ImGuiIO& kio = ImGui::GetIO();
+            const std::string line = te.GetCurrentLineText();
+            const int col = te.GetCursorPosition().mColumn;
+            const char next = col < (int)line.size() ? line[col] : 0;
+            const char prev = col > 0 && col - 1 < (int)line.size() ? line[col - 1] : 0;
+            if (kio.InputQueueCharacters.Size == 1 && !kio.KeyCtrl) {
+                const ImWchar ch = kio.InputQueueCharacters[0];
+                if ((ch == ')' || ch == ']' || ch == '}' || ch == '"' || ch == '\'') && next == (char)ch) {
+                    kio.InputQueueCharacters.resize(0);   // step over the closer instead of doubling it
+                    stepOver = true;
+                } else if (ch == '(' || ch == '[' || ch == '{' || ch == '"' || ch == '\'') {
+                    bool ok = next == 0 || next == ' ' || next == ')' || next == ']' || next == '}' || next == ';' || next == ',';
+                    if ((ch == '"' || ch == '\'') && (std::isalnum((unsigned char)prev) || prev == '_')) ok = false;   // it's / x"
+                    if (ok) pairOpen = (char)ch;
+                }
+            }
+            if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) &&
+                prev == '{' && next == '}')
+                braceEnter = true;
+        }
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
         te.Render("##code", ImVec2(showMap ? -(mmW + 6.0f) : 0.0f, av.y), true);
         if (g_codeFont) ImGui::PopFont();
         te.SetHandleKeyboardInputs(true);
+        s_codeFocus = GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr;
+        if (stepOver) {
+            TextEditor::Coordinates c = te.GetCursorPosition();
+            te.SetCursorPosition(TextEditor::Coordinates(c.mLine, c.mColumn + 1));
+        }
+        if (pairOpen) {
+            const char close = pairOpen == '(' ? ')' : pairOpen == '[' ? ']' : pairOpen == '{' ? '}' : pairOpen;
+            TextEditor::Coordinates c = te.GetCursorPosition();
+            te.InsertText(std::string(1, close));
+            te.SetCursorPosition(c);
+        }
+        if (braceEnter) {
+            // The widget already broke the line and indented it like the `{` line;
+            // add one level for the body and push the `}` to its own line.
+            TextEditor::Coordinates c = te.GetCursorPosition();
+            const std::string ln = te.GetCurrentLineText();
+            std::string ind; for (char ch : ln) { if (ch == ' ' || ch == '\t') ind += ch; else break; }
+            te.InsertText("    \n" + ind);
+            te.SetCursorPosition(TextEditor::Coordinates(c.mLine, c.mColumn + 4));
+        }
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
@@ -10996,12 +11261,41 @@ void DrawScriptEditor(EditorState& ed) {
             auto isWord = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
             while (ws > 0 && isWord(t[ws - 1])) --ws;
             std::string prefix(t + ws, t + p);
-            std::string receiver;
+            std::string receiver, recvExpr;
             if (ws > 0 && t[ws - 1] == '.') {
                 int rs = ws - 1; while (rs > 0 && isWord(t[rs - 1])) --rs;
                 receiver.assign(t + rs, t + (ws - 1));
+                // The whole receiver expression: a.b.c, GetComponent<T>(), xs[0].
+                int es = ws - 1;
+                while (es > 0) {
+                    char c = t[es - 1];
+                    if (isWord(c) || c == '.') { --es; continue; }
+                    if (c == ')' || c == ']' || c == '>') {   // skip a balanced (..) / [..] / <..>
+                        char open = c == ')' ? '(' : (c == ']' ? '[' : '<');
+                        int depth = 0, k = es - 1;
+                        for (; k >= 0; --k) { if (t[k] == c) ++depth; else if (t[k] == open && --depth == 0) break; }
+                        if (k < 0) break;
+                        es = k; continue;
+                    }
+                    break;
+                }
+                recvExpr.assign(t + es, t + (ws - 1));
             }
-            const std::vector<std::string>& members = ScriptMembers(receiver);
+            std::vector<std::string> csMembers;
+            const std::vector<std::string>* membersP = &ScriptMembers(receiver);
+            if (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos) {
+                csMembers = CsMembersFor(std::string(t), recvExpr);
+                if (!csMembers.empty()) membersP = &csMembers;
+            }
+            if (membersP != &csMembers && !membersP->empty()) {
+                // Static Unity API lists: capitalised names are methods (bar constants).
+                static const std::unordered_set<std::string> consts = {"PI", "Deg2Rad", "Rad2Deg", "Epsilon", "Infinity"};
+                csMembers.clear();
+                for (const auto& m : *membersP)
+                    csMembers.push_back(std::isupper((unsigned char)m[0]) && !consts.count(m) ? m + "(" : m);
+                membersP = &csMembers;
+            }
+            const std::vector<std::string>& members = *membersP;
             bool memberMode = !receiver.empty() && !members.empty();
             static std::string s_acKey;
             std::string acKey = receiver + "|" + prefix;
@@ -11033,6 +11327,11 @@ void DrawScriptEditor(EditorState& ed) {
                 if (h != s_acLastHash) { s_acLastHash = h; s_acLastEdit = ImGui::GetTime(); }
             }
             bool recentlyTyping = (ImGui::GetTime() - s_acLastEdit) < 4.0;
+            // Ctrl+Space: open suggestions right now, even for an empty / 1-letter word.
+            static bool s_acForce = false;
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl &&
+                ImGui::IsKeyPressed(ImGuiKey_Space, false)) { s_acForce = true; g_acDismiss = false; }
+            if (g_acDismiss) s_acForce = false;
             // ---- Signature help: caret inside f( ... ) of a known builtin shows
             // its parameter list + doc in a hint above the caret (IDE-style).
             if (!inCommentOrString && recentlyTyping && prefix.empty()) {
@@ -11056,6 +11355,7 @@ void DrawScriptEditor(EditorState& ed) {
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                 ImGuiWindowFlags_NoSavedSettings)) {
+                            ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());   // above a floating Script Editor
                             ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.70f, 1.0f), "%s", sg->c_str());
                             if (const std::string* dsc = ScriptDoc(fn)) {
                                 ImGui::PushTextWrapPos(340.0f);
@@ -11068,8 +11368,8 @@ void DrawScriptEditor(EditorState& ed) {
                     }
                 }
             }
-            if (!g_acDismiss && !inCommentOrString && recentlyTyping &&
-                (memberMode || prefix.size() >= 2)) {
+            if (!g_acDismiss && !inCommentOrString && (recentlyTyping || s_acForce) &&
+                (memberMode || prefix.size() >= 2 || s_acForce)) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
                 struct Hit { const std::string* w; bool fuzzy; int score; };
                 std::vector<Hit> exact, ci, fuzz;
@@ -11078,6 +11378,8 @@ void DrawScriptEditor(EditorState& ed) {
                 const std::vector<std::string>& pool = memberMode ? members : combined;
                 for (const auto& w : pool) {
                     if (w.size() < prefix.size()) continue;
+                    if (memberMode && (w.back() == '(' || w.back() == '<') && w.size() - 1 == prefix.size() &&
+                        w.compare(0, prefix.size(), prefix) == 0) continue;   // already typed in full
                     if (!memberMode && w == prefix) continue;
                     if (w.compare(0, prefix.size(), prefix) == 0) { exact.push_back({&w, false, 0}); continue; }
                     std::string lw = w; for (auto& ch : lw) ch = (char)std::tolower((unsigned char)ch);
@@ -11112,9 +11414,17 @@ void DrawScriptEditor(EditorState& ed) {
                         te.SetCursorPosition(TextEditor::Coordinates(l0, cStart));
                         const std::string* sg = memberMode ? nullptr : ScriptSignature(word);
                         bool zeroArg = sg && sg->find("()") != std::string::npos;
-                        te.InsertText(sg ? word + "()" : word);
-                        if (sg && !zeroArg)
-                            te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)word.size() + 1));
+                        if (memberMode && !word.empty() && (word.back() == '(' || word.back() == '<')) {
+                            // A method: Name() with the caret inside; a generic: GetComponent<|>()
+                            const std::string nm = word.substr(0, word.size() - 1);
+                            if (word.back() == '(') te.InsertText(nm + "()");
+                            else te.InsertText(nm + "<>()");
+                            te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)nm.size() + 1));
+                        } else {
+                            te.InsertText(sg ? word + "()" : word);
+                            if (sg && !zeroArg)
+                                te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)word.size() + 1));
+                        }
                         syncFromWidget();
                         g_acDismiss = true; g_acCount = 0;
                     };
@@ -11129,16 +11439,22 @@ void DrawScriptEditor(EditorState& ed) {
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                 ImGuiWindowFlags_NoSavedSettings)) {
+                            ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());   // above a floating Script Editor
                             for (std::size_t i = 0; i < hits.size(); ++i) {
-                                const std::string& nm = *hits[i].w;
-                                char letter; ImU32 tcol; AcKindTag(ClassifyCompletion(nm), letter, tcol);
+                                const std::string& full = *hits[i].w;
+                                const bool isMethod = memberMode && !full.empty() && (full.back() == '(' || full.back() == '<');
+                                const std::string nm = isMethod ? full.substr(0, full.size() - 1) : full;
+                                char letter; ImU32 tcol;
+                                if (memberMode) { letter = isMethod ? 'm' : 'p'; tcol = isMethod ? IM_COL32(220, 200, 120, 255) : IM_COL32(150, 190, 230, 255); }
+                                else AcKindTag(ClassifyCompletion(nm), letter, tcol);
                                 ImGui::TextColored(ImColor(tcol), "%c", letter);
                                 ImGui::SameLine(0, 6);
                                 float nameW = ImGui::CalcTextSize(nm.c_str()).x;
                                 char sid[24]; std::snprintf(sid, sizeof(sid), "##ac%d", (int)i);
                                 if (ImGui::Selectable((nm + sid).c_str(), (int)i == g_acIndex,
                                                       ImGuiSelectableFlags_None, ImVec2(nameW, 0)))
-                                    accept(nm);
+                                    accept(full);
+                                if (isMethod) { ImGui::SameLine(0, 0); ImGui::TextDisabled(full.back() == '<' ? "<T>()" : "()"); }
                                 if (const std::string* sg = ScriptSignature(nm)) {
                                     const char* paren = std::strchr(sg->c_str(), '(');
                                     ImGui::SameLine(0, 12);

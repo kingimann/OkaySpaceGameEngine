@@ -16,17 +16,32 @@ jobs:
   windows-exe:
     name: Cross-compile Windows exes (MinGW)
     runs-on: ubuntu-latest
+    # A normal release takes ~11 min; never let a stuck download hold one for hours.
+    timeout-minutes: 45
     env:
       SDL2_VERSION: 2.30.9
     steps:
       - uses: actions/checkout@v4
 
+      # Ubuntu mirrors occasionally hang (one release sat here 45 min): bounded
+      # attempts with apt's own timeouts, retried a few times.
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build mingw-w64 zip nsis
+        timeout-minutes: 15
+        run: |
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for i in 1 2 3; do
+            if timeout 240 sudo apt-get $APT update && \
+               timeout 420 sudo apt-get $APT install -y cmake ninja-build mingw-w64 zip nsis; then
+              exit 0
+            fi
+            echo "apt attempt $i failed or timed out; retrying"
+            sleep 10
+          done
+          exit 1
 
       - name: Fetch SDL2 (MinGW dev)
         run: |
-          curl -sSL -o sdl2-mingw.tar.gz \
+          curl -sSL --retry 3 --retry-delay 5 --max-time 300 -o sdl2-mingw.tar.gz \
             "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
           mkdir -p sdl2-mingw
           tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
@@ -36,7 +51,7 @@ jobs:
         # Statically linked into the exes for authenticated packet encryption — no
         # extra DLL ships. If this step is removed, the build is simply unencrypted.
         run: |
-          curl -sSL -o libsodium-mingw.tar.gz \
+          curl -sSL --retry 3 --retry-delay 5 --max-time 300 -o libsodium-mingw.tar.gz \
             "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz"
           mkdir -p libsodium-mingw
           tar xzf libsodium-mingw.tar.gz -C libsodium-mingw

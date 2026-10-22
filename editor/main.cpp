@@ -15030,6 +15030,8 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     // last image, so an idle Animation tab doesn't re-skin the model twice a frame.
     struct SavedTRS { Transform* tr; Vec3 p, s; Quat r; };
     std::vector<SavedTRS> saved;
+    struct SavedW { BlendShapes* bs; std::vector<float> w; };
+    std::vector<SavedW> savedW;
     const bool inScenePrev = g_maScenePrev == ma;
     static const void* s_prevMa = nullptr; static int s_prevClip = -1; static float s_prevT = -1.0f;
     const bool poseUnchanged = !run && !inScenePrev && s_prevMa == ma && s_prevClip == ma->active && s_prevT == t;
@@ -15042,6 +15044,19 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             Transform* tr = it->second->transform;
             saved.push_back({tr, tr->localPosition, tr->localScale, tr->localRotation});
             ApplyClipToTransform(nc.clip, tr, t, ma->loop);
+            // Blend shape weight tracks: on the node, or its per-material parts.
+            const auto& ch = nc.clip.Chan();
+            if (ch.weights.empty()) continue;
+            std::vector<BlendShapes*> targets;
+            if (auto* b0 = it->second->GetComponent<BlendShapes>()) targets.push_back(b0);
+            else for (Transform* c : tr->Children()) if (c && c->gameObject) if (auto* b1 = c->gameObject->GetComponent<BlendShapes>()) targets.push_back(b1);
+            for (BlendShapes* bs : targets) {
+                SavedW sw{bs, {}};
+                for (const auto& sh : bs->shapes) sw.w.push_back(sh.weight);
+                savedW.push_back(std::move(sw));
+                for (const auto& w : ch.weights) bs->SetWeight(w.first, w.second->Evaluate(t));
+                bs->Apply();
+            }
         }
         for (SkinnedMesh* sm : skins) { sm->ResolveJoints(); sm->Skin(); }
     };
@@ -15053,6 +15068,10 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             s2.tr->localPosition = s2.p;
             s2.tr->localScale    = s2.s;
             s2.tr->localRotation = s2.r;
+        }
+        for (const SavedW& sw : savedW) {
+            for (std::size_t i = 0; i < sw.w.size() && i < sw.bs->shapes.size(); ++i) sw.bs->shapes[i].weight = sw.w[i];
+            sw.bs->Apply();
         }
         for (SkinnedMesh* sm : skins) sm->Skin();   // deform back to the scene pose
     };
@@ -15403,6 +15422,32 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
 // transition's condition in the side panel, and watch the ACTIVE state light
 // up during Play. Node positions save with the scene (animsmpos record).
 // ---------------------------------------------------------------------------
+// A transition's conditions in a few characters, for its arrow in the graph:
+// "speed > 0.1 & grounded @75%".
+static std::string TransitionSummary(const AnimStateMachine::Transition& tr) {
+    using C = AnimStateMachine::Cond;
+    auto one = [](C c, const std::string& p, float v) -> std::string {
+        char b[96];
+        const char* pn = p.empty() ? "?" : p.c_str();
+        switch (c) {
+            case C::OnClipEnd:    return "end";
+            case C::FloatGreater: std::snprintf(b, sizeof(b), "%s > %g", pn, v); return b;
+            case C::FloatLess:    std::snprintf(b, sizeof(b), "%s < %g", pn, v); return b;
+            case C::BoolTrue:     return pn;
+            case C::BoolFalse:    return std::string("not ") + pn;
+            case C::Trigger:      return std::string(pn) + " (trigger)";
+            case C::Always:       return "always";
+            case C::IntEquals:    std::snprintf(b, sizeof(b), "%s = %d", pn, (int)std::lround(v)); return b;
+            case C::IntNotEquals: std::snprintf(b, sizeof(b), "%s != %d", pn, (int)std::lround(v)); return b;
+        }
+        return "?";
+    };
+    std::string out = one(tr.cond, tr.param, tr.value);
+    for (const auto& c : tr.extra) out += " & " + one(c.cond, c.param, c.value);
+    if (tr.hasExitTime) out += " @" + std::to_string((int)std::lround(tr.exitTime * 100.0f)) + "%";
+    return out;
+}
+
 static void DrawAnimatorGraph(EditorState& ed) {
     if (!g_showAnimatorGraph) return;
     ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
@@ -15499,8 +15544,18 @@ static void DrawAnimatorGraph(EditorState& ed) {
     static int s_selState = -1, s_selTrFrom = -1, s_selTrIdx = -1, s_pendingFrom = -1;
     static int s_selAny = -1;   // selected Any State transition (side panel)
     static ImVec2 s_pan{40.0f, 40.0f};
-    static bool s_dragPushed = false;
-    if (s_key != (void*)sm) { s_key = (void*)sm; s_selState = -1; s_selTrFrom = -1; s_selTrIdx = -1; s_pendingFrom = -1; s_selAny = -1; s_pan = ImVec2(40, 40); }
+    static float s_zoom = 1.0f;
+    static bool s_dragPushed = false, s_frameReq = false, s_labels = true;
+    static char s_find[48] = "";
+    static AnimStateMachine::State s_stateClip;   // Ctrl+C / Ctrl+V
+    static bool s_haveStateClip = false;
+    if (s_key != (void*)sm) { s_key = (void*)sm; s_selState = -1; s_selTrFrom = -1; s_selTrIdx = -1; s_pendingFrom = -1; s_selAny = -1; s_pan = ImVec2(40, 40); s_zoom = 1.0f; }
+    {   // OKAY_UI_AGSEL=<state>: select it once it exists (dev screenshots).
+        static bool s_devSel = false;
+        if (const char* e = std::getenv("OKAY_UI_AGSEL"); e && !s_devSel)
+            for (int i = 0; i < (int)sm->states.size(); ++i)
+                if (sm->states[i].name == e) { s_selState = i; s_devSel = true; break; }
+    }
     if (s_selState >= 0 || s_selTrFrom >= 0) s_selAny = -1;
     if (s_selAny >= (int)sm->anyState.size()) s_selAny = -1;
     int n = (int)sm->states.size();
@@ -15585,6 +15640,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 std::string afterAir = land.empty() ? "Locomotion" : "Land";
                 if (!jump.empty()) {
                     SM::State j; j.name = "Jump"; j.clip = jump; j.loop = false; j.nx = 260; j.ny = 20;
+                    j.ikWeight = 0.0f; j.enterEvent = "jump";
                     if (!fall.empty()) j.transitions.push_back(tr("Fall", SM::Cond::OnClipEnd, "", 0, 0.15f));
                     j.transitions.push_back(tr(afterAir, SM::Cond::BoolTrue, "grounded", 0, 0.1f));
                     j.transitions.back().hasExitTime = true; j.transitions.back().exitTime = 0.4f;
@@ -15594,6 +15650,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 }
                 if (!fall.empty()) {
                     SM::State f; f.name = "Fall"; f.clip = fall; f.loop = true; f.nx = 500; f.ny = 20;
+                    f.ikWeight = 0.0f;
                     f.transitions.push_back(tr(afterAir, SM::Cond::BoolTrue, "grounded", 0, 0.1f));
                     sm->states.push_back(f);
                     SM::Transition off = tr("Fall", SM::Cond::BoolFalse, "grounded", 0, 0.2f);
@@ -15602,6 +15659,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 }
                 if (!land.empty()) {
                     SM::State l; l.name = "Land"; l.clip = land; l.loop = false; l.nx = 500; l.ny = 140;
+                    l.enterEvent = "land";
                     SM::Transition back = tr("Locomotion", SM::Cond::OnClipEnd, "", 0, 0.2f);
                     l.transitions.push_back(back);
                     SM::Transition early = tr("Locomotion", SM::Cond::FloatGreater, "speed", 1.0f, 0.2f);
@@ -15618,6 +15676,55 @@ static void DrawAnimatorGraph(EditorState& ed) {
             }
             ImGui::EndPopup();
         }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Frame##ag")) s_frameReq = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom and pan to fit every state (F)");
+    ImGui::SameLine();
+    ImGui::Checkbox("Labels##ag", &s_labels);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show each transition's conditions on its arrow");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120);
+    bool findGo = ImGui::InputTextWithHint("##agfind", "Find state", s_find, sizeof(s_find), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Matching states light up; Enter selects and centres the first");
+    auto findMatch = [&](const std::string& nm) {
+        if (!s_find[0]) return false;
+        return Lower(nm).find(Lower(s_find)) != std::string::npos;
+    };
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d%%", (int)std::lround(s_zoom * 100.0f));
+    // A state name not used yet ("Run" -> "Run 2").
+    auto uniqueStateName = [&](const std::string& base) {
+        auto used = [&](const std::string& nm) { for (const auto& st : sm->states) if (st.name == nm) return true; return false; };
+        if (!used(base)) return base;
+        for (int k = 2;; ++k) { std::string c = base + " " + std::to_string(k); if (!used(c)) return c; }
+    };
+    auto pasteState = [&](const AnimStateMachine::State& src) {
+        ed.PushUndo();
+        AnimStateMachine::State st = src;
+        st.name = uniqueStateName(src.name);
+        st.nx += 30.0f; st.ny += 30.0f;
+        // Outgoing transitions only point at states that exist here.
+        for (int t2 = (int)st.transitions.size() - 1; t2 >= 0; --t2) {
+            bool ok = false;
+            for (const auto& o : sm->states) if (o.name == st.transitions[t2].to) { ok = true; break; }
+            if (!ok) st.transitions.erase(st.transitions.begin() + t2);
+        }
+        sm->states.push_back(std::move(st));
+        s_selState = (int)sm->states.size() - 1; s_selTrFrom = -1; s_selTrIdx = -1;
+        ed.dirty = true;
+        n = (int)sm->states.size();
+    };
+    {
+        const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput;
+        const bool ctrl = ImGui::GetIO().KeyCtrl;
+        if (focused && ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && s_selState >= 0 && s_selState < n)
+            pasteState(AnimStateMachine::State(sm->states[s_selState]));
+        if (focused && ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && s_selState >= 0 && s_selState < n) {
+            s_stateClip = sm->states[s_selState]; s_haveStateClip = true;
+        }
+        if (focused && ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false) && s_haveStateClip) pasteState(s_stateClip);
+        if (focused && !ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) s_frameReq = true;
     }
     // Delete key removes the selected state (same cleanup as the context menu:
     // drop inbound transitions and clear the entry if it pointed here).
@@ -15638,7 +15745,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
     ImGui::SameLine();
     if (ed.isPlaying()) ImGui::TextColored(AccentCol(1.0f), "playing: %s", sm->Current().empty() ? "(entering)" : sm->Current().c_str());
     else ImGui::TextDisabled(s_pendingFrom >= 0 ? "click a state to connect the transition (right-click cancels)"
-                                                : "drag nodes | right-click a node: transitions/entry | drag empty space: pan");
+                                                : "drag nodes | right-click: transitions/entry | drag empty space: pan | wheel: zoom | Ctrl+D duplicate");
 
     const float sideW = 250.0f;
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -15650,12 +15757,37 @@ static void DrawAnimatorGraph(EditorState& ed) {
     ImVec2 org = ImGui::GetCursorScreenPos();
     ImVec2 csz = ImGui::GetContentRegionAvail();
     // subtle grid
+    // Wheel zoom about the mouse; F / "Frame" fits every state in view.
+    if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+        ImVec2 mp = ImGui::GetIO().MousePos;
+        float wx = (mp.x - org.x - s_pan.x) / s_zoom, wy = (mp.y - org.y - s_pan.y) / s_zoom;
+        s_zoom = std::clamp(s_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.35f, 2.0f);
+        s_pan = ImVec2(mp.x - org.x - wx * s_zoom, mp.y - org.y - wy * s_zoom);
+    }
+    if (s_frameReq && n > 0) {
+        s_frameReq = false;
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+        for (const auto& st : sm->states) { x0 = std::min(x0, st.nx); y0 = std::min(y0, st.ny); x1 = std::max(x1, st.nx + 180.0f); y1 = std::max(y1, st.ny + 46.0f); }
+        s_zoom = std::clamp(std::min((csz.x - 60.0f) / std::max(x1 - x0, 1.0f), (csz.y - 60.0f) / std::max(y1 - y0, 1.0f)), 0.35f, 1.5f);
+        s_pan = ImVec2(csz.x * 0.5f - (x0 + x1) * 0.5f * s_zoom, csz.y * 0.5f - (y0 + y1) * 0.5f * s_zoom);
+    }
+    if (findGo)
+        for (int i = 0; i < n; ++i)
+            if (findMatch(sm->states[i].name)) {
+                s_selState = i; s_selTrFrom = -1; s_selTrIdx = -1;
+                s_pan = ImVec2(csz.x * 0.5f - (sm->states[i].nx + 90.0f) * s_zoom, csz.y * 0.5f - (sm->states[i].ny + 23.0f) * s_zoom);
+                break;
+            }
+    const float Z = s_zoom;
     ImU32 gridCol = ImGui::GetColorU32(ImGuiCol_Border, 0.25f);
-    for (float gx = std::fmod(s_pan.x, 40.0f); gx < csz.x; gx += 40.0f) dl->AddLine(ImVec2(org.x + gx, org.y), ImVec2(org.x + gx, org.y + csz.y), gridCol);
-    for (float gy = std::fmod(s_pan.y, 40.0f); gy < csz.y; gy += 40.0f) dl->AddLine(ImVec2(org.x, org.y + gy), ImVec2(org.x + csz.x, org.y + gy), gridCol);
+    const float gstep = 40.0f * Z;
+    for (float gx = std::fmod(s_pan.x, gstep); gx < csz.x; gx += gstep) dl->AddLine(ImVec2(org.x + gx, org.y), ImVec2(org.x + gx, org.y + csz.y), gridCol);
+    for (float gy = std::fmod(s_pan.y, gstep); gy < csz.y; gy += gstep) dl->AddLine(ImVec2(org.x, org.y + gy), ImVec2(org.x + csz.x, org.y + gy), gridCol);
 
-    const ImVec2 nodeSz(180.0f, 46.0f);
-    auto nodePos = [&](int i) { return ImVec2(org.x + s_pan.x + sm->states[i].nx, org.y + s_pan.y + sm->states[i].ny); };
+    const ImVec2 nodeSz(180.0f * Z, 46.0f * Z);
+    ImFont* gFont = ImGui::GetFont();
+    const float gFs = ImGui::GetFontSize() * std::clamp(Z, 0.6f, 1.4f);
+    auto nodePos = [&](int i) { return ImVec2(org.x + s_pan.x + sm->states[i].nx * Z, org.y + s_pan.y + sm->states[i].ny * Z); };
     auto nodeCenter = [&](int i) { ImVec2 p = nodePos(i); return ImVec2(p.x + nodeSz.x * 0.5f, p.y + nodeSz.y * 0.5f); };
     int stateIdx[64]; (void)stateIdx;
 
@@ -15667,6 +15799,9 @@ static void DrawAnimatorGraph(EditorState& ed) {
     int curIdx = -1;
     if (ed.isPlaying())
         for (int k = 0; k < n; ++k) if (sm->states[k].name == sm->Current()) { curIdx = k; break; }
+    // Arrow labels draw after the nodes so a node never hides one.
+    struct ArrowLabel { ImVec2 pos; std::string text; ImU32 col; };
+    std::vector<ArrowLabel> arrowLabels;
     for (int i = 0; i < n; ++i) {
         int outIdx = 0;
         for (int t = 0; t < (int)sm->states[i].transitions.size(); ++t) {
@@ -15675,9 +15810,21 @@ static void DrawAnimatorGraph(EditorState& ed) {
             for (int k = 0; k < n; ++k) if (sm->states[k].name == tr.to) { j = k; break; }
             if (j < 0) continue;
             ImVec2 a = nodeCenter(i), b = nodeCenter(j);
+            // Two-way pairs (A -> B and B -> A): each runs on its own side.
+            if (i != j) {
+                bool back = false;
+                for (const auto& rt : sm->states[j].transitions) if (rt.to == sm->states[i].name) { back = true; break; }
+                if (back) {
+                    float dx = b.x - a.x, dy = b.y - a.y, l = std::sqrt(dx * dx + dy * dy);
+                    if (l > 1e-3f) {
+                        ImVec2 side(-dy / l * 7.0f * Z, dx / l * 7.0f * Z);
+                        a = ImVec2(a.x + side.x, a.y + side.y); b = ImVec2(b.x + side.x, b.y + side.y);
+                    }
+                }
+            }
             float off = 10.0f * (float)outIdx++;
-            ImVec2 c1(a.x + 70.0f, a.y + off), c2(b.x - 70.0f, b.y + off);
-            if (i == j) { c1 = ImVec2(a.x + 120, a.y - 70); c2 = ImVec2(a.x - 120, a.y - 70); }   // self loop
+            ImVec2 c1(a.x + 70.0f * Z, a.y + off * Z), c2(b.x - 70.0f * Z, b.y + off * Z);
+            if (i == j) { c1 = ImVec2(a.x + 120 * Z, a.y - 70 * Z); c2 = ImVec2(a.x - 120 * Z, a.y - 70 * Z); }   // self loop
             bool sel = (s_selTrFrom == i && s_selTrIdx == t);
             // hit test along the curve
             bool hov = false;
@@ -15709,6 +15856,15 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 dl->AddTriangleFilled(ImVec2(p.x + d.x * 9, p.y + d.y * 9),
                                       ImVec2(p.x + nrm.x * 5, p.y + nrm.y * 5),
                                       ImVec2(p.x - nrm.x * 5, p.y - nrm.y * 5), col);
+                // What makes it fire, next to the arrow.
+                if ((s_labels && Z >= 0.6f) || sel || hov) {
+                    std::string lb = TransitionSummary(tr);
+                    const float lfs = gFs * 0.85f;
+                    ImVec2 ts = gFont->CalcTextSizeA(lfs, FLT_MAX, 0.0f, lb.c_str());
+                    // Centred beside the arrowhead, on the side its normal points to.
+                    ImVec2 lp(p.x + nrm.x * (8.0f + ts.x * 0.5f) - ts.x * 0.5f, p.y + nrm.y * (6.0f + ts.y * 0.5f) - ts.y * 0.5f);
+                    arrowLabels.push_back({lp, lb, sel || hov ? col : ImGui::GetColorU32(ImGuiCol_TextDisabled)});
+                }
             }
         }
     }
@@ -15739,14 +15895,16 @@ static void DrawAnimatorGraph(EditorState& ed) {
         }
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f) && s_pendingFrom < 0) {
             if (!s_dragPushed) { ed.PushUndo(); s_dragPushed = true; }
-            st.nx += ImGui::GetIO().MouseDelta.x;
-            st.ny += ImGui::GetIO().MouseDelta.y;
+            st.nx += ImGui::GetIO().MouseDelta.x / Z;
+            st.ny += ImGui::GetIO().MouseDelta.y / Z;
             ed.dirty = true;
         }
         if (ImGui::BeginPopupContextItem("##agnodectx")) {
             s_selState = i; s_selTrFrom = -1; s_selTrIdx = -1;
             if (ImGui::MenuItem("Add Transition from here")) s_pendingFrom = i;
             if (ImGui::MenuItem("Set as Entry")) { ed.PushUndo(); sm->entry = st.name; ed.dirty = true; }
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { AnimStateMachine::State cp = st; ImGui::EndPopup(); ImGui::PopID(); pasteState(cp); break; }
+            if (ImGui::MenuItem("Copy", "Ctrl+C")) { s_stateClip = st; s_haveStateClip = true; }
             ImGui::Separator();
             if (ImGui::MenuItem("Delete State")) {
                 ed.PushUndo();
@@ -15768,12 +15926,16 @@ static void DrawAnimatorGraph(EditorState& ed) {
         bool isEntry = (sm->entry == st.name) || (sm->entry.empty() && i == 0);
         bool isCurrent = ed.isPlaying() && sm->Current() == st.name;
         bool isSel = (s_selState == i);
+        const bool found = findMatch(st.name);
         ImU32 fill = isCurrent ? ImGui::GetColorU32(ImVec4(0.95f, 0.70f, 0.20f, 0.90f))
                                : ImGui::GetColorU32(isSel ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
         dl->AddRectFilled(p, ImVec2(p.x + nodeSz.x, p.y + nodeSz.y), fill, 6.0f);
         ImU32 border = isEntry ? ImGui::GetColorU32(ImVec4(0.25f, 0.80f, 0.35f, 1.0f))
                                : ImGui::GetColorU32(isSel ? ImGuiCol_Text : ImGuiCol_Border);
         dl->AddRect(p, ImVec2(p.x + nodeSz.x, p.y + nodeSz.y), border, 6.0f, 0, isEntry || isSel ? 2.5f : 1.0f);
+        if (found)
+            dl->AddRect(ImVec2(p.x - 4.0f, p.y - 4.0f), ImVec2(p.x + nodeSz.x + 4.0f, p.y + nodeSz.y + 4.0f),
+                        ImGui::GetColorU32(ImVec4(0.30f, 0.85f, 1.0f, 0.9f)), 8.0f, 0, 2.0f);
         // Running state: a soft pulsing halo so the live state is unmissable.
         if (isCurrent) {
             float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 5.0f);
@@ -15789,20 +15951,34 @@ static void DrawAnimatorGraph(EditorState& ed) {
                                   ImVec2(p.x + 1.0f, p.y + nodeSz.y * 0.5f),
                                   ImGui::GetColorU32(ImVec4(0.25f, 0.80f, 0.35f, 1.0f)));
         ImU32 txt = isCurrent ? ImGui::GetColorU32(ImVec4(0.05f, 0.05f, 0.05f, 1.0f)) : ImGui::GetColorU32(ImGuiCol_Text);
-        dl->AddText(ImVec2(p.x + 10, p.y + 6), txt, st.name.c_str());
+        const ImVec4 clipR(p.x, p.y, p.x + nodeSz.x - 4.0f, p.y + nodeSz.y);
+        dl->AddText(gFont, gFs, ImVec2(p.x + 10 * Z, p.y + 6 * Z), txt, st.name.c_str(), nullptr, 0.0f, &clipR);
         std::string sub = st.blendTree ? (st.blendDims == 2
                               ? "2D blend: " + st.blendParam + " / " + st.blendParamY
                               : "Blend tree: " + (st.blendParam.empty() ? std::string("?") : st.blendParam)) +
                                           " (" + std::to_string(st.motions.size()) + ")"
                         : st.clip.empty() ? "(no clip)" : st.clip;
         if (isEntry) sub += "   [entry]";
-        dl->AddText(ImVec2(p.x + 10, p.y + 24), isCurrent ? ImGui::GetColorU32(ImVec4(0.15f, 0.15f, 0.15f, 1.0f)) : ImGui::GetColorU32(ImGuiCol_TextDisabled), sub.c_str());
+        if (st.ikWeight < 0.999f) sub += "  IK " + std::to_string((int)std::lround(st.ikWeight * 100.0f)) + "%";
+        dl->AddText(gFont, gFs * 0.92f, ImVec2(p.x + 10 * Z, p.y + 24 * Z),
+                    isCurrent ? ImGui::GetColorU32(ImVec4(0.15f, 0.15f, 0.15f, 1.0f)) : ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                    sub.c_str(), nullptr, 0.0f, &clipR);
+        if (!st.enterEvent.empty() || !st.exitEvent.empty())   // event marker, top-right
+            dl->AddCircleFilled(ImVec2(p.x + nodeSz.x - 9 * Z, p.y + 9 * Z), 3.5f * Z, ImGui::GetColorU32(ImVec4(0.95f, 0.55f, 0.85f, 1.0f)));
         if (isCurrent) {   // how far through the state's clip (per loop)
             float nt = sm->NormalizedTime(); nt -= std::floor(nt);
             dl->AddRectFilled(ImVec2(p.x + 6, p.y + nodeSz.y - 5), ImVec2(p.x + 6 + (nodeSz.x - 12) * nt, p.y + nodeSz.y - 3),
                               ImGui::GetColorU32(ImVec4(0.1f, 0.1f, 0.1f, 0.85f)), 1.0f);
         }
         ImGui::PopID();
+    }
+
+    for (const ArrowLabel& al : arrowLabels) {
+        const float lfs = gFs * 0.85f;
+        ImVec2 ts = gFont->CalcTextSizeA(lfs, FLT_MAX, 0.0f, al.text.c_str());
+        dl->AddRectFilled(ImVec2(al.pos.x - 3, al.pos.y - 1), ImVec2(al.pos.x + ts.x + 3, al.pos.y + ts.y + 1),
+                          ImGui::GetColorU32(ImGuiCol_WindowBg, 0.9f), 3.0f);
+        dl->AddText(gFont, lfs, al.pos, al.col, al.text.c_str());
     }
 
     // canvas-level interactions (below nodes): select transitions, pan, context menu
@@ -15821,12 +15997,18 @@ static void DrawAnimatorGraph(EditorState& ed) {
         }
     }
     if (ImGui::BeginPopup("##agcanvasctx")) {
+        if (s_haveStateClip && ImGui::MenuItem("Paste State", "Ctrl+V")) {
+            AnimStateMachine::State cp = s_stateClip;
+            cp.nx = (mouse.x - org.x - s_pan.x) / Z - 30.0f; cp.ny = (mouse.y - org.y - s_pan.y) / Z - 30.0f;
+            pasteState(cp);
+        }
+        if (ImGui::MenuItem("Frame All", "F")) s_frameReq = true;
         if (ImGui::MenuItem("Add State Here")) {
             ed.PushUndo();
             AnimStateMachine::State st;
             st.name = "State " + std::to_string(n + 1);
             if (!clipNames.empty()) st.clip = clipNames.front();
-            st.nx = mouse.x - org.x - s_pan.x; st.ny = mouse.y - org.y - s_pan.y;
+            st.nx = (mouse.x - org.x - s_pan.x) / Z; st.ny = (mouse.y - org.y - s_pan.y) / Z;
             sm->states.push_back(std::move(st));
             s_selState = (int)sm->states.size() - 1;
             ed.dirty = true;
@@ -15911,6 +16093,9 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (ImGui::SliderFloat("##agexit", &tr.exitTime, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
         }
         if (ImGui::DragFloat("Blend (s)##ag", &tr.blend, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+        if (ImGui::SliderFloat("Start at##ag", &tr.offset, 0.0f, 0.99f, "%.2f")) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start the target state part-way into its clip (0.5 = halfway).\n"
+                                                      "Line up the feet when switching between walk/run cycles.");
         if (isAny && ImGui::Checkbox("Can re-enter itself##ag", &tr.canInterruptSelf)) ed.dirty = true;
     };
     if (s_selState >= 0 && s_selState < n) {
@@ -15947,6 +16132,17 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (useSp) { ImGui::SameLine(); ImGui::SetNextItemWidth(-1); paramPicker("##agspp", st.speedParam, 0); }
         }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
+        if (ImGui::SliderFloat("IK weight##ag", &st.ikWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much Foot IK / Full Body IK apply in this state; eases over\n"
+                                                      "the transition. 0 for jumps, rolls and falls (feet leave the ground).");
+        {
+            char eb[48]; std::snprintf(eb, sizeof(eb), "%s", st.enterEvent.c_str());
+            if (ImGui::InputTextWithHint("On enter##agev", "event name", eb, sizeof(eb))) { st.enterEvent = eb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Animation event fired when the machine enters this state:\n"
+                                                          "anim_event() in scripts, and visual scripts' animation event nodes.");
+            char xb[48]; std::snprintf(xb, sizeof(xb), "%s", st.exitEvent.c_str());
+            if (ImGui::InputTextWithHint("On exit##agev", "event name", xb, sizeof(xb))) { st.exitEvent = xb; ed.dirty = true; }
+        }
         // Motion: one clip, or a 1D blend tree driven by a float parameter.
         ImGui::Separator();
         int mode = st.blendTree ? 1 : 0;
@@ -22210,6 +22406,45 @@ void DrawInspector(EditorState& ed) {
                     if (b && (!b->Parent() || !set.count(b->Parent()))) row(b, 0);   // skeleton roots
                 ImGui::EndChild();
                 ImGui::TreePop();
+            }
+        }
+    }
+    if (auto* bsh = dynamic_cast<BlendShapes*>(curComp)) {
+        if (CompHeader("Blend Shapes", bsh, &toRemove)) {
+            // Morph targets: one slider per shape (faces carry dozens, so filterable).
+            static char bsFilter[64] = "";
+            ImGui::TextDisabled("%d shapes. Clips animate them with \"weights.<n>\" tracks.", (int)bsh->shapes.size());
+            ImGui::SetNextItemWidth(160);
+            ImGui::InputTextWithHint("##bsfilter", "Filter shapes", bsFilter, sizeof(bsFilter));
+            ImGui::SameLine();
+            bool changed = false;
+            if (ImGui::SmallButton("Reset all##bs")) {
+                ed.PushUndo();
+                for (auto& sh : bsh->shapes) sh.weight = 0.0f;
+                changed = true;
+            }
+            std::string flt = Lower(bsFilter);
+            const float h = std::min(260.0f, 26.0f * (float)bsh->shapes.size() + 8.0f);
+            ImGui::BeginChild("##bsshapes", ImVec2(0, h), ImGuiChildFlags_Borders);
+            for (int i = 0; i < (int)bsh->shapes.size(); ++i) {
+                auto& sh = bsh->shapes[i];
+                if (!flt.empty() && Lower(sh.name).find(flt) == std::string::npos) continue;
+                ImGui::PushID(i);
+                ImGui::SetNextItemWidth(std::max(80.0f, ImGui::GetContentRegionAvail().x - 150.0f));
+                if (ImGui::SliderFloat("##w", &sh.weight, 0.0f, 1.0f, "%.2f")) changed = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
+                ImGui::SameLine();
+                ImGui::TextUnformatted(sh.name.c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("#%d  %s\n%d vertices move. Double-click the slider to type a value.",
+                                      i, sh.name.c_str(), (int)sh.index.size());
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+            if (changed) {
+                bsh->Apply();
+                if (auto* sm = bsh->gameObject->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
+                ed.dirty = true;
             }
         }
     }
@@ -34586,8 +34821,27 @@ int main(int argc, char** argv) {
                     ed.Select(r); ed.dirty = true;
                     LogModelReport(ed, r);
                     if (std::getenv("OKAY_UI_ANIMGRAPH")) {
-                        r->AddComponent<AnimStateMachine>();
+                        auto* asmx = r->AddComponent<AnimStateMachine>();
                         g_showAnimatorGraph = true;
+                        // A small sample machine from the model's clips (screenshots).
+                        auto* mx = r->GetComponent<ModelAnimator>();
+                        if (mx && mx->ClipCount() >= 3) {
+                            using SM = AnimStateMachine;
+                            auto names = mx->ClipNames();
+                            asmx->params = {{"speed", 0}, {"jump", 2}, {"grounded", 1}};
+                            SM::State idle; idle.name = "Idle"; idle.clip = names[0]; idle.nx = 20; idle.ny = 130;
+                            SM::State move; move.name = "Locomotion"; move.blendTree = true; move.blendParam = "speed";
+                            move.motions = {{names[0], 0.0f}, {names[1], 1.5f}, {names[2], 5.0f}}; move.nx = 300; move.ny = 130;
+                            SM::State jump; jump.name = "Jump"; jump.clip = names[2]; jump.loop = false; jump.nx = 300; jump.ny = 10;
+                            jump.ikWeight = 0.0f; jump.enterEvent = "jump"; jump.exitEvent = "land";
+                            SM::Transition t1; t1.to = "Locomotion"; t1.cond = SM::Cond::FloatGreater; t1.param = "speed"; t1.value = 0.1f;
+                            SM::Transition t2; t2.to = "Idle"; t2.cond = SM::Cond::FloatLess; t2.param = "speed"; t2.value = 0.1f;
+                            SM::Transition t3; t3.to = "Locomotion"; t3.cond = SM::Cond::BoolTrue; t3.param = "grounded";
+                            t3.hasExitTime = true; t3.exitTime = 0.8f; t3.offset = 0.25f;
+                            SM::Transition any; any.to = "Jump"; any.cond = SM::Cond::Trigger; any.param = "jump";
+                            idle.transitions = {t1}; move.transitions = {t2}; jump.transitions = {t3};
+                            asmx->states = {idle, move, jump}; asmx->anyState = {any}; asmx->entry = "Idle";
+                        }
                     }
                 }
             }
@@ -34620,7 +34874,10 @@ int main(int argc, char** argv) {
             OKAY_PROFILE("UI.EditSkinning");
             if (!ed.isPlaying())
                 for (const auto& up : ed.scene().Objects())
-                    if (auto* sm = up->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
+                    if (auto* sm = up->GetComponent<SkinnedMesh>()) {
+                        if (auto* bs = up->GetComponent<BlendShapes>()) bs->Apply();   // cheap when weights are unchanged
+                        sm->ResolveJoints(); sm->Skin();
+                    }
         }
         { OKAY_PROFILE("UI.Viewport"); DrawViewport(ed); }   // the "Scene" panel (always shown; UI editing is also a mode toggle in it)
         { OKAY_PROFILE("UI.UIPanel"); if (g_showUIEditor) DrawViewport(ed, /*uiPanel=*/true); }   // dedicated dockable "UI" tab

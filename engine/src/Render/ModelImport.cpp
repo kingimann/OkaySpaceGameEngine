@@ -8,6 +8,7 @@
 #include "okay/Components/Animator.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
+#include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
@@ -76,8 +77,13 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
 // Imported clips: every node track spans the whole clip (see ModelAnimator::NormalizeClip).
 static void NormalizeImportedClips(GameObject* root) {
     if (!root) return;
-    if (auto* ma = root->GetComponent<ModelAnimator>())
+    if (auto* ma = root->GetComponent<ModelAnimator>()) {
+        // Baked imports carry a key per frame on every channel, most on straight
+        // lines: reduce them (within ~0.03 deg / 0.05% of travel) before use —
+        // smaller scenes, faster loads, cheaper sampling.
+        ma->OptimizeClips();
         for (auto& c : ma->clips) ModelAnimator::NormalizeClip(c);
+    }
 }
 
 #ifdef OKAY_HAVE_ASSIMP
@@ -304,6 +310,78 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
     return mesh;
+}
+
+// Morph targets ("targets" on each primitive) of a glTF mesh as blend shapes,
+// aligned with the vertices BuildSkinnedMesh / BuildMeshAt produce: primitives
+// concatenated, or just `onlyPrim`. Names come from mesh.extras.targetNames,
+// default weights from mesh.weights. Primitives without targets get zero offsets.
+static void AddGltfMorphTargets(const gltf_detail::GltfDoc& doc, int meshIndex, int onlyPrim, GameObject* host) {
+    using namespace gltf_detail;
+    const JVal* meshes = doc.root.Find("meshes");
+    if (!host || !meshes || meshIndex < 0 || meshIndex >= (int)meshes->arr.size()) return;
+    const JVal& mesh = meshes->arr[meshIndex];
+    const JVal* prims = mesh.Find("primitives");
+    if (!prims) return;
+    int nTargets = 0;
+    for (const JVal& prim : prims->arr)
+        if (const JVal* T = prim.Find("targets")) nTargets = std::max(nTargets, (int)T->arr.size());
+    if (nTargets == 0) return;
+
+    std::vector<std::vector<Vec3>> dp(nTargets), dn(nTargets);
+    bool anyN = false;
+    int primNo = -1, base = 0;
+    for (const JVal& prim : prims->arr) {
+        ++primNo;
+        if (onlyPrim >= 0 && primNo != onlyPrim) continue;
+        const JVal* attr = prim.Find("attributes");
+        const JVal* P = attr ? attr->Find("POSITION") : nullptr;
+        int pc = 0, pn = 0;
+        if (P) ReadAccessor(doc, P->Int(-1), pc, pn);
+        for (int t = 0; t < nTargets; ++t) { dp[t].resize((std::size_t)base + pn, Vec3{0, 0, 0}); dn[t].resize((std::size_t)base + pn, Vec3{0, 0, 0}); }
+        if (const JVal* T = prim.Find("targets"))
+            for (int t = 0; t < (int)T->arr.size() && t < nTargets; ++t) {
+                const JVal& tg = T->arr[t];
+                if (const JVal* TP = tg.Find("POSITION")) {
+                    int c = 0, n = 0; auto v = ReadAccessor(doc, TP->Int(-1), c, n);
+                    for (int i = 0; i < n && i < pn && c >= 3; ++i) dp[t][(std::size_t)base + i] = Vec3{v[i*c], v[i*c+1], v[i*c+2]};
+                }
+                if (const JVal* TN = tg.Find("NORMAL")) {
+                    int c = 0, n = 0; auto v = ReadAccessor(doc, TN->Int(-1), c, n);
+                    for (int i = 0; i < n && i < pn && c >= 3; ++i) dn[t][(std::size_t)base + i] = Vec3{v[i*c], v[i*c+1], v[i*c+2]};
+                    anyN = anyN || n > 0;
+                }
+            }
+        base += pn;
+    }
+    // A part none of whose vertices move (another primitive carries the targets): no shapes.
+    bool moves = false;
+    for (int t = 0; t < nTargets && !moves; ++t)
+        for (std::size_t v = 0; v < dp[t].size() && !moves; ++v)
+            moves = dp[t][v].x != 0.0f || dp[t][v].y != 0.0f || dp[t][v].z != 0.0f;
+    if (!moves) return;
+    const JVal* names = nullptr;
+    if (const JVal* ex = mesh.Find("extras")) names = ex->Find("targetNames");
+    const JVal* defW = mesh.Find("weights");
+    auto* bs = host->AddComponent<BlendShapes>();
+    for (int t = 0; t < nTargets; ++t) {
+        std::string nm = (names && t < (int)names->arr.size()) ? names->arr[t].Text() : std::string{};
+        if (nm.empty()) nm = "shape" + std::to_string(t);
+        float w = (defW && t < (int)defW->arr.size()) ? (float)defW->arr[t].Number(0.0) : 0.0f;
+        bs->AddShape(nm, dp[t], anyN ? dn[t] : std::vector<Vec3>{}, w);
+    }
+    // An unskinned morphing mesh gets a pass-through skin (one joint: itself,
+    // identity bind) so the renderers treat it as a mesh that changes.
+    if (!host->GetComponent<SkinnedMesh>())
+        if (auto* mr = host->GetComponent<MeshRenderer>()) {
+            auto* sm = host->AddComponent<SkinnedMesh>();
+            sm->bind = mr->mesh;
+            sm->jointIdx.assign(mr->mesh.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
+            sm->jointWt.assign(mr->mesh.vertices.size(), std::array<float, 4>{1, 0, 0, 0});
+            sm->joints = {host->transform}; sm->jointNames = {host->name};
+            sm->inverseBind = {Mat4::Identity()};
+        }
+    bs->Apply(true);
 }
 
 // Apply a resolved glTF material to a MeshRenderer: albedo + normal-map textures,
@@ -643,12 +721,14 @@ struct FbxVert {
     float px, py, pz, nx, ny, nz, u, v;
     int   j[4];
     float w[4];
+    uint32_t vi;   ///< control point (for blend shape offsets)
 };
 
 // Build one material part of a mesh: triangulated, deduplicated, optionally
 // with skin influences (indices into the skin's clusters).
 Mesh BuildFbxPart(const ufbx_mesh* mesh, const ufbx_mesh_part& part, const ufbx_skin_deformer* skin,
-                  std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt) {
+                  std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt,
+                  std::vector<uint32_t>* outVi = nullptr) {
     Mesh out;
     std::vector<uint32_t> tri(mesh->max_face_triangles * 3);
     std::vector<FbxVert> verts;
@@ -670,8 +750,9 @@ Mesh BuildFbxPart(const ufbx_mesh* mesh, const ufbx_mesh_part& part, const ufbx_
                 fv.u = (float)uv.x; fv.v = 1.0f - (float)uv.y;   // FBX UVs are bottom-up
             }
             fv.w[0] = 1.0f;
+            fv.vi = mesh->vertex_indices.data[ix];
             if (skin) {
-                const uint32_t vi = mesh->vertex_indices.data[ix];
+                const uint32_t vi = fv.vi;
                 if (vi < skin->vertices.count) {
                     const ufbx_skin_vertex sv = skin->vertices.data[vi];
                     float sum = 0.0f;
@@ -701,10 +782,62 @@ Mesh BuildFbxPart(const ufbx_mesh* mesh, const ufbx_mesh_part& part, const ufbx_
         if (hasN) out.normals.push_back(Vec3{v.nx, v.ny, v.nz});
         if (hasUV) out.uvs.push_back(Vec2{v.u, v.v});
         if (jIdx) { jIdx->push_back({v.j[0], v.j[1], v.j[2], v.j[3]}); jWt->push_back({v.w[0], v.w[1], v.w[2], v.w[3]}); }
+        if (outVi) outVi->push_back(v.vi);
     }
     out.triangles.reserve(indices.size());
     for (uint32_t ix : indices) out.triangles.push_back((int)ix);
     return out;
+}
+
+// The mesh's blend shape channels (every deformer, in order) as BlendShapes on
+// `g`, for one built part whose vertices came from control points `vi`. Offsets
+// go through `lin` (the geometry-to-node offset for unskinned meshes). An
+// unskinned mesh also gets a pass-through skin so the renderers see it change.
+void AddFbxBlendShapes(const ufbx_mesh* mesh, const std::vector<uint32_t>& vi, GameObject* g, const Mat4* lin) {
+    if (!mesh || !g || mesh->blend_deformers.count == 0) return;
+    BlendShapes* bs = nullptr;
+    for (const ufbx_blend_deformer* bd : mesh->blend_deformers)
+        for (const ufbx_blend_channel* ch : bd->channels) {
+            const ufbx_blend_shape* sh = ch->target_shape;
+            if (!sh && ch->keyframes.count) sh = ch->keyframes.data[ch->keyframes.count - 1].shape;
+            std::vector<Vec3> dp(vi.size(), Vec3{0, 0, 0}), dn;
+            bool hasN = sh && sh->normal_offsets.count == sh->num_offsets && sh->num_offsets > 0;
+            if (hasN) dn.assign(vi.size(), Vec3{0, 0, 0});
+            if (sh) {
+                // Control point -> its offset slot, then out to every split vertex.
+                std::unordered_map<uint32_t, uint32_t> slot;
+                for (size_t k = 0; k < sh->num_offsets && k < sh->offset_vertices.count; ++k) slot[sh->offset_vertices.data[k]] = (uint32_t)k;
+                for (size_t v = 0; v < vi.size(); ++v) {
+                    auto it = slot.find(vi[v]);
+                    if (it == slot.end()) continue;
+                    const ufbx_vec3 o = sh->position_offsets.data[it->second];
+                    float ow = it->second < sh->offset_weights.count ? (float)sh->offset_weights.data[it->second] : 1.0f;
+                    Vec3 d{(float)o.x * ow, (float)o.y * ow, (float)o.z * ow};
+                    dp[v] = lin ? lin->MultiplyVector(d) : d;
+                    if (hasN) {
+                        const ufbx_vec3 n = sh->normal_offsets.data[it->second];
+                        Vec3 dnn{(float)n.x * ow, (float)n.y * ow, (float)n.z * ow};
+                        dn[v] = lin ? lin->MultiplyVector(dnn) : dnn;
+                    }
+                }
+            }
+            if (!bs) bs = g->AddComponent<BlendShapes>();
+            std::string nm = UfbxStr(ch->name);
+            if (std::size_t dot = nm.find_last_of('.'); dot != std::string::npos && dot + 1 < nm.size()) nm = nm.substr(dot + 1);
+            if (nm.empty()) nm = "shape" + std::to_string(bs->shapes.size());
+            bs->AddShape(nm, dp, dn, (float)ch->weight);
+        }
+    if (!bs) return;
+    if (!g->GetComponent<SkinnedMesh>())
+        if (auto* mr = g->GetComponent<MeshRenderer>()) {
+            auto* sm = g->AddComponent<SkinnedMesh>();
+            sm->bind = mr->mesh;
+            sm->jointIdx.assign(mr->mesh.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
+            sm->jointWt.assign(mr->mesh.vertices.size(), std::array<float, 4>{1, 0, 0, 0});
+            sm->joints = {g->transform}; sm->jointNames = {g->name};
+            sm->inverseBind = {Mat4::Identity()};
+        }
+    bs->Apply(true);
 }
 
 Mesh TransformedMesh(Mesh m, const Mat4& t) {
@@ -790,7 +923,9 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
             const ufbx_mesh_part& part = mesh->material_parts.data[pi];
             if (part.num_triangles == 0) continue;
             std::vector<std::array<int, 4>> jIdx; std::vector<std::array<float, 4>> jWt;
-            Mesh bind = BuildFbxPart(mesh, part, skin, skin ? &jIdx : nullptr, skin ? &jWt : nullptr);
+            std::vector<uint32_t> vi;
+            Mesh bind = BuildFbxPart(mesh, part, skin, skin ? &jIdx : nullptr, skin ? &jWt : nullptr,
+                                     mesh->blend_deformers.count ? &vi : nullptr);
             if (bind.vertices.empty()) continue;
             GameObject* g = host;
             if (made++ > 0 || (parts > 1)) {   // one child per material when there are several
@@ -804,6 +939,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
             texSerial += 2;
             if (!skin) {
                 mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+                AddFbxBlendShapes(mesh, vi, g, geomOffset ? &g2n : nullptr);
                 continue;
             }
             // Skinned: vertices stay in geometry space; each cluster's
@@ -823,10 +959,20 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
             if (g != host) {   // the part's object is a child of the mesh node: same space
                 g->transform->localPosition = Vec3{0, 0, 0};
             }
+            AddFbxBlendShapes(mesh, vi, g, nullptr);
         }
     }
 
     // Animation takes -> a ModelAnimator clip library on the root.
+    // Blend channel element -> (mesh node name, shape index), for weight tracks.
+    std::unordered_map<uint32_t, std::pair<std::string, int>> chanOf;
+    for (const ufbx_node* node : sc->nodes) {
+        if (!node->mesh || !goOf[node->typed_id]) continue;
+        int k = 0;
+        for (const ufbx_blend_deformer* bd : node->mesh->blend_deformers)
+            for (const ufbx_blend_channel* ch : bd->channels)
+                chanOf.emplace(ch->element_id, std::make_pair(goOf[node->typed_id]->name, k++));
+    }
     if (sc->anim_stacks.count > 0) {
         auto* ma = root->AddComponent<ModelAnimator>();
         for (const ufbx_anim_stack* st : sc->anim_stacks) {
@@ -867,6 +1013,19 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
                     ac.AddKey("scale.x", t, (float)k.value.x); ac.AddKey("scale.y", t, (float)k.value.y); ac.AddKey("scale.z", t, (float)k.value.z);
                 }
                 if (ac.Tracks().empty()) clip.nodes.pop_back();
+            }
+            // Blend shape channels' DeformPercent (0..100) -> "weights.<i>" on the mesh node.
+            for (const ufbx_baked_element& be2 : bake->elements) {
+                auto it = chanOf.find(be2.element_id);
+                if (it == chanOf.end()) continue;
+                for (const ufbx_baked_prop& bp : be2.props) {
+                    if (UfbxStr(bp.name) != "DeformPercent" || bp.keys.count == 0) continue;
+                    ModelAnimator::NodeClip* ncp = nullptr;
+                    for (auto& ncx : clip.nodes) if (ncx.node == it->second.first) { ncp = &ncx; break; }
+                    if (!ncp) { clip.nodes.push_back({it->second.first, AnimationClip{}}); ncp = &clip.nodes.back(); ncp->clip.smoothKeys = false; }
+                    const std::string track = "weights." + std::to_string(it->second.second);
+                    for (const ufbx_baked_vec3& k : bp.keys) ncp->clip.AddKey(track, (float)k.time, (float)k.value.x * 0.01f);
+                }
             }
             ufbx_free_baked_anim(bake);
             if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
@@ -988,6 +1147,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                     if (!mm.vertices.empty()) {
                         auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = mm; mr->doubleSided = true;
                         ApplyGltfMaterial(*mr, ResolveMeshMaterial(doc, meshIdx, path));
+                        AddGltfMorphTargets(doc, meshIdx, -1, g);
                     }
                 } else {
                     // Multi-material: one child object per primitive, each with its
@@ -999,6 +1159,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                         auto* mr = part->AddComponent<MeshRenderer>(); mr->mesh = pm; mr->doubleSided = true;
                         ApplyGltfMaterial(*mr, ResolveMaterial(doc, PrimitiveMaterial(doc, meshIdx, pi), path));
                         part->transform->SetParent(g->transform, false);
+                        AddGltfMorphTargets(doc, meshIdx, pi, part);
                     }
                 }
             }
@@ -1067,6 +1228,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
             auto* sm = host->AddComponent<SkinnedMesh>();
             sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
             sm->joints = jointTs; sm->jointNames = jointNs; sm->inverseBind = invBind;
+            AddGltfMorphTargets(doc, meshIdx, pi, host);
         }
     }
 
@@ -1096,6 +1258,26 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                         int tc = 0, tn = 0; auto times = ReadAccessor(doc, inAcc, tc, tn);
                         int oc = 0, on = 0; auto vals = ReadAccessor(doc, outAcc, oc, on);
                         if (times.empty() || vals.empty()) continue;
+                        // Morph weights: one scalar per target per key -> "weights.<i>".
+                        if (tpath == "weights") {
+                            int nw = tn > 0 ? (on * oc) / tn : 0;
+                            std::string interpW = s.Find("interpolation") ? s.Find("interpolation")->Text() : "LINEAR";
+                            const bool cub = interpW == "CUBICSPLINE";
+                            if (cub) nw /= 3;
+                            if (nw <= 0) continue;
+                            const std::string& nodeName = go[node]->name;
+                            ModelAnimator::NodeClip* ncp = nullptr;
+                            for (auto& ncx : clip.nodes) if (ncx.node == nodeName) { ncp = &ncx; break; }
+                            if (!ncp) { clip.nodes.push_back({nodeName, AnimationClip{}}); ncp = &clip.nodes.back(); }
+                            ncp->clip.smoothKeys = cub;
+                            for (int k = 0; k < tn; ++k) {
+                                int vb = (cub ? (k * 3 + 1) : k) * nw;
+                                if (vb + nw > on * oc) break;
+                                for (int w = 0; w < nw; ++w)
+                                    ncp->clip.AddKey("weights." + std::to_string(w), times[k], vals[(std::size_t)vb + w]);
+                            }
+                            continue;
+                        }
                         // CUBICSPLINE stores 3 blocks per key (in-tangent, value, out-tangent);
                         // take the middle (value) block. LINEAR/STEP store one block per key.
                         std::string interp = s.Find("interpolation") ? s.Find("interpolation")->Text() : "LINEAR";
@@ -1169,7 +1351,10 @@ ModelReport AnalyzeModel(Scene& scene, GameObject* root) {
             r.vertices += (int)mr->mesh.vertices.size();
             r.triangles += (int)mr->mesh.triangles.size() / 3;
         }
-        if (auto* sm = g->GetComponent<SkinnedMesh>()) {
+        auto* sm = g->GetComponent<SkinnedMesh>();
+        // A morph-only mesh's pass-through skin (its one joint is itself) isn't a rig.
+        if (sm && sm->joints.size() == 1 && sm->joints[0] == g->transform) sm = nullptr;
+        if (sm) {
             ++r.skinnedMeshes;
             sm->ResolveJoints();
             for (Transform* t : sm->joints) if (t) bones.insert(t);
@@ -1177,6 +1362,7 @@ ModelReport AnalyzeModel(Scene& scene, GameObject* root) {
             r.unweightedVertices += sm->UnweightedVertices();
             r.maxInfluences = std::max(r.maxInfluences, sm->MaxInfluences());
         }
+        if (auto* bs = g->GetComponent<BlendShapes>()) r.blendShapes += (int)bs->shapes.size();
     }
     r.bones = (int)bones.size();
     // Skeleton roots: bones whose parent isn't a bone. One connected skeleton
@@ -1192,12 +1378,14 @@ ModelReport AnalyzeModel(Scene& scene, GameObject* root) {
     }
     if (auto* ma = root->GetComponent<ModelAnimator>()) {
         r.clips = ma->ClipCount();
+        for (const auto& c : ma->clips) for (const auto& nc : c.nodes) r.keys += nc.clip.KeyCount();
+        r.keysBeforeReduction = ma->lastOptimizeBefore;
         r.clipNames = ma->ClipNames();
     }
     if (r.missingBones)        r.warnings.push_back(std::to_string(r.missingBones) + " bone(s) referenced by a skin weren't found");
     if (r.unweightedVertices)  r.warnings.push_back(std::to_string(r.unweightedVertices) + " vertices have no bone weights (they won't move)");
     if (r.skeletonRoots > 1)   r.warnings.push_back("the skeleton is split into " + std::to_string(r.skeletonRoots) + " separate bone trees");
-    if (r.skinnedMeshes == 0 && r.clips > 0 && r.meshes > 0)
+    if (r.skinnedMeshes == 0 && r.blendShapes == 0 && r.clips > 0 && r.meshes > 0)
         r.warnings.push_back("animations but no skin: parts move rigidly (no mesh deformation)");
     return r;
 }
@@ -1213,7 +1401,12 @@ std::string ModelReport::Summary() const {
         s += ", " + std::to_string(clips) + " clip" + (clips == 1 ? "" : "s") + ":";
         for (int i = 0; i < (int)clipNames.size() && i < 5; ++i) s += (i ? ", " : " ") + clipNames[i];
         if ((int)clipNames.size() > 5) s += ", ...";
+        if (keysBeforeReduction > keys && keysBeforeReduction > 0)
+            s += " (" + std::to_string(keys) + " keys, " +
+                 std::to_string((int)std::lround(100.0 * (double)(keysBeforeReduction - keys) / (double)keysBeforeReduction)) +
+                 "% removed as redundant)";
     }
+    if (blendShapes) s += ", " + std::to_string(blendShapes) + " blend shape" + (blendShapes == 1 ? "" : "s");
     return s;
 }
 

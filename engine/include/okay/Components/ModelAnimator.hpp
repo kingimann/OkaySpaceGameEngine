@@ -17,6 +17,7 @@
 #include "okay/Animation/AnimationClip.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Components/BlendShapes.hpp"
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
@@ -82,6 +83,18 @@ public:
 
     /// Push callback for fired clip events; or poll with Consume/NextAnimEvent.
     std::function<void(const std::string&)> onAnimEvent;   // not serialized
+    /// Report an animation event: queued for anim_event(), sent to onAnimEvent,
+    /// and to every other component's OnAnimationEvent (visual scripts' handlers).
+    void FireEvent(const std::string& name) {
+        if (name.empty()) return;
+        m_firedEvents.push_back(name);
+        if (m_firedEvents.size() > 64) m_firedEvents.erase(m_firedEvents.begin());   // nobody polling
+        if (onAnimEvent) onAnimEvent(name);
+        if (!gameObject) return;
+        const auto& cs = gameObject->Components();   // by index: a handler may add components
+        for (std::size_t i = 0; i < cs.size(); ++i)
+            if (cs[i].get() != this) cs[i]->OnAnimationEvent(name);
+    }
     std::vector<std::string> ConsumeAnimEvents() { auto q = std::move(m_firedEvents); m_firedEvents.clear(); return q; }
     std::string NextAnimEvent() {
         if (m_firedEvents.empty()) return {};
@@ -172,10 +185,7 @@ public:
             if (!clips[active].events.empty() && len > 0.0f) {
                 auto fire = [&](float a, float b) {
                     for (const ClipEvent& ev : clips[active].events)
-                        if (ev.time > a && ev.time <= b && !ev.name.empty()) {
-                            m_firedEvents.push_back(ev.name);
-                            if (onAnimEvent) onAnimEvent(ev.name);
-                        }
+                        if (ev.time > a && ev.time <= b && !ev.name.empty()) FireEvent(ev.name);
                 };
                 if (loop && !m_once && t1 > len) { fire(t0, len); fire(0.0f, std::fmod(t1, len)); }
                 else                             fire(t0, t1);
@@ -422,6 +432,22 @@ public:
         return false;
     }
 
+    /// Keys before / after the last OptimizeClips (the import report shows them). Runtime only.
+    std::size_t lastOptimizeBefore = 0, lastOptimizeAfter = 0;
+    /// Keyframe reduction on every clip (baked imports carry a key per frame on
+    /// every channel; most are on straight lines). Returns {before, after} keys.
+    std::pair<std::size_t, std::size_t> OptimizeClips(float tolerance = 0.0005f) {
+        std::size_t before = 0, after = 0;
+        for (auto& c : clips)
+            for (auto& nc : c.nodes) {
+                before += nc.clip.KeyCount();
+                nc.clip.Reduce(tolerance, tolerance, tolerance);
+                after += nc.clip.KeyCount();
+            }
+        lastOptimizeBefore = before; lastOptimizeAfter = after;
+        return {before, after};
+    }
+
     /// Duplicate a clip (returns the new index, -1 on failure) — trim the copy
     /// to cut a long take into pieces without losing the original.
     int DuplicateClip(int i) {
@@ -513,10 +539,7 @@ public:
             float e0 = prevPhase * len, e1 = m_phase * len;
             auto fire = [&](float a2, float b2) {
                 for (const ClipEvent& ev : dom.events)
-                    if (ev.time > a2 && ev.time <= b2 && !ev.name.empty()) {
-                        m_firedEvents.push_back(ev.name);
-                        if (onAnimEvent) onAnimEvent(ev.name);
-                    }
+                    if (ev.time > a2 && ev.time <= b2 && !ev.name.empty()) FireEvent(ev.name);
             };
             if (e1 < e0) { fire(e0, len); fire(0.0f, e1); }
             else fire(e0, e1);
@@ -546,6 +569,7 @@ public:
         if (A != B)
             for (int nb : pm.onlyB)
                 if (bB[nb]) blendWrite(bB[nb], -1, nb);
+        ApplyShapeWeights(active, active == A ? tA : tB);   // face shapes follow the dominant clip
         return true;
     }
     /// Pose the model as a weighted mix of any number of clips (2D blend trees),
@@ -581,16 +605,14 @@ public:
             float L = len[dom], e0 = prevPhase * L, e1 = m_phase * L;
             auto fire = [&](float a2, float b2) {
                 for (const ClipEvent& ev : dc.events)
-                    if (ev.time > a2 && ev.time <= b2 && !ev.name.empty()) {
-                        m_firedEvents.push_back(ev.name);
-                        if (onAnimEvent) onAnimEvent(ev.name);
-                    }
+                    if (ev.time > a2 && ev.time <= b2 && !ev.name.empty()) FireEvent(ev.name);
             };
             if (e1 < e0) { fire(e0, L); fire(0.0f, e1); } else fire(e0, e1);
         }
         std::vector<std::pair<int, float>> ct;
         for (std::size_t i = 0; i < ci.size(); ++i) ct.push_back({ci[i], m_phase * len[i]});
         PoseWeighted(ct, w, nullptr, 1.0f);
+        ApplyShapeWeights(ci[dom], m_phase * len[dom]);   // face shapes follow the heaviest clip
         return true;
     }
 
@@ -794,6 +816,26 @@ public:
             Vec3 p = tr->localPosition, sc = tr->localScale; Quat r = tr->localRotation;
             SampleNode(ci, (int)n, t, p, r, sc);
             tr->localPosition = p; tr->localRotation = r; tr->localScale = sc;
+        }
+        ApplyShapeWeights(ci, t);
+    }
+
+    /// Blend shape weight tracks of clip `ci` at time `t` onto the nodes' BlendShapes.
+    void ApplyShapeWeights(int ci, float t) {
+        if (ci < 0 || ci >= (int)clips.size()) return;
+        const auto& b = Bind(ci);
+        for (std::size_t n = 0; n < b.size(); ++n) {
+            const auto& ch = clips[ci].nodes[n].clip.Chan();
+            if (ch.weights.empty() || !b[n] || !b[n]->gameObject) continue;
+            auto apply = [&](BlendShapes* bs) {
+                for (const auto& w : ch.weights) bs->SetWeight(w.first, w.second->Evaluate(t));
+            };
+            if (auto* bs = b[n]->gameObject->GetComponent<BlendShapes>()) { apply(bs); continue; }
+            // A multi-material mesh is split into one child per material, each
+            // with its own copy of the shapes: drive them all.
+            for (Transform* c : b[n]->Children())
+                if (c && c->gameObject)
+                    if (auto* bs = c->gameObject->GetComponent<BlendShapes>()) apply(bs);
         }
     }
 

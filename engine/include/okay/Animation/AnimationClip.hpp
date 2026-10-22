@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <cstdlib>
 #include <algorithm>
 #include <cmath>
 
@@ -176,6 +177,8 @@ public:
         const AnimationCurve* e[3] = {nullptr, nullptr, nullptr};          ///< euler rotation x/y/z
         const AnimationCurve* s[3] = {nullptr, nullptr, nullptr};          ///< scale x/y/z
         bool anyPos = false, anyQuat = false, anyEuler = false, anyScale = false;
+        /// Blend shape weight tracks ("weights.<n>"): shape index -> curve.
+        std::vector<std::pair<int, const AnimationCurve*>> weights;
     };
     const Channels& Chan() const {
         if (!m_chan.valid) {
@@ -192,6 +195,11 @@ public:
             c.anyQuat = c.q[0] || c.q[1] || c.q[2] || c.q[3];
             c.anyEuler = c.e[0] || c.e[1] || c.e[2];
             c.anyScale = c.s[0] || c.s[1] || c.s[2];
+            for (const auto& kv : m_tracks)
+                if (kv.first.compare(0, 8, "weights.") == 0) {
+                    int idx = std::atoi(kv.first.c_str() + 8);
+                    if (idx >= 0) c.weights.push_back({idx, &kv.second});
+                }
             m_chan.c = c; m_chan.valid = true;
         }
         return m_chan.c;
@@ -225,6 +233,31 @@ public:
                               c.e[2] ? c.e[2]->Evaluate(t) : 0.0f);
         }
     }
+
+    /// Keyframe reduction on every linear track (see AnimationCurve::Reduce).
+    /// Position tolerance scales with how far the track travels (so centimetre
+    /// rigs aren't over- or under-reduced); rotation components and scale use
+    /// `rotTol` / `sclTol`. Returns keys removed.
+    std::size_t Reduce(float posTol = 0.0005f, float rotTol = 0.0005f, float sclTol = 0.0005f) {
+        std::size_t removed = 0;
+        for (auto& kv : m_tracks) {
+            AnimationCurve& c = kv.second;
+            if (c.smooth || c.Count() < 3) continue;
+            float tol = sclTol;
+            if (kv.first.rfind("rotation.", 0) == 0) tol = rotTol;
+            else if (kv.first.rfind("position.", 0) == 0) {
+                float lo = 1e30f, hi = -1e30f;
+                for (const auto& k : c.Keys()) { lo = std::fmin(lo, k.value); hi = std::fmax(hi, k.value); }
+                float mag = 0.0f;
+                for (const auto& k : c.Keys()) mag = std::fmax(mag, std::fabs(k.value));
+                tol = posTol * std::fmax(1.0f, std::fmax(hi - lo, mag * 0.1f));
+            }
+            removed += c.Reduce(tol);
+        }
+        return removed;
+    }
+    /// Total keys across every track.
+    std::size_t KeyCount() const { std::size_t n = 0; for (const auto& kv : m_tracks) n += kv.second.Count(); return n; }
 
     // ---- Clip surgery (editor tools) ----
     /// Reverse the clip in time (plays backwards). Length is preserved.

@@ -1270,9 +1270,10 @@ struct Mesh {
     void Bounds(Vec3& outMin, Vec3& outMax) const {
         if (vertices.empty()) { outMin = outMax = Vec3{0, 0, 0}; return; }
         outMin = outMax = vertices[0];
-        for (const Vec3& v : vertices) {
-            outMin = {std::fmin(outMin.x, v.x), std::fmin(outMin.y, v.y), std::fmin(outMin.z, v.z)};
-            outMax = {std::fmax(outMax.x, v.x), std::fmax(outMax.y, v.y), std::fmax(outMax.z, v.z)};
+        for (const Vec3& v : vertices) {   // plain compares: std::fmin/fmax are library calls
+            if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+            if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+            if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
         }
     }
     /// Edges worth drawing in a wireframe: every real edge EXCEPT the internal

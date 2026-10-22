@@ -21,10 +21,17 @@
 // the base pose, only on `maskBone` and its children (an upper-body attack while
 // the legs keep walking), mixed in by `layerWeight`. Layers share the base
 // machine's parameters.
+//
+// Per state: an event fired on enter / exit (to anim_event() and every
+// component's OnAnimationEvent, like clip events) and an IK weight that Foot IK
+// and Full Body IK ease to over the transition (0 = feet free while jumping).
+// A transition can start its target part-way in (`offset`, normalized).
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/FootIK.hpp"
+#include "okay/Components/FullBodyIK.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -70,6 +77,7 @@ public:
         bool        hasExitTime = false;
         float       exitTime = 1.0f;    ///< normalized state time it may fire from (0.75 = 75% through)
         bool        canInterruptSelf = false;   ///< Any State only: may re-enter the current state
+        float       offset = 0.0f;      ///< normalized time the target state starts at (0..1)
     };
 
     /// A blend-tree motion: a clip and where it's fully on — `threshold` on the
@@ -91,6 +99,8 @@ public:
         int         blendDims = 1;  ///< 1 = 1D tree on blendParam; 2 = 2D on (blendParam, blendParamY)
         std::string blendParamY;
         std::string speedParam;     ///< float parameter that multiplies `speed` ("" = none)
+        std::string enterEvent, exitEvent;   ///< animation events fired on entering / leaving ("" = none)
+        float       ikWeight = 1.0f;         ///< Foot IK / Full Body IK weight in this state (base layer)
     };
 
     // ---- Layer settings (layer 0 = the base machine) ----
@@ -196,12 +206,14 @@ public:
 
     /// Force a state by name (fires no conditions; uses the given blend or the
     /// target's default 0.25s). Returns false if there's no such state.
-    bool GoTo(const std::string& name, float blend = -1.0f) {
+    bool GoTo(const std::string& name, float blend = -1.0f, float offset = 0.0f) {
         const State* st = FindState(name);
         if (!st) return false;
-        Enter(*st, blend >= 0.0f ? blend : 0.25f);
+        Enter(*st, blend >= 0.0f ? blend : 0.25f, offset);
         return true;
     }
+    /// The IK weight currently applied (eases to the state's ikWeight).
+    float IKWeight() const { return m_ikW; }
 
     void Start() override { m_current.clear(); }
     void OnDestroy() override { if (ModelAnimator* ma = Anim()) ma->RemovePostPose(this); }
@@ -219,6 +231,19 @@ public:
         }
         const State* cur = FindState(m_current);
         if (!cur) { m_current.clear(); return; }
+
+        // Per-state IK weight, eased over the transition's blend time.
+        {
+            float want = std::fmin(std::fmax(cur->ikWeight, 0.0f), 1.0f);
+            if (m_ikW != want) {
+                float step = m_ikBlend > 1e-4f ? dt / m_ikBlend : 1.0f;
+                m_ikW = m_ikW < want ? std::fmin(want, m_ikW + step) : std::fmax(want, m_ikW - step);
+            }
+            if (gameObject) {
+                if (auto* f = gameObject->GetComponent<FootIK>()) f->stateWeight = m_ikW;
+                if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = m_ikW;
+            }
+        }
 
         // Advance the state clock (and drive a blend tree).
         m_stateTime += dt;
@@ -429,23 +454,32 @@ private:
         auto consume = [&](Cond c, const std::string& p) { if (c == Cond::Trigger) Base()->m_triggers[p] = false; };
         consume(tr.cond, tr.param);
         for (const Condition& c : tr.extra) consume(c.cond, c.param);
-        Enter(*to, tr.blend);
+        Enter(*to, tr.blend, tr.offset);
         return true;
     }
-    void Enter(const State& st, float blend) {
+    void Enter(const State& st, float blend, float offset = 0.0f) {
         ModelAnimator* ma = Anim();
         if (!ma) return;
-        if (!m_current.empty() && onStateExit) onStateExit(m_current);
+        if (!m_current.empty()) {
+            if (onStateExit) onStateExit(m_current);
+            if (const State* old = FindState(m_current)) if (!old->exitEvent.empty()) ma->FireEvent(old->exitEvent);
+        }
+        const bool first = m_current.empty();
         m_previous = m_current;
         m_current = st.name;
-        m_stateTime = 0.0f; m_normTime = 0.0f;
+        offset = std::fmin(std::fmax(offset, 0.0f), 0.999f);
+        m_stateTime = 0.0f; m_normTime = offset;
+        m_ikBlend = blend;
+        if (first) m_ikW = std::fmin(std::fmax(st.ikWeight, 0.0f), 1.0f);
         m_bLo = m_bHi = -1; m_bW = 0.0f;
         if (layer > 0) {   // layers crossfade from their previous state themselves
             m_lPrev = m_lCur;
-            m_lCur = LayerPlay{&st, 0.0f, 0.0f};
+            m_lCur = LayerPlay{&st, 0.0f, offset};
+            if (!st.blendTree) { int c = ClipIndex(ma, st.clip); if (c >= 0) m_lCur.time = offset * ma->ClipLength(c); }
             m_fadeT = 0.0f; m_fadeDur = m_lPrev.st ? blend : 0.0f;
             if (!m_lPrev.st || blend <= 0.0f) m_lPrev.st = nullptr;
             if (onStateEnter) onStateEnter(st.name);
+            if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
             return;
         }
         ma->speed = StateSpeed(st);
@@ -455,7 +489,7 @@ private:
             for (std::size_t i = 0; i < st.motions.size(); ++i)
                 if (m_bWeights[i] > 0.0f) idx.push_back(ClipIndex(ma, st.motions[i].clip));
             ma->CaptureCrossfadeMany(idx, blend);
-            ma->ResetBlendPhase();
+            ma->ResetBlendPhase(offset);
             ma->externalDrive = true;
         } else if (st.blendTree) {
             // Crossfade from the current pose into the tree, which BlendClips then poses.
@@ -463,15 +497,17 @@ private:
             PickMotions(st, GetFloat(st.blendParam), lo, hi, w);
             ma->CaptureCrossfade(lo >= 0 ? ClipIndex(ma, st.motions[lo].clip) : -1,
                                  hi >= 0 ? ClipIndex(ma, st.motions[hi].clip) : -1, blend);
-            ma->ResetBlendPhase();
+            ma->ResetBlendPhase(offset);
             ma->externalDrive = true;
         } else {
             ma->externalDrive = false;
             ma->blendTime = blend;
             ma->loop  = st.loop;
             ma->Play(st.clip);
+            if (offset > 0.0f && ma->active >= 0) ma->SetTime(offset * ma->ClipLength(ma->active));
         }
         if (onStateEnter) onStateEnter(st.name);
+        if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
     }
 
     std::string m_current, m_previous;
@@ -481,6 +517,7 @@ private:
     std::unordered_map<std::string, bool>  m_bools;
     std::unordered_map<std::string, bool>  m_triggers;
     std::vector<float> m_bWeights;
+    float m_ikW = 1.0f, m_ikBlend = 0.25f;
     // layer playback
     LayerPlay m_lCur, m_lPrev;
     float m_fadeT = 0.0f, m_fadeDur = 0.0f;

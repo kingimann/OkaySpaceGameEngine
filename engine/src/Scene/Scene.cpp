@@ -126,7 +126,7 @@ void Scene::Update(float deltaTime) {
 
     // Keep auto-fit colliders matched to their renderer before the physics step.
     for (const auto& go : m_objects)
-        if (go->active) FitColliders(go.get(), /*onlyAuto*/ true);
+        if (go->active && go->Components().size() > 1) FitColliders(go.get(), /*onlyAuto*/ true);
 
     if (physicsEnabled) {
         { OKAY_PROFILE("Physics.2D"); m_physics.Step(*this, deltaTime); }

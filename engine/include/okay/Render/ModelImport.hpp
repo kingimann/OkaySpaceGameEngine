@@ -47,6 +47,8 @@ struct ModelReport {
     int objects = 0, meshes = 0, skinnedMeshes = 0, bones = 0, vertices = 0, triangles = 0;
     int maxInfluences = 0, unweightedVertices = 0, missingBones = 0, skeletonRoots = 0;
     int clips = 0;
+    int blendShapes = 0;                ///< morph targets across the model's meshes
+    std::size_t keys = 0, keysBeforeReduction = 0;   ///< animation keys now / as imported
     std::string rootBone;               ///< top of the skeleton ("" if not rigged)
     std::vector<std::string> clipNames;
     std::vector<std::string> warnings;

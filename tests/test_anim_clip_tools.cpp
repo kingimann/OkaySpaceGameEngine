@@ -19,6 +19,37 @@ struct EventSink : Component {
 int main() {
     RUN_SUITE("anim_clip_tools");
 
+    // ---- Keyframe reduction: straight runs collapse, curves stay within tolerance.
+    {
+        AnimationCurve ramp; ramp.smooth = false;
+        for (int i = 0; i <= 100; ++i) ramp.AddKey(i / 30.0f, i * 0.1f);
+        CHECK(ramp.Reduce(1e-4f) == 99);
+        CHECK(ramp.Count() == 2);
+        CHECK(std::fabs(ramp.Evaluate(50 / 30.0f) - 5.0f) < 1e-4f);
+
+        AnimationCurve wave; wave.smooth = false;
+        std::vector<std::pair<float, float>> orig;
+        for (int i = 0; i <= 120; ++i) { float t = i / 30.0f, v = std::sin(t * 2.0f); wave.AddKey(t, v); orig.push_back({t, v}); }
+        std::size_t removed = wave.Reduce(0.002f);
+        CHECK(removed > 40);                                    // most of a smooth wave is near-linear locally
+        float worst = 0.0f;
+        for (auto& o : orig) worst = std::fmax(worst, std::fabs(wave.Evaluate(o.first) - o.second));
+        CHECK(worst <= 0.002f + 1e-5f);
+        CHECK(std::fabs(wave.Keys().front().time) < 1e-6f && std::fabs(wave.Keys().back().time - 4.0f) < 1e-5f);
+
+        AnimationCurve smoothC;                                 // cubic curves are left alone
+        for (int i = 0; i < 10; ++i) smoothC.AddKey((float)i, (float)i);
+        CHECK(smoothC.Reduce(0.1f) == 0);
+
+        // Clip-level: a held (constant) track drops to its two ends.
+        AnimationClip c;
+        c.smoothKeys = false;
+        for (int i = 0; i <= 60; ++i) { c.AddKey("rotation.qw", i / 30.0f, 1.0f); c.AddKey("position.x", i / 30.0f, i * 2.0f); }
+        std::size_t before = c.KeyCount();
+        c.Reduce();
+        CHECK(before == 122 && c.KeyCount() == 4);
+    }
+
     // ---- Explicit length: short tracks hold instead of looping on their own span.
     {
         AnimationClip c;

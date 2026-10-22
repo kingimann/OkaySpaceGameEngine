@@ -71,6 +71,7 @@ public:
     bool        autoMap = true;
 
     float weight = 1.0f;
+    float stateWeight = 1.0f;        ///< x weight; set per state by the Animator state machine
     bool  ikActive = true;           ///< eases over fadeTime
     float fadeTime = 0.0f;
     float softness = 0.03f;          ///< soft-IK band as a fraction of limb length (0 = off)
@@ -161,7 +162,7 @@ public:
         // off first so it doesn't compound frame after frame.
         Transform* spineBone = bones[Chest] ? bones[Chest] : bones[Spine];
         m_hips.Undo(); m_spine.Undo(); m_head.Undo();
-        const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
         m_hips.Begin(bones[Hips]); m_spine.Begin(spineBone); m_head.Begin(bones[Head]);
         if (w <= 0.0f) { m_hips.End(); m_spine.End(); m_head.End(); return; }
         // 1) Body pull: effectors beyond their limb's reach drag the hips toward them.

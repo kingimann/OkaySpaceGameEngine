@@ -17,6 +17,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
@@ -2957,6 +2958,29 @@ struct OkayScriptVM::Impl {
         b["anim_trigger"] = [smSelf](std::vector<Value>& a) {
             if (AnimStateMachine* m = smSelf(); m && !a.empty()) m->SetTrigger(a[0].AsString());
             return Value{};
+        };
+        // ---- Blend shapes (morph targets) on this object and everything under it ----
+        //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
+        //   blend_shape_get("Smile")    read it back (0 if no mesh has it)
+        auto bsEach = [this](auto fn) {
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!g || !g->scene()) return;
+            for (const auto& up : g->scene()->Objects())
+                if (up && up->IsSelfOrDescendantOf(g))
+                    if (auto* bs = up->GetComponent<BlendShapes>()) fn(bs);
+        };
+        b["blend_shape"] = [bsEach](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            bool any = false;
+            const std::string nm = a[0].AsString(); const float w = a[1].AsFloat();
+            bsEach([&](BlendShapes* bs) { any = bs->SetWeight(nm, w) || any; });
+            return Value{any ? 1.0f : 0.0f};
+        };
+        b["blend_shape_get"] = [bsEach](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            float w = 0.0f; const std::string nm = a[0].AsString();
+            bsEach([&](BlendShapes* bs) { if (bs->Find(nm) >= 0) w = bs->Weight(nm); });
+            return Value{w};
         };
         b["anim_state"] = [smSelf](std::vector<Value>&) {
             AnimStateMachine* m = smSelf(); return Value{m ? m->Current() : std::string{}};

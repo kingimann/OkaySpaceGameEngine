@@ -210,6 +210,52 @@ inline int TypeComps(const std::string& t) {
     if (t == "VEC4") return 4; if (t == "MAT4") return 16; return 1;
 }
 
+// Read `count` elements of `comps` components of type `ct` from a bufferView
+// (tightly packed unless the view has a byteStride). Used for sparse data.
+inline std::vector<float> ReadView(const GltfDoc& doc, int viIdx, int byteOffset, int ct, int comps, int count, bool norm) {
+    std::vector<float> out;
+    const JVal* views = doc.root.Find("bufferViews");
+    if (!views || viIdx < 0 || viIdx >= (int)views->arr.size()) return out;
+    const JVal& v = views->arr[viIdx];
+    int buf = v.Find("buffer") ? v.Find("buffer")->Int(-1) : -1;
+    int voff = v.Find("byteOffset") ? v.Find("byteOffset")->Int(0) : 0;
+    int stride = v.Find("byteStride") ? v.Find("byteStride")->Int(0) : 0;
+    if (buf < 0 || buf >= (int)doc.buffers.size()) return out;
+    const std::vector<std::uint8_t>& data = doc.buffers[buf];
+    int csz = CompSize(ct);
+    if (stride == 0) stride = comps * csz;
+    out.reserve((std::size_t)count * comps);
+    for (int i = 0; i < count; ++i)
+        for (int c = 0; c < comps; ++c) {
+            std::size_t at = (std::size_t)voff + byteOffset + (std::size_t)i * stride + (std::size_t)c * csz;
+            if (at + csz > data.size()) { out.push_back(0.0f); continue; }
+            const std::uint8_t* d = data.data() + at; float fv = 0.0f;
+            switch (ct) {
+                case 5126: { float t; std::memcpy(&t, d, 4); fv = t; break; }
+                case 5125: { std::uint32_t t; std::memcpy(&t, d, 4); fv = (float)t; break; }
+                case 5123: { std::uint16_t t; std::memcpy(&t, d, 2); fv = norm ? t / 65535.0f : (float)t; break; }
+                case 5121: fv = norm ? d[0] / 255.0f : (float)d[0]; break;
+                case 5122: { std::int16_t t; std::memcpy(&t, d, 2); fv = norm ? std::fmax(t / 32767.0f, -1.0f) : (float)t; break; }
+                case 5120: fv = norm ? std::fmax((std::int8_t)d[0] / 127.0f, -1.0f) : (float)(std::int8_t)d[0]; break;
+                default: break;
+            }
+            out.push_back(fv);
+        }
+    return out;
+}
+
+// The dense (bufferView) part of an accessor, ignoring any "sparse" block.
+inline std::vector<float> ReadAccessorDense(const GltfDoc& doc, const JVal& a, int& outComps, int& outCount) {
+    int viIdx = a.Find("bufferView") ? a.Find("bufferView")->Int(-1) : -1;
+    int ct = a.Find("componentType") ? a.Find("componentType")->Int(5126) : 5126;
+    outCount = a.Find("count") ? a.Find("count")->Int(0) : 0;
+    outComps = TypeComps(a.Find("type") ? a.Find("type")->Text() : "SCALAR");
+    int aoff = a.Find("byteOffset") ? a.Find("byteOffset")->Int(0) : 0;
+    const JVal* nz = a.Find("normalized");
+    bool norm = nz && nz->type == JVal::Bool && nz->boolean;
+    return ReadView(doc, viIdx, aoff, ct, outComps, outCount, norm);
+}
+
 // Read accessor `ai` as a flat float array (count*components). Integer index types are
 // converted to floats too (for `indices`).
 inline std::vector<float> ReadAccessor(const GltfDoc& doc, int ai, int& outComps, int& outCount) {
@@ -224,6 +270,34 @@ inline std::vector<float> ReadAccessor(const GltfDoc& doc, int ai, int& outComps
     int comps = TypeComps(a.Find("type") ? a.Find("type")->Text() : "SCALAR");
     int aoff = a.Find("byteOffset") ? a.Find("byteOffset")->Int(0) : 0;
     outComps = comps; outCount = count;
+    // Sparse accessors (morph targets often are): a base (bufferView, or zeros
+    // when there's none) with a list of replaced elements.
+    if (const JVal* sp = a.Find("sparse")) {
+        // Base values: the dense part, if the accessor has one.
+        out.assign((std::size_t)count * comps, 0.0f);
+        if (viIdx >= 0) {
+            int bc = 0, bn = 0;
+            std::vector<float> dense = ReadAccessorDense(doc, a, bc, bn);
+            for (std::size_t k = 0; k < dense.size() && k < out.size(); ++k) out[k] = dense[k];
+        }
+        int sc = sp->Find("count") ? sp->Find("count")->Int(0) : 0;
+        const JVal* ix = sp->Find("indices");
+        const JVal* vx = sp->Find("values");
+        if (sc > 0 && ix && vx) {
+            std::vector<float> idx = ReadView(doc, ix->Find("bufferView") ? ix->Find("bufferView")->Int(-1) : -1,
+                                              ix->Find("byteOffset") ? ix->Find("byteOffset")->Int(0) : 0,
+                                              ix->Find("componentType") ? ix->Find("componentType")->Int(5125) : 5125, 1, sc, false);
+            std::vector<float> val = ReadView(doc, vx->Find("bufferView") ? vx->Find("bufferView")->Int(-1) : -1,
+                                              vx->Find("byteOffset") ? vx->Find("byteOffset")->Int(0) : 0,
+                                              ct, comps, sc, a.Find("normalized") && a.Find("normalized")->type == JVal::Bool && a.Find("normalized")->boolean);
+            for (int e = 0; e < sc && (std::size_t)e < idx.size(); ++e) {
+                std::size_t at = (std::size_t)(idx[e] + 0.5f);
+                if (at >= (std::size_t)count) continue;
+                for (int c = 0; c < comps && (std::size_t)(e * comps + c) < val.size(); ++c) out[at * comps + c] = val[(std::size_t)e * comps + c];
+            }
+        }
+        return out;
+    }
     // "normalized" integer data (quantized UVs, weights, rotations) maps to
     // 0..1 (unsigned) or -1..1 (signed) per the glTF spec.
     const JVal* nz = a.Find("normalized");

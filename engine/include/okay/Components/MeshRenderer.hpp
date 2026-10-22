@@ -12,6 +12,9 @@ namespace okay {
 class MeshRenderer : public Component {
 public:
     Mesh  mesh;
+    /// Set by a deformer (SkinnedMesh) that rewrites `mesh` every frame: auto-fit
+    /// colliders then keep their size instead of chasing each pose.
+    bool  deformed = false;
     Color color = Color::White;        // base (albedo) color
 
     /// Which surface/shading model the renderer uses (Unity's "Shader" on a

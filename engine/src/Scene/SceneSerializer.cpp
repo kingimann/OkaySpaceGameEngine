@@ -93,6 +93,7 @@
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
+#include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Joint3D.hpp"
@@ -345,7 +346,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // inverse-bind matrices, so an imported rigged character survives save/reload
     // (the joints are re-resolved by name and the mesh re-skins at runtime).
     if (auto* sm = go->GetComponent<SkinnedMesh>()) {
-        const Mesh& bm = sm->bind;
+        // Blend shapes morph the bind in place: store the unmorphed one.
+        const auto* bsh = go->GetComponent<BlendShapes>();
+        const Mesh& bm = (bsh && bsh->base.vertices.size() == sm->bind.vertices.size()) ? bsh->base : sm->bind;
         out << "  skinmesh " << bm.vertices.size();
         for (const Vec3& v : bm.vertices) out << " " << v.x << " " << v.y << " " << v.z;
         out << " " << bm.normals.size();
@@ -366,6 +369,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const Mat4& M : sm->inverseBind) for (int e = 0; e < 16; ++e) out << " " << M.m[e];
         out << "\n";
         if (sm->method != 0) out << "  skinx " << sm->method << "\n";   // separate record: older builds skip it
+    }
+    // Blend shapes (after skinmesh, whose bind they apply to): sparse offsets.
+    if (auto* bs = go->GetComponent<BlendShapes>()) {
+        out << "  blendshapes " << bs->shapes.size();
+        for (const auto& sh : bs->shapes) {
+            const bool n = sh.dNrm.size() == sh.index.size() && !sh.index.empty();
+            out << " " << Quote(sh.name) << " " << sh.weight << " " << sh.index.size() << " " << (n ? 1 : 0);
+            for (std::size_t k = 0; k < sh.index.size(); ++k) {
+                out << " " << sh.index[k] << " " << sh.dPos[k].x << " " << sh.dPos[k].y << " " << sh.dPos[k].z;
+                if (n) out << " " << sh.dNrm[k].x << " " << sh.dNrm[k].y << " " << sh.dNrm[k].z;
+            }
+        }
+        out << "\n";
     }
     // Model animation library: every imported clip (idle/walk/run) as per-node tracks,
     // so a saved model keeps all its animations and the picker still works on reload.
@@ -466,6 +482,23 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 out << " " << st.blendDims << " " << Quote(st.blendParamY) << " " << Quote(st.speedParam) << " " << st.motions.size();
                 for (const auto& m : st.motions) out << " " << m.posY;
             }
+            out << "\n";
+        }
+        // State events, per-state IK weight, transition start offsets.
+        bool anyEv = false;
+        for (const auto& st : asm2->states) {
+            if (!st.enterEvent.empty() || !st.exitEvent.empty() || st.ikWeight != 1.0f) anyEv = true;
+            for (const auto& tr : st.transitions) if (tr.offset != 0.0f) anyEv = true;
+        }
+        for (const auto& tr : asm2->anyState) if (tr.offset != 0.0f) anyEv = true;
+        if (anyEv) {
+            out << "  animsmev " << asm2->states.size();
+            for (const auto& st : asm2->states) {
+                out << " " << Quote(st.enterEvent) << " " << Quote(st.exitEvent) << " " << st.ikWeight << " " << st.transitions.size();
+                for (const auto& tr : st.transitions) out << " " << tr.offset;
+            }
+            out << " " << asm2->anyState.size();
+            for (const auto& tr : asm2->anyState) out << " " << tr.offset;
             out << "\n";
         }
     }
@@ -2172,6 +2205,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sm->bind = bm;
                     sm->joints.clear();   // re-resolved from names in Start()
                     if (auto* mr = go->GetComponent<MeshRenderer>()) mr->mesh = bm;   // show bind pose until skinned
+                } else if (field == "blendshapes") {
+                    auto* bs = go->GetComponent<BlendShapes>();
+                    if (!bs) bs = go->AddComponent<BlendShapes>();
+                    bs->shapes.clear(); bs->base = Mesh{};
+                    long nshape = 0; in >> nshape;
+                    for (long i = 0; i < nshape && in; ++i) {
+                        BlendShapes::Shape sh;
+                        sh.name = ReadQuoted(in);
+                        long cnt = 0; int hasN = 0;
+                        in >> sh.weight >> cnt >> hasN;
+                        for (long k = 0; k < cnt && in; ++k) {
+                            int v = 0; Vec3 d; in >> v >> d.x >> d.y >> d.z;
+                            sh.index.push_back(v); sh.dPos.push_back(d);
+                            if (hasN) { Vec3 nn; in >> nn.x >> nn.y >> nn.z; sh.dNrm.push_back(nn); }
+                        }
+                        bs->shapes.push_back(std::move(sh));
+                    }
+                    bs->Apply(true);
                 } else if (field == "skinx") {
                     int m = 0; in >> m;
                     if (auto* sm = go->GetComponent<SkinnedMesh>()) sm->method = m;
@@ -2339,6 +2390,25 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 readExt(k < (long)st.transitions.size() ? st.transitions[k] : tmp);
                             }
                         }
+                    }
+                } else if (field == "animsmev") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        AnimStateMachine::State dummy;
+                        AnimStateMachine::State& st = i < (long)sm2->states.size() ? sm2->states[i] : dummy;
+                        st.enterEvent = ReadQuoted(in);
+                        st.exitEvent = ReadQuoted(in);
+                        long nt = 0; in >> st.ikWeight >> nt;
+                        for (long k = 0; k < nt && in; ++k) {
+                            float o = 0; in >> o;
+                            if (k < (long)st.transitions.size()) st.transitions[k].offset = o;
+                        }
+                    }
+                    long na = 0; in >> na;
+                    for (long k = 0; k < na && in; ++k) {
+                        float o = 0; in >> o;
+                        if (k < (long)sm2->anyState.size()) sm2->anyState[k].offset = o;
                     }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();

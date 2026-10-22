@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <memory>
+#include <typeinfo>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -130,25 +131,38 @@ T* GameObject::AddComponent(Args&&... args) {
     return ptr;
 }
 
+// Component lookups run every frame all over the engine. Every object's first
+// component is its Transform, so a lookup for a type that can't be a Transform
+// starts after it (a bone object with nothing but a Transform then costs no
+// dynamic_cast at all), and an exact type match skips the dynamic_cast walk.
+template <typename T>
+inline std::size_t FirstComponentToSearch(const std::vector<std::unique_ptr<Component>>& cs, const Transform* t) {
+    if constexpr (std::is_base_of<T, Transform>::value) return 0;
+    else return (!cs.empty() && cs[0].get() == static_cast<const Component*>(t)) ? 1 : 0;
+}
+
 template <typename T>
 T* GameObject::GetComponent() const {
-    for (const auto& c : m_components)
-        if (T* casted = dynamic_cast<T*>(c.get())) return casted;
+    for (std::size_t i = FirstComponentToSearch<T>(m_components, transform); i < m_components.size(); ++i) {
+        Component* c = m_components[i].get();
+        if (typeid(*c) == typeid(T)) return static_cast<T*>(c);
+        if (T* casted = dynamic_cast<T*>(c)) return casted;
+    }
     return nullptr;
 }
 
 template <typename T>
 std::vector<T*> GameObject::GetComponents() const {
     std::vector<T*> result;
-    for (const auto& c : m_components)
-        if (T* casted = dynamic_cast<T*>(c.get())) result.push_back(casted);
+    for (std::size_t i = FirstComponentToSearch<T>(m_components, transform); i < m_components.size(); ++i)
+        if (T* casted = dynamic_cast<T*>(m_components[i].get())) result.push_back(casted);
     return result;
 }
 
 template <typename T>
 void GameObject::CollectComponents(std::vector<T*>& out) const {
-    for (const auto& c : m_components)
-        if (T* casted = dynamic_cast<T*>(c.get())) out.push_back(casted);
+    for (std::size_t i = FirstComponentToSearch<T>(m_components, transform); i < m_components.size(); ++i)
+        if (T* casted = dynamic_cast<T*>(m_components[i].get())) out.push_back(casted);
 }
 
 } // namespace okay

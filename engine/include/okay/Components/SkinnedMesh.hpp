@@ -65,7 +65,10 @@ public:
     }
 
     void Start() override  { ResolveJoints(); Skin(); }
-    void Update(float) override { Skin(); }
+    // Skin last: after animation, crossfades, layers and IK have all posed the
+    // bones (IK runs at order 100), so this frame's corrections reach the mesh.
+    int  ExecutionOrder() const override { return 200; }
+    void LateUpdate(float) override { Skin(); }
 
     /// Resolve joint Transforms by name (after a load, when the pointers are empty
     /// but the names round-tripped). Bones are looked up inside this mesh's own
@@ -135,6 +138,10 @@ public:
         return c;
     }
 
+    /// Call after changing `bind` (blend shapes): the next Skin() redeforms, and
+    /// a GPU-skinned mesh re-uploads its bind pose.
+    void BindChanged() { m_haveHash = false; m_bindDirty = true; }
+
     /// True once it has joints + a bind mesh to deform.
     bool Ready() const { return !joints.empty() && !bind.vertices.empty(); }
 
@@ -173,8 +180,10 @@ public:
         if (gpu) {
             // The vertex shader deforms; leave the bind pose in the renderer's mesh
             // (restored once when switching over from CPU skinning).
-            if (!m_lastGpu || mr->mesh.vertices.size() != bind.vertices.size()) mr->mesh = bind;
+            if (!m_lastGpu || m_bindDirty || mr->mesh.vertices.size() != bind.vertices.size()) mr->mesh = bind;
+            m_bindDirty = false;
             m_lastGpu = true;
+            mr->deformed = false;
             return;
         }
         m_lastGpu = false;
@@ -188,34 +197,51 @@ public:
             out.normals.size() != bind.normals.size() || out.uvs.size() != bind.uvs.size())
             out = bind;   // first deform (or the bind mesh changed): take the topology once
         const bool hasN = bind.normals.size() == bind.vertices.size();
+        mr->deformed = true;
         if (method == (int)Method::DualQuaternion) { SkinDualQuat(out, hasN); return; }
+        // Skin matrices as 3x4 affine rows (no perspective row, no divide). Per
+        // vertex the weighted matrices are summed first, then applied once to the
+        // position and normal — 12 multiply-adds per influence instead of a full
+        // 4x4 transform of both.
+        const std::size_t nj = sk.size();
+        m_aff.resize(nj);
+        for (std::size_t j = 0; j < nj; ++j) {
+            const Mat4& M = sk[j];
+            float* a = m_aff[j].m;
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 4; ++c) a[r * 4 + c] = M.at(c, r);
+        }
+        const int njInt = (int)nj;
         for (std::size_t v = 0; v < bind.vertices.size(); ++v) {
-            const Vec3 p = bind.vertices[v];
-            const Vec3 n = hasN ? bind.normals[v] : Vec3{0, 0, 0};
-            Vec3 accP{0, 0, 0}, accN{0, 0, 0};
-            float total = 0.0f;
             const std::array<int, 4>&   ji = jointIdx[v];
             const std::array<float, 4>& jw = jointWt[v];
+            float B[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            float total = 0.0f;
             for (int k = 0; k < 4; ++k) {
-                float w = jw[k];
-                if (w <= 0.0f) continue;
-                int idx = ji[k];
-                if (idx < 0 || idx >= (int)sk.size()) continue;
-                const Mat4& M = sk[idx];
-                accP = accP + M.MultiplyPoint(p) * w;
-                if (hasN) accN = accN + M.MultiplyVector(n) * w;
+                const float w = jw[k];
+                const int idx = ji[k];
+                if (w <= 0.0f || idx < 0 || idx >= njInt) continue;
+                const float* a = m_aff[idx].m;
+                for (int e = 0; e < 12; ++e) B[e] += a[e] * w;
                 total += w;
             }
-            if (total > 1e-6f) {
-                out.vertices[v] = accP * (1.0f / total);          // guard un-normalized weights
-                if (hasN) {
-                    Vec3 nn = accN;
-                    float l = std::sqrt(nn.x*nn.x + nn.y*nn.y + nn.z*nn.z);
-                    out.normals[v] = l > 1e-6f ? nn * (1.0f / l) : n;
-                }
-            } else {   // unweighted: the bind-pose vertex
+            const Vec3 p = bind.vertices[v];
+            if (total <= 1e-6f) {   // unweighted: the bind-pose vertex
                 out.vertices[v] = p;
-                if (hasN) out.normals[v] = n;
+                if (hasN) out.normals[v] = bind.normals[v];
+                continue;
+            }
+            const float it = (total > 0.999f && total < 1.001f) ? 1.0f : 1.0f / total;   // guard un-normalized weights
+            out.vertices[v] = Vec3{(B[0] * p.x + B[1] * p.y + B[2]  * p.z + B[3])  * it,
+                                   (B[4] * p.x + B[5] * p.y + B[6]  * p.z + B[7])  * it,
+                                   (B[8] * p.x + B[9] * p.y + B[10] * p.z + B[11]) * it};
+            if (hasN) {
+                const Vec3 n = bind.normals[v];
+                Vec3 nn{B[0] * n.x + B[1] * n.y + B[2]  * n.z,
+                        B[4] * n.x + B[5] * n.y + B[6]  * n.z,
+                        B[8] * n.x + B[9] * n.y + B[10] * n.z};
+                float l2 = nn.x * nn.x + nn.y * nn.y + nn.z * nn.z;
+                out.normals[v] = l2 > 1e-12f ? nn * (1.0f / std::sqrt(l2)) : n;
             }
         }
     }
@@ -282,9 +308,12 @@ private:
         }
     }
 
+    struct Affine { float m[12]; };
+    std::vector<Affine> m_aff;
     std::vector<Quat> m_dqR, m_dqD;
     std::vector<Vec3> m_dqS;
     std::uint64_t m_lastHash = 0;    ///< pose hash of the last deform (skip when equal)
+    bool          m_bindDirty = false;   ///< bind changed (blend shapes): re-copy it for GPU skinning
     bool          m_haveHash = false;
     bool          m_lastGpu = false;     ///< the last Skin() left the deform to the GPU
 };

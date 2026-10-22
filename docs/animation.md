@@ -451,6 +451,28 @@ Hovering a bone names it; clicking it selects it.
 Skinned meshes also deform in edit mode, so posing bones in the Scene view bends
 the mesh.
 
+**Sparse accessors.** glTF accessors stored sparse (common for morph targets) are
+read: the dense base, or zeros, with the listed values written over it.
+
+## Blend shapes (morph targets)
+
+Facial expressions, lip-sync visemes and corrective shapes come in with the
+model as a **Blend Shapes** component on each mesh that has them:
+
+- **glTF:** every primitive's `targets` (positions and normals), names from
+  `extras.targetNames`, default weights from `mesh.weights`, and `weights`
+  animation channels.
+- **FBX:** blend shape channels and their animated `DeformPercent`.
+- Clips drive them with `weights.<n>` tracks on the mesh's node. They play in the
+  Animation tab preview, through crossfades and blend trees, and in Play.
+- The inspector has one slider per shape, a filter box for faces with dozens of
+  shapes, and **Reset all**.
+- Scripts: `blend_shape("Smile", 0.8)` sets a shape on every mesh under the
+  object; `blend_shape_get("Smile")` reads it back.
+- The morph is applied before skinning, so a morphed face still follows the
+  skeleton. Shapes are stored sparse (only the vertices they move) and saved with
+  the scene; the mesh is only rebuilt when a weight changes.
+
 ## Root motion
 
 Turn on **Root Motion** in the Model Animator. The root bone's travel moves the
@@ -487,6 +509,30 @@ character, and the bone stays over it.
 - Parameters can be edited live while playing, and the running state shows a
   progress bar.
 
+**Per state and per transition:**
+- **On enter / On exit events:** an animation event fired when the machine enters
+  or leaves the state. It reaches `anim_event()` in scripts and the visual
+  scripts' animation event handlers, like clip events. Use it for jump and land
+  sounds or to open a hit window.
+- **IK weight:** how much Foot IK and Full Body IK apply in that state, eased
+  over the transition. Set it to 0 for jumps, rolls and falls so the feet aren't
+  pulled to the ground mid-air. Locomotion setup does this for Jump and Fall.
+- **Start at** on a transition starts the target part-way into its clip, to line
+  up the feet between walk and run cycles.
+
+Clip events from imported models now also reach visual scripts.
+
+**Graph editor:**
+- **Zoom** with the mouse wheel (around the cursor); **Frame** (F) fits every
+  state.
+- **Labels** shows each transition's conditions on its arrow, e.g.
+  `speed > 0.1 & grounded @80%`.
+- **Find state** lights up matching states; Enter selects and centres the first.
+- **Ctrl+D** duplicates a state; **Ctrl+C / Ctrl+V** copy and paste one, keeping
+  its transitions to states that exist. Both are also in the right-click menus.
+- Nodes show a marker when the state fires events, and its IK weight when it
+  isn't 100%.
+
 ## IK: feet, hands, posing
 
 - **Set up humanoid IK** (Model Animator inspector) adds, from the bone names:
@@ -511,5 +557,15 @@ character, and the bone stays over it.
   components, no clip copies when switching, and no name lookups per frame.
 - Skinned meshes only re-skin when a bone actually moved.
 
+- Skinning sums the weighted bone matrices once per vertex (3x4 affine) and runs
+  after IK, once per frame.
+- Imported clips get keyframe reduction: keys that lie on the line between
+  their neighbours (within a tiny tolerance) are dropped, so baked 30 fps FBX
+  takes sample far fewer keys.
+- Auto-fitted colliders skip meshes that deform every frame, and `GetComponent`
+  takes an exact-type fast path.
+
 A 60-bone mocap clip costs about 0.015 ms per frame to pose. The Khronos Fox
-(24 bones, 1,728 vertices) animates and CPU-skins in about 0.06 ms per frame.
+(24 bones, 1,728 vertices) animates and CPU-skins in about 0.06 ms per frame. A
+stress scene with 20 animated Foxes and 60 physics cubes went from 1.66 ms to
+about 0.65 ms per frame.

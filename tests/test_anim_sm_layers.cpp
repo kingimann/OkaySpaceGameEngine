@@ -3,6 +3,9 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Components/FootIK.hpp"
+#include <string>
+#include <vector>
 #include <cmath>
 
 using namespace okay;
@@ -134,6 +137,56 @@ int main() {
             CHECK(st.transitions[0].cond == AnimStateMachine::Cond::IntEquals);
             CHECK(machines[0]->states[1].speedParam == "emoteSpeed");
         }
+    }
+
+    // ---- State enter/exit events, per-state IK weight, transition offset.
+    {
+        Scene s2; s2.physicsEnabled = false;
+        GameObject* m = s2.CreateGameObject("M");
+        GameObject* bone = s2.CreateGameObject("Leg"); bone->transform->SetParent(m->transform, false);
+        auto* a2 = m->AddComponent<ModelAnimator>();
+        a2->autoPlay = false; a2->blendTime = 0.0f;
+        ModelAnimator::Clip ramp; ramp.name = "ramp";              // Leg.x goes 0 -> 10 over 1s
+        { ModelAnimator::NodeClip nc; nc.node = "Leg"; nc.clip.smoothKeys = false;
+          nc.clip.AddKey("position.x", 0.0f, 0.0f); nc.clip.AddKey("position.x", 1.0f, 10.0f); ramp.nodes.push_back(nc); }
+        a2->clips = {Hold("idle", {{"Leg", 0}}), ramp};
+        auto* fik = m->AddComponent<FootIK>();
+        fik->useRaycast = false;
+        auto* m2sm = m->AddComponent<AnimStateMachine>();
+        AnimStateMachine::State idle; idle.name = "Idle"; idle.clip = "idle";
+        idle.enterEvent = "idle_in"; idle.exitEvent = "idle_out";
+        AnimStateMachine::Transition go; go.to = "Jump"; go.cond = AnimStateMachine::Cond::Trigger; go.param = "jump";
+        go.blend = 0.2f; go.offset = 0.5f;
+        idle.transitions.push_back(go);
+        AnimStateMachine::State jump; jump.name = "Jump"; jump.clip = "ramp"; jump.ikWeight = 0.0f; jump.enterEvent = "jump_in";
+        m2sm->states = {idle, jump};
+        std::vector<std::string> got;
+        a2->onAnimEvent = [&](const std::string& e) { got.push_back(e); };
+        s2.Start();
+        Tick(s2, 2);
+        CHECK(got.size() == 1 && got[0] == "idle_in");
+        CHECK(std::fabs(m2sm->IKWeight() - 1.0f) < 1e-4f && std::fabs(fik->stateWeight - 1.0f) < 1e-4f);
+        m2sm->SetTrigger("jump");
+        Tick(s2, 1);
+        CHECK(m2sm->Current() == "Jump");
+        CHECK(got.size() == 3 && got[1] == "idle_out" && got[2] == "jump_in");
+        // Started half way in (the 0.2s crossfade still eases the pose, so check the clock).
+        CHECK(a2->Time() >= 0.49f);
+        CHECK(m2sm->NormalizedTime() >= 0.5f);
+        // The IK weight eases to 0 over the 0.2s blend.
+        Tick(s2, 3);
+        CHECK(m2sm->IKWeight() > 0.05f && m2sm->IKWeight() < 0.95f);
+        Tick(s2, 20);
+        CHECK(m2sm->IKWeight() < 1e-4f && fik->stateWeight < 1e-4f);
+        CHECK(a2->ConsumeAnimEvents().size() == 3);              // queued for anim_event() too
+        // Saved and loaded.
+        Scene s3;
+        CHECK(SceneSerializer::Deserialize(s3, SceneSerializer::Serialize(s2)));
+        if (GameObject* mm = s3.Find("M"))
+            if (auto* ld = mm->GetComponent<AnimStateMachine>()) {
+                CHECK(ld->states.size() == 2 && ld->states[0].enterEvent == "idle_in" && ld->states[0].exitEvent == "idle_out");
+                CHECK(ld->states[1].ikWeight == 0.0f && std::fabs(ld->states[0].transitions[0].offset - 0.5f) < 1e-5f);
+            }
     }
     TEST_MAIN_RESULT();
 }

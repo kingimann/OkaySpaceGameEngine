@@ -32,6 +32,7 @@
 #include "okay/Render/Gltf.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
+#include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Render/Lighting.hpp"

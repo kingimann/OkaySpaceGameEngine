@@ -694,3 +694,7 @@ add_test(NAME anim_sm_layers COMMAND test_anim_sm_layers)
 add_executable(test_foot_planting test_foot_planting.cpp)
 target_link_libraries(test_foot_planting PRIVATE okay::engine)
 add_test(NAME foot_planting COMMAND test_foot_planting)
+
+add_executable(test_blend_shapes test_blend_shapes.cpp)
+target_link_libraries(test_blend_shapes PRIVATE okay::engine)
+add_test(NAME blend_shapes COMMAND test_blend_shapes)

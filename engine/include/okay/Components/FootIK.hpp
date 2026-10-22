@@ -34,6 +34,10 @@ public:
     std::string rightHipName, rightKneeName, rightFootName, pelvisName;
 
     float weight     = 1.0f;   ///< 0 = off (pure animation), 1 = fully planted
+    /// Multiplies `weight`; set by the Animator state machine's per-state IK
+    /// weight (feet free while jumping or rolling). Runtime only.
+    float stateWeight = 1.0f;
+    float EffWeight() const { return weight * stateWeight; }
     float footOffset = 0.05f;  ///< ankle height to keep above the ground surface
     /// Correction ease speed (per second). The foot lift fades in/out toward its
     /// target instead of snapping the frame the ground appears/disappears under a
@@ -168,7 +172,7 @@ public:
     // start), which lands them after FootIK in the Update order — solving in
     // Update let those Animators clobber the correction the same frame.
     void LateUpdate(float dt) override {
-        if (weight <= 0.0f) return;
+        if (EffWeight() <= 0.0f) return;
         if (!m_init) { Learn(); m_init = true; }
         Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;
         Scene* s = GetScene();
@@ -242,7 +246,7 @@ private:
             off = any ? Mathf::Min(off, d) : d; any = true;
         };
         consider(leftFoot); consider(rightFoot);
-        float want = any ? Mathf::Clamp(Mathf::Min(off, 0.0f), -maxPelvisShift, maxPelvisShift) * weight : 0.0f;
+        float want = any ? Mathf::Clamp(Mathf::Min(off, 0.0f), -maxPelvisShift, maxPelvisShift) * EffWeight() : 0.0f;
         m_pelvisOff += (want - m_pelvisOff) * ease;
         Vec3 applied{0, m_pelvisOff, 0};
         pelvis->SetPosition(animP + applied);
@@ -296,8 +300,8 @@ private:
         Vec3 mid, end;
         SolveTwoBoneIK(hip->Position(), upLen, loLen, target, pole, mid, end,
                        minKneeBend, maxKneeBend);
-        Vec3 newMid = Vec3::Lerp(oldMid, mid, weight);
-        Vec3 newEnd = Vec3::Lerp(oldEnd, end, weight);
+        Vec3 newMid = Vec3::Lerp(oldMid, mid, EffWeight());
+        Vec3 newEnd = Vec3::Lerp(oldEnd, end, EffWeight());
         // Optional: rotate the thigh (hip->knee) and shin (knee->foot) bones so a
         // leg mesh skinned to them bends with the joints, not just the joints
         // moving. Done before pinning positions; see LimbIK for the rationale.
@@ -319,7 +323,7 @@ private:
             Vec3 up = (foot->Rotation() * footUpAxis).Normalized();
             Quat tilt = Quat::FromToRotation(up, normal.Normalized());
             Quat desired = (tilt * foot->Rotation()).Normalized();
-            foot->SetRotation(Quat::Slerp(foot->Rotation(), desired, weight));
+            foot->SetRotation(Quat::Slerp(foot->Rotation(), desired, EffWeight()));
         }
         L.written = foot->Position();
         L.applied = L.written - animFoot;

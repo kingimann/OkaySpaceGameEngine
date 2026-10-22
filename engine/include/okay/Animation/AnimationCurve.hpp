@@ -106,6 +106,42 @@ public:
         return h00 * a.value + h10 * seg * m0 + h01 * b.value + h11 * seg * m1;
     }
 
+    /// Keyframe reduction for LINEAR curves: drop every key that the straight
+    /// line between its kept neighbours reproduces within `tolerance` (checked
+    /// against all the original keys it would replace, so error never piles up).
+    /// First and last keys always stay. Returns how many keys were removed.
+    /// Smooth (cubic) curves are left alone: removing keys would change their shape.
+    std::size_t Reduce(float tolerance) {
+        if (smooth || m_keys.size() < 3 || tolerance <= 0.0f) return 0;
+        std::vector<Keyframe> out;
+        out.reserve(m_keys.size());
+        std::size_t a = 0;
+        out.push_back(m_keys[0]);
+        while (a + 1 < m_keys.size()) {
+            // Extend the segment a -> b as far as every key in between stays on the line.
+            std::size_t b = a + 1;
+            while (b + 1 < m_keys.size()) {
+                std::size_t c = b + 1;
+                const Keyframe& ka = m_keys[a];
+                const Keyframe& kc = m_keys[c];
+                float span = kc.time - ka.time;
+                bool fits = span > 0.0f;
+                for (std::size_t i = a + 1; i < c && fits; ++i) {
+                    float u = (m_keys[i].time - ka.time) / span;
+                    float v = ka.value + (kc.value - ka.value) * u;
+                    if (std::fabs(v - m_keys[i].value) > tolerance) fits = false;
+                }
+                if (!fits) break;
+                b = c;
+            }
+            out.push_back(m_keys[b]);
+            a = b;
+        }
+        std::size_t removed = m_keys.size() - out.size();
+        m_keys.swap(out);
+        return removed;
+    }
+
     /// Convenience: a curve from a to b over `duration` seconds.
     static AnimationCurve Linear(float a, float b, float duration) {
         AnimationCurve c;

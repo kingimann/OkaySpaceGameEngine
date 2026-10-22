@@ -897,6 +897,8 @@ struct VsEditState {
     bool   openPalette = false;
     ImVec2 paletteWorld{0, 0};
     bool   showScript = false;   // "View as OkayScript" side panel open
+    float  zoom = 1.0f;          // canvas zoom (mouse wheel / toolbar), 0.4 .. 2
+    bool   frameAll = false;     // fit every node in view on the next frame
 };
 
 inline VsEditState& State() { static VsEditState s; return s; }
@@ -990,8 +992,20 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("%s%s", g.path.empty() ? "(unsaved)" : g.path.c_str(), g.dirty ? " *" : "");
+    // Zoom controls (wheel over the canvas zooms too; Home frames every node).
+    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+    if (ImGui::Button(" - ##vszo")) st.zoom = std::max(0.4f, st.zoom / 1.15f);
     ImGui::SameLine();
-    ImGui::TextDisabled("  |  right-click: add node  ·  drag pins to wire  ·  Del: delete");
+    ImGui::Text("%d%%", (int)std::lround(st.zoom * 100.0f));
+    if (ImGui::IsItemClicked()) st.zoom = 1.0f;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to reset to 100%%. Mouse wheel over the graph zooms.");
+    ImGui::SameLine();
+    if (ImGui::Button(" + ##vszi")) st.zoom = std::min(2.0f, st.zoom * 1.15f);
+    ImGui::SameLine();
+    if (ImGui::Button("Frame All")) st.frameAll = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit every node in view (Home)");
+    ImGui::SameLine();
+    ImGui::TextDisabled("  right-click: add node  \xC2\xB7  drag pins to wire  \xC2\xB7  middle-drag: pan  \xC2\xB7  Del: delete");
     // Lightweight validation: a graph with nodes but no event entry never runs.
     {
         bool hasEvent = false;
@@ -1020,21 +1034,60 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::InvisibleButton("vscbg", ImVec2(canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool canvasHovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) st.selected = -1;   // click empty space: deselect
+    const bool canvasWindowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 
-    // Grid.
-    const float grid = 26.0f;
-    ImU32 gridc = IM_COL32(255, 255, 255, 10);
-    for (float x = std::fmod(st.pan.x, grid); x < canvasMax.x - canvasMin.x; x += grid)
-        dl->AddLine(ImVec2(canvasMin.x + x, canvasMin.y), ImVec2(canvasMin.x + x, canvasMax.y), gridc);
-    for (float y = std::fmod(st.pan.y, grid); y < canvasMax.y - canvasMin.y; y += grid)
-        dl->AddLine(ImVec2(canvasMin.x, canvasMin.y + y), ImVec2(canvasMax.x, canvasMin.y + y), gridc);
+    // ---- Zoom: wheel zooms about the mouse; Home / Frame All fits the graph ----
+    float& z = st.zoom;
+    // Node positions are stored in the original (compact) layout units; spread
+    // them by the same factor the nodes grew, so saved graphs keep their gaps.
+    const float kLayout = 1.4f;
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    if (canvasWindowHovered && ImGui::GetIO().MouseWheel != 0.0f && !ImGui::IsAnyItemActive() &&
+        !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+        float wx = (mouse.x - canvasMin.x - st.pan.x) / z, wy = (mouse.y - canvasMin.y - st.pan.y) / z;
+        z = std::clamp(z * (ImGui::GetIO().MouseWheel > 0 ? 1.12f : 1.0f / 1.12f), 0.4f, 2.0f);
+        st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);   // (pan math is layout-scale free)
+    }
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Home, false) &&
+        !ImGui::IsAnyItemActive()) st.frameAll = true;
+    if (st.frameAll) {
+        st.frameAll = false;
+        if (!g.nodes.empty()) {
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (const auto& n : g.nodes) {   // rough node extents in world units
+                x0 = std::min(x0, n.x * kLayout); y0 = std::min(y0, n.y * kLayout);
+                x1 = std::max(x1, n.x * kLayout + 260.0f); y1 = std::max(y1, n.y * kLayout + 170.0f);
+            }
+            float cw = canvasMax.x - canvasMin.x - 60.0f, chh = canvasMax.y - canvasMin.y - 60.0f;
+            z = std::clamp(std::min(cw / std::max(1.0f, x1 - x0), chh / std::max(1.0f, y1 - y0)), 0.4f, 1.25f);
+            st.pan = ImVec2((canvasMax.x - canvasMin.x) * 0.5f - (x0 + x1) * 0.5f * z,
+                            (canvasMax.y - canvasMin.y) * 0.5f - (y0 + y1) * 0.5f * z);
+        }
+    }
+    // Text and widgets follow the zoom.
+    ImGui::SetWindowFontScale(z);
+    ImFont* font = ImGui::GetFont();
+    const float fs = ImGui::GetFontSize();
 
-    // Pan with middle or right drag on empty canvas.
-    if (canvasHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    // Grid: minor lines + a major line every 4 cells.
+    const float grid = 28.0f * z;
+    const ImU32 gridMinor = IM_COL32(255, 255, 255, 9), gridMajor = IM_COL32(255, 255, 255, 22);
+    {
+        int i = (int)std::floor(-st.pan.x / grid);
+        for (float x = std::fmod(st.pan.x, grid); x < canvasMax.x - canvasMin.x; x += grid, ++i)
+            dl->AddLine(ImVec2(canvasMin.x + x, canvasMin.y), ImVec2(canvasMin.x + x, canvasMax.y), (i % 4 == 0) ? gridMajor : gridMinor);
+        int j = (int)std::floor(-st.pan.y / grid);
+        for (float y = std::fmod(st.pan.y, grid); y < canvasMax.y - canvasMin.y; y += grid, ++j)
+            dl->AddLine(ImVec2(canvasMin.x, canvasMin.y + y), ImVec2(canvasMax.x, canvasMin.y + y), (j % 4 == 0) ? gridMajor : gridMinor);
+    }
+
+    // Pan with middle drag (anywhere on the canvas).
+    if (canvasWindowHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         st.pan.x += ImGui::GetIO().MouseDelta.x; st.pan.y += ImGui::GetIO().MouseDelta.y;
     }
 
-    auto W2S = [&](float wx, float wy) { return ImVec2(canvasMin.x + st.pan.x + wx, canvasMin.y + st.pan.y + wy); };
+    auto W2S = [&](float wx, float wy) { return ImVec2(canvasMin.x + st.pan.x + wx * kLayout * z, canvasMin.y + st.pan.y + wy * kLayout * z); };
 
     // Compute pin screen positions this frame.
     std::map<long long, ImVec2> pinPos;
@@ -1042,76 +1095,111 @@ inline void Draw(EditorState& ed, bool* open) {
         return ((long long)node << 20) | ((long long)kind << 18) | ((long long)side << 16) | idx;
     };
 
-    const float NODE_W_BASE = 172.0f, HEADER_H = 24.0f, ROW_H = 20.0f, PIN_R = 5.0f;
-    const float BOX_W = 96.0f;   // inline value box on an unconnected data input
+    // Roomy layout (world units, scaled by the zoom).
+    const float NODE_W_BASE = 220.0f * z, HEADER_H = 32.0f * z, ROW_H = 28.0f * z, PIN_R = 6.5f * z;
+    const float BOX_W = 110.0f * z;   // inline value box on an unconnected data input
+    const float PAD = 12.0f * z, ROUND = 8.0f * z;
     auto inputLinked = [&](int node, int pin) {
         for (const auto& l : g.dataLinks) if (l.consumer == node && l.inPin == pin) return true;
         return false;
     };
+    auto text = [&](ImVec2 p, ImU32 c, const char* t) { dl->AddText(font, fs, p, c, t); };
+
+    // Wires go in a background channel so they run BEHIND the nodes.
+    dl->ChannelsSplit(2);
+    dl->ChannelsSetCurrent(1);
 
     // Lay out + draw each node.
+    int pendingDelete = -1, pendingDup = -1;
     for (auto& n : g.nodes) {
         const VsDef* d = FindDef(n.type);
         if (!d) continue;
         int leftRows  = (d->execIn ? 1 : 0) + (int)d->dataIn.size();
         int rightRows = (int)d->execOut.size() + (int)d->dataOut.size();
         int rows = std::max(leftRows, rightRows);
-        float bodyH = rows * ROW_H + (d->param ? ROW_H + 4 : 0) + 8;
+        float bodyH = rows * ROW_H + (d->param ? ROW_H + 8.0f * z : 0) + PAD;
         float h = HEADER_H + bodyH;
         // Wider when it has data inputs: their value boxes sit between the input
         // labels and the output labels.
-        float inLabelW = 0.0f;
+        float inLabelW = 0.0f, outLabelW = 0.0f;
         for (const char* lbl : d->dataIn) inLabelW = std::max(inLabelW, ImGui::CalcTextSize(lbl).x);
-        const float NODE_W = d->dataIn.empty() ? NODE_W_BASE : std::max(NODE_W_BASE, 10.0f + inLabelW + 6.0f + BOX_W + 70.0f);
+        for (const char* lbl : d->dataOut) outLabelW = std::max(outLabelW, ImGui::CalcTextSize(lbl).x);
+        for (const char* lbl : d->execOut) outLabelW = std::max(outLabelW, ImGui::CalcTextSize(lbl).x);
+        float titleW = ImGui::CalcTextSize(d->title).x + PAD * 2.0f;
+        const float NODE_W = std::max({NODE_W_BASE, titleW,
+            d->dataIn.empty() ? 0.0f : PAD + inLabelW + 8.0f * z + BOX_W + PAD + outLabelW + PAD});
         ImVec2 p0 = W2S(n.x, n.y), p1 = ImVec2(p0.x + NODE_W, p0.y + h);
+        const bool hovered = ImGui::IsMouseHoveringRect(p0, p1) && canvasWindowHovered;
 
-        // Body + header.
-        dl->AddRectFilled(p0, p1, IM_COL32(34, 34, 38, 240), 6.0f);
-        dl->AddRectFilled(p0, ImVec2(p1.x, p0.y + HEADER_H), CatColor(d->cat), 6.0f, ImDrawFlags_RoundCornersTop);
-        if (st.selected == n.id) dl->AddRect(p0, p1, IM_COL32(210, 210, 220, 255), 6.0f, 0, 2.0f);
-        else                     dl->AddRect(p0, p1, IM_COL32(0, 0, 0, 160), 6.0f);
-        dl->AddText(ImVec2(p0.x + 9, p0.y + 4), IM_COL32(236, 238, 244, 255), d->title);
+        // Shadow, body, header.
+        dl->AddRectFilled(ImVec2(p0.x + 3 * z, p0.y + 5 * z), ImVec2(p1.x + 3 * z, p1.y + 5 * z), IM_COL32(0, 0, 0, 90), ROUND);
+        dl->AddRectFilled(p0, p1, IM_COL32(38, 39, 44, 245), ROUND);
+        ImU32 hc = CatColor(d->cat);
+        dl->AddRectFilled(p0, ImVec2(p1.x, p0.y + HEADER_H), hc, ROUND, ImDrawFlags_RoundCornersTop);
+        dl->AddLine(ImVec2(p0.x, p0.y + HEADER_H), ImVec2(p1.x, p0.y + HEADER_H), IM_COL32(0, 0, 0, 120), 1.0f);
+        if (st.selected == n.id) {
+            dl->AddRect(ImVec2(p0.x - 2 * z, p0.y - 2 * z), ImVec2(p1.x + 2 * z, p1.y + 2 * z), IM_COL32(120, 170, 255, 255), ROUND + 2 * z, 0, 2.5f);
+        } else {
+            dl->AddRect(p0, p1, hovered ? IM_COL32(150, 154, 166, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
+        }
+        text(ImVec2(p0.x + PAD, p0.y + (HEADER_H - fs) * 0.5f), IM_COL32(244, 246, 250, 255), d->title);
 
         // Node drag handle: an invisible button over the header.
         ImGui::SetCursorScreenPos(p0);
         ImGui::PushID(n.id);
         ImGui::InvisibleButton("##hdr", ImVec2(NODE_W, HEADER_H));
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            n.x += ImGui::GetIO().MouseDelta.x; n.y += ImGui::GetIO().MouseDelta.y; g.dirty = true;
+            n.x += ImGui::GetIO().MouseDelta.x / (z * kLayout); n.y += ImGui::GetIO().MouseDelta.y / (z * kLayout); g.dirty = true;
         }
         if (ImGui::IsItemClicked()) st.selected = n.id;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && d->cat != CAT_EVENT && !ImGui::IsItemActive())
+            ImGui::SetTooltip("%s  (%s)", d->title, d->type);
         if (ImGui::BeginPopupContextItem("##nctx")) {
-            if (ImGui::MenuItem("Delete")) { g.removeNode(n.id); ImGui::EndPopup(); ImGui::PopID(); continue; }
+            // Applied after the loop: the node list mustn't change while it's iterated.
+            if (ImGui::MenuItem("Duplicate")) pendingDup = n.id;
+            if (ImGui::MenuItem("Delete", "Del")) pendingDelete = n.id;
             ImGui::EndPopup();
         }
 
-        float ly = p0.y + HEADER_H + 6;
+        const ImU32 labelCol = IM_COL32(205, 209, 216, 255);
+        const ImU32 execCol = IM_COL32(235, 236, 240, 255), dataCol = IM_COL32(120, 200, 140, 255);
+        float ly = p0.y + HEADER_H + PAD * 0.5f;
+        auto execTri = [&](ImVec2 pp) {
+            float r = PIN_R * 1.15f;
+            dl->AddTriangleFilled(ImVec2(pp.x - r * 0.8f, pp.y - r), ImVec2(pp.x - r * 0.8f, pp.y + r), ImVec2(pp.x + r, pp.y), execCol);
+        };
+        auto dataDot = [&](ImVec2 pp, bool linked) {
+            dl->AddCircleFilled(pp, PIN_R, linked ? dataCol : IM_COL32(38, 39, 44, 255), 16);
+            dl->AddCircle(pp, PIN_R, dataCol, 16, 2.0f * z);
+        };
         // Left pins (exec-in then data-in).
         int li = 0;
         if (d->execIn) {
             ImVec2 pp(p0.x, ly + li * ROW_H + ROW_H * 0.5f);
-            dl->AddTriangleFilled(ImVec2(pp.x - 5, pp.y - 5), ImVec2(pp.x - 5, pp.y + 5), ImVec2(pp.x + 4, pp.y),
-                                  IM_COL32(220, 220, 225, 255));
+            execTri(pp);
             pinPos[pk(n.id, 0, 0, 0)] = pp;
             ++li;
         }
         for (int i = 0; i < (int)d->dataIn.size(); ++i, ++li) {
             ImVec2 pp(p0.x, ly + li * ROW_H + ROW_H * 0.5f);
-            dl->AddCircleFilled(pp, PIN_R, IM_COL32(150, 190, 150, 255), 12);
-            dl->AddText(ImVec2(p0.x + 10, pp.y - 8), IM_COL32(190, 194, 200, 255), d->dataIn[i]);
+            const bool linked = inputLinked(n.id, i);
+            dataDot(pp, linked);
+            text(ImVec2(p0.x + PAD, pp.y - fs * 0.5f), labelCol, d->dataIn[i]);
             pinPos[pk(n.id, 1, 0, i)] = pp;
             // Nothing wired in: type the value right here (text, number, true/false).
-            if (!inputLinked(n.id, i)) {
-                ImGui::SetCursorScreenPos(ImVec2(p0.x + 10 + inLabelW + 6, pp.y - 9));
+            if (!linked) {
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5 * z, 3 * z));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4 * z);
+                const float boxH = fs + 6 * z;
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD + inLabelW + 8 * z, pp.y - boxH * 0.5f));
                 ImGui::SetNextItemWidth(BOX_W);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 1));
                 std::string& dv = n.pinDefault[i];
                 char vb[128]; std::snprintf(vb, sizeof(vb), "%s", dv.c_str());
                 char bid[16]; std::snprintf(bid, sizeof(bid), "##pd%d", i);
                 if (ImGui::InputTextWithHint(bid, "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
-                ImGui::PopStyleVar();
+                ImGui::PopStyleVar(2);
                 if (dv.empty()) n.pinDefault.erase(i);
             }
         }
@@ -1119,27 +1207,30 @@ inline void Draw(EditorState& ed, bool* open) {
         int ri = 0;
         for (int i = 0; i < (int)d->execOut.size(); ++i, ++ri) {
             ImVec2 pp(p1.x, ly + ri * ROW_H + ROW_H * 0.5f);
-            dl->AddTriangleFilled(ImVec2(pp.x - 4, pp.y - 5), ImVec2(pp.x - 4, pp.y + 5), ImVec2(pp.x + 5, pp.y),
-                                  IM_COL32(220, 220, 225, 255));
+            execTri(pp);
             if (d->execOut[i][0]) {
                 ImVec2 ts = ImGui::CalcTextSize(d->execOut[i]);
-                dl->AddText(ImVec2(p1.x - 12 - ts.x, pp.y - 8), IM_COL32(190, 194, 200, 255), d->execOut[i]);
+                text(ImVec2(p1.x - PAD - ts.x, pp.y - fs * 0.5f), labelCol, d->execOut[i]);
             }
             pinPos[pk(n.id, 0, 1, i)] = pp;
         }
         for (int i = 0; i < (int)d->dataOut.size(); ++i, ++ri) {
             ImVec2 pp(p1.x, ly + ri * ROW_H + ROW_H * 0.5f);
-            dl->AddCircleFilled(pp, PIN_R, IM_COL32(150, 190, 150, 255), 12);
+            bool used = false;
+            for (const auto& l : g.dataLinks) if (l.producer == n.id && l.outPin == i) { used = true; break; }
+            dataDot(pp, used);
             ImVec2 ts = ImGui::CalcTextSize(d->dataOut[i]);
-            dl->AddText(ImVec2(p1.x - 12 - ts.x, pp.y - 8), IM_COL32(190, 194, 200, 255), d->dataOut[i]);
+            text(ImVec2(p1.x - PAD - ts.x, pp.y - fs * 0.5f), labelCol, d->dataOut[i]);
             pinPos[pk(n.id, 1, 1, i)] = pp;
         }
 
         // Param editor (inline) in the body.
         if (d->param) {
-            float py = p0.y + HEADER_H + std::max(leftRows, rightRows) * ROW_H + 6;
-            ImGui::SetCursorScreenPos(ImVec2(p0.x + 8, py));
-            ImGui::SetNextItemWidth(NODE_W - 16);
+            float py = p0.y + HEADER_H + PAD * 0.5f + std::max(leftRows, rightRows) * ROW_H + 4 * z;
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6 * z, 4 * z));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4 * z);
+            ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD, py));
+            ImGui::SetNextItemWidth(NODE_W - PAD * 2);
             char buf[96]; std::snprintf(buf, sizeof(buf), "%s", n.arg.c_str());
             if (d->param == 2) {   // compare op combo
                 const char* ops[] = {">", "<", ">=", "<=", "==", "!="};
@@ -1148,7 +1239,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     ImGui::EndCombo();
                 }
             } else if (IsKeyNode(n.type)) {
-                if (KeyPicker(n.arg, NODE_W - 16)) g.dirty = true;
+                if (KeyPicker(n.arg, NODE_W - PAD * 2)) g.dirty = true;
             } else if (n.type == "MouseButton" || n.type == "MouseButtonDown") {
                 const char* btns[] = {"Left button", "Right button", "Middle button"};
                 int b = std::atoi(n.arg.c_str());
@@ -1159,21 +1250,23 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (ImGui::InputTextWithHint("##arg", d->paramHint ? d->paramHint : "", buf, sizeof(buf)))
                     { n.arg = buf; g.dirty = true; }
             }
+            ImGui::PopStyleVar(2);
         }
 
-        // Start a wire from a pin: a small invisible button over each pin.
+        // Start a wire from a pin: an invisible button over each pin (generous hit area).
         auto pinButton = [&](long long key, int kind, int side, int idx) {
             auto it = pinPos.find(key); if (it == pinPos.end()) return;
             ImVec2 pp = it->second;
-            ImGui::SetCursorScreenPos(ImVec2(pp.x - 9, pp.y - 9));
+            const float hit = std::max(18.0f, 22.0f * z);
+            ImGui::SetCursorScreenPos(ImVec2(pp.x - hit * 0.5f, pp.y - hit * 0.5f));
             char id[24]; std::snprintf(id, sizeof(id), "p%d%d%d", kind, side, idx);
-            ImGui::InvisibleButton(id, ImVec2(18, 18));
+            ImGui::InvisibleButton(id, ImVec2(hit, hit));
             if (ImGui::IsItemActivated()) {
                 st.dragging = true; st.dragExec = (kind == 0);
                 st.dragFromOutput = (side == 1); st.dragNode = n.id; st.dragPin = idx;
             }
             if (ImGui::IsItemHovered())
-                dl->AddCircle(pp, PIN_R + 2, IM_COL32(255, 255, 255, 200), 14, 1.5f);
+                dl->AddCircle(pp, PIN_R + 3 * z, IM_COL32(255, 255, 255, 210), 18, 2.0f);
         };
         if (d->execIn) pinButton(pk(n.id, 0, 0, 0), 0, 0, 0);
         for (int i = 0; i < (int)d->dataIn.size(); ++i)  pinButton(pk(n.id, 1, 0, i), 1, 0, i);
@@ -1183,19 +1276,35 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::PopID();
     }
 
-    // Draw existing wires (behind nodes would be nicer, but on top is fine/clear).
-    auto bezier = [&](ImVec2 a, ImVec2 b, ImU32 col) {
-        float dx = std::max(40.0f, std::fabs(b.x - a.x) * 0.5f);
-        dl->AddBezierCubic(a, ImVec2(a.x + dx, a.y), ImVec2(b.x - dx, b.y), b, col, 2.4f);
+    if (pendingDup >= 0) {
+        if (const VsEditNode* src = g.find(pendingDup)) {
+            VsEditNode copy = *src;
+            int c = g.add(copy.type, copy.x + 30.0f, copy.y + 30.0f);
+            if (VsEditNode* cn = g.find(c)) { cn->arg = copy.arg; cn->pinDefault = copy.pinDefault; }
+            st.selected = c;
+        }
+    }
+    if (pendingDelete >= 0) { g.removeNode(pendingDelete); if (st.selected == pendingDelete) st.selected = -1; }
+
+    // Wires, behind the nodes. Ones touching the selected node are highlighted.
+    dl->ChannelsSetCurrent(0);
+    auto bezier = [&](ImVec2 a, ImVec2 b, ImU32 col, float w) {
+        float dx = std::max(50.0f * z, std::fabs(b.x - a.x) * 0.5f);
+        dl->AddBezierCubic(a, ImVec2(a.x + dx, a.y), ImVec2(b.x - dx, b.y), b, col, w);
     };
     for (const auto& l : g.execLinks) {
         auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
-        if (a != pinPos.end() && b != pinPos.end()) bezier(a->second, b->second, IM_COL32(230, 230, 235, 220));
+        if (a == pinPos.end() || b == pinPos.end()) continue;
+        const bool hot = st.selected == l.from || st.selected == l.to;
+        bezier(a->second, b->second, hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(215, 216, 222, 200), (hot ? 3.6f : 2.8f) * std::max(0.7f, z));
     }
     for (const auto& l : g.dataLinks) {
         auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
-        if (a != pinPos.end() && b != pinPos.end()) bezier(a->second, b->second, IM_COL32(150, 200, 150, 220));
+        if (a == pinPos.end() || b == pinPos.end()) continue;
+        const bool hot = st.selected == l.producer || st.selected == l.consumer;
+        bezier(a->second, b->second, hot ? IM_COL32(150, 240, 170, 255) : IM_COL32(110, 190, 130, 210), (hot ? 3.4f : 2.6f) * std::max(0.7f, z));
     }
+    dl->ChannelsSetCurrent(1);
 
     // Live drag wire + release handling.
     if (st.dragging) {
@@ -1203,12 +1312,13 @@ inline void Draw(EditorState& ed, bool* open) {
         if (from != pinPos.end()) {
             ImVec2 m = ImGui::GetIO().MousePos;
             bezier(st.dragFromOutput ? from->second : m, st.dragFromOutput ? m : from->second,
-                   IM_COL32(255, 255, 255, 150));
+                   IM_COL32(255, 255, 255, 170), 2.6f * std::max(0.7f, z));
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             // Find a pin under the mouse of the opposite side + same kind.
             ImVec2 m = ImGui::GetIO().MousePos;
-            int bestNode = -1, bestIdx = -1; float bestD = 26 * 26;   // forgiving snap radius
+            float snap = std::max(26.0f, 30.0f * z);
+            int bestNode = -1, bestIdx = -1; float bestD = snap * snap;   // forgiving snap radius
             int wantSide = st.dragFromOutput ? 0 : 1;   // connect to an input if we came from an output
             int wantKind = st.dragExec ? 0 : 1;
             for (auto& kvp : pinPos) {
@@ -1233,12 +1343,14 @@ inline void Draw(EditorState& ed, bool* open) {
             st.dragging = false;
         }
     }
+    dl->ChannelsMerge();
+    ImGui::SetWindowFontScale(1.0f);   // popups / overlay text at normal size
 
     // Right-click empty canvas: node palette.
     if (canvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !st.dragging) {
         st.openPalette = true;
-        st.paletteWorld = ImVec2(ImGui::GetIO().MousePos.x - canvasMin.x - st.pan.x,
-                                 ImGui::GetIO().MousePos.y - canvasMin.y - st.pan.y);
+        st.paletteWorld = ImVec2((ImGui::GetIO().MousePos.x - canvasMin.x - st.pan.x) / (z * kLayout),
+                                 (ImGui::GetIO().MousePos.y - canvasMin.y - st.pan.y) / (z * kLayout));
         ImGui::OpenPopup("##vspalette");
     }
     if (ImGui::BeginPopup("##vspalette")) {

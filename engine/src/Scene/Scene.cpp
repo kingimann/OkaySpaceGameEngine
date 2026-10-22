@@ -291,8 +291,8 @@ void Scene::FlushDestroyed() {
     if (m_destroyQueue.empty()) return;
     // Survivors get to drop references to what's going away (skinned meshes to
     // their bones, IK to its targets, ...) before anything is freed.
+    const std::unordered_set<const GameObject*> dying(m_destroyQueue.begin(), m_destroyQueue.end());
     {
-        std::unordered_set<const GameObject*> dying(m_destroyQueue.begin(), m_destroyQueue.end());
         std::vector<Component*> survivors;
         for (Component* c : m_active)  if (c && !dying.count(c->gameObject)) survivors.push_back(c);
         for (Component* c : m_pending) if (c && !dying.count(c->gameObject)) survivors.push_back(c);
@@ -315,6 +315,12 @@ void Scene::FlushDestroyed() {
         // Keep the shell (GameObject + Transform) in the graveyard; free the rest.
         for (auto it = m_objects.begin(); it != m_objects.end(); ++it)
             if (it->get() == go) {
+                // Unlink the shell from a surviving parent, or it lingers in the
+                // Hierarchy as an empty, inactive child (a deleted camera showed up
+                // as "a camera with no Camera component").
+                if (Transform* t = go->transform)
+                    if (Transform* par = t->Parent(); par && par->gameObject && !dying.count(par->gameObject))
+                        t->SetParent(nullptr, /*worldPositionStays=*/true);
                 (*it)->StripToTransform();
                 m_graveyard.push_back(std::move(*it));
                 m_objects.erase(it);

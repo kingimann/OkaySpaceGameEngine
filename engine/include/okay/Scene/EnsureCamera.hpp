@@ -26,17 +26,24 @@ inline bool SceneLooks2D(const Scene& s) {
 
 inline Camera* EnsureSceneCamera(Scene& s, bool orthographic, bool* created = nullptr) {
     if (created) *created = false;
-    Camera* first = nullptr;
+    // Prefer an active camera flagged main, then any active camera (promoted to
+    // main so the Game view and the player both use it), then an inactive one.
+    Camera* mainActive = nullptr; Camera* firstActive = nullptr; Camera* first = nullptr;
     for (const auto& up : s.Objects()) {
         if (!up) continue;
         if (auto* c = up->GetComponent<Camera>()) {
-            if (c->main) { if (!s.mainCamera) s.mainCamera = c; return c; }
             if (!first) first = c;
+            if (!up->active || !c->enabled) continue;
+            if (c->main && !mainActive) mainActive = c;
+            if (!firstActive) firstActive = c;
         }
     }
-    if (first) {
-        if (!s.mainCamera) s.mainCamera = first;
-        return first;
+    Camera* pick = mainActive ? mainActive : (firstActive ? firstActive : first);
+    if (pick) {
+        pick->main = true;
+        if (!s.mainCamera || s.mainCamera == pick || !s.mainCamera->gameObject || !s.mainCamera->gameObject->active)
+            s.mainCamera = pick;
+        return pick;
     }
     GameObject* go = s.CreateGameObject("Main Camera");
     auto* cam = go->AddComponent<Camera>();

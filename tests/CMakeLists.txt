@@ -720,3 +720,7 @@ add_test(NAME humanoid_retarget COMMAND test_humanoid_retarget)
 add_executable(test_character_model_setup test_character_model_setup.cpp)
 target_link_libraries(test_character_model_setup PRIVATE okay::engine)
 add_test(NAME character_model_setup COMMAND test_character_model_setup)
+
+add_executable(test_scene_defaults test_scene_defaults.cpp)
+target_link_libraries(test_scene_defaults PRIVATE okay::engine)
+add_test(NAME scene_defaults COMMAND test_scene_defaults)

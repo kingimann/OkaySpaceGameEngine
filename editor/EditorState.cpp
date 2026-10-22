@@ -312,7 +312,10 @@ void EditorState::NewScene2D() {
     NewScene();
     m_suppressUndo = true; // batch the template objects into one undo step
     m_scene.SetName("Untitled 2D");
-    if (Camera* c = m_scene.mainCamera) c->projection = Camera::Projection::Orthographic;
+    if (Camera* c = m_scene.mainCamera) {   // a 2D camera looks straight at the origin
+        c->projection = Camera::Projection::Orthographic;
+        if (c->transform) c->transform->localPosition = {0, 0, 10};
+    }
     GameObject* sp = CreateSprite("Sprite");
     sp->GetComponent<SpriteRenderer>()->color = Color::Green;
     m_suppressUndo = false;

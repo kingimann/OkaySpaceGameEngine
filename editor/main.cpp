@@ -1417,7 +1417,7 @@ int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
-bool g_showUIOverlay = false;    // Scene view: overlay the screen-space UI (Canvas) on the 3D/2D scene. OFF by default so editing 3D objects / 2D sprites isn't obscured by the HUD; edit UI in the dedicated UI Only mode / UI tab, or toggle this on. (The Game view always shows UI regardless.)
+bool g_showUIOverlay = true;     // Scene view: overlay the screen-space UI (Canvas) on the 3D/2D scene, clickable + draggable (Scene "..." menu toggles it). The UI button on the Scene toolbar switches to the flat UI editing view.
 bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
 bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view locked to UI-only)
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
@@ -2582,6 +2582,8 @@ bool  g_dragRawValid = false;   // a transform drag is accumulating into the bel
 Vec3  g_dragRawPos{0, 0, 0};
 Vec3  g_dragRawScale{1, 1, 1};
 bool  g_uiDragRawValid = false; // a UI move drag is accumulating into the below
+bool  g_uiResizeRawValid = false;   // a UI resize drag: the edges' true (unsnapped) screen positions
+float g_uiResizeRaw[4] = {0, 0, 0, 0};   // left, top, right, bottom
 Vec2  g_uiDragRaw{0, 0};
 bool  g_gizmoLocal = false; // gizmo axes in the object's local space (Unity's Local/Global)
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
@@ -6607,7 +6609,18 @@ void DrawProject(EditorState& ed) {
     auto mkFolder = [&]{ std::error_code ce; fs::path p = uniquePath("New Folder", ""); if (fs::create_directory(p, ce)) nameOnCreate(p); };
     auto mkScript = [&]{ fs::path p = uniquePath("NewScript", ".okay"); std::ofstream(p) << extide::StarterScript("okayscript"); ConsoleLog("Created " + p.string()); nameOnCreate(p); };
     auto mkMaterial = [&]{ fs::path p = uniquePath("New Material", ".okaymat"); if (Material{}.SaveToFile(p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); } };
-    auto mkScene = [&]{ fs::path p = uniquePath("New Scene", ".okayscene"); okay::Scene empty("New Scene"); if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); } };
+    // A new scene starts usable (like Unity's): a Main Camera, plus a sun in 3D.
+    auto mkScene = [&]{
+        fs::path p = uniquePath("New Scene", ".okayscene");
+        okay::Scene sc("New Scene");
+        okay::EnsureSceneCamera(sc, !ed.view3D);
+        if (ed.view3D) {
+            GameObject* sun = sc.CreateGameObject("Directional Light");
+            sun->AddComponent<Light>();
+            sun->transform->localRotation = Quat::Euler(50.0f, -30.0f, 0.0f);
+        }
+        if (SceneSerializer::SaveToFile(sc, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
+    };
     auto mkStdFolders = [&]{
         int made = 0; std::error_code ce;
         for (const char* f : {"Scenes", "Scripts", "Prefabs", "Materials", "Models", "Textures", "Audio"})
@@ -30831,12 +30844,22 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     // Work in true (scroll-applied) screen space so the dragged edges and
                     // the guide candidates below (and the canvas edges) share one frame;
                     // the scroll offset is undone only at the reconstruction step.
-                    float l = o.x, t = o.y, rr = o.x + sz.x, bb = o.y + sz.y;
+                    // The dragged edges follow the cursor from their TRUE (unsnapped)
+                    // positions, kept across frames: starting each frame from the snapped
+                    // rect meant a guide pulled the edge back every frame and it could
+                    // never leave a guide once it had snapped to one.
+                    if (!g_uiResizeRawValid) {
+                        g_uiResizeRaw[0] = o.x; g_uiResizeRaw[1] = o.y;
+                        g_uiResizeRaw[2] = o.x + sz.x; g_uiResizeRaw[3] = o.y + sz.y;
+                        g_uiResizeRawValid = true;
+                    }
                     float minPx = 8.0f * s;
-                    if (left)   l  = Mathf::Min(l + io.MouseDelta.x, rr - minPx);
-                    if (right)  rr = Mathf::Max(rr + io.MouseDelta.x, l + minPx);
-                    if (top)    t  = Mathf::Min(t + io.MouseDelta.y, bb - minPx);
-                    if (bottom) bb = Mathf::Max(bb + io.MouseDelta.y, t + minPx);
+                    if (left)   g_uiResizeRaw[0] = Mathf::Min(g_uiResizeRaw[0] + io.MouseDelta.x, g_uiResizeRaw[2] - minPx);
+                    if (right)  g_uiResizeRaw[2] = Mathf::Max(g_uiResizeRaw[2] + io.MouseDelta.x, g_uiResizeRaw[0] + minPx);
+                    if (top)    g_uiResizeRaw[1] = Mathf::Min(g_uiResizeRaw[1] + io.MouseDelta.y, g_uiResizeRaw[3] - minPx);
+                    if (bottom) g_uiResizeRaw[3] = Mathf::Max(g_uiResizeRaw[3] + io.MouseDelta.y, g_uiResizeRaw[1] + minPx);
+                    float l  = left   ? g_uiResizeRaw[0] : o.x,        t  = top    ? g_uiResizeRaw[1] : o.y;
+                    float rr = right  ? g_uiResizeRaw[2] : o.x + sz.x, bb = bottom ? g_uiResizeRaw[3] : o.y + sz.y;
                     // Resize modifiers (Unity/Photoshop-style): Shift = keep the original
                     // aspect ratio, Alt = resize symmetrically about the original center.
                     const float cx0 = o.x + sz.x * 0.5f, cy0 = o.y + sz.y * 0.5f;
@@ -30989,8 +31012,12 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         // snap(g_uiDragRaw) == r.position stays true. Otherwise the next
                         // frame rebuilds r.position from the un-pulled accumulator and the
                         // widget jumps back — the stutter you feel near guide lines.
-                        if (adjX != 0.0f) { g_uiDragRaw.x += adjX / s; r.position->x = snap(g_uiDragRaw.x); g_uiGuideX = gx; }
-                        if (adjY != 0.0f) { g_uiDragRaw.y += adjY / s; r.position->y = snap(g_uiDragRaw.y); g_uiGuideY = gy; }
+                        // The pull is applied to the SHOWN position only, never folded into
+                        // the raw accumulator: folding it in pulled the cursor-tracking
+                        // position back onto the guide every frame, so a widget that had
+                        // snapped could never be dragged away again. Recomputed from the
+                        // raw rect each frame, the snap now lets go once you drag past it.
+                        float pullX = adjX, pullY = adjY;
                         // Unity-style: a child clings to its OWNING PARENT. Snap our
                         // edges/center to the parent's edges, center and thirds with a
                         // wider (stickier) threshold so it wins over sibling/canvas guides.
@@ -31006,14 +31033,15 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                                         for (float c : cands) { float d = std::fabs(m - c); if (d < best) { best = d; adj = c - m; guide = c; found = true; } }
                                     return found ? adj : 0.0f;
                                 };
-                                Vec2 o2, sz2; GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o2, sz2);
-                                float pgx = -1.0f, pgy = -1.0f;
-                                float pax = stick(o2.x, o2.x + sz2.x * 0.5f, o2.x + sz2.x, px, pgx);
-                                float pay = stick(o2.y, o2.y + sz2.y * 0.5f, o2.y + sz2.y, py, pgy);
-                                if (pax != 0.0f) { g_uiDragRaw.x += pax / s; r.position->x = snap(g_uiDragRaw.x); g_uiGuideX = pgx; }
-                                if (pay != 0.0f) { g_uiDragRaw.y += pay / s; r.position->y = snap(g_uiDragRaw.y); g_uiGuideY = pgy; }
+                                float pgx = -1.0f, pgy = -1.0f;   // measured on the same (raw) rect
+                                float pax = stick(o.x, o.x + sz.x * 0.5f, o.x + sz.x, px, pgx);
+                                float pay = stick(o.y, o.y + sz.y * 0.5f, o.y + sz.y, py, pgy);
+                                if (pax != 0.0f) { pullX = pax; gx = pgx; }   // the parent wins
+                                if (pay != 0.0f) { pullY = pay; gy = pgy; }
                             }
                         }
+                        if (pullX != 0.0f) { r.position->x = snap(g_uiDragRaw.x) + pullX / s; g_uiGuideX = gx; }
+                        if (pullY != 0.0f) { r.position->y = snap(g_uiDragRaw.y) + pullY / s; g_uiGuideY = gy; }
                     }
                     // Carry child widgets (e.g. a button's label) by the same amount
                     // so a parent and its children move together.
@@ -31060,7 +31088,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
         }
         g_uiDragTarget = nullptr;
         g_uiResizeHandle = -1;
-        g_uiDragRawValid = false;          // reseed the raw accumulator next drag
+        g_uiDragRawValid = false; g_uiResizeRawValid = false;   // reseed the raw accumulators next drag
         g_uiGuideX = g_uiGuideY = -1.0f;   // clear guides when the drag ends
     }
 
@@ -31081,7 +31109,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         ed.PushUndo();                     // checkpoint before a resize
                         g_uiDragTarget = ed.selected();
                         g_uiResizeHandle = i;
-                        g_uiDragRawValid = false;          // fresh drag: reseed accumulator
+                        g_uiDragRawValid = false; g_uiResizeRawValid = false;   // fresh drag: reseed accumulators
                         g_uiHandled = true;
                         break;
                     }
@@ -31159,7 +31187,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 ed.PushUndo();                             // checkpoint before a move
                 g_uiDragTarget = hit;
                 g_uiResizeHandle = -1;
-                g_uiDragRawValid = false;                  // fresh drag: reseed accumulator
+                g_uiDragRawValid = false; g_uiResizeRawValid = false;   // fresh drag: reseed accumulators
                 g_uiHandled = true;
             } else if (uiOnly && !ImGui::IsKeyDown(ImGuiKey_Space)) {
                 // Clicked empty canvas in the UI-Only view: begin a marquee box-select
@@ -31363,7 +31391,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // UI lives in its OWN section — the dedicated UI Only mode / UI tab — never mixed
     // into the 3D or 2D scene while you edit world objects. So the Scene view never
     // overlays the Canvas; only the Game view (what the player sees) draws UI here.
-    if (gameView) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+    if (gameView || (g_showUIOverlay && !g_uiOnlyMode)) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Transform gizmo at the selection, reflecting the active tool (Move/Rotate/Scale).
     if (!gameView && ed.selected() && !IsUIElement(ed.selected())) {
@@ -32213,7 +32241,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // UI lives in its OWN section — the dedicated UI Only mode / UI tab — never mixed
     // into the 3D or 2D scene while you edit world objects. So the Scene view never
     // overlays the Canvas; only the Game view (what the player sees) draws UI here.
-    if (gameView) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+    if (gameView || (g_showUIOverlay && !g_uiOnlyMode)) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Camera Preview (Unity): when a perspective Camera is selected, show what
     // it sees in a small inset in the corner of the Scene view (slot 2 so it
@@ -33202,6 +33230,12 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     const ImGuiStyle& vst = ImGui::GetStyle();
     if (ImGui::Button(ed.view3D ? "3D" : "2D", ImVec2(ImGui::GetFrameHeight() * 1.35f, 0))) ed.view3D = !ed.view3D;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch between the 2D and 3D scene view");
+    if (!uiPanel) {   // UI editing view, one click away (was buried in the "..." menu)
+        ImGui::SameLine(0, 2);
+        if (AccentToggleButton("UI##uimodebtn", g_uiOnlyMode, ImVec2(ImGui::GetFrameHeight() * 1.35f, 0))) g_uiOnlyMode = !g_uiOnlyMode;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(g_uiOnlyMode ? "UI editing view: the game screen with only the UI. Click to go back to the scene."
+                                                                   : "UI editing view: edit the HUD / menus on a flat game screen");
+    }
     auto toolGap = [&] {   // a hairline divider between toolbar groups
         ImGui::SameLine(0, vst.ItemSpacing.x * 1.5f);
         ImVec2 p = ImGui::GetCursorScreenPos();
@@ -33306,6 +33340,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (!uiPanel) {
             if (ImGui::MenuItem("UI only view", nullptr, g_uiOnlyMode)) g_uiOnlyMode = !g_uiOnlyMode;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the scene hidden.\nTip: View > UI Editor opens this as its own tab.");
+            if (ImGui::MenuItem("Show UI in Scene view", nullptr, g_showUIOverlay)) g_showUIOverlay = !g_showUIOverlay;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw the HUD / menus over the 2D or 3D scene (click + drag to edit them).\nTurn off to click objects that sit behind the UI.");
             if (ImGui::MenuItem("Isolate selection", "Shift+I", g_isolate != nullptr, g_isolate || ed.selected()))
                 g_isolate = g_isolate ? nullptr : ed.selected();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show ONLY the selected object and its children in the Scene view.\nView-only: the Game view and Play mode are unaffected.");
@@ -33654,7 +33690,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // EditUIWidgets pick widgets by their (invisible) rects would hijack clicks and block
     // object selection + the Move/Rotate/Scale gizmos. Edit UI in the UI view.
     OKAY_TRACE(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
-    if (ownsUIInteraction && uiOnly) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
+    // With "Show UI in Scene view" the UI is drawn over the scene, so it's editable there too.
+    if (ownsUIInteraction && (uiOnly || g_showUIOverlay)) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
     else                             g_uiHandled = false;   // scene view (or not the active viewport): leave clicks for object pick / gizmos
 
     if (uiOnly) {
@@ -34521,8 +34558,12 @@ void DrawGameView(EditorState& ed) {
                         IM_COL32(222, 224, 230, 220), sub);
         }
     } else {
-        dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(180, 180, 190, 255),
-                    "Game (press Play)");
+        // Below the resolution label (they used to print on top of each other).
+        const char* idle = "Edit mode - press Play to run";
+        ImVec2 ip(canvasPos.x + 6, canvasPos.y + 8 + ImGui::GetTextLineHeight());
+        dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
+                          IM_COL32(0, 0, 0, 120), 3.0f);
+        dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);
     }
     // In-view Stats overlay (Unity's Game-view Stats): FPS, frame time, object
     // and triangle counts, drawn over the running game's top-right corner.

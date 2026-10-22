@@ -35090,6 +35090,62 @@ static void OkayVpInstall() {
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
 }
 
+// ---- Launcher handshake: "save your project and close" ---------------------------
+// The launcher won't exit or install an update while the editor is open. It drops
+// okay_ipc_request.txt ("save-quit <unix time>") next to OkayEngine.exe and waits;
+// the editor saves the scene, every modified script and the open graph, leaves
+// okay_ipc_ack.txt and quits.
+static std::string LauncherIpcPath(const char* file) {
+    static std::string base;
+    if (base.empty()) {
+        char* b = SDL_GetBasePath();
+        base = b ? b : "";
+        if (b) SDL_free(b);
+    }
+    return base + file;
+}
+// Save the scene, modified scripts and the open visual-script graph. False if any failed.
+static bool SaveEverything(EditorState& ed) {
+    bool ok = true;
+    if (ed.isPlaying()) ed.Stop();   // save the edited scene, not the running copy
+    if (ed.dirty) {
+        std::string p = ed.path();
+        if (p.empty()) p = ed.projectDir().empty() ? std::string("scene.okayscene") : ed.projectDir() + "/Untitled.okayscene";
+        if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); } else ok = false;
+    }
+    for (okay::ScriptComponent* t : g_scriptTabs) {
+        if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+        const char* live = PeekCodeBuffer(t);
+        std::ofstream f(t->Path(), std::ios::binary);
+        if (f && live) { f << live; g_scriptSaved[t] = live; } else ok = false;
+    }
+    auto& vg = okay::editor::vsed::State().g;
+    if (vg.dirty && !vg.path.empty() && !vg.save(vg.path)) ok = false;
+    return ok;
+}
+static void PollLauncherRequest(EditorState& ed, bool& running) {
+    static Uint32 last = 0;
+    const Uint32 now = SDL_GetTicks();
+    if (now - last < 400) return;
+    last = now;
+    namespace fs = std::filesystem;
+    const std::string req = LauncherIpcPath("okay_ipc_request.txt");
+    std::error_code ec;
+    if (!fs::exists(req, ec)) return;
+    std::string line;
+    { std::ifstream f(req); std::getline(f, line); }
+    fs::remove(req, ec);
+    std::istringstream ls(line);
+    std::string verb; long long when = 0;
+    ls >> verb >> when;
+    const long long age = (long long)std::time(nullptr) - when;
+    if (verb != "save-quit" || age > 120 || age < -120) return;   // stale or unknown
+    const bool ok = SaveEverything(ed);
+    std::ofstream(LauncherIpcPath("okay_ipc_ack.txt")) << (ok ? "saved" : "save-failed") << "\n";
+    if (ok) running = false;
+    else { ConsoleLog("Couldn't save everything - the editor stays open so nothing is lost.", 2); g_quitRequested = true; }
+}
+
 // ---- One graph editor: the Actions step library inside the Visual Script graph ----
 // Single-step nodes skip the list-only flow steps (jumps, block openers, Wait):
 // the graph has its own Branch / loops / Delay, and an "Action Steps" node keeps
@@ -35371,6 +35427,10 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
+    {   // a request left over from an earlier session must not close this one
+        std::error_code ec;
+        std::filesystem::remove(LauncherIpcPath("okay_ipc_request.txt"), ec);
+    }
     LoadRecent();
     LoadSettings();
     // Brand-new install on a high-DPI display (common on Windows 11 laptops at
@@ -36018,6 +36078,7 @@ int main(int argc, char** argv) {
         }
         { OKAY_PROFILE("UI.FileDialogs"); DrawFileDialogs(ed); }
         { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); }
+        PollLauncherRequest(ed, running);   // the launcher asked us to save and close
         { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
         { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); }

@@ -58,6 +58,7 @@
 #if defined(_WIN32)
 #  include <windows.h>
 #  include <shellapi.h>   // Shell_NotifyIcon (system-tray icon)
+#  include <tlhelp32.h>   // process snapshot: is the editor still open?
 #  include <SDL_syswm.h>  // HWND of the SDL window, for the tray
 #else
 #  include <unistd.h>
@@ -133,6 +134,11 @@ std::string g_upMessage = "Checking for updates...";
 std::string g_upLatest;
 bool g_upRelaunchNeeded = false;
 SDL_Thread* g_upThread = nullptr;
+// The editor has to close (with its project saved) before the launcher exits or
+// installs an update. A pending action waits for it: 1 = exit, 2 = update.
+static bool EditorRunning();
+static int  g_afterEditor = 0;
+static bool g_afterEditorShowDialog = true;   // the update's showDialog, kept for later
 
 // Rich update progress, so the updater can show a real dialog (from/to version,
 // stepped progress, a live download bar in MB, elapsed time, and the changelog)
@@ -898,6 +904,8 @@ int RunUpdateCheck(void*) {
 void StartUpdateCheck(bool showDialog = true) {
     UpState s = GetState();
     if (s == Up_Checking || s == Up_Downloading) return;
+    // Updating replaces OkayEngine.exe: the editor must be closed (and saved) first.
+    if (EditorRunning()) { g_afterEditor = 2; g_afterEditorShowDialog = showDialog; return; }
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
@@ -1044,6 +1052,47 @@ static void PumpPlaytime() {
             g_playProcs.erase(g_playProcs.begin() + (long)i);
         } else ++i;
     }
+}
+static bool EditorRunning() {
+    for (const auto& pp : g_playProcs) {
+        if (pp.key != "editor") continue;
+#if defined(_WIN32)
+        if (WaitForSingleObject(pp.h, 0) == WAIT_TIMEOUT) return true;
+#else
+        if (kill(pp.pid, 0) == 0) return true;   // (reaped by PumpPlaytime once it exits)
+#endif
+    }
+#if defined(_WIN32)
+    // An editor opened outside the launcher counts too.
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe; pe.dwSize = sizeof(pe);
+        bool found = false;
+        if (Process32FirstW(snap, &pe))
+            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0) { found = true; break; } } while (Process32NextW(snap, &pe));
+        CloseHandle(snap);
+        if (found) return true;
+    }
+#endif
+    return false;
+}
+// Ask the running editor to save its project and close (it polls this file).
+static bool RequestEditorSaveQuit() {
+    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+    if (ed.empty()) return false;
+    fs::path dir = fs::path(ed).parent_path();
+    std::error_code ec; fs::remove(dir / "okay_ipc_ack.txt", ec);
+    std::ofstream f(dir / "okay_ipc_request.txt");
+    f << "save-quit " << (long long)std::time(nullptr) << "\n";
+    return (bool)f;
+}
+// What the editor answered ("saved" / "save-failed"), or "" while waiting.
+static std::string EditorAck() {
+    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+    if (ed.empty()) return {};
+    std::ifstream f(fs::path(ed).parent_path() / "okay_ipc_ack.txt");
+    std::string a; std::getline(f, a);
+    return a;
 }
 static bool PlaytimeRunning(const std::string& key) {
     for (const auto& pp : g_playProcs) if (pp.key == key) return true;
@@ -10958,7 +11007,7 @@ int main(int argc, char** argv) {
         // A right-click on the tray icon raises the Open/Quit menu (runs here, not
         // in the message hook, because TrackPopupMenu blocks).
         if (g_trayMenuReq) { g_trayMenuReq = false; OkayTrayShowMenu(); }
-        if (g_trayQuitReq) { g_trayQuitReq = false; OkayTrayRemove(); running = false; }
+        if (g_trayQuitReq) { g_trayQuitReq = false; if (EditorRunning()) g_afterEditor = 1; else { OkayTrayRemove(); running = false; } }
         // A tray-icon click (or a second launch) restores the launcher.
         if (g_trayRestoreReq) {
             g_trayRestoreReq = false;
@@ -11028,7 +11077,7 @@ int main(int argc, char** argv) {
         if (g_upRelaunchNeeded && GetState() == Up_Updated) {
             static Uint32 relaunchAt = 0;
             if (relaunchAt == 0) relaunchAt = SDL_GetTicks() + 1600;
-            else if (SDL_GetTicks() >= relaunchAt) { Launch(g_selfPath); running = false; }
+            else if (SDL_GetTicks() >= relaunchAt) { if (EditorRunning()) { g_afterEditor = 3; relaunchAt = 0xFFFFFFFFu; } else { Launch(g_selfPath); running = false; } }
         }
 
         // Periodic update check — runs while open AND while minimized (this block
@@ -11112,7 +11161,9 @@ int main(int argc, char** argv) {
                 ImGui::TextUnformatted("Do you want to exit OkaySpace, or just minimize it?");
                 ImGui::Dummy(ImVec2(0, 10));
                 if (ImGui::Button("Exit", ImVec2(120, 0))) {
-                    running = false; closeConfirm = false; ImGui::CloseCurrentPopup();
+                    if (EditorRunning()) g_afterEditor = 1;   // the editor closes (saved) first
+                    else running = false;
+                    closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Minimize", ImVec2(120, 0))) {
@@ -11122,6 +11173,55 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
                     ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                     closeConfirm = false; ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        // ---- "Close the editor first" (exit / update while the editor is open) ----
+        // The launcher never quits or replaces the editor under an open project: it
+        // asks the editor to save everything and close, waits, then carries on.
+        {
+            static bool s_closing = false;
+            static Uint32 s_sentAt = 0;
+            if (g_afterEditor && !ImGui::IsPopupOpen("Close the editor first")) ImGui::OpenPopup("Close the editor first");
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Close the editor first", nullptr,
+                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+                const bool upd = g_afterEditor == 2 || g_afterEditor == 3;
+                const bool edOpen = EditorRunning();
+                const std::string ack = s_closing ? EditorAck() : std::string();
+                if (!edOpen) {   // closed: do what was asked
+                    const int act = g_afterEditor;
+                    g_afterEditor = 0; s_closing = false;
+                    ImGui::CloseCurrentPopup();
+                    if (act == 1) running = false;
+                    else if (act == 2) StartUpdateCheck(g_afterEditorShowDialog);
+                    else if (act == 3) { Launch(g_selfPath); running = false; }   // restart to finish an update
+                } else if (!s_closing) {
+                    ImGui::TextUnformatted("The OkaySpace editor is still open.");
+                    ImGui::TextDisabled(upd ? "It has to close before the update can replace it."
+                                            : "It has to close before the launcher does.");
+                    ImGui::TextDisabled("Your project is saved first - nothing is lost.");
+                    ImGui::Dummy(ImVec2(0, 8));
+                    if (ImGui::Button(upd ? "Save project, close editor & update" : "Save project & close editor", ImVec2(300, 32))) {
+                        if (RequestEditorSaveQuit()) { s_closing = true; s_sentAt = SDL_GetTicks(); }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(110, 32)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                        g_afterEditor = 0; ImGui::CloseCurrentPopup();
+                    }
+                } else if (ack == "save-failed") {
+                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "The editor couldn't save everything, so it stayed open.");
+                    ImGui::TextDisabled("Save from the editor (File > Save), close it, then try again.");
+                    if (ImGui::Button("OK", ImVec2(110, 30))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
+                } else {
+                    static const char* kDots[] = {"", ".", "..", "..."};
+                    ImGui::Text("Saving your project and closing the editor%s", kDots[(SDL_GetTicks() / 400) % 4]);
+                    if (SDL_GetTicks() - s_sentAt > 15000)
+                        ImGui::TextDisabled("Still open - it may be waiting for you. Check the editor window.");
+                    ImGui::Dummy(ImVec2(0, 6));
+                    if (ImGui::Button("Cancel", ImVec2(110, 30))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
                 }
                 ImGui::EndPopup();
             }
@@ -11246,7 +11346,7 @@ int main(int argc, char** argv) {
                 // Action buttons depend on state.
                 if (us == Up_Updated && g_upRelaunchNeeded) {
                     if (ImGui::Button("Restart now", ImVec2(140, 34))) {
-                        Launch(g_selfPath); running = false;
+                        if (EditorRunning()) g_afterEditor = 3; else { Launch(g_selfPath); running = false; }
                         g_upModalOpen = false; ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
@@ -11851,7 +11951,7 @@ int main(int argc, char** argv) {
                 if (click) {
                     if (upAvail) StartUpdateCheck(true);
                     else if (st == Up_Failed) StartUpdateCheck();
-                    else if (g_upRelaunchNeeded && st == Up_Updated) { Launch(g_selfPath); running = false; }
+                    else if (g_upRelaunchNeeded && st == Up_Updated) { if (EditorRunning()) g_afterEditor = 3; else { Launch(g_selfPath); running = false; } }
                 }
                 ImGui::Dummy(ImVec2(0, 2));
             } else if (upNote) {
@@ -11882,7 +11982,7 @@ int main(int argc, char** argv) {
                 }
                 if (g_upRelaunchNeeded && st == Up_Updated) {
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
-                    if (PrimaryButton("Restart now", ImVec2(w - 48, 24))) { Launch(g_selfPath); running = false; }
+                    if (PrimaryButton("Restart now", ImVec2(w - 48, 24))) { if (EditorRunning()) g_afterEditor = 3; else { Launch(g_selfPath); running = false; } }
                 }
                 ImGui::SetCursorScreenPos(ImVec2(mn.x, mn.y + h + 8.0f));
             }

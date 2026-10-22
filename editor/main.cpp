@@ -5166,6 +5166,61 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
         ConsoleLog(log + " — press Play to try it");
 }
 
+// Inspector row shared by the player controllers and Character: swap the
+// body model, re-detect / turn its facing, and refit the physics body to it.
+static void CharacterModelTools(EditorState& ed, GameObject* go, const char* id) {
+    char lbl[64];
+    std::snprintf(lbl, sizeof(lbl), "Set Character Model...##%s", id);
+    if (ImGui::Button(lbl)) {
+        if (const char* p = OpenModelFileDialog("Set character model"))
+            EditorAttachCharacterModel(ed, go, p);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body: auto-sized,\nfeet grounded, turned to face forward, collider fitted and its\nidle/walk/run clips wired. Or drop a model asset onto this object.");
+    GameObject* model = okay::FindCharacterModelRoot(ed.scene(), go);
+    if (!model) return;
+    ImGui::SameLine();
+    std::snprintf(lbl, sizeof(lbl), "Fix Facing##%s", id);
+    if (ImGui::SmallButton(lbl)) {
+        ed.PushUndo();
+        int d = okay::FaceCharacterModel(ed.scene(), go, model, 0.0f);
+        if (d < 0) ConsoleLog("Couldn't read which way '" + model->name + "' faces (no left/right bones) - use Turn 180 / 90.", 1);
+        else ConsoleLog(d == 0 ? "'" + model->name + "' already faces forward"
+                               : "Turned '" + model->name + "' " + std::to_string(d) + " deg to face forward");
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Read the model's facing from its skeleton and turn it to face\nthe direction the controller walks (forward).");
+    ImGui::SameLine();
+    std::snprintf(lbl, sizeof(lbl), "Turn 180##%s", id);
+    if (ImGui::SmallButton(lbl)) { ed.PushUndo(); okay::FaceCharacterModel(ed.scene(), go, model, 180.0f); ed.dirty = true; }
+    ImGui::SameLine();
+    std::snprintf(lbl, sizeof(lbl), "90##%s", id);
+    if (ImGui::SmallButton(lbl)) { ed.PushUndo(); okay::FaceCharacterModel(ed.scene(), go, model, 90.0f); ed.dirty = true; }
+    ImGui::SameLine();
+    std::snprintf(lbl, sizeof(lbl), "Fit Collider##%s", id);
+    if (ImGui::SmallButton(lbl)) {
+        ed.PushUndo();
+        ConsoleLog(go->name + ": " + okay::FitCharacterCollider(ed.scene(), go, model));
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size the player's collider around the model (adds a capsule +\nRigidbody 3D when missing).");
+}
+
+// A controller added from Add Component: give it a physics body right away
+// (it walks through walls and falls through floors without one) and, when it
+// went straight onto an imported model, face that model forward.
+static void SetupControllerBody(EditorState& ed, GameObject* go) {
+    if (!go) return;
+    GameObject* model = okay::FindCharacterModelRoot(ed.scene(), go);
+    std::string msg;
+    if (model) {
+        int d = okay::FaceCharacterModel(ed.scene(), go, model, 0.0f);
+        if (d > 0) msg = "turned the model " + std::to_string(d) + " deg to face forward, ";
+    }
+    if (!go->GetComponent<Collider3D>() || !go->GetComponent<Rigidbody3D>())
+        msg += okay::FitCharacterCollider(ed.scene(), go, model);
+    if (!msg.empty()) ConsoleLog(go->name + ": " + msg);
+}
+
 // ---- In-editor auto-rig: bind a model to the humanoid skeleton --------------
 // Merge every mesh under `go` (baked into go's local space), bind it to the
 // Character's humanoid skeleton (nearest-bone auto-weights) and hide the source
@@ -23395,11 +23450,7 @@ void DrawInspector(EditorState& ed) {
             // One-click custom character: import a model file and make it THE body
             // (sized, grounded, faced, locomotion wired; blocky body hidden). Same
             // as dropping a model asset onto this object in the Hierarchy.
-            if (ImGui::Button("Set Character Model...##char")) {
-                if (const char* p = OpenModelFileDialog("Set character model"))
-                    EditorAttachCharacterModel(ed, go, p);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this character's body:\nauto-sized to the capsule, feet grounded, facing matched, and its\nidle/walk/run clips wired to movement. You can also just DROP a model\nasset onto this object in the Hierarchy.");
+            CharacterModelTools(ed, go, "char");
             if (!ch->enabled) ImGui::TextDisabled("(default body hidden - a custom model is the character)");
             if (ch->HasCustomBind()) {
                 ImGui::TextDisabled("(rigged model: %d verts bound to the skeleton)",
@@ -25905,6 +25956,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fp = dynamic_cast<FirstPersonController*>(curComp)) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
+            CharacterModelTools(ed, go, "fp");
             // Movement-feel presets: speed/accel/air-control/jump tuned together.
             {
                 auto fpre = [&](int which) {
@@ -26005,11 +26057,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
         if (CompHeader("Third Person Controller", tp, &toRemove)) {
-            if (ImGui::Button("Set Character Model...##tp")) {
-                if (const char* p = OpenModelFileDialog("Set character model"))
-                    EditorAttachCharacterModel(ed, go, p);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body (auto-sized,\ngrounded, locomotion clips wired). Or drop a model asset onto this\nobject in the Hierarchy.");
+            CharacterModelTools(ed, go, "tp");
             SectionHeader("Movement");
             // Same movement-feel presets as the First Person controller.
             {
@@ -28553,12 +28601,12 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Gameplay");
           if (o) {
             if (item(!go->GetComponent<CharacterController2D>(), "Character Controller 2D")) { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { go->AddComponent<FirstPersonController>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { go->AddComponent<ThirdPersonController>(); ed.dirty = true; }
-            if (item(!go->GetComponent<TopDownController>(), "Top Down Controller (3D)")) { go->AddComponent<TopDownController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { ed.PushUndo(); go->AddComponent<CharacterController3D>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { ed.PushUndo(); go->AddComponent<FirstPersonController>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonController>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(!go->GetComponent<TopDownController>(), "Top Down Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<TopDownController2D>(), "Top Down Controller 2D")) { go->AddComponent<TopDownController2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { go->AddComponent<ThirdPersonShooterController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
@@ -28590,7 +28638,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CraftingMenu>(), "Crafting Menu (auto UI)")) { go->AddComponent<CraftingMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<MeleeAttacker>(), "Melee Attacker")) { go->AddComponent<MeleeAttacker>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spawner>(), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { ed.PushUndo(); go->AddComponent<ClickToMoveController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
@@ -35489,6 +35537,14 @@ int main(int argc, char** argv) {
                 vg.linkExec(st, 0, pr); vg.linkExec(up, 0, fl); vg.linkExec(fl, 0, sc); vg.linkExec(fl, 1, ff);
                 vg.linkExec(ff, 0, pc); vg.linkData(sc, 1, ri, 0);
                 g_showVisualScript = true;
+            }
+            // OKAY_UI_CHARMODEL=model.glb: a Third Person player wearing that model,
+            // through the same path as Set Character Model (facing/collider shots).
+            if (const char* cm = std::getenv("OKAY_UI_CHARMODEL"); cm && s_focusFrames == 31) {
+                GameObject* p = okay::Templates::AddThirdPersonPlayer(ed.scene(), ed.camTarget);
+                EditorAttachCharacterModel(ed, p, cm);
+                ed.camYaw = 215.0f; ed.camPitch = 12.0f; ed.camDist = 4.5f;
+                ed.camTarget = p->transform->Position() + Vec3{0, 0.9f, 0};
             }
             // OKAY_UI_IMPORT=model.glb: import it and select it (screenshots of rigs).
             if (const char* imp = std::getenv("OKAY_UI_IMPORT"); imp && s_focusFrames == 31) {

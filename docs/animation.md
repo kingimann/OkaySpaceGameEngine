@@ -285,10 +285,19 @@ Any imported model can BE your playable character — no rigging setup:
 - **Drop a model asset** (.glb/.gltf/.fbx/.obj...) from the Project panel
   **onto a player in the Hierarchy** (any object with a controller or a
   Character), or press **Set Character Model...** on the Character /
-  Third-Person Controller in the Inspector.
+  First-Person / Third-Person Controller in the Inspector.
 - The model imports as a child of the player, auto-sized to the
-  character's height, feet grounded on the capsule's origin, and turned
-  to face the way the body faces.
+  character's height and feet grounded on the capsule's origin.
+- **Facing is read from the skeleton** (its left/right thighs, arms and
+  feet), so a model exported facing +Z, -Z or sideways all end up facing
+  the way the controller walks. Next to the button: **Fix Facing**
+  re-detects it, **Turn 180** / **90** turn it by hand (models with no
+  recognisable left/right bones).
+- **The collider follows the model**: the player's Box / Capsule Collider
+  is refitted around the model you see (a capsule + Rigidbody 3D are added
+  when the player had none). **Fit Collider** redoes it after you rescale.
+  Adding a First/Third-Person (or other) controller from *Add Component*
+  also gives the object a fitted collider + rigidbody straight away.
 - Its animation clips are wired to locomotion automatically: clips named
   *idle/stand*, *walk*, and *run/sprint/jog* map to the auto
   idle/walk/run switching (smooth 1D blend), driven by how fast the

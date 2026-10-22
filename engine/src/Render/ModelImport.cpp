@@ -12,6 +12,9 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
+#include "okay/Components/Camera.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "ufbx.h"
@@ -1526,6 +1529,240 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
     return added;
 }
 
+int CountHumanoidBones(Scene& scene, GameObject* modelRoot) {
+    if (!modelRoot) return 0;
+    int n = 0, sc = 0;
+    std::vector<bool> seen(15, false);
+    for (const auto& up : scene.Objects()) {
+        GameObject* g = up.get();
+        if (!g || g == modelRoot || !g->IsSelfOrDescendantOf(modelRoot)) continue;
+        int b = HumanoidRetarget::ClassifyBone(g->name, sc);
+        if (b >= 0 && b < 15 && !seen[b]) { seen[b] = true; ++n; }
+    }
+    return n;
+}
+
+int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog) {
+    auto say = [&](const std::string& m) { if (outLog) *outLog = m; };
+    if (!modelRoot || !modelRoot->transform) { say("Select an imported model first."); return 0; }
+    if (auto* mr = modelRoot->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty() &&
+        !modelRoot->GetComponent<Character>()) {
+        say("'" + modelRoot->name + "' is a single merged mesh with no skeleton - use Rig Model (Humanoid) instead.");
+        return 0;
+    }
+    const int bones = CountHumanoidBones(scene, modelRoot);
+    if (bones < 8) {
+        say("'" + modelRoot->name + "' doesn't look like a humanoid skeleton (" + std::to_string(bones) +
+            "/15 bones recognised). Rig Model (Humanoid) can bind its mesh to the built-in skeleton instead.");
+        return bones;
+    }
+    auto* ch = modelRoot->GetComponent<Character>();
+    const bool addedCh = !ch;
+    if (!ch) ch = modelRoot->AddComponent<Character>();
+    ch->driveExternal = true;
+    ch->separateParts = false;
+    ch->anim = 1;   // idle
+    auto* rt = modelRoot->GetComponent<HumanoidRetarget>();
+    if (!rt) rt = modelRoot->AddComponent<HumanoidRetarget>();
+    rt->Rewire();
+    const int found = rt->DetectAndWire(scene, modelRoot);
+    if (found < 8) {
+        if (addedCh) ch->enabled = false;
+        say("Only " + std::to_string(found) + "/15 humanoid bones matched on '" + modelRoot->name + "'.");
+        return found;
+    }
+    // The retarget owns the pose: the model's own clips stay for one-shots but
+    // mustn't auto-play over it every frame.
+    for (const auto& up : scene.Objects())
+        if (up->IsSelfOrDescendantOf(modelRoot))
+            if (auto* ma = up->GetComponent<ModelAnimator>()) { ma->autoPlay = false; ma->driveByMovement = false; }
+    say("Built-in animations on '" + modelRoot->name + "' (" + std::to_string(found) + "/15 bones matched)");
+    return found;
+}
+
+// Bounds of every mesh under `root` as currently posed, in the space `toSpace`
+// maps world into. Skinned meshes are deformed here from their bind pose and
+// joints: with GPU skinning the renderer's mesh holds the raw bind vertices
+// (centimetres on Mixamo rigs, before the armature's scale), so measuring it
+// sized characters 100x off.
+static bool SubtreeBounds(Scene& scene, GameObject* root, const Mat4& toSpace, Vec3& lo, Vec3& hi) {
+    bool any = false;
+    auto grow = [&](const Vec3& w) {
+        if (!any) { lo = hi = w; any = true; return; }
+        lo.x = std::fmin(lo.x, w.x); hi.x = std::fmax(hi.x, w.x);
+        lo.y = std::fmin(lo.y, w.y); hi.y = std::fmax(hi.y, w.y);
+        lo.z = std::fmin(lo.z, w.z); hi.z = std::fmax(hi.z, w.z);
+    };
+    for (const auto& up : scene.Objects()) {
+        GameObject* g = up.get();
+        if (!g || !g->transform || !g->IsSelfOrDescendantOf(root)) continue;
+        auto* mr = g->GetComponent<MeshRenderer>();
+        if (!mr) continue;
+        auto* sm = g->GetComponent<SkinnedMesh>();
+        if (sm) sm->ResolveJoints();
+        if (sm && sm->Ready() && sm->jointIdx.size() == sm->bind.vertices.size() &&
+            sm->jointWt.size() == sm->bind.vertices.size()) {
+            // World position per vertex: sum of w * jointWorld * inverseBind * v.
+            std::vector<Mat4> skin(sm->joints.size());
+            for (std::size_t j = 0; j < skin.size(); ++j) {
+                Mat4 jw = sm->joints[j] ? sm->joints[j]->LocalToWorldMatrix() : g->transform->LocalToWorldMatrix();
+                Mat4 ib = j < sm->inverseBind.size() ? sm->inverseBind[j] : Mat4::Identity();
+                skin[j] = toSpace * jw * ib;
+            }
+            Mat4 rigid = toSpace * g->transform->LocalToWorldMatrix();
+            for (std::size_t v = 0; v < sm->bind.vertices.size(); ++v) {
+                const Vec3& p = sm->bind.vertices[v];
+                Vec3 acc{0, 0, 0}; float wsum = 0.0f;
+                for (int k = 0; k < 4; ++k) {
+                    float w = sm->jointWt[v][k]; int j = sm->jointIdx[v][k];
+                    if (w <= 1e-4f || j < 0 || j >= (int)skin.size()) continue;
+                    acc = acc + skin[j].MultiplyPoint(p) * w; wsum += w;
+                }
+                grow(wsum > 1e-4f ? acc * (1.0f / wsum) : rigid.MultiplyPoint(p));
+            }
+            continue;
+        }
+        if (mr->mesh.vertices.empty()) continue;
+        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        Mat4 m = toSpace * g->transform->LocalToWorldMatrix();
+        for (int c = 0; c < 8; ++c)
+            grow(m.MultiplyPoint({c & 1 ? bhi.x : blo.x, c & 2 ? bhi.y : blo.y, c & 4 ? bhi.z : blo.z}));
+    }
+    return any;
+}
+
+// Which way an imported humanoid faces, read from its skeleton: the
+// character's right side (right thigh/arm/foot minus the left one) crossed
+// with up. Flattened, in `toSpace` coordinates. False when the rig has no
+// recognisable left/right pairs (static meshes, non-humanoids).
+static bool DetectModelForward(Scene& scene, GameObject* root, const Mat4& toSpace, Vec3& fwd) {
+    Vec3 pos[15]; int best[15];
+    for (int i = 0; i < 15; ++i) best[i] = -1;
+    for (const auto& up : scene.Objects()) {
+        GameObject* g = up.get();
+        if (!g || !g->transform || g == root || !g->IsSelfOrDescendantOf(root)) continue;
+        int sc = 0;
+        int b = HumanoidRetarget::ClassifyBone(g->name, sc);
+        if (b < 3 || b >= 15 || sc <= best[b]) continue;
+        best[b] = sc;
+        pos[b] = toSpace.MultiplyPoint(g->transform->Position());
+    }
+    const int pairs[4][2] = {{9, 12}, {3, 6}, {11, 14}, {4, 7}};   // thighs, upper arms, feet, forearms
+    Vec3 right{0, 0, 0}; int n = 0;
+    for (const auto& p : pairs)
+        if (best[p[0]] >= 0 && best[p[1]] >= 0) { right = right + (pos[p[1]] - pos[p[0]]); ++n; }
+    if (!n) return false;
+    float len = std::sqrt(right.x * right.x + right.z * right.z);
+    if (len < 1e-6f) return false;
+    // right = forward x up  =>  forward = up x right = (r.z, 0, -r.x).
+    fwd = {right.z / len, 0.0f, -right.x / len};
+    // Exported characters almost always face an axis: snap when close so a
+    // slightly asymmetric bind pose doesn't leave the model a few degrees off.
+    float a = std::atan2(fwd.x, fwd.z), q = 1.5707963f;
+    float snapped = std::round(a / q) * q;
+    if (std::fabs(a - snapped) < 0.35f) fwd = {std::sin(snapped), 0.0f, std::cos(snapped)};
+    return true;
+}
+
+// Turn the model about the player's vertical axis by `fix` (player-local).
+// When the model IS the player (a controller added straight onto a model),
+// its children turn instead, so the controller keeps owning the root.
+static void TurnModel(GameObject* player, GameObject* modelRoot, const Quat& fix) {
+    if (modelRoot != player) {
+        modelRoot->transform->localPosition = fix * modelRoot->transform->localPosition;
+        modelRoot->transform->localRotation = (fix * modelRoot->transform->localRotation).Normalized();
+        return;
+    }
+    for (Transform* c : player->transform->Children()) {
+        if (!c || !c->gameObject || c->gameObject->GetComponent<Camera>()) continue;
+        c->localPosition = fix * c->localPosition;
+        c->localRotation = (fix * c->localRotation).Normalized();
+    }
+}
+
+GameObject* FindCharacterModelRoot(Scene& scene, GameObject* player) {
+    if (!player || !player->transform) return nullptr;
+    auto hasModel = [&](GameObject* root) {
+        for (const auto& up : scene.Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+            if (g->GetComponent<Camera>()) return false;
+            if (g->GetComponent<SkinnedMesh>() || g->GetComponent<ModelAnimator>()) return true;
+            if (g != player) if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) return true;
+        }
+        return false;
+    };
+    for (Transform* c : player->transform->Children()) {
+        GameObject* g = c ? c->gameObject : nullptr;
+        if (!g || g->name == "Rig" || !g->active) continue;
+        if (hasModel(g)) return g;
+    }
+    // A controller put straight onto an imported model: the player IS the model.
+    if (!player->GetComponent<Character>())
+        for (const auto& up : scene.Objects())
+            if (up.get() != player && up->IsSelfOrDescendantOf(player) &&
+                (up->GetComponent<SkinnedMesh>() || up->GetComponent<MeshRenderer>()))
+                return player;
+    return nullptr;
+}
+
+int FaceCharacterModel(Scene& scene, GameObject* player, GameObject* modelRoot, float turnDegrees) {
+    if (!player || !player->transform) return -1;
+    if (!modelRoot) modelRoot = FindCharacterModelRoot(scene, player);
+    if (!modelRoot || !modelRoot->transform) return -1;
+    if (turnDegrees != 0.0f) {   // manual turn
+        TurnModel(player, modelRoot, Quat::Euler(0.0f, turnDegrees, 0.0f));
+        return (int)std::lround(turnDegrees);
+    }
+    Mat4 toPlayer = player->transform->LocalToWorldMatrix().Inverse();
+    Vec3 f;
+    if (!DetectModelForward(scene, modelRoot, toPlayer, f)) return -1;
+    // Controllers move a character along its LOCAL -Z: the rotation taking
+    // the model's forward onto -Z (LookRotation maps +Z onto its argument).
+    Quat fix = Quat::LookRotation(Vec3{-f.x, 0.0f, -f.z}).Inverse();
+    TurnModel(player, modelRoot, fix);
+    float deg = std::atan2(-f.x, -f.z) * 57.29578f;   // how far it was off
+    return (int)std::lround(std::fabs(deg));
+}
+
+std::string FitCharacterCollider(Scene& scene, GameObject* player, GameObject* modelRoot) {
+    if (!player || !player->transform) return {};
+    if (!modelRoot) modelRoot = FindCharacterModelRoot(scene, player);
+    float h = 1.8f, base = 0.0f, side = 0.6f;
+    if (auto* ch = player->GetComponent<Character>()) h = 1.8f * (ch->height > 0.1f ? ch->height : 1.0f);
+    Vec3 lo, hi;
+    Mat4 toPlayer = player->transform->LocalToWorldMatrix().Inverse();
+    if (modelRoot && SubtreeBounds(scene, modelRoot, toPlayer, lo, hi) && hi.y - lo.y > 1e-3f) {
+        h = hi.y - lo.y; base = lo.y;
+        // The narrower horizontal extent is the body's depth (a T-pose's arms
+        // stretch the other one): a person-shaped column, never a wide slab.
+        float d = std::fmin(hi.x - lo.x, hi.z - lo.z);
+        side = std::fmin(std::fmax(d, 0.3f * h), 0.45f * h);
+    } else {
+        side = h / 3.0f;
+    }
+    std::string what;
+    if (auto* box = player->GetComponent<BoxCollider3D>()) {
+        box->size = {side, h, side};
+        box->offset = {0.0f, base + h * 0.5f, 0.0f};
+        what = "box collider fitted";
+    } else if (auto* cap = player->GetComponent<CapsuleCollider3D>()) {
+        cap->radius = side * 0.5f; cap->height = h;
+        cap->offset = {0.0f, base + h * 0.5f, 0.0f};
+        what = "capsule collider fitted";
+    } else if (!player->GetComponent<Collider3D>()) {
+        auto* cap2 = player->AddComponent<CapsuleCollider3D>();
+        cap2->radius = side * 0.5f; cap2->height = h;
+        cap2->offset = {0.0f, base + h * 0.5f, 0.0f};
+        what = "capsule collider added";
+    } else {
+        what = "kept its collider";
+    }
+    if (!player->GetComponent<Rigidbody3D>()) { player->AddComponent<Rigidbody3D>(); what += " + rigidbody added"; }
+    char buf[64]; std::snprintf(buf, sizeof(buf), " (%.2f x %.2fu)", side, h);
+    return what + buf;
+}
+
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog) {
     if (!player || !player->transform) return nullptr;
@@ -1534,24 +1771,8 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     if (!ok || !root || !root->transform) return nullptr;
 
     // World bounds of the imported subtree (the import root sits at the origin).
-    Vec3 lo{0, 0, 0}, hi{0, 0, 0}; bool any = false;
-    for (const auto& up : scene.Objects()) {
-        GameObject* go = up.get();
-        if (!go || !go->IsSelfOrDescendantOf(root)) continue;
-        auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || mr->mesh.vertices.empty()) continue;
-        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
-        Mat4 l2w = go->transform->LocalToWorldMatrix();
-        for (int c = 0; c < 8; ++c) {
-            Vec3 w = l2w.MultiplyPoint({c & 1 ? bhi.x : blo.x, c & 2 ? bhi.y : blo.y, c & 4 ? bhi.z : blo.z});
-            if (!any) { lo = hi = w; any = true; }
-            else {
-                lo.x = std::fmin(lo.x, w.x); hi.x = std::fmax(hi.x, w.x);
-                lo.y = std::fmin(lo.y, w.y); hi.y = std::fmax(hi.y, w.y);
-                lo.z = std::fmin(lo.z, w.z); hi.z = std::fmax(hi.z, w.z);
-            }
-        }
-    }
+    Vec3 lo{0, 0, 0}, hi{0, 0, 0};
+    bool any = SubtreeBounds(scene, root, Mat4::Identity(), lo, hi);
 
     // Size the model to the character's height and stand its feet on the player's
     // origin (the controllers/capsules all treat the origin as ground level).
@@ -1563,8 +1784,12 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     root->transform->localScale = root->transform->localScale * s;
     root->transform->SetParent(player->transform, /*worldPositionStays=*/false);
     root->transform->localPosition = {0.0f, any ? -lo.y * s : 0.0f, 0.0f};
-    // The engine's character bodies face LOCAL -Z; most exported models face +Z.
-    root->transform->localRotation = Quat::Euler({0.0f, 180.0f, 0.0f});
+    // The engine's character bodies face LOCAL -Z. Read which way THIS model
+    // faces from its skeleton (exporters disagree: Mixamo/glTF +Z, some
+    // Blender / Unreal exports -Z or +X); a rig without recognisable
+    // left/right bones falls back to the common +Z.
+    int faced = FaceCharacterModel(scene, player, root, 0.0f);
+    if (faced < 0) root->transform->localRotation = Quat::Euler({0.0f, 180.0f, 0.0f}) * root->transform->localRotation;
 
     // Locomotion: auto-switch idle/walk/run from how fast the player moves, with
     // the clips mapped by name (idle/stand, walk, run/sprint/jog).
@@ -1643,24 +1868,8 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             for (const auto& up : scene.Objects())
                 if (up->IsSelfOrDescendantOf(root))
                     if (auto* sm = up->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
-            Vec3 alo{0, 0, 0}, ahi{0, 0, 0}; bool aany = false;
-            for (const auto& up : scene.Objects()) {
-                GameObject* g = up.get();
-                if (!g || !g->IsSelfOrDescendantOf(root)) continue;
-                auto* mr = g->GetComponent<MeshRenderer>();
-                if (!mr || mr->mesh.vertices.empty()) continue;
-                Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
-                Mat4 l2w = g->transform->LocalToWorldMatrix();
-                for (int c = 0; c < 8; ++c) {
-                    Vec3 w = l2w.MultiplyPoint({c & 1 ? bhi.x : blo.x, c & 2 ? bhi.y : blo.y, c & 4 ? bhi.z : blo.z});
-                    if (!aany) { alo = ahi = w; aany = true; }
-                    else {
-                        alo.x = std::fmin(alo.x, w.x); ahi.x = std::fmax(ahi.x, w.x);
-                        alo.y = std::fmin(alo.y, w.y); ahi.y = std::fmax(ahi.y, w.y);
-                        alo.z = std::fmin(alo.z, w.z); ahi.z = std::fmax(ahi.z, w.z);
-                    }
-                }
-            }
+            Vec3 alo{0, 0, 0}, ahi{0, 0, 0};
+            bool aany = SubtreeBounds(scene, root, Mat4::Identity(), alo, ahi);
             if (aany) {
                 Vec3 pw = player->transform->Position();
                 Vec3 dWorld{pw.x - (alo.x + ahi.x) * 0.5f, pw.y - alo.y, pw.z - (alo.z + ahi.z) * 0.5f};
@@ -1733,10 +1942,17 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                 up->active = false;
     }
 
+    // Physics: a player added from Add Component (or an old scene) may have no
+    // body at all, and the template's box was sized for the blocky character.
+    // Fit (or add) the collider + rigidbody around the model actually shown.
+    std::string phys = FitCharacterCollider(scene, player, root);
+
     if (outLog) {
         *outLog = "Character model '" + root->name + "' on " + player->name +
                   " (height " + std::to_string(want).substr(0, 4) + "u" +
-                  (mapped.empty() ? ", no animation clips" : ", " + mapped) + ")";
+                  (faced > 0 ? ", turned " + std::to_string(faced) + " deg to face forward" : "") +
+                  (mapped.empty() ? ", no animation clips" : ", " + mapped) +
+                  (phys.empty() ? "" : ", " + phys) + ")";
     }
     return root;
 }

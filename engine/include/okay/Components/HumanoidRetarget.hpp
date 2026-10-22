@@ -84,8 +84,12 @@ public:
         }
         // Crouch / prone / landing dip: lower the whole model like the blocky
         // rig lowers its root (StanceOffset is in player-local units already).
-        Vec3 so = ch->StanceOffset();
-        rig->transform->localPosition = m_rigRestPos + Vec3{0.0f, so.y * weight, 0.0f};
+        // (When the rig IS this object — built-in animations on a standalone
+        // model — leave its position alone: that's where you placed it.)
+        if (rig != gameObject) {
+            Vec3 so = ch->StanceOffset();
+            rig->transform->localPosition = m_rigRestPos + Vec3{0.0f, so.y * weight, 0.0f};
+        }
     }
 
     /// Detect the humanoid bones by name under `rigRoot` and capture the rest

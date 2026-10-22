@@ -63,6 +63,31 @@ ModelReport AnalyzeModel(Scene& scene, GameObject* root);
 /// mapped from the clip names), and hide the default blocky Character body.
 /// Returns the imported model root (or nullptr on failure). `outLog`, when
 /// given, receives a one-line human-readable summary of what was wired.
+/// Make an imported humanoid play the engine's BUILT-IN animations (idle,
+/// walk, run, jump, gestures, emotions, authored clips) on its OWN skeleton and
+/// skin: adds a Character (drive-external) + HumanoidRetarget to `modelRoot`,
+/// matching bones by name (Mixamo, Unreal/Quaternius, Blender/Rigify...).
+/// Returns how many of the 15 humanoid bones were found (< 8 = not set up;
+/// `outLog` says why).
+int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog = nullptr);
+/// How many of the 15 humanoid bones a model's skeleton has (0 = not a humanoid rig).
+int CountHumanoidBones(Scene& scene, GameObject* modelRoot);
+
+/// The imported model shown as `player`'s body: a child holding meshes /
+/// a skeleton (not the blocky "Rig", not a camera), or the player itself when
+/// a controller was added straight onto an imported model. nullptr if none.
+GameObject* FindCharacterModelRoot(Scene& scene, GameObject* player);
+/// Turn a character model so it faces the way controllers move (local -Z).
+/// turnDegrees == 0: detect the facing from the skeleton's left/right bones
+/// and fix it (returns how many degrees it was off, -1 if undetectable).
+/// Otherwise: turn it by exactly that much about the player's up axis.
+int FaceCharacterModel(Scene& scene, GameObject* player, GameObject* modelRoot = nullptr,
+                       float turnDegrees = 0.0f);
+/// Fit the player's Box/Capsule collider around its model (adding a capsule
+/// and a Rigidbody3D when missing) so the controller collides with the body
+/// you see. Returns a short summary for the console.
+std::string FitCharacterCollider(Scene& scene, GameObject* player, GameObject* modelRoot = nullptr);
+
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog = nullptr);
 

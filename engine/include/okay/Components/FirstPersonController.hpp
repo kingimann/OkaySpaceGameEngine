@@ -143,8 +143,11 @@ public:
                 // via the camera's ignore, still seen by other cameras). BUT when the
                 // Character is a separated rig, the rig renders the body instead — so
                 // leave the baked mesh hidden, or you'd see TWO characters overlapping.
+                // Same when a custom model replaced the body (Set Character Model
+                // switches the Character off, or to drive-external retargeting):
+                // re-enabling it drew the blocky body inside the new model.
                 auto* ch = gameObject->GetComponent<Character>();
-                mr->enabled = !(ch && ch->separateParts);
+                mr->enabled = !(ch && (ch->separateParts || !ch->enabled || ch->driveExternal));
             }
         if (Transform* camT = FindCameraChild())
             if (auto* cam = camT->gameObject->GetComponent<Camera>())

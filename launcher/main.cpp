@@ -16865,7 +16865,6 @@ int main(int argc, char** argv) {
                                 d->AddText(ImVec2(hp2.x + 20, hp2.y + 10 - ImGui::GetTextLineHeight() * 0.5f), cText, cnt.c_str());
                                 any = true;
                             }
-                            if (m.edited) { if (any) ImGui::SameLine(0, 8); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("(edited)"); any = true; }
                             if (auto tn = threadN.find(m.id); tn != threadN.end()) {   // "3 replies · 5m ago" -> open the thread
                                 if (any) ImGui::SameLine(0, 10);
                                 ImVec2 tp = ImGui::GetCursorScreenPos();
@@ -16960,64 +16959,109 @@ int main(int argc, char** argv) {
                             ImGui::TextDisabled("This is the start of the #%s channel.", chanName.empty() ? "channel" : chanName.c_str());
                             ImGui::Dummy(ImVec2(0, 8));
                         }
-                        const float rowRight = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+                        // Messages as chat bubbles, the same look as DMs and group chats: mine on
+                        // the right in the accent colour, others on the left with their avatar and
+                        // name at the start of a run. Replies quote inside the bubble; the time
+                        // (and "edited") sits in its corner; likes / threads under it.
+                        const float svBaseX = ImGui::GetCursorPosX();
+                        const float svAvW = ImGui::GetContentRegionAvail().x;
+                        const float svAvatarW = 30.0f, svPadX = 14.0f, svPadY = 8.0f;
+                        auto bubbleFor = [&](const std::string& who, bool mine, bool newGroup, const std::string& text,
+                                             const std::string& meta, const std::string& quoteWho, const std::string& quoteText,
+                                             bool hasQuote, float alpha, ImVec2* outMin, ImVec2* outMax) {
+                            const float gutter = mine ? 0.0f : svAvatarW + 8.0f;
+                            float bubbleMax = std::min((svAvW - gutter) * 0.72f, 460.0f);
+                            if (bubbleMax < 120.0f) bubbleMax = std::min(svAvW, 120.0f);
+                            ChatFileInfo cf; const bool isFile = ParseChatFile(text, cf);
+                            ChatVoiceInfo cv; const bool isVoice = !isFile && ParseChatVoice(text, cv);
+                            const float inner = bubbleMax - svPadX * 2;
+                            const float bodyW = isFile ? ChatFileCardWidth(cf, inner) : isVoice ? ChatVoiceWidth(inner) : MeasureChatBodyWidth(text, inner);
+                            const std::string qline = hasQuote ? ("@" + quoteWho + "  " + quoteText) : std::string();
+                            const float qW = hasQuote ? std::min(ImGui::CalcTextSize(qline.c_str()).x, inner) : 0.0f;
+                            const float contentW = std::max({bodyW + 2.0f, ImGui::CalcTextSize(meta.c_str()).x, qW});
+                            const float useW = std::max(contentW + svPadX * 2, 46.0f);
+                            float x0 = mine ? (svAvW - useW - 8.0f) : gutter;
+                            if (x0 < 0) x0 = 0;
+                            if (!mine && newGroup) {   // name above the first bubble of a run
+                                ImGui::SetCursorPosX(svBaseX + gutter + 2);
+                                ImGui::PushStyleColor(ImGuiCol_Text, NameColor(who));
+                                ImGui::TextUnformatted(who.c_str());
+                                ImGui::PopStyleColor();
+                            }
+                            ImGui::SetCursorPosX(svBaseX + x0);
+                            const ImVec2 top = ImGui::GetCursorScreenPos();
+                            if (!mine && newGroup) {   // avatar beside the first bubble
+                                std::string av; for (const auto& mm : svMembers) if (mm.name == who) { av = mm.avatar; break; }
+                                ImGui::SetCursorScreenPos(ImVec2(top.x - gutter, top.y));
+                                DrawAvatar(av, who, svAvatarW);
+                                ImGui::SetCursorScreenPos(top);
+                            }
+                            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * alpha);
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, mine ? kAccentDim : ImVec4(0.204f, 0.235f, 0.306f, 1.0f));
+                            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
+                            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(svPadX, svPadY));
+                            ImGui::BeginChild("##svbub", ImVec2(useW, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
+                            if (hasQuote) {
+                                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(accLt)), "@%s", quoteWho.c_str());
+                                ImGui::SameLine(0, 6);
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                                ImGui::TextUnformatted(FitText(quoteText, std::max(40.0f, ImGui::GetContentRegionAvail().x)).c_str());
+                                ImGui::PopStyleColor();
+                            }
+                            const float av2 = ImGui::GetContentRegionAvail().x;
+                            if (isFile) RenderChatFileCard(cf, av2);
+                            else if (isVoice) RenderChatVoice(cv, av2, mine, kAccentDim);
+                            else RenderChatBody(text, av2);
+                            {   // time (+ edited) tucked bottom-right, small + dim
+                                const float mw = ImGui::CalcTextSize(meta.c_str()).x, room = ImGui::GetContentRegionAvail().x;
+                                if (mw < room) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (room - mw));
+                                ImGui::PushStyleColor(ImGuiCol_Text, mine ? ImVec4(0.82f, 0.88f, 1.0f, 0.60f) : ImVec4(0.60f, 0.66f, 0.76f, 0.70f));
+                                ImGui::TextUnformatted(meta.c_str());
+                                ImGui::PopStyleColor();
+                            }
+                            ImGui::PopStyleVar();
+                            ImGui::EndChild();
+                            ImGui::PopStyleVar(2);
+                            ImGui::PopStyleColor();
+                            ImGui::PopStyleVar();
+                            if (outMin) *outMin = ImGui::GetItemRectMin();
+                            if (outMax) *outMax = ImGui::GetItemRectMax();
+                            return svBaseX + x0;
+                        };
                         for (const auto& m : svMsgs) {
                             SvBody pb = ParseSvBody(m.body);
                             if (pb.kind == 2 && svById.count(pb.ref)) continue;     // lives in its thread
                             if (pb.kind == 2) pb.kind = 1;                          // orphaned thread reply: show as a reply
                             const okay::ChannelMessage* quoted = pb.kind == 1 && svById.count(pb.ref) ? svById[pb.ref] : nullptr;
                             std::string who = m.author.empty() ? "unknown" : m.author;
-                            // Date separator when the day changes.
+                            const bool mine = !svMe.empty() && who == svMe;
                             long day = DayKey(m.when);
                             if (day != 0 && day != prevDay) { ChatDateSeparator(m.when); prevDay = day; prevAuthor.clear(); }
                             char w[24] = ""; if (m.when > 0) { std::time_t tt=(std::time_t)m.when; std::tm* tm=std::localtime(&tt); if(tm) std::strftime(w,sizeof(w),"%H:%M",tm); }
-                            // Start a fresh group on a new author, a >7 min gap, or a reply.
-                            bool newGroup = (who != prevAuthor) || (m.when > 0 && prevWhen > 0 && m.when - prevWhen > 420) || pb.kind == 1;
+                            std::string meta = w; if (m.edited) meta += " \xC2\xB7 edited";
+                            // A new run on a new author, a >7 min gap, or a reply.
+                            const bool newGroup = (who != prevAuthor) || (m.when > 0 && prevWhen > 0 && m.when - prevWhen > 420) || pb.kind == 1;
                             prevWhen = m.when;
-                            if (newGroup && !firstMsg) ImGui::Dummy(ImVec2(0, 8));
-                            const ImVec2 rowMin = ImGui::GetCursorScreenPos();
-                            if (pb.kind == 1) {   // reply quote: a hooked line from the avatar to "@name  snippet"
-                                ImDrawList* d = ImGui::GetWindowDrawList();
-                                ImVec2 qp = ImGui::GetCursorScreenPos();
-                                const float qy = qp.y + ImGui::GetTextLineHeight() * 0.5f + 1;
-                                d->PathLineTo(ImVec2(qp.x + 18, qy + 9)); d->PathLineTo(ImVec2(qp.x + 18, qy + 3));
-                                d->PathArcTo(ImVec2(qp.x + 24, qy + 3), 6.0f, 3.14159265f, 3.14159265f * 1.5f, 6);
-                                d->PathLineTo(ImVec2(qp.x + 40, qy - 3));
-                                d->PathStroke(IM_COL32(255, 255, 255, 60), 0, 1.6f);
-                                ImGui::SetCursorScreenPos(ImVec2(qp.x + 44, qp.y));
-                                std::string qa = quoted ? (quoted->author.empty() ? std::string("unknown") : quoted->author) : std::string();
-                                std::string qt = quoted ? ChatPreviewSmart(ParseSvBody(quoted->body).text, 70) : std::string("Original message was deleted");
-                                if (quoted) { ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(accLt)), "@%s", qa.c_str()); ImGui::SameLine(0, 6); }
-                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                                ImGui::TextUnformatted(FitText(qt, std::max(60.0f, rowRight - ImGui::GetCursorScreenPos().x - 10)).c_str());
-                                ImGui::PopStyleColor();
+                            ImGui::Dummy(ImVec2(0, firstMsg ? 2.0f : (newGroup ? 9.0f : 2.0f)));
+                            std::string qa, qt;
+                            if (pb.kind == 1) {
+                                qa = quoted ? (quoted->author.empty() ? std::string("unknown") : quoted->author) : std::string("deleted");
+                                qt = quoted ? ChatPreviewSmart(ParseSvBody(quoted->body).text, 70) : std::string("Original message was deleted");
                             }
-                            if (newGroup) {
-                                std::string av; for (const auto& mm : svMembers) if (mm.name == who) { av = mm.avatar; break; }
-                                DrawAvatar(av, who, 36.0f);
-                                ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6);
-                                ImGui::BeginGroup();
-                                ImVec4 nc2 = NameColor(who);
-                                ImGui::TextColored(ImVec4(nc2.x * 0.35f + 0.65f, nc2.y * 0.35f + 0.65f, nc2.z * 0.35f + 0.65f, 1), "%s", who.c_str());
-                                ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", w);
-                                RenderChatAny(pb.text, ImGui::GetContentRegionAvail().x, who == svMe);
+                            ImGui::PushID((int)m.id);
+                            ImVec2 bMin, bMax;
+                            const float bx = bubbleFor(who, mine, newGroup, pb.text, meta, qa, qt, pb.kind == 1, 1.0f, &bMin, &bMax);
+                            ImGui::PopID();
+                            {   // likes / thread under the bubble
+                                ImGui::SetCursorPosX(bx);
+                                const ImVec2 before = ImGui::GetCursorScreenPos();
                                 msgActions(m);
-                                ImGui::EndGroup();
-                                prevAuthor = who;
-                            } else {
-                                // Continuation of the same author's group: indent under the
-                                // avatar, with a faint timestamp revealed on hover (Discord-like).
-                                ImGui::Indent(42.0f);
-                                ImVec2 rowTop = ImGui::GetCursorScreenPos();
-                                RenderChatAny(pb.text, ImGui::GetContentRegionAvail().x, who == svMe);
-                                if (w[0] && ImGui::IsMouseHoveringRect(ImVec2(rowMin.x, rowTop.y), ImVec2(rowRight, ImGui::GetCursorScreenPos().y))) {
-                                    ImVec2 tp(rowTop.x - 40.0f, rowTop.y + 1.0f);
-                                    ImGui::GetWindowDrawList()->AddText(tp, ImGui::GetColorU32(ImGuiCol_TextDisabled), w);
-                                }
-                                msgActions(m);
-                                ImGui::Unindent(42.0f);
+                                if (ImGui::GetCursorScreenPos().y == before.y) ImGui::SetCursorScreenPos(before);
                             }
-                            rowToolbar(m, rowMin, ImVec2(rowRight, ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y));
+                            rowToolbar(m, bMin, bMax);
+                            prevAuthor = who;
                             firstMsg = false;
                         }
                         ImGui::Dummy(ImVec2(0, 0));
@@ -17033,39 +17077,18 @@ int main(int argc, char** argv) {
                                 if (ob.kind == 2) continue;   // shown in the thread panel
                                 ImGui::PushID((int)o.localId + 700000);
                                 const bool failed = o.state == -1;
-                                const bool cont = svMe == prevAuthor;
-                                if (!cont) {
-                                    if (!firstMsg) ImGui::Dummy(ImVec2(0, 8));
-                                    std::string av; for (const auto& mm : svMembers) if (mm.name == svMe) { av = mm.avatar; break; }
-                                    DrawAvatar(av, svMe, 36.0f);
-                                    ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6);
-                                    ImGui::BeginGroup();
-                                    ImVec4 nc2 = NameColor(svMe);
-                                    ImGui::TextColored(ImVec4(nc2.x * 0.35f + 0.65f, nc2.y * 0.35f + 0.65f, nc2.z * 0.35f + 0.65f, 1), "%s", svMe.c_str());
-                                    prevAuthor = svMe;
-                                } else {
-                                    ImGui::Indent(42.0f);
-                                    ImGui::BeginGroup();
-                                }
-                                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * (failed ? 0.85f : 0.55f));
-                                RenderChatAny(ob.text, ImGui::GetContentRegionAvail().x, true);
-                                ImGui::PopStyleVar();
-                                if (failed) {
-                                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.55f, 1.0f), "Not sent");
-                                    ImGui::SameLine(0, 8); if (ImGui::SmallButton("Retry")) OutboxRetry(o.localId);
+                                const bool newGroup = svMe != prevAuthor;
+                                ImGui::Dummy(ImVec2(0, firstMsg ? 2.0f : (newGroup ? 9.0f : 2.0f)));
+                                ImVec2 bMin, bMax;
+                                bubbleFor(svMe, true, newGroup, ob.text, failed ? std::string("not sent") : std::string("sending\xE2\x80\xA6"),
+                                          std::string(), std::string(), false, failed ? 0.85f : 0.55f, &bMin, &bMax);
+                                if (failed) {   // Retry / Discard under it, right-aligned like the bubble
+                                    const float bw = ImGui::CalcTextSize("Retry").x + ImGui::CalcTextSize("Discard").x + 40.0f;
+                                    ImGui::SetCursorScreenPos(ImVec2(bMax.x - bw, ImGui::GetCursorScreenPos().y));
+                                    if (ImGui::SmallButton("Retry")) OutboxRetry(o.localId);
                                     ImGui::SameLine(0, 4); if (ImGui::SmallButton("Discard")) OutboxDiscard(o.localId);
-                                } else {
-                                    ImVec2 cp = ImGui::GetCursorScreenPos();
-                                    const float r = 5.0f, cy = cp.y + ImGui::GetTextLineHeight() * 0.5f;
-                                    ImDrawList* dl = ImGui::GetWindowDrawList();
-                                    dl->AddCircle(ImVec2(cp.x + r, cy), r, cDim, 12, 1.2f);
-                                    dl->AddLine(ImVec2(cp.x + r, cy), ImVec2(cp.x + r, cy - 3.2f), cDim, 1.2f);
-                                    dl->AddLine(ImVec2(cp.x + r, cy), ImVec2(cp.x + r + 2.6f, cy), cDim, 1.2f);
-                                    ImGui::Dummy(ImVec2(r * 2 + 4, ImGui::GetTextLineHeight())); ImGui::SameLine(0, 2);
-                                    ImGui::TextDisabled("Sending\xE2\x80\xA6");
                                 }
-                                ImGui::EndGroup();
-                                if (cont) ImGui::Unindent(42.0f);
+                                prevAuthor = svMe;
                                 firstMsg = false;
                                 ImGui::PopID();
                             }

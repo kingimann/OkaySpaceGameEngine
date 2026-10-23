@@ -2302,6 +2302,10 @@ std::string g_buildStatus;
 bool  g_openBuildResult = false;
 int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 = Android
 
+// One entry of "Scenes In Build": a project scene, ticked to ship. The first
+// ticked scene is where the game starts; the rest load by index / name.
+struct BuildScene { std::string path; bool on = true; };
+
 // Unity-style Build Settings: window + player options written into the build's
 // game.okayconfig, plus which scenes to include.
 struct BuildSettings {
@@ -2350,6 +2354,9 @@ struct BuildSettings {
     // ---- Post-build actions (handled by the editor, not the builder) ----
     bool  openFolderAfter = true;          // reveal the output folder when done
     bool  zipAfter = false;                // also produce <Name>.zip of the build
+    // ---- Added later ----
+    bool  fullscreenToggle = true;         // Alt+Enter / F11 switches fullscreen in the game
+    std::vector<BuildScene> scenes;        // Scenes In Build (empty = just the open scene)
 };
 BuildSettings g_build;
 
@@ -2409,6 +2416,8 @@ static void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "ssao=" << b.ssao << "\n" << "fxaa=" << b.fxaa << "\n" << "antialias=" << b.antialias << "\n";
     o << "gpu=" << b.gpuRenderer << "\n" << "d3d12=" << b.preferD3D12 << "\n";
     o << "openFolder=" << b.openFolderAfter << "\n" << "zip=" << b.zipAfter << "\n";
+    o << "fsToggle=" << b.fullscreenToggle << "\n";
+    for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << sc.path << "\n";
 }
 
 // Apply one key=value line to a profile being read.
@@ -2440,6 +2449,8 @@ static void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "masterVolume") b.masterVolume = F();
     else if (k == "showFps")   b.showFps = B();
     else if (k == "includeAll") b.includeAllProjectScenes = B();
+    else if (k == "fsToggle")  b.fullscreenToggle = B();
+    else if (k == "scene" && v.size() > 2 && v[1] == '|') b.scenes.push_back(BuildScene{v.substr(2), v[0] == '1'});
     else if (k == "dev")       b.developmentBuild = B();
     else if (k == "clean")     b.cleanOutput = B();
     else if (k == "dataFolder") b.dataFolder = B();
@@ -3033,6 +3044,8 @@ struct Options {
     bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
     bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
     bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
+    bool fullscreenToggle = true;           // Alt+Enter / F11 in the shipped game
+    std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
     // ---- Player presentation (Unity-parity) ----
     std::string iconPath;      // window icon PNG (copied into the build)
     std::string bundleId = "com.okayspace.game";
@@ -3144,14 +3157,36 @@ std::string Build(EditorState& ed, const std::string& outDir,
     fs::path data = opt.dataFolder ? (dir / "Data") : dir;
     fs::create_directories(data, ec);
 
-    // 1) Write the active scene as Data/game.okayscene (the startup scene).
-    if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
-        return "Failed to write game.okayscene.";
-
     std::vector<std::string> sceneFiles; // filenames placed in the Data folder
-    sceneFiles.push_back("game.okayscene");
     int extraScenes = 0;
-    if (opt.includeAllProjectScenes && !ed.projectDir().empty()) {
+    // 1) Scenes In Build, in order: the first is the startup scene (written as
+    // game.okayscene); the open scene is written from memory so unsaved edits ship.
+    // With no list, the open scene alone is the game (plus, optionally, every
+    // project scene).
+    if (!opt.sceneList.empty()) {
+        std::error_code pe;
+        for (std::size_t i = 0; i < opt.sceneList.size(); ++i) {
+            const fs::path src(opt.sceneList[i]);
+            std::string fn = i == 0 ? std::string("game.okayscene") : src.filename().string();
+            for (int n = 2; std::find(sceneFiles.begin(), sceneFiles.end(), fn) != sceneFiles.end(); ++n)
+                fn = src.stem().string() + "_" + std::to_string(n) + ".okayscene";   // two scenes, same name
+            const bool isOpen = !ed.path().empty() && fs::exists(src, pe) && fs::equivalent(src, fs::path(ed.path()), pe);
+            if (isOpen) {
+                if (!SceneSerializer::SaveToFile(ed.scene(), (data / fn).string())) return "Failed to write " + fn + ".";
+            } else {
+                fs::copy_file(src, data / fn, fs::copy_options::overwrite_existing, pe);
+                if (pe) return "Couldn't copy the scene " + src.string() + " (" + pe.message() + ").";
+            }
+            sceneFiles.push_back(fn);
+            if (i > 0) ++extraScenes;
+        }
+    } else {
+        // Write the active scene as Data/game.okayscene (the startup scene).
+        if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
+            return "Failed to write game.okayscene.";
+        sceneFiles.push_back("game.okayscene");
+    }
+    if (opt.sceneList.empty() && opt.includeAllProjectScenes && !ed.projectDir().empty()) {
         fs::path assets = fs::path(ed.projectDir()) / "Assets";
         if (fs::exists(assets, ec))
             for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
@@ -3203,6 +3238,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "min_width=" << opt.minWidth << "\n";
         cf << "min_height=" << opt.minHeight << "\n";
         cf << "save_userdir=" << (opt.saveToUserDir ? 1 : 0) << "\n";
+        cf << "fullscreen_toggle=" << (opt.fullscreenToggle ? 1 : 0) << "\n";
         if (!opt.splashImage.empty()) {
             cf << "splash=" << fs::path(opt.splashImage).filename().string() << "\n";
             cf << "splash_time=" << opt.splashTime << "\n";
@@ -3689,7 +3725,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::TextDisabled("offered on next open if it's newer than the scene.");
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
+        if (ImGui::MenuItem("Build Settings...", "Ctrl+B")) g_showBuildGame = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) g_quitRequested = true;
         ImGui::EndMenu();
@@ -4260,7 +4296,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Engine")) {
-        if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
+        if (ImGui::MenuItem("Build Settings...", "Ctrl+B")) g_showBuildGame = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Check for Updates...")) {
             g_update = updater::CheckLatest();
@@ -8421,7 +8457,7 @@ void DrawShortcutsWindow() {
         {"Ctrl+Shift+S",  "Save scene as..."},
         {"Ctrl+O",        "Open scene"},
         {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
-        {"Ctrl+B",        "Build Game"},
+        {"Ctrl+B",        "Build Settings"},
         {"Ctrl+C / Ctrl+V","Copy / paste object"},
         {"Ctrl+D",        "Duplicate selection"},
         {"Ctrl+Shift+G",  "Group selection"},
@@ -12745,14 +12781,14 @@ void DrawFileDialogs(EditorState& ed) {
     }
 
     if (g_showBuildGame) {
-        ImGui::OpenPopup("Build Game"); g_showBuildGame = false;
+        ImGui::OpenPopup("Build Settings"); g_showBuildGame = false;
         // Load this project's saved build profiles the first time the dialog opens.
         if (!g_buildProfilesLoaded) { LoadBuildProfiles(ed); g_buildProfilesLoaded = true; }
     }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640, 600), ImGuiCond_Appearing);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(540, 480), ImVec2(1200, 1000));
-    if (ImGui::BeginPopupModal("Build Game")) {
+    ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(720, 520), ImVec2(1600, 1200));
+    if (ImGui::BeginPopupModal("Build Settings")) {
         ImGui::TextDisabled("Export a standalone game:  <Name>.exe + game.okayscene + game.okayconfig");
         ImGui::Spacing();
 
@@ -12826,8 +12862,128 @@ void DrawFileDialogs(EditorState& ed) {
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
-        if (ImGui::BeginTabBar("##buildtabs")) {
-            if (ImGui::BeginTabItem("Player")) {
+        // ---- Target platform first, as in Unity ----
+        // Target platform: Desktop ships a Windows .exe; Web/Android export a
+        // ready-to-build project (the editor can't run Emscripten / the Android NDK
+        // itself, so it lays down the data + build script + instructions).
+        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)"};
+        {   // Segmented platform picker (clearer than a dropdown for 3 options).
+            const char* platShort[] = {"Desktop", "Web", "Android"};
+            const char* platTip[] = {
+                "Build a runnable Windows .exe right here.",
+                "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
+                "Export an Android Studio project;\nfinish the build with Android Studio + NDK."};
+            ImGui::TextDisabled("Platform");
+            ImGui::SameLine();
+            for (int pi = 0; pi < 3; ++pi) {
+                if (pi) ImGui::SameLine(0, 2);
+                bool on = g_buildPlatform == pi;
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+                }
+                if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
+                if (on) ImGui::PopStyleColor(3);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", platTip[pi]);
+            }
+        }
+        ImGui::Spacing();
+        // ---- Sections: a sidebar on the left, the chosen page on the right ----
+        static int s_buildSec = 0;
+        static const char* kBuildSecs[] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output"};
+        static const char* kBuildSecTips[] = {
+            "Which scenes ship, in what order (the first one starts the game).",
+            "Name, company, version, identifier, icon and splash.",
+            "Resolution, window mode, frame rate, focus behaviour.",
+            "Renderer and quality: shadows, bloom, ambient occlusion, anti-aliasing.",
+            "Volume, cursor and keyboard behaviour.",
+            "Output folder layout, encryption and what happens after the build."};
+        const float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f;
+        ImGui::BeginChild("##bnav", ImVec2(170, -buildFooterH), ImGuiChildFlags_Borders);
+        for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
+            if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##bpane", ImVec2(0, -buildFooterH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        if (s_buildSec == 0) {   // ---- Scenes In Build ----
+            namespace fs = std::filesystem;
+            auto& L = g_build.scenes;
+            auto samePath = [](const std::string& a, const std::string& b) {
+                std::error_code e;
+                return a == b || (fs::exists(a, e) && fs::exists(b, e) && fs::equivalent(a, b, e));
+            };
+            SectionHeader("Scenes In Build");
+            ImGui::TextDisabled("Ticked scenes ship in this order. #0 is where the game starts; the others load with\n"
+                                "load_scene(\"Name\") or load_scene_index(n). The open scene ships with unsaved edits.");
+            ImGui::Spacing();
+            int shown = 0, move = -1, moveDir = 0, del = -1;
+            for (int i = 0; i < (int)L.size(); ++i) {
+                ImGui::PushID(i);
+                ImGui::Checkbox("##on", &L[i].on);
+                ImGui::SameLine();
+                if (L[i].on) ImGui::Text("#%d", shown++); else ImGui::TextDisabled(" - ");
+                ImGui::SameLine(80);
+                const fs::path sp(L[i].path);
+                std::error_code e;
+                const bool exists = fs::exists(sp, e);
+                if (exists) ImGui::TextUnformatted(sp.stem().string().c_str());
+                else ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "%s (missing)", sp.stem().string().c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L[i].path.c_str());
+                if (!ed.path().empty() && samePath(L[i].path, ed.path())) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "(open)"); }
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 92);
+                ImGui::BeginDisabled(i == 0);
+                if (ImGui::ArrowButton("##up", ImGuiDir_Up)) { move = i; moveDir = -1; }
+                ImGui::EndDisabled();
+                ImGui::SameLine(0, 2);
+                ImGui::BeginDisabled(i + 1 >= (int)L.size());
+                if (ImGui::ArrowButton("##dn", ImGuiDir_Down)) { move = i; moveDir = 1; }
+                ImGui::EndDisabled();
+                ImGui::SameLine(0, 2);
+                if (ImGui::SmallButton("x")) del = i;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove from the list (the file stays)");
+                ImGui::PopID();
+            }
+            if (move >= 0) std::swap(L[move], L[move + moveDir]);
+            if (del >= 0) L.erase(L.begin() + del);
+            if (L.empty()) ImGui::TextDisabled("No list yet: the open scene is built on its own.");
+            ImGui::Spacing();
+            const bool haveOpen = !ed.path().empty();
+            bool openListed = false;
+            for (const auto& sc : L) if (haveOpen && samePath(sc.path, ed.path())) openListed = true;
+            ImGui::BeginDisabled(!haveOpen || openListed);
+            if (ImGui::Button("Add Open Scene")) L.push_back(BuildScene{ed.path(), true});
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(!haveOpen ? "Save the scene first (File > Save Scene)." : openListed ? "Already in the list." : "Add the scene you have open.");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(ed.projectDir().empty());
+            if (ImGui::Button("Add All Project Scenes")) {
+                std::error_code e;
+                const fs::path assets = fs::path(ed.projectDir()) / "Assets";
+                if (fs::exists(assets, e))
+                    for (auto it = fs::recursive_directory_iterator(assets, e); it != fs::recursive_directory_iterator() && !e; it.increment(e)) {
+                        if (!it->is_regular_file(e) || it->path().extension() != ".okayscene") continue;
+                        bool have = false;
+                        for (const auto& sc : L) if (samePath(sc.path, it->path().string())) have = true;
+                        if (!have) L.push_back(BuildScene{it->path().string(), true});
+                    }
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(L.empty());
+            if (ImGui::Button("Clear")) L.clear();
+            ImGui::EndDisabled();
+            if (L.empty()) {
+                ImGui::Spacing();
+                ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a list: also bundle every .okayscene in Assets (the open scene starts the game).");
+            }
+        }
+        {
+            if (s_buildSec == 1) {
                 ImGui::Spacing();
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
@@ -12877,9 +13033,8 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::SetNextItemWidth(160); ImGui::DragFloat("Duration (s)", &g_build.splashTime, 0.1f, 0.3f, 15.0f);
                     ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background##splash", g_build.splashBg);
                 }
-                ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Display")) {
+            if (s_buildSec == 2) {
                 ImGui::Spacing();
                 ImGui::SetNextItemWidth(90); ImGui::InputInt("Width",  &g_build.width, 0); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height, 0);
@@ -12897,6 +13052,8 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Resizable", &g_build.resizable); ImGui::SameLine();
                 ImGui::Checkbox("VSync", &g_build.vsync); ImGui::SameLine();
                 ImGui::Checkbox("Start maximized", &g_build.startMaximized);
+                ImGui::Checkbox("Alt+Enter / F11 toggles fullscreen", &g_build.fullscreenToggle);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let players switch between fullscreen and a window while playing.");
                 const char* fpsOpts[] = {"Uncapped", "30", "60", "120", "144", "Custom"};
                 const int   fpsVals[] = {0, 30, 60, 120, 144, -1};
                 int fpsSel = 5; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;   // else Custom
@@ -12918,9 +13075,8 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Run in background", &g_build.runInBackground);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the game updating when its window isn't focused (Unity's Run In Background). Off = pause when minimized/unfocused.");
                 ImGui::Checkbox("Mute audio when unfocused", &g_build.muteOnFocusLoss);
-                ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Graphics")) {
+            if (s_buildSec == 3) {
                 ImGui::Spacing();
                 const char* qnames[] = {"Custom", "Low", "Medium", "High", "Ultra"};
                 static int q = 0; ImGui::SetNextItemWidth(180);
@@ -12968,9 +13124,8 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(120);
                 if (ImGui::Combo("Supersampling (AA)", &aaSel, aaOpts, 3)) g_build.antialias = aaVals[aaSel];
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render at a higher resolution then downscale for smoother edges.\n2x = 4x the pixels, 4x = 16x — sharper but heavier on the GPU.");
-                ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Audio & Input")) {
+            if (s_buildSec == 4) {
                 ImGui::Spacing();
                 ImGui::SetNextItemWidth(240); ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
@@ -12978,15 +13133,9 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Lock cursor on launch", &g_build.lockCursor);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor on launch (FPS/TPS games)");
                 ImGui::Checkbox("Hide cursor", &g_build.hideCursor);
-                ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Scenes")) {
-                ImGui::Spacing();
-                ImGui::TextDisabled("The current scene is always the startup scene.");
-                ImGui::Spacing();
-                ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene / load_scene_index work at runtime.\nOff = ship ONLY this scene (smaller, no unused scenes leaked).");
-                ImGui::Spacing(); SectionHeader("Output");
+            if (s_buildSec == 5) {
+                SectionHeader("Output");
                 ImGui::Checkbox("Clean output folder", &g_build.cleanOutput);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove leftover files from a previous build first, so the folder has no stale junk.");
                 ImGui::Checkbox("Tidy layout (Data/ folder)", &g_build.dataFolder);
@@ -12998,37 +13147,11 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reveal the finished build in your file browser when it's done.");
                 ImGui::Checkbox("Create a .zip archive", &g_build.zipAfter);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also package the whole build folder into <Name>.zip next to it — ready to share or upload.");
-                ImGui::EndTabItem();
             }
-            ImGui::EndTabBar();
         }
+        ImGui::EndChild();
 
-        ImGui::Spacing(); ImGui::Separator();
-        // Target platform: Desktop ships a Windows .exe; Web/Android export a
-        // ready-to-build project (the editor can't run Emscripten / the Android NDK
-        // itself, so it lays down the data + build script + instructions).
-        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)"};
-        {   // Segmented platform picker (clearer than a dropdown for 3 options).
-            const char* platShort[] = {"Desktop", "Web", "Android"};
-            const char* platTip[] = {
-                "Build a runnable Windows .exe right here.",
-                "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
-                "Export an Android Studio project;\nfinish the build with Android Studio + NDK."};
-            ImGui::TextDisabled("Platform");
-            ImGui::SameLine();
-            for (int pi = 0; pi < 3; ++pi) {
-                if (pi) ImGui::SameLine(0, 2);
-                bool on = g_buildPlatform == pi;
-                if (on) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-                }
-                if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
-                if (on) ImGui::PopStyleColor(3);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", platTip[pi]);
-            }
-        }
+        ImGui::Spacing();
         // One-line summary of what's about to be produced, so a wrong setting
         // is caught before the build instead of after it.
         {
@@ -13052,6 +13175,7 @@ void DrawFileDialogs(EditorState& ed) {
             std::strncpy(fresh.bundleId, g_build.bundleId, sizeof(fresh.bundleId) - 1);
             std::strncpy(fresh.icon, g_build.icon, sizeof(fresh.icon) - 1);
             std::strncpy(fresh.splash, g_build.splash, sizeof(fresh.splash) - 1);
+            fresh.scenes = g_build.scenes;   // the scene list isn't an "option"
             g_build = fresh;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Restore Display / Graphics / Audio options to defaults.\nKeeps your name, company, version, icon and splash.");
@@ -13113,6 +13237,8 @@ void DrawFileDialogs(EditorState& ed) {
             o.startMaximized = g_build.startMaximized;
             o.minWidth = g_build.minWidth; o.minHeight = g_build.minHeight;
             o.saveToUserDir = g_build.saveToUserDir;
+            o.fullscreenToggle = g_build.fullscreenToggle;
+            for (const BuildScene& sc : g_build.scenes) if (sc.on) o.sceneList.push_back(sc.path);
             o.splashImage = g_build.splash; o.splashTime = g_build.splashTime;
             o.splashBg[0] = g_build.splashBg[0]; o.splashBg[1] = g_build.splashBg[1]; o.splashBg[2] = g_build.splashBg[2];
             // Carry the project's custom loading screen into the shipped game.

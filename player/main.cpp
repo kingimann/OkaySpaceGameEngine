@@ -1050,6 +1050,7 @@ int main(int argc, char** argv) {
         // Presentation (Unity-parity).
         std::string icon;          // window icon PNG (in the Data folder)
         bool runInBackground = true;
+        bool fullscreenToggle = true;    // Alt+Enter / F11 switches fullscreen
         bool muteOnFocusLoss = false;
         bool startMaximized = false;
         int  minWidth = 0, minHeight = 0;
@@ -1109,6 +1110,7 @@ int main(int argc, char** argv) {
             else if (k == "scene")      cfg.scenes.push_back(v);
             else if (k == "icon")           cfg.icon = v;
             else if (k == "run_background") cfg.runInBackground = std::atoi(v.c_str()) != 0;
+            else if (k == "fullscreen_toggle") cfg.fullscreenToggle = std::atoi(v.c_str()) != 0;
             else if (k == "mute_unfocused") cfg.muteOnFocusLoss = std::atoi(v.c_str()) != 0;
             else if (k == "start_maximized")cfg.startMaximized = std::atoi(v.c_str()) != 0;
             else if (k == "min_width")      cfg.minWidth = std::atoi(v.c_str());
@@ -1365,6 +1367,14 @@ int main(int argc, char** argv) {
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
             if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
+            // Alt+Enter / F11: switch between fullscreen and windowed (when enabled in Build Settings).
+            if (cfg.fullscreenToggle && e.type == SDL_KEYDOWN && !e.key.repeat &&
+                (e.key.keysym.sym == SDLK_F11 ||
+                 ((e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) && (e.key.keysym.mod & KMOD_ALT)))) {
+                const bool fs = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+                SDL_SetWindowFullscreen(window, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                continue;
+            }
             // Esc quits only when no input field is focused (otherwise it cancels it).
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                 bool typing = false;

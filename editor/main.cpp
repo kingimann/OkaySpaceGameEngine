@@ -8841,6 +8841,10 @@ void DrawScriptDocs() {
         fapi("net_launch_join()", "1 if the launcher started the game to join a friend / invite / server");
         fapi("net_join_link(\"okay://join?...\")", "join from a join link");
         fapi("net_invite_friends()", "open the launcher's Invite friends window (also Shift+Tab)");
+        fapi("net_browser_open()", "show the built-in \"Find a server\" window");
+        fapi("net_browser_refresh([\"all\"|\"internet\"|\"lan\"]) / net_browser_busy()", "search for servers in the background");
+        fapi("net_browser_count() / net_browser_name(i) / _players(i) / _max(i) / _ping(i) / _map(i) / _locked(i)", "the results, for your own list");
+        fapi("net_browser_join(i[, \"password\"])", "join result i");
         fapi("net_set_score(id, n) / net_score(id)", "server-owned scores, seen by everyone");
         fapi("net_peer_name(id) / net_roster_count() / net_roster_id(i)", "who's in the room (any peer)");
         fapi("net_teleport(id, x, y[, z])", "server: move a player (respawn) past the speed check");
@@ -15421,6 +15425,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
     {"net_host_relay","Host via Relay",   "relayIp port code",    "Host through a relay using a shared code — players behind home routers connect with NO port-forwarding (NAT traversal). Run the okayspace-relay binary, or use a public one.", "Multiplayer"},
     {"net_join_relay","Join via Relay",   "relayIp port code",    "Join a relay-hosted game with the same relay address + code the host used — no port-forwarding needed.", "Multiplayer"},
+    {"net_browser_open","Open Server Browser","",                 "Show the built-in \"Find a server\" window: public and LAN servers for this game, with ping, players and Join.", "Multiplayer"},
     {"net_send",    "Send Message (fast)","channel data",         "Send a fast (unreliable) network message.",               "Multiplayer"},
     {"net_send_reliable","Send Message (sure)","channel data",    "Send a guaranteed (reliable) network message.",           "Multiplayer"},
     {"net_set",     "Set Network Value",  "name value",           "Set a value shared across the network.",                  "Multiplayer"},

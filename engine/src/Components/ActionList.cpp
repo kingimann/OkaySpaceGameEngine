@@ -29,6 +29,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/ServerBrowser.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Platform/PlayFab/PlayFab.hpp"
 #include "okay/Platform/Achievements.hpp"
@@ -1250,6 +1251,7 @@ void ActionList::Update(float dt) {
                 if (g && g->transform) g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
             }
         }
+        else if (op == "net_browser_open") ServerBrowser::Shared().windowOpen = true;   // the built-in "Find a server" window
         else if (op == "net_host" || op == "net_join" || op == "net_send" || op == "net_disconnect" ||
                  op == "net_host_relay" || op == "net_join_relay") {
             if (scene) {

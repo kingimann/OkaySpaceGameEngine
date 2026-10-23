@@ -17,8 +17,12 @@ endif()
 
 # The Direct3D 11 backend (src/OkayUI_D3D11.cpp) is guarded by #if defined(_WIN32),
 # so it compiles to nothing off Windows and never affects the Linux/SDL build.
-add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_D3D11.cpp)
+add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_D3D11.cpp)
 target_include_directories(okay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# The launcher look's font: Roboto (shared/RobotoFont.h) baked with stb_truetype,
+# whose implementation lives in the engine.
+target_include_directories(okay_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+                                           ${CMAKE_CURRENT_SOURCE_DIR}/../engine/third_party/stb)
 if(NOT TARGET SDL2::SDL2)
     target_include_directories(okay_ui PUBLIC ${SDL2_INCLUDE_DIRS})
 endif()

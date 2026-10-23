@@ -492,7 +492,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
     }
 
     int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
-    const float W = (float)std::min(760, ww - 40), H = (float)std::min(540, wh - 40);
+    const float W = (float)std::min(780, ww - 40), H = (float)std::min(620, wh - 40);
     bool open = true;
     if (OkayUI::Begin("Find a server", (ww - W) * 0.5f, (wh - H) * 0.5f, W, H, &open)) {
         const char* tabs[] = {"All", "Internet", "LAN"};
@@ -519,7 +519,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
             }
             rows.push_back(i);
         }
-        if (OkayUI::BeginChild("##servers", 0.0f, H - 230.0f, true)) {
+        if (OkayUI::BeginChild("##servers", 0.0f, H - 300.0f, true)) {
             const char* hdr[] = {"Server", "Players", "Map", "Ping"};
             const float weights[] = {3.2f, 1.1f, 1.4f, 1.0f};
             const float nameW = (W - 60.0f) * weights[0] / 6.7f - 12.0f;
@@ -579,7 +579,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
             if (e.info.password) line += "  password";
             OkayUI::TextDisabled(fitLine(line).c_str());
             if (e.info.password) { OkayUI::SetNextItemWidth(200.0f); OkayUI::InputText("Password", pass, sizeof(pass)); OkayUI::SameLine(); }
-            if (OkayUI::Button("Join")) {
+            if (OkayUI::PrimaryButton("Join")) {
                 okay::JoinLink l = e.Link();
                 if (e.info.password) l.password = pass;
                 if (e.info.password && !pass[0]) status = "This server needs a password.";
@@ -595,8 +595,11 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
             OkayUI::SetNextItemWidth(160.0f);
             OkayUI::SliderInt("Players", &players, 2, 16);
             OkayUI::SameLine();
+            char plText[16]; std::snprintf(plText, sizeof(plText), "%d", players);
+            OkayUI::Badge(plText);
+            OkayUI::SameLine();
             if (busy) { if (OkayUI::Button("Cancel search")) mm.Cancel(); }
-            else if (OkayUI::Button("Find match")) {
+            else if (OkayUI::PrimaryButton("Find match")) {
                 okay::MatchRequest r; r.players = players; r.minPlayers = players > 2 ? 2 : 0;
                 mm.Start(r);
                 sb.windowOpen = false;   // the "Finding a match" banner takes over
@@ -635,35 +638,30 @@ static void DrawMatchmakingBanner(SDL_Window* window) {
     if (st == okay::Matchmaker::State::Found) { if (!foundAt) foundAt = now; if (now - foundAt > 4000) return; }
     if (st == okay::Matchmaker::State::Failed) { if (!failedAt) failedAt = now; if (now - failedAt > 8000) { mm.Cancel(); return; } }
     int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
-    const float W = std::min(460.0f, (float)ww - 20.0f), H = 214.0f;
+    const float W = std::min(440.0f, (float)ww - 20.0f), H = 184.0f;
     bool open = true;
     if (OkayUI::Begin("Matchmaking", (ww - W) * 0.5f, 14.0f, W, H, &open)) {
         const int secs = (int)mm.Elapsed();
         char line[160];
         const okay::MatchRequest rq = mm.Request();
-        if (st == okay::Matchmaker::State::Searching) {
-            std::snprintf(line, sizeof(line), "Finding a match   %d:%02d", secs / 60, secs % 60);
+        if (st == okay::Matchmaker::State::Searching || st == okay::Matchmaker::State::Waiting) {
+            const bool waiting = st == okay::Matchmaker::State::Waiting;
+            OkayUI::Spinner(); OkayUI::SameLine();
+            std::snprintf(line, sizeof(line), "%s   %d:%02d", waiting ? "Match found - starting" : "Finding a match", secs / 60, secs % 60);
             OkayUI::Text(line);
-            char det[96];
-            std::snprintf(det, sizeof(det), "%s%s%d players", rq.mode.c_str(), rq.mode.empty() ? "" : " - ", rq.players);
-            OkayUI::TextDisabled(det);
-            std::snprintf(det, sizeof(det), "%d in the queue", mm.Searching());
-            OkayUI::TextDisabled(det);
-            OkayUI::ProgressBar((float)((now / 16) % 100) / 100.0f, "");
-            if (OkayUI::Button("Cancel")) mm.Cancel();
-        } else if (st == okay::Matchmaker::State::Waiting) {
-            OkayUI::Text("Match found!");
-            OkayUI::TextDisabled("Waiting for the host to start the match...");
+            if (waiting) std::snprintf(line, sizeof(line), "Waiting for the host to start the match...");
+            else std::snprintf(line, sizeof(line), "%s%s%d players  -  %d in the queue", rq.mode.c_str(), rq.mode.empty() ? "" : "  -  ", rq.players, mm.Searching());
+            OkayUI::TextDisabled(line);
             if (OkayUI::Button("Cancel")) mm.Cancel();
         } else if (st == okay::Matchmaker::State::Found) {
             const okay::MatchAssignment a = mm.Assignment();
-            OkayUI::TextColored(115, 209, 143, "Match found!");
-            std::snprintf(line, sizeof(line), "%s - %d players", a.isHost ? "Hosting" : !a.serverName.empty() ? a.serverName.c_str() : "Joining", a.players);
-            OkayUI::TextDisabled(line);
+            OkayUI::Caption("MATCH FOUND");
+            std::snprintf(line, sizeof(line), "%s - %d players", a.isHost ? "You're hosting" : !a.serverName.empty() ? a.serverName.c_str() : "Joining", a.players);
+            OkayUI::Text(line);
         } else {
-            OkayUI::TextColored(240, 128, 115, "Couldn't find a match");
+            OkayUI::Caption("COULDN'T FIND A MATCH", 240, 128, 115);
             const std::string e = mm.Error();
-            OkayUI::TextDisabled(e.empty() ? "Something went wrong." : e.c_str());
+            OkayUI::TextWrapped(e.empty() ? "Something went wrong." : e.c_str());
             if (OkayUI::Button("OK")) mm.Cancel();
         }
     }
@@ -1698,6 +1696,7 @@ int main(int argc, char** argv) {
     bool running = true;
 #ifdef OKAY_HAVE_OKAYUI
     bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
+    if (std::getenv("OKAY_TESTUI")) g_testUI = true;   // dev screenshot hook
     bool g_statsUI = false;           // F3 toggles the OkayUI performance HUD
     char g_uiText[32] = {0}; bool g_uiBack = false;
     float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
@@ -2003,6 +2002,8 @@ int main(int argc, char** argv) {
             ui.text = g_uiText[0] ? g_uiText : nullptr;
             ui.backspace = g_uiBack;
             ui.wheel = g_uiWheel;
+            static bool lookChosen = false;   // game UI looks like the OkaySpace launcher (OKAY_CLASSIC_UI=1: the old look)
+            if (!lookChosen) { lookChosen = true; if (!std::getenv("OKAY_CLASSIC_UI")) OkayUI::UseLauncherLook(true); }
             OkayUI::BeginFrame(ui);
         }
 #endif
@@ -3492,7 +3493,9 @@ int main(int argc, char** argv) {
         // Scripts drew their UI during scene.Update (via the bridge); add the optional
         // F1 "Test UI" panel on top, then flush the whole OkayUI frame here so it
         // composites above the game.
-        if (g_testUI) okay_testui::Panel(24.0f, 24.0f);
+        if (g_testUI) { okay_testui::Panel(24.0f, 24.0f); okay_testui::Showcase(390.0f, 24.0f); }
+        static bool toastDemo = false;   // dev screenshot hook
+        if (!toastDemo && std::getenv("OKAY_TESTUI")) { toastDemo = true; OkayUI::Toast("Match found - joining EU 1", 1, 30.0f); OkayUI::Toast("Maya invited you to play", 0, 30.0f); }
         DrawServerBrowserWindow(scene, window);   // net_browser_open(): the in-game "Find a server" window
         DrawMatchmakingBanner(window);            // net_queue_join() / Find match: progress + Cancel
         // F3 performance HUD — a real in-engine use of OkayUI (FPS graph, frame time,

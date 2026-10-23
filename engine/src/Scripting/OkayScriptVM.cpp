@@ -2492,6 +2492,48 @@ struct OkayScriptVM::Impl {
             bool nv = u ? u->Switch(a.empty() ? "" : a[0].AsString().c_str(), cur) : cur;
             return Value{nv ? 1.0f : 0.0f};
         };
+        // Launcher-style building blocks: ui_heading("Lobby"), ui_caption("NOW PLAYING"[, r, g, b]),
+        // ui_text_dim, ui_text_wrapped, ui_primary_button, ui_badge("3/4"[, r, g, b]),
+        // ui_avatar("Maya"[, size]), ui_card_begin("id") ... ui_card_end(),
+        // ui_list_item(title[, subtitle[, right[, selected]]]) -> clicked, ui_key_value(k, v),
+        // ui_spinner(), ui_toast(text[, kind 0/1/2[, seconds]]),
+        // ui_tabs("A|B|C", current) -> index, ui_input(label, text) -> text, ui_spacing(h),
+        // ui_style("launcher" | "classic").
+        auto uiS = [](std::vector<Value>& a, std::size_t i) { return a.size() > i ? a[i].AsString() : std::string(); };
+        auto uiN = [](std::vector<Value>& a, std::size_t i, float d) { return a.size() > i ? a[i].AsFloat() : d; };
+        b["ui_heading"]   = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Heading(uiS(a, 0).c_str()); return Value{}; };
+        b["ui_caption"]   = [uiS, uiN](std::vector<Value>& a) {
+            if (auto* u = GetScriptUI()) u->Caption(uiS(a, 0).c_str(), (int)uiN(a, 1, 115), (int)uiN(a, 2, 209), (int)uiN(a, 3, 143));
+            return Value{};
+        };
+        b["ui_text_dim"]     = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->TextDim(uiS(a, 0).c_str()); return Value{}; };
+        b["ui_text_wrapped"] = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->TextWrapped(uiS(a, 0).c_str()); return Value{}; };
+        b["ui_primary_button"] = [uiS](std::vector<Value>& a) { auto* u = GetScriptUI(); return Value{u && u->PrimaryButton(uiS(a, 0).c_str()) ? 1.0f : 0.0f}; };
+        b["ui_badge"]     = [uiS, uiN](std::vector<Value>& a) {
+            if (auto* u = GetScriptUI()) u->Badge(uiS(a, 0).c_str(), (int)uiN(a, 1, 0), (int)uiN(a, 2, 0), (int)uiN(a, 3, 0));
+            return Value{};
+        };
+        b["ui_avatar"]    = [uiS, uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Avatar(uiS(a, 0).c_str(), uiN(a, 1, 0.0f)); return Value{}; };
+        b["ui_card_begin"] = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->BeginCard(a.empty() ? "card" : uiS(a, 0).c_str()); return Value{}; };
+        b["ui_card_end"]  = [](std::vector<Value>&) { if (auto* u = GetScriptUI()) u->EndCard(); return Value{}; };
+        b["ui_list_item"] = [uiS, uiN](std::vector<Value>& a) {
+            auto* u = GetScriptUI();
+            const std::string t = uiS(a, 0), sub = uiS(a, 1), r = uiS(a, 2);
+            return Value{u && u->ListItem(t.c_str(), sub.empty() ? nullptr : sub.c_str(), r.empty() ? nullptr : r.c_str(), uiN(a, 3, 0.0f) != 0.0f) ? 1.0f : 0.0f};
+        };
+        b["ui_key_value"] = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->KeyValue(uiS(a, 0).c_str(), uiS(a, 1).c_str()); return Value{}; };
+        b["ui_spinner"]   = [](std::vector<Value>&) { if (auto* u = GetScriptUI()) u->Spinner(); return Value{}; };
+        b["ui_toast"]     = [uiS, uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Toast(uiS(a, 0).c_str(), (int)uiN(a, 1, 0), uiN(a, 2, 3.0f)); return Value{}; };
+        b["ui_tabs"]      = [uiS, uiN](std::vector<Value>& a) {
+            auto* u = GetScriptUI(); const int cur = (int)uiN(a, 1, 0);
+            return Value{(float)(u ? u->Tabs(uiS(a, 0).c_str(), cur) : cur)};
+        };
+        b["ui_input"]     = [uiS](std::vector<Value>& a) {
+            auto* u = GetScriptUI(); const std::string cur = uiS(a, 1);
+            return Value{std::string(u ? u->Input(uiS(a, 0).c_str(), cur.c_str()) : cur.c_str())};
+        };
+        b["ui_spacing"]   = [uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Spacing(uiN(a, 0, 8.0f)); return Value{}; };
+        b["ui_style"]     = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Style(uiS(a, 0).c_str()); return Value{}; };
         b["ui_slider"]    = [](std::vector<Value>& a)  {
             auto* u = GetScriptUI();
             float v = a.size() > 1 ? a[1].AsFloat() : 0.0f;

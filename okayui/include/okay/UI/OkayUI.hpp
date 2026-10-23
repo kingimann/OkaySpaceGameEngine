@@ -48,7 +48,23 @@ struct Theme {
     float borderPx  = 1.0f;
     float textScale = 2.0f;    // 8x8 font cell * scale (2 -> 16px-tall glyphs)
     float rounding  = 4.0f;    // corner radius (px) for panels/buttons/inputs; 0 = square
+    unsigned char textDim[4] = {150, 155, 166, 255};   // TextDisabled / secondary text
+    unsigned char titleBg[4] = { 36,  40,  48, 255};   // window title bars
+    unsigned char field[4]   = { 26,  28,  34, 255};   // text-field fill
+    float windowRounding = 4.0f;   // window corners
+    float windowPadding  = 10.0f;  // inside a window, around its content
+    bool  windowShadow   = false;  // soft drop shadow under windows
 };
+
+/// The OkaySpace launcher's look for game UI: its font (Roboto, smooth TrueType
+/// text instead of the 8x8 bitmap), its "Slate" colours (blue-tinted dark panels,
+/// hairline borders, accent for interactive states), rounder controls, pill tabs,
+/// shadows. The player turns it on; `false` restores the classic look. Needs the
+/// SDL_Renderer path (EndFrame(SDL_Renderer*)).
+void UseLauncherLook(bool on = true);
+bool LauncherLook();
+/// The Slate theme on its own (what UseLauncherLook applies), e.g. to tweak and reapply.
+Theme SlateTheme();
 
 /// Latch this frame's input and reset the geometry batch.
 void BeginFrame(const Input& in);
@@ -332,6 +348,37 @@ void TableNextRow();
 /// Advance to the next cell; returns true (visible). Widgets after it land in-cell.
 bool TableNextColumn();
 void EndTable();
+
+// ---- Launcher-style building blocks ----------------------------------------------
+// The pieces the OkaySpace launcher is made of, for menus, HUDs, lobbies and
+// scoreboards. They work in either look; with UseLauncherLook() they match it.
+/// A page / panel title: bigger text with the accent underline.
+void Heading(const char* text);
+/// Small coloured text, e.g. a green "NOW PLAYING" label.
+void Caption(const char* text, unsigned char r = 115, unsigned char g = 209, unsigned char b = 143);
+/// Text that wraps to the available width.
+void TextWrapped(const char* text);
+/// An accent-filled call-to-action button (Play, Join, Confirm).
+bool PrimaryButton(const char* label);
+/// A rounded pill with short text (counts, tags, "NEW"). r=g=b=0: the accent colour.
+void Badge(const char* text, unsigned char r = 0, unsigned char g = 0, unsigned char b = 0);
+/// A circle with the name's initial, coloured per name. size 0 = one row tall.
+void Avatar(const char* name, float size = 0.0f);
+/// A raised, rounded card; widgets until EndCard() go inside (it fits its content).
+void BeginCard(const char* id);
+void EndCard();
+/// A list row: avatar, title, dim subtitle, optional right-aligned text. True when clicked.
+bool ListItem(const char* title, const char* subtitle = nullptr, const char* right = nullptr, bool selected = false);
+/// A dim label on the left and its value on the right (stats, settings summaries).
+void KeyValue(const char* label, const char* value);
+/// A spinning "busy" ring. size 0 = one row tall.
+void Spinner(float size = 0.0f);
+/// Show a toast in the bottom-right corner (kind: 0 info, 1 success, 2 error).
+/// Call from anywhere; it stays up for `seconds`.
+void Toast(const char* text, int kind = 0, float seconds = 3.0f);
+/// Scale the text of the following widgets (1 = normal) until PopTextScale().
+void PushTextScale(float scale);
+void PopTextScale();
 
 // ---- Drag and drop -------------------------------------------------------------
 // Lightweight int-payload drag & drop (e.g. reorder a list by dragging item indices).

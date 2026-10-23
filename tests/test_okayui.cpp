@@ -817,6 +817,93 @@ int main(int argc, char** argv) {
         SDL_DestroyRenderer(br); SDL_FreeSurface(big);
     }
 
+    // ---- The launcher look: Roboto text, Slate theme, the building blocks ----------
+    {
+        const int LW = 420, LH = 360;
+        SDL_Surface* ls = SDL_CreateRGBSurfaceWithFormat(0, LW, LH, 32, SDL_PIXELFORMAT_ARGB8888);
+        SDL_Renderer* lr = ls ? SDL_CreateSoftwareRenderer(ls) : nullptr;
+        CHECK(lr != nullptr);
+        const float classicScale = OkayUI::Style().textScale;
+        OkayUI::UseLauncherLook(true);
+        CHECK(OkayUI::LauncherLook());
+        CHECK(OkayUI::Style().panel[0] == 30 && OkayUI::Style().accent[2] == 250);   // Slate palette
+        // Proportional TrueType text: "iiii" is far narrower than "WWWW" (the bitmap font made them equal).
+        OkayUI::Input none; none.mouseX = -1; none.mouseY = -1;
+        OkayUI::BeginFrame(none);
+        CHECK(OkayUI::CalcTextWidth("iiii") * 2.0f < OkayUI::CalcTextWidth("WWWW"));
+        CHECK(OkayUI::CalcTextWidth("Hello") > 20.0f && OkayUI::CalcTextWidth("Hello") < 60.0f);
+        OkayUI::EndFrame(lr);
+
+        auto frame = [&](const OkayUI::Input& in, bool* clickedRow, bool* clickedPrimary) {
+            SDL_SetRenderDrawColor(lr, 0, 0, 0, 255); SDL_RenderClear(lr);
+            OkayUI::BeginFrame(in);
+            OkayUI::Begin("Lobby", 10, 10, 400, 330);
+            OkayUI::Heading("Star Arena");
+            OkayUI::BeginCard("players");
+            bool row = OkayUI::ListItem("Maya", "Ready", "1,240");
+            OkayUI::EndCard();
+            bool prim = OkayUI::PrimaryButton("Ready");
+            OkayUI::SameLine(); OkayUI::Badge("3 / 4");
+            OkayUI::KeyValue("Ping", "23 ms");
+            OkayUI::End();
+            OkayUI::EndFrame(lr);
+            if (clickedRow) *clickedRow = row;
+            if (clickedPrimary) *clickedPrimary = prim;
+        };
+        frame(none, nullptr, nullptr);
+        frame(none, nullptr, nullptr);   // the card sizes itself from the previous frame
+        int aa = 0, accent = 0, raised = 0;
+        SDL_LockSurface(ls);
+        for (int y = 0; y < LH; ++y)
+            for (int x = 0; x < LW; ++x) {
+                Uint8 cr, cg, cb, ca; SDL_GetRGBA(pixelAt(ls, x, y), ls->format, &cr, &cg, &cb, &ca);
+                if (cr > 60 && cr < 200 && cg > 60 && cg < 200 && cb > 60 && cb < 220 && cr > 30 + 20) ++aa;   // anti-aliased text edges
+                if (cr < 90 && cg > 130 && cg < 170 && cb > 235) ++accent;                                     // accent (heading underline, primary button)
+                if (cr == 38 && cg == 42 && cb == 51) ++raised;                                                // the card
+            }
+        SDL_UnlockSurface(ls);
+        CHECK(aa > 40);
+        CHECK(accent > 200);
+        CHECK(raised > 500);
+
+        // Clicks: press + release on the list row and the primary button.
+        auto clickAt = [&](float mx, float my, bool* row, bool* prim) {
+            OkayUI::Input dn; dn.mouseX = mx; dn.mouseY = my; dn.mouseDown = true;
+            frame(dn, nullptr, nullptr);
+            OkayUI::Input up; up.mouseX = mx; up.mouseY = my;
+            frame(up, row, prim);
+        };
+        bool row = false, prim = false;
+        // Find the row and the button by colour-free geometry: the row sits inside the card under
+        // the heading; the primary button is the accent block below the card.
+        int btnY = -1, btnX = -1;
+        SDL_LockSurface(ls);
+        for (int y = LH - 1; y >= 0 && btnY < 0; --y)
+            for (int x = 20; x < 120; ++x) {
+                Uint8 cr, cg, cb, ca; SDL_GetRGBA(pixelAt(ls, x, y), ls->format, &cr, &cg, &cb, &ca);
+                if (cr < 90 && cg > 130 && cb > 235) { btnY = y; btnX = x + 4; break; }
+            }
+        SDL_UnlockSurface(ls);
+        CHECK(btnY > 0);
+        clickAt((float)btnX, (float)btnY - 6.0f, &row, &prim);
+        CHECK(prim && !row);
+        clickAt(200.0f, (float)btnY - 70.0f, &row, &prim);   // inside the card's row
+        CHECK(row);
+
+        // A toast shows in the bottom-right corner.
+        OkayUI::Toast("Saved", 1, 5.0f);
+        frame(none, nullptr, nullptr);
+        SDL_LockSurface(ls);
+        Uint8 tr, tg, tb, ta; SDL_GetRGBA(pixelAt(ls, LW - 40, LH - 40), ls->format, &tr, &tg, &tb, &ta);
+        SDL_UnlockSurface(ls);
+        CHECK(tr > 20 || tg > 20 || tb > 20);
+
+        if (argc >= 4 && std::strcmp(argv[1], "--png") == 0) savePng(ls, argv[3]);
+        OkayUI::UseLauncherLook(false);
+        CHECK(!OkayUI::LauncherLook() && OkayUI::Style().textScale == classicScale && OkayUI::Style().panel[0] == 40);
+        SDL_DestroyRenderer(lr); SDL_FreeSurface(ls);
+    }
+
     SDL_DestroyRenderer(r);
     SDL_FreeSurface(surf);
     std::printf(g_fail == 0 ? "okayui: all checks passed\n" : "okayui: %d FAILED\n", g_fail);

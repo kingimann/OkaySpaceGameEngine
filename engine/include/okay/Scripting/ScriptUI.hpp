@@ -28,6 +28,27 @@ struct ScriptUIBridge {
     virtual void  ProgressBar(float t) { (void)t; }
     virtual void  SameLine() {}
     virtual void  Separator() {}
+    // Launcher-style building blocks (see OkayUI). Defaults degrade to plain text/buttons.
+    virtual void  Heading(const char* s) { Text(s); }
+    virtual void  Caption(const char* s, int r, int g, int b) { (void)r;(void)g;(void)b; Text(s); }
+    virtual void  TextDim(const char* s) { Text(s); }
+    virtual void  TextWrapped(const char* s) { Text(s); }
+    virtual bool  PrimaryButton(const char* label) { return Button(label); }
+    virtual void  Badge(const char* s, int r, int g, int b) { (void)r;(void)g;(void)b; Text(s); }
+    virtual void  Avatar(const char* name, float size) { (void)name; (void)size; }
+    virtual void  BeginCard(const char* id) { (void)id; }
+    virtual void  EndCard() {}
+    virtual bool  ListItem(const char* title, const char* subtitle, const char* right, bool selected) { (void)subtitle;(void)right;(void)selected; return Button(title); }
+    virtual void  KeyValue(const char* k, const char* v) { (void)v; Text(k); }
+    virtual void  Spinner() {}
+    virtual void  Toast(const char* s, int kind, float seconds) { (void)s;(void)kind;(void)seconds; }
+    /// Pill tabs; `labels` separated by '|'. Returns the selected index.
+    virtual int   Tabs(const char* labels, int current) { (void)labels; return current; }
+    /// A text field; returns the (possibly edited) text.
+    virtual const char* Input(const char* label, const char* text) { (void)label; return text; }
+    virtual void  Spacing(float h) { (void)h; }
+    /// "launcher" (the OkaySpace look) or "classic".
+    virtual void  Style(const char* name) { (void)name; }
 };
 
 // The active bridge (null = no UI host installed; the ui_* builtins become no-ops).

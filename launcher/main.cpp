@@ -1545,6 +1545,53 @@ int g_friendRequests = 0;   // incoming pending friend requests (nav badge), pol
 int  g_dmUnread = 0;        // unread direct messages (nav badge)
 long g_lastDmId = 0;        // newest incoming DM id the user has seen (persisted)
 long g_newestDmId = 0;      // newest incoming DM id currently on the server
+volatile long g_inviteSeenId = 0;   // newest game/party invite already shown (persisted; the poll thread reads it)
+// Per-conversation "seen up to" ids for the chat list's unread dots. Kept on disk
+// (chat_seen_<account>.cfg beside the launcher) so a restart doesn't mark every
+// chat unread again.
+std::map<std::string, long> g_chatSeenDm;   // friend uid -> newest DM id I've viewed
+std::map<long, long> g_chatSeenGroup;       // group id -> newest message id I've viewed
+static std::string g_chatSeenUser;          // whose file is loaded
+static fs::path ChatSeenFile(const std::string& user) {
+    std::string safe;
+    for (char c : user) safe += (std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.') ? c : '_';
+    return fs::path(g_exeDir) / ("chat_seen_" + safe + ".cfg");
+}
+static long ChatSeenSum() {
+    long h = (long)(g_chatSeenDm.size() * 31 + g_chatSeenGroup.size());
+    for (const auto& [k, v] : g_chatSeenDm) h = h * 131 + v + (long)k.size();
+    for (const auto& [k, v] : g_chatSeenGroup) h = h * 131 + v + k;
+    return h;
+}
+// Load the signed-in account's markers when it changes; save them when they change.
+// Called once a frame from the main loop (cheap: a checksum every ~2 s).
+void SyncChatSeen(const std::string& user) {
+    static long savedSum = 0;
+    static Uint32 nextCheck = 0;
+    if (user != g_chatSeenUser) {
+        g_chatSeenDm.clear(); g_chatSeenGroup.clear();
+        g_chatSeenUser = user;
+        if (!user.empty()) {
+            std::ifstream f(ChatSeenFile(user));
+            std::string kind, key; long id = 0;
+            while (f >> kind >> key >> id) {
+                if (kind == "d") g_chatSeenDm[key] = id;
+                else if (kind == "g") { try { g_chatSeenGroup[std::stol(key)] = id; } catch (...) {} }
+            }
+        }
+        savedSum = ChatSeenSum();
+        return;
+    }
+    if (user.empty() || SDL_GetTicks() < nextCheck) return;
+    nextCheck = SDL_GetTicks() + 2000;
+    const long sum = ChatSeenSum();
+    if (sum == savedSum) return;
+    std::ofstream f(ChatSeenFile(user), std::ios::trunc);
+    if (!f) return;
+    for (const auto& [k, v] : g_chatSeenDm) if (v > 0 && !k.empty() && k.find_first_of(" \t\n") == std::string::npos) f << "d " << k << ' ' << v << '\n';
+    for (const auto& [k, v] : g_chatSeenGroup) if (v > 0) f << "g " << k << ' ' << v << '\n';
+    savedSum = sum;
+}
 int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible (persisted)
 bool g_sharePresence = true; // share "Playing X" with friends (persisted)
 bool g_partyFollow = true;    // party members follow the leader into games (persisted)
@@ -1591,9 +1638,16 @@ void SaveNotifs() {
         f << "n\t" << NotifEsc(n.key) << '\t' << n.kind << '\t' << n.gotoTab << '\t' << (n.read ? 1 : 0) << '\t'
           << n.wall << '\t' << NotifEsc(n.title) << '\t' << NotifEsc(n.body) << '\n';
     }
-    // Keep the read / cleared lists bounded (oldest-sorted entries go first).
-    while (g_notifReadSigs.size() > 400) g_notifReadSigs.erase(g_notifReadSigs.begin());
-    while (g_notifGoneSigs.size() > 400) g_notifGoneSigs.erase(g_notifGoneSigs.begin());
+    // Keep the read / cleared lists bounded, dropping ones no longer in the feed first
+    // (sets are sorted by text, not age, so never evict a live notification's mark).
+    auto trim = [](std::set<std::string>& sigs) {
+        if (sigs.size() <= 400) return;
+        std::set<std::string> live;
+        for (const auto& n : g_notifs) live.insert(NotifSig(n));
+        for (auto it = sigs.begin(); it != sigs.end() && sigs.size() > 400;)
+            it = live.count(*it) ? std::next(it) : sigs.erase(it);
+    };
+    trim(g_notifReadSigs); trim(g_notifGoneSigs);
     for (const auto& sg : g_notifReadSigs) f << "r\t" << NotifEsc(sg) << '\n';
     for (const auto& sg : g_notifGoneSigs) f << "x\t" << NotifEsc(sg) << '\n';
 }
@@ -3822,6 +3876,7 @@ void LoadPrefs() {
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
         else if (k == "online_status") { try { g_onlineStatus = std::stoi(v); } catch (...) {} }
         else if (k == "last_dm_id") { try { g_lastDmId = std::stol(v); } catch (...) {} }
+        else if (k == "invite_seen_id") { try { g_inviteSeenId = std::stol(v); } catch (...) {} }
         else if (k == "share_presence") g_sharePresence = (v != "0");
         else if (k == "party_follow") g_partyFollow = (v != "0");
         else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
@@ -3926,6 +3981,7 @@ void SavePrefs() {
     f << "play_sort=" << g_playSort << "\n";
     f << "online_status=" << g_onlineStatus << "\n";
     f << "last_dm_id=" << g_lastDmId << "\n";
+    f << "invite_seen_id=" << (long)g_inviteSeenId << "\n";
     f << "share_presence=" << (g_sharePresence ? 1 : 0) << "\n";
     f << "party_follow=" << (g_partyFollow ? 1 : 0) << "\n";
     f << "play_view=" << g_playView << "\n";
@@ -7146,7 +7202,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static std::map<long, std::map<std::string,long>> reacts;   // id -> emoji -> count
     static std::map<long, std::set<std::string>> myReacts;      // id -> emojis I used
     static long peerRead = 0;                        // peer's last-read id (Seen marker)
-    static std::map<std::string,long> seenId;        // newest id I've viewed, per friend (unread)
+    std::map<std::string,long>& seenId = g_chatSeenDm;   // newest id I've viewed, per friend (unread; saved)
     static long editId = 0, replyTo = 0;
     static std::string replyName, replySnippet;
     static char input[1024] = ""; static int lastShown = -1; static std::string lastConv;
@@ -7173,7 +7229,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
     // Group-chat composer / edit state (parallel to the DM ones above).
     static char   gInput[1024] = ""; static long gEditId = 0, gReplyTo = 0;
     static std::string gReplyName, gReplySnippet;
-    static std::map<long,long> gSeenId;               // newest group msg id I've viewed (unread)
+    std::map<long,long>& gSeenId = g_chatSeenGroup;   // newest group msg id I've viewed (unread; saved)
     static bool   showNewGroup = false;               // create-group dialog open
     static std::set<std::string> newGroupPick;        // friends picked for the new group
     static char   newGroupName[64] = "";
@@ -9436,7 +9492,7 @@ static long g_pollNewestDm = 0;         // (guarded)
 // Game / party invites waiting for the "X invited you" pop-up.
 struct PendingInvite { long id = 0; std::string from, fromName, body; long when = 0; };
 static std::vector<PendingInvite> g_pollInvites;   // (guarded) fresh ones not yet shown
-static volatile long g_inviteSeenId = 0;           // newest invite already shown (main thread writes)
+// (g_inviteSeenId — the newest invite already shown — is with the prefs; the main thread writes it.)
 // (g_pollCfgDir / g_pollUrl / g_pollKey are defined with the chat poll state.)
 
 static int PollWorker(void*) {
@@ -10231,7 +10287,7 @@ static void DrawInvitePopups() {
     std::sort(fresh.begin(), fresh.end(), [](const PendingInvite& a, const PendingInvite& b) { return a.id < b.id; });
     for (const auto& f : fresh) {
         if (f.id <= g_inviteSeenId && !MpDemo()) continue;
-        if (f.id > g_inviteSeenId) g_inviteSeenId = f.id;
+        if (f.id > g_inviteSeenId) { g_inviteSeenId = f.id; SavePrefs(); }
         ChatInviteInfo ci;
         const bool party = f.body.rfind("[Party] ", 0) == 0;
         if (!party && !ParseChatInvite(f.body, ci)) continue;
@@ -14627,10 +14683,16 @@ int main(int argc, char** argv) {
                     lastReqSeen = fr;
                     g_friendRequests = fr;
                     g_newestDmId = newest;
-                    if (unread > g_dmUnread && tab != 6) Toast("New message", 1);
+                    if (unread > g_dmUnread && tab != 6 && !g_chatWinOpen) Toast("New message", 1);
                     if (unread > g_dmUnread && !g_chatWinOpen) PlayChatChime();
                     g_dmUnread = unread;
                 }
+                // Reading chats in the chat window counts as seeing them (not only the
+                // Friends page), so the badge and "New messages" don't come back after a restart.
+                if (g_chatWinOpen && (g_dmUnread > 0 || g_newestDmId > g_lastDmId)) {
+                    g_lastDmId = std::max(g_lastDmId, g_newestDmId); g_dmUnread = 0; SavePrefs();
+                }
+                SyncChatSeen(account.CurrentSession().username);
             } else {
                 g_friendRequests = 0; lastReqSeen = -1; g_dmUnread = 0;
             }

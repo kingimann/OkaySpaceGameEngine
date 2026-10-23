@@ -59,6 +59,7 @@ add_library(okay_engine
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
+    src/Graphics/EmbeddedFont.cpp
     src/Render/ModelImport.cpp
     third_party/ufbx/ufbx.c
 )
@@ -88,6 +89,9 @@ endif()
 # that `-w` does not downgrade, even though GCC/MinGW accept it.
 set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Graphics/TtfFont.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
+# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
+set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
+    INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)
 

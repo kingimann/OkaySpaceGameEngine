@@ -258,6 +258,12 @@ static void DrawTtfText(SDL_Renderer* r, okay::TtfFont* f, const std::string& te
 // explicit font is given. Set around the screen-UI pass and cleared after, so world
 // text without its own font keeps the bitmap font (matching the editor preview).
 static okay::TtfFont* g_uiDefaultFont = nullptr;
+// Width of `text` in screen pixels at font-pixel size `px`, in the font DrawText will
+// use (the scene's UI font during the UI pass, else the 8x8 bitmap font).
+static float UITextW(const std::string& text, float px) {
+    if (g_uiDefaultFont && g_uiDefaultFont->Valid()) return g_uiDefaultFont->Measure(text.c_str(), (float)Font8x8::Height) * px;
+    return (float)text.size() * (Font8x8::Width + 1) * px;
+}
 
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
 // in screen pixels, each font pixel `px` screen pixels wide. When `ttf` is loaded,
@@ -726,7 +732,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             if (ui.showCounts && shown > 1) {
                 std::string cs = std::to_string(shown);
                 float px = S * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
-                float tw = cs.size() * (Font8x8::Width + 1) * px;
+                float tw = UITextW(cs, px);
                 DrawText(r, cs, X + S - tw - 3, Y + S - (Font8x8::Height + 1) * px - 3, px,
                          SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
             }
@@ -770,7 +776,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             float t = bpY(0), b = bpY(ui.backpackRows - 1);
             float top = (t < b ? t : b);
             float px = 2.0f * ui.labelScale * uiScale; if (px < 1.0f) px = 1.0f;
-            float tw = ui.backpackTitle.size() * (Font8x8::Width + 1) * px;
+            float tw = UITextW(ui.backpackTitle, px);
             DrawText(r, ui.backpackTitle, hx + rowW * 0.5f - tw * 0.5f,
                      top - panelPad - (Font8x8::Height + 1) * px - 2.0f, px,
                      SDL_Color{(Uint8)(ui.titleColor.r*255),(Uint8)(ui.titleColor.g*255),(Uint8)(ui.titleColor.b*255),255});
@@ -793,7 +799,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     auto drawTip = [&](const std::string& label) {
         if (!ui.showTooltips || label.empty()) return;
         float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
-        float tw = label.size() * (Font8x8::Width + 1) * px, th = Font8x8::Height * px, pad = 6.0f;
+        float tw = UITextW(label, px), th = Font8x8::Height * px, pad = 6.0f;
         SDL_Rect bg{(int)(mpos.x + 14), (int)(mpos.y + 14), (int)(tw + pad * 2), (int)(th + pad * 2)};
         FillUIShape(r, bg, UIShape::Rounded, 4.0f, ui.tooltipColor, ui.tooltipColor, false, false, 1.0f);
         DrawText(r, label, bg.x + pad, bg.y + pad, px,
@@ -814,7 +820,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         std::string nm = ui.SelectedItem();
         if (!nm.empty()) {
             float px = 2.0f * ui.labelScale * uiScale; if (px < 1.0f) px = 1.0f;
-            float tw = nm.size() * (Font8x8::Width + 1) * px;
+            float tw = UITextW(nm, px);
             float ty = ui.anchorTop ? hy + sz + panelPad + 4.0f : hy - (Font8x8::Height + 1) * px - panelPad - 4.0f;
             DrawText(r, nm, hx + rowW * 0.5f - tw * 0.5f, ty, px,
                      SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
@@ -897,7 +903,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         if (ui.showCounts && carried > 1) {
             std::string ccs = std::to_string(carried);
             float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
-            float tw = ccs.size() * (Font8x8::Width + 1) * px;
+            float tw = UITextW(ccs, px);
             DrawText(r, ccs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
                      SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
         }
@@ -992,7 +998,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         float hbX = startX - pad, hbW = lw + pad*2, hbY = startY - pad - headH - headGap;
         if (hbW < 200.0f) hbW = 200.0f;
         const std::string& mt = ui.masterTitle; float px = ui.titleScale;
-        float tw = (float)mt.size() * (Font8x8::Width + 1) * px;
+        float tw = UITextW(mt, px);
         DrawText(r, mt, hbX + (hbW - tw) * 0.5f, hbY, px, sc(ui.textColor));
         float totW = 0, totL = 0; for (auto* g : equipped) { totW += g->TotalWeight(); totL += g->weightLimit; }
         if (ui.showWeight && totL > 0.0f) {
@@ -1041,7 +1047,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         }
         if (it.count > 1) {
             std::string cstr = std::to_string(it.count); float px = 1.3f;
-            float tw = cstr.size() * (Font8x8::Width + 1) * px, ph = Font8x8::Height * px;
+            float tw = UITextW(cstr, px), ph = Font8x8::Height * px;
             float pwid = tw + 7, phgt = ph + 5;
             fill(box.x + box.w - pwid - 2, box.y + box.h - phgt - 2, pwid, phgt, Color::FromBytes(10, 12, 18, 225), 3);
             DrawText(r, cstr, box.x + box.w - tw - 5, box.y + box.h - ph - 4, px, SDL_Color{255, 255, 255, 255});
@@ -1058,7 +1064,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         DrawText(r, P.label, P.ox + (ui.accentBars ? 2.0f : 6.0f), hy + 5, 1.4f, sc(ui.textColor));
         if (ui.showWeight && inv->weightLimit > 0.0f) {
             char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
-            float px = 1.2f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
+            float px = 1.2f, tw = UITextW(wb, px);
             DrawText(r, wb, P.ox + P.gw - tw, hy + 6, px, sc(inv->OverWeight() ? ui.overweightColor : ui.textColor));
         }
         for (int y = 0; y < inv->rows; ++y)
@@ -1104,7 +1110,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
             char tip[96];
             std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
                           it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
-            float px = 1.4f, tw = (float)std::strlen(tip) * (Font8x8::Width + 1) * px, tpad = 6.0f;
+            float px = 1.4f, tw = UITextW(tip, px), tpad = 6.0f;
             fill(mp.x + 14, mp.y + 14, tw + tpad * 2, Font8x8::Height * px + tpad * 2, ui.tooltipColor, 4.0f);
             DrawText(r, tip, mp.x + 14 + tpad, mp.y + 14 + tpad, px, sc(ui.tooltipText));
         }
@@ -1166,7 +1172,7 @@ static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
         DrawText(r, out, px + 10, ry + 4, 1.4f, sc(cs.textColor));
         std::string ins;
         for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
-        float tw = ins.size() * (Font8x8::Width + 1) * 1.0f;
+        float tw = UITextW(ins, 1.0f);
         DrawText(r, ins, px + pw - 10 - tw, ry + 6, 1.0f, sc(cs.textColor));
         if (hover && can && okay::Input::GetMouseButtonDown(0)) cs.Craft(i);
     }
@@ -1223,7 +1229,7 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
                 if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
                 else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
                 if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
-                    float tw = c.size() * (Font8x8::Width + 1) * px;
+                    float tw = UITextW(c, px);
                     DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
             }
         }
@@ -1257,7 +1263,7 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
             if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
             else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
             if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
-                float tw = c.size() * (Font8x8::Width + 1) * px;
+                float tw = UITextW(c, px);
                 DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
         } else { ch.dragSide = -1; ch.dragIndex = -1; }
     }
@@ -2505,7 +2511,8 @@ int main(int argc, char** argv) {
                 return GetUIScreenRect(go, (float)ww, (float)hh, o, sz);
             };
         }
-        g_uiDefaultFont = okay::GetFont(scene.uiFont);   // scene-wide default for this pass
+        g_uiDefaultFont = okay::SceneUIFont(scene.uiFont);   // scene-wide default for this pass ("" = the launcher font)
+        okay::SetActiveUIFont(g_uiDefaultFont);              // screen-space text measures in it too
         for (const UIDrawItem& _it : uiItems) {
             const auto& up = scene.Objects()[_it.index];
             if (_it.kind == K_DropBg) {   // drop-target slot backgrounds (behind items)
@@ -2699,7 +2706,7 @@ int main(int argc, char** argv) {
             if (pb->showPercent) {
                 char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
                 float px = 2.0f;
-                float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+                float tw = UITextW(pct, px);
                 SDL_Color tc{(Uint8)(pb->textColor.r * 255), (Uint8)(pb->textColor.g * 255),
                              (Uint8)(pb->textColor.b * 255), (Uint8)(pb->textColor.a * 255 * op)};
                 DrawText(renderer, pct, o.x + (pb->size.x - tw) * 0.5f,
@@ -2728,7 +2735,7 @@ int main(int argc, char** argv) {
             if (rp->showPercent) {
                 char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(rp->Fraction() * 100.0f + 0.5f));
                 float ps = 2.0f;
-                float tw = std::strlen(pct) * (Font8x8::Width + 1) * ps;
+                float tw = UITextW(pct, ps);
                 SDL_Color tc{(Uint8)(rp->textColor.r * 255), (Uint8)(rp->textColor.g * 255),
                              (Uint8)(rp->textColor.b * 255), (Uint8)(rp->textColor.a * 255 * op)};
                 DrawText(renderer, pct, o.x + (rp->size.x - tw) * 0.5f,
@@ -3124,7 +3131,7 @@ int main(int argc, char** argv) {
             char vb[24];
             if (st->wholeNumbers) std::snprintf(vb, sizeof(vb), "%d", (int)st->value);
             else                  std::snprintf(vb, sizeof(vb), "%.2f", st->value);
-            float tw = std::strlen(vb) * (Font8x8::Width + 1) * px;
+            float tw = UITextW(vb, px);
             DrawText(renderer, vb, o.x + (st->size.x - tw) * 0.5f,
                      o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             if (!st->interactable) { SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &bg); }
@@ -3181,12 +3188,14 @@ int main(int argc, char** argv) {
             } else {
                 FillUIShape(renderer, box, UIShape::Rounded, tg->cornerRadius,
                             tg->boxColor, tg->boxColor, false, false, op);
-                if (t > 0.01f) {                            // inset check fill (fades in)
-                    int pad = (int)(tg->size.x * 0.22f);
-                    SDL_Rect chk{box.x + pad, box.y + pad, box.w - 2 * pad, box.h - 2 * pad};
+                if (t > 0.01f) {                            // filled box + white tick (fades in)
                     Color cc = tg->checkColor; cc.a *= t;
-                    FillUIShape(renderer, chk, UIShape::Rounded, tg->cornerRadius * 0.6f,
+                    FillUIShape(renderer, box, UIShape::Rounded, tg->cornerRadius,
                                 cc, cc, false, false, op);
+                    const float bw = (float)box.w, bh = (float)box.h, lw = std::max(2.0f, bw * 0.11f);
+                    SDL_Color wc{255, 255, 255, (Uint8)(255 * t * op)};
+                    MMThickLine(renderer, box.x + bw * 0.24f, box.y + bh * 0.52f, box.x + bw * 0.43f, box.y + bh * 0.70f, lw, wc);
+                    MMThickLine(renderer, box.x + bw * 0.43f, box.y + bh * 0.70f, box.x + bw * 0.77f, box.y + bh * 0.32f, lw, wc);
                 }
             }
             float px = 2.0f;
@@ -3217,7 +3226,7 @@ int main(int argc, char** argv) {
             for (int i = 0; i < tb->Count(); ++i) {
                 float ox, oy, sgw, sgh; tb->SegmentRect(i, ox, oy, sgw, sgh);
                 const std::string& lbl = tb->tabs[i];
-                float tw = lbl.size() * (Font8x8::Width + 1) * px;
+                float tw = UITextW(lbl, px);
                 const Color& c = (i == tb->value) ? tb->selectedTextColor : tb->textColor;
                 SDL_Color tc{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op)};
                 DrawText(renderer, lbl, o.x + ox + (sgw - tw) * 0.5f,
@@ -3280,9 +3289,9 @@ int main(int argc, char** argv) {
             // (Unity-style Button→Text) — that child draws itself in the text pass.
             if (!UIButtonTextChild(up.get())) {
                 float px = btn->fontScale * bk;
-                okay::TtfFont* fnt = okay::GetFont(btn->fontPath);
+                okay::TtfFont* fnt = btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath);
                 float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
-                               : btn->label.size() * (Font8x8::Width + 1) * px;
+                               : UITextW(btn->label, px);
                 float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);
                 float right = o.x + bsz.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f * bk : 0.0f);
                 float tx = left + ((right - left) - tw) * 0.5f;
@@ -3356,7 +3365,7 @@ int main(int argc, char** argv) {
                 scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
                                      wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
             float op = UIOpacity(up.get());
-            float tw = wu->text.size() * (Font8x8::Width + 1) * scale;
+            float tw = UITextW(wu->text, scale);
             float th = Font8x8::Height * scale;
             float tx = sp.x - tw * 0.5f, ty = sp.y - th * 0.5f;
             if (wu->background.a > 0.001f) {
@@ -3427,15 +3436,14 @@ int main(int argc, char** argv) {
             std::string full = empty ? in->placeholder : in->DisplayText();
             const Color& txc = empty ? in->placeholderColor : in->textColor;
             // Horizontal scroll: show the tail that fits so the caret stays visible.
-            float adv = (Font8x8::Width + 1) * px;
-            int fit = adv > 0 ? (int)((in->size.x - pad * 2) / adv) : (int)full.size();
-            if (fit < 1) fit = 1;
-            std::string shown = ((int)full.size() > fit) ? full.substr(full.size() - fit) : full;
+            // Horizontal scroll: drop leading characters until the tail fits.
+            std::string shown = full;
+            while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
             float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(txc.r * 255), (Uint8)(txc.g * 255), (Uint8)(txc.b * 255), (Uint8)(txc.a * 255)};
             DrawText(renderer, shown, o.x + pad, ty, px, tc);
             if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
-                int cx = (int)(o.x + pad + shown.size() * adv);
+                int cx = (int)(o.x + pad + UITextW(shown, px));
                 SDL_SetRenderDrawColor(renderer, 255, 255, 255, 220);
                 SDL_RenderDrawLine(renderer, cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
             }
@@ -3445,12 +3453,12 @@ int main(int argc, char** argv) {
             if (!up->active || !IsUIFocused(up.get())) continue;
             UIRect r = GetUIRect(up.get());
             if (!r.valid || !r.position) continue;
-            Vec2 o = ResolveAnchor(r.anchor, *r.position, r.size, (float)w, (float)h);
-            SDL_Rect ring{(int)o.x - 2, (int)o.y - 2, (int)r.size.x + 4, (int)r.size.y + 4};
-            SDL_SetRenderDrawColor(renderer, 255, 210, 90, 255);
-            SDL_RenderDrawRect(renderer, &ring);
-            SDL_Rect ring2{ring.x - 1, ring.y - 1, ring.w + 2, ring.h + 2};
-            SDL_RenderDrawRect(renderer, &ring2);
+            Vec2 o, sz;   // where the widget actually is (parents, canvases, world space)
+            if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) { o = UIResolveOrigin(up.get(), (float)w, (float)h); sz = r.size; }
+            const float x0 = o.x - 3.0f, y0 = o.y - 3.0f, x1 = o.x + sz.x + 3.0f, y1 = o.y + sz.y + 3.0f;
+            const SDL_Color fc{120, 182, 255, 230};   // launcher accent, lightened
+            MMThickLine(renderer, x0, y0, x1, y0, 2.0f, fc); MMThickLine(renderer, x1, y0, x1, y1, 2.0f, fc);
+            MMThickLine(renderer, x1, y1, x0, y1, 2.0f, fc); MMThickLine(renderer, x0, y1, x0, y0, 2.0f, fc);
         }
             else if (_it.kind == K_Tooltip) {   // tooltips (hover hints)
             SDL_RenderSetClipRect(renderer, nullptr);   // overlay — never scroll-clipped
@@ -3458,7 +3466,7 @@ int main(int argc, char** argv) {
             if (!tt || !up->active || !tt->Ready()) continue;
             Vec2 m = Input::MousePosition();
             float px = 2.0f;
-            float tw = tt->text.size() * (Font8x8::Width + 1) * px;
+            float tw = UITextW(tt->text, px);
             float th = Font8x8::Height * px;
             SDL_Rect box{(int)(m.x + 14), (int)(m.y + 14), (int)(tw + 12), (int)(th + 10)};
             SDL_SetRenderDrawColor(renderer, (Uint8)(tt->background.r * 255), (Uint8)(tt->background.g * 255),
@@ -3482,7 +3490,7 @@ int main(int argc, char** argv) {
             fpsSmooth = fpsSmooth <= 0.0f ? inst : fpsSmooth * 0.9f + inst * 0.1f;
             char buf[32]; std::snprintf(buf, sizeof(buf), "FPS %d", (int)(fpsSmooth + 0.5f));
             float px = 2.0f;
-            float tw = (float)std::char_traits<char>::length(buf) * (Font8x8::Width + 1) * px;
+            float tw = UITextW(buf, px);
             SDL_Rect bg{4, 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
             SDL_RenderFillRect(renderer, &bg);

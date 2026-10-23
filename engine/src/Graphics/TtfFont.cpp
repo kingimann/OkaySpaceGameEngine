@@ -13,9 +13,6 @@ namespace okay {
 
 bool TtfFont::LoadFromFile(const std::string& path, float bakeHeightPx) {
     m_valid = false;
-    if (bakeHeightPx < 8.0f) bakeHeightPx = 8.0f;
-    m_bakeHeight = bakeHeightPx;
-
     // Read the whole font file.
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) { Log::Error("[ttf] cannot open ", path); return false; }
@@ -27,10 +24,24 @@ bool TtfFont::LoadFromFile(const std::string& path, float bakeHeightPx) {
     std::size_t got = std::fread(data.data(), 1, (std::size_t)sz, f);
     std::fclose(f);
     if (got != (std::size_t)sz) { Log::Error("[ttf] short read ", path); return false; }
+    return Bake(data.data(), data.size(), bakeHeightPx, path);
+}
+
+bool TtfFont::LoadFromMemory(const unsigned char* bytes, std::size_t size, float bakeHeightPx) {
+    m_valid = false;
+    if (!bytes || size < 16) return false;
+    return Bake(bytes, size, bakeHeightPx, "(memory)");
+}
+
+bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& path) {
+    (void)size;
+    m_valid = false;
+    if (bakeHeightPx < 8.0f) bakeHeightPx = 8.0f;
+    m_bakeHeight = bakeHeightPx;
 
     stbtt_fontinfo info;
-    int off = stbtt_GetFontOffsetForIndex(data.data(), 0);
-    if (off < 0 || !stbtt_InitFont(&info, data.data(), off)) {
+    int off = stbtt_GetFontOffsetForIndex(bytes, 0);
+    if (off < 0 || !stbtt_InitFont(&info, bytes, off)) {
         Log::Error("[ttf] not a valid font: ", path);
         return false;
     }
@@ -48,7 +59,7 @@ bool TtfFont::LoadFromFile(const std::string& path, float bakeHeightPx) {
     int rows = -1;
     for (int attempt = 0; attempt < 2; ++attempt) {
         gray.assign((std::size_t)aw * ah, 0);
-        rows = stbtt_BakeFontBitmap(data.data(), off, bakeHeightPx,
+        rows = stbtt_BakeFontBitmap(bytes, off, bakeHeightPx,
                                     gray.data(), aw, ah, kFirst, kCount, cdata);
         if (rows > 0) break;
         aw = 1024; ah = 1024;   // didn't fit — try a bigger atlas
@@ -100,5 +111,30 @@ TtfFont* GetFont(const std::string& path) {
     cache[path] = std::move(font);
     return raw;
 }
+
+TtfFont* BuiltinUIFont() {
+    static std::unique_ptr<TtfFont> font;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        static std::vector<unsigned char> bytes;
+        if (EmbeddedUIFontData(bytes)) {
+            auto f = std::make_unique<TtfFont>();
+            if (f->LoadFromMemory(bytes.data(), bytes.size(), 64.0f)) font = std::move(f);
+        }
+    }
+    return font.get();
+}
+
+TtfFont* SceneUIFont(const std::string& uiFont) {
+    if (uiFont.empty()) return BuiltinUIFont();
+    if (uiFont == "pixel") return nullptr;
+    TtfFont* f = GetFont(uiFont);
+    return f ? f : BuiltinUIFont();   // a missing font file falls back to the built-in one
+}
+
+namespace { TtfFont* g_activeUIFont = nullptr; }
+void SetActiveUIFont(TtfFont* f) { g_activeUIFont = f; }
+TtfFont* ActiveUIFont() { return g_activeUIFont; }
 
 } // namespace okay

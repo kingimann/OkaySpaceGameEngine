@@ -14,19 +14,19 @@ class UIPanel : public Behaviour {
 public:
     Vec2 position{0.0f, 0.0f};
     Vec2 size{200.0f, 120.0f};
-    Color color = Color::FromBytes(20, 24, 34, 200);
+    Color color = Color::FromBytes(30, 33, 41, 240);   // the launcher's panel colour
     UIAnchor anchor = UIAnchor::TopLeft;
     // Silhouette: a hard box, soft rounded corners (the modern flat look),
     // a full circle (avatars/badges), or a pill/capsule (toggle tracks, tags).
     UIShape shape = UIShape::Rounded;
     // Customization: rounded corners and an optional border.
-    float cornerRadius = 4.0f;
+    float cornerRadius = 10.0f;
     // Which corners the Rounded/Pill shape actually rounds (bitmask of UICorner:
     // TL|TR|BR|BL). Default all — clear a bit to leave that corner square (tabs,
     // cards, speech bubbles, one-sided panels).
     int   cornerMask = UICornerAll;
     float borderWidth = 0.0f;                      // 0 = no border
-    Color borderColor = Color::FromBytes(255, 255, 255, 60);
+    Color borderColor = Color::FromBytes(255, 255, 255, 22);
     // Optional gradient: `color` fades to `colorBottom`. `gradientDir` chooses the
     // direction — Vertical (top->bottom), Horizontal (left->right) or one of the two
     // diagonals. `gradientHorizontal` is kept for back-compat (old scenes) and is

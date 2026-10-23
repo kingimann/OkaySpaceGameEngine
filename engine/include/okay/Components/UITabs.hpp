@@ -28,8 +28,8 @@ public:
     /// with zero scripting — assign a panel to each tab and switching just works.
     std::vector<std::string> pages;
     int  value = 0;                                  // selected segment index
-    Color background        = Color::FromBytes(34, 38, 48);   // track
-    Color selected          = Color::FromBytes(60, 120, 200); // active segment
+    Color background        = Color::FromBytes(23, 25, 31);   // track
+    Color selected          = Color::FromBytes(66, 150, 250); // active segment
     Color textColor         = Color::FromBytes(200, 205, 215);
     Color selectedTextColor = Color::White;
     UIAnchor anchor = UIAnchor::TopLeft;

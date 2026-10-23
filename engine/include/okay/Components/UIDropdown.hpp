@@ -24,11 +24,11 @@ public:
     std::vector<std::string> options{"Option A", "Option B", "Option C"};
     int  value = 0;                                 // selected option index
     bool open  = false;                             // list expanded
-    Color color       = Color::FromBytes(40, 44, 56);
-    Color hoverColor  = Color::FromBytes(60, 70, 92);   // highlighted option
-    Color listColor   = Color::FromBytes(28, 30, 40);   // open list background
+    Color color       = Color::FromBytes(41, 46, 59);
+    Color hoverColor  = Color::FromBytes(55, 62, 80);   // highlighted option
+    Color listColor   = Color::FromBytes(30, 33, 41);   // open list background
     Color textColor   = Color::White;
-    Color borderColor = Color::FromBytes(255, 255, 255, 60);
+    Color borderColor = Color::FromBytes(255, 255, 255, 22);
     UIAnchor anchor = UIAnchor::TopLeft;
     // Silhouette + corner radius for the header (and list) — clean rounded selects.
     UIShape shape = UIShape::Rounded;

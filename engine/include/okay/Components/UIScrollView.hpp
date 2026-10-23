@@ -18,8 +18,8 @@ public:
     Vec2 position{20.0f, 20.0f};      // viewport top-left (pixels, from anchor)
     Vec2 size{300.0f, 200.0f};        // viewport size
     UIAnchor anchor = UIAnchor::TopLeft;
-    Color background = Color::FromBytes(24, 28, 38, 220);
-    Color barColor   = Color::FromBytes(90, 100, 120, 255);
+    Color background = Color::FromBytes(30, 33, 41, 230);
+    Color barColor   = Color::FromBytes(255, 255, 255, 46);
     float contentHeight = 400.0f;     // total height of the scrollable content
     float scroll = 0.0f;              // current vertical scroll offset (pixels)
     /// When true (default), contentHeight is recomputed each frame from the child

@@ -44,16 +44,16 @@ public:
     // Amount passed to a native On Click method (e.g. Eat 25, Drink 30). Native
     // verbs take this; script CallEvent ignores it (it takes no args).
     float clickArg = 0.0f;
-    Color color = Color::FromBytes(60, 90, 150);
-    Color hoverColor = Color::FromBytes(80, 120, 200);
-    Color pressedColor = Color::FromBytes(45, 70, 120);  // shown while held down
-    Color disabledColor = Color::FromBytes(70, 70, 78);  // shown when !interactable
+    Color color = Color::FromBytes(66, 150, 250);     // the launcher accent
+    Color hoverColor = Color::FromBytes(92, 166, 252);
+    Color pressedColor = Color::FromBytes(52, 122, 214);  // shown while held down
+    Color disabledColor = Color::FromBytes(51, 56, 71);  // shown when !interactable
     Color textColor = Color::White;
     UIAnchor anchor = UIAnchor::TopLeft;
     // Silhouette: rounded (default), hard rectangle, circle (icon button) or pill.
     UIShape shape = UIShape::Rounded;
     // Customization: rounded corners, label size, and an optional border.
-    float cornerRadius = 4.0f;
+    float cornerRadius = 8.0f;
     float fontScale = 2.0f;                        // text pixel size multiplier
     float borderWidth = 0.0f;                      // 0 = no border
     Color borderColor = Color::FromBytes(255, 255, 255, 80);

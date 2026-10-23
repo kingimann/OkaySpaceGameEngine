@@ -8372,7 +8372,10 @@ void DrawSceneSettings(EditorState& ed) {
         std::string& uf = ed.scene().uiFont;
         ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Default UI Font"); ImGui::SameLine();
         if (AssetSlot("scenefont", uf, "Font", {".ttf", ".otf"})) ed.dirty = true;
-        if (uf.empty())             ImGui::TextDisabled("Built-in 8x8 bitmap font.");
+        bool pixel = uf == "pixel";
+        if (ImGui::Checkbox("Classic pixel font", &pixel)) { uf = pixel ? "pixel" : ""; ed.dirty = true; }
+        if (uf.empty())             ImGui::TextDisabled("The OkaySpace launcher font (Roboto), built in.");
+        else if (pixel)             ImGui::TextDisabled("Built-in 8x8 bitmap font.");
         else if (okay::GetFont(uf)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
         else                        ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
     }
@@ -30596,6 +30599,12 @@ static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, SDL_Texture* tex,
 // DrawBitmapText falls back to this. Set for the duration of the UI pass (from
 // Scene::uiFont) and cleared after, so it only affects game UI, not editor chrome.
 okay::TtfFont* g_uiDefaultFont = nullptr;
+// Width of `text` in screen pixels at font-pixel size `px`, in the font DrawText will
+// use (the scene's UI font during the UI pass, else the 8x8 bitmap font).
+float UITextW(const std::string& text, float px) {
+    if (g_uiDefaultFont && g_uiDefaultFont->Valid()) return g_uiDefaultFont->Measure(text.c_str(), (float)Font8x8::Height) * px;
+    return (float)text.size() * (Font8x8::Width + 1) * px;
+}
 
 // Draw a string with the engine's 8x8 bitmap font into an ImGui draw list, so
 // the editor viewport shows the same text the built game will (HUDs, labels).
@@ -30706,7 +30715,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
     // The scene's default UI font applies to every widget in this pass unless the
     // widget overrides it; cleared at the end so editor chrome stays unaffected.
-    g_uiDefaultFont = okay::GetFont(ed.scene().uiFont);
+    g_uiDefaultFont = okay::SceneUIFont(ed.scene().uiFont);   // "" = the launcher font, "pixel" = 8x8
+    okay::SetActiveUIFont(g_uiDefaultFont);
     struct ClearUIFont { ~ClearUIFont() { g_uiDefaultFont = nullptr; } } _clearUIFont;
 
     // Mirror the player's draw order: Canvas sortOrder first, then hierarchy
@@ -30930,7 +30940,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (pb->showPercent) {
             char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
             float px = 2.0f * s;
-            float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+            float tw = UITextW(pct, px);
             DrawBitmapText(dl, pct, a.x + (sz.x - tw) * 0.5f,
                            a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(pb->textColor));
         }
@@ -30985,7 +30995,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         char vb[24];
         if (st->wholeNumbers) std::snprintf(vb, sizeof(vb), "%d", (int)st->value);
         else                  std::snprintf(vb, sizeof(vb), "%.2f", st->value);
-        float tw = std::strlen(vb) * (Font8x8::Width + 1) * px;
+        float tw = UITextW(vb, px);
         DrawBitmapText(dl, vb, a.x + (sz.x - tw) * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
     }
     // UI ratings: a row of star diamonds, filled up to the value.
@@ -31028,11 +31038,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float kx = tg->on ? (b.x - r) : (a.x + r);
             dl->AddCircleFilled(ImVec2(kx, a.y + r), kr, ToColor(tg->knobColor));
         } else {
-            dl->AddRectFilled(a, b, ToColor(tg->boxColor), tg->cornerRadius);
-            if (tg->on) {
-                float pad = sz.x * 0.22f;
-                dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
-                                  ToColor(tg->checkColor), 2.0f);
+            dl->AddRectFilled(a, b, ToColor(tg->on ? tg->checkColor : tg->boxColor), tg->cornerRadius);
+            if (tg->on) {   // white tick, as the player draws it
+                const float bw = sz.x, bh = sz.y, lw = std::max(2.0f, bw * 0.11f);
+                dl->AddLine(ImVec2(a.x + bw * 0.24f, a.y + bh * 0.52f), ImVec2(a.x + bw * 0.43f, a.y + bh * 0.70f), IM_COL32(255, 255, 255, 255), lw);
+                dl->AddLine(ImVec2(a.x + bw * 0.43f, a.y + bh * 0.70f), ImVec2(a.x + bw * 0.77f, a.y + bh * 0.32f), IM_COL32(255, 255, 255, 255), lw);
             }
         }
         float px = 2.0f * s;
@@ -31068,7 +31078,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (rp->showPercent) {
             char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(rp->Fraction() * 100.0f + 0.5f));
             float px = 2.0f * s;
-            float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+            float tw = UITextW(pct, px);
             DrawBitmapText(dl, pct, ctr.x - tw * 0.5f, ctr.y - Font8x8::Height * px * 0.5f, px, ToColor(rp->textColor));
         }
     }
@@ -31340,7 +31350,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float px = 2.0f * s;
         for (int i = 0; i < n; ++i) {
             const std::string& lbl = tb->tabs[i];
-            float tw = lbl.size() * (Font8x8::Width + 1) * px;
+            float tw = UITextW(lbl, px);
             ImU32 c = ToColor(i == tb->value ? tb->selectedTextColor : tb->textColor);
             DrawBitmapText(dl, lbl, a.x + segW * i + (segW - tw) * 0.5f,
                            a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, c);
@@ -31365,7 +31375,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
                                      wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
             ImVec2 c(canvasPos.x + sp.x, canvasPos.y + sp.y);   // projector returns canvas-local px
-            float tw = wu->text.size() * (Font8x8::Width + 1) * scale;
+            float tw = UITextW(wu->text, scale);
             float th = Font8x8::Height * scale;
             float tx = c.x - tw * 0.5f, ty = c.y - th * 0.5f;
             if (wu->background.a > 0.001f)
@@ -31414,9 +31424,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         // Button→Text) — that child renders itself in the text pass.
         if (!UIButtonTextChild(up.get())) {
             float px = btn->fontScale * s;
-            okay::TtfFont* fnt = okay::GetFont(btn->fontPath);
+            okay::TtfFont* fnt = btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath);
             float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
-                           : btn->label.size() * (Font8x8::Width + 1) * px;
+                           : UITextW(btn->label, px);
             float left  = a.x + (isz > 0.0f && !btn->iconRight ? isz + 12 * s : 0.0f);
             float right = b.x - (isz > 0.0f &&  btn->iconRight ? isz + 12 * s : 0.0f);
             DrawBitmapText(dl, btn->label, left + ((right - left) - tw) * 0.5f,
@@ -31553,7 +31563,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!tt || !up->active || !tt->Ready()) continue;
         Vec2 m = Input::MousePosition();
         float px = 2.0f;
-        float tw = tt->text.size() * (Font8x8::Width + 1) * px;
+        float tw = UITextW(tt->text, px);
         float th = Font8x8::Height * px;
         ImVec2 a(canvasPos.x + m.x + 14, canvasPos.y + m.y + 14);
         ImVec2 b(a.x + tw + 12, a.y + th + 10);
@@ -35753,6 +35763,7 @@ static void UIThemePreset(EdUITheme& t, int p) {
         case 2: s(t.panel,0.06f,0.06f,0.10f,0.96f); s(t.panelBottom,0.02f,0.02f,0.05f,0.96f); s(t.button,0.10f,0.10f,0.16f,1); s(t.buttonText,0.20f,1.0f,0.85f,1); s(t.accent,0.20f,1.0f,0.85f,1); s(t.track,0.10f,0.10f,0.16f,1); s(t.text,0.85f,0.95f,1.0f,1); t.corner=6; t.border=2; break; // Neon
         case 3: s(t.panel,0.20f,0.12f,0.10f,0.96f); s(t.panelBottom,0.12f,0.07f,0.06f,0.96f); s(t.button,0.80f,0.45f,0.20f,1); s(t.buttonText,0.10f,0.06f,0.04f,1); s(t.accent,0.95f,0.70f,0.25f,1); s(t.track,0.30f,0.20f,0.15f,1); s(t.text,0.98f,0.92f,0.80f,1); t.corner=4; t.border=2; break; // Retro
         case 4: s(t.panel,0.93f,0.90f,0.96f,0.97f); s(t.panelBottom,0.85f,0.82f,0.92f,0.97f); s(t.button,0.62f,0.55f,0.88f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.55f,0.78f,0.72f,1); s(t.track,0.82f,0.80f,0.88f,1); s(t.text,0.28f,0.24f,0.36f,1); t.corner=14; t.border=0; break; // Pastel
+        case 6: s(t.panel,0.118f,0.129f,0.161f,0.96f); s(t.panelBottom,0.118f,0.129f,0.161f,0.96f); s(t.button,0.26f,0.59f,0.98f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.26f,0.59f,0.98f,1); s(t.track,0.16f,0.18f,0.23f,1); s(t.text,0.90f,0.92f,0.96f,1); t.corner=10; t.border=1; break; // OkaySpace (the launcher's look)
         case 5: s(t.panel,0.14f,0.14f,0.15f,0.96f); s(t.panelBottom,0.09f,0.09f,0.10f,0.96f); s(t.button,0.30f,0.30f,0.32f,1); s(t.buttonText,0.95f,0.95f,0.96f,1); s(t.accent,0.75f,0.75f,0.78f,1); s(t.track,0.20f,0.20f,0.22f,1); s(t.text,0.92f,0.92f,0.94f,1); t.corner=6; t.border=1; break; // Mono
     }
 }
@@ -35795,8 +35806,8 @@ void DrawUIThemer(EditorState& ed) {
     if (!ImGui::Begin("UI Theme", &g_showUIThemer)) { ImGui::End(); return; }
     ImGui::TextDisabled("Define a reusable UI style, then apply it to every widget at once.");
     ImGui::TextUnformatted("Presets:");
-    const char* names[] = {"Dark", "Light", "Neon", "Retro", "Pastel", "Mono"};
-    for (int i = 0; i < 6; ++i) {
+    const char* names[] = {"Dark", "Light", "Neon", "Retro", "Pastel", "Mono", "OkaySpace"};
+    for (int i = 0; i < 7; ++i) {
         if (i) ImGui::SameLine();
         if (ImGui::Button(names[i])) UIThemePreset(g_uiTheme, i);
         // Mini palette strip along the button's bottom edge: panel/button/accent/text.

@@ -15,8 +15,8 @@ public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{200.0f, 24.0f};
     float value = 1.0f;                              // clamped to [0, 1]
-    Color background = Color::FromBytes(40, 40, 50);
-    Color fill = Color::FromBytes(90, 200, 110);
+    Color background = Color::FromBytes(41, 46, 59);
+    Color fill = Color::FromBytes(66, 150, 250);
     UIAnchor anchor = UIAnchor::TopLeft;
     // Silhouette of the track/fill (Pill gives the clean capsule health-bar look).
     UIShape shape = UIShape::Rounded;

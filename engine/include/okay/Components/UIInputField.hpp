@@ -25,10 +25,10 @@ public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{220.0f, 40.0f};
     UIAnchor anchor = UIAnchor::TopLeft;
-    Color color            = Color::FromBytes(40, 44, 54);
-    Color focusColor       = Color::FromBytes(55, 62, 78);
+    Color color            = Color::FromBytes(41, 46, 59);
+    Color focusColor       = Color::FromBytes(48, 54, 69);
     Color textColor        = Color::White;
-    Color placeholderColor = Color::FromBytes(140, 144, 150);
+    Color placeholderColor = Color::FromBytes(140, 150, 171);
     std::string text;
     std::string placeholder = "Type...";
     int  maxLength = 64;
@@ -39,7 +39,7 @@ public:
     UIShape shape = UIShape::Rounded;
     float cornerRadius = 6.0f;
     float borderWidth = 0.0f;                         // focus ring thickness (0 = none)
-    Color borderColor = Color::FromBytes(90, 140, 220);  // shown while focused
+    Color borderColor = Color::FromBytes(66, 150, 250);  // shown while focused
 
     bool Contains(const Vec2& p) const {
         Vec2 o = ResolveAnchor(anchor, position, size);

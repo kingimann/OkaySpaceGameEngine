@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstddef>
 
 namespace okay {
 
@@ -31,6 +32,8 @@ public:
     /// Bake `path` at `bakeHeightPx` pixels. Returns false (and stays !Valid) if the
     /// file can't be read or doesn't parse as a font.
     bool LoadFromFile(const std::string& path, float bakeHeightPx = 48.0f);
+    /// Bake from font bytes already in memory (e.g. an embedded font).
+    bool LoadFromMemory(const unsigned char* data, std::size_t size, float bakeHeightPx = 48.0f);
 
     bool  Valid()       const { return m_valid; }
     float BakeHeight()  const { return m_bakeHeight; }
@@ -55,6 +58,7 @@ public:
     float Ascent(float pixelHeight) const { return m_ascent * ScaleFor(pixelHeight); }
 
 private:
+    bool  Bake(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& name);
     bool  m_valid = false;
     float m_bakeHeight = 48.0f;
     float m_lineHeight = 0.0f;   // at bake height
@@ -67,5 +71,17 @@ private:
 /// or nullptr if it can't be loaded. Empty path returns nullptr. Failures are cached
 /// so a missing/bad file isn't retried every frame.
 TtfFont* GetFont(const std::string& path);
+
+/// The launcher's font (Roboto Medium, built into the engine), baked once.
+TtfFont* BuiltinUIFont();
+/// The raw bytes of that font (decompressed once). False if unavailable.
+bool EmbeddedUIFontData(std::vector<unsigned char>& out);
+/// A scene's default UI font (Scene::uiFont): "" = the built-in launcher font,
+/// "pixel" = the classic 8x8 bitmap font (nullptr), else a .ttf/.otf path.
+TtfFont* SceneUIFont(const std::string& uiFont);
+/// The font screen-space text without its own font uses (hosts set it from the
+/// scene each frame; nullptr = the 8x8 bitmap font).
+void SetActiveUIFont(TtfFont* f);
+TtfFont* ActiveUIFont();
 
 } // namespace okay

@@ -11,6 +11,16 @@ launcher's look** by default:
 The editor's Game view draws the same way, so what you see while testing is
 what players get.
 
+**Scene UI** gets the same look: canvas widgets (buttons, panels, text,
+sliders, toggles, progress bars, inputs, dropdowns, tabs, tooltips) and HTML-style
+UI documents.
+- **Text font:** screen-space text uses the launcher font unless the scene picks
+  another. The scene's choice lives in **View → Panels → Lighting → UI Font**: a `.ttf` /
+  `.otf` file, or **Classic pixel font**.
+- **Colours:** new widgets start with the launcher's colours. Saved scenes keep
+  the colours they already had. To restyle existing UI in one go, open
+  **View → Editors & Tools → UI Theme**, pick **OkaySpace** and click **Apply to All UI**.
+
 Prefer the old pixel look? Call `ui_style("classic")` in a script, or start the
 game with `OKAY_CLASSIC_UI=1`.
 

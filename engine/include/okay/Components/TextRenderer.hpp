@@ -136,7 +136,8 @@ public:
     /// The resolved TTF font for this label, or nullptr to use the bitmap font.
     /// All measurement/draw use the SAME "font pixel" space (Font8x8::Height tall),
     /// so a host can scale either font by `pixelSize` identically.
-    TtfFont* Font() const { return fontPath.empty() ? nullptr : GetFont(fontPath); }
+    /// Screen-space text without its own font uses the scene's UI font (ActiveUIFont).
+    TtfFont* Font() const { return fontPath.empty() ? (screenSpace ? ActiveUIFont() : nullptr) : GetFont(fontPath); }
 
     /// Width of the widest line in font pixels (honors letter spacing + wrap).
     int PixelWidth() const {

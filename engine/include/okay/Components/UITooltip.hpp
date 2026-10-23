@@ -15,9 +15,9 @@ class UITooltip : public Behaviour {
 public:
     std::string text = "Tooltip";
     float delay = 0.5f;                              // hover seconds before showing
-    Color background = Color::FromBytes(15, 17, 24, 235);
+    Color background = Color::FromBytes(38, 42, 51, 250);
     Color textColor  = Color::White;
-    Color borderColor = Color::FromBytes(255, 255, 255, 50);
+    Color borderColor = Color::FromBytes(255, 255, 255, 28);
 
     /// True once the pointer has hovered the sibling widget for `delay` seconds.
     bool Ready() const { return m_hover >= delay && m_inside; }

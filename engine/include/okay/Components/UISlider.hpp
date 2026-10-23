@@ -22,9 +22,9 @@ public:
     float value = 0.5f;
     float minValue = 0.0f;
     float maxValue = 1.0f;
-    Color background = Color::FromBytes(40, 40, 50);
-    Color fill       = Color::FromBytes(90, 140, 220);
-    Color knob       = Color::FromBytes(230, 230, 240);
+    Color background = Color::FromBytes(41, 46, 59);
+    Color fill       = Color::FromBytes(66, 150, 250);
+    Color knob       = Color::FromBytes(245, 247, 252);
     UIAnchor anchor = UIAnchor::TopLeft;
     // Silhouette of the track + fill (Pill = clean capsule slider).
     UIShape trackShape = UIShape::Rounded;
@@ -32,7 +32,7 @@ public:
     // optional value readout drawn to the right of the track.
     float cornerRadius = 3.0f;
     float knobSize = 0.6f;                           // knob width = size.y * this
-    bool  roundKnob = false;                         // draw a circular handle
+    bool  roundKnob = true;                          // draw a circular handle
     bool  showValue = false;
     bool  wholeNumbers = false;                      // snap the value to integers
     bool  vertical = false;                          // drag/fill bottom->top

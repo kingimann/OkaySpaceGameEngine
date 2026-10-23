@@ -20,8 +20,8 @@ public:
     Vec2  size{28.0f, 28.0f};
     bool  on = false;
     std::string label = "Toggle";
-    Color boxColor   = Color::FromBytes(40, 40, 50);
-    Color checkColor = Color::FromBytes(90, 200, 110);
+    Color boxColor   = Color::FromBytes(41, 46, 59);
+    Color checkColor = Color::FromBytes(66, 150, 250);
     Color textColor  = Color::White;
     UIAnchor anchor = UIAnchor::TopLeft;
     float cornerRadius = 3.0f;                        // rounded box corners

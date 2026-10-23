@@ -55,6 +55,41 @@ public:
     /// Whether this camera should become the scene's main camera on Awake.
     bool main = true;
 
+    // ---- Framing & effects --------------------------------------------------
+    // Applied inside ViewMatrix / ProjectionMatrix (and RenderPosition /
+    // EffectiveOrthoSize for the 2D path), so every renderer, the Game view and
+    // built games use them with no extra work.
+    /// Zoom multiplier: 2 = twice as close (narrower FOV / half the orthographic size).
+    float zoom = 1.0f;
+    /// Dutch angle: roll around the view direction, in degrees (3D).
+    float dutch = 0.0f;
+    /// Lens shift: slide the image without turning the camera, as a fraction of
+    /// the view (0.5 = half a screen) — architecture shots, off-centre framing (3D).
+    float lensShiftX = 0.0f, lensShiftY = 0.0f;
+    /// Pixel perfect (2D): snap the camera to whole pixels at `pixelsPerUnit`, so
+    /// pixel art doesn't shimmer as the camera moves.
+    bool  pixelPerfect = false;
+    float pixelsPerUnit = 32.0f;
+
+    /// Camera shake (trauma-based): Shake() adds trauma; the camera jitters with
+    /// smooth noise scaled by trauma^2 and settles at `shakeRecovery` per second.
+    float shakeAmount = 0.3f;       // max position offset at full shake (world units)
+    float shakeAngle = 2.0f;        // max rotation at full shake (degrees, 3D)
+    float shakeFrequency = 18.0f;   // jitter speed (Hz)
+    float shakeRecovery = 1.5f;     // trauma lost per second
+    /// Add shake (0..1; stacks up to 1). Explosions ~0.6, hits ~0.3, footsteps ~0.1.
+    void Shake(float strength = 0.5f);
+    float ShakeTrauma() const { return m_trauma; }
+    /// Smoothly change `zoom` to `target` over `seconds` (0 = instantly).
+    void ZoomTo(float target, float seconds);
+
+    /// Orthographic half-height after zoom (what the 2D renderers draw with).
+    float EffectiveOrthoSize() const;
+    /// Where the camera renders from: its position plus shake and pixel snapping.
+    Vec3 RenderPosition() const;
+    /// Camera-to-world matrix including dutch, shake and pixel snapping.
+    Mat4 EyeMatrix() const;
+
     /// Optional object this camera does NOT render (e.g. a first-person player's
     /// own body): the mesh stays in the scene — visible to other cameras and the
     /// Scene view, and it still casts shadows — this camera just skips drawing it.
@@ -126,6 +161,12 @@ public:
     }
 
     void Awake() override;
+    void LateUpdate(float deltaTime) override;
+
+private:
+    float m_trauma = 0.0f, m_shakeTime = 0.0f;
+    Vec3  m_shakePos{0, 0, 0}, m_shakeRot{0, 0, 0};   // camera-local offset / euler degrees
+    float m_zoomFrom = 1.0f, m_zoomTarget = 1.0f, m_zoomTime = 0.0f, m_zoomDur = 0.0f;
 };
 
 } // namespace okay

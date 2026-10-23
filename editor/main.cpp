@@ -9105,6 +9105,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
         {"spawner_alive","spawner_alive(\"name\")"},
         {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
+        {"camera_shake","camera_shake(strength)"}, {"camera_zoom_to","camera_zoom_to(zoom, seconds)"},
+        {"camera_dutch","camera_dutch(degrees)"}, {"camera_fov","camera_fov(degrees)"},
         {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
         // variables / prefs
         {"set_var","set_var(\"name\", value)"}, {"get_var","get_var(\"name\")"}, {"add_var","add_var(\"name\", amount)"},
@@ -14809,6 +14811,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"play_sound",  "Play Sound",         "path [volume]",        "Play a sound effect.",                                    "Look"},
     {"set_cam",     "Move Camera",        "x y [zoom]",           "Move the main camera (and optional zoom).",               "Scene"},
     {"cam_center_on","Center Camera On",  "object",                "Instantly snap the camera onto a named object's position — cutscene cuts, jump to the action.", "Scene"},
+    {"camera_shake","Shake Camera",       "strength (0..1)",      "Shake the main camera (hits ~0.3, explosions ~0.6); it settles by itself.", "Scene"},
+    {"camera_zoom_to","Zoom Camera",      "zoom [seconds]",       "Smoothly zoom the main camera (2 = twice as close, 1 = normal).", "Scene"},
     {"set_bg",      "Set Background Color","r g b (0..1)",        "Set the background / sky color.",                         "Scene"},
     {"set_light",   "Set Light Direction","x y z",                "Aim the main directional light.",                         "Scene"},
     {"set_ambient", "Set Ambient Light",  "brightness 0..1",      "Set the ambient (fill) light level.",                     "Scene"},
@@ -15131,6 +15135,8 @@ static std::string VsStmt(const ActionList::Item& it) {
     if (op == "load_scene")  return "load_scene(" + q(0) + ")";
     if (op == "load_next_scene") return "load_next_scene()";
     if (op == "set_cam")     return "set_cam(" + a(0) + ", " + a(1) + ")";
+    if (op == "camera_shake")   return "camera_shake(" + a(0) + ")";
+    if (op == "camera_zoom_to") return "camera_zoom_to(" + a(0) + ", " + a(1) + ")";
     if (op == "set_bg")      return "set_bg(" + a(0) + ", " + a(1) + ", " + a(2) + ")";
     if (op == "send")        return "// send message \"" + a(0) + "\"";
     if (op == "comment")     return "// " + join(0);
@@ -15283,6 +15289,8 @@ static bool VsCodeLineToItem(const std::string& lineIn, ActionList::Item& out) {
     if (fn == "load_scene")   { out = {"load_scene", {arg(0)}}; return true; }
     if (fn == "load_next_scene") { out = {"load_next_scene", {}}; return true; }
     if (fn == "set_cam")      { out = {"set_cam", {arg(0), arg(1)}}; return true; }
+    if (fn == "camera_shake")   { out = {"camera_shake", {arg(0)}}; return true; }
+    if (fn == "camera_zoom_to") { out = {"camera_zoom_to", {arg(0), arg(1)}}; return true; }
     if (fn == "set_bg")       { out = {"set_bg", {arg(0), arg(1), arg(2)}}; return true; }
     if (fn == "heal")         { out = {"heal", {arg(0)}}; return true; }
     if (fn == "hurt")         { out = {"hurt", {arg(0)}}; return true; }
@@ -24355,6 +24363,14 @@ void DrawInspector(EditorState& ed) {
                 if (cam->physicalCamera) {
                     if (ImGui::DragFloat("Focal Length", &cam->focalLength, 0.5f, 1.0f, 300.0f, "%.1f mm")) ed.dirty = true;
                     if (ImGui::DragFloat("Sensor Height", &cam->sensorHeight, 0.1f, 1.0f, 100.0f, "%.1f mm")) ed.dirty = true;
+                    {   // Common sensor sizes (vertical mm), one click each.
+                        static const struct { const char* n; float h; } kSensors[] = {
+                            {"Full frame", 24.0f}, {"Super 35", 18.66f}, {"APS-C", 15.6f}, {"Micro 4/3", 13.0f}, {"16mm", 7.49f}};
+                        for (int si = 0; si < 5; ++si) {
+                            if (si) ImGui::SameLine(0, 4);
+                            if (ImGui::SmallButton(kSensors[si].n)) { cam->sensorHeight = kSensors[si].h; ed.dirty = true; }
+                        }
+                    }
                     ImGui::TextDisabled("Effective FOV: %.1f deg", cam->VerticalFovDegrees(16.0f / 9.0f));
                 } else {
                     if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
@@ -24397,6 +24413,39 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Clipping Planes");
             if (ImGui::DragFloat("Near", &cam->nearClip, 0.01f, 0.001f, 100.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Far",  &cam->farClip, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (cam->farClip <= cam->nearClip) { cam->farClip = cam->nearClip + 0.01f; ed.dirty = true; }   // keep a valid depth range
+
+            SectionHeader("Zoom & Framing");
+            if (ImGui::SliderFloat("Zoom", &cam->zoom, 0.25f, 8.0f, "%.2fx", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("2 = twice as close (narrower view / half the 2D size). Scripts: camera_zoom_to(z, seconds).");
+            ImGui::SameLine(); if (ImGui::SmallButton("1x##zoomreset")) { cam->zoom = 1.0f; ed.dirty = true; }
+            const bool cam3D = cam->projection == Camera::Projection::Perspective;
+            if (ImGui::SliderFloat("Dutch Angle", &cam->dutch, -45.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roll the view around its direction: tense / dramatic shots (3D).");
+            float shift[2] = {cam->lensShiftX, cam->lensShiftY};
+            if (ImGui::DragFloat2("Lens Shift", shift, 0.005f, -1.0f, 1.0f, "%.3f")) { cam->lensShiftX = shift[0]; cam->lensShiftY = shift[1]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide the image without turning the camera (fraction of the view):\nkeeps vertical lines straight in architecture shots, off-centre framing.");
+            if (!cam3D) {
+                if (ImGui::Checkbox("Pixel Perfect", &cam->pixelPerfect)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap the camera to whole pixels so pixel art doesn't shimmer when it moves.");
+                if (cam->pixelPerfect) {
+                    if (ImGui::DragFloat("Pixels Per Unit", &cam->pixelsPerUnit, 1.0f, 1.0f, 1024.0f, "%.0f")) ed.dirty = true;
+                    if (cam->pixelsPerUnit < 1.0f) cam->pixelsPerUnit = 1.0f;
+                }
+            }
+
+            SectionHeader("Camera Shake");
+            if (ImGui::SliderFloat("Amount", &cam->shakeAmount, 0.0f, 3.0f, "%.2f units")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the camera moves at full shake.");
+            if (cam3D && ImGui::SliderFloat("Angle", &cam->shakeAngle, 0.0f, 15.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::SliderFloat("Frequency", &cam->shakeFrequency, 1.0f, 60.0f, "%.0f Hz")) ed.dirty = true;
+            if (ImGui::SliderFloat("Recovery", &cam->shakeRecovery, 0.1f, 10.0f, "%.1f /s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly the shake settles (higher = shorter shakes).");
+            ImGui::BeginDisabled(!ed.isPlaying());
+            if (ImGui::Button("Test Shake")) cam->Shake(0.6f);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(ed.isPlaying() ? "Shake it now (strength 0.6)." : "Press Play, then try it here.\nIn scripts: camera_shake(0.5); in Actions: Shake Camera.");
 
             SectionHeader("Viewport Rect");
             float r[4] = {cam->rectX, cam->rectY, cam->rectW, cam->rectH};
@@ -29613,19 +29662,14 @@ static void UIAnchorRefRect(GameObject* go, ImVec2 canvasPos, ImVec2 canvasSize,
 // The camera to frame the Game view through: the scene's main camera if one is
 // active (set on Play), else the first Camera component found (edit mode).
 static Camera* SceneCamera(Scene& s) {
-    // Only trust mainCamera if it still points to a LIVE object — deleting the
-    // main camera leaves a dangling pointer, which made the Game view go black
-    // even after adding a replacement. Comparing pointers never dereferences the
-    // stale one; if it's gone we clear it and pick another camera.
-    if (s.mainCamera) {
-        for (const auto& go : s.Objects())
-            if (go->GetComponent<Camera>() == s.mainCamera) return s.mainCamera;
-        s.mainCamera = nullptr;   // it was deleted
-    }
+    // The same choice the game makes (okay::PickRenderCamera): the main camera
+    // while it can render, else the best active one — and never a dangling pointer
+    // to a deleted camera (that made the Game view go black).
+    std::vector<Camera*> cams;
     for (const auto& go : s.Objects())
-        if (go->active)
-            if (auto* c = go->GetComponent<Camera>()) { s.mainCamera = c; return c; }
-    return nullptr;
+        if (auto* c = go->GetComponent<Camera>()) cams.push_back(c);
+    s.mainCamera = okay::PickRenderCamera(s.mainCamera, cams);
+    return s.mainCamera;
 }
 
 // Screen-space UI overlay (text, images, panels, bars, sliders, toggles,
@@ -31163,8 +31207,8 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
         if (gameView) {
             if (Camera* mc = SceneCamera(ed.scene())) {
                 if (mc->gameObject && mc->gameObject->transform) {
-                    Vec3 cp = mc->gameObject->transform->Position();
-                    camPos = {cp.x, cp.y}; zoom = mc->orthographicSize * 2.0f;
+                    Vec3 cp = mc->RenderPosition();
+                    camPos = {cp.x, cp.y}; zoom = mc->EffectiveOrthoSize() * 2.0f;
                 }
             }
         }
@@ -31770,9 +31814,9 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     float zoom   = ed.cameraZoom;
     if (gameView) {
         if (Camera* mc = SceneCamera(ed.scene())) {
-            Vec3 cp = mc->gameObject->transform->Position();
+            Vec3 cp = mc->RenderPosition();             // incl. shake + pixel snap
             camPos = {cp.x, cp.y};
-            zoom = mc->orthographicSize * 2.0f;        // viewport world-height
+            zoom = mc->EffectiveOrthoSize() * 2.0f;     // viewport world-height (after zoom)
         }
     }
     float scale = canvasSize.y / zoom;
@@ -36497,9 +36541,13 @@ int main(int argc, char** argv) {
             static int s_camCheck = 0;
             if (!ed.isPlaying() && ++s_camCheck >= 20) {
                 s_camCheck = 0;
-                bool made = false;
-                Camera* ensured = okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made);
-                if (made) {
+                bool made = false, restored = false;
+                Camera* ensured = okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made, &restored);
+                if (made && restored) {
+                    ed.dirty = true;
+                    ConsoleLog("'" + ensured->gameObject->name + "' lost its Camera component, so it was put back "
+                               "(every scene needs a camera to render; add another camera before removing this one).", 1);
+                } else if (made) {
                     ed.autoCamera = ensured ? ensured->gameObject : nullptr;
                     ed.dirty = true;
                     ConsoleLog("This scene had no camera, so a Main Camera was added (every scene needs one to render).", 1);

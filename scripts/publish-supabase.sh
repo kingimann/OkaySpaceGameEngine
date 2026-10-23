@@ -89,7 +89,7 @@ NOTES="$(mktemp)"; trap 'rm -f "$RESP" "$NOTES"' EXIT
 if [ -n "${NOTES_FILE:-}" ]; then cp "$NOTES_FILE" "$NOTES"
 else git log -6 --no-merges --pretty='- %s' > "$NOTES" 2>/dev/null || echo "- OkaySpace v$VER" > "$NOTES"; fi
 CHANGELOG="$NOTES"   # the editor's update dialog shows this
-for c in "$DIST_DIR/CHANGELOG.txt" dist/CHANGELOG.txt; do [ -f "$c" ] && { CHANGELOG="$c"; break; }; done
+[ -f "$DIST_DIR/CHANGELOG.txt" ] && CHANGELOG="$DIST_DIR/CHANGELOG.txt"   # (dist/CHANGELOG.txt is years stale: not used)
 upload "$CHANGELOG" "v$VER/CHANGELOG.txt" "text/plain; charset=utf-8" 3600
 upload "$NOTES" NOTES.txt "text/plain; charset=utf-8" 30
 printf '%s\n' "$VER" > "$RESP.ver"

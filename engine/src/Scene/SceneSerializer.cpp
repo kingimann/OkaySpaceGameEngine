@@ -241,6 +241,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << cam->rectX << " " << cam->rectY << " " << cam->rectW << " " << cam->rectH
             << " " << cam->cullingMask
             << " " << (cam->physicalCamera ? 1 : 0) << " " << cam->focalLength << " " << cam->sensorHeight
+            << " " << cam->zoom << " " << cam->dutch << " " << cam->lensShiftX << " " << cam->lensShiftY
+            << " " << (cam->pixelPerfect ? 1 : 0) << " " << cam->pixelsPerUnit
+            << " " << cam->shakeAmount << " " << cam->shakeAngle << " " << cam->shakeFrequency << " " << cam->shakeRecovery
             << "\n";
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
@@ -2120,6 +2123,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 int phys = 0;
                                 in >> cam->cullingMask >> phys >> cam->focalLength >> cam->sensorHeight;
                                 cam->physicalCamera = (phys != 0);
+                                in >> std::ws; // optional zoom / dutch / lens shift / pixel perfect / shake (added later)
+                                if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                    int pp = 0;
+                                    in >> cam->zoom >> cam->dutch >> cam->lensShiftX >> cam->lensShiftY >> pp
+                                       >> cam->pixelsPerUnit >> cam->shakeAmount >> cam->shakeAngle
+                                       >> cam->shakeFrequency >> cam->shakeRecovery;
+                                    cam->pixelPerfect = (pp != 0);
+                                    if (!(cam->zoom > 0.01f)) cam->zoom = 1.0f;
+                                }
                             }
                         }
                     }

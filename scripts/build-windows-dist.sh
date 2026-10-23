@@ -38,6 +38,11 @@ BUILD_DIR=build-win
 OUT_DIR=build-win-dist
 
 EXTRA=()
+# Reuse compiled objects between release builds when ccache is installed (the
+# release workflow caches its directory): only changed files recompile.
+if command -v ccache >/dev/null 2>&1; then
+    EXTRA+=("-DCMAKE_C_COMPILER_LAUNCHER=ccache" "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
+fi
 [ -n "${OKAY_IMGUI_SRC:-}" ] && EXTRA+=("-DFETCHCONTENT_SOURCE_DIR_IMGUI=$OKAY_IMGUI_SRC")
 # Bake a default account server into the binaries when provided (e.g. from a CI
 # secret), so the release build is online with no key file on disk.
@@ -150,3 +155,18 @@ EOF
 echo
 echo "Built Windows distribution in $OUT_DIR/:"
 find "$OUT_DIR" -type f | sort
+
+# ---- Debug info: ship it separately -------------------------------------------
+# The editor is built with -g so crash offsets resolve to source lines, but the
+# DWARF is ~60 MB of an ~84 MB exe. Move it to Tools/../symbols/OkayEngine.debug
+# (published as its own release asset, never downloaded by the launcher) and keep
+# a debuglink in the exe; addr2line -e OkayEngine.debug resolves crash offsets.
+SYMBOLS_DIR="${SYMBOLS_DIR:-build-win-symbols}"
+mkdir -p "$SYMBOLS_DIR"
+OBJCOPY="${OBJCOPY:-x86_64-w64-mingw32-objcopy}"
+if command -v "$OBJCOPY" >/dev/null 2>&1 && [ -f "$OUT_DIR/Tools/OkayEngine.exe" ]; then
+    "$OBJCOPY" --only-keep-debug "$OUT_DIR/Tools/OkayEngine.exe" "$SYMBOLS_DIR/OkayEngine.debug"
+    ( cd "$SYMBOLS_DIR" && "$OBJCOPY" --strip-debug --add-gnu-debuglink=OkayEngine.debug "../$OUT_DIR/Tools/OkayEngine.exe" )
+    echo "Split editor debug info -> $SYMBOLS_DIR/OkayEngine.debug"
+    ls -la "$OUT_DIR/Tools/OkayEngine.exe" "$SYMBOLS_DIR/OkayEngine.debug"
+fi

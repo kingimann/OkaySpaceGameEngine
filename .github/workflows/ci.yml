@@ -10,7 +10,7 @@ jobs:
     name: Build & test (Ubuntu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install toolchain
         run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
@@ -48,12 +48,12 @@ jobs:
     name: WebGL build (Emscripten)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Pull in Emscripten. This runner has network, so Emscripten's SDL2 port is
       # fetched + cached here (the one online step the web build needs).
       - name: Set up Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+        uses: mymindstorm/setup-emsdk@v15
         with:
           version: 3.1.51
           actions-cache-folder: emsdk-cache
@@ -71,7 +71,7 @@ jobs:
           ls -la build-web/web/
 
       - name: Upload WebGL build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: okayspace-webgl
           path: build-web/web/

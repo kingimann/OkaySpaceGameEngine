@@ -20,8 +20,16 @@ jobs:
     timeout-minutes: 45
     env:
       SDL2_VERSION: 2.30.9
+      # Compiler cache kept between release builds (actions/cache below): only
+      # changed files recompile, so a typical release builds in a few minutes.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+      # "true" when the repo has the secret that the Supabase publish step needs.
+      SUPABASE_PUBLISH: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Ubuntu mirrors occasionally hang (one release sat here 45 min): bounded
       # attempts with apt's own timeouts, retried a few times.
@@ -31,7 +39,7 @@ jobs:
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for i in 1 2 3; do
             if timeout 240 sudo apt-get $APT update && \
-               timeout 420 sudo apt-get $APT install -y cmake ninja-build mingw-w64 zip nsis; then
+               timeout 420 sudo apt-get $APT install -y cmake ninja-build mingw-w64 zip nsis ccache; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"
@@ -57,6 +65,13 @@ jobs:
           tar xzf libsodium-mingw.tar.gz -C libsodium-mingw
           echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"
 
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-mingw-${{ github.sha }}
+          restore-keys: ccache-mingw-
+
       - name: Build Windows distribution
         # The account server + public key are baked into the build as the CMake
         # defaults (see the top-level CMakeLists), pointing at the OkaySpace
@@ -64,7 +79,10 @@ jobs:
         # anymore: a stale/empty secret used to silently misconfigure the build
         # and break sign-in. To point a fork at a different server, change the
         # CMake defaults instead.
-        run: scripts/build-windows-dist.sh
+        run: |
+          ccache -z || true
+          scripts/build-windows-dist.sh
+          ccache -s || true
 
       - name: Package zip
         id: pkg
@@ -91,7 +109,7 @@ jobs:
           ls -la OkaySpace-Setup.exe
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.pkg.outputs.name }}
           path: ${{ steps.pkg.outputs.zip }}
@@ -103,7 +121,7 @@ jobs:
       # updater (launcher + editor) downloads the individual files from
       # releases/latest/download/<name>, so they must be present as assets.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Upload the individual files the in-app updater fetches by name from
           # releases/latest/download/<name>. The launcher + its SDL2.dll sit at the
@@ -117,7 +135,16 @@ jobs:
             build-win-dist/Tools/OkaySpacePlayer.exe
             build-win-dist/SDL2.dll
             build-win-dist/VERSION.txt
+            build-win-symbols/OkayEngine.debug
             dist/CHANGELOG.txt
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.pkg.outputs.ver) }}
           name: OkaySpace v${{ steps.pkg.outputs.ver }}
           generate_release_notes: true
+
+      # Also publish to the Supabase "releases" bucket (launchers check it first),
+      # when the repo has a SUPABASE_SERVICE_KEY secret. Without it this is skipped.
+      - name: Publish to Supabase
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        if: env.SUPABASE_PUBLISH == 'true'
+        run: scripts/publish-supabase.sh

@@ -147,6 +147,12 @@ Recent additions (v2.12–2.14):
   (Quit-on-Escape, Master Volume, Show-FPS).
 - **Crash-safe autosave** (File ▸ Autosave) writes a `<scene>.autosave` recovery
   copy and offers to restore it after an unclean exit.
+- **Crash reports**: if the editor crashes, it saves a report beside the editor
+  executable. The report records what the editor was doing, the error, and a
+  backtrace (Windows, Linux and macOS). The launcher then notifies you and lists
+  every report in **Settings ▸ Crash reports**. From there you can copy a report
+  for support or a Forums post, open the folder, or clear the list. The editor's
+  own **View ▸ Crash Log** shows the same reports.
 - **Keyframe Animator** — add it from *Animation*, then play/scrub and **Record**
   the transform into keyframe tracks.
 

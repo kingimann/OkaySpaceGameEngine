@@ -504,6 +504,65 @@ static LONG WINAPI OkayCrashFilter(EXCEPTION_POINTERS* ep) {
     MessageBoxA(nullptr, msg, "OkaySpace crash", MB_OK | MB_ICONERROR);
     return EXCEPTION_EXECUTE_HANDLER;
 }
+#elif defined(__linux__) || defined(__APPLE__)
+// Linux / macOS: the same okay_crash.txt + okay_crashlog.txt reports beside the
+// editor (the launcher's Crash reports page reads them), from a fatal-signal
+// handler. Best effort: stdio in a signal handler isn't async-safe, but the
+// process is going down anyway; the default action runs afterwards.
+#include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+static void OkayCrashSignal(int sig) {
+    signal(sig, SIG_DFL);   // a second fault inside the handler just ends the process
+#ifndef OKAY_ENGINE_VERSION
+#  define OKAY_ENGINE_VERSION "?"
+#endif
+    char exePath[4096] = "";
+#if defined(__APPLE__)
+    uint32_t sz = sizeof(exePath);
+    if (_NSGetExecutablePath(exePath, &sz) != 0) exePath[0] = '\0';
+#else
+    ssize_t n = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    exePath[n > 0 ? n : 0] = '\0';
+#endif
+    std::string dir = exePath;
+    std::size_t slash = dir.find_last_of('/');
+    dir = slash == std::string::npos ? std::string(".") : dir.substr(0, slash);
+    std::time_t now = std::time(nullptr);
+    char when[32]; std::strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    const char* name = sig == SIGSEGV ? "SIGSEGV" : sig == SIGABRT ? "SIGABRT" : sig == SIGFPE ? "SIGFPE"
+                     : sig == SIGILL ? "SIGILL" : sig == SIGBUS ? "SIGBUS" : "signal";
+    void* frames[48];
+    const int nf = backtrace(frames, 48);
+    const std::string crashPath = dir + "/okay_crash.txt", logPath = dir + "/okay_crashlog.txt";
+    if (FILE* f = std::fopen(crashPath.c_str(), "w")) {
+        std::fprintf(f, "OkaySpace crash report\nVersion: %s\nWhen: %s\nExe: %s\nLast step: %s\n"
+                        "Exception: %s (signal %d)\nFault module: %s\n\nBacktrace:\n",
+                     OKAY_ENGINE_VERSION, when, exePath[0] ? exePath : "?", g_okayTrace, name, sig,
+                     exePath[0] ? exePath : "?");
+        std::fflush(f);
+        backtrace_symbols_fd(frames, nf, fileno(f));
+        std::fclose(f);
+    }
+    if (FILE* src = std::fopen(crashPath.c_str(), "r")) {
+        if (FILE* hist = std::fopen(logPath.c_str(), "a")) {
+            std::fprintf(hist, "\n========== crash @ %s (v%s) ==========\n", when, OKAY_ENGINE_VERSION);
+            char buf[1024]; std::size_t r;
+            while ((r = std::fread(buf, 1, sizeof(buf), src)) > 0) std::fwrite(buf, 1, r, hist);
+            std::fprintf(hist, "\n");
+            std::fclose(hist);
+        }
+        std::fclose(src);
+    }
+    std::fprintf(stderr, "OkaySpace crashed (%s). Last step: %s. Report: %s\n", name, g_okayTrace, crashPath.c_str());
+    raise(sig);
+}
+static void InstallCrashSignals() {
+    for (int s : {SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS}) signal(s, OkayCrashSignal);
+}
 #endif
 
 SDL_Renderer* g_sdlRenderer = nullptr;
@@ -36933,9 +36992,17 @@ static int VsStepEditor(ActionList::Item& it, bool cond, int id, bool& changed) 
 int main(int argc, char** argv) {
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
+#elif defined(__linux__) || defined(__APPLE__)
+    InstallCrashSignals();                          // same reports on Linux / macOS
 #endif
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
+    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end.
+    if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {
+        OKAY_TRACE(c);
+        volatile int* bad = nullptr;
+        *bad = 1;
+    }
 
     if (!PassesLauncherGate(argc, argv)) return 0;
 

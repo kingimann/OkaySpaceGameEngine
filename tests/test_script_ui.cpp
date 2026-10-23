@@ -67,5 +67,61 @@ int main() {
     s.Update(1.0f / 60.0f);
     CHECK(sc->VM()->GetGlobal("hp").AsFloat() == 75.0f);   // ui_slider echoed hp unchanged
 
+    // ---- The launcher-style blocks: ui_heading, cards, list items, tabs, inputs, toasts ----
+    {
+        struct KitUI : ScriptUIBridge {
+            std::string calls, lastToast, lastInputIn;
+            int tabsIn = -1, toastKind = -1;
+            void Heading(const char* s) override { calls += std::string("H:") + s + ";"; }
+            void Caption(const char* s, int r, int g, int b) override { calls += std::string("C:") + s + ":" + std::to_string(r + g + b) + ";"; }
+            void BeginCard(const char* id) override { calls += std::string("[") + id + ";"; }
+            void EndCard() override { calls += "];"; }
+            bool ListItem(const char* t, const char* sub, const char* r, bool sel) override {
+                calls += std::string("L:") + t + "/" + (sub ? sub : "-") + "/" + (r ? r : "-") + (sel ? "*" : "") + ";";
+                return std::string(t) == "Rin";
+            }
+            void KeyValue(const char* k, const char* v) override { calls += std::string("K:") + k + "=" + v + ";"; }
+            bool PrimaryButton(const char*) override { return true; }
+            void Badge(const char* s, int, int, int) override { calls += std::string("B:") + s + ";"; }
+            void Toast(const char* s, int kind, float) override { lastToast = s; toastKind = kind; }
+            int  Tabs(const char* labels, int cur) override { calls += std::string("T:") + labels + ";"; tabsIn = cur; return 2; }
+            const char* Input(const char*, const char* text) override { lastInputIn = text; return "edited"; }
+            void Style(const char* n) override { calls += std::string("S:") + n + ";"; }
+        } kit;
+        SetScriptUI(&kit);
+        Scene k("kit");
+        auto* kc = k.CreateGameObject("Lobby")->AddComponent<ScriptComponent>("okayscript");
+        std::string kerr;
+        const bool kok = kc->LoadSource(
+            "var tab = 0; var picked = \"\"; var name = \"Maya\"; var ready = false;\n"
+            "function update(dt) {\n"
+            "    ui_style(\"launcher\");\n"
+            "    ui_caption(\"NOW PLAYING\");\n"
+            "    ui_heading(\"Star Arena\");\n"
+            "    tab = ui_tabs(\"Players|Match|Settings\", tab);\n"
+            "    ui_card_begin(\"players\");\n"
+            "    var names = [\"Maya\", \"Rin\"];\n"
+            "    for (var i = 0; i < count(names); i = i + 1) {\n"
+            "        if (ui_list_item(names[i], \"Ready\", \"\" + (i + 1), i == 1)) { picked = names[i]; }\n"
+            "    }\n"
+            "    ui_card_end();\n"
+            "    ui_key_value(\"Ping\", \"23 ms\");\n"
+            "    ui_badge(\"3 / 4\");\n"
+            "    name = ui_input(\"Name\", name);\n"
+            "    if (ui_primary_button(\"Ready\")) { ready = true; ui_toast(\"You're ready\", 1); }\n"
+            "}\n", &kerr);
+        CHECK(kok);
+        if (!kok) std::cerr << "  script error: " << kerr << "\n";
+        k.Start();
+        k.Update(1.0f / 60.0f);
+        CHECK(kit.calls.find("S:launcher;C:NOW PLAYING:467;H:Star Arena;T:Players|Match|Settings;[players;") == 0);
+        CHECK(kit.calls.find("L:Maya/Ready/1;L:Rin/Ready/2*;];K:Ping=23 ms;B:3 / 4;") != std::string::npos);
+        CHECK(kit.tabsIn == 0 && kc->VM()->GetGlobal("tab").AsFloat() == 2.0f);
+        CHECK(kc->VM()->GetGlobal("picked").AsString() == "Rin");
+        CHECK(kit.lastInputIn == "Maya" && kc->VM()->GetGlobal("name").AsString() == "edited");
+        CHECK(kc->VM()->GetGlobal("ready").AsBool() && kit.lastToast == "You're ready" && kit.toastKind == 1);
+        SetScriptUI(nullptr);
+    }
+
     TEST_MAIN_RESULT();
 }

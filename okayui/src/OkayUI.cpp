@@ -1,6 +1,7 @@
 #include <algorithm>
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
+#include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include <SDL.h>
 #include <cstdio>   // snprintf for numeric widgets (C library, not STL)
 
@@ -29,6 +30,17 @@ int        g_onv = 0;
 int        g_ovIdx[kMaxIdx];
 int        g_oni = 0;
 bool       g_toOverlay = false;   // route quad()/drawText() to the overlay batch
+
+// The launcher look: text comes from a TrueType atlas, and flat shapes sample its
+// solid-white patch, so shapes + text share one texture (and one draw call). Spans
+// carry kAtlasTex as a placeholder; EndFrame swaps in the renderer's real texture.
+bool g_look = false;
+const fontatlas::Atlas* g_ttf = nullptr;            // set while the look is on and the atlas built
+SDL_Texture* const kAtlasTex = (SDL_Texture*)(void*)&g_ttf;   // placeholder (never dereferenced)
+SDL_Texture* g_defTex = nullptr;                    // texture for flat geometry (nullptr / kAtlasTex)
+float g_whiteU = 0.0f, g_whiteV = 0.0f;             // uv of an opaque texel for flat geometry
+SDL_Texture*  g_atlasTex = nullptr;                 // the atlas on g_atlasR
+SDL_Renderer* g_atlasR = nullptr;
 
 // Draw spans: the main batch is split into contiguous index ranges, each carrying a
 // clip state and a texture, so scrolling child regions can clip and Image() can bind a
@@ -116,6 +128,7 @@ inline int cstrlen(const char* s) { int n = 0; if (s) while (s[n]) ++n; return n
 // ---- Auto-layout state (ImGui-style window + cursor) ---------------------------
 struct LayoutState {
     bool  active   = false;
+    bool  winClip  = false;           // Begin() clipped the content to the window (launcher look)
     float ox = 0, oy = 0;            // content origin (top-left of the content area)
     float cx = 0, cy = 0;            // cursor: top-left where the next item goes
     float contentW = 0;             // usable content width
@@ -184,7 +197,7 @@ WinSlot g_wins[16];
 
 // Per-widget open/closed state (CollapsingHeader, Combo), persisted by id.
 struct OpenSlot { int id = 0; bool open = false; bool used = false; };
-OpenSlot g_opens[64];
+OpenSlot g_opens[128];
 bool* openState(int id, bool dflt) {
     for (OpenSlot& s : g_opens) if (s.used && s.id == id) return &s.open;
     for (OpenSlot& s : g_opens) if (!s.used) { s.used = true; s.id = id; s.open = dflt; return &s.open; }
@@ -192,7 +205,7 @@ bool* openState(int id, bool dflt) {
 }
 // Per-id float state (child-region scroll offsets), persisted across frames.
 struct FloatSlot { int id = 0; float v = 0.0f; bool used = false; };
-FloatSlot g_floats[64];
+FloatSlot g_floats[256];
 float* floatState(int id, float dflt) {
     for (FloatSlot& s : g_floats) if (s.used && s.id == id) return &s.v;
     for (FloatSlot& s : g_floats) if (!s.used) { s.used = true; s.id = id; s.v = dflt; return &s.v; }
@@ -230,9 +243,25 @@ const Font* g_font = &kFontDefault;
 inline int  fW() { return g_font->width; }
 inline int  fH() { return g_font->height; }
 inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c, x, y); }
-inline int  fMeasure(const char* s) { return fW() * cstrlen(s); }
+// Width of `s` in font-cell units (multiply by textScale for pixels). With the
+// launcher look it's the TrueType width at the 8-unit cell height (proportional).
+inline float fMeasure(const char* s) {
+    if (g_ttf && s) {
+        const fontatlas::Size& z = g_ttf->Pick(16.0f);
+        float w = 0.0f;
+        for (const char* p = s; *p;) {
+            const unsigned cp = fontatlas::NextCodepoint(&p);
+            const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
+            if (g) w += g->advance;
+        }
+        return w * 8.0f / z.px;
+    }
+    return (float)(fW() * cstrlen(s));
+}
+// Average character width in cell units (spacing glyph-like icons).
+inline float fCharW() { return g_ttf ? fMeasure("n") : (float)fW(); }
 
-inline float rowH() { return fH() * g_theme.textScale + 12.0f; }
+inline float rowH() { return fH() * g_theme.textScale + (g_look ? 15.0f : 12.0f); }
 inline float textH() { return fH() * g_theme.textScale; }
 inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
 
@@ -294,7 +323,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;   // overflow: drop silently
     const SDL_Color sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
     SDL_Vertex v;
     v.color = sc; v.tex_coord = uv;
     v.position.x = x;     v.position.y = y;     V[nv++] = v;
@@ -311,7 +340,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
 void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
              float u0, float v0, float u1, float v1, const unsigned char tint[4]) {
     setTexture(tex);
-    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { setTexture(nullptr); return; }
+    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { setTexture(g_defTex); return; }
     const SDL_Color sc = toColor(tint);
     const int base = g_nv;
     SDL_Vertex v; v.color = sc;
@@ -321,7 +350,7 @@ void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
     v.position.x = x;     v.position.y = y + h; v.tex_coord.x = u0; v.tex_coord.y = v1; g_verts[g_nv++] = v;
     g_idx[g_ni++] = base + 0; g_idx[g_ni++] = base + 1; g_idx[g_ni++] = base + 2;
     g_idx[g_ni++] = base + 0; g_idx[g_ni++] = base + 2; g_idx[g_ni++] = base + 3;
-    setTexture(nullptr);
+    setTexture(g_defTex);
 }
 
 // A quad from four arbitrary corners (for rotated/skewed shapes and thick lines).
@@ -334,7 +363,7 @@ void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
     const SDL_Color sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
     SDL_Vertex v; v.color = sc; v.tex_coord = uv;
     v.position.x = ax; v.position.y = ay; V[nv++] = v;
     v.position.x = bx; v.position.y = by; V[nv++] = v;
@@ -355,7 +384,7 @@ void gradQuad(float x, float y, float w, float h,
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
     const int base = nv;
-    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
     SDL_Vertex v; v.tex_coord = uv;
     v.position.x = x;     v.position.y = y;     v.color = toColor(tl); V[nv++] = v;
     v.position.x = x + w; v.position.y = y;     v.color = toColor(tr); V[nv++] = v;
@@ -420,7 +449,7 @@ void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsig
     if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) return;
     const SDL_Color sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
     SDL_Vertex v; v.color = sc; v.tex_coord = uv;
     v.position.x = ax; v.position.y = ay; V[nv++] = v;
     v.position.x = bx; v.position.y = by; V[nv++] = v;
@@ -474,6 +503,36 @@ inline float rnd() { return g_theme.rounding; }
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str) return;
+    if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
+        const float px = fH() * s;
+        const fontatlas::Size& z = g_ttf->Pick(px);
+        const float k = px / z.px;
+        const bool exact = k > 0.97f && k < 1.03f;
+        float pen = exact ? SDL_floorf(x + 0.5f) : x;
+        const float base = exact ? SDL_floorf(y + z.ascent * k + 0.5f) : y + z.ascent * k;
+        SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+        int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+        int&        nv = g_toOverlay ? g_onv : g_nv;
+        int&        ni = g_toOverlay ? g_oni : g_ni;
+        const SDL_Color sc = toColor(c);
+        for (const char* p = str; *p;) {
+            const unsigned cp = fontatlas::NextCodepoint(&p);
+            const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
+            if (!g) continue;
+            if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
+                const float x0 = pen + g->x0 * k, y0 = base + g->y0 * k, x1 = pen + g->x1 * k, y1 = base + g->y1 * k;
+                const int b0 = nv;
+                SDL_Vertex v; v.color = sc;
+                v.position.x = x0; v.position.y = y0; v.tex_coord.x = g->u0; v.tex_coord.y = g->v0; V[nv++] = v;
+                v.position.x = x1; v.position.y = y0; v.tex_coord.x = g->u1; v.tex_coord.y = g->v0; V[nv++] = v;
+                v.position.x = x1; v.position.y = y1; v.tex_coord.x = g->u1; v.tex_coord.y = g->v1; V[nv++] = v;
+                v.position.x = x0; v.position.y = y1; v.tex_coord.x = g->u0; v.tex_coord.y = g->v1; V[nv++] = v;
+                I[ni++] = b0; I[ni++] = b0 + 1; I[ni++] = b0 + 2; I[ni++] = b0; I[ni++] = b0 + 2; I[ni++] = b0 + 3;
+            }
+            pen += g->advance * k;
+        }
+        return;
+    }
     float penX = x;
     for (const char* p = str; *p; ++p) {
         for (int gy = 0; gy < fH(); ++gy)
@@ -482,6 +541,39 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
                     quad(penX + gx * s, y + gy * s, s, s, c);
         penX += fW() * s;
     }
+}
+
+// ---- Launcher-look shapes (drawn instead of text glyphs for icons) ----
+// A small chevron pointing right (open=false) or down (open=true), centred on (cx, cy).
+void chevron(float cx, float cy, float sz, bool down, const unsigned char c[4]) {
+    const float h = sz * 0.5f, t = sz < 12.0f ? 1.6f : 2.0f;
+    if (down) { line(cx - h, cy - h * 0.5f, cx, cy + h * 0.5f, t, c); line(cx, cy + h * 0.5f, cx + h, cy - h * 0.5f, t, c); }
+    else      { line(cx - h * 0.5f, cy - h, cx + h * 0.5f, cy, t, c); line(cx + h * 0.5f, cy, cx - h * 0.5f, cy + h, t, c); }
+}
+// An "x" mark centred on (cx, cy).
+void xMark(float cx, float cy, float sz, const unsigned char c[4]) {
+    const float h = sz * 0.5f;
+    line(cx - h, cy - h, cx + h, cy + h, 1.8f, c);
+    line(cx - h, cy + h, cx + h, cy - h, 1.8f, c);
+}
+// A tick inside a box at (x, y) of side `sz`.
+void tickMark(float x, float y, float sz, const unsigned char c[4]) {
+    const float t = sz < 18.0f ? 2.0f : 2.4f;
+    line(x + sz * 0.24f, y + sz * 0.52f, x + sz * 0.43f, y + sz * 0.70f, t, c);
+    line(x + sz * 0.43f, y + sz * 0.70f, x + sz * 0.77f, y + sz * 0.32f, t, c);
+}
+// Soft drop shadow under a rounded rect (a few widening translucent layers).
+void softShadow(float x, float y, float w, float h, float rad) {
+    for (int i = 4; i >= 1; --i) {
+        const float g = 3.0f * i;
+        const unsigned char c[4] = {0, 0, 0, (unsigned char)(26 - i * 4)};
+        rrect(x - g, y - g + 5.0f, w + 2.0f * g, h + 2.0f * g, rad + g, c);
+    }
+}
+// `c` with its alpha scaled (0..1), into `out`.
+const unsigned char* withAlpha(const unsigned char c[4], float a, unsigned char out[4]) {
+    out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = (unsigned char)(c[3] * a);
+    return out;
 }
 
 inline bool pointIn(float px, float py, float x, float y, float w, float h) {
@@ -519,7 +611,7 @@ void BeginFrame(const Input& in) {
     g_colTop = 0;
     g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
     g_nspans = 0; g_clipTop = 0;           // reset draw spans/stack
-    g_curClipOn = false; g_curTex = nullptr;
+    g_curClipOn = false; g_curTex = g_defTex;
     g_childTop = 0;                        // reset child-region stack
     g_col.active = false;                  // reset column layout
     g_tbl.active = false;                  // reset table layout
@@ -539,7 +631,7 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
     }
 
     const unsigned char* bg = g_theme.bg;
-    if (g_active == id && inside) bg = g_theme.bgDown;
+    if (g_active == id && inside) bg = g_look ? g_theme.accent : g_theme.bgDown;
     else if (inside)             bg = g_theme.bgHover;
 
     // Rounded border frame, then the inset fill.
@@ -590,8 +682,12 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
     rrect(x, y, size, size, rd, g_theme.border);
     const float b = g_theme.borderPx;
     if (size > 2.0f * b) rrect(x + b, y + b, size - 2.0f * b, size - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
-    // Check mark: a centered accent square when ticked.
-    if (*value) {
+    // Check mark: a centered accent square when ticked (launcher look: an accent box with a tick).
+    if (*value && g_look) {
+        rrect(x, y, size, size, rd, g_theme.accent);
+        const unsigned char white[4] = {255, 255, 255, 255};
+        tickMark(x, y, size, white);
+    } else if (*value) {
         const float pad = size * 0.28f;
         rrect(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, rd * 0.5f, g_theme.accent);
     }
@@ -656,6 +752,20 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
 
     // Rounded groove, then the filled portion, then a circular handle.
     const float t = clamp01((*value - minV) / (maxV - minV));
+    if (g_look) {   // thin field-coloured groove, accent fill, white knob
+        const float gy2 = y + h * 0.5f - 2.5f;
+        rrect(x, gy2, w, 5.0f, 2.5f, g_theme.field);
+        if (w * t > 0.0f) rrect(x, gy2, w * t, 5.0f, 2.5f, g_theme.accent);
+        const float kr = h * 0.32f;
+        float kcx = x + w * t;
+        if (kcx < x + kr) kcx = x + kr;
+        if (kcx > x + w - kr) kcx = x + w - kr;
+        const unsigned char ring[4] = {0, 0, 0, 60};
+        fillCircle(kcx, y + h * 0.5f + 1.0f, kr + 1.0f, ring);
+        const unsigned char knob[4] = {245, 247, 252, 255};
+        fillCircle(kcx, y + h * 0.5f, kr, (g_active == id || inside) ? g_theme.text : knob);
+        return changed;
+    }
     const float gy = y + h * 0.5f - 3.0f;     // 6px groove, vertically centered
     rrect(x, gy, w, 6.0f, 3.0f, g_theme.track);
     if (w * t > 0.0f) rrect(x, gy, w * t, 6.0f, 3.0f, g_theme.accent);
@@ -671,6 +781,12 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
 
 void ProgressBar(float x, float y, float w, float h, float t) {
     t = clamp01(t);
+    if (g_look) {   // a pill: field track, accent fill
+        const float bh = h > 10.0f ? 10.0f : h, by = y + (h - bh) * 0.5f;
+        rrect(x, by, w, bh, bh * 0.5f, g_theme.field);
+        if (w * t >= bh * 0.5f) rrect(x, by, w * t, bh, bh * 0.5f, g_theme.accent);
+        return;
+    }
     const float rd = rnd();
     rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
@@ -724,6 +840,17 @@ bool Tab(int id, float x, float y, float w, float h, const char* label, int* cur
     }
 
     const bool selected = (*current == index);
+    if (g_look) {   // launcher pill tabs: accent when selected, faint white otherwise
+        unsigned char tmp[4];
+        const unsigned char white[4] = {255, 255, 255, 255};
+        const unsigned char* fill = selected ? g_theme.accent : withAlpha(white, inside ? 0.10f : 0.05f, tmp);
+        rrect(x, y, w, h, h * 0.5f, fill);
+        if (label && *label) {
+            const float s = g_theme.textScale, tw = fMeasure(label) * s, th = fH() * s;
+            drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
+        }
+        return *current == index;
+    }
     const unsigned char* bg = selected ? g_theme.bg : g_theme.track;
     if (!selected && inside) bg = g_theme.bgHover;
 
@@ -767,25 +894,25 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
     const float rd = rnd();
     rrect(x, y, w, h, rd, focused ? g_theme.accent : g_theme.border);
     const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, g_theme.track);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, g_theme.field);
 
     // Show the trailing characters that fit (so the caret stays visible) — this
     // avoids needing a scissor rect across the batched geometry.
     const float s     = g_theme.textScale;
-    const float charW = fW() * s;
     const float th    = fH() * s;
-    const float pad   = 6.0f;
+    const float pad   = g_look ? 9.0f : 6.0f;
     const float innerW = w - 2.0f * pad;
-    const int   maxCh  = charW > 0.0f ? (int)(innerW / charW) : 0;
-    const int   len    = cstrlen(buf);
-    const char* shown  = (maxCh > 0 && len > maxCh) ? buf + (len - maxCh) : buf;
+    const char* shown  = buf;   // drop leading characters until the rest fits
+    while (*shown && fMeasure(shown) * s > innerW) {
+        ++shown;
+        while ((*shown & 0xC0) == 0x80) ++shown;   // whole UTF-8 characters only
+    }
     const float tx = x + pad, ty = y + (h - th) * 0.5f;
     drawText(tx, ty, shown, s, g_theme.text);
 
     // Blinking caret at the end of the shown text when focused.
     if (focused && (g_frame / 30u) % 2u == 0u) {
-        const int shownLen = cstrlen(shown);
-        const float cx = tx + shownLen * charW;
+        const float cx = tx + fMeasure(shown) * s;
         if (cx < x + w - 2.0f) quad(cx, ty, 2.0f, th, g_theme.text);
     }
     return changed;
@@ -794,7 +921,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
 namespace {
 // Append the overlay batch after the main batch so popups/tooltips draw on top.
 void mergeOverlay() {
-    if (g_oni > 0) { setTexture(nullptr); pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
+    if (g_oni > 0) { setTexture(g_defTex); pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
     const int base = g_nv;
     for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
     for (int j = 0; j < g_oni && g_ni < kMaxIdx; ++j)   g_idx[g_ni++] = base + g_ovIdx[j];
@@ -827,16 +954,71 @@ DrawData GetDrawData() {
 
 void EndFrameData() { finalizeFrame(); }
 
+// The real texture behind a span's texture (kAtlasTex -> this renderer's atlas).
+SDL_Texture* resolveTex(SDL_Renderer* r, SDL_Texture* t) {
+    if (t != kAtlasTex) return t;
+    if (!g_ttf || !g_ttf->ok) return nullptr;
+    if (!g_atlasTex || g_atlasR != r) {
+        g_atlasTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, g_ttf->w, g_ttf->h);
+        g_atlasR = r;
+        if (g_atlasTex) {
+            SDL_UpdateTexture(g_atlasTex, nullptr, g_ttf->rgba, g_ttf->w * 4);
+            SDL_SetTextureBlendMode(g_atlasTex, SDL_BLENDMODE_BLEND);
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+            SDL_SetTextureScaleMode(g_atlasTex, SDL_ScaleModeLinear);
+#endif
+        }
+    }
+    return g_atlasTex;
+}
+
+// Toasts: a few short messages stacked in the bottom-right corner (see Toast()).
+struct ToastSlot { char text[160]; int kind; Uint32 until; Uint32 born; };
+ToastSlot g_toasts[4];
+int       g_ntoasts = 0;
+void drawToasts(float screenW, float screenH) {
+    const Uint32 now = SDL_GetTicks();
+    int k = 0;
+    for (int i = 0; i < g_ntoasts; ++i) if (g_toasts[i].until > now) g_toasts[k++] = g_toasts[i];
+    g_ntoasts = k;
+    if (!g_ntoasts) return;
+    const float s = g_theme.textScale, pad = 14.0f, gap = 10.0f;
+    float y = screenH - 24.0f;
+    g_toOverlay = true;
+    for (int i = g_ntoasts - 1; i >= 0; --i) {
+        const ToastSlot& t = g_toasts[i];
+        const float tw = labelW(t.text), w = tw + pad * 2.0f + 22.0f, h = textH() + pad * 1.6f;
+        const float age = (float)(now - t.born) / 180.0f, left = (float)(t.until - now) / 250.0f;
+        const float a = clamp01(age < left ? age : left);   // fade in / out
+        const float x = screenW - 24.0f - w + (1.0f - a) * 30.0f;
+        y -= h;
+        const unsigned char bgc[4] = {38, 42, 51, (unsigned char)(245 * a)};
+        const unsigned char rim[4] = {255, 255, 255, (unsigned char)(28 * a)};
+        unsigned char dot[4] = {66, 150, 250, (unsigned char)(255 * a)};
+        if (t.kind == 1) { dot[0] = 67; dot[1] = 181; dot[2] = 129; }
+        if (t.kind == 2) { dot[0] = 237; dot[1] = 85; dot[2] = 85; }
+        const unsigned char txt[4] = {g_theme.text[0], g_theme.text[1], g_theme.text[2], (unsigned char)(255 * a)};
+        rrect(x, y, w, h, 10.0f, rim);
+        rrect(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f, 9.0f, bgc);
+        fillCircle(x + pad + 4.0f, y + h * 0.5f, 4.0f, dot, 16);
+        drawText(x + pad + 18.0f, y + (h - textH()) * 0.5f, t.text, s, txt);
+        y -= gap;
+    }
+    g_toOverlay = false;
+}
+
 void EndFrame(SDL_Renderer* r) {
+    if (r && g_ntoasts) { int ow = 0, oh = 0; SDL_GetRendererOutputSize(r, &ow, &oh); drawToasts((float)ow, (float)oh); }
     finalizeFrame();
     if (!r || g_nv == 0 || g_ni == 0) return;
+    SDL_Texture* const defTex = resolveTex(r, g_defTex);
     // Save/restore the renderer's blend mode so we never disturb ImGui or anything
     // else that draws through the same SDL_Renderer.
     SDL_BlendMode prev = SDL_BLENDMODE_NONE;
     SDL_GetRenderDrawBlendMode(r, &prev);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     if (g_nspans == 0) {
-        SDL_RenderGeometry(r, nullptr, g_verts, g_nv, g_idx, g_ni);   // fast path: no clipping
+        SDL_RenderGeometry(r, defTex, g_verts, g_nv, g_idx, g_ni);   // fast path: no clipping
     } else {
         // Draw each contiguous index range under its clip rect. Ranges run from one
         // span's startIdx to the next span's (last extends to g_ni).
@@ -845,7 +1027,7 @@ void EndFrame(SDL_Renderer* r) {
         // Geometry before the first span (window frames drawn pre-clip) is unclipped.
         if (g_spans[0].startIdx > 0) {
             SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, nullptr, g_verts, g_nv, &g_idx[0], g_spans[0].startIdx);
+            SDL_RenderGeometry(r, defTex, g_verts, g_nv, &g_idx[0], g_spans[0].startIdx);
         }
         for (int s = 0; s < g_nspans; ++s) {
             int from = g_spans[s].startIdx;
@@ -853,7 +1035,7 @@ void EndFrame(SDL_Renderer* r) {
             if (to <= from) continue;
             if (g_spans[s].on) SDL_RenderSetClipRect(r, &g_spans[s].rect);
             else               SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, g_spans[s].tex, g_verts, g_nv, &g_idx[from], to - from);
+            SDL_RenderGeometry(r, resolveTex(r, g_spans[s].tex), g_verts, g_nv, &g_idx[from], to - from);
         }
         // Restore the renderer's prior clip state.
         SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);
@@ -862,6 +1044,44 @@ void EndFrame(SDL_Renderer* r) {
 }
 
 Theme& Style() { return g_theme; }
+
+Theme SlateTheme() {
+    // The launcher's "Slate" palette (shared/OkayTheme.hpp) in bytes.
+    Theme t;
+    auto set = [](unsigned char* c, int r, int g, int b, int a) { c[0] = (unsigned char)r; c[1] = (unsigned char)g; c[2] = (unsigned char)b; c[3] = (unsigned char)a; };
+    set(t.bg, 51, 56, 71, 255);        // kControl
+    set(t.bgHover, 67, 72, 86, 255);
+    set(t.bgDown, 45, 50, 64, 255);
+    set(t.border, 255, 255, 255, 22);  // hairline
+    set(t.text, 230, 235, 245, 255);
+    set(t.panel, 30, 33, 41, 250);     // kBase
+    set(t.track, 41, 46, 59, 255);     // kField
+    set(t.accent, 66, 150, 250, 255);
+    set(t.textDim, 140, 150, 171, 255);
+    set(t.titleBg, 23, 25, 31, 255);
+    set(t.field, 41, 46, 59, 255);
+    t.borderPx = 1.0f; t.textScale = 2.0f; t.rounding = 6.0f;
+    t.windowRounding = 10.0f; t.windowPadding = 14.0f; t.windowShadow = true;
+    return t;
+}
+
+void UseLauncherLook(bool on) {
+    static Theme classic;
+    if (on == g_look) return;
+    if (on) {
+        classic = g_theme;
+        g_theme = SlateTheme();
+        const fontatlas::Atlas& a = fontatlas::Get();
+        g_ttf = a.ok ? &a : nullptr;
+        if (g_ttf) { g_defTex = kAtlasTex; g_whiteU = a.whiteU; g_whiteV = a.whiteV; }
+    } else {
+        g_theme = classic;
+        g_ttf = nullptr; g_defTex = nullptr; g_whiteU = g_whiteV = 0.0f;
+    }
+    g_look = on;
+    g_curTex = g_defTex;
+}
+bool LauncherLook() { return g_look; }
 
 void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
     if (g_colTop >= 64) return;
@@ -930,25 +1150,46 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
     // Frame: panel body (only the title bar when collapsed) + accent underline + title.
     const float bodyH = *collapsed ? titleH : h;
+    if (g_look) {   // launcher window: shadow, rounded body with a hairline, slim title bar
+        const float wr = g_theme.windowRounding;
+        if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
+        rrect(wx, wy, w, bodyH, wr, g_theme.border);
+        rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.panel);
+        rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.titleBg);
+        if (!*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, g_theme.titleBg);
+        if (!*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
+        const float s0 = g_theme.textScale;
+        chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : g_theme.textDim);
+        if (title && *title) drawText(wx + btn, wy + (titleH - textH()) * 0.5f, title, s0, g_theme.text);
+        if (p_open) {
+            unsigned char tmp[4];
+            const unsigned char white[4] = {255, 255, 255, 255};
+            if (overClose) rrect(closeX + 5.0f, wy + 5.0f, btn - 10.0f, titleH - 10.0f, 6.0f, withAlpha(white, 0.10f, tmp));
+            xMark(closeX + btn * 0.5f, wy + titleH * 0.5f, 9.0f, overClose ? g_theme.text : g_theme.textDim);
+        }
+    } else
     Panel(wx, wy, w, bodyH);
+    if (!g_look) {
     // Title bar: round the TOP corners to match the panel, square at the bottom edge
     // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
     const float rd = rnd();
-    rrect(wx, wy, w, titleH, rd, g_theme.bgDown);
-    if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, g_theme.bgDown);
+    rrect(wx, wy, w, titleH, rd, g_theme.titleBg);
+    if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, g_theme.titleBg);
     quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
     const float s = g_theme.textScale;
     drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
-    if (title && *title) drawText(wx + 8.0f + fW() * s * 2.0f, wy + (titleH - textH()) * 0.5f, title, s, g_theme.text);
+    if (title && *title) drawText(wx + 8.0f + fCharW() * s * 2.0f, wy + (titleH - textH()) * 0.5f, title, s, g_theme.text);
     if (p_open) {
         const unsigned char* xcol = overClose ? g_theme.accent : g_theme.text;
-        drawText(closeX + (btn - fW() * s) * 0.5f, wy + (titleH - textH()) * 0.5f, "x", s, xcol);
+        drawText(closeX + (btn - fCharW() * s) * 0.5f, wy + (titleH - textH()) * 0.5f, "x", s, xcol);
+    }
     }
 
     if (*collapsed) { g_lay.active = false; return false; }   // folded: skip content
 
     // Establish the content layout region.
-    const float pad = 10.0f;
+    const float pad = g_theme.windowPadding;
+    if (g_look) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
     g_lay.active = true;
     g_lay.seed = id;
     g_lay.ox = wx + pad;
@@ -956,14 +1197,17 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
     g_lay.contentW = w - 2.0f * pad;
-    g_lay.spacingX = 8.0f; g_lay.spacingY = 6.0f;
+    g_lay.spacingX = g_look ? 9.0f : 8.0f; g_lay.spacingY = g_look ? 8.0f : 6.0f;
     g_lay.indent = 0.0f;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
     return true;
 }
 
-void End() { g_lay.active = false; }
+void End() {
+    if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
+    g_lay.active = false;
+}
 
 bool BeginChild(const char* id, float w, float h, bool border) {
     if (!g_lay.active) return false;
@@ -1020,7 +1264,7 @@ void EndChild() {
     // Scrollbar (only when content overflows).
     if (maxScroll > 0.0f) {
         const float sbx = c.rx + c.rw - kScrollbarW;
-        quad(sbx, c.ry, kScrollbarW, c.rh, g_theme.track);
+        if (!g_look) quad(sbx, c.ry, kScrollbarW, c.rh, g_theme.track);
         float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
         float thumbH = frac * c.rh; if (thumbH < 16.0f) thumbH = 16.0f;
         float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
@@ -1035,8 +1279,15 @@ void EndChild() {
         } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
         if (*c.scroll < 0.0f) *c.scroll = 0.0f;
         if (*c.scroll > maxScroll) *c.scroll = maxScroll;
-        const unsigned char* tc = (g_active == sbId || overThumb) ? g_theme.text : g_theme.accent;
-        quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, tc);
+        if (g_look) {   // thin rounded thumb, faint until hovered
+            unsigned char tmp[4];
+            const unsigned char white[4] = {255, 255, 255, 255};
+            const unsigned char* tc2 = g_active == sbId ? g_theme.accent : withAlpha(white, overThumb ? 0.26f : 0.14f, tmp);
+            rrect(sbx + 3.0f, thumbY + 2.0f, kScrollbarW - 5.0f, thumbH - 4.0f, (kScrollbarW - 5.0f) * 0.5f, tc2);
+        } else {
+            const unsigned char* tc = (g_active == sbId || overThumb) ? g_theme.text : g_theme.accent;
+            quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, tc);
+        }
     }
 
     g_lay = c.lay;   // restore the parent layout (cursor already past the region)
@@ -1100,6 +1351,7 @@ void TextColored(unsigned char r, unsigned char g, unsigned char b, const char* 
 }
 
 void TextDisabled(const char* s) {
+    if (g_look) { TextColored(g_theme.textDim[0], g_theme.textDim[1], g_theme.textDim[2], s); return; }
     // Blend the theme text toward the panel color for a muted look.
     const unsigned char* t = g_theme.text; const unsigned char* p = g_theme.panel;
     TextColored((unsigned char)((t[0] + p[0]) / 2), (unsigned char)((t[1] + p[1]) / 2),
@@ -1181,13 +1433,13 @@ void TabBar(const char* const* labels, int count, int* current) {
     float tx = x;
     for (int i = 0; i < count; ++i) {
         const char* lbl = labels[i] ? labels[i] : "";
-        const float tw = labelW(lbl) + 20.0f;
+        const float tw = labelW(lbl) + (g_look ? 28.0f : 20.0f);
         const unsigned uid = ((unsigned)hashLabel(lbl) ^ ((unsigned)i * 2654435761u)) & 0x7fffffffu;
         Tab((int)uid, tx, y, tw, h, lbl, current, i);
-        tx += tw + 2.0f;
+        tx += tw + (g_look ? 6.0f : 2.0f);
     }
-    // A baseline under the whole tab row.
-    quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);
+    // A baseline under the whole tab row (classic look).
+    if (!g_look) quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);
 }
 
 bool Checkbox(const char* label, bool* value) {
@@ -1451,10 +1703,16 @@ bool CollapsingHeader(const char* label) {
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
     const unsigned char* bg = (g_active == id && inside) ? g_theme.bgDown : (inside ? g_theme.bgHover : g_theme.track);
-    quad(x, y, w, h, bg);
     const float s = g_theme.textScale;
+    if (g_look) {
+        rrect(x, y, w, h, rnd(), inside ? g_theme.bgHover : g_theme.bg);
+        chevron(x + 14.0f, y + h * 0.5f, 9.0f, *open, g_theme.textDim);
+        drawText(x + 28.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        return *open;
+    }
+    quad(x, y, w, h, bg);
     drawText(x + 8.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);   // expander glyph
-    drawText(x + 8.0f + fW() * s * 2.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    drawText(x + 8.0f + fCharW() * s * 2.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return *open;
 }
 
@@ -1466,6 +1724,15 @@ void Tooltip(const char* text) {
     const float tw = labelW(text), th = textH();
     const float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
     g_toOverlay = true;
+    if (g_look) {
+        const float p2 = 8.0f;
+        const unsigned char tip[4] = {38, 42, 51, 250};
+        rrect(bx, by, tw + p2 * 2.0f, th + p2 * 2.0f, 7.0f, g_theme.border);
+        rrect(bx + 1.0f, by + 1.0f, tw + p2 * 2.0f - 2.0f, th + p2 * 2.0f - 2.0f, 6.0f, tip);
+        drawText(bx + p2, by + p2, text, s, g_theme.text);
+        g_toOverlay = false;
+        return;
+    }
     quad(bx, by, tw + pad * 2.0f, th + pad * 2.0f, g_theme.border);
     quad(bx + 1.0f, by + 1.0f, tw + pad * 2.0f - 2.0f, th + pad * 2.0f - 2.0f, g_theme.panel);
     drawText(bx + pad, by + pad, text, s, g_theme.text);
@@ -1491,7 +1758,8 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
     if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
     const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, cur, s, g_theme.text);
-    drawText(x + boxW - fW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
+    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, g_theme.textDim);
+    else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
 
     bool changed = false;
@@ -1698,9 +1966,16 @@ bool TreeNode(const char* label) {
     if (inside) g_hot = id;
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
+    if (g_look) {
+        unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
+        if (inside) rrect(x, y, w, h, 6.0f, withAlpha(white, 0.06f, tmp));
+        chevron(x + 11.0f, y + h * 0.5f, 8.0f, *open, g_theme.textDim);
+        drawText(x + 24.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    } else {
     if (inside) quad(x, y, w, h, g_theme.bgHover);
     drawText(x + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
-    drawText(x + 4.0f + fW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    drawText(x + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    }
     if (*open) g_lay.indent += 16.0f;   // children indent until TreePop()
     return *open;
 }
@@ -1715,7 +1990,8 @@ void BeginMenuBar() {
     if (!g_lay.active) return;
     const float h = rowH();
     float x, y; place(fullW(), h, x, y);
-    quad(x, y, fullW(), h, g_theme.bgDown);
+    if (!g_look) quad(x, y, fullW(), h, g_theme.bgDown);
+    else quad(x, y + h - 1.0f, fullW(), 1.0f, g_theme.border);
     g_inMenuBar = true; g_barX = x; g_barY = y; g_barH = h;
 }
 
@@ -1785,6 +2061,14 @@ bool Selectable(const char* label, bool selected) {
     bool clicked = false;
     if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
+    if (g_look) {   // launcher rows: soft accent tint + bar when selected, faint white on hover
+        unsigned char tmp[4];
+        const unsigned char white[4] = {255, 255, 255, 255};
+        if (selected) { rrect(x, y, w, h, 6.0f, withAlpha(g_theme.accent, 0.28f, tmp)); rrect(x, y + 5.0f, 3.0f, h - 10.0f, 1.5f, g_theme.accent); }
+        else if (inside) rrect(x, y, w, h, 6.0f, withAlpha(white, 0.06f, tmp));
+        drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        return clicked;
+    }
     if (selected)      quad(x, y, w, h, g_theme.accent);
     else if (inside)   quad(x, y, w, h, g_theme.bgHover);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
@@ -1999,12 +2283,13 @@ bool BeginTable(const char* id, int columns, const char* const* headers, const f
     // Optional header row: a bar with bold column labels.
     if (headers) {
         const float hh = rowH();
-        quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, g_theme.bgDown);
+        if (g_look) quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, g_theme.border);   // hairline under dim headers
+        else quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, g_theme.bgDown);
         const Font* prevF = g_font; g_font = &kFontBold;
         for (int i = 0; i < columns; ++i) {
             float cx = tblColX(i);
             if (headers[i] && headers[i][0])
-                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, g_theme.text);
+                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, g_look ? g_theme.textDim : g_theme.text);
         }
         g_font = prevF;
         g_tbl.rowTop += hh;
@@ -2062,6 +2347,236 @@ void EndTable() {
     g_lay.indent = 0.0f;
     g_lay.pendingSameLine = false;
     g_tbl.active = false;
+}
+
+// ---- Launcher-style building blocks ---------------------------------------------
+namespace {
+float g_textScaleStack[8];
+int   g_textScaleTop = 0;
+struct CardSave { float x, y, w; float* height; float ox, contentW; };
+CardSave g_cards[8];
+int      g_ncards = 0;
+// A pleasant, stable colour per name (avatar backgrounds).
+void nameColor(const char* name, unsigned char out[4]) {
+    static const unsigned char pal[8][3] = {{66, 133, 244}, {67, 181, 129}, {235, 137, 52}, {171, 92, 230},
+                                            {230, 82, 120}, {38, 166, 191}, {214, 170, 44}, {108, 120, 230}};
+    unsigned h = 2166136261u;
+    if (name) for (const char* p = name; *p; ++p) h = (h ^ (unsigned char)*p) * 16777619u;
+    const unsigned char* c = pal[h % 8];
+    out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = 255;
+}
+// The first character of `name` (upper-cased ASCII), as a C string.
+void initialOf(const char* name, char out[8]) {
+    out[0] = '?'; out[1] = 0;
+    if (!name) return;
+    while (*name == ' ' || *name == '@') ++name;
+    if (!*name) return;
+    const unsigned char c = (unsigned char)*name;
+    if (c < 0x80) { out[0] = (char)(c >= 'a' && c <= 'z' ? c - 32 : c); out[1] = 0; return; }
+    int n = 1; while (n < 4 && (((unsigned char)name[n]) & 0xC0) == 0x80) ++n;   // a whole UTF-8 character
+    for (int i = 0; i < n; ++i) out[i] = name[i];
+    out[n] = 0;
+}
+void drawAvatar(float x, float y, float d, const char* name) {
+    unsigned char c[4]; nameColor(name, c);
+    fillCircle(x + d * 0.5f, y + d * 0.5f, d * 0.5f, c, 28);
+    char ini[8]; initialOf(name, ini);
+    const float prev = g_theme.textScale;
+    g_theme.textScale = d * 0.5f / 8.0f;
+    const unsigned char white[4] = {255, 255, 255, 255};
+    drawText(x + (d - labelW(ini)) * 0.5f, y + (d - textH()) * 0.5f, ini, g_theme.textScale, white);
+    g_theme.textScale = prev;
+}
+} // namespace
+
+void PushTextScale(float scale) {
+    if (g_textScaleTop < 8) g_textScaleStack[g_textScaleTop++] = g_theme.textScale;
+    g_theme.textScale = g_theme.textScale * (scale > 0.1f ? scale : 0.1f);
+}
+void PopTextScale() { if (g_textScaleTop > 0) g_theme.textScale = g_textScaleStack[--g_textScaleTop]; }
+
+void Heading(const char* text) {
+    if (!g_lay.active || !text) return;
+    PushTextScale(1.625f);   // 16px -> 26px (a baked size: crisp)
+    const float tw = labelW(text), th = textH();
+    float x, y; place(tw, th + 12.0f, x, y);
+    drawText(x, y, text, g_theme.textScale, g_theme.text);
+    rrect(x, y + th + 5.0f, tw, 3.0f, 1.5f, g_theme.accent);
+    PopTextScale();
+}
+
+void Caption(const char* text, unsigned char r, unsigned char g, unsigned char b) {
+    if (!g_lay.active || !text) return;
+    PushTextScale(0.8125f);  // 13px
+    const float tw = labelW(text), th = textH();
+    float x, y; place(tw, th + 2.0f, x, y);
+    const unsigned char c[4] = {r, g, b, 255};
+    drawText(x, y + 1.0f, text, g_theme.textScale, c);
+    PopTextScale();
+}
+
+void TextWrapped(const char* text) {
+    if (!g_lay.active || !text) return;
+    const float maxW = availW();
+    char line[512]; int n = 0;
+    const char* p = text;
+    while (*p) {
+        // Take words while the line fits.
+        const char* wordEnd = p;
+        while (*wordEnd && *wordEnd != ' ' && *wordEnd != '\n') ++wordEnd;
+        const int wl = (int)(wordEnd - p);
+        char trial[512]; int tn = 0;
+        for (int i = 0; i < n && tn < 500; ++i) trial[tn++] = line[i];
+        if (n > 0 && tn < 500) trial[tn++] = ' ';
+        for (int i = 0; i < wl && tn < 500; ++i) trial[tn++] = p[i];
+        trial[tn] = 0;
+        if (n > 0 && labelW(trial) > maxW) { line[n] = 0; Text(line); n = 0; continue; }
+        for (int i = 0; i < tn && i < 500; ++i) line[i] = trial[i];
+        n = tn < 500 ? tn : 500;
+        p = wordEnd;
+        if (*p == '\n') { line[n] = 0; Text(line); n = 0; ++p; }
+        else if (*p == ' ') ++p;
+    }
+    if (n > 0) { line[n] = 0; Text(line); }
+}
+
+bool PrimaryButton(const char* label) {
+    if (!g_lay.active || !label) return false;
+    const int id = hashLabel(label);
+    const float w = labelW(label) + 40.0f, h = rowH();
+    float x, y; place(w, h, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+    bool clicked = false;
+    if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
+    else if (inside && g_pressed) g_active = id;
+    unsigned char c[4] = {g_theme.accent[0], g_theme.accent[1], g_theme.accent[2], 255};
+    if (g_active == id && inside) { c[0] = (unsigned char)(c[0] * 0.85f); c[1] = (unsigned char)(c[1] * 0.85f); c[2] = (unsigned char)(c[2] * 0.85f); }
+    else if (inside) { c[0] = (unsigned char)(c[0] + (255 - c[0]) * 0.12f); c[1] = (unsigned char)(c[1] + (255 - c[1]) * 0.12f); c[2] = (unsigned char)(c[2] + (255 - c[2]) * 0.12f); }
+    rrect(x, y, w, h, rnd(), c);
+    const unsigned char white[4] = {255, 255, 255, 255};
+    drawText(x + (w - labelW(label)) * 0.5f, y + (h - textH()) * 0.5f, label, g_theme.textScale, white);
+    return clicked;
+}
+
+void Badge(const char* text, unsigned char r, unsigned char g, unsigned char b) {
+    if (!g_lay.active || !text) return;
+    PushTextScale(0.8125f);
+    const float tw = labelW(text), h = textH() + 8.0f, w = tw + 16.0f;
+    g_theme.textScale = g_textScaleStack[g_textScaleTop - 1];   // the row height of normal text...
+    const float row = rowH();
+    g_theme.textScale *= 0.8125f;
+    float x, y; place(w, row, x, y);
+    y += (row - h) * 0.5f;                                      // ...with the pill centred on it
+    unsigned char c[4] = {r, g, b, 255};
+    if (!r && !g && !b) { c[0] = g_theme.accent[0]; c[1] = g_theme.accent[1]; c[2] = g_theme.accent[2]; }
+    rrect(x, y, w, h, h * 0.5f, c);
+    const unsigned char white[4] = {255, 255, 255, 255};
+    drawText(x + 8.0f, y + 3.5f, text, g_theme.textScale, white);
+    PopTextScale();
+}
+
+void Avatar(const char* name, float size) {
+    if (!g_lay.active) return;
+    const float d = size > 0.0f ? size : rowH();
+    float x, y; place(d, d, x, y);
+    drawAvatar(x, y, d, name);
+}
+
+void BeginCard(const char* id) {
+    if (!g_lay.active || g_ncards >= 8) return;
+    const int cid = hashLabel(id ? id : "card");
+    float* height = floatState(cid ^ 0xca7d, 0.0f);
+    const float x = cursorX(), w = availW();
+    float px, py; place(w, 0.0f, px, py);   // reserve the line; content follows inside
+    g_lay.cy = py;                           // (no spacing yet: the card grows to fit)
+    const float pad = 14.0f, rad = g_look ? 10.0f : rnd();
+    if (*height > 0.0f) {
+        const unsigned char raised[4] = {38, 42, 51, 255};
+        rrect(px, py, w, *height, rad, g_theme.border);
+        rrect(px + 1.0f, py + 1.0f, w - 2.0f, *height - 2.0f, rad > 1.0f ? rad - 1.0f : 0.0f, g_look ? raised : g_theme.bg);
+    }
+    CardSave& c = g_cards[g_ncards++];
+    c.x = px; c.y = py; c.w = w; c.height = height; c.ox = g_lay.ox; c.contentW = g_lay.contentW;
+    (void)x;
+    g_lay.ox = px + pad - g_lay.indent; g_lay.contentW = w - 2.0f * pad + g_lay.indent;
+    g_lay.cy = py + pad; g_lay.cx = g_lay.ox;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.cy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+}
+
+void EndCard() {
+    if (!g_lay.active || g_ncards <= 0) return;
+    CardSave& c = g_cards[--g_ncards];
+    const float pad = 14.0f;
+    const float bottom = g_lay.cy - g_lay.spacingY + pad;   // last item's bottom + padding
+    *c.height = bottom - c.y;
+    g_lay.ox = c.ox; g_lay.contentW = c.contentW;
+    g_lay.cx = leftEdge();
+    g_lay.cy = bottom + g_lay.spacingY;
+    g_lay.prevX = c.x; g_lay.prevY = c.y; g_lay.prevW = c.w; g_lay.prevH = *c.height;
+    g_lay.pendingSameLine = false;
+}
+
+bool ListItem(const char* title, const char* subtitle, const char* right, bool selected) {
+    if (!g_lay.active) return false;
+    const int id = hashLabel(title ? title : "item");
+    const bool two = subtitle && *subtitle;
+    const float h = two ? rowH() + textH() * 0.85f : rowH() + 4.0f, w = fullW();
+    float x, y; place(w, h, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+    bool clicked = false;
+    if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
+    else if (inside && g_pressed) g_active = id;
+    unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
+    if (selected) rrect(x, y, w, h, 8.0f, withAlpha(g_theme.accent, 0.25f, tmp));
+    else if (inside) rrect(x, y, w, h, 8.0f, withAlpha(white, 0.06f, tmp));
+    const float d = h - 12.0f;
+    drawAvatar(x + 6.0f, y + 6.0f, d, title);
+    const float tx = x + d + 18.0f, s = g_theme.textScale;
+    float rw = 0.0f;
+    if (right && *right) { rw = labelW(right); drawText(x + w - rw - 10.0f, y + (h - textH()) * 0.5f, right, s, g_theme.textDim); }
+    if (two) {
+        drawText(tx, y + 6.0f, title ? title : "", s, g_theme.text);
+        PushTextScale(0.8125f);
+        drawText(tx, y + h - 6.0f - textH() - 1.0f, subtitle, g_theme.textScale, g_theme.textDim);
+        PopTextScale();
+    } else drawText(tx, y + (h - textH()) * 0.5f, title ? title : "", s, g_theme.text);
+    return clicked;
+}
+
+void KeyValue(const char* label, const char* value) {
+    if (!g_lay.active) return;
+    const float h = rowH(), w = fullW();
+    float x, y; place(w, h, x, y);
+    const float ty = y + (h - textH()) * 0.5f;
+    if (label) drawText(x, ty, label, g_theme.textScale, g_theme.textDim);
+    if (value) drawText(x + w - labelW(value), ty, value, g_theme.textScale, g_theme.text);
+}
+
+void Spinner(float size) {
+    if (!g_lay.active) return;
+    const float d = size > 0.0f ? size : rowH();
+    float x, y; place(d, d, x, y);
+    const float cx = x + d * 0.5f, cy = y + d * 0.5f, r = d * 0.38f;
+    const float a0 = (float)(SDL_GetTicks() % 1000u) / 1000.0f * 6.2831853f;
+    unsigned char tmp[4];
+    for (int i = 0; i < 20; ++i) {   // a 270-degree arc fading toward its tail
+        const float t0 = a0 + i * 0.2356f, t1 = t0 + 0.2356f;
+        line(cx + r * SDL_cosf(t0), cy + r * SDL_sinf(t0), cx + r * SDL_cosf(t1), cy + r * SDL_sinf(t1),
+             d * 0.1f, withAlpha(g_theme.accent, 0.15f + 0.85f * (float)i / 19.0f, tmp));
+    }
+}
+
+void Toast(const char* text, int kind, float seconds) {
+    if (!text || !*text) return;
+    if (g_ntoasts == 4) { for (int i = 1; i < 4; ++i) g_toasts[i - 1] = g_toasts[i]; g_ntoasts = 3; }
+    ToastSlot& t = g_toasts[g_ntoasts++];
+    int i = 0; for (; text[i] && i < 159; ++i) t.text[i] = text[i];
+    t.text[i] = 0;
+    t.kind = kind;
+    t.born = SDL_GetTicks();
+    t.until = t.born + (Uint32)((seconds > 0.5f ? seconds : 0.5f) * 1000.0f);
 }
 
 } // namespace OkayUI

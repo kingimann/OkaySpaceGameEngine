@@ -9106,6 +9106,16 @@ void DrawScriptDocs() {
         fapi("ui_slider(\"Label\", v, lo, hi)", "returns the new value (pass current value back in)");
         fapi("ui_progress(t)", "a progress/health bar, t in 0..1");
         fapi("ui_sameline() / ui_separator()", "lay next widget beside / draw a divider");
+        fapi("ui_heading(\"Lobby\") / ui_caption(\"NOW PLAYING\"[, r, g, b])", "a page title (accent underline) / small coloured label");
+        fapi("ui_text_dim(\"s\") / ui_text_wrapped(\"s\")", "secondary text / text that wraps to the window");
+        fapi("ui_primary_button(\"Play\")", "an accent call-to-action button (1 when clicked)");
+        fapi("ui_card_begin(\"id\") ... ui_card_end()", "a raised rounded card around widgets");
+        fapi("ui_list_item(title[, subtitle[, right[, selected]]])", "a row with an avatar, title and dim subtitle (1 when clicked)");
+        fapi("ui_badge(\"3/4\"[, r, g, b]) / ui_avatar(\"Maya\")", "a pill tag / a coloured initial circle");
+        fapi("ui_key_value(\"Ping\", \"23 ms\") / ui_spinner()", "label left, value right / a busy spinner");
+        fapi("ui_tabs(\"Players|Match\", tab) / ui_input(\"Name\", text)", "pill tabs (returns the index) / a text field (returns the text)");
+        fapi("ui_toast(\"Saved\"[, 0 info|1 ok|2 error[, secs]])", "a pop-up message in the corner");
+        fapi("ui_style(\"launcher\" | \"classic\")", "the OkaySpace launcher look (default) or the old pixel look");
         if (!filtering)
             code("ui_begin(\"HUD\", 24, 24, 240, 150)\n"
                  "ui_text(\"Health\")\n"
@@ -37367,6 +37377,8 @@ int main(int argc, char** argv) {
             uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
             uin.backspace = g_okayUIBack;
             OkayUI::SetFont(OkayUI::FontDefault());
+            static bool lookChosen = false;   // the Game view shows game UI exactly as the player draws it
+            if (!lookChosen) { lookChosen = true; if (!std::getenv("OKAY_CLASSIC_UI")) OkayUI::UseLauncherLook(true); }
             OkayUI::BeginFrame(uin);
         }
 #endif

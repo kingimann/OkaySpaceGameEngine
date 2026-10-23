@@ -25,6 +25,7 @@
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Net/ServerQuery.hpp"
 #include "okay/Platform/Parties.hpp"
+#include "okay/Net/MatchResults.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -10698,11 +10699,289 @@ static void PumpQuickPlay() {
     if (!link.empty()) MpJoin(link, std::string());
 }
 
+// ---- Multiplayer: Recent players + Leaderboards (match results, docs/sql/matches.sql) ----
+// Fetched on short-lived worker threads; the UI copies results under g_mrMutex.
+static SDL_mutex* g_mrMutex = nullptr;
+static volatile bool g_mrBusy = false;
+static std::vector<okay::RecentPlayer> g_mrRecent;          // (guarded) from match reports
+static bool g_mrRecentLoaded = false, g_mrRecentSupported = true;   // (guarded)
+static std::vector<okay::PlayerStats> g_mrBoard;            // (guarded)
+static okay::PlayerStats g_mrMine; static bool g_mrHaveMine = false;  // (guarded)
+static std::string g_mrBoardKey;                            // (guarded) "game|stat" the board is for
+static bool g_mrBoardSupported = true;                      // (guarded)
+struct MrJob { int kind = 0; std::string game, stat; };     // 0 recent players, 1 leaderboard
+static int MatchResultsWorker(void* p) {
+    std::unique_ptr<MrJob> j(static_cast<MrJob*>(p));
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::MatchResults mr(a);
+        if (j->kind == 0) {
+            bool sup = true;
+            auto rows = mr.RecentPlayers(60, &sup);
+            SDL_LockMutex(g_mrMutex);
+            g_mrRecent = std::move(rows); g_mrRecentSupported = sup; g_mrRecentLoaded = true;
+            SDL_UnlockMutex(g_mrMutex);
+        } else {
+            bool sup = true;
+            auto rows = mr.Leaderboard(j->game, j->stat, 100, &sup);
+            okay::PlayerStats mine; const bool have = sup && mr.MyStats(j->game, mine);
+            SDL_LockMutex(g_mrMutex);
+            g_mrBoard = std::move(rows); g_mrMine = mine; g_mrHaveMine = have;
+            g_mrBoardSupported = sup; g_mrBoardKey = j->game + "|" + j->stat;
+            SDL_UnlockMutex(g_mrMutex);
+        }
+    } catch (...) {}
+    g_mrBusy = false;
+    return 0;
+}
+static void MrQueue(int kind, const std::string& game = std::string(), const std::string& stat = std::string()) {
+    if (!g_mrMutex) g_mrMutex = SDL_CreateMutex();
+    if (g_mrBusy || g_pollCfgDir.empty()) return;
+    g_mrBusy = true;
+    MrJob* j = new MrJob{kind, game, stat};   // (built outside: SDL_CreateThread is a macro on Windows)
+    if (SDL_Thread* t = SDL_CreateThread(MatchResultsWorker, "okay-matches", j)) SDL_DetachThread(t);
+    else { g_mrBusy = false; delete j; }
+}
+static std::string MrDuration(long secs) {
+    char b[32];
+    if (secs < 60) std::snprintf(b, sizeof(b), "%lds", secs);
+    else if (secs < 3600) std::snprintf(b, sizeof(b), "%ldm", secs / 60);
+    else std::snprintf(b, sizeof(b), "%ld.%ldh", secs / 3600, (secs % 3600) / 360);
+    return b;
+}
+
+// Everyone I've been in a game with: match reports (signed-in servers) merged
+// with what my games logged locally (any session, even ones nobody reported).
+static void DrawRecentPlayers(bool signedIn, bool reload) {
+    struct Row { std::string uid, username, name, avatar, game; long when = 0; int matches = 0; bool fromServer = false; };
+    static std::vector<okay::PlayedWith> local;
+    static Uint32 localAt = 0;
+    static bool asked = false;
+    if (reload || !localAt || SDL_GetTicks() - localAt > 5000) { local = okay::GameIpc::ReadPlayedWith(); localAt = SDL_GetTicks(); }
+    if (signedIn && (reload || !asked) && !MpDemo()) { asked = true; MrQueue(0); }
+
+    std::vector<Row> rows;
+    bool supported = true;
+    if (MpDemo()) {
+        const long t0 = (long)std::time(nullptr);
+        const char* u[] = {"maya", "theo", "kai_88", "rin", "nova"};
+        const char* d[] = {"Maya Chen", "Theo", "Kai", "Rin", "Nova"};
+        const char* g[] = {"Star Arena", "Star Arena", "Kart Rush", "Star Arena", "Block Party"};
+        const long ago[] = {600, 3600 * 3, 86400, 86400 * 2, 86400 * 6};
+        const int m[] = {7, 2, 1, 4, 1};
+        for (int i = 0; i < 5; ++i) { Row r; r.uid = std::string("demo-") + u[i]; r.username = u[i]; r.name = d[i]; r.game = g[i]; r.when = t0 - ago[i]; r.matches = m[i]; r.fromServer = true; rows.push_back(r); }
+        Row loc; loc.name = "guest_4417"; loc.game = "Kart Rush"; loc.when = t0 - 86400 * 3; rows.push_back(loc);
+    } else {
+        if (g_mrMutex) {
+            SDL_LockMutex(g_mrMutex);
+            supported = g_mrRecentSupported;
+            for (const auto& p : g_mrRecent) { Row r; r.uid = p.userId; r.username = p.username; r.name = p.Name(); r.avatar = p.avatar; r.game = p.game; r.when = p.when; r.matches = p.matches; r.fromServer = true; rows.push_back(r); }
+            SDL_UnlockMutex(g_mrMutex);
+        }
+        const std::string me = MyUsername();
+        for (const auto& p : local) {
+            bool dup = false;
+            for (auto& r : rows)
+                if ((!p.userId.empty() && r.uid == p.userId) || (p.userId.empty() && !r.username.empty() && SameTitle(r.username, p.name))) {
+                    if (p.when > r.when) { r.when = p.when; r.game = p.game; }
+                    dup = true; break;
+                }
+            if (dup || (!me.empty() && SameTitle(p.name, me))) continue;
+            Row r; r.uid = p.userId; r.name = p.name; r.game = p.game; r.when = p.when; rows.push_back(r);
+        }
+        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.when > b.when; });
+    }
+
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("People you've been in a game with. Open a profile to add them as a friend, or invite them to what you're playing.");
+    ImGui::Dummy(ImVec2(0, 4));
+    const bool canInvite = !g_myGame.invite.empty();
+    ImGui::BeginChild("##mprecent", ImVec2(0, 0), ImGuiChildFlags_None);
+    if (rows.empty()) {
+        const char* msg = g_mrBusy ? "Loading\xE2\x80\xA6"
+                        : !signedIn ? "Sign in to see who you've played with."
+                        : "Nobody yet. Play a multiplayer game and the people you meet show up here.";
+        const ImVec2 ts = ImGui::CalcTextSize(msg), av = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPos(ImVec2((av.x - ts.x) * 0.5f, std::max(20.0f, av.y * 0.4f)));
+        ImGui::TextDisabled("%s", msg);
+    }
+    const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    for (int i = 0; i < (int)rows.size(); ++i) {
+        const Row& r = rows[i];
+        ImGui::PushID(i);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
+        ImGui::BeginChild("##rp", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+        DrawAvatar(r.avatar, r.name, 40.0f);
+        ImGui::SameLine(0, 12);
+        ImGui::BeginGroup();
+        ImGui::TextUnformatted(r.name.empty() ? r.username.c_str() : r.name.c_str());
+        if (!r.username.empty() && r.username != r.name) { ImGui::SameLine(); ImGui::TextDisabled("@%s", r.username.c_str()); }
+        std::string det = r.game.empty() ? std::string() : r.game;
+        const std::string ago = AgoText(r.when);
+        if (!ago.empty()) det += (det.empty() ? "" : "  \xC2\xB7  ") + ago;
+        if (r.matches > 1) det += "  \xC2\xB7  " + std::to_string(r.matches) + " matches together";
+        if (r.uid.empty()) det += "  \xC2\xB7  not signed in";
+        ImGui::TextDisabled("%s", det.c_str());
+        ImGui::EndGroup();
+        if (!r.uid.empty()) {
+            const float right = ImGui::GetContentRegionMax().x;
+            ImGui::SameLine(right - 236);
+            const float by = ImGui::GetCursorPosY() + 4;
+            ImGui::SetCursorPosY(by);
+            ImGui::BeginDisabled(!canInvite);
+            if (ImGui::Button("Invite", ImVec2(110, 32))) MpInviteUser(r.uid, r.name);
+            ImGui::EndDisabled();
+            if (!canInvite && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Host or join a match in a game first.");
+            ImGui::SameLine();
+            ImGui::SetCursorPosY(by);
+            if (ImGui::Button("Profile", ImVec2(110, 32))) OpenPublicProfile(r.uid, r.username, r.name, r.avatar, 0);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        ImGui::PopID();
+        ImGui::Dummy(ImVec2(0, 2));
+    }
+    if (signedIn && !supported && !MpDemo())
+        ImGui::TextDisabled("Match history isn't set up on the server yet (docs/sql/matches.sql), so only games on this PC are listed.");
+    ImGui::EndChild();
+}
+
+// Per-game leaderboards from match results, plus my own line.
+static void DrawGameLeaderboards(bool signedIn, bool reload) {
+    static int gameSel = 0, statSel = 0;
+    const auto lib = MpLibrary();
+    int nStats = 0; const char* const* statKeys = okay::MatchResults::Stats(&nStats);
+    const char* statNames[] = {"Wins", "Total score", "Best score", "Matches", "Time played"};
+    if (gameSel >= (int)lib.size()) gameSel = 0;
+    std::string game = MpDemo() ? std::string("Star Arena") : (lib.empty() ? std::string() : lib[gameSel].title);
+    if (!g_myGame.title.empty() && gameSel == 0 && !MpDemo()) {   // default to what I'm playing
+        for (int i = 0; i < (int)lib.size(); ++i) if (SameTitle(lib[i].title, g_myGame.title)) { gameSel = i; game = lib[i].title; break; }
+    }
+
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::SetNextItemWidth(220);
+    if (ImGui::BeginCombo("##lbgame", game.empty() ? "No games in your library" : game.c_str())) {
+        for (int i = 0; i < (int)lib.size(); ++i) if (ImGui::Selectable(lib[i].title.c_str(), gameSel == i)) { gameSel = i; reload = true; }
+        ImGui::EndCombo();
+    }
+    for (int i = 0; i < nStats; ++i) {
+        ImGui::SameLine(0, i ? 6 : 14);
+        const bool on = statSel == i;
+        ImGui::PushStyleColor(ImGuiCol_Button, on ? kAccent : ImVec4(1, 1, 1, 0.05f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? kAccent : ImVec4(1, 1, 1, 0.10f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
+        if (ImGui::Button(statNames[i], ImVec2(0, 26)) && !on) { statSel = i; reload = true; }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+    }
+    const std::string stat = statKeys[statSel];
+    const std::string key = game + "|" + stat;
+
+    std::vector<okay::PlayerStats> board;
+    okay::PlayerStats mine; bool haveMine = false, supported = true, current = false;
+    if (MpDemo()) {
+        const char* u[] = {"maya", "nova", "theo", "kai_88", "rin", "jules"};
+        const char* d[] = {"Maya Chen", "Nova", "Theo", "Kai", "Rin", "Jules Park"};
+        const int w[] = {42, 37, 25, 19, 11, 6}, m[] = {80, 71, 60, 45, 30, 22};
+        for (int i = 0; i < 6; ++i) {
+            okay::PlayerStats s; s.userId = std::string("demo-") + u[i]; s.username = u[i]; s.display = d[i]; s.rank = i + 1;
+            s.wins = w[i]; s.matches = m[i]; s.totalScore = w[i] * 230 + m[i] * 40; s.bestScore = 60 + w[i]; s.seconds = m[i] * 540;
+            board.push_back(s);
+        }
+        mine = board[2]; haveMine = true; current = true;
+    } else if (signedIn && !game.empty()) {
+        if (g_mrMutex) {
+            SDL_LockMutex(g_mrMutex);
+            current = g_mrBoardKey == key;
+            if (current) { board = g_mrBoard; mine = g_mrMine; haveMine = g_mrHaveMine; supported = g_mrBoardSupported; }
+            SDL_UnlockMutex(g_mrMutex);
+        }
+        if ((reload || !current) && !g_mrBusy) MrQueue(1, game, stat);
+    }
+
+    if (haveMine) {   // my line
+        ImGui::Dummy(ImVec2(0, 6));
+        const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
+        ImGui::BeginChild("##lbmine", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+        ImGui::SetWindowFontScale(0.82f);
+        ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "YOUR STATS");
+        ImGui::SetWindowFontScale(1.0f);
+        char line[256];
+        std::snprintf(line, sizeof(line), "%d wins  \xC2\xB7  %d matches  \xC2\xB7  %ld total score  \xC2\xB7  best %d  \xC2\xB7  %s played",
+                      mine.wins, mine.matches, mine.totalScore, mine.bestScore, MrDuration(mine.seconds).c_str());
+        ImGui::TextUnformatted(line);
+        if (mine.rank > 0) { ImGui::SameLine(ImGui::GetContentRegionMax().x - 120); ImGui::TextColored(ImVec4(0.92f, 0.78f, 0.38f, 1), "Rank #%d", mine.rank); }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::Dummy(ImVec2(0, 6));
+    const ImGuiTableFlags tf = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
+    const ImVec2 tblPos = ImGui::GetCursorScreenPos();
+    const ImVec2 tblSize(ImGui::GetContentRegionAvail().x, std::max(120.0f, ImGui::GetContentRegionAvail().y - 4));
+    const std::string me = MyUsername();
+    if (ImGui::BeginTable("##lbtable", 7, tf, tblSize)) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 44.0f);
+        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn("Wins", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Matches", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Score", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("Best", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < (int)board.size(); ++i) {
+            const okay::PlayerStats& e = board[i];
+            ImGui::TableNextRow(0, 34.0f);
+            ImGui::PushID(i);
+            ImGui::TableSetColumnIndex(0); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 7);
+            const ImVec4 medal = e.rank == 1 ? ImVec4(0.95f, 0.78f, 0.30f, 1) : e.rank == 2 ? ImVec4(0.78f, 0.80f, 0.86f, 1)
+                               : e.rank == 3 ? ImVec4(0.85f, 0.56f, 0.35f, 1) : ImVec4(0.60f, 0.63f, 0.70f, 1);
+            ImGui::TextColored(medal, "%d", e.rank);
+            ImGui::TableSetColumnIndex(1);
+            const bool isMe = !me.empty() && SameTitle(e.username, me);
+            DrawAvatar(e.avatar, e.Name(), 26.0f);
+            ImGui::SameLine(0, 8); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+            const std::string label = e.Name() + (isMe ? "  (you)" : "") + "##lbrow";
+            if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap) && !e.userId.empty())
+                OpenPublicProfile(e.userId, e.username, e.Name(), e.avatar, 0);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open %s's profile", e.Name().c_str());
+            auto cell = [&](int col, const std::string& v, bool hi) {
+                ImGui::TableSetColumnIndex(col); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 7);
+                if (hi) ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1), "%s", v.c_str()); else ImGui::TextDisabled("%s", v.c_str());
+            };
+            cell(2, std::to_string(e.wins), stat == "wins");
+            cell(3, std::to_string(e.matches), stat == "matches");
+            cell(4, std::to_string(e.totalScore), stat == "score");
+            cell(5, std::to_string(e.bestScore), stat == "best");
+            cell(6, MrDuration(e.seconds), stat == "time");
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (board.empty()) {
+        const char* msg = !signedIn ? "Sign in to see leaderboards."
+                        : game.empty() ? "Add a game to your library to see its leaderboard."
+                        : !supported ? "Leaderboards aren't set up on the server yet (docs/sql/matches.sql)."
+                        : (g_mrBusy || !current) ? "Loading\xE2\x80\xA6"
+                        : "No results yet. Matches show up here when a game reports them (net_match_end).";
+        const ImVec2 ts = ImGui::CalcTextSize(msg);
+        ImGui::GetWindowDrawList()->AddText(ImVec2(tblPos.x + (tblSize.x - ts.x) * 0.5f, tblPos.y + (tblSize.y - ts.y) * 0.5f),
+                                            ImGui::GetColorU32(ImGuiCol_TextDisabled), msg);
+    }
+}
+
 static void DrawMultiplayerPage(bool signedIn) {
     static int mpTab = 0, shownTab = -1, sel = -1;
     static char search[96] = "";
     static int gameFilter = 0;   // 0 = all, else index+1 into the game list
     static bool hideFull = false, hideEmpty = false, hidePw = false;
+    if (const char* t = std::getenv("OKAY_MP_DEMO_TAB")) { static bool once = false; if (!once) { once = true; mpTab = std::atoi(t); } }   // dev screenshot hook
     const ImU32 cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
 
@@ -10775,9 +11054,9 @@ static void DrawMultiplayerPage(bool signedIn) {
     const auto friendsNow = MpFriends();
     int friendGames = 0;
     for (const auto& f : friendsNow) { okay::JoinLink l; if (f.status == "accepted" && f.online && okay::JoinLink::Parse(f.sessionCode, l)) ++friendGames; }
-    const char* tabNames[] = {"Internet", "Friends", "LAN", "Favorites", "History"};
-    const int tabCounts[] = {-1, friendGames, -1, (int)g_mpFavs.size(), (int)g_mpHist.size()};
-    for (int i = 0; i < 5; ++i) {
+    const char* tabNames[] = {"Internet", "Friends", "LAN", "Favorites", "History", "Recent players", "Leaderboards"};
+    const int tabCounts[] = {-1, friendGames, -1, (int)g_mpFavs.size(), (int)g_mpHist.size(), -1, -1};
+    for (int i = 0; i < 7; ++i) {
         if (i) ImGui::SameLine(0, 6);
         char lbl[48];
         if (tabCounts[i] > 0) std::snprintf(lbl, sizeof(lbl), "%s  %d##mpt%d", tabNames[i], tabCounts[i], i);
@@ -10789,6 +11068,13 @@ static void DrawMultiplayerPage(bool signedIn) {
         if (ImGui::Button(lbl, ImVec2(0, 28)) && !on) { mpTab = i; shownTab = -1; sel = -1; }
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(2);
+    }
+    if (mpTab >= 5) {   // people + stats rather than servers
+        const bool reload = shownTab != mpTab;
+        shownTab = mpTab;
+        if (mpTab == 5) DrawRecentPlayers(signedIn, reload);
+        else DrawGameLeaderboards(signedIn, reload);
+        return;
     }
     if (shownTab != mpTab && !g_mpBusy && !MpDemo()) { shownTab = mpTab; MpRefresh(mpTab); }
 

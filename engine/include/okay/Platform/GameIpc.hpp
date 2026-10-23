@@ -9,12 +9,16 @@
 //   game-<pid>.invite    game -> launcher  "open the invite-friends window"
 //   game-<pid>.join      launcher -> game  "join this session now" (an invite
 //                                          accepted while the game is running)
+//   played-with.tsv      game -> launcher  people I was in a session with
+//                                          ("Recently played with")
 //
 // Files beat sockets here: nothing to bind, works when either side starts first,
 // and a crashed game leaves at most a stale file the launcher ignores by age.
 // ---------------------------------------------------------------------------
 #include "okay/Platform/Account/AccountService.hpp"   // DefaultConfigDir
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -29,6 +33,21 @@
 #endif
 
 namespace okay {
+
+/// Someone I was in a multiplayer session with.
+struct PlayedWith {
+    std::string userId;     ///< account id when the server verified it ("" = unknown)
+    std::string name;       ///< the name they played under
+    std::string game;
+    long when = 0;          ///< unix seconds, last seen together
+    /// One entry per account (or per name + game when there's no account).
+    std::string Key() const {
+        if (!userId.empty()) return userId;
+        std::string k = "name:" + name + "|" + game;
+        for (char& c : k) c = (char)std::tolower((unsigned char)c);
+        return k;
+    }
+};
 
 /// What a running game reports about itself.
 struct GamePresence {
@@ -99,6 +118,50 @@ inline bool TakeJoin(std::string& link, long pid = 0) {
     f.close();
     std::error_code ec; fs::remove(p, ec);
     return !link.empty();
+}
+
+// ---- "Recently played with" (game writes, launcher reads) -------------------
+inline fs::path PlayedWithFile() { return Dir() / "played-with.tsv"; }
+inline std::string NoTabs(std::string s) { for (char& c : s) if (c == '\t' || c == '\n' || c == '\r') c = ' '; return s; }
+/// Everyone in the list, newest first (at most `max`).
+inline std::vector<PlayedWith> ReadPlayedWith(std::size_t max = 100) {
+    std::vector<PlayedWith> out;
+    std::ifstream f(PlayedWithFile());
+    std::string line;
+    while (f && std::getline(f, line)) {   // when \t userId \t game \t name
+        std::size_t a = line.find('\t'), b = a == std::string::npos ? a : line.find('\t', a + 1),
+                    c = b == std::string::npos ? b : line.find('\t', b + 1);
+        if (c == std::string::npos) continue;
+        PlayedWith p;
+        p.when = std::atol(line.substr(0, a).c_str());
+        p.userId = line.substr(a + 1, b - a - 1); p.game = line.substr(b + 1, c - b - 1); p.name = line.substr(c + 1);
+        if (p.when > 0 && (!p.userId.empty() || !p.name.empty())) out.push_back(p);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const PlayedWith& x, const PlayedWith& y) { return x.when > y.when; });
+    if (out.size() > max) out.resize(max);
+    return out;
+}
+/// Add / refresh people (same Key() = one entry, newest wins); keeps the newest 100.
+inline bool RecordPlayedWith(const std::vector<PlayedWith>& people) {
+    if (people.empty()) return true;
+    std::vector<PlayedWith> all = ReadPlayedWith(1000);
+    for (const PlayedWith& p : people) {
+        if (p.userId.empty() && p.name.empty()) continue;
+        PlayedWith q = p; if (q.when <= 0) q.when = (long)std::time(nullptr);
+        const std::string k = q.Key();
+        bool merged = false;
+        for (PlayedWith& e : all) if (e.Key() == k) {
+            if (q.when >= e.when) { if (q.name.empty()) q.name = e.name; e = q; }
+            merged = true; break;
+        }
+        if (!merged) all.push_back(q);
+    }
+    std::stable_sort(all.begin(), all.end(), [](const PlayedWith& x, const PlayedWith& y) { return x.when > y.when; });
+    if (all.size() > 100) all.resize(100);
+    std::string body;
+    for (const PlayedWith& e : all)
+        body += std::to_string(e.when) + "\t" + NoTabs(e.userId) + "\t" + NoTabs(e.game) + "\t" + NoTabs(e.name) + "\n";
+    return WriteAtomic(PlayedWithFile(), body);
 }
 
 // ---- launcher side ---------------------------------------------------------

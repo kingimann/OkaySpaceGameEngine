@@ -49,6 +49,15 @@ write any extra code.
     \<game>**. Typing `/invite` does the same, and works in group chats too.
   - **Pop-up.** An invite that arrives while the chat is closed shows a
     "Maya invited you to play" pop-up with **Join game**.
+- **Recent players.** Everyone you've been in a game with, newest first, with
+  the game, when, and how many matches you played together. **Profile** opens
+  their profile so you can add them as a friend, and **Invite** asks them into
+  what you're playing. Your games log who you play with on this PC, so the list
+  works in any session. Matches that servers report add people from your other
+  PCs too.
+- **Leaderboards.** Pick a game and rank by wins, total score, best score,
+  matches or time played. Your own line and rank are shown on top. The numbers
+  come from match results (see below).
 - **Parties.** Friends who play together:
   - **Starting one.** Create a party on the Multiplayer page, or pick **Start
     a party with them** / **Invite to party** from a friend's menu, a chat's
@@ -157,6 +166,37 @@ script.
 
 The listing is removed when the server stops. A server that crashed drops out
 of the browser after a couple of minutes. See [dedicated-server.md](dedicated-server.md).
+
+## Match results, stats and leaderboards
+
+When a match ends, the server (a dedicated server, or the player hosting)
+reports it. That records everyone's score, place, win and time. Signed-in
+players get a per-game stats row, which feeds the launcher's **Leaderboards**
+and **Recent players** tabs.
+
+| Script (server) | Visual scripting | What it does |
+| --- | --- | --- |
+| `net_match_start()` | **Start Match** | scores back to 0, start the match clock |
+| `net_match_end()` | **End Match** | save the results; first place wins |
+| `net_match_end(3, 7)` | **End Match** `3 7` | save the results; these player ids win (teams) |
+| `net_match_seconds()` | | how long the match has run |
+| `net_match_status()` | | `""` until saved, then `"ok"` or why it failed |
+
+Any game can read its leaderboard:
+
+| Script | What it does |
+| --- | --- |
+| `net_stats_top("wins"\|"score"\|"best"\|"matches"\|"time", n)` | the top `n` as `"rank,name,value"` strings |
+| `net_stats_mine(stat)` | my value (`"rank"` gives my rank by wins) |
+
+Requirements:
+- The reporting server must be signed in (`--login` on a dedicated server).
+- Run `docs/sql/matches.sql` once.
+
+Only the match host can report. A host counts if it is in the match itself, or
+it's a server listed in the browser for that game. Reports are limited to one
+every 15 seconds per host, and players can't write stats directly. A dedicated
+server prints `match results saved` when a report lands.
 
 ## Server authority (anti-cheat basics)
 

@@ -30,6 +30,7 @@
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/ServerBrowser.hpp"
+#include "okay/Net/MatchResults.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Platform/PlayFab/PlayFab.hpp"
 #include "okay/Platform/Achievements.hpp"
@@ -1252,6 +1253,25 @@ void ActionList::Update(float dt) {
             }
         }
         else if (op == "net_browser_open") ServerBrowser::Shared().windowOpen = true;   // the built-in "Find a server" window
+        else if (op == "net_match_start" || op == "net_match_end") {   // a match: scores to 0 / report results
+            NetworkManager* n = scene ? scene->FindObjectOfType<NetworkManager>() : nullptr;
+            if (n && n->IsServer()) {
+                if (op == "net_match_start") n->BeginMatch();
+                else {
+                    std::vector<std::uint32_t> winners;
+                    const std::string w = Str(it, 0);   // optional winner ids: "1 4"
+                    std::size_t i = 0;
+                    while (i < w.size()) {
+                        while (i < w.size() && (w[i] == ' ' || w[i] == ',')) ++i;
+                        std::size_t j = i; while (j < w.size() && std::isdigit((unsigned char)w[j])) ++j;
+                        if (j > i) winners.push_back((std::uint32_t)std::strtoul(w.substr(i, j - i).c_str(), nullptr, 10));
+                        if (j == i) ++j;
+                        i = j;
+                    }
+                    EndMatchAndReport(*n, winners, std::string(), scene->Name());
+                }
+            }
+        }
         else if (op == "net_host" || op == "net_join" || op == "net_send" || op == "net_disconnect" ||
                  op == "net_host_relay" || op == "net_join_relay") {
             if (scene) {

@@ -790,6 +790,21 @@ void NetworkManager::SetPeerScore(std::uint32_t id, int score) {
     for (auto& [ep, c] : m_clients) if (c.id == id) { c.score = score; return; }
 }
 
+void NetworkManager::BeginMatch() {
+    if (m_mode != Mode::Server) return;
+    m_hostScore = 0;
+    for (auto& [ep, c] : m_clients) c.score = 0;
+    m_matchOn = true; m_matchEnded = false;
+    m_matchStartAt = m_serverTime;
+}
+
+float NetworkManager::EndMatch() {
+    if (m_mode != Mode::Server) return 0.0f;
+    const float len = MatchSeconds();
+    if (m_matchOn) { m_matchOn = false; m_matchEnded = true; m_matchEndAt = m_serverTime; }
+    return len;
+}
+
 int NetworkManager::PeerScore(std::uint32_t id) const {
     if (m_mode == Mode::Server) {
         if (id == 0) return m_hostScore;

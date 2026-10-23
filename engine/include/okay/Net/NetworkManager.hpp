@@ -105,6 +105,16 @@ public:
     /// dedicated); on a client everyone in its room, refreshed each second.
     std::vector<RosterEntry> Roster() const;
 
+    // ---- Matches (server) --------------------------------------------------
+    /// Server: start a match — every score goes back to 0 and the match clock starts.
+    void BeginMatch();
+    /// Server: stop the match clock; returns how long the match lasted (seconds).
+    /// Report the results with okay::MatchReport::FromRoster(Roster(), ...).
+    float EndMatch();
+    bool  InMatch() const { return m_matchOn; }
+    /// Seconds since BeginMatch() (since the server started if no match was begun).
+    float MatchSeconds() const { return m_matchOn || m_matchEnded ? (m_matchOn ? m_serverTime : m_matchEndAt) - m_matchStartAt : m_serverTime; }
+
     // ---- What a server browser sees (answered to queries without joining) ----
     std::string gameId;    ///< which game this is (the player fills in its title)
     std::string mapName;   ///< current map / scene name
@@ -518,6 +528,8 @@ private:
     // Server-only
     float m_serverTime = 0.0f;        // seconds since the server started
     int   m_hostScore = 0;
+    bool  m_matchOn = false, m_matchEnded = false;
+    float m_matchStartAt = 0.0f, m_matchEndAt = 0.0f;
     float m_rosterTimer = 0.0f;
     std::uint32_t m_querySecret = 0;  // keys the player-list query challenge
     std::uint32_t QueryChallenge(const net::Endpoint& from) const;

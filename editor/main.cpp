@@ -9176,6 +9176,8 @@ void DrawScriptDocs() {
         fapi("net_set_score(id, n) / net_score(id)", "server-owned scores, seen by everyone");
         fapi("net_peer_name(id) / net_roster_count() / net_roster_id(i)", "who's in the room (any peer)");
         fapi("net_teleport(id, x, y[, z])", "server: move a player (respawn) past the speed check");
+        fapi("net_match_start() / net_match_end([winner ids])", "server: zero scores / end the match and save results (stats, leaderboards)");
+        fapi("net_stats_top(\"wins\"|\"score\"|\"best\"|\"matches\"|\"time\", n) / net_stats_mine(stat)", "this game's leaderboard from match results");
         fapi("net_max_speed(units) / net_rate_limit(perSec)", "server: snap back too-fast moves / drop message spam");
         fapi("net_disconnect()", "leave / stop the session");
         fapi("net_connected() / net_is_server() / net_is_client()", "status");
@@ -15838,6 +15840,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"net_host_relay","Host via Relay",   "relayIp port code",    "Host through a relay using a shared code — players behind home routers connect with NO port-forwarding (NAT traversal). Run the okayspace-relay binary, or use a public one.", "Multiplayer"},
     {"net_join_relay","Join via Relay",   "relayIp port code",    "Join a relay-hosted game with the same relay address + code the host used — no port-forwarding needed.", "Multiplayer"},
     {"net_browser_open","Open Server Browser","",                 "Show the built-in \"Find a server\" window: public and LAN servers for this game, with ping, players and Join.", "Multiplayer"},
+    {"net_match_start","Start Match",     "",                     "Server: start a match. Every score goes back to 0 and the match clock starts.", "Multiplayer"},
+    {"net_match_end","End Match",         "[winner ids]",         "Server: end the match and save the results (scores, places, wins) to everyone's stats and the game's leaderboard. Winners default to first place.", "Multiplayer"},
     {"net_send",    "Send Message (fast)","channel data",         "Send a fast (unreliable) network message.",               "Multiplayer"},
     {"net_send_reliable","Send Message (sure)","channel data",    "Send a guaranteed (reliable) network message.",           "Multiplayer"},
     {"net_set",     "Set Network Value",  "name value",           "Set a value shared across the network.",                  "Multiplayer"},

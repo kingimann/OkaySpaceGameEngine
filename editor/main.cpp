@@ -1442,6 +1442,9 @@ int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
+int  g_gameDevice = 0;           // Game-view mobile emulator device (0 = off; persisted)
+bool g_gameDeviceLandscape = false;   // emulator orientation (persisted)
+bool g_gameSafeArea = true;      // emulator: shade the notch / home-indicator areas (persisted)
 bool g_showUIOverlay = true;     // Scene view: overlay the screen-space UI (Canvas) on the 3D/2D scene, clickable + draggable (Scene "..." menu toggles it). The UI button on the Scene toolbar switches to the flat UI editing view.
 bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
 bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view locked to UI-only)
@@ -1859,6 +1862,9 @@ void LoadSettings() {
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
+        else if (k == "gamedevice") g_gameDevice = (v < 0 ? 0 : v);
+        else if (k == "gamedeviceland") g_gameDeviceLandscape = (v != 0);
+        else if (k == "gamesafearea") g_gameSafeArea = (v != 0);
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
@@ -1898,6 +1904,9 @@ void SaveSettings() {
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
+      << "gamedevice " << g_gameDevice << "\n"
+      << "gamedeviceland " << (g_gameDeviceLandscape ? 1 : 0) << "\n"
+      << "gamesafearea " << (g_gameSafeArea ? 1 : 0) << "\n"
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
@@ -33788,9 +33797,45 @@ static const GameResPreset kGameResPresets[] = {
 static constexpr int kGameResCount     = (int)(sizeof(kGameResPresets) / sizeof(kGameResPresets[0]));
 static constexpr int kGameResCustomIdx = kGameResCount - 1;
 
+// ---- Mobile emulator ----------------------------------------------------------
+// Real phone / tablet screens (portrait pixels) with what eats into them: rounded
+// corners, the notch / Dynamic Island / punch-hole camera, and the home indicator.
+// Picking one in the Game view makes it the game screen (the UI editor too),
+// drawn inside the device's frame; Rotate flips it to landscape.
+enum class DevCutout { None, Notch, Island, PunchHole, HomeButton };
+struct MobileDevice {
+    const char* name; int w, h;
+    float corner;        // screen corner radius, fraction of the short side
+    DevCutout cutout;
+    float safeTop, safeBottom;   // unsafe insets in portrait, fraction of the long side
+    bool tablet;
+};
+static const MobileDevice kMobileDevices[] = {
+    {"Off (no device)",          0,    0,    0.00f, DevCutout::None,       0.000f, 0.000f, false},
+    {"iPhone 15 Pro",            1179, 2556, 0.14f, DevCutout::Island,     0.046f, 0.013f, false},
+    {"iPhone 15 Pro Max",        1290, 2796, 0.14f, DevCutout::Island,     0.044f, 0.012f, false},
+    {"iPhone 13 / 14",           1170, 2532, 0.13f, DevCutout::Notch,      0.047f, 0.013f, false},
+    {"iPhone SE",                750,  1334, 0.00f, DevCutout::HomeButton, 0.030f, 0.000f, false},
+    {"Pixel 8",                  1080, 2400, 0.10f, DevCutout::PunchHole,  0.035f, 0.010f, false},
+    {"Galaxy S24",               1080, 2340, 0.09f, DevCutout::PunchHole,  0.033f, 0.010f, false},
+    {"Small Android (720p)",     720,  1600, 0.07f, DevCutout::PunchHole,  0.035f, 0.010f, false},
+    {"iPad Air",                 1640, 2360, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
+    {"iPad mini",                1488, 2266, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
+    {"Android tablet",           1600, 2560, 0.04f, DevCutout::PunchHole,  0.016f, 0.008f, true},
+};
+static constexpr int kMobileDeviceCount = (int)(sizeof(kMobileDevices) / sizeof(kMobileDevices[0]));
+static const MobileDevice* ActiveDevice() {
+    return (g_gameDevice > 0 && g_gameDevice < kMobileDeviceCount) ? &kMobileDevices[g_gameDevice] : nullptr;
+}
+
 // Resolve the current selection to aspect + pixel size. Pure-aspect presets report
 // w=h=0 (aspect only); fixed and Custom presets carry real pixel dimensions.
 static void CurrentGameRes(float& aspect, int& w, int& h) {
+    if (const MobileDevice* d = ActiveDevice()) {   // the emulated device's screen wins
+        w = g_gameDeviceLandscape ? d->h : d->w; h = g_gameDeviceLandscape ? d->w : d->h;
+        aspect = (float)w / (float)h;
+        return;
+    }
     int i = g_gameResPreset; if (i < 0 || i >= kGameResCount) i = 0;
     w = kGameResPresets[i].w; h = kGameResPresets[i].h;
     if (i == kGameResCustomIdx) { w = g_gameCustomW; h = g_gameCustomH; }
@@ -33804,6 +33849,10 @@ static void CurrentGameRes(float& aspect, int& w, int& h) {
 static void LetterboxGameScreen(ImVec2 origin, ImVec2 avail,
                                 ImVec2& outPos, ImVec2& outSize, float& outResScale) {
     float aspect; int w, h; CurrentGameRes(aspect, w, h);
+    if (ActiveDevice()) {   // leave room for the device frame around the screen
+        const float m = std::min(avail.x, avail.y) * 0.06f + 10.0f;
+        origin.x += m; origin.y += m; avail.x = std::max(40.0f, avail.x - 2 * m); avail.y = std::max(40.0f, avail.y - 2 * m);
+    }
     ImVec2 size = avail, pos = origin;
     if (aspect > 0.0f) {
         float boxW = avail.x, boxH = avail.x / aspect;
@@ -34997,6 +35046,88 @@ void DrawProfiler(EditorState& ed) {
     ImGui::End();
 }
 
+// The phone / tablet body behind the emulated screen (drawn before the game).
+static void DrawDeviceBody(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDevice& d, bool land) {
+    const float sw = se.x - sp.x, sh = se.y - sp.y, shortSide = std::min(sw, sh);
+    const float bezel = std::max(6.0f, shortSide * (d.tablet ? 0.045f : 0.035f));
+    float bt = bezel, bb = bezel, bl = bezel, br = bezel;
+    if (d.cutout == DevCutout::HomeButton) {   // old-style phone: tall forehead + chin
+        if (land) { bl = br = shortSide * 0.20f; } else { bt = bb = shortSide * 0.20f; }
+    }
+    const ImVec2 b0(sp.x - bl, sp.y - bt), b1(se.x + br, se.y + bb);
+    const float bodyR = shortSide * d.corner + bezel;
+    dl->AddRectFilled(ImVec2(b0.x + 3, b0.y + 6), ImVec2(b1.x + 3, b1.y + 6), IM_COL32(0, 0, 0, 90), bodyR + 4);   // shadow
+    dl->AddRectFilled(b0, b1, IM_COL32(28, 29, 34, 255), bodyR + 2);
+    dl->AddRect(b0, b1, IM_COL32(92, 96, 108, 255), bodyR + 2, 0, 2.0f);       // metal rim
+    // Side buttons (volume / power), on the long edges.
+    const ImU32 btn = IM_COL32(70, 73, 82, 255);
+    if (!land) {
+        const float x0 = b0.x - 3, x1 = b1.x;
+        dl->AddRectFilled(ImVec2(x0, b0.y + (b1.y - b0.y) * 0.22f), ImVec2(x0 + 3, b0.y + (b1.y - b0.y) * 0.30f), btn, 1.5f);
+        dl->AddRectFilled(ImVec2(x0, b0.y + (b1.y - b0.y) * 0.32f), ImVec2(x0 + 3, b0.y + (b1.y - b0.y) * 0.40f), btn, 1.5f);
+        dl->AddRectFilled(ImVec2(x1, b0.y + (b1.y - b0.y) * 0.27f), ImVec2(x1 + 3, b0.y + (b1.y - b0.y) * 0.37f), btn, 1.5f);
+    } else {
+        const float y0 = b0.y - 3, y1 = b1.y;
+        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.70f, y0), ImVec2(b0.x + (b1.x - b0.x) * 0.78f, y0 + 3), btn, 1.5f);
+        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.60f, y0), ImVec2(b0.x + (b1.x - b0.x) * 0.68f, y0 + 3), btn, 1.5f);
+        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.63f, y1), ImVec2(b0.x + (b1.x - b0.x) * 0.73f, y1 + 3), btn, 1.5f);
+    }
+    if (d.cutout == DevCutout::HomeButton) {   // the round home button in the chin
+        const ImVec2 c = land ? ImVec2(se.x + br * 0.5f, (sp.y + se.y) * 0.5f) : ImVec2((sp.x + se.x) * 0.5f, se.y + bb * 0.5f);
+        const float r = shortSide * 0.075f;
+        dl->AddCircle(c, r, IM_COL32(90, 94, 104, 255), 40, 2.0f);
+    }
+}
+
+// What sits ON the screen (drawn after the game): rounded screen corners, the
+// notch / island / punch-hole, the home indicator and, optionally, the unsafe
+// areas a game's UI should keep clear of.
+static void DrawDeviceScreenOverlay(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDevice& d, bool land, bool safeArea) {
+    const float sw = se.x - sp.x, sh = se.y - sp.y, shortSide = std::min(sw, sh), longSide = std::max(sw, sh);
+    const ImU32 body = IM_COL32(28, 29, 34, 255), black = IM_COL32(0, 0, 0, 255);
+    const float r = shortSide * d.corner;
+    if (safeArea) {   // unsafe insets, tinted + outlined
+        const float top = longSide * d.safeTop, bot = longSide * d.safeBottom;
+        const ImU32 tint = IM_COL32(255, 80, 80, 40), line = IM_COL32(255, 110, 110, 150);
+        if (!land) {
+            if (top > 0) { dl->AddRectFilled(sp, ImVec2(se.x, sp.y + top), tint); dl->AddLine(ImVec2(sp.x, sp.y + top), ImVec2(se.x, sp.y + top), line, 1.0f); }
+            if (bot > 0) { dl->AddRectFilled(ImVec2(sp.x, se.y - bot), se, tint); dl->AddLine(ImVec2(sp.x, se.y - bot), ImVec2(se.x, se.y - bot), line, 1.0f); }
+        } else {   // landscape: the cutout side is on the left, the home indicator at the bottom
+            if (top > 0) { dl->AddRectFilled(sp, ImVec2(sp.x + top, se.y), tint); dl->AddLine(ImVec2(sp.x + top, sp.y), ImVec2(sp.x + top, se.y), line, 1.0f);
+                           dl->AddRectFilled(ImVec2(se.x - top, sp.y), se, tint); dl->AddLine(ImVec2(se.x - top, sp.y), ImVec2(se.x - top, se.y), line, 1.0f); }
+            if (bot > 0) { dl->AddRectFilled(ImVec2(sp.x, se.y - bot), se, tint); dl->AddLine(ImVec2(sp.x, se.y - bot), ImVec2(se.x, se.y - bot), line, 1.0f); }
+        }
+    }
+    if (r > 1.0f) {   // (after the tint) mask the square corners outside the rounded screen
+        const float t = r * 0.75f + 2.0f;
+        dl->AddRect(ImVec2(sp.x - t * 0.5f, sp.y - t * 0.5f), ImVec2(se.x + t * 0.5f, se.y + t * 0.5f), body, r + t * 0.5f, 0, t);
+    }
+    // Camera cutout.
+    const ImVec2 mid((sp.x + se.x) * 0.5f, (sp.y + se.y) * 0.5f);
+    switch (d.cutout) {
+        case DevCutout::Island: {
+            const float L = shortSide * 0.31f, W = shortSide * 0.095f, off = shortSide * 0.035f;
+            if (!land) dl->AddRectFilled(ImVec2(mid.x - L / 2, sp.y + off), ImVec2(mid.x + L / 2, sp.y + off + W), black, W / 2);
+            else       dl->AddRectFilled(ImVec2(sp.x + off, mid.y - L / 2), ImVec2(sp.x + off + W, mid.y + L / 2), black, W / 2);
+        } break;
+        case DevCutout::Notch: {
+            const float L = shortSide * 0.42f, W = shortSide * 0.085f;
+            if (!land) dl->AddRectFilled(ImVec2(mid.x - L / 2, sp.y - 1), ImVec2(mid.x + L / 2, sp.y + W), body, W * 0.6f, ImDrawFlags_RoundCornersBottom);
+            else       dl->AddRectFilled(ImVec2(sp.x - 1, mid.y - L / 2), ImVec2(sp.x + W, mid.y + L / 2), body, W * 0.6f, ImDrawFlags_RoundCornersRight);
+        } break;
+        case DevCutout::PunchHole: {
+            const float rr = shortSide * 0.028f, off = shortSide * 0.05f;
+            dl->AddCircleFilled(land ? ImVec2(sp.x + off, mid.y) : ImVec2(mid.x, sp.y + off), rr, black, 24);
+        } break;
+        default: break;
+    }
+    if (d.cutout != DevCutout::HomeButton) {   // home indicator bar
+        const float L = shortSide * 0.36f, W = std::max(3.0f, shortSide * 0.012f), off = shortSide * 0.025f;
+        const ImU32 bar = IM_COL32(235, 235, 240, 150);
+        dl->AddRectFilled(ImVec2(mid.x - (land ? L * 0.8f : L) / 2, se.y - off - W), ImVec2(mid.x + (land ? L * 0.8f : L) / 2, se.y - off), bar, W / 2);
+    }
+}
+
 void DrawGameView(EditorState& ed) {
     // Pressing Play focuses this window so it comes forward if docked as a tab
     // behind the Scene view. SetWindowFocus() must be called before Begin().
@@ -35011,6 +35142,30 @@ void DrawGameView(EditorState& ed) {
     // table so the Game tab and the UI-Only editor always frame UI against the same screen.
     int& s_aspect = g_gameResPreset;   // persisted across sessions
     if (s_aspect < 0 || s_aspect >= kGameResCount) s_aspect = 0;
+    // Mobile emulator: test on phone / tablet screens (size, notch, safe area).
+    if (g_gameDevice < 0 || g_gameDevice >= kMobileDeviceCount) g_gameDevice = 0;
+    ImGui::SetNextItemWidth(170);
+    if (ImGui::BeginCombo("##device", g_gameDevice ? kMobileDevices[g_gameDevice].name : "Device: off")) {
+        for (int i = 0; i < kMobileDeviceCount; ++i) {
+            if (i == 1 || i == 8) ImGui::Separator();   // off / phones / tablets
+            char lbl[96];
+            if (i == 0) std::snprintf(lbl, sizeof lbl, "%s", kMobileDevices[i].name);
+            else std::snprintf(lbl, sizeof lbl, "%s   %dx%d", kMobileDevices[i].name, kMobileDevices[i].w, kMobileDevices[i].h);
+            if (ImGui::Selectable(lbl, g_gameDevice == i)) { g_gameDevice = i; SaveSettings(); }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mobile emulator: play the game on a phone or tablet screen\n(real resolution, rounded corners, notch, safe area). The mouse acts as your finger.");
+    ImGui::SameLine();
+    int curW = 0, curH = 0;
+    if (const MobileDevice* dev = ActiveDevice()) {
+        (void)dev;
+        if (ImGui::Button(g_gameDeviceLandscape ? "Landscape" : "Portrait")) { g_gameDeviceLandscape = !g_gameDeviceLandscape; SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate the device");
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Safe area", &g_gameSafeArea)) SaveSettings();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tint the areas the notch / camera and the home indicator cover:\nkeep buttons and text out of them.");
+    } else {
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo("Resolution", kGameResPresets[s_aspect].name)) {
         for (int i = 0; i < kGameResCount; ++i) {
@@ -35020,7 +35175,7 @@ void DrawGameView(EditorState& ed) {
         ImGui::EndCombo();
     }
     // Custom width/height inputs (only for the Custom preset).
-    int curW = kGameResPresets[s_aspect].w, curH = kGameResPresets[s_aspect].h;
+    curW = kGameResPresets[s_aspect].w; curH = kGameResPresets[s_aspect].h;
     if (s_aspect == kGameResCustomIdx) {
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
         if (ImGui::DragInt("##cw", &g_gameCustomW, 1.0f, 16, 8192, "W %d")) SaveSettings();
@@ -35030,6 +35185,8 @@ void DrawGameView(EditorState& ed) {
         g_gameCustomH = g_gameCustomH < 16 ? 16 : g_gameCustomH;
         curW = g_gameCustomW; curH = g_gameCustomH;
     }
+    }   // no device
+    if (ActiveDevice()) { float da; CurrentGameRes(da, curW, curH); }
     const bool  kFixedRes  = (curW > 0 && curH > 0);
     ImGui::SameLine();
     {
@@ -35074,6 +35231,8 @@ void DrawGameView(EditorState& ed) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Dark letterbox bars over the whole region, then the camera background.
     dl->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), IM_COL32(8, 8, 10, 255));
+    const MobileDevice* device = ActiveDevice();
+    if (device) DrawDeviceBody(dl, canvasPos, canvasEnd, *device, g_gameDeviceLandscape);
     Color bg = mc ? mc->backgroundColor : Color::Black;
     dl->AddRectFilled(canvasPos, canvasEnd,
                       IM_COL32((int)(bg.r * 255), (int)(bg.g * 255), (int)(bg.b * 255), 255));
@@ -35099,6 +35258,7 @@ void DrawGameView(EditorState& ed) {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
     }
     okay::UIResolutionScale() = 1.0f;   // never leak the preview scale outside the Game view
+    if (device) DrawDeviceScreenOverlay(dl, canvasPos, canvasEnd, *device, g_gameDeviceLandscape, g_gameSafeArea);
 
     // Screen-space vignette preview (RenderSettings.vignette) — mirrors what the
     // shipped player draws, using four edge gradient bands that fade inward.
@@ -35112,6 +35272,13 @@ void DrawGameView(EditorState& ed) {
         dl->AddRectFilledMultiColor(ImVec2(canvasEnd.x - bw, canvasPos.y), canvasEnd, clr, edge, edge, clr);            // right
     }
 
+    // On an emulated device the labels go below the notch / rounded corner.
+    float labelDrop = 0.0f, labelIn = 0.0f;
+    if (device) {
+        const float shortSide = std::min(canvasSize.x, canvasSize.y), longSide = std::max(canvasSize.x, canvasSize.y);
+        if (!g_gameDeviceLandscape) labelDrop = longSide * device->safeTop + 4.0f;
+        labelIn = shortSide * device->corner * 0.45f + (g_gameDeviceLandscape ? longSide * device->safeTop : 0.0f);
+    }
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.
     {
@@ -35122,7 +35289,7 @@ void DrawGameView(EditorState& ed) {
         } else {
             std::snprintf(resLbl, sizeof(resLbl), "%d x %d px", (int)canvasSize.x, (int)canvasSize.y);
         }
-        ImVec2 tp(canvasPos.x + 6, canvasPos.y + 4);
+        ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop);
         dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 2),
                           ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
@@ -35139,7 +35306,7 @@ void DrawGameView(EditorState& ed) {
         ImVec2 ts = ImGui::CalcTextSize(pill);
         float pr = ImGui::GetTextLineHeight() * 0.26f;   // drawn dot (● is tofu here)
         float dotW = pr * 2.0f + 6.0f;
-        ImVec2 p0(canvasPos.x + 8, canvasPos.y + 6);
+        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 6 + labelDrop);
         dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + dotW + ts.x + 6, p0.y + ts.y + 3),
                           IM_COL32(0, 0, 0, 150), 4.0f);
         dl->AddCircleFilled(ImVec2(p0.x + pr, p0.y + ts.y * 0.55f), pr, pc);
@@ -35164,7 +35331,7 @@ void DrawGameView(EditorState& ed) {
     } else {
         // Below the resolution label (they used to print on top of each other).
         const char* idle = "Edit mode - press Play to run";
-        ImVec2 ip(canvasPos.x + 6, canvasPos.y + 8 + ImGui::GetTextLineHeight());
+        ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop);
         dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);

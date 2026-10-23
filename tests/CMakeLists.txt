@@ -740,3 +740,7 @@ add_test(NAME action_graph COMMAND test_action_graph)
 add_executable(test_scene_cameras test_scene_cameras.cpp)
 target_link_libraries(test_scene_cameras PRIVATE okay::engine)
 add_test(NAME scene_cameras COMMAND test_scene_cameras)
+
+add_executable(test_dedicated_server test_dedicated_server.cpp)
+target_link_libraries(test_dedicated_server PRIVATE okay::engine)
+add_test(NAME dedicated_server COMMAND test_dedicated_server)

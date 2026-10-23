@@ -10,6 +10,9 @@
 
 #include <Okay.hpp>
 #include "okay/Scene/EnsureCamera.hpp"
+#include "okay/Net/DedicatedServer.hpp"
+#include "okay/Net/NetworkManager.hpp"
+#include "okay/Platform/Account/Account.hpp"
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
@@ -1014,6 +1017,20 @@ int main(int argc, char** argv) {
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
     // resolution instead of being bitmap-stretched (blurry) on scaled displays.
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+    // `--server`: run headless as the game's dedicated server (no window, GPU or
+    // audio). See okay/Net/DedicatedServer.hpp for the flags.
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
+            std::printf("Usage: %s [scene.okayscene]\n       %s --server [options]\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
+            return 0;
+        }
+    okay::DedicatedServerOptions serverOpts;
+    std::string serverArgErr;
+    const bool dedicatedServer = okay::ParseDedicatedServerArgs(argc, argv, serverOpts, &serverArgErr);
+    if (!serverArgErr.empty()) { std::fprintf(stderr, "%s\n\n%s", serverArgErr.c_str(), okay::DedicatedServerUsage()); return 1; }
+    if (dedicatedServer) {
+        if (SDL_Init(SDL_INIT_TIMER) != 0) { std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError()); return 1; }
+    } else
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;
@@ -1133,7 +1150,11 @@ int main(int argc, char** argv) {
 
     // Resolve the scene path: CLI arg > config startup > game.okayscene.
     std::string scenePath;
-    if (argc > 1) scenePath = argv[1];
+    if (dedicatedServer && !serverOpts.scenePath.empty()) {   // --scene: as given, else beside the game
+        scenePath = serverOpts.scenePath;
+        if (!std::ifstream(scenePath).good()) scenePath = baseDir + serverOpts.scenePath;
+    }
+    else if (!dedicatedServer && argc > 1 && argv[1][0] != '-') scenePath = argv[1];
     else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
     else scenePath = baseDir + "game.okayscene";
 
@@ -1159,11 +1180,23 @@ int main(int argc, char** argv) {
         SDL_Log("Could not load %s: %s", scenePath.c_str(), err.c_str());
         // Keep running with an empty scene rather than failing outright.
     }
+    if (dedicatedServer) {   // headless: run the scene as the server until stopped
+        std::printf("[server] scene %s\n", scenePath.c_str());
+        const int rc = okay::RunDedicatedServer(scene, serverOpts);
+        Prefs::Save(prefsPath);
+        SDL_Quit();
+        return rc;
+    }
     {   // A scene without a camera would render nothing: add one.
         bool made = false;
         okay::EnsureSceneCamera(scene, okay::SceneLooks2D(scene), &made);
         if (made) SDL_Log("Scene has no camera; added a Main Camera.");
     }
+    // Multiplayer: a signed-in OkaySpace player presents their account when joining
+    // (servers started with --auth only let signed-in accounts in).
+    for (const auto& up : scene.Objects())
+        if (auto* nm = up ? up->GetComponent<okay::NetworkManager>() : nullptr)
+            if (nm->AuthToken().empty() && okay::Account::IsLoggedIn()) nm->SetAuthToken(okay::Account::Token());
 
     Uint32 winFlags = SDL_WINDOW_ALLOW_HIGHDPI;
     if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;

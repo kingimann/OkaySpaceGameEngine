@@ -11,6 +11,10 @@
 #include <Okay.hpp>
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Net/DedicatedServer.hpp"
+#if !defined(_WIN32)
+#include <termios.h>
+#endif
+#include <iostream>
 #include "okay/Net/JoinLink.hpp"
 #include "okay/Net/SessionPresence.hpp"
 #include "okay/Net/ServerBrowser.hpp"
@@ -1183,9 +1187,46 @@ int main(int argc, char** argv) {
                         "  --join LINK          join the session in an okay://join link\n"
                         "  --connect HOST:PORT  join a server directly\n"
                         "  --password P         its password\n"
-                        "  --room R             its lobby room\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
+                        "  --room R             its lobby room\n\n"
+                        "Account (for headless servers):\n"
+                        "  --login NAME         sign this machine in (password from OKAY_LOGIN_PASSWORD or typed)\n"
+                        "  --logout             sign out\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
             return 0;
         }
+    // `--login NAME` / `--logout`: sign this machine in to OkaySpace without the
+    // launcher (a headless server needs it to list itself with --advertise).
+    // The password comes from OKAY_LOGIN_PASSWORD or is typed (not echoed).
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--logout") { okay::Account::Logout(); std::printf("Signed out.\n"); return 0; }
+        if (a != "--login") continue;
+        if (i + 1 >= argc) { std::fprintf(stderr, "--login needs your OkaySpace username\n"); return 1; }
+        const std::string user = argv[i + 1];
+        std::string pass;
+        if (const char* e = std::getenv("OKAY_LOGIN_PASSWORD")) pass = e;
+        else {
+            std::printf("Password for %s: ", user.c_str()); std::fflush(stdout);
+#if defined(_WIN32)
+            HANDLE hin = GetStdHandle(STD_INPUT_HANDLE); DWORD mode = 0;
+            const bool tty = GetConsoleMode(hin, &mode) != 0;
+            if (tty) SetConsoleMode(hin, mode & ~ENABLE_ECHO_INPUT);
+#else
+            termios old{}; const bool tty = tcgetattr(0, &old) == 0;
+            if (tty) { termios t = old; t.c_lflag &= ~ECHO; tcsetattr(0, TCSANOW, &t); }
+#endif
+            std::getline(std::cin, pass);
+#if defined(_WIN32)
+            if (tty) SetConsoleMode(hin, mode);
+#else
+            if (tty) tcsetattr(0, TCSANOW, &old);
+#endif
+            std::printf("\n");
+        }
+        const okay::account::Result r = okay::Account::Login(user, pass);
+        if (!r.ok) { std::fprintf(stderr, "Sign-in failed: %s\n", r.error.c_str()); return 1; }
+        std::printf("Signed in as %s. Servers on this machine can now use --advertise.\n", okay::Account::Username().c_str());
+        return 0;
+    }
     okay::DedicatedServerOptions serverOpts;
     std::string serverArgErr;
     const bool dedicatedServer = okay::ParseDedicatedServerArgs(argc, argv, serverOpts, &serverArgErr);

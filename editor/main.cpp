@@ -8838,6 +8838,9 @@ void DrawScriptDocs() {
         fapi("net_join(\"ip\", port)", "connect to a host");
         fapi("net_host_relay(\"ip\", port, \"code\") / net_join_relay(...)", "host/join via a relay (NAT traversal)");
         fapi("net_relay_ready()", "1 once the relay has paired this peer");
+        fapi("net_launch_join()", "1 if the launcher started the game to join a friend / invite / server");
+        fapi("net_join_link(\"okay://join?...\")", "join from a join link");
+        fapi("net_invite_friends()", "open the launcher's Invite friends window (also Shift+Tab)");
         fapi("net_disconnect()", "leave / stop the session");
         fapi("net_connected() / net_is_server() / net_is_client()", "status");
         fapi("net_id() / net_peers() / net_ping()", "peer id / peer count / RTT (ms)");

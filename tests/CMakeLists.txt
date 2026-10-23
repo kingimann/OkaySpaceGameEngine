@@ -744,3 +744,7 @@ add_test(NAME scene_cameras COMMAND test_scene_cameras)
 add_executable(test_dedicated_server test_dedicated_server.cpp)
 target_link_libraries(test_dedicated_server PRIVATE okay::engine)
 add_test(NAME dedicated_server COMMAND test_dedicated_server)
+
+add_executable(test_launcher_join test_launcher_join.cpp)
+target_link_libraries(test_launcher_join PRIVATE okay::engine)
+add_test(NAME launcher_join COMMAND test_launcher_join)

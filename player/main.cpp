@@ -11,6 +11,8 @@
 #include <Okay.hpp>
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Net/DedicatedServer.hpp"
+#include "okay/Net/JoinLink.hpp"
+#include "okay/Net/SessionPresence.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
@@ -1021,13 +1023,37 @@ int main(int argc, char** argv) {
     // audio). See okay/Net/DedicatedServer.hpp for the flags.
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
-            std::printf("Usage: %s [scene.okayscene]\n       %s --server [options]\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
+            std::printf("Usage: %s [scene.okayscene] [--join LINK | --connect HOST:PORT [--password P] [--room R]]\n"
+                        "       %s --server [options]\n\n"
+                        "Joining (what the OkaySpace launcher passes):\n"
+                        "  --join LINK          join the session in an okay://join link\n"
+                        "  --connect HOST:PORT  join a server directly\n"
+                        "  --password P         its password\n"
+                        "  --room R             its lobby room\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
             return 0;
         }
     okay::DedicatedServerOptions serverOpts;
     std::string serverArgErr;
     const bool dedicatedServer = okay::ParseDedicatedServerArgs(argc, argv, serverOpts, &serverArgErr);
     if (!serverArgErr.empty()) { std::fprintf(stderr, "%s\n\n%s", serverArgErr.c_str(), okay::DedicatedServerUsage()); return 1; }
+    // `--join LINK` / `--connect HOST:PORT`: the launcher started us to join a
+    // friend, an invite or a server from the browser (Steam's "+connect").
+    std::string launchJoin;
+    if (!dedicatedServer) {
+        okay::JoinLink cl; bool direct = false;
+        for (int i = 1; i + 1 < argc; ++i) {
+            const std::string a = argv[i];
+            if (a == "--join") launchJoin = argv[++i];
+            else if (a == "--connect") { cl.addr = argv[++i]; direct = true; }
+            else if (a == "--password") cl.password = argv[++i];
+            else if (a == "--room") cl.room = argv[++i];
+        }
+        okay::JoinLink jl;
+        if (!launchJoin.empty() && okay::JoinLink::Parse(launchJoin, jl)) {
+            if (!cl.password.empty()) { jl.password = cl.password; launchJoin = jl.Format(); }
+        } else if (direct) { cl.game = "game"; launchJoin = cl.Format(); }
+        else launchJoin.clear();
+    }
     if (dedicatedServer) {
         if (SDL_Init(SDL_INIT_TIMER) != 0) { std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError()); return 1; }
     } else
@@ -1182,6 +1208,8 @@ int main(int argc, char** argv) {
     }
     if (dedicatedServer) {   // headless: run the scene as the server until stopped
         std::printf("[server] scene %s\n", scenePath.c_str());
+        if (serverOpts.game.empty())   // what the server browser shows as the game
+            serverOpts.game = !cfg.title.empty() && cfg.title != "OkaySpace Game" ? cfg.title : scene.Name();
         const int rc = okay::RunDedicatedServer(scene, serverOpts);
         Prefs::Save(prefsPath);
         SDL_Quit();
@@ -1197,6 +1225,12 @@ int main(int argc, char** argv) {
     for (const auto& up : scene.Objects())
         if (auto* nm = up ? up->GetComponent<okay::NetworkManager>() : nullptr)
             if (nm->AuthToken().empty() && okay::Account::IsLoggedIn()) nm->SetAuthToken(okay::Account::Token());
+    if (okay::Account::IsLoggedIn())   // also for networks scripts create later
+        okay::NetworkManager::SetDefaultIdentity(okay::Account::Token(), okay::Account::Username());
+    if (!launchJoin.empty()) {
+        SDL_Log("Joining %s", launchJoin.c_str());
+        okay::NetworkManager::SetLaunchJoin(launchJoin);
+    }
 
     Uint32 winFlags = SDL_WINDOW_ALLOW_HIGHDPI;
     if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;
@@ -1372,6 +1406,42 @@ int main(int argc, char** argv) {
     static okay::OkayUIScriptBridge g_uiBridge;
     okay::SetScriptUI(&g_uiBridge);
 #endif
+    // Rich presence + the launcher link (okay/Platform/GameIpc.hpp): once a second,
+    // tell the launcher what we're doing and how friends can join; pick up joins
+    // it asks for (an invite accepted while we run). Shift+Tab asks it to open the
+    // invite-friends window, like the Steam overlay.
+#if !defined(__EMSCRIPTEN__)
+    const std::string lanAddr = okay::LocalNetworkAddress();
+    const std::string gameTitle = !cfg.title.empty() && cfg.title != "OkaySpace Game" ? cfg.title : scene.Name();
+    Uint32 presenceAt = 0, presenceWritten = 0;
+    std::string presenceLast;
+    auto pumpPresence = [&]() {
+        const Uint32 now = SDL_GetTicks();
+        if (now - presenceAt < 1000) return;
+        presenceAt = now;
+        okay::NetworkManager* nm = scene.FindObjectOfType<okay::NetworkManager>();
+        if (nm) {
+            if (nm->gameId.empty()) nm->gameId = gameTitle;
+            if (nm->mapName.empty()) nm->mapName = scene.Name();
+        }
+        std::string link;
+        if (okay::GameIpc::TakeJoin(link)) {   // the launcher: "join this now"
+            SDL_Log("Launcher asked to join %s", link.c_str());
+            if (nm) nm->JoinByLink(link); else okay::NetworkManager::SetLaunchJoin(link);
+        }
+        // A launch join no NetworkManager picked up on Start (one a script made later).
+        if (nm && now > 1500) {
+            const std::string pending = okay::NetworkManager::TakeLaunchJoin();
+            if (!pending.empty()) nm->JoinByLink(pending);
+        }
+        okay::GamePresence g = okay::DescribeSession(nm, gameTitle, lanAddr);
+        const std::string key = g.status + "|" + g.join + "|" + std::to_string(g.players);
+        if (key != presenceLast || now - presenceWritten > 10000) {
+            okay::GameIpc::WritePresence(g);
+            presenceLast = key; presenceWritten = now;
+        }
+    };
+#endif
     Uint64 last = SDL_GetPerformanceCounter();
     bool windowFocused = true;   // Unity's Run In Background / mute-on-focus-loss
     auto frame = [&]() {
@@ -1390,6 +1460,13 @@ int main(int argc, char** argv) {
             if (g_testUI) {
                 if (e.type == SDL_TEXTINPUT) SDL_strlcat(g_uiText, e.text.text, sizeof(g_uiText));
                 if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
+            }
+#endif
+#if !defined(__EMSCRIPTEN__)
+            if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_TAB &&
+                (e.key.keysym.mod & KMOD_SHIFT)) {
+                okay::GameIpc::RequestInvite();   // the launcher pops its invite-friends window
+                SDL_Log("Asked the OkaySpace launcher to open Invite friends");
             }
 #endif
             if (e.type == SDL_WINDOWEVENT) {
@@ -1427,6 +1504,9 @@ int main(int argc, char** argv) {
             }
         }
 
+#if !defined(__EMSCRIPTEN__)
+        pumpPresence();
+#endif
         // Feed keyboard into the engine Input.
         const Uint8* ks = SDL_GetKeyboardState(nullptr);
         std::vector<char> down;
@@ -3202,6 +3282,9 @@ int main(int argc, char** argv) {
     }
 
     while (running) frame();
+#endif
+#if !defined(__EMSCRIPTEN__)
+    okay::GameIpc::ClearPresence();   // friends stop seeing a game that has closed
 #endif
 
     Prefs::Save(prefsPath); // persist any prefs the game set this session

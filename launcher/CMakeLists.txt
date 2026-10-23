@@ -46,7 +46,9 @@ endif()
 
 # Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
 set(OKAY_LAUNCHER_SOURCES main.cpp
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)   # native file picker (chat attachments)
+    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c   # native file picker (chat attachments)
+    ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)
+    ${CMAKE_SOURCE_DIR}/engine/src/Net/UdpSocket.cpp)
 set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
     PROPERTIES COMPILE_OPTIONS "-w")
 if(WIN32)

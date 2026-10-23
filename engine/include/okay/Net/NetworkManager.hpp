@@ -51,6 +51,35 @@ public:
     bool Relayed() const { return m_relay; }
     /// True once the relay has paired this peer (assigned a slot / host wired up).
     bool RelayReady() const { return m_relay && m_relayWelcomed; }
+    /// The relay session code ("" when not relayed).
+    const std::string& RelayCode() const { return m_relayCode; }
+    /// "a.b.c.d:port" of the relay in use ("" when not relayed).
+    std::string RelayAddress() const;
+    /// Client (direct): "a.b.c.d:port" of the server we connect to, else "".
+    std::string ServerAddress() const;
+    /// Players in the session: the server counts its clients (+1 for itself unless
+    /// dedicated); a joined client counts the peers it sees + itself.
+    int PlayerCount() const;
+
+    /// Connect using a join link (okay://join?..., see okay/Net/JoinLink.hpp):
+    /// direct or through a relay, into its room, with its password.
+    bool JoinByLink(const std::string& link);
+
+    // ---- Launcher hand-off (Steam's "+connect") --------------------------
+    /// A session the game was launched (or asked by the launcher) to join. The
+    /// next NetworkManager to Start() — or one already running, via
+    /// TakeLaunchJoin() — joins it instead of its own auto-start.
+    static void SetLaunchJoin(const std::string& link);
+    static std::string TakeLaunchJoin();
+    /// True if this run was started to join someone (scripts: net_launch_join()).
+    static bool LaunchedToJoin();
+    /// The account token / name every NetworkManager presents unless it was given
+    /// its own (the player sets these from the signed-in OkaySpace account).
+    static void SetDefaultIdentity(const std::string& token, const std::string& name);
+
+    // ---- What a server browser sees (answered to queries without joining) ----
+    std::string gameId;    ///< which game this is (the player fills in its title)
+    std::string mapName;   ///< current map / scene name
 
 
     Mode mode() const { return m_mode; }

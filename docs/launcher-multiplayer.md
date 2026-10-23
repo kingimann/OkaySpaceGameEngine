@@ -167,6 +167,47 @@ script.
 The listing is removed when the server stops. A server that crashed drops out
 of the browser after a couple of minutes. See [dedicated-server.md](dedicated-server.md).
 
+## Matchmaking ("Find match")
+
+Players don't have to pick a server. **Find match** puts them in a queue, and
+the game connects them when a match is ready. You can start it from:
+- the launcher's Multiplayer page (pick a game, players and an optional mode);
+- the in-game **Find a server** window;
+- a script or the **Find Match** visual-scripting action.
+
+While it searches, the game shows a **Finding a match** banner with a timer,
+the queue size and **Cancel**. A party leader brings the whole party along.
+
+How players are grouped:
+- Players are matched by game, mode and match size.
+- **Skill** (0–1000, from wins in match results) must be close at first. The
+  allowed gap widens every second, so nobody waits forever.
+- **Region:** the same region is preferred for the first 30 seconds.
+- **Smaller matches:** with a minimum set, a match can start with fewer players
+  after 45 seconds.
+
+Where the match is played:
+1. A **dedicated server** listed for that game with room for everyone. Each
+   match gets its own room.
+2. Otherwise **one of the players hosts**:
+   - If the site has a relay (`app_config` key `game_relay`, an
+     `okayspace-relay` address), everyone connects through it with a fresh code.
+     No port forwarding is needed.
+   - With no relay, the host posts its address and the others join it. Without
+     a relay, this only works on a LAN or with a forwarded port.
+
+| Script | What it does |
+| --- | --- |
+| `net_queue_join("mode", players[, minPlayers[, "region"]])` | start searching |
+| `net_queue_cancel()` | leave the queue |
+| `net_queue_state()` | `"idle"`, `"searching"`, `"waiting"` (found, the host is starting), `"found"` or `"failed"` |
+| `net_queue_time()`, `net_queue_count()`, `net_queue_error()` | seconds searching, players in the queue, why it failed |
+| `net_queue_auto(0)` + `net_queue_accept()` | show your own "Match found: Accept" step |
+
+Command line: `okay-player game.okayscene --find-match ranked --match-players 4`.
+
+Run `docs/sql/matchmaking.sql` once. Skill uses `matches.sql` when it's there.
+
 ## Match results, stats and leaderboards
 
 When a match ends, the server (a dedicated server, or the player hosting)

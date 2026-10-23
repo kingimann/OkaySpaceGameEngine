@@ -1,3 +1,5 @@
+#include "okay/Net/Matchmaker.hpp"
+#include "okay/Net/NetworkManager.hpp"
 #include "EditorState.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
@@ -644,12 +646,16 @@ void EditorState::Stop() {
     // any NetworkManager m_net points at. Drop the pointer first so TickServices
     // never dereferences freed memory (a use-after-free crash).
     m_net = nullptr;
+    Matchmaker::Shared().Cancel();   // a search started in play mode ends with it
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
 }
 
 void EditorState::Tick(float dt) {
-    if (m_playing) { m_scene.Update(dt); NavigateUI(m_scene); }
+    if (m_playing) {
+        m_scene.Update(dt); NavigateUI(m_scene);
+        Matchmaker::Shared().Pump(m_scene.FindObjectOfType<NetworkManager>());   // net_queue_join(): connect a found match
+    }
 }
 
 } // namespace okay::editor

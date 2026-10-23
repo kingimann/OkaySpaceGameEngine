@@ -14358,6 +14358,102 @@ void DrawFileDialogs(EditorState& ed) {
 // --new-project "<folder>" [--template "<Title>"] and the editor builds the
 // project here, headlessly, on its first frames — no in-editor dialog.
 // A bare --template (no folder) just loads that template into the open scene.
+// The editor always works inside a project. Opened without one (not from the
+// launcher's Create page, or the project was moved), a chooser that can't be
+// dismissed asks for one: a recent project, a project folder, or a new project.
+// (OKAY_ALLOW_NO_PROJECT=1 skips it for tools and tests.)
+void DrawProjectGate(EditorState& ed) {
+    static const bool allow = std::getenv("OKAY_ALLOW_NO_PROJECT") != nullptr;
+    if (allow || !ed.projectDir().empty() || !g_openScenePath.empty() || !g_newProjectRoot.empty() ||
+        !g_newProjectTemplate.empty() || ed.isPlaying())
+        return;
+    namespace fs = std::filesystem;
+    static char name[96] = "MyGame";
+    static char loc[512] = "";
+    static int tpl = 0;
+    static const char* kTpls[] = {"3D Scene", "2D Scene", "Empty", "First Person", "Third Person",
+                                  "Third Person Shooter", "Platformer", "Top-Down", "Point & Click",
+                                  "Vehicle (3D)", "Vehicle (2D)", "Sandbox", "Multiplayer", "Coin Collector",
+                                  "Snake", "Main Menu", "Inventory", "Humanoid"};
+    if (!loc[0]) {   // default: the Projects folder beside the editor (the launcher's default too)
+        std::string base;
+        if (char* b = SDL_GetBasePath()) { base = b; SDL_free(b); }
+        std::snprintf(loc, sizeof(loc), "%s", (fs::path(base.empty() ? "." : base) / "Projects").string().c_str());
+    }
+    auto openScene = [&](const std::string& scene) { g_openScenePath = scene; ImGui::CloseCurrentPopup(); };
+    ImGui::OpenPopup("Open a project");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(600, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Open a project", nullptr,
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize))
+        return;
+    ImGui::TextWrapped("OkaySpace works in projects: a folder with your scenes, scripts and assets. "
+                       "Open one, or make a new one, to start.");
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::TextDisabled("RECENT PROJECTS");
+    int shown = 0;
+    for (const std::string& r : g_recent) {
+        std::error_code ec;
+        if (!fs::exists(fs::path(r), ec) || shown >= 6) continue;
+        fs::path root = fs::path(r).parent_path();
+        if (root.filename() == "Assets") root = root.parent_path();
+        ImGui::PushID(shown++);
+        std::string label = root.filename().string();
+        if (ImGui::Selectable(("##rp" + label).c_str(), false, 0, ImVec2(0, 34))) openScene(r);
+        const ImVec2 mn = ImGui::GetItemRectMin();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddText(ImVec2(mn.x + 6, mn.y + 2), ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+        std::string where = root.string();   // long paths keep their end (the part that differs)
+        const float maxW = ImGui::GetItemRectSize().x - 12;
+        while (where.size() > 4 && ImGui::CalcTextSize(where.c_str()).x > maxW) where = "\xE2\x80\xA6" + where.substr(4);
+        dl->AddText(ImVec2(mn.x + 6, mn.y + 18), ImGui::GetColorU32(ImGuiCol_TextDisabled), where.c_str());
+        ImGui::PopID();
+    }
+    if (!shown) ImGui::TextDisabled("  None yet.");
+    if (ImGui::Button("Open a project folder\xE2\x80\xA6", ImVec2(220, 30))) {
+        if (const char* picked = tinyfd_selectFolderDialog("Open a project folder", loc)) {
+            fs::path root(picked);
+            if (root.filename() == "Assets") root = root.parent_path();
+            std::string scene;
+            std::error_code ec;
+            for (const fs::path& dir : {root / "Assets", root})
+                if (scene.empty() && fs::is_directory(dir, ec))
+                    for (auto& f : fs::directory_iterator(dir, ec))
+                        if (f.path().extension() == ".okayscene") { scene = f.path().string(); break; }
+            if (!scene.empty()) openScene(scene);
+            else ConsoleLog("No .okayscene in " + root.string() + ": pick a project folder (it has an Assets folder).", 1);
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 8));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("NEW PROJECT");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Name"); ImGui::SameLine(80);
+    ImGui::SetNextItemWidth(190);
+    ImGui::InputText("##gatename", name, sizeof(name));
+    ImGui::SameLine(0, 16);
+    ImGui::TextDisabled("Template"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    ImGui::Combo("##gatetpl", &tpl, kTpls, IM_ARRAYSIZE(kTpls));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Location"); ImGui::SameLine(80);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
+    ImGui::InputText("##gateloc", loc, sizeof(loc));
+    ImGui::SameLine();
+    if (ImGui::Button("Browse\xE2\x80\xA6##gate", ImVec2(-1, 0)))
+        if (const char* picked = tinyfd_selectFolderDialog("Where new projects go", loc)) std::snprintf(loc, sizeof(loc), "%s", picked);
+    ImGui::Dummy(ImVec2(0, 6));
+    if (ImGui::Button("Create & open", ImVec2(160, 32)) && name[0]) {
+        g_newProjectRoot = (fs::path(loc) / name).string();
+        g_newProjectTemplate = kTpls[tpl];
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
+    ImGui::EndPopup();
+}
+
 void DrawNewProjectPopup(EditorState& ed) {
     // --open "<scene>": reopen an existing project from the launcher's list.
     if (!g_openScenePath.empty()) {
@@ -37769,7 +37865,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); }
+        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); }
         {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
             static int s_focusFrames = 0;
             if (s_focusFrames < 90) ++s_focusFrames;
@@ -37784,10 +37880,15 @@ int main(int argc, char** argv) {
             if (const char* ua = std::getenv("OKAY_UI_UIADD"); ua && s_focusFrames == 32) {
                 g_uiOnlyMode = true;
                 const std::string n = ua;
-                GameObject* (*fn)(okay::Scene&) =
-                    n == "Lobby" ? &okay::UITemplates::AddLobby : n == "Shop" ? &okay::UITemplates::AddShop :
-                    n == "Main Menu" ? &okay::UITemplates::AddMainMenu : n == "HUD" ? &okay::UITemplates::AddHUD : nullptr;
-                if (fn) { ed.PushUndo(); ed.Select(fn(ed.scene())); }
+                using namespace okay::UITemplates;
+                static const std::pair<const char*, GameObject* (*)(okay::Scene&)> kScreens[] = {
+                    {"Main Menu", &AddMainMenu}, {"Pause Menu", &AddPauseMenu}, {"Settings", &AddSettings},
+                    {"HUD", &AddHUD}, {"Dialog Box", &AddDialogBox}, {"Health Bar", &AddHealthBar}, {"Lobby", &AddLobby},
+                    {"Scoreboard", &AddScoreboard}, {"Game Over", &AddGameOver}, {"Loading Screen", &AddLoadingScreen},
+                    {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog}, {"Notification", &AddNotificationScreen},
+                    {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard}};
+                for (const auto& sc : kScreens)
+                    if (n == sc.first) { ed.PushUndo(); ed.Select(sc.second(ed.scene())); }
             }
             // OKAY_UI_DEMO_ANIM=1: give the selection an Animator with a few keys and open
             // the Animation window (screenshots of the timeline).

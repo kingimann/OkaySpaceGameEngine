@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <algorithm>
 
 namespace okay {
 
@@ -457,6 +458,105 @@ public:
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body))
             out[std::atol(Field(o,"target_id").c_str())].insert(Field(o,"emoji"));
+        return out;
+    }
+
+    // ---- Search across every chat ------------------------------------------
+    // Messages whose text contains `query` (case-insensitive), in my DMs and the
+    // groups I'm in, newest first. RLS already limits both tables to what I can
+    // see. scope is "dm" (uid = the other person) or "group" (groupId set).
+    struct SearchHit {
+        std::string scope;          // "dm" | "group"
+        long        id = 0;
+        std::string uid;            // dm: the other person
+        long        groupId = 0;    // group: its conversation id
+        std::string senderName;     // group: who wrote it
+        std::string body;
+        long        when = 0;
+        bool        mine = false;
+    };
+    std::vector<SearchHit> Search(const std::string& query, int limit = 40) {
+        std::vector<SearchHit> out;
+        if (!acct_.IsLoggedIn()) return out;
+        std::string q;   // ilike pattern: *text*, percent-encoded (PostgREST's * is the wildcard)
+        for (unsigned char c : query) {
+            if (c == '*' || c == '%') continue;
+            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') q += (char)c;
+            else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", c); q += b; }
+        }
+        if (q.empty()) return out;
+        std::string mine = MyId();
+        const std::string lim = std::to_string(limit);
+        auto r = acct_.Api("/rest/v1/messages?select=id,sender,recipient,body,created_at&body=ilike.*" + q +
+                           "*&order=id.desc&limit=" + lim, "GET");
+        if (r.ok)
+            for (const auto& o : SplitObjects(r.body)) {
+                SearchHit h; h.scope = "dm"; h.id = std::atol(Field(o, "id").c_str());
+                const std::string s = Field(o, "sender"), rc = Field(o, "recipient");
+                h.mine = !mine.empty() && s == mine; h.uid = h.mine ? rc : s;
+                h.body = Field(o, "body"); h.when = ParseIso(Field(o, "created_at"));
+                out.push_back(h);
+            }
+        auto g = acct_.Api("/rest/v1/group_messages?select=id,convo_id,sender,sender_name,body,created_at&body=ilike.*" + q +
+                           "*&order=id.desc&limit=" + lim, "GET");
+        if (g.ok)
+            for (const auto& o : SplitObjects(g.body)) {
+                SearchHit h; h.scope = "group"; h.id = std::atol(Field(o, "id").c_str());
+                h.groupId = std::atol(Field(o, "convo_id").c_str());
+                h.senderName = Field(o, "sender_name");
+                h.mine = !mine.empty() && Field(o, "sender") == mine;
+                h.body = Field(o, "body"); h.when = ParseIso(Field(o, "created_at"));
+                out.push_back(h);
+            }
+        std::sort(out.begin(), out.end(), [](const SearchHit& a, const SearchHit& b) { return a.when > b.when; });
+        if ((int)out.size() > limit) out.resize((std::size_t)limit);
+        return out;
+    }
+
+    // ---- Edit history (message_edits; docs/sql/chat_extras.sql) ------------
+    // Before an edit is saved, the text it replaces is recorded, so anyone in
+    // the chat can see earlier versions. scope: "dm" or "group".
+    bool RecordEdit(const std::string& scope, long messageId, const std::string& oldBody) {
+        if (!acct_.IsLoggedIn() || messageId <= 0) return false;
+        return acct_.Api("/rest/v1/message_edits", "POST",
+                         "{\"scope\":" + JStr(scope) + ",\"target_id\":" + std::to_string(messageId) +
+                         ",\"old_body\":" + JStr(oldBody) + "}").ok;
+    }
+    struct EditVersion { std::string body; long when = 0; };
+    // Earlier versions of a message, oldest first. `supported` is false when the
+    // server doesn't have the table yet.
+    std::vector<EditVersion> EditHistory(const std::string& scope, long messageId, bool* supported = nullptr) {
+        std::vector<EditVersion> out;
+        if (supported) *supported = true;
+        if (!acct_.IsLoggedIn() || messageId <= 0) return out;
+        auto r = acct_.Api("/rest/v1/message_edits?select=old_body,edited_at&scope=eq." + scope +
+                           "&target_id=eq." + std::to_string(messageId) + "&order=id.asc", "GET");
+        if (!r.ok) { if (supported) *supported = r.status != 404 && r.status != 400; return out; }
+        for (const auto& o : SplitObjects(r.body)) out.push_back({Field(o, "old_body"), ParseIso(Field(o, "edited_at"))});
+        return out;
+    }
+
+    // ---- Pinned messages (message_pins; docs/sql/chat_extras.sql) ----------
+    // Shared pins: everyone in the chat sees them. A pin is keyed by (scope,
+    // message id); Pins() returns every pin I can see (RLS: messages I can read).
+    struct PinInfo { long id = 0; long when = 0; std::string by; };
+    bool Pin(const std::string& scope, long messageId, bool on) {
+        if (!acct_.IsLoggedIn() || messageId <= 0) return false;
+        if (on)
+            return acct_.Api("/rest/v1/message_pins", "POST",
+                             "{\"scope\":" + JStr(scope) + ",\"target_id\":" + std::to_string(messageId) + "}",
+                             "Prefer: resolution=ignore-duplicates").ok;
+        return acct_.Api("/rest/v1/message_pins?scope=eq." + scope + "&target_id=eq." + std::to_string(messageId), "DELETE").ok;
+    }
+    std::vector<PinInfo> Pins(const std::string& scope, bool* supported = nullptr) {
+        std::vector<PinInfo> out;
+        if (supported) *supported = true;
+        if (!acct_.IsLoggedIn()) return out;
+        auto r = acct_.Api("/rest/v1/message_pins?select=target_id,pinned_by,created_at&scope=eq." + scope +
+                           "&order=created_at.desc&limit=500", "GET");
+        if (!r.ok) { if (supported) *supported = r.status != 404 && r.status != 400; return out; }
+        for (const auto& o : SplitObjects(r.body))
+            out.push_back({std::atol(Field(o, "target_id").c_str()), ParseIso(Field(o, "created_at")), Field(o, "pinned_by")});
         return out;
     }
 

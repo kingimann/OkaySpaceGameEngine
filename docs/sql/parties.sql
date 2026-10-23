@@ -43,6 +43,10 @@ create policy "parties - leader edits" on public.parties for update using (leade
 create policy "party members - read"   on public.party_members for select using (party_id = public.my_party());
 create policy "party members - ready"  on public.party_members for update using (member = auth.uid()) with check (member = auth.uid());
 -- (No insert/delete policies: those go through the functions below.)
+-- Members may only change their ready flag: moving to another party or
+-- rewriting joined_at (who gets the lead next) has to go through the functions.
+revoke update on public.party_members from anon, authenticated;
+grant update (ready) on public.party_members to authenticated;
 
 create or replace function public.touch_party() returns trigger
 language plpgsql set search_path = public as $$

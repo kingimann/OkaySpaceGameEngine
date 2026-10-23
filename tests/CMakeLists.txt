@@ -764,3 +764,11 @@ add_test(NAME matchmaker COMMAND test_matchmaker)
 add_executable(test_ui_templates test_ui_templates.cpp)
 target_link_libraries(test_ui_templates PRIVATE okay::engine)
 add_test(NAME ui_templates COMMAND test_ui_templates)
+
+add_executable(test_gltf_cubicspline test_gltf_cubicspline.cpp)
+target_link_libraries(test_gltf_cubicspline PRIVATE okay::engine)
+add_test(NAME gltf_cubicspline COMMAND test_gltf_cubicspline)
+
+add_executable(test_crash_reports test_crash_reports.cpp)
+target_include_directories(test_crash_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME crash_reports COMMAND test_crash_reports)

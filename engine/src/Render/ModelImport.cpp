@@ -1235,6 +1235,46 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
         }
     }
 
+    // glTF CUBICSPLINE output stores (in-tangent, value, out-tangent) per key. Bake it
+    // into dense LINEAR keys with the spec's Hermite formula and the real tangents,
+    // so overshoot, anticipation and eased holds play back as authored (taking only
+    // the values and re-smoothing them flattened every exported F-curve). Each
+    // segment gets ~60 samples per second (2..16). Rotations are renormalised.
+    auto bakeCubic = [](const std::vector<float>& times, const std::vector<float>& vals, int oc,
+                        bool quat, std::vector<float>& outT, std::vector<float>& outV) {
+        outT.clear(); outV.clear();
+        const int n = (int)times.size();
+        if (n <= 0 || oc <= 0 || (int)vals.size() < n * 3 * oc) return;
+        auto blk = [&](int k, int which) { return &vals[(std::size_t)(k * 3 + which) * oc]; };   // 0 in, 1 value, 2 out
+        auto emit = [&](float t, const float* v) {
+            std::size_t at = outV.size();
+            outT.push_back(t); outV.insert(outV.end(), v, v + oc);
+            if (quat && oc == 4) {
+                float* q = &outV[at];
+                float len = std::sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+                if (len > 1e-8f) for (int c = 0; c < 4; ++c) q[c] /= len;
+            }
+        };
+        std::vector<float> tmp((std::size_t)oc);
+        for (int k = 0; k < n; ++k) {
+            emit(times[k], blk(k, 1));
+            if (k + 1 >= n) break;
+            const float td = times[k + 1] - times[k];
+            if (!(td > 1e-6f)) continue;
+            int sub = (int)std::ceil(td * 60.0f);
+            sub = sub < 2 ? 2 : (sub > 16 ? 16 : sub);
+            const float* v0 = blk(k, 1); const float* b0 = blk(k, 2);       // value, out-tangent of k
+            const float* v1 = blk(k + 1, 1); const float* a1 = blk(k + 1, 0); // value, in-tangent of k+1
+            for (int j = 1; j < sub; ++j) {
+                const float u = (float)j / (float)sub, u2 = u * u, u3 = u2 * u;
+                const float h00 = 2*u3 - 3*u2 + 1, h10 = u3 - 2*u2 + u, h01 = -2*u3 + 3*u2, h11 = u3 - u2;
+                for (int c = 0; c < oc; ++c)
+                    tmp[c] = h00 * v0[c] + h10 * td * b0[c] + h01 * v1[c] + h11 * td * a1[c];
+                emit(times[k] + td * u, tmp.data());
+            }
+        }
+    };
+
     // ALL animations -> a ModelAnimator clip library on the root (idle/walk/run...).
     // Each clip holds per-node TRS tracks (rotation as a quaternion so it plays back
     // exactly). At runtime PlayIndex pushes a clip's tracks onto an Animator per node.
@@ -1272,9 +1312,17 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                             ModelAnimator::NodeClip* ncp = nullptr;
                             for (auto& ncx : clip.nodes) if (ncx.node == nodeName) { ncp = &ncx; break; }
                             if (!ncp) { clip.nodes.push_back({nodeName, AnimationClip{}}); ncp = &clip.nodes.back(); }
-                            ncp->clip.smoothKeys = cub;
+                            ncp->clip.smoothKeys = false;   // LINEAR as authored; CUBICSPLINE baked below
+                            if (cub) {
+                                std::vector<float> bt, bv;
+                                bakeCubic(times, vals, nw, false, bt, bv);
+                                for (std::size_t k = 0; k < bt.size(); ++k)
+                                    for (int w = 0; w < nw; ++w)
+                                        ncp->clip.AddKey("weights." + std::to_string(w), bt[k], bv[k * nw + w]);
+                                continue;
+                            }
                             for (int k = 0; k < tn; ++k) {
-                                int vb = (cub ? (k * 3 + 1) : k) * nw;
+                                int vb = k * nw;
                                 if (vb + nw > on * oc) break;
                                 for (int w = 0; w < nw; ++w)
                                     ncp->clip.AddKey("weights." + std::to_string(w), times[k], vals[(std::size_t)vb + w]);
@@ -1292,9 +1340,9 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                         for (auto& ncx : clip.nodes) if (ncx.node == nodeName) { ncp = &ncx; break; }
                         if (!ncp) { clip.nodes.push_back({nodeName, AnimationClip{}}); ncp = &clip.nodes.back(); }
                         AnimationClip& ac = ncp->clip;
-                        // LINEAR / STEP data plays back exactly; CUBICSPLINE keeps
-                        // the smooth curve (its tangents aren't imported).
-                        ac.smoothKeys = cubic;
+                        // LINEAR / STEP data plays back exactly; CUBICSPLINE is baked
+                        // with its tangents into dense linear keys (bakeCubic).
+                        ac.smoothKeys = false;
                         float prevQ[4] = {0, 0, 0, 1}; bool haveQ = false;
                         auto put = [&](float t, const float* v) {
                             if (tpath == "translation" && oc >= 3) {
@@ -1313,9 +1361,15 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
                                 ac.AddKey("rotation.qz", t, q[2]); ac.AddKey("rotation.qw", t, q[3]);
                             }
                         };
+                        if (cubic) {
+                            std::vector<float> bt, bv;
+                            bakeCubic(times, vals, oc, tpath == "rotation", bt, bv);
+                            for (std::size_t k = 0; k < bt.size(); ++k) put(bt[k], &bv[k * oc]);
+                            continue;
+                        }
                         for (int k = 0; k < tn; ++k) {
                             float t = times[k];
-                            int vbase = (cubic ? (k * 3 + 1) : k) * oc;   // value block for this key
+                            int vbase = k * oc;                           // value block for this key
                             if (vbase + oc > on * oc) break;              // guard against short data
                             // STEP: hold this value until just before the next key.
                             if (step && k > 0) {

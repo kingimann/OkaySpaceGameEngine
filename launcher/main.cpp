@@ -11,6 +11,7 @@
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
+#include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -1707,8 +1708,62 @@ void RemoveNotif(const std::string& key) {
         if (it->key == key) { g_notifs.erase(it); return; }
 }
 
+// ---- Editor crash reports --------------------------------------------------
+// The editor's crash handler writes okay_crashlog.txt beside the editor; the launcher
+// shows them in Settings > Crash reports and raises one notification per new crash.
+std::vector<okaycrash::Report> g_crashes;   // newest first
+static fs::path CrashDir() {
+    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    if (const char* dev = std::getenv("OKAY_CRASH_DIR")) return fs::path(dev);   // (dev/test: another folder)
+    return ed.empty() ? fs::path() : fs::path(ed).parent_path();
+}
+// Re-read the reports when the files change (cheap stat every couple of seconds).
+static void RefreshCrashes(bool force = false) {
+    static Uint32 nextCheck = 0;
+    static std::string lastSig;
+    const Uint32 now = SDL_GetTicks();
+    if (!force && now < nextCheck) return;
+    nextCheck = now + 2000;
+    const fs::path dir = CrashDir();
+    std::string sig;
+    std::error_code ec;
+    long long newest = 0;
+    for (const char* f : {"okay_crashlog.txt", "okay_crash.txt"}) {
+        const fs::path p = dir / f;
+        if (dir.empty() || !fs::exists(p, ec)) { sig += "-;"; continue; }
+        const auto sz = fs::file_size(p, ec);
+        const auto mt = fs::last_write_time(p, ec).time_since_epoch().count();
+        newest = std::max<long long>(newest, (long long)mt);
+        sig += std::to_string((long long)sz) + ":" + std::to_string((long long)mt) + ";";
+    }
+    if (!force && sig == lastSig) return;
+    const bool firstRead = lastSig.empty();
+    lastSig = sig;
+    g_crashes = dir.empty() ? std::vector<okaycrash::Report>{} : okaycrash::Load(dir);
+    if (g_crashes.empty()) return;
+    // One notification for the newest crash: on a fresh launch only if the report is
+    // recent (not years of history the first time this ships), always if it appears
+    // while the launcher is open. Read / cleared state persists like any notification.
+    bool recent = !firstRead;
+    if (firstRead) {
+        std::error_code e2;
+        const fs::path p = fs::exists(dir / "okay_crashlog.txt", e2) ? dir / "okay_crashlog.txt" : dir / "okay_crash.txt";
+        const auto age = fs::file_time_type::clock::now() - fs::last_write_time(p, e2);
+        recent = !e2 && age < std::chrono::hours(72);
+    }
+    if (recent) {
+        const okaycrash::Report& r = g_crashes.front();
+        std::string body = okaycrash::ExceptionName(r.exception);
+        if (!r.lastStep.empty()) body += " during " + r.lastStep;
+        if (!r.when.empty()) body += " \xC2\xB7 " + r.when;
+        if (UpsertNotif("crash:" + r.when + "|" + r.version + "|" + r.lastStep, "The editor crashed", body, 0, 4))
+            Toast("The editor crashed \xE2\x80\x94 see Settings > Crash reports", 2);
+    }
+}
+
 // Sync the dynamic notifications with the current app state; called once a frame.
 void RefreshNotifs() {
+    RefreshCrashes();
     char b[96];
     if (g_friendRequests > 0) {
         std::snprintf(b, sizeof(b), "%d pending friend request%s",
@@ -3606,7 +3661,7 @@ static std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
 // One consistent set of 1.6px line icons (Lucide-like), drawn with the draw list
 // so no icon font is needed. Ids 0..10 match the launcher tabs; the rest are
 // sidebar extras.
-enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17, kIcoGlobe = 18 };
+enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17, kIcoGlobe = 18, kIcoAlert = 19 };
 static void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
     const float r = 7.5f, t = 1.6f, PI = 3.14159265f;
     switch (id) {
@@ -3689,6 +3744,12 @@ static void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
         d->PathLineTo(ImVec2(c.x + r, c.y + r));    d->PathLineTo(ImVec2(c.x + r, c.y + 2.2f));
         d->PathStroke(col, 0, t);
         break;
+    case kIcoAlert: {   // Crash reports: a warning triangle with "!"
+        d->AddTriangle(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y + r * 0.85f), ImVec2(c.x - r, c.y + r * 0.85f), col, t);
+        d->AddLine(ImVec2(c.x, c.y - 2.6f), ImVec2(c.x, c.y + 2.0f), col, t);
+        d->AddCircleFilled(ImVec2(c.x, c.y + 4.4f), 0.95f, col, 8);
+        break;
+    }
     case kIcoBell:
         d->PathArcTo(ImVec2(c.x, c.y - 1.2f), 5.0f, PI, 2 * PI, 12);
         d->PathLineTo(ImVec2(c.x + 5.0f, c.y + 3.2f)); d->PathLineTo(ImVec2(c.x + 6.6f, c.y + 5.0f));
@@ -15361,6 +15422,7 @@ int main(int argc, char** argv) {
                     if (click && dismissIdx != idx) {
                         n.read = true; g_notifFresh.erase(n.key);
                         if (n.gotoTab >= 0) gotoTabReq = n.gotoTab;
+                        if (n.key.rfind("crash:", 0) == 0) g_setCatJump = 9;   // straight to Crash reports
                     }
                     ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rh + 3.0f));
                     ImGui::Dummy(ImVec2(0, 0));
@@ -18160,8 +18222,9 @@ int main(int argc, char** argv) {
                 {"About",                9,           "Version, updates and links."},
                 {"Privacy & Safety",     3,           "Who can reach you, what others see, and who you've blocked."},
                 {"Voice & Audio",        kIcoChat,    "Microphone, speakers and voice calls."},
+                {"Crash reports",        kIcoAlert,   "What went wrong when the editor closed unexpectedly."},
             };
-            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 5, 6};   // rail order (new pages sit with Chat)
+            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 5, 9, 6};   // rail order (new pages sit with Chat)
             const int nCats = (int)(sizeof(kSetCats) / sizeof(kSetCats[0]));
             setCat = std::clamp(setCat, 0, nCats - 1);
             const float availW = ImGui::GetContentRegionAvail().x;
@@ -18664,6 +18727,98 @@ int main(int argc, char** argv) {
                         }
                     }
                     cardEnd();
+                } else if (setCat == 9) {   // ---- Crash reports ----
+                    RefreshCrashes(ImGui::IsWindowAppearing());
+                    static int crashOpen = -1;          // expanded report (index), -1 = none
+                    const fs::path crashDir = CrashDir();
+                    cardBegin("##sc_crash", "EDITOR CRASHES");
+                    {
+                        char sum[96];
+                        if (g_crashes.empty()) std::snprintf(sum, sizeof(sum), "No crashes recorded");
+                        else std::snprintf(sum, sizeof(sum), "%d crash report%s", (int)g_crashes.size(), g_crashes.size() == 1 ? "" : "s");
+                        settingRow(sum, g_crashes.empty()
+                                       ? "If the editor ever closes unexpectedly, a report with what it was doing shows up here."
+                                       : "Newest first. Copy a report into a Forums post or send it to support so the crash can be fixed.",
+                                   250.0f, 30.0f, [&](float) {
+                            ImGui::BeginDisabled(crashDir.empty());
+                            if (ImGui::Button("Open folder", ImVec2(110, 30))) OpenExternal(crashDir.string());
+                            ImGui::EndDisabled();
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(g_crashes.empty());
+                            if (ImGui::Button("Clear all", ImVec2(110, 30))) ImGui::OpenPopup("Clear crash reports?");
+                            ImGui::EndDisabled();
+                            if (ImGui::BeginPopupModal("Clear crash reports?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                                ImGui::TextUnformatted("Delete every saved editor crash report?");
+                                ImGui::TextDisabled("They can't be brought back.");
+                                ImGui::Dummy(ImVec2(0, 6));
+                                if (ImGui::Button("Delete", ImVec2(100, 30))) {
+                                    if (okaycrash::Clear(crashDir)) Toast("Crash reports cleared", 1);
+                                    else Toast("Couldn't delete the crash reports", 2);
+                                    RefreshCrashes(true); crashOpen = -1;
+                                    ImGui::CloseCurrentPopup();
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+                                ImGui::EndPopup();
+                            }
+                        });
+                    }
+                    cardEnd();
+                    for (int i = 0; i < (int)g_crashes.size() && i < 50; ++i) {
+                        const okaycrash::Report& r = g_crashes[i];
+                        ImGui::PushID(i);
+                        cardBegin("##crashcard", nullptr);
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        const ImVec2 p = ImGui::GetCursorScreenPos();
+                        const float w = ImGui::GetContentRegionAvail().x;
+                        // Red badge with the alert icon, then what / when / where.
+                        dl->AddCircleFilled(ImVec2(p.x + 18, p.y + 20), 18, IM_COL32(226, 82, 82, 40), 24);
+                        DrawNavIcon(dl, kIcoAlert, ImVec2(p.x + 18, p.y + 20), IM_COL32(240, 120, 120, 255));
+                        const float tx = p.x + 50;
+                        dl->AddText(ImVec2(tx, p.y + 2), cText, okaycrash::ExceptionName(r.exception).c_str());
+                        std::string meta = r.when.empty() ? std::string("Unknown time") : r.when;
+                        if (!r.version.empty()) meta += "  \xC2\xB7  v" + r.version;
+                        if (i == 0) meta += "  \xC2\xB7  latest";
+                        dl->AddText(ImVec2(tx, p.y + 22), cDim, meta.c_str());
+                        ImGui::Dummy(ImVec2(w, 44));
+                        if (!r.lastStep.empty()) {
+                            ImGui::TextDisabled("Doing:");
+                            ImGui::SameLine();
+                            ImGui::TextUnformatted(r.lastStep.c_str());
+                        }
+                        if (!r.module.empty()) {
+                            std::string mod = r.module;
+                            const std::size_t sl = mod.find_last_of("/\\", mod.find(" + "));
+                            if (sl != std::string::npos) mod = mod.substr(sl + 1);
+                            ImGui::TextDisabled("In:");
+                            ImGui::SameLine();
+                            ImGui::TextUnformatted(FitText(mod, w - 40).c_str());
+                        }
+                        ImGui::Dummy(ImVec2(0, 4));
+                        const bool open = crashOpen == i;
+                        if (ImGui::Button(open ? "Hide details" : "Details", ImVec2(110, 28))) crashOpen = open ? -1 : i;
+                        ImGui::SameLine();
+                        if (ImGui::Button("Copy report", ImVec2(110, 28))) {
+                            ImGui::SetClipboardText(r.text.c_str());
+                            Toast("Crash report copied", 1);
+                        }
+                        if (r.frames > 0) {
+                            ImGui::SameLine();
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextDisabled("%d stack frame%s", r.frames, r.frames == 1 ? "" : "s");
+                        }
+                        if (open) {
+                            ImGui::Dummy(ImVec2(0, 4));
+                            static std::string shown;   // InputTextMultiline needs a mutable buffer
+                            shown = r.text;
+                            ImGui::PushStyleColor(ImGuiCol_FrameBg, okaytheme::kSunken);
+                            ImGui::InputTextMultiline("##crashtext", shown.data(), shown.size() + 1, ImVec2(-1, 240),
+                                                      ImGuiInputTextFlags_ReadOnly);
+                            ImGui::PopStyleColor();
+                        }
+                        cardEnd();
+                        ImGui::PopID();
+                    }
                 } else if (setCat == 5) {   // ---- Account ----
                     const bool signedIn = account.IsLoggedIn() || kUiDemoUser;
                     const std::string uname = kUiDemoUser ? std::string(kUiDemoUser)

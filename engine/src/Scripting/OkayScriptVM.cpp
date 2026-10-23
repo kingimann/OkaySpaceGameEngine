@@ -35,6 +35,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/GameIpc.hpp"
+#include "okay/Net/ServerBrowser.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
@@ -4020,6 +4021,42 @@ struct OkayScriptVM::Impl {
             if (!n || a.empty()) return Value{0.0f};
             return Value{n->JoinByLink(a[0].AsString()) ? 1.0f : 0.0f};
         };
+        // In-game server browser (filtered to this game; refreshes in the background).
+        // net_browser_open() shows the built-in "Find a server" window; the rest let a
+        // game draw its own list.
+        b["net_browser_open"]  = [](std::vector<Value>&) { ServerBrowser::Shared().windowOpen = true; return Value{1.0f}; };
+        b["net_browser_close"] = [](std::vector<Value>&) { ServerBrowser::Shared().windowOpen = false; return Value{1.0f}; };
+        b["net_browser_is_open"] = [](std::vector<Value>&) { return Value{ServerBrowser::Shared().windowOpen ? 1.0f : 0.0f}; };
+        b["net_browser_refresh"] = [](std::vector<Value>& a) {   // ["all" | "internet" | "lan"]
+            const std::string w = a.empty() ? std::string("all") : a[0].AsString();
+            ServerBrowser::Shared().Refresh(w == "internet" ? ServerBrowser::kInternet : w == "lan" ? ServerBrowser::kLan : ServerBrowser::kAll);
+            return Value{1.0f};
+        };
+        b["net_browser_busy"]  = [](std::vector<Value>&) { return Value{ServerBrowser::Shared().Busy() ? 1.0f : 0.0f}; };
+        b["net_browser_count"] = [](std::vector<Value>&) { return Value{(float)ServerBrowser::Shared().Results().size()}; };
+        auto browserAt = [](std::vector<Value>& a, ServerBrowser::Entry& out) {
+            if (a.empty()) return false;
+            const auto r = ServerBrowser::Shared().Results(); const int i = (int)a[0].AsFloat();
+            if (i < 0 || i >= (int)r.size()) return false;
+            out = r[i]; return true;
+        };
+        b["net_browser_name"] = [browserAt](std::vector<Value>& a) { ServerBrowser::Entry e; return Value{browserAt(a, e) ? (e.info.name.empty() ? e.info.Address() : e.info.name) : std::string{}}; };
+        b["net_browser_map"]  = [browserAt](std::vector<Value>& a) { ServerBrowser::Entry e; return Value{browserAt(a, e) ? e.info.map : std::string{}}; };
+        b["net_browser_address"] = [browserAt](std::vector<Value>& a) { ServerBrowser::Entry e; return Value{browserAt(a, e) ? e.info.Address() : std::string{}}; };
+        b["net_browser_players"] = [browserAt](std::vector<Value>& a) { ServerBrowser::Entry e; return Value{browserAt(a, e) ? (float)e.info.players : 0.0f}; };
+        b["net_browser_max"]  = [browserAt](std::vector<Value>& a) { ServerBrowser::Entry e; return Value{browserAt(a, e) ? (float)e.info.maxPlayers : 0.0f}; };
+        b["net_browser_ping"] = [browserAt](std::vector<Value>& a) { ServerBrowser::Entry e; return Value{browserAt(a, e) ? (float)e.info.pingMs : -1.0f}; };
+        b["net_browser_locked"] = [browserAt](std::vector<Value>& a) { ServerBrowser::Entry e; return Value{browserAt(a, e) && e.info.password ? 1.0f : 0.0f}; };
+        b["net_browser_join"] = [this, browserAt](std::vector<Value>& a) {   // (index[, password])
+            ServerBrowser::Entry e;
+            NetworkManager* n = EnsureNet();
+            if (!n || !browserAt(a, e)) return Value{0.0f};
+            JoinLink l = e.Link();
+            if (a.size() > 1) l.password = a[1].AsString();
+            ServerBrowser::Shared().windowOpen = false;
+            return Value{n->JoinByLink(l.Format()) ? 1.0f : 0.0f};
+        };
+
         // Scores (server-owned, replicated to everyone in the room) + the roster.
         b["net_set_score"] = [this](std::vector<Value>& a) {   // server only: (id, score)
             NetworkManager* n = Net();

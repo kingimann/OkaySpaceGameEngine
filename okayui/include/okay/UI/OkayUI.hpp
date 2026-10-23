@@ -322,6 +322,11 @@ void EndColumns();
 /// Begin a table of `columns` columns. If `headers` is given, a header row is drawn.
 /// Returns true (open) — pair with EndTable(). Rows/cells via TableNextRow/Column.
 bool BeginTable(const char* id, int columns, const char* const* headers = nullptr);
+/// Same, with starting column widths in proportion to `weights` (e.g. {3, 1, 1}
+/// makes the first column three times as wide). Users can still drag them.
+bool BeginTable(const char* id, int columns, const char* const* headers, const float* weights);
+/// Width in pixels of `text` in the current UI font (for fitting/truncating).
+float CalcTextWidth(const char* text);
 /// Start a new row (call before the row's TableNextColumn cells).
 void TableNextRow();
 /// Advance to the next cell; returns true (visible). Widgets after it land in-cell.

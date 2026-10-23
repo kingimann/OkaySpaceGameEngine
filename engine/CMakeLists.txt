@@ -22,6 +22,7 @@ add_library(okay_engine
     src/Net/RelayServer.cpp
     src/Net/DedicatedServer.cpp
     src/Net/ServerQuery.cpp
+    src/Net/ServerBrowser.cpp
     src/Net/NetBackend.cpp
     src/Net/NetTransport.cpp
     src/Net/PhotonTransport.cpp

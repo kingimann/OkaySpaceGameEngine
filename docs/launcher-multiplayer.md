@@ -92,6 +92,37 @@ write any extra code.
   players, and password / dedicated / sign-in flags, without anyone joining.
   The LAN tab broadcasts the same query on ports 45000–45015.
 
+## In-game server browser
+
+Games get a ready-made **Find a server** window, in addition to the
+launcher's Multiplayer page. It has:
+- tabs for All, Internet and LAN, with servers filtered to this game;
+- search, plus Not full and No password filters;
+- live ping and player counts;
+- a password prompt for locked servers;
+- **Address / Connect** for a direct IP or a pasted join link.
+
+Double-click a server, or pick one and press **Join**. The window closes once
+you're in.
+
+To open it, call `net_browser_open()` from a menu button script, or use the
+**Open Server Browser** action in visual scripting. It searches in the
+background, so the game never stutters.
+
+To draw your own list instead:
+
+| Script | What it does |
+| --- | --- |
+| `net_browser_refresh(["all"\|"internet"\|"lan"])` | start a search |
+| `net_browser_busy()` | 1 while it's searching |
+| `net_browser_count()` | results |
+| `net_browser_name(i)`, `_players(i)`, `_max(i)`, `_ping(i)`, `_map(i)`, `_locked(i)`, `_address(i)` | details of result `i` |
+| `net_browser_join(i[, "password"])` | join result `i` |
+
+The Internet tab needs the player signed in to OkaySpace, plus the
+`game_sessions` listing (`docs/sql/game_servers.sql`). LAN servers on ports
+45000–45015 always show.
+
 ## For game makers
 
 Nothing is required. If you want more:

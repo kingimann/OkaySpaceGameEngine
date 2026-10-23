@@ -20,6 +20,7 @@ add_library(okay_engine
     src/Net/UdpSocket.cpp
     src/Net/NetworkManager.cpp
     src/Net/RelayServer.cpp
+    src/Net/DedicatedServer.cpp
     src/Net/NetBackend.cpp
     src/Net/NetTransport.cpp
     src/Net/PhotonTransport.cpp

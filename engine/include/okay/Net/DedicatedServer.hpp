@@ -1,0 +1,77 @@
+#pragma once
+// ---------------------------------------------------------------------------
+// Dedicated (headless) game server: run a game scene with no window, renderer
+// or audio, as the authoritative server players connect to. The shipped player
+// does this with `okay-player --server ...`; the same code drives tests.
+//
+// What it does on top of NetworkManager:
+//   - loads/uses the scene's NetworkManager (adds one if the scene has none),
+//     puts it in dedicated mode (no host avatar, hears every room) and hosts;
+//   - steps the scene at a fixed tick rate (simulation + networking);
+//   - optionally only lets signed-in OkaySpace (Supabase) accounts join, with the
+//     token checks running off the tick so a slow web request never stalls play;
+//   - logs joins/leaves and a periodic status line, and stops cleanly on
+//     Ctrl+C / SIGTERM (what container hosts send).
+// ---------------------------------------------------------------------------
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+
+namespace okay {
+
+class Scene;
+
+struct DedicatedServerOptions {
+    std::uint16_t port = 45000;      ///< UDP port to listen on
+    std::string scenePath;           ///< scene to run ("" = the game's startup scene)
+    int   maxPlayers = 16;           ///< joins beyond this are refused ("server is full")
+    float tickRate = 30.0f;          ///< simulation + snapshot ticks per second
+    std::string name = "OkaySpace Server";   ///< shown to clients on join
+    std::string password;            ///< "" = open
+    bool  requireAuth = false;       ///< only signed-in OkaySpace accounts may join
+    bool  encryption = true;         ///< encrypt traffic when both ends support it
+    float statusEvery = 60.0f;       ///< seconds between status lines (0 = never)
+    float maxRuntime = 0.0f;         ///< stop after this many seconds (0 = run until stopped)
+};
+
+/// Read `--server` and its flags (plus OKAY_SERVER_* environment variables, which
+/// container hosts use) into `out`. Returns true when `--server` was given.
+/// Flags: --port N, --scene PATH, --max-players N, --tick HZ, --name TEXT,
+/// --password TEXT, --auth, --no-encryption, --status SECONDS, --run-for SECONDS.
+/// Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,
+/// OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1. Flags win.
+/// On a bad value, returns true with `error` set.
+bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out, std::string* error = nullptr);
+/// The usage text for --help.
+const char* DedicatedServerUsage();
+
+/// Token checks that never block the caller: the first Check() for a token
+/// queues it for a background worker and returns -1 (pending); later calls
+/// return the cached answer (1 accept with the user id, 0 reject). Answers are
+/// cached for `cacheSeconds`. Plugs straight into NetworkManager::SetJoinCheck.
+class AsyncTokenCheck {
+public:
+    using Verify = std::function<bool(const std::string& token, std::string& outUserId)>;
+    explicit AsyncTokenCheck(Verify verify, float cacheSeconds = 300.0f);
+    ~AsyncTokenCheck();
+    AsyncTokenCheck(const AsyncTokenCheck&) = delete;
+    AsyncTokenCheck& operator=(const AsyncTokenCheck&) = delete;
+
+    /// 1 = valid (outUserId set), 0 = invalid / empty token, -1 = still checking.
+    int Check(const std::string& token, std::string& outUserId);
+    /// Number of checks waiting for the worker (diagnostics / tests).
+    std::size_t Pending() const;
+
+private:
+    struct Impl;   // the worker thread + cache (native threads on Windows, std::thread elsewhere)
+    std::unique_ptr<Impl> m;
+};
+
+/// Run `scene` as a dedicated server until stopped. Returns a process exit code
+/// (0 = clean stop, 2 = couldn't open the port).
+int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts);
+/// Ask a running RunDedicatedServer loop to stop (also what SIGINT/SIGTERM do).
+void RequestDedicatedServerStop();
+
+} // namespace okay

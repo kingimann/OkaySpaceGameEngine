@@ -2195,10 +2195,13 @@ void DrawVarWatch() {
 // Save the open scene so an auto-update relaunch never loses work. Uses the
 // current path when known, otherwise a recovery file (added to Recent).
 void ConsoleLog(const std::string& msg, int level);   // (defined below)
+// Saving (defined near the end of this namespace):
+static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
+static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
+static bool SaveProject(EditorState& ed, bool interactive);   // File > Save Project (Ctrl+Alt+S): everything
+static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or the open graph
 void SaveAllBeforeExit(EditorState& ed) {
-    std::string p = ed.path().empty() ? "autosaved_scene.okayscene" : ed.path();
-    if (ed.Save(p)) { AddRecent(p); ConsoleLog("Saved before updating: " + p, 0); }
-    ed.dirty = false;
+    if (SaveProject(ed, false)) ConsoleLog("Saved everything before updating.", 0);
 }
 
 // File dialogs.
@@ -3654,17 +3657,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Save", "Ctrl+S")) {
-            std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-            if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); ed.Achievement("FIRST_SAVE");
-                std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
-            else ConsoleLog("Save failed");
-        }
-        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
-            std::strncpy(g_pathBuf, ed.path().empty() ? "scene.okayscene" : ed.path().c_str(),
-                         sizeof(g_pathBuf) - 1);
-            g_showSaveAs = true;
-        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveSceneCmd(ed);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(ed.path().empty() ? "This scene hasn't been saved yet: pick where it goes (Assets/Scenes)."
+                                                                         : "Save this scene: %s", ed.path().c_str());
+        if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) SaveSceneAsCmd(ed);
+        if (ImGui::MenuItem("Save Project", "Ctrl+Alt+S")) SaveProject(ed, true);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save everything: the scene, every edited script, the open visual\n"
+                                                      "script, project and build settings, and editor preferences.");
+        ImGui::Separator();
         if (ImGui::MenuItem("Merge Scene into Current...")) {
             // Combine scenes: append another scene's objects into this one (kept),
             // tagged with its name so the Hierarchy shows where it starts/ends.
@@ -8351,7 +8352,7 @@ void DrawScenes(EditorState& ed) {
 void DrawQuitPrompt(EditorState& ed, bool& running) {
     static bool open = false;
     if (g_quitRequested && !open) {
-        if (!ed.dirty) { running = false; g_quitRequested = false; return; }
+        if (!AnyUnsavedWork(ed)) { running = false; g_quitRequested = false; return; }
         ImGui::OpenPopup("Unsaved Changes");
         open = true;
     }
@@ -8359,11 +8360,12 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("You have unsaved changes. Save before quitting?");
+        ImGui::TextDisabled("Save keeps everything: the scene, edited scripts and the open visual script.");
         ImGui::Separator();
         if (ImGui::Button("Save", ImVec2(110, 0))) {
-            std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-            if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); }
-            running = false; g_quitRequested = false; open = false;
+            const bool ok = SaveProject(ed, false);
+            g_quitRequested = false; open = false;
+            if (ok) running = false;   // something failed: stay open so nothing is lost
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -8415,6 +8417,7 @@ void DrawShortcutsWindow() {
     section("General", {
         {"Ctrl+P",        "Play / Stop"},
         {"Ctrl+S",        "Save scene"},
+        {"Ctrl+Alt+S",    "Save project (everything)"},
         {"Ctrl+Shift+S",  "Save scene as..."},
         {"Ctrl+O",        "Open scene"},
         {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
@@ -12389,15 +12392,12 @@ void HandleShortcuts(EditorState& ed) {
         if (ed.Redo()) ConsoleLog("Redo");
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
-    if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        // Ctrl+Shift+S = Save Scene As (seed the dialog with the current path).
-        std::strncpy(g_pathBuf, ed.path().empty() ? "scene.okayscene" : ed.path().c_str(),
-                     sizeof(g_pathBuf) - 1);
-        g_showSaveAs = true;
+    if (ctrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        SaveProject(ed, true);                       // Ctrl+Alt+S = Save Project (everything)
+    } else if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        SaveSceneAsCmd(ed);                          // Ctrl+Shift+S = Save Scene As
     } else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-        if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE");
-            std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
+        SaveSceneCmd(ed);                            // Ctrl+S = Save Scene
     }
     if (!animKeys && ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
         ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
@@ -35360,6 +35360,95 @@ void DrawGameView(EditorState& ed) {
     ImGui::End();
 }
 
+// ---- Saving ------------------------------------------------------------------
+// Where a never-saved scene goes: <project>/Assets/Scenes/<scene name>.okayscene.
+static std::string DefaultScenePath(EditorState& ed) {
+    namespace fs = std::filesystem;
+    std::string name = ed.scene().Name();
+    for (char& c : name) if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == ' ')) c = '_';
+    if (name.empty() || name == "Scene") name = "Main";
+    const fs::path dir = ed.projectDir().empty() ? fs::path("Scenes") : fs::path(ed.projectDir()) / "Assets" / "Scenes";
+    return (dir / (name + ".okayscene")).string();
+}
+static bool SaveSceneTo(EditorState& ed, std::string p) {
+    namespace fs = std::filesystem;
+    if (fs::path(p).extension() != ".okayscene") p += ".okayscene";
+    std::error_code ec;
+    if (fs::path(p).has_parent_path()) fs::create_directories(fs::path(p).parent_path(), ec);
+    if (!ed.Save(p)) { ConsoleLog("Couldn't save the scene to " + p, 2); return false; }
+    ConsoleLog("Saved scene: " + p);
+    AddRecent(p); ed.Achievement("FIRST_SAVE");
+    fs::remove(p + ".autosave", ec);
+    return true;
+}
+static void SaveSceneAsCmd(EditorState& ed) {
+    if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
+    const std::string def = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(def).parent_path(), ec);   // so the dialog opens there
+    const char* filt[1] = {"*.okayscene"};
+    if (const char* p = tinyfd_saveFileDialog("Save Scene As", def.c_str(), 1, filt, "OkaySpace scene")) SaveSceneTo(ed, p);
+}
+static void SaveSceneCmd(EditorState& ed) {
+    if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
+    if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
+    SaveSceneTo(ed, ed.path());
+}
+static bool AnyUnsavedWork(EditorState& ed) {
+    if (ed.dirty) return true;
+    for (okay::ScriptComponent* t : g_scriptTabs)
+        if (t && !t->Path().empty() && ScriptTabDirty(t)) return true;
+    const auto& vg = okay::editor::vsed::State().g;
+    return vg.dirty && !vg.path.empty();
+}
+// Save everything: the scene (an unsaved one goes to Assets/Scenes), every edited
+// script file, the open visual-script graph, project + build settings and the
+// editor's own preferences. Interactive = the user asked (File > Save Project):
+// a running game is left alone and a summary goes to the Console. Non-interactive
+// (quit / the launcher's save-before-update) stops Play first. False if anything failed.
+static bool SaveProject(EditorState& ed, bool interactive) {
+    bool ok = true;
+    std::vector<std::string> saved;
+    bool sceneSkipped = false;
+    if (ed.isPlaying()) {
+        if (interactive) sceneSkipped = true;
+        else ed.Stop();   // save the edited scene, not the running copy
+    }
+    if (!sceneSkipped) {   // always written: "Save Project" means everything is on disk
+        const std::string p = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
+        if (SaveSceneTo(ed, p)) saved.push_back("scene"); else ok = false;
+    }
+    int scripts = 0;
+    for (okay::ScriptComponent* t : g_scriptTabs) {
+        if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+        const char* live = PeekCodeBuffer(t);
+        std::ofstream f(t->Path(), std::ios::binary);
+        if (f && live) { f << live; g_scriptSaved[t] = live; ++scripts; }
+        else { ok = false; ConsoleLog("Couldn't save " + t->Path(), 2); }
+    }
+    if (scripts) saved.push_back(std::to_string(scripts) + (scripts == 1 ? " script" : " scripts"));
+    auto& vg = okay::editor::vsed::State().g;
+    if (vg.dirty && !vg.path.empty()) {
+        if (vg.save(vg.path)) saved.push_back("visual script"); else { ok = false; ConsoleLog("Couldn't save " + vg.path, 2); }
+    }
+    SaveProjectSettings();
+    SaveBuildProfiles(ed);
+    SaveCustomActions();
+    SaveProjectViewPrefs();
+    SavePluginPrefs();
+    SaveSettings();
+    SaveRecent();
+    saved.push_back("settings");
+    if (interactive) {
+        std::string msg = "Project saved: ";
+        for (std::size_t i = 0; i < saved.size(); ++i) msg += (i ? ", " : "") + saved[i];
+        if (sceneSkipped) msg += ". (The scene wasn't saved while playing: stop Play, then save.)";
+        ConsoleLog(msg, ok ? (sceneSkipped ? 1 : 0) : 2);
+    }
+    return ok;
+}
+static bool SaveEverything(EditorState& ed) { return SaveProject(ed, false); }
+
 } // namespace
 
 // ---- Launcher gate ---------------------------------------------------------
@@ -35680,25 +35769,6 @@ static std::string LauncherIpcPath(const char* file) {
         if (b) SDL_free(b);
     }
     return base + file;
-}
-// Save the scene, modified scripts and the open visual-script graph. False if any failed.
-static bool SaveEverything(EditorState& ed) {
-    bool ok = true;
-    if (ed.isPlaying()) ed.Stop();   // save the edited scene, not the running copy
-    if (ed.dirty) {
-        std::string p = ed.path();
-        if (p.empty()) p = ed.projectDir().empty() ? std::string("scene.okayscene") : ed.projectDir() + "/Untitled.okayscene";
-        if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); } else ok = false;
-    }
-    for (okay::ScriptComponent* t : g_scriptTabs) {
-        if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
-        const char* live = PeekCodeBuffer(t);
-        std::ofstream f(t->Path(), std::ios::binary);
-        if (f && live) { f << live; g_scriptSaved[t] = live; } else ok = false;
-    }
-    auto& vg = okay::editor::vsed::State().g;
-    if (vg.dirty && !vg.path.empty() && !vg.save(vg.path)) ok = false;
-    return ok;
 }
 static void PollLauncherRequest(EditorState& ed, bool& running) {
     static Uint32 last = 0;

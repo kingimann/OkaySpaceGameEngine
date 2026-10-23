@@ -5984,6 +5984,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
     const bool chatOpen = ImGui::Begin("Chat", chatClose, chatFlags);
     if (g_chatInOwnWindow) ImGui::PopStyleVar();
     ImGui::PopStyleVar();
+    if (!g_chatInOwnWindow && chatOpen) {   // never left off-screen (a position saved on a bigger window)
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        const ImVec2 p = ImGui::GetWindowPos();
+        const ImVec2 np(std::clamp(p.x, vp->Pos.x, std::max(vp->Pos.x, vp->Pos.x + vp->Size.x - 160.0f)),
+                        std::clamp(p.y, vp->Pos.y, std::max(vp->Pos.y, vp->Pos.y + vp->Size.y - 80.0f)));
+        if (np.x != p.x || np.y != p.y) ImGui::SetWindowPos(np);
+    }
     g_chatDropOk = chatOpen && (account.IsLoggedIn() || kChatDemo);
     g_chatDropMin = ImGui::GetWindowPos();
     g_chatDropMax = ImVec2(g_chatDropMin.x + ImGui::GetWindowWidth(), g_chatDropMin.y + ImGui::GetWindowHeight());
@@ -10724,8 +10731,30 @@ struct ChatWindowHost {
     ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
+// Keep a window reachable: when too little of it (or its title bar) is on any
+// display (a monitor was unplugged, a minimized position got saved...), put it
+// back in the middle of the first display, shrunk to fit.
+static void KeepWindowOnScreen(SDL_Window* w) {
+    if (!w) return;
+    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(w);
+    int x = 0, y = 0, ww = 0, wh = 0;
+    SDL_GetWindowPosition(w, &x, &y); SDL_GetWindowSize(w, &ww, &wh);
+    for (int d = 0; d < SDL_GetNumVideoDisplays(); ++d) {
+        SDL_Rect b;
+        if (SDL_GetDisplayUsableBounds(d, &b) != 0) continue;
+        const int ix = std::min(x + ww, b.x + b.w) - std::max(x, b.x);
+        const int iy = std::min(y + wh, b.y + b.h) - std::max(y, b.y);
+        if (ix >= 160 && iy >= 80 && y >= b.y - 8 && y < b.y + b.h - 40) return;   // title bar visible
+    }
+    SDL_Rect b;
+    if (SDL_GetDisplayUsableBounds(0, &b) != 0) return;
+    ww = std::min(ww, b.w - 40); wh = std::min(wh, b.h - 40);
+    SDL_SetWindowSize(w, ww, wh);
+    SDL_SetWindowPosition(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
+}
 static void ChatHostSaveGeometry() {
     if (!g_chatHost.win || !g_chatHost.shown) return;
+    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;   // (its position is meaningless then)
     SDL_GetWindowPosition(g_chatHost.win, &g_chatWinX, &g_chatWinY);
     SDL_GetWindowSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
 }
@@ -10765,7 +10794,9 @@ static void ChatHostSync() {
     const bool want = g_chatSeparate && g_chatWinOpen;
     if (want && !g_chatHost.shown) {
         if (!ChatHostCreate()) { g_chatSeparate = false; return; }   // fall back to the in-launcher window
-        SDL_ShowWindow(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win);
+        SDL_ShowWindow(g_chatHost.win);
+        KeepWindowOnScreen(g_chatHost.win);
+        SDL_RaiseWindow(g_chatHost.win);
         g_chatHost.shown = true;
     } else if (!want && g_chatHost.shown) {
         ChatHostSaveGeometry(); SavePrefs();
@@ -10776,7 +10807,7 @@ static void ChatHostSync() {
 static bool ChatHostFocused() {
     return g_chatHost.shown && (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
 }
-static void ChatHostRaise() { if (g_chatHost.shown) { SDL_RestoreWindow(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win); } }
+static void ChatHostRaise() { if (g_chatHost.shown) { SDL_RestoreWindow(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win); } }
 // Route an SDL event to the chat window; true when it belonged to it.
 static bool ChatHostEvent(const SDL_Event& e) {
     if (!g_chatHost.win) return false;

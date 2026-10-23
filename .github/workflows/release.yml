@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     # A normal release takes ~11 min; never let a stuck download hold one for hours.
     timeout-minutes: 45
+    outputs:
+      ver: ${{ steps.pkg.outputs.ver }}
     env:
       SDL2_VERSION: 2.30.9
       # Compiler cache kept between release builds (actions/cache below): only
@@ -150,3 +152,45 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         if: env.SUPABASE_PUBLISH == 'true'
         run: scripts/publish-supabase.sh
+
+  # The Linux game server: the player runtime built for Linux, which runs games
+  # headless with --server. The editor's "Dedicated Server" export downloads it
+  # (releases/latest/download/okay-server-linux-x64) to make a Linux server
+  # folder from Windows. Built on 22.04 so it runs on most VPS distros (glibc 2.35+).
+  linux-server:
+    name: Build the Linux game server
+    needs: windows-exe
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        timeout-minutes: 20
+        run: |
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for i in 1 2 3; do
+            if timeout 240 sudo apt-get $APT update && \
+               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++ libsdl2-dev libsodium-dev; then
+              exit 0
+            fi
+            echo "apt attempt $i failed or timed out; retrying"
+            sleep 10
+          done
+          exit 1
+
+      - name: Build the server runtime
+        run: |
+          cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_LAUNCHER=OFF \
+                -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF
+          cmake --build build-linux --target okay-player
+          cp build-linux/bin/okay-player okay-server-linux-x64
+          strip okay-server-linux-x64
+          ./okay-server-linux-x64 --help | head -n 3
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: okay-server-linux-x64
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', needs.windows-exe.outputs.ver) }}

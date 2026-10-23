@@ -9719,6 +9719,290 @@ static std::vector<std::string> CsMembersFor(const std::string& src, const std::
     return {};
 }
 
+// ---- Autocomplete details: description + code example -----------------------
+// Shown beside the suggestion list (like Rider / VS Code's details pane). Curated
+// entries cover the APIs people reach for most; any other builtin gets an example
+// generated from its signature. Keys are "Receiver.Member" or a bare name.
+struct ScriptHelp { const char* doc; const char* example; };
+static const ScriptHelp* ScriptHelpFor(const std::string& key) {
+    static const std::unordered_map<std::string, ScriptHelp> H = {
+        // ---- C# / Unity-style API
+        {"Input.GetAxis", {"-1..1 from the keyboard (A/D, arrows) or a stick. \"Horizontal\" or \"Vertical\".",
+            "float h = Input.GetAxis(\"Horizontal\");\nfloat v = Input.GetAxis(\"Vertical\");\ntransform.position += new Vector3(h, 0, v) * speed * Time.deltaTime;"}},
+        {"Input.GetKeyDown", {"True only on the frame the key goes down.",
+            "if (Input.GetKeyDown(KeyCode.Space))\n{\n    Jump();\n}"}},
+        {"Input.GetKey", {"True every frame while the key is held.",
+            "if (Input.GetKey(KeyCode.LeftShift))\n    speed = runSpeed;"}},
+        {"Input.GetKeyUp", {"True only on the frame the key is released.",
+            "if (Input.GetKeyUp(KeyCode.E))\n    Debug.Log(\"Released E\");"}},
+        {"Input.GetMouseButtonDown", {"True on the frame a mouse button is pressed (0 left, 1 right, 2 middle).",
+            "if (Input.GetMouseButtonDown(0))\n    Shoot();"}},
+        {"Input.GetMouseButton", {"True while a mouse button is held (0 left, 1 right, 2 middle).",
+            "if (Input.GetMouseButton(1))\n    Aim();"}},
+        {"Input.GetButtonDown", {"True on the frame a named button (\"Jump\", \"Fire1\") is pressed.",
+            "if (Input.GetButtonDown(\"Jump\"))\n    rb.AddForce(Vector3.up * jumpForce);"}},
+        {"Input.mousePosition", {"The mouse position in screen pixels.",
+            "Vector3 m = Input.mousePosition;\nDebug.Log($\"Mouse at {m.x}, {m.y}\");"}},
+        {"Time.deltaTime", {"Seconds since the last frame. Multiply speeds by it so movement is frame-rate independent.",
+            "transform.Rotate(0, 90 * Time.deltaTime, 0);"}},
+        {"Time.time", {"Seconds since the game started.",
+            "float y = Mathf.Sin(Time.time * 2f) * 0.5f;"}},
+        {"Time.timeScale", {"Game speed: 1 = normal, 0.5 = slow motion, 0 = paused.",
+            "Time.timeScale = paused ? 0f : 1f;"}},
+        {"Debug.Log", {"Print a message to the Console.",
+            "Debug.Log(\"Hello\");\nDebug.Log($\"Score: {score}\");"}},
+        {"Debug.LogWarning", {"Print a yellow warning to the Console.",
+            "if (health < 10)\n    Debug.LogWarning(\"Low health!\");"}},
+        {"Debug.LogError", {"Print a red error to the Console.",
+            "if (target == null)\n    Debug.LogError(\"No target set\");"}},
+        {"Mathf.Lerp", {"Blend from a to b by t (0..1).",
+            "speed = Mathf.Lerp(speed, maxSpeed, 5f * Time.deltaTime);"}},
+        {"Mathf.Clamp", {"Keep a value between min and max.",
+            "health = Mathf.Clamp(health - damage, 0, maxHealth);"}},
+        {"Mathf.Clamp01", {"Keep a value between 0 and 1.",
+            "float t = Mathf.Clamp01(elapsed / duration);"}},
+        {"Mathf.Abs", {"The value without its sign.",
+            "if (Mathf.Abs(h) > 0.1f)\n    walking = true;"}},
+        {"Mathf.Sin", {"Sine of an angle in radians: a smooth -1..1 wave.",
+            "float bob = Mathf.Sin(Time.time * 3f) * 0.25f;"}},
+        {"Mathf.MoveTowards", {"Step from current toward target by at most maxDelta (never overshoots).",
+            "x = Mathf.MoveTowards(x, targetX, 4f * Time.deltaTime);"}},
+        {"Mathf.SmoothStep", {"Like Lerp but eases in and out.",
+            "float a = Mathf.SmoothStep(0f, 1f, t);"}},
+        {"Mathf.PingPong", {"Goes 0 -> length -> 0 over and over.",
+            "float x = Mathf.PingPong(Time.time, 3f);"}},
+        {"Mathf.Max", {"The larger of the values.",
+            "int best = Mathf.Max(best, score);"}},
+        {"Mathf.Min", {"The smaller of the values.",
+            "ammo = Mathf.Min(ammo + 10, maxAmmo);"}},
+        {"Random.Range", {"Random number in [min, max). Ints exclude max; floats can include it.",
+            "int roll = Random.Range(1, 7);          // 1..6\nfloat x = Random.Range(-5f, 5f);"}},
+        {"Random.value", {"Random float from 0 to 1.",
+            "if (Random.value < 0.25f)\n    DropLoot();"}},
+        {"Vector3.Distance", {"Distance between two points.",
+            "if (Vector3.Distance(transform.position, player.position) < 3f)\n    Attack();"}},
+        {"Vector3.Lerp", {"Blend between two points by t (0..1).",
+            "transform.position = Vector3.Lerp(transform.position, target, 5f * Time.deltaTime);"}},
+        {"Vector3.up", {"Shorthand for (0, 1, 0).",
+            "transform.position += Vector3.up * 2f * Time.deltaTime;"}},
+        {"Vector3.zero", {"Shorthand for (0, 0, 0).",
+            "rb.velocity = Vector3.zero;"}},
+        {"Quaternion.Euler", {"A rotation from angles in degrees (x, y, z).",
+            "transform.rotation = Quaternion.Euler(0, 90, 0);"}},
+        {"SceneManager.LoadScene", {"Load another scene by name.",
+            "SceneManager.LoadScene(\"Level2\");"}},
+        {"Translate", {"Move by an offset (local space by default).",
+            "transform.Translate(Vector3.forward * speed * Time.deltaTime);"}},
+        {"Rotate", {"Turn by angles in degrees.",
+            "transform.Rotate(0, 90 * Time.deltaTime, 0);"}},
+        {"LookAt", {"Turn to face a target.",
+            "transform.LookAt(player);"}},
+        {"position", {"World position.",
+            "transform.position = new Vector3(0, 1, 0);"}},
+        {"localScale", {"Scale relative to the parent.",
+            "transform.localScale = Vector3.one * 2f;"}},
+        {"eulerAngles", {"Rotation as angles in degrees.",
+            "Vector3 r = transform.eulerAngles;\ntransform.eulerAngles = new Vector3(0, r.y + 45, 0);"}},
+        {"SetActive", {"Turn the object on or off.",
+            "door.SetActive(false);"}},
+        {"CompareTag", {"True when the object has that tag (faster than tag == ...).",
+            "void OnCollisionEnter(Collision other)\n{\n    if (other.gameObject.CompareTag(\"Enemy\"))\n        TakeDamage(10);\n}"}},
+        {"GetComponent", {"Find a component on this object.",
+            "Rigidbody rb = GetComponent<Rigidbody>();\nrb.AddForce(Vector3.up * 5f);"}},
+        {"AddForce", {"Push a Rigidbody.",
+            "rb.AddForce(Vector3.up * jumpForce);"}},
+        {"MovePosition", {"Move a Rigidbody, respecting collisions.",
+            "rb.MovePosition(rb.position + dir * speed * Time.deltaTime);"}},
+        {"velocity", {"Current speed and direction of a Rigidbody.",
+            "rb.velocity = new Vector2(h * speed, rb.velocity.y);"}},
+        {"SetTrigger", {"Fire an Animator trigger parameter.",
+            "animator.SetTrigger(\"Jump\");"}},
+        {"SetBool", {"Set an Animator bool parameter.",
+            "animator.SetBool(\"Running\", Mathf.Abs(h) > 0.1f);"}},
+        {"SetFloat", {"Set an Animator float parameter.",
+            "animator.SetFloat(\"Speed\", rb.velocity.magnitude);"}},
+        {"Play", {"Start playing (a sound, or an animation state).",
+            "audioSource.Play();"}},
+        {"Add", {"Add an item to the end of a list.",
+            "List<string> names = new List<string>();\nnames.Add(\"Ada\");"}},
+        {"Remove", {"Remove the first matching item.",
+            "enemies.Remove(enemy);"}},
+        {"RemoveAt", {"Remove the item at an index.",
+            "items.RemoveAt(0);"}},
+        {"Contains", {"True when the collection (or string) has the item.",
+            "if (inventory.Contains(\"Key\"))\n    OpenDoor();"}},
+        {"ContainsKey", {"True when the dictionary has the key.",
+            "if (!scores.ContainsKey(name))\n    scores[name] = 0;"}},
+        {"Count", {"How many items are in the collection.",
+            "for (int i = 0; i < items.Count; i++)\n    Debug.Log(items[i]);"}},
+        {"Length", {"How many characters (string) or items (array).",
+            "if (playerName.Length > 12)\n    playerName = playerName.Substring(0, 12);"}},
+        {"Clear", {"Remove everything.",
+            "bullets.Clear();"}},
+        {"Split", {"Cut a string into parts.",
+            "string[] parts = \"a,b,c\".Split(',');"}},
+        {"ToUpper", {"An upper-case copy of the string.",
+            "string shout = message.ToUpper();"}},
+        {"StartCoroutine", {"Run an IEnumerator over several frames.",
+            "StartCoroutine(Blink());\n\nIEnumerator Blink()\n{\n    yield return new WaitForSeconds(0.5f);\n}"}},
+        {"Instantiate", {"Spawn a copy of a prefab or object.",
+            "GameObject b = Instantiate(bulletPrefab, transform.position, transform.rotation);"}},
+        {"Destroy", {"Remove an object (optionally after a delay).",
+            "Destroy(gameObject, 2f);   // gone in 2 seconds"}},
+        {"WaitForSeconds", {"Pause a coroutine.",
+            "yield return new WaitForSeconds(1f);"}},
+        {"Vector3", {"A 3D point or direction (x, y, z).",
+            "Vector3 dir = new Vector3(1, 0, 0);\ntransform.position += dir * speed * Time.deltaTime;"}},
+        {"Vector2", {"A 2D point or direction (x, y).",
+            "Vector2 move = new Vector2(h, v).normalized;"}},
+        {"List", {"A resizable list.",
+            "List<int> scores = new List<int>();\nscores.Add(10);\nforeach (int s in scores)\n    Debug.Log(s);"}},
+        {"Dictionary", {"Key -> value lookup.",
+            "Dictionary<string, int> stock = new Dictionary<string, int>();\nstock[\"apples\"] = 3;"}},
+        {"Color", {"An RGBA colour (0..1 each).",
+            "GetComponent<SpriteRenderer>().color = Color.red;"}},
+        // ---- keywords
+        {"if", {"Run code only when a condition is true.",
+            "if (health <= 0)\n{\n    Die();\n}\nelse if (health < 20)\n{\n    Debug.Log(\"Low!\");\n}"}},
+        {"for", {"Loop a set number of times.",
+            "for (int i = 0; i < 5; i++)\n{\n    Debug.Log(i);\n}"}},
+        {"foreach", {"Loop over every item in a collection.",
+            "foreach (var enemy in enemies)\n{\n    enemy.TakeDamage(1);\n}"}},
+        {"while", {"Loop while a condition stays true.",
+            "while (ammo > 0)\n{\n    Fire();\n    ammo--;\n}"}},
+        {"switch", {"Pick a branch by value.",
+            "switch (state)\n{\n    case 0: Idle(); break;\n    case 1: Run(); break;\n    default: break;\n}"}},
+        {"class", {"Declare a type. A script's class extends MonoBehaviour.",
+            "public class Coin : MonoBehaviour\n{\n    public int value = 1;\n}"}},
+        {"enum", {"A named set of values.",
+            "enum State { Idle, Walk, Jump }\nState state = State.Idle;"}},
+        {"return", {"Leave the function (with a value, if it returns one).",
+            "int Double(int x)\n{\n    return x * 2;\n}"}},
+        {"new", {"Create an object.",
+            "Vector3 p = new Vector3(0, 1, 0);"}},
+        // ---- OkayScript one-liners
+        {"spin", {nullptr, "void Update()\n{\n    spin(90);   // 90 degrees per second\n}"}},
+        {"walk", {nullptr, "walk(1, 0, 3);   // right at 3 units/second"}},
+        {"on_key_move", {nullptr, "void Update()\n{\n    on_key_move(5);\n}"}},
+        {"platformer", {nullptr, "void Update()\n{\n    platformer(6, 8);   // speed, jump\n}"}},
+        {"follow", {nullptr, "follow(\"Player\", 3, 1.5);"}},
+        {"timer", {nullptr, "if (timer(\"spawn\", 2))\n    spawn(\"Enemy\", 0, 5);"}},
+        {"cooldown", {nullptr, "if (key_down(\"space\") && cooldown(\"shoot\", 0.3))\n    shoot();"}},
+        {"once", {nullptr, "if (once(\"intro\"))\n    print(\"Welcome!\");"}},
+        {"print", {"Print to the Console.", "print(\"Score: \" + score);"}},
+        {"camera_shake", {nullptr, "camera_shake(0.6);   // a hit"}},
+        {"camera_zoom_to", {nullptr, "camera_zoom_to(2, 0.5);   // 2x over half a second"}},
+    };
+    auto it = H.find(key);
+    return it == H.end() ? nullptr : &it->second;
+}
+
+// An example call built from a signature such as "walk(dx, dy, speed [, x])":
+// optional parts dropped, each parameter given a plausible value by its name.
+static std::string ScriptExampleFromSignature(const std::string& sig) {
+    const auto lp = sig.find('('), rp = sig.rfind(')');
+    if (lp == std::string::npos || rp == std::string::npos || rp < lp || sig.find('|') != std::string::npos) return "";
+    std::string inner = sig.substr(lp + 1, rp - lp - 1);
+    if (auto ob = inner.find('['); ob != std::string::npos) inner = inner.substr(0, ob);
+    std::vector<std::string> args;
+    std::string cur;
+    auto flush = [&] {
+        std::string a = cur; cur.clear();
+        while (!a.empty() && (a.back() == ' ' || a.back() == ',')) a.pop_back();
+        std::size_t s = a.find_first_not_of(' '); if (s == std::string::npos) return;
+        a = a.substr(s);
+        if (a == "...") return;
+        std::string v;
+        auto has = [&](const char* w) { return a.find(w) != std::string::npos; };
+        if (a[0] == '"') v = a;                                            // "name" stays a string
+        else if (has("speed")) v = "5";
+        else if (has("deg") || has("angle")) v = "90";
+        else if (has("dur") || has("time") || has("sec")) v = "0.5";
+        else if (has("count") || a == "n") v = "3";
+        else if (has("radius") || has("dist")) v = "2";
+        else if (has("amount") || has("intensity") || has("strength")) v = "0.5";
+        else if (has("key")) v = "\"space\"";
+        else if (has("name") || has("target") || has("tag") || has("prefab")) v = "\"Player\"";
+        else if (has("fn")) v = "\"OnHit\"";
+        else if (a == "r") v = "1"; else if (a == "g" || a == "b") v = "0";
+        else if (has("text") || has("msg") || has("str")) v = "\"Hello\"";
+        else if (a == "dx" || a == "x" || a == "x1") v = "1";
+        else if (a == "dy" || a == "y" || a == "y1" || a == "z" || a == "dz") v = "0";
+        else v = "1";
+        args.push_back(v);
+    };
+    for (char c : inner) { if (c == ',') flush(); else cur += c; }
+    flush();
+    std::string out = sig.substr(0, lp) + "(";
+    for (std::size_t i = 0; i < args.size(); ++i) out += (i ? ", " : "") + args[i];
+    return out + ");";
+}
+
+// Colour a code snippet with the editor's palette (keywords, types, strings,
+// numbers, calls, comments) using the code font.
+static void DrawCodeSnippet(const std::string& code) {
+    static const std::unordered_set<std::string> kw = {
+        "if","else","for","foreach","in","while","do","return","break","continue","switch","case","default",
+        "new","public","private","protected","static","void","int","float","bool","string","var","class",
+        "enum","struct","true","false","null","this","yield","using","override","const","readonly"};
+    static const std::unordered_set<std::string> types = {
+        "Vector3","Vector2","Quaternion","Color","Mathf","Time","Input","KeyCode","Debug","Random",
+        "List","Dictionary","GameObject","Transform","Rigidbody","Rigidbody2D","SpriteRenderer",
+        "Animator","AudioSource","Collision","Collision2D","IEnumerator","WaitForSeconds","MonoBehaviour",
+        "SceneManager","State","Coin"};
+    const ImU32 cDef = IM_COL32(169, 183, 198, 255), cKw = IM_COL32(204, 120, 50, 255),
+                cTy = IM_COL32(78, 201, 176, 255), cStr = IM_COL32(106, 135, 89, 255),
+                cNum = IM_COL32(104, 151, 187, 255), cFn = IM_COL32(255, 198, 109, 255),
+                cCm = IM_COL32(128, 138, 128, 255), cMem = IM_COL32(176, 154, 196, 255);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (g_codeFont) ImGui::PushFont(g_codeFont, ImGui::GetFontSize());
+    const float lh = ImGui::GetTextLineHeight();
+    std::size_t ls = 0;
+    while (ls <= code.size()) {
+        std::size_t le = code.find('\n', ls); if (le == std::string::npos) le = code.size();
+        const std::string line = code.substr(ls, le - ls);
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        float x = pos.x;
+        auto put = [&](std::size_t a, std::size_t b, ImU32 col) {
+            if (b <= a) return;
+            const char* s = line.c_str() + a; const char* e = line.c_str() + b;
+            dl->AddText(ImVec2(x, pos.y), col, s, e);
+            x += ImGui::CalcTextSize(s, e).x;
+        };
+        std::size_t i = 0;
+        while (i < line.size()) {
+            const char c = line[i];
+            if (c == '/' && i + 1 < line.size() && line[i + 1] == '/') { put(i, line.size(), cCm); break; }
+            if (c == '"' || ((c == '$' || c == '@') && i + 1 < line.size() && line[i + 1] == '"')) {
+                std::size_t j = i + (c == '"' ? 1 : 2);
+                while (j < line.size() && line[j] != '"') { if (line[j] == '\\') ++j; ++j; }
+                put(i, std::min(j + 1, line.size()), cStr); i = j + 1; continue;
+            }
+            if (c == '\'') { std::size_t j = line.find('\'', i + 1); j = j == std::string::npos ? line.size() : j + 1; put(i, j, cStr); i = j; continue; }
+            if (std::isdigit((unsigned char)c)) {
+                std::size_t j = i; while (j < line.size() && (std::isalnum((unsigned char)line[j]) || line[j] == '.')) ++j;
+                put(i, j, cNum); i = j; continue;
+            }
+            if (std::isalpha((unsigned char)c) || c == '_') {
+                std::size_t j = i; while (j < line.size() && (std::isalnum((unsigned char)line[j]) || line[j] == '_')) ++j;
+                const std::string w = line.substr(i, j - i);
+                std::size_t k = j; while (k < line.size() && line[k] == ' ') ++k;
+                ImU32 col = cDef;
+                if (kw.count(w)) col = cKw;
+                else if (types.count(w)) col = cTy;
+                else if (k < line.size() && (line[k] == '(' || line[k] == '<') && !(i > 0 && line[i - 1] == '.' && line[k] == '<')) col = cFn;
+                else if (i > 0 && line[i - 1] == '.') col = cMem;
+                put(i, j, col); i = j; continue;
+            }
+            put(i, i + 1, cDef); ++i;
+        }
+        ImGui::Dummy(ImVec2(x - pos.x, lh));
+        if (le == code.size()) break;
+        ls = le + 1;
+    }
+    if (g_codeFont) ImGui::PopFont();
+}
+
 // ---- ImGuiColorTextEdit integration ----------------------------------------
 // A Darcula-flavoured palette matching the old hand-drawn highlighter (ABGR, so
 // 0xAABBGGRR). Known identifiers (our builtins) render yellow like function calls.
@@ -9732,7 +10016,7 @@ static const TextEditor::Palette& OkayScriptPalette() {
         0xffc8c8c8,  // Punctuation        light gray
         0xff808080,  // Preprocessor
         0xffc6b7a9,  // Identifier         default text
-        0xff6dc6ff,  // KnownIdentifier    (255,198,109) yellow — builtins/functions
+        0xffaa7698,  // KnownIdentifier    (152,118,170) purple — builtin properties (transform, deltaTime)
         0xffaa7698,  // PreprocIdentifier  purple
         0xff808a80,  // Comment            (128,138,128) gray
         0xff808a80,  // MultiLineComment   gray
@@ -9745,6 +10029,9 @@ static const TextEditor::Palette& OkayScriptPalette() {
         0x14ffffff,  // CurrentLineFill
         0x0affffff,  // CurrentLineFillInactive
         0x18ffffff,  // CurrentLineEdge
+        0xffb0c94e,  // TypeName           (78,201,176)  teal — Vector3, List, your classes
+        0xff6dc6ff,  // Function           (255,198,109) yellow — calls + method declarations
+        0xffc49ab0,  // Member             (176,154,196) light purple — .position, .x
     } };
     return p;
 }
@@ -9764,21 +10051,28 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             "sealed","ref","out","is","as","typeof","base","get","set","yield","using","namespace",
             "void","int","float","double","bool","string","char","long","byte","uint","object",
             "true","false","null","this","foreach","in","and","or","not","try","catch","finally","throw",
+            "short","ushort","ulong","sbyte","decimal","async","await","params","delegate","event",
+            "operator","nameof","when","where","partial",
         };
         for (auto* k : kw) d.mKeywords.insert(k);
-        // C# / Unity type names OkayScript understands, coloured like known identifiers.
+        // C# / Unity type names OkayScript understands: teal (TypeName), with a
+        // hover tooltip. Classes / enums declared in the script are added per
+        // editor (SetUserTypes).
         static const char* kTypes[] = {
             "MonoBehaviour","OkaySource","GameObject","Transform","Vector3","Vector2","Quaternion","Color",
             "Mathf","Time","Input","KeyCode","Debug","Random","Space","Screen","List","Dictionary",
             "KeyValuePair","HashSet","Queue","Stack","IEnumerator","Coroutine","WaitForSeconds",
             "WaitForEndOfFrame","Rigidbody","Rigidbody2D","SpriteRenderer","MeshRenderer","Renderer",
             "Animator","AudioSource","Collider","Collider2D","Collision","Collision2D","ForceMode2D",
-            "SerializeField","Header","Range","Tooltip","Action","Func",
+            "SerializeField","Header","Range","Tooltip","Action","Func","String","Text",
+            "SortedDictionary","IEnumerable",
         };
         for (auto* t : kTypes) {
             TextEditor::Identifier id; id.mDeclaration = std::string(t) + " (C# / Unity type)";
             d.mIdentifiers.insert(std::make_pair(std::string(t), id));
+            d.mTypeNames.insert(t);
         }
+        d.mSemantic = true;
         // Every completion name (curated API + all VM builtins) becomes a known
         // identifier; attach the signature + doc so hovering shows it (widget tooltip).
         for (const auto& name : ScriptCompletions()) {
@@ -9791,7 +10085,9 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             d.mIdentifiers.insert(std::make_pair(name, id));
         }
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "\\\"(\\\\.|[^\\\"])*\\\"", TextEditor::PaletteIndex::String));
+            "[$@]?\\\"(\\\\.|[^\\\"])*\\\"", TextEditor::PaletteIndex::String));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "'(\\\\.|[^'\\\\])'", TextEditor::PaletteIndex::CharLiteral));
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
             "[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[fF]?", TextEditor::PaletteIndex::Number));
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
@@ -10236,6 +10532,7 @@ void DrawScriptEditor(EditorState& ed) {
         static std::string s_error;     // last compile error (shown red in status)
         static std::vector<ScriptDiagnostic> s_diags;   // all live syntax problems (Problems panel)
         static std::vector<ScriptLint> s_warns;         // semantic warnings (unknown fn, arity)
+        static TextEditor::Keywords s_userTypes;        // classes / enums declared in the open script
         static bool s_showProblems = false;             // Problems panel visibility
         static bool s_palReq = false;   // request to open the command palette
         static char s_find[128] = "";   // Find query (Ctrl+F opens the bar + highlights matches)
@@ -11118,6 +11415,71 @@ void DrawScriptEditor(EditorState& ed) {
             ed.dirty = true;
         }
 
+        // ---- Live problems while you type (debounced ~0.35 s after the last edit):
+        // syntax errors from the VM's recovering parser (every error, not just the
+        // first) and, once it parses, lint warnings: unknown functions with a
+        // "did you mean" fix, and calls passing too many arguments. They drive the
+        // red / amber line marks, the inline messages, the scrollbar ticks, the
+        // status bar and the Problems panel (F2 = next problem).
+        {
+            static const void* s_checkFor = nullptr;
+            static std::size_t s_seenHash = 0, s_checkedHash = 0;
+            static double s_changedAt = 0.0;
+            const double nowT = ImGui::GetTime();
+            if (sc != s_checkFor) { s_checkFor = sc; s_seenHash = bufHash; s_checkedHash = bufHash ^ 1u; s_changedAt = -100.0; }
+            if (bufHash != s_seenHash) { s_seenHash = bufHash; s_changedAt = nowT; }
+            if (bufHash != s_checkedHash && nowT - s_changedAt > 0.35) {
+                s_checkedHash = bufHash;
+                s_diags.clear(); s_warns.clear(); s_error.clear();
+                // Classes / structs / enums / interfaces declared in this file: coloured
+                // as types, and never "unknown function" when used as constructors.
+                s_userTypes.clear();
+                {
+                    const std::string src = buf.data();
+                    for (const char* kwd : {"class", "struct", "enum", "interface"}) {
+                        const std::size_t kl = std::strlen(kwd);
+                        for (std::size_t p = src.find(kwd); p != std::string::npos; p = src.find(kwd, p + kl)) {
+                            if (p > 0 && (std::isalnum((unsigned char)src[p - 1]) || src[p - 1] == '_')) continue;
+                            std::size_t q = p + kl;
+                            if (q >= src.size() || (src[q] != ' ' && src[q] != '\t')) continue;
+                            while (q < src.size() && (src[q] == ' ' || src[q] == '\t')) ++q;
+                            std::size_t e = q; while (e < src.size() && (std::isalnum((unsigned char)src[e]) || src[e] == '_')) ++e;
+                            if (e > q) s_userTypes.insert(src.substr(q, e - q));
+                        }
+                    }
+                }
+                if (sc->Language() == "okayscript") {
+                    static std::unique_ptr<okay::IScriptVM> s_checkVM = okay::CreateScriptVM("okayscript");
+                    if (s_checkVM) s_diags = s_checkVM->ValidateAll(buf.data());
+                    if (!s_diags.empty()) {
+                        s_error = (s_diags[0].line > 0 ? "line " + std::to_string(s_diags[0].line) + ": " : std::string()) + s_diags[0].message;
+                    } else {
+                        // Every builtin + its max argument count (from the signature table;
+                        // a signature with "..." takes any number).
+                        static std::unordered_set<std::string> s_known;
+                        static std::unordered_map<std::string, int> s_maxArgs;
+                        if (s_known.empty()) {
+                            for (const auto& w : ScriptCompletions()) s_known.insert(w);
+                            for (const auto& kv : ScriptSignatureMap()) {
+                                s_known.insert(kv.first);
+                                const std::string& sg = kv.second;
+                                const auto lp = sg.find('('), rp = sg.rfind(')');
+                                if (lp == std::string::npos || rp == std::string::npos || rp <= lp) continue;
+                                const std::string params = sg.substr(lp + 1, rp - lp - 1);
+                                if (params.find("...") != std::string::npos) continue;
+                                int cnt = 0; bool any = false;
+                                for (char c : params) { if (c == ',') ++cnt; else if (!std::isspace((unsigned char)c)) any = true; }
+                                s_maxArgs[kv.first] = any ? cnt + 1 : 0;
+                            }
+                        }
+                        std::unordered_set<std::string> known = s_known;
+                        known.insert(s_userTypes.begin(), s_userTypes.end());
+                        s_warns = AnalyzeScriptWarnings(buf.data(), known, s_maxArgs);
+                    }
+                }
+            }
+        }
+
         // Diagnostics -> error markers (red line + hover message); bookmarks -> the
         // widget's breakpoint markers (repurposed).
         {
@@ -11125,6 +11487,7 @@ void DrawScriptEditor(EditorState& ed) {
             for (const auto& w : s_warns) if (w.line > 0) em[w.line] = std::string("warning: ") + w.msg;
             for (const auto& d : s_diags) if (d.line > 0) em[d.line] = d.message;   // errors win
             te.SetErrorMarkers(em);
+            te.SetUserTypes(s_userTypes);
             te.SetBreakpoints(TextEditor::Breakpoints(bookmarks.begin(), bookmarks.end()));
         }
 
@@ -11917,13 +12280,20 @@ void DrawScriptEditor(EditorState& ed) {
                 }
                 std::sort(fuzz.begin(), fuzz.end(), [](const Hit& a, const Hit& b) {
                     return a.score != b.score ? a.score > b.score : a.w->size() < b.w->size(); });
+                // Words you've picked before come first (per session), then shorter ones.
+                static std::unordered_map<std::string, int> s_acUsed;
+                std::stable_sort(exact.begin(), exact.end(), [&](const Hit& a, const Hit& b) {
+                    auto ua = s_acUsed.find(*a.w), ub = s_acUsed.find(*b.w);
+                    const int na = ua == s_acUsed.end() ? 0 : ua->second, nb = ub == s_acUsed.end() ? 0 : ub->second;
+                    return na != nb ? na > nb : a.w->size() < b.w->size(); });
+                constexpr std::size_t kMaxHits = 10;
                 std::vector<Hit> hits = exact;
-                for (auto& h : ci) { if (hits.size() >= 8) break; hits.push_back(h); }
+                for (auto& h : ci) { if (hits.size() >= kMaxHits) break; hits.push_back(h); }
                 // Fuzzy matches are a FALLBACK only: when real prefix matches
                 // exist, fuzzy noise ("spr" -> set_parent) just buries them.
                 if (hits.empty())
-                    for (auto& h : fuzz) { if (hits.size() >= 8) break; hits.push_back(h); }
-                if (hits.size() > 8) hits.resize(8);
+                    for (auto& h : fuzz) { if (hits.size() >= kMaxHits) break; hits.push_back(h); }
+                if (hits.size() > kMaxHits) hits.resize(kMaxHits);
                 if (!hits.empty()) {
                     g_acCount = (int)hits.size();
                     if (acKeyUp)   g_acIndex = (g_acIndex - 1 + g_acCount) % g_acCount;
@@ -11955,19 +12325,30 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                         syncFromWidget();
                         g_acDismiss = true; g_acCount = 0;
+                        ++s_acUsed[word];
                     };
                     if (acKeyTab || acKeyEnter) {
                         accept(*hits[g_acIndex].w);
                     } else {
+                        // Below the caret; above it (and pulled left) when last frame's
+                        // size wouldn't fit on screen.
+                        static ImVec2 s_acSize(0, 0);
                         ImVec2 acPos = te.CaretScreenPosBelow();
-                        ImGui::SetNextWindowPos(ImVec2(acPos.x, acPos.y + 2));
-                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 46, 245));
+                        ImVec2 at(acPos.x, acPos.y + 2);
+                        const ImGuiViewport* vp = ImGui::GetMainViewport();
+                        const float vpR = vp->WorkPos.x + vp->WorkSize.x, vpB = vp->WorkPos.y + vp->WorkSize.y;
+                        if (at.y + s_acSize.y > vpB) at.y = std::max(vp->WorkPos.y, acPos.y - te.RowHeight() - 2 - s_acSize.y);
+                        if (at.x + s_acSize.x > vpR) at.x = std::max(vp->WorkPos.x, vpR - s_acSize.x);
+                        ImGui::SetNextWindowPos(at);
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(38, 38, 44, 255));
                         if (ImGui::Begin("##autocomplete", nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                 ImGuiWindowFlags_NoSavedSettings)) {
+                            s_acSize = ImGui::GetWindowSize();
                             ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());   // above a floating Script Editor
+                            ImGui::BeginGroup();
                             for (std::size_t i = 0; i < hits.size(); ++i) {
                                 const std::string& full = *hits[i].w;
                                 const bool isMethod = memberMode && !full.empty() && (full.back() == '(' || full.back() == '<');
@@ -11989,15 +12370,69 @@ void DrawScriptEditor(EditorState& ed) {
                                     ImGui::TextDisabled("%s", paren ? paren : sg->c_str());
                                 }
                             }
+                            ImGui::Dummy(ImVec2(0, 2));
+                            ImGui::TextDisabled("Up/Down select   Tab/Enter accept   Esc dismiss");
+                            ImGui::EndGroup();
+                            // Details pane for the selected suggestion: kind, signature,
+                            // what it does and a code example (IDE-style).
                             if (g_acCount > 0 && g_acIndex >= 0 && g_acIndex < (int)hits.size()) {
-                                if (const std::string* dsc = ScriptDoc(*hits[g_acIndex].w)) {
-                                    ImGui::Separator();
-                                    ImGui::PushTextWrapPos(320.0f);
-                                    ImGui::TextColored(ImVec4(0.66f, 0.80f, 0.62f, 1.0f), "%s", dsc->c_str());
+                                const std::string& full = *hits[g_acIndex].w;
+                                const bool isMethod = memberMode && !full.empty() && (full.back() == '(' || full.back() == '<');
+                                const std::string nm = isMethod ? full.substr(0, full.size() - 1) : full;
+                                const ScriptHelp* help = nullptr;
+                                if (!receiver.empty()) help = ScriptHelpFor(receiver + "." + nm);
+                                if (!help) help = ScriptHelpFor(nm);
+                                const std::string* sg = memberMode ? nullptr : ScriptSignature(nm);
+                                const std::string* dsc = memberMode ? nullptr : ScriptDoc(nm);
+                                std::string doc = help && help->doc ? help->doc : (dsc ? *dsc : std::string());
+                                std::string example = help && help->example ? help->example : std::string();
+                                if (example.empty() && sg) example = ScriptExampleFromSignature(*sg);
+                                if (sg || !doc.empty() || !example.empty()) {
+                                    const float paneW = ImGui::GetFontSize() * 24.0f;
+                                    ImGui::SameLine(0, 12);
+                                    ImGui::BeginGroup();
+                                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + paneW);
+                                    char letter; ImU32 tcol;
+                                    if (memberMode) { letter = isMethod ? 'm' : 'p'; tcol = isMethod ? IM_COL32(220, 200, 120, 255) : IM_COL32(150, 190, 230, 255); }
+                                    else AcKindTag(ClassifyCompletion(nm), letter, tcol);
+                                    static const char* kKind[] = {"keyword", "type", "function", "variable"};
+                                    const char* kind = memberMode ? (isMethod ? "method" : "property")
+                                        : (letter == 'k' ? kKind[0] : letter == 'T' ? kKind[1] : letter == 'f' ? kKind[2] : kKind[3]);
+                                    ImGui::TextColored(ImColor(tcol), "%s", kind);
+                                    ImGui::SameLine(0, 8);
+                                    if (sg) ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.55f, 1.0f), "%s", sg->c_str());
+                                    else ImGui::TextColored(ImVec4(0.92f, 0.92f, 0.92f, 1.0f), "%s%s%s",
+                                                            receiver.empty() ? "" : receiver.c_str(), receiver.empty() ? "" : ".",
+                                                            (nm + (isMethod ? (full.back() == '<' ? "<T>()" : "()") : "")).c_str());
+                                    if (!doc.empty()) {
+                                        ImGui::Dummy(ImVec2(0, 2));
+                                        ImGui::TextColored(ImVec4(0.80f, 0.82f, 0.86f, 1.0f), "%s", doc.c_str());
+                                    }
                                     ImGui::PopTextWrapPos();
+                                    if (!example.empty()) {
+                                        ImGui::Dummy(ImVec2(0, 4));
+                                        ImGui::TextDisabled("Example");
+                                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                                        dl->ChannelsSplit(2);
+                                        dl->ChannelsSetCurrent(1);
+                                        const ImVec2 b0 = ImGui::GetCursorScreenPos();
+                                        ImGui::Indent(8.0f);
+                                        ImGui::Dummy(ImVec2(0, 3));
+                                        DrawCodeSnippet(example);
+                                        ImGui::Dummy(ImVec2(0, 3));
+                                        ImGui::Unindent(8.0f);
+                                        const ImVec2 b1(std::max(b0.x + paneW, ImGui::GetItemRectMax().x + 8.0f), ImGui::GetCursorScreenPos().y - 2.0f);
+                                        dl->ChannelsSetCurrent(0);
+                                        dl->AddRectFilled(b0, b1, IM_COL32(24, 24, 28, 255), 4.0f);
+                                        dl->AddRect(b0, b1, IM_COL32(70, 70, 80, 255), 4.0f);
+                                        dl->ChannelsMerge();
+                                    }
+                                    ImGui::EndGroup();
+                                    // Divider between the list and the details.
+                                    const ImVec2 g0 = ImGui::GetItemRectMin(), g1 = ImGui::GetItemRectMax();
+                                    ImGui::GetWindowDrawList()->AddLine(ImVec2(g0.x - 6, g0.y), ImVec2(g0.x - 6, g1.y),
+                                                                       IM_COL32(80, 80, 92, 255));
                                 }
-                                ImGui::Separator();
-                                ImGui::TextDisabled("Up/Down select   Tab/Enter accept   Esc dismiss");
                             }
                         }
                         ImGui::End();

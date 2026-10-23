@@ -20,6 +20,12 @@ jobs:
     timeout-minutes: 45
     env:
       SDL2_VERSION: 2.30.9
+      # Compiler cache kept between release builds (actions/cache below): only
+      # changed files recompile, so a typical release builds in a few minutes.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v6
 
@@ -31,7 +37,7 @@ jobs:
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for i in 1 2 3; do
             if timeout 240 sudo apt-get $APT update && \
-               timeout 420 sudo apt-get $APT install -y cmake ninja-build mingw-w64 zip nsis; then
+               timeout 420 sudo apt-get $APT install -y cmake ninja-build mingw-w64 zip nsis ccache; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"
@@ -57,6 +63,13 @@ jobs:
           tar xzf libsodium-mingw.tar.gz -C libsodium-mingw
           echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"
 
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-mingw-${{ github.sha }}
+          restore-keys: ccache-mingw-
+
       - name: Build Windows distribution
         # The account server + public key are baked into the build as the CMake
         # defaults (see the top-level CMakeLists), pointing at the OkaySpace
@@ -64,7 +77,10 @@ jobs:
         # anymore: a stale/empty secret used to silently misconfigure the build
         # and break sign-in. To point a fork at a different server, change the
         # CMake defaults instead.
-        run: scripts/build-windows-dist.sh
+        run: |
+          ccache -z || true
+          scripts/build-windows-dist.sh
+          ccache -s || true
 
       - name: Package zip
         id: pkg
@@ -117,6 +133,7 @@ jobs:
             build-win-dist/Tools/OkaySpacePlayer.exe
             build-win-dist/SDL2.dll
             build-win-dist/VERSION.txt
+            build-win-symbols/OkayEngine.debug
             dist/CHANGELOG.txt
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.pkg.outputs.ver) }}
           name: OkaySpace v${{ steps.pkg.outputs.ver }}

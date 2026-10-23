@@ -14,9 +14,9 @@
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
+#include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
-#include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
 #endif

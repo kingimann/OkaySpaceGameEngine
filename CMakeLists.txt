@@ -5,7 +5,10 @@ project(OkaySpaceGameEngine
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (e.g. tinyfiledialogs)
 
 # Stamp the version into binaries (used by the editor's self-updater).
-add_compile_definitions(OKAY_ENGINE_VERSION="${PROJECT_VERSION}")
+# The version string is only compiled into the editor and launcher (their targets
+# add OKAY_ENGINE_VERSION), so a version bump doesn't change every file's compile
+# flags and the release build's compiler cache keeps hitting.
+set(OKAY_VERSION_DEFINE OKAY_ENGINE_VERSION="${PROJECT_VERSION}")
 
 # ---- Global settings --------------------------------------------------
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

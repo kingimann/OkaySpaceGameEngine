@@ -1185,12 +1185,26 @@ bool Download(const std::string& url, const std::string& outPath) {
 // version (the branch URL handed back a cached old binary).
 // (LatestRef removed — downloads use the releases/latest asset URL directly.)
 
-// URL of a published file: the named asset of the latest GitHub Release (what
-// the release workflow uploads). "releases/latest/download/<name>" always
-// redirects to the newest release, so it never serves a stale binary the way the
-// old raw dist/ URL did. (ref is unused now; kept for call-site compatibility.)
+// Builds are published to two places: the project's Supabase Storage (public
+// "releases" bucket: VERSION.txt + v<ver>/<files>, see scripts/publish-supabase.sh)
+// and GitHub Releases. The check uses whichever has the newer version; GitHub
+// stays the fallback. OKAY_UPDATE_SERVER overrides the Supabase URL (testing).
+std::string SupabaseReleasesBase() {
+    std::string s;
+    if (const char* e = std::getenv("OKAY_UPDATE_SERVER"); e && *e) s = e;
+#ifdef OKAY_DEFAULT_ACCOUNT_URL
+    if (s.empty()) s = OKAY_DEFAULT_ACCOUNT_URL;
+#endif
+    if (s.rfind("https://", 0) != 0 && s.rfind("http://127.0.0.1", 0) != 0) return {};
+    while (!s.empty() && s.back() == '/') s.pop_back();
+    return s + "/storage/v1/object/public/releases/";
+}
+
+// URL of a published file. ref "sb:<ver>" = that version's folder in the
+// Supabase bucket; anything else = the latest GitHub Release's asset
+// ("releases/latest/download/<name>" always redirects to the newest release).
 std::string RawUrl(const std::string& ref, const std::string& name) {
-    (void)ref;
+    if (ref.rfind("sb:", 0) == 0) return SupabaseReleasesBase() + "v" + ref.substr(3) + "/" + name;
     return "https://github.com/kingimann/OkaySpaceGameEngine/releases/latest/download/" + name;
 }
 
@@ -1231,17 +1245,28 @@ UpdateInfo CheckLatest() {
     info.checked = true;
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
-    info.ref = "latest";                          // the latest GitHub Release
-    fs::path vf = tmp / "okayspace_version.txt";
-    if (!Download(RawUrl(info.ref, "VERSION.txt"), vf.string())) {
-        info.error = "Couldn't reach GitHub (no internet, or curl/PowerShell missing).";
+    // The published version at one place ("" if unreachable or not a version).
+    auto fetchVer = [&](const std::string& url, const char* tmpName) {
+        fs::path vf = tmp / tmpName;
+        std::string v;
+        if (Download(url, vf.string())) {
+            std::ifstream f(vf); std::getline(f, v);
+            while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ')) v.pop_back();
+        }
+        fs::remove(vf, ec);
+        const bool ok = !v.empty() && v.size() < 24 && v.find('.') != std::string::npos &&
+                        v.find_first_not_of("0123456789.") == std::string::npos;
+        return ok ? v : std::string();
+    };
+    const std::string sb = SupabaseReleasesBase();
+    const std::string vs = sb.empty() ? std::string() : fetchVer(sb + "VERSION.txt", "okayspace_version_sb.txt");
+    const std::string vg = fetchVer(RawUrl("latest", "VERSION.txt"), "okayspace_version.txt");
+    if (!vs.empty() && (vg.empty() || CompareVersions(vg, vs) <= 0)) { info.latest = vs; info.ref = "sb:" + vs; }
+    else { info.latest = vg; info.ref = "latest"; }   // the latest GitHub Release
+    if (info.latest.empty()) {
+        info.error = "Couldn't reach the update server (no internet, or curl/PowerShell missing).";
         return info;
     }
-    { std::ifstream f(vf); std::getline(f, info.latest); }
-    while (!info.latest.empty() &&
-           (info.latest.back() == '\r' || info.latest.back() == '\n' || info.latest.back() == ' '))
-        info.latest.pop_back();
-    fs::remove(vf, ec);
 
     // Optional human-readable release notes.
     fs::path cf = tmp / "okayspace_changelog.txt";

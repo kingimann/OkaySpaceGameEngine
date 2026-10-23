@@ -26,6 +26,8 @@ jobs:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "1"
       CCACHE_MAXSIZE: 2G
+      # "true" when the repo has the secret that the Supabase publish step needs.
+      SUPABASE_PUBLISH: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -138,3 +140,11 @@ jobs:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.pkg.outputs.ver) }}
           name: OkaySpace v${{ steps.pkg.outputs.ver }}
           generate_release_notes: true
+
+      # Also publish to the Supabase "releases" bucket (launchers check it first),
+      # when the repo has a SUPABASE_SERVICE_KEY secret. Without it this is skipped.
+      - name: Publish to Supabase
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        if: env.SUPABASE_PUBLISH == 'true'
+        run: scripts/publish-supabase.sh

@@ -717,8 +717,8 @@ bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse,
     fs::path tmp = dest; tmp += ".new";
     bool got = progress ? DownloadProgress(url, tmp.string())
                         : Download(url, tmp.string());
-    if (!got) return false;
     std::error_code ec;
+    if (!got) { fs::remove(tmp, ec); return false; }   // no empty .new left behind
     if (!fs::exists(tmp, ec) || fs::file_size(tmp, ec) < 100000) {
         fs::remove(tmp, ec);
         return false;
@@ -795,6 +795,71 @@ void FetchReleaseNews() {
     if (kept > 0) SetNews(tag, lines);
 }
 
+// ---- Supabase update mirror ---------------------------------------------------
+// Builds can be published straight to the project's Supabase Storage (public
+// "releases" bucket, see scripts/publish-supabase.sh) with no GitHub workflow:
+//   releases/VERSION.txt      newest version (uploaded last, after its files)
+//   releases/NOTES.txt        "what's new" bullet lines for that version
+//   releases/v<ver>/<exe>     each version's files, in their own folder
+// The updater uses whichever of Supabase and GitHub Releases has the newer
+// version, so either one can ship an update and GitHub stays the fallback.
+// OKAY_UPDATE_SERVER overrides the Supabase project URL (testing).
+static std::string SupabaseReleasesBase() {
+    std::string s;
+    if (const char* e = std::getenv("OKAY_UPDATE_SERVER"); e && *e) s = e;
+#ifdef OKAY_DEFAULT_ACCOUNT_URL
+    if (s.empty()) s = OKAY_DEFAULT_ACCOUNT_URL;
+#endif
+    if (s.rfind("https://", 0) != 0 && s.rfind("http://127.0.0.1", 0) != 0) return {};
+    while (!s.empty() && s.back() == '/') s.pop_back();
+    return s + "/storage/v1/object/public/releases/";
+}
+static bool LooksLikeVersion(const std::string& v) {
+    if (v.empty() || v.size() > 24 || v.find('.') == std::string::npos) return false;
+    for (char c : v) if (!(c == '.' || (c >= '0' && c <= '9'))) return false;
+    return true;
+}
+// First line of a small text file at `url` ("" if unreachable or not a version).
+static std::string FetchVersionAt(const std::string& url, const char* tmpName) {
+    std::error_code ec;
+    const fs::path vf = fs::temp_directory_path(ec) / tmpName;
+    std::string v;
+    if (Download(url, vf.string())) {
+        std::ifstream f(vf); std::getline(f, v);
+        while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ')) v.pop_back();
+    }
+    fs::remove(vf, ec);
+    return LooksLikeVersion(v) ? v : std::string();
+}
+// The newest published version and the folder its files download from.
+static std::string ResolveLatest(std::string& base, bool& fromSupabase) {
+    const std::string sb = SupabaseReleasesBase();
+    const std::string vs = sb.empty() ? std::string() : FetchVersionAt(sb + "VERSION.txt", "okayspace_ver_sb.txt");
+    const std::string vg = FetchVersionAt(std::string(kRawBase) + "VERSION.txt", "okayspace_ver_gh.txt");
+    if (!vs.empty() && (vg.empty() || CompareVersions(vg, vs) <= 0)) {
+        base = sb + "v" + vs + "/"; fromSupabase = true; return vs;
+    }
+    base = kRawBase; fromSupabase = false; return vg;
+}
+// "What's new" lines published beside a Supabase release (NOTES.txt).
+static void FetchSupabaseNews(const std::string& ver) {
+    const std::string sb = SupabaseReleasesBase();
+    if (sb.empty()) return;
+    std::error_code ec;
+    const fs::path nf = fs::temp_directory_path(ec) / "okayspace_notes_sb.txt";
+    if (!Download(sb + "NOTES.txt", nf.string())) return;
+    std::ifstream f(nf);
+    std::string ln, lines; int kept = 0;
+    while (kept < 6 && std::getline(f, ln)) {
+        while (!ln.empty() && (ln.back() == '\r' || ln.back() == ' ')) ln.pop_back();
+        std::size_t a = ln.find_first_not_of(" \t-*");
+        if (a == std::string::npos) continue;
+        lines += ln.substr(a) + "\n"; ++kept;
+    }
+    f.close(); fs::remove(nf, ec);
+    if (kept > 0) SetNews("v" + ver, lines);
+}
+
 bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
@@ -802,7 +867,7 @@ int RunUpdateCheck(void*) {
     SDL_AtomicSet(&g_upStartMs, (int)SDL_GetTicks());
     std::string local = LocalVersion();
     SetUpVers(local, "");
-    SetUpStep("Contacting GitHub", 0, 1);
+    SetUpStep("Contacting the update server", 0, 1);
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
     FetchReleaseNews();   // refresh the What's-new card while we're online anyway
@@ -812,20 +877,15 @@ int RunUpdateCheck(void*) {
       nv = g_newsVersion; nl = g_newsLines;
       if (g_upMutex) SDL_UnlockMutex(g_upMutex);
       if (!nl.empty()) SetUpChangelog(nl); }
-    std::error_code ec;
-    fs::path tmp = fs::temp_directory_path(ec);
-    fs::path vf = tmp / "okayspace_launcher_ver.txt";
-    if (!Download(std::string(kRawBase) + "VERSION.txt", vf.string())) {
-        SetUpMsg("Couldn't reach GitHub (offline?).");
+    std::string base; bool fromSupabase = false;
+    const std::string latest = ResolveLatest(base, fromSupabase);
+    if (latest.empty()) {
+        SetUpMsg("Couldn't reach the update server (offline?).");
         SetUpStep("Couldn't reach the update server", 0, 1);
         SetState(Up_Failed);
         return 0;
     }
-    std::string latest;
-    { std::ifstream f(vf); std::getline(f, latest); }
-    while (!latest.empty() && (latest.back() == '\r' || latest.back() == '\n' || latest.back() == ' '))
-        latest.pop_back();
-    fs::remove(vf, ec);
+    if (fromSupabase) FetchSupabaseNews(latest);
     g_upLatest = latest;
 
     fs::path dir(g_exeDir);
@@ -862,13 +922,13 @@ int RunUpdateCheck(void*) {
         if (!repair || FindExe({"OkayEngine.exe"}).empty()) {
             SetUpMsg("Downloading engine v" + latest + "...");
             SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
-            ok = ReplaceFile(std::string(kRawBase) + "OkayEngine.exe",
+            ok = ReplaceFile(base + "OkayEngine.exe",
                              destOf("OkayEngine.exe"), false, /*progress=*/true) && ok;
         }
         if (!repair || FindExe({"OkaySpacePlayer.exe"}).empty()) {
             SetUpMsg("Downloading player runtime v" + latest + "...");
             SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
-            ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
+            ok = ReplaceFile(base + "OkaySpacePlayer.exe",
                              destOf("OkaySpacePlayer.exe"), false, /*progress=*/true) && ok;
         }
     }
@@ -878,7 +938,7 @@ int RunUpdateCheck(void*) {
         SetUpMsg("Updating launcher...");
         SetUpStep("Updating launcher (OkaySpace)", 2, kSteps);
         launcherOk = !g_selfPath.empty() &&
-            ReplaceFile(std::string(kRawBase) + "OkaySpace.exe",
+            ReplaceFile(base + "OkaySpace.exe",
                         fs::path(g_selfPath), true, /*progress=*/true);
     }
 
@@ -923,14 +983,8 @@ static std::string g_upPollResult;         // (guarded)
 static bool g_upPollDone = false;          // (guarded)
 static volatile bool g_upPollBusy = false;
 static int UpdatePollWorker(void*) {
-    std::error_code ec;
-    fs::path vf = fs::temp_directory_path(ec) / "okayspace_launcher_ver_poll.txt";
-    std::string latest;
-    if (Download(std::string(kRawBase) + "VERSION.txt", vf.string())) {
-        std::ifstream f(vf); std::getline(f, latest);
-        while (!latest.empty() && (latest.back() == '\r' || latest.back() == '\n' || latest.back() == ' ')) latest.pop_back();
-    }
-    fs::remove(vf, ec);
+    std::string base; bool fromSupabase = false;
+    const std::string latest = ResolveLatest(base, fromSupabase);
     SDL_LockMutex(g_upPollMutex);
     g_upPollResult = latest; g_upPollDone = true;
     SDL_UnlockMutex(g_upPollMutex);

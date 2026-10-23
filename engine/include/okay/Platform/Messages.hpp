@@ -361,6 +361,39 @@ public:
         return out;
     }
 
+    // Everyone in a group with their name, avatar, how far they've read
+    // (last_read: drives "Seen by") and when they were last online. Two
+    // round-trips: the member rows, then their profiles.
+    struct GroupMemberInfo { std::string uid, username, name, avatar; long lastRead = 0; long lastSeen = 0; };
+    std::vector<GroupMemberInfo> GroupMembersInfo(long convoId) {
+        std::vector<GroupMemberInfo> out;
+        if (!acct_.IsLoggedIn() || convoId <= 0) return out;
+        auto r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
+                           "&select=member,last_read", "GET");
+        if (!r.ok) return out;
+        std::string ids;
+        for (const auto& o : SplitObjects(r.body)) {
+            GroupMemberInfo m; m.uid = Field(o, "member"); m.lastRead = std::atol(Field(o, "last_read").c_str());
+            if (m.uid.empty()) continue;
+            if (!ids.empty()) ids += ",";
+            ids += m.uid;
+            out.push_back(m);
+        }
+        if (ids.empty()) return out;
+        auto p = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen&id=in.(" + ids + ")", "GET");
+        if (p.ok)
+            for (const auto& o : SplitObjects(p.body)) {
+                const std::string id = Field(o, "id");
+                for (auto& m : out) if (m.uid == id) {
+                    m.username = Field(o, "username");
+                    m.name = Field(o, "display_name"); if (m.name.empty()) m.name = m.username;
+                    m.avatar = Field(o, "avatar_url");
+                    m.lastSeen = ParseIso(Field(o, "last_seen"));
+                }
+            }
+        return out;
+    }
+
     // The messages of a group, oldest first.
     std::vector<GroupMessage> GroupThread(long convoId) {
         std::vector<GroupMessage> out;

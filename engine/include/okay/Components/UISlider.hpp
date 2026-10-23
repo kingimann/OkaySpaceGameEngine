@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/Components/UIWorldContext.hpp"   // UIToLocal
 #include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
@@ -59,8 +60,11 @@ public:
     bool IsFocused() const { return m_focused; }
     void SetFocused(bool f) { m_focused = f; }
 
-    bool Contains(const Vec2& p) const {
-        Vec2 o = ResolveAnchor(anchor, position, size);
+    /// A screen point mapped into this widget's own frame (where it is really drawn:
+    /// inside its UI parent, at the Canvas scale). See UIToLocal.
+    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    bool Contains(const Vec2& sp) const {
+        Vec2 o = ResolveAnchor(anchor, position, size), p = ToLocal(sp);
         return p.x >= o.x && p.y >= o.y &&
                p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
@@ -73,10 +77,10 @@ public:
         if (Input::GetMouseButtonDown(0) && Contains(m)) m_dragging = true;
         if (!Input::GetMouseButton(0)) m_dragging = false;
         if (m_dragging && size.x > 0.0f && size.y > 0.0f) {
-            Vec2 o = ResolveAnchor(anchor, position, size);
+            Vec2 o = ResolveAnchor(anchor, position, size), lm = ToLocal(m);
             // Horizontal: left->right. Vertical: bottom->top (natural for volume).
-            float frac = vertical ? Mathf::Clamp01((o.y + size.y - m.y) / size.y)
-                                  : Mathf::Clamp01((m.x - o.x) / size.x);
+            float frac = vertical ? Mathf::Clamp01((o.y + size.y - lm.y) / size.y)
+                                  : Mathf::Clamp01((lm.x - o.x) / size.x);
             float nv = minValue + frac * (maxValue - minValue);
             if (wholeNumbers) nv = Mathf::Round(nv);
             if (nv != value) {

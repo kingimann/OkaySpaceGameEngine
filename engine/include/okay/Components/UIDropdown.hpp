@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/Components/UIWorldContext.hpp"   // UIToLocal
 #include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
@@ -71,6 +72,9 @@ public:
         SetValue(v);
     }
 
+    /// A screen point mapped into this widget's own frame (where it is really drawn:
+    /// inside its UI parent, at the Canvas scale). See UIToLocal.
+    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
     /// Header rectangle origin (resolved against the anchor).
     Vec2 Origin() const { return ResolveAnchor(anchor, position, size); }
 
@@ -97,7 +101,7 @@ public:
 
     void Update(float) override {
         if (!interactable) { m_hover = false; m_hoverOption = -1; open = false; return; }
-        Vec2 m = Input::MousePosition();
+        Vec2 m = ToLocal(Input::MousePosition());   // header / option tests work in the widget's frame
         m_hover = HeaderContains(m);
         m_hoverOption = OptionAt(m);
         if (Input::GetMouseButtonDown(0)) {

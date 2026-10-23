@@ -596,6 +596,10 @@ int main() {
         // Text bind interpolates the var (and prettifies the number).
         CHECK(UITextBind::Resolve("HP: {hp}") == "HP: 75");
         CHECK(UITextBind::Resolve("{missing}") == "");
+        // {key|default}: the default until the variable exists, the value after.
+        CHECK(UITextBind::Resolve("Score: {missing|0}") == "Score: 0");
+        CHECK(UITextBind::Resolve("{hp|100}") == "75");
+        CHECK(UITextBind::Resolve("{missing|}") == "");
 
         Scene s("bind"); s.physicsEnabled = false;
         GameObject* bar = s.CreateGameObject("HealthBar");

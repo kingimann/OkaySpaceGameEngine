@@ -139,17 +139,12 @@ public:
         return false;
     }
 
-    bool Contains(const Vec2& p) const {
-        // World-space button (own 3D object / world canvas): hit-test where it
-        // actually projects on screen. The renderer supplies rectOf() so this
-        // header needn't pull in GetUIScreenRect. The projected silhouette is a
-        // quad, so an axis-aligned rect test is the right approximation here.
-        if (UIWorld().active && UIWorld().rectOf && gameObject && IsWorldSpaceUI()) {
-            Vec2 o, sz;
-            if (!UIWorld().rectOf(gameObject, o, sz)) return false;  // behind camera
-            return p.x >= o.x && p.x <= o.x + sz.x && p.y >= o.y && p.y <= o.y + sz.y;
-        }
+    bool Contains(const Vec2& sp) const {
+        // Map the screen point into the button's own frame: UIToLocal uses the rect
+        // the host actually draws it at (inside its UI parent, at the Canvas scale,
+        // or projected for a world-space button), so it's clickable where it appears.
         Vec2 o = ResolveAnchor(anchor, position, size);
+        Vec2 p = UIToLocal(gameObject, o, size, sp);
         // Hit-test the actual silhouette so corners of a rounded/circle/pill button
         // aren't clickable where there's no pixel.
         return UIShapeContains(shape, size.x, size.y, cornerRadius, p.x - o.x, p.y - o.y);

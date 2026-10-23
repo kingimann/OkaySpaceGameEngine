@@ -10,8 +10,8 @@ namespace okay {
 /// sibling TextRenderer/Button/InputField. So a label authored as
 /// `Score: {score}` shows the live `score` variable — set it from a visual script
 /// (Set Variable "score") or with prefs_set("score", v) and the HUD follows.
-/// Numbers are prettified (5.0 -> "5"). Unknown keys resolve to an empty string;
-/// `{{` / `}}` emit literal braces.
+/// Numbers are prettified (5.0 -> "5"). Unknown keys resolve to an empty string,
+/// or to a default written after a bar: `{score|0}`. `{{` / `}}` emit literal braces.
 class UITextBind : public Behaviour {
 public:
     std::string format = "{value}";

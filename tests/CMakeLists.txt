@@ -756,3 +756,7 @@ add_test(NAME net_authority COMMAND test_net_authority)
 add_executable(test_match_results test_match_results.cpp)
 target_link_libraries(test_match_results PRIVATE okay::engine)
 add_test(NAME match_results COMMAND test_match_results)
+
+add_executable(test_matchmaker test_matchmaker.cpp)
+target_link_libraries(test_matchmaker PRIVATE okay::engine)
+add_test(NAME matchmaker COMMAND test_matchmaker)

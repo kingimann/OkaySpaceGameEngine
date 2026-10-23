@@ -31,6 +31,7 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/ServerBrowser.hpp"
 #include "okay/Net/MatchResults.hpp"
+#include "okay/Net/Matchmaker.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Platform/PlayFab/PlayFab.hpp"
 #include "okay/Platform/Achievements.hpp"
@@ -1253,6 +1254,12 @@ void ActionList::Update(float dt) {
             }
         }
         else if (op == "net_browser_open") ServerBrowser::Shared().windowOpen = true;   // the built-in "Find a server" window
+        else if (op == "net_queue_join") {   // Find Match: "mode players" (both optional)
+            MatchRequest r; r.mode = Str(it, 0);
+            const int n = (int)Num(it, 1); if (n >= 2) r.players = n;
+            Matchmaker::Shared().Start(r);
+        }
+        else if (op == "net_queue_cancel") Matchmaker::Shared().Cancel();
         else if (op == "net_match_start" || op == "net_match_end") {   // a match: scores to 0 / report results
             NetworkManager* n = scene ? scene->FindObjectOfType<NetworkManager>() : nullptr;
             if (n && n->IsServer()) {

@@ -37,6 +37,7 @@
 #include "okay/Platform/GameIpc.hpp"
 #include "okay/Net/ServerBrowser.hpp"
 #include "okay/Net/MatchResults.hpp"
+#include "okay/Net/Matchmaker.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
@@ -4083,6 +4084,39 @@ struct OkayScriptVM::Impl {
             const auto r = n->Roster(); const int i = (int)a[0].AsFloat();
             return Value{(i >= 0 && i < (int)r.size()) ? (float)r[i].id : -1.0f};
         };
+        // ---- Matchmaking queues (docs/sql/matchmaking.sql) ----
+        // net_queue_join("duel", 2[, minPlayers[, "EU"]]) puts this player (and their
+        // party, if they lead one) in the queue; when a match is found the game joins
+        // it — a dedicated server's room, or a player who hosts. The player shows a
+        // "Finding a match" banner with Cancel; scripts can draw their own with these.
+        b["net_queue_join"] = [this](std::vector<Value>& a) {
+            EnsureNet();   // the found match needs a NetworkManager to connect
+            MatchRequest r;
+            r.mode = a.size() > 0 ? a[0].AsString() : std::string();
+            r.players = a.size() > 1 ? (int)a[1].AsFloat() : 2;
+            r.minPlayers = a.size() > 2 ? (int)a[2].AsFloat() : 0;
+            r.region = a.size() > 3 ? a[3].AsString() : std::string();
+            return Value{Matchmaker::Shared().Start(r) ? 1.0f : 0.0f};
+        };
+        b["net_queue_cancel"] = [](std::vector<Value>&) { Matchmaker::Shared().Cancel(); return Value{1.0f}; };
+        // "idle" | "searching" | "waiting" (found; the host is starting) | "found" | "failed"
+        b["net_queue_state"] = [](std::vector<Value>&) {
+            return Value{std::string(Matchmaker::StateName(Matchmaker::Shared().GetState()))};
+        };
+        b["net_queue_time"]  = [](std::vector<Value>&) { return Value{Matchmaker::Shared().Elapsed()}; };
+        b["net_queue_count"] = [](std::vector<Value>&) { return Value{(float)Matchmaker::Shared().Searching()}; };
+        b["net_queue_error"] = [](std::vector<Value>&) { return Value{Matchmaker::Shared().Error()}; };
+        b["net_queue_is_host"] = [](std::vector<Value>&) { return Value{Matchmaker::Shared().Assignment().isHost ? 1.0f : 0.0f}; };
+        // Turn off auto-connect to show "Match found — Accept"; net_queue_accept() then connects.
+        b["net_queue_auto"] = [](std::vector<Value>& a) {
+            if (!a.empty()) Matchmaker::Shared().autoConnect = a[0].AsFloat() != 0.0f;
+            return Value{Matchmaker::Shared().autoConnect ? 1.0f : 0.0f};
+        };
+        b["net_queue_accept"] = [this](std::vector<Value>&) {
+            NetworkManager* n = EnsureNet();
+            return Value{(n && Matchmaker::Shared().Connect(n)) ? 1.0f : 0.0f};
+        };
+
         // ---- Matches: results -> stats + leaderboards (docs/sql/matches.sql) ----
         // Server: net_match_start() zeroes scores and starts the clock;
         // net_match_end([winner ids...]) reports everyone's score / place / win

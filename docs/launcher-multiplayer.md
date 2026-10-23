@@ -34,6 +34,26 @@ write any extra code.
 - **Rich presence.** Friends see what you're doing, e.g. "Playing Star Arena ·
   Hosting Maya's lobby (2/8)". **Invisible** and the "share what I'm playing"
   setting are respected.
+- **In chat:**
+  - **Game bar.** While a friend is in a game, their DM shows a bar with
+    "Playing X" and **Join game**. If their game isn't open to join, it shows
+    **Ask to join**, which sends them a card with an **Invite them** button.
+  - **Invites from chat.** The composer's **+** menu has **Invite to
+    \<game>**. Typing `/invite` does the same, and works in group chats too.
+  - **Pop-up.** An invite that arrives while the chat is closed shows a
+    "Maya invited you to play" pop-up with **Join game**.
+- **Parties.** Friends who play together:
+  - **Starting one.** Create a party on the Multiplayer page, or pick **Start
+    a party with them** / **Invite to party** from a friend's menu, a chat's
+    menu, the composer's **+** menu, or `/party`.
+  - **Following the leader.** When the leader hosts or joins a match, everyone
+    in the party follows into it. Members can turn **Follow the leader** off and
+    use **Join the leader** instead.
+  - **The party card** shows members, a crown on the leader, and ready
+    checks. Right-click a member to make them leader or remove them.
+  - **Rules:** one party at a time, up to 8 people, and the lead passes on
+    when the leader leaves.
+  - **Setup:** run `docs/sql/parties.sql` once.
 
 ## How it fits together
 

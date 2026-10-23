@@ -74,6 +74,26 @@ public:
         return out;
     }
 
+    // Game and party invites sent to me ("[Invite] ..." / "[Party] ..."), newest
+    // first: id > sinceId and no older than maxAgeSecs. Drives the launcher's
+    // "X invited you to play" pop-up even when the chat isn't open.
+    std::vector<CallSignal> InvitesSince(long sinceId, int maxAgeSecs = 900) {
+        std::vector<CallSignal> out;
+        if (!acct_.IsLoggedIn()) return out;
+        std::string mine = MyId(); if (mine.empty()) return out;
+        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at&recipient=eq." + mine +
+                           "&or=(body.like.%5BInvite%5D*,body.like.%5BParty%5D*)&id=gt." + std::to_string(sinceId) +
+                           "&created_at=gte." + IsoAt(std::time(nullptr) - maxAgeSecs) +
+                           "&order=id.desc&limit=10", "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body)) {
+            CallSignal c; c.id = std::atol(Field(o, "id").c_str()); c.from = Field(o, "sender");
+            c.body = Field(o, "body"); c.when = ParseIso(Field(o, "created_at"));
+            out.push_back(c);
+        }
+        return out;
+    }
+
     int UnreadSince(long sinceId, long& newestOut) {
         newestOut = sinceId;
         if (!acct_.IsLoggedIn()) return 0;

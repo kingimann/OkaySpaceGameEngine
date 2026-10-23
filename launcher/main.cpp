@@ -24,6 +24,7 @@
 #include "okay/Net/JoinLink.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Net/ServerQuery.hpp"
+#include "okay/Platform/Parties.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -1545,6 +1546,7 @@ long g_lastDmId = 0;        // newest incoming DM id the user has seen (persiste
 long g_newestDmId = 0;      // newest incoming DM id currently on the server
 int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible (persisted)
 bool g_sharePresence = true; // share "Playing X" with friends (persisted)
+bool g_partyFollow = true;    // party members follow the leader into games (persisted)
 
 // ---- Notifications area -------------------------------------------------
 // A unified notifications feed behind a bell button in the sidebar. Items are
@@ -3820,6 +3822,7 @@ void LoadPrefs() {
         else if (k == "online_status") { try { g_onlineStatus = std::stoi(v); } catch (...) {} }
         else if (k == "last_dm_id") { try { g_lastDmId = std::stol(v); } catch (...) {} }
         else if (k == "share_presence") g_sharePresence = (v != "0");
+        else if (k == "party_follow") g_partyFollow = (v != "0");
         else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "news_seen") g_newsSeen = v;
@@ -3923,6 +3926,7 @@ void SavePrefs() {
     f << "online_status=" << g_onlineStatus << "\n";
     f << "last_dm_id=" << g_lastDmId << "\n";
     f << "share_presence=" << (g_sharePresence ? 1 : 0) << "\n";
+    f << "party_follow=" << (g_partyFollow ? 1 : 0) << "\n";
     f << "play_view=" << g_playView << "\n";
     f << "tab=" << g_lastTab << "\n";
     if (!g_newsSeen.empty()) f << "news_seen=" << g_newsSeen << "\n";
@@ -4155,6 +4159,11 @@ static bool MpCanInvite();                                             // in a j
 static std::string MpGameTitle();                                      // the game I'm playing ("" = none)
 static void MpInviteUser(const std::string& uid, const std::string& name);
 static void MpJoinFriend(const std::string& sessionCode, const std::string& name);
+static void MpInviteGroup(long gid, const std::string& name);         // a whole group chat
+static std::string MpMyJoin();                                        // my session's public link ("" = none)
+static void MpPartyInvite(const std::string& uid, const std::string& name);   // (makes a party if needed)
+static void MpPartyJoinFromInvite(const std::string& body);
+static std::string MpPartyId();                                       // my party ("" = none)
 // A little gamepad: rounded body, d-pad, two buttons.
 static void DrawGamepadIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
     const float w = s * 0.5f, h = s * 0.30f;
@@ -4221,6 +4230,8 @@ static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
     if (body.rfind("[Sticker] ", 0) == 0) return "Sticker";
     { ChatPollInfo pi; if (ParseChatPoll(body, pi)) return ChatPreview("Poll: " + pi.question, n); }
     { ChatInviteInfo ii; if (ParseChatInvite(body, ii)) return ChatPreview("Game invite: " + ii.title, n); }
+    if (body.rfind("[JoinRequest] ", 0) == 0) return ChatPreview("Asked to join: " + body.substr(14), n);
+    if (body.rfind("[Party] ", 0) == 0) return "Party invite";
     if (body.rfind("[Call] ", 0) == 0) return "Voice call";
     if (body.rfind("[CallEnd] ", 0) == 0) return "Call ended";
     std::string t = body; while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
@@ -5764,11 +5775,154 @@ static void ComposerPlusButton(const char* id, float size, const std::string& to
         if (ImGui::MenuItem("Photo or file\xE2\x80\xA6", "25 MB")) PickAndSendAttachment(toUid, toGroup, toChannel);
         if (!toChannel && ImGui::MenuItem("Poll\xE2\x80\xA6")) openPoll = true;
         if (!toChannel && ImGui::MenuItem("Schedule message\xE2\x80\xA6")) g_schedOpenReq = true;
+        if (!toChannel) {
+            ImGui::Separator();
+            const bool can = MpCanInvite();
+            if (ImGui::MenuItem(can ? ("Invite to " + MpGameTitle()).c_str() : "Invite to a game", "/invite", false, can))
+                { if (toGroup > 0) MpInviteGroup(toGroup, "the group"); else MpInviteUser(toUid, "them"); }
+            if (!can && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Host or join a match in a game, then invite from here.");
+            if (toGroup <= 0 && ImGui::MenuItem(MpPartyId().empty() ? "Start a party with them" : "Invite to party", "/party"))
+                MpPartyInvite(toUid, "them");
+        }
         ImGui::EndPopup();
     }
     if (openPoll || std::getenv("OKAY_CHAT_DEMO_POLLNEW")) { if (!ImGui::IsPopupOpen("Create a poll")) ImGui::OpenPopup("Create a poll"); }
     PollCreatorPopup("Create a poll", toUid, toGroup);
     ImGui::PopID();
+}
+
+// ---- Games in chat: what a friend is playing, Join / Ask to join, /invite ------------
+// "Ask to join" is a message too: "[JoinRequest] Game" draws as a card the other
+// person answers with Invite (which sends them a normal invite).
+static bool SameTitleCI(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
+    return true;
+}
+static std::string JoinRequestBody(const std::string& game) { return "[JoinRequest] " + game; }
+static bool ParseJoinRequest(const std::string& body, std::string& game) {
+    if (body.rfind("[JoinRequest] ", 0) != 0) return false;
+    game = body.substr(14);
+    const std::size_t nl = game.find('\n'); if (nl != std::string::npos) game.resize(nl);
+    return !game.empty();
+}
+// "Playing Star Arena · Hosting … (2/8)" -> "Star Arena".
+static std::string GameFromPlaying(const std::string& playing) {
+    if (playing.rfind("Playing ", 0) != 0) return {};
+    std::string g = playing.substr(8);
+    for (const char* cut : {" \xC2\xB7 ", " ("}) { const std::size_t k = g.find(cut); if (k != std::string::npos) g.resize(k); }
+    return g;
+}
+static void RenderJoinRequest(const std::string& game, bool mine, const std::string& uid, const std::string& name, float width) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float tile = 36.0f;
+    d->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), IM_COL32(255, 255, 255, 30), 9.0f);
+    DrawGamepadIcon(d, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, IM_COL32(255, 255, 255, 220));
+    ImGui::SetCursorScreenPos(ImVec2(p.x + tile + 10, p.y));
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted(mine ? "You asked to join" : (name + " wants to join").c_str());
+    ImGui::TextDisabled("%s", FitText(game, width - tile - 14).c_str());
+    ImGui::EndGroup();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + tile + 6));
+    if (!mine) {
+        const bool can = MpCanInvite() && SameTitleCI(MpGameTitle(), game);
+        ImGui::BeginDisabled(!can);
+        ImGui::PushID(("jr" + uid + game).c_str());
+        if (PrimaryButton("Invite them", ImVec2(width, 28))) MpInviteUser(uid, name);
+        ImGui::PopID();
+        ImGui::EndDisabled();
+        if (!can) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+            ImGui::TextDisabled("Start a match in %s to invite them.", game.c_str());
+            ImGui::PopTextWrapPos();
+        }
+    }
+}
+// Under a DM's header: the friend's game, with Join (or Ask to join when it isn't open).
+static void DrawChatGameBar(const okay::Friend* f, const std::string& uid, const std::string& name, float w) {
+    if (!f || !f->online) return;
+    okay::JoinLink l;
+    const bool joinable = okay::JoinLink::Parse(f->sessionCode, l);
+    const std::string game = joinable ? l.game : GameFromPlaying(f->playing);
+    if (game.empty()) return;
+    okay::JoinLink mine;
+    const bool together = joinable && okay::JoinLink::Parse(MpMyJoin(), mine) && mine.SameSession(l);
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = 40.0f;
+    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(46, 150, 86, 34), 8.0f);
+    d->AddRect(p, ImVec2(p.x + w, p.y + h), IM_COL32(46, 150, 86, 90), 8.0f);
+    DrawGamepadIcon(d, ImVec2(p.x + 22, p.y + h * 0.5f), 22.0f, IM_COL32(115, 209, 143, 255));
+    const float bw = 116.0f;
+    std::string line = "Playing " + game;
+    std::string detail = f->playing.size() > 8 + game.size() ? f->playing.substr(8 + game.size()) : std::string();
+    while (!detail.empty() && (detail[0] == ' ' || (unsigned char)detail[0] == 0xC2 || (unsigned char)detail[0] == 0xB7)) detail.erase(0, 1);
+    d->AddText(ImVec2(p.x + 42, p.y + 4), IM_COL32(115, 209, 143, 255), FitText(line, w - 42 - bw - 16).c_str());
+    d->AddText(ImVec2(p.x + 42, p.y + 21), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+               FitText(together ? std::string("You're in the same match") : !detail.empty() ? detail : joinable ? std::string("Open to friends") : std::string("Not open to join"), w - 42 - bw - 16).c_str());
+    ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw - 6, p.y + 6));
+    ImGui::PushID(("gbar" + uid).c_str());
+    static std::set<std::string> asked;   // asked once per friend per run
+    if (together) { ImGui::BeginDisabled(); ImGui::Button("Joined", ImVec2(bw, 28)); ImGui::EndDisabled(); }
+    else if (joinable) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.52f, 0.30f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.21f, 0.62f, 0.36f, 1));
+        if (ImGui::Button("Join game", ImVec2(bw, 28))) MpJoinFriend(f->sessionCode, name);
+        ImGui::PopStyleColor(2);
+    } else if (asked.count(uid)) { ImGui::BeginDisabled(); ImGui::Button("Asked", ImVec2(bw, 28)); ImGui::EndDisabled(); }
+    else if (ImGui::Button("Ask to join", ImVec2(bw, 28))) {
+        OutboxSend(uid, 0, JoinRequestBody(game)); asked.insert(uid);
+        Toast("Asked " + name + " to invite you", 1);
+    }
+    ImGui::PopID();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 6));
+    ImGui::Dummy(ImVec2(0, 0));
+}
+// Party invites in chat: "[Party] <party id>" + the inviter. A card with Join party.
+static void DrawPeopleIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
+    d->AddCircleFilled(ImVec2(c.x - s * 0.22f, c.y - s * 0.18f), s * 0.17f, col, 12);
+    d->AddCircleFilled(ImVec2(c.x + s * 0.24f, c.y - s * 0.14f), s * 0.14f, col, 12);
+    d->PathArcTo(ImVec2(c.x - s * 0.22f, c.y + s * 0.34f), s * 0.30f, 3.14159f, 6.28318f, 12); d->PathFillConvex(col);
+    d->PathArcTo(ImVec2(c.x + s * 0.24f, c.y + s * 0.32f), s * 0.24f, 3.14159f, 6.28318f, 12); d->PathFillConvex(col);
+}
+static void RenderPartyInvite(const std::string& partyId, const std::string& from, bool mine, float width) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float tile = 44.0f;
+    d->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), IM_COL32(124, 92, 230, 255), 10.0f);
+    DrawPeopleIcon(d, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, IM_COL32(255, 255, 255, 240));
+    ImGui::SetCursorScreenPos(ImVec2(p.x + tile + 10, p.y + 1));
+    ImGui::BeginGroup();
+    ImGui::TextDisabled(mine ? "You sent a party invite" : "Party invite");
+    ImGui::SetWindowFontScale(1.08f);
+    ImGui::TextUnformatted(FitText(mine ? std::string("Join my party") : (from.empty() ? std::string("Join their party") : "Join " + from + "'s party"), width - tile - 14).c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::EndGroup();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + tile + 8));
+    if (!mine) {
+        const bool already = MpPartyId() == partyId;
+        ImGui::BeginDisabled(already);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.43f, 0.32f, 0.85f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.51f, 0.40f, 0.93f, 1));
+        ImGui::PushID(partyId.c_str());
+        if (ImGui::Button(already ? "You're in this party" : "Join party", ImVec2(width, 30)))
+            MpPartyJoinFromInvite(okay::Parties::InviteBody(partyId, from));
+        ImGui::PopID();
+        ImGui::PopStyleColor(2);
+        ImGui::EndDisabled();
+    }
+}
+
+// Chat commands: "/invite" sends a game invite to this chat, "/party" (in a DM)
+// invites them to my party. True if handled.
+static bool ChatSlashCommand(const std::string& text, const std::string& uid, const std::string& name, long gid) {
+    std::string t = text; while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
+    if (t == "/party" && gid <= 0) { MpPartyInvite(uid, name); return true; }
+    if (t != "/invite") return false;
+    if (gid > 0) MpInviteGroup(gid, name); else MpInviteUser(uid, name);
+    return true;
 }
 
 // "Forwarded from <name>" over a forwarded message: a small arrow + dim italic-ish line.
@@ -6595,7 +6749,7 @@ static void DrawGroupConversation(
             if (demo || ChatSaveEdit(dm, true, gEditId, ob, gInput)) { gEditId = 0; gInput[0] = '\0'; g_chatForceLog = true; }
             else Toast("Couldn't save the edit", 2);
         } else {
-            if (!demo) OutboxSend(std::string(), gid, ExpandCustomEmoji(gInput), gReplyTo);
+            if (!demo && !ChatSlashCommand(gInput, std::string(), "the group", gid)) OutboxSend(std::string(), gid, ExpandCustomEmoji(gInput), gReplyTo);
             gInput[0] = '\0'; gReplyTo = 0; wantBottom = true;
         }
         gRefocus = true;   // keep typing without clicking back into the box
@@ -7184,6 +7338,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 add(24, InviteMessageBody("Star Arena", "okay://join?game=Star%20Arena&addr=192.168.1.20:45000&name=Maya%27s%20lobby&host=maya").c_str(), 4, false);
                 add(25, "omw!", 3, true);
                 add(26, InviteMessageBody("Kart Rush", "okay://join?game=Kart%20Rush&relay=relay.okayspace.net:45100&code=K7Q-29X&pass=cup&host=kingimann").c_str(), 2, true);
+                add(27, okay::Parties::InviteBody("0f6a2c1e-5b7d-4e8a-9c3f-2d1b0a9e8f7c", "Alex Rivera").c_str(), 1, false);
+                add(28, JoinRequestBody("Neon Drift").c_str(), 1, false);
+                for (auto& f : friends) if (f.id == "demo-uid") {   // Alex is in a joinable match (chat header bar)
+                    f.playing = "Playing Neon Drift \xC2\xB7 Hosting Night Race (3/6)";
+                    okay::JoinLink l; l.game = "Neon Drift"; l.addr = "192.168.1.44:45000"; l.name = "Night Race"; l.host = "alexr";
+                    f.sessionCode = l.Format();
+                }
             }
             if (std::getenv("OKAY_CHAT_DEMO_MD")) {   // formatting showcase
                 add(21, "Formatting works now: **bold**, *italic*, ~~strike~~, `inline code` and a ||secret spoiler||", 15, false);
@@ -8144,6 +8305,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImGui::EndMenu();
                 }
                 if (MpCanInvite() && ImGui::MenuItem(("Invite to " + MpGameTitle()).c_str())) MpInviteUser(selUid, selName);
+                if (ImGui::MenuItem(MpPartyId().empty() ? "Start a party with them" : "Invite to party")) MpPartyInvite(selUid, selName);
                 if (ImGui::MenuItem("Starred messages")) openStarred = true;
                 if (ImGui::MenuItem("Media & links")) openMedia = true;
                 ImGui::Separator();
@@ -8246,6 +8408,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + hdrW, lp.y), IM_COL32(255, 255, 255, 16), 1.0f);
             }
             ImGui::Dummy(ImVec2(0, 6));
+            if (!selBlocked) if (auto fg = fById.find(selUid); fg != fById.end()) DrawChatGameBar(fg->second, selUid, selName, hdrW);
             if (showSearch) {
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f);
                 ImGui::SetNextItemWidth(-1);
@@ -8384,12 +8547,16 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ChatVoiceInfo voice; const bool isVoice = !isFile && ParseChatVoice(mb, voice);
                 ChatPollInfo pollInfo; const bool isPoll = !isFile && !isVoice && ParseChatPoll(mb, pollInfo);
                 ChatInviteInfo invInfo; const bool isInvite = !isFile && !isVoice && !isPoll && ParseChatInvite(mb, invInfo);
+                std::string jrGame; const bool isJoinReq = !isFile && !isVoice && !isPoll && !isInvite && ParseJoinRequest(mb, jrGame);
+                std::string ptyId, ptyFrom; const bool isParty = !isFile && !isVoice && !isPoll && !isInvite && !isJoinReq && okay::Parties::ParseInvite(mb, ptyId, ptyFrom);
                 const CallBody callB = (isFile || isVoice || isPoll) ? CallBody{} : ParseCallBody(mb);
                 const bool isCall = callB.kind == 1;
                 float bodyW = isFile ? ChatFileCardWidth(fileInfo, bubbleMax - padX*2)
                             : isVoice ? ChatVoiceWidth(bubbleMax - padX*2)
                             : isCall ? ChatCallWidth(bubbleMax - padX*2)
                             : isInvite ? ChatInviteWidth(bubbleMax - padX*2)
+                            : isJoinReq ? std::min(bubbleMax - padX*2, 250.0f)
+                            : isParty ? ChatInviteWidth(bubbleMax - padX*2)
                             : isPoll ? ChatPollWidth(bubbleMax - padX*2) : MeasureChatBodyWidth(mb, bubbleMax - padX*2);
                 // reply quote + time contribute to width
                 const okay::DirectMessage* rep = (m.replyTo && byId.count(m.replyTo)) ? byId[m.replyTo] : nullptr;
@@ -8529,6 +8696,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                                            selUid, selName, selAvatar);
                     }
                     else if (isInvite) RenderChatInvite(invInfo, m.mine, m.when, ImGui::GetContentRegionAvail().x);
+                    else if (isJoinReq) RenderJoinRequest(jrGame, m.mine, selUid, selName, ImGui::GetContentRegionAvail().x);
+                    else if (isParty) RenderPartyInvite(ptyId, ptyFrom, m.mine, ImGui::GetContentRegionAvail().x);
                     else if (isPoll) {
                         auto rc = reacts.find(m.id); auto mr = myReacts.find(m.id);
                         RenderChatPoll(pollInfo, false, m.id, rc != reacts.end() ? &rc->second : nullptr,
@@ -8917,7 +9086,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     else Toast("Couldn't save the edit", 2);
                 }
                 else {   // instant: shows as "Sending" right away, sent off-thread
-                    OutboxSend(selUid, 0, ExpandCustomEmoji(input), replyTo);
+                    if (!ChatSlashCommand(input, selUid, selName, 0)) OutboxSend(selUid, 0, ExpandCustomEmoji(input), replyTo);
                     input[0] = '\0'; replyTo = 0; drafts.erase(selUid); wantScrollBottom = true;
                 }
                 // Keep typing: refocus the message box (not the Send button, which
@@ -9263,25 +9432,47 @@ static bool g_pollReady = false;        // a fresh result is waiting (guarded)
 static int  g_pollFriendReqs = 0;       // (guarded)
 static int  g_pollUnread = 0;           // (guarded)
 static long g_pollNewestDm = 0;         // (guarded)
+// Game / party invites waiting for the "X invited you" pop-up.
+struct PendingInvite { long id = 0; std::string from, fromName, body; long when = 0; };
+static std::vector<PendingInvite> g_pollInvites;   // (guarded) fresh ones not yet shown
+static volatile long g_inviteSeenId = 0;           // newest invite already shown (main thread writes)
 // (g_pollCfgDir / g_pollUrl / g_pollKey are defined with the chat poll state.)
 
 static int PollWorker(void*) {
+    int cycle = 0;
     while (g_pollRun) {
         long since = g_lastDmId;   // benign read of a long written by the main thread
         try {
             okay::account::AccountService poller(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
             if (poller.IsLoggedIn()) {
-                int fr = okay::Friends(poller).PendingRequests();
-                long newest = since;
-                int unread = okay::Messages(poller).UnreadSince(since, newest);
+                // Invites every ~10s (they're time-sensitive); counts every ~30s.
+                okay::Messages msgs(poller);
+                auto inv = msgs.InvitesSince(g_inviteSeenId);
+                std::vector<PendingInvite> fresh;
+                if (!inv.empty()) {
+                    std::map<std::string, std::string> names;
+                    for (const auto& f : okay::Friends(poller).List()) names[f.id] = f.display.empty() ? f.username : f.display;
+                    for (const auto& c : inv) {
+                        PendingInvite pi; pi.id = c.id; pi.from = c.from; pi.body = c.body; pi.when = c.when;
+                        auto it = names.find(c.from); pi.fromName = it != names.end() ? it->second : std::string("Someone");
+                        fresh.push_back(pi);
+                    }
+                }
+                const bool counts = cycle % 3 == 0;
+                int fr = 0, unread = 0; long newest = since;
+                if (counts) { fr = okay::Friends(poller).PendingRequests(); unread = msgs.UnreadSince(since, newest); }
                 if (g_pollMutex) SDL_LockMutex(g_pollMutex);
-                g_pollFriendReqs = fr; g_pollUnread = unread; g_pollNewestDm = newest;
-                g_pollReady = true;
+                if (counts) { g_pollFriendReqs = fr; g_pollUnread = unread; g_pollNewestDm = newest; g_pollReady = true; }
+                for (auto& f : fresh) {
+                    bool dup = false; for (const auto& q : g_pollInvites) if (q.id == f.id) dup = true;
+                    if (!dup) g_pollInvites.push_back(std::move(f));
+                }
                 if (g_pollMutex) SDL_UnlockMutex(g_pollMutex);
             }
         } catch (...) { /* transient network error — try again next cycle */ }
-        // Wait ~30s, in short steps so shutdown is prompt.
-        for (int i = 0; i < 150 && g_pollRun; ++i) SDL_Delay(200);
+        ++cycle;
+        // Wait ~10s, in short steps so shutdown is prompt.
+        for (int i = 0; i < 50 && g_pollRun; ++i) SDL_Delay(200);
     }
     return 0;
 }
@@ -9641,6 +9832,7 @@ static void MpJoinFriend(const std::string& sessionCode, const std::string& name
 
 // ---- Inviting --------------------------------------------------------------------
 static bool g_inviteOpenReq = false;            // open the Invite friends window
+static int g_inviteMode = 0;                    // ...0 = to my game, 1 = to my party
 static std::set<std::string> g_invitedUids;     // invited to the current session
 static std::string g_invitedFor;                // ...which session that was
 static void MpInviteUser(const std::string& uid, const std::string& name) {
@@ -9649,6 +9841,12 @@ static void MpInviteUser(const std::string& uid, const std::string& name) {
     g_invitedUids.insert(uid);
     Toast("Invited " + name + " to " + g_myGame.title, 1);
 }
+static void MpInviteGroup(long gid, const std::string& name) {
+    if (!MpCanInvite()) { Toast("Host or join a match in your game first, then invite friends.", 2); return; }
+    OutboxSend(std::string(), gid, InviteMessageBody(g_myGame.title, g_myGame.invite));
+    Toast("Invited " + name + " to " + g_myGame.title, 1);
+}
+static std::string MpMyJoin() { return g_myGame.running ? g_myGame.join : std::string(); }
 
 // ---- Presence pump (once a second, UI thread) -----------------------------------
 static int MpPublishWorker(void* p) {
@@ -9711,7 +9909,7 @@ static void PumpMultiplayer() {
     }
     // Shift+Tab in a game (or net_invite_friends()): bring up Invite friends.
     if (!okay::GameIpc::TakeInviteRequests().empty()) {
-        g_inviteOpenReq = true;
+        g_inviteOpenReq = true; g_inviteMode = 0;
         if (g_launcherWindow) { SDL_RestoreWindow(g_launcherWindow); SDL_RaiseWindow(g_launcherWindow); }
     }
 }
@@ -9811,6 +10009,185 @@ static void MpFetchFriends() {
     else g_frFetching = false;
 }
 
+static void OpenPublicProfile(const std::string& uid, const std::string& username,
+                              const std::string& name, const std::string& avatar, int accent);
+// ---- Parties: friends who play together -------------------------------------------
+// The leader's launcher stores its game session on the party; members' launchers
+// follow it into the same match. A background thread keeps the party fresh
+// (every 3s while in one, 15s otherwise); actions run on short-lived threads.
+static SDL_mutex* g_partyMutex = nullptr;
+static okay::Party g_partyNew;                 // (guarded) latest fetch
+static bool g_partyNewReady = false;           // (guarded)
+static std::string g_partyMe;                  // (guarded) my uid
+static std::string g_partyToast;               // (guarded) a result to show
+static int g_partyToastKind = 1;               // (guarded)
+static volatile bool g_partyForce = false;     // refetch now
+static volatile bool g_partyPollRun = false;
+static okay::Party g_party;                    // UI thread copy
+static std::string g_partyMyUid;               // UI thread copy
+static std::vector<std::pair<std::string, std::string>> g_partyPendingInvites;   // (uid, name) waiting for a new party
+static bool PartyDemo() { return std::getenv("OKAY_MP_DEMO") != nullptr; }
+
+static int PartyPollWorker(void*) {
+    Uint32 next = 0;
+    while (g_partyPollRun) {
+        const Uint32 now = SDL_GetTicks();
+        if (now >= next || g_partyForce) {
+            g_partyForce = false;
+            bool inParty = false;
+            try {
+                okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+                if (a.IsLoggedIn()) {
+                    okay::Parties ps(a);
+                    okay::Party p;
+                    if (ps.Mine(p)) {
+                        inParty = p.Valid();
+                        const std::string me = ps.MyId();
+                        SDL_LockMutex(g_partyMutex);
+                        g_partyNew = std::move(p); g_partyMe = me; g_partyNewReady = true;
+                        SDL_UnlockMutex(g_partyMutex);
+                    }
+                }
+            } catch (...) {}
+            next = SDL_GetTicks() + (inParty ? 3000 : 15000);
+        }
+        SDL_Delay(100);
+    }
+    return 0;
+}
+
+struct PartyJob { int op = 0; std::string a, b; bool flag = false; std::string partyId; };
+enum { kPartyCreate = 1, kPartyJoin, kPartyLeave, kPartyKick, kPartyPromote, kPartyReady, kPartySession };
+static int PartyJobWorker(void* p) {
+    std::unique_ptr<PartyJob> j(static_cast<PartyJob*>(p));
+    std::string err, ok;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::Parties ps(a);
+        bool done = false;
+        switch (j->op) {
+        case kPartyCreate:  done = ps.Create(&err);  ok = "Party created \xE2\x80\x94 invite your friends"; break;
+        case kPartyJoin:    done = ps.Join(j->a, &err); ok = "You joined the party"; break;
+        case kPartyLeave:   done = ps.Leave(&err);   ok = "You left the party"; break;
+        case kPartyKick:    done = ps.Kick(j->a, &err); ok = "Removed " + j->b + " from the party"; break;
+        case kPartyPromote: done = ps.Promote(j->a, &err); ok = j->b + " is the party leader now"; break;
+        case kPartyReady:   done = ps.SetReady(j->partyId, j->flag); break;
+        case kPartySession: done = ps.SetSession(j->partyId, j->a, j->b); break;
+        }
+        if (!done && err.empty() && j->op < kPartyReady) err = "Couldn't update the party.";
+    } catch (...) { err = "Couldn't reach the server."; }
+    if (!err.empty() || !ok.empty()) {
+        SDL_LockMutex(g_partyMutex);
+        g_partyToast = err.empty() ? ok : err; g_partyToastKind = err.empty() ? 1 : 2;
+        SDL_UnlockMutex(g_partyMutex);
+    }
+    g_partyForce = true;
+    return 0;
+}
+static void PartyRun(int op, const std::string& a = {}, const std::string& b = {}, bool flag = false) {
+    if (PartyDemo()) {   // dev screenshot hook: act locally
+        if (op == kPartyLeave) g_party = okay::Party{};
+        if (op == kPartyReady) for (auto& m : g_party.members) if (m.uid == g_partyMyUid) m.ready = flag;
+        return;
+    }
+    if (!g_partyMutex) g_partyMutex = SDL_CreateMutex();
+    auto* j = new PartyJob; j->op = op; j->a = a; j->b = b; j->flag = flag; j->partyId = g_party.id;
+    if (SDL_Thread* t = SDL_CreateThread(PartyJobWorker, "okay-party", j)) SDL_DetachThread(t);
+    else delete j;
+}
+static bool PartyIsLeader() { return g_party.Valid() && g_party.leader == g_partyMyUid; }
+static std::string MpPartyId() { return g_party.id; }
+
+// Invite someone to my party (making one first if I'm not in a party).
+static void MpPartyInvite(const std::string& uid, const std::string& name) {
+    if (!g_party.Valid()) {
+        g_partyPendingInvites.push_back({uid, name});
+        PartyRun(kPartyCreate);
+        return;
+    }
+    if (g_party.Find(uid)) { Toast(name + " is already in your party", 1); return; }
+    if ((int)g_party.members.size() >= g_party.maxSize) { Toast("Your party is full", 2); return; }
+    OutboxSend(uid, 0, okay::Parties::InviteBody(g_party.id, MyUsername()));
+    Toast("Invited " + name + " to your party", 1);
+}
+static void MpPartyJoinFromInvite(const std::string& body) {
+    std::string pid, from;
+    if (!okay::Parties::ParseInvite(body, pid, from)) { Toast("That party invite isn't valid.", 2); return; }
+    if (g_party.id == pid) { Toast("You're already in that party", 1); return; }
+    PartyRun(kPartyJoin, pid);
+}
+
+// Once a frame: take fresh party state, keep the leader's session on the party,
+// and follow the leader into games.
+static void PumpParty() {
+    if (PartyDemo()) {
+        static bool seeded = false;
+        if (!seeded) {
+            seeded = true;
+            g_partyMyUid = "me";
+            g_party.id = "demo-party"; g_party.leader = "me"; g_party.game = "Star Arena"; g_party.maxSize = 8;
+            auto mk = [](const char* uid, const char* user, const char* disp, bool ready, bool online, const char* playing) {
+                okay::PartyMember m; m.uid = uid; m.username = user; m.display = disp; m.ready = ready; m.online = online; m.playing = playing; return m; };
+            g_party.members = {mk("me", "kingimann", "", true, true, "Playing Star Arena \xC2\xB7 Hosting Maya's lobby (2/8)"),
+                               mk("demo-maya", "maya", "Maya Chen", true, true, "Playing Star Arena \xC2\xB7 Playing on Maya's lobby"),
+                               mk("demo-theo", "theo", "Theo", false, true, "In OkaySpace")};
+        }
+        return;
+    }
+    if (!g_presenceAccount || !g_presenceAccount->IsLoggedIn()) {
+        if (g_party.Valid()) g_party = okay::Party{};
+        return;
+    }
+    if (!g_partyMutex) g_partyMutex = SDL_CreateMutex();
+    if (!g_partyPollRun) {
+        g_partyPollRun = true;
+        if (SDL_Thread* t = SDL_CreateThread(PartyPollWorker, "okay-partypoll", nullptr)) SDL_DetachThread(t);
+        else g_partyPollRun = false;
+    }
+    std::string toast; int toastKind = 1;
+    bool fresh = false; okay::Party np;
+    SDL_LockMutex(g_partyMutex);
+    if (g_partyNewReady) { np = g_partyNew; g_partyMyUid = g_partyMe; g_partyNewReady = false; fresh = true; }
+    toast.swap(g_partyToast); toastKind = g_partyToastKind;
+    SDL_UnlockMutex(g_partyMutex);
+    if (!toast.empty()) Toast(toast, toastKind);
+    if (fresh) {
+        // Who came and went (not on the first load / when switching parties).
+        if (g_party.Valid() && np.id == g_party.id) {
+            for (const auto& m : np.members) if (!g_party.Find(m.uid) && m.uid != g_partyMyUid) Toast(m.Name() + " joined the party", 1);
+            for (const auto& m : g_party.members) if (!np.Find(m.uid) && m.uid != g_partyMyUid) Toast(m.Name() + " left the party", 1);
+            if (np.leader != g_party.leader && np.leader == g_partyMyUid) Toast("You're the party leader now", 1);
+        } else if (g_party.Valid() && !np.Valid()) Toast("You're no longer in the party", 1);
+        g_party = np;
+        if (g_party.Valid() && !g_partyPendingInvites.empty()) {   // invites waiting for a new party
+            auto pend = std::move(g_partyPendingInvites); g_partyPendingInvites.clear();
+            for (const auto& [uid, name] : pend) MpPartyInvite(uid, name);
+        }
+    }
+    if (!g_party.Valid()) return;
+
+    static Uint32 lastSync = 0;
+    if (PartyIsLeader()) {   // members follow whatever session I'm in
+        const std::string game = MpCanInvite() ? g_myGame.title : std::string();
+        const std::string link = MpCanInvite() ? g_myGame.invite : std::string();
+        if ((game != g_party.game || link != g_party.joinLink) && SDL_GetTicks() - lastSync > 3000) {
+            lastSync = SDL_GetTicks();
+            g_party.game = game; g_party.joinLink = link;   // optimistic; the next poll confirms
+            PartyRun(kPartySession, game, link);
+        }
+        return;
+    }
+    // A member: follow the leader into their match (once per session).
+    static std::string followed;
+    if (!g_partyFollow || g_party.joinLink.empty() || g_party.joinLink == followed) return;
+    followed = g_party.joinLink;
+    okay::JoinLink theirs, mine;
+    if (okay::JoinLink::Parse(g_party.joinLink, theirs) && okay::JoinLink::Parse(MpMyJoin(), mine) && mine.SameSession(theirs)) return;
+    const okay::PartyMember* lead = g_party.Find(g_party.leader);
+    Toast("Following " + (lead ? lead->Name() : std::string("the leader")) + " into " + (g_party.game.empty() ? std::string("their game") : g_party.game), 1);
+    MpJoin(g_party.joinLink, lead ? lead->Name() : std::string());
+}
+
 // ---- Multiplayer UI: dialogs (drawn every frame) --------------------------------
 static bool g_mpConnectReq = false;    // open "Connect to server"
 static bool MpDemo() { static const bool on = std::getenv("OKAY_MP_DEMO") != nullptr; return on; }
@@ -9836,7 +10213,84 @@ static std::vector<okay::Friend> MpFriends() {
     return fl;
 }
 
+// "Maya invited you to play Star Arena  [Join] [Later]" — bottom-right pop-ups for
+// invites that arrive while the chat is closed (Steam's invite toast).
+static void DrawInvitePopups() {
+    struct Pop { PendingInvite inv; Uint32 shownAt = 0; };
+    static std::vector<Pop> pops;
+    std::vector<PendingInvite> fresh;
+    if (g_pollMutex) { SDL_LockMutex(g_pollMutex); fresh.swap(g_pollInvites); SDL_UnlockMutex(g_pollMutex); }
+    static bool demoDone = false;
+    if (MpDemo() && !demoDone) {
+        demoDone = true;
+        PendingInvite d; d.id = 1; d.fromName = "Maya Chen"; d.when = (long)std::time(nullptr);
+        d.body = InviteMessageBody("Star Arena", "okay://join?game=Star%20Arena&addr=192.168.1.20:45000&name=Maya%27s%20lobby&host=maya");
+        fresh.push_back(d);
+    }
+    std::sort(fresh.begin(), fresh.end(), [](const PendingInvite& a, const PendingInvite& b) { return a.id < b.id; });
+    for (const auto& f : fresh) {
+        if (f.id <= g_inviteSeenId && !MpDemo()) continue;
+        if (f.id > g_inviteSeenId) g_inviteSeenId = f.id;
+        ChatInviteInfo ci;
+        const bool party = f.body.rfind("[Party] ", 0) == 0;
+        if (!party && !ParseChatInvite(f.body, ci)) continue;
+        pops.push_back({f, SDL_GetTicks()});
+        if (pops.size() > 3) pops.erase(pops.begin());
+        UpsertNotif("invite:" + std::to_string(f.id), party ? f.fromName + " invited you to their party"
+                                                            : f.fromName + " invited you to play " + ci.title,
+                    party ? "Open the Multiplayer page to join." : "Open the chat with " + f.fromName + " to join.", 2, 14);
+        PlayChatChime();
+    }
+    if (pops.empty()) return;
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float w = 340.0f, h = 104.0f;
+    float y = vp->WorkPos.y + vp->WorkSize.y - 70.0f;
+    for (int i = (int)pops.size() - 1; i >= 0; --i) {
+        Pop& pp = pops[i];
+        if (SDL_GetTicks() - pp.shownAt > 60000) { pops.erase(pops.begin() + i); continue; }
+        y -= h + 10;
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - w - 18, y));
+        ImGui::SetNextWindowSize(ImVec2(w, h));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.13f, 0.15f, 0.19f, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.24f, 0.55f, 0.36f, 0.9f));
+        char wid[32]; std::snprintf(wid, sizeof(wid), "##invpop%ld", pp.inv.id);
+        bool close = false;
+        if (ImGui::Begin(wid, nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
+            const bool party = pp.inv.body.rfind("[Party] ", 0) == 0;
+            ChatInviteInfo ci; if (!party) ParseChatInvite(pp.inv.body, ci);
+            ImDrawList* d = ImGui::GetWindowDrawList();
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            d->AddRectFilled(p, ImVec2(p.x + 44, p.y + 44), ImGui::GetColorU32(kAccent), 10.0f);
+            DrawGamepadIcon(d, ImVec2(p.x + 22, p.y + 22), 27.0f, IM_COL32(255, 255, 255, 240));
+            ImGui::SetCursorScreenPos(ImVec2(p.x + 54, p.y));
+            ImGui::BeginGroup();
+            ImGui::TextUnformatted(FitText(pp.inv.fromName + (party ? " invited you to a party" : " invited you to play"), w - 80).c_str());
+            ImGui::SetWindowFontScale(1.1f);
+            ImGui::TextUnformatted(FitText(party ? std::string("Join their party") : ci.title, w - 80).c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::EndGroup();
+            ImGui::SetCursorScreenPos(ImVec2(p.x + 54, p.y + 54));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.52f, 0.30f, 1));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.21f, 0.62f, 0.36f, 1));
+            if (ImGui::Button(party ? "Join party" : "Join game", ImVec2(130, 28))) {
+                if (party) MpPartyJoinFromInvite(pp.inv.body); else MpJoin(ci.link.Format(), pp.inv.fromName);
+                close = true;
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine();
+            if (ImGui::Button("Later", ImVec2(90, 28))) close = true;
+        }
+        ImGui::End();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar();
+        if (close) pops.erase(pops.begin() + i);
+    }
+}
+
 static void DrawMpDialogs() {
+    DrawInvitePopups();
     const ImU32 cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     // ---- Invite friends (Steam overlay's "Invite to game") ----
     if (g_inviteOpenReq) { g_inviteOpenReq = false; ImGui::OpenPopup("Invite friends##mpinv"); }
@@ -9848,17 +10302,21 @@ static void DrawMpDialogs() {
         DrawGamepadIcon(dl, ImVec2(p.x + 23, p.y + 23), 28.0f, IM_COL32(255, 255, 255, 240));
         ImGui::SetCursorScreenPos(ImVec2(p.x + 58, p.y + 2));
         ImGui::BeginGroup();
+        const bool toParty = g_inviteMode == 1;
         ImGui::SetWindowFontScale(1.12f);
-        ImGui::TextUnformatted(g_myGame.running ? g_myGame.title.c_str() : "No game running");
+        ImGui::TextUnformatted(toParty ? "Invite to your party" : g_myGame.running ? g_myGame.title.c_str() : "No game running");
         ImGui::SetWindowFontScale(1.0f);
-        if (g_myGame.running) {
+        if (toParty) {
+            if (g_party.Valid()) ImGui::TextDisabled("%d/%d in the party Â· they'll join your games with you", (int)g_party.members.size(), g_party.maxSize);
+            else ImGui::TextDisabled("Inviting someone starts a party with you as the leader.");
+        } else if (g_myGame.running) {
             std::string st = g_myGame.status.empty() ? std::string("Starting\xE2\x80\xA6") : g_myGame.status;
             if (g_myGame.maxPlayers > 0) st += "  \xC2\xB7  " + std::to_string(g_myGame.players) + "/" + std::to_string(g_myGame.maxPlayers) + " players";
             ImGui::TextDisabled("%s", st.c_str());
         } else ImGui::TextDisabled("Start a game from your library first.");
         ImGui::EndGroup();
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 56));
-        if (!MpCanInvite()) {
+        if (!toParty && !MpCanInvite()) {
             ImGui::PushTextWrapPos(0);
             ImGui::TextDisabled("Friends can join once you host or join a match in the game. Invites send them a link that opens the game and drops them into your session.");
             ImGui::PopTextWrapPos();
@@ -9894,10 +10352,15 @@ static void DrawMpDialogs() {
                                   : !f.playing.empty() ? f.playing : std::string("Online");
             ld->AddText(ImVec2(rp.x + 52, rp.y + 27), cDim, FitText(sub, w - 52 - bw - 12).c_str());
             ImGui::SetCursorScreenPos(ImVec2(rp.x + w - bw - 4, rp.y + 10));
-            const bool sent = g_invitedUids.count(f.id) != 0;
-            ImGui::BeginDisabled(sent || !MpCanInvite());
-            if (sent) ImGui::Button("Invited", ImVec2(bw, 30));
-            else if (PrimaryButton("Invite", ImVec2(bw, 30))) MpInviteUser(f.id, name);
+            static std::set<std::string> partyInvited;
+            const bool inParty = toParty && g_party.Find(f.id);
+            const bool sent = toParty ? partyInvited.count(f.id) != 0 : g_invitedUids.count(f.id) != 0;
+            ImGui::BeginDisabled(sent || inParty || (!toParty && !MpCanInvite()));
+            if (inParty) ImGui::Button("In party", ImVec2(bw, 30));
+            else if (sent) ImGui::Button("Invited", ImVec2(bw, 30));
+            else if (PrimaryButton("Invite", ImVec2(bw, 30))) {
+                if (toParty) { MpPartyInvite(f.id, name); partyInvited.insert(f.id); } else MpInviteUser(f.id, name);
+            }
             ImGui::EndDisabled();
             ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + 2));
             ImGui::Dummy(ImVec2(0, 0));
@@ -9910,7 +10373,7 @@ static void DrawMpDialogs() {
         }
         ImGui::EndChild();
         ImGui::Separator();
-        ImGui::BeginDisabled(!MpCanInvite());
+        ImGui::BeginDisabled(toParty || !MpCanInvite());
         if (ImGui::Button("Copy invite link", ImVec2(150, 30))) { ImGui::SetClipboardText(g_myGame.invite.c_str()); Toast("Invite link copied \xE2\x80\x94 anyone with it can join", 1); }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Paste it anywhere; in OkaySpace it opens as a Join card.");
@@ -9999,6 +10462,107 @@ static void DrawMpDialogs() {
     }
 }
 
+// ---- Party card (Multiplayer page) ----------------------------------------------------
+static void DrawCrown(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
+    const ImVec2 pts[] = {ImVec2(c.x - s, c.y + s * 0.55f), ImVec2(c.x - s, c.y - s * 0.35f), ImVec2(c.x - s * 0.5f, c.y + s * 0.05f),
+                          ImVec2(c.x, c.y - s * 0.6f), ImVec2(c.x + s * 0.5f, c.y + s * 0.05f), ImVec2(c.x + s, c.y - s * 0.35f),
+                          ImVec2(c.x + s, c.y + s * 0.55f)};
+    d->AddConvexPolyFilled(pts, 7, col);
+}
+static void DrawPartyCard() {
+    const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    const ImU32 cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 12));
+    ImGui::BeginChild("##party", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+    const float right = ImGui::GetContentRegionMax().x;
+    if (!g_party.Valid()) {
+        ImGui::SetWindowFontScale(0.82f);
+        ImGui::TextColored(ImVec4(0.62f, 0.72f, 1.0f, 1.0f), "PARTY");
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::TextUnformatted("Play together with friends");
+        ImGui::TextDisabled("The party leader picks the game and server \xE2\x80\x94 everyone in the party joins with them.");
+        ImGui::SetCursorPos(ImVec2(right - 290, 18));
+        if (PrimaryButton("Create party", ImVec2(140, 32))) PartyRun(kPartyCreate);
+        ImGui::SameLine();
+        if (ImGui::Button("Invite to party", ImVec2(140, 32))) { g_inviteMode = 1; g_inviteOpenReq = true; }
+        ImGui::EndChild(); ImGui::PopStyleVar(); ImGui::PopStyleColor();
+        return;
+    }
+    const bool leader = PartyIsLeader();
+    const okay::PartyMember* me = g_party.Find(g_partyMyUid);
+    // Header row: PARTY · 3/8, what we're playing, actions.
+    ImGui::SetWindowFontScale(0.82f);
+    ImGui::TextColored(ImVec4(0.62f, 0.72f, 1.0f, 1.0f), "PARTY  \xC2\xB7  %d/%d", (int)g_party.members.size(), g_party.maxSize);
+    ImGui::SetWindowFontScale(1.0f);
+    const okay::PartyMember* lead = g_party.Find(g_party.leader);
+    std::string what = !g_party.game.empty() ? (leader ? "You're playing " : (lead ? lead->Name() : std::string("The leader")) + " is playing ") + g_party.game
+                     : leader ? std::string("Start a match \xE2\x80\x94 your party joins you") : (lead ? lead->Name() : std::string("The leader")) + " hasn't started a game yet";
+    ImGui::TextUnformatted(what.c_str());
+    ImGui::SetCursorPos(ImVec2(right - 360, 16));
+    if (ImGui::Button("Invite", ImVec2(100, 30))) { g_inviteMode = 1; g_inviteOpenReq = true; }
+    ImGui::SameLine();
+    const bool ready = me && me->ready;
+    if (ImGui::Button(ready ? "Ready" : "Not ready", ImVec2(110, 30))) PartyRun(kPartyReady, {}, {}, !ready);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(ready ? "You're ready. Click to un-ready." : "Let the party know you're ready.");
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.55f, 1));
+    if (ImGui::Button("Leave", ImVec2(110, 30))) PartyRun(kPartyLeave);
+    ImGui::PopStyleColor();
+    if (!leader && !g_party.joinLink.empty()) {   // jump in now (e.g. after turning Follow off)
+        ImGui::SetCursorPos(ImVec2(right - 360, 52));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.52f, 0.30f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.21f, 0.62f, 0.36f, 1));
+        if (ImGui::Button("Join the leader", ImVec2(342, 26))) MpJoin(g_party.joinLink, lead ? lead->Name() : std::string());
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::Dummy(ImVec2(0, 6));
+    // Members: avatar chips with crown / ready tick / status.
+    const float chipW = 170.0f, chipH = 54.0f;
+    const int cols = std::max(1, (int)((ImGui::GetContentRegionAvail().x + 8) / (chipW + 8)));
+    const ImVec2 g0 = ImGui::GetCursorScreenPos();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    int i = 0;
+    for (const auto& m : g_party.members) {
+        const ImVec2 cp(g0.x + (i % cols) * (chipW + 8), g0.y + (i / cols) * (chipH + 8));
+        ++i;
+        ImGui::PushID(m.uid.c_str());
+        ImGui::SetCursorScreenPos(cp);
+        ImGui::InvisibleButton("##chip", ImVec2(chipW, chipH));
+        const bool hov = ImGui::IsItemHovered();
+        d->AddRectFilled(cp, ImVec2(cp.x + chipW, cp.y + chipH), hov ? IM_COL32(255, 255, 255, 16) : IM_COL32(255, 255, 255, 8), 10.0f);
+        if (ImGui::BeginPopupContextItem("##chipctx")) {
+            if (m.uid != g_partyMyUid) {
+                if (ImGui::MenuItem("Message")) OpenChatWith(m.uid, m.Name(), m.avatar);
+                if (ImGui::MenuItem("View profile")) OpenPublicProfile(m.uid, m.username, m.Name(), m.avatar, 0);
+                if (leader) {
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Make party leader")) PartyRun(kPartyPromote, m.uid, m.Name());
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                    if (ImGui::MenuItem("Remove from party")) PartyRun(kPartyKick, m.uid, m.Name());
+                    ImGui::PopStyleColor();
+                }
+            } else ImGui::TextDisabled("That's you");
+            ImGui::EndPopup();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(cp.x + 8, cp.y + 9));
+        DrawAvatar(m.avatar, m.Name(), 36.0f);
+        d->AddCircleFilled(ImVec2(cp.x + 8 + 31, cp.y + 9 + 31), 5.5f, m.online ? IM_COL32(67, 181, 129, 255) : IM_COL32(120, 128, 140, 255), 12);
+        if (m.uid == g_party.leader) DrawCrown(d, ImVec2(cp.x + 8 + 18, cp.y + 6), 6.0f, IM_COL32(250, 200, 70, 255));
+        const std::string nm = m.uid == g_partyMyUid ? m.Name() + " (you)" : m.Name();
+        d->AddText(ImVec2(cp.x + 52, cp.y + 9), ImGui::GetColorU32(ImGuiCol_Text), FitText(nm, chipW - 60).c_str());
+        const std::string st = m.ready ? std::string("Ready") : !m.playing.empty() ? m.playing : m.online ? std::string("Online") : std::string("Offline");
+        d->AddText(ImVec2(cp.x + 52, cp.y + 28), m.ready ? IM_COL32(115, 209, 143, 255) : cDim, FitText(st, chipW - 60).c_str());
+        ImGui::PopID();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + ((i + cols - 1) / cols) * (chipH + 8)));
+    if (leader) ImGui::TextDisabled("You lead: when you host or join a match, your party joins you. Right-click a member to make them leader.");
+    else if (ImGui::Checkbox("Follow the leader into games", &g_partyFollow)) SavePrefs();
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
 // ---- The Multiplayer page: now playing + server browser ------------------------------
 static void DrawMultiplayerPage(bool signedIn) {
     static int mpTab = 0, shownTab = -1, sel = -1;
@@ -10029,6 +10593,8 @@ static void DrawMultiplayerPage(bool signedIn) {
         ImGui::Dummy(ImVec2(0, 6));
     }
 
+    if (signedIn) { DrawPartyCard(); ImGui::Dummy(ImVec2(0, 8)); }
+
     // Now playing: the game I'm in, and inviting friends to it.
     const MyGame cur = g_myGame;
     if (cur.running) {
@@ -10055,7 +10621,7 @@ static void DrawMultiplayerPage(bool signedIn) {
         ImGui::SetCursorScreenPos(ImVec2(ImGui::GetWindowPos().x + bx, p.y + (tile - 32) * 0.5f));
         const bool can = !cur.invite.empty();
         ImGui::BeginDisabled(!can);
-        if (PrimaryButton("Invite friends", ImVec2(150, 32))) g_inviteOpenReq = true;
+        if (PrimaryButton("Invite friends", ImVec2(150, 32))) { g_inviteMode = 0; g_inviteOpenReq = true; }
         ImGui::SameLine();
         if (ImGui::Button("Copy join link", ImVec2(130, 32))) { ImGui::SetClipboardText(cur.invite.c_str()); Toast("Join link copied", 1); }
         ImGui::EndDisabled();
@@ -12123,6 +12689,7 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
             if (ImGui::MenuItem("Copy username")) { ImGui::SetClipboardText(("@" + p.username).c_str()); Toast("Username copied", 1); }
             if (!me && p.online && !p.sessionCode.empty() && ImGui::MenuItem("Join their game")) MpJoinFriend(p.sessionCode, p.username);
             if (!me && MpCanInvite() && ImGui::MenuItem(("Invite to " + MpGameTitle()).c_str())) MpInviteUser(p.id, p.username);
+            if (!me && s_b.friendStatus == "accepted" && ImGui::MenuItem(MpPartyId().empty() ? "Start a party with them" : "Invite to party")) MpPartyInvite(p.id, p.username);
             if (me && ImGui::MenuItem("View all achievements")) { out.gotoTab = 5; ClosePublicProfile(); }
             if (!me && s_b.friendStatus == "pending" && s_b.incoming) {
                 ImGui::Separator();
@@ -13708,6 +14275,7 @@ int main(int argc, char** argv) {
         VoicePump();
         PumpScheduled(account.IsLoggedIn());   // scheduled chat messages that are due
         PumpMultiplayer();                     // running game's rich presence + in-game invite requests
+        PumpParty();                           // party state, leader's session, follow the leader
         PumpStatus(account.IsLoggedIn());      // learn / auto-clear my custom status
         PlaytimeTick(account.IsLoggedIn());
         if (!g_incoming.code.empty()) {   // ring (and get the user's attention) while a call waits
@@ -14490,7 +15058,7 @@ int main(int argc, char** argv) {
         navSection("MENU");
         tabRow(0);
         tabRow(1, LibraryGameCount(scenes), navSoft);     // built + web games (not editor projects)
-        if (navRow("##navmp", "Multiplayer", kIcoGlobe, tab == 14 && !g_pfOpen, 0, 0)) { tab = 14; ClosePublicProfile(); }
+        if (navRow("##navmp", "Multiplayer", kIcoGlobe, tab == 14 && !g_pfOpen, g_party.Valid() ? (int)g_party.members.size() : 0, navSoft)) { tab = 14; ClosePublicProfile(); }
         tabRow(2);
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
@@ -18168,6 +18736,7 @@ int main(int argc, char** argv) {
                             if (ImGui::MenuItem("Message")) OpenChatWith(f->id, dispName, f->avatar);
                             if (joinable && ImGui::MenuItem("Join their game")) MpJoinFriend(f->sessionCode, dispName);
                             if (MpCanInvite() && ImGui::MenuItem(("Invite to " + MpGameTitle()).c_str())) MpInviteUser(f->id, dispName);
+                            if (ImGui::MenuItem(MpPartyId().empty() ? "Start a party with them" : "Invite to party")) MpPartyInvite(f->id, dispName);
                             if (ImGui::MenuItem(fav ? "Unfavorite" : "Favorite")) {
                                 if (fav) g_favFriends.erase(f->id); else g_favFriends.insert(f->id);
                                 SavePrefs();

@@ -4,6 +4,7 @@
 #include "okay/Net/ServerQuery.hpp"
 #include "okay/Net/SessionPresence.hpp"
 #include "okay/Platform/GameIpc.hpp"
+#include "okay/Platform/Parties.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -160,6 +161,18 @@ int main() {
         GameIpc::ClearPresence();
         CHECK(!GameIpc::ReadPresence(GameIpc::CurrentPid(), r));
         std::error_code ec; fs::remove_all(dir, ec);
+    }
+
+    // ---- Party invites (chat messages) ----------------------------------------------------
+    {
+        const std::string pid = "0f6a2c1e-5b7d-4e8a-9c3f-2d1b0a9e8f7c";
+        std::string id, from;
+        CHECK(Parties::ParseInvite(Parties::InviteBody(pid, "maya"), id, from));
+        CHECK(id == pid && from == "maya");
+        CHECK(!Parties::ParseInvite("[Party] nope", id, from));          // not a party id
+        CHECK(!Parties::ParseInvite("hello [Party] " + pid, id, from));  // only at the start
+        Party p; p.id = pid; PartyMember m; m.uid = "u1"; m.username = "theo"; p.members.push_back(m);
+        CHECK(p.Valid() && p.Find("u1") && p.Find("u1")->Name() == "theo" && !p.Find("u2"));
     }
 
     TEST_MAIN_RESULT();

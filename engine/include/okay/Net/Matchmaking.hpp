@@ -1,6 +1,9 @@
 #pragma once
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Platform/Account/AccountService.hpp"   // detail JSON helpers
+#include <cctype>
+#include <cstdlib>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -17,6 +20,12 @@ struct GameSession {
     int port       = 0;      // UDP port
     int players    = 0;      // current player count
     int maxPlayers = 0;      // capacity
+    // Server-browser details (columns from docs/sql/game_servers.sql; empty /
+    // false on a project that hasn't added them yet).
+    std::string game;        // game title (the launcher filters by it)
+    std::string map;         // current map / scene
+    bool hasPassword = false;
+    bool dedicated   = false;
 };
 
 /// Supabase-backed matchmaking / server browser. A host advertises its session in
@@ -46,6 +55,63 @@ public:
         account::ApiResponse r = Account::Api("/rest/v1/game_sessions", "POST", body,
                                               "Prefer: return=representation");
         return r.ok ? d::JsonField(r.body, "id") : std::string{};
+    }
+
+    /// Advertise with the full server-browser details (game, map, password flag,
+    /// dedicated). Falls back to the basic columns on a project without them.
+    static std::string Advertise(const GameSession& s) {
+        namespace d = okay::account::detail;
+        const std::string basic = "\"name\":\"" + d::JsonEscape(s.name) +
+            "\",\"host_addr\":\"" + d::JsonEscape(s.hostAddr) +
+            "\",\"port\":" + std::to_string(s.port) +
+            ",\"max_players\":" + std::to_string(s.maxPlayers) +
+            ",\"players\":" + std::to_string(s.players) +
+            ",\"room\":\"" + d::JsonEscape(s.room) +
+            "\",\"region\":\"" + d::JsonEscape(s.region) + "\"";
+        const std::string full = basic + ",\"game\":\"" + d::JsonEscape(s.game) +
+            "\",\"map\":\"" + d::JsonEscape(s.map) +
+            "\",\"has_password\":" + (s.hasPassword ? "true" : "false") +
+            ",\"dedicated\":" + (s.dedicated ? "true" : "false");
+        account::ApiResponse r = Account::Api("/rest/v1/game_sessions", "POST", "[{" + full + "}]",
+                                              "Prefer: return=representation");
+        if (!r.ok && r.reached && r.status == 400)   // columns not there yet: basic listing
+            r = Account::Api("/rest/v1/game_sessions", "POST", "[{" + basic + "}]", "Prefer: return=representation");
+        return r.ok ? d::JsonField(r.body, "id") : std::string{};
+    }
+
+    /// Open sessions for the server browser: only ones heartbeated in the last
+    /// `freshSeconds` (a crashed host drops off), optionally for one `game`.
+    static std::vector<GameSession> Browse(const std::string& game = {}, int freshSeconds = 150) {
+        if (!Account::Exists()) return {};
+        return BrowseWith(Account::Get(), game, freshSeconds);
+    }
+    /// Browse() through a specific account service (the launcher's worker threads).
+    static std::vector<GameSession> BrowseWith(account::AccountService& svc, const std::string& game = {},
+                                               int freshSeconds = 150) {
+        char iso[32] = {0};
+        std::time_t t = std::time(nullptr) - freshSeconds;
+        if (std::tm* g = std::gmtime(&t)) std::strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", g);
+        const std::string fresh = std::string("&updated_at=gt.") + iso + "&order=players.desc,updated_at.desc&limit=200";
+        std::string path = "/rest/v1/game_sessions?select=id,name,room,host_addr,port,players,max_players,region,game,map,has_password,dedicated" + fresh;
+        if (!game.empty()) path += "&game=eq." + UrlEnc(game);
+        account::ApiResponse r = svc.Api(path, "GET");
+        if (!r.ok && r.reached && r.status == 400)   // older table: basic columns
+            r = svc.Api("/rest/v1/game_sessions?select=id,name,room,host_addr,port,players,max_players,region" + fresh, "GET");
+        std::vector<GameSession> out;
+        if (!r.ok) return out;
+        for (const std::string& o : SplitObjects(r.body)) {
+            GameSession g;
+            g.id = Raw(o, "id"); g.name = Raw(o, "name"); g.room = Raw(o, "room");
+            g.hostAddr = Raw(o, "host_addr"); g.region = Raw(o, "region");
+            g.port = std::atoi(Raw(o, "port").c_str());
+            g.players = std::atoi(Raw(o, "players").c_str());
+            g.maxPlayers = std::atoi(Raw(o, "max_players").c_str());
+            g.game = Raw(o, "game"); g.map = Raw(o, "map");
+            g.hasPassword = Raw(o, "has_password") == "true";
+            g.dedicated = Raw(o, "dedicated") == "true";
+            if (!g.hostAddr.empty() && g.port > 0) out.push_back(std::move(g));
+        }
+        return out;
     }
 
     /// Refresh a session's player count (and, via a DB trigger, its updated_at), so
@@ -98,6 +164,48 @@ public:
             out.push_back(std::move(g));
         }
         return out;
+    }
+
+private:
+    static std::vector<std::string> SplitObjects(const std::string& json) {
+        std::vector<std::string> out; int depth = 0; std::size_t start = 0; bool inStr = false;
+        for (std::size_t i = 0; i < json.size(); ++i) {
+            const char c = json[i];
+            if (inStr) { if (c == '\\') ++i; else if (c == '"') inStr = false; continue; }
+            if (c == '"') inStr = true;
+            else if (c == '{') { if (depth++ == 0) start = i; }
+            else if (c == '}' && depth > 0 && --depth == 0) out.push_back(json.substr(start, i - start + 1));
+        }
+        return out;
+    }
+    // A field's value from one flat object: strings unescaped, others as written ("" for null).
+    static std::string Raw(const std::string& obj, const std::string& key) {
+        const std::string k = "\"" + key + "\"";
+        std::size_t p = obj.find(k);
+        if (p == std::string::npos) return {};
+        p = obj.find(':', p + k.size());
+        if (p == std::string::npos) return {};
+        ++p; while (p < obj.size() && obj[p] == ' ') ++p;
+        std::string v;
+        if (p < obj.size() && obj[p] == '"') {
+            for (++p; p < obj.size() && obj[p] != '"'; ++p) {
+                if (obj[p] == '\\' && p + 1 < obj.size()) ++p;
+                v += obj[p];
+            }
+            return v;
+        }
+        while (p < obj.size() && obj[p] != ',' && obj[p] != '}') v += obj[p++];
+        while (!v.empty() && v.back() == ' ') v.pop_back();
+        return v == "null" ? std::string() : v;
+    }
+    static std::string UrlEnc(const std::string& s) {
+        static const char* hex = "0123456789ABCDEF";
+        std::string o;
+        for (unsigned char c : s) {
+            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
+            else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
+        }
+        return o;
     }
 };
 

@@ -93,6 +93,13 @@ bool UdpSocket::Bind(std::uint16_t port) {
                   reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
 }
 
+bool UdpSocket::EnableBroadcast() {
+    if (!IsOpen()) return false;
+    int on = 1;
+    return ::setsockopt(static_cast<int>(m_handle), SOL_SOCKET, SO_BROADCAST,
+                        reinterpret_cast<const char*>(&on), sizeof(on)) == 0;
+}
+
 void UdpSocket::Close() {
     if (m_handle == kInvalid) return;
 #if defined(_WIN32)

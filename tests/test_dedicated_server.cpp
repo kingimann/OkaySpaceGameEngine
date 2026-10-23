@@ -34,6 +34,14 @@ int main() {
         const char* a4[] = {"okay-player", "--server", "--bogus"};
         std::string e4; DedicatedServerOptions r;
         CHECK(ParseDedicatedServerArgs(3, (char**)a4, r, &e4) && !e4.empty());
+        // Server browser listing needs the address players reach.
+        const char* a5[] = {"okay-player", "--server", "--advertise"};
+        std::string e5; DedicatedServerOptions s5;
+        CHECK(ParseDedicatedServerArgs(3, (char**)a5, s5, &e5) && !e5.empty());
+        const char* a6[] = {"okay-player", "--server", "--advertise", "--public-addr", "play.example.com", "--region", "EU"};
+        std::string e6; DedicatedServerOptions s6;
+        CHECK(ParseDedicatedServerArgs(7, (char**)a6, s6, &e6) && e6.empty());
+        CHECK(s6.advertise && s6.publicAddr == "play.example.com" && s6.region == "EU");
     }
 
     // ---- AsyncTokenCheck: pending, then a cached answer -------------------------

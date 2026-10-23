@@ -29,10 +29,14 @@ okay-player --server --scene arena.okayscene --port 45000 --max-players 16 --aut
 | `--no-encryption` | don't encrypt traffic |
 | `--status SECONDS` | status line interval (default 60, 0 = off) |
 | `--run-for SECONDS` | stop after this long |
+| `--advertise` | list it in the launcher's server browser (sign in on this machine; run `docs/sql/game_servers.sql` once) |
+| `--public-addr HOST` | the address players connect to (required with `--advertise`) |
+| `--region TEXT` | region shown in the browser |
 
 Container hosts can use environment variables instead: `OKAY_SERVER_PORT`,
 `OKAY_SERVER_MAX_PLAYERS`, `OKAY_SERVER_TICK`, `OKAY_SERVER_NAME`,
-`OKAY_SERVER_PASSWORD`, `OKAY_SERVER_AUTH=1` (flags win). The server stops
+`OKAY_SERVER_PASSWORD`, `OKAY_SERVER_AUTH=1`, `OKAY_SERVER_ADVERTISE=1`,
+`OKAY_SERVER_PUBLIC_ADDR`, `OKAY_SERVER_REGION` (flags win). The server stops
 cleanly on Ctrl+C or SIGTERM.
 
 It logs one line per join/leave (with the verified account id when `--auth` is
@@ -68,6 +72,8 @@ Hathora can start servers per match on demand.
 ## Roadmap
 
 1. ✅ Headless server mode with Supabase sign-in on join
+   - ✅ Launcher integration: join friends, invites, server browser
+     ([launcher-multiplayer.md](launcher-multiplayer.md))
 2. Server-side validation of player movement and important actions
 3. `game_servers` / `matches` tables + an `allocate_match` Edge Function
 4. Match tickets: request a match, get an address + ticket, join

@@ -1,6 +1,8 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/RelayProtocol.hpp"
+#include "okay/Net/ServerQuery.hpp"
+#include "okay/Net/JoinLink.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -18,7 +20,8 @@ namespace {
         Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5,
         Message = 6, DirectMessage = 7, SyncVar = 8, Ping = 9, Pong = 10,
         Ready = 11, Reject = 12, Kicked = 13, ReliableMsg = 14, ReliableAck = 15,
-        Fragment = 16   // one piece of a message too large for a single datagram
+        Fragment = 16,  // one piece of a message too large for a single datagram
+        Query = 17, QueryInfo = 18   // server browser: "who are you?" without joining
     };
     constexpr float kFragmentTtl = 5.0f;        // drop half-assembled messages after this
     // Outer tag marking an encrypted datagram (nonce||ciphertext follows). Distinct
@@ -58,6 +61,18 @@ bool NetworkManager::StartServer(std::uint16_t port) {
     OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
               " (max ", maxPlayers, ")");
     return true;
+}
+
+int NetworkManager::PlayerCount() const {
+    if (m_mode == Mode::Server) return (int)m_clients.size() + (dedicated ? 0 : 1);
+    if (m_mode == Mode::Client) return m_joined ? (int)m_remotes.size() + 1 : 0;
+    return 0;
+}
+std::string NetworkManager::ServerAddress() const {
+    return (m_mode == Mode::Client && !m_relay) ? m_serverEp.ToString() : std::string();
+}
+std::string NetworkManager::RelayAddress() const {
+    return m_relay ? m_relayEp.ToString() : std::string();
 }
 
 bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
@@ -414,7 +429,39 @@ void NetworkManager::Despawn(const std::string& netId) {
     Send("__despawn", netId);
 }
 
+namespace {
+    std::string g_launchJoin;          // pending launcher join (consumed by the next Start)
+    bool        g_launchedToJoin = false;
+    std::string g_defaultToken, g_defaultName;
+}
+void NetworkManager::SetLaunchJoin(const std::string& link) {
+    g_launchJoin = link;
+    if (!link.empty()) g_launchedToJoin = true;
+}
+std::string NetworkManager::TakeLaunchJoin() { std::string l; l.swap(g_launchJoin); return l; }
+bool NetworkManager::LaunchedToJoin() { return g_launchedToJoin; }
+void NetworkManager::SetDefaultIdentity(const std::string& token, const std::string& name) {
+    g_defaultToken = token; g_defaultName = name;
+}
+
+bool NetworkManager::JoinByLink(const std::string& text) {
+    JoinLink l;
+    if (!JoinLink::Parse(text, l)) { OKAY_WARN("net: not a join link: ", text); return false; }
+    if (!l.room.empty()) m_localRoom = l.room;
+    if (!l.password.empty()) password = l.password;
+    if (l.Relayed()) {
+        std::string h; std::uint16_t port = 0;
+        if (!SplitHostPort(l.relay, h, port, 45100)) return false;
+        return JoinViaRelay(h, port, l.code);
+    }
+    std::string h; std::uint16_t port = 0;
+    if (!SplitHostPort(l.addr, h, port)) return false;
+    return StartClient(h, port);
+}
+
 void NetworkManager::Start() {
+    if (m_authToken.empty() && !g_defaultToken.empty()) m_authToken = g_defaultToken;
+    if (m_localName == "Player" && !g_defaultName.empty()) m_localName = g_defaultName;
     if (!startName.empty()) m_localName = startName;
     if (!startRoom.empty()) m_localRoom = startRoom;
     // Default the broadcast avatar + remote factory so auto-start works with no
@@ -429,6 +476,8 @@ void NetworkManager::Start() {
             return g;
         };
     }
+    const std::string launch = TakeLaunchJoin();   // launched from a friend / invite / server browser
+    if (!launch.empty() && JoinByLink(launch)) return;
     if (autoStart == AutoStart::Host) StartServer(autoPort);
     else if (autoStart == AutoStart::Join) StartClient(autoHost, autoPort);
 }
@@ -748,6 +797,27 @@ void NetworkManager::ServerTick(float dt) {
         }
         net::Packet p(data, len);
         std::uint8_t type = p.ReadU8();
+        if (type == Query) {
+            // A server browser asking for our details (no join, no state). The
+            // request is padded to at least the size of a typical answer so the
+            // server can't be used to amplify traffic at a spoofed address.
+            if (len < net::kQueryMinSize || p.ReadString() != net::kQueryMagic) continue;
+            const std::uint32_t nonce = p.ReadU32();
+            net::Packet q(QueryInfo);
+            q.Write(std::string(net::kQueryMagic)); q.Write(nonce);
+            q.Write(std::uint8_t(net::kQueryProtocol));
+            q.Write(serverName); q.Write(gameId); q.Write(mapName);
+            q.Write(std::uint32_t(PlayerCount()));
+            q.Write(std::uint32_t(maxPlayers + (dedicated ? 0 : 1)));
+            std::uint8_t flags = 0;
+            if (!password.empty()) flags |= net::kQueryPassword;
+            if (dedicated) flags |= net::kQueryDedicated;
+            if (m_joinCheck || m_verifyToken) flags |= net::kQueryAuth;
+            if (encryption && net::SecureChannel::Available()) flags |= net::kQueryEncrypted;
+            q.Write(flags);
+            SendDatagram(from, q.Data(), q.Size(), /*allowEncrypt=*/false);
+            continue;
+        }
         if (type == Join) {
             std::string name = p.ReadString();           // display name (may be empty)
             std::string room = p.ReadString();           // lobby room (may be empty)

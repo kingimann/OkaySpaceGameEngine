@@ -1,5 +1,6 @@
 #include "okay/Net/DedicatedServer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -12,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
@@ -76,8 +78,13 @@ const char* DedicatedServerUsage() {
         "  --no-encryption        don't encrypt traffic\n"
         "  --status SECONDS       print a status line this often (default 60, 0 = off)\n"
         "  --run-for SECONDS      stop after this long (for tests)\n"
+        "  --advertise            list this server in the launcher's server browser\n"
+        "                         (sign in to OkaySpace on this machine first)\n"
+        "  --public-addr HOST     the address players connect to (IP or hostname)\n"
+        "  --region TEXT          region shown in the browser (e.g. EU)\n"
         "Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,\n"
-        "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1 (flags win).\n";
+        "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1, OKAY_SERVER_ADVERTISE=1,\n"
+        "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
 }
 
 bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out, std::string* error) {
@@ -103,6 +110,9 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
     if (std::string e = EnvStr("OKAY_SERVER_NAME"); !e.empty()) out.name = e;
     if (std::string e = EnvStr("OKAY_SERVER_PASSWORD"); !e.empty()) out.password = e;
     if (EnvStr("OKAY_SERVER_AUTH") == "1") out.requireAuth = true;
+    if (EnvStr("OKAY_SERVER_ADVERTISE") == "1") out.advertise = true;
+    if (std::string e = EnvStr("OKAY_SERVER_PUBLIC_ADDR"); !e.empty()) out.publicAddr = e;
+    if (std::string e = EnvStr("OKAY_SERVER_REGION"); !e.empty()) out.region = e;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -139,9 +149,18 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
         } else if (a == "--run-for") {
             if (!value(v) || !ParseFloat(v, 0.0f, 1e7f, fv)) return fail("--run-for needs seconds");
             out.maxRuntime = fv;
+        } else if (a == "--advertise") out.advertise = true;
+        else if (a == "--public-addr") {
+            if (!value(v) || v.empty()) return fail("--public-addr needs the address players connect to");
+            out.publicAddr = v;
+        } else if (a == "--region") {
+            if (!value(v)) return fail("--region needs text");
+            out.region = v;
         } else if (a.rfind("--", 0) == 0) return fail("unknown option " + a);
         else if (out.scenePath.empty()) out.scenePath = a;   // a bare path = the scene
     }
+    if (out.advertise && out.publicAddr.empty())
+        return fail("--advertise needs --public-addr (the address players connect to)");
     return true;
 }
 
@@ -176,6 +195,58 @@ double NowSeconds() {
     using namespace std::chrono;
     return duration<double>(steady_clock::now().time_since_epoch()).count();
 }
+
+// Runs web requests (server-browser listing + heartbeats) one at a time on a
+// worker, so the game tick never waits on the network.
+class BackgroundJobs {
+public:
+    BackgroundJobs() {
+#if defined(_WIN32)
+        thread_ = CreateThread(nullptr, 0, &Entry, this, 0, nullptr);
+#else
+        thread_ = std::thread([this] { Run(); });
+#endif
+    }
+    ~BackgroundJobs() {   // finishes what's queued, then stops
+        { Guard g(lock_); stop_ = true; }
+        lock_.notify();
+#if defined(_WIN32)
+        if (thread_) { WaitForSingleObject(thread_, INFINITE); CloseHandle(thread_); }
+#else
+        if (thread_.joinable()) thread_.join();
+#endif
+    }
+    void Post(std::function<void()> job) {
+        { Guard g(lock_); jobs_.push_back(std::move(job)); }
+        lock_.notify();
+    }
+    bool Idle() { Guard g(lock_); return jobs_.empty() && !busy_; }
+
+private:
+    void Run() {
+        for (;;) {
+            std::function<void()> job;
+            {
+                Guard g(lock_);
+                while (!stop_ && jobs_.empty()) lock_.wait();
+                if (jobs_.empty()) return;   // stopping and drained
+                job = std::move(jobs_.front()); jobs_.pop_front();
+                busy_ = true;
+            }
+            try { job(); } catch (...) {}
+            Guard g(lock_); busy_ = false;
+        }
+    }
+    Lock lock_;
+    std::deque<std::function<void()>> jobs_;
+    bool stop_ = false, busy_ = false;
+#if defined(_WIN32)
+    HANDLE thread_ = nullptr;
+    static DWORD WINAPI Entry(LPVOID p) { static_cast<BackgroundJobs*>(p)->Run(); return 0; }
+#else
+    std::thread thread_;
+#endif
+};
 } // namespace
 
 struct AsyncTokenCheck::Impl {
@@ -279,6 +350,8 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     net->serverName = opts.name;
     net->password   = opts.password;
     net->encryption = opts.encryption;
+    if (!opts.game.empty()) net->gameId = opts.game;
+    if (net->mapName.empty()) net->mapName = scene.Name();
 
     std::unique_ptr<AsyncTokenCheck> auth;
     if (opts.requireAuth) {
@@ -301,6 +374,28 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
                 opts.password.empty() ? "" : " \xC2\xB7 password",
                 opts.encryption ? " \xC2\xB7 encrypted" : "");
     std::fflush(stdout);
+
+    // Server browser listing: register, heartbeat the player count, unlist on stop.
+    std::unique_ptr<BackgroundJobs> web;
+    auto listingId = std::make_shared<std::string>();
+    if (opts.advertise) {
+        if (!Account::IsLoggedIn()) {
+            std::fprintf(stderr, "[server] --advertise: not signed in to OkaySpace on this machine; not listed\n");
+        } else {
+            web = std::make_unique<BackgroundJobs>();
+            GameSession gs;
+            gs.name = opts.name; gs.hostAddr = opts.publicAddr; gs.port = net->ServerPort();
+            gs.maxPlayers = opts.maxPlayers; gs.region = opts.region; gs.game = net->gameId;
+            gs.map = net->mapName; gs.hasPassword = !opts.password.empty(); gs.dedicated = true;
+            web->Post([gs, listingId] {
+                *listingId = Matchmaking::Advertise(gs);
+                if (listingId->empty()) std::fprintf(stderr, "[server] couldn't list the server (is game_sessions set up?)\n");
+                else std::printf("[server] listed in the server browser as %s:%d\n", gs.hostAddr.c_str(), gs.port);
+                std::fflush(stdout);
+            });
+        }
+    }
+    double lastBeat = 0.0;
 
     using clock = std::chrono::steady_clock;
     const auto tick = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / opts.tickRate));
@@ -338,6 +433,11 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
             std::fflush(stdout);
             busySum = 0.0; busyTicks = 0;
         }
+        if (web && up - lastBeat >= 30.0 && web->Idle()) {   // keep the listing fresh
+            lastBeat = up;
+            const int players = (int)known.size();
+            web->Post([listingId, players] { if (!listingId->empty()) Matchmaking::Heartbeat(*listingId, players); });
+        }
         if (opts.maxRuntime > 0.0f && up >= opts.maxRuntime) break;
 
         // Fixed rate: sleep to the next tick (catch up without a spiral if we fall behind).
@@ -355,6 +455,10 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     }
     std::printf("[server] stopping\n");
     std::fflush(stdout);
+    if (web) {   // unlist, then let the worker finish
+        web->Post([listingId] { if (!listingId->empty()) Matchmaking::Unregister(*listingId); });
+        web.reset();
+    }
     net->Stop();
     return 0;
 }

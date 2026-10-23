@@ -33,14 +33,22 @@ struct DedicatedServerOptions {
     bool  encryption = true;         ///< encrypt traffic when both ends support it
     float statusEvery = 60.0f;       ///< seconds between status lines (0 = never)
     float maxRuntime = 0.0f;         ///< stop after this many seconds (0 = run until stopped)
+    // Server browser: list this server in the launcher's Internet tab (needs the
+    // OkaySpace account signed in on this machine, and an address players reach).
+    bool  advertise = false;
+    std::string publicAddr;          ///< address players connect to (IP or hostname)
+    std::string region;              ///< e.g. "EU", "US East"
+    std::string game;                ///< game title shown in the browser (the player fills it in)
 };
 
 /// Read `--server` and its flags (plus OKAY_SERVER_* environment variables, which
 /// container hosts use) into `out`. Returns true when `--server` was given.
 /// Flags: --port N, --scene PATH, --max-players N, --tick HZ, --name TEXT,
-/// --password TEXT, --auth, --no-encryption, --status SECONDS, --run-for SECONDS.
+/// --password TEXT, --auth, --no-encryption, --status SECONDS, --run-for SECONDS,
+/// --advertise, --public-addr HOST, --region TEXT.
 /// Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,
-/// OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1. Flags win.
+/// OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1,
+/// OKAY_SERVER_ADVERTISE=1, OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION. Flags win.
 /// On a bad value, returns true with `error` set.
 bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out, std::string* error = nullptr);
 /// The usage text for --help.

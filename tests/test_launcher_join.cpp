@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 #include "okay/Net/JoinLink.hpp"
 #include "okay/Net/ServerQuery.hpp"
+#include "okay/Net/ServerBrowser.hpp"
 #include "okay/Net/SessionPresence.hpp"
 #include "okay/Platform/GameIpc.hpp"
 #include "okay/Platform/Parties.hpp"
@@ -161,6 +162,39 @@ int main() {
         GameIpc::ClearPresence();
         CHECK(!GameIpc::ReadPresence(GameIpc::CurrentPid(), r));
         std::error_code ec; fs::remove_all(dir, ec);
+    }
+
+    // ---- In-game server browser: background LAN search, filtered to this game ---------------
+    {
+        Scene a("A"), b("B");
+        auto* mine  = a.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        auto* other = b.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        mine->serverName = "Arena EU"; mine->gameId = "Arena"; mine->password = "pw";
+        other->serverName = "Kart night"; other->gameId = "Kart Rush";
+        if (mine->StartServer(45011) && other->StartServer(45012)) {
+            a.Start(); b.Start();
+            std::atomic<bool> stop{false};
+            std::thread pump([&] { while (!stop) { a.Update(0.01f); b.Update(0.01f); std::this_thread::sleep_for(std::chrono::milliseconds(2)); } });
+            ServerBrowser sb;
+            sb.SetGame("arena");                       // case doesn't matter
+            const auto v0 = sb.Version();
+            sb.Refresh(ServerBrowser::kLan);
+            CHECK(sb.Busy());                          // runs in the background
+            for (int i = 0; i < 400 && sb.Busy(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            CHECK(!sb.Busy() && sb.Version() == v0 + 1);
+            const auto res = sb.Results();
+            bool sawArena = false, sawKart = false;
+            for (const auto& e : res) {
+                if (e.info.name == "Arena EU") { sawArena = true; CHECK(e.info.password && e.info.pingMs >= 0 && !e.listed); }
+                if (e.info.name == "Kart night") sawKart = true;
+            }
+            CHECK(sawArena && !sawKart);               // only this game's servers
+            for (const auto& e : res) if (e.info.name == "Arena EU") {
+                const JoinLink l = e.Link();
+                CHECK(l.game == "Arena" && l.needsPassword && l.addr.find(":45011") != std::string::npos);
+            }
+            stop = true; pump.join();
+        }
     }
 
     // ---- Party invites (chat messages) ----------------------------------------------------

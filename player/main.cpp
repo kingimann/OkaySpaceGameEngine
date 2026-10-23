@@ -13,6 +13,7 @@
 #include "okay/Net/DedicatedServer.hpp"
 #include "okay/Net/JoinLink.hpp"
 #include "okay/Net/SessionPresence.hpp"
+#include "okay/Net/ServerBrowser.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
@@ -421,6 +422,159 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
 }
 
 // A Minecraft-style hotbar (+ openable backpack) drawn from an Inventory.
+#ifdef OKAY_HAVE_OKAYUI
+// The built-in in-game server browser ("Find a server"): public servers for this
+// game plus the LAN, with ping, players, filters, a password prompt and Join. A
+// game opens it with net_browser_open() (or the Open Server Browser action).
+static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
+    okay::ServerBrowser& sb = okay::ServerBrowser::Shared();
+    static bool wasOpen = false;
+    static int tab = 0, shownTab = -1, sel = -1;
+    static char search[64] = "", pass[64] = "", direct[128] = "";
+    static bool notFull = false, noPassword = false;
+    static std::string status;
+    static okay::NetworkManager* joining = nullptr;
+    static Uint32 lastClick = 0; static int lastClickRow = -1;
+    static bool cursorWasShown = true;
+    if (!sb.windowOpen) {
+        if (wasOpen) { wasOpen = false; SDL_ShowCursor(cursorWasShown ? SDL_ENABLE : SDL_DISABLE); }
+        return;
+    }
+    if (!wasOpen) {   // just opened: fresh search, free the mouse (FPS games capture it)
+        wasOpen = true; shownTab = -1; sel = -1; status.clear(); joining = nullptr;
+        cursorWasShown = SDL_ShowCursor(SDL_QUERY) == SDL_ENABLE;
+        okay::Cursor::Capture(false);
+        SDL_ShowCursor(SDL_ENABLE);
+    }
+    const int sources = tab == 1 ? okay::ServerBrowser::kInternet : tab == 2 ? okay::ServerBrowser::kLan : okay::ServerBrowser::kAll;
+    if (shownTab != tab && !sb.Busy()) { shownTab = tab; sb.Refresh(sources); sel = -1; }
+
+    auto joinLink = [&](const okay::JoinLink& l) {
+        okay::NetworkManager* nm = scene.FindObjectOfType<okay::NetworkManager>();
+        if (nm) { nm->JoinByLink(l.Format()); joining = nm; status = "Joining " + (l.name.empty() ? l.addr : l.name) + "\xE2\x80\xA6"; }
+        else { okay::NetworkManager::SetLaunchJoin(l.Format()); sb.windowOpen = false; }
+    };
+    if (joining) {   // close once we're in; say why if refused
+        if (joining->Joined()) { sb.windowOpen = false; joining = nullptr; return; }
+        if (joining->JoinRejected()) { status = "Couldn't join: the server is full or the password is wrong."; joining = nullptr; }
+    }
+
+    int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
+    const float W = (float)std::min(760, ww - 40), H = (float)std::min(540, wh - 40);
+    bool open = true;
+    if (OkayUI::Begin("Find a server", (ww - W) * 0.5f, (wh - H) * 0.5f, W, H, &open)) {
+        const char* tabs[] = {"All", "Internet", "LAN"};
+        OkayUI::TabBar(tabs, 3, &tab);
+        OkayUI::SetNextItemWidth(200.0f);
+        OkayUI::InputText("Search", search, sizeof(search));
+        OkayUI::SameLine(); OkayUI::Checkbox("Not full", &notFull);
+        OkayUI::SameLine(); OkayUI::Checkbox("No password", &noPassword);
+        OkayUI::SameLine();
+        if (OkayUI::Button(sb.Busy() ? "Searching..." : "Refresh") && !sb.Busy()) { sb.Refresh(sources); sel = -1; }
+
+        const auto all = sb.Results();
+        std::string q = search; for (auto& c : q) c = (char)std::tolower((unsigned char)c);
+        std::vector<int> rows;
+        for (int i = 0; i < (int)all.size(); ++i) {
+            const auto& e = all[i];
+            if (tab == 1 && !e.listed) continue;
+            if (tab == 2 && e.listed) continue;
+            if (notFull && e.info.maxPlayers > 0 && e.info.players >= e.info.maxPlayers) continue;
+            if (noPassword && e.info.password) continue;
+            if (!q.empty()) {
+                std::string hay = e.info.name + " " + e.info.map; for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
+                if (hay.find(q) == std::string::npos) continue;
+            }
+            rows.push_back(i);
+        }
+        if (OkayUI::BeginChild("##servers", 0.0f, H - 230.0f, true)) {
+            const char* hdr[] = {"Server", "Players", "Map", "Ping"};
+            const float weights[] = {3.2f, 1.1f, 1.4f, 1.0f};
+            const float nameW = (W - 60.0f) * weights[0] / 6.7f - 12.0f;
+            auto fit = [](std::string t, float maxW) {   // trim with "..." to fit the column
+                if (OkayUI::CalcTextWidth(t.c_str()) <= maxW) return t;
+                while (!t.empty() && OkayUI::CalcTextWidth((t + "...").c_str()) > maxW) t.pop_back();
+                return t + "...";
+            };
+            if (OkayUI::BeginTable("##srvtable", 4, hdr, weights)) {
+                for (int i : rows) {
+                    const auto& e = all[i];
+                    OkayUI::TableNextRow();
+                    OkayUI::TableNextColumn();
+                    OkayUI::PushID(i);
+                    const std::string label = fit(std::string(e.info.password ? "(locked) " : "") + (e.info.name.empty() ? e.info.Address() : e.info.name), nameW);
+                    if (OkayUI::Selectable(label.c_str(), sel == i)) {
+                        const Uint32 now = SDL_GetTicks();
+                        if (lastClickRow == i && now - lastClick < 400 && !e.info.password) joinLink(e.Link());   // double-click joins
+                        lastClick = now; lastClickRow = i; sel = i;
+                    }
+                    OkayUI::PopID();
+                    OkayUI::TableNextColumn();
+                    char pl[32];
+                    if (e.info.maxPlayers > 0) std::snprintf(pl, sizeof(pl), "%d / %d", e.info.players, e.info.maxPlayers); else std::snprintf(pl, sizeof(pl), "-");
+                    OkayUI::Text(pl);
+                    OkayUI::TableNextColumn();
+                    OkayUI::Text(e.info.map.empty() ? "-" : e.info.map.c_str());
+                    OkayUI::TableNextColumn();
+                    if (e.info.pingMs < 0) OkayUI::TextDisabled("-");
+                    else {
+                        char pg[16]; std::snprintf(pg, sizeof(pg), "%d ms", e.info.pingMs);
+                        if (e.info.pingMs < 60) OkayUI::TextColored(115, 209, 143, pg);
+                        else if (e.info.pingMs < 130) OkayUI::TextColored(235, 199, 97, pg);
+                        else OkayUI::TextColored(240, 128, 115, pg);
+                    }
+                }
+                OkayUI::EndTable();
+            }
+            if (rows.empty())
+                OkayUI::TextDisabled(sb.Busy() ? "Looking for servers..." : all.empty() ? "No servers found. Try Refresh, or connect by address below." : "No servers match your filters.");
+        }
+        OkayUI::EndChild();
+
+        // Selected server: join (with a password if it's locked).
+        if (sel >= 0 && sel < (int)all.size()) {
+            const auto& e = all[sel];
+            const float lineW = W - 40.0f;
+            auto fitLine = [&](std::string t) {
+                if (OkayUI::CalcTextWidth(t.c_str()) <= lineW) return t;
+                while (!t.empty() && OkayUI::CalcTextWidth((t + "...").c_str()) > lineW) t.pop_back();
+                return t + "...";
+            };
+            OkayUI::Text(fitLine(e.info.name.empty() ? e.info.Address() : e.info.name).c_str());
+            std::string line = e.info.Address();
+            if (e.info.dedicated) line += "  dedicated";
+            if (e.info.auth) line += "  sign-in";
+            if (e.info.password) line += "  password";
+            OkayUI::TextDisabled(fitLine(line).c_str());
+            if (e.info.password) { OkayUI::SetNextItemWidth(200.0f); OkayUI::InputText("Password", pass, sizeof(pass)); OkayUI::SameLine(); }
+            if (OkayUI::Button("Join")) {
+                okay::JoinLink l = e.Link();
+                if (e.info.password) l.password = pass;
+                if (e.info.password && !pass[0]) status = "This server needs a password.";
+                else joinLink(l);
+            }
+        } else OkayUI::TextDisabled("Pick a server (double-click to join).");
+        OkayUI::Separator();
+        // Direct connect by address (or a pasted okay://join link).
+        OkayUI::SetNextItemWidth(260.0f);
+        OkayUI::InputText("Address", direct, sizeof(direct));
+        OkayUI::SameLine();
+        if (OkayUI::Button("Connect") && direct[0]) {
+            okay::JoinLink l;
+            if (!okay::JoinLink::Parse(direct, l)) {
+                std::string h; std::uint16_t port = 0;
+                if (okay::SplitHostPort(direct, h, port)) { l = okay::JoinLink{}; l.game = sb.Game(); l.addr = h + ":" + std::to_string(port); }
+            }
+            if (!l.addr.empty() || l.Relayed()) { if (pass[0] && l.password.empty()) l.password = pass; joinLink(l); }
+            else status = "That isn't an address (try host:port).";
+        }
+        if (!status.empty()) OkayUI::TextColored(235, 199, 97, status.c_str());
+    }
+    OkayUI::End();
+    if (!open) sb.windowOpen = false;
+}
+#endif
+
 static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::string& baseDir,
                             std::unordered_map<std::string, SDL_Texture*>& cache) {
     okay::Inventory* inv = ui.Inv();
@@ -1413,6 +1567,8 @@ int main(int argc, char** argv) {
 #if !defined(__EMSCRIPTEN__)
     const std::string lanAddr = okay::LocalNetworkAddress();
     const std::string gameTitle = !cfg.title.empty() && cfg.title != "OkaySpace Game" ? cfg.title : scene.Name();
+    okay::ServerBrowser::Shared().SetGame(gameTitle);   // the server browser lists this game's servers
+    if (std::getenv("OKAY_BROWSER_DEMO")) okay::ServerBrowser::Shared().windowOpen = true;   // dev screenshot hook
     Uint32 presenceAt = 0, presenceWritten = 0;
     std::string presenceLast;
     auto pumpPresence = [&]() {
@@ -1457,7 +1613,7 @@ int main(int argc, char** argv) {
             if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1) g_testUI = !g_testUI;
             if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F3) g_statsUI = !g_statsUI;
             if (e.type == SDL_MOUSEWHEEL) g_uiWheel += (float)e.wheel.y;   // for OkayUI scrolling
-            if (g_testUI) {
+            if (g_testUI || okay::ServerBrowser::Shared().windowOpen) {   // OkayUI text fields need the typing
                 if (e.type == SDL_TEXTINPUT) SDL_strlcat(g_uiText, e.text.text, sizeof(g_uiText));
                 if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
             }
@@ -3156,6 +3312,7 @@ int main(int argc, char** argv) {
         // F1 "Test UI" panel on top, then flush the whole OkayUI frame here so it
         // composites above the game.
         if (g_testUI) okay_testui::Panel(24.0f, 24.0f);
+        DrawServerBrowserWindow(scene, window);   // net_browser_open(): the in-game "Find a server" window
         // F3 performance HUD — a real in-engine use of OkayUI (FPS graph, frame time,
         // and a scrollable list of scene objects). Showcases PlotLines/LabelText/child.
         if (g_statsUI) {

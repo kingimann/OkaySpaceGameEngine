@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include <SDL.h>
@@ -1970,6 +1971,12 @@ void tblEnterCell() {
 } // namespace
 
 bool BeginTable(const char* id, int columns, const char* const* headers) {
+    return BeginTable(id, columns, headers, nullptr);
+}
+
+float CalcTextWidth(const char* text) { return labelW(text); }
+
+bool BeginTable(const char* id, int columns, const char* const* headers, const float* weights) {
     if (!g_lay.active || columns < 1) return false;
     if (columns > 16) columns = 16;
     const int tid = hashLabel(id);
@@ -1979,9 +1986,11 @@ bool BeginTable(const char* id, int columns, const char* const* headers) {
 
     // Fetch/seed persisted column widths, then rescale so they exactly fill fullW
     // (keeps the table snug when the window is resized).
-    float sum = 0.0f;
+    float sum = 0.0f, wsum = 0.0f;
+    if (weights) for (int i = 0; i < columns; ++i) wsum += weights[i] > 0.0f ? weights[i] : 0.0f;
     for (int i = 0; i < columns; ++i) {
-        g_tbl.w[i] = floatState(tid ^ (0x7100 + i), g_tbl.fullW / columns);
+        const float seed = (weights && wsum > 0.0f) ? g_tbl.fullW * std::max(weights[i], 0.0f) / wsum : g_tbl.fullW / columns;
+        g_tbl.w[i] = floatState(tid ^ (0x7100 + i), seed);
         if (*g_tbl.w[i] < 12.0f) *g_tbl.w[i] = 12.0f;
         sum += *g_tbl.w[i];
     }

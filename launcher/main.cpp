@@ -10564,6 +10564,140 @@ static void DrawPartyCard() {
 }
 
 // ---- The Multiplayer page: now playing + server browser ------------------------------
+// ---- Server info (who's playing) + Quick Play ----------------------------------------
+struct MpInfoJob { std::string host; std::uint16_t port = 0; };
+static SDL_mutex* g_mpInfoMutex = nullptr;
+static std::vector<okay::ServerPlayer> g_mpInfoPlayers;   // (guarded)
+static int g_mpInfoState = 0;                            // (guarded) 0 idle, 1 asking, 2 answered, 3 no answer
+static int MpInfoWorker(void* p) {
+    std::unique_ptr<MpInfoJob> j(static_cast<MpInfoJob*>(p));
+    std::vector<okay::ServerPlayer> pl;
+    const bool ok = okay::QueryPlayers(j->host, j->port, pl, 2000);
+    SDL_LockMutex(g_mpInfoMutex); g_mpInfoPlayers = std::move(pl); g_mpInfoState = ok ? 2 : 3; SDL_UnlockMutex(g_mpInfoMutex);
+    return 0;
+}
+static MpRow g_mpInfoRow;
+static bool g_mpInfoReq = false;
+static void MpOpenInfo(const MpRow& r) {
+    g_mpInfoRow = r; g_mpInfoReq = true;
+    if (!g_mpInfoMutex) g_mpInfoMutex = SDL_CreateMutex();
+    SDL_LockMutex(g_mpInfoMutex); g_mpInfoPlayers.clear(); g_mpInfoState = 1; SDL_UnlockMutex(g_mpInfoMutex);
+    if (MpDemo()) {
+        SDL_LockMutex(g_mpInfoMutex);
+        g_mpInfoPlayers = {{"Maya Chen", "", 24, 1520}, {"theo", "", 17, 610}, {"rin", "", 9, 95}, {"kartking", "", 3, 2410}};
+        g_mpInfoState = 2;
+        SDL_UnlockMutex(g_mpInfoMutex);
+        return;
+    }
+    if (r.relayed || r.info.host.empty()) { SDL_LockMutex(g_mpInfoMutex); g_mpInfoState = 3; SDL_UnlockMutex(g_mpInfoMutex); return; }
+    auto* j = new MpInfoJob{r.info.host, r.info.port};
+    if (SDL_Thread* t = SDL_CreateThread(MpInfoWorker, "okay-srvinfo", j)) SDL_DetachThread(t);
+    else delete j;
+}
+static void DrawMpInfoPopup(const std::function<void(const MpRow&)>& join) {
+    if (g_mpInfoReq) { g_mpInfoReq = false; ImGui::OpenPopup("Server info##mpinfo"); }
+    ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Server info##mpinfo", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const MpRow& r = g_mpInfoRow;
+    ImGui::SetWindowFontScale(1.12f);
+    ImGui::TextUnformatted(r.info.name.empty() ? r.info.Address().c_str() : r.info.name.c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    std::string det = (r.game.empty() ? std::string("Unknown game") : r.game);
+    if (!r.info.map.empty()) det += "  \xC2\xB7  " + r.info.map;
+    if (r.info.maxPlayers > 0) det += "  \xC2\xB7  " + std::to_string(r.info.players) + "/" + std::to_string(r.info.maxPlayers) + " players";
+    if (r.info.pingMs >= 0) det += "  \xC2\xB7  " + std::to_string(r.info.pingMs) + " ms";
+    ImGui::TextDisabled("%s", det.c_str());
+    std::string flags = r.relayed ? std::string("Through a relay") : r.info.Address();
+    if (r.info.dedicated) flags += "  \xC2\xB7  Dedicated";
+    if (r.info.auth) flags += "  \xC2\xB7  Sign-in required";
+    if (r.info.encrypted) flags += "  \xC2\xB7  Encrypted";
+    if (r.info.password) flags += "  \xC2\xB7  Password";
+    ImGui::TextDisabled("%s", flags.c_str());
+    ImGui::Separator();
+    std::vector<okay::ServerPlayer> pl; int st = 0;
+    SDL_LockMutex(g_mpInfoMutex); pl = g_mpInfoPlayers; st = g_mpInfoState; SDL_UnlockMutex(g_mpInfoMutex);
+    if (st == 1) ImGui::TextDisabled("Asking the server who's playing\xE2\x80\xA6");
+    else if (st == 3) ImGui::TextDisabled(r.relayed ? "Player lists aren't available through a relay." : "The server didn't answer.");
+    else if (pl.empty()) ImGui::TextDisabled("Nobody's playing right now \xE2\x80\x94 be the first.");
+    else if (ImGui::BeginTable("##mpplayers", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY, ImVec2(440, std::min(260.0f, 30.0f + 26.0f * pl.size())))) {
+        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Score", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableHeadersRow();
+        std::sort(pl.begin(), pl.end(), [](const okay::ServerPlayer& a, const okay::ServerPlayer& b) { return a.score > b.score; });
+        for (const auto& p : pl) {
+            ImGui::TableNextRow(0, 24.0f);
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(p.name.c_str());
+            ImGui::TableSetColumnIndex(1); ImGui::Text("%d", p.score);
+            ImGui::TableSetColumnIndex(2);
+            const int secs = (int)p.seconds;
+            if (secs >= 3600) ImGui::TextDisabled("%dh %02dm", secs / 3600, secs / 60 % 60); else ImGui::TextDisabled("%dm %02ds", secs / 60, secs % 60);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    if (PrimaryButton("Join", ImVec2(130, 30))) { ImGui::CloseCurrentPopup(); join(r); }
+    ImGui::SameLine();
+    if (ImGui::Button("Close", ImVec2(100, 30)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+// Quick Play: the best open server for a game — not full, no password, low ping,
+// preferring ones with people in them — across the public list and the LAN.
+struct MpQuickJob { std::string game; std::vector<std::string> library; };
+static SDL_mutex* g_mpQuickMutex = nullptr;
+static volatile bool g_mpQuickBusy = false;
+static std::string g_mpQuickLink, g_mpQuickMsg;   // (guarded) result
+static int MpQuickWorker(void* p) {
+    std::unique_ptr<MpQuickJob> j(static_cast<MpQuickJob*>(p));
+    std::vector<MpRow> rows;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        if (a.IsLoggedIn())
+            for (const auto& gs : okay::Matchmaking::BrowseWith(a, j->game)) {
+                MpRow r; r.info.host = gs.hostAddr; r.info.port = (std::uint16_t)gs.port; r.game = gs.game;
+                rows.push_back(r);
+            }
+    } catch (...) {}
+    std::vector<okay::QueryTarget> targets;
+    for (const auto& r : rows) targets.push_back({r.info.host, r.info.port});
+    const auto res = okay::QueryServers(targets, 1500, /*lan=*/true);
+    const okay::ServerInfo* best = nullptr; std::string bestGame; int bestScore = 1 << 30;
+    for (std::size_t i = 0; i < res.size(); ++i) {
+        const okay::ServerInfo& s = res[i];
+        if (!s.responded || s.password || (s.maxPlayers > 0 && s.players >= s.maxPlayers)) continue;
+        const std::string game = !s.game.empty() ? s.game : (i < rows.size() ? rows[i].game : std::string());
+        if (!j->game.empty() ? !SameTitle(game, j->game)
+                             : std::none_of(j->library.begin(), j->library.end(), [&](const std::string& t) { return SameTitle(t, game); })) continue;
+        const int score = s.pingMs + (s.players == 0 ? 150 : 0) - std::min(s.players, 10) * 5;
+        if (score < bestScore) { bestScore = score; best = &s; bestGame = game; }
+    }
+    std::string link, msg;
+    if (best) {
+        okay::JoinLink l; l.game = bestGame; l.addr = best->Address(); l.name = best->name;
+        link = l.Format();
+    } else msg = "No open servers for " + (j->game.empty() ? std::string("your games") : j->game) + " right now \xE2\x80\x94 host a match and invite friends.";
+    SDL_LockMutex(g_mpQuickMutex); g_mpQuickLink = link; g_mpQuickMsg = msg; SDL_UnlockMutex(g_mpQuickMutex);
+    g_mpQuickBusy = false;
+    return 0;
+}
+static void MpQuickPlay(const std::string& game) {
+    if (g_mpQuickBusy) return;
+    if (!g_mpQuickMutex) g_mpQuickMutex = SDL_CreateMutex();
+    auto* j = new MpQuickJob; j->game = game;
+    for (const auto& g : MpLibrary()) j->library.push_back(g.title);
+    g_mpQuickBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(MpQuickWorker, "okay-quickplay", j)) SDL_DetachThread(t);
+    else { delete j; g_mpQuickBusy = false; }
+}
+static void PumpQuickPlay() {
+    if (!g_mpQuickMutex) return;
+    std::string link, msg;
+    SDL_LockMutex(g_mpQuickMutex); link.swap(g_mpQuickLink); msg.swap(g_mpQuickMsg); SDL_UnlockMutex(g_mpQuickMutex);
+    if (!msg.empty()) Toast(msg, 2);
+    if (!link.empty()) MpJoin(link, std::string());
+}
+
 static void DrawMultiplayerPage(bool signedIn) {
     static int mpTab = 0, shownTab = -1, sel = -1;
     static char search[96] = "";
@@ -10674,6 +10808,17 @@ static void DrawMultiplayerPage(bool signedIn) {
     ImGui::SameLine(0, 14); ImGui::Checkbox("Not full", &hideFull);
     ImGui::SameLine(0, 10); ImGui::Checkbox("Has players", &hideEmpty);
     ImGui::SameLine(0, 10); ImGui::Checkbox("No password", &hidePw);
+    {   // Quick Play: jump into the best open server for the chosen game (or any of yours).
+        PumpQuickPlay();
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - 140);
+        ImGui::BeginDisabled(g_mpQuickBusy);
+        if (PrimaryButton(g_mpQuickBusy ? "Finding\xE2\x80\xA6" : "Quick Play", ImVec2(140, 0)))
+            MpQuickPlay(gameFilter > 0 ? lib[gameFilter - 1].title : std::string());
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", gameFilter > 0 ? ("Join the best open " + lib[gameFilter - 1].title + " server").c_str()
+                                                   : "Join the best open server for any game in your library");
+    }
 
     // Rows (demo: a fixed set so the page can be reviewed offline).
     std::vector<MpRow> rows;
@@ -10776,6 +10921,7 @@ static void DrawMultiplayerPage(bool signedIn) {
                     if (ImGui::MenuItem(fav ? "Remove from favorites" : "Add to favorites")) MpToggleFav(r.info.Address(), r.game, r.info.name);
                     if (ImGui::MenuItem("Copy address")) { ImGui::SetClipboardText(r.info.Address().c_str()); Toast("Address copied", 1); }
                 }
+                if (ImGui::MenuItem("Server info\xE2\x80\xA6")) MpOpenInfo(r);
                 if (ImGui::MenuItem("Copy join link")) { ImGui::SetClipboardText(rowLink(r).Format().c_str()); Toast("Join link copied", 1); }
                 ImGui::EndPopup();
             }
@@ -10836,6 +10982,8 @@ static void DrawMultiplayerPage(bool signedIn) {
         ImGui::TextDisabled("%s", det.c_str());
         ImGui::EndGroup();
         const float right = ImGui::GetContentRegionMax().x;
+        ImGui::SameLine(right - 410);
+        if (ImGui::Button("Players", ImVec2(110, 36))) MpOpenInfo(*sr);
         if (!sr->relayed && !sr->info.host.empty()) {
             ImGui::SameLine(right - 290);
             const bool fav = MpIsFav(sr->info.Address());
@@ -10845,8 +10993,9 @@ static void DrawMultiplayerPage(bool signedIn) {
         const bool full = sr->info.maxPlayers > 0 && sr->info.players >= sr->info.maxPlayers;
         if (PrimaryButton(full ? "Join (full)" : "Join", ImVec2(170, 36))) joinRow(*sr);
     } else {
-        ImGui::TextDisabled("Double-click a server to join it. Right-click for favorites and links.");
+        ImGui::TextDisabled("Double-click a server to join it. Right-click for players, favorites and links.");
     }
+    DrawMpInfoPopup(joinRow);
 }
 
 // Background Marketplace list/ratings fetch.

@@ -8841,6 +8841,10 @@ void DrawScriptDocs() {
         fapi("net_launch_join()", "1 if the launcher started the game to join a friend / invite / server");
         fapi("net_join_link(\"okay://join?...\")", "join from a join link");
         fapi("net_invite_friends()", "open the launcher's Invite friends window (also Shift+Tab)");
+        fapi("net_set_score(id, n) / net_score(id)", "server-owned scores, seen by everyone");
+        fapi("net_peer_name(id) / net_roster_count() / net_roster_id(i)", "who's in the room (any peer)");
+        fapi("net_teleport(id, x, y[, z])", "server: move a player (respawn) past the speed check");
+        fapi("net_max_speed(units) / net_rate_limit(perSec)", "server: snap back too-fast moves / drop message spam");
         fapi("net_disconnect()", "leave / stop the session");
         fapi("net_connected() / net_is_server() / net_is_client()", "status");
         fapi("net_id() / net_peers() / net_ping()", "peer id / peer count / RTT (ms)");

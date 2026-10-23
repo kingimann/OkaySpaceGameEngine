@@ -51,6 +51,12 @@ struct QueryTarget { std::string host; std::uint16_t port = 0; };
 std::vector<ServerInfo> QueryServers(const std::vector<QueryTarget>& targets,
                                      int timeoutMs = 1500, bool lan = false);
 
+/// One player on a server (server browser's player list).
+struct ServerPlayer { std::string name, userId; int score = 0; float seconds = 0.0f; };
+/// Ask a server who's playing (a two-step challenge, like Steam's A2S_PLAYER).
+/// Blocks up to `timeoutMs`. False if it didn't answer.
+bool QueryPlayers(const std::string& host, std::uint16_t port, std::vector<ServerPlayer>& out, int timeoutMs = 1500);
+
 /// Split "host:port" ("host" alone uses `defaultPort`). False if empty / bad port.
 bool SplitHostPort(const std::string& text, std::string& host, std::uint16_t& port,
                    std::uint16_t defaultPort = 45000);

@@ -34,6 +34,7 @@
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Platform/GameIpc.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
@@ -4007,6 +4008,25 @@ struct OkayScriptVM::Impl {
             if (!n || a.size() < 3) return Value{0.0f};
             return Value{n->JoinViaRelay(a[0].AsString(), (std::uint16_t)(int)a[1].AsFloat(),
                                          a[2].AsString()) ? 1.0f : 0.0f};
+        };
+        // Launcher integration (Steam-style): was this run started to join a friend
+        // / invite / server? (Skip your menu and go straight to the match.)
+        b["net_launch_join"] = [](std::vector<Value>&) {
+            return Value{NetworkManager::LaunchedToJoin() ? 1.0f : 0.0f};
+        };
+        // Join from an okay://join link (e.g. one a player pasted).
+        b["net_join_link"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (!n || a.empty()) return Value{0.0f};
+            return Value{n->JoinByLink(a[0].AsString()) ? 1.0f : 0.0f};
+        };
+        // Open the OkaySpace launcher's "Invite friends" window for this game.
+        b["net_invite_friends"] = [](std::vector<Value>&) {
+#if !defined(__EMSCRIPTEN__)
+            return Value{GameIpc::RequestInvite() ? 1.0f : 0.0f};
+#else
+            return Value{0.0f};
+#endif
         };
         // 1 once the relay has paired this peer (host wired up / slot assigned).
         b["net_relay_ready"] = [this](std::vector<Value>&) {

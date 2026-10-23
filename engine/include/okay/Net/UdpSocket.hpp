@@ -42,6 +42,8 @@ public:
     /// Bind to a local port (server side). Port 0 picks an ephemeral port.
     bool Bind(std::uint16_t port);
     void Close();
+    /// Allow sending to broadcast addresses (255.255.255.255) — LAN discovery.
+    bool EnableBroadcast();
     bool IsOpen() const { return m_handle != kInvalid; }
     /// The local port actually bound (useful after Bind(0) picks one), or 0.
     std::uint16_t LocalPort() const;

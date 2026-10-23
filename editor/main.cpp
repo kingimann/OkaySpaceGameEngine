@@ -11127,110 +11127,114 @@ void DrawScriptEditor(EditorState& ed) {
                 prev == '{' && next == '}')
                 braceEnter = true;
         }
-        // ---- Tool windows on the left, JetBrains-style: a thin strip of toggles
-        // (Project = Alt+1, Structure = Alt+7) and the open tool window beside the
-        // code. Project lists the project's scripts; Structure the classes and
-        // methods of this file - click one to go there.
+        // ---- Scripts sidebar on the left: only the project's scripts (plus the
+        // ones that live in the scene), with a filter. It folds away to a thin
+        // strip with the chevron or Alt+1. (Classes and methods: double Shift.)
         {
-            static int s_toolWin = 1;   // 0 closed, 1 Project, 2 Structure
+            static bool s_sideOpen = true;
+            static char s_sideFilter[64] = "";
+            static std::vector<std::string> s_sideFiles;
+            static double s_sideScan = -10.0;
+            static std::string s_sideRoot;
             const bool seFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             ImGuiIO& tio = ImGui::GetIO();
-            if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1, false)) { s_toolWin = s_toolWin == 1 ? 0 : 1; tio.InputQueueCharacters.resize(0); }
-            if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_7, false)) { s_toolWin = s_toolWin == 2 ? 0 : 2; tio.InputQueueCharacters.resize(0); }   // (don't also type the digit)
-            // The strip: two short vertical-ish toggles.
-            ImGui::BeginChild("##setoolstrip", ImVec2(30, av.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-            // A tall toggle with its name written top-to-bottom (like an IDE's side bar).
-            auto stripBtn = [&](const char* lbl, int which, const char* tip) {
-                const bool on = s_toolWin == which;
-                const float lh = ImGui::GetFontSize() * 0.92f;
-                const ImVec2 sz(28, lh * (float)std::strlen(lbl) + 12);
-                const ImVec2 p0 = ImGui::GetCursorScreenPos();
-                if (ImGui::InvisibleButton(lbl, sz)) s_toolWin = on ? 0 : which;
-                ImDrawList* sdl = ImGui::GetWindowDrawList();
-                if (on || ImGui::IsItemHovered())
-                    sdl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), on ? IM_COL32(66, 92, 143, 255) : IM_COL32(255, 255, 255, 18), 4.0f);
-                for (std::size_t i = 0; lbl[i]; ++i) {
-                    char ch[2] = {lbl[i], 0};
-                    const float w = ImGui::CalcTextSize(ch).x;
-                    sdl->AddText(ImVec2(p0.x + (sz.x - w) * 0.5f, p0.y + 6 + lh * (float)i),
-                                 on ? IM_COL32(240, 244, 250, 255) : IM_COL32(170, 176, 188, 255), ch);
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-                ImGui::Dummy(ImVec2(0, 4));
+            if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1, false)) { s_sideOpen = !s_sideOpen; tio.InputQueueCharacters.resize(0); }   // (don't also type the digit)
+            auto chevron = [](ImDrawList* d, ImVec2 c, bool left, ImU32 col) {
+                const float k = left ? -1.0f : 1.0f;
+                d->AddLine(ImVec2(c.x - 2.5f * k, c.y - 5), ImVec2(c.x + 2.5f * k, c.y), col, 1.6f);
+                d->AddLine(ImVec2(c.x + 2.5f * k, c.y), ImVec2(c.x - 2.5f * k, c.y + 5), col, 1.6f);
             };
-            stripBtn("PROJECT", 1, "Project (Alt+1): the project's scripts");
-            stripBtn("STRUCTURE", 2, "Structure (Alt+7): classes and methods in this file");
-            ImGui::EndChild();
-            ImGui::SameLine(0, 2);
-            if (s_toolWin) {
-                ImGui::BeginChild("##setool", ImVec2(230, av.y), ImGuiChildFlags_Borders);
-                ImGui::TextDisabled(s_toolWin == 1 ? "PROJECT" : "STRUCTURE");
-                ImGui::Separator();
-                if (s_toolWin == 1) {
-                    // Assets as a folder tree (scripts only); the open file is highlighted.
-                    namespace fs = std::filesystem;
-                    const fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-                    std::function<void(const fs::path&)> tree = [&](const fs::path& dir) {
-                        std::error_code ec;
-                        std::vector<fs::path> dirs, files;
-                        for (auto& e : fs::directory_iterator(dir, ec)) {
-                            if (e.is_directory(ec)) dirs.push_back(e.path());
-                            else {
-                                const std::string ext = e.path().extension().string();
-                                if (ext == ".okay" || ext == ".cs" || ext == ".lua") files.push_back(e.path());
-                            }
-                        }
-                        std::sort(dirs.begin(), dirs.end()); std::sort(files.begin(), files.end());
-                        for (const auto& d : dirs) {
-                            if (ImGui::TreeNodeEx(d.filename().string().c_str(), ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen)) { tree(d); ImGui::TreePop(); }
-                        }
-                        for (const auto& f : files) {
-                            const bool cur = !sc->Path().empty() && fs::equivalent(f, sc->Path(), ec);
-                            ImGui::TreeNodeEx(f.string().c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
-                                              ImGuiTreeNodeFlags_SpanAvailWidth | (cur ? ImGuiTreeNodeFlags_Selected : 0),
-                                              "%s", f.filename().string().c_str());
-                            if (ImGui::IsItemClicked() && !cur) OpenScriptFileInEditor(f.string());
-                        }
-                    };
+            if (!s_sideOpen) {   // folded: a slim strip with an expand chevron
+                ImGui::BeginChild("##sesidefold", ImVec2(24, av.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+                const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##seunfold", ImVec2(22, 26))) s_sideOpen = true;
+                const bool h = ImGui::IsItemHovered();
+                ImDrawList* d = ImGui::GetWindowDrawList();
+                if (h) { d->AddRectFilled(p0, ImVec2(p0.x + 22, p0.y + 26), IM_COL32(255, 255, 255, 22), 5.0f); ImGui::SetTooltip("Show scripts  (Alt+1)"); }
+                chevron(d, ImVec2(p0.x + 11, p0.y + 13), false, h ? IM_COL32(240, 244, 250, 255) : IM_COL32(170, 176, 188, 255));
+                ImGui::EndChild();
+                ImGui::SameLine(0, 2);
+            } else {
+                namespace fs = std::filesystem;
+                const fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+                if (ImGui::GetTime() - s_sideScan > 2.0 || s_sideRoot != assets.string()) {   // rescan every couple of seconds
+                    s_sideScan = ImGui::GetTime(); s_sideRoot = assets.string(); s_sideFiles.clear();
                     std::error_code ec;
-                    if (fs::is_directory(assets, ec)) {
-                        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-                        if (ImGui::TreeNodeEx("Assets", ImGuiTreeNodeFlags_SpanAvailWidth)) { tree(assets); ImGui::TreePop(); }
-                    } else ImGui::TextDisabled("No Assets folder.");
-                    // Scripts that live only inside the scene (no file).
-                    bool header = false;
-                    for (ScriptComponent* t : g_scriptTabs) {
-                        if (!t->Path().empty()) continue;
-                        if (!header) { ImGui::Spacing(); ImGui::TextDisabled("In the scene"); header = true; }
-                        GameObject* og = owner.count(t) ? owner[t] : nullptr;
-                        std::string nm = (og ? og->name : std::string("script")) + ".okay";
-                        ImGui::PushID(t);
-                        if (ImGui::Selectable(nm.c_str(), t == sc)) { g_activeScriptTab = t; g_focusScriptTab = t; }
-                        ImGui::PopID();
-                    }
-                    ImGui::Spacing();
-                    if (ImGui::Button("+ New Script", ImVec2(-1, 0))) g_seNewReq = true;
-                } else {
-                    // Structure: classes and methods; the one the caret is in is highlighted.
-                    static std::size_t s_stHash = 0; static std::vector<std::pair<int, std::string>> s_st;
-                    const std::size_t h = std::hash<std::string>{}(std::string(buf.data()));
-                    if (h != s_stHash) { s_stHash = h; s_st = ScriptOutline(buf.data()); }
-                    int curIdx = -1;
-                    for (int i = 0; i < (int)s_st.size(); ++i) if (s_st[i].first <= caret.line && s_st[i].second[0] == 'f') curIdx = i;
-                    if (s_st.empty()) ImGui::TextDisabled("Nothing to list yet.");
-                    for (int i = 0; i < (int)s_st.size(); ++i) {
-                        const bool isClass = s_st[i].second[0] == 'C';
-                        const std::string nm = s_st[i].second.size() > 3 ? s_st[i].second.substr(3) : s_st[i].second;
-                        ImGui::PushID(i);
-                        if (!isClass) ImGui::Indent(12);
-                        ImGui::PushStyleColor(ImGuiCol_Text, isClass ? ImVec4(0.85f, 0.72f, 0.45f, 1.0f) : ImVec4(0.80f, 0.84f, 0.92f, 1.0f));
-                        std::string lbl = (isClass ? "class " : "") + nm + (isClass ? "" : "()");
-                        if (ImGui::Selectable(lbl.c_str(), i == curIdx)) jumpTo(s_st[i].first);
-                        ImGui::PopStyleColor();
-                        if (!isClass) ImGui::Unindent(12);
-                        ImGui::PopID();
-                    }
+                    if (fs::is_directory(assets, ec))
+                        for (auto it = fs::recursive_directory_iterator(assets, fs::directory_options::skip_permission_denied, ec);
+                             it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
+                            const std::string ext = it->path().extension().string();
+                            if (it->is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua")) s_sideFiles.push_back(it->path().string());
+                            if (s_sideFiles.size() > 2000) break;
+                        }
+                    std::sort(s_sideFiles.begin(), s_sideFiles.end(), [](const std::string& x, const std::string& y) {
+                        std::string a = fs::path(x).filename().string(), b = fs::path(y).filename().string();
+                        for (auto& c : a) c = (char)std::tolower((unsigned char)c);
+                        for (auto& c : b) c = (char)std::tolower((unsigned char)c);
+                        return a < b;
+                    });
                 }
+                ImGui::BeginChild("##setool", ImVec2(230, av.y), ImGuiChildFlags_Borders);
+                {   // header: "Scripts" + count, fold chevron on the right
+                    const ImVec2 hp = ImGui::GetCursorScreenPos();
+                    const float hw = ImGui::GetContentRegionAvail().x;
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted("Scripts");
+                    ImGui::SameLine(0, 6);
+                    ImGui::TextDisabled("%d", (int)s_sideFiles.size());
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x + hw - 22, hp.y));
+                    if (ImGui::InvisibleButton("##sefold", ImVec2(22, ImGui::GetFrameHeight()))) s_sideOpen = false;
+                    const bool h = ImGui::IsItemHovered();
+                    ImDrawList* d = ImGui::GetWindowDrawList();
+                    const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
+                    if (h) { d->AddRectFilled(bmin, bmax, IM_COL32(255, 255, 255, 22), 5.0f); ImGui::SetTooltip("Hide scripts  (Alt+1)"); }
+                    chevron(d, ImVec2((bmin.x + bmax.x) * 0.5f, (bmin.y + bmax.y) * 0.5f), true, h ? IM_COL32(240, 244, 250, 255) : IM_COL32(170, 176, 188, 255));
+                }
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##sefilter", "Filter scripts", s_sideFilter, sizeof s_sideFilter);
+                std::string fl = s_sideFilter; for (auto& c : fl) c = (char)std::tolower((unsigned char)c);
+                ImGui::Spacing();
+                ImGui::BeginChild("##sesidelist", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4));
+                std::error_code ec;
+                int shown = 0;
+                for (const auto& f : s_sideFiles) {
+                    const fs::path fp(f);
+                    const std::string nm = fp.filename().string();
+                    if (!fl.empty()) { std::string l = nm; for (auto& c : l) c = (char)std::tolower((unsigned char)c); if (l.find(fl) == std::string::npos) continue; }
+                    const bool cur = !sc->Path().empty() && fs::equivalent(fp, sc->Path(), ec);
+                    // Folder (relative to Assets) shown dim after the name when it isn't Scripts/.
+                    std::string rel = fp.parent_path().lexically_relative(assets).generic_string();
+                    if (rel == "." || rel == "Scripts") rel.clear();
+                    ImGui::PushID(f.c_str());
+                    const ImVec2 rp = ImGui::GetCursorScreenPos();
+                    if (ImGui::Selectable("##sefile", cur, 0, ImVec2(0, ImGui::GetTextLineHeight() + 4)) && !cur) OpenScriptFileInEditor(f);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", fp.lexically_relative(assets.parent_path()).generic_string().c_str());
+                    ImDrawList* d = ImGui::GetWindowDrawList();
+                    const float ty = rp.y + 2;
+                    d->AddText(ImVec2(rp.x + 4, ty), ImGui::GetColorU32(ImGuiCol_Text), nm.c_str());
+                    if (!rel.empty()) {
+                        const float nw = ImGui::CalcTextSize(nm.c_str()).x;
+                        d->AddText(ImVec2(rp.x + 4 + nw + 8, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), rel.c_str());
+                    }
+                    ImGui::PopID();
+                    ++shown;
+                }
+                // Scripts that live only inside the scene (no file).
+                bool header = false;
+                for (ScriptComponent* t : g_scriptTabs) {
+                    if (!t->Path().empty()) continue;
+                    GameObject* og = owner.count(t) ? owner[t] : nullptr;
+                    std::string nm = (og ? og->name : std::string("script")) + ".okay";
+                    if (!fl.empty()) { std::string l = nm; for (auto& c : l) c = (char)std::tolower((unsigned char)c); if (l.find(fl) == std::string::npos) continue; }
+                    if (!header) { ImGui::Spacing(); ImGui::TextDisabled("In the scene"); header = true; }
+                    ImGui::PushID(t);
+                    if (ImGui::Selectable(nm.c_str(), t == sc)) { g_activeScriptTab = t; g_focusScriptTab = t; }
+                    ImGui::PopID();
+                    ++shown;
+                }
+                if (!shown) ImGui::TextDisabled(fl.empty() ? "No scripts yet." : "No scripts match.");
+                ImGui::EndChild();
+                if (ImGui::Button("+ New Script", ImVec2(-1, 0))) g_seNewReq = true;
                 ImGui::EndChild();
                 ImGui::SameLine();
             }

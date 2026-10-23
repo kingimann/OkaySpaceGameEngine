@@ -760,3 +760,7 @@ add_test(NAME match_results COMMAND test_match_results)
 add_executable(test_matchmaker test_matchmaker.cpp)
 target_link_libraries(test_matchmaker PRIVATE okay::engine)
 add_test(NAME matchmaker COMMAND test_matchmaker)
+
+add_executable(test_ui_templates test_ui_templates.cpp)
+target_link_libraries(test_ui_templates PRIVATE okay::engine)
+add_test(NAME ui_templates COMMAND test_ui_templates)

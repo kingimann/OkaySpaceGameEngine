@@ -1973,6 +1973,11 @@ int main(int argc, char** argv) {
           // world-space button's Contains() hit-tests where it actually appears
           // on screen (the draw pass re-installs the same projector each frame).
           UIWorld().active = false;
+          // Widgets hit-test against where they're really drawn (inside their UI
+          // parent, at the Canvas scale): always, camera or not.
+          UIWorld().rectOf = [cw, ch](GameObject* go, Vec2& o, Vec2& sz) {
+              return GetUIScreenRect(go, (float)cw, (float)ch, o, sz);
+          };
           if (Camera* wcam = scene.mainCamera) {
               UIWorld().active = true;
               UIWorld().screenW = (float)cw; UIWorld().screenH = (float)ch;
@@ -1980,9 +1985,6 @@ int main(int argc, char** argv) {
                   UIWorld().right = wcam->gameObject->transform->Right();
               UIWorld().project = [wcam, cw, ch](const Vec3& p, Vec2& out, float& depth) {
                   return wcam->WorldToScreen(p, (float)cw, (float)ch, out, &depth);
-              };
-              UIWorld().rectOf = [cw, ch](GameObject* go, Vec2& o, Vec2& sz) {
-                  return GetUIScreenRect(go, (float)cw, (float)ch, o, sz);
               };
           } }
 
@@ -2441,14 +2443,15 @@ int main(int argc, char** argv) {
                 if (tr->shadow)
                     DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
                              o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                const float fo = fnt ? 1.0f : px;   // TTF: ~1 screen px, not a whole font pixel
                 if (tr->outline) {
-                    DrawText(renderer, tr->text, o.x - px, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                    DrawText(renderer, tr->text, o.x + px, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                    DrawText(renderer, tr->text, o.x, o.y - px, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                    DrawText(renderer, tr->text, o.x, o.y + px, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x - fo, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x + fo, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x, o.y - fo, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x, o.y + fo, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
                 }
                 DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                if (tr->bold) DrawText(renderer, tr->text, (float)o.x + fo, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
             }
         }
 
@@ -2513,8 +2516,30 @@ int main(int argc, char** argv) {
         }
         g_uiDefaultFont = okay::SceneUIFont(scene.uiFont);   // scene-wide default for this pass ("" = the launcher font)
         okay::SetActiveUIFont(g_uiDefaultFont);              // screen-space text measures in it too
+        // A "Scale With Screen Size" canvas draws at its scale factor, like the editor's
+        // Game view and like hit-testing (GetUIScreenRect): the renderer is scaled and
+        // w/h become the canvas's logical size, so every widget kind (whether it lays out
+        // with UIResolveOrigin or GetUIScreenRect) lands where clicks land.
+        const int uiFullW = w, uiFullH = h;
+        float uiScaleCur = 1.0f;
+        auto uiUseScale = [&](float sc) {
+            if (std::fabs(sc - uiScaleCur) < 1e-4f) return;
+            uiScaleCur = sc;
+            SDL_RenderSetClipRect(renderer, nullptr);
+            SDL_RenderSetScale(renderer, sc, sc);
+            w = (int)std::lround(uiFullW / sc); h = (int)std::lround(uiFullH / sc);
+        };
+        auto uiMouse = [&]() { Vec2 m = Input::MousePosition(); return Vec2{m.x / uiScaleCur, m.y / uiScaleCur}; };
         for (const UIDrawItem& _it : uiItems) {
             const auto& up = scene.Objects()[_it.index];
+            {
+                float want = 1.0f;
+                Canvas* ucv = OwningCanvas(up.get());
+                if (ucv && !ucv->worldSpace && !WorldUIRoot(up.get()) &&
+                    ucv->scaleMode == Canvas::ScaleMode::ScaleWithScreenSize)
+                    want = ucv->ScaleFactor((float)uiFullW, (float)uiFullH);
+                uiUseScale(want > 0.05f ? want : 1.0f);
+            }
             if (_it.kind == K_DropBg) {   // drop-target slot backgrounds (behind items)
             auto* dt = up->GetComponent<UIDropTarget>();
             if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;
@@ -2812,7 +2837,7 @@ int main(int argc, char** argv) {
             float selfAng = targetHeading - mapHeading;   // facing of the player on-map
             // Click the open (fullscreen) map to drop a waypoint; right-click clears it.
             if (mm->fullscreen && mm->mapClickWaypoint) {
-                okay::Vec2 cur = Input::MousePosition();
+                okay::Vec2 cur = uiMouse();   // logical (canvas-scaled) coordinates
                 bool inBox = cur.x >= o.x && cur.x < o.x + sz.x && cur.y >= o.y && cur.y < o.y + sz.y;
                 if (inBox && Input::GetMouseButtonDown(0)) {
                     mm->userWaypoint = Minimap::MapToWorldPlane(*mm, center, sz.x, sz.y, mapHeading,
@@ -3342,14 +3367,17 @@ int main(int argc, char** argv) {
             if (tr->shadow)
                 DrawText(renderer, disp, o.x + tr->shadowOffset.x * p,
                          o.y + tr->shadowOffset.y * p, p, sh, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+            // Bold / outline offsets: one font pixel for the 8x8 font; for smooth TTF text
+            // about one screen pixel (a font pixel is 5 px at title size: a double image).
+            const float fo = fnt ? (p * 8.0f >= 30.0f ? 1.5f : 1.0f) : p;
             if (tr->outline) {
-                DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
-                DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
-                DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
-                DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x - fo, o.y, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x + fo, o.y, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x, o.y - fo, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x, o.y + fo, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
             }
             DrawText(renderer, disp, o.x, o.y, p, col, ls, lp, it, tr->gradient, c2, fnt);
-            if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp, it, tr->gradient, c2, fnt);
+            if (tr->bold) DrawText(renderer, disp, o.x + fo, o.y, p, col, ls, lp, it, tr->gradient, c2, fnt);
         }
             else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
             auto* wu = up->GetComponent<WorldUI>();
@@ -3464,7 +3492,7 @@ int main(int argc, char** argv) {
             SDL_RenderSetClipRect(renderer, nullptr);   // overlay — never scroll-clipped
             auto* tt = up->GetComponent<UITooltip>();
             if (!tt || !up->active || !tt->Ready()) continue;
-            Vec2 m = Input::MousePosition();
+            Vec2 m = uiMouse();
             float px = 2.0f;
             float tw = UITextW(tt->text, px);
             float th = Font8x8::Height * px;
@@ -3480,6 +3508,8 @@ int main(int argc, char** argv) {
             DrawText(renderer, tt->text, m.x + 20, m.y + 19, px, tc);
             }
         }   // end single UI draw pass
+        uiUseScale(1.0f);
+        w = uiFullW; h = uiFullH;
         g_uiDefaultFont = nullptr;   // world text / FPS overlay keep the bitmap font
         SDL_RenderSetClipRect(renderer, nullptr);   // end any scroll clipping
 

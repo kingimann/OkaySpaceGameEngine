@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/Components/UIWorldContext.hpp"   // UIToLocal
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -32,6 +33,9 @@ public:
 
     float CellWidth() const { return count > 0 ? size.x / (float)count : size.x; }
 
+    /// A screen point mapped into this widget's own frame (where it is really drawn:
+    /// inside its UI parent, at the Canvas scale). See UIToLocal.
+    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
     /// Star index (0..count-1) under the anchored point, or -1 if outside.
     int StarAt(const Vec2& p) const {
         Vec2 o = ResolveAnchor(anchor, position, size);
@@ -82,7 +86,7 @@ public:
 
     void Update(float) override {
         if (readOnly) { m_hovering = false; return; }
-        Vec2 m = Input::MousePosition();
+        Vec2 m = ToLocal(Input::MousePosition());   // StarAt / ValueAt work in the widget's frame
         m_hovering = StarAt(m) >= 0;                      // pointer is over the stars
         if (!m_hovering) return;
         m_hoverValue = ValueAt(m);                         // live preview as you sweep

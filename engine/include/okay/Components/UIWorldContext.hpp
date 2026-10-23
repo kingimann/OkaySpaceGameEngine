@@ -29,4 +29,20 @@ struct UIWorldCtx {
 };
 inline UIWorldCtx& UIWorld() { static thread_local UIWorldCtx c; return c; }
 
+/// Map a screen point into a widget's authored frame: the frame where the widget
+/// sits at `designOrigin` (ResolveAnchor of its anchor/position/size against the
+/// canvas) at 1:1 size. Widgets keep their hit-test and drag math in that frame.
+/// When the host installed `rectOf` it knows where the widget is really drawn
+/// (inside its UI parent, at the Canvas scale, or projected in world space), so a
+/// button inside a scaled panel is clickable exactly where it appears. Without
+/// `rectOf` the point is unchanged. A widget that isn't on screen maps far away.
+inline Vec2 UIToLocal(GameObject* go, const Vec2& designOrigin, const Vec2& size, const Vec2& p) {
+    if (!go || !UIWorld().rectOf) return p;
+    Vec2 o, sz;
+    if (!UIWorld().rectOf(go, o, sz)) return Vec2{-1.0e9f, -1.0e9f};   // behind the camera
+    const float kx = sz.x > 1e-4f ? size.x / sz.x : 1.0f;
+    const float ky = sz.y > 1e-4f ? size.y / sz.y : 1.0f;
+    return Vec2{designOrigin.x + (p.x - o.x) * kx, designOrigin.y + (p.y - o.y) * ky};
+}
+
 } // namespace okay

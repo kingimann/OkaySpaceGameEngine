@@ -181,7 +181,11 @@ planet, `A` player ship.)*
   edge/center **alignment guides** to the canvas and siblings; arrow-key
   nudging; a **3×3 anchor preset** grid (re-anchors without moving the widget);
   Bring to Front / Send to Back, a per-widget **Draw Order** override, Center in
-  Canvas, and Fill Width/Height/Canvas.
+  Canvas, and Fill Width/Height/Canvas. The UI view's **+ Add** menu has every
+  widget, launcher-look kit pieces (cards, list rows, badges, avatars, switches,
+  spinners, toasts) and 15 prebuilt screens. The screens are main / pause /
+  settings menus, a HUD, shop, game over, loading screen, lobby, scoreboard,
+  leaderboard and matchmaking. See [docs/game_ui.md](docs/game_ui.md).
 - **UI layering** — one draw pass ordered by Canvas **Sort Order**, then each
   widget's **Draw Order** (0 = default type order; non-zero layers it against any
   other type, higher on top), then the hierarchy (child over parent, sibling

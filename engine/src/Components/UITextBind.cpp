@@ -51,7 +51,13 @@ std::string UITextBind::Resolve(const std::string& format) {
             std::size_t end = format.find('}', i + 1);
             if (end == std::string::npos) { out += c; continue; }   // unterminated
             std::string key = format.substr(i + 1, end - i - 1);
-            out += ResolveKey(key);
+            // {key|default}: the default shows until the variable exists (a fresh HUD
+            // reads "100" / "0" instead of blanks before the game sets them).
+            std::string fallback;
+            std::size_t bar = key.find('|');
+            if (bar != std::string::npos) { fallback = key.substr(bar + 1); key.erase(bar); }
+            std::string v = ResolveKey(key);
+            out += (v.empty() && bar != std::string::npos) ? fallback : v;
             i = end;
         } else if (c == '}') {
             if (i + 1 < format.size() && format[i + 1] == '}') { out += '}'; ++i; continue; }

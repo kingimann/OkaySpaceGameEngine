@@ -209,10 +209,10 @@ private:
         Scene* s = gameObject ? gameObject->scene() : nullptr;
         Camera* cam = s ? s->mainCamera : nullptr;
         if (!cam || !cam->transform) return {0, 0};
-        float ortho = cam->orthographicSize > 1e-3f ? cam->orthographicSize : 5.0f;
+        float ortho = cam->EffectiveOrthoSize();
         float w = UICanvas::Width(), h = UICanvas::Height();
         float scale = h / (2.0f * ortho); if (scale < 1e-6f) scale = 1.0f;
-        Vec3 cp = cam->transform->Position();
+        Vec3 cp = cam->RenderPosition();
         Vec2 mp = Input::MousePosition();
         Vec2 world{ cp.x + (mp.x - w * 0.5f) / scale, cp.y + (h * 0.5f - mp.y) / scale };
         Vec3 me = transform->Position();
@@ -225,7 +225,7 @@ private:
         Scene* s = gameObject ? gameObject->scene() : nullptr;
         Camera* cam = s ? s->mainCamera : nullptr;
         if (!cam || !cam->transform) return;
-        float ortho = cam->orthographicSize > 1e-3f ? cam->orthographicSize : 5.0f;
+        float ortho = cam->EffectiveOrthoSize();
         float aspect = UICanvas::Width() / Mathf::Max(1.0f, UICanvas::Height());
         Vec3 cc = cam->transform->Position();
         float halfY = ortho, halfX = ortho * aspect;

@@ -941,17 +941,21 @@ void TextEditor::Render()
 			if (errorIt != mErrorMarkers.end())
 			{
 				auto end = ImVec2(lineStartScreenPos.x + contentSize.x + 2.0f * scrollX, lineStartScreenPos.y + mCharAdvance.y);
-				drawList->AddRectFilled(start, end, mPalette[(int)PaletteIndex::ErrorMarker]);
+				// A message starting with "warning: " is a warning: amber, not red.
+				static const char kWarn[] = "warning: ";
+				const bool isWarn = errorIt->second.compare(0, sizeof(kWarn) - 1, kWarn) == 0;
+				const char* msg = errorIt->second.c_str() + (isWarn ? sizeof(kWarn) - 1 : 0);
+				drawList->AddRectFilled(start, end, isWarn ? IM_COL32(200, 150, 40, 55) : mPalette[(int)PaletteIndex::ErrorMarker]);
 
 				if (ImGui::IsMouseHoveringRect(lineStartScreenPos, end))
 				{
 					ImGui::BeginTooltip();
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
-					ImGui::Text("Error at line %d:", errorIt->first);
+					ImGui::PushStyleColor(ImGuiCol_Text, isWarn ? ImVec4(1.0f, 0.75f, 0.25f, 1.0f) : ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+					ImGui::Text(isWarn ? "Warning at line %d:" : "Error at line %d:", errorIt->first);
 					ImGui::PopStyleColor();
 					ImGui::Separator();
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
-					ImGui::Text("%s", errorIt->second.c_str());
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.92f, 0.92f, 1.0f));
+					ImGui::Text("%s", msg);
 					ImGui::PopStyleColor();
 					ImGui::EndTooltip();
 				}
@@ -2249,6 +2253,23 @@ void TextEditor::ColorizeRange(int aFromLine, int aToLine)
 					{
 						if (mLanguageDefinition.mKeywords.count(id) != 0)
 							token_color = PaletteIndex::Keyword;
+						else if (mLanguageDefinition.mSemantic)
+						{
+							const char* after = token_end;
+							while (after < bufferEnd && (*after == ' ' || *after == '\t')) ++after;
+							const char* before = token_begin;
+							while (before > bufferBegin && (before[-1] == ' ' || before[-1] == '\t')) --before;
+							const bool call = after < bufferEnd && *after == '(';
+							const bool member = before > bufferBegin && before[-1] == '.';
+							if (mLanguageDefinition.mTypeNames.count(id) != 0 || mUserTypes.count(id) != 0)
+								token_color = PaletteIndex::TypeName;
+							else if (call)
+								token_color = PaletteIndex::Function;
+							else if (member)
+								token_color = PaletteIndex::Member;
+							else if (mLanguageDefinition.mIdentifiers.count(id) != 0)
+								token_color = PaletteIndex::KnownIdentifier;
+						}
 						else if (mLanguageDefinition.mIdentifiers.count(id) != 0)
 							token_color = PaletteIndex::KnownIdentifier;
 						else if (mLanguageDefinition.mPreprocIdentifiers.count(id) != 0)

@@ -736,3 +736,7 @@ add_test(NAME ui_animation COMMAND test_ui_animation)
 add_executable(test_action_graph test_action_graph.cpp)
 target_link_libraries(test_action_graph PRIVATE okay::engine)
 add_test(NAME action_graph COMMAND test_action_graph)
+
+add_executable(test_scene_cameras test_scene_cameras.cpp)
+target_link_libraries(test_scene_cameras PRIVATE okay::engine)
+add_test(NAME scene_cameras COMMAND test_scene_cameras)

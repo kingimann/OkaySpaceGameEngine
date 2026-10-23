@@ -172,6 +172,9 @@ public:
     void Start();
     /// Advance one frame: flush pending components, Update, LateUpdate, cleanup.
     void Update(float deltaTime);
+    /// Re-pick mainCamera from the live cameras (see PickRenderCamera). Runs at the
+    /// end of every Update; call it after switching cameras outside of Update.
+    void ResolveMainCamera();
     /// Issue the render pass to the given backend.
     void Render(IRenderer& renderer);
 

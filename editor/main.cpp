@@ -1442,6 +1442,9 @@ int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
+int  g_gameDevice = 0;           // Game-view mobile emulator device (0 = off; persisted)
+bool g_gameDeviceLandscape = false;   // emulator orientation (persisted)
+bool g_gameSafeArea = true;      // emulator: shade the notch / home-indicator areas (persisted)
 bool g_showUIOverlay = true;     // Scene view: overlay the screen-space UI (Canvas) on the 3D/2D scene, clickable + draggable (Scene "..." menu toggles it). The UI button on the Scene toolbar switches to the flat UI editing view.
 bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
 bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view locked to UI-only)
@@ -1859,6 +1862,9 @@ void LoadSettings() {
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
+        else if (k == "gamedevice") g_gameDevice = (v < 0 ? 0 : v);
+        else if (k == "gamedeviceland") g_gameDeviceLandscape = (v != 0);
+        else if (k == "gamesafearea") g_gameSafeArea = (v != 0);
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
@@ -1898,6 +1904,9 @@ void SaveSettings() {
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
+      << "gamedevice " << g_gameDevice << "\n"
+      << "gamedeviceland " << (g_gameDeviceLandscape ? 1 : 0) << "\n"
+      << "gamesafearea " << (g_gameSafeArea ? 1 : 0) << "\n"
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
@@ -2186,10 +2195,13 @@ void DrawVarWatch() {
 // Save the open scene so an auto-update relaunch never loses work. Uses the
 // current path when known, otherwise a recovery file (added to Recent).
 void ConsoleLog(const std::string& msg, int level);   // (defined below)
+// Saving (defined near the end of this namespace):
+static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
+static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
+static bool SaveProject(EditorState& ed, bool interactive);   // File > Save Project (Ctrl+Alt+S): everything
+static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or the open graph
 void SaveAllBeforeExit(EditorState& ed) {
-    std::string p = ed.path().empty() ? "autosaved_scene.okayscene" : ed.path();
-    if (ed.Save(p)) { AddRecent(p); ConsoleLog("Saved before updating: " + p, 0); }
-    ed.dirty = false;
+    if (SaveProject(ed, false)) ConsoleLog("Saved everything before updating.", 0);
 }
 
 // File dialogs.
@@ -2290,6 +2302,10 @@ std::string g_buildStatus;
 bool  g_openBuildResult = false;
 int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 = Android
 
+// One entry of "Scenes In Build": a project scene, ticked to ship. The first
+// ticked scene is where the game starts; the rest load by index / name.
+struct BuildScene { std::string path; bool on = true; };
+
 // Unity-style Build Settings: window + player options written into the build's
 // game.okayconfig, plus which scenes to include.
 struct BuildSettings {
@@ -2338,6 +2354,9 @@ struct BuildSettings {
     // ---- Post-build actions (handled by the editor, not the builder) ----
     bool  openFolderAfter = true;          // reveal the output folder when done
     bool  zipAfter = false;                // also produce <Name>.zip of the build
+    // ---- Added later ----
+    bool  fullscreenToggle = true;         // Alt+Enter / F11 switches fullscreen in the game
+    std::vector<BuildScene> scenes;        // Scenes In Build (empty = just the open scene)
 };
 BuildSettings g_build;
 
@@ -2397,6 +2416,8 @@ static void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "ssao=" << b.ssao << "\n" << "fxaa=" << b.fxaa << "\n" << "antialias=" << b.antialias << "\n";
     o << "gpu=" << b.gpuRenderer << "\n" << "d3d12=" << b.preferD3D12 << "\n";
     o << "openFolder=" << b.openFolderAfter << "\n" << "zip=" << b.zipAfter << "\n";
+    o << "fsToggle=" << b.fullscreenToggle << "\n";
+    for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << sc.path << "\n";
 }
 
 // Apply one key=value line to a profile being read.
@@ -2428,6 +2449,8 @@ static void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "masterVolume") b.masterVolume = F();
     else if (k == "showFps")   b.showFps = B();
     else if (k == "includeAll") b.includeAllProjectScenes = B();
+    else if (k == "fsToggle")  b.fullscreenToggle = B();
+    else if (k == "scene" && v.size() > 2 && v[1] == '|') b.scenes.push_back(BuildScene{v.substr(2), v[0] == '1'});
     else if (k == "dev")       b.developmentBuild = B();
     else if (k == "clean")     b.cleanOutput = B();
     else if (k == "dataFolder") b.dataFolder = B();
@@ -3021,6 +3044,8 @@ struct Options {
     bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
     bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
     bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
+    bool fullscreenToggle = true;           // Alt+Enter / F11 in the shipped game
+    std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
     // ---- Player presentation (Unity-parity) ----
     std::string iconPath;      // window icon PNG (copied into the build)
     std::string bundleId = "com.okayspace.game";
@@ -3132,14 +3157,36 @@ std::string Build(EditorState& ed, const std::string& outDir,
     fs::path data = opt.dataFolder ? (dir / "Data") : dir;
     fs::create_directories(data, ec);
 
-    // 1) Write the active scene as Data/game.okayscene (the startup scene).
-    if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
-        return "Failed to write game.okayscene.";
-
     std::vector<std::string> sceneFiles; // filenames placed in the Data folder
-    sceneFiles.push_back("game.okayscene");
     int extraScenes = 0;
-    if (opt.includeAllProjectScenes && !ed.projectDir().empty()) {
+    // 1) Scenes In Build, in order: the first is the startup scene (written as
+    // game.okayscene); the open scene is written from memory so unsaved edits ship.
+    // With no list, the open scene alone is the game (plus, optionally, every
+    // project scene).
+    if (!opt.sceneList.empty()) {
+        std::error_code pe;
+        for (std::size_t i = 0; i < opt.sceneList.size(); ++i) {
+            const fs::path src(opt.sceneList[i]);
+            std::string fn = i == 0 ? std::string("game.okayscene") : src.filename().string();
+            for (int n = 2; std::find(sceneFiles.begin(), sceneFiles.end(), fn) != sceneFiles.end(); ++n)
+                fn = src.stem().string() + "_" + std::to_string(n) + ".okayscene";   // two scenes, same name
+            const bool isOpen = !ed.path().empty() && fs::exists(src, pe) && fs::equivalent(src, fs::path(ed.path()), pe);
+            if (isOpen) {
+                if (!SceneSerializer::SaveToFile(ed.scene(), (data / fn).string())) return "Failed to write " + fn + ".";
+            } else {
+                fs::copy_file(src, data / fn, fs::copy_options::overwrite_existing, pe);
+                if (pe) return "Couldn't copy the scene " + src.string() + " (" + pe.message() + ").";
+            }
+            sceneFiles.push_back(fn);
+            if (i > 0) ++extraScenes;
+        }
+    } else {
+        // Write the active scene as Data/game.okayscene (the startup scene).
+        if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
+            return "Failed to write game.okayscene.";
+        sceneFiles.push_back("game.okayscene");
+    }
+    if (opt.sceneList.empty() && opt.includeAllProjectScenes && !ed.projectDir().empty()) {
         fs::path assets = fs::path(ed.projectDir()) / "Assets";
         if (fs::exists(assets, ec))
             for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
@@ -3191,6 +3238,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "min_width=" << opt.minWidth << "\n";
         cf << "min_height=" << opt.minHeight << "\n";
         cf << "save_userdir=" << (opt.saveToUserDir ? 1 : 0) << "\n";
+        cf << "fullscreen_toggle=" << (opt.fullscreenToggle ? 1 : 0) << "\n";
         if (!opt.splashImage.empty()) {
             cf << "splash=" << fs::path(opt.splashImage).filename().string() << "\n";
             cf << "splash_time=" << opt.splashTime << "\n";
@@ -3645,17 +3693,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Save", "Ctrl+S")) {
-            std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-            if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); ed.Achievement("FIRST_SAVE");
-                std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
-            else ConsoleLog("Save failed");
-        }
-        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
-            std::strncpy(g_pathBuf, ed.path().empty() ? "scene.okayscene" : ed.path().c_str(),
-                         sizeof(g_pathBuf) - 1);
-            g_showSaveAs = true;
-        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveSceneCmd(ed);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(ed.path().empty() ? "This scene hasn't been saved yet: pick where it goes (Assets/Scenes)."
+                                                                         : "Save this scene: %s", ed.path().c_str());
+        if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) SaveSceneAsCmd(ed);
+        if (ImGui::MenuItem("Save Project", "Ctrl+Alt+S")) SaveProject(ed, true);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save everything: the scene, every edited script, the open visual\n"
+                                                      "script, project and build settings, and editor preferences.");
+        ImGui::Separator();
         if (ImGui::MenuItem("Merge Scene into Current...")) {
             // Combine scenes: append another scene's objects into this one (kept),
             // tagged with its name so the Hierarchy shows where it starts/ends.
@@ -3679,7 +3725,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::TextDisabled("offered on next open if it's newer than the scene.");
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
+        if (ImGui::MenuItem("Build Settings...", "Ctrl+B")) g_showBuildGame = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) g_quitRequested = true;
         ImGui::EndMenu();
@@ -4250,7 +4296,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Engine")) {
-        if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
+        if (ImGui::MenuItem("Build Settings...", "Ctrl+B")) g_showBuildGame = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Check for Updates...")) {
             g_update = updater::CheckLatest();
@@ -8342,7 +8388,7 @@ void DrawScenes(EditorState& ed) {
 void DrawQuitPrompt(EditorState& ed, bool& running) {
     static bool open = false;
     if (g_quitRequested && !open) {
-        if (!ed.dirty) { running = false; g_quitRequested = false; return; }
+        if (!AnyUnsavedWork(ed)) { running = false; g_quitRequested = false; return; }
         ImGui::OpenPopup("Unsaved Changes");
         open = true;
     }
@@ -8350,11 +8396,12 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("You have unsaved changes. Save before quitting?");
+        ImGui::TextDisabled("Save keeps everything: the scene, edited scripts and the open visual script.");
         ImGui::Separator();
         if (ImGui::Button("Save", ImVec2(110, 0))) {
-            std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-            if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); }
-            running = false; g_quitRequested = false; open = false;
+            const bool ok = SaveProject(ed, false);
+            g_quitRequested = false; open = false;
+            if (ok) running = false;   // something failed: stay open so nothing is lost
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -8406,10 +8453,11 @@ void DrawShortcutsWindow() {
     section("General", {
         {"Ctrl+P",        "Play / Stop"},
         {"Ctrl+S",        "Save scene"},
+        {"Ctrl+Alt+S",    "Save project (everything)"},
         {"Ctrl+Shift+S",  "Save scene as..."},
         {"Ctrl+O",        "Open scene"},
         {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
-        {"Ctrl+B",        "Build Game"},
+        {"Ctrl+B",        "Build Settings"},
         {"Ctrl+C / Ctrl+V","Copy / paste object"},
         {"Ctrl+D",        "Duplicate selection"},
         {"Ctrl+Shift+G",  "Group selection"},
@@ -9105,6 +9153,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
         {"spawner_alive","spawner_alive(\"name\")"},
         {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
+        {"camera_shake","camera_shake(strength)"}, {"camera_zoom_to","camera_zoom_to(zoom, seconds)"},
+        {"camera_dutch","camera_dutch(degrees)"}, {"camera_fov","camera_fov(degrees)"},
         {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
         // variables / prefs
         {"set_var","set_var(\"name\", value)"}, {"get_var","get_var(\"name\")"}, {"add_var","add_var(\"name\", amount)"},
@@ -9669,6 +9719,290 @@ static std::vector<std::string> CsMembersFor(const std::string& src, const std::
     return {};
 }
 
+// ---- Autocomplete details: description + code example -----------------------
+// Shown beside the suggestion list (like Rider / VS Code's details pane). Curated
+// entries cover the APIs people reach for most; any other builtin gets an example
+// generated from its signature. Keys are "Receiver.Member" or a bare name.
+struct ScriptHelp { const char* doc; const char* example; };
+static const ScriptHelp* ScriptHelpFor(const std::string& key) {
+    static const std::unordered_map<std::string, ScriptHelp> H = {
+        // ---- C# / Unity-style API
+        {"Input.GetAxis", {"-1..1 from the keyboard (A/D, arrows) or a stick. \"Horizontal\" or \"Vertical\".",
+            "float h = Input.GetAxis(\"Horizontal\");\nfloat v = Input.GetAxis(\"Vertical\");\ntransform.position += new Vector3(h, 0, v) * speed * Time.deltaTime;"}},
+        {"Input.GetKeyDown", {"True only on the frame the key goes down.",
+            "if (Input.GetKeyDown(KeyCode.Space))\n{\n    Jump();\n}"}},
+        {"Input.GetKey", {"True every frame while the key is held.",
+            "if (Input.GetKey(KeyCode.LeftShift))\n    speed = runSpeed;"}},
+        {"Input.GetKeyUp", {"True only on the frame the key is released.",
+            "if (Input.GetKeyUp(KeyCode.E))\n    Debug.Log(\"Released E\");"}},
+        {"Input.GetMouseButtonDown", {"True on the frame a mouse button is pressed (0 left, 1 right, 2 middle).",
+            "if (Input.GetMouseButtonDown(0))\n    Shoot();"}},
+        {"Input.GetMouseButton", {"True while a mouse button is held (0 left, 1 right, 2 middle).",
+            "if (Input.GetMouseButton(1))\n    Aim();"}},
+        {"Input.GetButtonDown", {"True on the frame a named button (\"Jump\", \"Fire1\") is pressed.",
+            "if (Input.GetButtonDown(\"Jump\"))\n    rb.AddForce(Vector3.up * jumpForce);"}},
+        {"Input.mousePosition", {"The mouse position in screen pixels.",
+            "Vector3 m = Input.mousePosition;\nDebug.Log($\"Mouse at {m.x}, {m.y}\");"}},
+        {"Time.deltaTime", {"Seconds since the last frame. Multiply speeds by it so movement is frame-rate independent.",
+            "transform.Rotate(0, 90 * Time.deltaTime, 0);"}},
+        {"Time.time", {"Seconds since the game started.",
+            "float y = Mathf.Sin(Time.time * 2f) * 0.5f;"}},
+        {"Time.timeScale", {"Game speed: 1 = normal, 0.5 = slow motion, 0 = paused.",
+            "Time.timeScale = paused ? 0f : 1f;"}},
+        {"Debug.Log", {"Print a message to the Console.",
+            "Debug.Log(\"Hello\");\nDebug.Log($\"Score: {score}\");"}},
+        {"Debug.LogWarning", {"Print a yellow warning to the Console.",
+            "if (health < 10)\n    Debug.LogWarning(\"Low health!\");"}},
+        {"Debug.LogError", {"Print a red error to the Console.",
+            "if (target == null)\n    Debug.LogError(\"No target set\");"}},
+        {"Mathf.Lerp", {"Blend from a to b by t (0..1).",
+            "speed = Mathf.Lerp(speed, maxSpeed, 5f * Time.deltaTime);"}},
+        {"Mathf.Clamp", {"Keep a value between min and max.",
+            "health = Mathf.Clamp(health - damage, 0, maxHealth);"}},
+        {"Mathf.Clamp01", {"Keep a value between 0 and 1.",
+            "float t = Mathf.Clamp01(elapsed / duration);"}},
+        {"Mathf.Abs", {"The value without its sign.",
+            "if (Mathf.Abs(h) > 0.1f)\n    walking = true;"}},
+        {"Mathf.Sin", {"Sine of an angle in radians: a smooth -1..1 wave.",
+            "float bob = Mathf.Sin(Time.time * 3f) * 0.25f;"}},
+        {"Mathf.MoveTowards", {"Step from current toward target by at most maxDelta (never overshoots).",
+            "x = Mathf.MoveTowards(x, targetX, 4f * Time.deltaTime);"}},
+        {"Mathf.SmoothStep", {"Like Lerp but eases in and out.",
+            "float a = Mathf.SmoothStep(0f, 1f, t);"}},
+        {"Mathf.PingPong", {"Goes 0 -> length -> 0 over and over.",
+            "float x = Mathf.PingPong(Time.time, 3f);"}},
+        {"Mathf.Max", {"The larger of the values.",
+            "int best = Mathf.Max(best, score);"}},
+        {"Mathf.Min", {"The smaller of the values.",
+            "ammo = Mathf.Min(ammo + 10, maxAmmo);"}},
+        {"Random.Range", {"Random number in [min, max). Ints exclude max; floats can include it.",
+            "int roll = Random.Range(1, 7);          // 1..6\nfloat x = Random.Range(-5f, 5f);"}},
+        {"Random.value", {"Random float from 0 to 1.",
+            "if (Random.value < 0.25f)\n    DropLoot();"}},
+        {"Vector3.Distance", {"Distance between two points.",
+            "if (Vector3.Distance(transform.position, player.position) < 3f)\n    Attack();"}},
+        {"Vector3.Lerp", {"Blend between two points by t (0..1).",
+            "transform.position = Vector3.Lerp(transform.position, target, 5f * Time.deltaTime);"}},
+        {"Vector3.up", {"Shorthand for (0, 1, 0).",
+            "transform.position += Vector3.up * 2f * Time.deltaTime;"}},
+        {"Vector3.zero", {"Shorthand for (0, 0, 0).",
+            "rb.velocity = Vector3.zero;"}},
+        {"Quaternion.Euler", {"A rotation from angles in degrees (x, y, z).",
+            "transform.rotation = Quaternion.Euler(0, 90, 0);"}},
+        {"SceneManager.LoadScene", {"Load another scene by name.",
+            "SceneManager.LoadScene(\"Level2\");"}},
+        {"Translate", {"Move by an offset (local space by default).",
+            "transform.Translate(Vector3.forward * speed * Time.deltaTime);"}},
+        {"Rotate", {"Turn by angles in degrees.",
+            "transform.Rotate(0, 90 * Time.deltaTime, 0);"}},
+        {"LookAt", {"Turn to face a target.",
+            "transform.LookAt(player);"}},
+        {"position", {"World position.",
+            "transform.position = new Vector3(0, 1, 0);"}},
+        {"localScale", {"Scale relative to the parent.",
+            "transform.localScale = Vector3.one * 2f;"}},
+        {"eulerAngles", {"Rotation as angles in degrees.",
+            "Vector3 r = transform.eulerAngles;\ntransform.eulerAngles = new Vector3(0, r.y + 45, 0);"}},
+        {"SetActive", {"Turn the object on or off.",
+            "door.SetActive(false);"}},
+        {"CompareTag", {"True when the object has that tag (faster than tag == ...).",
+            "void OnCollisionEnter(Collision other)\n{\n    if (other.gameObject.CompareTag(\"Enemy\"))\n        TakeDamage(10);\n}"}},
+        {"GetComponent", {"Find a component on this object.",
+            "Rigidbody rb = GetComponent<Rigidbody>();\nrb.AddForce(Vector3.up * 5f);"}},
+        {"AddForce", {"Push a Rigidbody.",
+            "rb.AddForce(Vector3.up * jumpForce);"}},
+        {"MovePosition", {"Move a Rigidbody, respecting collisions.",
+            "rb.MovePosition(rb.position + dir * speed * Time.deltaTime);"}},
+        {"velocity", {"Current speed and direction of a Rigidbody.",
+            "rb.velocity = new Vector2(h * speed, rb.velocity.y);"}},
+        {"SetTrigger", {"Fire an Animator trigger parameter.",
+            "animator.SetTrigger(\"Jump\");"}},
+        {"SetBool", {"Set an Animator bool parameter.",
+            "animator.SetBool(\"Running\", Mathf.Abs(h) > 0.1f);"}},
+        {"SetFloat", {"Set an Animator float parameter.",
+            "animator.SetFloat(\"Speed\", rb.velocity.magnitude);"}},
+        {"Play", {"Start playing (a sound, or an animation state).",
+            "audioSource.Play();"}},
+        {"Add", {"Add an item to the end of a list.",
+            "List<string> names = new List<string>();\nnames.Add(\"Ada\");"}},
+        {"Remove", {"Remove the first matching item.",
+            "enemies.Remove(enemy);"}},
+        {"RemoveAt", {"Remove the item at an index.",
+            "items.RemoveAt(0);"}},
+        {"Contains", {"True when the collection (or string) has the item.",
+            "if (inventory.Contains(\"Key\"))\n    OpenDoor();"}},
+        {"ContainsKey", {"True when the dictionary has the key.",
+            "if (!scores.ContainsKey(name))\n    scores[name] = 0;"}},
+        {"Count", {"How many items are in the collection.",
+            "for (int i = 0; i < items.Count; i++)\n    Debug.Log(items[i]);"}},
+        {"Length", {"How many characters (string) or items (array).",
+            "if (playerName.Length > 12)\n    playerName = playerName.Substring(0, 12);"}},
+        {"Clear", {"Remove everything.",
+            "bullets.Clear();"}},
+        {"Split", {"Cut a string into parts.",
+            "string[] parts = \"a,b,c\".Split(',');"}},
+        {"ToUpper", {"An upper-case copy of the string.",
+            "string shout = message.ToUpper();"}},
+        {"StartCoroutine", {"Run an IEnumerator over several frames.",
+            "StartCoroutine(Blink());\n\nIEnumerator Blink()\n{\n    yield return new WaitForSeconds(0.5f);\n}"}},
+        {"Instantiate", {"Spawn a copy of a prefab or object.",
+            "GameObject b = Instantiate(bulletPrefab, transform.position, transform.rotation);"}},
+        {"Destroy", {"Remove an object (optionally after a delay).",
+            "Destroy(gameObject, 2f);   // gone in 2 seconds"}},
+        {"WaitForSeconds", {"Pause a coroutine.",
+            "yield return new WaitForSeconds(1f);"}},
+        {"Vector3", {"A 3D point or direction (x, y, z).",
+            "Vector3 dir = new Vector3(1, 0, 0);\ntransform.position += dir * speed * Time.deltaTime;"}},
+        {"Vector2", {"A 2D point or direction (x, y).",
+            "Vector2 move = new Vector2(h, v).normalized;"}},
+        {"List", {"A resizable list.",
+            "List<int> scores = new List<int>();\nscores.Add(10);\nforeach (int s in scores)\n    Debug.Log(s);"}},
+        {"Dictionary", {"Key -> value lookup.",
+            "Dictionary<string, int> stock = new Dictionary<string, int>();\nstock[\"apples\"] = 3;"}},
+        {"Color", {"An RGBA colour (0..1 each).",
+            "GetComponent<SpriteRenderer>().color = Color.red;"}},
+        // ---- keywords
+        {"if", {"Run code only when a condition is true.",
+            "if (health <= 0)\n{\n    Die();\n}\nelse if (health < 20)\n{\n    Debug.Log(\"Low!\");\n}"}},
+        {"for", {"Loop a set number of times.",
+            "for (int i = 0; i < 5; i++)\n{\n    Debug.Log(i);\n}"}},
+        {"foreach", {"Loop over every item in a collection.",
+            "foreach (var enemy in enemies)\n{\n    enemy.TakeDamage(1);\n}"}},
+        {"while", {"Loop while a condition stays true.",
+            "while (ammo > 0)\n{\n    Fire();\n    ammo--;\n}"}},
+        {"switch", {"Pick a branch by value.",
+            "switch (state)\n{\n    case 0: Idle(); break;\n    case 1: Run(); break;\n    default: break;\n}"}},
+        {"class", {"Declare a type. A script's class extends MonoBehaviour.",
+            "public class Coin : MonoBehaviour\n{\n    public int value = 1;\n}"}},
+        {"enum", {"A named set of values.",
+            "enum State { Idle, Walk, Jump }\nState state = State.Idle;"}},
+        {"return", {"Leave the function (with a value, if it returns one).",
+            "int Double(int x)\n{\n    return x * 2;\n}"}},
+        {"new", {"Create an object.",
+            "Vector3 p = new Vector3(0, 1, 0);"}},
+        // ---- OkayScript one-liners
+        {"spin", {nullptr, "void Update()\n{\n    spin(90);   // 90 degrees per second\n}"}},
+        {"walk", {nullptr, "walk(1, 0, 3);   // right at 3 units/second"}},
+        {"on_key_move", {nullptr, "void Update()\n{\n    on_key_move(5);\n}"}},
+        {"platformer", {nullptr, "void Update()\n{\n    platformer(6, 8);   // speed, jump\n}"}},
+        {"follow", {nullptr, "follow(\"Player\", 3, 1.5);"}},
+        {"timer", {nullptr, "if (timer(\"spawn\", 2))\n    spawn(\"Enemy\", 0, 5);"}},
+        {"cooldown", {nullptr, "if (key_down(\"space\") && cooldown(\"shoot\", 0.3))\n    shoot();"}},
+        {"once", {nullptr, "if (once(\"intro\"))\n    print(\"Welcome!\");"}},
+        {"print", {"Print to the Console.", "print(\"Score: \" + score);"}},
+        {"camera_shake", {nullptr, "camera_shake(0.6);   // a hit"}},
+        {"camera_zoom_to", {nullptr, "camera_zoom_to(2, 0.5);   // 2x over half a second"}},
+    };
+    auto it = H.find(key);
+    return it == H.end() ? nullptr : &it->second;
+}
+
+// An example call built from a signature such as "walk(dx, dy, speed [, x])":
+// optional parts dropped, each parameter given a plausible value by its name.
+static std::string ScriptExampleFromSignature(const std::string& sig) {
+    const auto lp = sig.find('('), rp = sig.rfind(')');
+    if (lp == std::string::npos || rp == std::string::npos || rp < lp || sig.find('|') != std::string::npos) return "";
+    std::string inner = sig.substr(lp + 1, rp - lp - 1);
+    if (auto ob = inner.find('['); ob != std::string::npos) inner = inner.substr(0, ob);
+    std::vector<std::string> args;
+    std::string cur;
+    auto flush = [&] {
+        std::string a = cur; cur.clear();
+        while (!a.empty() && (a.back() == ' ' || a.back() == ',')) a.pop_back();
+        std::size_t s = a.find_first_not_of(' '); if (s == std::string::npos) return;
+        a = a.substr(s);
+        if (a == "...") return;
+        std::string v;
+        auto has = [&](const char* w) { return a.find(w) != std::string::npos; };
+        if (a[0] == '"') v = a;                                            // "name" stays a string
+        else if (has("speed")) v = "5";
+        else if (has("deg") || has("angle")) v = "90";
+        else if (has("dur") || has("time") || has("sec")) v = "0.5";
+        else if (has("count") || a == "n") v = "3";
+        else if (has("radius") || has("dist")) v = "2";
+        else if (has("amount") || has("intensity") || has("strength")) v = "0.5";
+        else if (has("key")) v = "\"space\"";
+        else if (has("name") || has("target") || has("tag") || has("prefab")) v = "\"Player\"";
+        else if (has("fn")) v = "\"OnHit\"";
+        else if (a == "r") v = "1"; else if (a == "g" || a == "b") v = "0";
+        else if (has("text") || has("msg") || has("str")) v = "\"Hello\"";
+        else if (a == "dx" || a == "x" || a == "x1") v = "1";
+        else if (a == "dy" || a == "y" || a == "y1" || a == "z" || a == "dz") v = "0";
+        else v = "1";
+        args.push_back(v);
+    };
+    for (char c : inner) { if (c == ',') flush(); else cur += c; }
+    flush();
+    std::string out = sig.substr(0, lp) + "(";
+    for (std::size_t i = 0; i < args.size(); ++i) out += (i ? ", " : "") + args[i];
+    return out + ");";
+}
+
+// Colour a code snippet with the editor's palette (keywords, types, strings,
+// numbers, calls, comments) using the code font.
+static void DrawCodeSnippet(const std::string& code) {
+    static const std::unordered_set<std::string> kw = {
+        "if","else","for","foreach","in","while","do","return","break","continue","switch","case","default",
+        "new","public","private","protected","static","void","int","float","bool","string","var","class",
+        "enum","struct","true","false","null","this","yield","using","override","const","readonly"};
+    static const std::unordered_set<std::string> types = {
+        "Vector3","Vector2","Quaternion","Color","Mathf","Time","Input","KeyCode","Debug","Random",
+        "List","Dictionary","GameObject","Transform","Rigidbody","Rigidbody2D","SpriteRenderer",
+        "Animator","AudioSource","Collision","Collision2D","IEnumerator","WaitForSeconds","MonoBehaviour",
+        "SceneManager","State","Coin"};
+    const ImU32 cDef = IM_COL32(169, 183, 198, 255), cKw = IM_COL32(204, 120, 50, 255),
+                cTy = IM_COL32(78, 201, 176, 255), cStr = IM_COL32(106, 135, 89, 255),
+                cNum = IM_COL32(104, 151, 187, 255), cFn = IM_COL32(255, 198, 109, 255),
+                cCm = IM_COL32(128, 138, 128, 255), cMem = IM_COL32(176, 154, 196, 255);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (g_codeFont) ImGui::PushFont(g_codeFont, ImGui::GetFontSize());
+    const float lh = ImGui::GetTextLineHeight();
+    std::size_t ls = 0;
+    while (ls <= code.size()) {
+        std::size_t le = code.find('\n', ls); if (le == std::string::npos) le = code.size();
+        const std::string line = code.substr(ls, le - ls);
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        float x = pos.x;
+        auto put = [&](std::size_t a, std::size_t b, ImU32 col) {
+            if (b <= a) return;
+            const char* s = line.c_str() + a; const char* e = line.c_str() + b;
+            dl->AddText(ImVec2(x, pos.y), col, s, e);
+            x += ImGui::CalcTextSize(s, e).x;
+        };
+        std::size_t i = 0;
+        while (i < line.size()) {
+            const char c = line[i];
+            if (c == '/' && i + 1 < line.size() && line[i + 1] == '/') { put(i, line.size(), cCm); break; }
+            if (c == '"' || ((c == '$' || c == '@') && i + 1 < line.size() && line[i + 1] == '"')) {
+                std::size_t j = i + (c == '"' ? 1 : 2);
+                while (j < line.size() && line[j] != '"') { if (line[j] == '\\') ++j; ++j; }
+                put(i, std::min(j + 1, line.size()), cStr); i = j + 1; continue;
+            }
+            if (c == '\'') { std::size_t j = line.find('\'', i + 1); j = j == std::string::npos ? line.size() : j + 1; put(i, j, cStr); i = j; continue; }
+            if (std::isdigit((unsigned char)c)) {
+                std::size_t j = i; while (j < line.size() && (std::isalnum((unsigned char)line[j]) || line[j] == '.')) ++j;
+                put(i, j, cNum); i = j; continue;
+            }
+            if (std::isalpha((unsigned char)c) || c == '_') {
+                std::size_t j = i; while (j < line.size() && (std::isalnum((unsigned char)line[j]) || line[j] == '_')) ++j;
+                const std::string w = line.substr(i, j - i);
+                std::size_t k = j; while (k < line.size() && line[k] == ' ') ++k;
+                ImU32 col = cDef;
+                if (kw.count(w)) col = cKw;
+                else if (types.count(w)) col = cTy;
+                else if (k < line.size() && (line[k] == '(' || line[k] == '<') && !(i > 0 && line[i - 1] == '.' && line[k] == '<')) col = cFn;
+                else if (i > 0 && line[i - 1] == '.') col = cMem;
+                put(i, j, col); i = j; continue;
+            }
+            put(i, i + 1, cDef); ++i;
+        }
+        ImGui::Dummy(ImVec2(x - pos.x, lh));
+        if (le == code.size()) break;
+        ls = le + 1;
+    }
+    if (g_codeFont) ImGui::PopFont();
+}
+
 // ---- ImGuiColorTextEdit integration ----------------------------------------
 // A Darcula-flavoured palette matching the old hand-drawn highlighter (ABGR, so
 // 0xAABBGGRR). Known identifiers (our builtins) render yellow like function calls.
@@ -9682,7 +10016,7 @@ static const TextEditor::Palette& OkayScriptPalette() {
         0xffc8c8c8,  // Punctuation        light gray
         0xff808080,  // Preprocessor
         0xffc6b7a9,  // Identifier         default text
-        0xff6dc6ff,  // KnownIdentifier    (255,198,109) yellow — builtins/functions
+        0xffaa7698,  // KnownIdentifier    (152,118,170) purple — builtin properties (transform, deltaTime)
         0xffaa7698,  // PreprocIdentifier  purple
         0xff808a80,  // Comment            (128,138,128) gray
         0xff808a80,  // MultiLineComment   gray
@@ -9695,6 +10029,9 @@ static const TextEditor::Palette& OkayScriptPalette() {
         0x14ffffff,  // CurrentLineFill
         0x0affffff,  // CurrentLineFillInactive
         0x18ffffff,  // CurrentLineEdge
+        0xffb0c94e,  // TypeName           (78,201,176)  teal — Vector3, List, your classes
+        0xff6dc6ff,  // Function           (255,198,109) yellow — calls + method declarations
+        0xffc49ab0,  // Member             (176,154,196) light purple — .position, .x
     } };
     return p;
 }
@@ -9714,21 +10051,28 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             "sealed","ref","out","is","as","typeof","base","get","set","yield","using","namespace",
             "void","int","float","double","bool","string","char","long","byte","uint","object",
             "true","false","null","this","foreach","in","and","or","not","try","catch","finally","throw",
+            "short","ushort","ulong","sbyte","decimal","async","await","params","delegate","event",
+            "operator","nameof","when","where","partial",
         };
         for (auto* k : kw) d.mKeywords.insert(k);
-        // C# / Unity type names OkayScript understands, coloured like known identifiers.
+        // C# / Unity type names OkayScript understands: teal (TypeName), with a
+        // hover tooltip. Classes / enums declared in the script are added per
+        // editor (SetUserTypes).
         static const char* kTypes[] = {
             "MonoBehaviour","OkaySource","GameObject","Transform","Vector3","Vector2","Quaternion","Color",
             "Mathf","Time","Input","KeyCode","Debug","Random","Space","Screen","List","Dictionary",
             "KeyValuePair","HashSet","Queue","Stack","IEnumerator","Coroutine","WaitForSeconds",
             "WaitForEndOfFrame","Rigidbody","Rigidbody2D","SpriteRenderer","MeshRenderer","Renderer",
             "Animator","AudioSource","Collider","Collider2D","Collision","Collision2D","ForceMode2D",
-            "SerializeField","Header","Range","Tooltip","Action","Func",
+            "SerializeField","Header","Range","Tooltip","Action","Func","String","Text",
+            "SortedDictionary","IEnumerable",
         };
         for (auto* t : kTypes) {
             TextEditor::Identifier id; id.mDeclaration = std::string(t) + " (C# / Unity type)";
             d.mIdentifiers.insert(std::make_pair(std::string(t), id));
+            d.mTypeNames.insert(t);
         }
+        d.mSemantic = true;
         // Every completion name (curated API + all VM builtins) becomes a known
         // identifier; attach the signature + doc so hovering shows it (widget tooltip).
         for (const auto& name : ScriptCompletions()) {
@@ -9741,7 +10085,9 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             d.mIdentifiers.insert(std::make_pair(name, id));
         }
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "\\\"(\\\\.|[^\\\"])*\\\"", TextEditor::PaletteIndex::String));
+            "[$@]?\\\"(\\\\.|[^\\\"])*\\\"", TextEditor::PaletteIndex::String));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "'(\\\\.|[^'\\\\])'", TextEditor::PaletteIndex::CharLiteral));
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
             "[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[fF]?", TextEditor::PaletteIndex::Number));
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
@@ -10186,6 +10532,7 @@ void DrawScriptEditor(EditorState& ed) {
         static std::string s_error;     // last compile error (shown red in status)
         static std::vector<ScriptDiagnostic> s_diags;   // all live syntax problems (Problems panel)
         static std::vector<ScriptLint> s_warns;         // semantic warnings (unknown fn, arity)
+        static TextEditor::Keywords s_userTypes;        // classes / enums declared in the open script
         static bool s_showProblems = false;             // Problems panel visibility
         static bool s_palReq = false;   // request to open the command palette
         static char s_find[128] = "";   // Find query (Ctrl+F opens the bar + highlights matches)
@@ -11068,6 +11415,71 @@ void DrawScriptEditor(EditorState& ed) {
             ed.dirty = true;
         }
 
+        // ---- Live problems while you type (debounced ~0.35 s after the last edit):
+        // syntax errors from the VM's recovering parser (every error, not just the
+        // first) and, once it parses, lint warnings: unknown functions with a
+        // "did you mean" fix, and calls passing too many arguments. They drive the
+        // red / amber line marks, the inline messages, the scrollbar ticks, the
+        // status bar and the Problems panel (F2 = next problem).
+        {
+            static const void* s_checkFor = nullptr;
+            static std::size_t s_seenHash = 0, s_checkedHash = 0;
+            static double s_changedAt = 0.0;
+            const double nowT = ImGui::GetTime();
+            if (sc != s_checkFor) { s_checkFor = sc; s_seenHash = bufHash; s_checkedHash = bufHash ^ 1u; s_changedAt = -100.0; }
+            if (bufHash != s_seenHash) { s_seenHash = bufHash; s_changedAt = nowT; }
+            if (bufHash != s_checkedHash && nowT - s_changedAt > 0.35) {
+                s_checkedHash = bufHash;
+                s_diags.clear(); s_warns.clear(); s_error.clear();
+                // Classes / structs / enums / interfaces declared in this file: coloured
+                // as types, and never "unknown function" when used as constructors.
+                s_userTypes.clear();
+                {
+                    const std::string src = buf.data();
+                    for (const char* kwd : {"class", "struct", "enum", "interface"}) {
+                        const std::size_t kl = std::strlen(kwd);
+                        for (std::size_t p = src.find(kwd); p != std::string::npos; p = src.find(kwd, p + kl)) {
+                            if (p > 0 && (std::isalnum((unsigned char)src[p - 1]) || src[p - 1] == '_')) continue;
+                            std::size_t q = p + kl;
+                            if (q >= src.size() || (src[q] != ' ' && src[q] != '\t')) continue;
+                            while (q < src.size() && (src[q] == ' ' || src[q] == '\t')) ++q;
+                            std::size_t e = q; while (e < src.size() && (std::isalnum((unsigned char)src[e]) || src[e] == '_')) ++e;
+                            if (e > q) s_userTypes.insert(src.substr(q, e - q));
+                        }
+                    }
+                }
+                if (sc->Language() == "okayscript") {
+                    static std::unique_ptr<okay::IScriptVM> s_checkVM = okay::CreateScriptVM("okayscript");
+                    if (s_checkVM) s_diags = s_checkVM->ValidateAll(buf.data());
+                    if (!s_diags.empty()) {
+                        s_error = (s_diags[0].line > 0 ? "line " + std::to_string(s_diags[0].line) + ": " : std::string()) + s_diags[0].message;
+                    } else {
+                        // Every builtin + its max argument count (from the signature table;
+                        // a signature with "..." takes any number).
+                        static std::unordered_set<std::string> s_known;
+                        static std::unordered_map<std::string, int> s_maxArgs;
+                        if (s_known.empty()) {
+                            for (const auto& w : ScriptCompletions()) s_known.insert(w);
+                            for (const auto& kv : ScriptSignatureMap()) {
+                                s_known.insert(kv.first);
+                                const std::string& sg = kv.second;
+                                const auto lp = sg.find('('), rp = sg.rfind(')');
+                                if (lp == std::string::npos || rp == std::string::npos || rp <= lp) continue;
+                                const std::string params = sg.substr(lp + 1, rp - lp - 1);
+                                if (params.find("...") != std::string::npos) continue;
+                                int cnt = 0; bool any = false;
+                                for (char c : params) { if (c == ',') ++cnt; else if (!std::isspace((unsigned char)c)) any = true; }
+                                s_maxArgs[kv.first] = any ? cnt + 1 : 0;
+                            }
+                        }
+                        std::unordered_set<std::string> known = s_known;
+                        known.insert(s_userTypes.begin(), s_userTypes.end());
+                        s_warns = AnalyzeScriptWarnings(buf.data(), known, s_maxArgs);
+                    }
+                }
+            }
+        }
+
         // Diagnostics -> error markers (red line + hover message); bookmarks -> the
         // widget's breakpoint markers (repurposed).
         {
@@ -11075,6 +11487,7 @@ void DrawScriptEditor(EditorState& ed) {
             for (const auto& w : s_warns) if (w.line > 0) em[w.line] = std::string("warning: ") + w.msg;
             for (const auto& d : s_diags) if (d.line > 0) em[d.line] = d.message;   // errors win
             te.SetErrorMarkers(em);
+            te.SetUserTypes(s_userTypes);
             te.SetBreakpoints(TextEditor::Breakpoints(bookmarks.begin(), bookmarks.end()));
         }
 
@@ -11867,13 +12280,20 @@ void DrawScriptEditor(EditorState& ed) {
                 }
                 std::sort(fuzz.begin(), fuzz.end(), [](const Hit& a, const Hit& b) {
                     return a.score != b.score ? a.score > b.score : a.w->size() < b.w->size(); });
+                // Words you've picked before come first (per session), then shorter ones.
+                static std::unordered_map<std::string, int> s_acUsed;
+                std::stable_sort(exact.begin(), exact.end(), [&](const Hit& a, const Hit& b) {
+                    auto ua = s_acUsed.find(*a.w), ub = s_acUsed.find(*b.w);
+                    const int na = ua == s_acUsed.end() ? 0 : ua->second, nb = ub == s_acUsed.end() ? 0 : ub->second;
+                    return na != nb ? na > nb : a.w->size() < b.w->size(); });
+                constexpr std::size_t kMaxHits = 10;
                 std::vector<Hit> hits = exact;
-                for (auto& h : ci) { if (hits.size() >= 8) break; hits.push_back(h); }
+                for (auto& h : ci) { if (hits.size() >= kMaxHits) break; hits.push_back(h); }
                 // Fuzzy matches are a FALLBACK only: when real prefix matches
                 // exist, fuzzy noise ("spr" -> set_parent) just buries them.
                 if (hits.empty())
-                    for (auto& h : fuzz) { if (hits.size() >= 8) break; hits.push_back(h); }
-                if (hits.size() > 8) hits.resize(8);
+                    for (auto& h : fuzz) { if (hits.size() >= kMaxHits) break; hits.push_back(h); }
+                if (hits.size() > kMaxHits) hits.resize(kMaxHits);
                 if (!hits.empty()) {
                     g_acCount = (int)hits.size();
                     if (acKeyUp)   g_acIndex = (g_acIndex - 1 + g_acCount) % g_acCount;
@@ -11905,19 +12325,30 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                         syncFromWidget();
                         g_acDismiss = true; g_acCount = 0;
+                        ++s_acUsed[word];
                     };
                     if (acKeyTab || acKeyEnter) {
                         accept(*hits[g_acIndex].w);
                     } else {
+                        // Below the caret; above it (and pulled left) when last frame's
+                        // size wouldn't fit on screen.
+                        static ImVec2 s_acSize(0, 0);
                         ImVec2 acPos = te.CaretScreenPosBelow();
-                        ImGui::SetNextWindowPos(ImVec2(acPos.x, acPos.y + 2));
-                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 46, 245));
+                        ImVec2 at(acPos.x, acPos.y + 2);
+                        const ImGuiViewport* vp = ImGui::GetMainViewport();
+                        const float vpR = vp->WorkPos.x + vp->WorkSize.x, vpB = vp->WorkPos.y + vp->WorkSize.y;
+                        if (at.y + s_acSize.y > vpB) at.y = std::max(vp->WorkPos.y, acPos.y - te.RowHeight() - 2 - s_acSize.y);
+                        if (at.x + s_acSize.x > vpR) at.x = std::max(vp->WorkPos.x, vpR - s_acSize.x);
+                        ImGui::SetNextWindowPos(at);
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(38, 38, 44, 255));
                         if (ImGui::Begin("##autocomplete", nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                 ImGuiWindowFlags_NoSavedSettings)) {
+                            s_acSize = ImGui::GetWindowSize();
                             ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());   // above a floating Script Editor
+                            ImGui::BeginGroup();
                             for (std::size_t i = 0; i < hits.size(); ++i) {
                                 const std::string& full = *hits[i].w;
                                 const bool isMethod = memberMode && !full.empty() && (full.back() == '(' || full.back() == '<');
@@ -11939,15 +12370,69 @@ void DrawScriptEditor(EditorState& ed) {
                                     ImGui::TextDisabled("%s", paren ? paren : sg->c_str());
                                 }
                             }
+                            ImGui::Dummy(ImVec2(0, 2));
+                            ImGui::TextDisabled("Up/Down select   Tab/Enter accept   Esc dismiss");
+                            ImGui::EndGroup();
+                            // Details pane for the selected suggestion: kind, signature,
+                            // what it does and a code example (IDE-style).
                             if (g_acCount > 0 && g_acIndex >= 0 && g_acIndex < (int)hits.size()) {
-                                if (const std::string* dsc = ScriptDoc(*hits[g_acIndex].w)) {
-                                    ImGui::Separator();
-                                    ImGui::PushTextWrapPos(320.0f);
-                                    ImGui::TextColored(ImVec4(0.66f, 0.80f, 0.62f, 1.0f), "%s", dsc->c_str());
+                                const std::string& full = *hits[g_acIndex].w;
+                                const bool isMethod = memberMode && !full.empty() && (full.back() == '(' || full.back() == '<');
+                                const std::string nm = isMethod ? full.substr(0, full.size() - 1) : full;
+                                const ScriptHelp* help = nullptr;
+                                if (!receiver.empty()) help = ScriptHelpFor(receiver + "." + nm);
+                                if (!help) help = ScriptHelpFor(nm);
+                                const std::string* sg = memberMode ? nullptr : ScriptSignature(nm);
+                                const std::string* dsc = memberMode ? nullptr : ScriptDoc(nm);
+                                std::string doc = help && help->doc ? help->doc : (dsc ? *dsc : std::string());
+                                std::string example = help && help->example ? help->example : std::string();
+                                if (example.empty() && sg) example = ScriptExampleFromSignature(*sg);
+                                if (sg || !doc.empty() || !example.empty()) {
+                                    const float paneW = ImGui::GetFontSize() * 24.0f;
+                                    ImGui::SameLine(0, 12);
+                                    ImGui::BeginGroup();
+                                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + paneW);
+                                    char letter; ImU32 tcol;
+                                    if (memberMode) { letter = isMethod ? 'm' : 'p'; tcol = isMethod ? IM_COL32(220, 200, 120, 255) : IM_COL32(150, 190, 230, 255); }
+                                    else AcKindTag(ClassifyCompletion(nm), letter, tcol);
+                                    static const char* kKind[] = {"keyword", "type", "function", "variable"};
+                                    const char* kind = memberMode ? (isMethod ? "method" : "property")
+                                        : (letter == 'k' ? kKind[0] : letter == 'T' ? kKind[1] : letter == 'f' ? kKind[2] : kKind[3]);
+                                    ImGui::TextColored(ImColor(tcol), "%s", kind);
+                                    ImGui::SameLine(0, 8);
+                                    if (sg) ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.55f, 1.0f), "%s", sg->c_str());
+                                    else ImGui::TextColored(ImVec4(0.92f, 0.92f, 0.92f, 1.0f), "%s%s%s",
+                                                            receiver.empty() ? "" : receiver.c_str(), receiver.empty() ? "" : ".",
+                                                            (nm + (isMethod ? (full.back() == '<' ? "<T>()" : "()") : "")).c_str());
+                                    if (!doc.empty()) {
+                                        ImGui::Dummy(ImVec2(0, 2));
+                                        ImGui::TextColored(ImVec4(0.80f, 0.82f, 0.86f, 1.0f), "%s", doc.c_str());
+                                    }
                                     ImGui::PopTextWrapPos();
+                                    if (!example.empty()) {
+                                        ImGui::Dummy(ImVec2(0, 4));
+                                        ImGui::TextDisabled("Example");
+                                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                                        dl->ChannelsSplit(2);
+                                        dl->ChannelsSetCurrent(1);
+                                        const ImVec2 b0 = ImGui::GetCursorScreenPos();
+                                        ImGui::Indent(8.0f);
+                                        ImGui::Dummy(ImVec2(0, 3));
+                                        DrawCodeSnippet(example);
+                                        ImGui::Dummy(ImVec2(0, 3));
+                                        ImGui::Unindent(8.0f);
+                                        const ImVec2 b1(std::max(b0.x + paneW, ImGui::GetItemRectMax().x + 8.0f), ImGui::GetCursorScreenPos().y - 2.0f);
+                                        dl->ChannelsSetCurrent(0);
+                                        dl->AddRectFilled(b0, b1, IM_COL32(24, 24, 28, 255), 4.0f);
+                                        dl->AddRect(b0, b1, IM_COL32(70, 70, 80, 255), 4.0f);
+                                        dl->ChannelsMerge();
+                                    }
+                                    ImGui::EndGroup();
+                                    // Divider between the list and the details.
+                                    const ImVec2 g0 = ImGui::GetItemRectMin(), g1 = ImGui::GetItemRectMax();
+                                    ImGui::GetWindowDrawList()->AddLine(ImVec2(g0.x - 6, g0.y), ImVec2(g0.x - 6, g1.y),
+                                                                       IM_COL32(80, 80, 92, 255));
                                 }
-                                ImGui::Separator();
-                                ImGui::TextDisabled("Up/Down select   Tab/Enter accept   Esc dismiss");
                             }
                         }
                         ImGui::End();
@@ -12378,15 +12863,12 @@ void HandleShortcuts(EditorState& ed) {
         if (ed.Redo()) ConsoleLog("Redo");
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
-    if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        // Ctrl+Shift+S = Save Scene As (seed the dialog with the current path).
-        std::strncpy(g_pathBuf, ed.path().empty() ? "scene.okayscene" : ed.path().c_str(),
-                     sizeof(g_pathBuf) - 1);
-        g_showSaveAs = true;
+    if (ctrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        SaveProject(ed, true);                       // Ctrl+Alt+S = Save Project (everything)
+    } else if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        SaveSceneAsCmd(ed);                          // Ctrl+Shift+S = Save Scene As
     } else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-        if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE");
-            std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
+        SaveSceneCmd(ed);                            // Ctrl+S = Save Scene
     }
     if (!animKeys && ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
         ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
@@ -12734,14 +13216,14 @@ void DrawFileDialogs(EditorState& ed) {
     }
 
     if (g_showBuildGame) {
-        ImGui::OpenPopup("Build Game"); g_showBuildGame = false;
+        ImGui::OpenPopup("Build Settings"); g_showBuildGame = false;
         // Load this project's saved build profiles the first time the dialog opens.
         if (!g_buildProfilesLoaded) { LoadBuildProfiles(ed); g_buildProfilesLoaded = true; }
     }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640, 600), ImGuiCond_Appearing);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(540, 480), ImVec2(1200, 1000));
-    if (ImGui::BeginPopupModal("Build Game")) {
+    ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(720, 520), ImVec2(1600, 1200));
+    if (ImGui::BeginPopupModal("Build Settings")) {
         ImGui::TextDisabled("Export a standalone game:  <Name>.exe + game.okayscene + game.okayconfig");
         ImGui::Spacing();
 
@@ -12815,8 +13297,128 @@ void DrawFileDialogs(EditorState& ed) {
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
-        if (ImGui::BeginTabBar("##buildtabs")) {
-            if (ImGui::BeginTabItem("Player")) {
+        // ---- Target platform first, as in Unity ----
+        // Target platform: Desktop ships a Windows .exe; Web/Android export a
+        // ready-to-build project (the editor can't run Emscripten / the Android NDK
+        // itself, so it lays down the data + build script + instructions).
+        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)"};
+        {   // Segmented platform picker (clearer than a dropdown for 3 options).
+            const char* platShort[] = {"Desktop", "Web", "Android"};
+            const char* platTip[] = {
+                "Build a runnable Windows .exe right here.",
+                "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
+                "Export an Android Studio project;\nfinish the build with Android Studio + NDK."};
+            ImGui::TextDisabled("Platform");
+            ImGui::SameLine();
+            for (int pi = 0; pi < 3; ++pi) {
+                if (pi) ImGui::SameLine(0, 2);
+                bool on = g_buildPlatform == pi;
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+                }
+                if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
+                if (on) ImGui::PopStyleColor(3);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", platTip[pi]);
+            }
+        }
+        ImGui::Spacing();
+        // ---- Sections: a sidebar on the left, the chosen page on the right ----
+        static int s_buildSec = 0;
+        static const char* kBuildSecs[] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output"};
+        static const char* kBuildSecTips[] = {
+            "Which scenes ship, in what order (the first one starts the game).",
+            "Name, company, version, identifier, icon and splash.",
+            "Resolution, window mode, frame rate, focus behaviour.",
+            "Renderer and quality: shadows, bloom, ambient occlusion, anti-aliasing.",
+            "Volume, cursor and keyboard behaviour.",
+            "Output folder layout, encryption and what happens after the build."};
+        const float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f;
+        ImGui::BeginChild("##bnav", ImVec2(170, -buildFooterH), ImGuiChildFlags_Borders);
+        for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
+            if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##bpane", ImVec2(0, -buildFooterH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        if (s_buildSec == 0) {   // ---- Scenes In Build ----
+            namespace fs = std::filesystem;
+            auto& L = g_build.scenes;
+            auto samePath = [](const std::string& a, const std::string& b) {
+                std::error_code e;
+                return a == b || (fs::exists(a, e) && fs::exists(b, e) && fs::equivalent(a, b, e));
+            };
+            SectionHeader("Scenes In Build");
+            ImGui::TextDisabled("Ticked scenes ship in this order. #0 is where the game starts; the others load with\n"
+                                "load_scene(\"Name\") or load_scene_index(n). The open scene ships with unsaved edits.");
+            ImGui::Spacing();
+            int shown = 0, move = -1, moveDir = 0, del = -1;
+            for (int i = 0; i < (int)L.size(); ++i) {
+                ImGui::PushID(i);
+                ImGui::Checkbox("##on", &L[i].on);
+                ImGui::SameLine();
+                if (L[i].on) ImGui::Text("#%d", shown++); else ImGui::TextDisabled(" - ");
+                ImGui::SameLine(80);
+                const fs::path sp(L[i].path);
+                std::error_code e;
+                const bool exists = fs::exists(sp, e);
+                if (exists) ImGui::TextUnformatted(sp.stem().string().c_str());
+                else ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "%s (missing)", sp.stem().string().c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L[i].path.c_str());
+                if (!ed.path().empty() && samePath(L[i].path, ed.path())) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "(open)"); }
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 92);
+                ImGui::BeginDisabled(i == 0);
+                if (ImGui::ArrowButton("##up", ImGuiDir_Up)) { move = i; moveDir = -1; }
+                ImGui::EndDisabled();
+                ImGui::SameLine(0, 2);
+                ImGui::BeginDisabled(i + 1 >= (int)L.size());
+                if (ImGui::ArrowButton("##dn", ImGuiDir_Down)) { move = i; moveDir = 1; }
+                ImGui::EndDisabled();
+                ImGui::SameLine(0, 2);
+                if (ImGui::SmallButton("x")) del = i;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove from the list (the file stays)");
+                ImGui::PopID();
+            }
+            if (move >= 0) std::swap(L[move], L[move + moveDir]);
+            if (del >= 0) L.erase(L.begin() + del);
+            if (L.empty()) ImGui::TextDisabled("No list yet: the open scene is built on its own.");
+            ImGui::Spacing();
+            const bool haveOpen = !ed.path().empty();
+            bool openListed = false;
+            for (const auto& sc : L) if (haveOpen && samePath(sc.path, ed.path())) openListed = true;
+            ImGui::BeginDisabled(!haveOpen || openListed);
+            if (ImGui::Button("Add Open Scene")) L.push_back(BuildScene{ed.path(), true});
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(!haveOpen ? "Save the scene first (File > Save Scene)." : openListed ? "Already in the list." : "Add the scene you have open.");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(ed.projectDir().empty());
+            if (ImGui::Button("Add All Project Scenes")) {
+                std::error_code e;
+                const fs::path assets = fs::path(ed.projectDir()) / "Assets";
+                if (fs::exists(assets, e))
+                    for (auto it = fs::recursive_directory_iterator(assets, e); it != fs::recursive_directory_iterator() && !e; it.increment(e)) {
+                        if (!it->is_regular_file(e) || it->path().extension() != ".okayscene") continue;
+                        bool have = false;
+                        for (const auto& sc : L) if (samePath(sc.path, it->path().string())) have = true;
+                        if (!have) L.push_back(BuildScene{it->path().string(), true});
+                    }
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(L.empty());
+            if (ImGui::Button("Clear")) L.clear();
+            ImGui::EndDisabled();
+            if (L.empty()) {
+                ImGui::Spacing();
+                ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a list: also bundle every .okayscene in Assets (the open scene starts the game).");
+            }
+        }
+        {
+            if (s_buildSec == 1) {
                 ImGui::Spacing();
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
@@ -12866,9 +13468,8 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::SetNextItemWidth(160); ImGui::DragFloat("Duration (s)", &g_build.splashTime, 0.1f, 0.3f, 15.0f);
                     ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background##splash", g_build.splashBg);
                 }
-                ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Display")) {
+            if (s_buildSec == 2) {
                 ImGui::Spacing();
                 ImGui::SetNextItemWidth(90); ImGui::InputInt("Width",  &g_build.width, 0); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height, 0);
@@ -12886,6 +13487,8 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Resizable", &g_build.resizable); ImGui::SameLine();
                 ImGui::Checkbox("VSync", &g_build.vsync); ImGui::SameLine();
                 ImGui::Checkbox("Start maximized", &g_build.startMaximized);
+                ImGui::Checkbox("Alt+Enter / F11 toggles fullscreen", &g_build.fullscreenToggle);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let players switch between fullscreen and a window while playing.");
                 const char* fpsOpts[] = {"Uncapped", "30", "60", "120", "144", "Custom"};
                 const int   fpsVals[] = {0, 30, 60, 120, 144, -1};
                 int fpsSel = 5; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;   // else Custom
@@ -12907,9 +13510,8 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Run in background", &g_build.runInBackground);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the game updating when its window isn't focused (Unity's Run In Background). Off = pause when minimized/unfocused.");
                 ImGui::Checkbox("Mute audio when unfocused", &g_build.muteOnFocusLoss);
-                ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Graphics")) {
+            if (s_buildSec == 3) {
                 ImGui::Spacing();
                 const char* qnames[] = {"Custom", "Low", "Medium", "High", "Ultra"};
                 static int q = 0; ImGui::SetNextItemWidth(180);
@@ -12957,9 +13559,8 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(120);
                 if (ImGui::Combo("Supersampling (AA)", &aaSel, aaOpts, 3)) g_build.antialias = aaVals[aaSel];
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render at a higher resolution then downscale for smoother edges.\n2x = 4x the pixels, 4x = 16x — sharper but heavier on the GPU.");
-                ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Audio & Input")) {
+            if (s_buildSec == 4) {
                 ImGui::Spacing();
                 ImGui::SetNextItemWidth(240); ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
@@ -12967,15 +13568,9 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Lock cursor on launch", &g_build.lockCursor);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor on launch (FPS/TPS games)");
                 ImGui::Checkbox("Hide cursor", &g_build.hideCursor);
-                ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Scenes")) {
-                ImGui::Spacing();
-                ImGui::TextDisabled("The current scene is always the startup scene.");
-                ImGui::Spacing();
-                ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene / load_scene_index work at runtime.\nOff = ship ONLY this scene (smaller, no unused scenes leaked).");
-                ImGui::Spacing(); SectionHeader("Output");
+            if (s_buildSec == 5) {
+                SectionHeader("Output");
                 ImGui::Checkbox("Clean output folder", &g_build.cleanOutput);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove leftover files from a previous build first, so the folder has no stale junk.");
                 ImGui::Checkbox("Tidy layout (Data/ folder)", &g_build.dataFolder);
@@ -12987,37 +13582,11 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reveal the finished build in your file browser when it's done.");
                 ImGui::Checkbox("Create a .zip archive", &g_build.zipAfter);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also package the whole build folder into <Name>.zip next to it — ready to share or upload.");
-                ImGui::EndTabItem();
             }
-            ImGui::EndTabBar();
         }
+        ImGui::EndChild();
 
-        ImGui::Spacing(); ImGui::Separator();
-        // Target platform: Desktop ships a Windows .exe; Web/Android export a
-        // ready-to-build project (the editor can't run Emscripten / the Android NDK
-        // itself, so it lays down the data + build script + instructions).
-        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)"};
-        {   // Segmented platform picker (clearer than a dropdown for 3 options).
-            const char* platShort[] = {"Desktop", "Web", "Android"};
-            const char* platTip[] = {
-                "Build a runnable Windows .exe right here.",
-                "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
-                "Export an Android Studio project;\nfinish the build with Android Studio + NDK."};
-            ImGui::TextDisabled("Platform");
-            ImGui::SameLine();
-            for (int pi = 0; pi < 3; ++pi) {
-                if (pi) ImGui::SameLine(0, 2);
-                bool on = g_buildPlatform == pi;
-                if (on) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-                }
-                if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
-                if (on) ImGui::PopStyleColor(3);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", platTip[pi]);
-            }
-        }
+        ImGui::Spacing();
         // One-line summary of what's about to be produced, so a wrong setting
         // is caught before the build instead of after it.
         {
@@ -13041,6 +13610,7 @@ void DrawFileDialogs(EditorState& ed) {
             std::strncpy(fresh.bundleId, g_build.bundleId, sizeof(fresh.bundleId) - 1);
             std::strncpy(fresh.icon, g_build.icon, sizeof(fresh.icon) - 1);
             std::strncpy(fresh.splash, g_build.splash, sizeof(fresh.splash) - 1);
+            fresh.scenes = g_build.scenes;   // the scene list isn't an "option"
             g_build = fresh;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Restore Display / Graphics / Audio options to defaults.\nKeeps your name, company, version, icon and splash.");
@@ -13102,6 +13672,8 @@ void DrawFileDialogs(EditorState& ed) {
             o.startMaximized = g_build.startMaximized;
             o.minWidth = g_build.minWidth; o.minHeight = g_build.minHeight;
             o.saveToUserDir = g_build.saveToUserDir;
+            o.fullscreenToggle = g_build.fullscreenToggle;
+            for (const BuildScene& sc : g_build.scenes) if (sc.on) o.sceneList.push_back(sc.path);
             o.splashImage = g_build.splash; o.splashTime = g_build.splashTime;
             o.splashBg[0] = g_build.splashBg[0]; o.splashBg[1] = g_build.splashBg[1]; o.splashBg[2] = g_build.splashBg[2];
             // Carry the project's custom loading screen into the shipped game.
@@ -14809,6 +15381,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"play_sound",  "Play Sound",         "path [volume]",        "Play a sound effect.",                                    "Look"},
     {"set_cam",     "Move Camera",        "x y [zoom]",           "Move the main camera (and optional zoom).",               "Scene"},
     {"cam_center_on","Center Camera On",  "object",                "Instantly snap the camera onto a named object's position — cutscene cuts, jump to the action.", "Scene"},
+    {"camera_shake","Shake Camera",       "strength (0..1)",      "Shake the main camera (hits ~0.3, explosions ~0.6); it settles by itself.", "Scene"},
+    {"camera_zoom_to","Zoom Camera",      "zoom [seconds]",       "Smoothly zoom the main camera (2 = twice as close, 1 = normal).", "Scene"},
     {"set_bg",      "Set Background Color","r g b (0..1)",        "Set the background / sky color.",                         "Scene"},
     {"set_light",   "Set Light Direction","x y z",                "Aim the main directional light.",                         "Scene"},
     {"set_ambient", "Set Ambient Light",  "brightness 0..1",      "Set the ambient (fill) light level.",                     "Scene"},
@@ -15131,6 +15705,8 @@ static std::string VsStmt(const ActionList::Item& it) {
     if (op == "load_scene")  return "load_scene(" + q(0) + ")";
     if (op == "load_next_scene") return "load_next_scene()";
     if (op == "set_cam")     return "set_cam(" + a(0) + ", " + a(1) + ")";
+    if (op == "camera_shake")   return "camera_shake(" + a(0) + ")";
+    if (op == "camera_zoom_to") return "camera_zoom_to(" + a(0) + ", " + a(1) + ")";
     if (op == "set_bg")      return "set_bg(" + a(0) + ", " + a(1) + ", " + a(2) + ")";
     if (op == "send")        return "// send message \"" + a(0) + "\"";
     if (op == "comment")     return "// " + join(0);
@@ -15283,6 +15859,8 @@ static bool VsCodeLineToItem(const std::string& lineIn, ActionList::Item& out) {
     if (fn == "load_scene")   { out = {"load_scene", {arg(0)}}; return true; }
     if (fn == "load_next_scene") { out = {"load_next_scene", {}}; return true; }
     if (fn == "set_cam")      { out = {"set_cam", {arg(0), arg(1)}}; return true; }
+    if (fn == "camera_shake")   { out = {"camera_shake", {arg(0)}}; return true; }
+    if (fn == "camera_zoom_to") { out = {"camera_zoom_to", {arg(0), arg(1)}}; return true; }
     if (fn == "set_bg")       { out = {"set_bg", {arg(0), arg(1), arg(2)}}; return true; }
     if (fn == "heal")         { out = {"heal", {arg(0)}}; return true; }
     if (fn == "hurt")         { out = {"hurt", {arg(0)}}; return true; }
@@ -24355,6 +24933,14 @@ void DrawInspector(EditorState& ed) {
                 if (cam->physicalCamera) {
                     if (ImGui::DragFloat("Focal Length", &cam->focalLength, 0.5f, 1.0f, 300.0f, "%.1f mm")) ed.dirty = true;
                     if (ImGui::DragFloat("Sensor Height", &cam->sensorHeight, 0.1f, 1.0f, 100.0f, "%.1f mm")) ed.dirty = true;
+                    {   // Common sensor sizes (vertical mm), one click each.
+                        static const struct { const char* n; float h; } kSensors[] = {
+                            {"Full frame", 24.0f}, {"Super 35", 18.66f}, {"APS-C", 15.6f}, {"Micro 4/3", 13.0f}, {"16mm", 7.49f}};
+                        for (int si = 0; si < 5; ++si) {
+                            if (si) ImGui::SameLine(0, 4);
+                            if (ImGui::SmallButton(kSensors[si].n)) { cam->sensorHeight = kSensors[si].h; ed.dirty = true; }
+                        }
+                    }
                     ImGui::TextDisabled("Effective FOV: %.1f deg", cam->VerticalFovDegrees(16.0f / 9.0f));
                 } else {
                     if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
@@ -24397,6 +24983,39 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Clipping Planes");
             if (ImGui::DragFloat("Near", &cam->nearClip, 0.01f, 0.001f, 100.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Far",  &cam->farClip, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (cam->farClip <= cam->nearClip) { cam->farClip = cam->nearClip + 0.01f; ed.dirty = true; }   // keep a valid depth range
+
+            SectionHeader("Zoom & Framing");
+            if (ImGui::SliderFloat("Zoom", &cam->zoom, 0.25f, 8.0f, "%.2fx", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("2 = twice as close (narrower view / half the 2D size). Scripts: camera_zoom_to(z, seconds).");
+            ImGui::SameLine(); if (ImGui::SmallButton("1x##zoomreset")) { cam->zoom = 1.0f; ed.dirty = true; }
+            const bool cam3D = cam->projection == Camera::Projection::Perspective;
+            if (ImGui::SliderFloat("Dutch Angle", &cam->dutch, -45.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roll the view around its direction: tense / dramatic shots (3D).");
+            float shift[2] = {cam->lensShiftX, cam->lensShiftY};
+            if (ImGui::DragFloat2("Lens Shift", shift, 0.005f, -1.0f, 1.0f, "%.3f")) { cam->lensShiftX = shift[0]; cam->lensShiftY = shift[1]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide the image without turning the camera (fraction of the view):\nkeeps vertical lines straight in architecture shots, off-centre framing.");
+            if (!cam3D) {
+                if (ImGui::Checkbox("Pixel Perfect", &cam->pixelPerfect)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap the camera to whole pixels so pixel art doesn't shimmer when it moves.");
+                if (cam->pixelPerfect) {
+                    if (ImGui::DragFloat("Pixels Per Unit", &cam->pixelsPerUnit, 1.0f, 1.0f, 1024.0f, "%.0f")) ed.dirty = true;
+                    if (cam->pixelsPerUnit < 1.0f) cam->pixelsPerUnit = 1.0f;
+                }
+            }
+
+            SectionHeader("Camera Shake");
+            if (ImGui::SliderFloat("Amount", &cam->shakeAmount, 0.0f, 3.0f, "%.2f units")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the camera moves at full shake.");
+            if (cam3D && ImGui::SliderFloat("Angle", &cam->shakeAngle, 0.0f, 15.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::SliderFloat("Frequency", &cam->shakeFrequency, 1.0f, 60.0f, "%.0f Hz")) ed.dirty = true;
+            if (ImGui::SliderFloat("Recovery", &cam->shakeRecovery, 0.1f, 10.0f, "%.1f /s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly the shake settles (higher = shorter shakes).");
+            ImGui::BeginDisabled(!ed.isPlaying());
+            if (ImGui::Button("Test Shake")) cam->Shake(0.6f);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(ed.isPlaying() ? "Shake it now (strength 0.6)." : "Press Play, then try it here.\nIn scripts: camera_shake(0.5); in Actions: Shake Camera.");
 
             SectionHeader("Viewport Rect");
             float r[4] = {cam->rectX, cam->rectY, cam->rectW, cam->rectH};
@@ -29613,19 +30232,14 @@ static void UIAnchorRefRect(GameObject* go, ImVec2 canvasPos, ImVec2 canvasSize,
 // The camera to frame the Game view through: the scene's main camera if one is
 // active (set on Play), else the first Camera component found (edit mode).
 static Camera* SceneCamera(Scene& s) {
-    // Only trust mainCamera if it still points to a LIVE object — deleting the
-    // main camera leaves a dangling pointer, which made the Game view go black
-    // even after adding a replacement. Comparing pointers never dereferences the
-    // stale one; if it's gone we clear it and pick another camera.
-    if (s.mainCamera) {
-        for (const auto& go : s.Objects())
-            if (go->GetComponent<Camera>() == s.mainCamera) return s.mainCamera;
-        s.mainCamera = nullptr;   // it was deleted
-    }
+    // The same choice the game makes (okay::PickRenderCamera): the main camera
+    // while it can render, else the best active one — and never a dangling pointer
+    // to a deleted camera (that made the Game view go black).
+    std::vector<Camera*> cams;
     for (const auto& go : s.Objects())
-        if (go->active)
-            if (auto* c = go->GetComponent<Camera>()) { s.mainCamera = c; return c; }
-    return nullptr;
+        if (auto* c = go->GetComponent<Camera>()) cams.push_back(c);
+    s.mainCamera = okay::PickRenderCamera(s.mainCamera, cams);
+    return s.mainCamera;
 }
 
 // Screen-space UI overlay (text, images, panels, bars, sliders, toggles,
@@ -31163,8 +31777,8 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
         if (gameView) {
             if (Camera* mc = SceneCamera(ed.scene())) {
                 if (mc->gameObject && mc->gameObject->transform) {
-                    Vec3 cp = mc->gameObject->transform->Position();
-                    camPos = {cp.x, cp.y}; zoom = mc->orthographicSize * 2.0f;
+                    Vec3 cp = mc->RenderPosition();
+                    camPos = {cp.x, cp.y}; zoom = mc->EffectiveOrthoSize() * 2.0f;
                 }
             }
         }
@@ -31770,9 +32384,9 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     float zoom   = ed.cameraZoom;
     if (gameView) {
         if (Camera* mc = SceneCamera(ed.scene())) {
-            Vec3 cp = mc->gameObject->transform->Position();
+            Vec3 cp = mc->RenderPosition();             // incl. shake + pixel snap
             camPos = {cp.x, cp.y};
-            zoom = mc->orthographicSize * 2.0f;        // viewport world-height
+            zoom = mc->EffectiveOrthoSize() * 2.0f;     // viewport world-height (after zoom)
         }
     }
     float scale = canvasSize.y / zoom;
@@ -33744,9 +34358,45 @@ static const GameResPreset kGameResPresets[] = {
 static constexpr int kGameResCount     = (int)(sizeof(kGameResPresets) / sizeof(kGameResPresets[0]));
 static constexpr int kGameResCustomIdx = kGameResCount - 1;
 
+// ---- Mobile emulator ----------------------------------------------------------
+// Real phone / tablet screens (portrait pixels) with what eats into them: rounded
+// corners, the notch / Dynamic Island / punch-hole camera, and the home indicator.
+// Picking one in the Game view makes it the game screen (the UI editor too),
+// drawn inside the device's frame; Rotate flips it to landscape.
+enum class DevCutout { None, Notch, Island, PunchHole, HomeButton };
+struct MobileDevice {
+    const char* name; int w, h;
+    float corner;        // screen corner radius, fraction of the short side
+    DevCutout cutout;
+    float safeTop, safeBottom;   // unsafe insets in portrait, fraction of the long side
+    bool tablet;
+};
+static const MobileDevice kMobileDevices[] = {
+    {"Off (no device)",          0,    0,    0.00f, DevCutout::None,       0.000f, 0.000f, false},
+    {"iPhone 15 Pro",            1179, 2556, 0.14f, DevCutout::Island,     0.046f, 0.013f, false},
+    {"iPhone 15 Pro Max",        1290, 2796, 0.14f, DevCutout::Island,     0.044f, 0.012f, false},
+    {"iPhone 13 / 14",           1170, 2532, 0.13f, DevCutout::Notch,      0.047f, 0.013f, false},
+    {"iPhone SE",                750,  1334, 0.00f, DevCutout::HomeButton, 0.030f, 0.000f, false},
+    {"Pixel 8",                  1080, 2400, 0.10f, DevCutout::PunchHole,  0.035f, 0.010f, false},
+    {"Galaxy S24",               1080, 2340, 0.09f, DevCutout::PunchHole,  0.033f, 0.010f, false},
+    {"Small Android (720p)",     720,  1600, 0.07f, DevCutout::PunchHole,  0.035f, 0.010f, false},
+    {"iPad Air",                 1640, 2360, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
+    {"iPad mini",                1488, 2266, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
+    {"Android tablet",           1600, 2560, 0.04f, DevCutout::PunchHole,  0.016f, 0.008f, true},
+};
+static constexpr int kMobileDeviceCount = (int)(sizeof(kMobileDevices) / sizeof(kMobileDevices[0]));
+static const MobileDevice* ActiveDevice() {
+    return (g_gameDevice > 0 && g_gameDevice < kMobileDeviceCount) ? &kMobileDevices[g_gameDevice] : nullptr;
+}
+
 // Resolve the current selection to aspect + pixel size. Pure-aspect presets report
 // w=h=0 (aspect only); fixed and Custom presets carry real pixel dimensions.
 static void CurrentGameRes(float& aspect, int& w, int& h) {
+    if (const MobileDevice* d = ActiveDevice()) {   // the emulated device's screen wins
+        w = g_gameDeviceLandscape ? d->h : d->w; h = g_gameDeviceLandscape ? d->w : d->h;
+        aspect = (float)w / (float)h;
+        return;
+    }
     int i = g_gameResPreset; if (i < 0 || i >= kGameResCount) i = 0;
     w = kGameResPresets[i].w; h = kGameResPresets[i].h;
     if (i == kGameResCustomIdx) { w = g_gameCustomW; h = g_gameCustomH; }
@@ -33760,6 +34410,10 @@ static void CurrentGameRes(float& aspect, int& w, int& h) {
 static void LetterboxGameScreen(ImVec2 origin, ImVec2 avail,
                                 ImVec2& outPos, ImVec2& outSize, float& outResScale) {
     float aspect; int w, h; CurrentGameRes(aspect, w, h);
+    if (ActiveDevice()) {   // leave room for the device frame around the screen
+        const float m = std::min(avail.x, avail.y) * 0.06f + 10.0f;
+        origin.x += m; origin.y += m; avail.x = std::max(40.0f, avail.x - 2 * m); avail.y = std::max(40.0f, avail.y - 2 * m);
+    }
     ImVec2 size = avail, pos = origin;
     if (aspect > 0.0f) {
         float boxW = avail.x, boxH = avail.x / aspect;
@@ -34953,6 +35607,88 @@ void DrawProfiler(EditorState& ed) {
     ImGui::End();
 }
 
+// The phone / tablet body behind the emulated screen (drawn before the game).
+static void DrawDeviceBody(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDevice& d, bool land) {
+    const float sw = se.x - sp.x, sh = se.y - sp.y, shortSide = std::min(sw, sh);
+    const float bezel = std::max(6.0f, shortSide * (d.tablet ? 0.045f : 0.035f));
+    float bt = bezel, bb = bezel, bl = bezel, br = bezel;
+    if (d.cutout == DevCutout::HomeButton) {   // old-style phone: tall forehead + chin
+        if (land) { bl = br = shortSide * 0.20f; } else { bt = bb = shortSide * 0.20f; }
+    }
+    const ImVec2 b0(sp.x - bl, sp.y - bt), b1(se.x + br, se.y + bb);
+    const float bodyR = shortSide * d.corner + bezel;
+    dl->AddRectFilled(ImVec2(b0.x + 3, b0.y + 6), ImVec2(b1.x + 3, b1.y + 6), IM_COL32(0, 0, 0, 90), bodyR + 4);   // shadow
+    dl->AddRectFilled(b0, b1, IM_COL32(28, 29, 34, 255), bodyR + 2);
+    dl->AddRect(b0, b1, IM_COL32(92, 96, 108, 255), bodyR + 2, 0, 2.0f);       // metal rim
+    // Side buttons (volume / power), on the long edges.
+    const ImU32 btn = IM_COL32(70, 73, 82, 255);
+    if (!land) {
+        const float x0 = b0.x - 3, x1 = b1.x;
+        dl->AddRectFilled(ImVec2(x0, b0.y + (b1.y - b0.y) * 0.22f), ImVec2(x0 + 3, b0.y + (b1.y - b0.y) * 0.30f), btn, 1.5f);
+        dl->AddRectFilled(ImVec2(x0, b0.y + (b1.y - b0.y) * 0.32f), ImVec2(x0 + 3, b0.y + (b1.y - b0.y) * 0.40f), btn, 1.5f);
+        dl->AddRectFilled(ImVec2(x1, b0.y + (b1.y - b0.y) * 0.27f), ImVec2(x1 + 3, b0.y + (b1.y - b0.y) * 0.37f), btn, 1.5f);
+    } else {
+        const float y0 = b0.y - 3, y1 = b1.y;
+        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.70f, y0), ImVec2(b0.x + (b1.x - b0.x) * 0.78f, y0 + 3), btn, 1.5f);
+        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.60f, y0), ImVec2(b0.x + (b1.x - b0.x) * 0.68f, y0 + 3), btn, 1.5f);
+        dl->AddRectFilled(ImVec2(b0.x + (b1.x - b0.x) * 0.63f, y1), ImVec2(b0.x + (b1.x - b0.x) * 0.73f, y1 + 3), btn, 1.5f);
+    }
+    if (d.cutout == DevCutout::HomeButton) {   // the round home button in the chin
+        const ImVec2 c = land ? ImVec2(se.x + br * 0.5f, (sp.y + se.y) * 0.5f) : ImVec2((sp.x + se.x) * 0.5f, se.y + bb * 0.5f);
+        const float r = shortSide * 0.075f;
+        dl->AddCircle(c, r, IM_COL32(90, 94, 104, 255), 40, 2.0f);
+    }
+}
+
+// What sits ON the screen (drawn after the game): rounded screen corners, the
+// notch / island / punch-hole, the home indicator and, optionally, the unsafe
+// areas a game's UI should keep clear of.
+static void DrawDeviceScreenOverlay(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDevice& d, bool land, bool safeArea) {
+    const float sw = se.x - sp.x, sh = se.y - sp.y, shortSide = std::min(sw, sh), longSide = std::max(sw, sh);
+    const ImU32 body = IM_COL32(28, 29, 34, 255), black = IM_COL32(0, 0, 0, 255);
+    const float r = shortSide * d.corner;
+    if (safeArea) {   // unsafe insets, tinted + outlined
+        const float top = longSide * d.safeTop, bot = longSide * d.safeBottom;
+        const ImU32 tint = IM_COL32(255, 80, 80, 40), line = IM_COL32(255, 110, 110, 150);
+        if (!land) {
+            if (top > 0) { dl->AddRectFilled(sp, ImVec2(se.x, sp.y + top), tint); dl->AddLine(ImVec2(sp.x, sp.y + top), ImVec2(se.x, sp.y + top), line, 1.0f); }
+            if (bot > 0) { dl->AddRectFilled(ImVec2(sp.x, se.y - bot), se, tint); dl->AddLine(ImVec2(sp.x, se.y - bot), ImVec2(se.x, se.y - bot), line, 1.0f); }
+        } else {   // landscape: the cutout side is on the left, the home indicator at the bottom
+            if (top > 0) { dl->AddRectFilled(sp, ImVec2(sp.x + top, se.y), tint); dl->AddLine(ImVec2(sp.x + top, sp.y), ImVec2(sp.x + top, se.y), line, 1.0f);
+                           dl->AddRectFilled(ImVec2(se.x - top, sp.y), se, tint); dl->AddLine(ImVec2(se.x - top, sp.y), ImVec2(se.x - top, se.y), line, 1.0f); }
+            if (bot > 0) { dl->AddRectFilled(ImVec2(sp.x, se.y - bot), se, tint); dl->AddLine(ImVec2(sp.x, se.y - bot), ImVec2(se.x, se.y - bot), line, 1.0f); }
+        }
+    }
+    if (r > 1.0f) {   // (after the tint) mask the square corners outside the rounded screen
+        const float t = r * 0.75f + 2.0f;
+        dl->AddRect(ImVec2(sp.x - t * 0.5f, sp.y - t * 0.5f), ImVec2(se.x + t * 0.5f, se.y + t * 0.5f), body, r + t * 0.5f, 0, t);
+    }
+    // Camera cutout.
+    const ImVec2 mid((sp.x + se.x) * 0.5f, (sp.y + se.y) * 0.5f);
+    switch (d.cutout) {
+        case DevCutout::Island: {
+            const float L = shortSide * 0.31f, W = shortSide * 0.095f, off = shortSide * 0.035f;
+            if (!land) dl->AddRectFilled(ImVec2(mid.x - L / 2, sp.y + off), ImVec2(mid.x + L / 2, sp.y + off + W), black, W / 2);
+            else       dl->AddRectFilled(ImVec2(sp.x + off, mid.y - L / 2), ImVec2(sp.x + off + W, mid.y + L / 2), black, W / 2);
+        } break;
+        case DevCutout::Notch: {
+            const float L = shortSide * 0.42f, W = shortSide * 0.085f;
+            if (!land) dl->AddRectFilled(ImVec2(mid.x - L / 2, sp.y - 1), ImVec2(mid.x + L / 2, sp.y + W), body, W * 0.6f, ImDrawFlags_RoundCornersBottom);
+            else       dl->AddRectFilled(ImVec2(sp.x - 1, mid.y - L / 2), ImVec2(sp.x + W, mid.y + L / 2), body, W * 0.6f, ImDrawFlags_RoundCornersRight);
+        } break;
+        case DevCutout::PunchHole: {
+            const float rr = shortSide * 0.028f, off = shortSide * 0.05f;
+            dl->AddCircleFilled(land ? ImVec2(sp.x + off, mid.y) : ImVec2(mid.x, sp.y + off), rr, black, 24);
+        } break;
+        default: break;
+    }
+    if (d.cutout != DevCutout::HomeButton) {   // home indicator bar
+        const float L = shortSide * 0.36f, W = std::max(3.0f, shortSide * 0.012f), off = shortSide * 0.025f;
+        const ImU32 bar = IM_COL32(235, 235, 240, 150);
+        dl->AddRectFilled(ImVec2(mid.x - (land ? L * 0.8f : L) / 2, se.y - off - W), ImVec2(mid.x + (land ? L * 0.8f : L) / 2, se.y - off), bar, W / 2);
+    }
+}
+
 void DrawGameView(EditorState& ed) {
     // Pressing Play focuses this window so it comes forward if docked as a tab
     // behind the Scene view. SetWindowFocus() must be called before Begin().
@@ -34967,6 +35703,30 @@ void DrawGameView(EditorState& ed) {
     // table so the Game tab and the UI-Only editor always frame UI against the same screen.
     int& s_aspect = g_gameResPreset;   // persisted across sessions
     if (s_aspect < 0 || s_aspect >= kGameResCount) s_aspect = 0;
+    // Mobile emulator: test on phone / tablet screens (size, notch, safe area).
+    if (g_gameDevice < 0 || g_gameDevice >= kMobileDeviceCount) g_gameDevice = 0;
+    ImGui::SetNextItemWidth(170);
+    if (ImGui::BeginCombo("##device", g_gameDevice ? kMobileDevices[g_gameDevice].name : "Device: off")) {
+        for (int i = 0; i < kMobileDeviceCount; ++i) {
+            if (i == 1 || i == 8) ImGui::Separator();   // off / phones / tablets
+            char lbl[96];
+            if (i == 0) std::snprintf(lbl, sizeof lbl, "%s", kMobileDevices[i].name);
+            else std::snprintf(lbl, sizeof lbl, "%s   %dx%d", kMobileDevices[i].name, kMobileDevices[i].w, kMobileDevices[i].h);
+            if (ImGui::Selectable(lbl, g_gameDevice == i)) { g_gameDevice = i; SaveSettings(); }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mobile emulator: play the game on a phone or tablet screen\n(real resolution, rounded corners, notch, safe area). The mouse acts as your finger.");
+    ImGui::SameLine();
+    int curW = 0, curH = 0;
+    if (const MobileDevice* dev = ActiveDevice()) {
+        (void)dev;
+        if (ImGui::Button(g_gameDeviceLandscape ? "Landscape" : "Portrait")) { g_gameDeviceLandscape = !g_gameDeviceLandscape; SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate the device");
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Safe area", &g_gameSafeArea)) SaveSettings();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tint the areas the notch / camera and the home indicator cover:\nkeep buttons and text out of them.");
+    } else {
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo("Resolution", kGameResPresets[s_aspect].name)) {
         for (int i = 0; i < kGameResCount; ++i) {
@@ -34976,7 +35736,7 @@ void DrawGameView(EditorState& ed) {
         ImGui::EndCombo();
     }
     // Custom width/height inputs (only for the Custom preset).
-    int curW = kGameResPresets[s_aspect].w, curH = kGameResPresets[s_aspect].h;
+    curW = kGameResPresets[s_aspect].w; curH = kGameResPresets[s_aspect].h;
     if (s_aspect == kGameResCustomIdx) {
         ImGui::SameLine(); ImGui::SetNextItemWidth(70);
         if (ImGui::DragInt("##cw", &g_gameCustomW, 1.0f, 16, 8192, "W %d")) SaveSettings();
@@ -34986,6 +35746,8 @@ void DrawGameView(EditorState& ed) {
         g_gameCustomH = g_gameCustomH < 16 ? 16 : g_gameCustomH;
         curW = g_gameCustomW; curH = g_gameCustomH;
     }
+    }   // no device
+    if (ActiveDevice()) { float da; CurrentGameRes(da, curW, curH); }
     const bool  kFixedRes  = (curW > 0 && curH > 0);
     ImGui::SameLine();
     {
@@ -35030,6 +35792,8 @@ void DrawGameView(EditorState& ed) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Dark letterbox bars over the whole region, then the camera background.
     dl->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), IM_COL32(8, 8, 10, 255));
+    const MobileDevice* device = ActiveDevice();
+    if (device) DrawDeviceBody(dl, canvasPos, canvasEnd, *device, g_gameDeviceLandscape);
     Color bg = mc ? mc->backgroundColor : Color::Black;
     dl->AddRectFilled(canvasPos, canvasEnd,
                       IM_COL32((int)(bg.r * 255), (int)(bg.g * 255), (int)(bg.b * 255), 255));
@@ -35055,6 +35819,7 @@ void DrawGameView(EditorState& ed) {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
     }
     okay::UIResolutionScale() = 1.0f;   // never leak the preview scale outside the Game view
+    if (device) DrawDeviceScreenOverlay(dl, canvasPos, canvasEnd, *device, g_gameDeviceLandscape, g_gameSafeArea);
 
     // Screen-space vignette preview (RenderSettings.vignette) — mirrors what the
     // shipped player draws, using four edge gradient bands that fade inward.
@@ -35068,6 +35833,13 @@ void DrawGameView(EditorState& ed) {
         dl->AddRectFilledMultiColor(ImVec2(canvasEnd.x - bw, canvasPos.y), canvasEnd, clr, edge, edge, clr);            // right
     }
 
+    // On an emulated device the labels go below the notch / rounded corner.
+    float labelDrop = 0.0f, labelIn = 0.0f;
+    if (device) {
+        const float shortSide = std::min(canvasSize.x, canvasSize.y), longSide = std::max(canvasSize.x, canvasSize.y);
+        if (!g_gameDeviceLandscape) labelDrop = longSide * device->safeTop + 4.0f;
+        labelIn = shortSide * device->corner * 0.45f + (g_gameDeviceLandscape ? longSide * device->safeTop : 0.0f);
+    }
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.
     {
@@ -35078,7 +35850,7 @@ void DrawGameView(EditorState& ed) {
         } else {
             std::snprintf(resLbl, sizeof(resLbl), "%d x %d px", (int)canvasSize.x, (int)canvasSize.y);
         }
-        ImVec2 tp(canvasPos.x + 6, canvasPos.y + 4);
+        ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop);
         dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 2),
                           ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
@@ -35095,7 +35867,7 @@ void DrawGameView(EditorState& ed) {
         ImVec2 ts = ImGui::CalcTextSize(pill);
         float pr = ImGui::GetTextLineHeight() * 0.26f;   // drawn dot (● is tofu here)
         float dotW = pr * 2.0f + 6.0f;
-        ImVec2 p0(canvasPos.x + 8, canvasPos.y + 6);
+        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 6 + labelDrop);
         dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + dotW + ts.x + 6, p0.y + ts.y + 3),
                           IM_COL32(0, 0, 0, 150), 4.0f);
         dl->AddCircleFilled(ImVec2(p0.x + pr, p0.y + ts.y * 0.55f), pr, pc);
@@ -35120,7 +35892,7 @@ void DrawGameView(EditorState& ed) {
     } else {
         // Below the resolution label (they used to print on top of each other).
         const char* idle = "Edit mode - press Play to run";
-        ImVec2 ip(canvasPos.x + 6, canvasPos.y + 8 + ImGui::GetTextLineHeight());
+        ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop);
         dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);
@@ -35148,6 +35920,95 @@ void DrawGameView(EditorState& ed) {
     }
     ImGui::End();
 }
+
+// ---- Saving ------------------------------------------------------------------
+// Where a never-saved scene goes: <project>/Assets/Scenes/<scene name>.okayscene.
+static std::string DefaultScenePath(EditorState& ed) {
+    namespace fs = std::filesystem;
+    std::string name = ed.scene().Name();
+    for (char& c : name) if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == ' ')) c = '_';
+    if (name.empty() || name == "Scene") name = "Main";
+    const fs::path dir = ed.projectDir().empty() ? fs::path("Scenes") : fs::path(ed.projectDir()) / "Assets" / "Scenes";
+    return (dir / (name + ".okayscene")).string();
+}
+static bool SaveSceneTo(EditorState& ed, std::string p) {
+    namespace fs = std::filesystem;
+    if (fs::path(p).extension() != ".okayscene") p += ".okayscene";
+    std::error_code ec;
+    if (fs::path(p).has_parent_path()) fs::create_directories(fs::path(p).parent_path(), ec);
+    if (!ed.Save(p)) { ConsoleLog("Couldn't save the scene to " + p, 2); return false; }
+    ConsoleLog("Saved scene: " + p);
+    AddRecent(p); ed.Achievement("FIRST_SAVE");
+    fs::remove(p + ".autosave", ec);
+    return true;
+}
+static void SaveSceneAsCmd(EditorState& ed) {
+    if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
+    const std::string def = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(def).parent_path(), ec);   // so the dialog opens there
+    const char* filt[1] = {"*.okayscene"};
+    if (const char* p = tinyfd_saveFileDialog("Save Scene As", def.c_str(), 1, filt, "OkaySpace scene")) SaveSceneTo(ed, p);
+}
+static void SaveSceneCmd(EditorState& ed) {
+    if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
+    if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
+    SaveSceneTo(ed, ed.path());
+}
+static bool AnyUnsavedWork(EditorState& ed) {
+    if (ed.dirty) return true;
+    for (okay::ScriptComponent* t : g_scriptTabs)
+        if (t && !t->Path().empty() && ScriptTabDirty(t)) return true;
+    const auto& vg = okay::editor::vsed::State().g;
+    return vg.dirty && !vg.path.empty();
+}
+// Save everything: the scene (an unsaved one goes to Assets/Scenes), every edited
+// script file, the open visual-script graph, project + build settings and the
+// editor's own preferences. Interactive = the user asked (File > Save Project):
+// a running game is left alone and a summary goes to the Console. Non-interactive
+// (quit / the launcher's save-before-update) stops Play first. False if anything failed.
+static bool SaveProject(EditorState& ed, bool interactive) {
+    bool ok = true;
+    std::vector<std::string> saved;
+    bool sceneSkipped = false;
+    if (ed.isPlaying()) {
+        if (interactive) sceneSkipped = true;
+        else ed.Stop();   // save the edited scene, not the running copy
+    }
+    if (!sceneSkipped) {   // always written: "Save Project" means everything is on disk
+        const std::string p = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
+        if (SaveSceneTo(ed, p)) saved.push_back("scene"); else ok = false;
+    }
+    int scripts = 0;
+    for (okay::ScriptComponent* t : g_scriptTabs) {
+        if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+        const char* live = PeekCodeBuffer(t);
+        std::ofstream f(t->Path(), std::ios::binary);
+        if (f && live) { f << live; g_scriptSaved[t] = live; ++scripts; }
+        else { ok = false; ConsoleLog("Couldn't save " + t->Path(), 2); }
+    }
+    if (scripts) saved.push_back(std::to_string(scripts) + (scripts == 1 ? " script" : " scripts"));
+    auto& vg = okay::editor::vsed::State().g;
+    if (vg.dirty && !vg.path.empty()) {
+        if (vg.save(vg.path)) saved.push_back("visual script"); else { ok = false; ConsoleLog("Couldn't save " + vg.path, 2); }
+    }
+    SaveProjectSettings();
+    SaveBuildProfiles(ed);
+    SaveCustomActions();
+    SaveProjectViewPrefs();
+    SavePluginPrefs();
+    SaveSettings();
+    SaveRecent();
+    saved.push_back("settings");
+    if (interactive) {
+        std::string msg = "Project saved: ";
+        for (std::size_t i = 0; i < saved.size(); ++i) msg += (i ? ", " : "") + saved[i];
+        if (sceneSkipped) msg += ". (The scene wasn't saved while playing: stop Play, then save.)";
+        ConsoleLog(msg, ok ? (sceneSkipped ? 1 : 0) : 2);
+    }
+    return ok;
+}
+static bool SaveEverything(EditorState& ed) { return SaveProject(ed, false); }
 
 } // namespace
 
@@ -35469,25 +36330,6 @@ static std::string LauncherIpcPath(const char* file) {
         if (b) SDL_free(b);
     }
     return base + file;
-}
-// Save the scene, modified scripts and the open visual-script graph. False if any failed.
-static bool SaveEverything(EditorState& ed) {
-    bool ok = true;
-    if (ed.isPlaying()) ed.Stop();   // save the edited scene, not the running copy
-    if (ed.dirty) {
-        std::string p = ed.path();
-        if (p.empty()) p = ed.projectDir().empty() ? std::string("scene.okayscene") : ed.projectDir() + "/Untitled.okayscene";
-        if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); } else ok = false;
-    }
-    for (okay::ScriptComponent* t : g_scriptTabs) {
-        if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
-        const char* live = PeekCodeBuffer(t);
-        std::ofstream f(t->Path(), std::ios::binary);
-        if (f && live) { f << live; g_scriptSaved[t] = live; } else ok = false;
-    }
-    auto& vg = okay::editor::vsed::State().g;
-    if (vg.dirty && !vg.path.empty() && !vg.save(vg.path)) ok = false;
-    return ok;
 }
 static void PollLauncherRequest(EditorState& ed, bool& running) {
     static Uint32 last = 0;
@@ -36497,9 +37339,13 @@ int main(int argc, char** argv) {
             static int s_camCheck = 0;
             if (!ed.isPlaying() && ++s_camCheck >= 20) {
                 s_camCheck = 0;
-                bool made = false;
-                Camera* ensured = okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made);
-                if (made) {
+                bool made = false, restored = false;
+                Camera* ensured = okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made, &restored);
+                if (made && restored) {
+                    ed.dirty = true;
+                    ConsoleLog("'" + ensured->gameObject->name + "' lost its Camera component, so it was put back "
+                               "(every scene needs a camera to render; add another camera before removing this one).", 1);
+                } else if (made) {
                     ed.autoCamera = ensured ? ensured->gameObject : nullptr;
                     ed.dirty = true;
                     ConsoleLog("This scene had no camera, so a Main Camera was added (every scene needs one to render).", 1);

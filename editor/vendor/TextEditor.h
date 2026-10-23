@@ -36,6 +36,9 @@ public:
 		CurrentLineFill,
 		CurrentLineFillInactive,
 		CurrentLineEdge,
+		TypeName,       // semantic colours (used when LanguageDefinition::mSemantic)
+		Function,       // identifier followed by '(' : a call or a method declaration
+		Member,         // identifier after '.' that isn't a call: a field / property
 		Max
 	};
 
@@ -168,8 +171,13 @@ public:
 
 		bool mCaseSensitive;
 
+		// Semantic colouring: type names (plus the editor's SetUserTypes) get
+		// TypeName, calls get Function and ".member" gets Member.
+		bool mSemantic;
+		Keywords mTypeNames;
+
 		LanguageDefinition()
-			: mPreprocChar('#'), mAutoIndentation(true), mTokenize(nullptr), mCaseSensitive(true)
+			: mPreprocChar('#'), mAutoIndentation(true), mTokenize(nullptr), mCaseSensitive(true), mSemantic(false)
 		{
 		}
 
@@ -192,6 +200,8 @@ public:
 	void SetPalette(const Palette& aValue);
 
 	void SetErrorMarkers(const ErrorMarkers& aMarkers) { mErrorMarkers = aMarkers; }
+	// Extra type names declared in the text (classes, enums); recolours on change.
+	void SetUserTypes(const Keywords& aTypes) { if (aTypes != mUserTypes) { mUserTypes = aTypes; Colorize(); } }
 	void SetBreakpoints(const Breakpoints& aMarkers) { mBreakpoints = aMarkers; }
 
 	void Render(const char* aTitle, const ImVec2& aSize = ImVec2(), bool aBorder = false);
@@ -408,6 +418,7 @@ private:
 	bool mCheckComments;
 	Breakpoints mBreakpoints;
 	ErrorMarkers mErrorMarkers;
+	Keywords mUserTypes;
 	ImVec2 mCharAdvance;
 	Coordinates mInteractiveStart, mInteractiveEnd;
 	std::string mLineBuffer;

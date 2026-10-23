@@ -3183,6 +3183,27 @@ struct OkayScriptVM::Impl {
                 s->mainCamera->orthographicSize = Mathf::Max(0.01f, a[0].AsFloat());
             return Value{};
         };
+        // Camera shake (0..1, stacks) and smooth zoom on the main camera.
+        b["camera_shake"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera) s->mainCamera->Shake(a.empty() ? 0.5f : a[0].AsFloat());
+            return Value{};
+        };
+        b["camera_zoom_to"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera && !a.empty())
+                s->mainCamera->ZoomTo(a[0].AsFloat(), a.size() > 1 ? a[1].AsFloat() : 0.0f);
+            return Value{};
+        };
+        b["camera_dutch"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera) s->mainCamera->dutch = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["camera_fov"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera) {
+                if (a.empty()) return Value{s->mainCamera->fieldOfView};
+                s->mainCamera->fieldOfView = Mathf::Clamp(a[0].AsFloat(), 1.0f, 179.0f);
+            }
+            return Value{};
+        };
         // Set the main camera's clear/background color (flash, day-night, fades).
         b["set_bg"] = [sceneOf](std::vector<Value>& a) {
             if (Scene* s = sceneOf()) if (s->mainCamera)
@@ -6395,6 +6416,9 @@ struct OkayScriptVM::Impl {
         alias("camera_zoom", "cam_zoom");
         alias("set_camera_zoom", "set_cam_zoom");
         alias("set_zoom", "set_cam_zoom");
+        alias("shake_camera", "camera_shake");
+        alias("cam_shake", "camera_shake");
+        alias("zoom_camera", "camera_zoom_to");
         // Physics
         alias("is_overlapping", "overlap");
         alias("point_overlaps", "overlap");

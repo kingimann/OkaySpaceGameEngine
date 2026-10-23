@@ -1050,6 +1050,7 @@ int main(int argc, char** argv) {
         // Presentation (Unity-parity).
         std::string icon;          // window icon PNG (in the Data folder)
         bool runInBackground = true;
+        bool fullscreenToggle = true;    // Alt+Enter / F11 switches fullscreen
         bool muteOnFocusLoss = false;
         bool startMaximized = false;
         int  minWidth = 0, minHeight = 0;
@@ -1109,6 +1110,7 @@ int main(int argc, char** argv) {
             else if (k == "scene")      cfg.scenes.push_back(v);
             else if (k == "icon")           cfg.icon = v;
             else if (k == "run_background") cfg.runInBackground = std::atoi(v.c_str()) != 0;
+            else if (k == "fullscreen_toggle") cfg.fullscreenToggle = std::atoi(v.c_str()) != 0;
             else if (k == "mute_unfocused") cfg.muteOnFocusLoss = std::atoi(v.c_str()) != 0;
             else if (k == "start_maximized")cfg.startMaximized = std::atoi(v.c_str()) != 0;
             else if (k == "min_width")      cfg.minWidth = std::atoi(v.c_str());
@@ -1365,6 +1367,14 @@ int main(int argc, char** argv) {
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
             if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
+            // Alt+Enter / F11: switch between fullscreen and windowed (when enabled in Build Settings).
+            if (cfg.fullscreenToggle && e.type == SDL_KEYDOWN && !e.key.repeat &&
+                (e.key.keysym.sym == SDLK_F11 ||
+                 ((e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) && (e.key.keysym.mod & KMOD_ALT)))) {
+                const bool fs = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+                SDL_SetWindowFullscreen(window, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                continue;
+            }
             // Esc quits only when no input field is focused (otherwise it cancels it).
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                 bool typing = false;
@@ -1721,8 +1731,19 @@ int main(int argc, char** argv) {
         if (perspective) {
             // Z-buffered software render so overlapping faces occlude correctly,
             // then blit it under the 2D/UI layers (transparent where no geometry).
-            Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
-            Mat4 vp = cam->ProjectionMatrix(h > 0 ? (float)w / h : 1.0f) * cam->ViewMatrix();
+            Vec3 camPos = (cam && cam->transform) ? cam->RenderPosition() : Vec3::Zero;
+            // The camera's Viewport Rect (X/Y/W/H, 0..1, origin bottom-left): split
+            // screen, picture-in-picture. The 3D image is drawn into that part of
+            // the window (it used to always fill the window in built games).
+            int vx = 0, vy = 0, vw = w, vh = h;
+            if (cam) {
+                const float rw = Mathf::Clamp(cam->rectW, 0.01f, 1.0f), rh = Mathf::Clamp(cam->rectH, 0.01f, 1.0f);
+                const float rx = Mathf::Clamp(cam->rectX, 0.0f, 1.0f - rw), ry = Mathf::Clamp(cam->rectY, 0.0f, 1.0f - rh);
+                vw = std::max(1, (int)(rw * w + 0.5f)); vh = std::max(1, (int)(rh * h + 0.5f));
+                vx = (int)(rx * w + 0.5f); vy = std::max(0, h - vh - (int)(ry * h + 0.5f));
+            }
+            const bool fullView = vx == 0 && vy == 0 && vw == w && vh == h;
+            Mat4 vp = cam->ProjectionMatrix(vh > 0 ? (float)vw / vh : 1.0f) * cam->ViewMatrix();
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
                 const GameObject* ignore = cam ? cam->ignoreObject : nullptr;
@@ -1734,15 +1755,15 @@ int main(int argc, char** argv) {
                 if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
 #if defined(_WIN32)
                     if (!px && d3d12Ready && d3d12Renderer)
-                        px = d3d12Renderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                        px = d3d12Renderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                            0.0f, 0.0f, 0.0f, 0.0f, ignore);
                     if (!px && d3dReady && d3dRenderer)
-                        px = d3dRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                        px = d3dRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                          0.0f, 0.0f, 0.0f, 0.0f, ignore);
 #endif
                     if (!px && glReady && glRenderer && glWindow && glCtx) {
                         if (SDL_GL_MakeCurrent(glWindow, glCtx) == 0) {
-                            px = glRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                            px = glRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                             0.0f, 0.0f, 0.0f, 0.0f, ignore);
                             SDL_GL_MakeCurrent(nullptr, nullptr);
                         }
@@ -1757,18 +1778,26 @@ int main(int argc, char** argv) {
                 // them; the software path (next line) fills + validates the depth buffer.
                 SceneOcclusionDepth().valid = false;
                 if (!px)
-                    px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
+                    px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, vw, vh,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
                 if (px) {
-                    if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
+                    if (!mesh3DTex || mesh3DW != vw || mesh3DH != vh) {
                         if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
                         mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
-                                                      SDL_TEXTUREACCESS_STREAMING, w, h);
+                                                      SDL_TEXTUREACCESS_STREAMING, vw, vh);
                         SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
-                        mesh3DW = w; mesh3DH = h;
+                        mesh3DW = vw; mesh3DH = vh;
                     }
-                    SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
-                    SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
+                    SDL_UpdateTexture(mesh3DTex, nullptr, px, vw * 4);
+                    if (fullView) SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
+                    else {   // outside the camera's rect stays black, like an empty screen area
+                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                        const SDL_Rect bars[4] = {{0, 0, w, vy}, {0, vy + vh, w, h - vy - vh},
+                                                  {0, vy, vx, vh}, {vx + vw, vy, w - vx - vw, vh}};
+                        for (const SDL_Rect& b : bars) if (b.w > 0 && b.h > 0) SDL_RenderFillRect(renderer, &b);
+                        const SDL_Rect dst{vx, vy, vw, vh};
+                        SDL_RenderCopy(renderer, mesh3DTex, nullptr, &dst);
+                    }
                 }
                 // Depth occlusion on the GPU color path: the GPU renderers don't read
                 // their depth back, so when one of them drew the frame, run a cheap
@@ -1850,8 +1879,8 @@ int main(int argc, char** argv) {
                 }
             }
         } else {
-            float ortho = cam ? cam->orthographicSize : 5.0f;
-            Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
+            float ortho = cam ? cam->EffectiveOrthoSize() : 5.0f;
+            Vec3 camPos = (cam && cam->transform) ? cam->RenderPosition() : Vec3::Zero;
             float scale = h / (2.0f * ortho);
             // Gather active sprites and draw back-to-front by sort key — sorting
             // layer first, then order-in-layer (stable, so same-key sprites keep
@@ -1936,8 +1965,8 @@ int main(int argc, char** argv) {
         // drawn LATER (after the UI widgets) so labels sit ON TOP of panels instead
         // of being hidden behind them — see the screen-space text pass below.
         {
-            float ortho = cam ? cam->orthographicSize : 5.0f;
-            Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
+            float ortho = cam ? cam->EffectiveOrthoSize() : 5.0f;
+            Vec3 camPos = (cam && cam->transform) ? cam->RenderPosition() : Vec3::Zero;
             float scale = h / (2.0f * ortho);
             for (const auto& up : scene.Objects()) {
                 auto* tr = up->GetComponent<TextRenderer>();

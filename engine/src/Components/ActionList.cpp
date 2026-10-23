@@ -1181,6 +1181,13 @@ void ActionList::Update(float dt) {
                     ct->localPosition.x = p.x; ct->localPosition.y = p.y;
                 }
         }
+        else if (op == "camera_shake") {   // strength (0..1)
+            if (scene && scene->mainCamera) scene->mainCamera->Shake(it.args.empty() ? 0.5f : Num(it, 0));
+        }
+        else if (op == "camera_zoom_to") {   // zoom [seconds]
+            if (scene && scene->mainCamera && !it.args.empty())
+                scene->mainCamera->ZoomTo(Num(it, 0), it.args.size() > 1 ? Num(it, 1) : 0.0f);
+        }
         else if (op == "set_bg") {
             if (scene && scene->mainCamera)
                 scene->mainCamera->backgroundColor = {Num(it, 0), Num(it, 1), Num(it, 2), 1.0f};

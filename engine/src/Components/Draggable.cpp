@@ -74,8 +74,8 @@ void Draggable::Update(float) {
     Camera* cam = scene.mainCamera;
     float w = UICanvas::Width(), h = UICanvas::Height();
     if (w < 1.0f || h < 1.0f) return;
-    float ortho = (cam && cam->orthographicSize > 1e-3f) ? cam->orthographicSize : 5.0f;
-    Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
+    float ortho = cam ? cam->EffectiveOrthoSize() : 5.0f;
+    Vec3 camPos = (cam && cam->transform) ? cam->RenderPosition() : Vec3::Zero;
     float scale = h / (2.0f * ortho);
     if (scale < 1e-6f) scale = 1.0f;
     Vec2 m = Input::MousePosition();

@@ -1,4 +1,5 @@
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -143,6 +144,7 @@ void Scene::Update(float deltaTime) {
     }
 
     FlushDestroyed();
+    ResolveMainCamera();   // follow cameras being switched on/off this frame
 
     // A deferred scene load (requested via RequestLoad) happens here, after all
     // iteration is done, so it's safe to replace the whole scene.
@@ -173,10 +175,8 @@ void Scene::DispatchPointer() {
     if (w < 1.0f || h < 1.0f) return;
 
     // Cursor -> world XY using the same 2D projection the player/editor draw with.
-    float ortho = (mainCamera && mainCamera->orthographicSize > 1e-3f)
-                      ? mainCamera->orthographicSize : 5.0f;
-    Vec3 camPos = (mainCamera && mainCamera->transform) ? mainCamera->transform->Position()
-                                                        : Vec3::Zero;
+    float ortho = mainCamera ? mainCamera->EffectiveOrthoSize() : 5.0f;
+    Vec3 camPos = (mainCamera && mainCamera->transform) ? mainCamera->RenderPosition() : Vec3::Zero;
     float scale = h / (2.0f * ortho);
     if (scale < 1e-6f) scale = 1.0f;
     Vec2 mp = Input::MousePosition();
@@ -251,8 +251,8 @@ void Scene::Render(IRenderer& renderer) {
 
     if (mainCamera && mainCamera->transform) {
         Viewport vp = renderer.GetViewport();
-        renderer.SetCamera(mainCamera->transform->Position(),
-                           mainCamera->orthographicSize, vp.Aspect());
+        renderer.SetCamera(mainCamera->RenderPosition(),
+                           mainCamera->EffectiveOrthoSize(), vp.Aspect());
     }
 
     for (Component* c : m_active) {
@@ -285,6 +285,13 @@ void Scene::Destroy(GameObject* go) {
         }
     };
     queue(go);
+}
+
+void Scene::ResolveMainCamera() {
+    std::vector<Camera*> cams;
+    for (Component* c : m_active)
+        if (auto* cam = dynamic_cast<Camera*>(c)) cams.push_back(cam);
+    mainCamera = PickRenderCamera(mainCamera, cams);
 }
 
 void Scene::FlushDestroyed() {

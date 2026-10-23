@@ -36,6 +36,7 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/GameIpc.hpp"
 #include "okay/Net/ServerBrowser.hpp"
+#include "okay/Net/MatchResults.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
@@ -4081,6 +4082,62 @@ struct OkayScriptVM::Impl {
             if (!n || a.empty()) return Value{-1.0f};
             const auto r = n->Roster(); const int i = (int)a[0].AsFloat();
             return Value{(i >= 0 && i < (int)r.size()) ? (float)r[i].id : -1.0f};
+        };
+        // ---- Matches: results -> stats + leaderboards (docs/sql/matches.sql) ----
+        // Server: net_match_start() zeroes scores and starts the clock;
+        // net_match_end([winner ids...]) reports everyone's score / place / win
+        // (winners default to first place) when the server is signed in.
+        b["net_match_start"] = [this](std::vector<Value>&) {
+            NetworkManager* n = Net();
+            if (!n || !n->IsServer()) return Value{0.0f};
+            n->BeginMatch();
+            return Value{1.0f};
+        };
+        b["net_match_end"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (!n || !n->IsServer()) return Value{0.0f};
+            std::vector<std::uint32_t> winners;
+            for (auto& v : a) {
+                if (auto arr = v.AsArray()) { for (auto& w : *arr) winners.push_back((std::uint32_t)(int)w.AsFloat()); }
+                else winners.push_back((std::uint32_t)(int)v.AsFloat());
+            }
+            Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            return Value{EndMatchAndReport(*n, winners, std::string(), sc ? sc->Name() : std::string()) ? 1.0f : 0.0f};
+        };
+        b["net_match_seconds"] = [this](std::vector<Value>&) {
+            NetworkManager* n = Net();
+            return Value{n ? n->MatchSeconds() : 0.0f};
+        };
+        // "" until a report finished, then "ok" or why it failed.
+        b["net_match_status"] = [](std::vector<Value>&) { return Value{LastMatchReportStatus()}; };
+        // Leaderboards from match results: net_stats_top("wins"|"score"|"best"|"matches"|"time", n)
+        // -> ["1,maya,42", ...]; net_stats_mine(stat) -> my value. Optional last arg: another game's title.
+        b["net_stats_top"] = [this](std::vector<Value>& a) {
+            Value v = Value::MakeArray();
+            auto arr = v.AsArray();
+            if (!arr || !Account::Exists() || !Account::IsLoggedIn()) return v;
+            const std::string stat = a.empty() ? std::string("wins") : a[0].AsString();
+            const int count = a.size() > 1 ? std::max(1, (int)a[1].AsFloat()) : 10;
+            std::string game = a.size() > 2 ? a[2].AsString() : std::string();
+            if (game.empty()) { NetworkManager* n = Net(); game = n && !n->gameId.empty() ? n->gameId : ServerBrowser::Shared().Game(); }
+            for (const auto& e : MatchResults(Account::Get()).Leaderboard(game, stat, count)) {
+                const long val = stat == "score" ? e.totalScore : stat == "best" ? e.bestScore : stat == "matches" ? e.matches
+                               : stat == "time" ? e.seconds : e.wins;
+                arr->push_back(Value{std::to_string(e.rank) + "," + e.Name() + "," + std::to_string(val)});
+            }
+            return v;
+        };
+        b["net_stats_mine"] = [this](std::vector<Value>& a) {
+            if (!Account::Exists() || !Account::IsLoggedIn()) return Value{0.0f};
+            const std::string stat = a.empty() ? std::string("wins") : a[0].AsString();
+            std::string game = a.size() > 1 ? a[1].AsString() : std::string();
+            if (game.empty()) { NetworkManager* n = Net(); game = n && !n->gameId.empty() ? n->gameId : ServerBrowser::Shared().Game(); }
+            PlayerStats e;
+            if (!MatchResults(Account::Get()).MyStats(game, e)) return Value{0.0f};
+            if (stat == "rank") return Value{(float)e.rank};
+            const long val = stat == "score" ? e.totalScore : stat == "best" ? e.bestScore : stat == "matches" ? e.matches
+                           : stat == "time" ? e.seconds : e.wins;
+            return Value{(float)val};
         };
         // Server only: move a player (respawn / teleport) — passes the speed check.
         b["net_teleport"] = [this](std::vector<Value>& a) {

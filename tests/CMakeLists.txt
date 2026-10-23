@@ -752,3 +752,7 @@ add_test(NAME launcher_join COMMAND test_launcher_join)
 add_executable(test_net_authority test_net_authority.cpp)
 target_link_libraries(test_net_authority PRIVATE okay::engine)
 add_test(NAME net_authority COMMAND test_net_authority)
+
+add_executable(test_match_results test_match_results.cpp)
+target_link_libraries(test_match_results PRIVATE okay::engine)
+add_test(NAME match_results COMMAND test_match_results)

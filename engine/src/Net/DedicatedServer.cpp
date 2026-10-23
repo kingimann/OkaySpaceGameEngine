@@ -1,6 +1,7 @@
 #include "okay/Net/DedicatedServer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/Matchmaking.hpp"
+#include "okay/Net/MatchResults.hpp"
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -498,6 +499,7 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     auto next = started;
     double lastStatus = 0.0, busySum = 0.0; long busyTicks = 0;
     std::map<std::uint32_t, std::string> known;   // roster last tick (for join/leave lines)
+    int reportsSeen = FinishedMatchReports();
 
     while (!g_stop && !Game::QuitRequested()) {
         const auto t0 = clock::now();
@@ -518,6 +520,13 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
             if (!now.count(id)) std::printf("[server] - %s left (id %u) \xC2\xB7 %lu online\n", nm.c_str(), id, (unsigned long)now.size());
         if (now.size() != known.size() || now != known) std::fflush(stdout);
         known.swap(now);
+        if (const int done = FinishedMatchReports(); done != reportsSeen) {   // net_match_end() results
+            reportsSeen = done;
+            const std::string st = LastMatchReportStatus();
+            if (st == "ok") std::printf("[server] match results saved\n");
+            else std::fprintf(stderr, "[server] match results not saved: %s\n", st.c_str());
+            std::fflush(stdout);
+        }
 
         const double up = std::chrono::duration<double>(clock::now() - started).count();
         if (opts.statusEvery > 0.0f && up - lastStatus >= opts.statusEvery) {
@@ -552,6 +561,11 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     if (web) {   // unlist, then let the worker finish
         web->Post([listingId] { if (!listingId->empty()) Matchmaking::Unregister(*listingId); });
         web.reset();
+    }
+    if (PendingMatchReports() > 0) {   // a match that just ended: let its results reach the database
+        WaitForMatchReports(8000);
+        const std::string st = LastMatchReportStatus();
+        if (!st.empty() && st != "ok") std::fprintf(stderr, "[server] match report: %s\n", st.c_str());
     }
     net->Stop();
     return 0;

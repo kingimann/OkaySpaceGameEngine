@@ -15,6 +15,7 @@
 #include <termios.h>
 #endif
 #include <iostream>
+#include <map>
 #include "okay/Net/JoinLink.hpp"
 #include "okay/Net/SessionPresence.hpp"
 #include "okay/Net/ServerBrowser.hpp"
@@ -1612,6 +1613,7 @@ int main(int argc, char** argv) {
     if (std::getenv("OKAY_BROWSER_DEMO")) okay::ServerBrowser::Shared().windowOpen = true;   // dev screenshot hook
     Uint32 presenceAt = 0, presenceWritten = 0;
     std::string presenceLast;
+    std::map<std::string, Uint32> playedWith;   // who we've logged this run (key -> when)
     auto pumpPresence = [&]() {
         const Uint32 now = SDL_GetTicks();
         if (now - presenceAt < 1000) return;
@@ -1630,6 +1632,20 @@ int main(int argc, char** argv) {
         if (nm && now > 1500) {
             const std::string pending = okay::NetworkManager::TakeLaunchJoin();
             if (!pending.empty()) nm->JoinByLink(pending);
+        }
+        // "Recently played with": everyone who's been in my session for 30s+.
+        if (nm && (nm->IsServer() || nm->Joined())) {
+            const std::uint32_t me = nm->IsServer() ? 0u : nm->LocalId();
+            std::vector<okay::PlayedWith> met;
+            for (const auto& e : nm->Roster()) {
+                if (e.id == me || e.seconds < 30.0f || (e.userId.empty() && e.name.empty())) continue;
+                okay::PlayedWith p; p.userId = e.userId; p.name = e.name; p.game = gameTitle;
+                const std::string k = p.Key();
+                if (playedWith.count(k) && now - playedWith[k] < 300000) continue;   // refresh every 5 min
+                playedWith[k] = now;
+                met.push_back(p);
+            }
+            if (!met.empty()) okay::GameIpc::RecordPlayedWith(met);
         }
         okay::GamePresence g = okay::DescribeSession(nm, gameTitle, lanAddr);
         const std::string key = g.status + "|" + g.join + "|" + std::to_string(g.players);

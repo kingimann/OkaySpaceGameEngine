@@ -142,4 +142,4 @@ Hathora can start servers per match on demand.
 3. ✅ `game_servers` listing (`docs/sql/game_servers.sql`). Still to come: `matches` and an `allocate_match` Edge Function
 4. Match tickets: request a match, get an address + ticket, join
 5. ✅ "Dedicated server" export in Build Settings (Linux + Windows) + a one-command deploy script
-6. Match results → Supabase (stats, leaderboards, achievements)
+6. ✅ Match results → Supabase: stats, per-game leaderboards and "Recent players" (`docs/sql/matches.sql`)

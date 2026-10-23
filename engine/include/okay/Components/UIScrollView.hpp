@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/Components/UIWorldContext.hpp"   // UIToLocal
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -37,18 +38,22 @@ public:
     float wheelSpeed = 30.0f;
     bool IsDraggingBar() const { return m_dragBar; }
 
-    bool Contains(const Vec2& p) const {
+    /// A screen point mapped into this widget's own frame (where it is really drawn:
+    /// inside its UI parent, at the Canvas scale). See UIToLocal.
+    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    bool LocalContains(const Vec2& p) const {
         Vec2 o = ResolveAnchor(anchor, position, size);
         return p.x >= o.x && p.y >= o.y && p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
+    bool Contains(const Vec2& sp) const { return LocalContains(ToLocal(sp)); }
 
     // Wheel-scroll when the pointer is over the viewport, and let the player grab the
     // scrollbar on the right edge and drag it (both in the built game and play mode).
     void Update(float) override {
-        Vec2 m = Input::MousePosition();
+        Vec2 m = ToLocal(Input::MousePosition());   // the viewport's own frame
         Vec2 o = ResolveAnchor(anchor, position, size);
         float wheel = Input::MouseWheel();
-        if (wheel != 0.0f && Contains(m)) ScrollBy(-wheel * wheelSpeed);
+        if (wheel != 0.0f && LocalContains(m)) ScrollBy(-wheel * wheelSpeed);
 
         // Scrollbar drag: grab anywhere in the right-edge bar column, then track the
         // pointer (clamped) — clicking the track also jumps the thumb to that spot.

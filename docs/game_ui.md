@@ -24,6 +24,28 @@ UI documents.
 Prefer the old pixel look? Call `ui_style("classic")` in a script, or start the
 game with `OKAY_CLASSIC_UI=1`.
 
+## Adding UI in the editor
+
+The **UI** button on the Scene toolbar switches to the UI editing view. Its
+**+ Add** button (and **GameObject → Create → UI**) lists everything you can add:
+
+| Menu | What's in it |
+| --- | --- |
+| **Basic** / **Controls** / **HUD** / **Layout** | Single widgets: button, panel, image, text, slider, toggle, stepper, rating, tabs, input field, dropdown, progress bar, radial, minimap, crosshair, tooltip, scroll view, layout group, drag and drop. |
+| **Kit (launcher look)** | Ready-styled building blocks: Card, Heading, List Row, Badge, Avatar, Divider, Primary / Secondary / Danger / Ghost buttons, Switch, Spinner and Notification. |
+| **Prebuilt Screens** | Whole screens. **Menus:** Main Menu, Pause Menu, Settings, Confirm Dialog, Loading Screen. **In game:** HUD, Health Bar, Dialog Box, Notification, Shop, Game Over. **Multiplayer:** Lobby, Scoreboard, Leaderboard, Matchmaking. |
+
+Select a panel or card first and new widgets and kit pieces go **inside** it.
+Otherwise they go on the scene's Canvas, which is created if it's missing.
+Everything you add is ordinary objects, so you can drag, resize, restyle or
+delete each part. To reuse a screen you've customised, use **Save Selected as
+UI**.
+
+Screens lay out against a 1280×720 canvas that **scales with the screen**, so
+they keep their layout at any window size. The HUD's health bar and number
+follow the `hp` variable, and the score follows `score`. The Loading Screen's
+bar follows `loading` (0 to 1).
+
 ## Building blocks
 
 Besides the usual widgets (text, buttons, checkboxes, sliders, inputs, tabs,

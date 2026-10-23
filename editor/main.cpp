@@ -3969,6 +3969,124 @@ GameObject* MakeButtonTextChild(EditorState& ed, GameObject* button) {
     return g;
 }
 
+// Where a new widget goes: inside the selected panel / card / scroll view / layout
+// group (so you can build a menu by selecting its card and adding to it), else
+// under the scene's Canvas.
+GameObject* UIAddParent(EditorState& ed) {
+    if (GameObject* sel = ed.selected())
+        if (sel->GetComponent<UIPanel>() || sel->GetComponent<UIScrollView>() || sel->GetComponent<UILayoutGroup>())
+            return sel;
+    return EnsureUIRoot(ed);
+}
+
+// The widget list shared by Create > UI and the UI view's "+ Add" button: plain
+// widgets, launcher-look kit pieces and whole prebuilt screens.
+void DrawUIWidgetItems(EditorState& ed, bool& created) {
+    auto addUI = [&](const char* nm, auto build) {
+        GameObject* parent = UIAddParent(ed);
+        GameObject* g = ed.CreateEmpty(nm);
+        build(g);
+        if (parent) g->transform->SetParent(parent->transform, /*worldPositionStays=*/false);
+        // Spawn centered (on screen, or in the panel it went into) so it's visible.
+        UIRect r = GetUIRect(g);
+        if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+        ed.Select(g); ed.dirty = true; created = true;
+    };
+    if (ImGui::BeginMenu("Basic")) {
+        if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
+        if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
+        if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
+        if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Controls")) {
+        if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
+        if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
+        if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
+        if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
+        if (ImGui::MenuItem("Tabs"))         addUI("Tabs",        [](GameObject* g){ g->AddComponent<UITabs>(); });
+        if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
+        if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
+        if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
+        if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("HUD")) {
+        if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
+        if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
+        if (ImGui::MenuItem("Minimap"))      addUI("Minimap",     [](GameObject* g){ g->AddComponent<Minimap>(); });
+        if (ImGui::MenuItem("Crosshair"))    addUI("Crosshair",   [](GameObject* g){ g->AddComponent<Crosshair>(); });
+        if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Layout")) {
+        if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
+        if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
+        ImGui::EndMenu();
+    }
+    // Launcher-look building blocks: each is a small ready-styled group you can
+    // restyle. They go inside the selected panel/card when there is one.
+    if (ImGui::BeginMenu("Kit (launcher look)")) {
+        auto kit = [&](const char* label, const char* tip, auto fn) {
+            if (ImGui::MenuItem(label)) {
+                ed.PushUndo();
+                GameObject* g = fn(ed.scene(), UIAddParent(ed));
+                ed.Select(g); ed.dirty = true; created = true;
+                ConsoleLog(std::string("Added UI: ") + label);
+            }
+            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        };
+        using namespace okay::UITemplates;
+        kit("Card",             "A raised rounded card: caption, title, text and an action button.", &AddCard);
+        kit("Heading",          "A caption over a big title with the accent underline.", &AddHeading);
+        kit("List Row",         "Avatar + name + status, with a badge on the right (player lists, friends).", &AddListRow);
+        kit("Badge",            "A pill tag (\"Ready\", \"3 / 4\", \"New\").", &AddBadge);
+        kit("Avatar",           "A coloured circle with an initial.", &AddAvatar);
+        kit("Divider",          "A 1 px hairline.", &AddDivider);
+        ImGui::Separator();
+        kit("Primary Button",   "The accent call-to-action button.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Primary); });
+        kit("Secondary Button", "A quieter button for other actions.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Secondary); });
+        kit("Danger Button",    "A red button for destructive actions.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Danger); });
+        kit("Ghost Button",     "A text-only button (Cancel, Back).", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Ghost); });
+        ImGui::Separator();
+        kit("Switch",           "An on/off switch.", &AddSwitch);
+        kit("Spinner",          "A busy spinner (loading, searching).", &AddSpinner);
+        kit("Notification",     "A toast that slides in at the top-right.", &AddNotification);
+        ImGui::EndMenu();
+    }
+    // Prebuilt, fully-editable UI screens. Drop one in, then customize it or save
+    // it as a reusable prefab ("Save Selected as UI").
+    if (ImGui::BeginMenu("Prebuilt Screens")) {
+        auto add = [&](const char* label, GameObject* (*fn)(okay::Scene&)) {
+            if (ImGui::MenuItem(label)) {
+                ed.PushUndo(); ed.Select(fn(ed.scene()));
+                ConsoleLog(std::string("Added UI: ") + label); ed.dirty = true; created = true;
+            }
+        };
+        ImGui::TextDisabled("Menus");
+        add("Main Menu",            &okay::UITemplates::AddMainMenu);
+        add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
+        add("Settings",             &okay::UITemplates::AddSettings);
+        add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
+        add("Loading Screen",       &okay::UITemplates::AddLoadingScreen);
+        ImGui::Separator();
+        ImGui::TextDisabled("In game");
+        add("HUD (health + score)", &okay::UITemplates::AddHUD);
+        add("Health Bar",           &okay::UITemplates::AddHealthBar);
+        add("Dialog Box",           &okay::UITemplates::AddDialogBox);
+        add("Notification",         &okay::UITemplates::AddNotificationScreen);
+        add("Shop",                 &okay::UITemplates::AddShop);
+        add("Game Over",            &okay::UITemplates::AddGameOver);
+        ImGui::Separator();
+        ImGui::TextDisabled("Multiplayer");
+        add("Lobby",                &okay::UITemplates::AddLobby);
+        add("Scoreboard",           &okay::UITemplates::AddScoreboard);
+        add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
+        add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
+        ImGui::EndMenu();
+    }
+}
+
 // Defined with the Animation window further down; entering Play must clear the
 // editor pose previews or they override the real animations every frame.
 static void StopAnimPreview();
@@ -4431,18 +4549,10 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         ImGui::Separator();
         if (ImGui::BeginMenu("UI")) {   // each UI element is its own GameObject
-            // Create a widget under the scene's Canvas (making one — plus an
-            // Event System — if missing), exactly like Unity.
-            auto addUI = [&](const char* nm, auto build) {
-                GameObject* root = EnsureUIRoot(ed);
-                GameObject* g = ed.CreateEmpty(nm);
-                build(g);
-                if (root) g->transform->SetParent(root->transform, /*worldPositionStays=*/false);
-                // Spawn centered on screen (not the top-left corner) so it's visible.
-                UIRect r = GetUIRect(g);
-                if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
-                ed.Select(g); ed.dirty = true; created = true;
-            };
+            // Widgets go under the scene's Canvas (made, plus an Event System, if
+            // missing), or inside the selected panel; see DrawUIWidgetItems.
+            DrawUIWidgetItems(ed, created);
+            ImGui::Separator();
             if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
             if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
             if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
@@ -4525,23 +4635,6 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 doc->Rebuild(); ed.scene().Update(0.0f);
                 ed.Select(g); ed.dirty = true; created = true;
             }
-            // Prebuilt, fully-editable UI screens — drop one in, then customize or save
-            // it as a reusable prefab/template ("Save Selected as UI" below).
-            if (ImGui::BeginMenu("Prebuilt Screens")) {
-                auto add = [&](const char* label, GameObject* (*fn)(okay::Scene&)) {
-                    if (ImGui::MenuItem(label)) {
-                        ed.PushUndo(); ed.Select(fn(ed.scene()));
-                        ConsoleLog(std::string("Added UI: ") + label); ed.dirty = true; created = true;
-                    }
-                };
-                add("Main Menu",          &okay::UITemplates::AddMainMenu);
-                add("Pause Menu",         &okay::UITemplates::AddPauseMenu);
-                add("Settings",           &okay::UITemplates::AddSettings);
-                add("HUD (health + score)", &okay::UITemplates::AddHUD);
-                add("Dialog Box",         &okay::UITemplates::AddDialogBox);
-                add("Health Bar",         &okay::UITemplates::AddHealthBar);
-                ImGui::EndMenu();
-            }
             // Save the selected UI subtree as a reusable prefab under Assets/UI, so you
             // can drop your own custom UI back into any scene from the Project panel.
             if (ImGui::MenuItem("Save Selected as UI", nullptr, false, ed.selected() != nullptr)) {
@@ -4552,27 +4645,6 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 created = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Save the selected UI (e.g. a Canvas or a menu Panel + its children) as a reusable .okayprefab in Assets/UI.\nDrop it from the Project panel into any scene to reuse it.");
-            ImGui::Separator();
-            if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
-            if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
-            if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
-            if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; });
-            if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
-            if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
-            if (ImGui::MenuItem("Minimap"))      addUI("Minimap",     [](GameObject* g){ g->AddComponent<Minimap>(); });
-            if (ImGui::MenuItem("Crosshair"))    addUI("Crosshair",   [](GameObject* g){ g->AddComponent<Crosshair>(); });
-            if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
-            if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
-            if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
-            if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
-            if (ImGui::MenuItem("Tabs"))         addUI("Tabs",        [](GameObject* g){ g->AddComponent<UITabs>(); });
-            if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
-            if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
-            if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
-            if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
-            if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
-            if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
-            if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
             ImGui::Separator();
             // 3D UI: each widget is its own standalone object in the world (a
             // WorldSpaceUI marker), NOT under the 2D Canvas. Placed at the camera focus.
@@ -31506,15 +31578,18 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (tr->shadow)
             DrawBitmapText(dl, disp, bx + tr->shadowOffset.x * px,
                            by + tr->shadowOffset.y * px, px, sh, ls, lp, it, false, 0, fnt);
+        // Bold / outline offsets: a font pixel for the 8x8 font, ~1 screen px for TTF text
+        // (a whole font pixel is 5 px at title size and reads as a double image).
+        const float fo = fnt ? (px * 8.0f >= 30.0f ? 1.5f : 1.0f) : px;
         if (tr->outline) {                            // 4-direction outline
             ImU32 oc = ToColor(tr->outlineColor);
-            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp, it, false, 0, fnt);
-            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp, it, false, 0, fnt);
-            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp, it, false, 0, fnt);
-            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx - fo, by, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx + fo, by, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx, by - fo, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx, by + fo, px, oc, ls, lp, it, false, 0, fnt);
         }
         DrawBitmapText(dl, disp, bx, by, px, col, ls, lp, it, tr->gradient, c2, fnt);
-        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp, it, tr->gradient, c2, fnt);  // faux-bold
+        if (tr->bold) DrawBitmapText(dl, disp, bx + fo, by, px, col, ls, lp, it, tr->gradient, c2, fnt);  // faux-bold
     }
 
     // UI dropdowns: header (shows the selection + a caret); when open, the option
@@ -32968,7 +33043,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
                            o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, 0, fnt);
         DrawBitmapText(dl, tr->text, o.x, o.y, px, col, 0, 0, false, false, 0, fnt);
-        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + px, o.y, px, col, 0, 0, false, false, 0, fnt);  // faux-bold
+        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + (fnt ? 1.0f : px), o.y, px, col, 0, 0, false, false, 0, fnt);  // faux-bold
     }
 
     // 2D collider wireframes (Unity-style green outlines), Scene view only.
@@ -35041,6 +35116,23 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     }
     // ---- UI view row: zoom, screen size, overlays, anchors, align -----------------
     if (uiOnly) {
+        // "+ Add": every widget, kit piece and prebuilt screen, one click away in the
+        // UI view (it goes inside the selected panel/card, else on the Canvas).
+        if (AccentToggleButton("+ Add##uiadd", true)) ImGui::OpenPopup("##uiaddpop");
+        if (ImGui::IsItemHovered()) {
+            GameObject* sel = ed.selected();
+            bool into = sel && (sel->GetComponent<UIPanel>() || sel->GetComponent<UIScrollView>() || sel->GetComponent<UILayoutGroup>());
+            ImGui::SetTooltip(into ? "Add a widget, kit piece or whole screen inside \"%s\""
+                                   : "Add a widget, kit piece or whole screen (select a panel first to add inside it)%s",
+                              into ? sel->name.c_str() : "");
+        }
+        if (ImGui::BeginPopup("##uiaddpop")) {
+            bool created = false;
+            DrawUIWidgetItems(ed, created);
+            if (created) ed.Achievement("FIRST_OBJECT");
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, vst.ItemSpacing.y));
         if (ImGui::Button("-##uizm", ImVec2(ImGui::GetFrameHeight(), 0))) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom - 0.1f, 0.25f, 4.0f);
         ImGui::SameLine();
@@ -37373,6 +37465,12 @@ int main(int argc, char** argv) {
         // The draws afterwards clear it again, so it's only live for this tick.
         if (ed.isPlaying() && SceneCamera(ed.scene()))
             SetEditorWorldUIProjector(ed, g_playCanvasSize, g_playPersp, /*gameView=*/true);
+        else if (ed.isPlaying()) {   // no camera: screen-space widgets still hit-test where drawn
+            ImVec2 cs = g_playCanvasSize;
+            UIWorld().rectOf = [cs](GameObject* go, Vec2& o, Vec2& sz) {
+                return GetUIScreenRect(go, cs.x, cs.y, o, sz);
+            };
+        }
 
 #ifdef OKAY_HAVE_OKAYUI
         // Open the OkayUI frame BEFORE the scene ticks, so a playing game's ui_*
@@ -37614,6 +37712,16 @@ int main(int argc, char** argv) {
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
+            // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
+            // (screenshots of the UI editor and its "+ Add" menu).
+            if (const char* ua = std::getenv("OKAY_UI_UIADD"); ua && s_focusFrames == 32) {
+                g_uiOnlyMode = true;
+                const std::string n = ua;
+                GameObject* (*fn)(okay::Scene&) =
+                    n == "Lobby" ? &okay::UITemplates::AddLobby : n == "Shop" ? &okay::UITemplates::AddShop :
+                    n == "Main Menu" ? &okay::UITemplates::AddMainMenu : n == "HUD" ? &okay::UITemplates::AddHUD : nullptr;
+                if (fn) { ed.PushUndo(); ed.Select(fn(ed.scene())); }
+            }
             // OKAY_UI_DEMO_ANIM=1: give the selection an Animator with a few keys and open
             // the Animation window (screenshots of the timeline).
             if (std::getenv("OKAY_UI_ASSETS") && s_focusFrames == 31) g_showAssetManager = true;

@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/Components/UIWorldContext.hpp"   // UIToLocal
 #include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
@@ -52,8 +53,11 @@ public:
         return Part::None;
     }
 
-    bool Contains(const Vec2& p) const {
-        Vec2 o = ResolveAnchor(anchor, position, size);
+    /// A screen point mapped into this widget's own frame (where it is really drawn:
+    /// inside its UI parent, at the Canvas scale). See UIToLocal.
+    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    bool Contains(const Vec2& sp) const {
+        Vec2 o = ResolveAnchor(anchor, position, size), p = ToLocal(sp);
         return p.x >= o.x && p.y >= o.y && p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
 
@@ -77,7 +81,7 @@ public:
     void Update(float) override {
         if (!interactable) return;
         if (Input::GetMouseButtonDown(0)) {
-            Part part = PartAt(Input::MousePosition());
+            Part part = PartAt(ToLocal(Input::MousePosition()));
             if (part == Part::Minus) Step(-1.0f);
             else if (part == Part::Plus) Step(1.0f);
         }

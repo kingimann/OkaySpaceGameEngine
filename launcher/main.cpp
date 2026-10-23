@@ -3534,7 +3534,7 @@ static std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
 // One consistent set of 1.6px line icons (Lucide-like), drawn with the draw list
 // so no icon font is needed. Ids 0..10 match the launcher tabs; the rest are
 // sidebar extras.
-enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15 };
+enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17 };
 static void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
     const float r = 7.5f, t = 1.6f, PI = 3.14159265f;
     switch (id) {
@@ -3633,6 +3633,24 @@ static void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
         d->AddRect(ImVec2(c.x - r, c.y - 6.5f), ImVec2(c.x + r, c.y + 6.5f), col, 2.5f, 0, t);
         d->AddLine(ImVec2(c.x - 2.2f, c.y - 6.5f), ImVec2(c.x - 2.2f, c.y + 6.5f), col, t);
         break;
+    case kIcoSpark: {   // What's New: a four-point sparkle + a small one
+        auto star = [&](ImVec2 o, float R, float k) {
+            for (int q = 0; q < 8; ++q) {
+                const float a = q * PI / 4 - PI / 2, rr = (q % 2) ? R * k : R;
+                d->PathLineTo(ImVec2(o.x + std::cos(a) * rr, o.y + std::sin(a) * rr));
+            }
+            d->PathStroke(col, ImDrawFlags_Closed, t);
+        };
+        star(ImVec2(c.x - 1.2f, c.y + 1.2f), 6.4f, 0.32f);
+        d->AddCircleFilled(ImVec2(c.x + 5.4f, c.y - 5.2f), 1.6f, col, 8);
+        break;
+    }
+    case kIcoBulb:      // Tips: a light bulb
+        d->PathArcTo(ImVec2(c.x, c.y - 2.2f), 5.2f, PI * 0.78f, PI * 2.22f, 20);
+        d->PathLineTo(ImVec2(c.x + 2.2f, c.y + 4.0f)); d->PathLineTo(ImVec2(c.x - 2.2f, c.y + 4.0f));
+        d->PathStroke(col, ImDrawFlags_Closed, t);
+        d->AddLine(ImVec2(c.x - 2.2f, c.y + 6.6f), ImVec2(c.x + 2.2f, c.y + 6.6f), col, t);
+        break;
     case kIcoRefresh: {
         d->PathArcTo(c, 5.6f, -PI * 0.35f, PI * 1.45f, 20); d->PathStroke(col, 0, t);
         ImVec2 e(c.x + std::cos(-PI * 0.35f) * 5.6f, c.y + std::sin(-PI * 0.35f) * 5.6f);
@@ -3715,6 +3733,51 @@ float DrawStars(ImDrawList* dl, ImVec2 pos, float sz, float avg, ImU32 on, ImU32
 }
 
 // Launcher preferences persisted next to the exe (launcher.cfg).
+// ---- What's New history --------------------------------------------------
+// Every release's notes this launcher has seen (newest first, up to 12), kept
+// in news.cfg so the What's New page can show earlier releases too. Lines:
+// "v\t<version>" starts a release, "l\t<text>" is one of its notes.
+struct NewsRelease { std::string ver; std::vector<std::string> lines; };
+std::vector<NewsRelease> g_newsHistory;
+std::string g_newsSeen;            // newest version whose notes were opened (prefs)
+static void SaveNewsHistory() {
+    std::ofstream f(fs::path(g_exeDir) / "news.cfg", std::ios::trunc);
+    for (const auto& r : g_newsHistory) {
+        f << "v\t" << r.ver << "\n";
+        for (const auto& l : r.lines) f << "l\t" << l << "\n";
+    }
+}
+static void LoadNewsHistory() {
+    g_newsHistory.clear();
+    std::ifstream f(fs::path(g_exeDir) / "news.cfg");
+    std::string ln;
+    while (std::getline(f, ln)) {
+        while (!ln.empty() && (ln.back() == '\r' || ln.back() == '\n')) ln.pop_back();
+        if (ln.size() < 3 || ln[1] != '\t') continue;
+        if (ln[0] == 'v') g_newsHistory.push_back({ln.substr(2), {}});
+        else if (ln[0] == 'l' && !g_newsHistory.empty()) g_newsHistory.back().lines.push_back(ln.substr(2));
+    }
+}
+// Record the latest fetched notes (GetNews) in the history. Cheap when nothing changed.
+static void SyncNewsHistory() {
+    std::string ver, lines;
+    GetNews(ver, lines);
+    if (ver.empty() || lines.empty()) return;
+    std::vector<std::string> ls;
+    for (std::size_t s = 0; s < lines.size();) {
+        std::size_t e = lines.find('\n', s); if (e == std::string::npos) e = lines.size();
+        if (e > s) ls.push_back(lines.substr(s, e - s));
+        s = e + 1;
+    }
+    for (auto& r : g_newsHistory) if (r.ver == ver) { if (r.lines != ls) { r.lines = ls; SaveNewsHistory(); } return; }
+    g_newsHistory.insert(g_newsHistory.begin(), {ver, ls});
+    std::stable_sort(g_newsHistory.begin(), g_newsHistory.end(), [](const NewsRelease& a, const NewsRelease& b) {
+        auto num = [](const std::string& v) { return v.size() > 1 && v[0] == 'v' ? v.substr(1) : v; };
+        return CompareVersions(num(a.ver), num(b.ver)) > 0; });
+    if (g_newsHistory.size() > 12) g_newsHistory.resize(12);
+    SaveNewsHistory();
+}
+
 void LoadPrefs() {
     std::ifstream f(fs::path(g_exeDir) / "launcher.cfg");
     std::string line;
@@ -3738,6 +3801,7 @@ void LoadPrefs() {
         else if (k == "share_presence") g_sharePresence = (v != "0");
         else if (k == "play_view") { try { g_playView = std::stoi(v) ? 1 : 0; } catch (...) {} }
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
+        else if (k == "news_seen") g_newsSeen = v;
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "favfriend" && !v.empty()) g_favFriends.insert(v);
         else if (k == "pinchat" && !v.empty()) g_pinnedChats.insert(v);
@@ -3835,6 +3899,7 @@ void SavePrefs() {
     f << "share_presence=" << (g_sharePresence ? 1 : 0) << "\n";
     f << "play_view=" << g_playView << "\n";
     f << "tab=" << g_lastTab << "\n";
+    if (!g_newsSeen.empty()) f << "news_seen=" << g_newsSeen << "\n";
     f << "win_w=" << g_winW << "\n";
     f << "chat_window=" << (g_chatSeparate ? 1 : 0) << "\n";
     f << "voice_relay=" << g_voiceRelay << "\nvoice_gate=" << g_voiceGate << "\n";
@@ -9359,7 +9424,8 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
     const bool kDemo = kDemoUser != nullptr;
     const std::string meName = kDemo ? std::string(kDemoUser) : account.CurrentSession().username;
     static const char* kTabNames[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements",
-                                      "Friends", "Market", "Servers", "Forums", "Downloads", "Admin"};
+                                      "Friends", "Market", "Servers", "Forums", "Downloads", "Admin",
+                                      "What's New", "Tips"};
     const int nPresets = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
 
     // ---- Page state --------------------------------------------------------
@@ -9449,7 +9515,7 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 cp = ImGui::GetCursorScreenPos();
         const float ch = ImGui::GetTextLineHeight() + 14.0f;
-        char lbl[64]; std::snprintf(lbl, sizeof(lbl), "Back to %s", kTabNames[std::clamp(fromTab, 0, 10)]);
+        char lbl[64]; std::snprintf(lbl, sizeof(lbl), "Back to %s", kTabNames[std::clamp(fromTab, 0, 13)]);
         float bw = ImGui::CalcTextSize(lbl).x + 42.0f;
         if (ImGui::InvisibleButton("##pfback", ImVec2(bw, ch))) goBack = true;
         bool h = ImGui::IsItemHovered();
@@ -10925,6 +10991,7 @@ int main(int argc, char** argv) {
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
     LoadNotifs();                // the notifications feed + what was read / cleared
+    LoadNewsHistory();           // release notes seen before (What's New page)
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup gap. We draw the first splash
     // frame while hidden, then reveal the window already showing the splash, so
@@ -11124,7 +11191,7 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab < 10) ? g_lastTab : 0;
+    int tab = (g_lastTab >= 0 && g_lastTab <= 13 && g_lastTab != 11) ? g_lastTab : 0;
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
     if (g_updateOnLaunch) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
@@ -12009,13 +12076,15 @@ int main(int argc, char** argv) {
             if (!g_navCollapsed)
                 dl->AddText(ImVec2(mn.x + 42.0f, cy - ImGui::GetTextLineHeight() * 0.5f),
                             (sel || hov) ? navTextHi : navText, label);
-            if (badge > 0) {
+            if (badge != 0) {   // < 0: a "NEW" pill instead of a count
                 if (g_navCollapsed) {
                     ImVec2 bc(ic.x + 9.0f, cy - 8.0f);
                     dl->AddCircleFilled(bc, 5.5f, ImGui::GetColorU32(navBg), 12);
                     dl->AddCircleFilled(bc, 4.0f, badgeCol, 12);
                 } else {
-                    char nb[8]; std::snprintf(nb, sizeof(nb), badge > 99 ? "99+" : "%d", badge);
+                    char nb[8];
+                    if (badge < 0) std::snprintf(nb, sizeof(nb), "NEW");
+                    else std::snprintf(nb, sizeof(nb), badge > 99 ? "99+" : "%d", badge);
                     ImVec2 ts = ImGui::CalcTextSize(nb);
                     float bw = std::max(20.0f, ts.x + 12.0f), bx = mx.x - bw - 8.0f;
                     dl->AddRectFilled(ImVec2(bx, cy - 9.0f), ImVec2(bx + bw, cy + 9.0f), badgeCol, 9.0f);
@@ -12141,6 +12210,11 @@ int main(int argc, char** argv) {
         tabRow(8);
         tabRow(9);
         tabRow(5);
+        navSection("LEARN");
+        SyncNewsHistory();
+        const bool newsUnseen = !g_newsHistory.empty() && g_newsHistory[0].ver != g_newsSeen;
+        if (navRow("##navnews", "What's New", kIcoSpark, tab == 12 && !g_pfOpen, newsUnseen ? -1 : 0, navAccent)) { tab = 12; ClosePublicProfile(); }
+        if (navRow("##navtips", "Tips", kIcoBulb, tab == 13 && !g_pfOpen, 0, 0)) { tab = 13; ClosePublicProfile(); }
         if (navSignedIn && g_myRank >= 1) {
             navSection("MODERATION");
             if (navRow("##navadmin", "Admin", kIcoShield, tab == 11 && !g_pfOpen, 0, 0)) { tab = 11; ClosePublicProfile(); }
@@ -12747,41 +12821,209 @@ int main(int argc, char** argv) {
             }
 
             ImGui::Dummy(ImVec2(0, 14));
-            // Live notes from the latest GitHub release when a check has run;
-            // the built-in highlights otherwise (offline / never checked).
-            std::string newsVer, newsLines;
-            GetNews(newsVer, newsLines);
-            if (!newsLines.empty()) {
-                std::string hdr = "What's new" + (newsVer.empty() ? "" : "  \xC2\xB7  " + newsVer);
-                ImGui::SeparatorText(hdr.c_str());
-                std::size_t s2 = 0;
-                while (s2 < newsLines.size()) {
-                    std::size_t e2 = newsLines.find('\n', s2);
-                    if (e2 == std::string::npos) e2 = newsLines.size();
-                    if (e2 > s2) ImGui::BulletText("%s", newsLines.substr(s2, e2 - s2).c_str());
-                    s2 = e2 + 1;
+            // What's New and Tips have their own pages now: a one-line pointer here.
+            {
+                const std::string latest = g_newsHistory.empty() ? std::string() : g_newsHistory[0].ver;
+                std::string line = latest.empty() ? std::string("See what's new in OkaySpace") : "See what's new in " + latest;
+                if (ImGui::SmallButton((line + "  \xE2\x86\x92").c_str())) tab = 12;
+                ImGui::SameLine(0, 18);
+                if (ImGui::SmallButton("Tips & shortcuts  \xE2\x86\x92")) tab = 13;
+            }
+        } else if (tab == 12) {                           // ---- What's New ----
+            sectionHeader("What's New", "Release notes for OkaySpace, newest first.");
+            if (!g_newsHistory.empty() && g_newsSeen != g_newsHistory[0].ver) { g_newsSeen = g_newsHistory[0].ver; SavePrefs(); }
+            const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+            // ---- Your version + update status ----
+            {
+                const UpState us = GetState();
+                const bool busy = us == Up_Checking || us == Up_Downloading;
+                const bool avail = !g_upAvailable.empty() && !busy && us != Up_Updated;
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
+                ImGui::BeginChild("##wnver", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+                const ImVec2 top = ImGui::GetCursorPos();
+                const float bw = 160.0f;
+                ImGui::SetWindowFontScale(1.12f);
+                ImGui::Text("You're on v%s", OKAY_ENGINE_VERSION);
+                ImGui::SetWindowFontScale(1.0f);
+                if (avail) ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "v%s is ready to install.", g_upAvailable.c_str());
+                else if (busy) ImGui::TextDisabled("%s", GetUpMsg().empty() ? "Checking for updates\xE2\x80\xA6" : GetUpMsg().c_str());
+                else if (us == Up_Updated) ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "Update installed.");
+                else if (us == Up_Failed) ImGui::TextColored(ImVec4(0.94f, 0.50f, 0.50f, 1.0f), "%s", GetUpMsg().c_str());
+                else if (!g_upLatest.empty() && CompareVersions(OKAY_ENGINE_VERSION, g_upLatest) >= 0) ImGui::TextDisabled("You're up to date.");
+                else ImGui::TextDisabled("Updates are checked automatically while the launcher is open.");
+                const float below = ImGui::GetCursorPosY();
+                ImGui::SetCursorPos(ImVec2(top.x + ImGui::GetContentRegionMax().x - top.x - bw, top.y + (below - top.y - 32.0f) * 0.5f));
+                if (avail) { if (PrimaryButton("Install now", ImVec2(bw, 32))) StartUpdateCheck(true); }
+                else if (us == Up_Updated && g_upRelaunchNeeded) {
+                    if (PrimaryButton("Restart now", ImVec2(bw, 32))) { if (EditorRunning()) g_afterEditor = 3; else { Launch(g_selfPath); running = false; } }
+                }
+                else { ImGui::BeginDisabled(busy); if (ImGui::Button(busy ? "Checking\xE2\x80\xA6" : "Check for updates", ImVec2(bw, 32))) StartUpdateCheck(); ImGui::EndDisabled(); }
+                if (ImGui::GetCursorPosY() < below) { ImGui::SetCursorPosY(below); ImGui::Dummy(ImVec2(0, 0)); }
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0, 10));
+            // One release: version title (+ "Latest" pill) and its notes as bullets.
+            auto releaseCard = [&](const NewsRelease& r, bool latest) {
+                ImGui::PushID(r.ver.c_str());
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
+                ImGui::BeginChild("##rel", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+                ImGui::SetWindowFontScale(1.12f);
+                ImGui::TextUnformatted(r.ver.c_str());
+                ImGui::SetWindowFontScale(1.0f);
+                if (latest) {
+                    ImGui::SameLine(0, 10);
+                    ImVec2 pp = ImGui::GetCursorScreenPos();
+                    const char* pill = "Latest";
+                    ImVec2 ts = ImGui::CalcTextSize(pill);
+                    pp.y += 2.0f;
+                    ImGui::GetWindowDrawList()->AddRectFilled(pp, ImVec2(pp.x + ts.x + 14, pp.y + ts.y + 4),
+                                                              ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), 9.0f);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(pp.x + 7, pp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), pill);
+                    ImGui::Dummy(ImVec2(ts.x + 14, ts.y));
+                }
+                ImGui::Dummy(ImVec2(0, 2));
+                ImGui::PushTextWrapPos(0.0f);
+                for (const auto& l : r.lines) ImGui::BulletText("%s", l.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+                ImGui::PopID();
+            };
+            if (!g_newsHistory.empty()) {
+                releaseCard(g_newsHistory[0], true);
+                if (g_newsHistory.size() > 1) {
+                    ImGui::Dummy(ImVec2(0, 10));
+                    ImGui::SeparatorText("Earlier releases");
+                    for (std::size_t i = 1; i < g_newsHistory.size(); ++i) {
+                        ImGui::PushID((int)i);
+                        if (ImGui::CollapsingHeader(g_newsHistory[i].ver.c_str(), i == 1 ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+                            ImGui::Indent(8.0f);
+                            for (const auto& l : g_newsHistory[i].lines) ImGui::BulletText("%s", l.c_str());
+                            ImGui::Unindent(8.0f);
+                        }
+                        ImGui::PopID();
+                    }
                 }
             } else {
-                ImGui::SeparatorText("What's new");
-                // Curated highlights of the last few releases (updated each ship).
-                static const char* kNews[] = {
-                    "NPC pathfinding (A*) with scriptable npc_goto commands",
-                    "Spawner waves: count / wave delay / max alive, script control",
-                    "Click-placed patrol waypoints + NPC vision-cone gizmos",
-                    "Script Editor: signature help and smarter autocomplete",
-                    "Hierarchy & Project: Shift+click range select, multi copy/paste",
-                };
-                for (const char* n : kNews) ImGui::BulletText("%s", n);
+                NewsRelease hl{"Highlights", {
+                    "Script Editor: errors and warnings as you type, examples in autocomplete",
+                    "Game view: preview phone and tablet screen sizes",
+                    "Build Settings: choose the scenes in your build",
+                    "Camera: zoom, shake, dutch angle and lens shift",
+                    "Updates download straight from the OkaySpace update server",
+                }};
+                releaseCard(hl, false);
+                ImGui::TextDisabled("Notes for each release show up here once the launcher has checked for updates.");
             }
-            if (ImGui::SmallButton("View all releases"))
-                OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/releases");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the full release notes on GitHub");
-
             ImGui::Dummy(ImVec2(0, 10));
-            ImGui::SeparatorText("Tips");
-            ImGui::BulletText("Press Play in the editor to test instantly.");
-            ImGui::BulletText("Drag assets from the Project panel onto objects.");
-            ImGui::BulletText("Add UI from GameObject > UI (buttons, sliders, radial loaders).");
+            if (ImGui::Button("View all releases on GitHub"))
+                OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/releases");
+        } else if (tab == 13) {                           // ---- Tips ----
+            sectionHeader("Tips", "Shortcuts and tricks for the editor, scripting, building and the launcher.");
+            struct Tip { int cat; const char* title; const char* body; };
+            static const char* kCats[] = {"All", "Editor", "Scripting", "Building", "Launcher"};
+            static const Tip kTips[] = {
+                {1, "Test instantly", "Press Play in the editor toolbar to try the scene right away."},
+                {1, "Save everything", "Ctrl+S saves the scene, Ctrl+Shift+S saves it under a new name and Ctrl+Alt+S saves the whole project."},
+                {1, "Test on phone screens", "In the Game view, pick a Device to preview phone and tablet sizes. Flip to landscape and show the safe area around notches."},
+                {1, "Drag assets onto objects", "Drag textures, models and scripts from the Project panel onto objects in the Scene or Hierarchy."},
+                {1, "Add UI", "GameObject > UI adds buttons, sliders, text and radial loaders."},
+                {1, "Camera feel", "The Camera inspector has Zoom, Dutch Angle, Lens Shift and Camera Shake. Use Test Shake to preview it."},
+                {2, "Autocomplete with examples", "Ctrl+Space opens suggestions. The panel beside the list shows what the selected item does, with an example."},
+                {2, "Jump between problems", "Errors and warnings appear while you type. Press F2 to jump to the next one."},
+                {2, "More room to code", "Alt+1 folds the scripts sidebar in the Script Editor."},
+                {2, "One-line timers", "if (timer(\"spawn\", 2)) runs every 2 seconds, cooldown(\"shoot\", 0.3) limits how often something happens and once(\"intro\") runs a single time."},
+                {2, "Shake the camera from code", "camera_shake(0.6) for hits and explosions; camera_zoom_to(2, 0.5) zooms in over half a second."},
+                {2, "Movement in one line", "on_key_move(5) moves with WASD or the arrow keys; platformer(6, 8) is a whole 2D side-scroller controller."},
+                {3, "Choose the scenes you ship", "File > Build Settings > Scenes In Build: tick the scenes to include. The top one loads first."},
+                {3, "Fullscreen toggle", "Turn on the fullscreen toggle in Build Settings so players can press Alt+Enter or F11."},
+                {3, "Share on GitHub", "Right-click a project on the Create page to publish it to GitHub, then use Commit & Push for later changes."},
+                {3, "Play web games", "Drop an .html game (or a folder with index.html) into your games folder and it shows up under Play."},
+                {4, "Jump between pages", "When you're not typing, the number keys switch pages (1 Create, 2 Play, 3 Community). Ctrl+F searches the current page."},
+                {4, "Chat your way", "Chat can open in its own window or dock inside the launcher. Use the dock / pop-out button in the chat window."},
+                {4, "Collapse the sidebar", "The panel button next to the logo shrinks the sidebar to icons."},
+                {4, "Check for updates", "Click the version number under the logo to check for an update right now."},
+                {4, "Notifications", "The bell keeps friend requests, mentions and release news. Read and cleared items stay that way after a restart."},
+            };
+            const int nTips = (int)(sizeof(kTips) / sizeof(kTips[0]));
+            static int s_cat = 0;
+            static char s_q[96] = "";
+            static int s_daily = -1;
+            if (s_daily < 0) { std::time_t now = std::time(nullptr); s_daily = (int)((now / 86400) % nTips); }
+            const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+            // ---- Tip of the day ----
+            {
+                const Tip& t = kTips[s_daily];
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
+                ImGui::BeginChild("##tipday", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+                const ImVec2 bp = ImGui::GetCursorScreenPos();
+                DrawNavIcon(ImGui::GetWindowDrawList(), kIcoBulb, ImVec2(bp.x + 9, bp.y + 10), ImGui::GetColorU32(kAccent));
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 26);
+                ImGui::TextColored(ImVec4(kAccent.x * 0.6f + 0.4f, kAccent.y * 0.6f + 0.4f, kAccent.z * 0.6f + 0.4f, 1.0f), "Tip of the day  \xC2\xB7  %s", kCats[t.cat]);
+                ImGui::SetWindowFontScale(1.12f);
+                ImGui::TextUnformatted(t.title);
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", t.body);
+                ImGui::PopTextWrapPos();
+                if (ImGui::SmallButton("Next tip")) s_daily = (s_daily + 1) % nTips;
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0, 10));
+            // ---- Filter: category pills + search ----
+            for (int c = 0; c < 5; ++c) {
+                if (c) ImGui::SameLine(0, 6);
+                const bool on = s_cat == c;
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.55f));
+                if (ImGui::Button(kCats[c])) s_cat = c;
+                if (on) ImGui::PopStyleColor();
+            }
+            ImGui::SameLine(0, 16);
+            ImGui::SetNextItemWidth(std::min(260.0f, ImGui::GetContentRegionAvail().x));
+            if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
+            ImGui::InputTextWithHint("##tipq", "Search tips", s_q, sizeof(s_q));
+            ImGui::Dummy(ImVec2(0, 6));
+            std::string q = s_q; for (auto& ch : q) ch = (char)std::tolower((unsigned char)ch);
+            auto lc = [](std::string v) { for (auto& ch : v) ch = (char)std::tolower((unsigned char)ch); return v; };
+            std::vector<int> shown;
+            for (int i = 0; i < nTips; ++i) {
+                if (s_cat && kTips[i].cat != s_cat) continue;
+                if (!q.empty() && lc(kTips[i].title).find(q) == std::string::npos && lc(kTips[i].body).find(q) == std::string::npos) continue;
+                shown.push_back(i);
+            }
+            if (shown.empty()) ImGui::TextDisabled("No tips match \"%s\".", s_q);
+            // Two columns of cards when there's room.
+            const int cols = ImGui::GetContentRegionAvail().x > 760.0f ? 2 : 1;
+            if (ImGui::BeginTable("##tips", cols, ImGuiTableFlags_SizingStretchSame)) {
+                for (int idx : shown) {
+                    const Tip& t = kTips[idx];
+                    ImGui::TableNextColumn();
+                    ImGui::PushID(idx);
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
+                    ImGui::BeginChild("##tip", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+                    ImGui::TextDisabled("%s", kCats[t.cat]);
+                    ImGui::TextUnformatted(t.title);
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_Text, 0.82f));
+                    ImGui::TextUnformatted(t.body);
+                    ImGui::PopStyleColor();
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
         } else if (tab == 1) {                            // ---- Play ----
             sectionHeader("Play a game", nullptr);
 

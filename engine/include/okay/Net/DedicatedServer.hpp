@@ -39,6 +39,10 @@ struct DedicatedServerOptions {
     std::string publicAddr;          ///< address players connect to (IP or hostname)
     std::string region;              ///< e.g. "EU", "US East"
     std::string game;                ///< game title shown in the browser (the player fills it in)
+    // Anti-cheat basics (NetworkManager::maxMoveSpeed / maxMessagesPerSecond / kickAfterViolations).
+    float maxSpeed = 0.0f;           ///< --max-speed: units per second (0 = off)
+    int   rateLimit = 0;             ///< --rate-limit: custom messages per second per player (0 = off)
+    int   kickAfter = 0;             ///< --kick-after: rejected moves in a minute before a kick (0 = never)
 };
 
 /// Read `--server` and its flags (plus OKAY_SERVER_* environment variables, which

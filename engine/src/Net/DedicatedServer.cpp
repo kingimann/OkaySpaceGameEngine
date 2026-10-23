@@ -82,6 +82,9 @@ const char* DedicatedServerUsage() {
         "                         (sign in to OkaySpace on this machine first)\n"
         "  --public-addr HOST     the address players connect to (IP or hostname)\n"
         "  --region TEXT          region shown in the browser (e.g. EU)\n"
+        "  --max-speed UNITS      reject player moves faster than this (units/second)\n"
+        "  --rate-limit N         drop a player's messages beyond N per second\n"
+        "  --kick-after N         kick after N rejected moves in a minute\n"
         "Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,\n"
         "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1, OKAY_SERVER_ADVERTISE=1,\n"
         "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
@@ -156,6 +159,15 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
         } else if (a == "--region") {
             if (!value(v)) return fail("--region needs text");
             out.region = v;
+        } else if (a == "--max-speed") {
+            if (!value(v) || !ParseFloat(v, 0.0f, 1e6f, fv)) return fail("--max-speed needs units per second");
+            out.maxSpeed = fv;
+        } else if (a == "--rate-limit") {
+            if (!value(v) || !ParseInt(v, 0, 100000, iv)) return fail("--rate-limit needs messages per second");
+            out.rateLimit = iv;
+        } else if (a == "--kick-after") {
+            if (!value(v) || !ParseInt(v, 0, 100000, iv)) return fail("--kick-after needs a count");
+            out.kickAfter = iv;
         } else if (a.rfind("--", 0) == 0) return fail("unknown option " + a);
         else if (out.scenePath.empty()) out.scenePath = a;   // a bare path = the scene
     }
@@ -350,6 +362,9 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     net->serverName = opts.name;
     net->password   = opts.password;
     net->encryption = opts.encryption;
+    if (opts.maxSpeed > 0.0f) net->maxMoveSpeed = opts.maxSpeed;
+    if (opts.rateLimit > 0) net->maxMessagesPerSecond = opts.rateLimit;
+    if (opts.kickAfter > 0) net->kickAfterViolations = opts.kickAfter;
     if (!opts.game.empty()) net->gameId = opts.game;
     if (net->mapName.empty()) net->mapName = scene.Name();
 

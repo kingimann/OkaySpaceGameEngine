@@ -34,6 +34,13 @@ write any extra code.
 - **Rich presence.** Friends see what you're doing, e.g. "Playing Star Arena ·
   Hosting Maya's lobby (2/8)". **Invisible** and the "share what I'm playing"
   setting are respected.
+- **Quick Play** finds the best open server for the game you pick, or for any
+  game in your library, and joins it:
+  - It skips servers that are full or need a password.
+  - It prefers low ping and servers that already have players.
+- **Server info** shows who's playing on a server: names, scores and how long
+  they've been on. Open it with **Players** in the browser footer, or
+  right-click a server → **Server info…**.
 - **In chat:**
   - **Game bar.** While a friend is in a game, their DM shows a bar with
     "Playing X" and **Join game**. If their game isn't open to join, it shows
@@ -115,3 +122,23 @@ seconds. It needs:
 
 The listing is removed when the server stops. A server that crashed drops out
 of the browser after a couple of minutes. See [dedicated-server.md](dedicated-server.md).
+
+## Server authority (anti-cheat basics)
+
+The server decides; clients only ask.
+
+| | Script (server) | Dedicated server flag |
+| --- | --- | --- |
+| Reject moves faster than N units/s and snap the player back | `net_max_speed(N)` | `--max-speed N` |
+| Drop a player's custom messages beyond N per second | `net_rate_limit(N)` | `--rate-limit N` |
+| Kick after N rejected moves in a minute | (`kickAfterViolations`) | `--kick-after N` |
+| Move a player legitimately (respawn, portal) | `net_teleport(id, x, y[, z])` | |
+| Server-owned score everyone sees | `net_set_score(id, n)`, `net_score(id)` | |
+
+Every peer gets the **roster** once a second: names, scores and time
+played. Read it with `net_roster_count()`, `net_roster_id(i)`,
+`net_peer_name(id)` and `net_score(id)`, which makes a scoreboard easy. Clients
+can't change scores.
+
+The server browser asks a server who's playing with a two-step challenge, like
+Steam's A2S_PLAYER, so the player list can't be aimed at a spoofed address.

@@ -20,6 +20,7 @@ namespace okay {
 
 namespace {
     constexpr std::uint8_t kMsgQuery = 17, kMsgQueryInfo = 18;   // NetworkManager's ids
+    constexpr std::uint8_t kMsgPlayerQuery = 20, kMsgPlayerList = 21, kMsgPlayerChallenge = 22;
     constexpr std::uint32_t kLanNonce = 0x80000000u;
 
     void NapMs(int ms) {
@@ -151,6 +152,64 @@ std::vector<ServerInfo> QueryServers(const std::vector<QueryTarget>& targets, in
     }
     net::Shutdown();
     return out;
+}
+
+bool QueryPlayers(const std::string& host, std::uint16_t port, std::vector<ServerPlayer>& out, int timeoutMs) {
+    using Clock = std::chrono::steady_clock;
+    out.clear();
+    if (!net::Startup()) return false;
+    bool ok = false;
+    {
+        net::UdpSocket sock;
+        net::Endpoint ep;
+        if (sock.Open() && net::UdpSocket::Resolve(host, port, ep)) {
+            auto send = [&](std::uint32_t challenge) {
+                net::Packet p(kMsgPlayerQuery);
+                p.Write(std::string(net::kQueryMagic)); p.Write(challenge);
+                std::vector<std::uint8_t> b(p.Data(), p.Data() + p.Size());
+                if (b.size() < net::kQueryMinSize) b.resize(net::kQueryMinSize, 0);
+                sock.SendTo(ep, b.data(), b.size());
+            };
+            std::uint32_t challenge = 0;
+            send(0);
+            const Clock::time_point start = Clock::now();
+            Clock::time_point lastSend = start;
+            std::vector<std::uint8_t> buf(net::kMaxDatagram);
+            while (!ok) {
+                const auto now = Clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() >= timeoutMs) break;
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSend).count() >= timeoutMs / 3) {
+                    send(challenge); lastSend = now;   // a lost packet gets another go
+                }
+                net::Endpoint from; int n;
+                bool any = false;
+                while ((n = sock.RecvFrom(buf.data(), buf.size(), from)) != 0) {
+                    if (n < 0) break;
+                    any = true;
+                    if (!(from == ep)) continue;
+                    net::Packet p(buf.data(), (std::size_t)n);
+                    const std::uint8_t type = p.ReadU8();
+                    if (p.ReadString() != net::kQueryMagic) continue;
+                    if (type == kMsgPlayerChallenge) {
+                        challenge = p.ReadU32();
+                        if (p.Ok()) { send(challenge); lastSend = Clock::now(); }
+                    } else if (type == kMsgPlayerList) {
+                        const std::uint32_t count = p.ReadU32();
+                        std::vector<ServerPlayer> list;
+                        for (std::uint32_t i = 0; i < count && i < 256 && p.Ok(); ++i) {
+                            ServerPlayer sp; sp.name = p.ReadString(); sp.userId = p.ReadString();
+                            sp.score = p.ReadI32(); sp.seconds = p.ReadF32();
+                            list.push_back(sp);
+                        }
+                        if (p.Ok()) { out = std::move(list); ok = true; break; }
+                    }
+                }
+                if (!any && !ok) NapMs(2);
+            }
+        }
+    }
+    net::Shutdown();
+    return ok;
 }
 
 std::string LocalNetworkAddress() {

@@ -4020,6 +4020,48 @@ struct OkayScriptVM::Impl {
             if (!n || a.empty()) return Value{0.0f};
             return Value{n->JoinByLink(a[0].AsString()) ? 1.0f : 0.0f};
         };
+        // Scores (server-owned, replicated to everyone in the room) + the roster.
+        b["net_set_score"] = [this](std::vector<Value>& a) {   // server only: (id, score)
+            NetworkManager* n = Net();
+            if (!n || a.size() < 2 || !n->IsServer()) return Value{0.0f};
+            n->SetPeerScore((std::uint32_t)(int)a[0].AsFloat(), (int)a[1].AsFloat());
+            return Value{1.0f};
+        };
+        b["net_score"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            return Value{(n && !a.empty()) ? (float)n->PeerScore((std::uint32_t)(int)a[0].AsFloat()) : 0.0f};
+        };
+        b["net_peer_name"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            return Value{(n && !a.empty()) ? n->PeerName((std::uint32_t)(int)a[0].AsFloat()) : std::string{}};
+        };
+        b["net_roster_count"] = [this](std::vector<Value>&) {
+            NetworkManager* n = Net();
+            return Value{n ? (float)n->Roster().size() : 0.0f};
+        };
+        b["net_roster_id"] = [this](std::vector<Value>& a) {   // (index) -> peer id, -1 if out of range
+            NetworkManager* n = Net();
+            if (!n || a.empty()) return Value{-1.0f};
+            const auto r = n->Roster(); const int i = (int)a[0].AsFloat();
+            return Value{(i >= 0 && i < (int)r.size()) ? (float)r[i].id : -1.0f};
+        };
+        // Server only: move a player (respawn / teleport) — passes the speed check.
+        b["net_teleport"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (!n || a.size() < 3 || !n->IsServer()) return Value{0.0f};
+            n->ServerTeleport((std::uint32_t)(int)a[0].AsFloat(),
+                              Vec3(a[1].AsFloat(), a[2].AsFloat(), a.size() > 3 ? a[3].AsFloat() : 0.0f));
+            return Value{1.0f};
+        };
+        // Server only: anti-cheat basics. (max units/second, 0 = off) / (messages per second, 0 = off).
+        b["net_max_speed"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->maxMoveSpeed = a[0].AsFloat();
+            return Value{n ? n->maxMoveSpeed : 0.0f};
+        };
+        b["net_rate_limit"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->maxMessagesPerSecond = (int)a[0].AsFloat();
+            return Value{n ? (float)n->maxMessagesPerSecond : 0.0f};
+        };
         // Open the OkaySpace launcher's "Invite friends" window for this game.
         b["net_invite_friends"] = [](std::vector<Value>&) {
 #if !defined(__EMSCRIPTEN__)

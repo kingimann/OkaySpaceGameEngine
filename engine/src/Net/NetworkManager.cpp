@@ -11,6 +11,9 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
+#include <algorithm>
+#include <cmath>
+#include <random>
 #include <sstream>
 
 namespace okay {
@@ -21,7 +24,10 @@ namespace {
         Message = 6, DirectMessage = 7, SyncVar = 8, Ping = 9, Pong = 10,
         Ready = 11, Reject = 12, Kicked = 13, ReliableMsg = 14, ReliableAck = 15,
         Fragment = 16,  // one piece of a message too large for a single datagram
-        Query = 17, QueryInfo = 18   // server browser: "who are you?" without joining
+        Query = 17, QueryInfo = 18,  // server browser: "who are you?" without joining
+        Correct = 19,                // server -> client: you're here (move rejected / teleported)
+        PlayerQuery = 20, PlayerList = 21, PlayerChallenge = 22,   // server browser: who's playing
+        RosterMsg = 23               // server -> clients: everyone in the room, scores, time
     };
     constexpr float kFragmentTtl = 5.0f;        // drop half-assembled messages after this
     // Outer tag marking an encrypted datagram (nonce||ciphertext follows). Distinct
@@ -57,6 +63,8 @@ bool NetworkManager::StartServer(std::uint16_t port) {
     m_mode = Mode::Server;
     m_localId = 0;
     m_kicked = false; m_kickReason.clear();
+    m_serverTime = 0.0f; m_hostScore = 0; m_rosterTimer = 0.0f;
+    { std::random_device rd; m_querySecret = rd() | 1u; }
     if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
     OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
               " (max ", maxPlayers, ")");
@@ -180,6 +188,8 @@ void NetworkManager::Stop() {
     m_relOut.clear();
     m_relSeen.clear();
     m_relSeq = 0;
+    m_roster.clear();
+    m_corrections = 0;
     // m_kicked / m_kickReason persist so WasKicked() can be read after the
     // disconnect; they're cleared when a new session starts.
     m_mode = Mode::Offline;
@@ -744,7 +754,60 @@ std::vector<NetworkManager::PeerInfo> NetworkManager::Peers() const {
 
 std::string NetworkManager::PeerName(std::uint32_t id) const {
     for (auto& [ep, c] : m_clients) if (c.id == id) return c.name;
+    if (m_mode == Mode::Server && id == 0) return m_localName;
+    for (const auto& e : m_roster) if (e.id == id) return e.name;
     return {};
+}
+
+std::uint32_t NetworkManager::QueryChallenge(const net::Endpoint& from) const {
+    std::uint32_t h = (from.address * 2654435761u) ^ (std::uint32_t(from.port) * 40503u) ^ m_querySecret;
+    h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+    return h ? h : 1u;
+}
+
+void NetworkManager::ServerTeleport(std::uint32_t id, const Vec3& pos) {
+    if (m_mode != Mode::Server) return;
+    if (id == 0) { if (m_localAvatar) m_localAvatar->localPosition = pos; return; }
+    for (auto& [ep, c] : m_clients) {
+        if (c.id != id) continue;
+        c.state.x = pos.x; c.state.y = pos.y; c.state.z = pos.z;
+        c.hasState = true; c.stateAge = 0.0f;
+        net::Packet cp(Correct); cp.Write(pos.x); cp.Write(pos.y); cp.Write(pos.z);
+        SendDatagram(c.endpoint, cp.Data(), cp.Size());
+        ApplyPeer(c.state);
+        return;
+    }
+}
+
+int NetworkManager::PeerViolations(std::uint32_t id) const {
+    for (auto& [ep, c] : m_clients) if (c.id == id) return c.violations;
+    return 0;
+}
+
+void NetworkManager::SetPeerScore(std::uint32_t id, int score) {
+    if (m_mode != Mode::Server) return;
+    if (id == 0) { m_hostScore = score; return; }
+    for (auto& [ep, c] : m_clients) if (c.id == id) { c.score = score; return; }
+}
+
+int NetworkManager::PeerScore(std::uint32_t id) const {
+    if (m_mode == Mode::Server) {
+        if (id == 0) return m_hostScore;
+        for (auto& [ep, c] : m_clients) if (c.id == id) return c.score;
+        return 0;
+    }
+    for (const auto& e : m_roster) if (e.id == id) return e.score;
+    return 0;
+}
+
+std::vector<NetworkManager::RosterEntry> NetworkManager::Roster() const {
+    if (m_mode == Mode::Client) return m_roster;
+    std::vector<RosterEntry> out;
+    if (m_mode != Mode::Server) return out;
+    if (!dedicated) out.push_back({0, m_localName, std::string(), m_hostScore, m_serverTime});
+    for (auto& [ep, c] : m_clients) out.push_back({c.id, c.name, c.userId, c.score, m_serverTime - c.joinedAt});
+    std::sort(out.begin(), out.end(), [](const RosterEntry& a, const RosterEntry& b) { return a.id < b.id; });
+    return out;
 }
 
 std::string NetworkManager::PeerUserId(std::uint32_t id) const {
@@ -773,6 +836,9 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
 }
 
 void NetworkManager::ServerTick(float dt) {
+    m_serverTime += dt;
+    // Rate limit: true if this client may send another custom message this second.
+    auto rateOk = [this](Client& c) { return maxMessagesPerSecond <= 0 || ++c.msgCount <= maxMessagesPerSecond; };
     // A full-size receive buffer: a UDP datagram can be up to ~64 KB, so a small
     // fixed buffer silently truncated any larger message (e.g. a big reliable
     // payload). Reused across ticks (thread-local) to avoid per-frame allocation.
@@ -818,6 +884,27 @@ void NetworkManager::ServerTick(float dt) {
             SendDatagram(from, q.Data(), q.Size(), /*allowEncrypt=*/false);
             continue;
         }
+        if (type == PlayerQuery) {
+            // Who's playing (server browser). Answered only to a sender that echoes
+            // the challenge we gave its address, so the (larger) list can't be
+            // aimed at a spoofed victim.
+            if (len < net::kQueryMinSize || p.ReadString() != net::kQueryMagic) continue;
+            const std::uint32_t got = p.ReadU32(), want = QueryChallenge(from);
+            if (got != want) {
+                net::Packet c(PlayerChallenge); c.Write(std::string(net::kQueryMagic)); c.Write(want);
+                SendDatagram(from, c.Data(), c.Size(), /*allowEncrypt=*/false);
+                continue;
+            }
+            const auto roster = Roster();
+            const std::uint32_t n = (std::uint32_t)std::min<std::size_t>(roster.size(), 64);
+            net::Packet l(PlayerList); l.Write(std::string(net::kQueryMagic)); l.Write(n);
+            for (std::uint32_t i = 0; i < n; ++i) {
+                l.Write(roster[i].name.substr(0, 32)); l.Write(roster[i].userId);
+                l.Write(std::int32_t(roster[i].score)); l.Write(roster[i].seconds);
+            }
+            SendDatagram(from, l.Data(), l.Size(), /*allowEncrypt=*/false);
+            continue;
+        }
         if (type == Join) {
             std::string name = p.ReadString();           // display name (may be empty)
             std::string room = p.ReadString();           // lobby room (may be empty)
@@ -852,6 +939,7 @@ void NetworkManager::ServerTick(float dt) {
                 c.state = {c.id, 0, 0, 0, '@'};
                 c.name = name.empty() ? ("Player" + std::to_string(c.id)) : name;
                 c.room = room;
+                c.joinedAt = m_serverTime;
                 c.userId = userId;
                 // Establish this client's encrypted session from its public key.
                 if (encryption && net::SecureChannel::Available() && !clientPk.empty()) {
@@ -903,7 +991,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::string data    = p.ReadString();
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (it->second.relSeen.insert(seq).second)   // first time -> deliver
+                if (it->second.relSeen.insert(seq).second && rateOk(it->second))   // first time -> deliver
                     Deliver(it->second.id, channel, data);
             }
         } else if (type == ReliableAck) {
@@ -911,7 +999,7 @@ void NetworkManager::ServerTick(float dt) {
             if (it != m_clients.end()) it->second.relOut.erase(p.ReadU32());
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end()) {
+            if (it != m_clients.end() && rateOk(it->second)) {
                 std::uint32_t sender = it->second.id;
                 p.ReadU32();                              // sender-reported id (ignored)
                 std::uint32_t target = p.ReadU32();
@@ -937,9 +1025,24 @@ void NetworkManager::ServerTick(float dt) {
                 p.ReadU32(); // sender-reported id (ignored; endpoint is truth)
                 s.x = p.ReadF32(); s.y = p.ReadF32(); s.z = p.ReadF32();
                 s.glyph = static_cast<char>(p.ReadU8());
-                it->second.state = s;
-                it->second.hasState = true;   // we now know where this client is (for interest culling)
-                it->second.lastSeen = 0.0f;
+                Client& c = it->second;
+                c.lastSeen = 0.0f;
+                if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) continue;   // garbage
+                if (maxMoveSpeed > 0.0f && c.hasState) {   // too fast? keep the last good spot
+                    const float dx = s.x - c.state.x, dy = s.y - c.state.y, dz = s.z - c.state.z;
+                    const float allowed = maxMoveSpeed * std::max(c.stateAge, m_snapshotInterval) * 1.25f + 0.25f;
+                    if (dx * dx + dy * dy + dz * dz > allowed * allowed) {
+                        ++c.violations;
+                        net::Packet cp(Correct); cp.Write(c.state.x); cp.Write(c.state.y); cp.Write(c.state.z);
+                        SendDatagram(c.endpoint, cp.Data(), cp.Size());
+                        if (kickAfterViolations > 0 && c.violations >= kickAfterViolations)
+                            Kick(c.id, "movement check failed");   // (erases c; nothing below touches it)
+                        continue;
+                    }
+                }
+                c.state = s;
+                c.hasState = true;   // we now know where this client is (for interest culling)
+                c.stateAge = 0.0f;
                 ApplyPeer(s); // host sees the client move
             }
         } else if (type == Leave) {
@@ -955,7 +1058,7 @@ void NetworkManager::ServerTick(float dt) {
             }
         } else if (type == Message) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end()) {
+            if (it != m_clients.end() && rateOk(it->second)) {
                 std::uint32_t sender = it->second.id;   // endpoint is the source of truth
                 const std::string senderRoom = it->second.room;
                 p.ReadU32();                            // sender-reported id (ignored)
@@ -975,9 +1078,12 @@ void NetworkManager::ServerTick(float dt) {
         }
     }
 
-    // Time out silent clients.
+    // Time out silent clients (and age the move-check / rate-limit windows).
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
+        it->second.stateAge += dt;
+        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; }
+        if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
             std::uint32_t id = it->second.id;
             if (auto r = m_remotes.find(id); r != m_remotes.end()) {
@@ -988,6 +1094,21 @@ void NetworkManager::ServerTick(float dt) {
             if (m_peerLeft) m_peerLeft(id);
         } else {
             ++it;
+        }
+    }
+
+    // Once a second, tell each client who's in its room (names, scores, time).
+    m_rosterTimer += dt;
+    if (m_rosterTimer >= 1.0f && !m_clients.empty()) {
+        m_rosterTimer = 0.0f;
+        std::unordered_map<std::string, std::vector<RosterEntry>> byRoom;
+        if (!dedicated) byRoom[m_localRoom].push_back({0, m_localName, std::string(), m_hostScore, m_serverTime});
+        for (auto& [ep, c] : m_clients) byRoom[c.room].push_back({c.id, c.name, c.userId, c.score, m_serverTime - c.joinedAt});
+        for (auto& [ep, c] : m_clients) {
+            const auto& list = byRoom[c.room];
+            net::Packet r(RosterMsg); r.Write(std::uint32_t(list.size()));
+            for (const auto& e : list) { r.Write(e.id); r.Write(e.name); r.Write(e.userId); r.Write(std::int32_t(e.score)); r.Write(e.seconds); }
+            SendDatagram(c.endpoint, r.Data(), r.Size());
         }
     }
 
@@ -1153,6 +1274,20 @@ void NetworkManager::ClientTick(float dt) {
             std::string key = p.ReadString();
             std::string value = p.ReadString();
             ApplySyncVar(key, value);
+        } else if (type == Correct) {
+            // The server rejected a move (or teleported us): go where it says.
+            const float x = p.ReadF32(), y = p.ReadF32(), z = p.ReadF32();
+            if (p.Ok() && m_localAvatar) m_localAvatar->localPosition = Vec3(x, y, z);
+            ++m_corrections;
+        } else if (type == RosterMsg) {
+            const std::uint32_t n = p.ReadU32();
+            std::vector<RosterEntry> list;
+            for (std::uint32_t i = 0; i < n && i < 1024 && p.Ok(); ++i) {
+                RosterEntry e; e.id = p.ReadU32(); e.name = p.ReadString(); e.userId = p.ReadString();
+                e.score = p.ReadI32(); e.seconds = p.ReadF32();
+                list.push_back(e);
+            }
+            if (p.Ok()) m_roster = std::move(list);
         } else if (type == Pong) {
             float stamp = p.ReadF32();
             m_rtt = (m_clock - stamp) * 1000.0f;   // round-trip in ms

@@ -77,6 +77,34 @@ public:
     /// its own (the player sets these from the signed-in OkaySpace account).
     static void SetDefaultIdentity(const std::string& token, const std::string& name);
 
+    // ---- Server authority (basic anti-cheat) ----------------------------
+    /// Server: the fastest a client's avatar may move (world units per second;
+    /// 0 = no check). A faster move is rejected and the client is snapped back to
+    /// its last good position. Use ServerTeleport() for legit jumps (respawns).
+    float maxMoveSpeed = 0.0f;
+    /// Server: custom messages a client may send per second (0 = unlimited);
+    /// extra ones are dropped (reliable ones are still acknowledged).
+    int maxMessagesPerSecond = 0;
+    /// Server: kick a client after this many rejected moves within a minute (0 = never).
+    int kickAfterViolations = 0;
+    /// Server: move a peer's avatar (0 = the host's own) — accepted by the move
+    /// check and pushed to that client.
+    void ServerTeleport(std::uint32_t id, const Vec3& pos);
+    /// Server: rejected moves from a peer in the last minute.
+    int PeerViolations(std::uint32_t id) const;
+    /// Client: how many times the server corrected our position.
+    std::uint32_t Corrections() const { return m_corrections; }
+
+    // ---- Scores + roster (every peer sees who's in the room) -------------
+    /// Server only: set a peer's score (0 = the host). Clients can't change scores.
+    void SetPeerScore(std::uint32_t id, int score);
+    /// Any peer: a player's score (clients read it from the roster).
+    int PeerScore(std::uint32_t id) const;
+    struct RosterEntry { std::uint32_t id = 0; std::string name, userId; int score = 0; float seconds = 0.0f; };
+    /// Who's in the session: on the server every client (+ itself unless
+    /// dedicated); on a client everyone in its room, refreshed each second.
+    std::vector<RosterEntry> Roster() const;
+
     // ---- What a server browser sees (answered to queries without joining) ----
     std::string gameId;    ///< which game this is (the player fills in its title)
     std::string mapName;   ///< current map / scene name
@@ -336,7 +364,7 @@ public:
     /// The current roster the server knows about (server only): every connected
     /// client. Empty on a client.
     std::vector<PeerInfo> Peers() const;
-    /// The display name a peer joined with (server only), or "" if unknown.
+    /// The display name a peer joined with ("" if unknown). Clients look it up in the roster.
     std::string PeerName(std::uint32_t id) const;
 
     /// Register a callback fired the moment a custom message arrives.
@@ -386,6 +414,13 @@ private:
         std::unordered_map<std::uint32_t, PeerState> sentStates;  // last state sent (delta snapshots)
         bool hasState = false;   // true once this client has reported its position
         bool ready = false;
+        float stateAge = 0.0f;   // seconds since its last accepted position (move check)
+        int   violations = 0;    // rejected moves in the current minute
+        float violationTimer = 0.0f;
+        int   msgCount = 0;      // custom messages this second (rate limit)
+        float msgTimer = 0.0f;
+        float joinedAt = 0.0f;   // server clock when it joined
+        int   score = 0;
         // Per-client reliable channel (server side).
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
         std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
@@ -481,6 +516,14 @@ private:
     void InterpolateRemotes(float dt);
 
     // Server-only
+    float m_serverTime = 0.0f;        // seconds since the server started
+    int   m_hostScore = 0;
+    float m_rosterTimer = 0.0f;
+    std::uint32_t m_querySecret = 0;  // keys the player-list query challenge
+    std::uint32_t QueryChallenge(const net::Endpoint& from) const;
+    // Client-only: the roster the server sends, and position corrections received.
+    std::vector<RosterEntry> m_roster;
+    std::uint32_t m_corrections = 0;
     std::unordered_map<net::Endpoint, Client, net::EndpointHash> m_clients;
     std::uint32_t m_nextId = 1;
     float m_snapshotTimer = 0.0f;

@@ -748,3 +748,7 @@ add_test(NAME dedicated_server COMMAND test_dedicated_server)
 add_executable(test_launcher_join test_launcher_join.cpp)
 target_link_libraries(test_launcher_join PRIVATE okay::engine)
 add_test(NAME launcher_join COMMAND test_launcher_join)
+
+add_executable(test_net_authority test_net_authority.cpp)
+target_link_libraries(test_net_authority PRIVATE okay::engine)
+add_test(NAME net_authority COMMAND test_net_authority)

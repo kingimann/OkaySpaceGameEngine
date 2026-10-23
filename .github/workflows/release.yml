@@ -21,7 +21,7 @@ jobs:
     env:
       SDL2_VERSION: 2.30.9
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Ubuntu mirrors occasionally hang (one release sat here 45 min): bounded
       # attempts with apt's own timeouts, retried a few times.
@@ -91,7 +91,7 @@ jobs:
           ls -la OkaySpace-Setup.exe
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.pkg.outputs.name }}
           path: ${{ steps.pkg.outputs.zip }}
@@ -103,7 +103,7 @@ jobs:
       # updater (launcher + editor) downloads the individual files from
       # releases/latest/download/<name>, so they must be present as assets.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Upload the individual files the in-app updater fetches by name from
           # releases/latest/download/<name>. The launcher + its SDL2.dll sit at the

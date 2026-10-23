@@ -3,6 +3,8 @@
 #include "okay/Net/DedicatedServer.hpp"
 
 #include <atomic>
+#include <cstdio>
+#include <fstream>
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -42,6 +44,36 @@ int main() {
         std::string e6; DedicatedServerOptions s6;
         CHECK(ParseDedicatedServerArgs(7, (char**)a6, s6, &e6) && e6.empty());
         CHECK(s6.advertise && s6.publicAddr == "play.example.com" && s6.region == "EU");
+    }
+
+    // ---- server.cfg: the exported server folder's settings file ----------------
+    {
+        const std::string path = "test_server.cfg";
+        { std::ofstream f(path);
+          f << "# OkaySpace server\nname = \"EU 1\"\nport = 47002\nmax_players = 24\npassword = hunter2\n"
+               "auth = yes\nadvertise = 1\npublic_addr = play.example.com\nregion = EU\nmax_speed = 12.5\n"
+               "rate_limit = 30\nkick_after = 6\n"; }
+        DedicatedServerOptions o; std::string e;
+        CHECK(LoadDedicatedServerConfig(path, o, &e) && e.empty());
+        CHECK(o.name == "EU 1" && o.port == 47002 && o.maxPlayers == 24 && o.password == "hunter2");
+        CHECK(o.requireAuth && o.advertise && o.publicAddr == "play.example.com" && o.region == "EU");
+        CHECK(o.maxSpeed == 12.5f && o.rateLimit == 30 && o.kickAfter == 6);
+        // --config loads it; flags still win.
+        const char* a[] = {"okay-player", "--server", "--config", "test_server.cfg", "--port", "47003"};
+        DedicatedServerOptions p; std::string pe;
+        CHECK(ParseDedicatedServerArgs(6, (char**)a, p, &pe) && pe.empty());
+        CHECK(p.port == 47003 && p.name == "EU 1" && DedicatedServerConfigPath() == "test_server.cfg");
+        // Comments after values; # inside quotes or a bare word stays.
+        { std::ofstream f(path); f << "name = \"Room #1\"   # shown in the browser\nmax_speed = 12   # units/s\npassword = ab#c\nregion = \"\"  ; none\n"; }
+        DedicatedServerOptions c; std::string ce;
+        CHECK(LoadDedicatedServerConfig(path, c, &ce) && ce.empty());
+        CHECK(c.name == "Room #1" && c.maxSpeed == 12.0f && c.password == "ab#c" && c.region.empty());
+        { std::ofstream f(path); f << "port = 99999\n"; }
+        DedicatedServerOptions q; std::string qe;
+        CHECK(!LoadDedicatedServerConfig(path, q, &qe) && qe.find("line 1") != std::string::npos);
+        { std::ofstream f(path); f << "colour = blue\n"; }
+        CHECK(!LoadDedicatedServerConfig(path, q, &qe) && qe.find("unknown setting") != std::string::npos);
+        std::remove(path.c_str());
     }
 
     // ---- AsyncTokenCheck: pending, then a cached answer -------------------------

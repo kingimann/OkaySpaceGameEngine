@@ -11,6 +11,68 @@ Players ──UDP──▶ okay-player --server (your scenes + scripts, authorit
    └──── HTTPS ────▶ Supabase (auth, lobbies/matchmaking, results, leaderboards)
 ```
 
+## Export one from the editor
+
+**File → Build Settings → Platform: Server.** Pick Linux (a VPS or Docker) or
+Windows, fill in the **Server** page and press **Build**. The output folder
+holds:
+
+| File | What |
+| --- | --- |
+| `<game>-server` / `<Game>-Server.exe` | the game runtime and your scenes |
+| `server.cfg` | name, port, players, password, listing and anti-cheat settings |
+| `start-server.sh` / `start-server.bat` | run it in a terminal |
+| `deploy.sh` / `deploy.bat` | **one command:** copy the folder to a Linux VPS over SSH and install it |
+| `install-server.sh` | on the server: install dependencies, create an `okayspace` user, add a systemd service (restarts on crash, starts on boot), open the UDP port in ufw/firewalld |
+| `Dockerfile`, `docker-compose.yml` | for container hosts |
+| `README.txt` | these steps for whoever runs the server |
+
+Put it online from your own PC:
+
+```bash
+./deploy.sh root@203.0.113.7          # Windows: deploy.bat root@203.0.113.7
+```
+
+Building a Linux server on Windows (or the other way round) downloads the
+matching runtime from the latest OkaySpace release (`okay-server-linux-x64`).
+Each release attaches that file.
+
+To list the server in the browsers, sign the server machine in once, then set
+`advertise = 1` and `public_addr` in `server.cfg`:
+
+```bash
+sudo -u okayspace env HOME=/opt/<game>-server /opt/<game>-server/<game>-server --login YOUR_NAME
+```
+
+`--login` asks for the password without echoing it, or reads
+`OKAY_LOGIN_PASSWORD`. `--logout` forgets the saved login.
+
+## server.cfg
+
+```ini
+name = "EU 1"
+port = 45000
+max_players = 16
+tick = 30
+password = ""          # empty: open to everyone
+auth = 0               # 1: only signed-in OkaySpace players
+advertise = 1
+public_addr = "play.example.com"
+region = "EU"
+max_speed = 12         # anti-cheat basics, 0 = off
+rate_limit = 30
+kick_after = 6
+```
+
+The server reads `server.cfg` from:
+1. the working folder;
+2. beside the executable;
+3. `Data/`.
+
+Or name a file with `--config PATH`. Environment variables override the file,
+and flags override both. Typos are errors with the line number, so a bad
+setting never runs silently.
+
 ## Run one
 
 ```bash
@@ -32,6 +94,8 @@ okay-player --server --scene arena.okayscene --port 45000 --max-players 16 --aut
 | `--advertise` | list it in the launcher's server browser (sign in on this machine; run `docs/sql/game_servers.sql` once) |
 | `--public-addr HOST` | the address players connect to (required with `--advertise`) |
 | `--region TEXT` | region shown in the browser |
+| `--max-speed N`, `--rate-limit N`, `--kick-after N` | anti-cheat basics (see [launcher-multiplayer.md](launcher-multiplayer.md)) |
+| `--config PATH` | read settings from this file instead of the default `server.cfg` |
 
 Container hosts can use environment variables instead: `OKAY_SERVER_PORT`,
 `OKAY_SERVER_MAX_PLAYERS`, `OKAY_SERVER_TICK`, `OKAY_SERVER_NAME`,
@@ -74,8 +138,8 @@ Hathora can start servers per match on demand.
 1. ✅ Headless server mode with Supabase sign-in on join
    - ✅ Launcher integration: join friends, invites, server browser
      ([launcher-multiplayer.md](launcher-multiplayer.md))
-2. Server-side validation of player movement and important actions
-3. `game_servers` / `matches` tables + an `allocate_match` Edge Function
+2. ✅ Server-side validation of player movement and important actions
+3. ✅ `game_servers` listing (`docs/sql/game_servers.sql`). Still to come: `matches` and an `allocate_match` Edge Function
 4. Match tickets: request a match, get an address + ticket, join
-5. "Dedicated server" export in Build Settings (Linux) + a deploy script
+5. ✅ "Dedicated server" export in Build Settings (Linux + Windows) + a one-command deploy script
 6. Match results → Supabase (stats, leaderboards, achievements)

@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
@@ -68,6 +69,7 @@ const char* DedicatedServerUsage() {
     return
         "Dedicated server:\n"
         "  --server               run headless as the game's server (no window)\n"
+        "  --config FILE          read settings from FILE (default: server.cfg beside the game)\n"
         "  --port N               UDP port to listen on (default 45000)\n"
         "  --scene PATH           scene to run (default: the game's startup scene)\n"
         "  --max-players N        player limit (default 16)\n"
@@ -90,11 +92,86 @@ const char* DedicatedServerUsage() {
         "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
 }
 
+namespace { std::string g_configPath; }
+const std::string& DedicatedServerConfigPath() { return g_configPath; }
+
+bool LoadDedicatedServerConfig(const std::string& path, DedicatedServerOptions& out, std::string* error) {
+    std::ifstream f(path);
+    if (!f) { if (error) *error = "can't read " + path; return false; }
+    auto trim = [](std::string v) {
+        std::size_t a = v.find_first_not_of(" \t\r"), b = v.find_last_not_of(" \t\r");
+        return a == std::string::npos ? std::string() : v.substr(a, b - a + 1);
+    };
+    auto truthy = [](const std::string& v) { return v == "1" || v == "true" || v == "yes" || v == "on"; };
+    std::string line; int n = 0; int iv = 0; float fv = 0.0f;
+    auto bad = [&](const std::string& why) { if (error) *error = path + " line " + std::to_string(n) + ": " + why; return false; };
+    while (std::getline(f, line)) {
+        ++n;
+        line = trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+        const std::size_t eq = line.find('=');
+        if (eq == std::string::npos) return bad("expected key = value");
+        const std::string k = trim(line.substr(0, eq));
+        std::string v = trim(line.substr(eq + 1));
+        if (!v.empty() && v.front() == '"') {   // "quoted" (may hold # or spaces), then an optional # comment
+            const std::size_t close = v.find('"', 1);
+            if (close == std::string::npos) return bad("missing closing quote");
+            const std::string rest = trim(v.substr(close + 1));
+            if (!rest.empty() && rest[0] != '#' && rest[0] != ';') return bad("unexpected text after the quoted value");
+            v = v.substr(1, close - 1);
+        } else {                                // a # after whitespace starts a comment: max_speed = 12   # units/s
+            for (std::size_t i = 1; i < v.size(); ++i)
+                if ((v[i] == '#' || v[i] == ';') && (v[i - 1] == ' ' || v[i - 1] == '\t')) { v = trim(v.substr(0, i)); break; }
+        }
+        if (k == "port") { if (!ParseInt(v, 1, 65535, iv)) return bad("port must be 1-65535"); out.port = (std::uint16_t)iv; }
+        else if (k == "name") out.name = v;
+        else if (k == "max_players") { if (!ParseInt(v, 1, 1024, iv)) return bad("max_players must be 1-1024"); out.maxPlayers = iv; }
+        else if (k == "tick") { if (!ParseFloat(v, 1.0f, 240.0f, fv)) return bad("tick must be 1-240"); out.tickRate = fv; }
+        else if (k == "password") out.password = v;
+        else if (k == "auth") out.requireAuth = truthy(v);
+        else if (k == "encryption") out.encryption = truthy(v);
+        else if (k == "status") { if (!ParseFloat(v, 0.0f, 86400.0f, fv)) return bad("status must be seconds"); out.statusEvery = fv; }
+        else if (k == "scene") out.scenePath = v;
+        else if (k == "advertise") out.advertise = truthy(v);
+        else if (k == "public_addr") out.publicAddr = v;
+        else if (k == "region") out.region = v;
+        else if (k == "max_speed") { if (!ParseFloat(v, 0.0f, 1e6f, fv)) return bad("max_speed must be a number"); out.maxSpeed = fv; }
+        else if (k == "rate_limit") { if (!ParseInt(v, 0, 100000, iv)) return bad("rate_limit must be a number"); out.rateLimit = iv; }
+        else if (k == "kick_after") { if (!ParseInt(v, 0, 100000, iv)) return bad("kick_after must be a number"); out.kickAfter = iv; }
+        else return bad("unknown setting '" + k + "'");
+    }
+    return true;
+}
+
 bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out, std::string* error) {
     bool server = false;
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--server") server = true;
     if (!server) return false;
     auto fail = [&](const std::string& why) { if (error) *error = why; return true; };
+
+    // A config file first (the exported server folder ships one), then the
+    // environment, then flags — each overrides the one before.
+    g_configPath.clear();
+    {
+        std::string cfg;
+        for (int i = 1; i + 1 < argc; ++i) if (std::string(argv[i]) == "--config") cfg = argv[i + 1];
+        if (cfg.empty()) {
+            std::vector<std::string> tries = {"server.cfg"};
+            std::string exe = argc > 0 && argv[0] ? argv[0] : "";
+            const std::size_t slash = exe.find_last_of("/\\");
+            if (slash != std::string::npos) {
+                const std::string dir = exe.substr(0, slash + 1);
+                tries.push_back(dir + "server.cfg");
+                tries.push_back(dir + "Data/server.cfg");
+            }
+            for (const auto& t : tries) if (std::ifstream(t).good()) { cfg = t; break; }
+        }
+        if (!cfg.empty()) {
+            std::string e;
+            if (!LoadDedicatedServerConfig(cfg, out, &e)) return fail(e);
+            g_configPath = cfg;
+        }
+    }
 
     // Environment first (container hosts set these), then flags override.
     int iv = 0; float fv = 0.0f;
@@ -126,6 +203,7 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
         };
         std::string v;
         if (a == "--server") continue;
+        else if (a == "--config") { ++i; continue; }   // loaded above
         else if (a == "--port") {
             if (!value(v) || !ParseInt(v, 1, 65535, iv)) return fail("--port needs a number from 1 to 65535");
             out.port = (std::uint16_t)iv;
@@ -383,6 +461,7 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
         std::fprintf(stderr, "[server] couldn't listen on UDP port %u (is it in use?)\n", (unsigned)opts.port);
         return 2;
     }
+    if (!g_configPath.empty()) std::printf("[server] settings from %s\n", g_configPath.c_str());
     std::printf("[server] \"%s\" listening on UDP %u \xC2\xB7 up to %d players \xC2\xB7 %.0f Hz%s%s%s\n",
                 opts.name.c_str(), (unsigned)net->ServerPort(), opts.maxPlayers, opts.tickRate,
                 opts.requireAuth ? " \xC2\xB7 sign-in required" : "",
@@ -395,7 +474,7 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     auto listingId = std::make_shared<std::string>();
     if (opts.advertise) {
         if (!Account::IsLoggedIn()) {
-            std::fprintf(stderr, "[server] --advertise: not signed in to OkaySpace on this machine; not listed\n");
+            std::fprintf(stderr, "[server] advertise: not signed in to OkaySpace on this machine, so not listed (sign in once with --login NAME)\n");
         } else {
             web = std::make_unique<BackgroundJobs>();
             GameSession gs;

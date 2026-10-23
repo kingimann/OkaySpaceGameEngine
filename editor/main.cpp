@@ -2357,6 +2357,20 @@ struct BuildSettings {
     // ---- Added later ----
     bool  fullscreenToggle = true;         // Alt+Enter / F11 switches fullscreen in the game
     std::vector<BuildScene> scenes;        // Scenes In Build (empty = just the open scene)
+    // ---- Dedicated server (platform "Server") -> the server folder's server.cfg ----
+    int   srvTarget = 0;                   // 0 = Linux, 1 = Windows
+    char  srvName[96] = "";                // "" = "<Product> Server"
+    int   srvPort = 45000;
+    int   srvMaxPlayers = 16;
+    int   srvTick = 30;
+    char  srvPassword[64] = "";
+    bool  srvAuth = false;                 // only signed-in OkaySpace accounts
+    bool  srvAdvertise = false;            // list in the server browsers
+    char  srvPublicAddr[128] = "";         // the address players connect to
+    char  srvRegion[32] = "";
+    float srvMaxSpeed = 0.0f;              // anti-cheat: units/second (0 = off)
+    int   srvRateLimit = 0;                // messages per second per player (0 = off)
+    int   srvKickAfter = 0;                // rejected moves per minute before a kick (0 = never)
 };
 BuildSettings g_build;
 
@@ -2417,6 +2431,11 @@ static void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "gpu=" << b.gpuRenderer << "\n" << "d3d12=" << b.preferD3D12 << "\n";
     o << "openFolder=" << b.openFolderAfter << "\n" << "zip=" << b.zipAfter << "\n";
     o << "fsToggle=" << b.fullscreenToggle << "\n";
+    o << "srvTarget=" << b.srvTarget << "\n" << "srvName=" << b.srvName << "\n" << "srvPort=" << b.srvPort << "\n";
+    o << "srvMax=" << b.srvMaxPlayers << "\n" << "srvTick=" << b.srvTick << "\n" << "srvPassword=" << b.srvPassword << "\n";
+    o << "srvAuth=" << b.srvAuth << "\n" << "srvAdvertise=" << b.srvAdvertise << "\n" << "srvAddr=" << b.srvPublicAddr << "\n";
+    o << "srvRegion=" << b.srvRegion << "\n" << "srvMaxSpeed=" << b.srvMaxSpeed << "\n" << "srvRate=" << b.srvRateLimit << "\n";
+    o << "srvKick=" << b.srvKickAfter << "\n";
     for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << sc.path << "\n";
 }
 
@@ -2478,6 +2497,19 @@ static void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "d3d12")     b.preferD3D12 = B();
     else if (k == "openFolder") b.openFolderAfter = B();
     else if (k == "zip")       b.zipAfter = B();
+    else if (k == "srvTarget") b.srvTarget = I();
+    else if (k == "srvName")   S(b.srvName, sizeof(b.srvName));
+    else if (k == "srvPort")   b.srvPort = I();
+    else if (k == "srvMax")    b.srvMaxPlayers = I();
+    else if (k == "srvTick")   b.srvTick = I();
+    else if (k == "srvPassword") S(b.srvPassword, sizeof(b.srvPassword));
+    else if (k == "srvAuth")   b.srvAuth = B();
+    else if (k == "srvAdvertise") b.srvAdvertise = B();
+    else if (k == "srvAddr")   S(b.srvPublicAddr, sizeof(b.srvPublicAddr));
+    else if (k == "srvRegion") S(b.srvRegion, sizeof(b.srvRegion));
+    else if (k == "srvMaxSpeed") b.srvMaxSpeed = F();
+    else if (k == "srvRate")   b.srvRateLimit = I();
+    else if (k == "srvKick")   b.srvKickAfter = I();
 }
 
 static void SaveBuildProfiles(EditorState& ed) {
@@ -3486,6 +3518,302 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
     return "Exported Android data + guide to " + dir.string() + " (" + std::to_string(copied) +
            " asset(s)). See README.txt - an APK needs Android Studio + the NDK.";
 }
+// ---- Dedicated server export ---------------------------------------------------
+// A ready-to-run server folder: the game's data + the player runtime for the
+// target OS (it runs headless with --server), a server.cfg with the chosen
+// settings, start scripts, and for Linux everything to put it online — an
+// install script (service + firewall), deploy.sh/.bat (copy over SSH and
+// install in one command), a Dockerfile/compose file and a README.
+struct ServerOptions {
+    int  target = 0;              // 0 = Linux, 1 = Windows
+    std::string name, password, publicAddr, region;
+    int  port = 45000, maxPlayers = 16, tick = 30, rateLimit = 0, kickAfter = 0;
+    bool auth = false, advertise = false;
+    float maxSpeed = 0.0f;
+};
+
+// "Star Arena!" -> "star-arena" (file names, service names, Docker images).
+inline std::string ServerSlug(const std::string& s) {
+    std::string o;
+    for (unsigned char c : s) {
+        if (std::isalnum(c)) o += (char)std::tolower(c);
+        else if (!o.empty() && o.back() != '-') o += '-';
+    }
+    while (!o.empty() && o.back() == '-') o.pop_back();
+    return o.empty() ? std::string("game") : o;
+}
+// Scripts must keep Unix line endings even when written on Windows.
+inline bool WriteFileExact(const fs::path& p, const std::string& body) {
+    std::ofstream f(p.string(), std::ios::binary | std::ios::trunc);
+    f << body;
+    return (bool)f;
+}
+inline std::string CfgQuote(const std::string& v) {
+    std::string o = "\"";
+    for (char c : v) if (c != '"' && c != '\n' && c != '\r') o += c;
+    return o + "\"";
+}
+
+std::string BuildServer(EditorState& ed, const std::string& outDir, const std::string& gameName,
+                        Options opt, const ServerOptions& so, BuildReport* report = nullptr) {
+    // A server draws nothing: skip the presentation extras.
+    opt.gpuRenderer = false; opt.iconPath.clear(); opt.splashImage.clear(); opt.bootLogo.clear();
+    BuildReport local;
+    BuildReport* rep = report ? report : &local;
+    const std::string built = Build(ed, outDir, gameName, opt, rep);
+    if (!rep->valid) return built;   // Build() said what went wrong
+
+    std::error_code ec;
+    fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
+    if (dir.empty()) dir = fs::path(outDir);
+    const bool linuxTarget = so.target == 0;
+#if defined(_WIN32)
+    const bool hostLinux = false;
+    const fs::path hostExe = dir / (gameName + ".exe");
+#else
+    const bool hostLinux = true;
+    const fs::path hostExe = dir / gameName;
+#endif
+    const std::string slug = ServerSlug(gameName);
+    const std::string binName = linuxTarget ? slug + "-server" : gameName + "-Server.exe";
+    const fs::path bin = dir / binName;
+    const std::string serverName = so.name.empty() ? gameName + " Server" : so.name;
+
+    // 1) The runtime for the target OS.
+    std::string fetched;
+    if (linuxTarget == hostLinux) {
+        fs::remove(bin, ec);
+        fs::rename(hostExe, bin, ec);
+        if (ec) return "Built the game data, but couldn't rename the runtime to " + binName + " (" + ec.message() + ").";
+    } else {
+        fs::remove(hostExe, ec);
+        for (const char* lib : {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libSDL2-2.0.so.0"})
+            fs::remove(dir / lib, ec);
+        auto fetch = [&](const char* asset, const fs::path& dest, std::size_t minBytes) {
+            if (!updater::Download(updater::RawUrl("latest", asset), dest.string())) return false;
+            std::error_code fe;
+            if (!fs::exists(dest, fe) || fs::file_size(dest, fe) < minBytes) { fs::remove(dest, fe); return false; }
+            return true;
+        };
+        if (linuxTarget) {
+            if (!fetch("okay-server-linux-x64", bin, 100000))
+                return "Built the game data to " + dir.string() + ", but couldn't download the Linux server runtime "
+                       "(okay-server-linux-x64 from the latest release). Check your connection, or export a Windows server.";
+            fetched = "the Linux server runtime";
+        } else {
+            if (!fetch("OkaySpacePlayer.exe", bin, 100000) || !fetch("SDL2.dll", dir / "SDL2.dll", 10000))
+                return "Built the game data to " + dir.string() + ", but couldn't download the Windows runtime.";
+            fetched = "the Windows runtime";
+        }
+    }
+#if !defined(_WIN32)
+    fs::permissions(bin, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
+#endif
+
+    // 2) server.cfg: what the server reads at start (flags/env still override).
+    {
+        std::string c;
+        c += "# " + gameName + " dedicated server settings.\n";
+        c += "# Edit and restart the server to apply. Command-line flags override these.\n\n";
+        c += "name = " + CfgQuote(serverName) + "\n";
+        c += "port = " + std::to_string(so.port) + "\n";
+        c += "max_players = " + std::to_string(so.maxPlayers) + "\n";
+        c += "tick = " + std::to_string(so.tick) + "\n";
+        c += "password = " + CfgQuote(so.password) + "\n";
+        c += "# Only players signed in to OkaySpace may join.\n";
+        c += std::string("auth = ") + (so.auth ? "1" : "0") + "\n";
+        c += "encryption = 1\n";
+        c += "status = 60\n\n";
+        c += "# List this server in the launcher and in-game server browsers.\n";
+        c += "# Needs the machine signed in once:  ./" + binName + " --login YOUR_NAME\n";
+        c += std::string("advertise = ") + (so.advertise ? "1" : "0") + "\n";
+        c += "public_addr = " + CfgQuote(so.publicAddr) + "\n";
+        c += "region = " + CfgQuote(so.region) + "\n\n";
+        c += "# Anti-cheat basics (0 = off).\n";
+        char sp[32]; std::snprintf(sp, sizeof(sp), "%g", so.maxSpeed);
+        c += std::string("max_speed = ") + sp + "\n";
+        c += "rate_limit = " + std::to_string(so.rateLimit) + "\n";
+        c += "kick_after = " + std::to_string(so.kickAfter) + "\n";
+        if (!WriteFileExact(dir / "server.cfg", c)) return "Couldn't write server.cfg in " + dir.string() + ".";
+    }
+
+    // 3) Start scripts.
+    const std::string portS = std::to_string(so.port);
+    WriteFileExact(dir / "start-server.bat",
+        "@echo off\r\nrem Start the " + gameName + " server (settings in server.cfg).\r\n"
+        "cd /d \"%~dp0\"\r\n" + (linuxTarget ? "echo This server is built for Linux: copy the folder to a Linux machine, or use deploy.bat.\r\npause\r\n"
+                                             : "\"" + binName + "\" --server %*\r\npause\r\n"));
+    if (linuxTarget) {
+        WriteFileExact(dir / "start-server.sh",
+            "#!/bin/sh\n# Start the " + gameName + " server in this terminal (settings in server.cfg).\n"
+            "cd \"$(dirname \"$0\")\" && exec ./" + binName + " --server \"$@\"\n");
+
+        // install-server.sh: run ON the server (deploy.* does it for you).
+        WriteFileExact(dir / "install-server.sh",
+            "#!/usr/bin/env bash\n"
+            "# Install this folder as a service that starts on boot and restarts if it stops.\n"
+            "#   sudo bash install-server.sh        (from inside the folder, on the server)\n"
+            "set -euo pipefail\n"
+            "APP=" + slug + "-server\n"
+            "DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+            "PORT=$(sed -n 's/^port *= *\\([0-9]*\\).*/\\1/p' \"$DIR/server.cfg\" | head -n1)\n"
+            "PORT=${PORT:-" + portS + "}\n"
+            "SUDO=; [ \"$(id -u)\" -ne 0 ] && SUDO=sudo\n"
+            "if command -v apt-get >/dev/null; then\n"
+            "  $SUDO apt-get update -qq && $SUDO apt-get install -y -qq libsdl2-2.0-0 libsodium23 >/dev/null || true\n"
+            "elif command -v dnf >/dev/null; then\n"
+            "  $SUDO dnf install -y -q SDL2 libsodium >/dev/null || true\n"
+            "fi\n"
+            "id okayspace >/dev/null 2>&1 || $SUDO useradd --system --home-dir \"$DIR\" --shell /usr/sbin/nologin okayspace\n"
+            "chmod +x \"$DIR/" + binName + "\" \"$DIR\"/*.sh\n"
+            "$SUDO chown -R okayspace \"$DIR\"\n"
+            "$SUDO tee /etc/systemd/system/$APP.service >/dev/null <<EOF\n"
+            "[Unit]\nDescription=" + gameName + " dedicated server\nAfter=network-online.target\nWants=network-online.target\n\n"
+            "[Service]\nUser=okayspace\nWorkingDirectory=$DIR\nEnvironment=HOME=$DIR\n"
+            "ExecStart=$DIR/" + binName + " --server\nRestart=always\nRestartSec=3\n\n"
+            "[Install]\nWantedBy=multi-user.target\nEOF\n"
+            "$SUDO systemctl daemon-reload\n"
+            "$SUDO systemctl enable $APP >/dev/null\n"
+            "$SUDO systemctl restart $APP\n"
+            "if command -v ufw >/dev/null && $SUDO ufw status | grep -q active; then $SUDO ufw allow \"$PORT\"/udp >/dev/null; fi\n"
+            "if command -v firewall-cmd >/dev/null && $SUDO firewall-cmd --state >/dev/null 2>&1; then\n"
+            "  $SUDO firewall-cmd --permanent --add-port=\"$PORT\"/udp >/dev/null && $SUDO firewall-cmd --reload >/dev/null; fi\n"
+            "sleep 1\n"
+            "$SUDO systemctl --no-pager --lines=8 status $APP || true\n"
+            "echo\n"
+            "echo \"Running as the service '$APP' on UDP port $PORT.\"\n"
+            "echo \"  logs:    journalctl -u $APP -f\"\n"
+            "echo \"  restart: sudo systemctl restart $APP   (after editing server.cfg)\"\n"
+            "echo \"  list it: sudo -u okayspace env HOME=$DIR $DIR/" + binName + " --login YOUR_NAME   (then set advertise = 1)\"\n");
+
+        // deploy.sh / deploy.bat: run on YOUR machine — copy over SSH, then install.
+        const std::string dest = "/opt/" + slug + "-server";
+        WriteFileExact(dir / "deploy.sh",
+            "#!/usr/bin/env bash\n"
+            "# Put this server online on a Linux machine you can SSH into (a VPS):\n"
+            "#   ./deploy.sh user@your-server [ssh-port]\n"
+            "# Copies this folder to " + dest + " and installs it as a service.\n"
+            "set -euo pipefail\n"
+            "HOST=\"${1:?usage: ./deploy.sh user@host [ssh-port]}\"\nSSHPORT=\"${2:-22}\"\n"
+            "cd \"$(dirname \"$0\")\"\n"
+            "echo \"Copying to $HOST:" + dest + " ...\"\n"
+            "ssh -t -p \"$SSHPORT\" \"$HOST\" 'sudo mkdir -p " + dest + " && sudo chown \"$(id -un)\" " + dest + "'\n"
+            "tar czf - --exclude=deploy.sh --exclude=deploy.bat . | ssh -p \"$SSHPORT\" \"$HOST\" 'tar xzf - -C " + dest + "'\n"
+            "ssh -t -p \"$SSHPORT\" \"$HOST\" 'sudo bash " + dest + "/install-server.sh'\n");
+        WriteFileExact(dir / "deploy.bat",
+            "@echo off\r\n"
+            "rem Put this server online on a Linux machine you can SSH into (a VPS):\r\n"
+            "rem   deploy.bat user@your-server [ssh-port]\r\n"
+            "rem Uses the ssh and tar built into Windows 10/11.\r\n"
+            "setlocal\r\n"
+            "if \"%~1\"==\"\" (echo Usage: deploy.bat user@host [ssh-port] & exit /b 1)\r\n"
+            "set HOST=%~1\r\nset SSHPORT=%~2\r\nif \"%SSHPORT%\"==\"\" set SSHPORT=22\r\n"
+            "cd /d \"%~dp0\"\r\n"
+            "echo Copying to %HOST%:" + dest + " ...\r\n"
+            "ssh -t -p %SSHPORT% %HOST% \"sudo mkdir -p " + dest + " && sudo chown $(id -un) " + dest + "\" || exit /b 1\r\n"
+            "tar czf - --exclude=deploy.sh --exclude=deploy.bat . | ssh -p %SSHPORT% %HOST% \"tar xzf - -C " + dest + "\" || exit /b 1\r\n"
+            "ssh -t -p %SSHPORT% %HOST% \"sudo bash " + dest + "/install-server.sh\"\r\n"
+            "pause\r\n");
+
+        // Docker: for hosts that run containers (and Fly.io / Railway / etc.).
+        WriteFileExact(dir / "Dockerfile",
+            "# " + gameName + " dedicated server.\n"
+            "#   docker build -t " + slug + "-server .\n"
+            "#   docker run -d -p " + portS + ":" + portS + "/udp --restart unless-stopped " + slug + "-server\n"
+            "FROM ubuntu:22.04\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends libsdl2-2.0-0 libsodium23 ca-certificates \\\n"
+            "    && rm -rf /var/lib/apt/lists/* && useradd --system --create-home okayspace\n"
+            "WORKDIR /srv/game\n"
+            "COPY . .\n"
+            "RUN chmod +x " + binName + " && chown -R okayspace /srv/game\n"
+            "USER okayspace\n"
+            "EXPOSE " + portS + "/udp\n"
+            "CMD [\"./" + binName + "\", \"--server\"]\n");
+        WriteFileExact(dir / "docker-compose.yml",
+            "# docker compose up -d   (settings in server.cfg, or OKAY_SERVER_* variables below)\n"
+            "services:\n"
+            "  server:\n"
+            "    build: .\n"
+            "    restart: unless-stopped\n"
+            "    ports:\n"
+            "      - \"" + portS + ":" + portS + "/udp\"\n"
+            "    # environment:\n"
+            "    #   OKAY_SERVER_NAME: \"" + serverName + "\"\n"
+            "    #   OKAY_SERVER_MAX_PLAYERS: \"" + std::to_string(so.maxPlayers) + "\"\n");
+        WriteFileExact(dir / ".dockerignore", "deploy.sh\ndeploy.bat\n*.zip\n");
+    }
+
+    // 4) README.
+    {
+        std::string r;
+        r += gameName + " - dedicated server\n";
+        r += std::string(gameName.size() + 19, '=') + "\n\n";
+        r += "This folder is a complete game server: no window, no graphics. Players connect to it\n";
+        r += "over UDP port " + portS + ". Settings live in server.cfg (restart after editing).\n\n";
+        if (linuxTarget) {
+            r += "PUT IT ONLINE (a Linux VPS: Hetzner, DigitalOcean, OVH, ...)\n";
+            r += "  From this PC, in this folder:\n";
+            r += "    Windows:  deploy.bat user@your-server\n";
+            r += "    Mac/Linux: ./deploy.sh user@your-server\n";
+            r += "  It copies the folder to /opt/" + slug + "-server, installs what it needs, opens the\n";
+            r += "  firewall port and runs it as a service that restarts on its own and starts on boot.\n\n";
+            r += "  By hand instead: copy the folder to the server and run  sudo bash install-server.sh\n";
+            r += "  Just to try it:  ./start-server.sh\n\n";
+            r += "DOCKER\n  docker compose up -d   (or see the Dockerfile)\n\n";
+            r += "MANAGE IT (on the server)\n";
+            r += "  logs:     journalctl -u " + slug + "-server -f\n";
+            r += "  restart:  sudo systemctl restart " + slug + "-server\n";
+            r += "  stop:     sudo systemctl stop " + slug + "-server\n\n";
+        } else {
+            r += "RUN IT\n  Double-click start-server.bat (or run: " + binName + " --server).\n";
+            r += "  Allow " + binName + " through Windows Firewall (UDP " + portS + ") when asked.\n\n";
+        }
+        r += "LIST IT IN THE SERVER BROWSERS\n";
+        r += "  1. Sign this machine in to OkaySpace once:\n";
+        r += linuxTarget ? "       sudo -u okayspace env HOME=/opt/" + slug + "-server /opt/" + slug + "-server/" + binName + " --login YOUR_NAME\n"
+                         : "       " + binName + " --login YOUR_NAME\n";
+        r += "  2. In server.cfg set  advertise = 1  and  public_addr = your server's IP or hostname.\n";
+        r += "  3. Restart the server. It shows up in the launcher's Multiplayer page and the game's\n";
+        r += "     \"Find a server\" window within a minute.\n\n";
+        r += "PLAYERS CAN ALSO JOIN BY ADDRESS\n";
+        r += "  Connect to server... (launcher) or Address (in game):  your-server:" + portS + "\n\n";
+        r += "More: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/dedicated-server.md\n";
+        WriteFileExact(dir / "README.txt", r);
+    }
+
+#if !defined(_WIN32)
+    for (const char* sh : {"start-server.sh", "install-server.sh", "deploy.sh"})
+        fs::permissions(dir / sh, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
+#endif
+
+    // 5) Re-tally the folder for the result popup.
+    *rep = BuildReport{};
+    for (auto& e : fs::recursive_directory_iterator(dir, ec)) {
+        if (!e.is_regular_file(ec)) continue;
+        std::error_code se; const std::uintmax_t sz = fs::file_size(e.path(), se);
+        std::string ext = e.path().extension().string();
+        for (char& ch : ext) ch = (char)std::tolower((unsigned char)ch);
+        const std::string fn = e.path().filename().string();
+        int cat = CAT_ASSET;
+        if (fn == binName) cat = CAT_EXE;
+        else if (ext == ".dll" || ext == ".so" || fn.rfind("libSDL2", 0) == 0) cat = CAT_LIB;
+        else if (ext == ".okayscene" || ext == ".okayconfig" || fn == "server.cfg") cat = CAT_DATA;
+        rep->files.push_back({fs::relative(e.path(), dir, se).generic_string(), sz, cat});
+        rep->catBytes[cat] += sz; rep->total += sz;
+    }
+    std::sort(rep->files.begin(), rep->files.end(), [](const ReportEntry& a, const ReportEntry& b) { return a.bytes > b.bytes; });
+    rep->valid = true;
+
+    std::string msg = "Built the " + std::string(linuxTarget ? "Linux" : "Windows") + " dedicated server for '" + gameName +
+                      "' to " + dir.string() + "  [" + HumanBytes(rep->total) + "]. ";
+    msg += linuxTarget ? "Put it online with deploy.bat user@your-server (or ./deploy.sh), or docker compose up. "
+                       : "Run start-server.bat. ";
+    msg += "Settings are in server.cfg; README.txt has the steps.";
+    if (!fetched.empty()) msg += "  (" + fetched + " was downloaded from the latest release)";
+    if (so.advertise && so.publicAddr.empty()) msg += "  NOTE: set public_addr in server.cfg so the listing points players at the right address.";
+    return msg;
+}
+
 } // namespace builder
 
 builder::BuildReport g_buildReport;   // per-file size breakdown of the last build
@@ -13235,7 +13563,8 @@ void DrawFileDialogs(EditorState& ed) {
     ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_Appearing);
     ImGui::SetNextWindowSizeConstraints(ImVec2(720, 520), ImVec2(1600, 1200));
     if (ImGui::BeginPopupModal("Build Settings")) {
-        ImGui::TextDisabled("Export a standalone game:  <Name>.exe + game.okayscene + game.okayconfig");
+        if (g_buildPlatform == 3) ImGui::TextDisabled("Export a dedicated server:  the game with no window, plus server.cfg and deploy scripts");
+        else ImGui::TextDisabled("Export a standalone game:  <Name>.exe + game.okayscene + game.okayconfig");
         ImGui::Spacing();
 
         // ---- Build profiles bar (Unity 6 "Build Profiles") ----------------
@@ -13312,16 +13641,19 @@ void DrawFileDialogs(EditorState& ed) {
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
-        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)"};
-        {   // Segmented platform picker (clearer than a dropdown for 3 options).
-            const char* platShort[] = {"Desktop", "Web", "Android"};
+        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server"};
+        {   // Segmented platform picker (clearer than a dropdown for a few options).
+            const char* platShort[] = {"Desktop", "Web", "Android", "Server"};
             const char* platTip[] = {
                 "Build a runnable Windows .exe right here.",
                 "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
-                "Export an Android Studio project;\nfinish the build with Android Studio + NDK."};
+                "Export an Android Studio project;\nfinish the build with Android Studio + NDK.",
+                "A headless multiplayer server for Linux or Windows: the game runs with no window\n"
+                "and players connect to it. Comes with server.cfg, start scripts, a one-command\n"
+                "deploy to a Linux VPS, a Dockerfile and a README."};
             ImGui::TextDisabled("Platform");
             ImGui::SameLine();
-            for (int pi = 0; pi < 3; ++pi) {
+            for (int pi = 0; pi < 4; ++pi) {
                 if (pi) ImGui::SameLine(0, 2);
                 bool on = g_buildPlatform == pi;
                 if (on) {
@@ -13337,6 +13669,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::Spacing();
         // ---- Sections: a sidebar on the left, the chosen page on the right ----
         static int s_buildSec = 0;
+        if (const char* e = std::getenv("OKAY_UI_BUILDSEC")) { static bool once = false; if (!once) { once = true; s_buildSec = std::atoi(e); } }
         static const char* kBuildSecs[] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output"};
         static const char* kBuildSecTips[] = {
             "Which scenes ship, in what order (the first one starts the game).",
@@ -13347,9 +13680,21 @@ void DrawFileDialogs(EditorState& ed) {
             "Output folder layout, encryption and what happens after the build."};
         const float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f;
         ImGui::BeginChild("##bnav", ImVec2(170, -buildFooterH), ImGuiChildFlags_Borders);
-        for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
-            if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
+        if (g_buildPlatform == 3) {   // a server has no window/graphics/audio: Scenes, Server, Output
+            if (s_buildSec != 0 && s_buildSec != 5 && s_buildSec != 6) s_buildSec = 6;
+            const int ids[] = {0, 6, 5};
+            const char* labels[] = {"Scenes", "Server", "Output"};
+            const char* tips[] = {kBuildSecTips[0], "Name, port, players, password, public listing and anti-cheat (written to server.cfg).", kBuildSecTips[5]};
+            for (int k = 0; k < 3; ++k) {
+                if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[k]);
+            }
+        } else {
+            if (s_buildSec == 6) s_buildSec = 0;
+            for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
+                if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
+            }
         }
         ImGui::EndChild();
         ImGui::SameLine();
@@ -13427,6 +13772,41 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a list: also bundle every .okayscene in Assets (the open scene starts the game).");
             }
+        }
+        if (s_buildSec == 6) {   // ---- Dedicated server ----
+            SectionHeader("Dedicated Server");
+            ImGui::TextDisabled("The game runs headless (no window or GPU) and players connect to it over UDP.\n"
+                                "These go into server.cfg in the build, which you can edit later.");
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Runs on");
+            ImGui::SameLine(140);
+            ImGui::RadioButton("Linux (VPS / Docker)", &g_build.srvTarget, 0); ImGui::SameLine();
+            ImGui::RadioButton("Windows", &g_build.srvTarget, 1);
+            ImGui::SetNextItemWidth(300); ImGui::InputText("Product name##srv", g_buildNameBuf, sizeof(g_buildNameBuf));
+            ImGui::SetNextItemWidth(300); ImGui::InputTextWithHint("Server name", (std::string(g_buildNameBuf) + " Server").c_str(), g_build.srvName, sizeof(g_build.srvName));
+            ImGui::SetNextItemWidth(140); ImGui::InputInt("UDP port", &g_build.srvPort);
+            g_build.srvPort = std::clamp(g_build.srvPort, 1, 65535);
+            ImGui::SetNextItemWidth(140); ImGui::InputInt("Max players", &g_build.srvMaxPlayers);
+            g_build.srvMaxPlayers = std::clamp(g_build.srvMaxPlayers, 1, 1024);
+            ImGui::SetNextItemWidth(140); ImGui::SliderInt("Tick rate (Hz)", &g_build.srvTick, 10, 120);
+            ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("Password", "(open to everyone)", g_build.srvPassword, sizeof(g_build.srvPassword), ImGuiInputTextFlags_Password);
+            ImGui::Checkbox("Only signed-in OkaySpace players", &g_build.srvAuth);
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+            ImGui::Checkbox("List in the server browsers", &g_build.srvAdvertise);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shows up in the launcher's Multiplayer page and the game's Find a server window.\nThe server machine signs in once with --login (see the README).");
+            ImGui::BeginDisabled(!g_build.srvAdvertise);
+            ImGui::SetNextItemWidth(300); ImGui::InputTextWithHint("Public address", "203.0.113.7 or play.example.com", g_build.srvPublicAddr, sizeof(g_build.srvPublicAddr));
+            ImGui::SetNextItemWidth(140); ImGui::InputTextWithHint("Region", "EU, US East...", g_build.srvRegion, sizeof(g_build.srvRegion));
+            ImGui::EndDisabled();
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+            ImGui::TextDisabled("Anti-cheat basics (0 = off)");
+            ImGui::SetNextItemWidth(140); ImGui::InputFloat("Max move speed", &g_build.srvMaxSpeed, 1.0f, 5.0f, "%.1f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units per second. Faster moves are rejected and the player snaps back.");
+            ImGui::SetNextItemWidth(140); ImGui::InputInt("Messages / second", &g_build.srvRateLimit);
+            ImGui::SetNextItemWidth(140); ImGui::InputInt("Kick after N bad moves", &g_build.srvKickAfter);
+            g_build.srvMaxSpeed = std::max(0.0f, g_build.srvMaxSpeed);
+            g_build.srvRateLimit = std::max(0, g_build.srvRateLimit);
+            g_build.srvKickAfter = std::max(0, g_build.srvKickAfter);
         }
         {
             if (s_buildSec == 1) {
@@ -13600,6 +13980,15 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::Spacing();
         // One-line summary of what's about to be produced, so a wrong setting
         // is caught before the build instead of after it.
+        if (g_buildPlatform == 3) {
+            ImGui::TextDisabled("%s server  \xC2\xB7  %s  \xC2\xB7  UDP %d  \xC2\xB7  %d players%s%s  \xC2\xB7  %s",
+                g_build.srvTarget == 0 ? "Linux" : "Windows",
+                g_build.srvName[0] ? g_build.srvName : (std::string(g_buildNameBuf) + " Server").c_str(),
+                g_build.srvPort, g_build.srvMaxPlayers,
+                g_build.srvPassword[0] ? "  \xC2\xB7  password" : "",
+                g_build.srvAdvertise ? "  \xC2\xB7  listed" : "",
+                g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
+        } else
         {
             const char* wm2 = g_build.fullscreen ? "fullscreen" : (g_build.borderless ? "borderless" : "windowed");
             ImGui::TextDisabled("%s v%s  \xC2\xB7  %dx%d %s  \xC2\xB7  %s%s%s  \xC2\xB7  %s",
@@ -13628,7 +14017,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SameLine();
         // Footer buttons, right-aligned (dialog convention): Cancel, then the
         // green primary Build/Export in the corner.
-        const char* buildLabel = g_buildPlatform == 0 ? "Build" : "Export";
+        const char* buildLabel = (g_buildPlatform == 0 || g_buildPlatform == 3) ? "Build" : "Export";
         const float bw = 120.0f;
         const bool  desktop = (g_buildPlatform == 0);
         // Cancel, [Build & Run], Build/Export — right-aligned. Build & Run only
@@ -13650,7 +14039,30 @@ void DrawFileDialogs(EditorState& ed) {
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
         ImGui::PopStyleColor(3);
         if (doBuild) {
-          if (g_buildPlatform != 0) {
+          if (g_buildPlatform == 3) {   // dedicated server folder
+            builder::Options so;
+            so.company = g_build.company; so.version = g_build.version; so.bundleId = g_build.bundleId;
+            so.cleanOutput = g_build.cleanOutput; so.dataFolder = g_build.dataFolder; so.encryptData = g_build.encryptData;
+            so.includeAllProjectScenes = g_build.includeAllProjectScenes;
+            for (const BuildScene& sc : g_build.scenes) if (sc.on) so.sceneList.push_back(sc.path);
+            builder::ServerOptions sv;
+            sv.target = g_build.srvTarget; sv.name = g_build.srvName; sv.password = g_build.srvPassword;
+            sv.publicAddr = g_build.srvPublicAddr; sv.region = g_build.srvRegion;
+            sv.port = g_build.srvPort; sv.maxPlayers = g_build.srvMaxPlayers; sv.tick = g_build.srvTick;
+            sv.auth = g_build.srvAuth; sv.advertise = g_build.srvAdvertise;
+            sv.maxSpeed = g_build.srvMaxSpeed; sv.rateLimit = g_build.srvRateLimit; sv.kickAfter = g_build.srvKickAfter;
+            g_buildReport = builder::BuildReport{};
+            g_buildStatus = builder::BuildServer(ed, g_buildDirBuf, g_buildNameBuf, so, sv, &g_buildReport);
+            g_openBuildResult = true;
+            ConsoleLog("Build Server: " + g_buildStatus);
+            if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()) {
+                BuildProfile& p = g_buildProfiles[g_buildProfileSel];
+                p.settings = g_build; p.productName = g_buildNameBuf; p.outputDir = g_buildDirBuf; p.platform = g_buildPlatform;
+                SaveBuildProfiles(ed);
+            }
+            if (g_buildReport.valid && g_build.openFolderAfter) extide::RevealInFiles(g_buildDirBuf);
+            ImGui::CloseCurrentPopup();
+          } else if (g_buildPlatform != 0) {
             builder::Options wo;
             wo.company = g_build.company; wo.version = g_build.version;
             wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId;
@@ -37298,6 +37710,16 @@ int main(int argc, char** argv) {
                             asmx->states = {idle, move, jump}; asmx->anyState = {any}; asmx->entry = "Idle";
                         }
                     }
+                }
+            }
+            if (const char* bs = std::getenv("OKAY_UI_BUILDSERVER"); bs && s_focusFrames == 33) {   // dev: Server build page + export
+                g_buildPlatform = 3; g_showBuildGame = true;
+                if (*bs) {
+                    builder::Options o; builder::ServerOptions sv;
+                    sv.name = "Test Server"; sv.password = "pw"; sv.advertise = true; sv.publicAddr = "play.example.com"; sv.region = "EU";
+                    sv.target = std::getenv("OKAY_UI_BUILDSERVER_WIN") ? 1 : 0;
+                    std::printf("[build-server] %s\n", builder::BuildServer(ed, bs, "Test Game", o, sv).c_str());
+                    std::fflush(stdout);
                 }
             }
             if (std::getenv("OKAY_UI_PLUGIN") && s_focusFrames == 33) { NewPluginFromTemplate(ed); }

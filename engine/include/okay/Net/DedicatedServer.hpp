@@ -55,6 +55,15 @@ struct DedicatedServerOptions {
 /// OKAY_SERVER_ADVERTISE=1, OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION. Flags win.
 /// On a bad value, returns true with `error` set.
 bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out, std::string* error = nullptr);
+/// Read a server.cfg ("key = value" lines, # comments) into `out`: port, name,
+/// max_players, tick, password, auth, encryption, status, scene, advertise,
+/// public_addr, region, max_speed, rate_limit, kick_after. False with `error`
+/// set on a bad value. ParseDedicatedServerArgs loads one automatically: the
+/// file given with --config, else server.cfg in the working folder or beside the
+/// executable. Precedence: config file < environment < flags.
+bool LoadDedicatedServerConfig(const std::string& path, DedicatedServerOptions& out, std::string* error = nullptr);
+/// Where the config came from ("" = none) after ParseDedicatedServerArgs.
+const std::string& DedicatedServerConfigPath();
 /// The usage text for --help.
 const char* DedicatedServerUsage();
 

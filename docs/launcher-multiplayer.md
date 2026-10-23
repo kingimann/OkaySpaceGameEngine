@@ -151,6 +151,10 @@ seconds. It needs:
 - the OkaySpace account signed in on that machine;
 - the `game_sessions` table: run `docs/sql/game_servers.sql` once.
 
+The easiest way to get there is the editor's **Build Settings → Server**
+export. It writes these settings to `server.cfg` and adds a one-command deploy
+script.
+
 The listing is removed when the server stops. A server that crashed drops out
 of the browser after a couple of minutes. See [dedicated-server.md](dedicated-server.md).
 

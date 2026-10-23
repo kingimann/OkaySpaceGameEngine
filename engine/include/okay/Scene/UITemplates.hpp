@@ -26,6 +26,7 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Scene/UILayoutTools.hpp"   // AvoidOverlap: HUD pieces don't land on each other
 #include <cctype>
 #include <string>
 
@@ -34,7 +35,7 @@ namespace okay { namespace UITemplates {
 // The launcher's palette, so screens and kit pieces match it (and each other).
 namespace slate {
     inline Color Backdrop()   { return Color::FromBytes(18, 20, 26, 250); }
-    inline Color Panel()      { return Color::FromBytes(30, 33, 41, 245); }
+    inline Color Panel()      { return Color::FromBytes(30, 33, 41, 252); }
     inline Color Card()       { return Color::FromBytes(38, 42, 53, 255); }
     inline Color Field()      { return Color::FromBytes(46, 51, 64, 255); }
     inline Color FieldHover() { return Color::FromBytes(58, 64, 80, 255); }
@@ -84,8 +85,8 @@ namespace detail {
         p->cornerRadius = corner;
         p->borderWidth = corner > 0.0f ? 1.0f : 0.0f; p->borderColor = slate::Border();
         if (lifted) {
-            p->shadow = true; p->shadowColor = Color::FromBytes(0, 0, 0, 120);
-            p->shadowOffset = {0.0f, 8.0f}; p->shadowSoftness = 18.0f;
+            p->shadow = true; p->shadowColor = Color::FromBytes(0, 0, 0, 90);
+            p->shadowOffset = {0.0f, 6.0f}; p->shadowSoftness = 16.0f;
         }
         return g;
     }
@@ -404,6 +405,7 @@ inline GameObject* AddHUD(Scene& scene) {
     GameObject* ammo = Panel(scene, root, "Ammo", UIAnchor::BottomRight, {-20, -20}, {150, 56},
                              Color::FromBytes(30, 33, 41, 215), 12.0f);
     Text(scene, ammo, "Count", "30 / 90", UIAnchor::TopLeft, {0, 0}, {150, 56}, 24.0f, slate::Text(), 1, true);
+    for (GameObject* piece : {card, score, ammo}) UILayout::AvoidOverlap(scene, piece);
     return root;
 }
 
@@ -411,15 +413,16 @@ inline GameObject* AddHUD(Scene& scene) {
 inline GameObject* AddDialogBox(Scene& scene) {
     using namespace detail;
     GameObject* canvas = EnsureCanvas(scene);
-    GameObject* root = Panel(scene, canvas, "Dialog Box", UIAnchor::BottomCenter, {0, -24}, {920, 168},
+    GameObject* root = Panel(scene, canvas, "Dialog Box", UIAnchor::BottomCenter, {0, -24}, {840, 168},
                              Color::FromBytes(24, 27, 34, 240), 14.0f, true);
     Avatar(scene, root, "Portrait", "Name", UIAnchor::TopLeft, {24, 22}, 56.0f);
     Text(scene, root, "Speaker", "Name", UIAnchor::TopLeft, {96, 22}, {400, 24}, 17.0f, slate::Accent(), 0, true);
     auto* body = Text(scene, root, "Body", "Type your dialogue here...", UIAnchor::TopLeft, {96, 52},
-                      {780, 64}, 17.0f)->GetComponent<TextRenderer>();
+                      {600, 64}, 17.0f)->GetComponent<TextRenderer>();
     body->wrap = true; body->vcenter = false; body->typeSpeed = 40.0f; body->visibleChars = 0;
     Button(scene, root, "NextButton", "Next", UIAnchor::BottomRight, {-20, -18}, {120, 40});
     IntroAnim(root, UIAnimation::Intro::SlideBottom);
+    UILayout::AvoidOverlap(scene, root);
     return root;
 }
 
@@ -436,6 +439,7 @@ inline GameObject* AddHealthBar(Scene& scene) {
       pb->anchor = UIAnchor::TopLeft; pb->position = {14, 34}; pb->size = {272, 12}; pb->value = 1.0f;
       pb->shape = UIShape::Pill; pb->fill = slate::Success(); pb->background = Color::FromBytes(255, 255, 255, 24);
       auto* bb = g->AddComponent<UIBarBind>(); bb->var = "hp"; bb->min = 0.0f; bb->max = 100.0f; }   // fills from `hp`
+    UILayout::AvoidOverlap(scene, root);
     return root;
 }
 
@@ -556,7 +560,8 @@ inline GameObject* AddShop(Scene& scene) {
     GameObject* root = Panel(scene, canvas, "Shop", UIAnchor::Center, {0, 0}, {780, 452}, slate::Panel(), 16.0f, true);
     Text(scene, root, "Title", "Shop", UIAnchor::TopLeft, {32, 24}, {300, 40}, 30.0f, slate::Text(), 0, true);
     Badge(scene, root, "Coins", "1,250 coins", UIAnchor::TopRight, {-72, 32}, slate::Warning());
-    Button(scene, root, "CloseButton", "x", UIAnchor::TopRight, {-24, 26}, {34, 34}, ButtonKind::Ghost);
+    { GameObject* close = Button(scene, root, "CloseButton", "x", UIAnchor::TopRight, {-24, 26}, {34, 34}, ButtonKind::Secondary);
+      close->GetComponent<UIButton>()->shape = UIShape::Circle; }
     const char* items[] = {"Plasma Blade", "Jet Boots", "Shield Orb"};
     const char* desc[]  = {"Melee - Epic", "Gear - Rare", "Gadget - Common"};
     const char* price[] = {"900", "450", "200"};
@@ -595,7 +600,11 @@ inline GameObject* AddConfirmDialog(Scene& scene) {
 }
 
 // A toast on its own (the kit piece, on the scene's canvas).
-inline GameObject* AddNotificationScreen(Scene& scene) { return AddNotification(scene, EnsureCanvas(scene)); }
+inline GameObject* AddNotificationScreen(Scene& scene) {
+    GameObject* n = AddNotification(scene, EnsureCanvas(scene));
+    UILayout::AvoidOverlap(scene, n);   // below a HUD score chip already in the corner
+    return n;
+}
 
 // Matchmaking banner: spinner + "Finding match" + elapsed time + Cancel (top-centre).
 inline GameObject* AddMatchmaking(Scene& scene) {
@@ -610,6 +619,7 @@ inline GameObject* AddMatchmaking(Scene& scene) {
     Text(scene, root, "Status", "Ranked - 0:12", UIAnchor::TopLeft, {70, 38}, {230, 20}, 13.0f, slate::Dim());
     Button(scene, root, "CancelButton", "Cancel", UIAnchor::MiddleRight, {-16, 0}, {96, 38}, ButtonKind::Secondary);
     IntroAnim(root, UIAnimation::Intro::SlideTop);
+    UILayout::AvoidOverlap(scene, root);
     return root;
 }
 

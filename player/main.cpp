@@ -113,6 +113,34 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
     }
 }
 
+// A border ring: the outer shape minus the shape inset by `width`. Drawn over the
+// fill, so a clear or see-through widget (an outline button, a glass panel) shows
+// what's behind it instead of a solid slab of border colour.
+static void FillUIRing(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
+                       const Color& c, int width, float op, int cornerMask = UICornerAll) {
+    if (r.w <= 0 || r.h <= 0 || width <= 0) return;
+    SDL_SetRenderDrawColor(ren, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op));
+    const int iw = r.w - 2 * width, ih = r.h - 2 * width;
+    const float innerR = radius - width > 0.0f ? radius - width : 0.0f;
+    for (int row = 0; row < r.h; ++row) {
+        float x0, x1;
+        if (!UIShapeRowSpan(shape, (float)r.w, (float)r.h, radius, row, x0, x1, cornerMask)) continue;
+        float ix0 = 0, ix1 = -1;
+        const int ir = row - width;
+        const bool inner = iw > 0 && ih > 0 && ir >= 0 && ir < ih &&
+                           UIShapeRowSpan(shape, (float)iw, (float)ih, innerR, ir, ix0, ix1, cornerMask);
+        if (!inner) {
+            SDL_Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
+            SDL_RenderFillRect(ren, &span);
+            continue;
+        }
+        const int l0 = (int)x0, l1 = width + (int)ix0;           // left piece  [l0, l1)
+        const int r0 = width + (int)ix1 + 1, r1 = (int)x1 + 1;   // right piece [r0, r1)
+        if (l1 > l0) { SDL_Rect a{r.x + l0, r.y + row, l1 - l0, 1}; SDL_RenderFillRect(ren, &a); }
+        if (r1 > r0) { SDL_Rect b{r.x + r0, r.y + row, r1 - r0, 1}; SDL_RenderFillRect(ren, &b); }
+    }
+}
+
 // Map a panel's gradient direction to FillUIShape's (horizontal, diag) params.
 static void GradientParams(UIPanel::GradientDir d, bool& horizontal, int& diag) {
     horizontal = (d == UIPanel::GradientDir::Horizontal);
@@ -135,7 +163,8 @@ static void FillUIShadow(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, fl
         Color c = color; c.a = color.a * (0.6f / layers);     // accumulate toward the edge
         FillUIShape(ren, r2, shape, radius + grow, c, c, false, false, op, 0, cornerMask);
     }
-    FillUIShape(ren, r, shape, radius, color, color, false, false, op, 0, cornerMask);   // solid core
+    Color core = color; core.a *= 0.55f;   // a lighter core: soft shadows read as depth, not a dark slab
+    FillUIShape(ren, r, shape, radius, core, core, false, false, op, 0, cornerMask);
 }
 
 // A stable, distinct color for each non-zero tile id (no palette is stored).
@@ -2656,19 +2685,16 @@ int main(int argc, char** argv) {
                 FillUIShape(renderer, outer, pn->shape, pn->cornerRadius + ow,
                             pn->outlineColor, pn->outlineColor, false, false, op, 0, cm);
             }
-            if (pn->borderWidth > 0.0f) {                   // border = outer shape, then inner fill
+            if (pn->borderWidth > 0.0f) {                   // fill, then the border ring over it
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
-                            pn->borderColor, pn->borderColor, false, false, op, 0, cm);
-                int b = (int)pn->borderWidth;
-                SDL_Rect inner{r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b};
-                float innerR = pn->cornerRadius - b; if (innerR < 0.0f) innerR = 0.0f;
-                FillUIShape(renderer, inner, pn->shape, innerR,
                             pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag, cm);
                 if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
                     Color hb = pn->highlightColor; hb.a = 0.0f;
-                    FillUIShape(renderer, inner, pn->shape, innerR,
+                    FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
                                 pn->highlightColor, hb, true, false, op, 0, cm);
                 }
+                FillUIRing(renderer, r, pn->shape, pn->cornerRadius, pn->borderColor,
+                           std::max(1, (int)(pn->borderWidth + 0.5f)), op, cm);
             } else {
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
                             pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag, cm);
@@ -3288,13 +3314,10 @@ int main(int argc, char** argv) {
                 FillUIShadow(renderer, sh, btn->shape, btn->cornerRadius,
                              btn->shadowColor, btn->shadowSoftness, op);
             }
-            if (btn->borderWidth > 0.0f) {                  // border = outer shape, then inner fill
-                FillUIShape(renderer, r, btn->shape, btn->cornerRadius,
-                            btn->borderColor, btn->borderColor, false, false, op);
-                int b = (int)btn->borderWidth;
-                SDL_Rect inner{r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b};
-                float innerR = btn->cornerRadius - b; if (innerR < 0.0f) innerR = 0.0f;
-                FillUIShape(renderer, inner, btn->shape, innerR, bg, bg, false, false, op);
+            if (btn->borderWidth > 0.0f) {                  // fill, then the border ring over it
+                FillUIShape(renderer, r, btn->shape, btn->cornerRadius, bg, bg, false, false, op);
+                FillUIRing(renderer, r, btn->shape, btn->cornerRadius, btn->borderColor,
+                           std::max(1, (int)(btn->borderWidth + 0.5f)), op);
             } else {
                 FillUIShape(renderer, r, btn->shape, btn->cornerRadius, bg, bg, false, false, op);
             }
@@ -3450,12 +3473,9 @@ int main(int argc, char** argv) {
             Color bg = in->CurrentColor();
             // Focus ring: draw the border shape behind, then the field inset over it.
             if (in->focused && in->borderWidth > 0.0f) {
-                FillUIShape(renderer, box, in->shape, in->cornerRadius,
-                            in->borderColor, in->borderColor, false, false, 1.0f);
-                int b = (int)in->borderWidth;
-                SDL_Rect inner{box.x + b, box.y + b, box.w - 2 * b, box.h - 2 * b};
-                float ir = in->cornerRadius - b; if (ir < 0.0f) ir = 0.0f;
-                FillUIShape(renderer, inner, in->shape, ir, bg, bg, false, false, 1.0f);
+                FillUIShape(renderer, box, in->shape, in->cornerRadius, bg, bg, false, false, 1.0f);
+                FillUIRing(renderer, box, in->shape, in->cornerRadius, in->borderColor,
+                           std::max(1, (int)(in->borderWidth + 0.5f)), 1.0f);
             } else {
                 FillUIShape(renderer, box, in->shape, in->cornerRadius, bg, bg, false, false, 1.0f);
             }

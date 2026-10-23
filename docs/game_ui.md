@@ -41,6 +41,32 @@ Everything you add is ordinary objects, so you can drag, resize, restyle or
 delete each part. To reuse a screen you've customised, use **Save Selected as
 UI**.
 
+When you add several screens to one scene:
+- **HUD pieces** move out of each other's way. For example, a Health Bar added
+  after a HUD sits under the player card, and a Notification sits under the score.
+- **Adding a centred menu** (Settings, Pause, Game Over...) hides the other
+  centred menus on the Canvas, so they aren't drawn on top of each other. Turn
+  them back on in the Hierarchy when you want them.
+
+### Styling and layout tools
+
+- **Look** (at the top of every UI component in the Inspector): one-click
+  styles in the launcher's look.
+  - **Button:** Primary, Secondary, Danger, Ghost, Success, Outline, Pill, Icon.
+  - **Panel:** Card, Raised, Glass, Outline, Pill, Dim overlay, Accent, Gradient.
+  - **Text:** Title, Heading, Body, Caption, Muted, Number, HUD.
+  - Progress bars, sliders, switches, inputs, dropdowns, tabs and radials have
+    their own looks.
+- **Copy style / Paste style**: copy one widget's look (colours, corners,
+  borders, shadow, font) onto another, or onto the whole selection. Its position,
+  size and text stay.
+- **Wrap in Panel** puts the selected widgets on a new card that fits around
+  them.
+- **Fit to Children** shrinks or grows a card to wrap what's on it.
+- With several widgets selected, the UI view's **Align** menu can also
+  **Match width / height / size**, **Stack in a column / row** with a gap, and
+  **Wrap in panel**.
+
 Screens lay out against a 1280×720 canvas that **scales with the screen**, so
 they keep their layout at any window size. The HUD's health bar and number
 follow the `hp` variable, and the score follows `score`. The Loading Screen's

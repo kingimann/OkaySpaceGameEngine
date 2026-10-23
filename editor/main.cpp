@@ -15,6 +15,8 @@
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
+#include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
+#include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
@@ -4038,6 +4040,90 @@ GameObject* UIAddParent(EditorState& ed) {
     return EnsureUIRoot(ed);
 }
 
+// A centred menu card / modal just added: hide the other centred menus on the same
+// Canvas so the new one isn't drawn on top of them (they stay in the Hierarchy).
+void HideOtherMenus(EditorState& ed, GameObject* fresh) {
+    if (!fresh || !fresh->transform) return;
+    auto isMenu = [](GameObject* g) {
+        if (!g) return false;
+        if (auto* p = g->GetComponent<UIPanel>())
+            return p->anchor == UIAnchor::Center && p->size.x >= 280.0f && p->size.y >= 180.0f;
+        if (!GetUIRect(g).valid && g->transform)        // a group: a modal with a full-screen dimmer
+            for (Transform* c : g->transform->Children())
+                if (c && c->gameObject && c->gameObject->name == "Dim") return true;
+        return false;
+    };
+    if (!isMenu(fresh)) return;
+    Transform* parent = fresh->transform->Parent();
+    if (!parent) return;
+    std::string hidden;
+    for (Transform* c : parent->Children()) {
+        GameObject* g = c ? c->gameObject : nullptr;
+        if (!g || g == fresh || !g->active || !isMenu(g)) continue;
+        g->active = false;
+        hidden += (hidden.empty() ? "" : ", ") + g->name;
+    }
+    if (!hidden.empty())
+        ConsoleLog("Hid " + hidden + " so " + fresh->name + " isn't drawn on top of it. Turn it back on in the Hierarchy.");
+    (void)ed;
+}
+
+// One-click looks + copy / paste style, at the top of each UI component's inspector.
+std::string g_uiStyleClip;   // a serialized widget whose look Paste style applies
+void UIStyleBar(EditorState& ed, Component* c) {
+    using namespace okay::UIStyles;
+    const std::vector<const char*>* names = nullptr;
+    std::function<void(int)> apply;
+    if (auto* b = dynamic_cast<UIButton*>(c))               { names = &ButtonPresets();   apply = [b](int i) { ApplyButton(b, i); }; }
+    else if (auto* p = dynamic_cast<UIPanel*>(c))           { names = &PanelPresets();    apply = [p](int i) { ApplyPanel(p, i); }; }
+    else if (auto* t = dynamic_cast<TextRenderer*>(c))      { if (!t->screenSpace) return; names = &TextPresets(); apply = [t](int i) { ApplyText(t, i); }; }
+    else if (auto* pb = dynamic_cast<UIProgressBar*>(c))    { names = &ProgressPresets(); apply = [pb](int i) { ApplyProgress(pb, i); }; }
+    else if (auto* sl = dynamic_cast<UISlider*>(c))         { names = &SliderPresets();   apply = [sl](int i) { ApplySlider(sl, i); }; }
+    else if (auto* tg = dynamic_cast<UIToggle*>(c))         { names = &TogglePresets();   apply = [tg](int i) { ApplyToggle(tg, i); }; }
+    else if (auto* in = dynamic_cast<UIInputField*>(c))     { names = &InputPresets();    apply = [in](int i) { ApplyInput(in, i); }; }
+    else if (auto* dd = dynamic_cast<UIDropdown*>(c))       { names = &DropdownPresets(); apply = [dd](int i) { ApplyDropdown(dd, i); }; }
+    else if (auto* tb = dynamic_cast<UITabs*>(c))           { names = &TabsPresets();     apply = [tb](int i) { ApplyTabs(tb, i); }; }
+    else if (auto* rp = dynamic_cast<UIRadialProgress*>(c)) { names = &RadialPresets();   apply = [rp](int i) { ApplyRadial(rp, i); }; }
+    if (!names || !c->gameObject) return;
+    ImGui::PushID("##stylebar");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Look");
+    const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    for (int i = 0; i < (int)names->size(); ++i) {
+        const char* n = (*names)[i];
+        const float w = ImGui::CalcTextSize(n).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine();
+        if (ImGui::GetCursorScreenPos().x + w > right) { ImGui::NewLine(); }
+        ImGui::PushID(i);
+        if (ImGui::SmallButton(n)) { ed.PushUndo(); apply(i); ed.dirty = true; }
+        ImGui::PopID();
+    }
+    if (ImGui::SmallButton("Copy style")) {
+        g_uiStyleClip = SceneSerializer::SerializeObject(*c->gameObject);
+        ConsoleLog("Copied the look of " + c->gameObject->name);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy this widget's look (colours, corners, borders, shadows, font)");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(g_uiStyleClip.empty());
+    if (ImGui::SmallButton("Paste style")) {
+        okay::Scene tmp("styleclip");
+        if (GameObject* src = SceneSerializer::InstantiateFromText(tmp, g_uiStyleClip)) {
+            ed.PushUndo();
+            int n = 0;
+            std::vector<GameObject*> targets = ed.MultiSelection();
+            if (std::find(targets.begin(), targets.end(), c->gameObject) == targets.end()) targets.push_back(c->gameObject);
+            for (GameObject* g : targets) n += okay::UIStyles::CopyStyle(src, g);
+            ed.dirty = true;
+            ConsoleLog(n ? "Pasted the look onto " + std::to_string(targets.size()) + " widget(s)" : std::string("Nothing to paste: the copied widget is a different kind"));
+        }
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Give this widget (and the rest of the selection) the copied look. Position, size and text stay.");
+    ImGui::PopID();
+    ImGui::Spacing();
+}
+
 // The widget list shared by Create > UI and the UI view's "+ Add" button: plain
 // widgets, launcher-look kit pieces and whole prebuilt screens.
 void DrawUIWidgetItems(EditorState& ed, bool& created) {
@@ -4118,7 +4204,10 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
     if (ImGui::BeginMenu("Prebuilt Screens")) {
         auto add = [&](const char* label, GameObject* (*fn)(okay::Scene&)) {
             if (ImGui::MenuItem(label)) {
-                ed.PushUndo(); ed.Select(fn(ed.scene()));
+                ed.PushUndo();
+                GameObject* g = fn(ed.scene());
+                HideOtherMenus(ed, g);
+                ed.Select(g);
                 ConsoleLog(std::string("Added UI: ") + label); ed.dirty = true; created = true;
             }
         };
@@ -22478,6 +22567,21 @@ static bool IsPolyUIShape(UIShape s) {
     return s != UIShape::Rectangle && s != UIShape::Rounded;
 }
 
+// Soft drop shadow for the editor's UI preview, matching the game: a few expanding,
+// fading copies and a light core (one solid copy read as a dark slab under cards).
+static void SoftShadowIm(ImDrawList* dl, ImVec2 a, ImVec2 b, float r, const Color& c, float soft, ImDrawFlags fl = 0) {
+    auto col = [](const Color& k) { return IM_COL32((int)(k.r * 255), (int)(k.g * 255), (int)(k.b * 255), (int)(k.a * 255)); };
+    if (soft <= 0.0f) { dl->AddRectFilled(a, b, col(c), r, fl); return; }
+    const int layers = 5;
+    for (int k = layers; k >= 1; --k) {
+        const float g = soft * (float)k / layers;
+        Color cc = c; cc.a = c.a * (0.6f / layers);
+        dl->AddRectFilled(ImVec2(a.x - g, a.y - g), ImVec2(b.x + g, b.y + g), col(cc), r + g, fl);
+    }
+    Color core = c; core.a *= 0.55f;
+    dl->AddRectFilled(a, b, col(core), r, fl);
+}
+
 // Preview a UIShape in the editor canvas by sampling UIShapeRowSpan (the same
 // single source of truth the game renderer uses) into a convex polygon, so the
 // editor shows exactly the silhouette the built game will fill.
@@ -23991,6 +24095,28 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Button("Fill Height")) fill(false, true);
             ImGui::SameLine();
             if (ImGui::Button(hasParent ? "Fill Parent" : "Fill Canvas")) fill(true, true);
+        }
+        // Layout tools: put this widget on a card, or shrink-wrap a card around its children.
+        {
+            bool hasUIKids = false;
+            for (Transform* ch : go->transform->Children())
+                if (ch && ch->gameObject && GetUIRect(ch->gameObject).valid) { hasUIKids = true; break; }
+            if (ImGui::Button("Wrap in Panel")) {
+                ed.PushUndo();
+                std::vector<GameObject*> items = ed.MultiSelection();
+                if (items.size() < 2) items = {go};
+                if (GameObject* p = okay::UILayout::WrapInPanel(ed.scene(), items)) { ed.Select(p); ed.dirty = true; }
+                else ConsoleLog("Wrap in Panel: the selected widgets need the same parent", 1);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put the selected widget(s) on a new card that fits around them (16 px padding)");
+            if (hasUIKids && ar.sizePtr) {
+                ImGui::SameLine();
+                if (ImGui::Button("Fit to Children")) {
+                    ed.PushUndo();
+                    if (okay::UILayout::FitToChildren(go)) ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resize this to wrap its child widgets (16 px padding); the children stay put on screen");
+            }
         }
         ImGui::Spacing();
     }
@@ -28788,6 +28914,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tr = dynamic_cast<TextRenderer*>(curComp)) {
         if (CompHeader("Text", tr, &toRemove)) {
+            UIStyleBar(ed, tr);
             char buf[512];
             std::strncpy(buf, tr->text.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
@@ -29105,6 +29232,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* btn = dynamic_cast<UIButton*>(curComp)) {
         if (CompHeader("UI Button", btn, &toRemove)) {
+            UIStyleBar(ed, btn);
             // The label lives on a child Text object (Unity-style). When one exists,
             // text is edited/styled THERE — don't show a duplicate text field on the
             // button. Only the legacy case (no child) edits the built-in label here.
@@ -29251,6 +29379,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* pn = dynamic_cast<UIPanel*>(curComp)) {
         if (CompHeader("UI Panel", pn, &toRemove)) {
+            UIStyleBar(ed, pn);
             AnchorCombo("Anchor##uip", pn->anchor, ed);
             UIRectFields("uip", pn->anchor, pn->position, pn->size, ed);
             float c[4] = {pn->color.r, pn->color.g, pn->color.b, pn->color.a};
@@ -29309,6 +29438,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* in = dynamic_cast<UIInputField*>(curComp)) {
         if (CompHeader("UI Input Field", in, &toRemove)) {
+            UIStyleBar(ed, in);
             char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
             char ph[96]; std::strncpy(ph, in->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
@@ -29338,6 +29468,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* dd = dynamic_cast<UIDropdown*>(curComp)) {
         if (CompHeader("UI Dropdown", dd, &toRemove)) {
+            UIStyleBar(ed, dd);
             float pos[2] = {dd->position.x, dd->position.y};
             if (ImGui::DragFloat2("Pos (px)##udd", pos, 1.0f)) { dd->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {dd->size.x, dd->size.y};
@@ -29594,6 +29725,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
+            UIStyleBar(ed, pb);
             float pos[2] = {pb->position.x, pb->position.y};
             if (ImGui::DragFloat2("Pos (px)##upb", pos, 1.0f)) { pb->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {pb->size.x, pb->size.y};
@@ -29626,6 +29758,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* rp = dynamic_cast<UIRadialProgress*>(curComp)) {
         if (CompHeader("UI Radial Progress", rp, &toRemove)) {
+            UIStyleBar(ed, rp);
             float pos[2] = {rp->position.x, rp->position.y};
             if (ImGui::DragFloat2("Pos (px)##urp", pos, 1.0f)) { rp->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {rp->size.x, rp->size.y};
@@ -30003,6 +30136,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* sl = dynamic_cast<UISlider*>(curComp)) {
         if (CompHeader("UI Slider", sl, &toRemove)) {
+            UIStyleBar(ed, sl);
             float pos[2] = {sl->position.x, sl->position.y};
             if (ImGui::DragFloat2("Pos (px)##usl", pos, 1.0f)) { sl->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sl->size.x, sl->size.y};
@@ -30089,6 +30223,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tg = dynamic_cast<UIToggle*>(curComp)) {
         if (CompHeader("UI Toggle", tg, &toRemove)) {
+            UIStyleBar(ed, tg);
             char lb[128];
             std::strncpy(lb, tg->label.c_str(), sizeof(lb) - 1);
             lb[sizeof(lb) - 1] = '\0';
@@ -30122,6 +30257,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tb = dynamic_cast<UITabs*>(curComp)) {
         if (CompHeader("UI Tabs", tb, &toRemove)) {
+            UIStyleBar(ed, tb);
             float pos[2] = {tb->position.x, tb->position.y};
             if (ImGui::DragFloat2("Pos (px)##utb", pos, 1.0f)) { tb->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {tb->size.x, tb->size.y};
@@ -31114,10 +31250,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                         ImVec2(pb2.x + pn->outlineWidth * 0.5f, pb2.y + pn->outlineWidth * 0.5f),
                         ToColor(pn->outlineColor), pn->cornerRadius + pn->outlineWidth * 0.5f,
                         pcf, pn->outlineWidth);
-        if (pn->shadow)          // drop shadow behind the panel
-            dl->AddRectFilled(ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
-                              ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
-                              ToColor(pn->shadowColor), pn->cornerRadius, pcf);
+        if (pn->shadow)          // drop shadow behind the panel (soft, like the game)
+            SoftShadowIm(dl, ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
+                         ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
+                         pn->cornerRadius, pn->shadowColor, pn->shadowSoftness, pcf);
         if (IsPolyUIShape(pn->shape)) {
             DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), pn->shape, pn->cornerRadius,
                             ToColor(pn->color),
@@ -31629,14 +31765,27 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float gy = sz.y * (btn->hoverScale - 1.0f) * 0.5f;
             a.x -= gx; a.y -= gy; b.x += gx; b.y += gy;
         }
+        // Same silhouette as the game: rounded / square / pill / circle / polygon shapes.
+        const float bW = b.x - a.x, bH = b.y - a.y;
+        const float brad = btn->shape == UIShape::Rectangle ? 0.0f
+                         : btn->shape == UIShape::Pill ? bH * 0.5f
+                         : btn->shape == UIShape::Circle ? std::min(bW, bH) * 0.5f : btn->cornerRadius;
         if (btn->shadow)         // drop shadow (lifts the button off the card)
-            dl->AddRectFilled(ImVec2(a.x + btn->shadowOffset.x, a.y + btn->shadowOffset.y),
-                              ImVec2(b.x + btn->shadowOffset.x, b.y + btn->shadowOffset.y),
-                              ToColor(btn->shadowColor), btn->cornerRadius);
-        dl->AddRectFilled(a, b, ToColor(btn->DisplayColor()), btn->cornerRadius);
-        dl->AddRectFilled(a, ImVec2(b.x, a.y + (b.y - a.y) * 0.45f), IM_COL32(255, 255, 255, 22), btn->cornerRadius);  // top sheen
-        if (btn->borderWidth > 0.0f)
-            dl->AddRect(a, b, ToColor(btn->borderColor), btn->cornerRadius, 0, btn->borderWidth);
+            SoftShadowIm(dl, ImVec2(a.x + btn->shadowOffset.x, a.y + btn->shadowOffset.y),
+                         ImVec2(b.x + btn->shadowOffset.x, b.y + btn->shadowOffset.y),
+                         brad, btn->shadowColor, btn->shadowSoftness);
+        const ImU32 bfill = ToColor(btn->DisplayColor());
+        const ImU32 bline = btn->borderWidth > 0.0f ? ToColor(btn->borderColor) : IM_COL32(0, 0, 0, 0);
+        if (btn->shape == UIShape::Circle) {
+            const ImVec2 cc((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+            dl->AddCircleFilled(cc, brad, bfill, 40);
+            if (btn->borderWidth > 0.0f) dl->AddCircle(cc, brad - btn->borderWidth * 0.5f, bline, 40, btn->borderWidth);
+        } else if (IsPolyUIShape(btn->shape) && btn->shape != UIShape::Pill) {
+            DrawPolyUIShape(dl, a, ImVec2(bW, bH), btn->shape, btn->cornerRadius, bfill, bline, btn->borderWidth, UICornerAll);
+        } else {
+            dl->AddRectFilled(a, b, bfill, brad);
+            if (btn->borderWidth > 0.0f) dl->AddRect(a, b, bline, brad, 0, btn->borderWidth);
+        }
         float shift = btn->PressShift() * s;
         // Icon placeholder (the editor overlay doesn't load textures), left or
         // right; label takes the remaining space. Press shifts content down.
@@ -35381,7 +35530,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (ed.MultiSelection().size() >= 2) {
             ImGui::SameLine();
             if (ImGui::Button("Align")) ImGui::OpenPopup("##uialign");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Align / distribute the selected widgets");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Align, distribute, match sizes, stack into a row / column, or wrap the selected widgets in a panel");
             if (ImGui::BeginPopup("##uialign")) {
                 float aw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
                 float ah = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
@@ -35395,6 +35544,32 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 bool three = ed.MultiSelection().size() >= 3;
                 if (ImGui::MenuItem("Distribute horizontally", nullptr, false, three)) DistributeUISelection(ed, true, aw, ah);
                 if (ImGui::MenuItem("Distribute vertically", nullptr, false, three)) DistributeUISelection(ed, false, aw, ah);
+                ImGui::Separator();
+                // Arrange: sizes and spacing in one click (the first-selected widget is the reference).
+                static float s_stackGap = 12.0f;
+                std::vector<GameObject*> msel = ed.MultiSelection();
+                GameObject* refW = ed.selected() ? ed.selected() : msel.front();
+                if (ImGui::MenuItem("Match width"))  { ed.PushUndo(); okay::UILayout::MatchSize(msel, refW, true, false); ed.dirty = true; }
+                if (ImGui::MenuItem("Match height")) { ed.PushUndo(); okay::UILayout::MatchSize(msel, refW, false, true); ed.dirty = true; }
+                if (ImGui::MenuItem("Match size"))   { ed.PushUndo(); okay::UILayout::MatchSize(msel, refW, true, true); ed.dirty = true; }
+                ImGui::Separator();
+                ImGui::SetNextItemWidth(110);
+                ImGui::DragFloat("##stackgap", &s_stackGap, 0.5f, 0.0f, 200.0f, "Gap %.0f px");
+                if (ImGui::MenuItem("Stack in a column")) {
+                    ed.PushUndo();
+                    if (!okay::UILayout::Stack(msel, true, s_stackGap)) ConsoleLog("Stack: the widgets need the same parent", 1);
+                    ed.dirty = true;
+                }
+                if (ImGui::MenuItem("Stack in a row")) {
+                    ed.PushUndo();
+                    if (!okay::UILayout::Stack(msel, false, s_stackGap)) ConsoleLog("Stack: the widgets need the same parent", 1);
+                    ed.dirty = true;
+                }
+                if (ImGui::MenuItem("Wrap in panel")) {
+                    ed.PushUndo();
+                    if (GameObject* p = okay::UILayout::WrapInPanel(ed.scene(), msel)) { ed.Select(p); ed.dirty = true; }
+                    else ConsoleLog("Wrap in panel: the widgets need the same parent", 1);
+                }
                 ImGui::EndPopup();
             }
         }

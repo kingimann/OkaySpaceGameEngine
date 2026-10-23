@@ -25,14 +25,44 @@ Var IsUpdate                 ; 1 when an existing OkaySpace install was found
 
 ; Detect a prior install up front: if OkaySpace is already on this system, reuse
 ; its folder and UPDATE it in place instead of offering a second copy somewhere
-; new. The directory page is then skipped (see SkipDirIfUpdate).
+; new. The directory page is then skipped (see SkipDirIfUpdate). Looked for, in
+; order: where the last installer put it, the Apps & features entry, the folder
+; this setup runs from (an unzipped copy has no registry entry), and the default.
 Function .onInit
   ReadRegStr $0 HKCU "Software\OkaySpace" "InstallDir"
-  ${If} $0 != ""
-    ${AndIf} ${FileExists} "$0\OkaySpace.exe"
-      StrCpy $INSTDIR $0
-      StrCpy $IsUpdate "1"
+  Call UseIfInstalled
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\OkaySpace" "InstallLocation"
+  Call UseIfInstalled
+  StrCpy $0 "$EXEDIR"
+  Call UseIfInstalled
+  StrCpy $0 "$LOCALAPPDATA\OkaySpace"
+  Call UseIfInstalled
+FunctionEnd
+
+; $0 = a candidate folder; the first one holding OkaySpace.exe wins.
+Function UseIfInstalled
+  ${If} $IsUpdate != "1"
+  ${AndIf} $0 != ""
+  ${AndIf} ${FileExists} "$0\OkaySpace.exe"
+    StrCpy $INSTDIR $0
+    StrCpy $IsUpdate "1"
   ${EndIf}
+FunctionEnd
+
+; $0 = a program in $INSTDIR. A running exe can't be opened for writing, so ask
+; the user to close OkaySpace instead of failing halfway through the copy.
+Function WaitUntilClosed
+  ${IfNot} ${FileExists} "$INSTDIR\$0"
+    Return
+  ${EndIf}
+  retry:
+    ClearErrors
+    FileOpen $1 "$INSTDIR\$0" a
+    ${If} ${Errors}
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "OkaySpace is still running ($0).$\r$\n$\r$\nClose it, then click Retry." IDRETRY retry
+      Abort
+    ${EndIf}
+    FileClose $1
 FunctionEnd
 
 Function SkipDirIfUpdate
@@ -59,6 +89,16 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "English"
 
 Section "OkaySpace" SecMain
+  ${If} $IsUpdate == "1"
+    DetailPrint "Updating OkaySpace in $INSTDIR"
+  ${EndIf}
+  StrCpy $0 "OkaySpace.exe"
+  Call WaitUntilClosed
+  StrCpy $0 "Tools\OkayEngine.exe"
+  Call WaitUntilClosed
+  StrCpy $0 "Tools\OkaySpacePlayer.exe"
+  Call WaitUntilClosed
+
   SetOutPath "$INSTDIR"
   ; Forward slash + "*" so this resolves on the build host whether makensis runs
   ; on Windows or (as in CI) on Linux, where "\" is literal and "*.*" would skip

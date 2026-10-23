@@ -762,6 +762,11 @@ void NetworkManager::ServerTick(float dt) {
                 const char* why = nullptr;
                 if ((int)m_clients.size() >= maxPlayers) why = "server is full";
                 else if (!password.empty() && pass != password) why = "wrong password";
+                else if (m_joinCheck) {
+                    const int r = m_joinCheck(token, userId);
+                    if (r < 0) continue;                       // still checking: the client retries
+                    if (r == 0) why = "authentication failed";
+                }
                 else if (m_verifyToken && !m_verifyToken(token, userId)) why = "authentication failed";
                 if (why) {
                     net::Packet r(Reject); r.Write(std::string(why));
@@ -886,7 +891,7 @@ void NetworkManager::ServerTick(float dt) {
                 p.ReadU32();                            // sender-reported id (ignored)
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
-                if (m_localRoom == senderRoom)          // host only sees its room
+                if (dedicated || m_localRoom == senderRoom)   // host only sees its room (a dedicated server sees all)
                     Deliver(sender, channel, data);
                 // Relay to every other client in the sender's room.
                 net::Packet relay(Message);
@@ -929,7 +934,7 @@ void NetworkManager::ServerTick(float dt) {
             // plain reference the closure can capture portably.
             auto& rc = recipient;
             const std::string& room = recipient.room;
-            bool hostHere = (m_localRoom == room);
+            bool hostHere = !dedicated && (m_localRoom == room);   // a dedicated server has no avatar
             // Interest culling needs the recipient's own position; until it has
             // reported one, hold its snapshots (a tick or two) so we never spawn a
             // far peer on it from a default origin.

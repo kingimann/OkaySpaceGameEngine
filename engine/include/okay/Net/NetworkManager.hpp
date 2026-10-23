@@ -106,6 +106,19 @@ public:
     using TokenVerifier = std::function<bool(const std::string& token, std::string& outUserId)>;
     void SetTokenVerifier(TokenVerifier v) { m_verifyToken = std::move(v); }
 
+    /// Server: like SetTokenVerifier, but for checks that take time (a web request)
+    /// so they never stall the network tick. Return 1 to accept (set `outUserId`),
+    /// 0 to reject, or -1 while the answer is still pending: the join is ignored
+    /// for now and the client's next join retry (every half second) asks again.
+    /// Takes precedence over SetTokenVerifier when both are set.
+    using JoinCheck = std::function<int(const std::string& token, std::string& outUserId)>;
+    void SetJoinCheck(JoinCheck c) { m_joinCheck = std::move(c); }
+
+    /// Dedicated (headless) server: the server is not a player itself. It has no
+    /// avatar in anyone's snapshots and it hears messages from EVERY room, so one
+    /// server process can host many matches and run their game logic.
+    bool dedicated = false;
+
     /// Encrypt traffic. When true (and the engine is built with libsodium), peers
     /// exchange public keys during the join handshake and all post-handshake
     /// datagrams are sealed with XChaCha20-Poly1305 (confidentiality + integrity).
@@ -413,6 +426,7 @@ private:
     std::string m_authToken;     // token presented on join ("" = anonymous)
     std::string m_localUserId;   // client: our own verified id once joined
     TokenVerifier m_verifyToken; // server: verifies joining clients' tokens
+    JoinCheck m_joinCheck;       // server: async (tri-state) join check
     std::string m_localRoom;     // "" = default room
     bool m_ready = false;        // this peer's ready flag
     bool m_matchStarted = false; // set when StartMatch reaches this peer's room

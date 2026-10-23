@@ -17,6 +17,7 @@
 #include <iostream>
 #include <map>
 #include "okay/Net/JoinLink.hpp"
+#include "okay/Net/Matchmaker.hpp"
 #include "okay/Net/SessionPresence.hpp"
 #include "okay/Net/ServerBrowser.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -426,6 +427,32 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
     }
 }
 
+// "okay://match?mode=duel&players=2&min=2&region=EU" — the launcher's "Find match"
+// (via --find-match or a running game's join file). False if it isn't one.
+static bool ParseMatchLink(const std::string& link, okay::MatchRequest& out) {
+    const std::string pre = "okay://match";
+    if (link.compare(0, pre.size(), pre) != 0) return false;
+    out = okay::MatchRequest{};
+    std::size_t q = link.find('?');
+    while (q != std::string::npos && q + 1 < link.size()) {
+        const std::size_t st = q + 1, amp = link.find('&', st);
+        const std::string kv = link.substr(st, amp == std::string::npos ? std::string::npos : amp - st);
+        const std::size_t eq = kv.find('=');
+        std::string k = kv.substr(0, eq), v, raw = eq == std::string::npos ? std::string() : kv.substr(eq + 1);
+        for (std::size_t i = 0; i < raw.size(); ++i) {
+            if (raw[i] == '%' && i + 2 < raw.size()) { v += (char)std::strtol(raw.substr(i + 1, 2).c_str(), nullptr, 16); i += 2; }
+            else v += raw[i] == '+' ? ' ' : raw[i];
+        }
+        if (k == "mode") out.mode = v;
+        else if (k == "players") out.players = std::max(2, std::atoi(v.c_str()));
+        else if (k == "min") out.minPlayers = std::atoi(v.c_str());
+        else if (k == "region") out.region = v;
+        else if (k == "game") out.game = v;
+        q = amp;
+    }
+    return true;
+}
+
 // A Minecraft-style hotbar (+ openable backpack) drawn from an Inventory.
 #ifdef OKAY_HAVE_OKAYUI
 // The built-in in-game server browser ("Find a server"): public servers for this
@@ -560,6 +587,22 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
             }
         } else OkayUI::TextDisabled("Pick a server (double-click to join).");
         OkayUI::Separator();
+        {   // Matchmaking: get put in a match with other players (Steam's "Find match").
+            static int players = 2;
+            okay::Matchmaker& mm = okay::Matchmaker::Shared();
+            const auto st = mm.GetState();
+            const bool busy = st == okay::Matchmaker::State::Searching || st == okay::Matchmaker::State::Waiting;
+            OkayUI::SetNextItemWidth(160.0f);
+            OkayUI::SliderInt("Players", &players, 2, 16);
+            OkayUI::SameLine();
+            if (busy) { if (OkayUI::Button("Cancel search")) mm.Cancel(); }
+            else if (OkayUI::Button("Find match")) {
+                okay::MatchRequest r; r.players = players; r.minPlayers = players > 2 ? 2 : 0;
+                mm.Start(r);
+                sb.windowOpen = false;   // the "Finding a match" banner takes over
+            }
+        }
+        OkayUI::Separator();
         // Direct connect by address (or a pasted okay://join link).
         OkayUI::SetNextItemWidth(260.0f);
         OkayUI::InputText("Address", direct, sizeof(direct));
@@ -577,6 +620,55 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
     }
     OkayUI::End();
     if (!open) sb.windowOpen = false;
+}
+
+// "Finding a match 0:23 · 6 searching [Cancel]" while matchmaking runs (top of the
+// screen), "Match found" as it connects, and why it stopped if it failed.
+static void DrawMatchmakingBanner(SDL_Window* window) {
+    okay::Matchmaker& mm = okay::Matchmaker::Shared();
+    const auto st = mm.GetState();
+    static Uint32 foundAt = 0, failedAt = 0;
+    if (st != okay::Matchmaker::State::Found) foundAt = 0;
+    if (st != okay::Matchmaker::State::Failed) failedAt = 0;
+    if (st == okay::Matchmaker::State::Idle) return;
+    const Uint32 now = SDL_GetTicks();
+    if (st == okay::Matchmaker::State::Found) { if (!foundAt) foundAt = now; if (now - foundAt > 4000) return; }
+    if (st == okay::Matchmaker::State::Failed) { if (!failedAt) failedAt = now; if (now - failedAt > 8000) { mm.Cancel(); return; } }
+    int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
+    const float W = std::min(460.0f, (float)ww - 20.0f), H = 214.0f;
+    bool open = true;
+    if (OkayUI::Begin("Matchmaking", (ww - W) * 0.5f, 14.0f, W, H, &open)) {
+        const int secs = (int)mm.Elapsed();
+        char line[160];
+        const okay::MatchRequest rq = mm.Request();
+        if (st == okay::Matchmaker::State::Searching) {
+            std::snprintf(line, sizeof(line), "Finding a match   %d:%02d", secs / 60, secs % 60);
+            OkayUI::Text(line);
+            char det[96];
+            std::snprintf(det, sizeof(det), "%s%s%d players", rq.mode.c_str(), rq.mode.empty() ? "" : " - ", rq.players);
+            OkayUI::TextDisabled(det);
+            std::snprintf(det, sizeof(det), "%d in the queue", mm.Searching());
+            OkayUI::TextDisabled(det);
+            OkayUI::ProgressBar((float)((now / 16) % 100) / 100.0f, "");
+            if (OkayUI::Button("Cancel")) mm.Cancel();
+        } else if (st == okay::Matchmaker::State::Waiting) {
+            OkayUI::Text("Match found!");
+            OkayUI::TextDisabled("Waiting for the host to start the match...");
+            if (OkayUI::Button("Cancel")) mm.Cancel();
+        } else if (st == okay::Matchmaker::State::Found) {
+            const okay::MatchAssignment a = mm.Assignment();
+            OkayUI::TextColored(115, 209, 143, "Match found!");
+            std::snprintf(line, sizeof(line), "%s - %d players", a.isHost ? "Hosting" : !a.serverName.empty() ? a.serverName.c_str() : "Joining", a.players);
+            OkayUI::TextDisabled(line);
+        } else {
+            OkayUI::TextColored(240, 128, 115, "Couldn't find a match");
+            const std::string e = mm.Error();
+            OkayUI::TextDisabled(e.empty() ? "Something went wrong." : e.c_str());
+            if (OkayUI::Button("OK")) mm.Cancel();
+        }
+    }
+    OkayUI::End();
+    if (!open) mm.Cancel();
 }
 #endif
 
@@ -1188,7 +1280,8 @@ int main(int argc, char** argv) {
                         "  --join LINK          join the session in an okay://join link\n"
                         "  --connect HOST:PORT  join a server directly\n"
                         "  --password P         its password\n"
-                        "  --room R             its lobby room\n\n"
+                        "  --room R             its lobby room\n"
+                        "  --find-match [MODE]  matchmaking: get put in a match (--match-players N, --match-min N, --region R)\n\n"
                         "Account (for headless servers):\n"
                         "  --login NAME         sign this machine in (password from OKAY_LOGIN_PASSWORD or typed)\n"
                         "  --logout             sign out\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
@@ -1235,6 +1328,7 @@ int main(int argc, char** argv) {
     // `--join LINK` / `--connect HOST:PORT`: the launcher started us to join a
     // friend, an invite or a server from the browser (Steam's "+connect").
     std::string launchJoin;
+    std::string launchFindMatch;   // --find-match [MODE] [--match-players N]: start matchmaking once the game is up
     if (!dedicatedServer) {
         okay::JoinLink cl; bool direct = false;
         for (int i = 1; i + 1 < argc; ++i) {
@@ -1244,6 +1338,15 @@ int main(int argc, char** argv) {
             else if (a == "--password") cl.password = argv[++i];
             else if (a == "--room") cl.room = argv[++i];
         }
+        std::string fmMode, fmPlayers = "2", fmMin, fmRegion; bool findMatch = false;
+        for (int i = 1; i < argc; ++i) {
+            const std::string a = argv[i];
+            if (a == "--find-match") { findMatch = true; if (i + 1 < argc && argv[i + 1][0] != '-') fmMode = argv[++i]; }
+            else if (a == "--match-players" && i + 1 < argc) fmPlayers = argv[++i];
+            else if (a == "--match-min" && i + 1 < argc) fmMin = argv[++i];
+            else if (a == "--region" && i + 1 < argc) fmRegion = argv[++i];
+        }
+        if (findMatch) launchFindMatch = "okay://match?mode=" + fmMode + "&players=" + fmPlayers + "&min=" + fmMin + "&region=" + fmRegion;
         okay::JoinLink jl;
         if (!launchJoin.empty() && okay::JoinLink::Parse(launchJoin, jl)) {
             if (!cl.password.empty()) { jl.password = cl.password; launchJoin = jl.Format(); }
@@ -1611,6 +1714,17 @@ int main(int argc, char** argv) {
     const std::string gameTitle = !cfg.title.empty() && cfg.title != "OkaySpace Game" ? cfg.title : scene.Name();
     okay::ServerBrowser::Shared().SetGame(gameTitle);   // the server browser lists this game's servers
     if (std::getenv("OKAY_BROWSER_DEMO")) okay::ServerBrowser::Shared().windowOpen = true;   // dev screenshot hook
+    if (std::getenv("OKAY_MM_DEMO")) {   // dev screenshot hook: a queue that keeps searching
+        struct DemoQueue : okay::Matchmaker::Backend {
+            bool Join(const okay::MatchRequest&, std::string& t, std::string&) override { t = "demo"; return true; }
+            bool Poll(const std::string&, okay::Matchmaker::PollResult& o, std::string&) override { o.status = "searching"; o.searching = 7; return true; }
+            void Leave(const std::string&) override {}
+            bool HostReady(const std::string&, const std::string&) override { return true; }
+        };
+        okay::Matchmaker::Shared().SetBackend(std::make_shared<DemoQueue>());
+        okay::MatchRequest r; r.mode = "ranked"; r.players = 4;
+        okay::Matchmaker::Shared().Start(r);
+    }
     Uint32 presenceAt = 0, presenceWritten = 0;
     std::string presenceLast;
     std::map<std::string, Uint32> playedWith;   // who we've logged this run (key -> when)
@@ -1624,9 +1738,18 @@ int main(int argc, char** argv) {
             if (nm->mapName.empty()) nm->mapName = scene.Name();
         }
         std::string link;
-        if (okay::GameIpc::TakeJoin(link)) {   // the launcher: "join this now"
-            SDL_Log("Launcher asked to join %s", link.c_str());
-            if (nm) nm->JoinByLink(link); else okay::NetworkManager::SetLaunchJoin(link);
+        if (okay::GameIpc::TakeJoin(link)) {   // the launcher: "join this now" (or "find me a match")
+            okay::MatchRequest mr;
+            if (ParseMatchLink(link, mr)) { SDL_Log("Launcher asked to find a match (%d players)", mr.players); okay::Matchmaker::Shared().Start(mr); }
+            else {
+                SDL_Log("Launcher asked to join %s", link.c_str());
+                if (nm) nm->JoinByLink(link); else okay::NetworkManager::SetLaunchJoin(link);
+            }
+        }
+        if (!launchFindMatch.empty() && now > 1500) {   // --find-match: start once the game is up
+            okay::MatchRequest mr;
+            if (ParseMatchLink(launchFindMatch, mr)) okay::Matchmaker::Shared().Start(mr);
+            launchFindMatch.clear();
         }
         // A launch join no NetworkManager picked up on Start (one a script made later).
         if (nm && now > 1500) {
@@ -1719,6 +1842,7 @@ int main(int argc, char** argv) {
 
 #if !defined(__EMSCRIPTEN__)
         pumpPresence();
+        okay::Matchmaker::Shared().Pump(scene.FindObjectOfType<okay::NetworkManager>());   // a found match: join / host it
 #endif
         // Feed keyboard into the engine Input.
         const Uint8* ks = SDL_GetKeyboardState(nullptr);
@@ -3370,6 +3494,7 @@ int main(int argc, char** argv) {
         // composites above the game.
         if (g_testUI) okay_testui::Panel(24.0f, 24.0f);
         DrawServerBrowserWindow(scene, window);   // net_browser_open(): the in-game "Find a server" window
+        DrawMatchmakingBanner(window);            // net_queue_join() / Find match: progress + Cancel
         // F3 performance HUD — a real in-engine use of OkayUI (FPS graph, frame time,
         // and a scrollable list of scene objects). Showcases PlotLines/LabelText/child.
         if (g_statsUI) {

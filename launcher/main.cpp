@@ -9774,6 +9774,7 @@ static bool MpCanInvite() { return g_myGame.running && !g_myGame.invite.empty();
 static std::string MpGameTitle() { return g_myGame.running ? g_myGame.title : std::string(); }
 
 // ---- Library lookup: which game a join link is for -------------------------------
+// Only built (exported) games count in multiplayer — the same rule as the Play page.
 struct MpLibGame { std::string title, scene; };
 static std::vector<MpLibGame> MpLibrary(bool refresh = false) {
     static std::vector<MpLibGame> cache; static Uint32 at = 0;
@@ -9781,6 +9782,7 @@ static std::vector<MpLibGame> MpLibrary(bool refresh = false) {
         cache.clear(); at = SDL_GetTicks();
         std::set<std::string> seen;
         for (const auto& sc : FindScenes()) {
+            if (!IsBuiltGame(sc)) continue;   // exported games only, not editor projects / loose scenes
             const std::string t = GameTitleFromPath(sc.string());
             std::string low = t; for (auto& c : low) c = (char)std::tolower((unsigned char)c);
             if (seen.insert(low).second) cache.push_back({t, sc.string()});
@@ -9869,6 +9871,39 @@ static void MpLaunch(const okay::JoinLink& in) {
         Toast("Starting " + g->title + " \xE2\x80\x94 joining " + (l.name.empty() ? l.Where() : l.name), 1);
     } else Toast("Couldn't start " + g->title + ".", 2);
 }
+// Matchmaking: the game (started now, or already running) joins the queue for a
+// match of `players` in `mode` and connects when one is found (its own banner
+// shows progress + Cancel). A party leader brings the party; members follow.
+static void MpFindMatch(const std::string& game, const std::string& mode, int players, const std::string& region) {
+    auto enc = [](const std::string& v) {
+        std::string o;
+        for (unsigned char c : v) { if (std::isalnum(c) || c == '-' || c == '_' || c == '.') o += (char)c; else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", c); o += b; } }
+        return o;
+    };
+    const std::string link = "okay://match?mode=" + enc(mode) + "&players=" + std::to_string(players) +
+                             "&min=" + std::to_string(players > 2 ? 2 : 0) + "&region=" + enc(region);
+    for (const auto& pp : g_playProcs)
+        if (pp.key.rfind("game:", 0) == 0 && SameTitle(pp.title, game)) {
+            okay::GameIpc::PostJoin(PlayProcPid(pp), link);
+            Toast("Finding a match in " + pp.title + "\xE2\x80\xA6", 1);
+            return;
+        }
+    const MpLibGame* g = nullptr;
+    const auto lib = MpLibrary();
+    for (const auto& x : lib) if (SameTitle(x.title, game)) { g = &x; break; }
+    if (!g) { Toast("Pick one of your games first.", 2); return; }
+    const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
+    if (player.empty()) { Toast("The OkaySpace player isn't installed next to the launcher.", 2); return; }
+    std::string args = "\"" + g->scene + "\" --find-match";
+    if (!mode.empty()) args += " \"" + mode + "\"";
+    args += " --match-players " + std::to_string(players) + (players > 2 ? " --match-min 2" : "");
+    if (!region.empty()) args += " --region \"" + region + "\"";
+    if (SpawnTracked(player, args, "game:" + g->title, g->title)) {
+        RecordPlayed(g->scene); SavePrefs();
+        Toast("Starting " + g->title + " \xE2\x80\x94 finding a match", 1);
+    } else Toast("Couldn't start " + g->title + ".", 2);
+}
+
 // Join from a link (a friend's game, an invite card, the server browser, a paste).
 static void MpJoin(const std::string& text, const std::string& from) {
     (void)from;
@@ -11051,7 +11086,47 @@ static void DrawMultiplayerPage(bool signedIn) {
         ImGui::SetWindowFontScale(1.0f);
         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(tp.x, tp.y + tsz.y + 5), ImVec2(tp.x + tsz.x, tp.y + tsz.y + 7.5f), ImGui::GetColorU32(kAccent), 1.5f);
         const float right = ImGui::GetContentRegionMax().x;
-        ImGui::SameLine(right - 290);
+        ImGui::SameLine(right - 566);
+    {   // Find match (matchmaking queue) + Quick Play (best open server).
+        static int fmPlayers = 2, fmGame = 0;
+        static char fmMode[40] = "", fmRegion[24] = "";
+        const auto lib = MpLibrary();
+        ImGui::BeginDisabled(lib.empty() || !signedIn);
+        if (ImGui::Button("Find match", ImVec2(130, 32))) { fmGame = gameFilter > 0 ? gameFilter - 1 : 0; ImGui::OpenPopup("##findmatch"); }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", !signedIn ? "Sign in to use matchmaking." : lib.empty() ? "Build a game first: only exported games can be played online."
+                                                : "Get put in a match with other players (your party comes with you).");
+        if (ImGui::BeginPopup("##findmatch")) {
+            ImGui::TextUnformatted("Find a match");
+            ImGui::TextDisabled("Players with a similar record are grouped together.");
+            ImGui::Dummy(ImVec2(0, 4));
+            if (fmGame >= (int)lib.size()) fmGame = 0;
+            ImGui::SetNextItemWidth(220);
+            if (ImGui::BeginCombo("Game", lib.empty() ? "" : lib[fmGame].title.c_str())) {
+                for (int i = 0; i < (int)lib.size(); ++i) if (ImGui::Selectable(lib[i].title.c_str(), fmGame == i)) fmGame = i;
+                ImGui::EndCombo();
+            }
+            ImGui::SetNextItemWidth(220); ImGui::SliderInt("Players", &fmPlayers, 2, 16);
+            ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("Mode", "(the game's default)", fmMode, sizeof(fmMode));
+            ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("Region", "any", fmRegion, sizeof(fmRegion));
+            ImGui::Dummy(ImVec2(0, 4));
+            if (PrimaryButton("Find match", ImVec2(150, 32)) && !lib.empty()) { MpFindMatch(lib[fmGame].title, fmMode, fmPlayers, fmRegion); ImGui::CloseCurrentPopup(); }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(100, 32))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        PumpQuickPlay();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(g_mpQuickBusy);
+        if (PrimaryButton(g_mpQuickBusy ? "Finding\xE2\x80\xA6" : "Quick Play", ImVec2(130, 32)))
+            MpQuickPlay(gameFilter > 0 ? lib[gameFilter - 1].title : std::string());
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", gameFilter > 0 ? ("Join the best open " + lib[gameFilter - 1].title + " server").c_str()
+                                                   : "Join the best open server for any game in your library");
+    }
+        ImGui::SameLine();
         if (ImGui::Button("Connect to server\xE2\x80\xA6", ImVec2(170, 32))) g_mpConnectReq = true;
         ImGui::SameLine();
         ImGui::BeginDisabled(g_mpBusy);
@@ -11137,7 +11212,7 @@ static void DrawMultiplayerPage(bool signedIn) {
     // Filters.
     ImGui::Dummy(ImVec2(0, 4));
     const auto lib = MpLibrary();
-    ImGui::SetNextItemWidth(240);
+    ImGui::SetNextItemWidth(190);
     ImGui::InputTextWithHint("##mpsearch", "Search servers", search, sizeof(search));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(180);
@@ -11150,18 +11225,6 @@ static void DrawMultiplayerPage(bool signedIn) {
     ImGui::SameLine(0, 14); ImGui::Checkbox("Not full", &hideFull);
     ImGui::SameLine(0, 10); ImGui::Checkbox("Has players", &hideEmpty);
     ImGui::SameLine(0, 10); ImGui::Checkbox("No password", &hidePw);
-    {   // Quick Play: jump into the best open server for the chosen game (or any of yours).
-        PumpQuickPlay();
-        ImGui::SameLine(ImGui::GetContentRegionMax().x - 140);
-        ImGui::BeginDisabled(g_mpQuickBusy);
-        if (PrimaryButton(g_mpQuickBusy ? "Finding\xE2\x80\xA6" : "Quick Play", ImVec2(140, 0)))
-            MpQuickPlay(gameFilter > 0 ? lib[gameFilter - 1].title : std::string());
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", gameFilter > 0 ? ("Join the best open " + lib[gameFilter - 1].title + " server").c_str()
-                                                   : "Join the best open server for any game in your library");
-    }
-
     // Rows (demo: a fixed set so the page can be reviewed offline).
     std::vector<MpRow> rows;
     if (MpDemo()) {

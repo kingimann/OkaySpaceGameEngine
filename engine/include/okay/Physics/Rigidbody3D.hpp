@@ -32,6 +32,11 @@ public:
     float    maxFallSpeed = 0.0f;
     /// Freeze movement on selected world axes (e.g. lock Y for a top-down game).
     bool     freezeX = false, freezeY = false, freezeZ = false;
+    /// Continuous collision detection: sweep the body along each step's motion so a
+    /// fast object (bullet, thrown ball) stops at a thin wall instead of jumping
+    /// past it between two frames. Costs a shape cast per step while moving fast,
+    /// so it's opt-in.
+    bool     continuousCollision = false;
 
     // ---- Angular dynamics ----
     /// Angular velocity in RADIANS per second about each world axis (Unity 3D units).

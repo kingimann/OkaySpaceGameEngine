@@ -527,8 +527,16 @@ Intuitive names for common builtins so code reads naturally:
 | `raycast(ox, oy, dx, dy [, maxDist])` | 2D ray; returns the **name** of the object hit ("" = miss) |
 | `ray_hit()` / `ray_object()` / `ray_x()` / `ray_y()` / `ray_nx()` / `ray_ny()` / `ray_dist()` | Details of the last `raycast()` |
 | `raycast_hit3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray hits a collider? (boolean) |
-| `raycast3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
+| `raycast3(ox,oy,oz, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
+| `raycast_all3(...)` / `raycast_all(ox,oy,dx,dy ...)` | Every object hit, nearest first (`ray_all_count/object/dist/point/normal(i)`) |
+| `sphere_cast3` / `box_cast3` / `capsule_cast3` | Thick shape casts (skip triggers); details via `ray3_*` |
+| `overlap_sphere3` / `overlap_box3` / `overlap_capsule3` | Names of the objects inside a 3D shape |
+| `layer_mask("Default", "Enemy")` | A layers value (or pass `"0,3"` / `"Default,Enemy"` directly) |
 | `overlap(x, y)` | A 2D collider contains this point? |
+
+In collision / trigger handlers, `contact_point`, `contact_normal`,
+`contact_x/_y/_z`, `impact_speed` and `other_tag` describe the touch (see
+docs/scripting.md).
 
 ## Physics events
 

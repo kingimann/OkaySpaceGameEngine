@@ -1501,6 +1501,14 @@ float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
+// Physics debug view (Scene + Game views): colliders, triggers, contacts and rays.
+bool g_physDebug = false;        // the master toggle (persisted)
+bool g_physDebugRays = true;     // ...also draw rays / casts made by scripts (persisted)
+// Push the toggles to the engine, which only records contacts / rays while on.
+static void ApplyPhysicsDebug() {
+    okay::PhysicsDebug::Collect() = g_physDebug;
+    okay::PhysicsDebug::ScriptRays() = g_physDebugRays;
+}
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
 int  g_gameDevice = 0;           // Game-view mobile emulator device (0 = off; persisted)
@@ -1762,6 +1770,32 @@ static bool SearchField(const char* id, char* buf, std::size_t bufSize, const ch
 static void SameLineRight(float w) {
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - w);
 }
+// A layer mask as the friendly list the physics accepts ("" = every layer).
+static std::string LayerMaskToList(std::uint32_t mask) {
+    if (mask == 0xFFFFFFFFu) return std::string();
+    std::string s;
+    for (int i = 0; i < 32; ++i)
+        if ((mask >> i) & 1u) { if (!s.empty()) s += ","; s += std::to_string(i); }
+    return s;
+}
+// Trigger filter fields for a trigger collider (2D or 3D): only react to objects
+// with a tag and/or on some collider layers. Returns true when something changed.
+template <class Col>
+static bool TriggerFilterFields(Col* c, const char* id) {
+    if (!c->isTrigger) return false;
+    bool changed = false;
+    char tb[64]; std::snprintf(tb, sizeof(tb), "%s", c->triggerTag.c_str());
+    std::string l1 = std::string("Only Tag##tf") + id;
+    if (ImGui::InputTextWithHint(l1.c_str(), "any tag (e.g. Player)", tb, sizeof(tb))) { c->triggerTag = tb; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The trigger only reacts to objects with this tag; everything else\npasses through with no Enter / Stay / Exit events. Blank = any object.");
+    char lb[96]; std::snprintf(lb, sizeof(lb), "%s", LayerMaskToList(c->triggerLayers).c_str());
+    std::string l2 = std::string("Only Layers##tf") + id;
+    if (ImGui::InputTextWithHint(l2.c_str(), "all layers", lb, sizeof(lb))) {
+        c->triggerLayers = okay::Layers::MaskFromList(lb); changed = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only colliders on these layers set the trigger off: numbers or names\nseparated by commas (0,3 or Default,Enemy). Blank = all layers.");
+    return changed;
+}
 // A vector3 drag field with per-axis colour cues (X=red, Y=green, Z=blue) — a
 // 3px coloured bar down each component, like Unity/Godot/Blender. `activated` is
 // set when a drag begins on any field (so the caller can push one undo step).
@@ -1937,6 +1971,8 @@ void LoadSettings() {
         else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
+        else if (k == "physdebug") g_physDebug = (v != 0);
+        else if (k == "physdebugrays") g_physDebugRays = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamedevice") g_gameDevice = (v < 0 ? 0 : v);
@@ -1949,6 +1985,7 @@ void LoadSettings() {
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
+    ApplyPhysicsDebug();
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
     // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
     // source, so the FPS-costly supersample isn't needed). ver 3 also undoes the
@@ -1979,6 +2016,8 @@ void SaveSettings() {
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
+      << "physdebug " << (g_physDebug ? 1 : 0) << "\n"
+      << "physdebugrays " << (g_physDebugRays ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
       << "gamedevice " << g_gameDevice << "\n"
@@ -4572,6 +4611,13 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         if (ImGui::BeginMenu("Scene Overlays")) {
             ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
+            if (ImGui::BeginMenu("Physics Debug")) {
+                if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
+                if (ImGui::MenuItem("Rays cast from scripts", nullptr, &g_physDebugRays)) { ApplyPhysicsDebug(); SaveSettings(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also draw the raycasts / sphere casts that scripts, visual\nscripts and Actions make: green to the hit (white normal), yellow on a miss.");
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Skeletons")) {
                 if (ImGui::MenuItem("Selected model", nullptr, g_skeletonMode == 1)) g_skeletonMode = 1;
                 if (ImGui::MenuItem("All rigged models", nullptr, g_skeletonMode == 2)) g_skeletonMode = 2;
@@ -9033,6 +9079,12 @@ void DrawSceneSettings(EditorState& ed) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Turn off to see meshes against a flat background\n(isolates what's geometry vs. the sky behind it).");
         if (ImGui::Checkbox("Colliders", &g_showColliders)) SaveSettings();
+        if (ImGui::Checkbox("Physics debug (also Game view)", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Colliders, triggers, contact points and query rays while playing.");
+        if (g_physDebug) {
+            ImGui::SameLine();
+            if (ImGui::Checkbox("+ script rays", &g_physDebugRays)) { ApplyPhysicsDebug(); SaveSettings(); }
+        }
         if (ImGui::Checkbox("Gizmos (selection / camera / lights)", &g_showGizmos)) SaveSettings();
         if (ImGui::Checkbox("Wireframe (all meshes)", &g_wireframeAll)) SaveSettings();
         if (ImGui::Checkbox("World axes (origin)", &g_showWorldAxes)) SaveSettings();
@@ -9785,9 +9837,17 @@ void DrawScriptDocs() {
         fapi("raycast(ox,oy,dx,dy[, maxDist])", "2D ray; returns the name hit (\"\" = miss)");
         fapi("ray_hit()/ray_object()/ray_x()/ray_y()/ray_nx()/ray_ny()/ray_dist()", "details of the last raycast()");
         fapi("raycast_hit3(o.., d..[, maxDist]) / raycast3(...)", "3D ray test / named hit + ray3_* details");
+        fapi("...[, maxDist, layers, ignore_triggers]", "every ray / cast / overlap takes these: layers \"0,3\" or \"Default,Enemy\"");
+        fapi("raycast_all3(o.., d..) / raycast_all(ox,oy,dx,dy)", "names of EVERYTHING hit, nearest first (+ ray_all_*)");
+        fapi("sphere_cast3(o.., d.., r) / box_cast3(c.., half.., d..)", "thick casts (won't slip through gaps)");
+        fapi("capsule_cast3(a.., b.., r, d..)", "would a capsule fit along this path?");
+        fapi("overlap_sphere3 / overlap_box3 / overlap_capsule3", "names of the objects inside a shape");
+        fapi("layer_mask(\"Default\", \"Enemy\")", "a layers number for the queries above");
         fapi("overlap(x, y)", "a 2D collider contains this point?");
         ImGui::TextWrapped("Define on_collision() / on_trigger() — they fire when this "
-            "object's collider hits or overlaps another.");
+            "object's collider hits or overlaps another. on_trigger_stay() runs every frame "
+            "something stays inside. Inside these, contact_point / contact_normal (vectors), "
+            "contact_x/_y/_z, impact_speed and other_tag describe the touch.");
     }
 
     if (sec("Friendly aliases")) {
@@ -9891,7 +9951,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
         "ui_toggle_value","ui_set_progress",
         // raycast
-        "raycast","raycast3","overlap_circle",
+        "raycast","raycast3","overlap_circle","raycast_all3","sphere_cast3","box_cast3","overlap_box3",
     };
     // Merge in EVERY builtin the OkayScript VM actually registers (hundreds), so
     // autocomplete covers the whole language, not just this hand-picked subset.
@@ -9986,6 +10046,9 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         // networking / raycast
         {"net_send","net_send(\"msg\")"}, {"raycast","raycast(x, y, dx, dy)"}, {"raycast3","raycast3(x, y, z, dx, dy, dz)"},
         {"overlap_circle","overlap_circle(x, y, r)"},
+        {"raycast_all3","raycast_all3(x, y, z, dx, dy, dz, dist)"}, {"sphere_cast3","sphere_cast3(x, y, z, dx, dy, dz, r, dist)"},
+        {"box_cast3","box_cast3(x, y, z, hx, hy, hz, dx, dy, dz, dist)"}, {"overlap_box3","overlap_box3(x, y, z, hx, hy, hz)"},
+        {"overlap_sphere3","overlap_sphere3(x, y, z, r)"},
         // timers
         {"after","after(seconds, \"func\")"}, {"every","every(seconds, \"func\")"}, {"cancel_timers","cancel_timers()"},
         // high-level one-liners (call every frame from update)
@@ -10536,6 +10599,25 @@ static std::vector<std::string> CsMembersFor(const std::string& src, const std::
 struct ScriptHelp { const char* doc; const char* example; };
 static const ScriptHelp* ScriptHelpFor(const std::string& key) {
     static const std::unordered_map<std::string, ScriptHelp> H = {
+        // ---- Physics queries (OkayScript builtins)
+        {"raycast3", {"Cast a 3D ray; returns the name of the first thing hit (\"\" = nothing). "
+            "Optional: max distance, layers (\"0,3\" or \"Default,Enemy\"), ignore triggers. Details via ray3_*.",
+            "if (raycast3(x, y, z, 0, -1, 0, 2, \"Default\", true) != \"\")\n{\n    grounded = true;\n}"}},
+        {"raycast_all3", {"Every object a 3D ray passes through, nearest first (a list of names). "
+            "ray_all_count() / ray_all_dist(i) / ray_all_point(i) give details.",
+            "var hits = raycast_all3(x, y, z, 1, 0, 0, 50);\nfor (var i = 0; i < ray_all_count(); i++)\n{\n    print(ray_all_object(i) + \" at \" + ray_all_dist(i));\n}"}},
+        {"sphere_cast3", {"Sweep a ball along a direction and return the first thing it touches. "
+            "A thick ray that can't slip through gaps; skips triggers.",
+            "string hit = sphere_cast3(x, y, z, 0, 0, 1, 0.5, 10);\nif (hit != \"\") print(\"blocked by \" + hit);"}},
+        {"box_cast3", {"Sweep a box (centre, half size) along a direction; the first thing it touches.",
+            "string hit = box_cast3(x, y, z, 0.5, 1, 0.5, 0, 0, 1, 5);"}},
+        {"overlap_box3", {"Names of the objects inside a box (centre, half size). Optional layers / ignore triggers.",
+            "var inside = overlap_box3(x, y, z, 2, 2, 2);\nprint(count(inside) + \" things nearby\");"}},
+        {"overlap_sphere3", {"Names of the objects inside a ball. Great for explosions.",
+            "var near = overlap_sphere3(x, y, z, 5);\nprint(count(near) + \" caught in the blast\");"}},
+        {"contact_point", {"Inside a collision / trigger handler: where the touch happened (a vector). "
+            "Also contact_normal, contact_x/_y/_z, impact_speed and other_tag.",
+            "void OnCollisionEnter(Collision other)\n{\n    if (impact_speed > 8) spawn3(\"Sparks\", contact_x, contact_y, contact_z);\n}"}},
         // ---- C# / Unity-style API
         {"Input.GetAxis", {"-1..1 from the keyboard (A/D, arrows) or a stick. \"Horizontal\" or \"Vertical\".",
             "float h = Input.GetAxis(\"Horizontal\");\nfloat v = Input.GetAxis(\"Vertical\");\ntransform.position += new Vector3(h, 0, v) * speed * Time.deltaTime;"}},
@@ -16759,6 +16841,7 @@ static std::string TriggerPhrase(ActionList::Trigger t, const std::string& key) 
         case T::OnMouseOver:     return "While hovered";
         case T::OnInterval:      return "Every " + (key.empty() ? std::string("0") : key) + "s";
         case T::OnLateUpdate:    return "Every frame (late)";
+        case T::OnTriggerStay:   return "While something is inside";
     }
     return "When triggered";
 }
@@ -16901,7 +16984,7 @@ static std::string ActionListToCode(const ActionList& al) {
             updateB += lead + "}\n";
         }
         else if (trg == T::OnCollision || trg == T::OnCollisionStay || trg == T::OnCollisionExit
-              || trg == T::OnTriggerEnter || trg == T::OnTriggerExit) {
+              || trg == T::OnTriggerEnter || trg == T::OnTriggerExit || trg == T::OnTriggerStay) {
             VsEmitBody(collB, conds, ins, lead);
         }
         else { updateB += lead + "// TODO: " + std::string(TriggerPhrase(trg, key)) + " (add your own trigger check)\n"; VsEmitBody(updateB, conds, ins, lead); }
@@ -20495,7 +20578,7 @@ static bool FlowIsEnder(const std::string& o) {
 static const char* kTriggerLabels[] = {"On Start","On Update","On Key","On Collision","On Click",
     "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
     "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over",
-    "On Collision Exit","On Collision Stay","On Interval","On Late Update"};
+    "On Collision Exit","On Collision Stay","On Interval","On Late Update","On Trigger Stay"};
 
 // Every pickable key as (label, stored-char). Keys are single characters — that's what
 // Input::GetKeyDown(char) matches — so the picker offers letters, digits and Space.
@@ -21056,7 +21139,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
     static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",
         "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
         "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over",
-        "On Collision Exit","On Collision Stay","On Interval","On Late Update"};
+        "On Collision Exit","On Collision Stay","On Interval","On Late Update","On Trigger Stay"};
 
     // ---- Always-visible editor strip -------------------------------------------
     // Change the trigger and edit the currently-selected node right here, so editing
@@ -22282,6 +22365,22 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         ImGui::SetNextItemWidth(80);
         if (ImGui::InputTextWithHint("only", "tag", onb, sizeof(onb))) setMod("only:", onb);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only hit objects with this tag (like a layer mask).");
+        // Thick ray, collider layers and triggers (r: / lm: / nt: tokens).
+        ImGui::SameLine();
+        float rad = getMod("r:").empty() ? 0.0f : (float)std::atof(getMod("r:").c_str());
+        ImGui::SetNextItemWidth(56);
+        if (ImGui::DragFloat("radius", &rad, 0.02f, 0.0f, 50.0f, "%.2f"))
+            setMod("r:", rad <= 0.0f ? std::string() : std::to_string(rad));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = a thin ray. Above 0 casts a ball of this radius instead\n(a sphere cast), so it can't slip through small gaps.");
+        ImGui::SameLine();
+        char lmb[64]; std::strncpy(lmb, getMod("lm:").c_str(), sizeof(lmb)-1); lmb[sizeof(lmb)-1]='\0';
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::InputTextWithHint("layers", "all", lmb, sizeof(lmb))) setMod("lm:", lmb);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only hit colliders on these layers: numbers or names,\nseparated by commas (e.g. 0,3 or Default,Enemy).\nStart with ! to hit everything EXCEPT them. Blank = all.");
+        ImGui::SameLine();
+        bool skipTrig = getMod("nt:") == "1";
+        if (ImGui::Checkbox("skip triggers", &skipTrig)) setMod("nt:", skipTrig ? "1" : "");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pass through trigger colliders (pickups, zones)\nand only hit solid ones.");
     } else if (it.op == "set_text" || it.op == "set_text_on" || it.op == "set_bar" ||
                it.op == "get_prefs") {
         // Friendly, Unity-style fields so it's clear WHAT you're setting and WHAT
@@ -26437,6 +26536,8 @@ void DrawInspector(EditorState& ed) {
             if (!rb->freezeRotation) ImGui::DragFloat("Angular Drag", &rb->angularDrag, 0.01f, 0.0f, 10.0f);
             if (ImGui::Checkbox("Allow Sleep", &rb->allowSleep)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
+            if (ImGui::Checkbox("Continuous Collision", &rb->continuousCollision)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
@@ -26448,6 +26549,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc", &bc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(bc, "bc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##bc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##bc", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
@@ -26463,6 +26565,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cc", &cc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cc", &cc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(cc, "cc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##cc", &cc->autoFit)) { if (cc->autoFit) FitColliders(go); ed.dirty = true; }
@@ -26482,6 +26585,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap2", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap2", &cap->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(cap, "cap2")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cap2")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##cap2", &cap->autoFit)) { if (cap->autoFit) FitColliders(go); ed.dirty = true; }
@@ -26497,6 +26601,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##ec2", &ec->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##ec2", &ec->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(ec, "ec2")) ed.dirty = true;
             if (ImGui::Checkbox("One-Way##ec2", &ec->oneWay)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only blocks bodies from the normal side — jump up through it, land on top.");
             if (ec->oneWay) {
@@ -26528,6 +26633,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##pc2", &pc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##pc2", &pc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(pc, "pc2")) ed.dirty = true;
             ImGui::Separator();
             ImGui::Text("Vertices (%d)", (int)pc->points.size());
             for (std::size_t i = 0; i < pc->points.size(); ++i) {
@@ -26568,6 +26674,8 @@ void DrawInspector(EditorState& ed) {
             if (!rb->freezeRotation) ImGui::DragFloat("Angular Drag##rb3", &rb->angularDrag, 0.01f, 0.0f, 10.0f);
             if (ImGui::Checkbox("Allow Sleep##rb3", &rb->allowSleep)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
+            if (ImGui::Checkbox("Continuous Collision##rb3", &rb->continuousCollision)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
@@ -27051,6 +27159,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(bc, "bc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##bc3")) {
                 FitBox(go, bc); ed.dirty = true;
             }
@@ -27078,6 +27187,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(sc, "sc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##sc3")) {
                 FitSphere(go, sc); ed.dirty = true;
             }
@@ -27098,6 +27208,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(cap, "cap3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cap3")) {
                 FitCapsule(go, cap); ed.dirty = true;
             }
@@ -34095,6 +34206,51 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // Physics debug view (Scene AND Game view): 2D colliders (green solid, blue
+    // trigger), this frame's contacts (red dot + normal) and rays cast by scripts.
+    if (g_physDebug) {
+        auto P = [&](const Vec2& p) { return worldToScreen(Vec3{p, 0}); };
+        for (const auto& up : objs) {
+            if (!up->active) continue;
+            for (Collider2D* col : up->GetComponents<Collider2D>()) {
+                if (!col->enabled) continue;
+                ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230) : IM_COL32(90, 230, 120, 230);
+                if (auto* bx = dynamic_cast<BoxCollider2D*>(col)) {   // oriented box
+                    Vec2 c = bx->WorldCenter(), h = bx->HalfExtents();
+                    float a = bx->WorldAngle(), ca = Mathf::Cos(a), sa = Mathf::Sin(a);
+                    Vec2 ax{ca * h.x, sa * h.x}, ay{-sa * h.y, ca * h.y};
+                    ImVec2 q[4] = {P(c - ax - ay), P(c + ax - ay), P(c + ax + ay), P(c - ax + ay)};
+                    dl->AddPolyline(q, 4, cc, ImDrawFlags_Closed, 1.5f);
+                } else if (auto* ci = dynamic_cast<CircleCollider2D*>(col)) {
+                    dl->AddCircle(P(ci->WorldCenter()), ci->WorldRadius() * scale, cc, 28, 1.5f);
+                } else if (auto* cap = dynamic_cast<CapsuleCollider2D*>(col)) {
+                    Vec2 s0, s1; cap->Segment(s0, s1); float r = cap->WorldRadius();
+                    dl->AddCircle(P(s0), r * scale, cc, 20, 1.5f);
+                    dl->AddCircle(P(s1), r * scale, cc, 20, 1.5f);
+                } else if (auto* poly = dynamic_cast<PolyShapeCollider2D*>(col)) {
+                    std::vector<Vec2> wp = poly->WorldPoints();
+                    std::size_t segs = poly->closedLoop() ? wp.size() : (wp.empty() ? 0 : wp.size() - 1);
+                    for (std::size_t i = 0; i < segs; ++i) dl->AddLine(P(wp[i]), P(wp[(i + 1) % wp.size()]), cc, 1.5f);
+                }
+            }
+        }
+        for (const PhysicsDebugContact2D& ct : ed.scene().physics().DebugContacts()) {
+            ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
+            dl->AddLine(P(ct.point), P(ct.point + ct.normal * 0.5f), kc, 2.0f);
+            dl->AddCircleFilled(P(ct.point), 3.5f, kc);
+        }
+        for (const PhysicsDebugRay2D& r : ed.scene().physics().DebugRays()) {
+            if (r.hit) {
+                dl->AddLine(P(r.from), P(r.point), IM_COL32(80, 230, 120, 255), 2.0f);
+                dl->AddLine(P(r.point), P(r.point + r.normal * 0.4f), IM_COL32(255, 255, 255, 230), 1.5f);
+                if (r.radius > 0.0f) dl->AddCircle(P(r.point + r.normal * r.radius), r.radius * scale, IM_COL32(80, 230, 120, 200), 20, 1.25f);
+                dl->AddCircleFilled(P(r.point), 3.5f, IM_COL32(80, 230, 120, 255));
+            } else {
+                dl->AddLine(P(r.from), P(r.to), IM_COL32(255, 210, 80, 220), 1.5f);
+            }
+        }
+    }
+
     // In-world UI projector for this (2D ortho) view, so world-space canvases sit on
     // their objects while editing. (Same helper EditUIWidgets used, so pick/drag and
     // rendering agree.)
@@ -35032,6 +35188,77 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (auto& h : al->extraHandlers) {
                 for (auto& c : h.conditions)   drawRay(c);
                 for (auto& i : h.instructions) drawRay(i);
+            }
+        }
+    }
+
+    // Physics debug view (Scene AND Game view, so you can watch it while playing):
+    // every 3D collider by its true shape (green solid, blue trigger, grey asleep),
+    // this frame's contacts (red dot + normal) and the rays scripts cast (green to
+    // the hit with a white normal, yellow on a miss). Off = nothing is drawn and the
+    // physics records nothing.
+    if (g_physDebug) {
+        auto C = [&](const Vec3& p) { return vp * Vec4{p.x, p.y, p.z, 1.0f}; };
+        auto line = [&](const Vec3& a, const Vec3& b, ImU32 col, float th = 1.5f) { clipLine(C(a), C(b), col, th); };
+        auto ring = [&](const Vec3& c, const Vec3& u, const Vec3& v, float r, ImU32 col) {
+            Vec3 prev = c + u * r;
+            for (int k = 1; k <= 24; ++k) {
+                float a = (float)k / 24.0f * 6.2831853f;
+                Vec3 cur = c + u * (r * Mathf::Cos(a)) + v * (r * Mathf::Sin(a));
+                line(prev, cur, col, 1.25f);
+                prev = cur;
+            }
+        };
+        // Two unit vectors perpendicular to n (for rings around an axis).
+        auto basis = [](const Vec3& n, Vec3& u, Vec3& v) {
+            Vec3 t = Mathf::Abs(n.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+            u = Vec3::Cross(n, t).Normalized(); v = Vec3::Cross(n, u);
+        };
+        for (const auto& up : objs) {
+            if (!up->active) continue;
+            auto* rb = up->GetComponent<Rigidbody3D>();
+            for (Collider3D* col : up->GetComponents<Collider3D>()) {
+                if (!col->enabled) continue;
+                ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230)
+                         : (rb && rb->sleeping) ? IM_COL32(140, 150, 140, 200) : IM_COL32(90, 230, 120, 230);
+                if (auto* bx = dynamic_cast<BoxCollider3D*>(col)) {   // oriented box (mesh = its bounds)
+                    Vec3 c = bx->WorldCenter(), h = bx->HalfExtents(), ax, ay, az;
+                    bx->WorldAxes(ax, ay, az);
+                    Vec3 cr[8];
+                    for (int i = 0; i < 8; ++i)
+                        cr[i] = c + ax * ((i & 1) ? h.x : -h.x) + ay * ((i & 2) ? h.y : -h.y) + az * ((i & 4) ? h.z : -h.z);
+                    static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+                    for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]], cc, 1.25f);
+                } else if (auto* sp = dynamic_cast<SphereCollider3D*>(col)) {
+                    Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
+                    ring(c, {1, 0, 0}, {0, 1, 0}, r, cc); ring(c, {1, 0, 0}, {0, 0, 1}, r, cc); ring(c, {0, 1, 0}, {0, 0, 1}, r, cc);
+                } else if (auto* cap = dynamic_cast<CapsuleCollider3D*>(col)) {   // capsule / cylinder
+                    Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
+                    Vec3 axis = (b - a).SqrMagnitude() > 1e-10f ? (b - a).Normalized() : Vec3{0, 1, 0}, u, v;
+                    basis(axis, u, v);
+                    ring(a, u, v, r, cc); ring(b, u, v, r, cc);
+                    ring(a, u, axis, r, cc); ring(b, u, axis, r, cc);
+                    line(a + u * r, b + u * r, cc); line(a - u * r, b - u * r, cc);
+                    line(a + v * r, b + v * r, cc); line(a - v * r, b - v * r, cc);
+                }
+            }
+        }
+        for (const PhysicsDebugContact3D& ct : ed.scene().physics3D().DebugContacts()) {
+            ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
+            line(ct.point, ct.point + ct.normal * 0.5f, kc, 2.0f);
+            ImVec2 sp; if (toScreen(C(ct.point), sp)) dl->AddCircleFilled(sp, 3.5f, kc);
+        }
+        for (const PhysicsDebugRay3D& r : ed.scene().physics3D().DebugRays()) {
+            if (r.hit) {
+                line(r.from, r.point, IM_COL32(80, 230, 120, 255), 2.0f);
+                line(r.point, r.point + r.normal * 0.4f, IM_COL32(255, 255, 255, 230), 1.5f);
+                if (r.radius > 0.0f) {   // the cast ball where it stopped
+                    Vec3 u, v, c = r.point + r.normal * r.radius; basis(r.normal, u, v);
+                    ring(c, u, v, r.radius, IM_COL32(80, 230, 120, 200));
+                }
+                ImVec2 sp; if (toScreen(C(r.point), sp)) dl->AddCircleFilled(sp, 3.5f, IM_COL32(80, 230, 120, 255));
+            } else {
+                line(r.from, r.to, IM_COL32(255, 210, 80, 220), 1.5f);
             }
         }
     }
@@ -37355,6 +37582,9 @@ void DrawGameView(EditorState& ed) {
     ImGui::SameLine();
     if (ImGui::Checkbox("Stats", &g_gameStatsOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("FPS / frame time / object + triangle counts, overlaid on the view");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Physics", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Physics debug view: colliders (green), triggers (blue), contact points\nand normals (red), and rays cast from scripts, in the Scene and Game views.\nMore options in View > Scene Overlays > Physics Debug.");
     if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked())) {
         ImGui::SameLine();
         if (g_gameCursorReleased) ImGui::TextDisabled("(click the view to capture)");

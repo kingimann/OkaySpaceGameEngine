@@ -9,6 +9,8 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Layers.hpp"
+#include "okay/Physics/Collider3D.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Physics/Physics2D.hpp"
@@ -426,6 +428,7 @@ struct Runtime {
     };
     LastHit lastHit2D;
     LastHit lastHit3D;
+    std::vector<LastHit> lastHitAll;    // raycast_all / raycast_all3, nearest first
 
     // Scheduled callbacks (after / every). interval == 0 means fire once.
     struct Timer { float remaining; float interval; std::string fn; bool dead; };
@@ -3672,7 +3675,13 @@ struct OkayScriptVM::Impl {
             Vec2 origin{a[0].AsFloat(), a[1].AsFloat()};
             Vec2 dir{a[2].AsFloat(), a[3].AsFloat()};
             float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
-            RaycastHit2D h = sc->physics().Raycast(*sc, origin, dir, maxDist);
+            // Optional filters: [, layers [, ignore_triggers]] (as for raycast3).
+            std::uint32_t mask = Physics2D::kAllLayers;
+            if (a.size() > 5) mask = a[5].IsString() ? Layers::MaskFromList(a[5].AsString())
+                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : (std::uint32_t)a[5].AsFloat());
+            bool trig = a.size() > 6 ? !a[6].AsBool() : true;
+            RaycastHit2D h = sc->physics().Raycast(*sc, origin, dir, maxDist, nullptr, mask, trig);
+            sc->physics().RecordQueryRay(origin, dir, maxDist, h);
             if (h.hit) {
                 rt.lastHit2D.hit = true;
                 rt.lastHit2D.object = h.gameObject ? h.gameObject->name : std::string{};
@@ -3689,6 +3698,33 @@ struct OkayScriptVM::Impl {
         b["ray_nx"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.nx}; };
         b["ray_ny"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.ny}; };
         b["ray_dist"]   = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.dist}; };
+        // raycast_all(ox, oy, dx, dy [, maxDist [, layers [, ignore_triggers]]]) -> names of
+        // everything the 2D ray passes through, nearest first (details: ray_all_*).
+        b["raycast_all"] = [this](std::vector<Value>& a) -> Value {
+            rt.lastHitAll.clear();
+            Value out = Value::MakeArray();
+            if (a.size() < 4 || !rt.host || !rt.host->gameObject) return out;
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return out;
+            Vec2 origin{a[0].AsFloat(), a[1].AsFloat()};
+            Vec2 dir{a[2].AsFloat(), a[3].AsFloat()};
+            float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
+            std::uint32_t mask = Physics2D::kAllLayers;
+            if (a.size() > 5) mask = a[5].IsString() ? Layers::MaskFromList(a[5].AsString())
+                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : (std::uint32_t)a[5].AsFloat());
+            bool trig = a.size() > 6 ? !a[6].AsBool() : true;
+            auto hits = sc->physics().RaycastAll(*sc, origin, dir, maxDist, nullptr, mask, trig);
+            sc->physics().RecordQueryRay(origin, dir, maxDist, hits.empty() ? RaycastHit2D{} : hits.front());
+            for (const RaycastHit2D& h : hits) {
+                Runtime::LastHit l;
+                l.hit = true; l.object = h.gameObject ? h.gameObject->name : std::string{};
+                l.px = h.point.x; l.py = h.point.y; l.nx = h.normal.x; l.ny = h.normal.y;
+                l.dist = h.distance;
+                rt.lastHitAll.push_back(l);
+                out.AsArray()->push_back(Value{l.object});
+            }
+            return out;
+        };
         b["overlap"] = [this](std::vector<Value>& a) {
             if (a.size() < 2 || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* sc = rt.host->gameObject->scene();
@@ -5728,23 +5764,203 @@ struct OkayScriptVM::Impl {
         };
         // raycast3(ox,oy,oz, dx,dy,dz [, maxDist]) returns the hit object's name
         // ("" = miss); details via ray3_hit/ray3_object/ray3_x/y/z/dist/nx/ny/nz.
-        b["raycast3"] = [this](std::vector<Value>& a) -> Value {
+        // Optional trailing query filters shared by the 3D/2D casts below:
+        // layers = a layer mask number, or a list "0,3" / "Default,Enemy"
+        // (see layer_mask), and ignore_triggers = true to pass through triggers.
+        auto maskArg = [](const std::vector<Value>& a, std::size_t i) -> std::uint32_t {
+            if (a.size() <= i) return Physics3D::kAllLayers;
+            if (a[i].IsString()) return Layers::MaskFromList(a[i].AsString());
+            float f = a[i].AsFloat();
+            return f <= 0.0f ? Physics3D::kAllLayers : (std::uint32_t)f;
+        };
+        auto trigArg = [](const std::vector<Value>& a, std::size_t i, bool dflt) {
+            return a.size() > i ? !a[i].AsBool() : dflt;   // arg is "ignore triggers"
+        };
+        auto toHit = [](const RaycastHit3D& h) {
+            Runtime::LastHit l;
+            if (!h.hit) return l;
+            l.hit = true;
+            l.object = h.gameObject ? h.gameObject->name : std::string{};
+            l.px = h.point.x;  l.py = h.point.y;  l.pz = h.point.z;
+            l.nx = h.normal.x; l.ny = h.normal.y; l.nz = h.normal.z;
+            l.dist = h.distance;
+            return l;
+        };
+        // raycast3(ox,oy,oz, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]])
+        b["raycast3"] = [this, maskArg, trigArg, toHit](std::vector<Value>& a) -> Value {
             rt.lastHit3D = Runtime::LastHit{};
             if (a.size() < 6 || !rt.host || !rt.host->gameObject) return Value{std::string{}};
             Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value{std::string{}};
             Vec3 o{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
             Vec3 d{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
             float maxDist = a.size() > 6 ? a[6].AsFloat() : 1e9f;
-            RaycastHit3D h = sc->physics3D().Raycast(*sc, o, d, maxDist);
-            if (h.hit) {
-                rt.lastHit3D.hit = true;
-                rt.lastHit3D.object = h.gameObject ? h.gameObject->name : std::string{};
-                rt.lastHit3D.px = h.point.x;  rt.lastHit3D.py = h.point.y;  rt.lastHit3D.pz = h.point.z;
-                rt.lastHit3D.nx = h.normal.x; rt.lastHit3D.ny = h.normal.y; rt.lastHit3D.nz = h.normal.z;
-                rt.lastHit3D.dist = h.distance;
-            }
+            RaycastHit3D h = sc->physics3D().Raycast(*sc, o, d, maxDist, nullptr, maskArg(a, 7), trigArg(a, 8, true));
+            sc->physics3D().RecordQueryRay(o, d, maxDist, h);
+            rt.lastHit3D = toHit(h);
             return Value{rt.lastHit3D.object};
         };
+        // raycast_all3(ox,oy,oz, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]]) ->
+        // the names of EVERYTHING the ray passes through, nearest first. Details per
+        // hit: ray_all_count(), ray_all_object(i), ray_all_dist(i), ray_all_point(i),
+        // ray_all_normal(i).
+        b["raycast_all3"] = [this, maskArg, trigArg, toHit](std::vector<Value>& a) -> Value {
+            rt.lastHitAll.clear();
+            Value out = Value::MakeArray();
+            if (a.size() < 6 || !rt.host || !rt.host->gameObject) return out;
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return out;
+            Vec3 o{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Vec3 d{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            float maxDist = a.size() > 6 ? a[6].AsFloat() : 1e9f;
+            auto hits = sc->physics3D().RaycastAll(*sc, o, d, maxDist, nullptr, maskArg(a, 7), trigArg(a, 8, true));
+            sc->physics3D().RecordQueryRay(o, d, maxDist, hits.empty() ? RaycastHit3D{} : hits.front());
+            for (const RaycastHit3D& h : hits) {
+                rt.lastHitAll.push_back(toHit(h));
+                out.AsArray()->push_back(Value{rt.lastHitAll.back().object});
+            }
+            return out;
+        };
+        auto allAt = [this](std::vector<Value>& a) -> const Runtime::LastHit* {
+            int i = a.empty() ? 0 : (int)a[0].AsFloat();
+            return (i >= 0 && i < (int)rt.lastHitAll.size()) ? &rt.lastHitAll[(std::size_t)i] : nullptr;
+        };
+        b["ray_all_count"]  = [this](std::vector<Value>&) -> Value { return Value{(float)rt.lastHitAll.size()}; };
+        b["ray_all_object"] = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return Value{h ? h->object : std::string{}}; };
+        b["ray_all_dist"]   = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return Value{h ? h->dist : 0.0f}; };
+        b["ray_all_point"]  = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return Value{h ? Vec3{h->px, h->py, h->pz} : Vec3::Zero}; };
+        b["ray_all_normal"] = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return Value{h ? Vec3{h->nx, h->ny, h->nz} : Vec3::Zero}; };
+        // Thick casts (fill the same ray3_* details as raycast3; skip triggers unless
+        // the last arg is false): sphere_cast3(ox,oy,oz, dx,dy,dz, radius [, maxDist [, layers [, ignore_triggers]]])
+        b["sphere_cast3"] = [this, maskArg, trigArg, toHit](std::vector<Value>& a) -> Value {
+            rt.lastHit3D = Runtime::LastHit{};
+            if (a.size() < 7 || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value{std::string{}};
+            Vec3 o{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Vec3 d{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            float r = a[6].AsFloat(), maxDist = a.size() > 7 ? a[7].AsFloat() : 1e9f;
+            RaycastHit3D h = sc->physics3D().SphereCast(*sc, o, d, r, maxDist, nullptr, maskArg(a, 8), trigArg(a, 9, false));
+            sc->physics3D().RecordQueryRay(o, d, maxDist, h, r);
+            rt.lastHit3D = toHit(h);
+            return Value{rt.lastHit3D.object};
+        };
+        // box_cast3(cx,cy,cz, hx,hy,hz, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]]) — h = half size
+        b["box_cast3"] = [this, maskArg, trigArg, toHit](std::vector<Value>& a) -> Value {
+            rt.lastHit3D = Runtime::LastHit{};
+            if (a.size() < 9 || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value{std::string{}};
+            Vec3 c{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Vec3 h3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            Vec3 d{a[6].AsFloat(), a[7].AsFloat(), a[8].AsFloat()};
+            float maxDist = a.size() > 9 ? a[9].AsFloat() : 1e9f;
+            RaycastHit3D h = sc->physics3D().BoxCast(*sc, c, h3, d, Quat::Identity, maxDist, nullptr,
+                                                     maskArg(a, 10), trigArg(a, 11, false));
+            sc->physics3D().RecordQueryRay(c, d, maxDist, h, Mathf::Min(h3.x, Mathf::Min(h3.y, h3.z)));
+            rt.lastHit3D = toHit(h);
+            return Value{rt.lastHit3D.object};
+        };
+        // capsule_cast3(ax,ay,az, bx,by,bz, radius, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]])
+        b["capsule_cast3"] = [this, maskArg, trigArg, toHit](std::vector<Value>& a) -> Value {
+            rt.lastHit3D = Runtime::LastHit{};
+            if (a.size() < 10 || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value{std::string{}};
+            Vec3 p0{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Vec3 p1{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            float r = a[6].AsFloat();
+            Vec3 d{a[7].AsFloat(), a[8].AsFloat(), a[9].AsFloat()};
+            float maxDist = a.size() > 10 ? a[10].AsFloat() : 1e9f;
+            RaycastHit3D h = sc->physics3D().CapsuleCast(*sc, p0, p1, r, d, maxDist, nullptr,
+                                                         maskArg(a, 11), trigArg(a, 12, false));
+            sc->physics3D().RecordQueryRay((p0 + p1) * 0.5f, d, maxDist, h, r);
+            rt.lastHit3D = toHit(h);
+            return Value{rt.lastHit3D.object};
+        };
+        // Overlaps -> the names of every collider's object inside the shape.
+        auto names3 = [](const std::vector<Collider3D*>& cols) {
+            Value out = Value::MakeArray();
+            for (Collider3D* c : cols) out.AsArray()->push_back(Value{c->gameObject ? c->gameObject->name : std::string{}});
+            return out;
+        };
+        // overlap_sphere3(cx,cy,cz, radius [, layers [, ignore_triggers]])
+        b["overlap_sphere3"] = [this, maskArg, trigArg, names3](std::vector<Value>& a) -> Value {
+            if (a.size() < 4 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            return names3(sc->physics3D().OverlapSphere(*sc, {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()},
+                                                        a[3].AsFloat(), maskArg(a, 4), trigArg(a, 5, true)));
+        };
+        // overlap_box3(cx,cy,cz, hx,hy,hz [, layers [, ignore_triggers]]) — h = half size
+        b["overlap_box3"] = [this, maskArg, trigArg, names3](std::vector<Value>& a) -> Value {
+            if (a.size() < 6 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            return names3(sc->physics3D().OverlapBox(*sc, {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()},
+                                                     {a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}, Quat::Identity,
+                                                     maskArg(a, 6), trigArg(a, 7, true)));
+        };
+        // overlap_capsule3(ax,ay,az, bx,by,bz, radius [, layers [, ignore_triggers]])
+        b["overlap_capsule3"] = [this, maskArg, trigArg, names3](std::vector<Value>& a) -> Value {
+            if (a.size() < 7 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            return names3(sc->physics3D().OverlapCapsule(*sc, {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()},
+                                                         {a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()},
+                                                         a[6].AsFloat(), maskArg(a, 7), trigArg(a, 8, true)));
+        };
+        // layer_mask("Default", "Enemy", 3, ...) -> a mask number for the layers arg.
+        b["layer_mask"] = [](std::vector<Value>& a) -> Value {
+            std::uint32_t m = 0;
+            for (const Value& v : a)
+                m |= v.IsString() ? Layers::MaskFromList(v.AsString()) : (1u << ((int)v.AsFloat() & 31));
+            return Value{(float)(a.empty() ? Physics3D::kAllLayers : m)};
+        };
+        // ray3_cast(what, origin, direction [, maxDist [, layers [, ignore_triggers [, radius]]]])
+        // — one value from a cast that skips this object: what = "hit" (true/false),
+        // "point", "normal" (vectors), "distance" or "object" (name). Used by
+        // visual-script Raycast 3D / Sphere Cast nodes turned into code.
+        b["ray3_cast"] = [this, maskArg, trigArg](std::vector<Value>& a) -> Value {
+            const std::string what = a.empty() ? std::string("hit") : a[0].AsString();
+            RaycastHit3D h;
+            Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr;
+            if (what == "all") {   // names of everything along the ray, nearest first
+                Value out = Value::MakeArray();
+                if (!sc || a.size() < 3) return out;
+                for (const RaycastHit3D& x : sc->physics3D().RaycastAll(*sc, a[1].AsVec3(), a[2].AsVec3(),
+                        a.size() > 3 ? a[3].AsFloat() : 1e9f, rt.host->gameObject, maskArg(a, 4), trigArg(a, 5, true)))
+                    out.AsArray()->push_back(Value{x.gameObject ? x.gameObject->name : std::string{}});
+                return out;
+            }
+            if (sc && a.size() >= 3) {
+                Vec3 o = a[1].AsVec3(), d = a[2].AsVec3();
+                float maxDist = a.size() > 3 ? a[3].AsFloat() : 1e9f;
+                float r = a.size() > 6 ? a[6].AsFloat() : 0.0f;
+                bool trig = trigArg(a, 5, r <= 0.0f);
+                h = r > 0.0f
+                    ? sc->physics3D().SphereCast(*sc, o, d, r, maxDist, rt.host->gameObject, maskArg(a, 4), trig)
+                    : sc->physics3D().Raycast(*sc, o, d, maxDist, rt.host->gameObject, maskArg(a, 4), trig);
+                sc->physics3D().RecordQueryRay(o, d, maxDist, h, r);
+            }
+            if (what == "point")    return Value{h.point};
+            if (what == "normal")   return Value{h.normal};
+            if (what == "distance") return Value{h.distance};
+            if (what == "object")   return Value{h.gameObject ? h.gameObject->name : std::string{}};
+            return Value{h.hit};
+        };
+        // overlap3("sphere" | "box", center, radius_or_half_size [, layers]) -> names of
+        // the objects inside, leaving out this object (the Overlap nodes as code).
+        b["overlap3"] = [this, maskArg, names3](std::vector<Value>& a) -> Value {
+            Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr;
+            if (!sc || a.size() < 3) return Value::MakeArray();
+            GameObject* self = rt.host->gameObject;
+            std::vector<Collider3D*> cols = a[0].AsString() == "box"
+                ? sc->physics3D().OverlapBox(*sc, a[1].AsVec3(), a[2].AsVec3(), Quat::Identity, maskArg(a, 3), true, self)
+                : sc->physics3D().OverlapSphere(*sc, a[1].AsVec3(), a[2].AsFloat(), maskArg(a, 3), true, self);
+            Value out = Value::MakeArray();   // one entry per object
+            std::vector<GameObject*> seen;
+            for (Collider3D* c : cols) {
+                if (std::find(seen.begin(), seen.end(), c->gameObject) != seen.end()) continue;
+                seen.push_back(c->gameObject);
+                out.AsArray()->push_back(Value{c->gameObject ? c->gameObject->name : std::string{}});
+            }
+            return out;
+        };
+        b["ray3_point"]  = [this](std::vector<Value>&) -> Value { return Value{Vec3{rt.lastHit3D.px, rt.lastHit3D.py, rt.lastHit3D.pz}}; };
+        b["ray3_normal"] = [this](std::vector<Value>&) -> Value { return Value{Vec3{rt.lastHit3D.nx, rt.lastHit3D.ny, rt.lastHit3D.nz}}; };
         b["ray3_hit"]    = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.hit}; };
         b["ray3_object"] = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.object}; };
         b["ray3_x"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.px}; };

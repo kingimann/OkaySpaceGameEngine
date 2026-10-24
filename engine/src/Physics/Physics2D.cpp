@@ -7,6 +7,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Mathf.hpp"
 
+#include <algorithm>
 #include <vector>
 #include <unordered_set>
 
@@ -260,8 +261,39 @@ void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision2D&)
                        const Collision2D& info) {
     for (Component* c : go->GetComponents<Component>()) (c->*fn)(info);
 }
-void DispatchTrigger(GameObject* go, void (Component::*fn)(Collider2D*), Collider2D* other) {
-    for (Component* c : go->GetComponents<Component>()) (c->*fn)(other);
+// The trigger overlap being dispatched right now (Physics2D::CurrentTrigger).
+const TriggerContact2D* g_currentTrigger = nullptr;
+
+// Tell `self`'s object it overlapped `other`, with the overlap point/normal
+// readable through Physics2D::CurrentTrigger() for the duration of the calls.
+void DispatchTrigger(Collider2D* self, void (Component::*fn)(Collider2D*), Collider2D* other,
+                     const Vec2& point, const Vec2& normal) {
+    TriggerContact2D info{self, other, point, normal};
+    const TriggerContact2D* prev = g_currentTrigger;
+    g_currentTrigger = &info;
+    for (Component* c : self->gameObject->GetComponents<Component>()) (c->*fn)(other);
+    g_currentTrigger = prev;
+}
+
+// The Collision2D handed to one side of a contact. `n` points from that side
+// toward the other; `relVel` is the other's velocity minus this side's.
+Collision2D MakeCollision(Collider2D* other, const Vec2& n, float pen, const Vec2& point,
+                          const Vec2& relVel) {
+    Collision2D c;
+    c.gameObject = other->gameObject; c.collider = other;
+    c.normal = n; c.penetration = pen; c.point = point;
+    c.relativeVelocity = relVel;
+    float closing = -Vec2::Dot(relVel, n);   // > 0 when the two approach
+    c.impactSpeed = closing > 0.0f ? closing : 0.0f;
+    return c;
+}
+
+// Does trigger collider `trig` react to `other`? (its tag / layer filter)
+bool TriggerAccepts(const Collider2D* trig, const Collider2D* other) {
+    if (!trig->isTrigger) return true;
+    if (!trig->triggerTag.empty() && (!other->gameObject || other->gameObject->tag != trig->triggerTag))
+        return false;
+    return ((trig->triggerLayers >> (other->layer & 31)) & 1u) != 0;
 }
 
 } // namespace
@@ -305,7 +337,8 @@ void Physics2D::Step(Scene& scene, float dt) {
             }
         }
         if (rb->bodyType != Rigidbody2D::BodyType::Static) {
-            t->localPosition += Vec3{rb->velocity * dt};
+            if (rb->continuousCollision) SweepBody(scene, rb, dt);   // stops at walls it would skip
+            else t->localPosition += Vec3{rb->velocity * dt};
             if (!rb->freezeRotation && rb->angularVelocity != 0.0f) {
                 Vec3 e = t->localRotation.ToEuler();
                 e.z += rb->angularVelocity * dt;
@@ -343,6 +376,11 @@ void Physics2D::Step(Scene& scene, float dt) {
             if (aMax.x < bMin.x || aMin.x > bMax.x || aMax.y < bMin.y || aMin.y > bMax.y)
                 continue;
 
+            bool trigger = a->isTrigger || b->isTrigger;
+            // Trigger tag / layer filters: a filtered-out object passes through
+            // silently (no events on either side).
+            if (trigger && (!TriggerAccepts(a, b) || !TriggerAccepts(b, a))) continue;
+
             Contact c = TestColliders(a, b);
             if (!c.hit) continue;
 
@@ -350,7 +388,10 @@ void Physics2D::Step(Scene& scene, float dt) {
 
             Rigidbody2D* ra = a->gameObject->GetComponent<Rigidbody2D>();
             Rigidbody2D* rb = b->gameObject->GetComponent<Rigidbody2D>();
-            bool trigger = a->isTrigger || b->isTrigger;
+            // Relative velocity before the solver changes it (for impact speed).
+            const Vec2 relVelBA = (rb ? rb->velocity : Vec2::Zero) - (ra ? ra->velocity : Vec2::Zero);
+            if (PhysicsDebug::Collect() && (int)m_debugContacts.size() < PhysicsDebug::kMaxContacts)
+                m_debugContacts.push_back({c.point, c.normal, trigger});
 
             // 3) Resolve solids (skip triggers and pairs without dynamics).
             if (!trigger && !OneWayPassThrough(a, b)) {
@@ -443,15 +484,15 @@ void Physics2D::Step(Scene& scene, float dt) {
             bool wasContact = m_contacts.count({a, b}) != 0;
             if (trigger) {
                 if (!wasContact) {
-                    DispatchTrigger(a->gameObject, &Component::OnTriggerEnter2D, b);
-                    DispatchTrigger(b->gameObject, &Component::OnTriggerEnter2D, a);
+                    DispatchTrigger(a, &Component::OnTriggerEnter2D, b, c.point, c.normal);
+                    DispatchTrigger(b, &Component::OnTriggerEnter2D, a, c.point, -c.normal);
                 } else {
-                    DispatchTrigger(a->gameObject, &Component::OnTriggerStay2D, b);
-                    DispatchTrigger(b->gameObject, &Component::OnTriggerStay2D, a);
+                    DispatchTrigger(a, &Component::OnTriggerStay2D, b, c.point, c.normal);
+                    DispatchTrigger(b, &Component::OnTriggerStay2D, a, c.point, -c.normal);
                 }
             } else {
-                Collision2D forA{b->gameObject, b, c.normal, c.penetration};
-                Collision2D forB{a->gameObject, a, -c.normal, c.penetration};
+                Collision2D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
+                Collision2D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
                 if (!wasContact) {
                     DispatchCollision(a->gameObject, &Component::OnCollisionEnter2D, forA);
                     DispatchCollision(b->gameObject, &Component::OnCollisionEnter2D, forB);
@@ -594,11 +635,14 @@ void Physics2D::Step(Scene& scene, float dt) {
         // The colliders may have been destroyed; guard via the live list.
         if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
         if (a->isTrigger || b->isTrigger) {
-            DispatchTrigger(a->gameObject, &Component::OnTriggerExit2D, b);
-            DispatchTrigger(b->gameObject, &Component::OnTriggerExit2D, a);
+            // No overlap any more: report the midpoint between the two centres.
+            Vec2 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
+            Vec2 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
+            DispatchTrigger(a, &Component::OnTriggerExit2D, b, mid, n);
+            DispatchTrigger(b, &Component::OnTriggerExit2D, a, mid, n * -1.0f);
         } else {
-            Collision2D forA{b->gameObject, b, {0, 0}, 0.0f};
-            Collision2D forB{a->gameObject, a, {0, 0}, 0.0f};
+            Collision2D forA = MakeCollision(b, Vec2::Zero, 0.0f, Vec2::Zero, Vec2::Zero);
+            Collision2D forB = MakeCollision(a, Vec2::Zero, 0.0f, Vec2::Zero, Vec2::Zero);
             DispatchCollision(a->gameObject, &Component::OnCollisionExit2D, forA);
             DispatchCollision(b->gameObject, &Component::OnCollisionExit2D, forB);
         }
@@ -681,25 +725,39 @@ bool Alive(Collider2D* c) { return c->enabled && c->gameObject && c->gameObject-
 
 } // namespace
 
+namespace {
+// Does a query consider this collider? (alive, not ignored, layer, trigger rule)
+bool Passes(Collider2D* c, GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
+    if (!Alive(c)) return false;
+    if (ignore && c->gameObject == ignore) return false;
+    if (!queryTriggers && c->isTrigger) return false;
+    return ((mask >> (c->layer & 31)) & 1u) != 0;
+}
+
+// Ray test against one collider: exact for circles and (oriented) boxes,
+// the AABB for capsules / edges / polygons.
+bool RayCollider(Collider2D* c, const Vec2& o, const Vec2& d, float maxT, float& t, Vec2& n) {
+    if (c->shape() == Collider2D::Shape::Circle) {
+        auto* cc = static_cast<CircleCollider2D*>(c);
+        return RayCircle(o, d, cc->WorldCenter(), cc->WorldRadius(), maxT, t, n);
+    }
+    if (c->shape() == Collider2D::Shape::Box)   // exact oriented-box ray test
+        return RayOBB2(o, d, static_cast<BoxCollider2D*>(c), maxT, t, n);
+    Vec2 mn, mx; c->WorldAABB(mn, mx);
+    return RayAABB(o, d, mn, mx, maxT, t, n);
+}
+} // namespace
+
 RaycastHit2D Physics2D::Raycast(Scene& scene, const Vec2& origin, const Vec2& direction,
-                                float maxDistance) {
+                                float maxDistance, GameObject* ignore,
+                                std::uint32_t layerMask, bool queryTriggers) {
     RaycastHit2D best;
     best.distance = maxDistance;
     Vec2 dir = direction.Normalized();
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
-        if (!Alive(c)) continue;
+        if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
         float t; Vec2 n;
-        bool hit = false;
-        if (c->shape() == Collider2D::Shape::Circle) {
-            auto* cc = static_cast<CircleCollider2D*>(c);
-            hit = RayCircle(origin, dir, cc->WorldCenter(), cc->WorldRadius(), best.distance, t, n);
-        } else if (c->shape() == Collider2D::Shape::Box) {   // exact oriented-box ray test
-            hit = RayOBB2(origin, dir, static_cast<BoxCollider2D*>(c), best.distance, t, n);
-        } else { // capsule/edge/polygon (via its AABB)
-            Vec2 mn, mx; c->WorldAABB(mn, mx);
-            hit = RayAABB(origin, dir, mn, mx, best.distance, t, n);
-        }
-        if (hit && t <= best.distance) {
+        if (RayCollider(c, origin, dir, best.distance, t, n) && t <= best.distance) {
             best.hit = true;
             best.collider = c;
             best.gameObject = c->gameObject;
@@ -711,9 +769,28 @@ RaycastHit2D Physics2D::Raycast(Scene& scene, const Vec2& origin, const Vec2& di
     return best;
 }
 
-Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p) {
+std::vector<RaycastHit2D> Physics2D::RaycastAll(Scene& scene, const Vec2& origin, const Vec2& direction,
+                                                float maxDistance, GameObject* ignore,
+                                                std::uint32_t layerMask, bool queryTriggers) {
+    std::vector<RaycastHit2D> hits;
+    Vec2 dir = direction.Normalized();
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
-        if (!Alive(c)) continue;
+        if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
+        float t; Vec2 n;
+        if (!RayCollider(c, origin, dir, maxDistance, t, n)) continue;
+        RaycastHit2D h;
+        h.hit = true; h.collider = c; h.gameObject = c->gameObject;
+        h.distance = t; h.point = origin + dir * t; h.normal = n;
+        hits.push_back(h);
+    }
+    std::stable_sort(hits.begin(), hits.end(),
+                     [](const RaycastHit2D& x, const RaycastHit2D& y) { return x.distance < y.distance; });
+    return hits;
+}
+
+Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p, std::uint32_t layerMask, bool queryTriggers) {
+    for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Passes(c, nullptr, layerMask, queryTriggers)) continue;
         if (c->shape() == Collider2D::Shape::Box) {
             // Exact oriented-box test: bring the point into the box's local frame.
             auto* box = static_cast<BoxCollider2D*>(c);
@@ -727,7 +804,7 @@ Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p) {
         } else if (c->shape() == Collider2D::Shape::Circle) {
             auto* cc = static_cast<CircleCollider2D*>(c);
             if ((p - cc->WorldCenter()).Magnitude() <= cc->WorldRadius()) return c;
-        } else { // Capsule: distance from point to the inner segment.
+        } else if (c->shape() == Collider2D::Shape::Capsule) {   // distance to the inner segment
             auto* cap = static_cast<CapsuleCollider2D*>(c);
             Vec2 a, b; cap->Segment(a, b);
             if ((p - ClosestOnSegment(p, a, b)).Magnitude() <= cap->WorldRadius()) return c;
@@ -736,10 +813,11 @@ Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p) {
     return nullptr;
 }
 
-std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& center, float radius) {
+std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& center, float radius,
+                                                  std::uint32_t layerMask, bool queryTriggers) {
     std::vector<Collider2D*> out;
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
-        if (!Alive(c)) continue;
+        if (!Passes(c, nullptr, layerMask, queryTriggers)) continue;
         bool hit = false;
         if (c->shape() == Collider2D::Shape::Box) {
             // Exact oriented-box distance: closest point in the box's local frame.
@@ -759,12 +837,13 @@ std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& cent
     return out;
 }
 
-std::vector<Collider2D*> Physics2D::OverlapBox(Scene& scene, const Vec2& center, const Vec2& half) {
+std::vector<Collider2D*> Physics2D::OverlapBox(Scene& scene, const Vec2& center, const Vec2& half,
+                                               std::uint32_t layerMask, bool queryTriggers) {
     std::vector<Collider2D*> out;
     Vec2 qmn{center.x - half.x, center.y - half.y};
     Vec2 qmx{center.x + half.x, center.y + half.y};
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
-        if (!Alive(c)) continue;
+        if (!Passes(c, nullptr, layerMask, queryTriggers)) continue;
         bool hit = false;
         if (c->shape() == Collider2D::Shape::Box) {
             Vec2 mn, mx; c->WorldAABB(mn, mx);
@@ -812,28 +891,118 @@ bool CircleTouch(Collider2D* col, const Vec2& c, float r, Vec2& n, Vec2& point) 
     point = sc + n * sr;
     return true;
 }
+
+// Sweep a circle along unit `dir` up to maxDist; the nearest collider it touches.
+// Steps of half the radius (a thin wall can't slip between samples), limited to
+// the stretch of path near any candidate's bounds, each touch refined by
+// bisection. `skipStartOverlaps` ignores colliders already touching at the start.
+RaycastHit2D SweepCircle(Scene& scene, const Vec2& origin, float radius, const Vec2& dir,
+                         float maxDist, GameObject* ignore, std::uint32_t mask,
+                         bool queryTriggers, bool skipStartOverlaps) {
+    RaycastHit2D best;
+    struct Cand { Collider2D* c; float t0, t1; };
+    std::vector<Cand> cands;
+    float lo = 1e30f, hi = -1e30f;
+    for (Collider2D* col : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Passes(col, ignore, mask, queryTriggers)) continue;
+        Vec2 n, p;
+        if (skipStartOverlaps && CircleTouch(col, origin, radius, n, p)) continue;
+        Vec2 mn, mx; col->WorldAABB(mn, mx);
+        mn = mn - Vec2{radius, radius}; mx = mx + Vec2{radius, radius};
+        // Slab test of the centre's path against the inflated bounds.
+        float t0 = -1e30f, t1 = 1e30f; bool miss = false;
+        for (int a = 0; a < 2 && !miss; ++a) {
+            float od = a == 0 ? dir.x : dir.y, oo = a == 0 ? origin.x : origin.y;
+            float l = a == 0 ? mn.x : mn.y, h = a == 0 ? mx.x : mx.y;
+            if (Mathf::Abs(od) < 1e-8f) { if (oo < l || oo > h) miss = true; continue; }
+            float s0 = (l - oo) / od, s1 = (h - oo) / od;
+            if (s0 > s1) std::swap(s0, s1);
+            t0 = Mathf::Max(t0, s0); t1 = Mathf::Min(t1, s1);
+            if (t0 > t1) miss = true;
+        }
+        if (miss || t1 < 0.0f || t0 > maxDist) continue;
+        t0 = Mathf::Max(t0, 0.0f); t1 = Mathf::Min(t1, maxDist);
+        cands.push_back({col, t0, t1});
+        lo = Mathf::Min(lo, t0); hi = Mathf::Max(hi, t1);
+    }
+    if (cands.empty()) return best;
+    if (dir.SqrMagnitude() < 1e-12f) hi = lo;   // no direction: just test where it stands
+    float step = Mathf::Max(radius * 0.5f, 0.02f);
+    if ((hi - lo) / step > 20000.0f) step = (hi - lo) / 20000.0f;   // bound the work
+    float prev = lo;
+    for (float t = lo; ; t += step) {
+        bool last = t >= hi;
+        if (last) t = hi;
+        float bestT = 1e30f; Collider2D* bestC = nullptr;
+        for (const Cand& cd : cands) {
+            if (t < cd.t0 - step || t > cd.t1 + step) continue;
+            Vec2 n, p;
+            if (!CircleTouch(cd.c, origin + dir * t, radius, n, p)) continue;
+            float a = prev, b = t;
+            if (b > a) for (int it = 0; it < 12; ++it) {
+                float m = (a + b) * 0.5f;
+                if (CircleTouch(cd.c, origin + dir * m, radius, n, p)) b = m; else a = m;
+            }
+            if (b < bestT) { bestT = b; bestC = cd.c; }
+        }
+        if (bestC) {
+            Vec2 n, p;
+            CircleTouch(bestC, origin + dir * bestT, radius, n, p);
+            best.hit = true; best.collider = bestC; best.gameObject = bestC->gameObject;
+            best.distance = bestT; best.point = p; best.normal = n;
+            return best;
+        }
+        if (last) break;
+        prev = t;
+    }
+    return best;
+}
 } // namespace
 
 RaycastHit2D Physics2D::CircleCast(Scene& scene, const Vec2& origin, const Vec2& direction,
-                                   float radius, float maxDistance) {
-    RaycastHit2D best;
+                                   float radius, float maxDistance, GameObject* ignore,
+                                   std::uint32_t layerMask, bool queryTriggers) {
     Vec2 dir = direction.Normalized();
-    if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance);
-    auto colliders = scene.FindObjectsOfType<Collider2D>();
-    float step = radius * 0.5f; if (step < 0.02f) step = 0.02f;
-    for (float t = 0.0f; t <= maxDistance; t += step) {
-        Vec2 c = origin + dir * t;
-        for (Collider2D* col : colliders) {
-            if (!Alive(col) || col->isTrigger) continue;
-            Vec2 n, p;
-            if (CircleTouch(col, c, radius, n, p)) {
-                best.hit = true; best.collider = col; best.gameObject = col->gameObject;
-                best.distance = t; best.point = p; best.normal = n;
-                return best;
-            }
-        }
+    if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
+    return SweepCircle(scene, origin, radius, dir, maxDistance, ignore, layerMask, queryTriggers, false);
+}
+
+void Physics2D::SweepBody(Scene& scene, Rigidbody2D* rb, float dt) {
+    Transform* t = rb->transform;
+    Vec2 motion = rb->velocity * dt;
+    float len = motion.Magnitude();
+    Collider2D* self = rb->gameObject->GetComponent<Collider2D>();
+    if (!self || !Alive(self) || self->isTrigger || len < 1e-6f) {
+        t->localPosition += Vec3{motion};
+        return;
     }
-    return best;
+    // The body as the circle that fits inside its bounds: a slow body (moving
+    // less than half that per step) can't skip a wall, so it moves normally.
+    Vec2 mn, mx; self->WorldAABB(mn, mx);
+    float r = 0.5f * Mathf::Min(mx.x - mn.x, mx.y - mn.y);
+    if (r < 0.01f) r = 0.01f;
+    if (len <= r * 0.5f) { t->localPosition += Vec3{motion}; return; }
+    Vec2 dir = motion / len;
+    RaycastHit2D h = SweepCircle(scene, self->WorldCenter(), r, dir, len, rb->gameObject,
+                                 m_layerMask[self->layer & 31], false, true);
+    float travel = len;
+    // Stop just inside the surface so this step's narrow phase sees the contact.
+    if (h.hit) travel = Mathf::Min(len, h.distance + Mathf::Min(0.02f, r * 0.2f));
+    t->localPosition += Vec3{dir * travel};
+}
+
+const TriggerContact2D* Physics2D::CurrentTrigger() { return g_currentTrigger; }
+
+void Physics2D::RecordQueryRay(const Vec2& origin, const Vec2& direction, float maxDistance,
+                               const RaycastHit2D& hit, float radius) {
+    if (!PhysicsDebug::Collect() || !PhysicsDebug::ScriptRays()) return;
+    if ((int)m_debugRays.size() >= PhysicsDebug::kMaxRays) return;
+    Vec2 dir = direction.Normalized();
+    PhysicsDebugRay2D r;
+    r.from = origin;
+    r.to = origin + dir * Mathf::Min(maxDistance, 1000.0f);   // "infinite" rays drawn 1 km long
+    r.hit = hit.hit; r.point = hit.point; r.normal = hit.normal; r.radius = radius;
+    m_debugRays.push_back(r);
 }
 
 } // namespace okay

@@ -179,20 +179,6 @@ struct ObjectInfoNode : VsNode {   // the Target's (default: this object's) name
         return tag ? ctx.gameObject->tag : ctx.gameObject->name;
     }
 };
-        const Vec3 origin = HasInput(0) ? In(0, g, ctx).AsVec3() : (ctx.transform ? ctx.transform->Position() : Vec3{0, 0, 0});
-        Vec3 dir = HasInput(1) ? In(1, g, ctx).AsVec3() : (ctx.transform ? ctx.transform->Forward() : Vec3{0, 0, -1});
-        const float maxDist = In(2, g, ctx, VsValue{1000.0f}).AsFloat();
-        RaycastHit3D h;
-        if (dir.Magnitude() > 1e-6f) h = sc->physics3D().Raycast(*sc, origin, dir.Normalized(), maxDist, ctx.gameObject);
-        switch (outPin) {
-            case 0: return h.hit;
-            case 1: return VsValue::Object(h.hit && h.gameObject ? h.gameObject->InstanceId() : 0);
-            case 2: return h.point;
-            case 3: return h.normal;
-            default: return h.hit ? h.distance : maxDist;
-        }
-    }
-};
 struct AnimEventNameNode : VsNode {   // the clip event an On Anim Event chain is running for
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
         auto it = ctx.variables.find("anim_event");

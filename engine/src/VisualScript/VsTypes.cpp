@@ -243,6 +243,11 @@ const Row kRows[] = {
         {"SaveValue", true, "A", ""},
         {"LoadValue", false, "A", "A"},
         {"Format", false, "AAA", "T"},
+        {"FunctionStart", false, "", ""},
+        {"Return", true, "", ""},
+        {"CallFunction", true, "", ""},
+        {"SetLocal", true, "A", ""},
+        {"GetLocal", false, "", "A"},
         {"Substring", false, "TNN", "T"},
         {"Replace", false, "TTT", "T"},
         {"ToNumber", false, "T", "N"},
@@ -375,6 +380,76 @@ std::string ConversionHint(PinType from, PinType to) {
     return "";
 }
 
+// ---- Function signatures ------------------------------------------------------
+namespace {
+std::string Trim(std::string s) {
+    while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(s.begin());
+    while (!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
+    return s;
+}
+bool ValidName(const std::string& s) {
+    if (s.empty() || !(std::isalpha((unsigned char)s[0]) || s[0] == '_')) return false;
+    for (char c : s) if (!(std::isalnum((unsigned char)c) || c == '_')) return false;
+    return true;
+}
+bool TypeFromName(std::string t, PinType& out) {
+    for (char& c : t) c = (char)std::tolower((unsigned char)c);
+    if (t.empty() || t == "any") { out = PinType::Any; return true; }
+    if (t == "number" || t == "float" || t == "int" || t == "n") { out = PinType::Number; return true; }
+    if (t == "bool" || t == "boolean" || t == "b") { out = PinType::Bool; return true; }
+    if (t == "text" || t == "string" || t == "t") { out = PinType::Text; return true; }
+    if (t == "vector3" || t == "vec3" || t == "v") { out = PinType::Vec3; return true; }
+    if (t == "object" || t == "gameobject" || t == "o") { out = PinType::Object; return true; }
+    if (t == "list" || t == "l") { out = PinType::List; return true; }
+    return false;
+}
+bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std::string* err, const char* what) {
+    std::string cur;
+    auto flush = [&]() -> bool {
+        std::string item = Trim(cur); cur.clear();
+        if (item.empty()) return true;
+        FunctionSig::Pin p;
+        const auto colon = item.find(':');
+        p.name = Trim(colon == std::string::npos ? item : item.substr(0, colon));
+        const std::string type = colon == std::string::npos ? "" : Trim(item.substr(colon + 1));
+        if (!ValidName(p.name)) { if (err) *err = std::string(what) + " name '" + p.name + "' isn't a valid name"; return false; }
+        if (!TypeFromName(type, p.type)) {
+            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Object, List or Any)";
+            return false;
+        }
+        for (const auto& q : out) if (q.name == p.name) { if (err) *err = std::string(what) + " '" + p.name + "' is listed twice"; return false; }
+        out.push_back(p);
+        return true;
+    };
+    for (char c : list) { if (c == ',') { if (!flush()) return false; } else cur += c; }
+    return flush();
+}
+} // namespace
+
+std::string FunctionNameOf(const std::string& text) {
+    const auto open = text.find('(');
+    return Trim(open == std::string::npos ? text : text.substr(0, open));
+}
+
+bool ParseFunctionSignature(const std::string& textIn, FunctionSig& out, std::string* err) {
+    out = FunctionSig{};
+    const std::string text = Trim(textIn);
+    const auto open = text.find('('), close = text.find(')');
+    out.name = FunctionNameOf(text);
+    if (!ValidName(out.name)) {
+        if (err) *err = out.name.empty() ? "the function has no name (write e.g. Damage(amount: Number))"
+                                         : "'" + out.name + "' isn't a valid function name (letters, digits and _)";
+        return false;
+    }
+    if (open == std::string::npos) return true;   // "Reset" = Reset()
+    if (close == std::string::npos || close < open) { if (err) *err = "missing ')' after the parameters"; return false; }
+    if (!ParsePins(text.substr(open + 1, close - open - 1), out.params, err, "parameter")) return false;
+    std::string rest = Trim(text.substr(close + 1));
+    if (rest.empty()) return true;
+    if (rest.rfind("->", 0) != 0) { if (err) *err = "write the return values after '->'"; return false; }
+    return ParsePins(rest.substr(2), out.returns, err, "return value");
+}
+
 // ---- The checker -------------------------------------------------------------
 namespace {
 std::vector<std::string> Tokens(const std::string& line) {
@@ -440,12 +515,70 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         return it == nodes.end() ? std::string("?") : "'" + it->second.type + "' (#" + std::to_string(id) + ")";
     };
 
+    // 0) Functions: each Function node's signature (its pins come from it).
+    std::map<std::string, FunctionSig> fns;
+    std::map<std::string, int> fnNode;
+    for (const auto& kv : nodes) {
+        if (kv.second.type != "FunctionStart") continue;
+        FunctionSig sig; std::string err;
+        if (!ParseFunctionSignature(kv.second.arg, sig, &err)) { issues.push_back({0, kv.first, "bad function signature: " + err}); continue; }
+        if (fns.count(sig.name)) { issues.push_back({0, kv.first, "there's already a function named '" + sig.name + "'"}); continue; }
+        fns[sig.name] = sig; fnNode[sig.name] = kv.first;
+    }
+    auto fnOf = [&](const N& n) -> const FunctionSig* {
+        auto it = fns.find(FunctionNameOf(n.arg));
+        return it != fns.end() ? &it->second : nullptr;
+    };
+    auto outType = [&](int id, int pin) {
+        const N& n = nodes[id];
+        if (n.type == "FunctionStart" || n.type == "CallFunction") {
+            const FunctionSig* f = fnOf(n);
+            const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "FunctionStart" ? f->params : f->returns;
+            return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : PinType::Any;
+        }
+        return OutputType(n.type, pin, n.arg);
+    };
+    auto inType = [&](int id, int pin) {
+        const N& n = nodes[id];
+        if (n.type == "Return" || n.type == "CallFunction") {
+            const FunctionSig* f = fnOf(n);
+            const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "Return" ? f->returns : f->params;
+            return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : PinType::Any;
+        }
+        return InputType(n.type, pin);
+    };
+    // Wires to parameters / return values a function doesn't have (any more).
+    for (const Data& d : datas) {
+        auto c = nodes.find(d.consumer), p = nodes.find(d.producer);
+        if (c == nodes.end() || p == nodes.end()) continue;
+        if (p->second.type == "FunctionStart" || p->second.type == "CallFunction") {
+            const FunctionSig* f = fnOf(p->second);
+            const std::size_t n = !f ? 0 : p->second.type == "FunctionStart" ? f->params.size() : f->returns.size();
+            if (f && d.outPin >= (int)n)
+                issues.push_back({0, d.consumer, "it's wired to " + std::string(p->second.type == "FunctionStart" ? "parameter" : "return value") +
+                                                 " #" + std::to_string(d.outPin + 1) + " of '" + f->name + "', which it doesn't have (any more)"});
+        }
+        if (c->second.type == "Return" || c->second.type == "CallFunction") {
+            const FunctionSig* f = fnOf(c->second);
+            const std::size_t n = !f ? 0 : c->second.type == "Return" ? f->returns.size() : f->params.size();
+            if (f && d.inPin >= (int)n)
+                issues.push_back({0, d.consumer, "a wire goes into " + std::string(c->second.type == "Return" ? "return value" : "parameter") +
+                                                 " #" + std::to_string(d.inPin + 1) + " of '" + f->name + "', which it doesn't have (any more)"});
+        }
+    }
+    for (const auto& kv : nodes)
+        if (kv.second.type == "CallFunction" || kv.second.type == "Return") {
+            const std::string f = FunctionNameOf(kv.second.arg);
+            if (f.empty()) issues.push_back({0, kv.first, "no function is picked"});
+            else if (!fns.count(f)) issues.push_back({0, kv.first, "there's no function named '" + f + "' in this graph"});
+        }
+
     // 1) Wires whose value can't mean what the input expects.
     for (const Data& d : datas) {
         auto c = nodes.find(d.consumer), p = nodes.find(d.producer);
         if (c == nodes.end() || p == nodes.end()) continue;
-        const PinType from = OutputType(p->second.type, d.outPin, p->second.arg);
-        const PinType to = InputType(c->second.type, d.inPin);
+        const PinType from = outType(d.producer, d.outPin);
+        const PinType to = inType(d.consumer, d.inPin);
         if (PinCompatible(from, to)) continue;
         std::string m = "a " + std::string(PinTypeName(from)) + " from " + title(d.producer) +
                         " is wired into an input that needs a " + PinTypeName(to);
@@ -454,21 +587,82 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         issues.push_back({0, d.consumer, m});
     }
 
-    // 2) Exec nodes no event reaches never run.
-    std::set<int> reached;
-    std::vector<int> stack(entries.begin(), entries.end());
-    while (!stack.empty()) {
-        int id = stack.back(); stack.pop_back();
-        if (!reached.insert(id).second) continue;
-        auto range = execOut.equal_range(id);
-        for (auto it = range.first; it != range.second; ++it) stack.push_back(it->second);
-    }
+    // 2) Exec nodes no event (or function) reaches never run.
+    auto reach = [&](std::vector<int> stack) {
+        std::set<int> seen;
+        while (!stack.empty()) {
+            int id = stack.back(); stack.pop_back();
+            if (!seen.insert(id).second) continue;
+            auto range = execOut.equal_range(id);
+            for (auto it = range.first; it != range.second; ++it) stack.push_back(it->second);
+        }
+        return seen;
+    };
+    const std::set<int> fromEvents = reach(std::vector<int>(entries.begin(), entries.end()));
+    std::map<std::string, std::set<int>> inFn;   // function name -> exec nodes of its body
+    for (const auto& kv : fnNode) inFn[kv.first] = reach({kv.second});
+    std::set<int> reached = fromEvents;
+    for (const auto& kv : inFn) reached.insert(kv.second.begin(), kv.second.end());
     for (const auto& kv : nodes) {
         const NodeSignature* s = SignatureFor(kv.second.type);
         if (s && s->execIn && !reached.count(kv.first))
             issues.push_back({1, kv.first, "nothing runs this node: no event's chain leads to it"});
         if (IsEventType(kv.second.type) && !hasExecOut.count(kv.first))
             issues.push_back({1, kv.first, "this event does nothing: nothing is wired to it"});
+    }
+
+    // 2b) Function rules: where Return / locals / pauses may be, and whether it's called.
+    std::set<std::string> called;
+    for (const auto& kv : nodes) if (kv.second.type == "CallFunction") called.insert(FunctionNameOf(kv.second.arg));
+    for (const auto& kv : fnNode) {
+        if (!called.count(kv.first)) issues.push_back({1, kv.second, "function '" + kv.first + "' is never called"});
+        if (!hasExecOut.count(kv.second)) issues.push_back({1, kv.second, "function '" + kv.first + "' does nothing: nothing is wired to it"});
+    }
+    for (const auto& kv : nodes) {
+        const std::string& t = kv.second.type;
+        std::string owner;   // the function whose body runs this node
+        for (const auto& f : inFn) if (f.second.count(kv.first)) { owner = f.first; break; }
+        if (t == "Return") {
+            if (owner.empty() && fromEvents.count(kv.first))
+                issues.push_back({0, kv.first, "Return is outside a function (an event's chain reaches it)"});
+            else if (!owner.empty() && FunctionNameOf(kv.second.arg) != owner)
+                issues.push_back({0, kv.first, "this Return is in function '" + owner + "' but returns from '" + FunctionNameOf(kv.second.arg) + "'"});
+        }
+        if ((t == "Delay" || t == "Wait") && !owner.empty())
+            issues.push_back({0, kv.first, "Delay / Wait can't pause inside a function (it runs to the end at once) - "
+                                           "start the delay after the Call Function instead"});
+        if (t == "SetLocal" && owner.empty() && fromEvents.count(kv.first))
+            issues.push_back({0, kv.first, "Set Local only works inside a function - use Set Var for graph variables"});
+    }
+    {   // Data nodes take the context of the exec nodes that read them.
+        std::multimap<int, int> producers;   // consumer -> producer
+        for (const Data& d : datas) producers.emplace(d.consumer, d.producer);
+        auto readers = [&](const std::set<int>& execNodes) {
+            std::set<int> seen; std::vector<int> st(execNodes.begin(), execNodes.end());
+            while (!st.empty()) {
+                int id = st.back(); st.pop_back();
+                auto r = producers.equal_range(id);
+                for (auto it = r.first; it != r.second; ++it) if (seen.insert(it->second).second) st.push_back(it->second);
+            }
+            return seen;
+        };
+        const std::set<int> eventData = readers(fromEvents);
+        for (const auto& kv : nodes) {
+            if (kv.second.type == "GetLocal" && eventData.count(kv.first))
+                issues.push_back({0, kv.first, "Get Local only works inside a function (an event's chain reads it) - use Get Var"});
+            if (kv.second.type == "FunctionStart" && eventData.count(kv.first)) {
+                const FunctionSig* f = fnOf(kv.second);
+                issues.push_back({0, kv.first, "a parameter of function '" + (f ? f->name : std::string("?")) +
+                                               "' is read by an event's chain, outside the function (it reads 0)"});
+            }
+        }
+        for (const auto& f : inFn) {
+            const std::set<int> fd = readers(f.second);
+            for (const auto& g2 : fnNode)
+                if (g2.first != f.first && fd.count(g2.second))
+                    issues.push_back({0, g2.second, "a parameter of function '" + g2.first + "' is read inside function '" +
+                                                    f.first + "', where it has no value"});
+        }
     }
 
     // 3) Variables read but never written by this graph.

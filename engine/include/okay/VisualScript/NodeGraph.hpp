@@ -180,8 +180,36 @@ public:
     static constexpr long kMaxStepsPerEvent = 1000000;
     /// Deepest a data pull may nest before it is treated as a wiring cycle.
     static constexpr int kMaxPullDepth = 512;
-    /// True once the event being run was stopped (loop nodes check it to stop too).
-    bool Aborted() const { return m_abort; }
+    /// True once the event being run was stopped, or the function being run has
+    /// returned (loop nodes check it so they stop too).
+    bool Aborted() const { return m_abort || (!m_frames.empty() && m_frames.back().returned); }
+
+    // ---- Functions -------------------------------------------------------
+    /// Deepest functions may call each other (or themselves) before a call is refused.
+    static constexpr int kMaxCallDepth = 64;
+    /// The Function node (graph id) named `name`, or -1.
+    int FunctionNode(const std::string& name) const {
+        auto it = m_functions.find(name);
+        return it != m_functions.end() ? it->second : -1;
+    }
+    /// Run function `name` with `args`; its Return values land in `rets` (one per
+    /// return value; unset ones stay empty). False (and reported) when it can't run.
+    bool CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
+                      const VsNode* caller, VsContext& ctx);
+    /// Inside a running function: its arguments / where Return writes / its locals.
+    bool InFunction() const { return !m_frames.empty(); }
+    const VsValue* Arg(int i) const {
+        if (m_frames.empty() || i < 0 || i >= (int)m_frames.back().args.size()) return nullptr;
+        return &m_frames.back().args[(std::size_t)i];
+    }
+    /// The function a Return / Set Local is running in ("" outside any function).
+    const std::string& CurrentFunction() const { static const std::string none; return m_frames.empty() ? none : m_frames.back().name; }
+    void SetReturn(std::vector<VsValue> values) {
+        if (m_frames.empty()) return;
+        m_frames.back().rets = std::move(values);
+        m_frames.back().returned = true;
+    }
+    std::unordered_map<std::string, VsValue>* Locals() { return m_frames.empty() ? nullptr : &m_frames.back().locals; }
     /// The last runtime error ("" if none) and the file id of the node it was
     /// reported on (-1 if unknown). Each distinct error is logged once; repeats count up.
     const std::string& LastError() const { return m_lastError; }
@@ -206,6 +234,14 @@ private:
     int m_runDepth = 0;      // nested Run() calls (loop bodies, sequences)
     long m_steps = 0;        // node executions in the current event
     bool m_abort = false;    // the current event was stopped
+    struct Frame {
+        std::string name;
+        std::vector<VsValue> args, rets;
+        std::unordered_map<std::string, VsValue> locals;
+        bool returned = false;
+    };
+    std::vector<Frame> m_frames;                        // running function calls, innermost last
+    std::unordered_map<std::string, int> m_functions;   // function name -> its Function node
     std::string m_lastError;
     int m_lastErrorNode = -1;
     int m_errorCount = 0;

@@ -34,7 +34,7 @@ int main() {
 
     // ---- A: On Update -> Axis X * speed * Delta Time -> Translate ----------
     {
-        const char* move = R"(
+        const char* move = R"VS(
 node 0 OnUpdate
 node 1 AxisX
 node 2 Const 5
@@ -49,7 +49,7 @@ data 5 1 4 0
 data 6 0 5 0
 exec 0 0 6
 entry OnUpdate 0
-)";
+)VS";
         Scene s("A"); GameObject* p = s.CreateGameObject("P"); Attach(p, move);
         s.Start();
         for (int i = 0; i < 10; ++i) { Input::FeedKeys({'d'}); s.Update(0.1f); }
@@ -64,7 +64,7 @@ entry OnUpdate 0
     // ---- C: Start -> Set Var -> Add -> Print --------------------------------
     {
         Scene s("C"); GameObject* go = s.CreateGameObject("C");
-        auto* v = Attach(go, R"(
+        auto* v = Attach(go, R"VS(
 node 0 OnStart
 node 1 Const 10
 node 2 SetVar score
@@ -83,7 +83,7 @@ exec 0 0 2
 exec 2 0 6
 exec 6 0 8
 entry OnStart 0
-)");
+)VS");
         g_log.clear(); s.Start(); Tick(s, 1);
         CHECK_NEAR(v->GetVariable("score").AsFloat(), 15.0f, 1e-6f);
         CHECK(!g_log.empty() && g_log[0] == "15");
@@ -124,7 +124,7 @@ entry OnStart 0
     // ---- Runaway loops are stopped AND reported, then the graph keeps working --
     {
         Scene s("Loop"); GameObject* go = s.CreateGameObject("Looper");
-        auto* v = Attach(go, R"(
+        auto* v = Attach(go, R"VS(
 node 0 OnUpdate
 node 1 ForLoop
 node 2 AddVar n
@@ -138,7 +138,7 @@ exec 0 0 1
 exec 1 0 2
 exec 1 1 4
 entry OnUpdate 0
-)");
+)VS");
         g_log.clear();
         s.Start();
         const auto t0 = std::chrono::steady_clock::now();
@@ -162,7 +162,7 @@ entry OnUpdate 0
     // Nested loops share one budget (10k x 10k would be 100M steps).
     {
         Scene s("Nested"); GameObject* go = s.CreateGameObject("Nest");
-        Attach(go, R"(
+        Attach(go, R"VS(
 node 0 OnStart
 node 1 ForLoop
 node 2 ForLoop
@@ -177,7 +177,7 @@ exec 0 0 1
 exec 1 0 2
 exec 2 0 3
 entry OnStart 0
-)");
+)VS");
         g_log.clear();
         const auto t0 = std::chrono::steady_clock::now();
         s.Start(); Tick(s, 1);
@@ -354,7 +354,7 @@ entry OnStart 0
     // ---- B: Collision -> Other's tag is Enemy -> Destroy the Enemy (graph on Player) --
     {
         Scene s("B"); GameObject *p, *e; collisionScene(s, p, e);
-        Attach(p, R"(
+        Attach(p, R"VS(
 node 0 OnCollision
 node 1 Other
 node 2 GetTag
@@ -374,7 +374,7 @@ exec 0 0 5
 exec 5 0 6
 exec 6 0 7
 entry OnCollision 0
-)");
+)VS");
         const auto pid = p->InstanceId(), eid = e->InstanceId();
         s.Start(); Tick(s, 120);
         CHECK(GameObject::FromInstanceId(eid) == nullptr);   // the Enemy is gone
@@ -442,7 +442,7 @@ entry OnCollision 0
     // ---- A destroyed target: reported, node skipped, chain goes on, no crash ----
     {
         Scene s("Gone"); GameObject* me = s.CreateGameObject("Me"); GameObject* t = s.CreateGameObject("Temp");
-        auto* v = Attach(me, R"(
+        auto* v = Attach(me, R"VS(
 node 0 OnStart
 node 1 FindObject Temp
 node 2 SetVar target
@@ -466,7 +466,7 @@ exec 15 0 16
 exec 15 1 12
 exec 12 0 13
 entry OnKey:space 10
-)");
+)VS");
         s.Start(); Tick(s, 1);
         CHECK(v->GetVariable("target").IsObject());
         CHECK(v->GetVariable("target").AsString() == "Temp");   // reads as its name
@@ -487,7 +487,7 @@ entry OnKey:space 10
         me->AddComponent<SphereCollider3D>()->radius = 0.5f;            // its own collider is ignored
         GameObject* wall = s.CreateGameObject("Wall"); wall->transform->localPosition = {0, 0, -10};
         wall->AddComponent<BoxCollider3D>()->size = {4, 4, 1};
-        auto* v = Attach(me, R"(
+        auto* v = Attach(me, R"VS(
 node 0 OnStart
 node 1 Raycast3D
 node 2 SetVar hit
@@ -507,7 +507,7 @@ exec 2 0 3
 exec 3 0 4
 exec 4 0 6
 entry OnStart 0
-)");
+)VS");
         s.Start(); Tick(s, 1);
         CHECK(v->GetVariable("hit").AsBool());
         CHECK(v->GetVariable("what").IsObject());
@@ -519,7 +519,7 @@ entry OnStart 0
     {
         Scene s("Tag"); GameObject* me = s.CreateGameObject("Me"); GameObject* boss = s.CreateGameObject("Boss"); boss->tag = "Boss";
         auto* vb = Attach(boss, "node 0 OnEvent Hit\nnode 1 EventValue\nnode 2 SetVar dmg\ndata 2 0 1 0\nexec 0 0 2\nentry OnEvent:Hit 0\n");
-        auto* vm = Attach(me, R"(
+        auto* vm = Attach(me, R"VS(
 node 0 OnStart
 node 1 FindWithTag Boss
 node 2 SendEvent Hit
@@ -542,7 +542,7 @@ exec 0 0 2
 exec 2 0 6
 exec 6 0 9
 entry OnStart 0
-)");
+)VS");
         s.Start(); Tick(s, 1);
         CHECK_NEAR(vb->GetVariable("dmg").AsFloat(), 25.0f, 1e-6f);
         CHECK(vm->GetVariable("same").AsBool());
@@ -562,6 +562,202 @@ entry OnStart 0
         CHECK(GameObject::FromInstanceId(eid) == nullptr);
         CHECK(GameObject::FromInstanceId(pid) != nullptr);
         std::remove("vs_acceptance_b.okayscene");
+    }
+
+    // ==== Functions =============================================================
+    // ---- E: Start -> Call Function -> Return -> Print ---------------------------
+    const std::string doubleFn = R"VS(
+node 10 FunctionStart "Double(x: Number) -> result: Number"
+node 11 Mul
+node 12 Const 2
+node 13 Return Double
+data 11 0 10 0
+data 11 1 12 0
+data 13 0 11 0
+exec 10 0 13
+)VS";
+    {
+        Scene s("E"); GameObject* go = s.CreateGameObject("Calc");
+        Attach(go, doubleFn + R"VS(
+node 0 OnStart
+node 1 CallFunction Double
+node 2 Const 21
+node 3 Print
+data 1 0 2 0
+data 3 0 1 0
+exec 0 0 1
+exec 1 0 3
+entry OnStart 0
+)VS");
+        g_log.clear(); s.Start(); Tick(s, 1);
+        CHECK(Logged("42"));
+        CHECK(g_log.size() == 1);   // and nothing else (no errors)
+    }
+    // ---- Recursion: Factorial(5) = 120 ---------------------------------------------
+    {
+        Scene s("Fact"); GameObject* go = s.CreateGameObject("Calc");
+        auto* v = Attach(go, R"VS(
+node 10 FunctionStart "Fact(n: Number) -> r: Number"
+node 11 Compare <=
+node 12 Const 1
+node 13 Branch
+node 14 Return Fact
+node 15 Sub
+node 16 CallFunction Fact
+node 17 Mul
+node 18 Return Fact
+data 11 0 10 0
+data 11 1 12 0
+data 13 0 11 0
+data 14 0 12 0
+data 15 0 10 0
+data 15 1 12 0
+data 16 0 15 0
+data 17 0 10 0
+data 17 1 16 0
+data 18 0 17 0
+exec 10 0 13
+exec 13 0 14
+exec 13 1 16
+exec 16 0 18
+node 0 OnStart
+node 1 CallFunction Fact
+node 2 Const 5
+node 3 SetVar out
+data 1 0 2 0
+data 3 0 1 0
+exec 0 0 1
+exec 1 0 3
+entry OnStart 0
+)VS");
+        s.Start(); Tick(s, 1);
+        CHECK_NEAR(v->GetVariable("out").AsFloat(), 120.0f, 1e-3f);
+    }
+    // ---- Endless recursion is refused and reported, not a crash ----------------
+    {
+        Scene s("Rec"); GameObject* go = s.CreateGameObject("Loop");
+        auto* v = Attach(go, R"VS(
+node 10 FunctionStart "Forever()"
+node 11 CallFunction Forever
+exec 10 0 11
+node 0 OnStart
+node 1 CallFunction Forever
+node 2 SetVar after
+node 3 Const 1
+data 2 0 3 0
+exec 0 0 1
+exec 1 0 2
+entry OnStart 0
+)VS");
+        g_log.clear(); s.Start(); Tick(s, 1);
+        CHECK(Logged("more than 64 deep"));
+        CHECK(v->GetVariable("after").AsFloat() == 1.0f);   // the event carried on after the refused call
+    }
+    // ---- Return inside a loop ends the whole function, at once ------------------
+    {
+        Scene s("Find"); GameObject* go = s.CreateGameObject("Calc");
+        auto* v = Attach(go, R"VS(
+node 10 FunctionStart "FirstOver(limit: Number) -> found: Number"
+node 11 ForLoop
+node 12 AddVar steps
+node 13 Const 1
+node 14 Compare >
+node 15 Branch
+node 16 Return FirstOver
+default 11 0 0
+default 11 1 100
+data 12 0 13 0
+data 14 0 11 0
+data 14 1 10 0
+data 15 0 14 0
+data 16 0 11 0
+exec 10 0 11
+exec 11 0 12
+exec 12 0 15
+exec 15 0 16
+node 0 OnStart
+node 1 CallFunction FirstOver
+node 2 Const 3
+node 3 SetVar out
+data 1 0 2 0
+data 3 0 1 0
+exec 0 0 1
+exec 1 0 3
+entry OnStart 0
+)VS");
+        s.Start(); Tick(s, 1);
+        CHECK_NEAR(v->GetVariable("out").AsFloat(), 4.0f, 1e-4f);
+        CHECK_NEAR(v->GetVariable("steps").AsFloat(), 5.0f, 1e-4f);   // indexes 0..4, then it returned
+    }
+    // ---- Locals live for one call; a call can use many functions ---------------
+    {
+        Scene s("Loc"); GameObject* go = s.CreateGameObject("Calc");
+        auto* v = Attach(go, doubleFn + R"VS(
+node 20 FunctionStart "Quad(v: Number) -> q: Number"
+node 21 CallFunction Double
+node 22 SetLocal half
+node 23 CallFunction Double
+node 24 GetLocal half
+node 25 Return Quad
+data 21 0 20 0
+data 22 0 21 0
+data 23 0 24 0
+data 25 0 23 0
+exec 20 0 21
+exec 21 0 22
+exec 22 0 23
+exec 23 0 25
+node 0 OnStart
+node 1 CallFunction Quad
+node 2 Const 5
+node 3 SetVar out
+data 1 0 2 0
+data 3 0 1 0
+exec 0 0 1
+exec 1 0 3
+entry OnStart 0
+)VS");
+        s.Start(); Tick(s, 1);
+        CHECK_NEAR(v->GetVariable("out").AsFloat(), 20.0f, 1e-4f);
+        CHECK(!v->GetVariable("half").AsBool());   // the local didn't leak into the graph's variables
+    }
+    // ---- Misuse is reported at runtime too --------------------------------------
+    {
+        Scene s("Bad"); GameObject* go = s.CreateGameObject("Bad");
+        Attach(go, R"VS(
+node 10 FunctionStart "Slow()"
+node 11 Delay 1
+node 12 Print
+default 12 0 "after delay"
+exec 10 0 11
+exec 11 0 12
+node 0 OnStart
+node 1 CallFunction Slow
+node 2 CallFunction Missing
+node 3 Print
+default 3 0 "event done"
+exec 0 0 1
+exec 1 0 2
+exec 2 0 3
+entry OnStart 0
+)VS");
+        g_log.clear(); s.Start(); Tick(s, 3, 1.0f);
+        CHECK(Logged("can't pause inside a function"));
+        CHECK(Logged("no function named 'Missing'"));
+        CHECK(Logged("event done"));
+        CHECK(!Logged("after delay"));
+    }
+    // ---- Function graphs survive save -> reload --------------------------------
+    {
+        Scene s("SaveE"); GameObject* go = s.CreateGameObject("Calc");
+        Attach(go, doubleFn + "node 0 OnStart\nnode 1 CallFunction Double\nnode 2 Const 4\nnode 3 Print\n"
+                              "data 1 0 2 0\ndata 3 0 1 0\nexec 0 0 1\nexec 1 0 3\nentry OnStart 0\n");
+        CHECK(SceneSerializer::SaveToFile(s, "vs_acceptance_fn.okayscene"));
+        Scene r("R");
+        CHECK(SceneSerializer::LoadFromFile(r, "vs_acceptance_fn.okayscene"));
+        g_log.clear(); r.Start(); Tick(r, 1);
+        CHECK(Logged("8"));
+        std::remove("vs_acceptance_fn.okayscene");
     }
 
     std::remove(prefab.c_str());

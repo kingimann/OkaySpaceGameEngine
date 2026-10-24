@@ -321,6 +321,7 @@ int main(int argc, char** argv) {
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder for the default layout
+#include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
@@ -1492,6 +1493,10 @@ int  g_lastSceneW = 0, g_lastSceneH = 0;
 Vec2 g_lastUICanvas{0, 0};
 bool g_captureScene = false;
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
+int  g_layoutRequest = -1;       // a built-in layout preset to build next frame (okay::edtabs::Preset)
+std::string g_layoutPendingIni;  // a saved layout's ini text, loaded before the next NewFrame()
+std::string g_layoutName;        // the layout last applied this session (Layout dropdown label)
+int  g_sideTabs = 0;             // vertical side tabs: 0 off, 1 down the left edge, 2 down the right (persisted)
 ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into it)
 bool g_scriptAutoPair = true;      // Script Editor: auto-close ( [ { " '
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
@@ -1952,6 +1957,7 @@ void LoadSettings() {
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
+        else if (k == "sidetabs") g_sideTabs = (v < 0 || v > 2) ? 0 : v;
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
@@ -1993,7 +1999,8 @@ void SaveSettings() {
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
-      << "uisubdivy " << g_uiSubdivY << "\n";
+      << "uisubdivy " << g_uiSubdivY << "\n"
+      << "sidetabs " << g_sideTabs << "\n";
 }
 
 // ---- Reusable custom-action library (persisted globally) -----------------
@@ -3965,6 +3972,18 @@ void ApplyTheme() {
         okaytheme::ApplySlateMetrics(s);
         s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
     }
+    // Panel tabs: a tab's close button shows only while it's hovered,
+    // there's no extra "close the whole group" X at the end of each tab strip, the
+    // active tab gets a thicker accent overline, and short names ("Game") still
+    // make a comfortable click target. Tabs stay drag-to-reorder (ImGui docking).
+    s.TabCloseButtonMinWidthSelected   = 0.0f;
+    s.TabCloseButtonMinWidthUnselected = 0.0f;
+    s.DockingNodeHasCloseButton = false;
+    s.TabBarOverlineSize = 2.0f;
+    s.TabBarBorderSize   = 1.0f;
+    s.TabMinWidthBase    = 64.0f;
+    s.TabMinWidthShrink  = 96.0f;    // squeezed dock tabs still show the icon + a few letters
+    if (g_theme == 0) s.TabRounding = 4.0f;
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
@@ -3976,53 +3995,574 @@ void ApplyTheme() {
     // with the user's chosen accent colour.
     const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
     okaytheme::ApplySlateColors(s, ImVec4(ap.r, ap.g, ap.b, 1.0f));
+    // The selected tab of every group matches the panel under it (so it reads as
+    // "connected"), focused or not; only the overline says which group has focus.
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_Tab]                 = okaytheme::kSunken;
+    c[ImGuiCol_TabHovered]          = okaytheme::Mix(okaytheme::kSunken, okaytheme::kControl, 0.55f);
+    c[ImGuiCol_TabSelected]         = okaytheme::kBase;
+    c[ImGuiCol_TabDimmed]           = okaytheme::kSunken;
+    c[ImGuiCol_TabDimmedSelected]   = okaytheme::kBase;
+    c[ImGuiCol_TabDimmedSelectedOverline] = okaytheme::WithAlpha(okaytheme::kTextDim, 0.35f);
 }
 
-// Build the default dock layout once.
-// Right-click a panel's tab: add another panel as a tab in the same
-// spot, close this one or the others beside it, or float it. Runs once per frame after
-// every panel has been drawn, so it covers all docked windows without each panel
-// wiring its own menu.
-struct DockPanelDef { const char* label; const char* window; bool* open; const char* group; };
+// ---- Panel tabs, layouts and the panel switcher ------------------------------
+// Every dockable panel the tab system knows: its menu label, ImGui window name,
+// visibility flag (nullptr = always open, like the Scene view), its Add Tab menu
+// group and the icon drawn on its tab, in the side tabs and in the panel lists.
+enum PanelIcon {
+    PI_Generic, PI_Scene, PI_Game, PI_Hierarchy, PI_Inspector, PI_Project, PI_Console,
+    PI_Services, PI_Scenes, PI_Save, PI_Variables, PI_History, PI_Stats, PI_Lighting,
+    PI_Profiler, PI_Package, PI_Warning, PI_Script, PI_Nodes, PI_Bolt, PI_Animation,
+    PI_Animator, PI_Modeling, PI_Sprite, PI_Palette, PI_UI,
+};
+struct DockPanelDef { const char* label; const char* window; bool* open; const char* group; int icon; };
 static const DockPanelDef* DockPanels(int& n) {
     static const DockPanelDef k[] = {
-        {"Hierarchy",     "Hierarchy",                 &g_showHierarchy,     "Panels"},
-        {"Inspector",     "Inspector",                 &g_showInspector,     "Panels"},
-        {"Project",       "Project",                   &g_showProject,       "Panels"},
-        {"Console",       "Console###Console",         &g_showConsole,       "Panels"},
-        {"Game",          "Game",                      &g_showGame,          "Panels"},
-        {"Services",      "Services",                  &g_showServices,      "Panels"},
-        {"Scenes",        "Scenes",                    &g_showScenes,        "Panels"},
-        {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels"},
-        {"Variables",     "Variables",                 &g_showVarWatch,      "Panels"},
-        {"History",       "History",                   &g_showHistory,       "Panels"},
-        {"Stats",         "Stats",                     &g_showStats,         "Panels"},
-        {"Lighting",      "Lighting",                  &g_showSceneSettings, "Panels"},
-        {"Profiler",      "Profiler",                  &g_showProfiler,      "Panels"},
-        {"Asset Manager", "Asset Manager",             &g_showAssetManager,  "Panels"},
-        {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels"},
-        {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools"},
-        {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools"},
-        {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools"},
-        {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools"},
-        {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools"},
-        {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools"},
-        {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools"},
-        {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools"},
+        {"Scene",         "Scene",                     nullptr,              "Panels", PI_Scene},
+        {"Hierarchy",     "Hierarchy",                 &g_showHierarchy,     "Panels", PI_Hierarchy},
+        {"Inspector",     "Inspector",                 &g_showInspector,     "Panels", PI_Inspector},
+        {"Project",       "Project",                   &g_showProject,       "Panels", PI_Project},
+        {"Console",       "Console###Console",         &g_showConsole,       "Panels", PI_Console},
+        {"Game",          "Game",                      &g_showGame,          "Panels", PI_Game},
+        {"Services",      "Services",                  &g_showServices,      "Panels", PI_Services},
+        {"Scenes",        "Scenes",                    &g_showScenes,        "Panels", PI_Scenes},
+        {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels", PI_Save},
+        {"Variables",     "Variables",                 &g_showVarWatch,      "Panels", PI_Variables},
+        {"History",       "History",                   &g_showHistory,       "Panels", PI_History},
+        {"Stats",         "Stats",                     &g_showStats,         "Panels", PI_Stats},
+        {"Lighting",      "Lighting",                  &g_showSceneSettings, "Panels", PI_Lighting},
+        {"Profiler",      "Profiler",                  &g_showProfiler,      "Panels", PI_Profiler},
+        {"Asset Manager", "Asset Manager",             &g_showAssetManager,  "Panels", PI_Package},
+        {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels", PI_Warning},
+        {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
+        {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
+        {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools", PI_Bolt},
+        {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
+        {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
+        {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
+        {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
+        {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
+        {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
     n = (int)(sizeof(k) / sizeof(k[0]));
     return k;
 }
+static bool PanelOpen(const DockPanelDef& d) { return !d.open || *d.open; }
+static const DockPanelDef* PanelDefForWindow(const char* winName) {
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    for (int i = 0; i < n; ++i) if (std::strcmp(defs[i].window, winName) == 0) return &defs[i];
+    return nullptr;
+}
+// What a window is called in tabs and lists: its panel label, else the visible
+// part of its ImGui name (before any "###id").
+static std::string WindowLabel(const ImGuiWindow* w) {
+    if (const DockPanelDef* d = PanelDefForWindow(w->Name)) return d->label;
+    const char* name = w->Name;
+    return std::string(name, ImGui::FindRenderedTextEnd(name));
+}
+// An open panel's window, if it was drawn this frame or the last one.
+static ImGuiWindow* LivePanelWindow(const DockPanelDef& d) {
+    if (!PanelOpen(d)) return nullptr;
+    ImGuiWindow* w = ImGui::FindWindowByName(d.window);
+    return (w && (w->Active || w->WasActive)) ? w : nullptr;
+}
+
+// A small line-art icon for a panel, centred on `c` and `s` pixels across. Drawn
+// with the draw list (the UI font has no icon glyphs), so it scales with the UI.
+static void DrawPanelIcon(ImDrawList* dl, ImVec2 c, float s, int icon, ImU32 col) {
+    const float r = s * 0.5f, t = std::max(1.0f, s * 0.11f);
+    auto P = [&](float x, float y) { return ImVec2(c.x + x * r, c.y + y * r); };   // a -1..1 box
+    auto text = [&](const char* txt) {
+        ImFont* f = ImGui::GetFont();
+        const float fs = s * 0.92f;
+        ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.0f, txt);
+        dl->AddText(f, fs, ImVec2(std::floor(c.x - ts.x * 0.5f), std::floor(c.y - ts.y * 0.5f)), col, txt);
+    };
+    auto cube = [&](bool dots) {
+        ImVec2 hex[6] = {P(0, -1), P(0.87f, -0.5f), P(0.87f, 0.5f), P(0, 1), P(-0.87f, 0.5f), P(-0.87f, -0.5f)};
+        dl->AddPolyline(hex, 6, col, ImDrawFlags_Closed, t);
+        dl->AddLine(P(0, 0), hex[5], col, t); dl->AddLine(P(0, 0), hex[1], col, t); dl->AddLine(P(0, 0), hex[3], col, t);
+        if (dots) for (const ImVec2& v : hex) dl->AddCircleFilled(v, t * 1.2f, col);
+    };
+    switch (icon) {
+    case PI_Scene:    cube(false); break;
+    case PI_Modeling: cube(true); break;
+    case PI_Game:     // a gamepad
+        dl->AddRect(P(-1, -0.6f), P(1, 0.6f), col, r * 0.45f, 0, t);
+        dl->AddLine(P(-0.68f, 0), P(-0.18f, 0), col, t);
+        dl->AddLine(P(-0.43f, -0.25f), P(-0.43f, 0.25f), col, t);
+        dl->AddCircleFilled(P(0.32f, -0.1f), t * 0.95f, col);
+        dl->AddCircleFilled(P(0.6f, 0.15f), t * 0.95f, col);
+        break;
+    case PI_Hierarchy:   // a parent row with two indented children
+        dl->AddRectFilled(P(-1, -1), P(-0.2f, -0.5f), col, 1.0f);
+        dl->AddRectFilled(P(0.05f, -0.22f), P(1, 0.22f), col, 1.0f);
+        dl->AddRectFilled(P(0.05f, 0.52f), P(1, 0.96f), col, 1.0f);
+        dl->AddLine(P(-0.62f, -0.5f), P(-0.62f, 0.74f), col, t);
+        dl->AddLine(P(-0.62f, 0), P(0.05f, 0), col, t);
+        dl->AddLine(P(-0.62f, 0.74f), P(0.05f, 0.74f), col, t);
+        break;
+    case PI_Inspector:   // an "i" in a circle
+        dl->AddCircle(c, r * 0.95f, col, 0, t);
+        dl->AddCircleFilled(P(0, -0.42f), t * 1.05f, col);
+        dl->AddLine(P(0, -0.1f), P(0, 0.52f), col, t * 1.25f);
+        break;
+    case PI_Project: {   // a folder
+        ImVec2 f[6] = {P(-1, -0.72f), P(-0.25f, -0.72f), P(-0.05f, -0.45f), P(1, -0.45f), P(1, 0.8f), P(-1, 0.8f)};
+        dl->AddPolyline(f, 6, col, ImDrawFlags_Closed, t);
+        break;
+    }
+    case PI_Console:     // a prompt
+        dl->AddRect(P(-1, -0.82f), P(1, 0.82f), col, r * 0.18f, 0, t);
+        dl->AddLine(P(-0.6f, -0.35f), P(-0.2f, 0), col, t);
+        dl->AddLine(P(-0.2f, 0), P(-0.6f, 0.35f), col, t);
+        dl->AddLine(P(0.05f, 0.38f), P(0.6f, 0.38f), col, t);
+        break;
+    case PI_Services:    // a cloud
+        dl->AddCircleFilled(P(-0.42f, 0.18f), r * 0.42f, col);
+        dl->AddCircleFilled(P(0.12f, -0.12f), r * 0.55f, col);
+        dl->AddCircleFilled(P(0.6f, 0.26f), r * 0.36f, col);
+        dl->AddRectFilled(P(-0.42f, 0.2f), P(0.6f, 0.6f), col);
+        break;
+    case PI_Scenes: {    // stacked layers
+        ImVec2 top[4] = {P(0, -0.95f), P(1, -0.42f), P(0, 0.1f), P(-1, -0.42f)};
+        dl->AddPolyline(top, 4, col, ImDrawFlags_Closed, t);
+        ImVec2 low[3] = {P(-1, 0.05f), P(0, 0.58f), P(1, 0.05f)};
+        dl->AddPolyline(low, 3, col, 0, t);
+        ImVec2 low2[3] = {P(-1, 0.45f), P(0, 0.98f), P(1, 0.45f)};
+        dl->AddPolyline(low2, 3, col, 0, t);
+        break;
+    }
+    case PI_Save:        // a floppy disk
+        dl->AddRect(P(-0.9f, -0.9f), P(0.9f, 0.9f), col, r * 0.15f, 0, t);
+        dl->AddRectFilled(P(-0.45f, -0.9f), P(0.35f, -0.3f), col);
+        dl->AddRect(P(-0.5f, 0.2f), P(0.5f, 0.9f), col, 0.0f, 0, t);
+        break;
+    case PI_Variables:   text("{x}"); break;
+    case PI_Script:      text("</>"); break;
+    case PI_History:     // a clock
+        dl->AddCircle(c, r * 0.95f, col, 0, t);
+        dl->AddLine(c, P(0, -0.58f), col, t);
+        dl->AddLine(c, P(0.42f, 0.2f), col, t);
+        break;
+    case PI_Stats:       // a bar chart
+        dl->AddRectFilled(P(-0.9f, 0.15f), P(-0.4f, 0.9f), col, 1.0f);
+        dl->AddRectFilled(P(-0.25f, -0.6f), P(0.25f, 0.9f), col, 1.0f);
+        dl->AddRectFilled(P(0.4f, -0.15f), P(0.9f, 0.9f), col, 1.0f);
+        break;
+    case PI_Lighting:    // a sun
+        dl->AddCircleFilled(c, r * 0.4f, col);
+        for (int i = 0; i < 8; ++i) {
+            const float a = i * 0.785398f;
+            dl->AddLine(P(std::cos(a) * 0.62f, std::sin(a) * 0.62f), P(std::cos(a) * 0.98f, std::sin(a) * 0.98f), col, t);
+        }
+        break;
+    case PI_Profiler: {  // a timing graph
+        ImVec2 g[5] = {P(-1, 0.45f), P(-0.5f, -0.05f), P(-0.1f, 0.3f), P(0.35f, -0.65f), P(1, -0.2f)};
+        dl->AddPolyline(g, 5, col, 0, t);
+        dl->AddLine(P(-1, 0.9f), P(1, 0.9f), col, t);
+        break;
+    }
+    case PI_Package: {   // a box
+        dl->AddRect(P(-0.85f, -0.4f), P(0.85f, 0.9f), col, 1.0f, 0, t);
+        ImVec2 lid[4] = {P(-0.85f, -0.4f), P(-0.5f, -0.95f), P(0.5f, -0.95f), P(0.85f, -0.4f)};
+        dl->AddPolyline(lid, 4, col, 0, t);
+        dl->AddLine(P(0, -0.4f), P(0, 0.2f), col, t);
+        break;
+    }
+    case PI_Warning:     // a warning triangle
+        dl->AddTriangle(P(0, -0.95f), P(1, 0.85f), P(-1, 0.85f), col, t);
+        dl->AddLine(P(0, -0.3f), P(0, 0.25f), col, t);
+        dl->AddCircleFilled(P(0, 0.55f), t * 0.9f, col);
+        break;
+    case PI_Nodes:       // two nodes and a wire
+        dl->AddRectFilled(P(-1, -0.9f), P(-0.3f, -0.3f), col, 1.0f);
+        dl->AddRectFilled(P(0.3f, 0.3f), P(1, 0.9f), col, 1.0f);
+        dl->AddBezierCubic(P(-0.3f, -0.6f), P(0.4f, -0.6f), P(-0.4f, 0.6f), P(0.3f, 0.6f), col, t);
+        break;
+    case PI_Bolt: {      // a lightning bolt
+        ImVec2 b[6] = {P(0.3f, -1), P(-0.6f, 0.15f), P(0, 0.15f), P(-0.3f, 1), P(0.6f, -0.2f), P(0, -0.2f)};
+        dl->AddPolyline(b, 6, col, ImDrawFlags_Closed, t);
+        break;
+    }
+    case PI_Animation: { // a timeline with keyframes
+        dl->AddLine(P(-1, 0), P(1, 0), col, t);
+        const float k = 0.42f;
+        ImVec2 a[4] = {P(-0.45f, -k), P(-0.45f + k, 0), P(-0.45f, k), P(-0.45f - k, 0)};
+        dl->AddConvexPolyFilled(a, 4, col);
+        ImVec2 b[4] = {P(0.5f, -k), P(0.5f + k, 0), P(0.5f, k), P(0.5f - k, 0)};
+        dl->AddPolyline(b, 4, col, ImDrawFlags_Closed, t);
+        break;
+    }
+    case PI_Animator:    // two states and a transition
+        dl->AddCircle(P(-0.55f, -0.42f), r * 0.38f, col, 0, t);
+        dl->AddCircle(P(0.55f, 0.42f), r * 0.38f, col, 0, t);
+        dl->AddLine(P(-0.27f, -0.2f), P(0.27f, 0.2f), col, t);
+        break;
+    case PI_Sprite:      // a pixel checker
+        dl->AddRect(P(-0.9f, -0.9f), P(0.9f, 0.9f), col, 0.0f, 0, t);
+        dl->AddRectFilled(P(-0.9f, -0.9f), P(0, 0), col);
+        dl->AddRectFilled(P(0, 0), P(0.9f, 0.9f), col);
+        break;
+    case PI_Palette:     // a palette
+        dl->AddCircle(c, r * 0.95f, col, 0, t);
+        dl->AddCircleFilled(P(-0.42f, -0.2f), t * 1.15f, col);
+        dl->AddCircleFilled(P(0.05f, -0.5f), t * 1.15f, col);
+        dl->AddCircleFilled(P(0.48f, -0.12f), t * 1.15f, col);
+        dl->AddCircleFilled(P(0.1f, 0.42f), t * 1.6f, col);
+        break;
+    case PI_UI:          // a screen with a button
+        dl->AddRect(P(-1, -0.8f), P(1, 0.8f), col, r * 0.15f, 0, t);
+        dl->AddLine(P(-0.55f, -0.32f), P(0.55f, -0.32f), col, t);
+        dl->AddRectFilled(P(-0.5f, 0.08f), P(0.5f, 0.46f), col, 1.0f);
+        break;
+    default:
+        dl->AddRect(P(-0.85f, -0.85f), P(0.85f, 0.85f), col, r * 0.25f, 0, t);
+        break;
+    }
+}
+
+// Docked tabs get extra left padding so a panel icon fits before the name. ImGui
+// lays dock tab bars out inside NewFrame() (floating groups) and DockSpace() (the
+// main window), so the wider FramePadding.x is applied around just those two calls:
+// every other widget keeps the normal padding.
+static float g_tabIconPx = 0.0f;     // icon size on panel tabs (from the font, updated each frame)
+static float TabIconPx()    { return g_tabIconPx > 0.0f ? g_tabIconPx : std::round(12.0f * g_uiScale); }
+static float TabIconInset() { return std::round(7.0f * g_uiScale); }
+static float TabPadX()      { return TabIconInset() + TabIconPx() + std::round(6.0f * g_uiScale); }
+struct TabPaddingScope {
+    float saved;
+    TabPaddingScope() : saved(ImGui::GetStyle().FramePadding.x) { ImGui::GetStyle().FramePadding.x = TabPadX(); }
+    ~TabPaddingScope() { ImGui::GetStyle().FramePadding.x = saved; }
+    TabPaddingScope(const TabPaddingScope&) = delete;
+    TabPaddingScope& operator=(const TabPaddingScope&) = delete;
+};
+
+// Work on a dock host's draw list after the frame's docking pass: the host keeps
+// its background / foreground channels split until render, and tabs are drawn in
+// the foreground one, so anything drawn over them must go there too.
+struct HostFgChannel {
+    ImDrawList* dl; int prev;
+    explicit HostFgChannel(ImDrawList* d) : dl(d), prev(d->_Splitter._Current) { if (dl->_Splitter._Count >= 2) dl->ChannelsSetCurrent(1); }
+    ~HostFgChannel() { if (dl->_Splitter._Count >= 2) dl->ChannelsSetCurrent(prev); }
+    HostFgChannel(const HostFgChannel&) = delete;
+    HostFgChannel& operator=(const HostFgChannel&) = delete;
+};
+
+// The dock group shown as vertical side tabs (0 = none). Its tab bar is hidden
+// (ImGuiDockNodeFlags_NoTabBar via each window's class, which isn't written to
+// imgui.ini) and ImGui then always shows the group's FIRST window - so switching
+// panels there means moving the chosen window to the front.
+static ImGuiID g_sideTabsNode = 0;
+static std::string g_sideAnchor;     // window whose group is shown (session only; empty = Hierarchy / Inspector)
+static void MoveWindowToFront(ImGuiDockNode* node, ImGuiWindow* w) {
+    const int i = node->Windows.find_index(w);
+    if (i > 0) { node->Windows.erase(node->Windows.Data + i); node->Windows.push_front(w); }
+}
+// Bring a panel forward: select its tab (or side tab) and give it focus.
+static void FocusPanelWindow(ImGuiWindow* w) {
+    if (!w) return;
+    if (ImGuiDockNode* node = w->DockNode; node && node->IsNoTabBar()) MoveWindowToFront(node, w);
+    ImGui::SetWindowFocus(w->Name);
+}
+// Panels to focus once they exist (a tab just added, a layout just built).
+static std::vector<std::string> g_focusQueue;
+static int g_focusQueueFrame = 0;   // wait until this frame: tabs docked by a new layout keep
+                                    // auto-selecting themselves for a frame or two as they appear
+static void PumpFocusQueue() {
+    if (ImGui::GetFrameCount() < g_focusQueueFrame) return;
+    for (std::size_t i = 0; i < g_focusQueue.size();) {
+        ImGuiWindow* fw = ImGui::FindWindowByName(g_focusQueue[i].c_str());
+        const DockPanelDef* d = PanelDefForWindow(g_focusQueue[i].c_str());
+        if (fw && fw->WasActive) FocusPanelWindow(fw);
+        else if (!d || PanelOpen(*d)) { ++i; continue; }   // not drawn yet: wait (a closed panel is dropped)
+        g_focusQueue.erase(g_focusQueue.begin() + (std::ptrdiff_t)i);
+    }
+}
+
+// ---- Layouts: built-in presets + the user's saved ones -------------------------
+static std::vector<okay::edtabs::SavedLayout> g_userLayouts;
+static bool g_openSaveLayout = false;      // open the "Save Layout" dialog next frame
+static void LoadUserLayouts() {
+    std::ifstream f("okay_layouts.txt", std::ios::binary);
+    if (!f) return;
+    std::stringstream ss; ss << f.rdbuf();
+    g_userLayouts = okay::edtabs::ParseLayouts(ss.str());
+}
+static void SaveUserLayouts() {
+    std::ofstream f("okay_layouts.txt", std::ios::binary);
+    if (!f) { ConsoleLog("Couldn't write okay_layouts.txt", 2); return; }
+    f << okay::edtabs::SerializeLayouts(g_userLayouts);
+}
+static void SaveCurrentLayoutAs(const std::string& name) {
+    okay::edtabs::SavedLayout l;
+    l.name = okay::edtabs::CleanLayoutName(name);
+    size_t sz = 0;
+    const char* ini = ImGui::SaveIniSettingsToMemory(&sz);
+    l.ini.assign(ini ? ini : "", ini ? sz : 0);
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    for (int i = 0; i < n; ++i) if (defs[i].open && *defs[i].open) l.open.push_back(defs[i].label);
+    const bool replaced = okay::edtabs::UpsertLayout(g_userLayouts, l);
+    SaveUserLayouts();
+    g_layoutName = l.name;
+    ConsoleLog((replaced ? "Updated layout \"" : "Saved layout \"") + l.name + "\"");
+}
+static void ApplyUserLayout(const okay::edtabs::SavedLayout& l) {
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    for (int i = 0; i < n; ++i)
+        if (defs[i].open) *defs[i].open = std::find(l.open.begin(), l.open.end(), defs[i].label) != l.open.end();
+    if (l.ini.empty()) g_layoutRequest = (int)okay::edtabs::Preset::Default;   // nothing stored: rebuild instead
+    else g_layoutPendingIni = l.ini;
+    g_layoutName = l.name;
+    ConsoleLog("Layout: " + l.name);
+}
+// A saved layout is ImGui ini text. Docking rebuilds its nodes from it, so it's
+// loaded between frames (just before NewFrame), never in the middle of one.
+static void ApplyPendingLayoutIni() {
+    if (g_layoutPendingIni.empty()) return;
+    ImGui::LoadIniSettingsFromMemory(g_layoutPendingIni.c_str(), g_layoutPendingIni.size());
+    g_layoutPendingIni.clear();
+}
+
+// Build a built-in layout preset with DockBuilder. Each one opens the panels it
+// arranges; any other panel that's open goes in as a tab of the preset's "spare"
+// group, so nothing is left floating.
+static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
+    using okay::edtabs::Preset;
+    ImGui::DockBuilderRemoveNode(dockId);
+    ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockId, size);
+    ImGuiID center = dockId, spare = dockId;
+    auto split = [](ImGuiID& from, ImGuiDir dir, float ratio) {
+        return ImGui::DockBuilderSplitNode(from, dir, ratio, nullptr, &from);
+    };
+    std::vector<const char*> placed;
+    auto dock = [&](const char* window, ImGuiID node) { ImGui::DockBuilderDockWindow(window, node); placed.push_back(window); };
+    switch ((Preset)preset) {
+    case Preset::Tall: {   // Scene over Game; tall Hierarchy / Project columns, Inspector at the edge
+        ImGuiID right = split(center, ImGuiDir_Right, 0.44f);
+        ImGuiID insp  = split(right, ImGuiDir_Right, 0.55f);
+        ImGuiID proj  = split(right, ImGuiDir_Down, 0.50f);
+        ImGuiID game  = split(center, ImGuiDir_Down, 0.45f);
+        dock("Scene", center); dock("Game", game);
+        dock("Hierarchy", right);
+        dock("Project", proj); dock("Console###Console", proj);
+        dock("Inspector", insp); dock("Lighting", insp);
+        spare = proj;
+        break;
+    }
+    case Preset::Wide: {   // a wide Scene; Hierarchy | Project | Console underneath
+        ImGuiID right = split(center, ImGuiDir_Right, 0.22f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.32f);
+        ImGuiID dProj = split(down, ImGuiDir_Right, 0.70f);
+        ImGuiID dCon  = split(dProj, ImGuiDir_Right, 0.50f);
+        dock("Scene", center); dock("Game", center);
+        dock("Inspector", right); dock("Lighting", right);
+        dock("Hierarchy", down); dock("Project", dProj); dock("Console###Console", dCon);
+        spare = dCon;
+        break;
+    }
+    case Preset::TwoByThree: {   // [Scene / Game] [Hierarchy] [Project] [Inspector]
+        ImGuiID insp = split(center, ImGuiDir_Right, 0.22f);
+        ImGuiID proj = split(center, ImGuiDir_Right, 0.26f);
+        ImGuiID hier = split(center, ImGuiDir_Right, 0.30f);
+        ImGuiID game = split(center, ImGuiDir_Down, 0.50f);
+        dock("Scene", center); dock("Game", game);
+        dock("Hierarchy", hier);
+        dock("Project", proj); dock("Console###Console", proj);
+        dock("Inspector", insp);
+        spare = proj;
+        break;
+    }
+    case Preset::Scripting: {   // a big Script Editor in the middle
+        ImGuiID left  = split(center, ImGuiDir_Left, 0.18f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.24f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.24f);
+        ImGuiID leftD = split(left, ImGuiDir_Down, 0.55f);
+        dock("Hierarchy", left); dock("Project", leftD);
+        dock("Scene", center); dock("Game", center); dock("Script Editor", center);
+        dock("Console###Console", down);
+        dock("Inspector", right);
+        spare = down;
+        g_focusQueue.push_back("Script Editor");
+        break;
+    }
+    case Preset::Animation: {   // Scene on top, a wide timeline + the Animator underneath
+        ImGuiID left  = split(center, ImGuiDir_Left, 0.18f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.24f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.40f);
+        ImGuiID downR = split(down, ImGuiDir_Right, 0.36f);
+        dock("Hierarchy", left); dock("Inspector", right);
+        dock("Scene", center); dock("Game", center);
+        dock("Animation###AnimationDock", down); dock("Project", down); dock("Console###Console", down);
+        dock("Animator", downR);
+        spare = downR;   // extras go beside the Animator, keeping the timeline's group short
+        g_focusQueue.push_back("Animation###AnimationDock");
+        g_focusQueue.push_back("Animator");
+        break;
+    }
+    default: {   // Default: the original layout
+        ImGuiID left  = split(center, ImGuiDir_Left, 0.18f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.24f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.26f);
+        dock("Hierarchy", left);
+        dock("Inspector", right);
+        dock("Console###Console", down);
+        dock("Project", down);
+        dock("Services", down);
+        dock("Script Editor", down);
+        dock("Animation###AnimationDock", down);
+        dock("Asset Manager", down);
+        dock("Stats", right);
+        dock("Lighting", right);
+        dock("Scene", center);
+        dock("Game", center);   // tab alongside Scene
+        spare = down;
+        break;
+    }
+    }
+    // Open the panels the preset arranges (Default leaves the optional extras as
+    // they were - the old Reset Layout reopens the core ones itself), then tab any
+    // other open panel into the spare group.
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    for (int i = 0; i < n; ++i) {
+        const DockPanelDef& d = defs[i];
+        const bool inPreset = std::find_if(placed.begin(), placed.end(),
+                                           [&](const char* p) { return std::strcmp(p, d.window) == 0; }) != placed.end();
+        if (inPreset) {
+            if (d.open && preset != (int)Preset::Default) *d.open = true;
+        } else if (d.open && *d.open) {
+            ImGui::DockBuilderDockWindow(d.window, spare);
+        }
+    }
+    ImGui::DockBuilderFinish(dockId);
+    g_layoutName = okay::edtabs::PresetName(preset);
+    g_focusQueueFrame = ImGui::GetFrameCount() + 3;
+}
+
+// The Layout menu: presets, saved layouts, save / delete, side tabs. Shared by
+// View > Layout, the Layout dropdown at the top right and the tab right-click menu.
+static void DrawLayoutMenuItems() {
+    using namespace okay::edtabs;
+    ImGui::TextDisabled("Built-in");
+    for (int i = 0; i < kPresetCount; ++i) {
+        if (ImGui::MenuItem(PresetName(i), nullptr, g_layoutName == PresetName(i))) g_layoutRequest = i;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", PresetHint(i));
+    }
+    if (!g_userLayouts.empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled("Saved");
+        for (std::size_t i = 0; i < g_userLayouts.size(); ++i) {
+            ImGui::PushID((int)i);
+            if (ImGui::MenuItem(g_userLayouts[i].name.c_str(), nullptr, g_layoutName == g_userLayouts[i].name))
+                ApplyUserLayout(g_userLayouts[i]);
+            ImGui::PopID();
+        }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Save Layout...")) g_openSaveLayout = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save how the panels are arranged now under a name, to switch back to it later.");
+    if (ImGui::BeginMenu("Delete Layout", !g_userLayouts.empty())) {
+        for (std::size_t i = 0; i < g_userLayouts.size(); ++i) {
+            ImGui::PushID((int)i);
+            if (ImGui::MenuItem(g_userLayouts[i].name.c_str())) {
+                ConsoleLog("Deleted layout \"" + g_userLayouts[i].name + "\"");
+                if (g_layoutName == g_userLayouts[i].name) g_layoutName.clear();
+                g_userLayouts.erase(g_userLayouts.begin() + (std::ptrdiff_t)i);
+                SaveUserLayouts();
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    if (ImGui::BeginMenu("Side Tabs")) {
+        static const char* kSide[3] = {"Off", "Left Edge", "Right Edge"};
+        for (int i = 0; i < 3; ++i)
+            if (ImGui::MenuItem(kSide[i], nullptr, g_sideTabs == i)) { g_sideTabs = i; g_sideAnchor.clear(); SaveSettings(); }
+        ImGui::Separator();
+        ImGui::TextDisabled("Lists one panel group's tabs down the edge of the");
+        ImGui::TextDisabled("window (like VS Code's activity bar) instead of a tab");
+        ImGui::TextDisabled("strip: the Hierarchy's group on the left, the");
+        ImGui::TextDisabled("Inspector's on the right. Right-click any tab >");
+        ImGui::TextDisabled("Show Group as Side Tabs to pick another group.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to the Default layout with the core panels reopened.");
+}
+// The "Save Layout" dialog (drawn once per frame at the top level).
+static void DrawLayoutPopups() {
+    static char s_name[64] = "";
+    if (g_openSaveLayout) {
+        g_openSaveLayout = false;
+        std::snprintf(s_name, sizeof(s_name), "%s", okay::edtabs::PresetFromName(g_layoutName) < 0 ? g_layoutName.c_str() : "");
+        ImGui::OpenPopup("Save Layout");
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Save Layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextUnformatted("Save the current panel arrangement as:");
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(280.0f * g_uiScale);
+    const bool enter = ImGui::InputTextWithHint("##layoutname", "Layout name", s_name, sizeof(s_name), ImGuiInputTextFlags_EnterReturnsTrue);
+    const std::string clean = okay::edtabs::CleanLayoutName(s_name);
+    const bool builtIn = okay::edtabs::PresetFromName(clean) >= 0;
+    const bool exists  = okay::edtabs::FindLayout(g_userLayouts, clean) >= 0;
+    if (builtIn)     ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.35f, 1.0f), "That's a built-in layout's name: pick another.");
+    else if (exists) ImGui::TextDisabled("Replaces your saved layout \"%s\".", clean.c_str());
+    else             ImGui::TextDisabled("Saved in okay_layouts.txt beside the editor.");
+    ImGui::Dummy(ImVec2(0, 2));
+    const bool ok = !clean.empty() && !builtIn;
+    ImGui::BeginDisabled(!ok);
+    if ((ImGui::Button(exists ? "Replace" : "Save", ImVec2(110, 0)) || enter) && ok) {
+        SaveCurrentLayoutAs(clean);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+// One row of a panel list (the tab overflow list, the Ctrl+Tab switcher): icon,
+// label and an optional right-aligned hint. Returns true when clicked.
+static bool PanelListRow(const char* label, int icon, bool selected, const char* hint = nullptr) {
+    ImGui::PushID(label);
+    const float ic = TabIconPx();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = std::max(ImGui::GetContentRegionAvail().x, 250.0f * g_uiScale);
+    const bool hit = ImGui::Selectable("##row", selected, ImGuiSelectableFlags_None, ImVec2(w, 0));
+    const float h = ImGui::GetItemRectSize().y;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    DrawPanelIcon(dl, ImVec2(p.x + 2.0f + ic * 0.5f, p.y + h * 0.5f), ic, icon,
+                  ImGui::GetColorU32(selected ? AccentCol(1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)));
+    const float ty = p.y + (h - ImGui::GetTextLineHeight()) * 0.5f;
+    dl->AddText(ImVec2(p.x + ic + 10.0f * g_uiScale, ty), ImGui::GetColorU32(ImGuiCol_Text), label);
+    if (hint && *hint) {
+        const float hw = ImGui::CalcTextSize(hint).x;
+        dl->AddText(ImVec2(p.x + w - hw - 4.0f, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
+    }
+    ImGui::PopID();
+    return hit;
+}
+
+// Right-click a panel's tab: add another panel as a tab in the same
+// spot, close this one or the others beside it, float it, or switch layouts. Runs once
+// per frame after every panel has been drawn, so it covers all docked windows without
+// each panel wiring its own menu.
+static ImGuiID g_tabMenuRequest = 0;   // a window whose menu to open (right-click on a side tab)
 static void DrawPanelTabMenu() {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     static ImGuiID s_tabWin = 0;            // window whose tab was right-clicked
-    static std::string s_focusNext;         // a panel just added: focus it once it exists
     int n = 0; const DockPanelDef* defs = DockPanels(n);
-    if (!s_focusNext.empty()) {
-        ImGuiWindow* fw = ImGui::FindWindowByName(s_focusNext.c_str());
-        if (fw && fw->WasActive) { ImGui::SetWindowFocus(s_focusNext.c_str()); s_focusNext.clear(); }
-    }
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && g.HoveredWindow && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+    PumpFocusQueue();
+    if (g_tabMenuRequest) {
+        s_tabWin = g_tabMenuRequest; g_tabMenuRequest = 0;
+        ImGui::OpenPopup("##paneltabmenu");
+    } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && g.HoveredWindow && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
         for (ImGuiWindow* w : g.Windows) {
             ImGuiDockNode* node = w->DockNode;
             if (!node || !node->IsVisible || !node->TabBar || node->IsHiddenTabBar() || node->IsNoTabBar()) continue;
@@ -4036,23 +4576,22 @@ static void DrawPanelTabMenu() {
     if (!ImGui::BeginPopup("##paneltabmenu")) return;
     ImGuiWindow* w = ImGui::FindWindowByID(s_tabWin);
     if (!w || !w->DockNode) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    auto defFor = [&](const char* winName) -> const DockPanelDef* {
-        for (int i = 0; i < n; ++i) if (std::strcmp(defs[i].window, winName) == 0) return &defs[i];
-        return nullptr;
-    };
-    const DockPanelDef* self = defFor(w->Name);
-    if (self) ImGui::TextDisabled("%s", self->label);
-    else ImGui::TextDisabled("%s", std::string((const char*)w->Name, ImGui::FindRenderedTextEnd(w->Name)).c_str());
+    const DockPanelDef* self = PanelDefForWindow(w->Name);
+    ImGui::TextDisabled("%s", WindowLabel(w).c_str());
     ImGui::Separator();
     const ImGuiID nodeId = w->DockNode->ID;
+    auto dockedHere = [&](const DockPanelDef& d) {
+        ImGuiWindow* dw = ImGui::FindWindowByName(d.window);
+        return PanelOpen(d) && dw && dw->DockNode && dw->DockNode->ID == nodeId;
+    };
     auto addTab = [&](const DockPanelDef& d) {
-        if (ImGuiWindow* dw = ImGui::FindWindowByName(d.window); dw && dw->DockNode && dw->DockNode->ID == nodeId && *d.open) {
-            ImGui::SetWindowFocus(d.window);   // already a tab here: just bring it forward
+        if (dockedHere(d)) {   // already a tab here: just bring it forward
+            FocusPanelWindow(ImGui::FindWindowByName(d.window));
             return;
         }
         ImGui::DockBuilderDockWindow(d.window, nodeId);
-        *d.open = true;
-        s_focusNext = d.window;
+        if (d.open) *d.open = true;
+        g_focusQueue.push_back(d.window);
     };
     if (ImGui::BeginMenu("Add Tab")) {
         const char* lastGroup = nullptr;
@@ -4061,56 +4600,308 @@ static void DrawPanelTabMenu() {
             if (&d == self) continue;
             if (lastGroup && std::strcmp(lastGroup, d.group) != 0) ImGui::Separator();
             lastGroup = d.group;
-            ImGuiWindow* dw = ImGui::FindWindowByName(d.window);
-            const bool here = *d.open && dw && dw->DockNode && dw->DockNode->ID == nodeId;
-            if (ImGui::MenuItem(d.label, here ? "here" : (*d.open ? "open" : nullptr))) addTab(d);
-            if (ImGui::IsItemHovered() && *d.open && !here)
+            const bool here = dockedHere(d);
+            if (ImGui::MenuItem(d.label, here ? "here" : (PanelOpen(d) ? "open" : nullptr))) addTab(d);
+            if (ImGui::IsItemHovered() && PanelOpen(d) && !here)
                 ImGui::SetTooltip("Already open elsewhere: moves it into this tab group.");
         }
         ImGui::EndMenu();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Close Tab", nullptr, false, self != nullptr)) *self->open = false;
+    if (ImGui::MenuItem("Close Tab", "Middle-click", false, self != nullptr && self->open != nullptr)) *self->open = false;
     {
         int others = 0;
-        for (int i = 0; i < n; ++i) {
-            ImGuiWindow* dw = ImGui::FindWindowByName(defs[i].window);
-            if (&defs[i] != self && *defs[i].open && dw && dw->DockNode && dw->DockNode->ID == nodeId) ++others;
-        }
+        for (int i = 0; i < n; ++i)
+            if (&defs[i] != self && defs[i].open && dockedHere(defs[i])) ++others;
         if (ImGui::MenuItem("Close Other Tabs", nullptr, false, others > 0))
-            for (int i = 0; i < n; ++i) {
-                ImGuiWindow* dw = ImGui::FindWindowByName(defs[i].window);
-                if (&defs[i] != self && dw && dw->DockNode && dw->DockNode->ID == nodeId) *defs[i].open = false;
-            }
+            for (int i = 0; i < n; ++i)
+                if (&defs[i] != self && defs[i].open && dockedHere(defs[i])) *defs[i].open = false;
     }
     if (ImGui::MenuItem("Float (undock)")) ImGui::DockContextQueueUndockWindow(&g, w);
     ImGui::Separator();
-    if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
+    if (g_sideTabs != 0 && nodeId == g_sideTabsNode) {
+        if (ImGui::MenuItem("Side Tabs Off")) { g_sideTabs = 0; g_sideAnchor.clear(); SaveSettings(); }
+    } else if (ImGui::DockNodeGetRootNode(w->DockNode)->ID == g_dockspaceId) {
+        if (ImGui::MenuItem("Show Group as Side Tabs")) {
+            g_sideAnchor = w->Name;
+            if (g_sideTabs == 0) { g_sideTabs = 1; SaveSettings(); }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("List this group's tabs down the edge of the window\n(saves the height of its tab strip).");
+    }
+    if (ImGui::BeginMenu("Layout")) { DrawLayoutMenuItems(); ImGui::EndMenu(); }
     ImGui::EndPopup();
 }
-void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
-    ImGui::DockBuilderRemoveNode(dockId);
-    ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockId, size);
 
-    ImGuiID center = dockId, left, right, down;
-    left  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.18f, nullptr, &center);
-    right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
-    down  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.26f, nullptr, &center);
+// Panel icons on docked tabs: drawn over each tab, in the room TabPaddingScope
+// leaves before the name. The active tab's icon takes the accent colour.
+static void DrawPanelTabIcons() {
+    ImGuiContext& g = *GImGui;
+    g_tabIconPx = std::round(ImGui::GetFontSize() * 0.80f);   // used by next frame's layout
+    const float ic = TabIconPx(), inset = TabIconInset();
+    const ImU32 accent = ImGui::GetColorU32(AccentCol(1.0f));
+    const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text, 0.85f);
+    const ImU32 dim    = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    for (ImGuiWindow* w : g.Windows) {
+        ImGuiDockNode* node = w->DockNode;
+        if (!node || !w->DockIsActive || !node->IsVisible || !node->TabBar || !node->HostWindow) continue;
+        if (node->IsHiddenTabBar() || node->IsNoTabBar() || !(w->Active || w->WasActive)) continue;
+        ImRect r = w->DC.DockTabItemRect;
+        if (r.GetWidth() < ic + inset * 2.0f + 8.0f) continue;   // squeezed: the name needs the room
+        ImRect clip = r;
+        clip.ClipWith(node->TabBar->BarRect);
+        if (clip.GetWidth() <= 0.0f) continue;   // scrolled out of view
+        ImGuiTabBar* tb = node->TabBar;
+        const bool sel = tb->VisibleTabId == w->TabId;
+        const bool focused = (tb->Flags & ImGuiTabBarFlags_IsFocused) != 0;
+        const DockPanelDef* d = PanelDefForWindow(w->Name);
+        ImDrawList* dl = node->HostWindow->DrawList;
+        HostFgChannel fg(dl);
+        dl->PushClipRect(clip.Min, clip.Max, false);
+        DrawPanelIcon(dl, ImVec2(std::floor(r.Min.x + inset + ic * 0.5f) + 0.5f, std::floor((r.Min.y + r.Max.y) * 0.5f + 1.0f) + 0.5f),
+                      ic, d ? d->icon : PI_Generic, sel ? (focused ? accent : normal) : dim);
+        dl->PopClipRect();
+    }
+}
 
-    ImGui::DockBuilderDockWindow("Hierarchy", left);
-    ImGui::DockBuilderDockWindow("Inspector", right);
-    ImGui::DockBuilderDockWindow("Console###Console", down);
-    ImGui::DockBuilderDockWindow("Project", down);
-    ImGui::DockBuilderDockWindow("Services", down);
-    ImGui::DockBuilderDockWindow("Script Editor", down);
-    ImGui::DockBuilderDockWindow("Animation###AnimationDock", down);
-    ImGui::DockBuilderDockWindow("Asset Manager", down);
-    ImGui::DockBuilderDockWindow("Stats", right);
-    ImGui::DockBuilderDockWindow("Lighting", right);
-    ImGui::DockBuilderDockWindow("Scene", center);
-    ImGui::DockBuilderDockWindow("Game", center);   // tab alongside Scene
-    ImGui::DockBuilderFinish(dockId);
+// Tab overflow: when a group's tabs don't fit at full width, a list button joins
+// the end of its tab strip; it opens a searchable list of that group's tabs and of
+// every other open panel.
+static void DrawTabOverflow() {
+    ImGuiContext& g = *GImGui;
+    static ImGuiStorage s_shown;             // node id -> 1 when its list button showed last frame
+    static ImGuiID s_listNode = 0;           // the group whose list is open
+    static ImVec2 s_listPos;                 // where the list drops down from
+    const ImGuiID popupId = ImHashStr("##okaytaboverflow");
+    const float btnW = std::round(ImGui::GetFrameHeight() * 0.95f);
+    for (int i = 0; i < g.DockContext.Nodes.Data.Size; ++i) {
+        ImGuiDockNode* node = (ImGuiDockNode*)g.DockContext.Nodes.Data[i].val_p;
+        if (!node || !node->IsLeafNode() || !node->IsVisible || !node->TabBar || !node->HostWindow) continue;
+        if (node->IsHiddenTabBar() || node->IsNoTabBar() || node->LastFrameActive != g.FrameCount) continue;
+        ImGuiTabBar* tb = node->TabBar;
+        int tabs = 0;
+        for (const ImGuiTabItem& t : tb->Tabs) if (!(t.Flags & ImGuiTabItemFlags_Button)) ++tabs;
+        const bool was = s_shown.GetInt(node->ID, 0) != 0;
+        const float btn = was ? btnW + g.Style.ItemInnerSpacing.x : 0.0f;
+        const float barW = node->Size.x - 2.0f * TabPadX() - 2.0f * node->HostWindow->WindowBorderSize;
+        const bool show = okay::edtabs::TabsOverflow(tb->WidthAllTabsIdeal - btn, barW, tabs, was);
+        s_shown.SetInt(node->ID, show ? 1 : 0);
+        if (!show || !ImGui::DockNodeBeginAmendTabBar(node)) continue;
+        {
+            HostFgChannel fg(ImGui::GetWindowDrawList());
+            ImGui::SetNextItemWidth(btnW);
+            const bool hit = ImGui::TabItemButton("##tablist", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip);
+            const ImRect br(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            if (br.GetWidth() > 2.0f) {   // a chevron (the button has no label)
+                const ImVec2 c = br.GetCenter();
+                const float s = ImGui::GetFontSize() * 0.22f;
+                ImVec2 v[3] = {ImVec2(c.x - s, c.y - s * 0.45f), ImVec2(c.x, c.y + s * 0.55f), ImVec2(c.x + s, c.y - s * 0.45f)};
+                ImGui::GetWindowDrawList()->AddPolyline(v, 3, ImGui::GetColorU32(ImGuiCol_Text), 0, std::max(1.0f, s * 0.45f));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("All %d tabs in this group (and other open panels)", tabs);
+            if (hit) { s_listNode = node->ID; s_listPos = ImVec2(br.Max.x, br.Max.y); ImGui::OpenPopup(popupId); }
+        }
+        ImGui::DockNodeEndAmendTabBar();
+    }
+
+    ImGui::SetNextWindowPos(s_listPos, ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
+    if (!ImGui::BeginPopupEx(popupId, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) return;
+    static char s_q[64] = "";
+    if (ImGui::IsWindowAppearing()) { s_q[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##tabfind", "Search panels", s_q, sizeof(s_q));
+    const bool enter = ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
+    ImGuiWindow* pick = nullptr;
+    ImGuiWindow* first = nullptr;
+    ImGuiDockNode* node = ImGui::DockBuilderGetNode(s_listNode);
+    std::vector<ImGuiWindow*> here;
+    if (node && node->TabBar) {
+        ImGui::SeparatorText("In this group");
+        for (const ImGuiTabItem& t : node->TabBar->Tabs) {
+            if (!t.Window) continue;
+            here.push_back(t.Window);
+            const std::string lbl = WindowLabel(t.Window);
+            if (!okay::edtabs::MatchesFilter(lbl, s_q)) continue;
+            if (!first) first = t.Window;
+            const DockPanelDef* d = PanelDefForWindow(t.Window->Name);
+            if (PanelListRow(lbl.c_str(), d ? d->icon : PI_Generic, t.ID == node->TabBar->SelectedTabId)) pick = t.Window;
+        }
+    }
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    bool header = false;
+    for (int i = 0; i < n; ++i) {
+        ImGuiWindow* w = LivePanelWindow(defs[i]);
+        if (!w || std::find(here.begin(), here.end(), w) != here.end()) continue;
+        if (!okay::edtabs::MatchesFilter(defs[i].label, s_q)) continue;
+        if (!header) { ImGui::SeparatorText("Other open panels"); header = true; }
+        if (!first) first = w;
+        if (PanelListRow(defs[i].label, defs[i].icon, false)) pick = w;
+    }
+    if (!first) ImGui::TextDisabled("No open panel matches \"%s\".", s_q);
+    if (enter && first) pick = first;
+    if (pick) { FocusPanelWindow(pick); ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
+}
+
+// Side tabs: keep the chosen group's tab bar hidden (and only that group's).
+static void UpdateSideTabs() {
+    ImGuiContext& g = *GImGui;
+    ImGuiID want = 0;
+    if (g_sideTabs != 0) {
+        const char* anchor = !g_sideAnchor.empty() ? g_sideAnchor.c_str() : (g_sideTabs == 2 ? "Inspector" : "Hierarchy");
+        ImGuiWindow* a = ImGui::FindWindowByName(anchor);
+        if (a && a->DockNode && a->DockNode->IsLeafNode() && ImGui::DockNodeGetRootNode(a->DockNode)->ID == g_dockspaceId)
+            want = a->DockNode->ID;
+        else if (ImGuiDockNode* prev = g_sideTabsNode ? ImGui::DockBuilderGetNode(g_sideTabsNode) : nullptr; prev && prev->Windows.Size > 0)
+            want = prev->ID;   // the anchor panel closed: keep showing the rest of its group
+    }
+    if (want && want != g_sideTabsNode)   // a newly chosen group: keep its current tab showing
+        if (ImGuiDockNode* nn = ImGui::DockBuilderGetNode(want); nn && nn->TabBar)
+            if (ImGuiTabItem* t = ImGui::TabBarFindTabByID(nn->TabBar, nn->TabBar->SelectedTabId); t && t->Window)
+                MoveWindowToFront(nn, t->Window);
+    g_sideTabsNode = want;
+    for (ImGuiWindow* w : g.Windows) {
+        if (want && w->DockNode && w->DockNode->ID == want) w->WindowClass.DockNodeFlagsOverrideSet |= ImGuiDockNodeFlags_NoTabBar;
+        else                                                w->WindowClass.DockNodeFlagsOverrideSet &= ~ImGuiDockNodeFlags_NoTabBar;
+    }
+}
+static float SideStripWidth() { return std::round(64.0f * g_uiScale); }
+// The vertical strip itself: an icon + short name per panel of the side group.
+// Click shows that panel; right-click opens its tab menu.
+static void DrawSideTabStrip(float height) {
+    const float w = SideStripWidth();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 4.0f * g_uiScale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 2.0f * g_uiScale));
+    ImGui::BeginChild("##sidetabs", ImVec2(w, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+    ImGuiDockNode* node = g_sideTabsNode ? ImGui::DockBuilderGetNode(g_sideTabsNode) : nullptr;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float itemH = std::round(w * 0.88f), ic = std::round(TabIconPx() * 1.3f);
+    if (node && node->Windows.Size > 0) {
+        // List in tab order (DockOrder), not node->Windows order, which switching changes.
+        std::vector<ImGuiWindow*> wins(node->Windows.begin(), node->Windows.end());
+        std::stable_sort(wins.begin(), wins.end(), [](const ImGuiWindow* a, const ImGuiWindow* b) {
+            const int oa = a->DockOrder < 0 ? 0x7fff : a->DockOrder, ob = b->DockOrder < 0 ? 0x7fff : b->DockOrder;
+            return oa != ob ? oa < ob : a->ID < b->ID;
+        });
+        for (ImGuiWindow* win : wins) {
+            ImGui::PushID((void*)win);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const bool clicked = ImGui::InvisibleButton("##side", ImVec2(w, itemH));
+            const bool hov = ImGui::IsItemHovered();
+            const bool active = node->Windows[0] == win;
+            const std::string lbl = WindowLabel(win);
+            if (active || hov)
+                dl->AddRectFilled(p, ImVec2(p.x + w, p.y + itemH), ImGui::GetColorU32(active ? ImGuiCol_TabSelected : ImGuiCol_TabHovered));
+            if (active) {   // accent bar on the outer edge, like VS Code
+                const float bw = std::max(2.0f, std::round(2.0f * g_uiScale));
+                const float x0 = g_sideTabs == 2 ? p.x + w - bw : p.x;
+                dl->AddRectFilled(ImVec2(x0, p.y), ImVec2(x0 + bw, p.y + itemH), ImGui::GetColorU32(AccentCol(1.0f)));
+            }
+            DrawPanelIcon(dl, ImVec2(p.x + w * 0.5f, p.y + itemH * 0.36f), ic, [&] {
+                              const DockPanelDef* d = PanelDefForWindow(win->Name); return d ? d->icon : (int)PI_Generic; }(),
+                          ImGui::GetColorU32(active ? AccentCol(1.0f) : ImGui::GetStyleColorVec4(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled)));
+            {   // the name, small, under the icon (trimmed with ".." to fit)
+                ImFont* f = ImGui::GetFont();
+                const float fs = ImGui::GetFontSize() * 0.78f, maxW = w - 6.0f;
+                std::string t = lbl;
+                while (t.size() > 1 && f->CalcTextSizeA(fs, FLT_MAX, 0.0f, (t + "..").c_str()).x > maxW && f->CalcTextSizeA(fs, FLT_MAX, 0.0f, t.c_str()).x > maxW)
+                    t.pop_back();
+                if (t != lbl) t += "..";
+                const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.0f, t.c_str());
+                dl->AddText(f, fs, ImVec2(std::floor(p.x + (w - ts.x) * 0.5f), std::floor(p.y + itemH * 0.66f)),
+                            ImGui::GetColorU32(active || hov ? ImGuiCol_Text : ImGuiCol_TextDisabled), t.c_str());
+            }
+            if (hov) ImGui::SetTooltip("%s%s", lbl.c_str(), active ? "" : "  (click to show)");
+            if (clicked) FocusPanelWindow(win);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) g_tabMenuRequest = win->ID;
+            ImGui::PopID();
+        }
+    } else {
+        ImGui::Dummy(ImVec2(w, itemH));
+        const ImVec2 mn = ImGui::GetItemRectMin();
+        DrawPanelIcon(dl, ImVec2(mn.x + w * 0.5f, mn.y + itemH * 0.4f), ic, PI_Generic, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Side tabs show the %s's tab group. Open it (View > Panels),\nor right-click any tab > Show Group as Side Tabs.",
+                              g_sideTabs == 2 ? "Inspector" : "Hierarchy");
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+}
+
+// Ctrl+Tab / Ctrl+Shift+Tab: cycle through the open panels, most recently used
+// first. A list shows while Ctrl is held; letting go of Ctrl switches, Esc cancels.
+// (This replaces Dear ImGui's own Ctrl+Tab window switcher, turned off at start-up.
+// The Script Editor's code box never takes Ctrl+Tab, so nothing clashes.)
+static std::vector<std::string> g_panelMru;   // window names, most recently focused first
+static void DrawPanelSwitcher() {
+    ImGuiContext& g = *GImGui;
+    ImGuiIO& io = ImGui::GetIO();
+    static bool s_active = false;
+    static int s_sel = 0;
+    static std::vector<ImGuiWindow*> s_list;
+    if (g.NavWindow && !s_active)
+        if (ImGuiWindow* root = g.NavWindow->RootWindow; root && PanelDefForWindow(root->Name))
+            okay::edtabs::TouchMru(g_panelMru, root->Name);
+    const bool tab = io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Tab, true);
+    const int step = io.KeyShift ? -1 : 1;
+    if (!s_active) {
+        if (!tab || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
+        int n = 0; const DockPanelDef* defs = DockPanels(n);
+        std::vector<std::string> open;
+        for (int i = 0; i < n; ++i) if (LivePanelWindow(defs[i])) open.push_back(defs[i].window);
+        s_list.clear();
+        for (const std::string& name : okay::edtabs::MruOrder(g_panelMru, open))
+            if (ImGuiWindow* w = ImGui::FindWindowByName(name.c_str())) s_list.push_back(w);
+        if (s_list.empty()) return;
+        // Start on the previous panel (one Ctrl+Tab flips between the last two).
+        s_sel = okay::edtabs::CycleIndex(0, (int)s_list.size(), s_list.size() > 1 ? step : 0);
+        s_active = true;
+    } else if (tab) {
+        s_sel = okay::edtabs::CycleIndex(s_sel, (int)s_list.size(), step);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) s_sel = okay::edtabs::CycleIndex(s_sel, (int)s_list.size(), 1);
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   s_sel = okay::edtabs::CycleIndex(s_sel, (int)s_list.size(), -1);
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { s_active = false; return; }
+    ImGuiWindow* pick = nullptr;
+    if (!io.KeyCtrl) pick = s_list[(std::size_t)s_sel];
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowViewport(vp->ID);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * g_uiScale, 10.0f * g_uiScale));
+    ImGui::Begin("##panelswitcher", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                 ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove);
+    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    ImGui::TextDisabled("Open panels");
+    ImGui::Separator();
+    for (int i = 0; i < (int)s_list.size(); ++i) {
+        ImGuiWindow* w = s_list[(std::size_t)i];
+        const DockPanelDef* d = PanelDefForWindow(w->Name);
+        const char* where = !w->DockNode ? "floating" : (w->DockTabIsVisible ? "showing" : "");
+        if (PanelListRow(WindowLabel(w).c_str(), d ? d->icon : PI_Generic, i == s_sel, where)) pick = w;
+        if (i == s_sel) ImGui::SetScrollHereY();
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Tab / Shift+Tab to move   release Ctrl to switch   Esc cancels");
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+    if (pick) { s_active = false; FocusPanelWindow(pick); }
+}
+
+// Everything the tab system does after the panels have been drawn this frame.
+static void DrawPanelTabsExtras() {
+    UpdateSideTabs();
+    DrawPanelTabIcons();
+    DrawTabOverflow();
+    DrawPanelTabMenu();
+    DrawPanelSwitcher();
+    DrawLayoutPopups();
 }
 
 // UI rule: every widget lives under a Canvas, and a scene needs one
@@ -4646,6 +5437,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Layout")) { DrawLayoutMenuItems(); ImGui::EndMenu(); }
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
         ImGui::EndMenu();
     }
@@ -5134,7 +5926,29 @@ void DrawMenuAndToolbar(EditorState& ed) {
     // would otherwise render as tofu).
     float dotR = ImGui::GetFontSize() * 0.28f;
     float dotW = dotR * 2.0f + 8.0f;
-    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - dotW - 16);
+    const float statusX = ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - dotW - 16;
+    {   // Layout dropdown (top-right): presets + saved layouts.
+        const std::string lbl = (g_layoutName.empty() ? std::string("Layout") : g_layoutName);
+        const float chev = ImGui::GetFontSize() * 0.9f;
+        const float lw = ImGui::CalcTextSize(lbl.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f + chev;
+        ImGui::SameLine(statusX - lw - 18.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+        if (ImGui::Button((lbl + "##layoutdd").c_str(), ImVec2(lw, 0))) ImGui::OpenPopup("##layoutdd");
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        {   // chevron
+            const ImVec2 c(mx.x - chev * 0.6f, (mn.y + mx.y) * 0.5f);
+            const float cs = ImGui::GetFontSize() * 0.2f;
+            ImVec2 v[3] = {ImVec2(c.x - cs, c.y - cs * 0.45f), ImVec2(c.x, c.y + cs * 0.55f), ImVec2(c.x + cs, c.y - cs * 0.45f)};
+            ImGui::GetWindowDrawList()->AddPolyline(v, 3, ImGui::GetColorU32(ImGuiCol_Text, 0.8f), 0, std::max(1.0f, cs * 0.45f));
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch the panel layout, or save this one");
+        ImGui::SetNextWindowPos(ImVec2(mx.x, mx.y + 2.0f), ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
+        if (ImGui::BeginPopup("##layoutdd")) { DrawLayoutMenuItems(); ImGui::EndPopup(); }
+    }
+    ImGui::SameLine(statusX);
     ImVec2 dp = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddCircleFilled(
         ImVec2(dp.x + dotR + 1.0f, dp.y + ImGui::GetTextLineHeight() * 0.5f),
@@ -5275,18 +6089,29 @@ void DrawDockSpace(EditorState& ed) {
 
     ImGuiID dockId = ImGui::GetID("OkayDockSpace");
     g_dockspaceId = dockId;   // remembered so panels can dock/undock themselves
-    if (first || g_resetLayout) {
-        first = false;
-        BuildDefaultLayout(dockId, vp->WorkSize);
-        if (g_resetLayout) {
-            // Reopen every panel so a reset always restores the full workspace.
+    if (first || g_resetLayout || g_layoutRequest >= 0) {
+        // A layout preset (Layout menu), Reset Layout, or the start-up default.
+        const bool asked = !first;
+        const int preset = (!g_resetLayout && g_layoutRequest >= 0) ? g_layoutRequest : (int)okay::edtabs::Preset::Default;
+        if (g_resetLayout || (asked && preset == (int)okay::edtabs::Preset::Default)) {
+            // Reopen every core panel so a reset always restores the full workspace.
             g_showHierarchy = g_showInspector = g_showConsole = g_showProject =
                 g_showServices = g_showScriptEditor = g_showStats = g_showSceneSettings = g_showGame = true;
-            g_resetLayout = false;
         }
+        first = false; g_resetLayout = false; g_layoutRequest = -1;
+        if (asked) g_focusQueue.push_back("Scene");   // the preset may queue its own main panel after this
+        BuildLayoutPreset(preset, dockId, vp->WorkSize);
+        if (asked) ConsoleLog(std::string("Layout: ") + okay::edtabs::PresetName(preset));
     }
-    // Reserve one row at the bottom for the status bar, then draw it there.
-    ImGui::DockSpace(dockId, ImVec2(0, -ImGui::GetFrameHeight()), ImGuiDockNodeFlags_None);
+    // Reserve one row at the bottom for the status bar, then draw it there. With
+    // side tabs on, a vertical tab strip sits beside the dockspace at that edge.
+    const float dockH = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeight();
+    if (g_sideTabs == 1) { DrawSideTabStrip(dockH); ImGui::SameLine(0, 0); }
+    {
+        TabPaddingScope tabPad;   // room for the panel icons on the tabs (see TabPaddingScope)
+        ImGui::DockSpace(dockId, ImVec2(g_sideTabs == 2 ? -SideStripWidth() : 0.0f, -ImGui::GetFrameHeight()), ImGuiDockNodeFlags_None);
+    }
+    if (g_sideTabs == 2) { ImGui::SameLine(0, 0); DrawSideTabStrip(dockH); }
     DrawStatusBar(ed);
 
     DrawMenuAndToolbar(ed);
@@ -9253,6 +10078,13 @@ void DrawShortcutsWindow() {
         {"Ctrl+1..3",     "Recall camera bookmark"},
         {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
         {"Ctrl+Wheel",    "Zoom UI authoring view"},
+    });
+    section("Panels & tabs", {
+        {"Ctrl+Tab",      "Switch to the previous panel (hold Ctrl, Tab again to go further)"},
+        {"Ctrl+Shift+Tab","Switch panels, going backwards"},
+        {"Middle-click",  "Close a panel tab"},
+        {"Drag a tab",    "Reorder it, dock it elsewhere, or drag it out to float"},
+        {"Right-click tab","Tab menu: add a tab, close, float, layouts, side tabs"},
     });
     section("Hierarchy", {
         {"F2",            "Rename object"},
@@ -38704,6 +39536,10 @@ int main(int argc, char** argv) {
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
     // button labels like "Load" in a panel) at end users.
     io.ConfigDebugHighlightIdConflicts = false;
+    // Ctrl+Tab cycles the editor's panels (DrawPanelSwitcher) instead of Dear
+    // ImGui's own window switcher, which would list every internal window too.
+    GImGui->ConfigNavWindowingKeyNext = 0;
+    GImGui->ConfigNavWindowingKeyPrev = 0;
     // A clean, modern proportional UI font (Roboto Medium, embedded — the
     // runtime/Material typeface) instead of Dear ImGui's tiny built-in bitmap font.
     // Crisper at any zoom and far more legible across the whole editor. Falls back
@@ -38827,6 +39663,7 @@ int main(int argc, char** argv) {
     }
     LoadRecent();
     LoadSettings();
+    LoadUserLayouts();     // named panel layouts (okay_layouts.txt)
     // Brand-new install on a high-DPI display (common on Windows 11 laptops at
     // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —
     // afterwards the user's own UI Scale choice (saved) wins.
@@ -39278,7 +40115,11 @@ int main(int argc, char** argv) {
                 s_skinWas = now;
             }
         }
-        ImGui::NewFrame();
+        ApplyPendingLayoutIni();   // a saved layout picked last frame
+        {
+            TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
+            ImGui::NewFrame();
+        }
 
         // Clear editor globals still pointing at an object deleted last frame (hierarchy
         // delete, Del key, script destroy). Dereferencing a freed GameObject in the
@@ -39601,7 +40442,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
-        DrawPanelTabMenu();   // right-click on any panel tab
+        DrawPanelTabsExtras();   // tab icons, overflow lists, side tabs, Ctrl+Tab, right-click tab menu
         {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
             auto& f = okay::UISafeInsets();
             f = {};

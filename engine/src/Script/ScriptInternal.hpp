@@ -101,6 +101,9 @@ struct ApiMethod {
     /// Optional compile-time check of literal arguments (key names, axis names):
     /// returns an error message, or "" when fine. `literal` is empty for non-literals.
     std::function<std::string(int argIndex, const std::string& literal)> checkLiteral;
+    /// No side effects (maths, queries): the visual-script node generated from it
+    /// is a value node instead of a step in the flow.
+    bool pure = false;
 };
 struct ApiType {
     std::string name;
@@ -117,7 +120,7 @@ struct ApiType {
 /// The engine binding registry (built once).
 struct EngineApi {
     std::vector<ApiType> types;
-    int gameObject = -1, transform = -1, vector3 = -1;
+    int gameObject = -1, transform = -1, vector3 = -1, rigidbody = -1;
     int Find(const std::string& name) const;
     static const EngineApi& Get();
 };

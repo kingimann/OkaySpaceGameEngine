@@ -4,7 +4,11 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsApi.hpp"
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 using namespace okay;
@@ -281,6 +285,59 @@ entry OnStart 0
 )VS");
         CHECK(v.empty());
         for (const auto& i : v) std::fprintf(stderr, "  unexpected: %s\n", i.message.c_str());
+    }
+
+    // ---- Engine-API nodes: typed from the binding table, literals checked by it ----
+    {
+        const NodeSignature* sig = SignatureFor("Transform.Translate/3");
+        CHECK(sig && sig->execIn && sig->ins == "NNNO" && sig->outs.empty());
+        CHECK(TargetPinFor("Transform.Translate/3") == 3);
+        CHECK(TargetPinFor("Mathf.Clamp/3") == -1);
+        CHECK(OutputType("Rigidbody.velocity", 0) == PinType::Vec3);
+        CHECK(InputType("Transform.position=", 0) == PinType::Vec3);
+        CHECK(OutputType("GameObject.Find/1", 0) == PinType::Object);
+        bool listed = false;
+        for (const auto& t : AllNodeTypes()) listed = listed || t == "Rigidbody.AddForce/1";
+        CHECK(listed);
+
+        auto keyGraph = [](const std::string& extra) {
+            return "node 0 OnUpdate\nnode 1 Branch\nnode 2 Input.GetKey/1\nnode 3 Print\n" + extra +
+                   "data 1 0 2 0\nexec 0 0 1\nexec 1 0 3\nentry OnUpdate 0\n";
+        };
+        auto bad = ValidateGraphText(keyGraph("default 2 0 \"spacebar\"\n"));
+        CHECK(Has(bad, 0, 2, "isn't a key name"));
+        CHECK(Errors(ValidateGraphText(keyGraph("default 2 0 \"space\"\n"))) == 0);
+        CHECK(Has(ValidateGraphText(keyGraph("")), 0, 2, "input 'key'"));   // nothing typed in
+        // A Const wired straight in is checked the same way; anything else is left to Play.
+        auto viaConst = ValidateGraphText("node 0 OnUpdate\nnode 1 SetVar a\nnode 2 Input.GetAxis/1\nnode 3 Const \"Sideways\"\n"
+                                          "data 2 0 3 0\ndata 1 0 2 0\nexec 0 0 1\nentry OnUpdate 0\n");
+        CHECK(Has(viaConst, 0, 2, "isn't an axis"));
+        auto dyn = ValidateGraphText("node 0 OnUpdate\nnode 1 SetVar a\nnode 2 Input.GetAxis/1\nnode 3 GetVar which\n"
+                                     "node 4 SetVar which\nnode 5 Const \"Vertical\"\ndata 4 0 5 0\n"
+                                     "data 2 0 3 0\ndata 1 0 2 0\nexec 0 0 4\nexec 4 0 1\nentry OnUpdate 0\n");
+        CHECK(!Has(dyn, 0, 2, "isn't an axis"));
+        // Wrong kinds of value are refused like on any node.
+        auto mism = ValidateGraphText("node 0 OnStart\nnode 1 Transform.Translate/1\nnode 2 Const \"hello\"\n"
+                                      "data 1 0 2 0\nexec 0 0 1\nentry OnStart 0\n");
+        CHECK(Has(mism, 0, 1, "Text"));
+        // A binding that doesn't exist (renamed in the table?) says so.
+        auto gone = ValidateGraphText("node 0 OnStart\nnode 1 Transform.Bogus/1\nexec 0 0 1\nentry OnStart 0\n");
+        CHECK(Has(gone, 0, -1, "no engine binding"));
+    }
+
+    // ---- docs/engine_api.md is generated from the binding table and up to date ----
+    {
+        const std::string path = std::string(OKAY_SOURCE_DIR) + "/docs/engine_api.md";
+        const std::string want = VsApiReference();
+        if (const char* w = std::getenv("OKAY_WRITE_API_DOCS"); w && *w == '1') {
+            std::ofstream(path, std::ios::binary) << want;
+        }
+        std::ifstream f(path, std::ios::binary);
+        std::stringstream have; have << f.rdbuf();
+        CHECK(have.str() == want);
+        if (have.str() != want)
+            std::fprintf(stderr, "  docs/engine_api.md is out of date: run OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types\n");
+        CHECK(want.find("| `GetComponent<Rigidbody>().AddForce(force)` | `Rigidbody.AddForce/1` | step |") != std::string::npos);
     }
 
     // ---- Scene-wide check (what Play and Build run) names the object and node ----

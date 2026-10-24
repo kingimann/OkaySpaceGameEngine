@@ -820,4 +820,5 @@ add_test(NAME vs_acceptance COMMAND test_vs_acceptance)
 
 add_executable(test_vs_types test_vs_types.cpp)
 target_link_libraries(test_vs_types PRIVATE okay::engine)
+target_compile_definitions(test_vs_types PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_types COMMAND test_vs_types)

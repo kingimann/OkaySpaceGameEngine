@@ -10,6 +10,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include <cmath>
 #include <set>
 
@@ -88,6 +89,13 @@ Vec2 Axes() {
 }
 
 std::string LogText(const Value& v) { return ValueToString(v); }
+
+Rigidbody3D* Body(const Value& self, CallContext& c) {
+    GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+    auto* rb = g->GetComponent<Rigidbody3D>();
+    if (!rb) throw RuntimeError("'" + g->name + "' has no Rigidbody (add one in the Inspector)", c.loc);
+    return rb;
+}
 
 EngineApi Build() {
     EngineApi api;
@@ -233,6 +241,53 @@ EngineApi Build() {
             [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Vec3::MoveTowards(V(a[0]), V(a[1]), F(a[2]))}; },
             "Step from current toward target, moving at most maxDistance."));
     }
+    // ---- Rigidbody ----
+    {
+        api.rigidbody = (int)api.types.size();
+        ApiType r; r.name = "Rigidbody"; r.isComponent = true;
+        r.doc = "A physics body: velocity, mass and forces. The object needs a Rigidbody component.";
+        r.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<Rigidbody3D>() : nullptr; };
+        r.props.push_back(prop("velocity", tVec,
+            [](const Value& s, CallContext& c) { return Value{Body(s, c)->velocity}; },
+            [](const Value& s, const Value& v, CallContext& c) { Rigidbody3D* b = Body(s, c); b->velocity = V(v); b->WakeUp(); },
+            "Speed and direction in units per second."));
+        r.props.push_back(prop("angularVelocity", tVec,
+            [](const Value& s, CallContext& c) { return Value{Body(s, c)->angularVelocity}; },
+            [](const Value& s, const Value& v, CallContext& c) { Rigidbody3D* b = Body(s, c); b->angularVelocity = V(v); b->WakeUp(); },
+            "Spin around X / Y / Z in radians per second."));
+        r.props.push_back(prop("mass", tFloat,
+            [](const Value& s, CallContext& c) { return Value{Body(s, c)->mass}; },
+            [](const Value& s, const Value& v, CallContext& c) {
+                if (F(v) <= 0.0f) throw RuntimeError("mass must be more than 0", c.loc);
+                Body(s, c)->mass = F(v);
+            }, "How heavy the body is (more than 0)."));
+        r.props.push_back(prop("gravityScale", tFloat,
+            [](const Value& s, CallContext& c) { return Value{Body(s, c)->gravityScale}; },
+            [](const Value& s, const Value& v, CallContext& c) { Body(s, c)->gravityScale = F(v); },
+            "How strongly gravity pulls it: 1 normal, 0 none."));
+        r.props.push_back(prop("drag", tFloat,
+            [](const Value& s, CallContext& c) { return Value{Body(s, c)->drag}; },
+            [](const Value& s, const Value& v, CallContext& c) { Body(s, c)->drag = std::max(0.0f, F(v)); },
+            "How quickly it slows down by itself (0 = never)."));
+        r.props.push_back(prop("isKinematic", tBool,
+            [](const Value& s, CallContext& c) { return Value{Body(s, c)->bodyType == Rigidbody3D::BodyType::Kinematic}; },
+            [](const Value& s, const Value& v, CallContext& c) {
+                Body(s, c)->bodyType = std::get<bool>(v) ? Rigidbody3D::BodyType::Kinematic : Rigidbody3D::BodyType::Dynamic;
+            }, "When true, forces and gravity don't move it; only scripts do."));
+        r.methods.push_back(method("AddForce", {tVec}, {"force"}, tVoid,
+            [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForce(V(a[0])); return Value{}; },
+            "Push it, over the next physics step (heavier bodies move less)."));
+        r.methods.push_back(method("AddImpulse", {tVec}, {"impulse"}, tVoid,
+            [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddImpulse(V(a[0])); return Value{}; },
+            "Kick it at once (a jump, a hit)."));
+        r.methods.push_back(method("AddTorque", {tVec}, {"torque"}, tVoid,
+            [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddTorque(V(a[0])); return Value{}; },
+            "Twist it around X / Y / Z."));
+        r.methods.push_back(method("AddForceAtPosition", {tVec, tVec}, {"force", "point"}, tVoid,
+            [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForceAtPosition(V(a[0]), V(a[1])); return Value{}; },
+            "Push it at a world point (off-centre pushes also spin it)."));
+        api.types.push_back(std::move(r));
+    }
     // ---- Input ----
     {
         ApiType in; in.name = "Input"; in.isStatic = true; in.doc = "Keyboard, mouse and gamepad.";
@@ -339,6 +394,11 @@ EngineApi Build() {
            {"current", "target", "maxDelta"}, "Step from current toward target by at most maxDelta.");
         api.types.push_back(std::move(m));
     }
+    // Queries and maths have no side effects: in a visual script they're value
+    // nodes, not steps in the flow.
+    for (ApiType& t : api.types)
+        if (t.name == "GameObject" || t.name == "Vector3" || t.name == "Input" || t.name == "Mathf")
+            for (ApiMethod& m : t.staticMethods) m.pure = true;
     return api;
 }
 

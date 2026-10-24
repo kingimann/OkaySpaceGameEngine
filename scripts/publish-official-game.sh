@@ -3,6 +3,11 @@
 # install it from the Play page and keep it up to date. Run it on the folder the
 # editor's File > Build Game made (<Game>.exe + SDL2.dll + Data/...).
 #
+# The easier way: the launcher's Admin > Official game tab does the same with an
+# admin's own sign-in, no key needed (after docs/sql/official_game_admin.sql has
+# been run once). Its checks are okayofficial::CheckPublish in
+# shared/OfficialGame.hpp: keep this script's rules in step with it.
+#
 #   SUPABASE_ACCESS_TOKEN=sbp_...  scripts/publish-official-game.sh <built-game-folder> [version]
 #   SUPABASE_SERVICE_KEY=eyJ...    scripts/publish-official-game.sh <built-game-folder> [version]
 #
@@ -120,6 +125,7 @@ for rel in open(listing, encoding="utf-8").read().splitlines():
     why = unsafe(rel)
     if why: sys.exit(f"publish-official-game: {rel!r} has {why}; rename it")
     if rel.lower() in seen: sys.exit(f"publish-official-game: {rel!r} differs from another file only in case")
+    if rel.lower() == "manifest.json": sys.exit("publish-official-game: a top-level manifest.json would clash with the launcher's file list; rename it")
     seen.add(rel.lower())
     path = os.path.join(root, rel)
     size = os.path.getsize(path)
@@ -130,6 +136,11 @@ for rel in open(listing, encoding="utf-8").read().splitlines():
         for block in iter(lambda: f.read(1 << 20), b""): h.update(block)
     files.append({"path": rel, "size": size, "sha256": h.hexdigest()})
     total += size
+for f in files:   # a file can't also be a folder ("data" and "Data/x" on a case-insensitive disk)
+    parts = f["path"].lower().split("/")
+    if any("/".join(parts[:i]) in seen for i in range(1, len(parts))): sys.exit(f"publish-official-game: {f['path']} is inside a file of the same name")
+if total == 0: sys.exit("publish-official-game: the game's files are all empty")
+if total > 10 * 1024 ** 3: sys.exit("publish-official-game: the game is over 10 GB")
 m = {"name": name, "version": ver, "exe": exe, "notes": open(notes_file, encoding="utf-8").read().strip()}
 if image: m["image"] = image
 m["size"] = total

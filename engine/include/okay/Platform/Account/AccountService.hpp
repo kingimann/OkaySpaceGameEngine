@@ -1072,6 +1072,19 @@ private:
         return Succeed(display, token, refresh);
     }
 
+    // `extraHeader` may hold several headers, one per line ("x-upsert: true\n
+    // cache-control: max-age=30"). Blank lines and stray quotes are dropped.
+    static std::vector<std::string> SplitHeaders(const std::string& extra) {
+        std::vector<std::string> out;
+        std::string cur;
+        for (std::size_t i = 0; i <= extra.size(); ++i) {
+            const char c = i < extra.size() ? extra[i] : '\n';
+            if (c == '\n' || c == '\r') { if (!cur.empty()) out.push_back(cur); cur.clear(); }
+            else if (c != '"') cur += c;
+        }
+        return out;
+    }
+
     // Perform one HTTP request via the system `curl` so the launcher/engine need
     // no HTTP library and reuse the platform's TLS stack. Secrets (the request
     // body and the auth header) are passed through files, never argv, so they
@@ -1090,7 +1103,7 @@ private:
             std::vector<std::string> hdrs;
             if (!apiKey_.empty())      hdrs.push_back("apikey: " + apiKey_);
             if (!authToken.empty())    hdrs.push_back("Authorization: Bearer " + authToken);
-            if (!extraHeader.empty())  hdrs.push_back(extraHeader);
+            for (const std::string& h : SplitHeaders(extraHeader)) hdrs.push_back(h);
             if (!bodyFile.empty())     hdrs.push_back("Content-Type: " + bodyType);
             else if (!jsonBody.empty()) hdrs.push_back("Content-Type: application/json");
             okay::http::Result nr = okay::http::Request(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile);
@@ -1119,8 +1132,8 @@ private:
             cfg += "header = \"apikey: " + apiKey_ + "\"\n";
         if (!authToken.empty())
             cfg += "header = \"Authorization: Bearer " + authToken + "\"\n";
-        if (!extraHeader.empty())                      // e.g. PostgREST "Prefer: ..."
-            cfg += "header = \"" + extraHeader + "\"\n";
+        for (const std::string& h : SplitHeaders(extraHeader))   // e.g. PostgREST "Prefer: ..."
+            cfg += "header = \"" + h + "\"\n";
         if (!bodyFile.empty()) {                       // upload a file as-is
             cfg += "header = \"Content-Type: " + bodyType + "\"\n";
             cmd += " --data-binary @\"" + bodyFile + "\"";

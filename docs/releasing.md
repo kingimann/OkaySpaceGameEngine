@@ -43,7 +43,51 @@ in the environment's settings (Network secrets, or an environment variable).
 ## Publishing the official game
 
 The official game shows at the top of the launcher's Play page. Players click
-Install, then Play, and the launcher keeps it up to date. To ship a version:
+Install, then Play, and the launcher keeps it up to date. There are two ways to
+ship a version: from the launcher as an admin (recommended), or with the script.
+Both upload the same files in the same order, with the same checks.
+
+### From the launcher (recommended)
+
+Once, the project owner runs `docs/sql/official_game_admin.sql` in the Supabase
+SQL editor (after `admin.sql`). It lets accounts with the `admin` role, and
+nobody else, write under `official/` in the `releases` bucket; nothing outside
+`official/` becomes writable, and reads stay public. Until it's run, publishing
+from the launcher is refused and the tab says to run it.
+
+Then, signed in as an admin:
+
+1. In the editor: File > Build Game for Windows, into its own folder. Optional
+   extras in that folder: `cover.png` / `cover.jpg` and `VERSION.txt`.
+2. In the launcher: **Admin > Official game**. "Live now" shows the published
+   version, its notes, size and file count.
+3. **Browse...** to the built folder. The tab shows the game's name, exe, cover,
+   file count and size. The version is filled in for you (the folder's
+   `VERSION.txt`, else today's date, as the script does) and must be newer than
+   the live one unless you tick "Allow same or older" (the script's `FORCE=1`).
+   Type the "What's new" lines (they become `NOTES.txt`).
+4. **Check** lists anything that would stop the publish: not exactly one
+   Windows game exe, a file over 50 MB, names Windows can't store or that clash,
+   an empty or oversized game, a version that isn't newer.
+5. **Publish...** uploads with your own sign-in: every file to `official/v<ver>/`,
+   then `manifest.json`, then `NOTES.txt`, and `VERSION.txt` last. A progress bar
+   shows file X of Y. Cancel works until the last step and leaves the live
+   version as it was (the partial `v<ver>` can be deleted from the list). Players'
+   launchers pick up the new version on their next update check.
+
+"Versions in the bucket" lists every `official/v*` with its size. **Make live**
+switches `VERSION.txt` and `NOTES.txt` back (or forward) to an existing version,
+e.g. to roll back a bad release (players who already have a newer version keep
+it, since launchers only move forward; new installs get the live one).
+**Delete** removes a version (never the live one). **Clean up old versions**
+keeps the live version and the newest complete ones (N in all) and deletes the
+rest, including unfinished uploads older than the live version; nothing is
+deleted automatically. Publishes, "make live" and deletes are written to the audit log.
+
+### With the script
+
+The script needs a Supabase key (the service key, or a management token that
+fetches it), so only use it on a machine you trust:
 
 ```bash
 # 1. In the editor: File > Build Game for Windows, into its own folder.
@@ -70,9 +114,10 @@ The bucket layout, beside the engine's files:
 
 The game's name is `title=` from `Data/game.okayconfig` (or `NAME=...`); its exe
 is `<title>.exe`, or the only `.exe` at the top of the folder (or `EXE=...`). The
-script refuses a non-Windows exe, a file over 50 MB, and names Windows can't
-store (or that only differ in case). Hidden files (`.git`, `.DS_Store`) are left
-out. As with the engine, `KEEP` (default 3) versions are kept and `DRY_RUN=1`
+script refuses a non-Windows exe, a file over 50 MB, names Windows can't store
+(or that only differ in case), a top-level `manifest.json`, and an empty or
+over-10 GB game. Hidden files (`.git`, `.DS_Store`) are left out. As with the engine, `KEEP` (default 3) versions are kept (the script, unlike
+the launcher, cleans up on its own) and `DRY_RUN=1`
 uploads nothing (`DRY_RUN_MANIFEST=out.json` saves the manifest it would upload).
 
 What players get: the launcher installs to `Games/Official` beside it, checks

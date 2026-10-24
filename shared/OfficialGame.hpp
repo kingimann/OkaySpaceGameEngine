@@ -619,4 +619,294 @@ inline void Recover(const fs::path& root) {
     fs::remove_all(meta / "old", ec);
 }
 
+// ---- Publishing ------------------------------------------------------------
+// What the launcher's Admin > Official game tab needs that doesn't touch the
+// network: reading a built game folder, the same checks as
+// scripts/publish-official-game.sh (keep the two in step), the manifest it
+// uploads (ToJson above), the next version, the bucket listing, and which
+// versions "Make live" and "Clean up" may pick.
+constexpr std::uint64_t kMaxUploadBytes = 50ull * 1024ull * 1024ull;          // Supabase's per-file limit on this plan
+constexpr std::uint64_t kMaxPublishBytes = 10ull * 1024ull * 1024ull * 1024ull;   // a whole game, sanity cap
+constexpr const char* kManifestName = "manifest.json";   // official/v<ver>/manifest.json: no game file may take it
+
+struct LocalFile {
+    std::string path;          // relative, forward slashes
+    std::uint64_t size = 0;
+};
+
+// A built game folder (File > Build Game), as read by ScanFolder.
+struct PublishFolder {
+    std::vector<LocalFile> files;   // sorted by path (bytewise, like LC_ALL=C sort)
+    std::string title;              // title= in game.okayconfig ("" = none)
+    std::string exe;                // the game's exe ("" = none or several found)
+    int exeCandidates = 0;          // top-level .exe files that could be the game (not -Server.exe)
+    bool exeIsWindows = false;      // the exe starts with "MZ"
+    std::string image;              // cover.png / cover.jpg at the top, "" = none
+    std::string folderVersion;      // first line of VERSION.txt in the folder, "" = none
+    std::string name() const {      // the name players see
+        if (!title.empty()) return title;
+        return exe.empty() ? std::string() : fs::path(exe).stem().string();
+    }
+    std::uint64_t total() const {
+        std::uint64_t t = 0;
+        for (const LocalFile& f : files) t += f.size;
+        return t;
+    }
+};
+
+inline std::string Trim(const std::string& s) {
+    const std::size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return {};
+    return s.substr(a, s.find_last_not_of(" \t\r\n") - a + 1);
+}
+
+namespace detail {
+inline std::string FirstLine(const fs::path& p) {
+    std::string text;
+    if (!ReadText(p, text, 64 * 1024)) return {};
+    return Trim(text.substr(0, text.find('\n')));
+}
+inline bool EndsWithNoCase(const std::string& s, const std::string& tail) {
+    return s.size() >= tail.size() && Lower(s.substr(s.size() - tail.size())) == Lower(tail);
+}
+} // namespace detail
+
+// Read a built game folder: every file (hidden files and folders, and links,
+// left out, as the script's `find -type f ! -path '*/.*'` does), the title,
+// the exe, the cover and VERSION.txt. False (with a reason) if it can't be read.
+inline bool ScanFolder(const fs::path& dir, PublishFolder& out, std::string* err = nullptr) {
+    auto fail = [&](const std::string& w) { if (err) *err = w; return false; };
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return fail("That folder doesn't exist.");
+    PublishFolder pf;
+    fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+    if (ec) return fail("Couldn't read that folder.");
+    for (; it != end; it.increment(ec)) {
+        if (ec) return fail("Couldn't read every file in that folder.");
+        const fs::path& p = it->path();
+        if (p.filename().string().rfind('.', 0) == 0) {   // hidden (.git, .DS_Store, ...)
+            if (it->is_directory(ec)) it.disable_recursion_pending();
+            continue;
+        }
+        if (it->is_symlink(ec) || !it->is_regular_file(ec)) continue;
+        LocalFile f;
+#if defined(_WIN32)
+        f.path = p.lexically_relative(dir).generic_u8string();
+#else
+        f.path = p.lexically_relative(dir).generic_string();
+#endif
+        f.size = (std::uint64_t)it->file_size(ec);
+        if (ec) return fail("Couldn't read " + f.path + ".");
+        pf.files.push_back(std::move(f));
+        if (pf.files.size() > kMaxFiles) break;   // CheckPublish reports it
+    }
+    std::sort(pf.files.begin(), pf.files.end(), [](const LocalFile& a, const LocalFile& b) { return a.path < b.path; });
+    for (const char* c : {"Data/game.okayconfig", "game.okayconfig"}) {
+        std::string text;
+        if (!ReadText(dir / c, text, 1024 * 1024)) continue;
+        std::istringstream in(text);
+        for (std::string ln; std::getline(in, ln);)
+            if (ln.rfind("title=", 0) == 0) { pf.title = CleanText(Trim(ln.substr(6)), 80, false); break; }
+        break;
+    }
+    auto top = [&](const std::string& name) {
+        for (const LocalFile& f : pf.files) if (f.path == name) return true;
+        return false;
+    };
+    // The exe: <title>.exe, else the only .exe at the top that isn't a dedicated server.
+    if (!pf.title.empty() && top(pf.title + ".exe")) { pf.exe = pf.title + ".exe"; pf.exeCandidates = 1; }
+    else {
+        std::string only;
+        for (const LocalFile& f : pf.files)
+            if (f.path.find('/') == std::string::npos && detail::EndsWithNoCase(f.path, ".exe") &&
+                !detail::EndsWithNoCase(f.path, "-Server.exe")) { ++pf.exeCandidates; only = f.path; }
+        if (pf.exeCandidates == 1) pf.exe = only;
+    }
+    if (!pf.exe.empty()) {
+        std::ifstream in(dir / fs::u8path(pf.exe), std::ios::binary);
+        char mz[2] = {0, 0};
+        in.read(mz, 2);
+        pf.exeIsWindows = in.gcount() == 2 && mz[0] == 'M' && mz[1] == 'Z';
+    }
+    for (const char* c : {"cover.png", "cover.jpg"}) if (top(c)) { pf.image = c; break; }
+    if (top("VERSION.txt")) pf.folderVersion = detail::FirstLine(dir / "VERSION.txt");
+    out = std::move(pf);
+    return true;
+}
+
+// The version to suggest, as the script picks it: the folder's VERSION.txt,
+// else today's date (2026.10.24.1), or the next number for a second publish on
+// the same day.
+inline std::string SuggestVersion(const std::string& folderVersion, const std::string& published, int year, int month, int day) {
+    if (!Trim(folderVersion).empty()) return Trim(folderVersion);
+    char today[32];
+    std::snprintf(today, sizeof(today), "%04d.%02d.%02d", year, month, day);
+    const std::string pre = std::string(today) + ".";
+    if (published.rfind(pre, 0) == 0) {
+        const std::string n = published.substr(pre.size());
+        if (!n.empty() && n.size() < 9 && n.find_first_not_of("0123456789") == std::string::npos)
+            return pre + std::to_string(std::stoul(n) + 1);
+    }
+    return pre + "1";
+}
+
+// Everything that would stop the publish, in plain words ("" items never).
+// `published` = the live version ("" = none); `allowNotNewer` mirrors FORCE=1.
+inline std::vector<std::string> CheckPublish(const PublishFolder& pf, const std::string& version, const std::string& published,
+                                             bool allowNotNewer) {
+    std::vector<std::string> out;
+    if (pf.files.empty()) { out.push_back("The folder is empty."); return out; }
+    if (pf.files.size() > kMaxFiles) out.push_back("Too many files (over " + std::to_string(kMaxFiles) + ").");
+    if (pf.exeCandidates == 0) out.push_back("No game .exe at the top of the folder (build the game for Windows with File > Build Game).");
+    else if (pf.exe.empty()) out.push_back("Found " + std::to_string(pf.exeCandidates) + " game .exe files at the top; keep only the game's.");
+    else if (!pf.exeIsWindows) out.push_back(pf.exe + " isn't a Windows program (build the game for Windows).");
+    if (pf.name().empty()) out.push_back("The game has no name.");
+    if (!LooksLikeVersion(version)) out.push_back("Bad version \"" + CleanText(version, 40, false) + "\" (use dotted numbers, e.g. 1.2.0).");
+    else if (!published.empty() && CompareVersions(version, published) <= 0 && !allowNotNewer)
+        out.push_back("v" + version + " isn't newer than the published v" + published +
+                      " (launchers only move forward). Pick a newer version, or tick \"Allow same or older\".");
+    std::set<std::string> seen;
+    std::size_t big = 0, bad = 0, clash = 0;
+    for (const LocalFile& f : pf.files) {
+        std::string why;
+        if (!SafeRelPath(f.path, &why)) { if (++bad <= 5) out.push_back("\"" + CleanText(f.path, 80, false) + "\": " + why + "; rename it."); continue; }
+        if (!seen.insert(Lower(f.path)).second) {
+            if (++clash <= 5) out.push_back(f.path + " differs from another file only in case (one file on Windows).");
+        }
+        if (f.size > kMaxUploadBytes && ++big <= 5)
+            out.push_back(f.path + " is " + std::to_string(f.size / (1024 * 1024)) + " MB, over the 50 MB file limit.");
+        if (Lower(f.path) == kManifestName) out.push_back("A file named manifest.json at the top would clash with the launcher's file list; rename it.");
+    }
+    if (bad > 5) out.push_back("...and " + std::to_string(bad - 5) + " more unsafe names.");
+    if (clash > 5) out.push_back("...and " + std::to_string(clash - 5) + " more case clashes.");
+    if (big > 5) out.push_back("...and " + std::to_string(big - 5) + " more files over 50 MB.");
+    for (const LocalFile& f : pf.files)   // a file can't also be a folder ("Data" and "Data/x" on a case-insensitive disk)
+        for (std::size_t s = f.path.find('/'); s != std::string::npos; s = f.path.find('/', s + 1))
+            if (seen.count(Lower(f.path.substr(0, s)))) { out.push_back(f.path + " is inside a file of the same name."); break; }
+    const std::uint64_t total = pf.total();
+    if (total == 0) out.push_back("The game's files are all empty.");
+    else if (total > kMaxPublishBytes) out.push_back("The game is over 10 GB; that's too big to publish this way.");
+    return out;
+}
+
+// The "what's new" text: the admin's lines, else "- <name> v<ver>" (as the script).
+inline std::string PublishNotes(const std::string& typed, const std::string& name, const std::string& version) {
+    std::string n = Trim(typed);
+    std::string o;   // CRLF -> LF
+    for (char c : n) if (c != '\r') o += c;
+    return o.empty() ? "- " + name + " v" + version : o;
+}
+
+// The manifest for a publish: `files` with their sha256 already filled in.
+inline Manifest MakeManifest(const std::string& name, const std::string& version, const std::string& exe,
+                             const std::string& notes, const std::string& image, std::vector<File> files) {
+    Manifest m;
+    m.name = name; m.version = version; m.exe = exe; m.notes = notes; m.image = image;
+    for (const File& f : files) m.size += f.size;
+    m.files = std::move(files);
+    return m;
+}
+
+// The Content-Type each file is uploaded with (as the script's ctype()).
+inline const char* ContentType(const std::string& path) {
+    const std::string l = Lower(path);
+    auto ends = [&](const char* e) { return detail::EndsWithNoCase(l, e); };
+    if (ends(".png")) return "image/png";
+    if (ends(".jpg") || ends(".jpeg")) return "image/jpeg";
+    if (ends(".json")) return "application/json";
+    if (ends(".txt") || ends(".okayconfig")) return "text/plain; charset=utf-8";
+    return "application/octet-stream";
+}
+
+// ---- The bucket ------------------------------------------------------------
+// One entry of a Storage list (POST /storage/v1/object/list/<bucket>): folders
+// have no id. A DELETE answers with the same shape (the objects it removed).
+struct StorageEntry {
+    std::string name;
+    bool folder = false;
+    std::uint64_t size = 0;
+};
+
+inline bool ParseStorageList(const std::string& text, std::vector<StorageEntry>& out) {
+    json::Value root;
+    if (text.size() > kMaxManifestBytes || !json::Reader(text).Parse(root) || root.kind != json::Value::Array) return false;
+    std::vector<StorageEntry> v;
+    for (const json::Value& e : root.arr) {
+        if (e.kind != json::Value::Object) continue;
+        const json::Value* n = e.get("name");
+        if (!n || n->kind != json::Value::String || n->str.empty()) continue;
+        StorageEntry s;
+        s.name = n->str;
+        const json::Value* id = e.get("id");
+        s.folder = !id || id->kind == json::Value::Null;
+        if (const json::Value* md = e.get("metadata"); md && md->kind == json::Value::Object) ParseSize(md->get("size"), s.size);
+        v.push_back(std::move(s));
+    }
+    out = std::move(v);
+    return true;
+}
+
+// The version folders of a list of official/ ("v1.2.0" -> "1.2.0"), newest first.
+inline std::vector<std::string> VersionFolders(const std::vector<StorageEntry>& list) {
+    std::vector<std::string> v;
+    for (const StorageEntry& e : list)
+        if (e.folder && e.name.size() > 1 && e.name[0] == 'v' && LooksLikeVersion(e.name.substr(1))) v.push_back(e.name.substr(1));
+    std::sort(v.begin(), v.end(), [](const std::string& a, const std::string& b) {
+        const int c = CompareVersions(a, b);
+        return c != 0 ? c > 0 : a > b;
+    });
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+    return v;
+}
+
+// Why `target` can't be made live ("" = it can): it must be one of `versions`,
+// have a manifest that checks out, and not be live already.
+inline std::string MakeLiveProblem(const std::string& target, const std::string& live,
+                                   const std::vector<std::string>& versions, bool manifestOk) {
+    if (std::find(versions.begin(), versions.end(), target) == versions.end()) return "v" + target + " isn't in the bucket.";
+    if (target == live) return "v" + target + " is already live.";
+    if (!manifestOk) return "v" + target + " has no complete file list (an upload that didn't finish?).";
+    return {};
+}
+
+// The version a rollback goes back to: the newest one older than `live` whose
+// manifest checks out (`ok`), "" if there's none. `versions` newest first.
+inline std::string RollbackTarget(const std::vector<std::string>& versions, const std::string& live,
+                                  const std::function<bool(const std::string&)>& ok) {
+    for (const std::string& v : versions)
+        if (CompareVersions(v, live) < 0 && (!ok || ok(v))) return v;
+    return {};
+}
+
+// What "Clean up old versions" deletes: it keeps the newest `keep` complete
+// versions (`ok`: the manifest checks out) and always the live one, so rollback
+// targets survive. An incomplete version newer than the live one is kept too
+// (it may be uploading right now); older incomplete ones go. `versions` newest first.
+inline std::vector<std::string> CleanupVersions(const std::vector<std::string>& versions, const std::string& live, int keep,
+                                                const std::function<bool(const std::string&)>& ok = nullptr) {
+    std::vector<std::string> out;
+    if (keep < 1) keep = 1;
+    int kept = std::find(versions.begin(), versions.end(), live) != versions.end() ? 1 : 0;   // live counts as one of them
+    for (const std::string& v : versions) {
+        const bool complete = !ok || ok(v);
+        if (v == live) continue;
+        if (complete && kept < keep) { ++kept; continue; }
+        if (!complete && (live.empty() || CompareVersions(v, live) > 0)) continue;
+        out.push_back(v);
+    }
+    return out;
+}
+
+// Storage refused a write because of its policies: the SQL that lets admins
+// publish (docs/sql/official_game_admin.sql) isn't there, or this account isn't
+// an admin. Storage answers 403, or (older versions) 400 with a "403" body.
+// (A 401 is a sign-in problem, not this.)
+inline bool StorageDenied(long status, const std::string& body) {
+    if (status == 403) return true;
+    if (status != 400) return false;
+    const std::string b = Lower(body);
+    return b.find("row-level security") != std::string::npos || b.find("\"statuscode\":\"403\"") != std::string::npos ||
+           b.find("\"statuscode\": \"403\"") != std::string::npos || b.find("unauthorized") != std::string::npos;
+}
+
 } // namespace okayofficial

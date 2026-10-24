@@ -481,6 +481,8 @@ void ActionList::SeedVariable(const VarDecl& v) {
 }
 
 void ActionList::Start() {
+    if (!ScriptsRun(gameObject)) { m_startDeferred = true; return; }
+    m_startDeferred = false;
     // Seed declared variables into the shared pools before anything runs, so they
     // exist (with their starting values) for every list from frame one.
     for (const VarDecl& v : variables) SeedVariable(v);
@@ -621,6 +623,8 @@ bool ActionList::FireHandler(std::vector<Item>& conds, std::vector<Item>& ins, b
 }
 
 void ActionList::Update(float dt) {
+    if (!ScriptsRun(gameObject)) return;
+    if (m_startDeferred) Start();
     // ---- Triggers ----
     if (!m_running) {
         // Poll the primary handler and every extra handler; each has its OWN trigger,

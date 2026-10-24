@@ -1,11 +1,36 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <mutex>
+#include <unordered_map>
 
 namespace okay {
 
+namespace {
+// Scenes can be built on loader threads (scene thumbnails, async loads), so the
+// id registry is guarded.
+std::mutex g_registryMutex;
+std::unordered_map<std::uint64_t, GameObject*> g_registry;
+std::uint64_t g_nextInstanceId = 1;
+} // namespace
+
 GameObject::GameObject(Scene* scene, std::string name)
-    : name(std::move(name)), m_scene(scene) {}
+    : name(std::move(name)), m_scene(scene) {
+    std::lock_guard<std::mutex> lock(g_registryMutex);
+    m_instanceId = g_nextInstanceId++;
+    g_registry[m_instanceId] = this;
+}
+
+GameObject::~GameObject() {
+    std::lock_guard<std::mutex> lock(g_registryMutex);
+    g_registry.erase(m_instanceId);
+}
+
+GameObject* GameObject::FromInstanceId(std::uint64_t id) {
+    std::lock_guard<std::mutex> lock(g_registryMutex);
+    auto it = g_registry.find(id);
+    return (it == g_registry.end() || it->second->m_destroyed) ? nullptr : it->second;
+}
 
 bool GameObject::IsSelfOrDescendantOf(const GameObject* other) const {
     if (!other) return false;

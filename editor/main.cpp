@@ -924,6 +924,7 @@ static SDL_Texture* GetPrefabThumb(const std::string& path) {
     SDL_Texture* tex = nullptr;
     {
         okay::Scene sc;
+        sc.runScripts = false;   // a prefab thumbnail must never run its scripts
         if (GameObject* root = SceneSerializer::InstantiateFromFile(sc, path, nullptr))
             tex = RenderObjectThumb(sc, root);
     }
@@ -948,6 +949,7 @@ static SDL_Texture* GetSceneThumb(const std::string& path) {
     auto sz = std::filesystem::file_size(path, ec);
     if (!ec && sz <= 4u * 1024u * 1024u && g_sdlRenderer) {
         okay::Scene sc;
+        sc.runScripts = false;   // a thumbnail must never run the scene's game code
         if (SceneSerializer::LoadFromFile(sc, path, nullptr)) {
             sc.Update(0.0f);
             // Combined bounds over every root object (two passes: centroid, then reach).
@@ -12283,7 +12285,17 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                     }
                 }
-                if (sc->Language() == "okayscript") {
+                if (sc->Language() == okay::NextScriptVM::kLanguage) {
+                    // The new language's own checker: every error and "does nothing"
+                    // warning comes from the compiler that runs the script.
+                    static okay::NextScriptVM s_nextCheck;
+                    for (auto& d : s_nextCheck.ValidateAll(buf.data())) {
+                        if (d.severity == 0) s_diags.push_back(d);
+                        else s_warns.push_back({d.line, d.message});
+                    }
+                    if (!s_diags.empty())
+                        s_error = (s_diags[0].line > 0 ? "line " + std::to_string(s_diags[0].line) + ": " : std::string()) + s_diags[0].message;
+                } else if (sc->Language() == "okayscript") {
                     static std::unique_ptr<okay::IScriptVM> s_checkVM = okay::CreateScriptVM("okayscript");
                     // Errors (won't run) stay in s_diags; "does nothing" / "probably not what you
                     // meant" warnings join the editor's own lint warnings.

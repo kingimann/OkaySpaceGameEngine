@@ -167,6 +167,7 @@ public:
     static std::vector<Item> DecodeItems(const std::string& text);
 
 private:
+    bool m_startDeferred = false;   // Start() arrived while scripts were off
     void Fire();   // fire handler 0 (used by Start for On Start)
     // Start running one handler's instructions if idle and its gate passes.
     bool FireHandler(std::vector<Item>& conds, std::vector<Item>& ins, bool& fired, bool once);

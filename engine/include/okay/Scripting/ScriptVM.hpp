@@ -10,6 +10,7 @@ namespace okay {
 
 class Transform;
 class GameObject;
+class Component;
 
 /// The engine-side context a script can see and manipulate. Every script VM
 /// (built-in, Lua, C#) binds against this same surface, so a game can swap
@@ -17,6 +18,7 @@ class GameObject;
 struct ScriptHost {
     Transform*  transform  = nullptr;
     GameObject* gameObject = nullptr;
+    Component*  component  = nullptr;   ///< the Script component running the script
     float       deltaTime  = 0.0f;
     /// A shared blackboard scripts can read/write (also visible to gameplay code).
     std::unordered_map<std::string, vs::VsValue> globals;

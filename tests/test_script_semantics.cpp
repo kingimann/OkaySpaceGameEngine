@@ -231,6 +231,27 @@ int main() {
         CHECK(r.Get("ok").AsBool());
     }
 
+    // ---- scripts never run while the scene has them switched off (editor outside Play) ----
+    {
+        Scene s("edit");
+        s.runScripts = false;
+        auto* go = s.CreateGameObject("G");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("int starts = 0;\nint updates = 0;\nvoid Start() { starts++; }\nvoid Update() { updates++; }\n"
+                             "void OnMouseDown() { starts += 100; }\n"));
+        s.Start();
+        for (int i = 0; i < 5; ++i) s.Update(0.0f);   // the editor's edit-mode flushes
+        sc->OnMouseDown();
+        CHECK_NEAR(sc->VM()->GetGlobal("starts").AsFloat(), 0.0f, 1e-6f);
+        CHECK_NEAR(sc->VM()->GetGlobal("updates").AsFloat(), 0.0f, 1e-6f);
+        s.runScripts = true;                           // Play
+        s.Update(1.0f / 60.0f);
+        CHECK_NEAR(sc->VM()->GetGlobal("starts").AsFloat(), 1.0f, 1e-6f);   // the deferred Start ran once
+        CHECK_NEAR(sc->VM()->GetGlobal("updates").AsFloat(), 1.0f, 1e-6f);
+        s.Update(1.0f / 60.0f);
+        CHECK_NEAR(sc->VM()->GetGlobal("starts").AsFloat(), 1.0f, 1e-6f);
+    }
+
     Log::sink = nullptr;
     TEST_MAIN_RESULT();
 }

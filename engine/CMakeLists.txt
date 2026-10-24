@@ -35,6 +35,12 @@ add_library(okay_engine
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
     src/Scripting/ScriptVM.cpp
+    src/Script/Lexer.cpp
+    src/Script/Parser.cpp
+    src/Script/Checker.cpp
+    src/Script/Interpreter.cpp
+    src/Script/EngineApi.cpp
+    src/Script/NextScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/ActionList.cpp
     src/Components/UIDocument.cpp

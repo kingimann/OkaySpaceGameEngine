@@ -20,6 +20,7 @@ void AddFittedBoxCollider(okay::GameObject* go) {
 namespace okay::editor {
 
 EditorState::EditorState() : m_scene("Untitled") {
+    m_scene.runScripts = false;   // game code only runs in Play
     // Online services are part of the engine: a Steam simulation backend by
     // default, the real Steamworks backend when built with -DOKAY_WITH_STEAM.
     m_steam = CreateSteamService();
@@ -653,6 +654,7 @@ void EditorState::Play() {
     Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
     Game::Reset();             // clear stale pause/quit state from a prior session
+    m_scene.runScripts = true;
     m_scene.Start();
     m_playing = true;
 }
@@ -667,11 +669,13 @@ void EditorState::Stop() {
     // never dereferences freed memory (a use-after-free crash).
     m_net = nullptr;
     Matchmaker::Shared().Cancel();   // a search started in play mode ends with it
+    m_scene.runScripts = false;
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
 }
 
 void EditorState::Tick(float dt) {
+    m_scene.runScripts = m_playing;   // edit-mode flushes (UI tools, previews) never run game code
     if (m_playing) {
         m_scene.Update(dt); NavigateUI(m_scene);
         Matchmaker::Shared().Pump(m_scene.FindObjectOfType<NetworkManager>());   // net_queue_join(): connect a found match

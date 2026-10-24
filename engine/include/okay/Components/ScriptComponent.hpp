@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/Scene.hpp"   // ScriptsRun
 #include "okay/Scripting/ScriptVM.hpp"
 #include <memory>
 #include <string>
@@ -51,6 +52,7 @@ public:
 
     void Start() override;
     void Update(float dt) override;
+    void LateUpdate(float dt) override;
     /// The script's OnDisable() then OnDestroy(), when its object is destroyed.
     void OnDestroy() override;
     /// FixedUpdate() runs at this fixed rate (steps per second), however fast the game draws.
@@ -64,7 +66,7 @@ public:
     /// Clip events: `anim_event` holds the name, then the handler named like the
     /// event runs, then on_anim_event().
     void OnAnimationEvent(const std::string& name) override {
-        if (!m_vm) return;
+        if (!m_vm || !ScriptsRun(gameObject)) return;
         m_vm->SetGlobal("anim_event", vs::VsValue(name));
         if (!name.empty()) m_vm->CallEvent(name);
         m_vm->CallEvent("on_anim_event");
@@ -93,8 +95,9 @@ public:
     void OnMouseClick() override { Fire("on_click"); }
 
 private:
+    bool  m_startDeferred = false;   // Start() arrived while scripts were off
     float m_fixedAcc = 0.0f;   // time banked toward the next FixedUpdate()
-    void Fire(const char* event) { if (m_vm) m_vm->CallEvent(event); }
+    void Fire(const char* event) { if (m_vm && ScriptsRun(gameObject)) m_vm->CallEvent(event); }
     void FireOther(const char* event, Collider2D* c);
     void FireOther(const char* event, Collider3D* c);
     void FireOther(const char* event, const Collision2D& c);

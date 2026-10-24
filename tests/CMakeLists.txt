@@ -784,3 +784,7 @@ add_test(NAME shooter25d COMMAND test_shooter25d)
 add_executable(test_script_semantics test_script_semantics.cpp)
 target_link_libraries(test_script_semantics PRIVATE okay::engine)
 add_test(NAME script_semantics COMMAND test_script_semantics)
+
+add_executable(test_okayscript_next test_okayscript_next.cpp)
+target_link_libraries(test_okayscript_next PRIVATE okay::engine)
+add_test(NAME okayscript_next COMMAND test_okayscript_next)

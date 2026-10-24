@@ -1,0 +1,299 @@
+#pragma once
+// ---------------------------------------------------------------------------
+// OkayScript: a C#-style scripting language that runs on OkaySpace's engine.
+//
+// Pipeline: source -> Lexer (tokens with line/column) -> Parser (syntax tree)
+// -> Checker (every name resolved, every type known, diagnostics) -> Interpreter
+// (walks the checked tree). Nothing reaches the interpreter unless it passed the
+// checker, so a script either works or says why it won't.
+//
+// Engine access goes through one registry of bindings (EngineApi.cpp): each
+// type, property and method there is backed by a real engine call. The checker
+// uses the registry to resolve members and the editor uses it for autocomplete,
+// so a name that autocompletes is a name that runs.
+// ---------------------------------------------------------------------------
+#include "okay/Math/Vec3.hpp"
+#include "okay/Scripting/ScriptVM.hpp"   // ScriptDiagnostic
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <variant>
+#include <vector>
+
+namespace okay {
+class GameObject;
+class Scene;
+class Component;
+}
+
+namespace okay::script {
+
+struct SrcLoc { int line = 0, col = 0; };
+
+// ---- Types -----------------------------------------------------------------
+enum class TK : std::uint8_t {
+    Error,    ///< couldn't be worked out (an error was already reported)
+    Void,
+    Null,     ///< the type of the `null` literal
+    Bool, Int, Float, String,
+    Vector3,
+    Object,   ///< an engine reference type (GameObject, Transform, ...): id = ApiType index
+    Any,      ///< parameter that accepts every type (Debug.Log)
+};
+struct Type {
+    TK  kind = TK::Error;
+    int id = -1;
+    bool operator==(const Type& o) const { return kind == o.kind && id == o.id; }
+    bool operator!=(const Type& o) const { return !(*this == o); }
+    bool IsNumeric() const { return kind == TK::Int || kind == TK::Float; }
+    static Type Of(TK k) { return Type{k, -1}; }
+    static Type Obj(int apiType) { return Type{TK::Object, apiType}; }
+};
+
+// ---- Runtime values -------------------------------------------------------
+/// A reference to an engine object by id: the GameObject, plus which of its
+/// components (an ApiType index; the GameObject itself uses its own index).
+/// Resolved on every use, so a destroyed object reads as "destroyed", never as
+/// freed memory.
+struct ObjRef {
+    std::uint64_t go = 0;
+    int type = -1;
+    bool operator==(const ObjRef& o) const { return go == o.go && type == o.type; }
+};
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef>;
+
+std::string ValueToString(const Value& v);
+
+/// A runtime failure inside a script (destroyed object, division by zero, ...),
+/// reported with the line it happened on.
+struct RuntimeError : std::runtime_error {
+    SrcLoc loc;
+    RuntimeError(const std::string& m, SrcLoc l) : std::runtime_error(m), loc(l) {}
+};
+
+// ---- Engine bindings -------------------------------------------------------
+/// What a binding needs from the running script: the object it's attached to.
+struct CallContext {
+    GameObject* self = nullptr;
+    Component* component = nullptr;   ///< the Script component running this code
+    float deltaTime = 0.0f;
+    float fixedDeltaTime = 0.02f;
+    SrcLoc loc;
+};
+
+struct ApiProperty {
+    std::string name;
+    Type type;
+    std::function<Value(const Value& self, CallContext&)> get;
+    std::function<void(const Value& self, const Value& v, CallContext&)> set;   ///< empty = read-only
+    std::string doc;
+};
+struct ApiMethod {
+    std::string name;
+    std::vector<Type> params;
+    std::vector<std::string> paramNames;
+    Type ret;
+    std::function<Value(const Value& self, std::vector<Value>& args, CallContext&)> fn;
+    std::string doc;
+    /// Optional compile-time check of literal arguments (key names, axis names):
+    /// returns an error message, or "" when fine. `literal` is empty for non-literals.
+    std::function<std::string(int argIndex, const std::string& literal)> checkLiteral;
+};
+struct ApiType {
+    std::string name;
+    bool isComponent = false;   ///< reachable through GetComponent<T>()
+    bool isStatic = false;      ///< only static members (Input, Time, Debug, Mathf)
+    bool isValueType = false;   ///< Vector3
+    std::vector<ApiProperty> props, staticProps;
+    std::vector<ApiMethod> methods, staticMethods;
+    std::string doc;
+    /// Components only: the component of this type on `go`, or nullptr.
+    std::function<Component*(GameObject* go)> find;
+};
+
+/// The engine binding registry (built once).
+struct EngineApi {
+    std::vector<ApiType> types;
+    int gameObject = -1, transform = -1, vector3 = -1;
+    int Find(const std::string& name) const;
+    static const EngineApi& Get();
+};
+
+/// The GameObject behind a reference, or throws a RuntimeError at `loc`.
+GameObject* Resolve(const ObjRef& r, SrcLoc loc);
+Value MakeRef(GameObject* go, int apiType);
+
+// ---- Tokens ----------------------------------------------------------------
+enum class T : std::uint8_t {
+    End, Ident, IntLit, FloatLit, StringLit,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Dot, Semicolon, Colon, Question,
+    Plus, Minus, Star, Slash, Percent, Not, Lt, Gt, Le, Ge, EqEq, NotEq, AndAnd, OrOr,
+    Assign, PlusEq, MinusEq, StarEq, SlashEq, PercentEq, PlusPlus, MinusMinus,
+    // keywords
+    KwClass, KwPublic, KwPrivate, KwVoid, KwInt, KwFloat, KwBool, KwString, KwVar,
+    KwIf, KwElse, KwWhile, KwFor, KwReturn, KwBreak, KwContinue, KwTrue, KwFalse, KwNull,
+    KwNew, KwThis, KwConst,
+};
+struct Token {
+    T type = T::End;
+    std::string text;
+    SrcLoc loc;
+};
+/// Tokenize; lexical errors (bad character, unterminated string) go to `diags`.
+std::vector<Token> Lex(const std::string& src, std::vector<ScriptDiagnostic>& diags);
+const char* TokenName(T t);
+
+// ---- Syntax tree -----------------------------------------------------------
+struct TypeRef {
+    std::string name;     ///< "int", "float", "Vector3", "GameObject", "var", "void", ...
+    std::string generic;  ///< reserved (List<T> later)
+    SrcLoc loc;
+};
+
+enum class EK : std::uint8_t {
+    IntLit, FloatLit, StringLit, BoolLit, NullLit, This,
+    Name,          ///< bare identifier (local, field, method group, type)
+    Member,        ///< a.b
+    Call,          ///< f(args) / a.f(args) / GetComponent<T>()
+    New,           ///< new Vector3(...)
+    Unary, Binary, Assign, IncDec, Cast, Conditional,
+};
+
+struct Expr;
+using ExprPtr = std::unique_ptr<Expr>;
+
+/// What a checked name/member refers to (filled by the Checker).
+enum class Bind : std::uint8_t {
+    None, Local, Field, Method, SelfMember /*gameObject/transform/enabled*/,
+    ApiProp, ApiStaticProp, ApiMethod, ApiStaticMethod, StaticType,
+    VecField /*x/y/z*/, VecProp /*magnitude/normalized*/, GetComponent, Destroy,
+};
+
+struct Expr {
+    EK kind;
+    SrcLoc loc;
+    // Literal payloads
+    std::int32_t ival = 0; float fval = 0; bool bval = false; std::string sval;
+    // Name / member / call
+    std::string name;
+    ExprPtr object;                 ///< Member/Call receiver (null = unqualified)
+    std::vector<ExprPtr> args;
+    TypeRef typeArg;                ///< GetComponent<T>, new T, (T)cast
+    // Operators
+    T op = T::End;                  ///< Unary/Binary/Assign/IncDec operator
+    bool prefix = false;            ///< IncDec
+    ExprPtr lhs, rhs, third;        ///< Binary lhs/rhs; Assign target/value; Conditional cond/a/b
+    // ---- filled by the Checker ----
+    Type type;
+    Bind bind = Bind::None;
+    int slot = -1;                  ///< local slot / field index / method index / api type
+    int member = -1;                ///< api prop / method index, vec field 0..2
+    bool isStaticRecv = false;
+    bool promoteL = false, promoteR = false;   ///< int -> float before the operator
+    bool toFloat = false;           ///< convert this (int) result to float where it's used
+};
+
+enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue };
+struct Stmt;
+using StmtPtr = std::unique_ptr<Stmt>;
+struct LocalDecl { TypeRef type; std::string name; SrcLoc loc; ExprPtr init; int slot = -1; Type resolved; bool promote = false; };
+struct Stmt {
+    SK kind;
+    SrcLoc loc;
+    std::vector<StmtPtr> body;          ///< Block
+    ExprPtr expr;                       ///< Expr / If cond / While cond / For cond / Return value
+    std::vector<LocalDecl> locals;      ///< Local
+    StmtPtr then, otherwise;            ///< If
+    StmtPtr init;                       ///< For init (Local or Expr stmt)
+    std::vector<ExprPtr> step;          ///< For step expressions
+    StmtPtr loopBody;                   ///< While / For
+    bool promoteReturn = false;
+};
+
+struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
+
+struct FieldDecl {
+    std::vector<Attribute> attrs;
+    bool isPublic = false, isConst = false;
+    TypeRef type;
+    std::string name;
+    SrcLoc loc;
+    ExprPtr init;
+    // checked
+    Type resolved;
+    int index = -1;
+    bool promote = false;
+    bool read = false;
+};
+struct Param { TypeRef type; std::string name; SrcLoc loc; Type resolved; };
+struct MethodDecl {
+    bool isPublic = false;
+    TypeRef ret;
+    std::string name;
+    SrcLoc loc;
+    std::vector<Param> params;
+    std::unique_ptr<Stmt> body;
+    // checked
+    Type retType;
+    int localCount = 0;
+    bool called = false;
+    int lifecycle = -1;   ///< index into the lifecycle table, -1 = an ordinary method
+};
+struct ClassDecl {
+    std::string name, base;
+    SrcLoc loc, baseLoc;
+    std::vector<FieldDecl> fields;
+    std::vector<MethodDecl> methods;
+};
+
+/// A checked, runnable script.
+struct Program {
+    std::vector<ClassDecl> classes;
+    int component = -1;            ///< the class that is the component
+    std::vector<ScriptDiagnostic> diags;
+    bool ok() const;
+    const ClassDecl* Component() const { return component >= 0 ? &classes[(std::size_t)component] : nullptr; }
+    int MethodIndex(const std::string& name) const;
+};
+
+/// Parse + check `src`. The program is runnable only if it has no errors.
+std::shared_ptr<Program> Compile(const std::string& src);
+/// Parser entry (used by Compile).
+void Parse(const std::vector<Token>& toks, Program& out);
+/// Checker entry (used by Compile).
+void Check(Program& prog);
+
+/// The lifecycle methods the engine calls, by name.
+struct Lifecycle { const char* name; const char* when; };
+const std::vector<Lifecycle>& LifecycleMethods();
+
+std::string TypeName(const Type& t);
+
+// ---- Running ---------------------------------------------------------------
+/// One running instance of a component class.
+class Instance {
+public:
+    Instance(std::shared_ptr<Program> prog, GameObject* self);
+    /// Run the field initializers. Throws RuntimeError.
+    void Init();
+    /// Call a method by index with args. Throws RuntimeError.
+    Value Call(int method, std::vector<Value> args);
+    bool HasMethod(const std::string& name) const { return prog_->MethodIndex(name) >= 0; }
+    Value GetField(const std::string& name) const;
+    bool SetField(const std::string& name, const Value& v);
+    CallContext& Context() { return ctx_; }
+    const Program& program() const { return *prog_; }
+    std::vector<Value>& Fields() { return fields_; }
+    /// Statements executed in the current callback (a guard against endless loops).
+    std::uint64_t steps = 0;
+    std::uint64_t stepLimit = 50'000'000;
+private:
+    std::shared_ptr<Program> prog_;
+    std::vector<Value> fields_;
+    CallContext ctx_;
+};
+
+} // namespace okay::script

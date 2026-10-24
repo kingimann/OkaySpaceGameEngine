@@ -271,8 +271,16 @@ Spawn / Despawn, Set Ready, Start Match, Match Started, All Ready, Steam Name,
 Achievement Unlocked, Unlock Achievement, Get / Set Steam Stat, Store Stats,
 Submit Score.
 
-**Finding nodes:** right-click the canvas and start typing; the search box
-matches titles, type names and categories, and **Enter** adds the first match.
+**Finding nodes:** right-click the canvas (or press **Space**) and start typing.
+- **Search** is forgiving: `ply snd` finds Play Sound. Close matches come first,
+  and the matched letters are highlighted.
+- **Keys:** **Up / Down** pick a result and **Enter** adds it.
+- **Sidebar:** browse by category, by **Do something** / **Check something**
+  (the Actions library), by **Recent**, or by **Favourites**. Click a node's star
+  to make it a favourite.
+- **Details:** the strip at the bottom says what the highlighted node takes and
+  gives.
+- **Dragging from a pin:** only the nodes that fit that pin are listed.
 
 **Typed values:** every unconnected input has an inline box, so a Print node
 can print text without wiring a Const. Graphs attach from the Inspector (Add

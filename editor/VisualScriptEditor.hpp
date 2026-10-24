@@ -2187,97 +2187,247 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
+    ImGui::SetNextWindowSize(ImVec2(600, 440), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam"};
         auto fits = [&](const VsDef& d) { return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput); };
-        if (st.linkPending) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Add a node and connect it");
-        // Type to search every node by title, type name or category; Enter adds
-        // the first match.
-        static char search[64] = "";
-        if (ImGui::IsWindowAppearing()) { search[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
-        ImGui::SetNextItemWidth(260);
-        const bool enter = ImGui::InputTextWithHint("##vssearch", "Search nodes...", search, sizeof search,
-                                                    ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Separator();
         auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
-        const std::string needle = lower(search);
-        if (!needle.empty()) {
-            int shown = 0;
-            for (const auto& d : Registry()) {
-                if (!fits(d)) continue;
-                const std::string hay = lower(std::string(d.title) + " " + d.type + " " + catNames[d.cat]);
-                if (hay.find(needle) == std::string::npos) continue;
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                ImGui::TextUnformatted(catNames[d.cat]);
-                ImGui::PopStyleColor();
-                ImGui::SameLine(150);
-                if (ImGui::Selectable(d.title, shown == 0 && enter) || (shown == 0 && enter)) {
-                    addFromPalette(d);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (++shown >= 40) break;
-            }
-            // ...and every Actions step (Move, Play Sound, Has Tag...).
-            for (int pass = 0; pass < 2 && shown < 60; ++pass) {
-                const bool cond = pass == 1;
-                const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-                if (!StepCatalog || !sd || !fits(*sd)) continue;
-                if (const auto* cat = StepCatalog(cond))
-                    for (const auto& si : *cat) {
-                        if (si.listOnly) continue;
-                        const std::string hay = lower(si.label + " " + si.op + " " + si.group);
-                        if (hay.find(needle) == std::string::npos) continue;
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                        ImGui::TextUnformatted(cond ? "Check" : "Do");
-                        ImGui::PopStyleColor();
-                        ImGui::SameLine(150);
-                        ImGui::PushID(si.op.c_str()); ImGui::PushID(pass);
-                        if (ImGui::Selectable(si.label.c_str(), shown == 0 && enter) || (shown == 0 && enter)) {
-                            addFromPalette(*sd, okay::ActionList::EncodeItem({si.op, {}}));
-                            ImGui::CloseCurrentPopup();
-                        }
-                        if (ImGui::IsItemHovered() && !si.desc.empty()) ImGui::SetTooltip("%s", si.desc.c_str());
-                        ImGui::PopID(); ImGui::PopID();
-                        if (++shown >= 60) break;
-                    }
-            }
-            if (shown == 0) ImGui::TextDisabled("No node matches \"%s\"", search);
-        } else {
-            for (int c = 0; c < CAT_COUNT; ++c) {
-                bool any = false;
-                for (const auto& d : Registry()) if (d.cat == c && fits(d)) { any = true; break; }
-                if (!any) continue;
-                if (ImGui::BeginMenu(catNames[c])) {
-                    for (const auto& d : Registry())
-                        if (d.cat == c && fits(d) && ImGui::MenuItem(d.title)) addFromPalette(d);
-                    ImGui::EndMenu();
-                }
-            }
-            // The Actions library: every no-code step, grouped like the old Actions menus.
-            for (int pass = 0; pass < 2; ++pass) {
-                const bool cond = pass == 1;
-                const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-                if (!StepCatalog || !sd || !fits(*sd)) continue;
-                const auto* cat = StepCatalog(cond);
-                if (!cat || cat->empty()) continue;
-                if (pass == 0) ImGui::Separator();
-                if (ImGui::BeginMenu(cond ? "Check something" : "Do something")) {
-                    std::vector<std::string> groups;
-                    for (const auto& si : *cat)
-                        if (!si.listOnly && std::find(groups.begin(), groups.end(), si.group) == groups.end()) groups.push_back(si.group);
-                    for (const auto& gname : groups) {
-                        if (!ImGui::BeginMenu(gname.empty() ? "Other" : gname.c_str())) continue;
-                        for (const auto& si : *cat) {
-                            if (si.group != gname || si.listOnly) continue;
-                            if (ImGui::MenuItem(si.label.c_str())) addFromPalette(*sd, okay::ActionList::EncodeItem({si.op, {}}));
-                            if (ImGui::IsItemHovered() && !si.desc.empty()) ImGui::SetTooltip("%s", si.desc.c_str());
-                        }
-                        ImGui::EndMenu();
-                    }
-                    ImGui::EndMenu();
-                }
-            }
+        auto bright = [](ImU32 c) {   // the category colour, lifted so a dot reads on the dark list
+            ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
+            return ImGui::GetColorU32(ImVec4(v.x + (1 - v.x) * 0.45f, v.y + (1 - v.y) * 0.45f, v.z + (1 - v.z) * 0.45f, 1.0f));
+        };
+        // Every placeable thing: core nodes, plus each Actions step ("Do" / "Check").
+        struct Entry {
+            const VsDef* def = nullptr; const VsStepInfo* step = nullptr; bool cond = false;
+            std::string title, cat, key, desc; int group = 0; ImU32 col = 0;
+        };
+        std::vector<Entry> all;
+        for (const auto& d : Registry()) {
+            if (!fits(d)) continue;
+            Entry e; e.def = &d; e.title = d.title; e.cat = catNames[d.cat]; e.key = std::string("n:") + d.type;
+            e.group = d.cat; e.col = bright(CatColor(d.cat));
+            // Built from the pins: what goes in, what comes out.
+            auto join = [](const std::vector<const char*>& v) {
+                std::string s; for (const char* p : v) if (p && *p) { if (!s.empty()) s += ", "; s += p; } return s;
+            };
+            const std::string in = join(d.dataIn), out = join(d.dataOut), ex = join(d.execOut);
+            if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc = "An event: starts a flow. ";
+            else if (d.execIn) e.desc = "Runs when the flow reaches it. ";
+            else e.desc = "Gives a value to other nodes. ";
+            if (!in.empty())  e.desc += "Takes: " + in + ". ";
+            if (!out.empty()) e.desc += "Gives: " + out + ". ";
+            if (!ex.empty())  e.desc += "Continues to: " + ex + ". ";
+            if (d.param && d.paramHint) e.desc += std::string("Setting: ") + d.paramHint + ".";
+            all.push_back(std::move(e));
         }
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool cond = pass == 1;
+            const VsDef* sd = FindDef(cond ? "Condition" : "Action");
+            if (!StepCatalog || !sd || !fits(*sd)) continue;
+            if (const auto* cat = StepCatalog(cond))
+                for (const auto& si : *cat) {
+                    if (si.listOnly) continue;
+                    Entry e; e.def = sd; e.step = &si; e.cond = cond; e.title = si.label;
+                    e.cat = std::string(cond ? "Check" : "Do") + (si.group.empty() ? "" : " / " + si.group);
+                    e.key = std::string(cond ? "c:" : "a:") + si.op; e.desc = si.desc;
+                    e.group = CAT_COUNT + pass; e.col = bright(CatColor(CAT_ACTION));
+                    all.push_back(std::move(e));
+                }
+        }
+        // Favourites and recently added, remembered between sessions.
+        static std::vector<std::string> s_fav, s_recent;
+        static bool s_loaded = false;
+        auto saveLists = [&] {
+            std::ofstream f("okay_vsnodes.txt");
+            for (const auto& k : s_fav) f << "fav " << k << "\n";
+            for (const auto& k : s_recent) f << "rec " << k << "\n";
+        };
+        if (!s_loaded) {
+            s_loaded = true;
+            std::ifstream f("okay_vsnodes.txt"); std::string kind, k;
+            while (f >> kind >> k) (kind == "fav" ? s_fav : s_recent).push_back(k);
+        }
+        auto isFav = [&](const std::string& k) { return std::find(s_fav.begin(), s_fav.end(), k) != s_fav.end(); };
+        auto add = [&](const Entry& e) {
+            if (e.step) addFromPalette(*e.def, okay::ActionList::EncodeItem({e.step->op, {}}));
+            else addFromPalette(*e.def);
+            s_recent.erase(std::remove(s_recent.begin(), s_recent.end(), e.key), s_recent.end());
+            s_recent.insert(s_recent.begin(), e.key);
+            if (s_recent.size() > 12) s_recent.resize(12);
+            saveLists();
+            ImGui::CloseCurrentPopup();
+        };
+
+        // Sidebar choice: -3 All, -2 Recent, -1 Favourites, 0.. a category, CAT_COUNT Do, CAT_COUNT+1 Check.
+        static int s_side = -3;
+        static int s_kb = 0;
+        static char search[64] = "";
+        if (ImGui::IsWindowAppearing()) { search[0] = '\0'; s_kb = 0; ImGui::SetKeyboardFocusHere(); }
+        if (st.linkPending) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit the dragged pin are shown");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
+            s_kb = 0;
+        const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+        const std::string needle = lower(search);
+
+        // Fuzzy score: whole title > start > start of a word > anywhere > letters in
+        // order; type, category and description count a little. `hits` marks the
+        // matched letters of the title.
+        auto score = [&](const Entry& e, std::vector<int>& hits) -> int {
+            hits.clear();
+            if (needle.empty()) return 1;
+            const std::string t = lower(e.title);
+            if (t == needle) { for (int i = 0; i < (int)t.size(); ++i) hits.push_back(i); return 1000; }
+            std::size_t p = t.find(needle);
+            if (p != std::string::npos) {
+                for (std::size_t i = 0; i < needle.size(); ++i) hits.push_back((int)(p + i));
+                if (p == 0) return 800;
+                if (t[p - 1] == ' ' || t[p - 1] == '(') return 650;
+                return 500 - (int)p;
+            }
+            int run = 0, sc = 0; std::size_t j = 0;
+            for (std::size_t i = 0; i < t.size() && j < needle.size(); ++i) {
+                if (t[i] == needle[j]) { hits.push_back((int)i); ++j; run++; sc += 3 + run * 2 + (i == 0 || t[i - 1] == ' ' ? 6 : 0); }
+                else run = 0;
+            }
+            if (j == needle.size()) return 100 + sc;
+            hits.clear();
+            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc);
+            return extra.find(needle) != std::string::npos ? 40 : 0;
+        };
+
+        // ---- Sidebar ----
+        ImGui::BeginChild("##vspside", ImVec2(150, -66), ImGuiChildFlags_Borders);
+        auto sideItem = [&](int id, const char* label, ImU32 dot, int count) {
+            ImGui::PushID(id + 10);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::Selectable("##side", s_side == id)) { s_side = id; s_kb = 0; }
+            ImDrawList* sdl = ImGui::GetWindowDrawList();
+            const float h = ImGui::GetTextLineHeight();
+            if (dot) sdl->AddCircleFilled(ImVec2(p.x + 6, p.y + h * 0.5f + 1), 3.5f, dot);
+            const float right = p.x + ImGui::GetContentRegionAvail().x;
+            char n[16] = ""; if (count >= 0) std::snprintf(n, sizeof n, "%d", count);
+            const float nw = ImGui::CalcTextSize(n).x;
+            sdl->PushClipRect(ImVec2(p.x, p.y), ImVec2(right - nw - 6, p.y + h + 4), true);   // long names stop before the count
+            sdl->AddText(ImVec2(p.x + 16, p.y), ImGui::GetColorU32(ImGuiCol_Text), label);
+            sdl->PopClipRect();
+            if (count >= 0) sdl->AddText(ImVec2(right - nw, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
+            if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label).x + 16 > right - nw - 6 - p.x) ImGui::SetTooltip("%s", label);
+            ImGui::PopID();
+        };
+        auto countIn = [&](int grp) { int n = 0; for (const auto& e : all) if (e.group == grp) ++n; return n; };
+        sideItem(-3, "All", 0, (int)all.size());
+        sideItem(-2, "Recent", 0, -1);
+        sideItem(-1, "Favourites", 0, (int)s_fav.size());
+        ImGui::Separator();
+        for (int c = 0; c < CAT_COUNT; ++c) { const int n = countIn(c); if (n) sideItem(c, catNames[c], bright(CatColor(c)), n); }
+        ImGui::Separator();
+        if (int n = countIn(CAT_COUNT)) sideItem(CAT_COUNT, "Do something", bright(CatColor(CAT_ACTION)), n);
+        if (int n = countIn(CAT_COUNT + 1)) sideItem(CAT_COUNT + 1, "Check something", bright(CatColor(CAT_ACTION)), n);
+        ImGui::EndChild();
+        ImGui::SameLine();
+
+        // ---- Results ----
+        struct Row { const Entry* e; int sc; std::vector<int> hits; };
+        std::vector<Row> rows;
+        for (const auto& e : all) {
+            if (s_side >= 0 && e.group != s_side) continue;
+            if (s_side == -1 && !isFav(e.key)) continue;
+            if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
+            Row r{&e, 0, {}};
+            r.sc = score(e, r.hits);
+            if (r.sc > 0) rows.push_back(std::move(r));
+        }
+        if (!needle.empty())
+            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.sc > b.sc; });
+        else if (s_side == -2)
+            std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
+                return std::find(s_recent.begin(), s_recent.end(), a.e->key) < std::find(s_recent.begin(), s_recent.end(), b.e->key);
+            });
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) s_kb = std::min(s_kb + 1, (int)rows.size() - 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   s_kb = std::max(s_kb - 1, 0);
+        if (s_kb >= (int)rows.size()) s_kb = std::max(0, (int)rows.size() - 1);
+
+        const Entry* hovered = nullptr;
+        const Entry* toAdd = nullptr;
+        ImGui::BeginChild("##vspres", ImVec2(0, -66), ImGuiChildFlags_Borders);
+        if (rows.empty()) {
+            ImGui::TextDisabled(s_side == -1 ? "No favourites yet: click the star on a node to add one."
+                              : s_side == -2 ? "Nodes you add show up here."
+                              : needle.empty() ? "Nothing here." : "No node matches that.");
+        }
+        const float lh = ImGui::GetTextLineHeight();
+        int lastGroup = -99;
+        for (int i = 0; i < (int)rows.size(); ++i) {
+            const Entry& e = *rows[i].e;
+            // Group headers while browsing everything (not while searching).
+            if (needle.empty() && s_side == -3 && e.group != lastGroup) {
+                lastGroup = e.group;
+                if (i) ImGui::Spacing();
+                ImGui::TextDisabled("%s", e.group < CAT_COUNT ? catNames[e.group] : e.group == CAT_COUNT ? "Do something" : "Check something");
+            }
+            ImGui::PushID(i);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const bool kbSel = i == s_kb;
+            if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, lh + 4))) toAdd = &e;
+            if (ImGui::IsItemHovered()) { hovered = &e; }
+            if (kbSel && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow))) ImGui::SetScrollHereY(0.5f);
+            ImDrawList* rdl = ImGui::GetWindowDrawList();
+            const float w = ImGui::GetContentRegionAvail().x;
+            rdl->AddCircleFilled(ImVec2(p.x + 7, p.y + (lh + 4) * 0.5f), 4.0f, e.col);
+            // Title, matched letters in the accent colour.
+            float x = p.x + 18;
+            const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = IM_COL32(110, 180, 255, 255);
+            for (int c = 0; c < (int)e.title.size(); ++c) {
+                const char buf[2] = {e.title[c], 0};
+                const bool h = std::find(rows[i].hits.begin(), rows[i].hits.end(), c) != rows[i].hits.end();
+                rdl->AddText(ImVec2(x, p.y + 2), h ? hit : normal, buf);
+                x += ImGui::CalcTextSize(buf).x;
+            }
+            // Category on the right, then the favourite star.
+            const float catW = ImGui::CalcTextSize(e.cat.c_str()).x;
+            if (x + 20 < p.x + w - catW - 32)
+                rdl->AddText(ImVec2(p.x + w - catW - 32, p.y + 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.cat.c_str());
+            ImGui::SameLine(w - 18);
+            const bool fav = isFav(e.key);
+            const ImVec2 sp = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton("##fav", ImVec2(18, lh + 4))) {
+                if (fav) s_fav.erase(std::remove(s_fav.begin(), s_fav.end(), e.key), s_fav.end());
+                else s_fav.push_back(e.key);
+                saveLists();
+            }
+            const bool sh = ImGui::IsItemHovered();
+            if (sh) ImGui::SetTooltip(fav ? "Remove from favourites" : "Add to favourites");
+            {   // a drawn star (the UI font has no star glyph)
+                const ImVec2 c(sp.x + 9, sp.y + (lh + 4) * 0.5f);
+                ImVec2 pts[10];
+                for (int k = 0; k < 10; ++k) {
+                    const float a = -1.5707963f + k * 0.6283185f, r = (k % 2) ? 2.6f : 6.0f;
+                    pts[k] = ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r);
+                }
+                const ImU32 sc = fav ? IM_COL32(255, 204, 64, 255) : sh ? IM_COL32(200, 200, 210, 200) : IM_COL32(120, 124, 134, 120);
+                if (fav) rdl->AddConcavePolyFilled(pts, 10, sc); else rdl->AddPolyline(pts, 10, sc, ImDrawFlags_Closed, 1.2f);
+            }
+            ImGui::PopID();
+        }
+        if (enter && !rows.empty()) toAdd = rows[std::clamp(s_kb, 0, (int)rows.size() - 1)].e;
+        ImGui::EndChild();
+
+        // ---- Details: the hovered (or keyboard) node ----
+        const Entry* info = hovered ? hovered : (!rows.empty() ? rows[std::clamp(s_kb, 0, (int)rows.size() - 1)].e : nullptr);
+        ImGui::BeginChild("##vspinfo", ImVec2(0, 0), ImGuiChildFlags_Borders);
+        if (info) {
+            ImGui::TextUnformatted(info->title.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", info->cat.c_str());
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", info->desc.empty() ? "No description." : info->desc.c_str());
+            ImGui::PopTextWrapPos();
+        } else {
+            ImGui::TextDisabled("%d nodes and actions. Star the ones you use most.", (int)all.size());
+        }
+        ImGui::EndChild();
+        if (toAdd) add(*toAdd);
         ImGui::EndPopup();
     } else if (st.linkPending && !openPaletteNow) {
         st.linkPending = false;   // palette dismissed without a pick

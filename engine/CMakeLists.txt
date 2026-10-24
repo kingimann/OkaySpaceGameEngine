@@ -2,6 +2,7 @@
 add_library(okay_engine
     src/Core/Application.cpp
     src/Core/Scheduler.cpp
+    src/Core/Tween.cpp
     src/Core/Prefs.cpp
     src/Core/DataAsset.cpp
     src/Input/Input.cpp

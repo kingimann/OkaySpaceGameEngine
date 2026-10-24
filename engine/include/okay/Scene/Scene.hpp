@@ -2,6 +2,7 @@
 #include <cstdint>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Scheduler.hpp"
+#include "okay/Core/Tween.hpp"
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Render/Color.hpp"
@@ -102,6 +103,9 @@ public:
     /// Time-based callbacks (Invoke / InvokeRepeating / Tween), ticked each
     /// frame during Update.
     Scheduler& scheduler() { return m_scheduler; }
+    /// Running tweens (DOTween-style animations), ticked each frame during Update
+    /// and killed with the objects they animate.
+    TweenManager& tweens() { return m_tweens; }
 
     /// The 2D physics world, stepped each frame during Update.
     Physics2D& physics() { return m_physics; }
@@ -193,6 +197,7 @@ private:
 
     std::string m_name;
     Scheduler   m_scheduler;
+    TweenManager m_tweens;
     Physics2D   m_physics;
     Physics3D   m_physics3d;
     std::vector<std::unique_ptr<GameObject>> m_objects;

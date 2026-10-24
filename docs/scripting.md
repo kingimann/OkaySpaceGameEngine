@@ -412,45 +412,116 @@ split(s, sep) join(arr, sep)` — plus `+` concatenation.
 `map() map_set(m, k, v) map_get(m, k[, default]) map_has(m, k) map_remove(m, k)
 map_keys(m) map_count(m)` — shared by reference, like arrays.
 
-### Tweening
-Smoothly animate this object over time via the scene scheduler. Every tween
-takes an optional easing name and an optional **on-complete** function name as
-its last argument(s).
+### Tweening (DOTween-style)
+Smoothly animate this object over time. Every tween:
+- takes an optional ease name and an optional **on-complete** function name as
+  its last argument(s);
+- **returns an id** you can use to set it up or control it afterwards;
+- stops by itself when its object is destroyed.
 
 | Function | Effect |
 | --- | --- |
 | `tween_move(x, y, dur[, ease][, "done"])` | move to (x, y); `ease` e.g. `"out_quad"` |
 | `tween_move3(x, y, z, dur[, ease][, "done"])` | move in 3D |
-| `tween_scale(s, dur[, ease][, "done"])` | scale to uniform `s` |
-| `tween_rotate(deg, dur[, ease][, "done"])` | spin `deg` degrees about Z (relative) |
-| `tween_rotate_to(deg, dur[, ease][, "done"])` | rotate to an **absolute** Z angle (shortest path) |
-| `tween_scale_xy(sx, sy, dur[, ease][, "done"])` | non-uniform scale to (sx, sy) |
-| `tween_ui_move(x, y, dur[, ease][, "done"])` | move a **UI widget** (anchored position) |
-| `tween_ui_size(w, h, dur[, ease][, "done"])` | resize a **UI widget** (grow/shrink panels) |
-| `tween_color(r, g, b, dur[, ease][, "done"])` | fade the sprite/mesh color |
-| `tween_fade(a, dur[, ease][, "done"])` | fade alpha to `a` (works on sprites, meshes & UI Image/Panel) |
+| `tween_move_world(x, y, z, dur[, ease][, "done"])` | move in world space (ignores the parent) |
 | `tween_move_by(dx, dy, dur[, ease][, "done"])` | move by a **relative** offset |
-| `tween_jump(x, y, height, dur[, "done"])` | arc-jump to (x, y) peaking `height` up (coins, hops) |
-| `tween_path(dur, x1, y1, x2, y2, ...)` | move through a list of waypoints |
-| `tween_loop_move(x, y, dur[, ease])` | **ping-pong** forever between here and (x, y) |
+| `tween_scale(s, dur[, ease][, "done"])` | scale to uniform `s` |
+| `tween_scale_xy(sx, sy, dur[, ease][, "done"])` | non-uniform scale to (sx, sy) |
+| `tween_rotate(deg, dur[, ease][, "done"])` | spin `deg` degrees about Z (relative; 360 = a full turn) |
+| `tween_rotate_to(deg, dur[, ease][, "done"])` | rotate to an **absolute** Z angle |
+| `tween_rotate3(x, y, z, dur[, ease][, "done"])` | rotate to Euler angles (3D) |
+| `tween_ui_move(x, y, dur[, ease][, "done"])` | move a **UI widget** (anchored position) |
+| `tween_ui_size(w, h, dur[, ease][, "done"])` | resize a **UI widget** |
+| `tween_color(r, g, b, dur[, ease][, "done"])` | colour of a sprite, mesh, UI image, panel, button or text |
+| `tween_fade(a, dur[, ease][, "done"])` | fade alpha to `a` |
+| `flash(r, g, b[, dur])` | snap to a colour and fade back (hit feedback) |
+| `tween_jump(x, y, height, dur[, jumps][, "done"])` | hop to (x, y) in `jumps` arcs |
+| `tween_path(dur, x1, y1, x2, y2, ...)` | move through waypoints |
+| `tween_path_smooth(dur, x1, y1, ...)` | the same, curving smoothly through them |
+| `tween_loop_move(x, y, dur[, ease])` | ping-pong forever between here and (x, y) |
 | `tween_loop_scale(s, dur[, ease])` | ping-pong the scale forever (pulsing) |
-| `tween_loop_rotate(dur[, dir])` | spin continuously, a turn every `dur` (dir +1/-1) |
-| `tween_number(from, to, dur[, "prefix"])` | count a sibling text number up/down (score ticks) |
+| `tween_loop_rotate(dur[, dir])` | spin forever, a turn every `dur` (dir +1/-1) |
 | `tween_punch_scale(amount, dur[, vib])` | punch the scale and settle back ("juice") |
 | `tween_punch_pos(dx, dy, dur[, vib])` | punch the position and settle back |
-| `tween_shake(intensity, dur)` | random shake that decays to a stop (impact/camera) |
+| `tween_punch_rotate(deg, dur[, vib])` | wobble the angle and settle back |
+| `tween_shake(intensity, dur[, vib])` | shake the position, fading out (impact / camera) |
+| `tween_shake_rotate(deg, dur[, vib])` / `tween_shake_scale(amount, dur[, vib])` | shake the angle / scale |
+| `tween_number(from, to, dur[, "prefix"])` | count this object's text number (score ticks) |
+| `tween_text("Hello!", dur[, "done"])` | type this object's text out letter by letter |
+| `tween_var("name", to, dur[, ease][, "done"])` | tween one of the script's own variables |
+| `tween_call(seconds, "fn")` | call a function after a delay |
 
-Easings: `linear in_quad out_quad in_out_quad in_cubic out_cubic in_out_cubic
-in_sine out_sine in_out_sine in_expo out_expo in_out_expo in_back out_back
-out_elastic out_bounce`.
+**Set up** a tween. Each of these returns the id, so they nest, e.g.
+`tween_loops(tween_scale(1.2, 0.4), -1, "yoyo")`:
+
+| Function | Effect |
+| --- | --- |
+| `tween_delay(id, s)` | wait before starting |
+| `tween_ease(id, "out_back")` | change the ease |
+| `tween_loops(id, n[, "restart" \| "yoyo" \| "incremental"])` | repeat (`-1` = forever) |
+| `tween_speed(id, x)` | play faster or slower |
+| `tween_unscaled(id)` | ignore the time scale (pause menus) |
+| `tween_from(id)` | play from the end value back to the current one (intros) |
+| `tween_relative(id)` | treat the end value as an offset |
+| `tween_set_id(id, "name")` | name it, for the `_id` functions below |
+| `tween_keep(id)` | keep it after it ends, so it can be restarted |
+| `tween_on_complete(id, "fn")`, `tween_on_step(id, "fn")`, `tween_on_start(id, "fn")`, `tween_on_update(id, "fn")` | callbacks |
+
+**Control** tweens:
+- **One tween:** `tween_pause(id)`, `tween_play(id)`, `tween_toggle(id)`,
+  `tween_restart(id)`, `tween_rewind(id)`, `tween_complete(id)`,
+  `tween_backwards(id)`, `tween_goto(id, seconds)`, and `tween_kill(id[, complete])`.
+  To check on one, use `tween_playing(id)`, `tween_active(id)` or
+  `tween_progress(id)` (0 to 1).
+- **This object's tweens:** `tween_kill_all()`, `tween_pause_all()`,
+  `tween_play_all()` and `is_tweening()`.
+- **By name, anywhere in the scene:** `tween_kill_id("name")`,
+  `tween_pause_id("name")`, `tween_play_id("name")` and
+  `tween_restart_id("name")`. These also start a **Tween Animation** component
+  with that Id.
+
+**Sequences** run tweens one after another, or together:
+
+| Function | Effect |
+| --- | --- |
+| `seq_new()` | a new, empty sequence (returns its id; it plays by itself) |
+| `seq_append(seq, id)` | play after everything already in it |
+| `seq_join(seq, id)` | play together with the last appended tween |
+| `seq_insert(seq, time, id)` | play at a time |
+| `seq_interval(seq, s)` / `seq_prepend_interval(seq, s)` | a pause at the end / start |
+| `seq_callback(seq, "fn")` / `seq_insert_callback(seq, time, "fn")` | call a function at that point |
+
+A sequence's id works with every setup and control function above (loops,
+delay, pause...).
+
+**Eases** (any spelling works: `out_quad`, `OutQuad`, `ease_out_quad`):
+- `linear`
+- `in_` / `out_` / `in_out_` followed by `quad`, `cubic`, `quart`, `quint`,
+  `sine`, `expo`, `circ`, `back`, `elastic` or `bounce`.
 
 ```c
 function start() {
-  tween_move(5, 0, 1.0, "out_quad", "arrived");  // calls arrived() when done
-  tween_loop_move(0, 0.3, 0.8, "in_out_sine");   // bob forever
+  tween_move(5, 0, 1.0, "out_quad", "arrived");          // calls arrived() when done
+  tween_loops(tween_move_by(0, 0.3, 0.8, "in_out_sine"), -1, "yoyo");   // bob forever
+  var intro = seq_new();
+  seq_append(intro, tween_from(tween_scale(0, 0.4, "out_back")));
+  seq_join(intro, tween_fade(1, 0.4));
+  seq_interval(intro, 0.2);
+  seq_callback(intro, "ready");
 }
-function arrived() { tween_punch_scale(0.3, 0.25); }   // pop on arrival
+function arrived() { tween_punch_scale(0.3, 0.25); }    // pop on arrival
 ```
+
+**Without code:** add a **Tween Animation** component (Add Component →
+Animation). Pick what to animate (move, scale, rotate, fade, colour, UI position
+or size, punch, shake, jump), plus the end value, duration, delay, ease and loops.
+It plays when the scene starts, or with `tween_play_id("Id")`. **Preview**
+plays it in the editor and puts the object back afterwards.
+
+From C++, `okay::DOTween::Move / Scale / Rotate / PunchScale / ShakePosition /
+Jump / Path / Fade / Text ...` return a tween you can chain:
+`->SetEase(Ease::BackOut).SetLoops(-1, LoopType::Yoyo)`. Sequences come from
+`scene.tweens().Sequence()`.
 
 ### Drag & drop
 Add a **UI Draggable** (UI widget) or **Draggable** (world sprite) component in

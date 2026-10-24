@@ -772,3 +772,7 @@ add_test(NAME gltf_cubicspline COMMAND test_gltf_cubicspline)
 add_executable(test_crash_reports test_crash_reports.cpp)
 target_include_directories(test_crash_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_reports COMMAND test_crash_reports)
+
+add_executable(test_tween test_tween.cpp)
+target_link_libraries(test_tween PRIVATE okay::engine)
+add_test(NAME tween COMMAND test_tween)

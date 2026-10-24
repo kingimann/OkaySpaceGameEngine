@@ -798,6 +798,10 @@ add_executable(test_editor_tabs test_editor_tabs.cpp)
 target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_tabs COMMAND test_editor_tabs)
 
+add_executable(test_ui_tabs test_ui_tabs.cpp)
+target_link_libraries(test_ui_tabs PRIVATE okay::engine)
+add_test(NAME ui_tabs COMMAND test_ui_tabs)
+
 add_executable(test_shooter25d test_shooter25d.cpp)
 target_link_libraries(test_shooter25d PRIVATE okay::engine)
 add_test(NAME shooter25d COMMAND test_shooter25d)

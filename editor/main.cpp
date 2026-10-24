@@ -10430,6 +10430,8 @@ void DrawScriptDocs() {
         fapi("ui_toggle_value(\"n\") / ui_set_toggle(\"n\", on)", "read / set a toggle");
         fapi("ui_dropdown_value(\"n\") / ui_dropdown_text(\"n\")", "selected index / option text");
         fapi("ui_set_dropdown(\"n\", i)", "select a dropdown option (fires on_change)");
+        fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
+        fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
         fapi("ui_set_fill(\"n\", v)", "set a filled UI Image's amount (cooldowns/health)");
     }
@@ -10990,6 +10992,9 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"to_num","to_num(s)"}, {"to_str","to_str(v)"}, {"format","format(\"{} {}\", a, b)"},
         // ui widgets
         {"set_slider","set_slider(v)"}, {"set_toggle","set_toggle(on)"}, {"set_progress","set_progress(t)"},
+        {"set_tab","set_tab(i)"}, {"set_tab_badge","set_tab_badge(i, count)"}, {"set_tab_enabled","set_tab_enabled(i, on)"},
+        {"ui_set_tab","ui_set_tab(\"n\", i)"}, {"ui_set_tab_badge","ui_set_tab_badge(\"n\", i, count)"},
+        {"ui_set_tab_enabled","ui_set_tab_enabled(\"n\", i, on)"}, {"ui_tab_value","ui_tab_value(\"n\")"},
         // math checks
         {"is_nan","is_nan(x)"}, {"is_finite","is_finite(x)"}, {"acos","acos(x)"}, {"asin","asin(x)"},
         {"atan","atan(x)"}, {"atan2","atan2(y, x)"}, {"sign","sign(x)"},
@@ -32418,17 +32423,88 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {tb->size.x, tb->size.y};
             if (ImGui::DragFloat2("Size (px)##utb", sz, 1.0f, 8.0f, 4000.0f)) { tb->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##utb", tb->anchor, ed);
-            ShapeCombo("Shape##utb", tb->shape, ed);
-            if (UIShapeUsesRadius(tb->shape))
+            // Style: the tab bar's look. Picking one fills in sensible spacing/shape
+            // (all still editable below).
+            static const char* tabStyles[] = {"Segmented", "Underline", "Folder", "Pills", "Vertical"};
+            int tst = (int)tb->style;
+            if (ImGui::Combo("Style##utb", &tst, tabStyles, 5)) {
+                tb->style = (UITabs::Style)tst;
+                if (tb->style == UITabs::Style::Pills && tb->spacing <= 0.0f) tb->spacing = 8.0f;
+                if (tb->style == UITabs::Style::Vertical && tb->spacing <= 0.0f) tb->spacing = 4.0f;
+                if (tb->style == UITabs::Style::Folder && tb->spacing <= 0.0f) tb->spacing = 2.0f;
+                if ((tb->style == UITabs::Style::Vertical || tb->style == UITabs::Style::Folder) && tb->shape == UIShape::Pill)
+                    tb->shape = UIShape::Rounded;
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Segmented: one-piece control.  Underline: a line under the selected tab.\n"
+                                  "Folder: browser tabs joined to the page.  Pills: separate round buttons.\n"
+                                  "Vertical: stacked down the side (settings menus).");
+            if (tb->style == UITabs::Style::Segmented || tb->style == UITabs::Style::Vertical) {
+                ShapeCombo("Shape##utb", tb->shape, ed);
+                if (UIShapeUsesRadius(tb->shape))
+                    if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            } else if (tb->style != UITabs::Style::Pills) {
                 if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            }
+            static const char* tabSizing[] = {"Equal width", "Fit text"};
+            int tsz = (int)tb->sizing;
+            if (ImGui::Combo("Sizing##utb", &tsz, tabSizing, 2)) { tb->sizing = (UITabs::Sizing)tsz; ed.dirty = true; }
+            if (ImGui::DragFloat("Spacing##utb", &tb->spacing, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Padding##utb", &tb->padding, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Space either side of a tab's text (Fit text sizing, Vertical rows)");
+            if (ImGui::DragFloat("Min Tab Size##utb", &tb->minTabSize, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tabs never get smaller than this; when they no longer fit,\nthe bar scrolls (wheel / drag) with arrow buttons at the ends.");
+            if (ImGui::DragFloat("Font Scale##utb", &tb->fontScale, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
+            if (tb->style != UITabs::Style::Segmented && tb->style != UITabs::Style::Pills)
+                if (ImGui::DragFloat("Indicator##utb", &tb->indicatorThickness, 0.1f, 1.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Icon Size##utb", &tb->iconSize, 0.5f, 4.0f, 128.0f)) ed.dirty = true;
             if (tb->Count() > 0) {
                 int v = tb->value;
-                if (ImGui::SliderInt("Selected##utb", &v, 0, tb->Count() - 1)) { tb->value = v; ed.dirty = true; }
+                // Edit mode doesn't tick the scene: apply the pages here so the preview
+                // shows the selected tab's content straight away.
+                if (ImGui::SliderInt("Selected##utb", &v, 0, tb->Count() - 1)) { tb->value = v; tb->ApplyPages(); ed.dirty = true; }
             }
+            SectionHeader("Colors");
             float se[4] = {tb->selected.r, tb->selected.g, tb->selected.b, tb->selected.a};
             if (ImGui::ColorEdit4("Selected Color##utb", se)) { tb->selected = {se[0], se[1], se[2], se[3]}; ed.dirty = true; }
             float bgc[4] = {tb->background.r, tb->background.g, tb->background.b, tb->background.a};
             if (ImGui::ColorEdit4("Track Color##utb", bgc)) { tb->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            float txc[4] = {tb->textColor.r, tb->textColor.g, tb->textColor.b, tb->textColor.a};
+            if (ImGui::ColorEdit4("Text##utb", txc)) { tb->textColor = {txc[0], txc[1], txc[2], txc[3]}; ed.dirty = true; }
+            float stc[4] = {tb->selectedTextColor.r, tb->selectedTextColor.g, tb->selectedTextColor.b, tb->selectedTextColor.a};
+            if (ImGui::ColorEdit4("Selected Text##utb", stc)) { tb->selectedTextColor = {stc[0], stc[1], stc[2], stc[3]}; ed.dirty = true; }
+            float hvc[4] = {tb->hoverColor.r, tb->hoverColor.g, tb->hoverColor.b, tb->hoverColor.a};
+            if (ImGui::ColorEdit4("Hover Tint##utb", hvc)) { tb->hoverColor = {hvc[0], hvc[1], hvc[2], hvc[3]}; ed.dirty = true; }
+            float prc[4] = {tb->pressedColor.r, tb->pressedColor.g, tb->pressedColor.b, tb->pressedColor.a};
+            if (ImGui::ColorEdit4("Pressed Tint##utb", prc)) { tb->pressedColor = {prc[0], prc[1], prc[2], prc[3]}; ed.dirty = true; }
+            float bdc[4] = {tb->badgeColor.r, tb->badgeColor.g, tb->badgeColor.b, tb->badgeColor.a};
+            if (ImGui::ColorEdit4("Badge##utb", bdc)) { tb->badgeColor = {bdc[0], bdc[1], bdc[2], bdc[3]}; ed.dirty = true; }
+            float btc[4] = {tb->badgeTextColor.r, tb->badgeTextColor.g, tb->badgeTextColor.b, tb->badgeTextColor.a};
+            if (ImGui::ColorEdit4("Badge Text##utb", btc)) { tb->badgeTextColor = {btc[0], btc[1], btc[2], btc[3]}; ed.dirty = true; }
+            SectionHeader("Behavior");
+            if (ImGui::Checkbox("Interactable##utb", &tb->interactable)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Focusable##utb", &tb->focusable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keyboard/gamepad menu focus: Left/Right switch tabs");
+            if (ImGui::Checkbox("Animate##utb", &tb->animate)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The selection slides to the new tab");
+            if (tb->animate) {
+                ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                if (ImGui::DragFloat("Speed##utbanim", &tb->animSpeed, 0.2f, 1.0f, 60.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Prev/Next Keys##utb", &tb->hotkeys)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch tabs with these keys (and the gamepad L / R\nshoulder buttons) while the bar is on screen");
+            if (tb->hotkeys) {
+                char pk[16]; std::strncpy(pk, tb->prevKey.c_str(), sizeof(pk) - 1); pk[sizeof(pk) - 1] = '\0';
+                char nk[16]; std::strncpy(nk, tb->nextKey.c_str(), sizeof(nk) - 1); nk[sizeof(nk) - 1] = '\0';
+                ImGui::SetNextItemWidth(60);
+                if (ImGui::InputText("Prev##utbkey", pk, sizeof(pk))) { tb->prevKey = pk; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                if (ImGui::InputText("Next##utbkey", nk, sizeof(nk))) { tb->nextKey = nk; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Wrap##utb", &tb->wrapAround)) ed.dirty = true;
+            }
             SectionHeader("Tabs & content");
             // Each tab can name a GameObject to show as its content page (others are
             // hidden) — assign one per tab and switching works with no scripting.
@@ -32455,12 +32531,36 @@ void DrawInspector(EditorState& ed) {
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) eraseT = i;
+                // Second row: icon (a texture path, or drop one from the Project panel),
+                // badge (0 none, -1 dot, N number) and whether the tab can be picked.
+                char ib[192]; std::strncpy(ib, tb->IconOf(i).c_str(), sizeof(ib) - 1); ib[sizeof(ib) - 1] = '\0';
+                ImGui::Indent(12.0f);
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::InputText("Icon##ic", ib, sizeof(ib))) { tb->SetIcon(i, ib); ed.dirty = true; }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                        tb->SetIcon(i, (const char*)p->Data); ed.dirty = true;
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                int bdg = tb->BadgeOf(i);
+                if (ImGui::DragInt("Badge##bd", &bdg, 0.1f, -1, 999)) { tb->SetBadge(i, bdg); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = none, -1 = a dot, N = a number");
+                ImGui::SameLine();
+                bool en = tb->IsTabEnabled(i);
+                if (ImGui::Checkbox("Enabled##en", &en)) { tb->SetTabEnabled(i, en); ed.dirty = true; }
+                ImGui::Unindent(12.0f);
                 ImGui::PopID();
             }
             if (eraseT >= 0) {
                 tb->tabs.erase(tb->tabs.begin() + eraseT);
-                if (eraseT < (int)tb->pages.size()) tb->pages.erase(tb->pages.begin() + eraseT);
+                if (eraseT < (int)tb->pages.size())    tb->pages.erase(tb->pages.begin() + eraseT);
+                if (eraseT < (int)tb->icons.size())    tb->icons.erase(tb->icons.begin() + eraseT);
+                if (eraseT < (int)tb->badges.size())   tb->badges.erase(tb->badges.begin() + eraseT);
+                if (eraseT < (int)tb->disabled.size()) tb->disabled.erase(tb->disabled.begin() + eraseT);
                 if (tb->value >= tb->Count()) tb->value = tb->Count() - 1;
+                if (tb->value < 0) tb->value = 0;
                 ed.dirty = true;
             }
             if (ImGui::SmallButton("Add Tab##utb")) { tb->tabs.push_back("Tab"); tb->pages.push_back(""); ed.dirty = true; }
@@ -32471,6 +32571,7 @@ void DrawInspector(EditorState& ed) {
                 ed.PushUndo();
                 GameObject* parent = go->transform->Parent() ? go->transform->Parent()->gameObject : nullptr;
                 tb->pages.resize(tb->tabs.size());
+                const bool side = tb->style == UITabs::Style::Vertical;
                 for (int i = 0; i < (int)tb->tabs.size(); ++i) {
                     std::string nm = go->name + " / " + tb->tabs[i];
                     GameObject* page = ed.scene().Find(nm);
@@ -32478,20 +32579,29 @@ void DrawInspector(EditorState& ed) {
                         page = ed.scene().CreateGameObject(nm);
                         auto* pn = page->AddComponent<UIPanel>();
                         pn->anchor = tb->anchor;
-                        pn->position = {tb->position.x, tb->position.y + tb->size.y + 8.0f};
-                        pn->size = {tb->size.x, 220.0f};
-                        pn->color = Color::FromBytes(28, 32, 42, 235);
+                        // Beside a vertical bar, under a horizontal one (a Folder page
+                        // touches its tabs so the selected tab joins the page).
+                        if (side) {
+                            pn->position = {tb->position.x + tb->size.x + 8.0f, tb->position.y};
+                            pn->size = {360.0f, tb->size.y};
+                        } else {
+                            const float gapY = tb->style == UITabs::Style::Folder ? 0.0f : 8.0f;
+                            pn->position = {tb->position.x, tb->position.y + tb->size.y + gapY};
+                            pn->size = {tb->size.x, 220.0f};
+                        }
+                        pn->color = tb->style == UITabs::Style::Folder ? tb->selected : Color::FromBytes(28, 32, 42, 235);
                         if (parent) page->transform->SetParent(parent->transform, false);
                     }
                     tb->pages[i] = nm;
-                    page->active = (i == tb->value);
                 }
+                tb->ApplyPages();
                 ed.dirty = true; ConsoleLog("Generated tab content pages");
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Make a content Panel per tab and wire it up. Put your\nwidgets under each page; the selected tab shows its page.");
-            ImGui::TextDisabled("Selected tab shows its Page object; others hide. on_change()");
-            ImGui::TextDisabled("still fires on a sibling script if you want extra logic.");
+            ImGui::TextDisabled("Selected tab shows its Page object (and everything under");
+            ImGui::TextDisabled("it); others hide. Long names are shortened with \"...\".");
+            ImGui::TextDisabled("on_change() still fires on a sibling script.");
             if (ImGui::SmallButton("Remove##utb")) toRemove = tb;
         }
     }
@@ -33959,32 +34069,42 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
     }
 
-    // UI tabs: a segmented bar with the selected segment highlighted + labels.
-        else if (_it.kind == K_Tabs) {   // segmented tab bars
+    // UI tabs: replay the bar's shared paint list (UITabs::Paint) — the same layout the
+    // game draws and hit-tests, so the preview matches the built game in every style.
+        else if (_it.kind == K_Tabs) {   // tab bars (segmented / underline / folder / pills / vertical)
         auto* tb = up->GetComponent<UITabs>();
         if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
-        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        if (IsPolyUIShape(tb->shape))
-            DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), tb->shape, tb->cornerRadius, ToColor(tb->background), IM_COL32(0, 0, 0, 0), 0.0f);
-        else
-            dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(tb->background), tb->cornerRadius);
-        int n = tb->Count();
-        float segW = sz.x / (float)n;
-        ImVec2 selA(a.x + segW * tb->value + 2.0f, a.y + 2.0f);
-        ImVec2 selB(a.x + segW * (tb->value + 1) - 2.0f, a.y + sz.y - 2.0f);
-        dl->AddRectFilled(selA, selB, ToColor(tb->selected), tb->cornerRadius);
-        float px = 2.0f * s;
-        for (int i = 0; i < n; ++i) {
-            const std::string& lbl = tb->tabs[i];
-            float tw = UITextW(lbl, px);
-            ImU32 c = ToColor(i == tb->value ? tb->selectedTextColor : tb->textColor);
-            DrawBitmapText(dl, lbl, a.x + segW * i + (segW - tw) * 0.5f,
-                           a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, c);
+        const ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        int clips = 0;
+        for (const UITabsDraw& d : tb->Paint(sz.x, sz.y, s, UITextW)) {
+            const ImVec2 p0(a.x + d.x, a.y + d.y), p1(a.x + d.x + d.w, a.y + d.y + d.h);
+            switch (d.kind) {
+                case UITabsDraw::Kind::Fill: {
+                    const ImU32 c = ToColor(d.color);
+                    if (d.shape == UIShape::Rectangle)    dl->AddRectFilled(p0, p1, c);
+                    else if (d.shape == UIShape::Rounded) dl->AddRectFilled(p0, p1, c, d.radius, CornerFlags(d.cornerMask));
+                    else if (d.shape == UIShape::Circle && std::fabs(d.w - d.h) < 0.5f)
+                        dl->AddCircleFilled(ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f), d.w * 0.5f, c, 24);
+                    else DrawPolyUIShape(dl, p0, ImVec2(d.w, d.h), d.shape, d.radius, c, IM_COL32(0, 0, 0, 0), 0.0f, d.cornerMask);
+                    break;
+                }
+                case UITabsDraw::Kind::Text:
+                    DrawBitmapText(dl, d.text, p0.x, p0.y, d.px, ToColor(d.color));
+                    break;
+                case UITabsDraw::Kind::Icon:
+                    if (SDL_Texture* itex = GetThumb(d.text))
+                        dl->AddImage((ImTextureID)itex, p0, p1, ImVec2(0, 0), ImVec2(1, 1), ToColor(d.color));
+                    else   // missing texture: a placeholder square like the button's icon slot
+                        dl->AddRect(p0, p1, IM_COL32(255, 255, 255, (int)(110 * d.color.a)), 3.0f);
+                    break;
+                case UITabsDraw::Kind::Clip:   dl->PushClipRect(p0, p1, true); ++clips; break;
+                case UITabsDraw::Kind::Unclip: if (clips > 0) { dl->PopClipRect(); --clips; } break;
+            }
         }
-        if (!tb->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), tb->cornerRadius);
+        while (clips-- > 0) dl->PopClipRect();
     }
 
     // In-world UI (3D labels/markers): project each through the main camera onto the
@@ -34848,6 +34968,7 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
     // on-screen rect so a 3D button is clickable where it actually appears.
     if (UIWorld().active) {
         UIWorld().rectOf = [cs](GameObject* go, Vec2& o, Vec2& sz) {
+            if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
             return GetUIScreenRect(go, cs.x, cs.y, o, sz);
         };
     }
@@ -40185,6 +40306,7 @@ int main(int argc, char** argv) {
         else if (ed.isPlaying()) {   // no camera: screen-space widgets still hit-test where drawn
             ImVec2 cs = g_playCanvasSize;
             UIWorld().rectOf = [cs](GameObject* go, Vec2& o, Vec2& sz) {
+                if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
                 return GetUIScreenRect(go, cs.x, cs.y, o, sz);
             };
         }

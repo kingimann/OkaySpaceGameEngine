@@ -20,19 +20,21 @@ namespace okay {
 ///   * Toggle   — Enter/Space/A flips it (on_toggle()).
 ///   * Dropdown — Enter/Space/A opens/closes; Left/Right change the selection.
 ///   * Slider   — Left/Right adjust the value by 5% (on_change()).
+///   * Tabs     — Left/Right select the previous / next enabled tab (on_change()).
 /// Mouse interaction still works independently. Returns the widget activated
 /// this frame (button/toggle/dropdown), or nullptr.
 inline GameObject* NavigateUI(Scene& scene) {
     // Collect focusable, interactable widgets and a quick type tag.
-    enum Kind { Button, Toggle, Slider, Dropdown };
+    enum Kind { Button, Toggle, Slider, Dropdown, Tabs };
     struct Item { GameObject* go; Kind kind; };
     std::vector<Item> items;
     for (const auto& go : scene.Objects()) {
-        if (!go->active) continue;
+        if (!go->active || UIHidden(go.get())) continue;   // hidden pages/menus can't take focus
         if (auto* b = go->GetComponent<UIButton>())   { if (b->focusable && b->interactable) items.push_back({go.get(), Button}); continue; }
         if (auto* t = go->GetComponent<UIToggle>())   { if (t->focusable) items.push_back({go.get(), Toggle}); continue; }
         if (auto* s = go->GetComponent<UISlider>())   { if (s->focusable) items.push_back({go.get(), Slider}); continue; }
         if (auto* d = go->GetComponent<UIDropdown>()) { if (d->focusable) items.push_back({go.get(), Dropdown}); continue; }
+        if (auto* tb = go->GetComponent<UITabs>())    { if (tb->focusable && tb->interactable && tb->Count() > 0) items.push_back({go.get(), Tabs}); continue; }
     }
     if (items.empty()) return nullptr;
 
@@ -50,6 +52,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* t = it.go->GetComponent<UIToggle>())   return t->IsFocused();
         if (auto* s = it.go->GetComponent<UISlider>())   return s->IsFocused();
         if (auto* d = it.go->GetComponent<UIDropdown>()) return d->IsFocused();
+        if (auto* tb = it.go->GetComponent<UITabs>())    return tb->IsFocused();
         return false;
     };
     auto setFocused = [](const Item& it, bool f) {
@@ -57,6 +60,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* t = it.go->GetComponent<UIToggle>())   t->SetFocused(f);
         if (auto* s = it.go->GetComponent<UISlider>())   s->SetFocused(f);
         if (auto* d = it.go->GetComponent<UIDropdown>()) d->SetFocused(f);
+        if (auto* tb = it.go->GetComponent<UITabs>())    tb->SetFocused(f);
     };
 
     const int n = (int)items.size();
@@ -98,6 +102,12 @@ inline GameObject* NavigateUI(Scene& scene) {
             float step = (s->maxValue - s->minValue) * 0.05f;
             if (right) s->SetValue(s->value + step);
             else if (left) s->SetValue(s->value - step);
+            break;
+        }
+        case Tabs: {
+            auto* tb = it.go->GetComponent<UITabs>();
+            if (right) tb->SelectNext();
+            else if (left) tb->SelectPrevious();
             break;
         }
     }

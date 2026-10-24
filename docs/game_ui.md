@@ -72,6 +72,52 @@ they keep their layout at any window size. The HUD's health bar and number
 follow the `hp` variable, and the score follows `score`. The Loading Screen's
 bar follows `loading` (0 to 1).
 
+## Tabs
+
+**UI Tabs** (Add ▸ UI ▸ Controls ▸ Tabs, or Add Component ▸ UI Tabs) is a tab bar for
+settings menus, inventories and other screens with pages. Click a tab to select
+it. Each tab can name a **Page** object: the selected tab's page shows and the
+others hide, along with everything parented under them. **Generate Pages**
+makes and wires up one panel per tab. A sibling script's `on_change()` runs
+whenever the tab changes.
+
+- **Style**:
+  - **Segmented** (the default): one control with the selected tab highlighted.
+  - **Underline**: plain text tabs with a line under the selected one.
+  - **Folder**: browser-style tabs. The selected tab joins the page below. Give
+    the page the tab bar's *Selected Color* so they read as one piece.
+  - **Pills**: separate rounded buttons with gaps between them.
+  - **Vertical**: tabs stacked down the side, with the text left-aligned
+    (settings sidebars).
+- **Sizing**: *Equal width* shares the bar evenly. *Fit text* sizes each tab to
+  its text plus **Padding**. **Spacing** sets the gap between tabs. A name that
+  is too long for its tab is cut short with "...".
+- **Per tab** (the row under each tab name): an **Icon** (a texture path, or
+  drop one from the Project panel) drawn before the text, a **Badge** (0 = none,
+  -1 = a small dot, a number shows the count, "99+" above 99) and **Enabled**.
+  A disabled tab is dimmed and can't be selected. Clicks and the keys below skip
+  it.
+- **States and motion**: *Hover Tint* and *Pressed Tint* show under the pointer.
+  With **Animate** on, the selection slides to the new tab. *Speed* sets how fast.
+- **Too many tabs**: when the tabs don't fit (for example with a *Min Tab Size*
+  set, or *Fit text* names that are longer than the bar), the bar scrolls. Use
+  the mouse wheel, drag the tabs, or click the small arrow buttons at the ends.
+  The selected tab always scrolls into view.
+- **Keyboard and gamepad**: **Prev/Next Keys** (Q / E by default, any key name
+  works) and the gamepad L / R shoulder buttons switch tabs while the bar is on
+  screen. They don't fire while you are typing in a text field. *Wrap* goes from
+  the last tab back to the first. With **Focusable** on, menu navigation can
+  focus the bar, and Left / Right (A / D, the arrow keys, the D-pad) switch tabs.
+  Scenes saved before these options existed load with both turned off, so their
+  keys keep doing what they did.
+- **Look** presets: Pills, Segmented and Minimal (segmented controls), plus
+  Underline, Folder, Pill buttons and Sidebar.
+- **Script**: `ui_set_tab("Tabs", 2)`, `ui_tab_value("Tabs")`,
+  `ui_tab_text("Tabs")`, `ui_set_tab_badge("Tabs", 1, 3)` and
+  `ui_set_tab_enabled("Tabs", 3, false)`. On the tab bar's own object you can
+  use `set_tab(i)`, `tab_value()`, `set_tab_badge(i, n)` and
+  `set_tab_enabled(i, on)`.
+
 ## Phones and tablets
 
 - **The canvas fits any screen shape.** The Canvas's **Screen Match** decides

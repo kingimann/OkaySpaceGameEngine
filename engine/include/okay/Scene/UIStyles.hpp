@@ -181,17 +181,40 @@ inline void ApplyDropdown(UIDropdown* d, int i) {
 }
 
 inline const std::vector<const char*>& TabsPresets() {
-    static const std::vector<const char*> v = {"Pills", "Segmented", "Minimal"};
+    static const std::vector<const char*> v = {"Pills", "Segmented", "Minimal", "Underline", "Folder", "Pill buttons", "Sidebar"};
     return v;
 }
 inline void ApplyTabs(UITabs* t, int i) {
     if (!t) return;
     t->selectedTextColor = Color::White; t->textColor = Color::FromBytes(200, 205, 215);
+    // The first three are segmented controls (the classic look); the rest pick one
+    // of the other tab styles with the spacing / sizing that suit it.
+    t->style = UITabs::Style::Segmented; t->sizing = UITabs::Sizing::Equal; t->spacing = 0.0f;
+    t->hoverColor = Color::FromBytes(255, 255, 255, 20); t->pressedColor = Color::FromBytes(0, 0, 0, 50);
     switch (i) {
         case 0: t->shape = UIShape::Pill; t->background = Color::FromBytes(23, 25, 31); t->selected = slate::Accent(); break;
         case 1: t->shape = UIShape::Rounded; t->cornerRadius = 8.0f; t->background = slate::Field(); t->selected = Color::FromBytes(78, 86, 106); break;
         case 2: t->shape = UIShape::Rounded; t->cornerRadius = 6.0f; t->background = Color::FromBytes(0, 0, 0, 0);
                 t->selected = Color::FromBytes(66, 150, 250, 50); t->selectedTextColor = Color::FromBytes(150, 198, 255); break;
+        case 3:   // text tabs with an accent line under the selected one
+            t->style = UITabs::Style::Underline; t->sizing = UITabs::Sizing::FitText; t->spacing = 4.0f;
+            t->shape = UIShape::Rectangle; t->cornerRadius = 6.0f; t->background = Color::FromBytes(0, 0, 0, 0);
+            t->selected = slate::Accent(); t->textColor = slate::Dim(); t->selectedTextColor = slate::Text();
+            t->indicatorThickness = 3.0f; break;
+        case 4:   // browser tabs: the selected one joins the page (give the page the Card colour)
+            t->style = UITabs::Style::Folder; t->sizing = UITabs::Sizing::FitText; t->spacing = 2.0f;
+            t->shape = UIShape::Rounded; t->cornerRadius = 8.0f; t->background = slate::Panel();
+            t->selected = slate::Card(); t->textColor = slate::Dim(); t->selectedTextColor = slate::Text();
+            t->indicatorThickness = 2.0f; break;
+        case 5:   // separate round buttons
+            t->style = UITabs::Style::Pills; t->sizing = UITabs::Sizing::FitText; t->spacing = 8.0f;
+            t->shape = UIShape::Pill; t->background = slate::Field(); t->selected = slate::Accent();
+            t->hoverColor = Color::FromBytes(255, 255, 255, 26); break;
+        case 6:   // a settings-menu sidebar
+            t->style = UITabs::Style::Vertical; t->sizing = UITabs::Sizing::FitText; t->spacing = 4.0f;
+            t->shape = UIShape::Rounded; t->cornerRadius = 8.0f; t->background = slate::Panel();
+            t->selected = slate::Field(); t->textColor = slate::Dim(); t->selectedTextColor = slate::Text();
+            t->padding = 14.0f; t->indicatorThickness = 3.0f; break;
         default: break;
     }
 }
@@ -262,6 +285,10 @@ inline void CopyStyle(const UIDropdown& s, UIDropdown& d) {
 inline void CopyStyle(const UITabs& s, UITabs& d) {
     d.background = s.background; d.selected = s.selected; d.textColor = s.textColor;
     d.selectedTextColor = s.selectedTextColor; d.shape = s.shape; d.cornerRadius = s.cornerRadius;
+    d.style = s.style; d.sizing = s.sizing; d.spacing = s.spacing; d.padding = s.padding;
+    d.fontScale = s.fontScale; d.indicatorThickness = s.indicatorThickness; d.iconSize = s.iconSize;
+    d.hoverColor = s.hoverColor; d.pressedColor = s.pressedColor; d.badgeColor = s.badgeColor;
+    d.badgeTextColor = s.badgeTextColor; d.animate = s.animate; d.animSpeed = s.animSpeed;
 }
 inline void CopyStyle(const UIRadialProgress& s, UIRadialProgress& d) {
     d.background = s.background; d.fill = s.fill; d.thickness = s.thickness; d.textColor = s.textColor;

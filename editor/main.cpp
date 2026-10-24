@@ -40245,7 +40245,7 @@ int main(int argc, char** argv) {
         g_showVisualScript = true;
         ConsoleLog("Visual Script paused before node #" + std::to_string(v.node) + " (" + v.nodeType + ") on '" + v.object +
                    "'. F5 continue, F10 step, F11 step into.");
-        g_gameFiber.Yield();   // the game stays frozen here until Continue / Step
+        g_gameFiber.YieldToEditor();   // the game stays frozen here until Continue / Step
         v.stopped = false;
         v.graph = nullptr;
         v.resume = false;

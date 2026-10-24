@@ -11,7 +11,7 @@ static GameFiber g_fiber;
 static std::string g_trace;
 
 static int Deep(int n) {   // a few frames deep, then freeze in the middle
-    if (n == 0) { g_trace += "y"; g_fiber.Yield(); g_trace += "r"; return 1; }
+    if (n == 0) { g_trace += "y"; g_fiber.YieldToEditor(); g_trace += "r"; return 1; }
     return Deep(n - 1) + 1;
 }
 
@@ -24,7 +24,7 @@ int main() {
         int local = 0;
         g_fiber.Run([&] {
             local = 1; g_trace += "a";
-            g_fiber.Yield();
+            g_fiber.YieldToEditor();
             local = 2; g_trace += "b";
             local += Deep(50);
             g_trace += "c";
@@ -56,7 +56,7 @@ int main() {
         CHECK(after);
     }
     // Yield outside the fiber does nothing.
-    g_fiber.Yield();
+    g_fiber.YieldToEditor();
     CHECK(!g_fiber.Suspended());
 
     TEST_MAIN_RESULT();

@@ -1,7 +1,7 @@
 #pragma once
 // Runs the game's tick on its own stack, on the editor's own thread, so a
 // visual-script breakpoint can freeze the game in the middle of a frame: the
-// breakpoint handler calls Yield(), the editor carries on drawing (the game
+// breakpoint handler calls YieldToEditor(), the editor carries on drawing (the game
 // frozen exactly where it stopped), and Resume() later continues the tick from
 // that point. Staying on one thread keeps OpenGL, audio and thread-locals happy.
 // Only used while debugging (a breakpoint is set); otherwise the editor calls
@@ -35,7 +35,7 @@ public:
 #endif
     }
 
-    /// Run `body` on the fiber. Returns when it finished or called Yield().
+    /// Run `body` on the fiber. Returns when it finished or called YieldToEditor().
     /// Must not be called while a previous body is suspended (use Resume()).
     void Run(std::function<void()> body) {
         if (m_suspended) return;
@@ -60,7 +60,7 @@ public:
     /// Carry on with a suspended body until it finishes or yields again.
     void Resume() { if (m_suspended) Enter(); }
     /// From inside the body: freeze here and return to Run()/Resume()'s caller.
-    void Yield() {
+    void YieldToEditor() {
         if (!m_inFiber) return;
         m_suspended = true;
         m_inFiber = false;

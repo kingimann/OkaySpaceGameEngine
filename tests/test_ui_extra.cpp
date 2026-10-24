@@ -586,5 +586,46 @@ int main() {
         Input::FeedKeys({});
     }
 
+    // --- Raw Image: the UV rect tiles, offsets and mirrors the texture --------
+    {
+        UIRawImage ri;
+        auto one = ri.Pieces(200, 100);                    // (0,0,1,1): the image once
+        CHECK(one.size() == 1);
+        CHECK_NEAR(one[0].w, 200.0f, 1e-3f); CHECK_NEAR(one[0].u1, 1.0f, 1e-4f);
+        ri.uvW = 3; ri.uvH = 2;                            // tiled 3 x 2
+        auto tiles = ri.Pieces(300, 200);
+        CHECK(tiles.size() == 6);
+        float area = 0; for (const auto& p : tiles) area += p.w * p.h;
+        CHECK_NEAR(area, 300.0f * 200.0f, 1e-2f);
+        ri.uvX = 0.5f; ri.uvW = 1; ri.uvH = 1;             // offset half an image: two pieces
+        auto off = ri.Pieces(100, 100);
+        CHECK(off.size() == 2);
+        CHECK_NEAR(off[0].w, 50.0f, 1e-3f); CHECK_NEAR(off[0].u0, 0.5f, 1e-4f); CHECK_NEAR(off[1].u0, 0.0f, 1e-4f);
+        ri.uvX = 1; ri.uvW = -1;                           // mirrored
+        auto mir = ri.Pieces(100, 100);
+        CHECK(mir.size() == 1);
+        CHECK(mir[0].u0 > mir[0].u1);
+        ri.uvX = 0; ri.uvW = 1; ri.scroll = {0.25f, 0};    // scrolling wraps the offset
+        for (int i = 0; i < 5; ++i) ri.Update(1.0f);
+        CHECK_NEAR(ri.uvX, 0.25f, 1e-4f);
+        // Saved and loaded with the scene, and laid out like any widget.
+        Scene s("raw");
+        GameObject* g = s.CreateGameObject("Raw");
+        auto* r = g->AddComponent<UIRawImage>();
+        r->texture = "Assets/bg.png"; r->uvW = 4; r->uvH = 2; r->scroll = {0.1f, -0.2f};
+        r->position = {10, 20}; r->size = {300, 150}; r->anchor = UIAnchor::Center;
+        CHECK(GetUIRect(g).valid);
+        Scene s2("raw2");
+        GameObject* back = SceneSerializer::InstantiateFromText(s2, SceneSerializer::SerializeObject(*g));
+        auto* rb = back ? back->GetComponent<UIRawImage>() : nullptr;
+        CHECK(rb != nullptr);
+        if (rb) {
+            CHECK(rb->texture == "Assets/bg.png");
+            CHECK_NEAR(rb->uvW, 4.0f, 1e-4f); CHECK_NEAR(rb->scroll.y, -0.2f, 1e-4f);
+            CHECK_NEAR(rb->size.x, 300.0f, 1e-4f);
+            CHECK(rb->anchor == UIAnchor::Center);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

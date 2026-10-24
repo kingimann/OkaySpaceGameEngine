@@ -4271,6 +4271,8 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
         if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
         if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
+        if (ImGui::MenuItem("Raw Image"))    addUI("RawImage",    [](GameObject* g){ g->AddComponent<UIRawImage>(); });
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A texture through a UV rect: show part of it, tile it or scroll it.");
         if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
         ImGui::EndMenu();
     }
@@ -6314,6 +6316,7 @@ static bool ObjectUsesAsset(GameObject* go, const std::string& fname) {
     if (auto* sr = go->GetComponent<SpriteRenderer>()) if (hit(sr->texture)) return true;
     if (auto* mr = go->GetComponent<MeshRenderer>())   if (hit(mr->texture) || hit(mr->meshPath)) return true;
     if (auto* im = go->GetComponent<UIImage>())        if (hit(im->texture)) return true;
+    if (auto* ri = go->GetComponent<UIRawImage>())     if (hit(ri->texture)) return true;
     if (auto* tr = go->GetComponent<TextRenderer>())   if (hit(tr->fontPath)) return true;
     if (auto* bt = go->GetComponent<UIButton>())       if (hit(bt->fontPath)) return true;
     for (auto* sc : go->GetComponents<ScriptComponent>()) if (hit(sc->Path())) return true;
@@ -15125,7 +15128,7 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
         if (go->GetComponent<UIDropdown>())
             dl->AddTriangleFilled(ImVec2(c.x + r * 0.2f, c.y - r * 0.15f), ImVec2(c.x + r * 0.7f, c.y - r * 0.15f), ImVec2(c.x + r * 0.45f, c.y + r * 0.2f), ic);
         else dl->AddLine(ImVec2(c.x - r * 0.55f, c.y - r * 0.3f), ImVec2(c.x - r * 0.55f, c.y + r * 0.3f), ic, 1.4f);
-    } else if (go->GetComponent<UIImage>()) {                // picture
+    } else if (go->GetComponent<UIImage>() || go->GetComponent<UIRawImage>()) {   // picture
         ImU32 ic = col(130, 220, 150);
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.8f), ImVec2(c.x + r, c.y + r * 0.8f), ic, 1.5f, 0, 1.4f);
         dl->AddTriangleFilled(ImVec2(c.x - r * 0.7f, c.y + r * 0.6f), ImVec2(c.x, c.y - r * 0.1f), ImVec2(c.x + r * 0.7f, c.y + r * 0.6f), ic);
@@ -15384,7 +15387,7 @@ void DrawHierarchy(EditorState& ed) {
                 go->GetComponent<CharacterController3D>() || go->GetComponent<ClickToMoveController>())
                 hay += " player controller";
             if (go->GetComponent<UIButton>() || go->GetComponent<UIPanel>() ||
-                go->GetComponent<UIImage>()  || go->GetComponent<UISlider>() ||
+                go->GetComponent<UIImage>()  || go->GetComponent<UIRawImage>() || go->GetComponent<UISlider>() ||
                 go->GetComponent<UIToggle>() || go->GetComponent<UIProgressBar>())
                 hay += " ui widget canvas";
             for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
@@ -15976,6 +15979,7 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Panel"))        mkUI("Panel",   [](GameObject* g){ g->AddComponent<UIPanel>(); });
             if (ImGui::MenuItem("Button"))       { mkUI("Button", [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
             if (ImGui::MenuItem("Image"))        mkUI("Image",   [](GameObject* g){ g->AddComponent<UIImage>(); });
+            if (ImGui::MenuItem("Raw Image"))    mkUI("RawImage", [](GameObject* g){ g->AddComponent<UIRawImage>(); });
             if (ImGui::MenuItem("Text"))         mkUI("Text",    [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
             if (ImGui::MenuItem("Slider"))       mkUI("Slider",  [](GameObject* g){ g->AddComponent<UISlider>(); });
             if (ImGui::MenuItem("Toggle"))       mkUI("Toggle",  [](GameObject* g){ g->AddComponent<UIToggle>(); });
@@ -30786,19 +30790,66 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uch")) toRemove = cr;
         }
     }
+    if (auto* ri = dynamic_cast<UIRawImage*>(curComp)) {
+        if (CompHeader("UI Raw Image", ri, &toRemove)) {
+            AnchorCombo("Anchor##uri", ri->anchor, ed);
+            UIRectFields("uri", ri->anchor, ri->position, ri->size, ed);
+            ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Texture"); ImGui::SameLine(80);
+            if (AssetSlot("uritex", ri->texture, "Image", {".png", ".jpg", ".jpeg", ".bmp", ".tga"})) ed.dirty = true;
+            TexFieldThumb(ri->texture);
+            int tw = 0, th = 0;
+            if (SDL_Texture* t = ri->texture.empty() ? nullptr : GetThumb(ri->texture)) SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+            if (tw > 0) {
+                if (ImGui::SmallButton("Set Native Size##uri")) {
+                    ed.PushUndo();
+                    ri->size = {(float)tw * std::fabs(ri->uvW), (float)th * std::fabs(ri->uvH)};
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the widget the texture's own size (times the UV size)");
+                ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", tw, th);
+            }
+            float c[4] = {ri->color.r, ri->color.g, ri->color.b, ri->color.a};
+            if (ImGui::ColorEdit4("Tint##uri", c)) { ri->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            SectionHeader("UV Rect");
+            float uvp[2] = {ri->uvX, ri->uvY}, uvs[2] = {ri->uvW, ri->uvH};
+            if (ImGui::DragFloat2("Offset (X, Y)##uri", uvp, 0.01f)) { ri->uvX = uvp[0]; ri->uvY = uvp[1]; ed.dirty = true; }
+            if (ImGui::DragFloat2("Size (W, H)##uri", uvs, 0.01f, -64.0f, 64.0f)) { ri->uvW = uvs[0]; ri->uvH = uvs[1]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("1, 1 = the whole image once. 3, 2 tiles it 3 across, 2 down.\nA negative size mirrors it.");
+            if (ImGui::SmallButton("Reset##uriuv")) { ri->uvX = ri->uvY = 0.0f; ri->uvW = ri->uvH = 1.0f; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Tile to fit##uri") && tw > 0) {   // repeat at the texture's own pixel size
+                ri->uvW = ri->size.x / (float)tw; ri->uvH = ri->size.y / (float)th; ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Repeat the texture at its own pixel size across the widget");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Flip X##uri")) { ri->uvX += ri->uvW; ri->uvW = -ri->uvW; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Flip Y##uri")) { ri->uvY += ri->uvH; ri->uvH = -ri->uvH; ed.dirty = true; }
+            float sc[2] = {ri->scroll.x, ri->scroll.y};
+            if (ImGui::DragFloat2("Scroll / s##uri", sc, 0.005f, -10.0f, 10.0f)) { ri->scroll = {sc[0], sc[1]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the UV offset every second while playing (scrolling backgrounds, conveyors).");
+        }
+    }
     if (auto* im = dynamic_cast<UIImage*>(curComp)) {
         if (CompHeader("UI Image", im, &toRemove)) {
             AnchorCombo("Anchor##uim", im->anchor, ed);
             UIRectFields("uim", im->anchor, im->position, im->size, ed);
-            char tx[256];
-            std::strncpy(tx, im->texture.c_str(), sizeof(tx) - 1);
-            tx[sizeof(tx) - 1] = '\0';
-            if (ImGui::InputText("Texture##uim", tx, sizeof(tx))) { im->texture = tx; ed.dirty = true; }
-            if (AcceptAssetPathField(im->texture)) ed.dirty = true;   // drop an image from Project
+            ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Image"); ImGui::SameLine(80);
+            if (AssetSlot("uimtex", im->texture, "Image", {".png", ".jpg", ".jpeg", ".bmp", ".tga"})) ed.dirty = true;
             TexFieldThumb(im->texture);
+            if (!im->texture.empty()) {
+                if (SDL_Texture* t = GetThumb(im->texture)) {
+                    int tw = 0, th = 0; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+                    if (ImGui::SmallButton("Set Native Size##uim")) { ed.PushUndo(); im->size = {(float)tw, (float)th}; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the widget the picture's own size (%d x %d)", tw, th);
+                    ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", tw, th);
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.45f, 1.0f), "Can't load this file.");
+                }
+            }
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
-            ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");
+            if (im->texture.empty()) ImGui::TextDisabled("No image: it draws as a coloured shape.");
             SectionHeader("Texture");
             if (ImGui::Checkbox("Flip X##uim", &im->flipX)) ed.dirty = true; ImGui::SameLine();
             if (ImGui::Checkbox("Flip Y##uim", &im->flipY)) ed.dirty = true;
@@ -31490,6 +31541,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRawImage>() && !go->GetComponent<UIImage>(), "UI Raw Image (tile / scroll a texture)")) { go->AddComponent<UIRawImage>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
             if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
@@ -31875,7 +31927,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto add = [&](int k) { edItems.push_back(UIDrawItem{_qi, k, k}); };
         if (g->GetComponent<UIScrollView>())     add(K_Scroll);
         if (g->GetComponent<UIDropTarget>())     add(K_DropBg);
-        if (g->GetComponent<UIImage>())          add(K_Image);
+        if (g->GetComponent<UIImage>() || g->GetComponent<UIRawImage>()) add(K_Image);
         if (g->GetComponent<UIPanel>())          add(K_Panel);
         if (g->GetComponent<UIProgressBar>())    add(K_Progress);
         if (g->GetComponent<UISlider>())         add(K_Slider);
@@ -31951,6 +32003,23 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI images (logos/icons): preview as a tinted rect with the path centered.
         else if (_it.kind == K_Image) {   // images (logos/icons)
         auto* im = up->GetComponent<UIImage>();
+        if (auto* ri = up->GetComponent<UIRawImage>(); ri && !im) {   // Raw Image: the texture through its UV rect
+            if (!ri->enabled || !up->active || UIHidden(up.get())) continue;
+            Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+            if (svCull(up.get(), o, sz)) continue;
+            const ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+            SDL_Texture* rtex = ri->texture.empty() ? nullptr : GetThumb(ri->texture);
+            if (!rtex) {
+                dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(ri->color));
+                dl->AddRect(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(255, 255, 255, 90));
+                if (!ri->texture.empty()) DrawBitmapText(dl, "missing: " + ri->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 150, 120, 220));
+                continue;
+            }
+            for (const auto& pc : ri->Pieces(sz.x, sz.y))
+                dl->AddImage((ImTextureID)rtex, ImVec2(a.x + pc.x, a.y + pc.y), ImVec2(a.x + pc.x + pc.w, a.y + pc.y + pc.h),
+                             ImVec2(pc.u0, pc.v0), ImVec2(pc.u1, pc.v1), ToColor(ri->color));
+            continue;
+        }
         if (!im || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
@@ -31964,7 +32033,48 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ImVec2(a.x + im->shadowOffset.x, a.y + im->shadowOffset.y),
                               ImVec2(b.x + im->shadowOffset.x, b.y + im->shadowOffset.y),
                               ToColor(im->shadowColor), im->cornerRadius, icf);
-        if (IsPolyUIShape(im->shape)) {
+        // The picture itself, as the game draws it: tint, flips, 9-slice, fill,
+        // preserve-aspect, and rounded / circle / pill corners.
+        SDL_Texture* itex = im->texture.empty() ? nullptr : GetThumb(im->texture);
+        if (itex) {
+            int tw = 0, th = 0; SDL_QueryTexture(itex, nullptr, nullptr, &tw, &th);
+            const ImU32 tint = ToColor(im->color);
+            const float ux0 = im->flipX ? 1.0f : 0.0f, ux1 = im->flipX ? 0.0f : 1.0f;
+            const float vy0 = im->flipY ? 1.0f : 0.0f, vy1 = im->flipY ? 0.0f : 1.0f;
+            auto uvAt = [&](float fx, float fy) { return ImVec2(ux0 + (ux1 - ux0) * fx, vy0 + (vy1 - vy0) * fy); };
+            const bool filled = im->fillMode != UIImage::FillMode::None;
+            if (im->nineSlice && im->border > 0.0f && tw > 0 && th > 0) {
+                const float bx = std::min(im->border, sz.x * 0.5f), by = std::min(im->border, sz.y * 0.5f);
+                const float su[4] = {0.0f, im->border / tw, 1.0f - im->border / tw, 1.0f};
+                const float sv[4] = {0.0f, im->border / th, 1.0f - im->border / th, 1.0f};
+                const float dx[4] = {a.x, a.x + bx, b.x - bx, b.x};
+                const float dy[4] = {a.y, a.y + by, b.y - by, b.y};
+                for (int yy = 0; yy < 3; ++yy)
+                    for (int xx = 0; xx < 3; ++xx)
+                        if (dx[xx + 1] > dx[xx] && dy[yy + 1] > dy[yy])
+                            dl->AddImage((ImTextureID)itex, ImVec2(dx[xx], dy[yy]), ImVec2(dx[xx + 1], dy[yy + 1]),
+                                         uvAt(su[xx], sv[yy]), uvAt(su[xx + 1], sv[yy + 1]), tint);
+            } else if (filled) {
+                if (sz.x > 0 && sz.y > 0)
+                    dl->AddImage((ImTextureID)itex, fa, fb, uvAt(fox / sz.x, foy / sz.y),
+                                 uvAt((fox + fw) / sz.x, (foy + fh) / sz.y), tint);
+            } else {
+                ImVec2 da = a, db = b;
+                if (im->preserveAspect) {
+                    float aox, aoy, afw, afh;
+                    im->AspectRect(sz.x, sz.y, (float)tw, (float)th, aox, aoy, afw, afh);
+                    da = ImVec2(a.x + aox, a.y + aoy); db = ImVec2(da.x + afw, da.y + afh);
+                }
+                const float rounding = im->shape == UIShape::Circle || im->shape == UIShape::Pill
+                                     ? std::min(db.x - da.x, db.y - da.y) * 0.5f
+                                     : im->shape == UIShape::Rounded ? im->cornerRadius : 0.0f;
+                if (rounding > 0.5f)
+                    dl->AddImageRounded((ImTextureID)itex, da, db, uvAt(0, 0), uvAt(1, 1), tint, rounding,
+                                        im->shape == UIShape::Rounded ? icf : ImDrawFlags_RoundCornersAll);
+                else
+                    dl->AddImage((ImTextureID)itex, da, db, uvAt(0, 0), uvAt(1, 1), tint);
+            }
+        } else if (IsPolyUIShape(im->shape)) {
             DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), im->shape, im->cornerRadius,
                             ToColor(im->color), IM_COL32(255, 255, 255, 90), 1.0f, im->cornerMask);
         } else {
@@ -31973,12 +32083,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
         if (im->borderWidth > 0.0f)   // frame/matte around the image
             dl->AddRect(a, b, ToColor(im->borderColor), im->cornerRadius, icf, im->borderWidth);
-        if (!im->texture.empty()) {
-            DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
-            if (im->flipX || im->flipY)   // preview hint for mirror flags
-                DrawBitmapText(dl, im->flipX && im->flipY ? "flip XY" : im->flipX ? "flip X" : "flip Y",
-                               a.x + 4, a.y + 14, 1.0f, IM_COL32(150, 200, 255, 200));
-        }
+        if (!im->texture.empty() && !itex)   // the file couldn't be loaded: say so on the widget
+            DrawBitmapText(dl, "missing: " + im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 150, 120, 220));
     }
 
     // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.

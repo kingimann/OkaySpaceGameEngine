@@ -5,6 +5,7 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIImage.hpp"
+#include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIRating.hpp"
@@ -83,6 +84,7 @@ inline UIRect GetUIRect(GameObject* go) {
     if (auto* b = go->GetComponent<UIButton>())          { r.valid = true; r.anchor = b->anchor; r.anchorPtr = &b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
     else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor; r.anchorPtr = &p->anchor;  r.position = &p->position;  r.sizePtr = &p->size;  r.size = p->size; }
     else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.anchorPtr = &im->anchor; r.position = &im->position; r.sizePtr = &im->size; r.size = im->size; }
+    else if (auto* ri = go->GetComponent<UIRawImage>())   { r.valid = true; r.anchor = ri->anchor; r.anchorPtr = &ri->anchor; r.position = &ri->position; r.sizePtr = &ri->size; r.size = ri->size; }
     else if (auto* sl = go->GetComponent<UISlider>())     { r.valid = true; r.anchor = sl->anchor; r.anchorPtr = &sl->anchor; r.position = &sl->position; r.sizePtr = &sl->size; r.size = sl->size; }
     else if (auto* sp = go->GetComponent<UIStepper>())    { r.valid = true; r.anchor = sp->anchor; r.anchorPtr = &sp->anchor; r.position = &sp->position; r.sizePtr = &sp->size; r.size = sp->size; }
     else if (auto* rt = go->GetComponent<UIRating>())     { r.valid = true; r.anchor = rt->anchor; r.anchorPtr = &rt->anchor; r.position = &rt->position; r.sizePtr = &rt->size; r.size = rt->size; }
@@ -365,6 +367,7 @@ inline int UIDefaultLayer(GameObject* go) {
     if (!go) return -1;
     if (go->GetComponent<UIDropTarget>())     return 0;   // slot background
     if (go->GetComponent<UIImage>())          return 1;
+    if (go->GetComponent<UIRawImage>())       return 1;
     if (go->GetComponent<UIPanel>())          return 2;
     if (go->GetComponent<Minimap>())          return 3;
     if (go->GetComponent<UIScrollView>())     return 4;

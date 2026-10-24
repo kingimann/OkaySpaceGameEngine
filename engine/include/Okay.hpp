@@ -172,6 +172,7 @@
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/LoadingScreenLayout.hpp"
 #include "okay/Components/TweenAnimation.hpp"
+#include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/GridInventoryUI.hpp"

@@ -838,3 +838,11 @@ add_test(NAME game_fiber COMMAND test_game_fiber)
 add_executable(test_edit_transform test_edit_transform.cpp)
 target_link_libraries(test_edit_transform PRIVATE okay::engine)
 add_test(NAME edit_transform COMMAND test_edit_transform)
+
+add_executable(test_polymesh test_polymesh.cpp)
+target_link_libraries(test_polymesh PRIVATE okay::engine)
+add_test(NAME polymesh COMMAND test_polymesh)
+
+add_executable(test_mesh_asset test_mesh_asset.cpp)
+target_link_libraries(test_mesh_asset PRIVATE okay::engine)
+add_test(NAME mesh_asset COMMAND test_mesh_asset)

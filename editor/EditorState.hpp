@@ -98,6 +98,12 @@ public:
 
     // ---- Files ---------------------------------------------------------
     bool Save(const std::string& path);
+    /// Write meshes edited since they were loaded from a .okaymesh file back to
+    /// that file (Save does this first). Returns how many files were written.
+    int SaveEditedMeshAssets(std::string* report = nullptr);
+    /// Called for an object whose mesh was replaced by its re-saved asset (same
+    /// vertices, triangles possibly re-ordered): mesh edit mode drops face/edge selections.
+    static inline std::function<void(GameObject*)> onMeshTrianglesReordered;
     bool Load(const std::string& path, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
 

@@ -5,4 +5,5 @@ EXPORT break: inner loop ran 3 time(s)
 EXPORT scopes: score 15, coins 3
 EXPORT changed: score 15
 EXPORT api: position (1, 2, 3)
+EXPORT mesh asset: Tower top at 1.75
 EXPORT timer: ticked true

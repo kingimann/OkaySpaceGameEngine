@@ -10,6 +10,8 @@
 #include "EditorState.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
+#include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
+#include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
@@ -2889,6 +2891,122 @@ static const char* const kNeedFaces = "Select faces first: Face mode (key 3), th
 static const char* const kNeedVerts = "Select vertices first: Vertex mode (key 1), then click vertices in the 3D view.";
 static const char* const kNeedEdges = "Select edges first: Edge mode (key 2), then click edges in the 3D view.";
 
+// Load the renderer's mesh file (.okaymesh or .obj) into it.
+static void LoadMeshFileInto(EditorState& ed, MeshRenderer* mr) {
+    Mesh m; std::string tex, err;
+    if (okay::modeling::LoadMeshAsset(mr->meshPath, m, &tex, &err)) {
+        ed.PushUndo();
+        mr->mesh = m;
+        mr->meshPathHash = okay::modeling::GeometryHash(mr->mesh);
+        if (!tex.empty() && mr->texture.empty()) mr->texture = tex;
+        ConsoleLog("Loaded " + mr->meshPath + " (" + std::to_string(mr->mesh.TriangleCount()) + " triangles)");
+        ed.dirty = true;
+    } else {
+        ConsoleLog("Couldn't load the mesh file: " + err, 2);
+    }
+}
+
+// "Save as Mesh Asset": write the object's mesh to <project>/Assets/<name>.okaymesh
+// (quads kept as quads) and point the object at it, so other objects and scenes
+// can use the same model. Saving the scene later writes edits back to the file.
+static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* mr) {
+    const bool isAsset = okay::modeling::IsOkayMeshPath(mr->meshPath);
+    if (ImGui::Button(isAsset ? "Save Mesh Asset##meshasset" : "Save as Mesh Asset##meshasset")) {
+        std::filesystem::path path;
+        if (isAsset) path = mr->meshPath;
+        else {
+            // The project's Assets folder; without a project, next to the open scene.
+            std::filesystem::path dir = !ed.projectDir().empty() ? std::filesystem::path(ed.projectDir()) / "Assets"
+                                      : !ed.path().empty() ? std::filesystem::path(ed.path()).parent_path()
+                                      : std::filesystem::current_path();
+            std::string base;
+            for (char c : go->name) base += (std::isalnum((unsigned char)c) || c == '-' || c == '_') ? c : '_';
+            if (base.empty()) base = "Mesh";
+            path = dir / (base + ".okaymesh");
+            for (int n = 2; std::filesystem::exists(path); ++n) path = dir / (base + "_" + std::to_string(n) + ".okaymesh");
+        }
+        std::error_code ec;
+        if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
+        std::string err;
+        if (okay::modeling::SaveMeshAsset(path.string(), mr->mesh, &err)) {
+            if (!isAsset) ed.PushUndo();
+            mr->meshPath = path.string();
+            mr->meshPathHash = okay::modeling::GeometryHash(mr->mesh);
+            ed.dirty = true;
+            okay::modeling::PolyMesh pm;
+            okay::modeling::PolyMesh::Load(path.string(), pm);
+            ConsoleLog("Saved mesh asset " + path.string() + " (" + std::to_string(pm.faces.size()) + " faces: " +
+                       std::to_string(pm.CountFaces(4)) + " quads, " + std::to_string(pm.CountFaces(3)) + " triangles, " +
+                       std::to_string(pm.CountNgons()) + " n-gons)");
+        } else {
+            ConsoleLog("Couldn't save the mesh asset: " + err, 2);
+        }
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(isAsset ? "Write this mesh back to %s now (saving the scene does it too)."
+                                  : "Save this mesh as a .okaymesh file in the project's Assets folder and use it from there,\nso other objects and scenes can share the model. Quads are kept as quads.",
+                          mr->meshPath.c_str());
+}
+
+// ---- Undo inside mesh edit mode -------------------------------------------
+// Each edit-mode step stores a copy of just that mesh (and the selection), not
+// a text snapshot of the whole scene, so undo stays instant on big meshes.
+// Leaving edit mode turns the whole session into one scene undo step.
+struct MeshUndoStep {
+    Mesh mesh;
+    std::vector<int> verts, faces;
+    std::vector<std::pair<int, int>> edges;
+};
+std::vector<MeshUndoStep> g_meshUndo, g_meshRedo;
+Mesh g_meshEditStart;            // the mesh as it was when edit mode began
+bool g_meshEditStartSet = false;
+static MeshUndoStep MeshUndoCapture(const Mesh& m) { return {m, g_meshSelVerts, g_meshSelFaces, g_meshSelEdges}; }
+static void MeshUndoRestore(Mesh& m, MeshUndoStep& s) {
+    m = std::move(s.mesh);
+    g_meshSelVerts = std::move(s.verts); g_meshSelFaces = std::move(s.faces); g_meshSelEdges = std::move(s.edges);
+}
+static MeshRenderer* EditedRenderer() { return g_meshEdit && g_meshEditObj ? g_meshEditObj->GetComponent<MeshRenderer>() : nullptr; }
+// Call before changing a mesh: one undo step. In edit mode on this mesh it's a
+// mesh step; otherwise an ordinary scene undo step.
+static void EditUndoPoint(EditorState& ed, MeshRenderer* mr) {
+    if (!mr || mr != EditedRenderer()) { ed.PushUndo(); return; }
+    g_meshUndo.push_back(MeshUndoCapture(mr->mesh));
+    g_meshRedo.clear();
+    // Keep it bounded: at most 100 steps and about 4 million stored vertices.
+    std::size_t total = 0;
+    for (const auto& s : g_meshUndo) total += s.mesh.vertices.size();
+    while (g_meshUndo.size() > 1 && (g_meshUndo.size() > 100 || total > 4000000)) {
+        total -= g_meshUndo.front().mesh.vertices.size();
+        g_meshUndo.erase(g_meshUndo.begin());
+    }
+}
+// Ctrl+Z / Ctrl+Y in edit mode. Returns false when there's no mesh step to take
+// (then the ordinary scene undo applies).
+static bool MeshUndo(bool redo) {
+    MeshRenderer* mr = EditedRenderer();
+    auto& from = redo ? g_meshRedo : g_meshUndo;
+    auto& to = redo ? g_meshUndo : g_meshRedo;
+    if (!mr || from.empty()) return false;
+    to.push_back(MeshUndoCapture(mr->mesh));
+    MeshUndoRestore(mr->mesh, from.back());
+    from.pop_back();
+    return true;
+}
+// Leaving edit mode: if the mesh changed, record the whole session as one scene
+// undo step (the scene snapshot taken with the mesh as it was on entry).
+static void MeshUndoCommit(EditorState& ed) {
+    MeshRenderer* mr = EditedRenderer();
+    if (mr && g_meshEditStartSet &&
+        okay::modeling::GeometryHash(mr->mesh) != okay::modeling::GeometryHash(g_meshEditStart)) {
+        Mesh now = mr->mesh;
+        mr->mesh = g_meshEditStart;
+        ed.PushUndo();
+        mr->mesh = std::move(now);
+    }
+    g_meshUndo.clear(); g_meshRedo.clear();
+    g_meshEditStart = Mesh{}; g_meshEditStartSet = false;
+}
+
 // Enter or leave mesh edit mode on `go` (the panel's Edit Mesh checkbox and Tab).
 static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
     if (g_meModal.Active() && g_meModalObj) {   // never leave a transform half done
@@ -2898,8 +3016,16 @@ static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
         else g_meModal.Confirm();
         g_meModalObj = nullptr;
     }
+    if (g_meshEdit && g_meshEditObj) {   // finishing an edit session: one scene undo step for it
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_meshEditObj) { alive = true; break; }
+        if (alive) MeshUndoCommit(ed);
+    }
+    g_meshUndo.clear(); g_meshRedo.clear(); g_meshEditStartSet = false;
     MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
     if (on && mr) {
+        g_meshEditStart = mr->mesh;   // before the weld, so undoing the session gives back the original
+        g_meshEditStartSet = true;
         // Weld first so a primitive (24-vert cube) becomes clean shared
         // topology (8 verts), then moving a vertex moves the whole corner.
         mr->mesh.WeldVertices();
@@ -5386,8 +5512,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, ed.CanUndo())) { ed.Undo(); ConsoleLog("Undo"); }
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, ed.CanRedo())) { ed.Redo(); ConsoleLog("Redo"); }
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !g_meshUndo.empty() || ed.CanUndo())) { if (!MeshUndo(false)) ed.Undo(); ed.dirty = true; ConsoleLog("Undo"); }
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !g_meshRedo.empty() || ed.CanRedo())) { if (!MeshUndo(true)) ed.Redo(); ed.dirty = true; ConsoleLog("Redo"); }
         ImGui::Separator();
         if (ImGui::MenuItem("Project Settings...")) g_showProjectSettings = true;
         ImGui::EndMenu();
@@ -14724,10 +14850,14 @@ void HandleShortcuts(EditorState& ed) {
     const bool animKeys = AnimationTabFocused();
     // Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. (Guard the undo with !Shift
     // so Ctrl+Shift+Z doesn't undo and redo in the same frame.)
-    if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) { if (ed.Undo()) ConsoleLog("Undo"); }
+    if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
+        else if (ed.Undo()) ConsoleLog("Undo");
+    }
     if (ctrl && (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
-        if (ed.Redo()) ConsoleLog("Redo");
+        if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
+        else if (ed.Redo()) ConsoleLog("Redo");
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
     if (ctrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
@@ -25177,6 +25307,26 @@ void DrawModeling(EditorState& ed) {
         bool editing = g_meshEdit && g_meshEditObj == go;
         if (ImGui::Checkbox("Edit Mesh##model", &editing)) SetMeshEditMode(ed, go, editing);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tab in the 3D view switches too.");
+        // What the mesh is as polygons (quads recovered from triangle pairs), and
+        // whether it's watertight. Recomputed only when the geometry changes.
+        {
+            static std::uint64_t s_statHash = 0;
+            static std::string s_stat;
+            const std::uint64_t h = okay::modeling::GeometryHash(mr->mesh);
+            if (h != s_statHash) {
+                s_statHash = h;
+                const okay::modeling::PolyMesh pm = okay::modeling::PolyMesh::FromMesh(mr->mesh);
+                const auto rep = pm.Check();
+                s_stat = std::to_string(pm.verts.size()) + " vertices, " + std::to_string(pm.faces.size()) + " faces (" +
+                         std::to_string(pm.CountFaces(4)) + " quads, " + std::to_string(pm.CountFaces(3)) + " triangles, " +
+                         std::to_string(pm.CountNgons()) + " n-gons)  ·  " +
+                         (rep.Closed() ? std::string("closed") : std::to_string(rep.boundaryEdges) + " open edges") +
+                         (rep.nonManifoldEdges ? ", " + std::to_string(rep.nonManifoldEdges) + " non-manifold" : std::string());
+            }
+            ImGui::TextDisabled("%s", s_stat.c_str());
+        }
+        SaveMeshAssetButton(ed, go, mr);
+        if (!mr->meshPath.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", mr->meshPath.c_str()); }
         if (g_meshEdit && g_meshEditObj == go) {
             ImGui::TextDisabled("Click in the 3D view to select. G move, R rotate, S scale\n"
                                 "(then X/Y/Z to lock an axis, type a value, Ctrl to snap,\n"
@@ -25256,16 +25406,16 @@ void DrawModeling(EditorState& ed) {
             ImGui::DragFloat("##extdist", &g_extrudeDist, 0.01f, -10.0f, 10.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Extrude Faces##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo(); mr->mesh.ExtrudeFaces(g_meshSelFaces, g_extrudeDist); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.ExtrudeFaces(g_meshSelFaces, g_extrudeDist); ed.dirty = true;
             }
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##insamt", &g_insetAmt, 0.01f, 0.0f, 1.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Inset Faces##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo(); mr->mesh.InsetFaces(g_meshSelFaces, g_insetAmt); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.InsetFaces(g_meshSelFaces, g_insetAmt); ed.dirty = true;
             }
             if (ToolButton("Subdivide Sel##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo(); mr->mesh.SubdivideFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.SubdivideFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }
             // Per-face detailing (Blender's Individual ops): each selected face is
             // poked / extruded / inset on its own — studs, spikes, panels, greebles.
@@ -25274,37 +25424,37 @@ void DrawModeling(EditorState& ed) {
             ImGui::DragFloat("##pokeh", &s_poke, 0.01f, -2.0f, 2.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Poke##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo(); mr->mesh.PokeFaces(g_meshSelFaces, s_poke); g_meshSelFaces.clear(); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.PokeFaces(g_meshSelFaces, s_poke); g_meshSelFaces.clear(); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fan each selected face from a centre point raised by this height — spikes, pyramids, dimples.");
             ImGui::SetNextItemWidth(90);
             ImGui::DragFloat("##indext", &s_indivExt, 0.01f, -5.0f, 5.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Extrude Indiv##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo(); mr->mesh.ExtrudeFacesIndividual(g_meshSelFaces, s_indivExt); g_meshSelFaces.clear(); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.ExtrudeFacesIndividual(g_meshSelFaces, s_indivExt); g_meshSelFaces.clear(); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push each selected face out along ITS OWN normal as a separate stud (greebles, rivets, spikes).");
             ImGui::SetNextItemWidth(90);
             ImGui::DragFloat("##indins", &s_indivInset, 0.01f, 0.0f, 1.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Inset Indiv##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo(); mr->mesh.InsetFacesIndividual(g_meshSelFaces, s_indivInset); g_meshSelFaces.clear(); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.InsetFacesIndividual(g_meshSelFaces, s_indivInset); g_meshSelFaces.clear(); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inset each selected face independently (panels/frames) — pair with Extrude Indiv.");
             if (ToolButton("Delete Faces##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo(); mr->mesh.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Flip Normals##me")) { ed.PushUndo(); mr->mesh.FlipNormals(); ed.dirty = true; }
+            if (ImGui::Button("Flip Normals##me")) { EditUndoPoint(ed, mr); mr->mesh.FlipNormals(); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Button("Recalc Outside##me")) {
-                ed.PushUndo(); int n = mr->mesh.OrientFacesOutward();
+                EditUndoPoint(ed, mr); int n = mr->mesh.OrientFacesOutward();
                 ConsoleLog(n ? "Recalculated normals: flipped " + std::to_string(n) + " inside-out faces"
                              : "Normals already consistent"); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blender's Recalculate Normals Outside: make all face windings\nconsistent and point closed shells outward (fixes dark/inside-out faces).");
             if (ImGui::Button("Merge by Distance##me")) {
-                ed.PushUndo(); int n = mr->mesh.WeldVertices();
+                EditUndoPoint(ed, mr); int n = mr->mesh.WeldVertices();
                 g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
                 ConsoleLog("Merged " + std::to_string(n) + " verts"); ed.dirty = true;
             }
@@ -25313,13 +25463,13 @@ void DrawModeling(EditorState& ed) {
             ImGui::DragFloat("##bevamt", &s_bevelAmt, 0.005f, 0.01f, 2.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Bevel Sel##me", !g_meshSelVerts.empty(), kNeedVerts)) {
-                ed.PushUndo(); mr->mesh.BevelVertices(g_meshSelVerts, s_bevelAmt);
+                EditUndoPoint(ed, mr); mr->mesh.BevelVertices(g_meshSelVerts, s_bevelAmt);
                 g_meshSelVerts.clear(); g_meshSelFaces.clear();   // topology changed
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Chamfer the selected corners: cut each back by this amount and cap the opening flat (knock the sharp corners off a box).");
             if (ToolButton("Relax Sel##me", !g_meshSelVerts.empty(), kNeedVerts)) {
-                ed.PushUndo(); mr->mesh.SmoothVertices(g_meshSelVerts, 0.5f); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.SmoothVertices(g_meshSelVerts, 0.5f); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian-smooth only the selected vertices (click repeatedly for more).");
             // Shrink/Fatten along normals (Alt+S) + To Sphere (Shift+Alt+S).
@@ -25328,39 +25478,39 @@ void DrawModeling(EditorState& ed) {
             ImGui::DragFloat("##sfdist", &s_sfDist, 0.005f, -5.0f, 5.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Shrink/Fatten##me", !g_meshSelVerts.empty(), kNeedVerts)) {
-                ed.PushUndo(); mr->mesh.ShrinkFattenVertices(g_meshSelVerts, s_sfDist); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.ShrinkFattenVertices(g_meshSelVerts, s_sfDist); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the selected vertices along their own normals — inflate (+) or carve (-) a patch without dragging an axis.");
             ImGui::SetNextItemWidth(90);
             ImGui::DragFloat("##tosph", &s_toSphere, 0.01f, 0.0f, 1.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("To Sphere##me", !g_meshSelVerts.empty(), kNeedVerts)) {
-                ed.PushUndo(); mr->mesh.SphereizeVertices(g_meshSelVerts, s_toSphere); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.SphereizeVertices(g_meshSelVerts, s_toSphere); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round the selected vertices toward a sphere around their centre (0 = off, 1 = fully round).");
             ImGui::SameLine(); ImGui::TextDisabled("Flatten:");
             ImGui::SameLine();
             if (ToolButton("X##fl", !g_meshSelVerts.empty(), kNeedVerts, true)) {
-                ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 0); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.FlattenVertices(g_meshSelVerts, 0); ed.dirty = true;
             }
             ImGui::SameLine();
             if (ToolButton("Y##fl", !g_meshSelVerts.empty(), kNeedVerts, true)) {
-                ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 1); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.FlattenVertices(g_meshSelVerts, 1); ed.dirty = true;
             }
             ImGui::SameLine();
             if (ToolButton("Z##fl", !g_meshSelVerts.empty(), kNeedVerts, true)) {
-                ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 2); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.FlattenVertices(g_meshSelVerts, 2); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap the selected vertices to their shared average on one axis — level a rim, square a wall.");
             if (ToolButton("Collapse Edges##me", !g_meshSelEdges.empty(), kNeedEdges)) {
-                ed.PushUndo(); mr->mesh.CollapseEdges(g_meshSelEdges);
+                EditUndoPoint(ed, mr); mr->mesh.CollapseEdges(g_meshSelEdges);
                 g_meshSelEdges.clear(); g_meshSelVerts.clear(); g_meshSelFaces.clear();
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge each selected edge's endpoints into one vertex — remove loops, simplify dense spots.");
             ImGui::SameLine();
             if (ToolButton("Split Edges##me", !g_meshSelEdges.empty(), kNeedEdges)) {
-                ed.PushUndo(); mr->mesh.SplitEdges(g_meshSelEdges);
+                EditUndoPoint(ed, mr); mr->mesh.SplitEdges(g_meshSelEdges);
                 g_meshSelEdges.clear();
                 ed.dirty = true;
             }
@@ -25370,7 +25520,7 @@ void DrawModeling(EditorState& ed) {
             ImGui::DragFloat("##exed", &s_exEdge, 0.01f, -10.0f, 10.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Extrude Edges##me", !g_meshSelEdges.empty(), kNeedEdges)) {
-                ed.PushUndo();
+                EditUndoPoint(ed, mr);
                 auto ne = mr->mesh.ExtrudeEdges(g_meshSelEdges, s_exEdge);
                 if (!ne.empty()) g_meshSelEdges = ne;     // keep the new rim selected
                 g_meshSelVerts.clear(); g_meshSelFaces.clear();
@@ -25379,7 +25529,7 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull a wall out of each selected edge along its face's normal — raise walls from a floor plate's rim. The new outer edges stay selected, so click again to keep going.");
             ImGui::SameLine();
             if (ToolButton("Duplicate Sel##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo();
+                EditUndoPoint(ed, mr);
                 g_meshSelFaces = mr->mesh.DuplicateFaces(g_meshSelFaces);
                 g_meshSelVerts.clear(); g_meshSelEdges.clear();
                 ed.dirty = true;
@@ -25390,15 +25540,15 @@ void DrawModeling(EditorState& ed) {
             ImGui::DragFloat("##snapsel", &s_snapSel, 0.01f, 0.01f, 5.0f, "%.2f");
             ImGui::SameLine();
             if (ToolButton("Snap Sel##me", !g_meshSelVerts.empty(), kNeedVerts)) {
-                ed.PushUndo(); mr->mesh.SnapToGrid(s_snapSel, g_meshSelVerts); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.SnapToGrid(s_snapSel, g_meshSelVerts); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize the selected vertices to this grid step — line up modular pieces exactly.");
-            // Tools that need real quads and edge loops: listed so you know they're
-            // planned, but greyed out until the polygon mesh core exists.
-            ImGui::TextDisabled("Coming with the polygon mesh core:");
+            // Edge-loop tools: listed so you know they're planned, but greyed out
+            // until they're built on the polygon mesh (PolyMesh).
+            ImGui::TextDisabled("Coming next (edge-loop tools):");
             {
-                const char* why = "Needs quads, n-gons and edge loops, which this triangle mesh doesn't have yet.\n"
-                                  "Planned for the polygon mesh core (modeling milestones 2 and 3).";
+                const char* why = "Not built yet. These work on quads and edge loops of the polygon mesh,\n"
+                                  "planned for modeling milestone 3.";
                 const char* later[] = {"Knife##me", "Edge Bevel##me", "Dissolve##me", "Bridge Edge Loops##me", "Edge Slide##me"};
                 for (int i = 0; i < 5; ++i) {
                     if (i) ImGui::SameLine();
@@ -25406,7 +25556,7 @@ void DrawModeling(EditorState& ed) {
                 }
             }
             if (ToolButton("Separate##me", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo();
+                EditUndoPoint(ed, mr);
                 Mesh part = mr->mesh.SeparateFaces(g_meshSelFaces);
                 g_meshSelFaces.clear(); g_meshSelVerts.clear();
                 if (!part.vertices.empty()) {
@@ -25452,7 +25602,7 @@ void DrawModeling(EditorState& ed) {
                 ImGui::TextDisabled("Drag over the mesh to color its faces.");
             }
             if (ToolButton("Fill Sel##paint", !g_meshSelFaces.empty(), kNeedFaces)) {
-                ed.PushUndo();
+                EditUndoPoint(ed, mr);
                 mr->mesh.FillFacesColor(g_meshSelFaces,
                     {g_paintColor[0], g_paintColor[1], g_paintColor[2], g_paintColor[3]});
                 ed.dirty = true;
@@ -25460,7 +25610,7 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Set the selected faces to exactly the brush color.");
             ImGui::SameLine();
             if (ImGui::Button("Clear Paint##paint") && mr->mesh.HasFaceColors()) {
-                ed.PushUndo(); mr->mesh.triColors.clear(); ed.dirty = true;
+                EditUndoPoint(ed, mr); mr->mesh.triColors.clear(); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove all face colors (back to the plain material color).");
         }
@@ -25470,15 +25620,11 @@ void DrawModeling(EditorState& ed) {
         static char objPath[256] = "";
         std::strncpy(objPath, mr->meshPath.c_str(), sizeof(objPath) - 1);
         objPath[sizeof(objPath) - 1] = '\0';
-        if (ImGui::InputText("OBJ File##model", objPath, sizeof(objPath))) { mr->meshPath = objPath; ed.dirty = true; }
+        if (ImGui::InputText("Mesh File##model", objPath, sizeof(objPath))) { mr->meshPath = objPath; ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okaymesh or .obj file this object's mesh comes from (and is reloaded from when the scene opens).");
         ImGui::SameLine();
-        if (ImGui::Button("Load##modelobj") && mr->meshPath[0]) {
-            bool ok = false;
-            Mesh m = Mesh::LoadOBJ(mr->meshPath, &ok);
-            if (ok && !m.vertices.empty()) { mr->mesh = m; ConsoleLog("Loaded " + mr->meshPath); }
-            else ConsoleLog("OBJ load failed: " + mr->meshPath);
-            ed.dirty = true;
-        }
+        if (ImGui::Button("Load##modelobj") && mr->meshPath[0]) LoadMeshFileInto(ed, mr);
+        SaveMeshAssetButton(ed, go, mr);
 
         if (!go->GetComponent<Rigidbody3D>() || !go->GetComponent<BoxCollider3D>()) {
             ImGui::Spacing();
@@ -26376,15 +26522,10 @@ void DrawInspector(EditorState& ed) {
             char mp[256];
             std::strncpy(mp, mr->meshPath.c_str(), sizeof(mp) - 1);
             mp[sizeof(mp) - 1] = '\0';
-            if (ImGui::InputText("OBJ File##mesh", mp, sizeof(mp))) { mr->meshPath = mp; ed.dirty = true; }
+            if (ImGui::InputText("Mesh File##mesh", mp, sizeof(mp))) { mr->meshPath = mp; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okaymesh or .obj file this object's mesh comes from (and is reloaded from when the scene opens).");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Load##obj") && mr->meshPath[0]) {
-                bool ok = false;
-                Mesh m = Mesh::LoadOBJ(mr->meshPath, &ok);
-                if (ok && !m.vertices.empty()) { mr->mesh = m; ConsoleLog("Loaded " + mr->meshPath); }
-                else ConsoleLog("OBJ load failed: " + mr->meshPath);
-                ed.dirty = true;
-            }
+            if (ImGui::SmallButton("Load##obj") && mr->meshPath[0]) LoadMeshFileInto(ed, mr);
             // Texture (planar/box-mapped, tinted by Color). Blank = untextured.
             char tex[256];
             std::strncpy(tex, mr->texture.c_str(), sizeof(tex) - 1);
@@ -37354,6 +37495,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (g_meshSculpt) {
             // Sculpt: drag over the mesh; the nearest vertex under the cursor is the
             // brush center. Grab pulls toward the camera; Inflate/Smooth use normals.
+            if (hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                EditUndoPoint(ed, meo->GetComponent<MeshRenderer>());   // one undo step per stroke
             if (hovered && !g_uiHandled && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 float best = 1e9f; int bv = -1;
                 for (int i = 0; i < (int)mesh.vertices.size(); ++i) {
@@ -37377,6 +37520,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         } else if (g_meshPaint) {
             // Paint: drag over the mesh; faces near the vertex under the cursor
             // blend toward the brush color.
+            if (hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                EditUndoPoint(ed, meo->GetComponent<MeshRenderer>());   // one undo step per stroke
             if (hovered && !g_uiHandled && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 float best = 1e9f; int bv = -1;
                 for (int i = 0; i < (int)mesh.vertices.size(); ++i) {
@@ -37552,7 +37697,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     const std::string resultName = mesh.name;
                     const std::vector<Vec3> resultNormals = mesh.normals;
                     g_meModal.Cancel(mesh);   // back to the start for the undo snapshot...
-                    ed.PushUndo();
+                    EditUndoPoint(ed, meo->GetComponent<MeshRenderer>());
                     mesh.vertices = result;   // ...then the result on top of it
                     mesh.name = resultName;
                     mesh.normals = resultNormals;
@@ -37580,7 +37725,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (oOk && hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 float best = 10.0f; int pick = -1;
                 for (int i = 0; i < 3; ++i) if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
-                if (pick >= 0) { ed.PushUndo(); g_meEditGrab = true; g_meEditAxis = pick; grabbedHandle = true; g_uiHandled = true; }
+                if (pick >= 0) { EditUndoPoint(ed, meo->GetComponent<MeshRenderer>()); g_meEditGrab = true; g_meEditAxis = pick; grabbedHandle = true; g_uiHandled = true; }
             }
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_meEditGrab = false; g_meEditAxis = -1; }
             // Drag the grabbed axis: project mouse motion onto it, move the selection.
@@ -40550,6 +40695,9 @@ int main(int argc, char** argv) {
         v.resume = false;
     };
     EditorState::finishFrozenTick = FinishFrozenTick;
+    // Saving rewrote an edited mesh asset and re-triangulated it: vertex numbers are
+    // kept (so vertex and edge selections stay), triangle numbers aren't.
+    EditorState::onMeshTrianglesReordered = [](GameObject* go) { if (go == g_meshEditObj) g_meshSelFaces.clear(); };
     okay::editor::vsed::StepCatalog = VsStepCatalog;
     okay::editor::vsed::StepEditor = VsStepEditor;
     okay::editor::vsed::StepSummary = [](const ActionList::Item& it) { return ActionOpSummary(it); };

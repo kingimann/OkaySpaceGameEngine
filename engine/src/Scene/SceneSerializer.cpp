@@ -38,6 +38,9 @@
 #include "okay/Components/CraftingMenu.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/TopDownShooterController.hpp"
+#include "okay/Components/Platformer25DController.hpp"
+#include "okay/Components/Projectile3D.hpp"
 #include "okay/Components/TopDownController2D.hpp"
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
@@ -161,6 +164,46 @@ std::string ReadQuoted(std::istream& in) {
     }
     return out;
 }
+
+// key=value component lines (used by newer components): order-free, and keys a
+// build doesn't know are skipped, so fields can be added without breaking saves.
+struct KvOut {
+    std::ostream& o;
+    template <class T> KvOut& operator()(const char* k, const T& v) { o << ' ' << k << '=' << v; return *this; }
+    KvOut& b(const char* k, bool v) { o << ' ' << k << '=' << (v ? 1 : 0); return *this; }
+    KvOut& key(const char* k, char v) { o << ' ' << k << '=' << (int)(unsigned char)v; return *this; }
+    KvOut& str(const char* k, const std::string& v) { o << ' ' << k << '=' << Quote(v); return *this; }
+    KvOut& col(const char* k, const Color& c) {
+        o << ' ' << k << "R=" << c.r << ' ' << k << "G=" << c.g << ' ' << k << "B=" << c.b << ' ' << k << "A=" << c.a;
+        return *this;
+    }
+};
+struct KvIn {
+    std::unordered_map<std::string, std::string> m;
+    explicit KvIn(std::istream& in) {
+        std::string line; std::getline(in, line);
+        std::istringstream ls(line);
+        while (true) {
+            ls >> std::ws;
+            if (!ls || ls.peek() == EOF) break;
+            std::string k; char c;
+            while (ls.get(c) && c != '=' && !std::isspace((unsigned char)c)) k += c;
+            if (c != '=') continue;
+            if (ls.peek() == '"') m[k] = ReadQuoted(ls);
+            else { std::string v; ls >> v; m[k] = v; }
+        }
+    }
+    const std::string* find(const char* k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
+    void f(const char* k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
+    void i(const char* k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
+    void b(const char* k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
+    void key(const char* k, char& v) const { if (auto* s = find(k)) v = (char)std::atoi(s->c_str()); }
+    void str(const char* k, std::string& v) const { if (auto* s = find(k)) v = *s; }
+    void col(const char* k, Color& c) const {
+        std::string b = k;
+        f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
+    }
+};
 
 // Read the three shared publish toggles trailing every stat_* line.
 void ReadStatTail(std::istream& in, StatComponent* c) {
@@ -1310,6 +1353,52 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
             << td->lookHeight << " " << td->cameraDamping
             << " " << (td->footIK ? 1 : 0) << "\n";
+    }
+    if (auto* ts = go->GetComponent<TopDownShooterController>()) {
+        out << "  tdsctrl";
+        KvOut k{out};
+        k("walk", ts->walkSpeed)("run", ts->runSpeed).key("sprint", ts->sprintKey)("accel", ts->acceleration)
+         ("decel", ts->deceleration)("backpedal", ts->backpedalMultiplier).b("camRel", ts->cameraRelative)
+         .b("anim", ts->driveAnimation)("aimMode", ts->aimMode)("turn", ts->turnSpeed)
+         ("fireMode", ts->fireMode)("fireBtn", ts->fireButton).key("fireKey", ts->fireKey)("firePad", ts->fireGamepadButton)
+         .b("auto", ts->autoFire)("rate", ts->fireRate)("dmg", ts->damage)("pspeed", ts->projectileSpeed)
+         ("plife", ts->projectileLifetime)("range", ts->range)("pellets", ts->pellets)("spread", ts->spread)
+         ("force", ts->impactForce)("bsize", ts->bulletSize).col("bcol", ts->bulletColor)
+         ("muzH", ts->muzzleHeight)("muzF", ts->muzzleForward)
+         ("mag", ts->magazineSize).key("reloadKey", ts->reloadKey)("reload", ts->reloadTime).b("autoReload", ts->autoReload)
+         .key("dashKey", ts->dashKey)("dashSpeed", ts->dashSpeed)("dashTime", ts->dashTime)("dashCd", ts->dashCooldown)
+         .b("dashInv", ts->dashInvulnerable)
+         ("camDist", ts->cameraDistance)("camPitch", ts->cameraPitch)("camYaw", ts->cameraYaw)("camDamp", ts->cameraDamping)
+         ("lead", ts->aimLookAhead)("maxLead", ts->maxLookAhead).b("zoom", ts->wheelZoom)("minDist", ts->minDistance)
+         ("maxDist", ts->maxDistance)("shake", ts->fireShake).str("proj", ts->projectile);
+        out << "\n";
+    }
+    if (auto* pc = go->GetComponent<Platformer25DController>()) {
+        out << "  p25ctrl";
+        KvOut k{out};
+        k("walk", pc->walkSpeed)("run", pc->runSpeed).key("sprint", pc->sprintKey)("accel", pc->acceleration)
+         ("decel", pc->deceleration)("air", pc->airControl).b("anim", pc->driveAnimation)
+         .b("jump", pc->canJump).key("jumpKey", pc->jumpKey)("jumpForce", pc->jumpForce)("jumps", pc->maxJumps)
+         ("cut", pc->jumpCut)("fallG", pc->fallGravity)("maxFall", pc->maxFallSpeed)("coyote", pc->coyoteTime)
+         ("buffer", pc->jumpBufferTime)
+         ("layers", pc->layerCount)("spacing", pc->layerSpacing)("frontZ", pc->frontLayerZ)("layer", pc->layer)
+         .key("backKey", pc->layerBackKey).key("frontKey", pc->layerFrontKey)("switch", pc->layerSwitchSpeed)
+         .b("checkFree", pc->checkLayerFree)("radius", pc->bodyRadius)
+         ("turn", pc->turnSpeed)("faceCam", pc->faceCameraAngle)
+         .b("grab", pc->canGrab).key("grabKey", pc->grabKey)("grabPad", pc->grabGamepadButton)("reach", pc->grabReach)
+         ("pull", pc->grabPullSpeed).b("hang", pc->grabHang)
+         ("camDist", pc->cameraDistance)("camH", pc->cameraHeight)("camPitch", pc->cameraPitch)("lead", pc->lookAhead)
+         ("camDamp", pc->cameraDamping)("vDamp", pc->verticalDamping)("speedZoom", pc->speedZoom)
+         .b("followLayer", pc->cameraFollowsLayer);
+        out << "\n";
+    }
+    if (auto* pj = go->GetComponent<Projectile3D>()) {
+        out << "  proj3d";
+        KvOut k{out};
+        k("vx", pj->velocity.x)("vy", pj->velocity.y)("vz", pj->velocity.z)("dmg", pj->damage)("life", pj->lifetime)
+         ("grav", pj->gravityScale)("force", pj->impactForce)("pierce", pj->pierce).b("bounce", pj->bounce)
+         ("bounces", pj->maxBounces);
+        out << "\n";
     }
     if (auto* t2 = go->GetComponent<TopDownController2D>()) {
         out << "  tdctrl2d " << t2->speed << " " << t2->runSpeed << " " << (t2->sprintKey ? t2->sprintKey : '-')
@@ -3652,6 +3741,50 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
                     in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; td->footIK = (fik != 0); }
+                } else if (field == "tdsctrl") {
+                    auto* ts = go->AddComponent<TopDownShooterController>();
+                    KvIn k(in);
+                    k.f("walk", ts->walkSpeed); k.f("run", ts->runSpeed); k.key("sprint", ts->sprintKey);
+                    k.f("accel", ts->acceleration); k.f("decel", ts->deceleration); k.f("backpedal", ts->backpedalMultiplier);
+                    k.b("camRel", ts->cameraRelative); k.b("anim", ts->driveAnimation); k.i("aimMode", ts->aimMode);
+                    k.f("turn", ts->turnSpeed); k.i("fireMode", ts->fireMode); k.i("fireBtn", ts->fireButton);
+                    k.key("fireKey", ts->fireKey); k.i("firePad", ts->fireGamepadButton); k.b("auto", ts->autoFire);
+                    k.f("rate", ts->fireRate); k.f("dmg", ts->damage); k.f("pspeed", ts->projectileSpeed);
+                    k.f("plife", ts->projectileLifetime); k.f("range", ts->range); k.i("pellets", ts->pellets);
+                    k.f("spread", ts->spread); k.f("force", ts->impactForce); k.f("bsize", ts->bulletSize);
+                    k.col("bcol", ts->bulletColor); k.f("muzH", ts->muzzleHeight); k.f("muzF", ts->muzzleForward);
+                    k.i("mag", ts->magazineSize); k.key("reloadKey", ts->reloadKey); k.f("reload", ts->reloadTime);
+                    k.b("autoReload", ts->autoReload); k.key("dashKey", ts->dashKey); k.f("dashSpeed", ts->dashSpeed);
+                    k.f("dashTime", ts->dashTime); k.f("dashCd", ts->dashCooldown); k.b("dashInv", ts->dashInvulnerable);
+                    k.f("camDist", ts->cameraDistance); k.f("camPitch", ts->cameraPitch); k.f("camYaw", ts->cameraYaw);
+                    k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);
+                    k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
+                    k.f("shake", ts->fireShake); k.str("proj", ts->projectile);
+                } else if (field == "p25ctrl") {
+                    auto* pc = go->AddComponent<Platformer25DController>();
+                    KvIn k(in);
+                    k.f("walk", pc->walkSpeed); k.f("run", pc->runSpeed); k.key("sprint", pc->sprintKey);
+                    k.f("accel", pc->acceleration); k.f("decel", pc->deceleration); k.f("air", pc->airControl);
+                    k.b("anim", pc->driveAnimation); k.b("jump", pc->canJump); k.key("jumpKey", pc->jumpKey);
+                    k.f("jumpForce", pc->jumpForce); k.i("jumps", pc->maxJumps); k.f("cut", pc->jumpCut);
+                    k.f("fallG", pc->fallGravity); k.f("maxFall", pc->maxFallSpeed); k.f("coyote", pc->coyoteTime);
+                    k.f("buffer", pc->jumpBufferTime); k.i("layers", pc->layerCount); k.f("spacing", pc->layerSpacing);
+                    k.f("frontZ", pc->frontLayerZ); k.i("layer", pc->layer); k.key("backKey", pc->layerBackKey);
+                    k.key("frontKey", pc->layerFrontKey); k.f("switch", pc->layerSwitchSpeed);
+                    k.b("checkFree", pc->checkLayerFree); k.f("radius", pc->bodyRadius); k.f("turn", pc->turnSpeed);
+                    k.f("faceCam", pc->faceCameraAngle); k.b("grab", pc->canGrab); k.key("grabKey", pc->grabKey);
+                    k.i("grabPad", pc->grabGamepadButton); k.f("reach", pc->grabReach); k.f("pull", pc->grabPullSpeed);
+                    k.b("hang", pc->grabHang); k.f("camDist", pc->cameraDistance); k.f("camH", pc->cameraHeight);
+                    k.f("camPitch", pc->cameraPitch); k.f("lead", pc->lookAhead); k.f("camDamp", pc->cameraDamping);
+                    k.f("vDamp", pc->verticalDamping); k.f("speedZoom", pc->speedZoom);
+                    k.b("followLayer", pc->cameraFollowsLayer);
+                } else if (field == "proj3d") {
+                    auto* pj = go->AddComponent<Projectile3D>();
+                    KvIn k(in);
+                    k.f("vx", pj->velocity.x); k.f("vy", pj->velocity.y); k.f("vz", pj->velocity.z);
+                    k.f("dmg", pj->damage); k.f("life", pj->lifetime); k.f("grav", pj->gravityScale);
+                    k.f("force", pj->impactForce); k.i("pierce", pj->pierce); k.b("bounce", pj->bounce);
+                    k.i("bounces", pj->maxBounces);
                 } else if (field == "tdctrl2d") {
                     auto* t2 = go->AddComponent<TopDownController2D>();
                     std::string sk = "-", dk = "-"; int nd = 1, ug = 1, da = 1, cb = 0, sw = 0;

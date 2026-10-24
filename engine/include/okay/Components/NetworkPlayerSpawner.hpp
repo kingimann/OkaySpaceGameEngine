@@ -25,6 +25,8 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/TopDownShooterController.hpp"
+#include "okay/Components/Platformer25DController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/VehicleController.hpp"
@@ -98,6 +100,8 @@ private:
         go->RemoveComponent<ThirdPersonController>();
         go->RemoveComponent<ThirdPersonShooterController>();
         go->RemoveComponent<TopDownController>();
+        go->RemoveComponent<TopDownShooterController>();
+        go->RemoveComponent<Platformer25DController>();
         go->RemoveComponent<ClickToMoveController>();
         go->RemoveComponent<FreeRoamController>();
         go->RemoveComponent<VehicleController>();

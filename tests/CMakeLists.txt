@@ -834,3 +834,7 @@ add_test(NAME vs_debug COMMAND test_vs_debug)
 add_executable(test_game_fiber test_game_fiber.cpp)
 target_include_directories(test_game_fiber PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME game_fiber COMMAND test_game_fiber)
+
+add_executable(test_edit_transform test_edit_transform.cpp)
+target_link_libraries(test_edit_transform PRIVATE okay::engine)
+add_test(NAME edit_transform COMMAND test_edit_transform)

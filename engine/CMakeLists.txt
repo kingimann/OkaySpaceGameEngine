@@ -73,6 +73,7 @@ add_library(okay_engine
     src/Graphics/TtfFont.cpp
     src/Graphics/EmbeddedFont.cpp
     src/Render/ModelImport.cpp
+    src/Modeling/EditTransform.cpp
     third_party/ufbx/ufbx.c
 )
 

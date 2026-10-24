@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
+#include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
@@ -2850,6 +2851,7 @@ float g_scatterMinH = -100.0f, g_scatterMaxH = 100.0f; // local height band to f
 // in the 3D viewport — select vertices/faces, move them, extrude/inset/subdivide, sculpt.
 bool  g_meshEdit = false;             // edit mode active
 GameObject* g_meshEditObj = nullptr;  // the object being edited
+std::string g_meshEditObjName;        // its name, to find it again after undo rebuilds the scene
 int   g_meshSelMode = 0;              // 0 = Vertex, 1 = Face, 2 = Edge
 std::vector<int> g_meshSelVerts;      // selected vertex indices
 std::vector<int> g_meshSelFaces;      // selected triangle (face) indices
@@ -2868,6 +2870,46 @@ float g_meshSoftRadius = 0.5f;        // falloff radius for soft selection
 bool  g_meshPaint   = false;          // face-paint brush active (instead of select/sculpt)
 float g_paintColor[4] = {0.9f, 0.25f, 0.2f, 1.0f};
 float g_paintRadius = 0.5f, g_paintBlend = 0.8f;
+// G / R / S in edit mode (Blender-style modal transforms, see okay/Modeling/EditTransform.hpp).
+okay::modeling::EditTransformSession g_meModal;
+GameObject* g_meModalObj = nullptr;   // the object whose mesh the session is moving
+ImVec2 g_meModalMouse0{0, 0}, g_meModalPrevMouse{0, 0};
+okay::modeling::Ray g_meModalRay0{};
+
+// A modeling tool button that is greyed out (with the reason on hover) until the
+// selection it works on is there, instead of a button that silently does nothing.
+static bool ToolButton(const char* label, bool ok, const char* why, bool small = false) {
+    ImGui::BeginDisabled(!ok);
+    const bool hit = small ? ImGui::SmallButton(label) : ImGui::Button(label);
+    ImGui::EndDisabled();
+    if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
+    return hit && ok;
+}
+static const char* const kNeedFaces = "Select faces first: Face mode (key 3), then click faces in the 3D view.";
+static const char* const kNeedVerts = "Select vertices first: Vertex mode (key 1), then click vertices in the 3D view.";
+static const char* const kNeedEdges = "Select edges first: Edge mode (key 2), then click edges in the 3D view.";
+
+// Enter or leave mesh edit mode on `go` (the panel's Edit Mesh checkbox and Tab).
+static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
+    if (g_meModal.Active() && g_meModalObj) {   // never leave a transform half done
+        bool alive = false;   // (an undo may have rebuilt the scene under it)
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_meModalObj) { alive = true; break; }
+        if (auto* mr = alive ? g_meModalObj->GetComponent<MeshRenderer>() : nullptr) g_meModal.Cancel(mr->mesh);
+        else g_meModal.Confirm();
+        g_meModalObj = nullptr;
+    }
+    MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
+    if (on && mr) {
+        // Weld first so a primitive (24-vert cube) becomes clean shared
+        // topology (8 verts), then moving a vertex moves the whole corner.
+        mr->mesh.WeldVertices();
+        g_meshEdit = true; g_meshEditObj = go; g_meshEditObjName = go->name;
+        g_meshSculpt = false; ed.dirty = true;
+    } else {
+        g_meshEdit = false; g_meshEditObj = nullptr;
+    }
+    g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+}
 // Interactive collider editing: drag the 6 face handles of the selected Box
 // collider in the 3D view to hand-fit it to the model ("Edit Collider").
 bool  g_colliderEdit = false;         // collider edit mode active
@@ -25133,21 +25175,12 @@ void DrawModeling(EditorState& ed) {
         }
         if (s_mdlPage == 5) {
         bool editing = g_meshEdit && g_meshEditObj == go;
-        if (ImGui::Checkbox("Edit Mesh##model", &editing)) {
-            if (editing) {
-                // Weld first so a primitive (24-vert cube) becomes clean shared
-                // topology (8 verts), then moving a vertex moves the whole corner.
-                mr->mesh.WeldVertices();
-                g_meshEdit = true; g_meshEditObj = go;
-                g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
-                g_meshSculpt = false; ed.dirty = true;
-            } else {
-                g_meshEdit = false; g_meshEditObj = nullptr;
-                g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
-            }
-        }
+        if (ImGui::Checkbox("Edit Mesh##model", &editing)) SetMeshEditMode(ed, go, editing);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tab in the 3D view switches too.");
         if (g_meshEdit && g_meshEditObj == go) {
-            ImGui::TextDisabled("Click in the 3D view to select; drag an axis to move.");
+            ImGui::TextDisabled("Click in the 3D view to select. G move, R rotate, S scale\n"
+                                "(then X/Y/Z to lock an axis, type a value, Ctrl to snap,\n"
+                                "Enter or click to confirm, Esc or right-click to cancel).");
             ImGui::RadioButton("Vertices##me", &g_meshSelMode, 0); ImGui::SameLine();
             ImGui::RadioButton("Edges##me", &g_meshSelMode, 2); ImGui::SameLine();
             ImGui::RadioButton("Faces##me", &g_meshSelMode, 1);
@@ -25167,15 +25200,15 @@ void DrawModeling(EditorState& ed) {
                         (int)g_meshSelVerts.size(), (int)g_meshSelEdges.size(), (int)g_meshSelFaces.size());
             // Selection intelligence: grow/shrink a vertex selection along edges,
             // flood-fill a connected island, or invert what's picked.
-            if (ImGui::SmallButton("Grow##mesel") && !g_meshSelVerts.empty())
+            if (ToolButton("Grow##mesel", !g_meshSelVerts.empty(), kNeedVerts, true))
                 g_meshSelVerts = mr->mesh.GrownVertexSelection(g_meshSelVerts);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add every vertex touching the selection (vertex mode).");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Shrink##mesel") && !g_meshSelVerts.empty())
+            if (ToolButton("Shrink##mesel", !g_meshSelVerts.empty(), kNeedVerts, true))
                 g_meshSelVerts = mr->mesh.ShrunkVertexSelection(g_meshSelVerts);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Peel the selection's rim off (vertex mode).");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Linked##mesel") && !g_meshSelVerts.empty())
+            if (ToolButton("Linked##mesel", !g_meshSelVerts.empty(), kNeedVerts, true))
                 g_meshSelVerts = mr->mesh.LinkedVertices(g_meshSelVerts[0]);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select everything connected to the first selected vertex — grab one island of a combined mesh.");
             ImGui::SameLine();
@@ -25222,16 +25255,16 @@ void DrawModeling(EditorState& ed) {
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##extdist", &g_extrudeDist, 0.01f, -10.0f, 10.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Extrude Faces##me") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Extrude Faces##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo(); mr->mesh.ExtrudeFaces(g_meshSelFaces, g_extrudeDist); ed.dirty = true;
             }
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##insamt", &g_insetAmt, 0.01f, 0.0f, 1.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Inset Faces##me") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Inset Faces##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo(); mr->mesh.InsetFaces(g_meshSelFaces, g_insetAmt); ed.dirty = true;
             }
-            if (ImGui::Button("Subdivide Sel##me") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Subdivide Sel##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo(); mr->mesh.SubdivideFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }
             // Per-face detailing (Blender's Individual ops): each selected face is
@@ -25240,25 +25273,25 @@ void DrawModeling(EditorState& ed) {
             ImGui::SetNextItemWidth(90);
             ImGui::DragFloat("##pokeh", &s_poke, 0.01f, -2.0f, 2.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Poke##me") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Poke##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo(); mr->mesh.PokeFaces(g_meshSelFaces, s_poke); g_meshSelFaces.clear(); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fan each selected face from a centre point raised by this height — spikes, pyramids, dimples.");
             ImGui::SetNextItemWidth(90);
             ImGui::DragFloat("##indext", &s_indivExt, 0.01f, -5.0f, 5.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Extrude Indiv##me") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Extrude Indiv##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo(); mr->mesh.ExtrudeFacesIndividual(g_meshSelFaces, s_indivExt); g_meshSelFaces.clear(); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push each selected face out along ITS OWN normal as a separate stud (greebles, rivets, spikes).");
             ImGui::SetNextItemWidth(90);
             ImGui::DragFloat("##indins", &s_indivInset, 0.01f, 0.0f, 1.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Inset Indiv##me") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Inset Indiv##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo(); mr->mesh.InsetFacesIndividual(g_meshSelFaces, s_indivInset); g_meshSelFaces.clear(); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inset each selected face independently (panels/frames) — pair with Extrude Indiv.");
-            if (ImGui::Button("Delete Faces##me") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Delete Faces##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo(); mr->mesh.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }
             ImGui::SameLine();
@@ -25279,13 +25312,13 @@ void DrawModeling(EditorState& ed) {
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##bevamt", &s_bevelAmt, 0.005f, 0.01f, 2.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Bevel Sel##me") && !g_meshSelVerts.empty()) {
+            if (ToolButton("Bevel Sel##me", !g_meshSelVerts.empty(), kNeedVerts)) {
                 ed.PushUndo(); mr->mesh.BevelVertices(g_meshSelVerts, s_bevelAmt);
                 g_meshSelVerts.clear(); g_meshSelFaces.clear();   // topology changed
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Chamfer the selected corners: cut each back by this amount and cap the opening flat (knock the sharp corners off a box).");
-            if (ImGui::Button("Relax Sel##me") && !g_meshSelVerts.empty()) {
+            if (ToolButton("Relax Sel##me", !g_meshSelVerts.empty(), kNeedVerts)) {
                 ed.PushUndo(); mr->mesh.SmoothVertices(g_meshSelVerts, 0.5f); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian-smooth only the selected vertices (click repeatedly for more).");
@@ -25294,39 +25327,39 @@ void DrawModeling(EditorState& ed) {
             ImGui::SetNextItemWidth(90);
             ImGui::DragFloat("##sfdist", &s_sfDist, 0.005f, -5.0f, 5.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Shrink/Fatten##me") && !g_meshSelVerts.empty()) {
+            if (ToolButton("Shrink/Fatten##me", !g_meshSelVerts.empty(), kNeedVerts)) {
                 ed.PushUndo(); mr->mesh.ShrinkFattenVertices(g_meshSelVerts, s_sfDist); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the selected vertices along their own normals — inflate (+) or carve (-) a patch without dragging an axis.");
             ImGui::SetNextItemWidth(90);
             ImGui::DragFloat("##tosph", &s_toSphere, 0.01f, 0.0f, 1.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("To Sphere##me") && !g_meshSelVerts.empty()) {
+            if (ToolButton("To Sphere##me", !g_meshSelVerts.empty(), kNeedVerts)) {
                 ed.PushUndo(); mr->mesh.SphereizeVertices(g_meshSelVerts, s_toSphere); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round the selected vertices toward a sphere around their centre (0 = off, 1 = fully round).");
             ImGui::SameLine(); ImGui::TextDisabled("Flatten:");
             ImGui::SameLine();
-            if (ImGui::SmallButton("X##fl") && !g_meshSelVerts.empty()) {
+            if (ToolButton("X##fl", !g_meshSelVerts.empty(), kNeedVerts, true)) {
                 ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 0); ed.dirty = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Y##fl") && !g_meshSelVerts.empty()) {
+            if (ToolButton("Y##fl", !g_meshSelVerts.empty(), kNeedVerts, true)) {
                 ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 1); ed.dirty = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Z##fl") && !g_meshSelVerts.empty()) {
+            if (ToolButton("Z##fl", !g_meshSelVerts.empty(), kNeedVerts, true)) {
                 ed.PushUndo(); mr->mesh.FlattenVertices(g_meshSelVerts, 2); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap the selected vertices to their shared average on one axis — level a rim, square a wall.");
-            if (ImGui::Button("Collapse Edges##me") && !g_meshSelEdges.empty()) {
+            if (ToolButton("Collapse Edges##me", !g_meshSelEdges.empty(), kNeedEdges)) {
                 ed.PushUndo(); mr->mesh.CollapseEdges(g_meshSelEdges);
                 g_meshSelEdges.clear(); g_meshSelVerts.clear(); g_meshSelFaces.clear();
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge each selected edge's endpoints into one vertex — remove loops, simplify dense spots.");
             ImGui::SameLine();
-            if (ImGui::Button("Split Edges##me") && !g_meshSelEdges.empty()) {
+            if (ToolButton("Split Edges##me", !g_meshSelEdges.empty(), kNeedEdges)) {
                 ed.PushUndo(); mr->mesh.SplitEdges(g_meshSelEdges);
                 g_meshSelEdges.clear();
                 ed.dirty = true;
@@ -25336,7 +25369,7 @@ void DrawModeling(EditorState& ed) {
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##exed", &s_exEdge, 0.01f, -10.0f, 10.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Extrude Edges##me") && !g_meshSelEdges.empty()) {
+            if (ToolButton("Extrude Edges##me", !g_meshSelEdges.empty(), kNeedEdges)) {
                 ed.PushUndo();
                 auto ne = mr->mesh.ExtrudeEdges(g_meshSelEdges, s_exEdge);
                 if (!ne.empty()) g_meshSelEdges = ne;     // keep the new rim selected
@@ -25345,7 +25378,7 @@ void DrawModeling(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull a wall out of each selected edge along its face's normal — raise walls from a floor plate's rim. The new outer edges stay selected, so click again to keep going.");
             ImGui::SameLine();
-            if (ImGui::Button("Duplicate Sel##me") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Duplicate Sel##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo();
                 g_meshSelFaces = mr->mesh.DuplicateFaces(g_meshSelFaces);
                 g_meshSelVerts.clear(); g_meshSelEdges.clear();
@@ -25356,11 +25389,23 @@ void DrawModeling(EditorState& ed) {
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##snapsel", &s_snapSel, 0.01f, 0.01f, 5.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::Button("Snap Sel##me") && !g_meshSelVerts.empty()) {
+            if (ToolButton("Snap Sel##me", !g_meshSelVerts.empty(), kNeedVerts)) {
                 ed.PushUndo(); mr->mesh.SnapToGrid(s_snapSel, g_meshSelVerts); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize the selected vertices to this grid step — line up modular pieces exactly.");
-            if (ImGui::Button("Separate##me") && !g_meshSelFaces.empty()) {
+            // Tools that need real quads and edge loops: listed so you know they're
+            // planned, but greyed out until the polygon mesh core exists.
+            ImGui::TextDisabled("Coming with the polygon mesh core:");
+            {
+                const char* why = "Needs quads, n-gons and edge loops, which this triangle mesh doesn't have yet.\n"
+                                  "Planned for the polygon mesh core (modeling milestones 2 and 3).";
+                const char* later[] = {"Knife##me", "Edge Bevel##me", "Dissolve##me", "Bridge Edge Loops##me", "Edge Slide##me"};
+                for (int i = 0; i < 5; ++i) {
+                    if (i) ImGui::SameLine();
+                    ToolButton(later[i], false, why, true);
+                }
+            }
+            if (ToolButton("Separate##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo();
                 Mesh part = mr->mesh.SeparateFaces(g_meshSelFaces);
                 g_meshSelFaces.clear(); g_meshSelVerts.clear();
@@ -25406,7 +25451,7 @@ void DrawModeling(EditorState& ed) {
                 ImGui::DragFloat("Blend##paint", &g_paintBlend, 0.01f, 0.05f, 1.0f, "%.2f");
                 ImGui::TextDisabled("Drag over the mesh to color its faces.");
             }
-            if (ImGui::Button("Fill Sel##paint") && !g_meshSelFaces.empty()) {
+            if (ToolButton("Fill Sel##paint", !g_meshSelFaces.empty(), kNeedFaces)) {
                 ed.PushUndo();
                 mr->mesh.FillFacesColor(g_meshSelFaces,
                     {g_paintColor[0], g_paintColor[1], g_paintColor[2], g_paintColor[3]});
@@ -37196,6 +37241,60 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // ---- Mesh edit mode: select & move vertices/faces, sculpt the surface ----
     // When editing a mesh we take over the viewport interaction (the transform
     // gizmo below is suppressed) so clicks pick geometry instead of the object.
+    // ---- Object / Edit mode: Tab switches, and a header at the top of the view
+    //      shows the mode (and, while editing, Vertex / Edge / Face: keys 1 2 3). ----
+    if (!gameView && ed.selected() && ed.selected()->GetComponent<MeshRenderer>()) {
+        GameObject* mo = ed.selected();
+        const bool editingThis = g_meshEdit && g_meshEditObj == mo;
+        const bool keysOk = hovered && !io.WantTextInput && !io.KeyCtrl && !io.KeyAlt && !g_meModal.Active();
+        if (keysOk && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+            SetMeshEditMode(ed, mo, !editingThis);
+            ConsoleLog(editingThis ? "Object mode" : "Edit mode: G move, R rotate, S scale the selection");
+        }
+        if (editingThis && keysOk) {
+            if (ImGui::IsKeyPressed(ImGuiKey_1, false)) g_meshSelMode = 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_2, false)) g_meshSelMode = 2;
+            if (ImGui::IsKeyPressed(ImGuiKey_3, false)) g_meshSelMode = 1;
+        }
+        struct Pill { const char* label; bool on; int id; };
+        std::vector<Pill> pills = {{"Object", !(g_meshEdit && g_meshEditObj == mo), 0}, {"Edit", g_meshEdit && g_meshEditObj == mo, 1}};
+        if (g_meshEdit && g_meshEditObj == mo) {
+            pills.push_back({"Vertex", g_meshSelMode == 0, 2});
+            pills.push_back({"Edge", g_meshSelMode == 2, 3});
+            pills.push_back({"Face", g_meshSelMode == 1, 4});
+        }
+        const float pad = 9.0f, gap = 4.0f, lh = ImGui::GetTextLineHeight(), hgt = lh + 8.0f;
+        float total = 0.0f;
+        for (const Pill& p : pills) total += ImGui::CalcTextSize(p.label).x + pad * 2.0f + gap;
+        if (pills.size() > 2) total += 10.0f;   // a gap between the mode and the select mode
+        float x = canvasPos.x + (canvasSize.x - total) * 0.5f;
+        const float y = canvasPos.y + 8.0f;
+        for (std::size_t i = 0; i < pills.size(); ++i) {
+            const Pill& p = pills[i];
+            if (i == 2) x += 10.0f;
+            const float w = ImGui::CalcTextSize(p.label).x + pad * 2.0f;
+            ImVec2 a(x, y), b(x + w, y + hgt);
+            const bool over = io.MousePos.x >= a.x && io.MousePos.x < b.x && io.MousePos.y >= a.y && io.MousePos.y < b.y;
+            dl->AddRectFilled(a, b, p.on ? IM_COL32(60, 120, 205, 235) : over ? IM_COL32(70, 74, 86, 230) : IM_COL32(32, 35, 42, 215), 4.0f);
+            dl->AddText(ImVec2(a.x + pad, a.y + 4.0f), p.on ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 204, 212, 255), p.label);
+            if (over && hovered) {
+                const char* tip = p.id == 0 ? "Object mode: move the whole object (Tab)"
+                                : p.id == 1 ? "Edit mode: select and move vertices, edges and faces (Tab)"
+                                : p.id == 2 ? "Select vertices (1)" : p.id == 3 ? "Select edges (2)" : "Select faces (3)";
+                ImGui::SetTooltip("%s", tip);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !g_meModal.Active()) {
+                    if (p.id == 0 && editingThis) SetMeshEditMode(ed, mo, false);
+                    else if (p.id == 1 && !editingThis) SetMeshEditMode(ed, mo, true);
+                    else if (p.id == 2) g_meshSelMode = 0;
+                    else if (p.id == 3) g_meshSelMode = 2;
+                    else if (p.id == 4) g_meshSelMode = 1;
+                    g_uiHandled = true;   // the click was for the header, not the scene
+                }
+            }
+            x += w + gap;
+        }
+    }
+
     bool meshEditActive = !gameView && g_meshEdit && ed.selected() && g_meshEditObj == ed.selected()
                           && ed.selected()->GetComponent<MeshRenderer>();
     if (meshEditActive) {
@@ -37296,6 +37395,173 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 g_uiHandled = true;     // consume so the object isn't orbited/moved
             }
         } else {
+            // ---- G / R / S: Blender-style modal move / rotate / scale ----
+            namespace mdl = okay::modeling;
+            auto mouseRay = [&](ImVec2 m) {
+                float ndcx = 2.0f * (m.x - canvasPos.x) / canvasSize.x - 1.0f;
+                float ndcy = 1.0f - 2.0f * (m.y - canvasPos.y) / canvasSize.y;
+                Mat4 inv = vp.Inverse();
+                Vec4 pn = inv * Vec4{ndcx, ndcy, -1.0f, 1.0f};
+                Vec4 pf = inv * Vec4{ndcx, ndcy,  1.0f, 1.0f};
+                Vec3 a{pn.x / pn.w, pn.y / pn.w, pn.z / pn.w};
+                Vec3 b{pf.x / pf.w, pf.y / pf.w, pf.z / pf.w};
+                return mdl::Ray{a, (b - a).Normalized()};
+            };
+            const bool keysFree = !io.WantTextInput && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper;
+            if (g_meModal.Active() && g_meModalObj != meo) { g_meModal.Confirm(); g_meModalObj = nullptr; }
+            auto beginModal = [&](mdl::EditXform kind) {
+                mdl::EditTransformOptions o;
+                o.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
+                o.mirrorX = g_meshSymX;
+                g_meModal.Begin(mesh, kind, affected, M, o);
+                if (!g_meModal.Active()) return;
+                g_meModalObj = meo;
+                g_meModalMouse0 = g_meModalPrevMouse = io.MousePos;
+                g_meModalRay0 = mouseRay(io.MousePos);
+            };
+            if (!g_meModal.Active() && !g_meEditGrab && hovered && keysFree && !affected.empty()) {
+                if (ImGui::IsKeyPressed(ImGuiKey_G, false)) beginModal(mdl::EditXform::Move);
+                else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) beginModal(mdl::EditXform::Rotate);
+                else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) beginModal(mdl::EditXform::Scale);
+            } else if (!g_meModal.Active() && hovered && keysFree && affected.empty() &&
+                       (ImGui::IsKeyPressed(ImGuiKey_G, false) || ImGui::IsKeyPressed(ImGuiKey_R, false) || ImGui::IsKeyPressed(ImGuiKey_S, false))) {
+                ConsoleLog("Select some vertices, edges or faces first (G / R / S move, rotate and scale the selection)", 1);
+            }
+            if (g_meModal.Active()) {
+                // Switch tool mid-way (Blender does): start over from the original positions.
+                if (keysFree) {
+                    mdl::EditXform next = g_meModal.Kind();
+                    if (ImGui::IsKeyPressed(ImGuiKey_G, false)) next = mdl::EditXform::Move;
+                    if (ImGui::IsKeyPressed(ImGuiKey_R, false)) next = mdl::EditXform::Rotate;
+                    if (ImGui::IsKeyPressed(ImGuiKey_S, false)) next = mdl::EditXform::Scale;
+                    if (next != g_meModal.Kind()) { g_meModal.Cancel(mesh); beginModal(next); }
+                }
+            }
+            if (g_meModal.Active()) {
+                // Axis lock (Shift = the plane of the other two) and typed values.
+                if (!io.WantTextInput) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_X, false)) g_meModal.lock.Press(0, io.KeyShift);
+                    if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) g_meModal.lock.Press(1, io.KeyShift);
+                    if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) g_meModal.lock.Press(2, io.KeyShift);
+                    for (int d = 0; d <= 9; ++d)
+                        if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_0 + d), false) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_Keypad0 + d), false))
+                            g_meModal.typed.Type((char)('0' + d));
+                    if (ImGui::IsKeyPressed(ImGuiKey_Period, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadDecimal, false)) g_meModal.typed.Type('.');
+                    if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) g_meModal.typed.Type('-');
+                    if (ImGui::IsKeyPressed(ImGuiKey_Backspace, true)) g_meModal.typed.Backspace();
+                }
+                const Vec3 pivot = g_meModal.PivotWorld();
+                const mdl::Ray rayNow = mouseRay(io.MousePos);
+                const Vec3 viewDir = mouseRay(ImVec2(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f)).dir;
+                const bool snap = g_snap || io.KeyCtrl;
+                ImVec2 ps; const bool psOk = toScreen(vp * Vec4{pivot, 1}, ps);
+                const mdl::AxisLock lock = g_meModal.lock;
+                const bool typed = g_meModal.typed.Active();
+                Mat4 W = Mat4::Identity();
+                std::string readout;
+                char buf[160];
+                switch (g_meModal.Kind()) {
+                    case mdl::EditXform::Move: {
+                        Vec3 off;
+                        if (typed) {
+                            // A typed distance goes along the locked axis (X when free,
+                            // the first axis of a locked plane).
+                            int a = lock.Free() ? 0 : lock.plane ? (lock.axis == 0 ? 1 : 0) : lock.axis;
+                            off = Vec3{0, 0, 0}; (&off.x)[a] = g_meModal.typed.Value(0.0f);
+                            W = Mat4::Translate(off);
+                        } else {
+                            off = mdl::MoveFromRays(lock, pivot, viewDir, g_meModalRay0, rayNow);
+                            if (snap) { off.x = mdl::SnapTo(off.x, g_snapSize); off.y = mdl::SnapTo(off.y, g_snapSize); off.z = mdl::SnapTo(off.z, g_snapSize); }
+                            W = mdl::MoveMatrix(off, lock);
+                        }
+                        std::snprintf(buf, sizeof(buf), "D: %.3f  %.3f  %.3f", off.x, off.y, off.z);
+                        readout = buf;
+                        break;
+                    }
+                    case mdl::EditXform::Rotate: {
+                        if (psOk) g_meModal.accumulatedDegrees += mdl::ScreenAngleDelta(ps.x, ps.y, g_meModalPrevMouse.x, g_meModalPrevMouse.y, io.MousePos.x, io.MousePos.y);
+                        float deg = typed ? g_meModal.typed.Value(0.0f) : g_meModal.accumulatedDegrees;
+                        if (snap && !typed) deg = mdl::SnapTo(deg, g_rotSnapDeg);
+                        // Turn about the locked axis (or the view axis when free), signed
+                        // so the mesh follows the mouse round the pivot on screen.
+                        Vec3 toCam = (eye - pivot).Normalized();
+                        Vec3 ax = toCam;
+                        if (!lock.Free()) {
+                            ax = Vec3{lock.axis == 0 ? 1.0f : 0.0f, lock.axis == 1 ? 1.0f : 0.0f, lock.axis == 2 ? 1.0f : 0.0f};
+                            if (!typed && Vec3::Dot(ax, toCam) < 0.0f) ax = ax * -1.0f;
+                        }
+                        W = mdl::RotateMatrix(pivot, ax, deg);
+                        std::snprintf(buf, sizeof(buf), "%.2f%s", deg, "\xc2\xb0");
+                        readout = buf;
+                        break;
+                    }
+                    case mdl::EditXform::Scale: {
+                        float f = 1.0f;
+                        if (typed) f = g_meModal.typed.Value(1.0f);
+                        else if (psOk) {
+                            float d0 = std::hypot(g_meModalMouse0.x - ps.x, g_meModalMouse0.y - ps.y);
+                            float d1 = std::hypot(io.MousePos.x - ps.x, io.MousePos.y - ps.y);
+                            f = d0 > 4.0f ? d1 / d0 : 1.0f;
+                            if (snap) f = mdl::SnapTo(f, 0.1f);
+                        }
+                        W = mdl::ScaleMatrix(pivot, lock, f);
+                        std::snprintf(buf, sizeof(buf), "Scale %.3f", f);
+                        readout = buf;
+                        break;
+                    }
+                }
+                g_meModalPrevMouse = io.MousePos;
+                g_meModal.Apply(mesh, W);
+                ed.dirty = true;
+
+                // The locked axis through the pivot, and a line from the pivot to the mouse.
+                if (!lock.Free() && !lock.plane) {
+                    ImU32 axc[3] = {IM_COL32(230, 80, 80, 220), IM_COL32(90, 210, 100, 220), IM_COL32(90, 150, 240, 220)};
+                    Vec3 ax{lock.axis == 0 ? 1.0f : 0.0f, lock.axis == 1 ? 1.0f : 0.0f, lock.axis == 2 ? 1.0f : 0.0f};
+                    ImVec2 a, b;
+                    if (toScreen(vp * Vec4{pivot - ax * 1000.0f, 1}, a) && toScreen(vp * Vec4{pivot + ax * 1000.0f, 1}, b))
+                        dl->AddLine(a, b, axc[lock.axis], 1.5f);
+                }
+                if (psOk && g_meModal.Kind() != mdl::EditXform::Move)
+                    dl->AddLine(ps, io.MousePos, IM_COL32(255, 255, 255, 120), 1.0f);
+
+                // Status line: what's happening and how to steer it.
+                {
+                    std::string line = std::string(mdl::EditXformName(g_meModal.Kind()));
+                    if (!lock.Free()) line += "  along " + lock.Label();
+                    line += "   " + (typed ? std::string("typed ") + g_meModal.typed.Text() : readout);
+                    if (snap) line += "   (snapping)";
+                    const char* help = "X / Y / Z lock an axis, Shift+X/Y/Z a plane  -  type a value  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel";
+                    ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
+                    float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
+                    ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
+                    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
+                    dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
+                    dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
+                }
+
+                // Confirm: keep the result as one undo step. Cancel: back to where it started.
+                const bool confirm = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+                                     (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left));
+                const bool cancel = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right));
+                if (cancel) {
+                    g_meModal.Cancel(mesh);
+                    g_meModalObj = nullptr;
+                } else if (confirm) {
+                    const std::vector<Vec3> result = mesh.vertices;
+                    const std::string resultName = mesh.name;
+                    const std::vector<Vec3> resultNormals = mesh.normals;
+                    g_meModal.Cancel(mesh);   // back to the start for the undo snapshot...
+                    ed.PushUndo();
+                    mesh.vertices = result;   // ...then the result on top of it
+                    mesh.name = resultName;
+                    mesh.normals = resultNormals;
+                    g_meModalObj = nullptr;
+                    ed.dirty = true;
+                }
+                g_uiHandled = true;   // the mouse belongs to the transform, not picking or the camera
+            }
+
             // Move handles (3 world axes) at the selection centroid.
             Vec3 cen{0, 0, 0};
             for (int vi : affected) cen += vWorld(vi);
@@ -37303,7 +37569,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             Vec3 axisW[3] = {{1,0,0},{0,1,0},{0,0,1}};
             ImU32 col[3] = {IM_COL32(230,80,80,255), IM_COL32(90,210,100,255), IM_COL32(90,150,240,255)};
             float L = ed.camDist * 0.16f;
-            ImVec2 so; bool oOk = !affected.empty() && toScreen(vp * Vec4{cen, 1}, so);
+            ImVec2 so; bool oOk = !affected.empty() && !g_meModal.Active() && toScreen(vp * Vec4{cen, 1}, so);
             ImVec2 tip[3]; bool tipOk[3] = {false,false,false};
             if (oOk) for (int i = 0; i < 3; ++i) {
                 tipOk[i] = toScreen(vp * Vec4{cen + axisW[i] * L, 1}, tip[i]);
@@ -38336,7 +38602,9 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         }
     }
     // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
-    if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {
+    // In mesh edit mode R and X belong to the modal transforms (rotate, lock X).
+    const bool meshEditKeys = g_meshEdit && g_meshEditObj && g_meshEditObj == ed.selected();
+    if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput && !meshEditKeys) {
         if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E, false)) g_tool = Tool::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) g_tool = Tool::Scale;
@@ -40801,7 +41069,9 @@ int main(int argc, char** argv) {
         // otherwise a toolbar button keeps nav-focus and pressing Space (jump)
         // activates it — which is why Space was pausing the game. Restore it when
         // stopped/paused so editor keyboard nav still works.
-        if (ed.isPlaying() && !g_paused)
+        // Same in mesh edit mode: Enter confirms a G / R / S transform there, and
+        // must not also press whichever button last had focus.
+        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj))
             ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -40849,9 +41119,23 @@ int main(int argc, char** argv) {
                 return false;
             };
             if (g_meshEditObj && !alive(g_meshEditObj)) {
-                g_meshEditObj = nullptr; g_meshEdit = false;
-                g_meshSelVerts.clear(); g_meshSelFaces.clear();
+                // Undo / redo rebuild the scene and re-select the same object: stay in
+                // edit mode on its new copy (dropping selected indices it no longer has).
+                GameObject* again = ed.selected();
+                MeshRenderer* amr = again ? again->GetComponent<MeshRenderer>() : nullptr;
+                if (amr && again->name == g_meshEditObjName) {
+                    g_meshEditObj = again;
+                    const int nv = (int)amr->mesh.vertices.size(), nf = amr->mesh.TriangleCount();
+                    g_meshSelVerts.erase(std::remove_if(g_meshSelVerts.begin(), g_meshSelVerts.end(), [&](int v) { return v < 0 || v >= nv; }), g_meshSelVerts.end());
+                    g_meshSelFaces.erase(std::remove_if(g_meshSelFaces.begin(), g_meshSelFaces.end(), [&](int f) { return f < 0 || f >= nf; }), g_meshSelFaces.end());
+                    g_meshSelEdges.erase(std::remove_if(g_meshSelEdges.begin(), g_meshSelEdges.end(), [&](const std::pair<int, int>& e) {
+                        return e.first < 0 || e.first >= nv || e.second < 0 || e.second >= nv; }), g_meshSelEdges.end());
+                } else {
+                    g_meshEditObj = nullptr; g_meshEdit = false;
+                    g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+                }
             }
+            if (g_meModalObj && !alive(g_meModalObj)) { g_meModal.Confirm(); g_meModalObj = nullptr; }   // its mesh is gone
             if (g_uiDragTarget && !alive(g_uiDragTarget)) g_uiDragTarget = nullptr;
             // The SELECTION can dangle too: in Play a script may destroy(...) the
             // selected object, after which the Inspector would dereference its freed

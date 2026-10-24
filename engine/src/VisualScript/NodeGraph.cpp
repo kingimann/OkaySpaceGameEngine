@@ -3,6 +3,7 @@
 #include "okay/VisualScript/NodesFunctions.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
+#include "okay/VisualScript/NodesBuild.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
 #include "okay/Core/Log.hpp"
@@ -251,7 +252,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
         type == "OnMouseDown" || type == "OnMouseUp" || type == "OnMouseOver" ||
-        type == "OnCollisionStay" || type == "OnLateUpdate" || type == "OnTriggerStay")
+        type == "OnCollisionStay" || type == "OnLateUpdate" || type == "OnTriggerStay" ||
+        type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal")
         return std::make_unique<EventNode>();
     if (type == "OnEvent") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
@@ -272,6 +274,17 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     {
         auto a0 = [&](const char* d) { return args.empty() || args[0].empty() ? std::string(d) : args[0]; };
         if (type == "SendEvent")      return std::make_unique<SendEventNode>(a0("Event"));
+        // Build mode.
+        if (type == "EnterBuildMode")  return std::make_unique<BuildModeSetNode>(true);
+        if (type == "ExitBuildMode")   return std::make_unique<BuildModeSetNode>(false);
+        if (type == "InBuildMode")     return std::make_unique<BuildModeActiveNode>();
+        if (type == "SetBuildPalette") {   // hand-written files may split the list into tokens
+            std::string spec;
+            for (const auto& a : args) { if (!spec.empty()) spec += ' '; spec += a; }
+            return std::make_unique<BuildSetPaletteNode>(spec);
+        }
+        if (type == "SaveCreation")    return std::make_unique<BuildCreationNode>(false, a0("creation"));
+        if (type == "LoadCreation")    return std::make_unique<BuildCreationNode>(true, a0("creation"));
         if (type == "BroadcastEvent") return std::make_unique<BroadcastEventNode>(a0("Event"));
         if (type == "EventValue")     return std::make_unique<EventValueNode>(false);
         if (type == "EventName")      return std::make_unique<EventValueNode>(true);

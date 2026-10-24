@@ -488,6 +488,20 @@ object is switched off and on.
 `OnKey:space`, `OnTimer:2` and `OnEvent:Hit` are accepted as node types too
 (the same spelling as the `entry` line).
 
+## Build mode nodes
+
+For games where players build (see [build_mode.md](build_mode.md)).
+
+| Node | What it does |
+|---|---|
+| On Object Placed | A player placed an object (also on undo / redo). **Other Name** is the object, **Event Value** its build id. |
+| On Object Removed | A player deleted an object. |
+| On Logic Signal | A wired door, light, spawner or event target turned on or off. **Event Name** is its signal name, **Event Value** is true when on. |
+| Enter Build Mode / Exit Build Mode | Turn the player's build mode on / off. |
+| In Build Mode? | True while it's on. |
+| Set Build Palette | Replace what players can place: `Name=prefab, Name=prefab\|icon.png, ...` (the icon is optional) |
+| Save Creation / Load Creation | Save / load everything players placed under a name. **Saved** / **Loaded** says whether it worked. |
+
 ## When a graph goes wrong
 
 Graphs never freeze the game and never fail silently:

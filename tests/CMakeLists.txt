@@ -98,6 +98,10 @@ add_executable(test_builder_mode test_builder_mode.cpp)
 target_link_libraries(test_builder_mode PRIVATE okay::engine)
 add_test(NAME builder_mode COMMAND test_builder_mode)
 
+add_executable(test_build_mode test_build_mode.cpp)
+target_link_libraries(test_build_mode PRIVATE okay::engine)
+add_test(NAME build_mode COMMAND test_build_mode)
+
 add_executable(test_loading_screen test_loading_screen.cpp)
 target_link_libraries(test_loading_screen PRIVATE okay::engine)
 add_test(NAME loading_screen COMMAND test_loading_screen)

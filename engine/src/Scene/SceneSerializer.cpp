@@ -18,6 +18,8 @@
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/StructureBuilder.hpp"
 #include "okay/Components/BuilderMode.hpp"
+#include "okay/Components/BuildMode.hpp"
+#include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
@@ -252,6 +254,14 @@ static bool IsGeneratedViewmodel(GameObject* go) {
     if (!go || go->name != "FP_Arm" || !go->transform) return false;
     Transform* par = go->transform->Parent();
     return par && par->gameObject && par->gameObject->GetComponent<FirstPersonHand>();
+}
+
+// Build mode's own runtime objects (placement ghost, link wires, hotbar) are
+// recreated each run, so they're never written to a scene or prefab.
+static bool IsBuildModeRuntime(GameObject* go) {
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject && t->gameObject->tag == BuildMode::kRuntimeTag) return true;
+    return false;
 }
 
 // Write a GameObject's Transform + all known components (no header/parent line).
@@ -981,6 +991,59 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* bp = go->GetComponent<BuildPiece>()) {
         out << "  buildpiece " << bp->tier << " " << bp->health << " " << bp->maxHealth
             << " " << bp->cost << " " << Quote(bp->material) << "\n";
+    }
+    // In-game build mode + logic links (key=value records: fields can be added freely).
+    if (auto* b = go->GetComponent<Buildable>()) {
+        out << "  buildable";
+        KvOut k{out};
+        k("id", b->buildId).b("edit", b->editable).b("placed", b->placed).str("prefab", b->prefab);
+        out << "\n";
+    }
+    if (auto* bm = go->GetComponent<BuildMode>()) {
+        const BuildBindings& kb = bm->bindings;
+        out << "  buildmode";
+        KvOut k{out};
+        k("grid", bm->gridSize)("rot", bm->rotationStep)("reach", bm->maxReach)("layers", bm->buildLayers)
+         ("max", bm->maxObjects).b("air", bm->allowAirPlacement).b("start", bm->startActive)
+         .b("hotbar", bm->showHotbar).b("ghost", bm->showGhost).str("folder", bm->creationFolder)
+         .col("ok", bm->validColor).col("bad", bm->invalidColor).col("hl", bm->highlightColor)
+         .col("wire", bm->wireColor).col("wireOn", bm->wireOnColor)
+         .key("kToggle", kb.toggle)("kPlace", kb.place)("kRemove", kb.remove).key("kRotate", kb.rotate)
+         .key("kMove", kb.move).key("kDup", kb.duplicate).key("kLink", kb.link).key("kUndo", kb.undo)
+         .key("kRedo", kb.redo).key("kNext", kb.nextItem).key("kPrev", kb.prevItem)
+         .b("kNum", kb.numberKeys).b("kWheel", kb.mouseWheel).key("kRemoveKey", kb.removeKey)
+         ("pToggle", kb.padToggle)("pPlace", kb.padPlace)("pRemove", kb.padRemove)("pRotate", kb.padRotate)
+         ("pNext", kb.padNext)("pUndo", kb.padUndo)("pMove", kb.padMove)("pDup", kb.padDuplicate)
+         ("pLink", kb.padLink)("pRedo", kb.padRedo)("pPrev", kb.padPrev)("pal", bm->palette.size());
+        for (std::size_t i = 0; i < bm->palette.size(); ++i) {
+            const std::string p = "p" + std::to_string(i);
+            k.str((p + "n").c_str(), bm->palette[i].name).str((p + "f").c_str(), bm->palette[i].prefab)
+             .str((p + "i").c_str(), bm->palette[i].icon);
+        }
+        out << "\n";
+    }
+    if (auto* ls = go->GetComponent<LogicSource>()) {
+        std::string links;
+        for (int id : ls->links) links += (links.empty() ? "" : ",") + std::to_string(id);
+        out << "  logicsource";
+        KvOut k{out};
+        k("kind", (int)ls->kind).b("toggle", ls->toggle)("hold", ls->holdTime)("interval", ls->interval)
+         ("on", ls->onTime).b("startOn", ls->startOn)
+         ("zx", ls->zoneSize.x)("zy", ls->zoneSize.y)("zz", ls->zoneSize.z)
+         ("ox", ls->zoneOffset.x)("oy", ls->zoneOffset.y)("oz", ls->zoneOffset.z)
+         .str("tag", ls->activatorTag).key("key", ls->pressKey)("pad", ls->pressPadButton)
+         ("reach", ls->pressReach).str("links", links);
+        out << "\n";
+    }
+    if (auto* lt = go->GetComponent<LogicTarget>()) {
+        out << "  logictarget";
+        KvOut k{out};
+        k("kind", (int)lt->kind)("mode", (int)lt->mode).b("invert", lt->invert)
+         ("dx", lt->openOffset.x)("dy", lt->openOffset.y)("dz", lt->openOffset.z)("yaw", lt->openYaw)
+         ("time", lt->moveTime)("light", lt->lightIntensity).col("glow", lt->onEmissive)
+         .str("prefab", lt->spawnPrefab)("sx", lt->spawnOffset.x)("sy", lt->spawnOffset.y)
+         ("sz", lt->spawnOffset.z)("alive", lt->maxAlive).str("event", lt->eventName);
+        out << "\n";
     }
     if (auto* ls = go->GetComponent<LoadingScreen>()) {
         auto& bg = ls->backgroundColor; auto& tc = ls->textColor;
@@ -2085,7 +2148,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
         GameObject* go = objs[i].get();
-        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
+        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         Transform* t = go->transform;
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
@@ -3200,6 +3263,64 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* bp = go->AddComponent<BuildPiece>();
                     in >> bp->tier >> bp->health >> bp->maxHealth >> bp->cost;
                     bp->material = ReadQuoted(in);
+                } else if (field == "buildable") {
+                    auto* b = go->AddComponent<Buildable>();
+                    KvIn k(in);
+                    k.i("id", b->buildId); k.b("edit", b->editable); k.b("placed", b->placed);
+                    k.str("prefab", b->prefab);
+                } else if (field == "buildmode") {
+                    auto* bm = go->AddComponent<BuildMode>();
+                    BuildBindings& kb = bm->bindings;
+                    KvIn k(in);
+                    k.f("grid", bm->gridSize); k.f("rot", bm->rotationStep); k.f("reach", bm->maxReach);
+                    if (const std::string* s = k.find("layers")) bm->buildLayers = (std::uint32_t)std::strtoul(s->c_str(), nullptr, 10);
+                    k.i("max", bm->maxObjects); k.b("air", bm->allowAirPlacement); k.b("start", bm->startActive);
+                    k.b("hotbar", bm->showHotbar); k.b("ghost", bm->showGhost); k.str("folder", bm->creationFolder);
+                    k.col("ok", bm->validColor); k.col("bad", bm->invalidColor); k.col("hl", bm->highlightColor);
+                    k.col("wire", bm->wireColor); k.col("wireOn", bm->wireOnColor);
+                    k.key("kToggle", kb.toggle); k.i("kPlace", kb.place); k.i("kRemove", kb.remove);
+                    k.key("kRotate", kb.rotate); k.key("kMove", kb.move); k.key("kDup", kb.duplicate);
+                    k.key("kLink", kb.link); k.key("kUndo", kb.undo); k.key("kRedo", kb.redo);
+                    k.key("kNext", kb.nextItem); k.key("kPrev", kb.prevItem);
+                    k.b("kNum", kb.numberKeys); k.b("kWheel", kb.mouseWheel); k.key("kRemoveKey", kb.removeKey);
+                    k.i("pToggle", kb.padToggle); k.i("pPlace", kb.padPlace); k.i("pRemove", kb.padRemove);
+                    k.i("pRotate", kb.padRotate); k.i("pNext", kb.padNext); k.i("pUndo", kb.padUndo);
+                    k.i("pMove", kb.padMove); k.i("pDup", kb.padDuplicate); k.i("pLink", kb.padLink);
+                    k.i("pRedo", kb.padRedo); k.i("pPrev", kb.padPrev);
+                    int pal = 0; k.i("pal", pal);
+                    for (int i = 0; i < pal && i < 256; ++i) {
+                        const std::string p = "p" + std::to_string(i);
+                        BuildPaletteItem it;
+                        k.str((p + "n").c_str(), it.name); k.str((p + "f").c_str(), it.prefab); k.str((p + "i").c_str(), it.icon);
+                        bm->palette.push_back(it);
+                    }
+                } else if (field == "logicsource") {
+                    auto* ls = go->AddComponent<LogicSource>();
+                    KvIn k(in);
+                    int kind = 0; k.i("kind", kind);
+                    if (kind >= 0 && kind < LogicSource::kKindCount) ls->kind = (LogicSource::Kind)kind;
+                    k.b("toggle", ls->toggle); k.f("hold", ls->holdTime); k.f("interval", ls->interval);
+                    k.f("on", ls->onTime); k.b("startOn", ls->startOn);
+                    k.f("zx", ls->zoneSize.x); k.f("zy", ls->zoneSize.y); k.f("zz", ls->zoneSize.z);
+                    k.f("ox", ls->zoneOffset.x); k.f("oy", ls->zoneOffset.y); k.f("oz", ls->zoneOffset.z);
+                    k.str("tag", ls->activatorTag); k.key("key", ls->pressKey); k.i("pad", ls->pressPadButton);
+                    k.f("reach", ls->pressReach);
+                    std::string links; k.str("links", links);
+                    std::replace(links.begin(), links.end(), ',', ' ');
+                    std::istringstream ids(links);
+                    for (int id = 0; ids >> id;) if (id != 0) ls->links.push_back(id);
+                } else if (field == "logictarget") {
+                    auto* lt = go->AddComponent<LogicTarget>();
+                    KvIn k(in);
+                    int kind = 0, mode = 0; k.i("kind", kind); k.i("mode", mode);
+                    if (kind >= 0 && kind < LogicTarget::kKindCount) lt->kind = (LogicTarget::Kind)kind;
+                    lt->mode = mode == 1 ? LogicTarget::Mode::Toggle : LogicTarget::Mode::Follow;
+                    k.b("invert", lt->invert);
+                    k.f("dx", lt->openOffset.x); k.f("dy", lt->openOffset.y); k.f("dz", lt->openOffset.z);
+                    k.f("yaw", lt->openYaw); k.f("time", lt->moveTime); k.f("light", lt->lightIntensity);
+                    k.col("glow", lt->onEmissive); k.str("prefab", lt->spawnPrefab);
+                    k.f("sx", lt->spawnOffset.x); k.f("sy", lt->spawnOffset.y); k.f("sz", lt->spawnOffset.z);
+                    k.i("alive", lt->maxAlive); k.str("event", lt->eventName);
                 } else if (field == "loadingscreen") {
                     auto* ls = go->AddComponent<LoadingScreen>();
                     auto& bg = ls->backgroundColor; auto& tc = ls->textColor;
@@ -5094,7 +5215,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     out << "okayscene 1\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
-        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
+        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
@@ -5170,6 +5291,9 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
         if (auto* an = go->GetComponent<SpriteAnimator>())
             for (const auto& f : an->frames) add(f);
+        if (auto* bm = go->GetComponent<BuildMode>())
+            for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
+        if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
     }
     return out;
 }

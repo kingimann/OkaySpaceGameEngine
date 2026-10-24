@@ -115,11 +115,12 @@ jobs:
             -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
             -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
           cmake --build build-win-tests -j --target test_vs_acceptance test_vs_debug test_game_fiber \
-            test_polymesh test_mesh_asset
+            test_polymesh test_mesh_asset test_poly_ops
           mkdir -p win-tests
           cp build-win-tests/tests/test_vs_acceptance.exe build-win-tests/tests/test_vs_debug.exe \
              build-win-tests/tests/test_game_fiber.exe build-win-tests/tests/test_polymesh.exe \
-             build-win-tests/tests/test_mesh_asset.exe "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
+             build-win-tests/tests/test_mesh_asset.exe build-win-tests/tests/test_poly_ops.exe \
+             "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v6
@@ -151,7 +152,7 @@ jobs:
         shell: pwsh
         run: |
           $failed = @()
-          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset") {
+          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops") {
             Write-Host "== $t"
             & "winbuild/win-tests/$t.exe"
             if ($LASTEXITCODE -ne 0) { $failed += $t }

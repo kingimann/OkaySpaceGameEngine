@@ -32,6 +32,10 @@ struct Mesh {
     std::vector<Vec2> uvs;        // optional per-vertex UVs (parallel to vertices)
     std::vector<Color> triColors; // optional per-triangle colors (parallel to faces);
                                   // used by the renderer only when fully populated.
+    std::vector<int>  polyFace;   // optional per-triangle polygon id (parallel to faces):
+                                  // triangles with the same id make one quad / n-gon, so
+                                  // modeling::PolyMesh gets the exact polygons back. Ignored
+                                  // when its size doesn't match the triangle count.
     std::vector<Vec3> normals;    // optional per-vertex normals (parallel to vertices);
                                   // when present the renderer smooth (Gouraud) shades.
     float autoSmoothAngle = 0.0f; // >0: normals came from ComputeAutoSmoothNormals(angle)
@@ -1949,19 +1953,22 @@ struct Mesh {
         // Rebuild triangles, dropping any face that collapsed, and keep the parallel
         // per-triangle face colors aligned to the surviving faces.
         const bool hadFC = HasFaceColors();
-        std::vector<int>   tris;
+        const bool hadPF = (int)polyFace.size() == TriangleCount() && !polyFace.empty();
+        std::vector<int>   tris, pf;
         std::vector<Color> fc;
         for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
             int a = remap[triangles[i]], b = remap[triangles[i + 1]], c = remap[triangles[i + 2]];
             if (a != b && b != c && a != c) {
                 tris.insert(tris.end(), {a, b, c}); // skip degenerate
                 if (hadFC) fc.push_back(triColors[i / 3]);
+                if (hadPF) pf.push_back(polyFace[i / 3]);
             }
         }
         vertices = std::move(unique);
         triangles = std::move(tris);
         if (hadUV) uvs = std::move(uniqueUV); else uvs.clear();
         if (hadFC) triColors = std::move(fc); else triColors.clear();
+        if (hadPF) polyFace = std::move(pf); else polyFace.clear();
         if (removed > 0) name = "";
         RefreshNormals();   // rebuild smooth normals at the welded resolution (or stay flat)
         return removed;

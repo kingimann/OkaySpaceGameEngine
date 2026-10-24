@@ -4,7 +4,7 @@
 
 namespace okay {
 
-/// 3D vector, modeled after Unity's `Vector3`.
+/// 3D vector, modeled after `Vector3`.
 struct Vec3 {
     float x = 0.0f, y = 0.0f, z = 0.0f;
 
@@ -112,7 +112,7 @@ struct Vec3 {
         Vec3 dir = (na * (std::sin((1.0f - t) * theta) / s)) + (nb * (std::sin(t * theta) / s));
         return dir * mag;
     }
-    /// Critically-damped spring toward `target` (Unity's Vector3.SmoothDamp).
+    /// Critically-damped spring toward `target`.
     /// `velocity` is carried between calls. Great for smooth camera/object follow.
     static Vec3 SmoothDamp(const Vec3& current, Vec3 target, Vec3& velocity,
                            float smoothTime, float deltaTime,

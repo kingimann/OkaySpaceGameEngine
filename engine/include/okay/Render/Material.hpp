@@ -10,7 +10,7 @@ namespace okay {
 
 /// A reusable surface material — the look (albedo, emissive, specular, texture,
 /// tiling, unlit, double-sided) packaged on its own so it can be saved as a
-/// `.okaymat` asset and applied to many MeshRenderers, exactly like a Unity
+/// `.okaymat` asset and applied to many MeshRenderers, exactly like a shared
 /// Material. The MeshRenderer still owns the live fields the renderer reads;
 /// a Material is the shareable preset you copy into them.
 struct Material {
@@ -23,7 +23,7 @@ struct Material {
     std::string texture;
     Vec2        tiling{1.0f, 1.0f};
 
-    /// Shading model (Unity's shader selector) + cel-band count for the Toon shader.
+    /// Shading model + cel-band count for the Toon shader.
     MeshRenderer::Shader shader = MeshRenderer::Shader::Standard;
     int                  toonBands = 3;
 

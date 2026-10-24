@@ -119,7 +119,7 @@ float Camera::VerticalFovDegrees(float aspect) const {
     } else if (fovAxisHorizontal && aspect > 1e-4f) {
         // Horizontal FOV axis: convert the horizontal angle to the vertical angle
         // the perspective matrix expects, so the chosen axis stays fixed as the
-        // aspect changes (Unity's "FOV Axis = Horizontal").
+        // aspect changes ("FOV Axis = Horizontal").
         float hf = fieldOfView * Mathf::Deg2Rad * 0.5f;
         vfov = 2.0f * std::atan(std::tan(hf) / aspect) * Mathf::Rad2Deg;
     }
@@ -131,7 +131,7 @@ float Camera::VerticalFovDegrees(float aspect) const {
 Mat4 Camera::ProjectionMatrix(float aspect) const {
     if (projection == Projection::Perspective) {
         Mat4 p = Mat4::Perspective(VerticalFovDegrees(aspect), aspect, nearClip, farClip);
-        p.at(2, 0) = lensShiftX * 2.0f;   // off-axis lens shift (Unity's physical camera)
+        p.at(2, 0) = lensShiftX * 2.0f;   // off-axis lens shift
         p.at(2, 1) = lensShiftY * 2.0f;
         return p;
     }

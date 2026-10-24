@@ -6,7 +6,7 @@
 #include <filesystem>
 
 namespace {
-// Every new 3D primitive ships with a collider fitted to its mesh (Unity-style), so
+// Every new 3D primitive ships with a collider fitted to its mesh, so
 // objects block and can be stood on the moment they're created. A box matches most
 // primitives; it's auto-fit so it tracks the mesh.
 void AddFittedBoxCollider(okay::GameObject* go) {
@@ -20,6 +20,7 @@ void AddFittedBoxCollider(okay::GameObject* go) {
 namespace okay::editor {
 
 EditorState::EditorState() : m_scene("Untitled") {
+    m_scene.runScripts = false;   // game code only runs in Play
     // Online services are part of the engine: a Steam simulation backend by
     // default, the real Steamworks backend when built with -DOKAY_WITH_STEAM.
     m_steam = CreateSteamService();
@@ -196,7 +197,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
     GameObject* go = m_scene.CreateGameObject(name);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Cube();
-    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
@@ -209,7 +210,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     GameObject* go = m_scene.CreateGameObject(name);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Pyramid();
-    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
@@ -222,7 +223,7 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     GameObject* go = m_scene.CreateGameObject(meshName);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::FromName(meshName);
-    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
@@ -296,7 +297,7 @@ void EditorState::NewScene() {
     StopNetwork();
     m_scene.Clear();
     m_scene.SetName("Untitled");
-    // Every scene starts with a Main Camera (Unity-like) so a fresh/empty scene can
+    // Every scene starts with a Main Camera so a fresh/empty scene can
     // render and Play right away. Templates Clear() the scene and add their own, so
     // this never doubles up.
     GameObject* camObj = m_scene.CreateGameObject("Main Camera");
@@ -332,7 +333,7 @@ void EditorState::NewScene3D() {
     m_scene.SetName("Untitled 3D");
     // NewScene already made a perspective Main Camera at {0,2,10}; reuse it.
 
-    // A polished, populated default (like Unreal's default level, not an empty
+    // A polished, populated default (like default level, not an empty
     // void): a ground plane, a warm sun with soft sky fill, and a couple of hero
     // shapes — so lighting, shadows, sky and reflections all read immediately.
 
@@ -653,6 +654,7 @@ void EditorState::Play() {
     Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
     Game::Reset();             // clear stale pause/quit state from a prior session
+    m_scene.runScripts = true;
     m_scene.Start();
     m_playing = true;
 }
@@ -667,11 +669,13 @@ void EditorState::Stop() {
     // never dereferences freed memory (a use-after-free crash).
     m_net = nullptr;
     Matchmaker::Shared().Cancel();   // a search started in play mode ends with it
+    m_scene.runScripts = false;
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
 }
 
 void EditorState::Tick(float dt) {
+    m_scene.runScripts = m_playing;   // edit-mode flushes (UI tools, previews) never run game code
     if (m_playing) {
         m_scene.Update(dt); NavigateUI(m_scene);
         Matchmaker::Shared().Pump(m_scene.FindObjectOfType<NetworkManager>());   // net_queue_join(): connect a found match

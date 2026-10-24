@@ -7,7 +7,7 @@
 namespace okay {
 
 /// Draws a colored quad at its GameObject's position, sized by the Transform's
-/// scale. Conceptually the same role as Unity's SpriteRenderer. With a `texture`
+/// scale. Conceptually the same role as SpriteRenderer. With a `texture`
 /// path set, the windowed runtimes draw that image (tinted by `color`); the
 /// console backend always falls back to the `glyph`.
 class SpriteRenderer : public Component {
@@ -25,7 +25,7 @@ public:
     /// in atlas mode rewrites these to walk a sprite sheet.
     Vec2 uvMin{0.0f, 0.0f};
     Vec2 uvMax{1.0f, 1.0f};
-    /// Sorting layer: a coarse band that ALWAYS wins over `sortOrder` (Unity-style).
+    /// Sorting layer: a coarse band that ALWAYS wins over `sortOrder`.
     /// Everything in a higher sorting layer draws on top of everything in a lower
     /// one, regardless of order-in-layer. Use named bands like Background(-1),
     /// Default(0), Foreground(1), UI(2); `sortOrder` then orders within a band.

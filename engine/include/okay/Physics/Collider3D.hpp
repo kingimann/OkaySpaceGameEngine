@@ -7,7 +7,7 @@
 namespace okay {
 
 /// Base class for 3D colliders. Provides a world-space center and an AABB for
-/// broad-phase tests; subclasses describe the actual shape (mirrors Unity's
+/// broad-phase tests; subclasses describe the actual shape (mirrors the usual
 /// 3D collider family). Pair with a Rigidbody3D to be moved by Physics3D.
 class Collider3D : public Component {
 public:

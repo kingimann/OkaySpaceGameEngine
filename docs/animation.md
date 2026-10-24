@@ -223,7 +223,7 @@ When a character also has imported clips (a swapped model), the Animation
 window shows **two tabs — Character and Imported Clips** — so both the
 built-in system and the file's own takes are always reachable.
 
-## Previewing & editing imported clips (Unity-style)
+## Previewing & editing imported clips
 
 Select any imported model (or any of its bones) with the **Animation
 window** open: pick a clip, press **Play** or scrub the timeline, and the
@@ -350,7 +350,7 @@ Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 
 | Component | Use |
 | --- | --- |
-| Full Body IK | Hands, feet and head reach goals on any humanoid rig; bones auto-map (Mixamo, Unity/Blender names, built-in Character). Out-of-reach goals pull the hips and bend the spine; soft reach stops limbs snapping straight. |
+| Full Body IK | Hands, feet and head reach goals on any humanoid rig; bones auto-map. Out-of-reach goals pull the hips and bend the spine; soft reach stops limbs snapping straight. |
 | Limb IK | One arm or leg reaching a target with a pole and bend limits. |
 | Chain IK | Long chains (tails, tentacles, spider legs) with FABRIK or CCD, a pole to set the curl direction and per-joint bend limits. |
 | Foot IK | Plant both feet on uneven ground and adjust the pelvis. |
@@ -406,7 +406,7 @@ When playback passes an event, every component on the object gets
 `OnAnimationEvent(name)`:
 
 - **OkayScript:** the global `anim_event` holds the name. Then a function with
-  the event's name runs (Unity-style, e.g. `footstep()`), followed by
+  the event's name runs (e.g. `footstep()`), followed by
   `on_anim_event()`.
 - **Visual scripts:** an **On Anim Event** node runs. Give it a name to react to
   only that event, or leave it blank to react to all of them. **Anim Event

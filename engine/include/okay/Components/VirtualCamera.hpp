@@ -20,7 +20,7 @@ namespace okay {
 /// plus optional handheld shake. A CinemachineBrain on the real (main) camera
 /// picks the highest-`priority` enabled virtual camera and blends the real
 /// camera toward its solved pose. Author several and switch shots by changing
-/// priorities — exactly like Unity's Cinemachine.
+/// priorities — exactly like Cinemachine.
 class VirtualCamera : public Behaviour {
 public:
     /// Higher wins. The brain makes the highest-priority enabled vcam "live".

@@ -11,37 +11,37 @@ class GameObject;
 
 /// A camera supporting both 2D (orthographic) and 3D (perspective) projection.
 /// The first one created registers itself as the scene's main camera (mirroring
-/// Unity's "MainCamera" convention).
+/// "MainCamera" convention).
 class Camera : public Component {
 public:
     enum class Projection { Orthographic, Perspective };
-    /// How the background is filled each frame (Unity's Clear Flags).
+    /// How the background is filled each frame.
     enum class ClearFlags { Skybox, SolidColor };
 
-    Projection projection = Projection::Perspective;   // Unity default (2D scenes set Orthographic)
+    Projection projection = Projection::Perspective;   // default (2D scenes set Orthographic)
 
     /// Half the vertical viewing volume, in world units (orthographic).
     float orthographicSize = 5.0f;
     /// Field of view in degrees (perspective). Measured along the axis set by
-    /// `fovAxisHorizontal` (Unity's FOV Axis): vertical by default.
+    /// `fovAxisHorizontal`: vertical by default.
     float fieldOfView = 60.0f;
-    bool  fovAxisHorizontal = false;   // false = vertical FOV (Unity default), true = horizontal
-    float nearClip = 0.3f;   // Unity-like near plane
+    bool  fovAxisHorizontal = false;   // false = vertical FOV, true = horizontal
+    float nearClip = 0.3f;   // near plane
     float farClip  = 4000.0f; // generous default so large voxel worlds / open terrain stay visible to the horizon
 
-    /// Physical camera (Unity's Physical Camera): derive the field of view from a
+    /// Physical camera: derive the field of view from a
     /// real lens focal length + sensor size instead of an angle. Great for matching
     /// real cameras / cinematic framing. When on, `fieldOfView` is ignored.
     bool  physicalCamera = false;
     float focalLength  = 50.0f;   // mm
     float sensorHeight = 24.0f;   // mm (full-frame vertical); FOV = 2*atan(h/2f)
 
-    /// Culling mask (Unity's Camera.cullingMask): a 32-bit set of layers this camera
+    /// Culling mask: a 32-bit set of layers this camera
     /// renders. A mesh is drawn only if bit (1 << gameObject->layer) is set. Default
     /// = all layers. Use it for mini-maps, hidden helper geometry, layered passes.
     int cullingMask = ~0;
 
-    /// Normalized viewport rectangle (Unity's Camera.rect): where on the screen
+    /// Normalized viewport rectangle: where on the screen
     /// this camera draws — x,y = bottom-left, w,h = size, all in 0..1. Defaults to
     /// the full screen. Use it for split-screen, mini-maps, or picture-in-picture.
     float rectX = 0.0f, rectY = 0.0f, rectW = 1.0f, rectH = 1.0f;
@@ -49,8 +49,8 @@ public:
     /// Background fill mode and the color used when SolidColor.
     ClearFlags clearFlags = ClearFlags::Skybox;
     /// Color the framebuffer is cleared to each frame.
-    Color backgroundColor = Color::FromBytes(49, 77, 121);   // Unity-like blue-grey (was black: 2D scenes started dark)
-    /// Render/priority order: the highest-depth camera wins "main" (Unity-like).
+    Color backgroundColor = Color::FromBytes(49, 77, 121);   // blue-grey (was black: 2D scenes started dark)
+    /// Render/priority order: the highest-depth camera wins "main".
     float depth = 0.0f;
     /// Whether this camera should become the scene's main camera on Awake.
     bool main = true;
@@ -97,13 +97,13 @@ public:
     GameObject* ignoreObject = nullptr;
 
     /// Build a world-space picking ray through a screen pixel (origin top-left,
-    /// +Y down) — Unity's Camera.ScreenPointToRay, for click-to-select / shooting.
+    /// +Y down) — Camera.ScreenPointToRay, for click-to-select / shooting.
     /// `outOrigin`/`outDir` (dir normalized) are set from this camera's transform and
     /// lens; works for both perspective and orthographic.
     void ScreenPointToRay(float screenX, float screenY, float screenW, float screenH,
                           Vec3& outOrigin, Vec3& outDir) const;
     /// World point at screen pixel (screenX,screenY) and `viewDepth` world units in
-    /// front of the camera (Unity's Camera.ScreenToWorldPoint with z = distance).
+    /// front of the camera.
     Vec3 ScreenToWorldPoint(float screenX, float screenY, float viewDepth,
                             float screenW, float screenH) const;
 
@@ -132,7 +132,7 @@ public:
         return true;
     }
 
-    /// World point to viewport coordinates (Unity's WorldToViewportPoint): x,y in
+    /// World point to viewport coordinates: x,y in
     /// 0..1 with the ORIGIN BOTTOM-LEFT (+Y up); *outDepth is the view depth. Returns
     /// false when the point is behind the camera.
     bool WorldToViewportPoint(const Vec3& world, float screenW, float screenH,

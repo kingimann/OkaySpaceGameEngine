@@ -68,6 +68,8 @@ void VisualScriptComponent::ScanPolledEvents() {
 }
 
 void VisualScriptComponent::Start() {
+    if (!ScriptsRun(gameObject)) { m_startDeferred = true; return; }
+    m_startDeferred = false;
     m_ctx.gameObject = gameObject;
     m_ctx.transform  = transform;
     if (!m_graph) return;
@@ -76,7 +78,8 @@ void VisualScriptComponent::Start() {
 }
 
 void VisualScriptComponent::Update(float dt) {
-    if (!m_graph) return;
+    if (!m_graph || !ScriptsRun(gameObject)) return;
+    if (m_startDeferred) Start();
     if (m_scanned != m_graph.get()) ScanPolledEvents();   // reloaded since the last frame
     m_ctx.deltaTime = dt;
     m_ctx.gameObject = gameObject;

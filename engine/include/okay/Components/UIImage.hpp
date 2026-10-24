@@ -39,7 +39,7 @@ public:
     /// asset — face a character the other way, mirror an arrow, etc.).
     bool  flipX = false;
     bool  flipY = false;
-    /// Preserve aspect ratio (Unity's "Preserve Aspect"): fit the source texture
+    /// Preserve aspect ratio ("Preserve Aspect"): fit the source texture
     /// inside `size` without stretching, centered, letterboxed. Ignored for
     /// nine-slice and fills (which intentionally reshape the image).
     bool  preserveAspect = false;

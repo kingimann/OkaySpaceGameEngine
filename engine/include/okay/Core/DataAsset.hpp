@@ -8,7 +8,7 @@ namespace okay {
 /// A "Scriptable Object" — a reusable data asset, saved as a small text file
 /// (`.okaydata`), that holds named fields you author in the editor and read
 /// from OkayScript. Use it for item/enemy/level definitions and game config so
-/// data lives outside code (Unity's ScriptableObject idea). Fields are ordered
+/// data lives outside code. Fields are ordered
 /// key/value pairs stored as strings, so a key reads as number or string.
 ///
 /// File format (one field per line):  `key = value`

@@ -1,6 +1,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Log.hpp"
+#include <algorithm>
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics2D.hpp"
@@ -78,21 +79,42 @@ bool ScriptComponent::LoadFile(const std::string& path, std::string* error) {
 
 void ScriptComponent::Start() {
     if (!m_vm) return;
+    if (!ScriptsRun(gameObject)) { m_startDeferred = true; return; }
+    m_startDeferred = false;
     m_host.gameObject = gameObject;
     m_host.transform  = transform;
+    m_host.component  = this;
     m_vm->Bind(&m_host);
     m_vm->CallStart();
 }
 
 void ScriptComponent::Update(float dt) {
-    if (!m_vm) return;
+    if (!m_vm || !ScriptsRun(gameObject)) return;
+    if (m_startDeferred) Start();
     m_host.transform = transform;
+    // FixedUpdate(): whole fixed steps for the time that passed (at most 5 per frame
+    // so a long hitch can't snowball), before this frame's Update.
+    m_fixedAcc = std::min(m_fixedAcc + dt, kFixedStep * 5.0f);
+    if (m_fixedAcc >= kFixedStep) {
+        m_host.deltaTime = kFixedStep;
+        while (m_fixedAcc >= kFixedStep) { m_fixedAcc -= kFixedStep; m_vm->CallEvent("on_fixed_update"); }
+    }
     m_host.deltaTime = dt;
     m_vm->CallUpdate(dt);
 }
 
+void ScriptComponent::LateUpdate(float) {
+    if (m_vm && !m_startDeferred && ScriptsRun(gameObject)) m_vm->CallEvent("on_late_update");
+}
+
+void ScriptComponent::OnDestroy() {
+    if (!m_vm || m_startDeferred || !ScriptsRun(gameObject)) return;   // never started: nothing to tear down
+    m_vm->CallEvent("on_disable");
+    m_vm->CallEvent("on_destroy");
+}
+
 void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
-    if (!m_vm) return;
+    if (!m_vm || !ScriptsRun(gameObject)) return;
     vs::VsValue name(other ? other->name : std::string());
     m_vm->SetGlobal("other", name);
     m_vm->CallEventWith(event, name);

@@ -79,6 +79,7 @@
 #include <mutex>
 #include <thread>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -208,6 +209,7 @@ struct Token {
     std::string text;
     double number = 0.0;
     int line = 0;
+    bool suffix = false;   ///< a number written with a C# suffix (5f, 2d)
 };
 
 struct ScriptError : std::runtime_error {
@@ -266,9 +268,13 @@ private:
     Token Number() {
         std::string s;
         while (std::isdigit((unsigned char)Peek()) || Peek() == '.') s += Advance();
-        // Allow C#/Unity numeric suffixes (5f, 1.0f, 2d) — just drop them.
-        if (Peek() == 'f' || Peek() == 'F' || Peek() == 'd' || Peek() == 'D') Advance();
-        return {Tok::Number, s, std::stod(s), m_line};
+        // Accept C# numeric suffixes (5f, 1.0f, 2d) so pasted code runs; every
+        // number is already a decimal, so the editor flags them as unnecessary.
+        bool suffix = false;
+        if (Peek() == 'f' || Peek() == 'F' || Peek() == 'd' || Peek() == 'D') { Advance(); suffix = true; }
+        Token t{Tok::Number, s, std::stod(s), m_line};
+        t.suffix = suffix;
+        return t;
     }
 
     Token String() {
@@ -330,7 +336,7 @@ private:
     Token Ident() {
         std::string s;
         while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
-        // Unity-style dotted names are a single token: Input.GetKeyDown,
+        // dotted names are a single token: Input.GetKeyDown,
         // Time.deltaTime, transform.position.x, gameObject.SetActive.
         while (Peek() == '.' && (std::isalpha((unsigned char)Peek(1)) || Peek(1) == '_')) {
             s += Advance();                                   // the '.'
@@ -400,17 +406,89 @@ struct BreakSignal {};
 struct ContinueSignal {};
 
 // ===================== Environment / Runtime =====================
+// What a declared variable may hold. `int x`, `float x`, `bool x` and `string x`
+// are real types: assignments convert (an int drops its fraction) or fail with a
+// clear error instead of silently storing the wrong kind of value. `const` /
+// `readonly` variables can't change after they're set. `var` and other types
+// (Vector3, List<int>, ...) hold anything.
+enum VarKind : unsigned char { KAny = 0, KInt = 1, KFloat = 2, KBool = 3, KString = 4, KConst = 0x10, KStatic = 0x20 };
+
+inline unsigned char TypeKind(const std::string& t) {
+    static const std::unordered_map<std::string, unsigned char> k = {
+        {"int", KInt}, {"long", KInt}, {"short", KInt}, {"byte", KInt}, {"uint", KInt},
+        {"ulong", KInt}, {"ushort", KInt}, {"sbyte", KInt},
+        {"float", KFloat}, {"double", KFloat}, {"decimal", KFloat},
+        {"bool", KBool}, {"string", KString}};
+    auto it = k.find(t);
+    return it == k.end() ? KAny : it->second;
+}
+inline const char* KindName(unsigned char k) {
+    switch (k & 0x0F) { case KInt: return "an int"; case KFloat: return "a float"; case KBool: return "a bool";
+                        case KString: return "a string"; default: return "a variable"; }
+}
+inline const char* ValueKindName(const Value& v) {
+    if (v.IsString()) return "text";
+    if (v.IsBool()) return "true/false";
+    if (v.IsNumber()) return "a number";
+    if (v.IsVec3()) return "a vector";
+    if (v.IsArray()) return "a list";
+    if (v.IsMap()) return "a map";
+    return "that value";
+}
+/// Convert `v` for a variable of `kind`, or throw a readable error.
+inline Value CoerceToKind(unsigned char kind, const Value& v, const std::string& name) {
+    const unsigned char t = kind & 0x0F;
+    auto fail = [&](const char* hint) -> Value {
+        throw ScriptError("'" + name + "' is " + KindName(kind) + ", so it can't hold " + ValueKindName(v) + hint, 0);
+    };
+    switch (t) {
+        case KInt:
+            if (v.IsNumber()) return Value{(float)(long long)v.AsFloat()};   // drops the fraction, like (int)
+            if (v.IsBool()) return Value{v.AsBool() ? 1.0f : 0.0f};
+            return fail(v.IsString() ? " (use int.Parse(text))" : "");
+        case KFloat:
+            if (v.IsNumber()) return v;
+            if (v.IsBool()) return Value{v.AsBool() ? 1.0f : 0.0f};
+            return fail(v.IsString() ? " (use float.Parse(text))" : "");
+        case KBool:
+            if (v.IsBool()) return v;
+            if (v.IsNumber()) return Value{v.AsFloat() != 0.0f};
+            return fail("");
+        case KString:
+            if (v.IsString()) return v;
+            return fail(" (turn it into text with $\"{value}\" or .ToString())");
+        default: return v;
+    }
+}
+inline Value DefaultForKind(unsigned char kind) {
+    switch (kind & 0x0F) { case KBool: return Value{false}; case KString: return Value{std::string()};
+                           default: return Value{}; }
+}
+
 struct Environment {
     std::unordered_map<std::string, Value> vars;
+    std::unordered_map<std::string, unsigned char> kinds;   ///< typed / const variables only
 };
+
+// `static` variables: one copy shared by every object running the same script
+// (keyed by its source), so e.g. `static int alive;` counts all the enemies.
+inline std::shared_ptr<Environment> SharedStatics(const std::string& source) {
+    static std::unordered_map<std::size_t, std::shared_ptr<Environment>> all;
+    auto& e = all[std::hash<std::string>{}(source)];
+    if (!e) e = std::make_shared<Environment>();
+    return e;
+}
 
 struct FunctionDecl {
     std::vector<std::string> params;
+    std::vector<unsigned char> paramKinds;   ///< `int dmg` converts / checks its argument
     std::vector<StmtPtr> body;
+    unsigned char returnKind = 0;            ///< `int Score()` converts what it returns
 };
 
 struct Runtime {
     std::vector<Environment> scopes{1};                 // scopes[0] = global
+    std::shared_ptr<Environment> statics;               // `static` variables shared by this script's objects
     std::unordered_map<std::string, FunctionDecl> functions;
     std::unordered_map<std::string, std::function<Value(std::vector<Value>&)>> builtins;
     ScriptHost* host = nullptr;
@@ -502,7 +580,7 @@ struct Runtime {
         co->id = nextCoId++; co->fn = fn; co->args = std::move(args);
         Coroutine* raw = co.get();
         coroutines.push_back(std::move(co));
-        Resume(raw);   // runs until its first yield (like Unity)
+        Resume(raw);   // runs until its first yield
         return raw->id;
     }
     void StopCoroutine(Coroutine* co) {
@@ -557,23 +635,64 @@ struct Runtime {
 
     Environment& Global() { return scopes.front(); }
 
-    void Define(const std::string& n, const Value& v) { scopes.back().vars[n] = v; }
+    void Define(const std::string& n, const Value& v) {
+        Environment& e = scopes.back();
+        e.vars[n] = v;
+        if (!e.kinds.empty()) e.kinds.erase(n);
+    }
+    /// A typed / const declaration: converts the value and remembers the type.
+    void DefineTyped(const std::string& n, const Value& v, unsigned char kind) {
+        Environment& e = scopes.back();
+        e.vars[n] = (kind & 0x0F) ? CoerceToKind(kind, v, n) : v;
+        if (kind) e.kinds[n] = kind; else if (!e.kinds.empty()) e.kinds.erase(n);
+    }
+    /// A `static` declaration: only the first object to run it sets the value;
+    /// everyone else shares it from then on.
+    void DefineStatic(const std::string& n, const Value& v, unsigned char kind) {
+        if (!statics) statics = std::make_shared<Environment>();
+        if (statics->vars.count(n)) return;
+        statics->vars[n] = (kind & 0x0F) ? CoerceToKind(kind, v, n) : v;
+        statics->kinds[n] = kind;
+    }
+    static bool AssignIn(Environment& e, const std::string& n, const Value& v) {
+        auto f = e.vars.find(n);
+        if (f == e.vars.end()) return false;
+        if (!e.kinds.empty()) {
+            auto k = e.kinds.find(n);
+            if (k != e.kinds.end()) {
+                if (k->second & KConst) throw ScriptError("'" + n + "' is const, so it can't change after it's set", 0);
+                f->second = (k->second & 0x0F) ? CoerceToKind(k->second, v, n) : v;
+                return true;
+            }
+        }
+        f->second = v;
+        return true;
+    }
     void Assign(const std::string& n, const Value& v) {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
-            if (it->vars.count(n)) { it->vars[n] = v; return; }
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) if (AssignIn(*it, n, v)) return;
+        if (statics && AssignIn(*statics, n, v)) return;
         Global().vars[n] = v; // create global on first assignment
+    }
+    /// Set a global from outside (the Inspector): converted to its declared type
+    /// when it has one; a value that can't convert is ignored.
+    void SetGlobalChecked(const std::string& n, const Value& v) {
+        Environment& g = Global();
+        auto k = g.kinds.find(n);
+        if (k == g.kinds.end()) { g.vars[n] = v; return; }
+        try { g.vars[n] = CoerceToKind(k->second, v, n); } catch (const ScriptError&) {}
     }
     Value Get(const std::string& n) {
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
             auto f = it->vars.find(n);
             if (f != it->vars.end()) return f->second;
         }
+        if (statics) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return f->second; }
         return Value{}; // undefined reads as 0/false/empty
     }
     bool Has(const std::string& n) {
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
             if (it->vars.count(n)) return true;
-        return false;
+        return statics && statics->vars.count(n);
     }
 
     Value Call(const std::string& name, std::vector<Value>& args);
@@ -586,7 +705,7 @@ struct Runtime {
     static bool IsLambda(const Value& v) { auto m = v.AsMap(); return m && m->count("__lambda"); }
     Value CallLambda(const Value& f, std::vector<Value>& args);
 
-    // Unity-style dotted property read/write (transform.position.x, Time.timeScale,
+    // dotted property read/write (transform.position.x, Time.timeScale,
     // gameObject.name, ...). GetDotted sets `ok` when it recognized the name;
     // SetDotted returns true when it handled the assignment.
     Value GetDotted(const std::string& name, bool& ok);
@@ -613,7 +732,7 @@ struct InterpStringExpr : Expr {
 struct VarExpr    : Expr {
     std::string n; explicit VarExpr(std::string s) : n(std::move(s)) {}
     Value Eval(Runtime& r) override {
-        // Unity-style property reads: transform.position.x, Time.deltaTime, ...
+        // property reads: transform.position.x, Time.deltaTime, ...
         if (n.find('.') != std::string::npos) {
             bool ok = false; Value v = r.GetDotted(n, ok);
             if (ok) return v;
@@ -661,7 +780,7 @@ struct BinaryExpr : Expr {
     BinaryExpr(Tok o, ExprPtr a, ExprPtr b) : op(o), l(std::move(a)), r(std::move(b)) {}
     Value Eval(Runtime& rt) override {
         Value a = l->Eval(rt), b = r->Eval(rt);
-        // Vector3 math (C#/Unity style): v + w, v - w, v * 2, 2 * v, v / 2,
+        // Vector3 math: v + w, v - w, v * 2, 2 * v, v / 2,
         // v * w (component-wise, like Vector3.Scale), v == w.
         if ((a.IsVec3() || b.IsVec3()) && !a.IsString() && !b.IsString()) {
             const Vec3 x = a.AsVec3(), y = b.AsVec3();
@@ -1066,9 +1185,17 @@ struct IndexCompoundAssignExpr : Expr {
 // ---- Statements ----
 struct ExprStmt : Stmt { ExprPtr e; explicit ExprStmt(ExprPtr x) : e(std::move(x)) {} void Exec(Runtime& r) override { e->Eval(r); } };
 struct VarDeclStmt : Stmt {
-    std::string n; ExprPtr init;
-    VarDeclStmt(std::string s, ExprPtr e) : n(std::move(s)), init(std::move(e)) {}
-    void Exec(Runtime& r) override { r.Define(n, init ? init->Eval(r) : Value{}); }
+    std::string n; ExprPtr init; unsigned char kind = KAny;
+    VarDeclStmt(std::string s, ExprPtr e, unsigned char k = KAny) : n(std::move(s)), init(std::move(e)), kind(k) {}
+    void Exec(Runtime& r) override {
+        if (kind & KStatic) {
+            if (r.statics && r.statics->vars.count(n)) return;   // already set by another object
+            r.DefineStatic(n, init ? init->Eval(r) : DefaultForKind(kind), (unsigned char)(kind & ~KStatic));
+            return;
+        }
+        if (!kind) { r.Define(n, init ? init->Eval(r) : Value{}); return; }
+        r.DefineTyped(n, init ? init->Eval(r) : DefaultForKind(kind), kind);
+    }
 };
 struct ReturnStmt : Stmt { ExprPtr e; explicit ReturnStmt(ExprPtr x) : e(std::move(x)) {} void Exec(Runtime& r) override { throw ReturnSignal{e ? e->Eval(r) : Value{}}; } };
 struct BreakStmt : Stmt { void Exec(Runtime&) override { throw BreakSignal{}; } };
@@ -1279,8 +1406,12 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
 
     scopes.push_back(Environment{});
     const FunctionDecl& fn = f->second;
-    for (std::size_t i = 0; i < fn.params.size(); ++i)
-        Define(fn.params[i], i < args.size() ? args[i] : Value{});
+    for (std::size_t i = 0; i < fn.params.size(); ++i) {
+        const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
+        if (!k) { Define(fn.params[i], i < args.size() ? args[i] : Value{}); continue; }
+        try { DefineTyped(fn.params[i], i < args.size() ? args[i] : DefaultForKind(k), k); }
+        catch (...) { scopes.pop_back(); throw; }
+    }
 
     Value ret;
     try {
@@ -1289,8 +1420,12 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
         ret = rs.value;
     } catch (BreakSignal&) {       // stray break/continue (no enclosing loop):
     } catch (ContinueSignal&) {    // end the function rather than escaping it.
+    } catch (...) {
+        scopes.pop_back();
+        throw;
     }
     scopes.pop_back();
+    if (fn.returnKind & 0x0F) return CoerceToKind(fn.returnKind, ret, name + "()");
     return ret;
 }
 
@@ -1312,7 +1447,7 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args) {
     return ret;
 }
 
-// ---- Unity-style dotted property access --------------------------------------
+// ---- dotted property access --------------------------------------
 namespace {
 // Euler Z angle (degrees) of a quaternion, for transform.eulerAngles.z.
 float EulerZ(const Quat& q) {
@@ -1556,6 +1691,64 @@ public:
     // and re-synchronizing to the next statement boundary, so the editor can list
     // EVERY syntax error at once instead of just the first. The parsed output is
     // discarded — this exists purely to collect ScriptDiagnostic entries.
+    // Syntax OkayScript accepts (so pasted C# runs) but that has no effect. Each is
+    // reported once per line as a warning, so the editor can say exactly what to
+    // delete instead of letting it look meaningful.
+    std::vector<ScriptDiagnostic> NoEffectWarnings() const {
+        std::vector<ScriptDiagnostic> w;
+        std::set<std::pair<int, std::string>> seen;
+        auto add = [&](int line, const std::string& key, const std::string& msg) {
+            if (seen.insert({line, key}).second) w.push_back({line, msg, 1});
+        };
+        static const std::unordered_map<std::string, const char*> kMods = {
+            {"virtual",   "`virtual` does nothing: scripts don't inherit from each other. Delete it."},
+            {"override",  "`override` does nothing: Start, Update and the other events are found by name. Delete it."},
+            {"abstract",  "`abstract` does nothing in a script. Delete it."},
+            {"sealed",    "`sealed` does nothing in a script. Delete it."},
+            {"internal",  "`internal` does nothing: use `public` to show a field in the Inspector, or leave it off."},
+            {"protected", "`protected` does nothing: use `public` to show a field in the Inspector, or leave it off."},
+            {"partial",   "`partial` does nothing in a script. Delete it."},
+            {"extern",    "`extern` does nothing in a script. Delete it."},
+            {"unsafe",    "`unsafe` does nothing in a script. Delete it."},
+            {"private",   "`private` is already the default (only `public` fields show in the Inspector). You can delete it."},
+        };
+        static const std::set<std::string> kNeverCalled = {
+            "OnGUI", "OnApplicationQuit", "OnApplicationPause", "OnApplicationFocus", "OnBecameVisible",
+            "OnBecameInvisible", "OnValidate", "Reset", "OnDrawGizmos", "OnDrawGizmosSelected", "OnPreRender",
+            "OnPostRender", "OnRenderObject", "OnWillRenderObject", "OnParticleCollision", "OnControllerColliderHit",
+            "OnJointBreak", "OnAnimatorMove", "OnAnimatorIK", "OnTransformParentChanged", "OnTransformChildrenChanged"};
+        for (std::size_t i = 0; m_toks[i].type != Tok::End; ++i) {
+            const Token& t = m_toks[i];
+            const Token& nx = m_toks[i + 1];
+            if (t.type == Tok::Number && t.suffix) {
+                add(t.line, "suffix", "`" + t.text + "f`: the letter after the number does nothing (every number is "
+                                      "already a decimal). Write " + t.text + ".");
+                continue;
+            }
+            if (t.type != Tok::Ident) continue;
+            if (t.text == "using" && nx.type == Tok::Ident)
+                add(t.line, "using", "`using` does nothing: everything is already available. Delete this line.");
+            else if (t.text == "namespace" && nx.type == Tok::Ident)
+                add(t.line, "namespace", "`namespace` does nothing. Delete it (and its braces); keep what's inside.");
+            else if ((t.text == "class" || t.text == "struct") && nx.type == Tok::Ident) {
+                const std::size_t after = SkipTypeSuffix(i + 2);
+                if (m_toks[after].type == Tok::Colon)
+                    add(t.line, "class", "The class wrapper and `: " + m_toks[after + 1].text + "` do nothing: the fields "
+                                         "and methods in this file are the component. Delete the `class " + nx.text +
+                                         "` line and its braces.");
+                else
+                    add(t.line, "class", "The class wrapper does nothing: the fields and methods in this file are the "
+                                         "component. Delete the `class " + nx.text + "` line and its braces.");
+            } else if (nx.type == Tok::Ident) {
+                auto m = kMods.find(t.text);
+                if (m != kMods.end()) add(t.line, t.text, m->second);
+            }
+            if (kNeverCalled.count(t.text) && nx.type == Tok::LParen && i > 0 && m_toks[i - 1].type == Tok::Ident)
+                add(t.line, "never", "`" + t.text + "()` is never called by the engine, so this code won't run.");
+        }
+        return w;
+    }
+
     std::vector<ScriptDiagnostic> ParseProgramRecovering() {
         std::vector<ScriptDiagnostic> diags;
         std::vector<StmtPtr> top;
@@ -1571,15 +1764,19 @@ public:
             }
             if (m_pos == before) ++m_pos;                // guarantee forward progress
         }
+        for (auto& d : m_semantic) diags.push_back(d);
+        for (auto& d : NoEffectWarnings()) diags.push_back(d);
+        std::stable_sort(diags.begin(), diags.end(),
+                         [](const ScriptDiagnostic& a, const ScriptDiagnostic& b) { return a.line < b.line; });
         return diags;
     }
 
     // Parse one top-level (or in-class) member: a function, a C#-style method,
     // a `[public] class Name : OkaySource { ... }` wrapper (its methods/fields
-    // are hoisted out, so real Unity scripts paste in), or a statement.
+    // are hoisted out, so pasted C# scripts work), or a statement.
     void ParseMember(std::vector<StmtPtr>& top, std::unordered_map<std::string, FunctionDecl>& funcs) {
         SkipAttributes();   // C# attributes: [SerializeField], [Header("..")], ...
-        // C# `using UnityEngine;` / `using System.Collections.Generic;` — nothing to import.
+        // C# `using X;` lines — nothing to import.
         if (Check(Tok::Ident) && Peek().text == "using" && m_toks[m_pos + 1].type == Tok::Ident) {
             m_pos += 2;
             while (Check(Tok::Ident) || Check(Tok::Assign) || Check(Tok::Dot)) ++m_pos;   // using X = Y.Z;
@@ -1757,9 +1954,19 @@ private:
 
     FunctionDecl ParseTypedFunction(std::string& nameOut) {
         // Consume modifier/type identifiers, keeping the last one (before '(')
-        // as the function name.
+        // as the function name. The return type is real: `void` can't return a
+        // value, `int` / `float` / `bool` / `string` convert what's returned.
+        bool isVoid = false;
+        for (std::size_t i = m_pos; m_toks[i].type == Tok::Ident && m_toks[i + 1].type != Tok::LParen; i = SkipTypeSuffix(i + 1))
+            if (m_toks[i].text == "void") isVoid = true;
+        const unsigned char ret = (unsigned char)(DeclKindAhead() & 0x0F);
         nameOut = ConsumeIdentRun("type");
-        return ParseParamsAndBody();
+        const bool prevVoid = m_inVoid; const std::string prevFn = m_fnName;
+        m_inVoid = isVoid; m_fnName = nameOut;
+        FunctionDecl decl = ParseParamsAndBody();
+        m_inVoid = prevVoid; m_fnName = prevFn;
+        decl.returnKind = ret;
+        return decl;
     }
 
     // Shared by `function f(...)` and `void F(...)`: parse the parameter list
@@ -1770,9 +1977,11 @@ private:
         if (!Check(Tok::RParen)) {
             do {
                 // `dt`, `float dt`, `List<int> xs`, `ref int n` — the last identifier is the name.
+                const unsigned char pk = (unsigned char)(DeclKindAhead() & 0x0F);
                 std::string p = ConsumeIdentRun("parameter");
                 if (Match(Tok::Assign)) ParseExpression();   // C# default value (ignored)
                 decl.params.push_back(p);
+                decl.paramKinds.push_back(pk);
             } while (Match(Tok::Comma));
         }
         Expect(Tok::RParen, "')'");
@@ -1795,6 +2004,43 @@ private:
         if (Check(Tok::LBrace)) return ParseBlock();
         return SingleStmt();
     }
+
+    // The declared type + const-ness of the typed declaration starting at m_pos
+    // (`const int MAX`, `public float speed`, `List<int> xs`). Generic / array
+    // types (`int[]`, `List<int>`) hold anything.
+    unsigned char DeclKindAhead() const {
+        unsigned char kind = KAny, flags = 0;
+        std::vector<std::pair<std::size_t, bool>> run;   // (token, has a generic / array suffix)
+        for (std::size_t i = m_pos; m_toks[i].type == Tok::Ident;) {
+            const std::size_t next = SkipTypeSuffix(i + 1);
+            run.push_back({i, next != i + 1});
+            i = next;
+        }
+        for (std::size_t r = 0; r + 1 < run.size(); ++r) {   // everything before the name
+            const std::string& w = m_toks[run[r].first].text;
+            if (w == "const" || w == "readonly") flags |= KConst;
+            else if (w == "static") flags |= KStatic;
+            else if (!run[r].second && TypeKind(w)) kind = TypeKind(w);
+        }
+        return (unsigned char)(kind | flags);
+    }
+    // Catch the obvious mistakes while typing: `int lives = "three";`,
+    // `string name = 5;`, `int half = 0.5;` (becomes 0).
+    void CheckLiteralInit(unsigned char kind, const std::string& name, Expr* init, int line) {
+        const unsigned char t = kind & 0x0F;
+        if (!t || !init) return;
+        const bool isStr = dynamic_cast<StringExpr*>(init) || dynamic_cast<InterpStringExpr*>(init);
+        auto* num = dynamic_cast<NumberExpr*>(init);
+        const bool isBool = dynamic_cast<BoolExpr*>(init) != nullptr;
+        if ((t == KInt || t == KFloat || t == KBool) && isStr)
+            m_semantic.push_back({line, "'" + name + "' is " + KindName(kind) + ", so it can't hold text"});
+        else if (t == KString && (num || isBool))
+            m_semantic.push_back({line, "'" + name + "' is a string: write the value in quotes"});
+        else if (t == KInt && num && num->v != (double)(long long)num->v)
+            m_semantic.push_back({line, "'" + name + "' is an int, so " + Fmt(num->v) + " becomes " +
+                                        Fmt((double)(long long)num->v) + ". Use float for decimals", 1});
+    }
+    static std::string Fmt(double v) { std::ostringstream o; o << v; return o.str(); }
 
     // A C#-style typed local/field: a run of >= 2 identifiers (type + modifiers
     // + name) ending in '=' or ';' (e.g. `int score = 0;`, `Vector3 v;`).
@@ -1921,20 +2167,26 @@ private:
             Expect(Tok::RBrace, "'}'");
             return sw;
         }
-        if (Match(Tok::Var) || IsTypedVarDeclAhead()) {
-            // For a typed decl, drop the leading type/modifier idents, keep the last.
+        const bool isVar = Match(Tok::Var);
+        if (isVar || IsTypedVarDeclAhead()) {
+            // `int x`, `const float y`, `public string name`: the type and const-ness
+            // are kept (they're enforced at runtime); the name is the last identifier.
+            const unsigned char kind = isVar ? KAny : DeclKindAhead();
+            const int declLine = Peek().line;
             std::string name = ConsumeIdentRun("variable name");
             SkipAutoPropertyBody();   // public int Lives { get; set; } = 3;
             ExprPtr init;
             if (Match(Tok::Assign)) init = ParseExpression();
-            if (!Check(Tok::Comma)) { Match(Tok::Semicolon); return std::make_unique<VarDeclStmt>(name, std::move(init)); }
+            CheckLiteralInit(kind, name, init.get(), declLine);
+            if (!Check(Tok::Comma)) { Match(Tok::Semicolon); return std::make_unique<VarDeclStmt>(name, std::move(init), kind); }
             auto multi = std::make_unique<MultiStmt>();   // int a = 1, b = 2;
-            multi->list.push_back(std::make_unique<VarDeclStmt>(name, std::move(init)));
+            multi->list.push_back(std::make_unique<VarDeclStmt>(name, std::move(init), kind));
             while (Match(Tok::Comma)) {
                 std::string n2 = Expect(Tok::Ident, "variable name").text;
                 ExprPtr i2;
                 if (Match(Tok::Assign)) i2 = ParseExpression();
-                multi->list.push_back(std::make_unique<VarDeclStmt>(n2, std::move(i2)));
+                CheckLiteralInit(kind, n2, i2.get(), declLine);
+                multi->list.push_back(std::make_unique<VarDeclStmt>(n2, std::move(i2), kind));
             }
             Match(Tok::Semicolon);
             return multi;
@@ -1997,7 +2249,11 @@ private:
         }
         if (Match(Tok::Return)) {
             ExprPtr e;
+            const int retLine = Prev().line;
             if (!Check(Tok::Semicolon) && !Check(Tok::RBrace)) e = ParseExpression();
+            if (e && m_inVoid)
+                m_semantic.push_back({retLine, m_fnName + "() is void, so it can't return a value. "
+                                               "Give it a return type (int, float, bool or string) or just write `return;`"});
             Match(Tok::Semicolon);
             return std::make_unique<ReturnStmt>(std::move(e));
         }
@@ -2050,8 +2306,10 @@ private:
             Expect(Tok::RParen, "')'");
         }
         Expect(Tok::Arrow, "'=>'");
+        const bool prevVoid = m_inVoid; m_inVoid = false;   // a lambda may return a value
         if (Check(Tok::LBrace)) lam->body = ParseBlock();
         else lam->body.push_back(std::make_unique<ReturnStmt>(ParseExpression()));
+        m_inVoid = prevVoid;
         return lam;
     }
     ExprPtr ParseAssignment() {
@@ -2376,6 +2634,9 @@ private:
     std::vector<Token> m_toks;
     std::size_t m_pos = 0;
     std::set<std::string> m_enums;                          // enum type names
+    std::vector<ScriptDiagnostic> m_semantic;               // type mistakes found while parsing
+    bool m_inVoid = false;                                  // parsing the body of a `void` function
+    std::string m_fnName;
     std::unordered_map<std::string, double> m_enumValues;   // "State.Run" -> 1
 };
 
@@ -6357,7 +6618,7 @@ struct OkayScriptVM::Impl {
         alias("screen_height", "screen_h");
         alias("debug", "debug_log");
 
-        // ---- Unity-style API: write scripts that look like C# in Unity. -----
+        // ---- API: write scripts that look like C#. -----
         //      Dotted names are single tokens (see the lexer), so these read as
         //      Input.GetKeyDown("space"), Mathf.Sin(t), Debug.Log(x), etc.
         b["Vector3"] = [](std::vector<Value>& a) -> Value {
@@ -6449,7 +6710,7 @@ struct OkayScriptVM::Impl {
             if (dist <= md || dist < 1e-6f) return Value{t};
             return Value{c + d * (md / dist)};
         };
-        // Smooth 2D value noise in [0,1] (a stand-in for Unity's Mathf.PerlinNoise).
+        // Smooth 2D value noise in [0,1].
         b["noise"] = [](std::vector<Value>& a) -> Value {
             float x = a.size() > 0 ? a[0].AsFloat() : 0.0f;
             float y = a.size() > 1 ? a[1].AsFloat() : 0.0f;
@@ -6532,7 +6793,7 @@ struct OkayScriptVM::Impl {
                     || (c == "TextRenderer"  && g->GetComponent<TextRenderer>());
             return Value{has};
         };
-        // A few more math helpers Unity scripts reach for (clamp01 / lerp_angle
+        // A few more math helpers scripts reach for (clamp01 / lerp_angle
         // already exist; these are new and avoid clobbering string repeat()).
         b["math_repeat"] = [](std::vector<Value>& a) -> Value {   // Mathf.Repeat: wrap into [0, len)
             if (a.size() < 2) return Value{0.0f};
@@ -6566,7 +6827,7 @@ struct OkayScriptVM::Impl {
         alias("Mathf.LerpAngle", "lerp_angle");
         alias("inverse_lerp_value", "inverse_lerp");
 
-        // Method-name aliases mapping Unity calls onto existing builtins.
+        // Method-name aliases mapping C#-style calls onto existing builtins.
         alias("Input.GetKey", "key");
         alias("Input.GetKeyDown", "key_down");
         alias("Input.GetKeyUp", "key_up");
@@ -6701,7 +6962,7 @@ struct OkayScriptVM::Impl {
         alias("json_stringify", "to_json");
         alias("json_parse", "from_json");
 
-        // ---- C# / Unity compatibility -------------------------------------------
+        // ---- C# compatibility -------------------------------------------
         // Collections created by `new List<T>()`, `new Dictionary<K,V>()`, `new T[n]`
         // (the parser lowers those to these calls). Lists/arrays share one type.
         b["__new_list"] = [](std::vector<Value>& a) {
@@ -6742,7 +7003,7 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         // transform.Translate(Vector3 / x, y, z) moves in the object's own space
-        // (Unity's default Space.Self); pass Space.World to move in world axes.
+        //; pass Space.World to move in world axes.
         // The two-number OkayScript form translate(x, y) stays a plain 2D move.
         b["transform.Translate"] = [tf](std::vector<Value>& a) {
             Transform* t = tf(); if (!t || a.empty()) return Value{};
@@ -6771,7 +7032,6 @@ struct OkayScriptVM::Impl {
         alias("Debug.LogWarning", "log_warn");
         alias("Debug.LogError", "log_error");
         alias("Debug.LogFormat", "format");
-        alias("MonoBehaviour.print", "print");
         b["Input.GetAxisRaw"] = [](std::vector<Value>& a) -> Value {
             std::string ax = a.empty() ? std::string{} : a[0].AsString();
             float v = ax == "Vertical" ? Input::AxisWASD().y : Input::AxisWASD().x;
@@ -7045,6 +7305,7 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->rt.StopCoroutines("");
         m_impl->rt.pendingDestroy.clear();
         m_impl->rt.functions.clear();
+        m_impl->rt.statics = SharedStatics(source);
         m_impl->topLevel = parser.ParseProgram(m_impl->rt.functions);
         // Bare mode: no functions defined -> the top-level statements ARE the update
         // loop (run every frame), so a whole script can be a single line. Otherwise run
@@ -7133,7 +7394,7 @@ void OkayScriptVM::Bind(ScriptHost* host) { m_impl->rt.host = host; }
 
 namespace {
 // Call the first of `names` that the script defines (with the given args).
-// Lets a script use Unity's PascalCase (Start/Update) or the classic
+// Lets a script use PascalCase (Start/Update) or the classic
 // lowercase (start/update) names interchangeably.
 void CallFirst(Runtime& rt, std::initializer_list<const char*> names,
                std::vector<Value>& args, const char* label) {
@@ -7150,7 +7411,8 @@ void CallFirst(Runtime& rt, std::initializer_list<const char*> names,
 void OkayScriptVM::CallStart() {
     if (!m_impl->loaded) return;
     std::vector<Value> none;
-    CallFirst(m_impl->rt, {"Awake", "awake"}, none, "Awake");   // Unity runs Awake then Start
+    CallFirst(m_impl->rt, {"Awake", "awake"}, none, "Awake");   // Awake, then OnEnable, then Start
+    CallFirst(m_impl->rt, {"OnEnable", "on_enable"}, none, "OnEnable");
     CallFirst(m_impl->rt, {"Start", "start"}, none, "Start");
 }
 
@@ -7203,8 +7465,8 @@ void OkayScriptVM::CallEvent(const std::string& function) {
 
 void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue& arg) {
     if (!m_impl->loaded) return;
-    // The requested (engine) name wins; otherwise accept a Unity-style alias so
-    // scripts can name handlers the Unity way (OnCollisionEnter, OnClick, ...).
+    // The requested (engine) name wins; otherwise accept an alias so
+    // scripts can name handlers in PascalCase (OnCollisionEnter, OnClick, ...).
     static const std::unordered_map<std::string, std::vector<std::string>> kAliases = {
         // Physics — distinct enter/stay/exit. The legacy on_trigger/on_collision
         // are accepted as enter handlers so older scripts keep working.
@@ -7229,6 +7491,10 @@ void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue&
         {"on_receive",   {"OnReceive"}},
         {"on_drag",      {"OnDrag"}},
         {"on_drag_start",{"OnBeginDrag"}},
+        // Lifecycle the ScriptComponent drives.
+        {"on_fixed_update", {"FixedUpdate", "fixed_update"}},
+        {"on_disable",      {"OnDisable"}},
+        {"on_destroy",      {"OnDestroy"}},
     };
     std::string fn = function;
     if (!m_impl->rt.functions.count(fn)) {
@@ -7253,7 +7519,7 @@ vs::VsValue OkayScriptVM::GetGlobal(const std::string& name) const {
 }
 
 void OkayScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {
-    m_impl->rt.Global().vars[name] = v;
+    m_impl->rt.SetGlobalChecked(name, v);
 }
 
 } // namespace okay

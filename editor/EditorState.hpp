@@ -65,7 +65,7 @@ public:
     void DeleteSelected();
     /// Clone the selected object(s) (and their children); selects the clones.
     GameObject* DuplicateSelected();
-    /// Wrap the current selection in a new empty parent (Unity's Ctrl+Shift+G group),
+    /// Wrap the current selection in a new empty parent,
     /// keeping each object's world position. Returns the new group (selected), or null
     /// if nothing is selected. Only top-level selected objects are reparented.
     GameObject* GroupSelected(const std::string& name = "Group");

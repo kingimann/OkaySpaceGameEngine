@@ -26,12 +26,12 @@ inline GameObject* UIRaycast(Scene& scene, const Vec2& point,
 
 class EventSystem; // defined below
 
-/// The EventSystem governing a scene's UI (Unity requires exactly one). Returns
+/// The EventSystem governing a scene's UI. Returns
 /// the first active EventSystem found, or nullptr.
 EventSystem* SceneEventSystem(Scene& scene);
 inline bool SceneHasEventSystem(Scene& scene) { return SceneEventSystem(scene) != nullptr; }
 
-/// The single place pointer input meets the UI, mirroring Unity's EventSystem.
+/// The single place pointer input meets the UI, mirroring EventSystem.
 /// Each frame it raycasts the cursor against the scene's widgets and tracks what
 /// is hovered, what is pressed, and what is currently selected (the widget the
 /// pointer last pressed). Individual widgets still run their own behaviour; this

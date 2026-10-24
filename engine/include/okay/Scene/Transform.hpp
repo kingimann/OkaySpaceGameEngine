@@ -8,7 +8,7 @@
 namespace okay {
 
 /// Spatial state of a GameObject and its place in the hierarchy. Every
-/// GameObject owns exactly one Transform, just like in Unity.
+/// GameObject owns exactly one Transform.
 class Transform : public Component {
 public:
     // ---- Local space ---------------------------------------------------
@@ -49,7 +49,7 @@ public:
 
     // ---- Hierarchy -----------------------------------------------------
     Transform* Parent() const { return m_parent; }
-    /// Reparent this transform. When `worldPositionStays` is true (Unity's
+    /// Reparent this transform. When `worldPositionStays` is true (the
     /// default) the world pose is preserved; when false the local pose is kept.
     void SetParent(Transform* parent, bool worldPositionStays = true);
     const std::vector<Transform*>& Children() const { return m_children; }

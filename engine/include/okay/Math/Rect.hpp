@@ -4,7 +4,7 @@
 namespace okay {
 
 /// 2D axis-aligned rectangle defined by a min corner (x, y) and a size, like
-/// Unity's `Rect`.
+/// `Rect`.
 struct Rect {
     float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
 

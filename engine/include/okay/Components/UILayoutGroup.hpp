@@ -5,7 +5,7 @@
 
 namespace okay {
 
-/// Auto-layout for child UI widgets (Unity's Vertical/Horizontal LayoutGroup).
+/// Auto-layout for child UI widgets.
 /// Arranges this object's child widgets in a column or row starting at `origin`,
 /// stacking them by their own sizes plus `spacing`. Combine with a Scroll View
 /// to make scrollable lists/menus without hand-placing every element. Call

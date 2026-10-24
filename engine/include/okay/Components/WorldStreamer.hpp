@@ -12,7 +12,7 @@
 
 namespace okay {
 
-/// World Partition / level streaming — Unreal's "only load the map near the
+/// World Partition / level streaming — "only load the map near the
 /// player" without the 32 GB RAM bill. The world is authored as a grid of cell
 /// files (one prefab per chunk, named "<prefix>_<x>_<z>.okayprefab" under
 /// `folder`). At runtime this watches a target (the main camera, or a named

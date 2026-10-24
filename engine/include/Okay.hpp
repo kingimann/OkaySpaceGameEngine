@@ -223,6 +223,7 @@
 // Text scripting (OkayScript built-in; Lua / C# optional)
 #include "okay/Scripting/ScriptVM.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Scripting/NextScriptVM.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 
 // Steam platform integration (simulation backend by default)

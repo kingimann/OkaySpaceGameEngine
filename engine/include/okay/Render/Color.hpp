@@ -3,7 +3,7 @@
 
 namespace okay {
 
-/// RGBA color with components in the [0, 1] range, like Unity's `Color`.
+/// RGBA color with components in the [0, 1] range, like `Color`.
 struct Color {
     float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
 

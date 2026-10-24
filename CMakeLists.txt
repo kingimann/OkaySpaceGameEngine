@@ -105,7 +105,7 @@ if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
     add_subdirectory(player)
 endif()
 
-# ---- Ship SDL2.dll beside the binaries (Unity-style dynamic linking) ----
+# ---- Ship SDL2.dll beside the binaries ----
 # Unless fully static (OKAY_STATIC_SDL), the Windows exes link SDL2 dynamically and
 # need SDL2.dll next to them. Copy it into the output bin dir so a build is runnable
 # in place and "Build Game" / packaging can grab it from there.

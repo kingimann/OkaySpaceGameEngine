@@ -15,7 +15,7 @@ struct Collision3D;
 
 /// Base class for everything attachable to a GameObject. Scripts derive from
 /// this (see `Behaviour`), as do built-in pieces like Transform and Camera.
-/// The lifecycle callbacks mirror Unity's MonoBehaviour message order.
+/// The lifecycle callbacks run in the usual order: Awake, Start, Update, LateUpdate, OnDestroy.
 class Component {
 public:
     virtual ~Component() = default;
@@ -61,7 +61,7 @@ public:
     virtual void OnTriggerExit3D(Collider3D* /*other*/) {}
 
     // ---- Pointer/mouse messages (dispatched by the Scene against the main
-    //      camera, like Unity's OnMouseX). The cursor is picked against each
+    //      camera, like OnMouseX). The cursor is picked against each
     //      object's sprite/2D-collider bounds. ----
     virtual void OnMouseEnter() {}   // cursor moved onto the object
     virtual void OnMouseExit()  {}   // cursor moved off it
@@ -86,7 +86,7 @@ private:
 };
 
 /// Convenience aliases for user scripts. OkaySpace's scripts subclass
-/// `OkaySource` the way Unity scripts subclass MonoBehaviour.
+/// `OkaySource`.
 using Behaviour = Component;
 using OkaySource = Component;
 

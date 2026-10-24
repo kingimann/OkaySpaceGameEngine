@@ -7,7 +7,7 @@ namespace okay {
 
 /// Time-based callbacks: one-shot delays, repeating timers, and value tweens.
 /// A Scene owns one and ticks it every frame, so gameplay code can schedule
-/// work without writing its own timers (think Unity's Invoke/InvokeRepeating).
+/// work without writing its own timers.
 class Scheduler {
 public:
     using Handle = std::uint64_t;

@@ -6,7 +6,7 @@
 namespace okay {
 
 /// Deterministic, seedable pseudo-random generator (xorshift128+ style), modeled
-/// after Unity's `Random`. There is a shared global instance plus instantiable
+/// after `Random`. There is a shared global instance plus instantiable
 /// generators for independent, reproducible streams.
 class Random {
 public:
@@ -57,7 +57,7 @@ public:
         return {r * Mathf::Cos(t), r * Mathf::Sin(t), z};
     }
 
-    /// Process-wide shared generator (matching Unity's static API style).
+    /// Process-wide shared generator.
     static Random& Shared() { static Random g(0xC0FFEEull); return g; }
 
 private:

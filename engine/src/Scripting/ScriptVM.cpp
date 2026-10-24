@@ -1,5 +1,6 @@
 #include "okay/Scripting/ScriptVM.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Scripting/NextScriptVM.hpp"
 
 #if defined(OKAY_WITH_LUA)
 #  include "okay/Scripting/LuaScriptVM.hpp"
@@ -24,6 +25,7 @@ std::vector<std::string> AvailableScriptLanguages() {
 std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language) {
     if (language == "okayscript" || language.empty())
         return std::make_unique<OkayScriptVM>();
+    if (language == NextScriptVM::kLanguage) return std::make_unique<NextScriptVM>();
 #if defined(OKAY_WITH_LUA)
     if (language == "lua") return std::make_unique<LuaScriptVM>();
 #endif

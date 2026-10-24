@@ -185,7 +185,7 @@ inline GameObject* AddThirdPersonShooterPlayer(Scene& scene, const Vec3& pos = {
 }
 
 /// Wire foot IK + root motion onto a part-rigged Character — the "humanoid setup"
-/// a Unity import gives you for free. Foot IK plants the feet on the ground; root
+/// a model import gives you for free. Foot IK plants the feet on the ground; root
 /// motion is wired to the hips and left Disabled (the procedural anims bob the
 /// hips, so it's only meaningful for imported clips with real root translation —
 /// flip its mode to AnimDrivesMotion for those).
@@ -211,7 +211,7 @@ inline void WireCharacterIK(GameObject* player, Character* pc) {
 }
 
 /// Build a fully-wired humanoid body: the part-rigged Character, a physics capsule,
-/// and foot IK + root motion already hooked to the right bones — Unity's "drop in a
+/// and foot IK + root motion already hooked to the right bones — "drop in a
 /// humanoid" in one call. Add a controller + camera to drive it.
 inline GameObject* BuildHumanoidBody(Scene& scene, const Vec3& pos, const char* name) {
     GameObject* player = scene.CreateGameObject(name);
@@ -915,7 +915,7 @@ inline void MainMenu(Scene& scene) {
     cam->main = true;
     cam->backgroundColor = Color::FromBytes(18, 20, 28);
 
-    // Unity-style UI root: a Canvas holding the widgets, plus an Event System.
+    // UI root: a Canvas holding the widgets, plus an Event System.
     GameObject* canvas = scene.CreateGameObject("Canvas");
     auto* cv = canvas->AddComponent<Canvas>();
     cv->screenMatch = Canvas::ScreenMatch::Expand;

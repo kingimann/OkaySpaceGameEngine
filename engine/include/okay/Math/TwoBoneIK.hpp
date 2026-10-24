@@ -11,7 +11,7 @@ namespace okay {
 /// direction (e.g. forward for a knee, so it bends the right way). The target is
 /// clamped to the reachable range, so the chain never stretches or inverts.
 ///
-/// This is the math Unity's IK / "foot IK" hides — a closed-form law-of-cosines
+/// This is the math IK / "foot IK" hides — a closed-form law-of-cosines
 /// solve, no iteration. Returns the mid-joint and the (clamped) end position.
 ///
 /// `minBendDeg`/`maxBendDeg` limit the interior angle at the mid joint (knee/elbow):

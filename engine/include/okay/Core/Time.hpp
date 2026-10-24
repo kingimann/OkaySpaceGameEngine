@@ -3,7 +3,7 @@
 
 namespace okay {
 
-/// Global frame timing, mirroring Unity's static `Time` class.
+/// Global frame timing, mirroring static `Time` class.
 /// Values are updated once per frame by the Application loop.
 class Time {
 public:

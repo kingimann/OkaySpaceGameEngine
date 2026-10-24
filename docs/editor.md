@@ -1,6 +1,6 @@
 # OkaySpace Editor
 
-A Unity-style desktop editor built with **Dear ImGui (docking) + SDL2**. It opens
+A desktop editor built with **Dear ImGui (docking) + SDL2**. It opens
 a real window with **docked** panels (Hierarchy / Scene / **Game** / Inspector /
 Console / Project), a Play·Stop·Step toolbar, and a dark theme, and edits live
 `okay::Scene`s. The UI renders through SDL's 2D renderer (Direct3D on Windows,
@@ -65,7 +65,7 @@ uses, built right into the engine app.
 
 Recent additions (v2.12–2.14):
 
-- **Add Component, Unity-style** — a centered *Component* title + Search box;
+- **Add Component** — a centered *Component* title + Search box;
   categories (Rendering, Animation, Physics 2D/3D, Lighting, Camera, Scripts,
   Audio, Gameplay, UI) drill into submenus while browsing, collapse to a flat
   filtered list while searching. The **Scripts** category lists every `.okay`
@@ -91,7 +91,7 @@ Recent additions (v2.12–2.14):
   out of the way while you work on 3D objects / 2D sprites. The normal Scene view
   shows **no UI overlay by default** (toggle it with the **UI** button if you want a
   peek); the **Game** view always shows the UI, since that's what players see. Edit
-  UI two ways (Unity's UI view): a **mode toggle** that locks the Scene view to
+  UI two ways: a **mode toggle** that locks the Scene view to
   UI-only (View ▸ UI Editing Mode, or the **UI Only** button on the Scene toolbar),
   and a **dedicated dockable "UI" tab**
   (View ▸ UI Editor (separate tab)) you can keep open **beside** the 3D Scene so you
@@ -100,7 +100,7 @@ Recent additions (v2.12–2.14):
   dropdown (it drives the Game view's *Resolution* menu too) and both tabs match
   pixel-for-pixel: same aspect, same letterbox, and the same CanvasScaler
   resolution-scale, so a HUD is the same size in the editor and the built game
-  (WYSIWYG, like Unity's Game view driving the Canvas). The letterbox margins outside
+  exactly as the game draws it. The letterbox margins outside
   the screen are dimmed and any widget that runs **off-screen is outlined red**, so
   "is my UI visible in-game?" is answerable at a glance, and the **safe-area** inset
   is a true 5% inset of the real screen. Both views share the same tools — zoom/pan,
@@ -111,7 +111,7 @@ Recent additions (v2.12–2.14):
   right on the toolbar. Drag a corner/edge handle to resize a widget to any size; only
   the viewport under the pointer processes a drag, so having both the Scene view and
   the UI tab open never double-moves a widget. Dragging a UI child **snaps stickily to
-  its parent** (edges, center and thirds), Unity-style, in addition to the canvas,
+  its parent** (edges, center and thirds), in addition to the canvas,
   safe-area, subdivision and sibling smart-guides.
 - **Flow Graph** (Window ▸ Flow Graph) — a node view of the selected object's
   **Actions** (visual scripting): the trigger wires to its conditions and a chain
@@ -136,11 +136,11 @@ Recent additions (v2.12–2.14):
   FromFile`, `Scene::RequestMerge`.)
 - **Edit Collider** — on a Box Collider 3D, click **Edit Collider** to show six
   draggable face handles in the Scene view; pull each side to hand-fit the box to
-  your model (Unity-style). Adjusts the collider's size + offset; undoable.
+  your model. Adjusts the collider's size + offset; undoable.
 - **Scene gizmos** — **snapping** for Move/Rotate/Scale (grid + 15° detents) and
   a **Local/Global** toggle (X); a live **Camera Preview** inset for a selected
   perspective camera; colored **light gizmos** (range sphere / spot cone).
-  **Unity-style billboard icons** with name labels mark every camera and light in
+  **billboard icons** with name labels mark every camera and light in
   the Scene (a camera glyph; a sun/bulb/spot glyph by light type), so lights and
   cameras are easy to see and pick even with no mesh.
 - **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
@@ -224,10 +224,10 @@ Recent additions (v2.12–2.14):
   Bottom-Right pause button or a Centered menu stays put at any window size or
   resolution. Hit-testing and the built game honor the anchor. Three **stretch
   anchors** (Stretch Horizontal / Vertical / Fill) make a widget fill the canvas
-  on that axis — its Position/Size fields then read as **margins** (Unity's
-  offsetMin/offsetMax: Left/Top/Right/Bottom), so a full-bleed backdrop or a
+  on that axis — its Position/Size fields then read as **margins**
+  (offsetMin/offsetMax: Left/Top/Right/Bottom), so a full-bleed backdrop or a
   top bar reflows with the window. The **Game view resolution** menu scales a
-  Constant-Pixel-Size HUD to the picked resolution, like Unity's CanvasScaler — and
+  Constant-Pixel-Size HUD to the picked resolution, like the Canvas scaler — and
   the UI-only editor now applies the *same* scale, so the HUD is identical in both.
 - **Panel & image styling** — *UI Panel* adds a **gradient direction** (vertical,
   horizontal, or either diagonal), an outer **outline** ring (focus keylines /
@@ -277,14 +277,14 @@ Recent additions (v2.12–2.14):
   `<Location>/<Name>` folder (an `Assets/` subfolder + the starting scene)
   already created. The **Project**
   panel is an asset browser rooted at the project's `Assets/`: navigate folders,
-  tick **All** to list the whole subtree (Unity-style), and click a `.okayscene`
+  tick **All** to list the whole subtree, and click a `.okayscene`
   to open or a `.okayprefab` to instantiate. It supports **create / import /
   rename (F2) / duplicate**, **sort by Name / Type / Size / Date**, a type filter
   and thumbnail-size slider, and drag-and-drop to move assets or make prefabs.
   **Cut / Copy / Paste** assets (right-click or Ctrl+X / Ctrl+C / Ctrl+V; paste
   into a folder or the current view), **Delete** asks for confirmation (Del key or
   the menu), and **Find References in Scene** selects the objects that use an
-  asset (texture, mesh, font, script) — Unity's most-used Project action.
+  asset (texture, mesh, font, script) — the most-used Project action.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a
   standalone, double-clickable game.

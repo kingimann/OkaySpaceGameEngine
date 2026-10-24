@@ -82,6 +82,7 @@ public:
     void SetVariable(const std::string& name, const vs::VsValue& v) { m_ctx.variables[name] = v; }
 
 private:
+    bool m_startDeferred = false;   // Start() arrived while scripts were off
     void Fire(const char* entryName, GameObject* other) {
         if (!m_graph) return;
         if (m_graph->Entries(entryName).empty()) return;

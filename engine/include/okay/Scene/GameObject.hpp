@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <cstdint>
 #include <memory>
 #include <typeinfo>
 #include <string>
@@ -10,7 +11,7 @@
 namespace okay {
 
 /// A named container of Components living in a Scene — the engine's primary
-/// unit of composition, modeled directly on Unity's GameObject.
+/// unit of composition, modeled directly on GameObject.
 class GameObject {
 public:
     std::string name;
@@ -26,7 +27,7 @@ public:
     /// Render/physics layer (0-31). A camera's cullingMask selects which layers it
     /// draws (bit 1<<layer); also used by the physics collision matrix.
     int layer = 0;
-    /// Marked non-moving (Unity-style). A hint for tools/builds; objects flagged
+    /// Marked non-moving. A hint for tools/builds; objects flagged
     /// static are not expected to move at runtime.
     bool isStatic = false;
 
@@ -114,9 +115,20 @@ public:
 
     Scene* scene() const { return m_scene; }
 
+    /// A number unique to this object for the whole run (never reused), so scripts
+    /// can hold a reference that safely turns into "destroyed" instead of dangling.
+    std::uint64_t InstanceId() const { return m_instanceId; }
+    /// The live object with this id, or nullptr once it's gone (or destroyed).
+    static GameObject* FromInstanceId(std::uint64_t id);
+
+    ~GameObject();
+    GameObject(const GameObject&) = delete;
+    GameObject& operator=(const GameObject&) = delete;
+
 private:
     friend class Scene;
     explicit GameObject(Scene* scene, std::string name);
+    std::uint64_t m_instanceId = 0;
 
     /// Routes a freshly added component to the Scene's lifecycle queue.
     /// Defined in GameObject.cpp where the full Scene type is visible.

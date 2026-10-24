@@ -10,7 +10,7 @@
 
 namespace okay {
 
-/// Bridge a Unity-style Button On Click (or any UI action) to a **native** component
+/// Bridge a Button On Click (or any UI action) to a **native** component
 /// method on `go`, passing `arg` as the amount. Returns true if a native component
 /// handled the name; UIButton falls back to a script's CallEvent when this is false,
 /// so custom script functions still work and the fixed native verbs take priority.

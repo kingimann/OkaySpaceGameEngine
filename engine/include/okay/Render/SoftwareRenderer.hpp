@@ -549,7 +549,7 @@ public:
                     }
                 }
                 // Ambient-occlusion map: darken the ambient + diffuse lighting in
-                // creases/contact areas (Unity's Occlusion / Unreal's AO). 1 = lit.
+                // creases/contact areas. 1 = lit.
                 float ao = 1.0f;
                 if (aoMap) {
                     float iwa = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
@@ -1531,7 +1531,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // The Unlit shader is equivalent to the unlit flag for the renderer.
         const bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
         // Scrolling-UV offset (animated textures): advance the texture coordinates by
-        // the scroll speed * elapsed time. Added after tiling, like Unity's offset.
+        // the scroll speed * elapsed time. Added after tiling, like offset.
         const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
         const float scrollV = mr->uvScroll.y * Time::ElapsedTime();
         Mat4 model = go->transform->LocalToWorldMatrix();

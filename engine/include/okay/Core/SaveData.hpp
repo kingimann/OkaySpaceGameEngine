@@ -12,7 +12,7 @@
 namespace okay {
 
 /// A single save file — a typed key/value store you can write to disk and read
-/// back, modeled on Unity's "Easy Save 3". Unlike Prefs (one global bag of
+/// back, modeled on "Easy Save 3". Unlike Prefs (one global bag of
 /// strings), a SaveFile holds typed values (float / int / bool / string / Vec3),
 /// you can have as many files as you like (slots, profiles, per-level data), and
 /// each key remembers its type. Values are stored as `type:payload` lines:
@@ -107,7 +107,7 @@ class Save {
 public:
     static const std::string& DefaultFile() { static std::string f = "save.okaysave"; return f; }
 
-    /// Folder that relative save files resolve into (Unity's persistentDataPath).
+    /// Folder that relative save files resolve into.
     /// The player points this at a per-user, writable app folder so saves work in
     /// read-only install locations and don't clash between games. Empty = current
     /// dir (the legacy behaviour). Absolute file paths are never relocated.

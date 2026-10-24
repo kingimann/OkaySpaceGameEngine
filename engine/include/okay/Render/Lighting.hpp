@@ -55,7 +55,7 @@ inline float LightAttenuation(float d, float range, int falloff) {
     if (range <= 0.0f) return 0.0f;
     if (falloff == 1) {                          // inverse-square, windowed at range
         float dr = d / range; if (dr >= 1.0f) return 0.0f;
-        float win = 1.0f - dr * dr * dr * dr; win *= win;      // smooth cutoff (Unreal-style)
+        float win = 1.0f - dr * dr * dr * dr; win *= win;      // smooth cutoff
         return win / (1.0f + 8.0f * d * d / (range * range));  // ~1 near source, scaled to range
     }
     float a = 1.0f - d / range; if (a < 0.0f) a = 0.0f;

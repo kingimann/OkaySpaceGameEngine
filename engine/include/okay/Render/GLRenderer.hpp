@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// GPU (OpenGL) scene renderer — "what Unity uses": the GPU's hardware rasterizer
+// GPU (OpenGL) scene renderer: the GPU's hardware rasterizer
 // with a real depth buffer and multisample (MSAA) anti-aliasing. Crisp,
 // perspective-correct, and the GPU does the work instead of the CPU.
 //

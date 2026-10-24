@@ -5,7 +5,7 @@
 
 namespace okay {
 
-/// Column-major 4x4 matrix, modeled after Unity's `Matrix4x4`.
+/// Column-major 4x4 matrix, modeled after `Matrix4x4`.
 /// Element m[col][row] -> data index col*4 + row.
 struct Mat4 {
     float m[16] = {
@@ -75,7 +75,7 @@ struct Mat4 {
         return r;
     }
 
-    /// Compose a Translate * Rotate * Scale transform (Unity's TRS order).
+    /// Compose a Translate * Rotate * Scale transform.
     static Mat4 TRS(const Vec3& t, const Quat& r, const Vec3& s) {
         return Translate(t) * Rotate(r) * Scale(s);
     }

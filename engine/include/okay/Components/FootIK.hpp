@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// FootIK — plant a biped's feet on the ground (Unity's foot IK). Each frame it
+// FootIK — plant a biped's feet on the ground. Each frame it
 // raycasts down under each foot, and if the ground is above where the animation
 // put the foot, it solves a two-bone IK (hip -> knee -> foot) so the foot sits on
 // the surface and the knee bends naturally — no more feet floating over slopes or

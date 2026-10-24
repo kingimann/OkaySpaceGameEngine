@@ -6,7 +6,7 @@
 namespace okay {
 
 /// Plays an AudioClip. The AudioMixer reads active sources and advances their
-/// playhead while mixing — analogous to Unity's AudioSource.
+/// playhead while mixing — analogous to AudioSource.
 class AudioSource : public Behaviour {
 public:
     AudioClip clip;

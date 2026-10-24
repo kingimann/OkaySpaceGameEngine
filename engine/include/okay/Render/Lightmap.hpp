@@ -8,7 +8,7 @@
 
 namespace okay {
 
-/// Offline "map baking" (Unity-style lightmapping): pre-compute the scene's
+/// Offline "map baking": pre-compute the scene's
 /// lighting — including cast SHADOWS and ambient occlusion — into a static mesh's
 /// per-face colors, so at runtime it renders unlit yet fully lit for near-zero
 /// cost. Call once (in the editor) after the lights are set; the result is stored

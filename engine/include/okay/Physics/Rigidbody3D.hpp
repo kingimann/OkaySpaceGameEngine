@@ -8,7 +8,7 @@
 
 namespace okay {
 
-/// 3D physics body, modeled after Unity's Rigidbody. Dynamic bodies are moved
+/// 3D physics body, modeled after Rigidbody. Dynamic bodies are moved
 /// by the Physics3D integrator (gravity, forces, velocity); Kinematic bodies
 /// move only by their velocity; Static bodies don't move and act as immovable
 /// colliders.
@@ -34,7 +34,7 @@ public:
     bool     freezeX = false, freezeY = false, freezeZ = false;
 
     // ---- Angular dynamics ----
-    /// Angular velocity in RADIANS per second about each world axis (Unity 3D units).
+    /// Angular velocity in RADIANS per second about each world axis.
     Vec3     angularVelocity = Vec3::Zero;
     /// Angular damping per second (bleeds off spin like `drag` does for velocity).
     float    angularDrag = 0.05f;
@@ -42,7 +42,7 @@ public:
     /// until you opt in — uncheck it to let torque and off-center hits rotate the body.
     bool     freezeRotation = true;
 
-    // ---- Sleeping (rest optimisation, Unity/PhysX-style) ----
+    // ---- Sleeping ----
     /// May this body fall asleep once at rest? A sleeping body is skipped by the
     /// integrator/solver (no CPU, no jitter) until woken by a moving-body collision,
     /// an applied force/impulse, or a directly set velocity. Off = always live.
@@ -71,7 +71,7 @@ public:
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; WakeUp(); }
-    /// Apply a force with an explicit Unity-style ForceMode.
+    /// Apply a force with an explicit ForceMode.
     void AddForce(const Vec3& force, ForceMode mode) {
         switch (mode) {
             case ForceMode::Force:          m_forceAccum = m_forceAccum + force; break;
@@ -88,7 +88,7 @@ public:
     void AddTorque(const Vec3& torque) { m_torqueAccum = m_torqueAccum + torque; WakeUp(); }
 
     /// Apply a force at a world point, producing both linear force and a torque from
-    /// the lever arm (Unity's AddForceAtPosition). Off-center hits spin the body.
+    /// the lever arm. Off-center hits spin the body.
     void AddForceAtPosition(const Vec3& force, const Vec3& point) {
         m_forceAccum = m_forceAccum + force;
         Vec3 c = transform ? transform->Position() : Vec3::Zero;
@@ -96,7 +96,7 @@ public:
         WakeUp();
     }
 
-    /// Unity-style explosion: shove this body away from `center` with `force`, falling
+    /// explosion: shove this body away from `center` with `force`, falling
     /// off linearly to zero at `radius` (bodies past the radius are untouched).
     /// `upModifier` biases the push upward (so debris pops up, not just outward).
     /// No effect on kinematic/static bodies (infinite mass).

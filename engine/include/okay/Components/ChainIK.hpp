@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// ChainIK — full-body / long-chain IK driven by FABRIK (Unity's "fancy" solver
+// ChainIK — full-body / long-chain IK driven by FABRIK ("fancy" solver
 // tier). Drags an arbitrarily long bone chain so its tip reaches a target while
 // keeping the root pinned and bone lengths fixed: spider legs, tentacles, a spine
 // reaching, planting both hands on a wall. For 2-bone limbs prefer the cheaper

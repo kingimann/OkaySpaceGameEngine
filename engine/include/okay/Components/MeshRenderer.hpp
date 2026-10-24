@@ -17,7 +17,7 @@ public:
     bool  deformed = false;
     Color color = Color::White;        // base (albedo) color
 
-    /// Which surface/shading model the renderer uses (Unity's "Shader" on a
+    /// Which surface/shading model the renderer uses ("Shader" on a
     /// Material). Standard = the full lit PBR-ish model; Unlit = flat base color, no
     /// lighting; Toon = cel-shaded (the diffuse banded into `toonBands` hard steps
     /// with a single hard specular glint).
@@ -63,7 +63,7 @@ public:
     bool   triplanar = false;
     bool  enabled = true;      // when false the mesh is not drawn (e.g. the local
                                // player's own body in first person)
-    bool  wireframe = false;   // solid by default (Unity-like); true = edges only
+    bool  wireframe = false;   // solid by default; true = edges only
     /// Render both faces of each triangle (no back-face culling) — for planes,
     /// flags, foliage cards, and the insides of open meshes like Tube.
     bool  doubleSided = false;
@@ -107,8 +107,8 @@ public:
     /// matte regions (per-pixel lighting only). Build Game bundles the file.
     std::string specularMap;
 
-    /// Optional ambient-occlusion map (grayscale PNG, like Unity's Occlusion slot
-    /// / Unreal's AO input): its per-texel luminance darkens the ambient + diffuse
+    /// Optional ambient-occlusion map (grayscale PNG, like Occlusion slot
+    /// / AO input): its per-texel luminance darkens the ambient + diffuse
     /// in creases and contact areas the direct lighting can't see, grounding the
     /// surface. 1 (white) = fully lit, 0 (black) = fully occluded. Build Game
     /// bundles the file. `aoStrength` blends it in (0 = off, 1 = full).

@@ -9,7 +9,7 @@ class GameObject;
 
 /// A "UI Toolkit"-style document: a block of **OkayUI** markup that describes a
 /// whole tree of UI widgets as text, which the engine turns into real widget
-/// GameObjects. Think Unity's UXML — but line-based, indentation-nested, and
+/// GameObjects. Think UXML — but line-based, indentation-nested, and
 /// built into the engine — so designers can author entire menus and HUDs in one
 /// editable document and reuse them, instead of hand-placing every element.
 ///

@@ -29,67 +29,104 @@ Attach a `ScriptComponent` to a GameObject and the engine calls your `start()`
 and `update(dt)` (plus event handlers like `on_collision(other)`) as part of the
 normal scene lifecycle.
 
-## C# / Unity style
+## C#-style syntax
 
-If you know Unity C#, write that: OkayScript reads it directly. New scripts start
-as a C# component class:
+Scripts read like C#, and every piece of syntax does something. A script's
+fields and functions **are** the component: there is no class or base type to
+write. New scripts start like this:
 
 ```csharp
-using UnityEngine;
-using System.Collections;
-using System.Collections.Generic;
+// Attach this script to an object. Its fields and functions are the component.
 
-public class Player : MonoBehaviour
+[Header("Movement")]
+public float speed = 5;        // public: shows in the Inspector
+public float hopHeight = 1;
+public int maxHops = 3;
+
+int hops = 0;                   // not public: only this script sees it
+
+void Start()
 {
-    [Header("Movement")]
-    public float speed = 5f;          // public fields show in the Inspector
-    private int hops = 0;
+    Debug.Log($"{gameObject.name} is ready");
+}
 
-    void Start() { Debug.Log($"{gameObject.name} is ready"); }
+void Update()
+{
+    float h = Input.GetAxis("Horizontal");
+    float v = Input.GetAxis("Vertical");
+    transform.position += new Vector3(h, v, 0) * speed * Time.deltaTime;
 
-    void Update()
+    if (Input.GetKeyDown(KeyCode.Space) && hops < maxHops)
     {
-        float h = Input.GetAxis("Horizontal");
-        transform.position += new Vector3(h, 0, 0) * speed * Time.deltaTime;
-        if (Input.GetKeyDown(KeyCode.Space)) StartCoroutine(Hop());
+        hops++;
+        StartCoroutine(Hop());
     }
+}
 
-    IEnumerator Hop()
-    {
-        transform.position += Vector3.up;
-        yield return new WaitForSeconds(0.25f);
-        transform.position -= Vector3.up;
-    }
-
-    void OnTriggerEnter2D(Collider2D other)
-    {
-        if (other.CompareTag("Coin")) { hops++; Destroy(other.gameObject); }
-    }
+IEnumerator Hop()
+{
+    transform.position += Vector3.up * hopHeight;
+    yield return new WaitForSeconds(0.25);
+    transform.position -= Vector3.up * hopHeight;
 }
 ```
 
-What works:
+### What each part does
+
+| Syntax | What it does |
+|---|---|
+| `public float speed = 5;` | `public` shows the field in the Inspector so it can be tuned per object. Fields without it are private to the script. `[SerializeField]` shows a non-public field too. |
+| `[Header("Movement")]`, `[Tooltip("...")]`, `[Range(0, 10)]` | A heading above the next fields, a hover tip, a slider in the Inspector. |
+| `int`, `float`, `bool`, `string` | Real types. An `int` drops the decimals (`int half = 7 / 2;` is 3). Putting the wrong kind of value in one (text in an `int`, a number in a `string`) is an error, shown in the editor as you type when it's a literal. `double`/`decimal` are floats; `long`/`short`/`byte`/... are ints. |
+| `var x = ...;` | A variable that can hold anything. Vector3, List, Dictionary and other types also hold anything of their kind. |
+| `const` / `readonly` | Can't change after it's set: assigning again is an error. |
+| `static int alive;` | One value shared by every object running this script (for example a count of all enemies). |
+| `void Hit(int dmg)` | Typed parameters convert their argument (`Hit(7.9)` gets 7). `int Score()` converts what it returns. A `void` function can't return a value. |
+| `IEnumerator Blink()` + `yield return ...` | A coroutine: runs across frames, pausing at each `yield`. Start it with `StartCoroutine(Blink())`. |
+| `enum State { Idle, Run }` | Named values: `State.Run`, `switch (state)`. |
+
+### Functions the engine calls
+
+| Function | When |
+|---|---|
+| `Awake()`, `OnEnable()`, `Start()` | Once each, in that order, when the scene starts. |
+| `Update()` / `LateUpdate()` | Every frame (`Time.deltaTime` is the seconds since the last). |
+| `FixedUpdate()` | 50 times a second, however fast the game draws. |
+| `OnDisable()`, `OnDestroy()` | When the object is destroyed. |
+| `OnCollisionEnter/Stay/Exit(string other)`, `OnTriggerEnter/Stay/Exit(string other)` | Physics contacts, 2D and 3D. `other` is the other object (`other.name`, `other.CompareTag(..)`, `other.transform.position`). |
+| `OnMouseDown/Up/Enter/Exit/Over()`, `OnClick()` | Pointer events on the object. |
+
+### Syntax that does nothing
+
+Pasted C# still runs, but these have no effect, and the Script Editor marks
+each one with a warning saying what to delete:
+
+- `using X;` and `namespace X { }`: everything is already available.
+- A `class X : Base { }` wrapper: the fields and functions inside are the component either way.
+- `virtual`, `override`, `abstract`, `sealed`, `protected`, `internal`, `partial`, and `private` (already the default).
+- Number suffixes like `5f`: every number is already a decimal.
+- Methods the engine never calls (`OnGUI`, `OnApplicationQuit`, `OnBecameVisible`, ...).
+
+### Also available
 
 | Area | Supported |
 |---|---|
-| Structure | `using ...;`, `namespace X { }`, `class`/`struct` with base types, `[Attributes]`, modifiers (`public`, `private`, `static`, `override`, ...), `enum`s (with explicit values), auto-properties `{ get; set; } = 3`, `/* block comments */` |
-| Types | `int`/`float`/`bool`/`string`/`char`, `var`, `List<T>`, `Dictionary<K,V>`, arrays `int[]` (`new int[3]`, `new[] {1, 2}`, `{1, 2, 3}` initializers), multiple declarators `int a = 1, b = 2;` |
-| Expressions | casts `(int)x`, `$"interpolated {strings}"`, `?:`, `%=`, bitwise `& \| ^`, `++x`, Vector3 maths (`v + w`, `v * 2`, `-v`, `v / 2`), `(a - b).normalized`, `this.field` |
-| Methods on values | strings: `ToUpper`, `ToLower`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `Substring`, `Replace`, `Split`, `Trim`, `PadLeft`...; numbers: `ToString("F2")`; lists: `Add`, `Remove`, `RemoveAt`, `Insert`, `Contains`, `IndexOf`, `Clear`, `Sort`, `Reverse`, `Count`; dictionaries: `Add`, `ContainsKey`, `Remove`, `Keys`, `Values`, `GetValueOrDefault`, `foreach (KeyValuePair<K,V> kv in d)` |
-| Lambdas | `x => x * 2`, `(a, b) => { ... }` with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)`; `Action` variables you can call |
-| Lifecycle | `Awake`, `Start`, `Update()` (with or without `dt`), `LateUpdate`, `OnCollisionEnter/Stay/Exit`, `OnTriggerEnter/Stay/Exit` (2D and 3D; the parameter is the other object, so `other.name`, `other.tag`, `other.CompareTag(..)`, `other.transform.position` work), `OnMouseDown/Up/Enter/Exit` |
-| Coroutines | `IEnumerator` methods, `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
-| Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text`/`TMP_Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
-| Unity API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
+| Collections | `List<T>`, `Dictionary<K,V>`, arrays `int[]` (`new int[3]`, `new[] {1, 2}`, `{1, 2, 3}`), `int a = 1, b = 2;` |
+| Expressions | casts `(int)x`, `$"interpolated {strings}"`, `?:`, `%=`, bitwise `& \| ^`, `++x`, Vector3 maths (`v + w`, `v * 2`, `-v`, `v / 2`), `(a - b).normalized` |
+| Methods on values | strings: `ToUpper`, `ToLower`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `Substring`, `Replace`, `Split`, `Trim`, `PadLeft`...; numbers: `ToString("F2")`; lists: `Add`, `Remove`, `RemoveAt`, `Insert`, `Contains`, `IndexOf`, `Clear`, `Sort`, `Reverse`, `Count`; dictionaries: `Add`, `ContainsKey`, `Remove`, `Keys`, `Values`, `GetValueOrDefault`, `foreach (var kv in d)` |
+| Lambdas | `x => x * 2`, `(a, b) => { ... }` with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
+| Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
+| Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
+| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
 
 Objects are referenced by name under the hood, so `GameObject.Find("Enemy")`
 returns a reference you can pass to `Destroy`, compare with `null`, or read
-`.tag` / `.transform.position` from. Not supported (yet): user-defined classes
-as types you `new`, generics you declare yourself, `ref`/`out` parameters, LINQ
-query syntax, and properties with bodies.
+`.tag` / `.transform.position` from. Not supported: your own classes as types
+you `new`, generics you declare yourself, `ref`/`out` parameters, LINQ query
+syntax, and properties with bodies.
 
 In the Script Editor, **Insert ▸ C# snippets** adds fields, handlers, coroutines
-and collections, and **Help ▸ C# Quick Reference** shows this list.
+and collections, and **Help ▸ Cheat Sheet** shows the short version.
 
 ## Compatibility: C-style syntax also parses
 

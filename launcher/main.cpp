@@ -1473,7 +1473,7 @@ ImVec4 kAccentDim(0.19f, 0.43f, 0.72f, 1.0f);
 // Selectable accent colors (name, main, dim) — mirror the editor's accent presets.
 struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
 const AccentPreset kAccentPresets[] = {
-    {"Unity", ImVec4(0.235f, 0.475f, 0.800f, 1), ImVec4(0.172f, 0.360f, 0.600f, 1)},  // Unity Editor selection blue (default)
+    {"Classic", ImVec4(0.235f, 0.475f, 0.800f, 1), ImVec4(0.172f, 0.360f, 0.600f, 1)},  // muted selection blue (default)
     {"Blue",   ImVec4(0.26f, 0.59f, 0.98f, 1), ImVec4(0.19f, 0.43f, 0.72f, 1)},
     {"Teal",   ImVec4(0.18f, 0.78f, 0.74f, 1), ImVec4(0.13f, 0.56f, 0.53f, 1)},
     {"Violet", ImVec4(0.56f, 0.46f, 0.96f, 1), ImVec4(0.40f, 0.33f, 0.70f, 1)},
@@ -1898,7 +1898,7 @@ void DarkTheme() {
     const bool light = (g_themeIndex == 2);
     if (light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Utilitarian, Steam/Unity-style metrics: mostly square, dense, flat. Small
+    // Utilitarian, Steam/metrics: mostly square, dense, flat. Small
     // corner radii only (no big pill rounding), tight spacing, thin separators.
     s.WindowRounding    = 0.0f;  s.ChildRounding    = 2.0f;
     s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
@@ -2781,7 +2781,7 @@ static float MeasureChatBodyText(const std::string& bodyIn, float maxW) {
 void IconTile(const std::string& name, float size) {
     ImVec4 raw = NameColor(name);
     // Mute the hue toward a neutral steel so a list reads as a clean, uniform set
-    // (Steam/Unity) instead of a rainbow of saturated tiles.
+    // instead of a rainbow of saturated tiles.
     auto mute = [](float c) { return 0.40f + (c - 0.40f) * 0.38f; };
     ImVec4 col(mute(raw.x), mute(raw.y), mute(raw.z), 1.0f);
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -15613,7 +15613,7 @@ int main(int argc, char** argv) {
         // dark surface reads more like a real app and less "designed".)
 
         // ---- Left nav (collapsible to an icon-only rail) ----
-        // Unity Hub-style rail: a darker, borderless column with the logo and the
+        // Launcher rail: a darker, borderless column with the logo and the
         // collapse toggle on top, grouped rows (inset + rounded; the active one
         // gets a soft fill, an accent bar and an accent icon), and notifications,
         // settings and a profile card pinned to the bottom. The page sits flush
@@ -19139,7 +19139,7 @@ int main(int argc, char** argv) {
                         dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, p.y + 2), cText, "OkaySpace Engine");
                         ImGui::SetWindowFontScale(1.0f);
                         dl->AddText(ImVec2(tx, p.y + 26), ImGui::GetColorU32(accLt), "Version " OKAY_ENGINE_VERSION);
-                        dl->AddText(ImVec2(tx, p.y + 44), cDim, FitText("A small Unity-inspired C++ game engine.", tr - tx).c_str());
+                        dl->AddText(ImVec2(tx, p.y + 44), cDim, FitText("A small C++ game engine.", tr - tx).c_str());
                         // Check for updates (+ live status underneath).
                         const UpState us = GetState();
                         const bool busy = (us == Up_Checking || us == Up_Downloading);

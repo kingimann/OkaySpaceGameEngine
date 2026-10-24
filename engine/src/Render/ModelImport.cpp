@@ -1844,7 +1844,7 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     root->transform->localPosition = {0.0f, any ? -lo.y * s : 0.0f, 0.0f};
     // The engine's character bodies face LOCAL -Z. Read which way THIS model
     // faces from its skeleton (exporters disagree: Mixamo/glTF +Z, some
-    // Blender / Unreal exports -Z or +X); a rig without recognisable
+    // Blender / other exporters use -Z or +X); a rig without recognisable
     // left/right bones falls back to the common +Z.
     int faced = FaceCharacterModel(scene, player, root, 0.0f);
     if (faced < 0) root->transform->localRotation = Quat::Euler({0.0f, 180.0f, 0.0f}) * root->transform->localRotation;

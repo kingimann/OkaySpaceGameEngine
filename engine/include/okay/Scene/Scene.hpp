@@ -17,7 +17,7 @@ class Camera;
 class IRenderer;
 
 /// Owns a graph of GameObjects and drives their lifecycle and rendering.
-/// Analogous to a Unity Scene.
+/// One level / screen of the game.
 class Scene {
 public:
     explicit Scene(std::string name = "Scene");
@@ -115,6 +115,10 @@ public:
     const Physics3D& physics3D() const { return m_physics3d; }
     /// Set false to skip the physics step (e.g. for pure-UI scenes).
     bool physicsEnabled = true;
+    /// Whether scripts (Script, Visual Script and Actions components) run. The
+    /// editor turns it off outside Play, so opening, previewing or editing a scene
+    /// never runs game code; their Start runs once it's back on.
+    bool runScripts = true;
 
     /// Per-scene rendering settings, saved with the scene so a built game shows
     /// the same sky and base lighting the editor previews (skybox + ambient).
@@ -214,5 +218,11 @@ private:
     bool        m_hasPendingLoad = false;
     std::vector<std::pair<std::string, Vec3>> m_pendingMerges;   // deferred additive scene merges
 };
+
+/// True when `go`'s scene lets scripts run (see Scene::runScripts).
+inline bool ScriptsRun(const GameObject* go) {
+    const Scene* s = go ? go->scene() : nullptr;
+    return !s || s->runScripts;
+}
 
 } // namespace okay

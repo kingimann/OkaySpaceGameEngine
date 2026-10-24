@@ -8,7 +8,7 @@
 
 namespace okay {
 
-/// Size a GameObject's colliders to match its renderer, the way Unity's
+/// Size a GameObject's colliders to match its renderer, the way the usual
 /// "Add Collider" auto-fits to the sprite/mesh bounds. Collider size is in local
 /// units (the Transform's scale is applied on top by the collider), so it's set
 /// straight from the un-scaled sprite size / mesh bounds and stays correct as the

@@ -409,9 +409,9 @@ add_executable(test_item_dragdrop test_item_dragdrop.cpp)
 target_link_libraries(test_item_dragdrop PRIVATE okay::engine)
 add_test(NAME item_dragdrop COMMAND test_item_dragdrop)
 
-add_executable(test_unity_script test_unity_script.cpp)
-target_link_libraries(test_unity_script PRIVATE okay::engine)
-add_test(NAME unity_script COMMAND test_unity_script)
+add_executable(test_csharp_style_script test_csharp_style_script.cpp)
+target_link_libraries(test_csharp_style_script PRIVATE okay::engine)
+add_test(NAME csharp_style_script COMMAND test_csharp_style_script)
 
 add_executable(test_uidocument test_uidocument.cpp)
 target_link_libraries(test_uidocument PRIVATE okay::engine)
@@ -707,7 +707,7 @@ add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
 target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
 add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
 
-# C# / Unity-style OkayScript: classes, generics, lambdas, coroutines, components.
+# C# / OkayScript: classes, generics, lambdas, coroutines, components.
 add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)
 target_link_libraries(test_okayscript_csharp PRIVATE okay::engine)
 add_test(NAME okayscript_csharp COMMAND test_okayscript_csharp)
@@ -780,3 +780,11 @@ add_test(NAME tween COMMAND test_tween)
 add_executable(test_shooter25d test_shooter25d.cpp)
 target_link_libraries(test_shooter25d PRIVATE okay::engine)
 add_test(NAME shooter25d COMMAND test_shooter25d)
+
+add_executable(test_script_semantics test_script_semantics.cpp)
+target_link_libraries(test_script_semantics PRIVATE okay::engine)
+add_test(NAME script_semantics COMMAND test_script_semantics)
+
+add_executable(test_okayscript_next test_okayscript_next.cpp)
+target_link_libraries(test_okayscript_next PRIVATE okay::engine)
+add_test(NAME okayscript_next COMMAND test_okayscript_next)

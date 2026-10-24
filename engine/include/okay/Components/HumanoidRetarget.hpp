@@ -104,7 +104,7 @@ public:
         m_rigRestPos  = rigRoot->transform->localPosition;
 
         // ---- 1. name-match the imported bones ----------------------------
-        // Mixamo (mixamorig:LeftUpLeg), Unreal UE4/UE5 Mannequin (thigh_l,
+        // Mixamo (mixamorig:LeftUpLeg), engine mannequin rigs (thigh_l,
         // upperarm_l, spine_01..05 — Quaternius' newer packs use it), Blender /
         // Rigify (upper_arm.L, DEF-thigh.L) and plain names. Helper bones that
         // only LOOK similar (ik_hand_l, upperarm_twist_01_l, ball_l, thumb_01_l,

@@ -6,7 +6,7 @@
 
 namespace okay {
 
-/// Minimal logging facility, similar in spirit to Unity's `Debug.Log`.
+/// Minimal logging facility, similar in spirit to `Debug.Log`.
 class Log {
 public:
     enum class Level { Trace, Info, Warning, Error };

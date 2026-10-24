@@ -4,7 +4,7 @@
 
 namespace okay {
 
-/// Quaternion rotation, modeled after Unity's `Quaternion`.
+/// Quaternion rotation, modeled after `Quaternion`.
 struct Quat {
     float x = 0.0f, y = 0.0f, z = 0.0f, w = 1.0f;
 
@@ -58,7 +58,7 @@ struct Quat {
         return {a.x * s, a.y * s, a.z * s, Mathf::Cos(r)};
     }
 
-    /// Build a rotation from Euler angles (degrees), applied Z, X, Y like Unity.
+    /// Build a rotation from Euler angles (degrees), applied Z, X, Y.
     static Quat Euler(float xDeg, float yDeg, float zDeg) {
         Quat qx = AngleAxis(xDeg, Vec3::Right);
         Quat qy = AngleAxis(yDeg, Vec3::Up);
@@ -85,7 +85,7 @@ struct Quat {
                 a.z * s0 + b.z * s1, a.w * s0 + b.w * s1};
     }
 
-    /// Normalized lerp between two rotations (cheaper than Slerp, Unity's Lerp).
+    /// Normalized lerp between two rotations.
     /// Takes the shortest path and renormalizes; good for small steps / blending.
     static Quat Lerp(const Quat& a, Quat b, float t) {
         t = Mathf::Clamp01(t);
@@ -95,7 +95,7 @@ struct Quat {
                     a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t}.Normalized();
     }
 
-    /// Rotation that orients +Z along `forward` with the given `up` (Unity-style).
+    /// Rotation that orients +Z along `forward` with the given `up`.
     static Quat LookRotation(Vec3 forward, Vec3 up = Vec3::Up) {
         forward = forward.Normalized();
         Vec3 right = Vec3::Cross(up, forward).Normalized();
@@ -143,7 +143,7 @@ struct Quat {
         return q.Normalized();
     }
 
-    /// Extract Euler angles (degrees) in Unity's Z-X-Y order — the inverse of Euler().
+    /// Extract Euler angles (degrees) in Z-X-Y order — the inverse of Euler().
     /// Handy for editors/serialization that want a readable rotation.
     Vec3 ToEuler() const {
         // Rotation matrix terms (from the unit quaternion).
@@ -187,7 +187,7 @@ struct Quat {
         return 2.0f * std::acos(d) * Mathf::Rad2Deg;
     }
 
-    /// Rotate `from` toward `to` by at most `maxDegrees` (Unity's RotateTowards).
+    /// Rotate `from` toward `to` by at most `maxDegrees`.
     static Quat RotateTowards(const Quat& from, const Quat& to, float maxDegrees) {
         float ang = Angle(from, to);
         if (ang < 1e-4f) return to;

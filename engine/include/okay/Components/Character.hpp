@@ -280,7 +280,7 @@ public:
     // animation. Runs on its own clock and loops; call StopLayer to clear it.
     /// Play `clip` on the bones whose bit is set in `boneMask` (bit i = bone i). Returns
     /// false if there's no such clip. Pass UpperBodyMask()/ArmsMask() or build your own.
-    /// `additive` ADDS the layer onto the base pose (Unity additive layers — good for
+    /// `additive` ADDS the layer onto the base pose (additive layers — good for
     /// aim offsets / recoil) instead of replacing it; `weight` (0..1) blends the layer in.
     bool PlayLayer(const std::string& clip, std::uint32_t boneMask,
                    bool additive = false, float weight = 1.0f);
@@ -299,7 +299,7 @@ public:
     static std::uint32_t UpperBodyMask();   ///< torso, head, arms (everything above the hips)
     static std::uint32_t BoneBit(int bone) { return (bone >= 0 && bone < 32) ? (1u << bone) : 0u; }
 
-    // ---- 1D blend tree (Unity-style) ----
+    // ---- 1D blend tree ----
     // Blend smoothly between clips by a single parameter — the classic locomotion setup:
     // idle at speed 0, walk at ~2, run at ~5; drive the parameter from the controller's
     // speed and the body morphs between them. Clips play on a shared, looping clock so

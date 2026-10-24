@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/Scene.hpp"   // ScriptsRun
 #include "okay/Scripting/ScriptVM.hpp"
 #include <memory>
 #include <string>
@@ -9,8 +10,7 @@ namespace okay {
 
 /// Runs a text script (OkayScript by default, or Lua / C# when those backends
 /// are enabled) on a GameObject. The script's start() runs once and update(dt)
-/// runs every frame — the same authoring model as Unity's MonoBehaviour, but in
-/// a scripting language.
+/// runs every frame — a component written in a scripting language.
 class ScriptComponent : public Behaviour {
 public:
     /// Choose the scripting language up front (default: "okayscript").
@@ -41,7 +41,7 @@ public:
     ScriptHost& Host() { return m_host; }
 
     /// Per-instance overrides for the script's public variables, shown and edited
-    /// in the Inspector (Unity-style serialized fields). Stored as text and
+    /// in the Inspector. Stored as text and
     /// applied over the script's defaults after each compile. The editor reads
     /// the script source to know which names exist; this map holds the values
     /// the user changed.
@@ -52,6 +52,11 @@ public:
 
     void Start() override;
     void Update(float dt) override;
+    void LateUpdate(float dt) override;
+    /// The script's OnDisable() then OnDestroy(), when its object is destroyed.
+    void OnDestroy() override;
+    /// FixedUpdate() runs at this fixed rate (steps per second), however fast the game draws.
+    static constexpr float kFixedStep = 1.0f / 50.0f;
 
     // Forward engine messages to optional script handlers. A script just defines a
     // function with the matching name to react. Physics overlaps/contacts and
@@ -59,9 +64,9 @@ public:
     // and the legacy on_trigger()/on_collision() still fire on enter (see the VM's
     // alias table) so older scripts keep working.
     /// Clip events: `anim_event` holds the name, then the handler named like the
-    /// event runs (Unity-style), then on_anim_event().
+    /// event runs, then on_anim_event().
     void OnAnimationEvent(const std::string& name) override {
-        if (!m_vm) return;
+        if (!m_vm || !ScriptsRun(gameObject)) return;
         m_vm->SetGlobal("anim_event", vs::VsValue(name));
         if (!name.empty()) m_vm->CallEvent(name);
         m_vm->CallEvent("on_anim_event");
@@ -90,7 +95,9 @@ public:
     void OnMouseClick() override { Fire("on_click"); }
 
 private:
-    void Fire(const char* event) { if (m_vm) m_vm->CallEvent(event); }
+    bool  m_startDeferred = false;   // Start() arrived while scripts were off
+    float m_fixedAcc = 0.0f;   // time banked toward the next FixedUpdate()
+    void Fire(const char* event) { if (m_vm && ScriptsRun(gameObject)) m_vm->CallEvent(event); }
     void FireOther(const char* event, Collider2D* c);
     void FireOther(const char* event, Collider3D* c);
     void FireOther(const char* event, const Collision2D& c);

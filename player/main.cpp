@@ -723,7 +723,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     const int n = ui.hotbarSlots < 1 ? 1 : ui.hotbarSlots;
     // Resolution-independent UI: scale by the window height vs the authored reference,
     // so the inventory keeps the same on-screen proportion in a small built-game window
-    // as it does in the (usually larger) editor Game view. Unity's "Scale With Screen Size".
+    // as it does in the (usually larger) editor Game view. "Scale With Screen Size".
     const float uiScale = (ui.scaleToScreen && ui.referenceHeight > 1.0f) ? (float)H / ui.referenceHeight : 1.0f;
     const float sz = ui.slotSize * uiScale, gap = ui.slotGap * uiScale;
     const float marginX = ui.marginX * uiScale, marginY = ui.marginY * uiScale, panelPad = ui.panelPad * uiScale;
@@ -1404,7 +1404,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Resolve where the game files live. New builds use a clean Unity-style layout
+    // Resolve where the game files live. New builds use a clean layout
     // (exe + DLLs at the root, scenes/config/assets in a Data/ subfolder); prefer
     // that when present, else fall back to the flat layout (everything beside exe).
     std::string baseDir;
@@ -1432,7 +1432,7 @@ int main(int argc, char** argv) {
         bool d3d12 = false; // opt-in: prefer the Direct3D 12 backend (Windows) over D3D11
         std::string startup;
         std::vector<std::string> scenes;
-        // Presentation (Unity-parity).
+        // Presentation.
         std::string icon;          // window icon PNG (in the Data folder)
         bool runInBackground = true;
         bool fullscreenToggle = true;    // Alt+Enter / F11 switches fullscreen
@@ -1526,7 +1526,7 @@ int main(int argc, char** argv) {
     else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
     else scenePath = baseDir + "game.okayscene";
 
-    // Where the game WRITES saves (Unity's persistentDataPath): a per-user, writable
+    // Where the game WRITES saves: a per-user, writable
     // app folder when enabled — so saving works even from a read-only install (e.g.
     // Program Files) and two games never clash. Falls back to beside-the-exe.
     std::string saveDir = baseDir;
@@ -1591,7 +1591,7 @@ int main(int argc, char** argv) {
         cfg.width, cfg.height, winFlags);
     if (window && cfg.minWidth > 0 && cfg.minHeight > 0)
         SDL_SetWindowMinimumSize(window, cfg.minWidth, cfg.minHeight);
-    // Window/taskbar icon (Unity's Default Icon): load the PNG and apply it.
+    // Window/taskbar icon: load the PNG and apply it.
     if (window && !cfg.icon.empty()) {
         okay::Image ico;
         if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon)) {
@@ -1829,7 +1829,7 @@ int main(int argc, char** argv) {
     };
 #endif
     Uint64 last = SDL_GetPerformanceCounter();
-    bool windowFocused = true;   // Unity's Run In Background / mute-on-focus-loss
+    bool windowFocused = true;   // Run In Background / mute-on-focus-loss
     bool cursorReleased = false; // Esc / focus loss freed a game-locked cursor; a click re-locks it
     auto frame = [&]() {
         Uint64 fStart = SDL_GetPerformanceCounter();
@@ -1966,10 +1966,10 @@ int main(int argc, char** argv) {
         }
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
-        // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
+        // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};
         bool locked = Cursor::IsLocked() && !invModal && !cursorReleased;
-        // Unity-style hand-off: when a bag opens (mouselook was locked) free the pointer
+        // hand-off: when a bag opens (mouselook was locked) free the pointer
         // AT SCREEN CENTRE, and when it closes warp back to centre before re-locking, so
         // the cursor always appears in the middle and the look anchor resets cleanly.
         static bool s_prevInvModal = false;
@@ -2066,7 +2066,7 @@ int main(int argc, char** argv) {
             OkayUI::BeginFrame(ui);
         }
 #endif
-        // Focus behaviour (Unity-parity): optionally pause the sim and/or mute audio
+        // Focus behaviour: optionally pause the sim and/or mute audio
         // when the window isn't focused.
         if (cfg.muteOnFocusLoss) AudioMixer::masterVolume = windowFocused ? cfg.volume : 0.0f;
         const bool tick = windowFocused || cfg.runInBackground;
@@ -3423,7 +3423,7 @@ int main(int argc, char** argv) {
             }
             // Center the label at the button's font scale, within the area beside
             // the icon. Skip the built-in label when a child Text object provides it
-            // (Unity-style Button→Text) — that child draws itself in the text pass.
+            // — that child draws itself in the text pass.
             if (!UIButtonTextChild(up.get())) {
                 float px = btn->fontScale * bk;
                 okay::TtfFont* fnt = btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath);
@@ -3734,7 +3734,7 @@ int main(int argc, char** argv) {
     static auto* s_frame = &frame;
     emscripten_set_main_loop([]() { (*s_frame)(); }, 0, 1);
 #else
-    // Startup splash (Unity-style): show a logo over a solid colour, fading in and
+    // Startup splash: show a logo over a solid colour, fading in and
     // out, before the game proper. Skippable with a key/click; closing quits.
     if (running && !cfg.splash.empty()) {
         if (SDL_Texture* stex = GetTexture(renderer, cfg.splash, baseDir, textureCache)) {

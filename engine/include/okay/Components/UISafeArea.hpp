@@ -13,7 +13,7 @@ namespace okay {
 struct UISafeInsetFractions { float left = 0, top = 0, right = 0, bottom = 0; };
 inline UISafeInsetFractions& UISafeInsets() { static UISafeInsetFractions f; return f; }
 
-/// A full-screen UI container that stays inside the safe area (Unity's common
+/// A full-screen UI container that stays inside the safe area (common
 /// "SafeArea" panel). Put HUD and menu widgets under it and they keep clear of
 /// the notch and the home bar on phones; on a desktop it simply fills the screen.
 /// Each side can be turned off (e.g. a background that should run under the notch).

@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// BlendShapes — morph targets (Unity's blend shapes): named sets of per-vertex
+// BlendShapes — morph targets: named sets of per-vertex
 // offsets mixed into a mesh by weights 0..1 — facial expressions, lip-sync
 // visemes, muscle bulges, corrective shapes. Imported from glTF ("targets") and
 // FBX (blend shape channels); weights can be animated by Model Animator clips

@@ -6,7 +6,7 @@
 
 namespace okay {
 
-/// The root of a screen-space UI, mirroring Unity's Canvas + CanvasScaler. A
+/// The root of a screen-space UI, mirroring Canvas + CanvasScaler. A
 /// scene's UI widgets are laid out in pixels; a Canvas decides how those pixels
 /// map to the actual window so a HUD designed at one resolution stays sensible
 /// at another.
@@ -14,7 +14,7 @@ namespace okay {
 ///  - ConstantPixelSize: widgets stay the size you authored (1:1 pixels).
 ///  - ScaleWithScreenSize: widgets scale relative to a `referenceResolution`,
 ///    blending the width- and height-based scale by `matchWidthOrHeight`
-///    (0 = follow width, 1 = follow height) — the same log2 blend Unity uses.
+///    (0 = follow width, 1 = follow height) — a log2 blend.
 ///
 /// `sortOrder` lets multiple canvases stack (higher draws on top). The runtime
 /// and editor query ScaleFactor() to size the UI for the current view.
@@ -27,7 +27,7 @@ public:
     ScaleMode scaleMode = ScaleMode::ScaleWithScreenSize;
     Vec2  referenceResolution{1280.0f, 720.0f};
     /// How Scale With Screen Size fits the reference resolution on a screen of a
-    /// different shape (Unity's Screen Match Mode):
+    /// different shape:
     ///  - MatchWidthOrHeight: blend width / height by `matchWidthOrHeight`.
     ///  - Expand: the whole reference layout always fits (a 1280x720 menu shows
     ///    fully on a portrait phone; the canvas grows the other way).
@@ -40,7 +40,7 @@ public:
     bool  visible = true;              // hide/show every widget under this canvas
     float opacity = 1.0f;             // 0..1 master fade for this canvas's widgets
 
-    // ---- World-space mode (Unity's "World Space" render mode) ----
+    // ---- World-space mode ("World Space" render mode) ----
     // When true, this canvas lives on a plane in the 3D world (at its GameObject's
     // position) instead of the screen. Its widgets are authored in `designResolution`
     // pixels and projected through the active camera each frame, so buttons, panels,

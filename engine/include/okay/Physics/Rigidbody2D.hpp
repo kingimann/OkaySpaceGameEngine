@@ -6,7 +6,7 @@
 
 namespace okay {
 
-/// 2D physics body, modeled after Unity's Rigidbody2D. Dynamic bodies are moved
+/// 2D physics body, modeled after Rigidbody2D. Dynamic bodies are moved
 /// by the Physics2D integrator (gravity, forces, velocity); Kinematic bodies
 /// move only by their velocity; Static bodies don't move and act as immovable
 /// colliders.
@@ -23,7 +23,7 @@ public:
     float    friction   = 0.4f;     // Coulomb friction coefficient (0 = ice)
 
     // ---- Angular dynamics (rotation about Z) ----
-    /// Spin rate in DEGREES per second (Unity's Rigidbody2D.angularVelocity).
+    /// Spin rate in DEGREES per second.
     float    angularVelocity = 0.0f;
     /// Angular damping per second (bleeds off spin like `drag` does for velocity).
     float    angularDrag = 0.05f;
@@ -32,7 +32,7 @@ public:
     /// body (boxes tip and tumble, wheels spin, etc.).
     bool     freezeRotation = true;
 
-    // ---- Sleeping (rest optimisation, Unity/Box2D-style) ----
+    // ---- Sleeping ----
     /// May this body fall asleep once it comes to rest? A sleeping body is skipped
     /// by the integrator and solver (no CPU cost, no jitter) until something wakes
     /// it: a collision from a moving body, an applied force/impulse, or a directly
@@ -45,7 +45,7 @@ public:
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec2& force) { m_forceAccum += force; WakeUp(); }
-    /// Apply a force with an explicit Unity-style ForceMode.
+    /// Apply a force with an explicit ForceMode.
     void AddForce(const Vec2& force, ForceMode mode) {
         switch (mode) {
             case ForceMode::Force:          m_forceAccum += force; break;
@@ -62,7 +62,7 @@ public:
     void AddTorque(float torque) { m_torqueAccum += torque; WakeUp(); }
 
     /// Apply a force at a world point, producing both linear force and a torque
-    /// from the lever arm (Unity's AddForceAtPosition). Off-center hits spin the body.
+    /// from the lever arm. Off-center hits spin the body.
     void AddForceAtPosition(const Vec2& force, const Vec2& point) {
         m_forceAccum += force;
         Vec3 c = transform ? transform->Position() : Vec3::Zero;

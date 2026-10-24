@@ -12,7 +12,7 @@ class Collider2D;
 class GameObject;
 
 /// Data passed to OnCollision2D callbacks describing a contact with another
-/// object (mirrors Unity's Collision2D, simplified).
+/// object.
 struct Collision2D {
     GameObject* gameObject = nullptr;  // the other object
     Collider2D* collider   = nullptr;  // the other collider
@@ -62,7 +62,7 @@ public:
     /// Cast a ray and return the nearest collider hit (within maxDistance).
     RaycastHit2D Raycast(Scene& scene, const Vec2& origin, const Vec2& direction,
                          float maxDistance = 1e9f);
-    /// Cast between two points (Unity's Linecast): the nearest hit on segment a→b.
+    /// Cast between two points: the nearest hit on segment a→b.
     RaycastHit2D Linecast(Scene& scene, const Vec2& a, const Vec2& b) {
         Vec2 d = b - a; float len = d.Magnitude();
         if (len < 1e-6f) return RaycastHit2D{};
@@ -76,7 +76,7 @@ public:
     std::vector<Collider2D*> OverlapBox(Scene& scene, const Vec2& center, const Vec2& halfExtents);
 
     /// Sweep a circle of `radius` from `origin` along `direction` and return the
-    /// first collider it touches (Unity's Physics2D.CircleCast) — a "thick ray"
+    /// first collider it touches — a "thick ray"
     /// that won't slip through gaps a zero-width ray would. The hit point is on the
     /// struck surface; the normal points back toward origin.
     RaycastHit2D CircleCast(Scene& scene, const Vec2& origin, const Vec2& direction,

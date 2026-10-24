@@ -3,11 +3,11 @@
 
 using namespace okay;
 
-// OkayScript can be written in a Unity/C# style: PascalCase Start()/Update(),
+// OkayScript can be written in a C# style: PascalCase Start()/Update(),
 // dotted property access (transform.position.x), new Vector3(...), typed vars,
 // i++ loops, and a `class : OkaySource` wrapper.
 int main() {
-    RUN_SUITE("unity_script");
+    RUN_SUITE("csharp_style_script");
 
     // --- void Start() + transform.position = new Vector3(...) -----------
     {
@@ -55,14 +55,14 @@ int main() {
         CHECK_NEAR(go->transform->Position().y, 10.0f, 0.001f);
     }
 
-    // --- Back-compat: any base name parses, so Unity scripts (: MonoBehaviour)
+    // --- Back-compat: any base name parses, so pasted C# scripts (: SomeBase)
     // pasted in still compile even though OkaySource is the documented base.
     {
         Scene s("UBase"); s.physicsEnabled = false;
         GameObject* go = s.CreateGameObject("Compat");
         auto* sc = go->AddComponent<ScriptComponent>("okayscript");
         CHECK(sc->LoadSource(
-            "public class Compat : MonoBehaviour {\n"
+            "public class Compat : Component {\n"
             "    void Start() { transform.position.x = 3; }\n"
             "}\n"));
         s.Start();
@@ -77,7 +77,7 @@ int main() {
         CHECK(sc->LoadSource(
             "void Start() {\n"
             "    transform.position.x = Mathf.Abs(-7);\n"
-            "    transform.Translate(0, 1);\n"          // Unity-style move
+            "    transform.Translate(0, 1);\n"          // move
             "    if (gameObject.name == \"Hero\") { transform.position.z = 9; }\n"
             "}\n"));
         s.Start();

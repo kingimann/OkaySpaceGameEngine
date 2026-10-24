@@ -4,7 +4,7 @@
 namespace okay {
 
 /// Axis-aligned bounding box defined by a center and extents (half-size),
-/// modeled after Unity's `Bounds`.
+/// modeled after `Bounds`.
 struct Bounds {
     Vec3 center;
     Vec3 extents; // half-size

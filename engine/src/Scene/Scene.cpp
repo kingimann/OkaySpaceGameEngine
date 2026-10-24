@@ -74,7 +74,7 @@ void Scene::NotifyComponentRemoved(Component* component) {
 
 void Scene::FlushPending() {
     if (m_pending.empty()) return;
-    // Awake the whole batch first, then Start it (Unity message order).
+    // Awake the whole batch first, then Start it.
     std::vector<Component*> batch;
     batch.swap(m_pending);
 
@@ -190,7 +190,7 @@ void Scene::DispatchPointer() {
                camPos.y + (h * 0.5f - mp.y) / scale, 0.0f};
 
     // Topmost object under the cursor. In a 3D (perspective) scene we cast a real
-    // camera ray against 3D colliders so OnMouse* fires on meshes (Unity-style); in
+    // camera ray against 3D colliders so OnMouse* fires on meshes; in
     // a 2D (orthographic) scene we pick by SpriteRenderer / BoxCollider2D bounds.
     GameObject* hit = nullptr;
     if (mainCamera && mainCamera->projection == Camera::Projection::Perspective) {

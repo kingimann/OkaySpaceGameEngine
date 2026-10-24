@@ -12,6 +12,7 @@
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
+#include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -1304,6 +1305,17 @@ void OpenExternal(const std::string& target) {
     RunCmd(cmd, false);
 }
 
+// Where the official game installs (the Play page's card at the top). It is a
+// built game too, so the library scans below skip it rather than list it twice.
+fs::path OfficialDir() { return (fs::path(g_exeDir) / "Games" / "Official").lexically_normal(); }
+static bool IsOfficialDir(const fs::directory_entry& e) {
+    std::error_code ec;
+    if (!e.is_directory(ec)) return false;
+    std::string n = e.path().filename().string();
+    for (char& c : n) c = (char)std::tolower((unsigned char)c);
+    return n == "official" && fs::equivalent(e.path(), OfficialDir(), ec);
+}
+
 // Scan a few likely folders for built games (*.okayscene).
 std::vector<fs::path> FindScenes() {
     std::vector<fs::path> out;
@@ -1312,6 +1324,7 @@ std::vector<fs::path> FindScenes() {
         if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return;
         for (auto it = fs::recursive_directory_iterator(dir, ec);
              it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (IsOfficialDir(*it)) { it.disable_recursion_pending(); continue; }
             if (it->is_regular_file(ec) && it->path().extension() == ".okayscene")
                 out.push_back(it->path());
         }
@@ -1336,6 +1349,7 @@ std::vector<fs::path> FindWebGames() {
         if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return;
         for (auto it = fs::recursive_directory_iterator(dir, ec);
              it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (IsOfficialDir(*it)) { it.disable_recursion_pending(); continue; }
             if (!it->is_regular_file(ec)) continue;
             std::string ext;
             for (char c : it->path().extension().string()) ext += (char)std::tolower((unsigned char)c);
@@ -1483,6 +1497,7 @@ const AccentPreset kAccentPresets[] = {
 };
 int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
+bool g_officialAutoUpdate = true; // keep the installed official game up to date in the background (persisted)
 bool g_chatSounds = true;         // soft chime for new chat messages (persisted)
 bool g_linkPreviews = true;       // fetch title/image cards for links in chat (persisted)
 int  g_voiceSpeed = 0;            // voice-note playback speed: 0 = 1x, 1 = 1.5x, 2 = 2x (persisted)
@@ -4018,6 +4033,7 @@ void LoadPrefs() {
         else if (k == "theme") { try { g_themeIndex = std::stoi(v); } catch (...) {} }
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
+        else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
         else if (k == "link_previews") g_linkPreviews = (v != "0");
         else if (k == "voice_speed") g_voiceSpeed = std::clamp(std::atoi(v.c_str()), 0, 2);
@@ -4125,6 +4141,7 @@ void SavePrefs() {
     f << "theme=" << g_themeIndex << "\n";
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
+    f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
     f << "voice_speed=" << g_voiceSpeed << "\n";
     f << "link_previews=" << (g_linkPreviews ? 1 : 0) << "\n";
@@ -12236,6 +12253,8 @@ static AdminData DemoAdminData() {
     return d;
 }
 
+static void DrawOfficialAdmin(okay::account::AccountService& account);   // Admin > Official game (below)
+
 static void DrawAdminPage(okay::account::AccountService& account) {
     static const bool kDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;
     static int sub = std::getenv("OKAY_UI_DEMO_ADSUB") ? std::atoi(std::getenv("OKAY_UI_DEMO_ADSUB")) : 0;   // (env: dev screenshot hook)
@@ -12302,13 +12321,17 @@ static void DrawAdminPage(okay::account::AccountService& account) {
     }
 
     // ---- Sub-tabs ----
-    static const char* kSubs[] = {"Overview", "Players", "Marketplace", "Forums", "Bans", "Audit log"};
+    // "Official game" (publish OkaySpace's own game) is for admins only; the
+    // server refuses everyone else anyway (docs/sql/official_game_admin.sql).
+    static const char* kSubs[] = {"Overview", "Players", "Marketplace", "Forums", "Bans", "Audit log", "Official game"};
+    const int nSubs = myRank >= 3 ? 7 : 6;
+    if (sub >= nSubs || sub < 0) sub = 0;
     {
         ImGui::Dummy(ImVec2(0, 8));
         ImDrawList* d = ImGui::GetWindowDrawList();
         const ImVec2 base = ImGui::GetCursorScreenPos();
         float x = base.x;
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < nSubs; ++i) {
             char lbl[64];
             if (i == 2 && D.stats.pending > 0) std::snprintf(lbl, sizeof(lbl), "%s  %ld", kSubs[i], D.stats.pending);
             else std::snprintf(lbl, sizeof(lbl), "%s", kSubs[i]);
@@ -12340,6 +12363,7 @@ static void DrawAdminPage(okay::account::AccountService& account) {
         else if (sub == 4) queue(job(15));
         else if (sub == 5) queue(job(16));
     }
+    if (sub == 6) { DrawOfficialAdmin(account); return; }
     if (sub == 3 && !kDemo && (loadedMask & kAdSections) && !(loadedMask & kAdThreads) && !g_adBusy) { loadedMask |= kAdThreads; queue(job(13)); }
 
     // Shared bits.
@@ -12364,7 +12388,8 @@ static void DrawAdminPage(okay::account::AccountService& account) {
     };
     auto actionCol = [](const std::string& a) -> ImU32 {
         return a == "ban" || a == "reject" || a == "role_remove" || a == "unverify" ? IM_COL32(232, 110, 110, 255)
-             : a == "unban" || a == "approve" || a == "role_add" || a == "verify" ? IM_COL32(90, 200, 130, 255) : IM_COL32(170, 176, 190, 255);
+             : a == "unban" || a == "approve" || a == "role_add" || a == "verify" || a == "official_publish" || a == "official_make_live"
+                 ? IM_COL32(90, 200, 130, 255) : IM_COL32(170, 176, 190, 255);
     };
     auto logRows = [&](const std::vector<okay::AdminLogEntry>& L, size_t max) {
         if (L.empty()) { ImGui::TextDisabled(g_adBusy ? "Loading\xE2\x80\xA6" : "Nothing logged yet."); return; }
@@ -14520,6 +14545,1229 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGui::SetCurrentContext(mainCtx);
 }
 
+// ---- The official game ------------------------------------------------------
+// OkaySpace's own game, published with scripts/publish-official-game.sh to the
+// "official/" folder of the releases bucket (layout in shared/OfficialGame.hpp).
+// The Play page shows it first: Install, then Play / Update / Uninstall. Nothing
+// downloads until the player clicks Install. After that the launcher looks for a
+// newer version shortly after start, when the Play page opens (at most every 5
+// minutes) and every half hour, and (unless Settings > Behavior turns it off)
+// fetches it in the background: only the files whose sha256 changed, each one
+// verified in a staging folder, swapped in once the game isn't running. The swap
+// is journaled (og::Apply / og::Recover), so a failure keeps the old version.
+// One worker thread at a time; what it reports lives in g_off (g_offMutex).
+namespace og = okayofficial;
+
+enum OffJob { Off_Idle, Off_Checking, Off_Downloading, Off_Waiting, Off_Applying };
+struct OfficialState {
+    int job = Off_Idle;
+    bool install = false;          // the running job installs / updates (else it only checks)
+    bool hasRemote = false;        // the last check found a published version
+    og::Manifest remote;           // the newest published manifest
+    std::string coverPreview;      // its cover image, fetched + verified for the card before install
+    long long bytesNow = 0, bytesTotal = 0;
+    int filesDone = 0, filesTotal = 0;
+    bool cancelReq = false;
+    bool gameRunning = false;      // kept current by the main thread; the swap waits on it
+    bool resultReady = false;      // a job ended: the main thread toasts resultMsg
+    bool installedChanged = false; // ...and reloads the installed manifest
+    std::string resultMsg;
+    int resultKind = 0;            // Toast kind
+    std::string lastError;         // the last failed install / update, shown small on the card
+};
+static OfficialState g_off;
+static SDL_mutex* g_offMutex = nullptr;
+static SDL_Thread* g_offThread = nullptr;
+// Main thread only.
+static og::Manifest g_offInstalled;
+static bool g_offIsInstalled = false;
+static Uint32 g_offLastCheck = 0;
+static bool g_offConfirmUninstall = false;
+
+template <class F> static void OffLocked(F fn) { SDL_LockMutex(g_offMutex); fn(); SDL_UnlockMutex(g_offMutex); }
+static bool OfficialCancelled() { bool c = false; OffLocked([&] { c = g_off.cancelReq; }); return c; }
+
+static std::string OffBytes(long long b) {
+    char out[32];
+    if (b < 1024 * 1024) std::snprintf(out, sizeof(out), "%.0f KB", std::max(1.0, b / 1024.0));
+    else if (b < 1024LL * 1024 * 1024) std::snprintf(out, sizeof(out), "%.1f MB", b / (1024.0 * 1024));
+    else std::snprintf(out, sizeof(out), "%.2f GB", b / (1024.0 * 1024 * 1024));
+    return out;
+}
+
+// The newest published manifest. False (with a reason) when nothing is published,
+// the server can't be reached, or what's there doesn't check out.
+static bool OfficialFetchLatest(og::Manifest& out, std::string& why) {
+    const std::string base = SupabaseReleasesBase();
+    if (base.empty()) { why = "No update server is set up in this build."; return false; }
+    const std::string ver = FetchVersionAt(base + "official/VERSION.txt", "okayspace_official_ver.txt");
+    if (ver.empty()) { why = "Couldn't reach the update server."; return false; }
+    std::error_code ec;
+    const fs::path mf = fs::temp_directory_path(ec) / "okayspace_official_manifest.json";
+    std::string text;
+    const bool got = Download(base + "official/v" + ver + "/manifest.json", mf.string()) && og::ReadText(mf, text);
+    fs::remove(mf, ec);
+    if (!got) { why = "Couldn't download the game's file list."; return false; }
+    og::Manifest m;
+    std::string perr;
+    if (!og::ParseManifest(text, m, &perr)) { why = "The published game didn't check out (" + perr + ")."; return false; }
+    if (m.version != ver) { why = "The game is still being published; try again in a minute."; return false; }
+    out = std::move(m);
+    return true;
+}
+
+// The published cover image, for the card before the game is installed: a small
+// download into the temp folder, used only if its sha256 matches the manifest.
+static std::string OfficialFetchCover(const og::Manifest& m) {
+    const std::string base = SupabaseReleasesBase();
+    if (m.image.empty() || base.empty()) return {};
+    const og::File* f = nullptr;
+    for (const og::File& x : m.files) if (x.path == m.image) f = &x;
+    if (!f || f->size > 8u * 1024u * 1024u) return {};
+    std::error_code ec;
+    const std::string ext = og::Lower(fs::path(m.image).extension().string()) == ".png" ? ".png" : ".jpg";
+    const fs::path p = fs::temp_directory_path(ec) / ("okayspace_official_cover_" + f->sha256.substr(0, 16) + ext);
+    if (og::Verify(p, *f)) return p.string();
+    if (Download(base + "official/v" + m.version + "/" + og::UrlEncodePath(m.image), p.string()) && og::Verify(p, *f))
+        return p.string();
+    fs::remove(p, ec);
+    return {};
+}
+
+// Download one file to `out`, cancelable: curl as a hidden child process (like the
+// Downloads tab) so Cancel can stop it mid-file, with the launcher's usual
+// Download() as the fallback where curl isn't there. `before` = bytes already
+// done, for the progress bar. Only the URL (checked, percent-encoded) and our own
+// path reach the command line, never a name from the manifest.
+static bool OfficialFetchFile(const std::string& url, const fs::path& out, long long before) {
+    std::error_code ec;
+    fs::remove(out, ec);
+    if (!ShellSafeUrl(url)) return false;
+    int code = -1;
+    Proc p = SpawnHidden("curl -L -s -f --retry 2 -A \"OkaySpace-Launcher\" -o \"" + out.string() + "\" \"" + url + "\"");
+    if (p.valid()) {
+        while (ProcRunning(&p, &code)) {
+            if (OfficialCancelled()) { ProcKill(&p); fs::remove(out, ec); return false; }
+            const long long got = FileSizeSafe(out.string());
+            OffLocked([&] { g_off.bytesNow = before + got; });
+            SDL_Delay(120);
+        }
+    }
+    if (code != 0) {
+        if (OfficialCancelled()) return false;
+        fs::remove(out, ec);
+        if (!Download(url, out.string())) { fs::remove(out, ec); return false; }
+    }
+    return fs::exists(out, ec);
+}
+
+struct OfficialJobArgs {
+    bool install = false;       // install / update / repair now
+    bool manual = false;        // the player asked: report the outcome either way
+    bool autoInstall = false;   // a background check may install a newer version
+    bool hasInstalled = false;
+    og::Manifest installed;
+};
+
+static int OfficialWorker(void* data) {
+    std::unique_ptr<OfficialJobArgs> a(static_cast<OfficialJobArgs*>(data));
+    const fs::path root = OfficialDir();
+    std::error_code ec;
+    auto finish = [&](const std::string& msg, int kind, bool changed) {
+        OffLocked([&] {
+            // A failed install / update stays on the card; a background one doesn't toast (no nagging).
+            if (kind == 2 && g_off.install) g_off.lastError = msg;
+            else if (changed) g_off.lastError.clear();
+            g_off.resultReady = !msg.empty() && (a->manual || kind != 2);
+            g_off.resultMsg = msg; g_off.resultKind = kind;
+            g_off.job = Off_Idle; g_off.install = false; g_off.cancelReq = false;
+            if (changed) g_off.installedChanged = true;
+        });
+        return 0;
+    };
+    auto discard = [&] {   // Cancel: drop what was downloaded (and an install that never finished)
+        fs::remove_all(og::StagingDir(root), ec);
+        fs::remove_all(og::MetaDir(root) / "download", ec);
+        if (!a->hasInstalled) fs::remove_all(root, ec);
+    };
+
+    og::Manifest next;
+    std::string why;
+    const bool found = OfficialFetchLatest(next, why);
+    const std::string cover = found ? OfficialFetchCover(next) : std::string();
+    OffLocked([&] {
+        g_off.hasRemote = found;
+        if (found) { g_off.remote = next; g_off.coverPreview = cover; }
+    });
+    if (!found) return finish(a->manual ? why : std::string(), 2, false);
+    const bool newer = !a->hasInstalled || og::CompareVersions(next.version, a->installed.version) > 0;
+    if (!a->install && !(a->autoInstall && a->hasInstalled && newer)) {
+        if (!a->manual) return finish("", 0, false);
+        if (newer && a->hasInstalled) return finish("Update available: " + next.name + " v" + next.version, 0, false);
+        return finish(next.name + " is up to date (v" + (a->hasInstalled ? a->installed.version : next.version) + ")", 1, false);
+    }
+
+    // ---- Install / update: fetch what's new or damaged into staging ----
+    const std::string base = SupabaseReleasesBase();
+    const og::Plan plan = og::Diff(a->hasInstalled ? &a->installed : nullptr, next, [&](const og::File& f) {
+        const fs::path t = og::ResolveInside(root, f.path);
+        std::error_code fe;
+        return !t.empty() && fs::is_regular_file(t, fe) && fs::file_size(t, fe) == f.size && !fe;
+    });
+    if (plan.empty()) return finish(a->manual ? next.name + " is up to date (v" + next.version + ")" : std::string(), 1, false);
+    OffLocked([&] {
+        g_off.job = Off_Downloading; g_off.install = true;
+        g_off.bytesNow = 0; g_off.bytesTotal = (long long)plan.downloadBytes;
+        g_off.filesDone = 0; g_off.filesTotal = (int)plan.download.size();
+    });
+    const fs::path stage = og::StagingDir(root), dl = og::MetaDir(root) / "download";
+    fs::create_directories(stage, ec);
+    fs::create_directories(dl, ec);
+    if (!fs::is_directory(stage, ec)) return finish("Couldn't write to " + root.string() + ".", 2, false);
+    long long done = 0;
+    for (const og::File& f : plan.download) {
+        const fs::path staged = stage / fs::u8path(f.path);
+        if (!og::Verify(staged, f)) {   // (already staged and intact: a download picked up where it left off)
+            const fs::path part = dl / "file.part";
+            const std::string url = base + "official/v" + next.version + "/" + og::UrlEncodePath(f.path);
+            if (!OfficialFetchFile(url, part, done)) {
+                if (OfficialCancelled()) { discard(); return finish(a->hasInstalled ? "Update canceled" : "Install canceled", 0, false); }
+                return finish("Couldn't download " + f.path + " \xE2\x80\x94 check your connection and try again.", 2, false);
+            }
+            if (!og::Verify(part, f)) {
+                fs::remove(part, ec);
+                return finish(f.path + " didn't download correctly (its checksum doesn't match). Try again.", 2, false);
+            }
+            if (!og::MoveInto(part, staged)) return finish("Couldn't save " + f.path + ".", 2, false);
+        }
+        done += (long long)f.size;
+        OffLocked([&] { g_off.bytesNow = done; ++g_off.filesDone; });
+    }
+
+    // ---- Swap it in, once the game isn't running ----
+    for (;;) {
+        bool running = false, cancel = false;
+        OffLocked([&] { running = g_off.gameRunning; cancel = g_off.cancelReq; g_off.job = running ? Off_Waiting : Off_Applying; });
+        if (cancel) { discard(); return finish("Update canceled", 0, false); }
+        if (!running) break;
+        SDL_Delay(500);
+    }
+    std::string err;
+    if (!og::Apply(root, next, plan, &err))
+        return finish("Couldn't install " + next.name + " v" + next.version + ": " + err +
+                      (a->hasInstalled ? ". The previous version is still there." : "."), 2, false);
+    fs::remove_all(dl, ec);
+    return finish((a->hasInstalled ? "Updated " : "Installed ") + next.name + " v" + next.version, 1, true);
+}
+
+// Start a check (install = false) or an install / update. No-op while one runs.
+static void StartOfficialJob(bool install, bool manual) {
+    if (!g_offMutex) return;
+    bool busy = false;
+    OffLocked([&] {
+        busy = g_off.job != Off_Idle;
+        if (!busy) {
+            g_off.job = Off_Checking; g_off.install = install; g_off.cancelReq = false;
+            if (install) g_off.lastError.clear();   // a new attempt: the last failure no longer applies
+        }
+    });
+    if (busy) return;
+    if (g_offThread) { SDL_WaitThread(g_offThread, nullptr); g_offThread = nullptr; }   // (the last job has ended)
+    auto* a = new OfficialJobArgs;
+    a->install = install; a->manual = manual; a->autoInstall = g_officialAutoUpdate;
+    a->hasInstalled = g_offIsInstalled; a->installed = g_offInstalled;
+    g_offLastCheck = SDL_GetTicks();
+    g_offThread = SDL_CreateThread(OfficialWorker, "okay-official", a);
+    if (!g_offThread) { delete a; OffLocked([&] { g_off.job = Off_Idle; g_off.install = false; }); }
+}
+
+static void OfficialReloadInstalled() {
+    og::Manifest m;
+    g_offIsInstalled = og::LoadInstalled(OfficialDir(), m);
+    g_offInstalled = g_offIsInstalled ? std::move(m) : og::Manifest();
+}
+static std::string OfficialCoverPath() {   // the installed cover, else the published one (before install)
+    if (g_offIsInstalled) {
+        if (g_offInstalled.image.empty()) return {};
+        const fs::path p = og::ResolveInside(OfficialDir(), g_offInstalled.image);
+        return p.empty() ? std::string() : p.string();
+    }
+    std::string c;
+    OffLocked([&] { c = g_off.coverPreview; });
+    return c;
+}
+// Forget the card's cover texture (the image on disk changed or went away).
+static void OfficialDropCover(const std::string& path) {
+    for (auto& cache : g_coverCaches) {
+        auto it = cache.find(path);
+        if (it == cache.end()) continue;
+        if (it->second) SDL_DestroyTexture(it->second);
+        cache.erase(it);
+    }
+}
+static std::string OfficialPlayKey() { return "game:" + (g_offInstalled.name.empty() ? std::string("Official") : g_offInstalled.name); }
+
+// The installed game is running: launched from here (tracked for playtime), or,
+// on Windows, started any other way.
+static bool OfficialRunning() {
+    if (!g_offIsInstalled) return false;
+    if (PlaytimeRunning(PlaytimeLabel(OfficialPlayKey()))) return true;
+#if defined(_WIN32)
+    const std::string exe = fs::path(g_offInstalled.exe).filename().string();
+    std::wstring wexe(exe.size() + 1, L'\0');
+    wexe.resize((std::size_t)std::max(0, MultiByteToWideChar(CP_UTF8, 0, exe.c_str(), -1, &wexe[0], (int)wexe.size()) - 1));
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe; pe.dwSize = sizeof(pe);
+    bool found = false;
+    if (Process32FirstW(snap, &pe))
+        do { if (_wcsicmp(pe.szExeFile, wexe.c_str()) == 0) { found = true; break; } } while (Process32NextW(snap, &pe));
+    CloseHandle(snap);
+    return found;
+#else
+    return false;
+#endif
+}
+
+static void PlayOfficial() {
+    const std::string name = g_offInstalled.name;
+    const fs::path exe = og::ResolveInside(OfficialDir(), g_offInstalled.exe);
+    std::error_code ec;
+    if (exe.empty() || !fs::is_regular_file(exe, ec)) {   // files deleted by hand: fetch them again
+        Toast(name + " is missing files \xE2\x80\x94 repairing it", 2);
+        StartOfficialJob(true, true);
+        return;
+    }
+    bool applying = false;
+    OffLocked([&] { applying = g_off.job == Off_Applying; if (!applying) g_off.gameRunning = true; });
+    if (applying) { Toast("One moment: an update is being installed"); return; }
+    if (!SpawnTracked(exe.string(), "", OfficialPlayKey(), name)) {
+        OffLocked([&] { g_off.gameRunning = false; });
+        Toast("Couldn't start " + name, 2);
+        return;
+    }
+    RecordPlayed(exe.string()); SavePrefs();
+    Toast("Playing " + name);
+}
+
+static void UninstallOfficial() {
+    const std::string name = g_offInstalled.name, cover = OfficialCoverPath();
+    std::error_code ec;
+    fs::remove_all(OfficialDir(), ec);
+    OfficialDropCover(cover);
+    OfficialReloadInstalled();
+    OffLocked([&] { g_off.lastError.clear(); });
+    Toast(ec ? "Couldn't remove every file (is the game still open?)" : "Uninstalled " + name, ec ? 2 : 1);
+}
+
+// Once a frame: start-up recovery, the running flag, worker results, and when to
+// look for a newer version.
+static void OfficialTick(bool onPlayPage) {
+    static bool started = false, wasOnPlay = false;
+    static Uint32 startCheckAt = 0, nextRunCheck = 0;
+    const Uint32 now = SDL_GetTicks();
+    if (!started) {
+        started = true;
+        g_offMutex = SDL_CreateMutex();
+        og::Recover(OfficialDir());   // finish (or undo) a swap a crash or power cut interrupted
+        OfficialReloadInstalled();
+        startCheckAt = now + 4000;
+    }
+    if (!g_offMutex) return;
+    if (now >= nextRunCheck) {
+        nextRunCheck = now + 1000;
+        const bool running = OfficialRunning();
+        OffLocked([&] { g_off.gameRunning = running; });
+    }
+    bool ready = false, changed = false;
+    std::string msg; int kind = 0;
+    OffLocked([&] {
+        ready = g_off.resultReady; changed = g_off.installedChanged;
+        msg = g_off.resultMsg; kind = g_off.resultKind;
+        g_off.resultReady = false; g_off.installedChanged = false;
+    });
+    if (changed) {
+        OfficialDropCover(OfficialCoverPath());
+        OfficialReloadInstalled();
+        OfficialDropCover(OfficialCoverPath());
+        if (g_offIsInstalled) UpsertNotif("official:" + g_offInstalled.version, g_offInstalled.name + " is ready", msg, 3, 1);
+    }
+    if (ready && !msg.empty()) Toast(msg, kind);
+    // Look for a newer version: shortly after start, when the Play page opens,
+    // and every 30 minutes while it's installed with auto-update on; never more
+    // often than every 5 minutes.
+    const bool stale = g_offLastCheck == 0 || now - g_offLastCheck > 5u * 60u * 1000u;
+    bool want = false;
+    if (startCheckAt && now >= startCheckAt) { startCheckAt = 0; want = stale; }
+    if (onPlayPage && !wasOnPlay && stale) want = true;
+    if (g_offIsInstalled && g_officialAutoUpdate && g_offLastCheck && now - g_offLastCheck > 30u * 60u * 1000u) want = true;
+    wasOnPlay = onPlayPage;
+    if (want) StartOfficialJob(false, false);
+}
+
+// The card at the top of the Play page. Hidden until there is something to show
+// (nothing published yet, or offline and not installed).
+static void DrawOfficialCard() {
+    if (!g_offMutex) return;
+    int job; bool install, hasRemote, running;
+    og::Manifest remote;
+    long long bNow, bTot; int fDone, fTot;
+    std::string lastError;
+    OffLocked([&] {
+        job = g_off.job; install = g_off.install; hasRemote = g_off.hasRemote; running = g_off.gameRunning;
+        if (hasRemote) {   // (the header only: the file list can be long)
+            remote.name = g_off.remote.name; remote.version = g_off.remote.version;
+            remote.notes = g_off.remote.notes; remote.size = g_off.remote.size;
+        }
+        bNow = g_off.bytesNow; bTot = g_off.bytesTotal; fDone = g_off.filesDone; fTot = g_off.filesTotal;
+        lastError = g_off.lastError;
+    });
+    const bool installing = job != Off_Idle && install;
+    if (!g_offIsInstalled && !hasRemote && !installing) return;
+    const og::Manifest& shown = g_offIsInstalled ? g_offInstalled : remote;
+    const bool updateReady = g_offIsInstalled && hasRemote && og::CompareVersions(remote.version, g_offInstalled.version) > 0;
+
+    ImGui::PushID("official");
+    const float W = ImGui::GetContentRegionAvail().x, pad = 16.0f;
+    const float coverW = std::clamp(W * 0.34f, 150.0f, 300.0f), coverH = std::floor(coverW * 9.0f / 16.0f);
+    const float cardH = std::max(coverH + pad * 2.0f, 156.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 cp = ImGui::GetCursorScreenPos();
+    const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    dl->AddRectFilled(cp, ImVec2(cp.x + W, cp.y + cardH), ImGui::GetColorU32(okaytheme::kRaised), 12.0f);
+    dl->AddRect(cp, ImVec2(cp.x + W, cp.y + cardH), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.35f)), 12.0f, 0, 1.0f);
+
+    // Cover (cropped to fill), or an accent tile with a play glyph.
+    const ImVec2 ca(cp.x + pad, cp.y + (cardH - coverH) * 0.5f), cb(ca.x + coverW, ca.y + coverH);
+    const std::string coverPath = OfficialCoverPath();
+    SDL_Texture* tex = coverPath.empty() ? nullptr : GameCover(coverPath);
+    if (tex) {
+        int tw = 0, th = 0;
+        SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+        const float ta = th > 0 ? (float)tw / (float)th : 1.0f, ba = coverW / coverH;
+        ImVec2 uv0(0, 0), uv1(1, 1);
+        if (ta > ba) { uv0.x = (1.0f - ba / ta) * 0.5f; uv1.x = 1.0f - uv0.x; }
+        else         { uv0.y = (1.0f - ta / ba) * 0.5f; uv1.y = 1.0f - uv0.y; }
+        dl->AddImageRounded((ImTextureID)(intptr_t)tex, ca, cb, uv0, uv1, IM_COL32_WHITE, 8.0f);
+    } else {
+        dl->AddRectFilled(ca, cb, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
+        const ImVec2 cc((ca.x + cb.x) * 0.5f, (ca.y + cb.y) * 0.5f);
+        dl->AddCircleFilled(cc, 26.0f, IM_COL32(10, 12, 16, 120), 32);
+        DrawNavIcon(dl, 1, cc, ImGui::GetColorU32(kAccent));
+    }
+
+    // Text: label, title, version / size, the first line of the notes.
+    const float tx = cb.x + 18.0f, tr = cp.x + W - pad, tw = tr - tx;
+    float ty = cp.y + pad;
+    ImGui::SetWindowFontScale(0.80f);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, ty), ImGui::GetColorU32(kAccent), "OFFICIAL GAME");
+    ty += ImGui::GetFontSize() + 4.0f;
+    ImGui::SetWindowFontScale(1.30f);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, ty), cText, FitText(shown.name, tw).c_str());
+    ty += ImGui::GetFontSize() + 4.0f;
+    ImGui::SetWindowFontScale(1.0f);
+    std::string meta = "v" + shown.version + "  \xC2\xB7  " + OffBytes((long long)shown.size);
+    if (g_offIsInstalled) {
+        const std::string exePath = og::ResolveInside(OfficialDir(), g_offInstalled.exe).string();
+        const int pc = PlayCount(exePath);
+        if (pc > 0) meta += "  \xC2\xB7  played " + std::to_string(pc) + "\xC3\x97, last " + AgoText(LastPlayed(exePath));
+    } else meta += "  \xC2\xB7  free";
+    dl->AddText(ImVec2(tx, ty), cDim, FitText(meta, tw).c_str());
+    ty += ImGui::GetTextLineHeight() + 3.0f;
+    std::string note = shown.notes.substr(0, shown.notes.find('\n'));
+    note.erase(0, std::min(note.find_first_not_of(" -*\t"), note.size()));
+    if (!lastError.empty() && job == Off_Idle) dl->AddText(ImVec2(tx, ty), IM_COL32(230, 120, 110, 255), FitText(lastError, tw).c_str());
+    else if (!note.empty()) dl->AddText(ImVec2(tx, ty), cDim, FitText(note, tw).c_str());
+
+    // Actions along the bottom.
+    const float bh = 40.0f, by = cp.y + cardH - pad - bh;
+    ImGui::SetCursorScreenPos(ImVec2(tx, by));
+    if (installing) {
+        // Installing / updating: a progress bar (bytes and %) + Cancel.
+        const char* what = job == Off_Waiting ? nullptr : job == Off_Applying ? "Installing\xE2\x80\xA6"
+                         : job == Off_Checking ? "Preparing\xE2\x80\xA6" : nullptr;
+        char overlay[96];
+        float frac = bTot > 0 ? (float)((double)bNow / (double)bTot) : 0.0f;
+        if (job == Off_Applying) frac = 1.0f;
+        if (job == Off_Waiting) std::snprintf(overlay, sizeof(overlay), "Downloaded \xE2\x80\x94 installs when you close the game");
+        else if (what) std::snprintf(overlay, sizeof(overlay), "%s", what);
+        else std::snprintf(overlay, sizeof(overlay), "%s of %s  (%d%%)  \xC2\xB7  file %d of %d", OffBytes(bNow).c_str(),
+                           OffBytes(bTot).c_str(), (int)(frac * 100.0f), std::min(fDone + 1, fTot), fTot);
+        const float cancelW = 96.0f;
+        ImGui::ProgressBar(std::clamp(frac, 0.0f, 1.0f), ImVec2(std::max(120.0f, tw - cancelW - 8.0f), bh), overlay);
+        ImGui::SameLine(0, 8);
+        ImGui::BeginDisabled(job == Off_Applying);
+        if (ImGui::Button("Cancel", ImVec2(cancelW, bh))) OffLocked([&] { g_off.cancelReq = true; });
+        ImGui::EndDisabled();
+    } else if (!g_offIsInstalled) {
+        const std::string lbl = "Install  (" + OffBytes((long long)shown.size) + ")";
+        if (PrimaryButton(lbl.c_str(), ImVec2(std::min(tw, 220.0f), bh))) StartOfficialJob(true, true);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Downloads to %s", OfficialDir().string().c_str());
+    } else {
+        ImGui::BeginDisabled(running);
+        if (PrimaryButton(running ? "Running" : "Play", ImVec2(150, bh))) PlayOfficial();
+        ImGui::EndDisabled();
+        if (running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s is open", shown.name.c_str());
+        if (updateReady) {
+            ImGui::SameLine(0, 8);
+            const std::string ul = "Update available: v" + remote.version;
+            ImGui::BeginDisabled(job != Off_Idle);
+            if (ImGui::Button(ul.c_str(), ImVec2(0, bh))) StartOfficialJob(true, true);
+            ImGui::EndDisabled();
+        } else if (job == Off_Checking) {
+            ImGui::SameLine(0, 12);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (bh - ImGui::GetTextLineHeight()) * 0.5f);
+            ImGui::TextDisabled("Checking for updates\xE2\x80\xA6");
+        }
+        const float d = 34.0f;
+        ImGui::SetCursorScreenPos(ImVec2(tr - d, by + (bh - d) * 0.5f));
+        if (RoundIconButton("##offmore", kRibMore, d, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 34), cText, "More"))
+            ImGui::OpenPopup("##offmenu");
+        if (ImGui::BeginPopup("##offmenu")) {
+            if (ImGui::MenuItem("Check for updates", nullptr, false, job == Off_Idle)) StartOfficialJob(false, true);
+            if (ImGui::MenuItem("Open folder")) OpenExternal(OfficialDir().string());
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+            if (ImGui::MenuItem("Uninstall\xE2\x80\xA6", nullptr, false, job == Off_Idle && !running)) g_offConfirmUninstall = true;
+            ImGui::PopStyleColor();
+            ImGui::EndPopup();
+        }
+    }
+    ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + cardH));
+    ImGui::Dummy(ImVec2(W, 12.0f));
+
+    // Confirm before deleting the install.
+    if (g_offConfirmUninstall && !ImGui::IsPopupOpen("Uninstall the official game?")) ImGui::OpenPopup("Uninstall the official game?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Uninstall the official game?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Uninstall %s?", shown.name.c_str());
+        ImGui::TextDisabled("This deletes %s. You can install it again any time.", OfficialDir().string().c_str());
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        ImGui::BeginDisabled(running || job != Off_Idle);
+        const bool doIt = ImGui::Button("Uninstall", ImVec2(110, 0));
+        ImGui::EndDisabled();
+        ImGui::PopStyleColor(2);
+        if (doIt) { UninstallOfficial(); g_offConfirmUninstall = false; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_offConfirmUninstall = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
+// ---- Admin > Official game ---------------------------------------------------
+// Admins publish the official game from here with their own sign-in: no service
+// key on anyone's machine. docs/sql/official_game_admin.sql lets admins (and only
+// admins) write under official/ in the releases bucket. The steps are the same
+// as scripts/publish-official-game.sh (og::CheckPublish keeps the rules in step):
+// every file to official/v<ver>/, then manifest.json, then official/NOTES.txt,
+// and official/VERSION.txt LAST, so no player ever sees a version before its
+// files. Cancel works until NOTES.txt; until VERSION.txt changes, players keep
+// the live version. "Make live" (rollback) rewrites NOTES.txt + VERSION.txt to
+// an existing version; Delete never touches the live one. One worker at a time;
+// what it reports lives in g_oa (g_oaMutex).
+static const char* kOaNeedSql = "Run docs/sql/official_game_admin.sql on Supabase to let admins publish.";
+
+enum OaJob { Oa_Idle, Oa_Refresh, Oa_Publish, Oa_MakeLive, Oa_Delete, Oa_Cleanup };
+struct OaVersion {
+    std::string version;
+    bool manifestOk = false;       // its manifest.json is there and checks out
+    std::string name;
+    std::uint64_t size = 0;
+    int files = 0;
+};
+struct OaState {
+    int job = Oa_Idle;
+    // The bucket, from the last refresh.
+    bool loaded = false, reached = true;
+    std::string live;              // official/VERSION.txt ("" = nothing published)
+    std::string liveNotes;         // official/NOTES.txt
+    std::vector<OaVersion> versions;   // newest first
+    bool listHidden = false;       // live, but the listing came back empty: the SQL isn't there yet
+    // A running job's progress.
+    int filesDone = 0, filesTotal = 0;
+    long long bytesDone = 0, bytesTotal = 0;
+    std::string current;           // the file being uploaded
+    bool committing = false;       // NOTES.txt / VERSION.txt are being written: too late to cancel
+    bool cancelReq = false;
+    // A job ended: the main thread toasts it.
+    bool resultReady = false;
+    std::string resultMsg;
+    int resultKind = 0;
+    bool needSql = false;          // the server refused: show kOaNeedSql
+    bool refreshNow = false;       // ...and refresh the bucket view
+};
+static OaState g_oa;
+static SDL_mutex* g_oaMutex = nullptr;
+static SDL_Thread* g_oaThread = nullptr;
+template <class F> static void OaLocked(F fn) { SDL_LockMutex(g_oaMutex); fn(); SDL_UnlockMutex(g_oaMutex); }
+static bool OaCancelled() { bool c = false; OaLocked([&] { c = g_oa.cancelReq; }); return c; }
+
+struct OaJobArgs {
+    int kind = Oa_Idle;
+    std::string folder, name, version, notes;   // publish
+    bool allowNotNewer = false;
+    std::string target;                         // make live / delete
+    std::vector<std::string> targets;           // clean up
+};
+
+// Requests (worker side). Reads go to the public URL with a cache-buster, like
+// the players' launchers; writes and listings use the admin's own session.
+static okay::account::ApiResponse OaGet(const okay::account::AccountService& a, const std::string& rel) {
+    return a.Api("/storage/v1/object/public/releases/official/" + og::UrlEncodePath(rel) + "?cb=" +
+                 std::to_string((long long)std::time(nullptr)) + "-" + std::to_string(SDL_GetTicks()), "GET");
+}
+static okay::account::ApiResponse OaUpload(const okay::account::AccountService& a, const std::string& rel, const fs::path& file,
+                                  const char* type, int cacheSec) {
+    return a.ApiUpload("/storage/v1/object/releases/official/" + og::UrlEncodePath(rel), file.string(), type,
+                       "x-upsert: true\ncache-control: max-age=" + std::to_string(cacheSec));
+}
+static bool OaUploadText(const okay::account::AccountService& a, const std::string& rel, const std::string& text,
+                         const char* type, int cacheSec, okay::account::ApiResponse* resp) {
+    std::error_code ec;
+    const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_oa_" + std::to_string(SDL_GetTicks()) + "_" +
+                                                        std::to_string(std::rand()) + ".txt");
+    { std::ofstream o(tmp, std::ios::binary | std::ios::trunc); o << text; if (!o) return false; }
+    *resp = OaUpload(a, rel, tmp, type, cacheSec);
+    fs::remove(tmp, ec);
+    return resp->ok;
+}
+// Every object under `prefix` ("official/v1.2.0/"), recursively, as bucket names.
+static bool OaListAll(const okay::account::AccountService& a, const std::string& prefix, std::vector<std::string>& out, int depth = 0) {
+    if (depth > 24) return false;
+    for (int offset = 0;; offset += 1000) {
+        const auto r = a.Api("/storage/v1/object/list/releases", "POST",
+                             "{\"prefix\":\"" + og::json::Escape(prefix) + "\",\"limit\":1000,\"offset\":" + std::to_string(offset) +
+                             ",\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}");
+        std::vector<og::StorageEntry> list;
+        if (!r.ok || !og::ParseStorageList(r.body, list)) return false;
+        for (const og::StorageEntry& e : list) {
+            if (e.folder) { if (!OaListAll(a, prefix + e.name + "/", out, depth + 1)) return false; }
+            else out.push_back(prefix + e.name);
+        }
+        if (list.size() < 1000) return true;
+    }
+}
+// A version's manifest, checked; false if it's missing or doesn't check out.
+static bool OaManifest(const okay::account::AccountService& a, const std::string& ver, og::Manifest& m) {
+    const auto r = OaGet(a, "v" + ver + "/" + og::kManifestName);
+    return r.ok && og::ParseManifest(r.body, m) && m.version == ver;
+}
+static std::string OaLive(const okay::account::AccountService& a, bool* reached = nullptr) {
+    const auto r = OaGet(a, "VERSION.txt");
+    if (reached) *reached = r.reached;
+    const std::string v = og::Trim(r.body.substr(0, r.body.find('\n')));
+    return r.ok && og::LooksLikeVersion(v) ? v : std::string();
+}
+// A failed write in plain words. Never the token; the server's message, capped.
+static std::string OaError(const okay::account::ApiResponse& r, const std::string& what, bool& needSql) {
+    if (!r.reached) return "Couldn't reach the server while " + what + ". Check your connection and try again.";
+    if (og::StorageDenied(r.status, r.body)) { needSql = true; return kOaNeedSql; }
+    if (r.status == 401) return "Your sign-in has expired. Sign out and back in, then try again.";
+    if (r.status == 413 || r.body.find("too large") != std::string::npos) return what + ": the file is over the server's upload limit.";
+    if (r.body.find("Bucket not found") != std::string::npos)
+        return "The releases bucket doesn't exist yet (scripts/publish-supabase.sh creates it).";
+    return what + " failed (HTTP " + std::to_string(r.status) + ")" +
+           (r.body.empty() ? std::string(".") : ": " + og::CleanText(r.body, 160, false));
+}
+static void OaLog(const okay::account::AccountService& a, const std::string& action, const std::string& ver, long long files, long long bytes) {
+    std::string body = "{\"p_version\":\"" + og::json::Escape(ver) + "\",\"p_action\":\"" + action + "\"";
+    if (files >= 0) body += ",\"p_files\":" + std::to_string(files) + ",\"p_bytes\":" + std::to_string(bytes);
+    a.Api("/rest/v1/rpc/log_official_publish", "POST", body + "}");   // best effort: the publish already happened
+}
+// Delete one version folder (never the live one). False (with a reason) on failure.
+static bool OaDeleteVersion(const okay::account::AccountService& a, const std::string& ver, std::string& why, bool& needSql) {
+    bool reached = true;
+    const std::string live = OaLive(a, &reached);
+    if (!reached) { why = "Couldn't reach the server."; return false; }
+    if (live == ver) { why = "v" + ver + " is live. Make another version live first."; return false; }
+    std::vector<std::string> names;
+    if (!OaListAll(a, "official/v" + ver + "/", names)) { why = "Couldn't list v" + ver + "'s files."; return false; }
+    if (names.empty()) { why = "v" + ver + " has no files the server lets you see. " + kOaNeedSql; needSql = true; return false; }
+    std::size_t gone = 0;
+    for (std::size_t i = 0; i < names.size(); i += 200) {
+        std::string body = "{\"prefixes\":[";
+        for (std::size_t k = i; k < std::min(names.size(), i + 200); ++k) body += (k > i ? ",\"" : "\"") + og::json::Escape(names[k]) + "\"";
+        const auto r = a.Api("/storage/v1/object/releases", "DELETE", body + "]}");
+        if (!r.ok) { why = OaError(r, "Deleting v" + ver, needSql); return false; }
+        std::vector<og::StorageEntry> del;
+        if (og::ParseStorageList(r.body, del)) gone += del.size();
+    }
+    if (gone == 0) { why = kOaNeedSql; needSql = true; return false; }
+    OaLog(a, "delete", ver, -1, 0);
+    return true;
+}
+
+static int OfficialAdminWorker(void* data) {
+    std::unique_ptr<OaJobArgs> j(static_cast<OaJobArgs*>(data));
+    std::string msg; int kind = 1; bool needSql = false, refresh = false;
+    OaState view; bool haveView = false;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        if (!a.IsLoggedIn()) throw std::runtime_error("signed out");
+        auto loadView = [&]() {   // the bucket as the tab shows it
+            view.live = OaLive(a, &view.reached);
+            if (!view.live.empty()) {
+                const auto n = OaGet(a, "NOTES.txt");
+                if (n.ok) view.liveNotes = og::CleanText(n.body, 4000, true);
+            }
+            std::vector<og::StorageEntry> top;
+            const auto r = a.Api("/storage/v1/object/list/releases", "POST",
+                                 "{\"prefix\":\"official/\",\"limit\":1000,\"offset\":0,\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}");
+            std::vector<std::string> vers;
+            if (r.ok && og::ParseStorageList(r.body, top)) vers = og::VersionFolders(top);
+            view.listHidden = vers.empty() && !view.live.empty();
+            if (!view.live.empty() && std::find(vers.begin(), vers.end(), view.live) == vers.end()) {
+                vers.push_back(view.live);
+                std::sort(vers.begin(), vers.end(), [](const std::string& x, const std::string& y) { return og::CompareVersions(x, y) > 0; });
+            }
+            for (std::size_t i = 0; i < vers.size() && i < 40; ++i) {
+                OaVersion v; v.version = vers[i];
+                og::Manifest m;
+                if (OaManifest(a, v.version, m)) { v.manifestOk = true; v.name = m.name; v.size = m.size; v.files = (int)m.files.size(); }
+                view.versions.push_back(std::move(v));
+            }
+            view.loaded = true;
+            haveView = true;
+        };
+
+        if (j->kind == Oa_Refresh) {
+            loadView();
+            msg.clear();
+        } else if (j->kind == Oa_Publish) {
+            // Read and check the folder again: it may have changed since Check.
+            og::PublishFolder pf;
+            std::string err;
+            bool reached = true;
+            const std::string live = OaLive(a, &reached);
+            if (!reached) throw std::runtime_error("Couldn't reach the server. Check your connection and try again.");
+            if (!og::ScanFolder(fs::u8path(j->folder), pf, &err)) throw std::runtime_error(err);
+            const std::vector<std::string> problems = og::CheckPublish(pf, j->version, live, j->allowNotNewer);
+            if (!problems.empty()) throw std::runtime_error(problems.front());
+            const std::string name = j->name.empty() ? pf.name() : j->name;
+            const std::string notes = og::PublishNotes(j->notes, name, j->version);
+            const std::string ver = j->version;
+            // Republishing the live version (allowed with the box ticked) reuses its
+            // URLs: keep caches short so players don't get a stale mix.
+            const int cache = ver == live ? 60 : 3600;
+            OaLocked([&] {
+                g_oa.filesDone = 0; g_oa.filesTotal = (int)pf.files.size() + 1;   // + the manifest
+                g_oa.bytesDone = 0; g_oa.bytesTotal = (long long)pf.total();
+            });
+            std::vector<og::File> files;
+            long long done = 0;
+            const fs::path root = fs::u8path(j->folder);
+            for (const og::LocalFile& lf : pf.files) {
+                if (OaCancelled()) {
+                    msg = "Publish canceled. Players still get " + (live.empty() ? std::string("nothing (nothing is published)") : "v" + live) +
+                          "; what was uploaded is in v" + ver + " (you can delete it below).";
+                    kind = 0; refresh = true;
+                    break;
+                }
+                OaLocked([&] { g_oa.current = lf.path; });
+                const fs::path p = root / fs::u8path(lf.path);
+                std::error_code ec;
+                const std::string sha = og::FileSha256(p);
+                if (sha.empty() || fs::file_size(p, ec) != lf.size || ec)
+                    throw std::runtime_error(lf.path + " changed or couldn't be read while publishing. Check the folder and try again.");
+                const auto r = OaUpload(a, "v" + ver + "/" + lf.path, p, og::ContentType(lf.path), cache);
+                if (!r.ok) { msg = OaError(r, "Uploading " + lf.path, needSql); kind = 2; break; }
+                files.push_back({lf.path, lf.size, sha});
+                done += (long long)lf.size;
+                OaLocked([&] { g_oa.bytesDone = done; ++g_oa.filesDone; });
+            }
+            if (msg.empty()) {
+                // The manifest: the same format the script writes, checked by the
+                // players' own parser before it goes up.
+                const og::Manifest m = og::MakeManifest(name, ver, pf.exe, notes, pf.image, files);
+                const std::string text = og::ToJson(m);
+                og::Manifest back;
+                std::string perr;
+                if (!og::ParseManifest(text, back, &perr) || back.files.size() != files.size())
+                    throw std::runtime_error("The file list didn't check out (" + perr + ").");
+                OaLocked([&] { g_oa.current = og::kManifestName; });
+                okay::account::ApiResponse r;
+                if (!OaUploadText(a, "v" + ver + "/" + og::kManifestName, text, "application/json", cache, &r)) {
+                    msg = OaError(r, "Uploading the file list", needSql); kind = 2;
+                }
+            }
+            if (msg.empty() && OaCancelled()) {
+                msg = "Publish canceled. Players still get " + (live.empty() ? std::string("nothing") : "v" + live) + ".";
+                kind = 0; refresh = true;
+            }
+            if (msg.empty()) {
+                // Commit: NOTES.txt, then VERSION.txt. No cancelling from here.
+                OaLocked([&] { g_oa.committing = true; ++g_oa.filesDone; g_oa.current = "VERSION.txt"; });
+                std::string oldNotes;
+                if (!live.empty()) { const auto n = OaGet(a, "NOTES.txt"); if (n.ok) oldNotes = n.body; }
+                okay::account::ApiResponse r;
+                if (!OaUploadText(a, "NOTES.txt", notes + "\n", "text/plain; charset=utf-8", 30, &r)) {
+                    msg = OaError(r, "Writing NOTES.txt", needSql) + " Players still get " +
+                          (live.empty() ? std::string("nothing") : "v" + live) + "."; kind = 2;
+                } else if (!OaUploadText(a, "VERSION.txt", ver + "\n", "text/plain", 30, &r)) {
+                    okay::account::ApiResponse r2;   // put the old notes back beside the old version
+                    if (!oldNotes.empty()) OaUploadText(a, "NOTES.txt", oldNotes, "text/plain; charset=utf-8", 30, &r2);
+                    msg = OaError(r, "Writing VERSION.txt", needSql) + " Players still get " +
+                          (live.empty() ? std::string("nothing") : "v" + live) + "."; kind = 2;
+                } else {
+                    OaLog(a, "publish", ver, (long long)files.size(), done);
+                    msg = "Published " + name + " v" + ver + ". Players get it on their launcher's next update check.";
+                    kind = 1;
+                }
+                refresh = true;
+            }
+        } else if (j->kind == Oa_MakeLive) {
+            og::Manifest m;
+            if (!OaManifest(a, j->target, m)) throw std::runtime_error("v" + j->target + " has no complete file list, so it can't go live.");
+            OaLocked([&] { g_oa.committing = true; g_oa.current = "VERSION.txt"; });
+            const std::string live = OaLive(a);
+            std::string oldNotes;
+            if (!live.empty()) { const auto n = OaGet(a, "NOTES.txt"); if (n.ok) oldNotes = n.body; }
+            okay::account::ApiResponse r;
+            if (!OaUploadText(a, "NOTES.txt", og::PublishNotes(m.notes, m.name, m.version) + "\n", "text/plain; charset=utf-8", 30, &r)) {
+                msg = OaError(r, "Writing NOTES.txt", needSql); kind = 2;
+            } else if (!OaUploadText(a, "VERSION.txt", m.version + "\n", "text/plain", 30, &r)) {
+                okay::account::ApiResponse r2;
+                if (!oldNotes.empty()) OaUploadText(a, "NOTES.txt", oldNotes, "text/plain; charset=utf-8", 30, &r2);
+                msg = OaError(r, "Writing VERSION.txt", needSql); kind = 2;
+            } else {
+                OaLog(a, "make_live", m.version, (long long)m.files.size(), (long long)m.size);
+                msg = "v" + m.version + " is live. Players' launchers switch to it on their next update check.";
+            }
+            refresh = true;
+        } else if (j->kind == Oa_Delete || j->kind == Oa_Cleanup) {
+            const std::vector<std::string> list = j->kind == Oa_Delete ? std::vector<std::string>{j->target} : j->targets;
+            OaLocked([&] { g_oa.filesDone = 0; g_oa.filesTotal = (int)list.size(); });
+            int n = 0;
+            for (const std::string& v : list) {
+                OaLocked([&] { g_oa.current = "v" + v; });
+                std::string why;
+                if (!OaDeleteVersion(a, v, why, needSql)) { msg = why; kind = 2; break; }
+                ++n;
+                OaLocked([&] { ++g_oa.filesDone; });
+            }
+            if (msg.empty()) msg = list.size() == 1 ? "Deleted v" + list[0] : "Deleted " + std::to_string(n) + " old versions";
+            refresh = true;
+        }
+        if (refresh) loadView();
+    } catch (const std::exception& e) {
+        msg = std::string(e.what()) == "signed out" ? std::string("Sign in again to use the admin tools.") : e.what();
+        kind = 2;
+    } catch (...) { msg = "Something went wrong"; kind = 2; }
+    OaLocked([&] {
+        if (haveView) {
+            g_oa.loaded = true; g_oa.reached = view.reached; g_oa.live = view.live; g_oa.liveNotes = view.liveNotes;
+            g_oa.versions = std::move(view.versions); g_oa.listHidden = view.listHidden;
+        }
+        g_oa.resultReady = !msg.empty();
+        g_oa.resultMsg = msg; g_oa.resultKind = kind;
+        if (needSql) g_oa.needSql = true;
+        else if (kind == 1 && j->kind != Oa_Refresh) g_oa.needSql = false;
+        g_oa.job = Oa_Idle; g_oa.committing = false; g_oa.cancelReq = false; g_oa.current.clear();
+    });
+    return 0;
+}
+
+// Start a job; false while another one runs.
+static bool StartOfficialAdminJob(OaJobArgs* a) {
+    if (!g_oaMutex) g_oaMutex = SDL_CreateMutex();
+    bool busy = false;
+    OaLocked([&] {
+        busy = g_oa.job != Oa_Idle;
+        if (!busy) { g_oa.job = a->kind; g_oa.cancelReq = false; g_oa.committing = false; g_oa.filesDone = g_oa.filesTotal = 0;
+                     g_oa.bytesDone = g_oa.bytesTotal = 0; g_oa.current.clear(); }
+    });
+    if (busy) { delete a; return false; }
+    if (g_oaThread) { SDL_WaitThread(g_oaThread, nullptr); g_oaThread = nullptr; }   // (the last job has ended)
+    g_oaThread = SDL_CreateThread(OfficialAdminWorker, "okay-offadmin", a);
+    if (!g_oaThread) { delete a; OaLocked([&] { g_oa.job = Oa_Idle; }); return false; }
+    return true;
+}
+
+static void DrawOfficialAdmin(okay::account::AccountService& account) {
+    (void)account;
+    if (!g_oaMutex) g_oaMutex = SDL_CreateMutex();
+    // The form (main thread only).
+    static char folder[1024] = "";
+    static std::string scannedDir;   // the folder pf was read from (the text box may be mid-edit)
+    static og::PublishFolder pf;
+    static bool scanned = false;
+    static std::string scanErr;
+    static char nameBuf[96] = "", verBuf[40] = "", notesBuf[4000] = "";
+    static bool verEdited = false, allowOlder = false;
+    static std::vector<std::string> problems;
+    static bool checked = false;
+    static int keepN = 3;
+    static std::string confirmLive, confirmDelete;
+    static bool confirmPublish = false, confirmCleanup = false;
+    static bool requested = false;
+
+    OaState s;   // a copy of the shared state for this frame (the list is short)
+    bool toast = false;
+    OaLocked([&] {
+        s = g_oa;
+        if (g_oa.resultReady) { g_oa.resultReady = false; toast = true; }
+    });
+    if (toast) Toast(s.resultMsg, s.resultKind);
+    const bool busy = s.job != Oa_Idle;
+    auto refresh = [&] { auto* a = new OaJobArgs; a->kind = Oa_Refresh; StartOfficialAdminJob(a); };
+    if (!requested) { requested = true; refresh(); }
+
+    const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    auto card = [&](const char* id) {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+        ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    };
+    auto cardEnd = [&] { ImGui::EndChild(); ImGui::PopStyleVar(2); ImGui::PopStyleColor(); ImGui::Dummy(ImVec2(0, 8)); };
+    auto smallCaps = [&](const char* t) { ImGui::SetWindowFontScale(0.80f); ImGui::TextDisabled("%s", t); ImGui::SetWindowFontScale(1.0f); };
+    auto pill = [&](const char* t, ImU32 bg) {
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 ts = ImGui::CalcTextSize(t);
+        const float sc = 0.78f, w = ts.x * sc + 12, h = ts.y * sc + 6;
+        const float y = p.y + (ImGui::GetFrameHeight() - h) * 0.5f;
+        d->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + w, y + h), bg, 8.0f);
+        d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * sc, ImVec2(p.x + 6, y + 3), IM_COL32_WHITE, t);
+        ImGui::Dummy(ImVec2(w, ImGui::GetFrameHeight()));
+    };
+    auto rescan = [&] {
+        pf = og::PublishFolder(); scanErr.clear(); checked = false; problems.clear();
+        scannedDir = folder;
+        scanned = folder[0] && og::ScanFolder(fs::u8path(scannedDir), pf, &scanErr);
+        if (!scanned) return;
+        std::snprintf(nameBuf, sizeof(nameBuf), "%s", pf.name().c_str());   // a new folder: its own name and version
+        verEdited = false;
+    };
+    if (static bool demoFolder = false; !demoFolder) {   // (env: dev screenshot hook) start with a folder picked
+        demoFolder = true;
+        if (const char* f = std::getenv("OKAY_UI_DEMO_OAFOLDER")) { std::snprintf(folder, sizeof(folder), "%s", f); rescan(); }
+    }
+    // The suggested version follows the live one until the admin types their own.
+    if (scanned && !verEdited) {
+        std::time_t now = std::time(nullptr);
+        const std::tm* tm = std::localtime(&now);
+        std::string newest = s.live;   // count versions already in the bucket too (e.g. after a rollback)
+        if (!s.versions.empty() && og::CompareVersions(s.versions.front().version, newest) > 0) newest = s.versions.front().version;
+        const std::string v = og::SuggestVersion(pf.folderVersion, newest, tm ? tm->tm_year + 1900 : 2026, tm ? tm->tm_mon + 1 : 1, tm ? tm->tm_mday : 1);
+        std::snprintf(verBuf, sizeof(verBuf), "%s", v.c_str());
+    }
+
+    if (s.needSql) {   // the server refused a write: say what to do, not the raw error
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.45f, 0.30f, 0.10f, 0.55f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
+        ImGui::BeginChild("##oa_sql", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::TextUnformatted(kOaNeedSql);
+        ImGui::TextDisabled("Uploads were refused (403). It's run once, by the project owner, in the Supabase SQL editor.");
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2); ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, 6));
+    }
+
+    ImGui::BeginChild("##oa_scroll", ImVec2(0, 0), ImGuiChildFlags_None);
+    // ======================= Live now =======================
+    card("##oa_live");
+    smallCaps("LIVE NOW");
+    const OaVersion* liveV = nullptr;
+    for (const OaVersion& v : s.versions) if (v.version == s.live) liveV = &v;
+    if (!s.loaded) ImGui::TextDisabled(busy ? "Loading\xE2\x80\xA6" : "Not loaded yet.");
+    else if (!s.reached) ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1), "Couldn't reach the server.");
+    else if (s.live.empty()) ImGui::TextDisabled("Nothing is published yet. Players don't see an official game until you publish one.");
+    else {
+        ImGui::SetWindowFontScale(1.3f);
+        ImGui::Text("%s  v%s", liveV && !liveV->name.empty() ? liveV->name.c_str() : "Official game", s.live.c_str());
+        ImGui::SetWindowFontScale(1.0f);
+        if (liveV && liveV->manifestOk)
+            ImGui::TextDisabled("%d files  \xC2\xB7  %s  \xC2\xB7  players install it from the Play page", liveV->files, OffBytes((long long)liveV->size).c_str());
+        else ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1), "Its file list (manifest.json) is missing or broken: players can't install it.");
+        if (!s.liveNotes.empty()) {
+            ImGui::Dummy(ImVec2(0, 2));
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(s.liveNotes.c_str());
+            ImGui::PopTextWrapPos();
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("Refresh", ImVec2(100, 30))) refresh();
+    ImGui::EndDisabled();
+    cardEnd();
+
+    // ======================= Publish =======================
+    card("##oa_pub");
+    smallCaps("PUBLISH A NEW VERSION");
+    ImGui::TextDisabled("Pick the folder File > Build Game made (the game's .exe, SDL2.dll and Data/).");
+    ImGui::Dummy(ImVec2(0, 2));
+    const bool publishing = s.job == Oa_Publish;
+    ImGui::BeginDisabled(publishing);
+    ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - 230));
+    if (ImGui::InputTextWithHint("##oa_folder", "Built game folder", folder, sizeof(folder), ImGuiInputTextFlags_EnterReturnsTrue)) rescan();
+    ImGui::SameLine(0, 8);
+    if (ImGui::Button("Browse\xE2\x80\xA6", ImVec2(100, 0))) {
+        if (const char* picked = tinyfd_selectFolderDialog("Choose the built game folder", folder[0] ? folder : nullptr)) {
+            std::snprintf(folder, sizeof(folder), "%s", picked);
+            rescan();
+        }
+    }
+    ImGui::SameLine(0, 8);
+    ImGui::BeginDisabled(!folder[0]);
+    if (ImGui::Button("Reload", ImVec2(100, 0))) rescan();
+    ImGui::EndDisabled();
+    if (!scanErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1), "%s", scanErr.c_str());
+    if (scanned) {
+        ImGui::Dummy(ImVec2(0, 6));
+        // What was found: cover, name, exe, size.
+        const float coverW = 192.0f, coverH = 108.0f;
+        const ImVec2 cp = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        SDL_Texture* tex = pf.image.empty() ? nullptr : GameCover((fs::u8path(scannedDir) / fs::u8path(pf.image)).string());
+        if (tex) {
+            int tw = 0, th = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            const float ta = th > 0 ? (float)tw / (float)th : 1.0f, ba = coverW / coverH;
+            ImVec2 uv0(0, 0), uv1(1, 1);
+            if (ta > ba) { uv0.x = (1.0f - ba / ta) * 0.5f; uv1.x = 1.0f - uv0.x; }
+            else         { uv0.y = (1.0f - ta / ba) * 0.5f; uv1.y = 1.0f - uv0.y; }
+            dl->AddImageRounded((ImTextureID)(intptr_t)tex, cp, ImVec2(cp.x + coverW, cp.y + coverH), uv0, uv1, IM_COL32_WHITE, 8.0f);
+        } else {
+            dl->AddRectFilled(cp, ImVec2(cp.x + coverW, cp.y + coverH), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
+            const char* t = "No cover.png";
+            const ImVec2 ts = ImGui::CalcTextSize(t);
+            dl->AddText(ImVec2(cp.x + (coverW - ts.x) * 0.5f, cp.y + (coverH - ts.y) * 0.5f), cDim, t);
+        }
+        const float tx = cp.x + coverW + 16;
+        float ty = cp.y;
+        auto line = [&](const char* label, const std::string& value, bool bad = false) {
+            dl->AddText(ImVec2(tx, ty), cDim, label);
+            dl->AddText(ImVec2(tx + 90, ty), bad ? IM_COL32(240, 120, 110, 255) : cText, value.c_str());
+            ty += ImGui::GetTextLineHeight() + 6;
+        };
+        line("Game", pf.name().empty() ? std::string("(no name found)") : pf.name(), pf.name().empty());
+        line("Exe", pf.exe.empty() ? (pf.exeCandidates ? std::to_string(pf.exeCandidates) + " .exe files: which one?" : std::string("none found"))
+                                   : pf.exe + (pf.exeIsWindows ? "" : "  (not a Windows program)"), pf.exe.empty() || !pf.exeIsWindows);
+        line("Cover", pf.image.empty() ? std::string("none (add cover.png)") : pf.image);
+        line("Files", std::to_string(pf.files.size()) + " files  \xC2\xB7  " + OffBytes((long long)pf.total()));
+        ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + std::max(coverH, ty - cp.y) + 10));
+
+        // Name, version, what's new.
+        const float lw = 120.0f, fw = std::min(ImGui::GetContentRegionAvail().x - lw, 520.0f);
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Name"); ImGui::SameLine(lw);
+        ImGui::SetNextItemWidth(fw);
+        if (ImGui::InputText("##oa_name", nameBuf, sizeof(nameBuf))) checked = false;
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Version"); ImGui::SameLine(lw);
+        ImGui::SetNextItemWidth(180);
+        if (ImGui::InputText("##oa_ver", verBuf, sizeof(verBuf), ImGuiInputTextFlags_CharsDecimal)) { verEdited = true; checked = false; }
+        ImGui::SameLine(0, 12);
+        if (ImGui::Checkbox("Allow same or older", &allowOlder)) checked = false;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Publish even if this version isn't newer than the live one (the script's FORCE=1).\n"
+                              "Players who already have a newer version won't go back to it.");
+        ImGui::SameLine(0, 12);
+        ImGui::AlignTextToFramePadding();
+        if (s.live.empty()) ImGui::TextDisabled("(nothing live yet)");
+        else ImGui::TextDisabled("live: v%s", s.live.c_str());
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("What's new"); ImGui::SameLine(lw);
+        ImGui::InputTextMultiline("##oa_notes", notesBuf, sizeof(notesBuf), ImVec2(fw, ImGui::GetTextLineHeight() * 5 + 12));
+        if (!notesBuf[0]) {
+            const ImVec2 r = ImGui::GetItemRectMin();
+            ImGui::GetWindowDrawList()->AddText(ImVec2(r.x + 8, r.y + 6), cDim, "- New level\n- Fixed the jump bug   (becomes NOTES.txt)");
+        }
+        ImGui::Dummy(ImVec2(0, 4));
+
+        auto runCheck = [&] {
+            const std::string folderCopy = scannedDir;
+            og::PublishFolder fresh;
+            std::string err;
+            if (!og::ScanFolder(fs::u8path(folderCopy), fresh, &err)) { problems = {err}; checked = true; return; }
+            pf = std::move(fresh);
+            problems = og::CheckPublish(pf, verBuf, s.live, allowOlder);
+            if (!s.loaded || !s.reached) problems.insert(problems.begin(), "The live version isn't known yet (refresh first).");
+            for (const OaVersion& v : s.versions)   // an older upload of the same version (not live): don't mix files by accident
+                if (v.version == og::Trim(verBuf) && v.version != s.live && !allowOlder)
+                    problems.push_back("v" + v.version + " is already in the bucket. Pick another version, or tick \"Allow same or older\" to replace it.");
+            checked = true;
+        };
+        if (ImGui::Button("Check", ImVec2(100, 34))) runCheck();
+        ImGui::SameLine(0, 8);
+        if (PrimaryButton("Publish\xE2\x80\xA6", ImVec2(140, 34))) {
+            runCheck();
+            if (problems.empty()) confirmPublish = true;
+        }
+        ImGui::EndDisabled();   // (publishing)
+        if (checked) {
+            ImGui::Dummy(ImVec2(0, 4));
+            for (const std::string& p : problems) {
+                ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1), "\xE2\x80\xA2");
+                ImGui::SameLine(0, 6);
+                ImGui::PushTextWrapPos(0.0f); ImGui::TextUnformatted(p.c_str()); ImGui::PopTextWrapPos();
+            }
+            if (problems.empty()) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "Everything checks out: %s v%s, %d files, %s.", nameBuf, verBuf,
+                                          (int)pf.files.size(), OffBytes((long long)pf.total()).c_str());
+            if (allowOlder && s.live == verBuf)
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "v%s is live: its files are replaced in place while players may be downloading them.", verBuf);
+        }
+    } else ImGui::EndDisabled();
+    if (publishing) {
+        // Progress: file X of Y, bytes, and Cancel until the version is committed.
+        ImGui::Dummy(ImVec2(0, 6));
+        const float frac = s.bytesTotal > 0 ? (float)((double)s.bytesDone / (double)s.bytesTotal) : 0.0f;
+        char overlay[160];
+        if (s.committing) std::snprintf(overlay, sizeof(overlay), "Making it live\xE2\x80\xA6");
+        else std::snprintf(overlay, sizeof(overlay), "File %d of %d  \xC2\xB7  %s of %s  (%d%%)", std::min(s.filesDone + 1, std::max(1, s.filesTotal)),
+                           s.filesTotal, OffBytes(s.bytesDone).c_str(), OffBytes(s.bytesTotal).c_str(), (int)(frac * 100.0f));
+        ImGui::ProgressBar(std::clamp(s.committing ? 1.0f : frac, 0.0f, 1.0f), ImVec2(std::max(200.0f, ImGui::GetContentRegionAvail().x - 110), 34), overlay);
+        ImGui::SameLine(0, 8);
+        ImGui::BeginDisabled(s.committing || s.cancelReq);
+        if (ImGui::Button(s.cancelReq ? "Canceling" : "Cancel", ImVec2(100, 34))) OaLocked([&] { g_oa.cancelReq = true; });
+        ImGui::EndDisabled();
+        if (!s.current.empty()) ImGui::TextDisabled("%s", s.current.c_str());
+        ImGui::TextDisabled("Players keep the live version until the very last step.");
+    }
+    cardEnd();
+
+    // ======================= Versions =======================
+    card("##oa_hist");
+    smallCaps("VERSIONS IN THE BUCKET");
+    ImGui::Dummy(ImVec2(0, 2));
+    if (s.listHidden)
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "The server doesn't let this account list official/ yet. %s", kOaNeedSql);
+    std::function<bool(const std::string&)> okFn = [&](const std::string& v) {
+        for (const OaVersion& x : s.versions) if (x.version == v) return x.manifestOk;
+        return false;
+    };
+    std::vector<std::string> names;
+    for (const OaVersion& v : s.versions) names.push_back(v.version);
+    const std::string prev = s.live.empty() ? std::string() : og::RollbackTarget(names, s.live, okFn);
+    if (s.versions.empty() && !s.listHidden) ImGui::TextDisabled(s.loaded ? "No versions yet." : busy ? "Loading\xE2\x80\xA6" : "");
+    for (const OaVersion& v : s.versions) {
+        ImGui::PushID(v.version.c_str());
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("v%s", v.version.c_str());
+        ImGui::SameLine(150);
+        if (v.version == s.live) pill("LIVE", IM_COL32(67, 160, 110, 255));
+        else if (v.version == prev) pill("PREVIOUS", IM_COL32(88, 120, 200, 255));
+        else if (!v.manifestOk) pill("INCOMPLETE", IM_COL32(190, 120, 60, 255));
+        else ImGui::Dummy(ImVec2(80, ImGui::GetFrameHeight()));
+        ImGui::SameLine(250);
+        ImGui::AlignTextToFramePadding();
+        if (v.manifestOk) ImGui::TextDisabled("%s  \xC2\xB7  %d files  \xC2\xB7  %s", v.name.c_str(), v.files, OffBytes((long long)v.size).c_str());
+        else ImGui::TextDisabled("no complete file list");
+        const float bx = ImGui::GetWindowContentRegionMax().x - 210;
+        ImGui::SameLine(std::max(bx, ImGui::GetCursorPosX() + 8));
+        const std::string why = og::MakeLiveProblem(v.version, s.live, names, v.manifestOk);
+        ImGui::BeginDisabled(busy || !why.empty());
+        if (ImGui::Button("Make live", ImVec2(100, 0))) confirmLive = v.version;
+        ImGui::EndDisabled();
+        if (!why.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why.c_str());
+        ImGui::SameLine(0, 6);
+        ImGui::BeginDisabled(busy || v.version == s.live);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.50f, 0.50f, 1));
+        if (ImGui::Button("Delete", ImVec2(100, 0))) confirmDelete = v.version;
+        ImGui::PopStyleColor();
+        ImGui::EndDisabled();
+        if (v.version == s.live && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The live version can't be deleted.");
+        ImGui::PopID();
+    }
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Keep the newest");
+    ImGui::SameLine(0, 8);
+    ImGui::SetNextItemWidth(130);
+    ImGui::InputInt("##oa_keep", &keepN);
+    keepN = std::clamp(keepN, 1, 50);
+    ImGui::SameLine(0, 8);
+    const std::vector<std::string> old = og::CleanupVersions(names, s.live, keepN, okFn);
+    ImGui::BeginDisabled(busy || old.empty());
+    if (ImGui::Button("Clean up old versions\xE2\x80\xA6", ImVec2(0, 0))) confirmCleanup = true;
+    ImGui::EndDisabled();
+    ImGui::SameLine(0, 10);
+    if (old.empty()) ImGui::TextDisabled("nothing to clean up");
+    else ImGui::TextDisabled("deletes %d version%s (never the live one)", (int)old.size(), old.size() == 1 ? "" : "s");
+    if (busy && s.job != Oa_Publish && s.job != Oa_Refresh) ImGui::TextDisabled("Working on %s\xE2\x80\xA6", s.current.c_str());
+    cardEnd();
+    ImGui::EndChild();
+
+    // ---- Confirmations ----
+    auto modal = [&](const char* title, bool open) {
+        if (open && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        return ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+    };
+    auto danger = [](const char* label) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        const bool b = ImGui::Button(label, ImVec2(130, 0));
+        ImGui::PopStyleColor(2);
+        return b;
+    };
+    if (modal("Publish the official game?", confirmPublish)) {
+        ImGui::Text("Publish %s v%s to every player?", nameBuf, verBuf);
+        ImGui::TextDisabled("%d files, %s, uploaded with your account. Players' launchers pick it up\non their next update check%s.",
+                            (int)pf.files.size(), OffBytes((long long)pf.total()).c_str(), s.live.empty() ? "" : (" (replacing v" + s.live + ")").c_str());
+        ImGui::Dummy(ImVec2(0, 6));
+        if (PrimaryButton("Publish", ImVec2(130, 0))) {
+            auto* a = new OaJobArgs; a->kind = Oa_Publish; a->folder = scannedDir; a->name = og::Trim(nameBuf); a->version = og::Trim(verBuf);
+            a->notes = notesBuf; a->allowNotNewer = allowOlder;
+            if (!StartOfficialAdminJob(a)) Toast("Still working on the last action\xE2\x80\xA6", 0);
+            confirmPublish = false; checked = false; ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) { confirmPublish = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+    if (modal("Make this version live?", !confirmLive.empty())) {
+        ImGui::Text("Make v%s the official version?", confirmLive.c_str());
+        if (og::CompareVersions(confirmLive, s.live) < 0)
+            ImGui::TextDisabled("This rolls back from v%s. Launchers only move forward, so players who\n"
+                                "already have v%s keep it; new installs get v%s.", s.live.c_str(), s.live.c_str(), confirmLive.c_str());
+        else ImGui::TextDisabled("Players move from v%s to it on their launcher's next update check.", s.live.c_str());
+        ImGui::Dummy(ImVec2(0, 6));
+        if (PrimaryButton("Make live", ImVec2(130, 0))) {
+            auto* a = new OaJobArgs; a->kind = Oa_MakeLive; a->target = confirmLive;
+            if (!StartOfficialAdminJob(a)) Toast("Still working on the last action\xE2\x80\xA6", 0);
+            confirmLive.clear(); ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) { confirmLive.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+    if (modal("Delete this version?", !confirmDelete.empty())) {
+        ImGui::Text("Delete v%s from the bucket?", confirmDelete.c_str());
+        ImGui::TextDisabled("Its files are removed for good. Players never get it again.");
+        ImGui::Dummy(ImVec2(0, 6));
+        if (danger("Delete")) {
+            auto* a = new OaJobArgs; a->kind = Oa_Delete; a->target = confirmDelete;
+            if (!StartOfficialAdminJob(a)) Toast("Still working on the last action\xE2\x80\xA6", 0);
+            confirmDelete.clear(); ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Keep", ImVec2(110, 0))) { confirmDelete.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+    if (modal("Clean up old versions?", confirmCleanup)) {
+        std::string list;
+        for (const std::string& v : old) list += (list.empty() ? "v" : ", v") + v;
+        ImGui::Text("Delete %d old version%s?", (int)old.size(), old.size() == 1 ? "" : "s");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420);
+        ImGui::TextDisabled("%s", list.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::TextDisabled("The live version and the newest complete ones (%d in all) stay.", keepN);
+        ImGui::Dummy(ImVec2(0, 6));
+        if (danger("Delete them")) {
+            auto* a = new OaJobArgs; a->kind = Oa_Cleanup; a->targets = old;
+            if (!StartOfficialAdminJob(a)) Toast("Still working on the last action\xE2\x80\xA6", 0);
+            confirmCleanup = false; ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Keep them", ImVec2(110, 0))) { confirmCleanup = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -14992,6 +16240,7 @@ int main(int argc, char** argv) {
         PumpParty();                           // party state, leader's session, follow the leader
         PumpStatus(account.IsLoggedIn());      // learn / auto-clear my custom status
         PlaytimeTick(account.IsLoggedIn());
+        OfficialTick(tab == 1);                // the official game: results, update checks, is it running
         if (!g_incoming.code.empty()) {   // ring (and get the user's attention) while a call waits
             static Uint32 nextRing = 0;
             if (SDL_GetTicks() >= nextRing) {
@@ -16758,6 +18007,7 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 1) {                            // ---- Play ----
             sectionHeader("Play a game", nullptr);
+            DrawOfficialCard();   // the official game, front and centre (hidden until one is published)
 
             // ---- Web games (HTML / JavaScript) -------------------------------
             // Any folder with an index.html (e.g. a web export) or a loose .html
@@ -18886,6 +20136,10 @@ int main(int argc, char** argv) {
                     settingRow("Check for updates when the launcher starts", "Looks for a new version in the background each time you open OkaySpace.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##uponlaunch", &g_updateOnLaunch)) SavePrefs();
                     });
+                    rowDivider();
+                    settingRow("Keep the official game up to date", "Downloads new versions of the official game in the background. They install once the game is closed.", 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##offauto", &g_officialAutoUpdate)) SavePrefs();
+                    });
                     cardEnd();
 
                     cardBegin("##sc_maint", "MAINTENANCE");
@@ -19202,7 +20456,7 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(2);
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
-                    g_updateOnLaunch = false; g_playSort = 0;
+                    g_updateOnLaunch = false; g_officialAutoUpdate = true; g_playSort = 0;
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
                     SavePrefs();

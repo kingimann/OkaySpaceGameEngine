@@ -715,7 +715,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << rb->mass << " " << rb->drag << " " << rb->bounciness
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
-            << " " << (rb->allowSleep ? 1 : 0) << "\n";
+            << " " << (rb->allowSleep ? 1 : 0)
+            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -747,6 +748,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const Vec2& p : pc->points) out << " " << p.x << " " << p.y;
         out << "\n";
     }
+    // Trigger tag / layer filter (one record for the object's 2D colliders, only
+    // when set, so older scenes and unfiltered triggers read exactly as before).
+    for (Collider2D* c : go->GetComponents<Collider2D>())
+        if (!c->triggerTag.empty() || c->triggerLayers != 0xFFFFFFFFu) {
+            out << "  trigfilter2d " << Quote(c->triggerTag) << " " << c->triggerLayers << "\n";
+            break;
+        }
     if (auto* rb = go->GetComponent<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -755,7 +763,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << rb->maxFallSpeed
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
-            << " " << (rb->allowSleep ? 1 : 0) << "\n";
+            << " " << (rb->allowSleep ? 1 : 0)
+            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
     if (auto* j = go->GetComponent<Joint3D>()) {
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
@@ -884,6 +893,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cap->offset.x << " " << cap->offset.y << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
+    // Trigger tag / layer filter for the object's 3D colliders (only when set).
+    for (Collider3D* c : go->GetComponents<Collider3D>())
+        if (!c->triggerTag.empty() || c->triggerLayers != 0xFFFFFFFFu) {
+            out << "  trigfilter3d " << Quote(c->triggerTag) << " " << c->triggerLayers << "\n";
+            break;
+        }
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -1689,6 +1704,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Extended (back-compatible trailing): content page name per tab.
         out << " " << tb->pages.size();
         for (const auto& p : tb->pages) out << " " << Quote(p);
+        // --- appended (v3): tab style, sizing, states, motion, keys, per-tab extras ---
+        out << " " << (int)tb->style << " " << (int)tb->sizing << " " << tb->spacing << " " << tb->padding
+            << " " << tb->fontScale << " " << tb->minTabSize << " " << tb->indicatorThickness << " " << tb->iconSize
+            << " " << tb->hoverColor.r << " " << tb->hoverColor.g << " " << tb->hoverColor.b << " " << tb->hoverColor.a
+            << " " << tb->pressedColor.r << " " << tb->pressedColor.g << " " << tb->pressedColor.b << " " << tb->pressedColor.a
+            << " " << tb->badgeColor.r << " " << tb->badgeColor.g << " " << tb->badgeColor.b << " " << tb->badgeColor.a
+            << " " << tb->badgeTextColor.r << " " << tb->badgeTextColor.g << " " << tb->badgeTextColor.b << " " << tb->badgeTextColor.a
+            << " " << (tb->animate ? 1 : 0) << " " << tb->animSpeed
+            << " " << (tb->hotkeys ? 1 : 0) << " " << Quote(tb->prevKey) << " " << Quote(tb->nextKey)
+            << " " << (tb->wrapAround ? 1 : 0) << " " << (tb->focusable ? 1 : 0)
+            << " " << tb->icons.size();
+        for (const auto& ic : tb->icons) out << " " << Quote(ic);
+        out << " " << tb->badges.size();
+        for (int b : tb->badges) out << " " << b;
+        out << " " << tb->disabled.size();
+        for (bool d : tb->disabled) out << " " << (d ? 1 : 0);
         out << "\n";
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
@@ -2001,6 +2032,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ps->collisionFriction << " " << ps->collisionLifeLoss << " "
             // --- appended (v6): render mode (billboard/stretch) ---
             << (int)ps->renderMode << " " << ps->stretchScale << "\n";
+        // Gradients/curves + motion modules live on their own line (read after the
+        // "particles" line above); older scenes simply don't have it.
+        out << "  particlesfx 1 " << (int)ps->simulationSpace << " " << ps->inheritVelocity << " "
+            << ps->noiseStrength << " " << ps->noiseFrequency << " " << ps->noiseScroll << " "
+            << ps->orbitSpeed << " " << ps->orbitAxis.x << " " << ps->orbitAxis.y << " " << ps->orbitAxis.z << " "
+            << ps->vortexStrength << " " << ps->vortexPull << " " << (ps->speedOverLife ? 1 : 0);
+        const ParticleGradient& g = ps->colorGradient;
+        out << " " << g.count;
+        for (int i = 0; i < g.count; ++i)
+            out << " " << g.stops[i].time << " " << g.stops[i].color.r << " " << g.stops[i].color.g
+                << " " << g.stops[i].color.b << " " << g.stops[i].color.a;
+        for (const ParticleCurve* c : {&ps->sizeCurve, &ps->speedCurve}) {
+            out << " " << c->count << " " << (c->smooth ? 1 : 0);
+            for (int i = 0; i < c->count; ++i) out << " " << c->keys[i].time << " " << c->keys[i].value;
+        }
+        out << "\n";
     }
 }
 } // namespace
@@ -2720,6 +2767,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
+                } else if (field == "trigfilter2d" || field == "trigfilter3d") {
+                    std::string tag = ReadQuoted(in);
+                    std::uint32_t layers = 0xFFFFFFFFu;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> layers;
+                    if (field == "trigfilter2d")
+                        for (Collider2D* c : go->GetComponents<Collider2D>()) { c->triggerTag = tag; c->triggerLayers = layers; }
+                    else
+                        for (Collider3D* c : go->GetComponents<Collider3D>()) { c->triggerTag = tag; c->triggerLayers = layers; }
                 } else if (field == "boxcollider2d") {
                     Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
@@ -2773,6 +2829,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
                 } else if (field == "joint3d") {
                     auto* j = go->AddComponent<Joint3D>();
                     int bk = 0, ac = 1;
@@ -4412,6 +4469,33 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tb->pages.clear();
                         for (std::size_t k = 0; k < pc; ++k) tb->pages.push_back(ReadQuoted(in));
                     }
+                    in >> std::ws;   // optional (v3): style, sizing, states, motion, keys, extras
+                    if (std::isdigit(in.peek())) {
+                        int st = 0, sz = 0, an = 1, hk = 1, wr = 0, fo = 1;
+                        Color hc, pc, bc, btc;
+                        in >> st >> sz >> tb->spacing >> tb->padding >> tb->fontScale >> tb->minTabSize
+                           >> tb->indicatorThickness >> tb->iconSize
+                           >> hc.r >> hc.g >> hc.b >> hc.a >> pc.r >> pc.g >> pc.b >> pc.a
+                           >> bc.r >> bc.g >> bc.b >> bc.a >> btc.r >> btc.g >> btc.b >> btc.a
+                           >> an >> tb->animSpeed >> hk;
+                        tb->style = (UITabs::Style)st; tb->sizing = (UITabs::Sizing)sz;
+                        tb->hoverColor = hc; tb->pressedColor = pc; tb->badgeColor = bc; tb->badgeTextColor = btc;
+                        tb->animate = (an != 0); tb->hotkeys = (hk != 0);
+                        tb->prevKey = ReadQuoted(in); tb->nextKey = ReadQuoted(in);
+                        in >> wr >> fo;
+                        tb->wrapAround = (wr != 0); tb->focusable = (fo != 0);
+                        std::size_t ic = 0, bn = 0, dn = 0;
+                        in >> ic; tb->icons.clear();
+                        for (std::size_t k = 0; k < ic && in; ++k) tb->icons.push_back(ReadQuoted(in));
+                        in >> bn; tb->badges.clear();
+                        for (std::size_t k = 0; k < bn && in; ++k) { int b = 0; in >> b; tb->badges.push_back(b); }
+                        in >> dn; tb->disabled.clear();
+                        for (std::size_t k = 0; k < dn && in; ++k) { int d = 0; in >> d; tb->disabled.push_back(d != 0); }
+                    } else {
+                        // Saved before tab keys / tab focus existed: keep Q/E, the gamepad
+                        // shoulders and A/D doing whatever the game already uses them for.
+                        tb->hotkeys = false; tb->focusable = false;
+                    }
                 } else if (field == "uidropdown") {
                     auto* dd = go->AddComponent<UIDropdown>();
                     int an = 0; std::size_t count = 0;
@@ -4928,6 +5012,43 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     }
                                 }
                             }
+                        }
+                    }
+                } else if (field == "particlesfx") {
+                    // Gradients/curves + motion modules (follows the "particles" line).
+                    auto* ps = go->GetComponent<ParticleSystem>();
+                    if (!ps) ps = go->AddComponent<ParticleSystem>();
+                    std::string rest; std::getline(in, rest);   // whole line: tolerant of short/extended data
+                    std::istringstream rs(rest);
+                    int ver = 0, space = 0, spdLife = 0;
+                    rs >> ver >> space >> ps->inheritVelocity
+                       >> ps->noiseStrength >> ps->noiseFrequency >> ps->noiseScroll
+                       >> ps->orbitSpeed >> ps->orbitAxis.x >> ps->orbitAxis.y >> ps->orbitAxis.z
+                       >> ps->vortexStrength >> ps->vortexPull >> spdLife;
+                    ps->simulationSpace = space == 1 ? ParticleSystem::SimulationSpace::Local
+                                                     : ParticleSystem::SimulationSpace::World;
+                    ps->speedOverLife = (spdLife != 0);
+                    // Counts are clamped so a hand-edited file can't overrun the fixed arrays.
+                    int n = 0;
+                    if (rs >> n) {
+                        ParticleGradient& g = ps->colorGradient;
+                        g.count = 0;
+                        n = n < 0 ? 0 : (n > ParticleGradient::kMaxStops ? ParticleGradient::kMaxStops : n);
+                        for (int i = 0; i < n; ++i) {
+                            ParticleGradient::Stop s;
+                            if (!(rs >> s.time >> s.color.r >> s.color.g >> s.color.b >> s.color.a)) break;
+                            g.stops[g.count++] = s;
+                        }
+                    }
+                    for (ParticleCurve* c : {&ps->sizeCurve, &ps->speedCurve}) {
+                        int sm = 0;
+                        if (!(rs >> n >> sm)) break;
+                        c->count = 0; c->smooth = (sm != 0);
+                        n = n < 0 ? 0 : (n > ParticleCurve::kMaxKeys ? ParticleCurve::kMaxKeys : n);
+                        for (int i = 0; i < n; ++i) {
+                            ParticleCurve::Key k;
+                            if (!(rs >> k.time >> k.value)) break;
+                            c->keys[c->count++] = k;
                         }
                     }
                 } else {

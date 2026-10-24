@@ -256,6 +256,40 @@ sprite (or 2D collider) bounds under the cursor, using the main camera.
 The older `on_trigger()` and `on_collision()` names still work — they're treated
 as the *enter* handlers.
 
+Inside a collision or trigger handler these describe the touch:
+
+| Value | Meaning |
+| --- | --- |
+| `other` / `other_tag` | the other object's name / tag |
+| `contact_point` / `contact_normal` | where it touched, and the surface direction (vectors; normal points at the other object) |
+| `contact_x/_y/_z`, `contact_nx/_ny/_nz` | the same as numbers |
+| `impact_speed` | how hard it hit (closing speed; 0 for triggers) |
+
+```
+function on_collision_enter(other) {
+    if (impact_speed > 8) spawn3("Sparks", contact_x, contact_y, contact_z)
+}
+```
+
+### Physics queries: layers, triggers, casts
+
+Every ray, cast and overlap takes two optional trailing arguments after the
+distance: **layers** (a number from `layer_mask(...)`, or a list such as
+`"0,3"` / `"Default,Enemy"`, `"!Ignore Raycast"` for all but one) and
+**ignore_triggers** (`true` to pass through trigger colliders).
+
+```
+var ground = raycast3(x, y, z, 0, -1, 0, 1.2, "Default", true)
+var hits   = raycast_all3(x, y, z, 1, 0, 0, 50)     // nearest first
+var wall   = sphere_cast3(x, y, z, 1, 0, 0, 0.4, 5)  // won't slip through gaps
+```
+
+Colliders also have a **trigger filter** (Inspector: *Only Tag* / *Only Layers*
+on a trigger): a pickup set to `Player` ignores enemies completely — no enter,
+stay or exit events on either side. Rigidbodies have **Continuous Collision**
+for fast objects (bullets, thrown balls) so they stop at thin walls instead of
+passing through between two frames.
+
 ## Built-in functions
 
 ### Transform
@@ -360,6 +394,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `ray_hit()` / `ray_object()` | did the last `raycast()` hit, and what it hit |
 | `ray_x()` / `ray_y()` | last hit point; `ray_nx()`/`ray_ny()` surface normal; `ray_dist()` distance |
 | `raycast3(ox,oy,oz, dx,dy,dz[, dist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
+| `raycast_all3(ox,oy,oz, dx,dy,dz[, dist])` / `raycast_all(ox,oy,dx,dy[, dist])` | every object the ray passes through, nearest first (a list of names; `ray_all_count/object/dist/point/normal(i)`) |
+| `sphere_cast3(o.., d.., r[, dist])` / `box_cast3(c.., half.., d..[, dist])` / `capsule_cast3(a.., b.., r, d..[, dist])` | thick casts: the first thing the shape touches (details via `ray3_*`) |
+| `overlap_sphere3(c.., r)` / `overlap_box3(c.., half..)` / `overlap_capsule3(a.., b.., r)` | names of the objects inside a shape |
+| `layer_mask("Default", "Enemy", 3)` | a layers value for the queries |
 | `overlap(x, y)` | true if a collider contains the point |
 | `set_gravity(x, y)` | set the scene's 2D gravity (0,0 for top-down) |
 | `set_text(string)` | set this object's TextRenderer text |
@@ -374,6 +412,8 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `set_progress(v)` | set this object's UIProgressBar fill (0..1) |
 | `slider_value()` / `set_slider(v)` | read/set this object's UISlider value (fires on its own drag) |
 | `toggle_on()` / `set_toggle(b)` | read/set this object's UIToggle checkbox state |
+| `tab_value()` / `set_tab(i)` | read/select this object's UITabs tab (fires on_change) |
+| `set_tab_badge(i, n)` / `set_tab_enabled(i, b)` | badge a tab (0 none, -1 dot, N number) / enable or disable it |
 | `tile_resize(w,h)` `set_tile(x,y,id)` `get_tile(x,y)` `tile_w()` `tile_h()` | edit a sibling Tilemap |
 | `emit(n)` | burst n particles from this object's ParticleSystem (explosions, dust) |
 | `particles_on(bool)` / `particles_alive()` | start/stop continuous emission / read live count |

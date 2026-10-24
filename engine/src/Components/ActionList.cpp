@@ -28,6 +28,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneManager.hpp"
+#include "okay/Scene/Layers.hpp"           // raycast "lm:" layer lists
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/ServerBrowser.hpp"
 #include "okay/Net/MatchResults.hpp"
@@ -190,7 +191,10 @@ bool RayDirFromToken(GameObject* go, const std::string& tok, Vec3& dir) {
 
 // Is this arg one of the optional trailing modifier tokens ("h:<n>" / "ig:<tag>")
 // rather than a positional value?
-bool IsRayMod(const std::string& a) { return a.rfind("h:", 0) == 0 || a.rfind("ig:", 0) == 0; }
+bool IsRayMod(const std::string& a) {
+    return a.rfind("h:", 0) == 0 || a.rfind("ig:", 0) == 0 || a.rfind("only:", 0) == 0 ||
+           a.rfind("r:", 0) == 0 || a.rfind("lm:", 0) == 0 || a.rfind("nt:", 0) == 0;
+}
 
 // Cast a ray for an action item. args[base] is a direction token (keyword or the
 // first of a raw "x y z" triple, kept for back-compat); the distance follows.
@@ -201,11 +205,18 @@ RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size
     RaycastHit3D miss;
     Scene* s = go ? go->scene() : nullptr;
     if (!s || !go || !go->transform) return miss;
-    float height = 0.0f; std::string ignoreTag, onlyTag;
+    // Further modifiers: "r:<radius>" makes it a thick sphere / circle cast,
+    // "lm:<layers>" limits it to collider layers ("0,3" or names), "nt:1" skips
+    // trigger colliders.
+    float height = 0.0f, radius = 0.0f; std::string ignoreTag, onlyTag;
+    std::uint32_t layerMask = Physics3D::kAllLayers; bool hitTriggers = true;
     for (const std::string& a : it.args) {
         if (a.rfind("h:", 0) == 0)  height = (float)std::atof(a.c_str() + 2);
         else if (a.rfind("ig:", 0) == 0) ignoreTag = a.substr(3);
         else if (a.rfind("only:", 0) == 0) onlyTag = a.substr(5);
+        else if (a.rfind("r:", 0) == 0) radius = (float)std::atof(a.c_str() + 2);
+        else if (a.rfind("lm:", 0) == 0) layerMask = Layers::MaskFromList(a.substr(3));
+        else if (a.rfind("nt:", 0) == 0) hitTriggers = std::atoi(a.c_str() + 3) == 0;
     }
     Vec3 dir; float dist;
     if (RayDirFromToken(go, Str(it, base), dir)) {
@@ -238,7 +249,10 @@ RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size
         if (mute) muteObj(g);
     }
 
-    RaycastHit3D h3 = s->physics3D().Raycast(*s, origin, nd, dist, go);
+    RaycastHit3D h3 = radius > 0.0f
+        ? s->physics3D().SphereCast(*s, origin, nd, radius, dist, go, layerMask, hitTriggers)
+        : s->physics3D().Raycast(*s, origin, nd, dist, go, layerMask, hitTriggers);
+    s->physics3D().RecordQueryRay(origin, nd, dist, h3, radius);
     RaycastHit3D result = h3;
     // Also cast in 2D against Collider2D, so a raycast in a top-down / side-scroller game
     // hits sprites too — but only when the ray has a real XY direction (a pure ±Z ray,
@@ -246,7 +260,11 @@ RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size
     Vec2 d2{nd.x, nd.y};
     if (d2.SqrMagnitude() > 1e-6f) {
         d2 = d2.Normalized();
-        RaycastHit2D h2 = s->physics().Raycast(*s, Vec2{origin.x, origin.y}, d2, dist);
+        Vec2 o2{origin.x, origin.y};
+        RaycastHit2D h2 = radius > 0.0f
+            ? s->physics().CircleCast(*s, o2, d2, radius, dist, go, layerMask, hitTriggers)
+            : s->physics().Raycast(*s, o2, d2, dist, go, layerMask, hitTriggers);
+        s->physics().RecordQueryRay(o2, d2, dist, h2, radius);
         if (h2.hit && (!h3.hit || h2.distance < h3.distance)) {
             result.hit = true; result.gameObject = h2.gameObject;
             result.point = {h2.point.x, h2.point.y, origin.z};

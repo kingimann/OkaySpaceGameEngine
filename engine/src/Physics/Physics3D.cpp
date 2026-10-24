@@ -128,6 +128,12 @@ inline bool IsCapsuleLike(Collider3D::Shape s) {
 inline bool IsBoxLike(Collider3D::Shape s) {
     return s == Collider3D::Shape::Box || s == Collider3D::Shape::Mesh;
 }
+// A mesh collider with real triangles is resolved per triangle in its own pass.
+bool MeshHasTris(Collider3D* col) {
+    if (col->shape() != Collider3D::Shape::Mesh || !col->gameObject) return false;
+    auto* mr = col->gameObject->GetComponent<MeshRenderer>();
+    return mr && !mr->mesh.triangles.empty();
+}
 
 // Closest point on triangle (a,b,c) to point p — Ericson, Real-Time Collision
 // Detection. Used for exact mesh-collider contact.
@@ -219,12 +225,7 @@ Contact TestColliders(Collider3D* a, Collider3D* b) {
     // A mesh collider that actually has geometry is resolved exactly (per triangle)
     // in a dedicated pass — skip it here so it doesn't ALSO over-block as a big AABB
     // box. A mesh collider with no MeshRenderer keeps the simple box behaviour.
-    auto meshHasTris = [](Collider3D* col) {
-        if (col->shape() != S::Mesh || !col->gameObject) return false;
-        auto* mr = col->gameObject->GetComponent<MeshRenderer>();
-        return mr && !mr->mesh.triangles.empty();
-    };
-    if (meshHasTris(a) || meshHasTris(b)) return {};
+    if (MeshHasTris(a) || MeshHasTris(b)) return {};
 
     // Capsule/cylinder vs capsule/cylinder: closest points between the two segments.
     if (IsCapsuleLike(sa) && IsCapsuleLike(sb)) {
@@ -281,8 +282,39 @@ void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision3D&)
                        const Collision3D& info) {
     for (Component* c : go->GetComponents<Component>()) (c->*fn)(info);
 }
-void DispatchTrigger(GameObject* go, void (Component::*fn)(Collider3D*), Collider3D* other) {
-    for (Component* c : go->GetComponents<Component>()) (c->*fn)(other);
+// The trigger overlap being dispatched right now (Physics3D::CurrentTrigger).
+const TriggerContact3D* g_currentTrigger = nullptr;
+
+// Tell `self`'s object it overlapped `other`, with the overlap point/normal
+// readable through Physics3D::CurrentTrigger() for the duration of the calls.
+void DispatchTrigger(Collider3D* self, void (Component::*fn)(Collider3D*), Collider3D* other,
+                     const Vec3& point, const Vec3& normal) {
+    TriggerContact3D info{self, other, point, normal};
+    const TriggerContact3D* prev = g_currentTrigger;
+    g_currentTrigger = &info;
+    for (Component* c : self->gameObject->GetComponents<Component>()) (c->*fn)(other);
+    g_currentTrigger = prev;
+}
+
+// The Collision3D handed to one side of a contact. `n` points from that side
+// toward the other; `relVel` is the other's velocity minus this side's.
+Collision3D MakeCollision(Collider3D* other, const Vec3& n, float pen, const Vec3& point,
+                          const Vec3& relVel) {
+    Collision3D c;
+    c.gameObject = other->gameObject; c.collider = other;
+    c.normal = n; c.penetration = pen; c.point = point;
+    c.relativeVelocity = relVel;
+    float closing = -Vec3::Dot(relVel, n);   // > 0 when the two approach
+    c.impactSpeed = closing > 0.0f ? closing : 0.0f;
+    return c;
+}
+
+// Does trigger collider `trig` react to `other`? (its tag / layer filter)
+bool TriggerAccepts(const Collider3D* trig, const Collider3D* other) {
+    if (!trig->isTrigger) return true;
+    if (!trig->triggerTag.empty() && (!other->gameObject || other->gameObject->tag != trig->triggerTag))
+        return false;
+    return ((trig->triggerLayers >> (other->layer & 31)) & 1u) != 0;
 }
 
 bool Alive(Collider3D* c) { return c->enabled && c->gameObject && c->gameObject->active; }
@@ -333,7 +365,8 @@ void Physics3D::Step(Scene& scene, float dt) {
             rb->ConsumeTorque();   // discard so it doesn't accumulate while frozen
         }
         if (rb->bodyType != Rigidbody3D::BodyType::Static) {
-            t->localPosition = t->localPosition + rb->velocity * dt;
+            if (rb->continuousCollision) SweepBody(scene, rb, dt);   // stops at walls it would skip
+            else t->localPosition = t->localPosition + rb->velocity * dt;
             // Integrate orientation: q += 0.5 * (ω as quat) * q * dt, renormalized.
             if (!rb->freezeRotation && rb->angularVelocity.SqrMagnitude() > 1e-12f) {
                 const Vec3& w = rb->angularVelocity;
@@ -378,6 +411,11 @@ void Physics3D::Step(Scene& scene, float dt) {
                 aMax.y < bMin.y || aMin.y > bMax.y ||
                 aMax.z < bMin.z || aMin.z > bMax.z) continue;
 
+            bool trigger = a->isTrigger || b->isTrigger;
+            // Trigger tag / layer filters: a filtered-out object passes through
+            // silently (no events on either side).
+            if (trigger && (!TriggerAccepts(a, b) || !TriggerAccepts(b, a))) continue;
+
             Contact c = TestColliders(a, b);
             if (!c.hit) continue;
 
@@ -385,7 +423,10 @@ void Physics3D::Step(Scene& scene, float dt) {
 
             Rigidbody3D* ra = a->gameObject->GetComponent<Rigidbody3D>();
             Rigidbody3D* rb = b->gameObject->GetComponent<Rigidbody3D>();
-            bool trigger = a->isTrigger || b->isTrigger;
+            // Relative velocity before the solver changes it (for impact speed).
+            const Vec3 relVelBA = (rb ? rb->velocity : Vec3::Zero) - (ra ? ra->velocity : Vec3::Zero);
+            if (PhysicsDebug::Collect() && (int)m_debugContacts.size() < PhysicsDebug::kMaxContacts)
+                m_debugContacts.push_back({c.point, c.normal, trigger});
 
             // 3) Resolve solids (skip triggers and pairs without dynamics).
             if (!trigger) {
@@ -472,15 +513,15 @@ void Physics3D::Step(Scene& scene, float dt) {
             bool wasContact = m_contacts.count({a, b}) != 0;
             if (trigger) {
                 if (!wasContact) {
-                    DispatchTrigger(a->gameObject, &Component::OnTriggerEnter3D, b);
-                    DispatchTrigger(b->gameObject, &Component::OnTriggerEnter3D, a);
+                    DispatchTrigger(a, &Component::OnTriggerEnter3D, b, c.point, c.normal);
+                    DispatchTrigger(b, &Component::OnTriggerEnter3D, a, c.point, -c.normal);
                 } else {
-                    DispatchTrigger(a->gameObject, &Component::OnTriggerStay3D, b);
-                    DispatchTrigger(b->gameObject, &Component::OnTriggerStay3D, a);
+                    DispatchTrigger(a, &Component::OnTriggerStay3D, b, c.point, c.normal);
+                    DispatchTrigger(b, &Component::OnTriggerStay3D, a, c.point, -c.normal);
                 }
             } else {
-                Collision3D forA{b->gameObject, b, c.normal, c.penetration};
-                Collision3D forB{a->gameObject, a, -c.normal, c.penetration};
+                Collision3D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
+                Collision3D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
                 if (!wasContact) {
                     DispatchCollision(a->gameObject, &Component::OnCollisionEnter3D, forA);
                     DispatchCollision(b->gameObject, &Component::OnCollisionEnter3D, forB);
@@ -499,11 +540,14 @@ void Physics3D::Step(Scene& scene, float dt) {
         Collider3D* b = p.second;
         if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
         if (a->isTrigger || b->isTrigger) {
-            DispatchTrigger(a->gameObject, &Component::OnTriggerExit3D, b);
-            DispatchTrigger(b->gameObject, &Component::OnTriggerExit3D, a);
+            // No overlap any more: report the midpoint between the two centres.
+            Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
+            Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
+            DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n);
+            DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n);
         } else {
-            Collision3D forA{b->gameObject, b, {0, 0, 0}, 0.0f};
-            Collision3D forB{a->gameObject, a, {0, 0, 0}, 0.0f};
+            Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
+            Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
             DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA);
             DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB);
         }
@@ -923,6 +967,29 @@ bool RayAABB(const Vec3& o, const Vec3& d, const Vec3& mn, const Vec3& mx,
     tHit = tmin; n = nrm; return true;
 }
 
+// Ray (o + d*t) vs box slab test returning BOTH entry and exit (unclamped below
+// 0), used to bound shape sweeps to the stretch where a collider could be hit.
+bool RaySlabs(const Vec3& o, const Vec3& d, const Vec3& mn, const Vec3& mx,
+              float& tEnter, float& tExit) {
+    tEnter = -1e30f; tExit = 1e30f;
+    for (int a = 0; a < 3; ++a) {
+        float od = a == 0 ? d.x : a == 1 ? d.y : d.z;
+        float oo = a == 0 ? o.x : a == 1 ? o.y : o.z;
+        float lo = a == 0 ? mn.x : a == 1 ? mn.y : mn.z;
+        float hi = a == 0 ? mx.x : a == 1 ? mx.y : mx.z;
+        if (Mathf::Abs(od) < 1e-8f) {
+            if (oo < lo || oo > hi) return false;
+            continue;
+        }
+        float t1 = (lo - oo) / od, t2 = (hi - oo) / od;
+        if (t1 > t2) std::swap(t1, t2);
+        tEnter = Mathf::Max(tEnter, t1);
+        tExit  = Mathf::Min(tExit, t2);
+        if (tEnter > tExit) return false;
+    }
+    return true;
+}
+
 // Ray vs oriented box: transform the ray into the box's local frame (where it's an
 // axis-aligned box centred at the origin), reuse RayAABB, rotate the normal back.
 bool RayOBB(const Vec3& o, const Vec3& d, BoxCollider3D* box,
@@ -953,123 +1020,179 @@ bool RaySphere(const Vec3& o, const Vec3& d, const Vec3& c, float r,
     tHit = t; return true;
 }
 
+// Ray vs capsule (segment a-b thickened by r): the tube around the segment,
+// limited to the segment's span, else whichever end-cap sphere comes first.
+// (Rays used to test capsules by their AABB, which hit the empty corners.)
+bool RayCapsule(const Vec3& o, const Vec3& d, const Vec3& a, const Vec3& b, float r,
+                float maxT, float& tHit, Vec3& n) {
+    Vec3 ab = b - a;
+    float len = ab.Magnitude();
+    if (len < 1e-6f) return RaySphere(o, d, a, r, maxT, tHit, n);
+    Vec3 inside = ClosestOnSegment(o, a, b);
+    if ((o - inside).SqrMagnitude() <= r * r) {        // starts inside: hit at 0
+        Vec3 out = o - inside;
+        n = out.SqrMagnitude() > 1e-12f ? out.Normalized() : d * -1.0f;
+        tHit = 0.0f; return true;
+    }
+    Vec3 ax = ab * (1.0f / len);
+    Vec3 ao = o - a;
+    Vec3 dp = d - ax * Vec3::Dot(d, ax), op = ao - ax * Vec3::Dot(ao, ax);
+    float best = 1e30f; Vec3 bestN{0, 0, 0};
+    float A = Vec3::Dot(dp, dp), B = 2.0f * Vec3::Dot(dp, op), C = Vec3::Dot(op, op) - r * r;
+    if (A > 1e-10f) {
+        float disc = B * B - 4.0f * A * C;
+        if (disc >= 0.0f) {
+            float t = (-B - Mathf::Sqrt(disc)) / (2.0f * A);
+            float s = Vec3::Dot(ao + d * t, ax);
+            if (t >= 0.0f && t <= maxT && s >= 0.0f && s <= len) {
+                best = t;
+                bestN = ((o + d * t) - (a + ax * s)).Normalized();
+            }
+        }
+    }
+    float tc; Vec3 nc;
+    if (RaySphere(o, d, a, r, maxT, tc, nc) && tc < best) { best = tc; bestN = nc; }
+    if (RaySphere(o, d, b, r, maxT, tc, nc) && tc < best) { best = tc; bestN = nc; }
+    if (best > maxT) return false;
+    tHit = best; n = bestN; return true;
+}
+
+// Does a query consider this collider? (alive, not ignored, layer, trigger rule)
+bool Passes(Collider3D* c, GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
+    if (!Alive(c)) return false;
+    if (ignore && c->gameObject == ignore) return false;
+    if (!queryTriggers && c->isTrigger) return false;
+    return ((mask >> (c->layer & 31)) & 1u) != 0;
+}
+
+// Exact ray test against one collider's shape.
+bool RayCollider(Collider3D* c, const Vec3& o, const Vec3& d, float maxT, float& t, Vec3& n) {
+    if (c->shape() == Collider3D::Shape::Sphere) {
+        auto* s = static_cast<SphereCollider3D*>(c);
+        return RaySphere(o, d, s->WorldCenter(), s->WorldRadius(), maxT, t, n);
+    }
+    if (IsBoxLike(c->shape()))    // exact oriented-box ray test
+        return RayOBB(o, d, static_cast<BoxCollider3D*>(c), maxT, t, n);
+    auto* cap = static_cast<CapsuleCollider3D*>(c);   // capsule / cylinder
+    Vec3 a, b; cap->Segment(a, b);
+    return RayCapsule(o, d, a, b, cap->WorldRadius(), maxT, t, n);
+}
+
+// Heightmap terrain: not a polygon collider, so march the ray against the
+// height field (transform-aware — scaled/rotated terrains work). Lets Foot
+// IK plant feet on hills, aim/mouse rays strike the ground, etc. Coarse
+// steps sized to the heightmap cell, then a short bisection refine.
+bool RayTerrain(Terrain* terr, const Vec3& origin, const Vec3& dir, float maxT,
+                float& tOut, Vec3& nOut) {
+    GameObject* tg = terr->gameObject;
+    Mat4 l2w = tg->transform->LocalToWorldMatrix();
+    Mat4 w2l = l2w.Inverse();
+    float half = terr->size * 0.5f;
+    auto below = [&](float t) {   // is the ray point at t under the surface?
+        Vec3 lp = w2l.MultiplyPoint(origin + dir * t);
+        if (lp.x < -half || lp.x > half || lp.z < -half || lp.z > half) return false;
+        return lp.y <= terr->SampleHeight(lp.x, lp.z);
+    };
+    // Bound the march to the ray's overlap with the terrain's (generous)
+    // world AABB — callers raycast with huge max distances (camera rays),
+    // and stepping all the way out would stall the frame.
+    Vec3 bmn, bmx; bool bAny = false;
+    for (int cix = 0; cix < 8; ++cix) {
+        Vec3 c2 = l2w.MultiplyPoint({cix & 1 ? half : -half,
+                                     cix & 2 ? 1000.0f : -1000.0f,
+                                     cix & 4 ? half : -half});
+        if (!bAny) { bmn = bmx = c2; bAny = true; }
+        else {
+            bmn.x = Mathf::Min(bmn.x, c2.x); bmx.x = Mathf::Max(bmx.x, c2.x);
+            bmn.y = Mathf::Min(bmn.y, c2.y); bmx.y = Mathf::Max(bmx.y, c2.y);
+            bmn.z = Mathf::Min(bmn.z, c2.z); bmx.z = Mathf::Max(bmx.z, c2.z);
+        }
+    }
+    float tEnter, tExit;
+    if (!RaySlabs(origin, dir, bmn, bmx, tEnter, tExit)) return false;
+    tEnter = Mathf::Max(tEnter, 0.0f);
+    tExit  = Mathf::Min(tExit, maxT);
+    if (tEnter > tExit) return false;
+    float step = terr->size / (float)(terr->resolution > 1 ? terr->resolution : 64);
+    if (step < 0.05f) step = 0.05f;
+    if (below(tEnter)) return false;   // started under the terrain — no forward hit
+    float prev = tEnter;
+    int guard = 0;
+    for (float t = tEnter + step; t <= tExit && guard < 4096; t += step, ++guard) {
+        if (!below(t)) { prev = t; continue; }
+        float lo = prev, hi = t;                    // crossed: refine the crossing
+        for (int it = 0; it < 10; ++it) {
+            float mid = (lo + hi) * 0.5f;
+            if (below(mid)) hi = mid; else lo = mid;
+        }
+        float tHit = (lo + hi) * 0.5f;
+        if (tHit > maxT) return false;
+        Vec3 lp = w2l.MultiplyPoint(origin + dir * tHit);
+        tOut = tHit;
+        nOut = l2w.MultiplyVector(terr->NormalAt(lp.x, lp.z)).Normalized();
+        return true;
+    }
+    return false;
+}
+
+bool TerrainPasses(Terrain* terr, GameObject* ignore, std::uint32_t mask) {
+    GameObject* tg = terr->gameObject;
+    if (!tg || !tg->active || !tg->transform) return false;
+    if (ignore && tg == ignore) return false;
+    return ((mask >> (tg->layer & 31)) & 1u) != 0;
+}
+
 } // namespace
 
 RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& direction,
-                                float maxDistance, GameObject* ignore) {
+                                float maxDistance, GameObject* ignore,
+                                std::uint32_t layerMask, bool queryTriggers) {
     RaycastHit3D best;
     best.distance = maxDistance;
     Vec3 dir = direction.Normalized();
     for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
-        if (!Alive(c)) continue;
-        if (ignore && c->gameObject == ignore) continue;   // skip the caller (e.g. player)
-        float t; Vec3 n; bool hit = false;
-        if (c->shape() == Collider3D::Shape::Sphere) {
-            auto* s = static_cast<SphereCollider3D*>(c);
-            hit = RaySphere(origin, dir, s->WorldCenter(), s->WorldRadius(), best.distance, t, n);
-        } else if (IsBoxLike(c->shape())) {   // exact oriented-box ray test
-            hit = RayOBB(origin, dir, static_cast<BoxCollider3D*>(c), best.distance, t, n);
-        } else { // capsule/cylinder via its AABB
-            Vec3 mn, mx; c->WorldAABB(mn, mx);
-            hit = RayAABB(origin, dir, mn, mx, best.distance, t, n);
-        }
-        if (hit && t <= best.distance) {
+        if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
+        float t; Vec3 n;
+        if (RayCollider(c, origin, dir, best.distance, t, n) && t <= best.distance) {
             best.hit = true; best.collider = c; best.gameObject = c->gameObject;
             best.distance = t; best.point = origin + dir * t; best.normal = n;
         }
     }
-    // Heightmap terrain: not a polygon collider, so march the ray against the
-    // height field (transform-aware — scaled/rotated terrains work). Lets Foot
-    // IK plant feet on hills, aim/mouse rays strike the ground, etc. Coarse
-    // steps sized to the heightmap cell, then a short bisection refine.
     for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
-        GameObject* tg = terr->gameObject;
-        if (!tg || !tg->active || !tg->transform) continue;
-        if (ignore && tg == ignore) continue;
-        Mat4 l2w = tg->transform->LocalToWorldMatrix();
-        Mat4 w2l = l2w.Inverse();
-        float half = terr->size * 0.5f;
-        auto below = [&](float t) {   // is the ray point at t under the surface?
-            Vec3 lp = w2l.MultiplyPoint(origin + dir * t);
-            if (lp.x < -half || lp.x > half || lp.z < -half || lp.z > half) return false;
-            return lp.y <= terr->SampleHeight(lp.x, lp.z);
-        };
-        // Bound the march to the ray's overlap with the terrain's (generous)
-        // world AABB — callers raycast with huge max distances (camera rays),
-        // and stepping all the way out would stall the frame.
-        Vec3 bmn, bmx; bool bAny = false;
-        for (int cix = 0; cix < 8; ++cix) {
-            Vec3 c2 = l2w.MultiplyPoint({cix & 1 ? half : -half,
-                                         cix & 2 ? 1000.0f : -1000.0f,
-                                         cix & 4 ? half : -half});
-            if (!bAny) { bmn = bmx = c2; bAny = true; }
-            else {
-                bmn.x = Mathf::Min(bmn.x, c2.x); bmx.x = Mathf::Max(bmx.x, c2.x);
-                bmn.y = Mathf::Min(bmn.y, c2.y); bmx.y = Mathf::Max(bmx.y, c2.y);
-                bmn.z = Mathf::Min(bmn.z, c2.z); bmx.z = Mathf::Max(bmx.z, c2.z);
-            }
-        }
-        float tEnter = 0.0f, tExit = best.distance;
-        bool miss = false;
-        for (int ax = 0; ax < 3 && !miss; ++ax) {
-            float o = ax == 0 ? origin.x : ax == 1 ? origin.y : origin.z;
-            float d = ax == 0 ? dir.x : ax == 1 ? dir.y : dir.z;
-            float lo = ax == 0 ? bmn.x : ax == 1 ? bmn.y : bmn.z;
-            float hi = ax == 0 ? bmx.x : ax == 1 ? bmx.y : bmx.z;
-            if (Mathf::Abs(d) < 1e-8f) { if (o < lo || o > hi) miss = true; continue; }
-            float t0 = (lo - o) / d, t1 = (hi - o) / d;
-            if (t0 > t1) { float tmp = t0; t0 = t1; t1 = tmp; }
-            tEnter = Mathf::Max(tEnter, t0);
-            tExit  = Mathf::Min(tExit, t1);
-            if (tEnter > tExit) miss = true;
-        }
-        if (miss) continue;
-        float step = terr->size / (float)(terr->resolution > 1 ? terr->resolution : 64);
-        if (step < 0.05f) step = 0.05f;
-        if (below(tEnter)) continue;   // started under the terrain — no forward hit
-        float prev = tEnter;
-        int guard = 0;
-        for (float t = tEnter + step; t <= tExit && guard < 4096; t += step, ++guard) {
-            if (!below(t)) { prev = t; continue; }
-            float lo = prev, hi = t;                    // crossed: refine the crossing
-            for (int it = 0; it < 10; ++it) {
-                float mid = (lo + hi) * 0.5f;
-                if (below(mid)) hi = mid; else lo = mid;
-            }
-            float tHit = (lo + hi) * 0.5f;
-            if (tHit <= best.distance) {
-                Vec3 lp = w2l.MultiplyPoint(origin + dir * tHit);
-                best.hit = true; best.collider = nullptr; best.gameObject = tg;
-                best.distance = tHit; best.point = origin + dir * tHit;
-                best.normal = l2w.MultiplyVector(terr->NormalAt(lp.x, lp.z)).Normalized();
-            }
-            break;
+        if (!TerrainPasses(terr, ignore, layerMask)) continue;
+        float t; Vec3 n;
+        if (RayTerrain(terr, origin, dir, best.distance, t, n) && t <= best.distance) {
+            best.hit = true; best.collider = nullptr; best.gameObject = terr->gameObject;
+            best.distance = t; best.point = origin + dir * t; best.normal = n;
         }
     }
     return best;
 }
 
-std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& center, float radius) {
-    std::vector<Collider3D*> out;
+std::vector<RaycastHit3D> Physics3D::RaycastAll(Scene& scene, const Vec3& origin, const Vec3& direction,
+                                                float maxDistance, GameObject* ignore,
+                                                std::uint32_t layerMask, bool queryTriggers) {
+    std::vector<RaycastHit3D> hits;
+    Vec3 dir = direction.Normalized();
+    auto add = [&](Collider3D* c, GameObject* go, float t, const Vec3& n) {
+        RaycastHit3D h;
+        h.hit = true; h.collider = c; h.gameObject = go;
+        h.distance = t; h.point = origin + dir * t; h.normal = n;
+        hits.push_back(h);
+    };
     for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
-        if (!Alive(c)) continue;
-        bool hit = false;
-        if (IsBoxLike(c->shape())) {
-            // Exact oriented-box overlap: closest point in the box's local frame.
-            auto* box = static_cast<BoxCollider3D*>(c);
-            Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
-            Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
-            Vec3 rel = center - bc;
-            Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
-            Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
-            hit = (l - cl).Magnitude() <= radius;
-        } else {
-            Vec3 sc; float sr; AsSphere(c, center, sc, sr);
-            hit = (sc - center).Magnitude() <= radius + sr;
-        }
-        if (hit) out.push_back(c);
+        if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
+        float t; Vec3 n;
+        if (RayCollider(c, origin, dir, maxDistance, t, n)) add(c, c->gameObject, t, n);
     }
-    return out;
+    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+        if (!TerrainPasses(terr, ignore, layerMask)) continue;
+        float t; Vec3 n;
+        if (RayTerrain(terr, origin, dir, maxDistance, t, n)) add(nullptr, terr->gameObject, t, n);
+    }
+    std::stable_sort(hits.begin(), hits.end(),
+                     [](const RaycastHit3D& x, const RaycastHit3D& y) { return x.distance < y.distance; });
+    return hits;
 }
 
 namespace {
@@ -1107,31 +1230,261 @@ bool SphereTouch(Collider3D* col, const Vec3& c, float r, Vec3& n, Vec3& point) 
     point = sc + n * sr;
     return true;
 }
-} // namespace
 
-RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
-                                   float radius, float maxDistance, GameObject* ignore) {
-    RaycastHit3D best;
-    Vec3 dir = direction.Normalized();
-    if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore);
-    auto colliders = scene.FindObjectsOfType<Collider3D>();
-    // March the sphere along the ray; the grid is fine enough (<= radius) that a
-    // thin wall can't slip between two samples.
-    float step = radius * 0.5f; if (step < 0.02f) step = 0.02f;
-    for (float t = 0.0f; t <= maxDistance; t += step) {
-        Vec3 c = origin + dir * t;
-        for (Collider3D* col : colliders) {
-            if (!Alive(col) || col->isTrigger) continue;
-            if (ignore && col->gameObject == ignore) continue;
-            Vec3 n, p;
-            if (SphereTouch(col, c, radius, n, p)) {
-                best.hit = true; best.collider = col; best.gameObject = col->gameObject;
-                best.distance = t; best.point = p; best.normal = n;
-                return best;   // first touch along the sweep = nearest
-            }
+// The closest point on an oriented box to p.
+Vec3 ClosestOnOBB(const OBB3& o, const Vec3& p) {
+    Vec3 d = p - o.c;
+    float x = Mathf::Clamp(Vec3::Dot(d, o.ax), -o.h.x, o.h.x);
+    float y = Mathf::Clamp(Vec3::Dot(d, o.ay), -o.h.y, o.h.y);
+    float z = Mathf::Clamp(Vec3::Dot(d, o.az), -o.h.z, o.h.z);
+    return o.c + o.ax * x + o.ay * y + o.az * z;
+}
+
+// A query shape for overlaps and casts: a sphere, an oriented box, or a capsule.
+struct QueryShape {
+    enum Kind { Sphere, Box, Capsule } kind = Sphere;
+    Vec3 c{0, 0, 0};        // sphere centre / box centre
+    float r = 0.0f;         // sphere / capsule radius
+    OBB3 box{};             // box (Kind::Box)
+    Vec3 a{0, 0, 0}, b{0, 0, 0};   // capsule segment
+    QueryShape Moved(const Vec3& d) const {
+        QueryShape q = *this;
+        q.c = c + d; q.box.c = box.c + d; q.a = a + d; q.b = b + d;
+        return q;
+    }
+    Vec3 Center() const { return kind == Box ? box.c : kind == Capsule ? (a + b) * 0.5f : c; }
+    /// Half-size of the shape's world AABB around Center().
+    Vec3 Extent() const {
+        if (kind == Box)
+            return {Mathf::Abs(box.ax.x) * box.h.x + Mathf::Abs(box.ay.x) * box.h.y + Mathf::Abs(box.az.x) * box.h.z,
+                    Mathf::Abs(box.ax.y) * box.h.x + Mathf::Abs(box.ay.y) * box.h.y + Mathf::Abs(box.az.y) * box.h.z,
+                    Mathf::Abs(box.ax.z) * box.h.x + Mathf::Abs(box.ay.z) * box.h.y + Mathf::Abs(box.az.z) * box.h.z};
+        if (kind == Capsule)
+            return {Mathf::Abs(b.x - a.x) * 0.5f + r, Mathf::Abs(b.y - a.y) * 0.5f + r, Mathf::Abs(b.z - a.z) * 0.5f + r};
+        return {r, r, r};
+    }
+    /// The smallest "thickness" — sets the sweep's step so nothing slips between samples.
+    float Thinnest() const {
+        if (kind == Box) return Mathf::Min(box.h.x, Mathf::Min(box.h.y, box.h.z));
+        return r;
+    }
+};
+
+// Does query shape q touch collider col? Fills n (unit, from col's surface
+// toward the shape) and point (on col's surface). Mesh colliders count as boxes.
+bool ShapeTouch(Collider3D* col, const QueryShape& q, Vec3& n, Vec3& point) {
+    switch (q.kind) {
+    case QueryShape::Sphere:
+        return SphereTouch(col, q.c, q.r, n, point);
+    case QueryShape::Capsule: {
+        // The segment point nearest the collider, then a sphere test there.
+        Vec3 p;
+        if (IsBoxLike(col->shape())) {
+            OBB3 o = MakeOBB3(static_cast<BoxCollider3D*>(col));
+            p = ClosestOnSegment(o.c, q.a, q.b);
+            for (int it = 0; it < 3; ++it) p = ClosestOnSegment(ClosestOnOBB(o, p), q.a, q.b);
+        } else if (IsCapsuleLike(col->shape())) {
+            Vec3 s0, s1; static_cast<CapsuleCollider3D*>(col)->Segment(s0, s1);
+            Vec3 onCol; ClosestSegSeg(q.a, q.b, s0, s1, p, onCol);
+        } else {
+            p = ClosestOnSegment(col->WorldCenter(), q.a, q.b);
         }
+        return SphereTouch(col, p, q.r, n, point);
+    }
+    case QueryShape::Box: {
+        if (IsBoxLike(col->shape())) {
+            Contact c = TestOBB3OBB3(MakeOBB3(static_cast<BoxCollider3D*>(col)), q.box);
+            if (!c.hit) return false;
+            n = c.normal; point = c.point;    // normal points col -> query box
+            return true;
+        }
+        Vec3 sc; float sr;
+        if (IsCapsuleLike(col->shape())) {    // capsule point nearest the box
+            auto* cap = static_cast<CapsuleCollider3D*>(col);
+            Vec3 s0, s1; cap->Segment(s0, s1);
+            sc = ClosestOnSegment(q.box.c, s0, s1);
+            for (int it = 0; it < 3; ++it) sc = ClosestOnSegment(ClosestOnOBB(q.box, sc), s0, s1);
+            sr = cap->WorldRadius();
+        } else {
+            AsSphere(col, q.box.c, sc, sr);
+        }
+        Contact c = TestOBB3Sphere(q.box, sc, sr);
+        if (!c.hit) return false;
+        n = c.normal * -1.0f;                 // box->sphere flipped: col -> query box
+        point = sc + n * sr;
+        return true;
+    }
+    }
+    return false;
+}
+
+std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_t mask,
+                                 bool queryTriggers, GameObject* ignore) {
+    std::vector<Collider3D*> out;
+    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+        if (!Passes(c, ignore, mask, queryTriggers)) continue;
+        Vec3 n, p;
+        if (ShapeTouch(c, q, n, p)) out.push_back(c);
+    }
+    return out;
+}
+
+// Sweep query shape q along unit `dir` up to maxDist; the nearest collider it
+// touches. Only the stretch of the path where a collider's (inflated) bounds
+// lie is marched, in steps of half the shape's thinnest size (so a thin wall
+// can't slip between two samples), and each touch is refined by bisection.
+// `skipStartOverlaps` ignores colliders already touching at the start (as
+// casts usually do; continuous collision needs it so a body resting on the floor can
+// still slide along it).
+RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+                   GameObject* ignore, std::uint32_t mask, bool queryTriggers,
+                   bool skipStartOverlaps, bool skipTriMeshes = false) {
+    RaycastHit3D best;
+    struct Cand { Collider3D* c; float t0, t1; };
+    std::vector<Cand> cands;
+    const Vec3 o = q.Center(), ext = q.Extent();
+    float lo = 1e30f, hi = -1e30f;
+    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+        if (!Passes(c, ignore, mask, queryTriggers)) continue;
+        if (skipTriMeshes && MeshHasTris(c)) continue;
+        Vec3 n, p;
+        if (skipStartOverlaps && ShapeTouch(c, q, n, p)) continue;
+        Vec3 mn, mx; c->WorldAABB(mn, mx);
+        float t0, t1;
+        if (!RaySlabs(o, dir, mn - ext, mx + ext, t0, t1)) continue;
+        if (t1 < 0.0f || t0 > maxDist) continue;
+        t0 = Mathf::Max(t0, 0.0f); t1 = Mathf::Min(t1, maxDist);
+        cands.push_back({c, t0, t1});
+        lo = Mathf::Min(lo, t0); hi = Mathf::Max(hi, t1);
+    }
+    if (cands.empty()) return best;
+    if (dir.SqrMagnitude() < 1e-12f) hi = lo;   // no direction: just test where it stands
+    float step = Mathf::Max(q.Thinnest() * 0.5f, 0.02f);
+    if ((hi - lo) / step > 20000.0f) step = (hi - lo) / 20000.0f;   // bound the work
+    float prev = lo;
+    for (float t = lo; ; t += step) {
+        bool last = t >= hi;
+        if (last) t = hi;
+        QueryShape s = q.Moved(dir * t);
+        float bestT = 1e30f; Collider3D* bestC = nullptr;
+        for (const Cand& cd : cands) {
+            if (t < cd.t0 - step || t > cd.t1 + step) continue;
+            Vec3 n, p;
+            if (!ShapeTouch(cd.c, s, n, p)) continue;
+            // Refine the first touch between the previous (clear) sample and t.
+            float a = prev, b = t;
+            if (b > a) for (int it = 0; it < 12; ++it) {
+                float m = (a + b) * 0.5f;
+                if (ShapeTouch(cd.c, q.Moved(dir * m), n, p)) b = m; else a = m;
+            }
+            if (b < bestT) { bestT = b; bestC = cd.c; }
+        }
+        if (bestC) {
+            Vec3 n, p;
+            ShapeTouch(bestC, q.Moved(dir * bestT), n, p);
+            best.hit = true; best.collider = bestC; best.gameObject = bestC->gameObject;
+            best.distance = bestT; best.point = p; best.normal = n;
+            return best;   // first touch along the sweep = nearest
+        }
+        if (last) break;
+        prev = t;
     }
     return best;
+}
+
+QueryShape SphereShape(const Vec3& c, float r) {
+    QueryShape q; q.kind = QueryShape::Sphere; q.c = c; q.r = r; return q;
+}
+QueryShape BoxShape(const Vec3& c, const Vec3& h, const Quat& rot) {
+    QueryShape q; q.kind = QueryShape::Box;
+    q.box.c = c; q.box.h = {Mathf::Abs(h.x), Mathf::Abs(h.y), Mathf::Abs(h.z)};
+    q.box.ax = rot * Vec3{1, 0, 0}; q.box.ay = rot * Vec3{0, 1, 0}; q.box.az = rot * Vec3{0, 0, 1};
+    return q;
+}
+QueryShape CapsuleShape(const Vec3& a, const Vec3& b, float r) {
+    QueryShape q; q.kind = QueryShape::Capsule; q.a = a; q.b = b; q.r = r; return q;
+}
+} // namespace
+
+std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& center, float radius,
+                                                  std::uint32_t layerMask, bool queryTriggers,
+                                                  GameObject* ignore) {
+    return Overlap(scene, SphereShape(center, radius), layerMask, queryTriggers, ignore);
+}
+
+std::vector<Collider3D*> Physics3D::OverlapBox(Scene& scene, const Vec3& center, const Vec3& halfExtents,
+                                               const Quat& rotation, std::uint32_t layerMask,
+                                               bool queryTriggers, GameObject* ignore) {
+    return Overlap(scene, BoxShape(center, halfExtents, rotation), layerMask, queryTriggers, ignore);
+}
+
+std::vector<Collider3D*> Physics3D::OverlapCapsule(Scene& scene, const Vec3& a, const Vec3& b, float radius,
+                                                   std::uint32_t layerMask, bool queryTriggers,
+                                                   GameObject* ignore) {
+    return Overlap(scene, CapsuleShape(a, b, radius), layerMask, queryTriggers, ignore);
+}
+
+RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
+                                   float radius, float maxDistance, GameObject* ignore,
+                                   std::uint32_t layerMask, bool queryTriggers) {
+    Vec3 dir = direction.Normalized();
+    if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
+    return Sweep(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask,
+                 queryTriggers, /*skipStartOverlaps*/ false);
+}
+
+RaycastHit3D Physics3D::BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
+                                const Vec3& direction, const Quat& rotation, float maxDistance,
+                                GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
+    return Sweep(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
+                 ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
+}
+
+RaycastHit3D Physics3D::CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
+                                    const Vec3& direction, float maxDistance, GameObject* ignore,
+                                    std::uint32_t layerMask, bool queryTriggers) {
+    return Sweep(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
+                 ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
+}
+
+void Physics3D::SweepBody(Scene& scene, Rigidbody3D* rb, float dt) {
+    Transform* t = rb->transform;
+    Vec3 motion = rb->velocity * dt;
+    float len = motion.Magnitude();
+    Collider3D* self = rb->gameObject->GetComponent<Collider3D>();
+    if (!self || !Alive(self) || self->isTrigger || len < 1e-6f) {
+        t->localPosition = t->localPosition + motion;
+        return;
+    }
+    // The body as the sphere that fits inside its bounds: a slow body (moving
+    // less than half that per step) can't skip a wall, so it moves normally.
+    Vec3 mn, mx; self->WorldAABB(mn, mx);
+    float r = 0.5f * Mathf::Min(mx.x - mn.x, Mathf::Min(mx.y - mn.y, mx.z - mn.z));
+    if (r < 0.01f) r = 0.01f;
+    if (len <= r * 0.5f) { t->localPosition = t->localPosition + motion; return; }
+    Vec3 dir = motion * (1.0f / len);
+    RaycastHit3D h = Sweep(scene, SphereShape(self->WorldCenter(), r), dir, len, rb->gameObject,
+                           m_layerMask[self->layer & 31], /*queryTriggers*/ false,
+                           /*skipStartOverlaps*/ true, /*skipTriMeshes*/ true);
+    float travel = len;
+    // Stop just inside the surface so this step's narrow phase sees the contact
+    // and bounces / stops the body as usual.
+    if (h.hit) travel = Mathf::Min(len, h.distance + Mathf::Min(0.02f, r * 0.2f));
+    t->localPosition = t->localPosition + dir * travel;
+}
+
+const TriggerContact3D* Physics3D::CurrentTrigger() { return g_currentTrigger; }
+
+void Physics3D::RecordQueryRay(const Vec3& origin, const Vec3& direction, float maxDistance,
+                               const RaycastHit3D& hit, float radius) {
+    if (!PhysicsDebug::Collect() || !PhysicsDebug::ScriptRays()) return;
+    if ((int)m_debugRays.size() >= PhysicsDebug::kMaxRays) return;
+    Vec3 dir = direction.Normalized();
+    PhysicsDebugRay3D r;
+    r.from = origin;
+    r.to = origin + dir * Mathf::Min(maxDistance, 1000.0f);   // "infinite" rays drawn 1 km long
+    r.hit = hit.hit; r.point = hit.point; r.normal = hit.normal; r.radius = radius;
+    m_debugRays.push_back(r);
 }
 
 Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore, int iterations) {

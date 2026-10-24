@@ -247,11 +247,17 @@ inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
     return cv ? cv->ScaleFactor(screenW, screenH) : 1.0f;
 }
 
-/// True when the widget's owning Canvas is hidden (Canvas.visible == false) —
-/// the renderer skips drawing it. No Canvas / no flag = visible.
+/// True when the widget's owning Canvas is hidden (Canvas.visible == false), or an
+/// ancestor GameObject is inactive (hiding a panel — a
+/// tab's content page, a closed menu — hides every widget under it too). The
+/// renderers skip drawing it and hosts don't hit-test it. No Canvas / no flag and
+/// every ancestor active = visible.
 inline bool UIHidden(GameObject* go) {
     Canvas* cv = OwningCanvas(go);
-    return cv && !cv->visible;
+    if (cv && !cv->visible) return true;
+    for (Transform* t = (go && go->transform) ? go->transform->Parent() : nullptr; t; t = t->Parent())
+        if (t->gameObject && !t->gameObject->active) return true;
+    return false;
 }
 
 /// The sort order of a widget's owning Canvas (0 if it has none). Higher draws on

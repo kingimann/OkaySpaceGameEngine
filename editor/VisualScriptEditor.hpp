@@ -9,6 +9,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
+#include "VisualScriptNodeHelp.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -339,6 +340,19 @@ inline const std::vector<VsDef>& Registry() {
         {"EveryN",          "Every N Times",    CAT_FLOW,   true, {""}, {"N"}, {}, 0, nullptr},
         {"ShowUI",          "Show UI",          CAT_ACTION, true, {""}, {}, {}, 1, "UI object (self)"},
         {"HideUI",          "Hide UI",          CAT_ACTION, true, {""}, {}, {}, 1, "UI object (self)"},
+        // Physics: trigger stay, 3D casts / overlaps (setting = layer list), contact details.
+        {"OnTriggerStay",   "On Trigger Stay",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"Raycast3D",       "Raycast 3D",       CAT_INPUT, false, {}, {"Origin", "Direction", "Max Dist", "Ignore Triggers"},
+                                                {"Hit", "Point", "Normal", "Distance", "Object"}, 1, "layers (blank = all)"},
+        {"SphereCast3D",    "Sphere Cast",      CAT_INPUT, false, {}, {"Origin", "Direction", "Radius", "Max Dist"},
+                                                {"Hit", "Point", "Normal", "Distance", "Object"}, 1, "layers (blank = all)"},
+        {"RaycastAll3D",    "Raycast All 3D",   CAT_INPUT, false, {}, {"Origin", "Direction", "Max Dist"},
+                                                {"Count", "Objects", "Nearest"}, 1, "layers (blank = all)"},
+        {"OverlapSphere3D", "Overlap Sphere",   CAT_INPUT, false, {}, {"Center", "Radius"}, {"Count", "Objects"}, 1, "layers (blank = all)"},
+        {"OverlapBox3D",    "Overlap Box",      CAT_INPUT, false, {}, {"Center", "Half Size"}, {"Count", "Objects"}, 1, "layers (blank = all)"},
+        {"ContactPoint",    "Contact Point",    CAT_DATA,  false, {}, {}, {"Point"}, 0, nullptr},
+        {"ContactNormal",   "Contact Normal",   CAT_DATA,  false, {}, {}, {"Normal"}, 0, nullptr},
+        {"ImpactSpeed",     "Impact Speed",     CAT_DATA,  false, {}, {}, {"Speed"}, 0, nullptr},
     };
     return defs;
 }
@@ -463,7 +477,8 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" ||
         type == "OnClick" || type == "OnCollisionExit" || type == "OnTriggerExit" ||
         type == "OnMouseEnter" || type == "OnMouseExit" || type == "OnMouseDown" || type == "OnMouseUp" ||
-        type == "OnMouseOver" || type == "OnCollisionStay" || type == "OnLateUpdate") return type;
+        type == "OnMouseOver" || type == "OnCollisionStay" || type == "OnLateUpdate" ||
+        type == "OnTriggerStay") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
@@ -650,12 +665,12 @@ inline int VsExecTarget(const VsEditGraph& g, int fromNode, int pin) {
     for (const auto& l : g.execLinks) if (l.from == fromNode && l.pin == pin) return l.to;
     return -1;
 }
-inline std::string VsDataExpr(const VsEditGraph& g, int nodeId);
+inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin = 0);
 inline const VsEditNode* VsFind(const VsEditGraph& g, int id);
 inline std::string VsInput(const VsEditGraph& g, int consumer, int inPin, const char* dflt = "0") {
     for (const auto& l : g.dataLinks)
         if (l.consumer == consumer && l.inPin == inPin)
-            return VsDataExpr(g, l.producer);
+            return VsDataExpr(g, l.producer, l.outPin);
     if (const VsEditNode* n = VsFind(g, consumer)) {
         auto it = n->pinDefault.find(inPin);
         if (it != n->pinDefault.end() && !it->second.empty()) return VsLiteral(it->second);
@@ -669,7 +684,7 @@ inline bool VsInputLinkedOrSet(const VsEditGraph& g, int nodeId, int pin) {
     auto it = n->pinDefault.find(pin);
     return it != n->pinDefault.end() && !it->second.empty();
 }
-inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
+inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     const VsEditNode* n = VsFind(g, nodeId);
     if (!n) return "0";
     const std::string& t = n->type;
@@ -796,6 +811,36 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId) {
     if (t == "GetRotation")   return "rotation_euler()";
     if (t == "GetBlendShape") return "blend_shape_get(" + q(lit("")) + ")";
     if (t == "Raycast")       return "raycast_hit(" + A() + ", " + B() + ", " + C() + ", " + D() + ", " + VsInput(g, nodeId, 4, "1000000") + ")";
+    // 3D casts / overlaps: one ray3_cast / overlap3 call per wired output pin
+    // (they skip this object, like the nodes). Unwired Origin / Direction start
+    // at this object, looking forward.
+    if (t == "Raycast3D" || t == "SphereCast3D" || t == "RaycastAll3D") {
+        static const char* kWhat[] = {"hit", "point", "normal", "distance", "object"};
+        const std::string o = VsInput(g, nodeId, 0, "transform.position");
+        const std::string d = VsInput(g, nodeId, 1, "transform.forward");
+        const std::string layers = q(lit(""));
+        if (t == "RaycastAll3D") {
+            std::string all = "ray3_cast(\"all\", " + o + ", " + d + ", " + VsInput(g, nodeId, 2, "100") + ", " + layers + ")";
+            if (outPin == 0) return "count(" + all + ")";
+            if (outPin == 1) return all;
+            return "ray3_cast(\"object\", " + o + ", " + d + ", " + VsInput(g, nodeId, 2, "100") + ", " + layers + ")";
+        }
+        const std::string what = q(kWhat[outPin >= 0 && outPin < 5 ? outPin : 0]);
+        if (t == "Raycast3D")
+            return "ray3_cast(" + what + ", " + o + ", " + d + ", " + VsInput(g, nodeId, 2, "100") + ", " +
+                   layers + ", " + VsInput(g, nodeId, 3, "false") + ")";
+        return "ray3_cast(" + what + ", " + o + ", " + d + ", " + VsInput(g, nodeId, 3, "100") + ", " +
+               layers + ", true, " + VsInput(g, nodeId, 2, "0.5") + ")";
+    }
+    if (t == "OverlapSphere3D" || t == "OverlapBox3D") {
+        const bool box = t == "OverlapBox3D";
+        std::string call = "overlap3(" + q(box ? "box" : "sphere") + ", " + VsInput(g, nodeId, 0, "transform.position") +
+                           ", " + VsInput(g, nodeId, 1, box ? "vec3(0.5, 0.5, 0.5)" : "1") + ", " + q(lit("")) + ")";
+        return outPin == 0 ? "count(" + call + ")" : call;
+    }
+    if (t == "ContactPoint")  return "contact_point";
+    if (t == "ContactNormal") return "contact_normal";
+    if (t == "ImpactSpeed")   return "impact_speed";
     if (t == "MouseWheel")    return "mouse_wheel()";
     if (t == "TimeScale")     return "timescale()";
     if (t == "FrameCount")    return "frame_count()";
@@ -1123,6 +1168,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         {"OnMouseUp",       "void OnMouseUp()"},
         {"OnMouseOver",     "void OnMouseOver()"},
         {"OnCollisionStay", "void OnCollisionStay(string other)"},
+        {"OnTriggerStay",   "void OnTriggerStay(string other)"},
         {"OnLateUpdate",    "void LateUpdate()"}};
     // Events sharing a handler (On Click + On Mouse Down) go into one method.
     std::set<std::string> doneSig;
@@ -2210,7 +2256,7 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
-    ImGui::SetNextWindowSize(ImVec2(600, 440), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(640, 470), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam"};
         auto fits = [&](const VsDef& d) { return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput); };
@@ -2234,9 +2280,11 @@ inline void Draw(EditorState& ed, bool* open) {
                 std::string s; for (const char* p : v) if (p && *p) { if (!s.empty()) s += ", "; s += p; } return s;
             };
             const std::string in = join(d.dataIn), out = join(d.dataOut), ex = join(d.execOut);
-            if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc = "An event: starts a flow. ";
-            else if (d.execIn) e.desc = "Runs when the flow reaches it. ";
-            else e.desc = "Gives a value to other nodes. ";
+            // What it does in plain words (VisualScriptNodeHelp.hpp), then how it plugs in.
+            if (const char* what = VsNodeHelp(d.type)) e.desc = std::string(what) + " ";
+            if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc += "An event: starts a flow. ";
+            else if (d.execIn) e.desc += "Runs when the flow reaches it. ";
+            else e.desc += "Gives a value to other nodes. ";
             if (!in.empty())  e.desc += "Takes: " + in + ". ";
             if (!out.empty()) e.desc += "Gives: " + out + ". ";
             if (!ex.empty())  e.desc += "Continues to: " + ex + ". ";
@@ -2320,7 +2368,7 @@ inline void Draw(EditorState& ed, bool* open) {
         };
 
         // ---- Sidebar ----
-        ImGui::BeginChild("##vspside", ImVec2(150, -66), ImGuiChildFlags_Borders);
+        ImGui::BeginChild("##vspside", ImVec2(150, -86), ImGuiChildFlags_Borders);
         auto sideItem = [&](int id, const char* label, ImU32 dot, int count) {
             ImGui::PushID(id + 10);
             const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -2335,7 +2383,15 @@ inline void Draw(EditorState& ed, bool* open) {
             sdl->AddText(ImVec2(p.x + 16, p.y), ImGui::GetColorU32(ImGuiCol_Text), label);
             sdl->PopClipRect();
             if (count >= 0) sdl->AddText(ImVec2(right - nw, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
-            if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label).x + 16 > right - nw - 6 - p.x) ImGui::SetTooltip("%s", label);
+            if (ImGui::IsItemHovered()) {   // what the category is for
+                const char* blurb = id >= 0 && id < CAT_COUNT ? VsCatBlurb(id) : id == CAT_COUNT ? VsStepCatBlurb(false)
+                                  : id == CAT_COUNT + 1 ? VsStepCatBlurb(true) : nullptr;
+                if (blurb && *blurb) {
+                    ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
+                    ImGui::TextUnformatted(label); ImGui::TextDisabled("%s", blurb);
+                    ImGui::PopTextWrapPos(); ImGui::EndTooltip();
+                } else if (ImGui::CalcTextSize(label).x + 16 > right - nw - 6 - p.x) ImGui::SetTooltip("%s", label);
+            }
             ImGui::PopID();
         };
         auto countIn = [&](int grp) { int n = 0; for (const auto& e : all) if (e.group == grp) ++n; return n; };
@@ -2373,7 +2429,7 @@ inline void Draw(EditorState& ed, bool* open) {
 
         const Entry* hovered = nullptr;
         const Entry* toAdd = nullptr;
-        ImGui::BeginChild("##vspres", ImVec2(0, -66), ImGuiChildFlags_Borders);
+        ImGui::BeginChild("##vspres", ImVec2(0, -86), ImGuiChildFlags_Borders);
         if (rows.empty()) {
             ImGui::TextDisabled(s_side == -1 ? "No favourites yet: click the star on a node to add one."
                               : s_side == -2 ? "Nodes you add show up here."

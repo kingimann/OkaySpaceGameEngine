@@ -103,6 +103,7 @@ private:
     void FireOther(const char* event, const Collision2D& c);
     void FireOther(const char* event, const Collision3D& c);
     void FireWithObject(const char* event, GameObject* other);
+    void SetContact(const Vec3& point, const Vec3& normal, float impactSpeed, GameObject* other);
 
     std::string m_language;
     std::string m_source;

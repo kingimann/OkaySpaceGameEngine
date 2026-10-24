@@ -27,7 +27,8 @@ public:
                          OnCollisionExit,   // physics contact ended
                          OnCollisionStay,   // every frame contact persists
                          OnInterval,        // fire repeatedly every triggerKey seconds (a timer)
-                         OnLateUpdate };    // every frame, after all Update()s
+                         OnLateUpdate,      // every frame, after all Update()s
+                         OnTriggerStay };   // every frame something stays inside a trigger
 
     /// One condition or instruction: an op name + string args (numbers parsed
     /// on use, so the data stays uniform and easy to edit/serialize).
@@ -91,6 +92,10 @@ public:
     // that listen for it.
     void OnTriggerEnter2D(Collider2D*) override        { Latch(Trigger::OnTriggerEnter); }
     void OnTriggerExit2D (Collider2D*) override        { Latch(Trigger::OnTriggerExit); }
+    // Stay fires every frame, so only latch it when a handler wants it (the single
+    // latch slot would otherwise hide other events from lists that don't).
+    void OnTriggerStay2D (Collider2D*) override        { if (HasTrigger(Trigger::OnTriggerStay)) Latch(Trigger::OnTriggerStay); }
+    void OnTriggerStay3D (Collider3D*) override        { if (HasTrigger(Trigger::OnTriggerStay)) Latch(Trigger::OnTriggerStay); }
     void OnCollisionEnter2D(const Collision2D&) override{ Latch(Trigger::OnCollision); }
     void OnCollisionExit2D (const Collision2D&) override{ Latch(Trigger::OnCollisionExit); }
     void OnCollisionStay2D (const Collision2D&) override{ Latch(Trigger::OnCollisionStay); }

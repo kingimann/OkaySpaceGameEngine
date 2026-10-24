@@ -321,6 +321,7 @@ int main(int argc, char** argv) {
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder for the default layout
+#include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
@@ -1492,6 +1493,10 @@ int  g_lastSceneW = 0, g_lastSceneH = 0;
 Vec2 g_lastUICanvas{0, 0};
 bool g_captureScene = false;
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
+int  g_layoutRequest = -1;       // a built-in layout preset to build next frame (okay::edtabs::Preset)
+std::string g_layoutPendingIni;  // a saved layout's ini text, loaded before the next NewFrame()
+std::string g_layoutName;        // the layout last applied this session (Layout dropdown label)
+int  g_sideTabs = 0;             // vertical side tabs: 0 off, 1 down the left edge, 2 down the right (persisted)
 ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into it)
 bool g_scriptAutoPair = true;      // Script Editor: auto-close ( [ { " '
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
@@ -1503,6 +1508,14 @@ float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
+// Physics debug view (Scene + Game views): colliders, triggers, contacts and rays.
+bool g_physDebug = false;        // the master toggle (persisted)
+bool g_physDebugRays = true;     // ...also draw rays / casts made by scripts (persisted)
+// Push the toggles to the engine, which only records contacts / rays while on.
+static void ApplyPhysicsDebug() {
+    okay::PhysicsDebug::Collect() = g_physDebug;
+    okay::PhysicsDebug::ScriptRays() = g_physDebugRays;
+}
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
 int  g_gameDevice = 0;           // Game-view mobile emulator device (0 = off; persisted)
@@ -1764,6 +1777,32 @@ static bool SearchField(const char* id, char* buf, std::size_t bufSize, const ch
 static void SameLineRight(float w) {
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - w);
 }
+// A layer mask as the friendly list the physics accepts ("" = every layer).
+static std::string LayerMaskToList(std::uint32_t mask) {
+    if (mask == 0xFFFFFFFFu) return std::string();
+    std::string s;
+    for (int i = 0; i < 32; ++i)
+        if ((mask >> i) & 1u) { if (!s.empty()) s += ","; s += std::to_string(i); }
+    return s;
+}
+// Trigger filter fields for a trigger collider (2D or 3D): only react to objects
+// with a tag and/or on some collider layers. Returns true when something changed.
+template <class Col>
+static bool TriggerFilterFields(Col* c, const char* id) {
+    if (!c->isTrigger) return false;
+    bool changed = false;
+    char tb[64]; std::snprintf(tb, sizeof(tb), "%s", c->triggerTag.c_str());
+    std::string l1 = std::string("Only Tag##tf") + id;
+    if (ImGui::InputTextWithHint(l1.c_str(), "any tag (e.g. Player)", tb, sizeof(tb))) { c->triggerTag = tb; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The trigger only reacts to objects with this tag; everything else\npasses through with no Enter / Stay / Exit events. Blank = any object.");
+    char lb[96]; std::snprintf(lb, sizeof(lb), "%s", LayerMaskToList(c->triggerLayers).c_str());
+    std::string l2 = std::string("Only Layers##tf") + id;
+    if (ImGui::InputTextWithHint(l2.c_str(), "all layers", lb, sizeof(lb))) {
+        c->triggerLayers = okay::Layers::MaskFromList(lb); changed = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only colliders on these layers set the trigger off: numbers or names\nseparated by commas (0,3 or Default,Enemy). Blank = all layers.");
+    return changed;
+}
 // A vector3 drag field with per-axis colour cues (X=red, Y=green, Z=blue) — a
 // 3px coloured bar down each component, like other editors. `activated` is
 // set when a drag begins on any field (so the caller can push one undo step).
@@ -1939,6 +1978,8 @@ void LoadSettings() {
         else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
+        else if (k == "physdebug") g_physDebug = (v != 0);
+        else if (k == "physdebugrays") g_physDebugRays = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamedevice") {   // the old, shorter device list: map to the new one
@@ -1952,9 +1993,11 @@ void LoadSettings() {
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
+        else if (k == "sidetabs") g_sideTabs = (v < 0 || v > 2) ? 0 : v;
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
+    ApplyPhysicsDebug();
     // One-time migration to the 3D view defaults: 60deg FOV (so models
     // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
     // source, so the FPS-costly supersample isn't needed). ver 3 also undoes the
@@ -1985,6 +2028,8 @@ void SaveSettings() {
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
+      << "physdebug " << (g_physDebug ? 1 : 0) << "\n"
+      << "physdebugrays " << (g_physDebugRays ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
       << "gamedevice2 " << g_gameDevice << "\n"
@@ -1993,7 +2038,8 @@ void SaveSettings() {
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
-      << "uisubdivy " << g_uiSubdivY << "\n";
+      << "uisubdivy " << g_uiSubdivY << "\n"
+      << "sidetabs " << g_sideTabs << "\n";
 }
 
 // ---- Reusable custom-action library (persisted globally) -----------------
@@ -3965,6 +4011,18 @@ void ApplyTheme() {
         okaytheme::ApplySlateMetrics(s);
         s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
     }
+    // Panel tabs: a tab's close button shows only while it's hovered,
+    // there's no extra "close the whole group" X at the end of each tab strip, the
+    // active tab gets a thicker accent overline, and short names ("Game") still
+    // make a comfortable click target. Tabs stay drag-to-reorder (ImGui docking).
+    s.TabCloseButtonMinWidthSelected   = 0.0f;
+    s.TabCloseButtonMinWidthUnselected = 0.0f;
+    s.DockingNodeHasCloseButton = false;
+    s.TabBarOverlineSize = 2.0f;
+    s.TabBarBorderSize   = 1.0f;
+    s.TabMinWidthBase    = 64.0f;
+    s.TabMinWidthShrink  = 96.0f;    // squeezed dock tabs still show the icon + a few letters
+    if (g_theme == 0) s.TabRounding = 4.0f;
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
@@ -3976,53 +4034,574 @@ void ApplyTheme() {
     // with the user's chosen accent colour.
     const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
     okaytheme::ApplySlateColors(s, ImVec4(ap.r, ap.g, ap.b, 1.0f));
+    // The selected tab of every group matches the panel under it (so it reads as
+    // "connected"), focused or not; only the overline says which group has focus.
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_Tab]                 = okaytheme::kSunken;
+    c[ImGuiCol_TabHovered]          = okaytheme::Mix(okaytheme::kSunken, okaytheme::kControl, 0.55f);
+    c[ImGuiCol_TabSelected]         = okaytheme::kBase;
+    c[ImGuiCol_TabDimmed]           = okaytheme::kSunken;
+    c[ImGuiCol_TabDimmedSelected]   = okaytheme::kBase;
+    c[ImGuiCol_TabDimmedSelectedOverline] = okaytheme::WithAlpha(okaytheme::kTextDim, 0.35f);
 }
 
-// Build the default dock layout once.
-// Right-click a panel's tab: add another panel as a tab in the same
-// spot, close this one or the others beside it, or float it. Runs once per frame after
-// every panel has been drawn, so it covers all docked windows without each panel
-// wiring its own menu.
-struct DockPanelDef { const char* label; const char* window; bool* open; const char* group; };
+// ---- Panel tabs, layouts and the panel switcher ------------------------------
+// Every dockable panel the tab system knows: its menu label, ImGui window name,
+// visibility flag (nullptr = always open, like the Scene view), its Add Tab menu
+// group and the icon drawn on its tab, in the side tabs and in the panel lists.
+enum PanelIcon {
+    PI_Generic, PI_Scene, PI_Game, PI_Hierarchy, PI_Inspector, PI_Project, PI_Console,
+    PI_Services, PI_Scenes, PI_Save, PI_Variables, PI_History, PI_Stats, PI_Lighting,
+    PI_Profiler, PI_Package, PI_Warning, PI_Script, PI_Nodes, PI_Bolt, PI_Animation,
+    PI_Animator, PI_Modeling, PI_Sprite, PI_Palette, PI_UI,
+};
+struct DockPanelDef { const char* label; const char* window; bool* open; const char* group; int icon; };
 static const DockPanelDef* DockPanels(int& n) {
     static const DockPanelDef k[] = {
-        {"Hierarchy",     "Hierarchy",                 &g_showHierarchy,     "Panels"},
-        {"Inspector",     "Inspector",                 &g_showInspector,     "Panels"},
-        {"Project",       "Project",                   &g_showProject,       "Panels"},
-        {"Console",       "Console###Console",         &g_showConsole,       "Panels"},
-        {"Game",          "Game",                      &g_showGame,          "Panels"},
-        {"Services",      "Services",                  &g_showServices,      "Panels"},
-        {"Scenes",        "Scenes",                    &g_showScenes,        "Panels"},
-        {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels"},
-        {"Variables",     "Variables",                 &g_showVarWatch,      "Panels"},
-        {"History",       "History",                   &g_showHistory,       "Panels"},
-        {"Stats",         "Stats",                     &g_showStats,         "Panels"},
-        {"Lighting",      "Lighting",                  &g_showSceneSettings, "Panels"},
-        {"Profiler",      "Profiler",                  &g_showProfiler,      "Panels"},
-        {"Asset Manager", "Asset Manager",             &g_showAssetManager,  "Panels"},
-        {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels"},
-        {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools"},
-        {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools"},
-        {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools"},
-        {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools"},
-        {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools"},
-        {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools"},
-        {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools"},
-        {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools"},
+        {"Scene",         "Scene",                     nullptr,              "Panels", PI_Scene},
+        {"Hierarchy",     "Hierarchy",                 &g_showHierarchy,     "Panels", PI_Hierarchy},
+        {"Inspector",     "Inspector",                 &g_showInspector,     "Panels", PI_Inspector},
+        {"Project",       "Project",                   &g_showProject,       "Panels", PI_Project},
+        {"Console",       "Console###Console",         &g_showConsole,       "Panels", PI_Console},
+        {"Game",          "Game",                      &g_showGame,          "Panels", PI_Game},
+        {"Services",      "Services",                  &g_showServices,      "Panels", PI_Services},
+        {"Scenes",        "Scenes",                    &g_showScenes,        "Panels", PI_Scenes},
+        {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels", PI_Save},
+        {"Variables",     "Variables",                 &g_showVarWatch,      "Panels", PI_Variables},
+        {"History",       "History",                   &g_showHistory,       "Panels", PI_History},
+        {"Stats",         "Stats",                     &g_showStats,         "Panels", PI_Stats},
+        {"Lighting",      "Lighting",                  &g_showSceneSettings, "Panels", PI_Lighting},
+        {"Profiler",      "Profiler",                  &g_showProfiler,      "Panels", PI_Profiler},
+        {"Asset Manager", "Asset Manager",             &g_showAssetManager,  "Panels", PI_Package},
+        {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels", PI_Warning},
+        {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
+        {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
+        {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools", PI_Bolt},
+        {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
+        {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
+        {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
+        {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
+        {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
+        {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
     n = (int)(sizeof(k) / sizeof(k[0]));
     return k;
 }
+static bool PanelOpen(const DockPanelDef& d) { return !d.open || *d.open; }
+static const DockPanelDef* PanelDefForWindow(const char* winName) {
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    for (int i = 0; i < n; ++i) if (std::strcmp(defs[i].window, winName) == 0) return &defs[i];
+    return nullptr;
+}
+// What a window is called in tabs and lists: its panel label, else the visible
+// part of its ImGui name (before any "###id").
+static std::string WindowLabel(const ImGuiWindow* w) {
+    if (const DockPanelDef* d = PanelDefForWindow(w->Name)) return d->label;
+    const char* name = w->Name;
+    return std::string(name, ImGui::FindRenderedTextEnd(name));
+}
+// An open panel's window, if it was drawn this frame or the last one.
+static ImGuiWindow* LivePanelWindow(const DockPanelDef& d) {
+    if (!PanelOpen(d)) return nullptr;
+    ImGuiWindow* w = ImGui::FindWindowByName(d.window);
+    return (w && (w->Active || w->WasActive)) ? w : nullptr;
+}
+
+// A small line-art icon for a panel, centred on `c` and `s` pixels across. Drawn
+// with the draw list (the UI font has no icon glyphs), so it scales with the UI.
+static void DrawPanelIcon(ImDrawList* dl, ImVec2 c, float s, int icon, ImU32 col) {
+    const float r = s * 0.5f, t = std::max(1.0f, s * 0.11f);
+    auto P = [&](float x, float y) { return ImVec2(c.x + x * r, c.y + y * r); };   // a -1..1 box
+    auto text = [&](const char* txt) {
+        ImFont* f = ImGui::GetFont();
+        const float fs = s * 0.92f;
+        ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.0f, txt);
+        dl->AddText(f, fs, ImVec2(std::floor(c.x - ts.x * 0.5f), std::floor(c.y - ts.y * 0.5f)), col, txt);
+    };
+    auto cube = [&](bool dots) {
+        ImVec2 hex[6] = {P(0, -1), P(0.87f, -0.5f), P(0.87f, 0.5f), P(0, 1), P(-0.87f, 0.5f), P(-0.87f, -0.5f)};
+        dl->AddPolyline(hex, 6, col, ImDrawFlags_Closed, t);
+        dl->AddLine(P(0, 0), hex[5], col, t); dl->AddLine(P(0, 0), hex[1], col, t); dl->AddLine(P(0, 0), hex[3], col, t);
+        if (dots) for (const ImVec2& v : hex) dl->AddCircleFilled(v, t * 1.2f, col);
+    };
+    switch (icon) {
+    case PI_Scene:    cube(false); break;
+    case PI_Modeling: cube(true); break;
+    case PI_Game:     // a gamepad
+        dl->AddRect(P(-1, -0.6f), P(1, 0.6f), col, r * 0.45f, 0, t);
+        dl->AddLine(P(-0.68f, 0), P(-0.18f, 0), col, t);
+        dl->AddLine(P(-0.43f, -0.25f), P(-0.43f, 0.25f), col, t);
+        dl->AddCircleFilled(P(0.32f, -0.1f), t * 0.95f, col);
+        dl->AddCircleFilled(P(0.6f, 0.15f), t * 0.95f, col);
+        break;
+    case PI_Hierarchy:   // a parent row with two indented children
+        dl->AddRectFilled(P(-1, -1), P(-0.2f, -0.5f), col, 1.0f);
+        dl->AddRectFilled(P(0.05f, -0.22f), P(1, 0.22f), col, 1.0f);
+        dl->AddRectFilled(P(0.05f, 0.52f), P(1, 0.96f), col, 1.0f);
+        dl->AddLine(P(-0.62f, -0.5f), P(-0.62f, 0.74f), col, t);
+        dl->AddLine(P(-0.62f, 0), P(0.05f, 0), col, t);
+        dl->AddLine(P(-0.62f, 0.74f), P(0.05f, 0.74f), col, t);
+        break;
+    case PI_Inspector:   // an "i" in a circle
+        dl->AddCircle(c, r * 0.95f, col, 0, t);
+        dl->AddCircleFilled(P(0, -0.42f), t * 1.05f, col);
+        dl->AddLine(P(0, -0.1f), P(0, 0.52f), col, t * 1.25f);
+        break;
+    case PI_Project: {   // a folder
+        ImVec2 f[6] = {P(-1, -0.72f), P(-0.25f, -0.72f), P(-0.05f, -0.45f), P(1, -0.45f), P(1, 0.8f), P(-1, 0.8f)};
+        dl->AddPolyline(f, 6, col, ImDrawFlags_Closed, t);
+        break;
+    }
+    case PI_Console:     // a prompt
+        dl->AddRect(P(-1, -0.82f), P(1, 0.82f), col, r * 0.18f, 0, t);
+        dl->AddLine(P(-0.6f, -0.35f), P(-0.2f, 0), col, t);
+        dl->AddLine(P(-0.2f, 0), P(-0.6f, 0.35f), col, t);
+        dl->AddLine(P(0.05f, 0.38f), P(0.6f, 0.38f), col, t);
+        break;
+    case PI_Services:    // a cloud
+        dl->AddCircleFilled(P(-0.42f, 0.18f), r * 0.42f, col);
+        dl->AddCircleFilled(P(0.12f, -0.12f), r * 0.55f, col);
+        dl->AddCircleFilled(P(0.6f, 0.26f), r * 0.36f, col);
+        dl->AddRectFilled(P(-0.42f, 0.2f), P(0.6f, 0.6f), col);
+        break;
+    case PI_Scenes: {    // stacked layers
+        ImVec2 top[4] = {P(0, -0.95f), P(1, -0.42f), P(0, 0.1f), P(-1, -0.42f)};
+        dl->AddPolyline(top, 4, col, ImDrawFlags_Closed, t);
+        ImVec2 low[3] = {P(-1, 0.05f), P(0, 0.58f), P(1, 0.05f)};
+        dl->AddPolyline(low, 3, col, 0, t);
+        ImVec2 low2[3] = {P(-1, 0.45f), P(0, 0.98f), P(1, 0.45f)};
+        dl->AddPolyline(low2, 3, col, 0, t);
+        break;
+    }
+    case PI_Save:        // a floppy disk
+        dl->AddRect(P(-0.9f, -0.9f), P(0.9f, 0.9f), col, r * 0.15f, 0, t);
+        dl->AddRectFilled(P(-0.45f, -0.9f), P(0.35f, -0.3f), col);
+        dl->AddRect(P(-0.5f, 0.2f), P(0.5f, 0.9f), col, 0.0f, 0, t);
+        break;
+    case PI_Variables:   text("{x}"); break;
+    case PI_Script:      text("</>"); break;
+    case PI_History:     // a clock
+        dl->AddCircle(c, r * 0.95f, col, 0, t);
+        dl->AddLine(c, P(0, -0.58f), col, t);
+        dl->AddLine(c, P(0.42f, 0.2f), col, t);
+        break;
+    case PI_Stats:       // a bar chart
+        dl->AddRectFilled(P(-0.9f, 0.15f), P(-0.4f, 0.9f), col, 1.0f);
+        dl->AddRectFilled(P(-0.25f, -0.6f), P(0.25f, 0.9f), col, 1.0f);
+        dl->AddRectFilled(P(0.4f, -0.15f), P(0.9f, 0.9f), col, 1.0f);
+        break;
+    case PI_Lighting:    // a sun
+        dl->AddCircleFilled(c, r * 0.4f, col);
+        for (int i = 0; i < 8; ++i) {
+            const float a = i * 0.785398f;
+            dl->AddLine(P(std::cos(a) * 0.62f, std::sin(a) * 0.62f), P(std::cos(a) * 0.98f, std::sin(a) * 0.98f), col, t);
+        }
+        break;
+    case PI_Profiler: {  // a timing graph
+        ImVec2 g[5] = {P(-1, 0.45f), P(-0.5f, -0.05f), P(-0.1f, 0.3f), P(0.35f, -0.65f), P(1, -0.2f)};
+        dl->AddPolyline(g, 5, col, 0, t);
+        dl->AddLine(P(-1, 0.9f), P(1, 0.9f), col, t);
+        break;
+    }
+    case PI_Package: {   // a box
+        dl->AddRect(P(-0.85f, -0.4f), P(0.85f, 0.9f), col, 1.0f, 0, t);
+        ImVec2 lid[4] = {P(-0.85f, -0.4f), P(-0.5f, -0.95f), P(0.5f, -0.95f), P(0.85f, -0.4f)};
+        dl->AddPolyline(lid, 4, col, 0, t);
+        dl->AddLine(P(0, -0.4f), P(0, 0.2f), col, t);
+        break;
+    }
+    case PI_Warning:     // a warning triangle
+        dl->AddTriangle(P(0, -0.95f), P(1, 0.85f), P(-1, 0.85f), col, t);
+        dl->AddLine(P(0, -0.3f), P(0, 0.25f), col, t);
+        dl->AddCircleFilled(P(0, 0.55f), t * 0.9f, col);
+        break;
+    case PI_Nodes:       // two nodes and a wire
+        dl->AddRectFilled(P(-1, -0.9f), P(-0.3f, -0.3f), col, 1.0f);
+        dl->AddRectFilled(P(0.3f, 0.3f), P(1, 0.9f), col, 1.0f);
+        dl->AddBezierCubic(P(-0.3f, -0.6f), P(0.4f, -0.6f), P(-0.4f, 0.6f), P(0.3f, 0.6f), col, t);
+        break;
+    case PI_Bolt: {      // a lightning bolt
+        ImVec2 b[6] = {P(0.3f, -1), P(-0.6f, 0.15f), P(0, 0.15f), P(-0.3f, 1), P(0.6f, -0.2f), P(0, -0.2f)};
+        dl->AddPolyline(b, 6, col, ImDrawFlags_Closed, t);
+        break;
+    }
+    case PI_Animation: { // a timeline with keyframes
+        dl->AddLine(P(-1, 0), P(1, 0), col, t);
+        const float k = 0.42f;
+        ImVec2 a[4] = {P(-0.45f, -k), P(-0.45f + k, 0), P(-0.45f, k), P(-0.45f - k, 0)};
+        dl->AddConvexPolyFilled(a, 4, col);
+        ImVec2 b[4] = {P(0.5f, -k), P(0.5f + k, 0), P(0.5f, k), P(0.5f - k, 0)};
+        dl->AddPolyline(b, 4, col, ImDrawFlags_Closed, t);
+        break;
+    }
+    case PI_Animator:    // two states and a transition
+        dl->AddCircle(P(-0.55f, -0.42f), r * 0.38f, col, 0, t);
+        dl->AddCircle(P(0.55f, 0.42f), r * 0.38f, col, 0, t);
+        dl->AddLine(P(-0.27f, -0.2f), P(0.27f, 0.2f), col, t);
+        break;
+    case PI_Sprite:      // a pixel checker
+        dl->AddRect(P(-0.9f, -0.9f), P(0.9f, 0.9f), col, 0.0f, 0, t);
+        dl->AddRectFilled(P(-0.9f, -0.9f), P(0, 0), col);
+        dl->AddRectFilled(P(0, 0), P(0.9f, 0.9f), col);
+        break;
+    case PI_Palette:     // a palette
+        dl->AddCircle(c, r * 0.95f, col, 0, t);
+        dl->AddCircleFilled(P(-0.42f, -0.2f), t * 1.15f, col);
+        dl->AddCircleFilled(P(0.05f, -0.5f), t * 1.15f, col);
+        dl->AddCircleFilled(P(0.48f, -0.12f), t * 1.15f, col);
+        dl->AddCircleFilled(P(0.1f, 0.42f), t * 1.6f, col);
+        break;
+    case PI_UI:          // a screen with a button
+        dl->AddRect(P(-1, -0.8f), P(1, 0.8f), col, r * 0.15f, 0, t);
+        dl->AddLine(P(-0.55f, -0.32f), P(0.55f, -0.32f), col, t);
+        dl->AddRectFilled(P(-0.5f, 0.08f), P(0.5f, 0.46f), col, 1.0f);
+        break;
+    default:
+        dl->AddRect(P(-0.85f, -0.85f), P(0.85f, 0.85f), col, r * 0.25f, 0, t);
+        break;
+    }
+}
+
+// Docked tabs get extra left padding so a panel icon fits before the name. ImGui
+// lays dock tab bars out inside NewFrame() (floating groups) and DockSpace() (the
+// main window), so the wider FramePadding.x is applied around just those two calls:
+// every other widget keeps the normal padding.
+static float g_tabIconPx = 0.0f;     // icon size on panel tabs (from the font, updated each frame)
+static float TabIconPx()    { return g_tabIconPx > 0.0f ? g_tabIconPx : std::round(12.0f * g_uiScale); }
+static float TabIconInset() { return std::round(7.0f * g_uiScale); }
+static float TabPadX()      { return TabIconInset() + TabIconPx() + std::round(6.0f * g_uiScale); }
+struct TabPaddingScope {
+    float saved;
+    TabPaddingScope() : saved(ImGui::GetStyle().FramePadding.x) { ImGui::GetStyle().FramePadding.x = TabPadX(); }
+    ~TabPaddingScope() { ImGui::GetStyle().FramePadding.x = saved; }
+    TabPaddingScope(const TabPaddingScope&) = delete;
+    TabPaddingScope& operator=(const TabPaddingScope&) = delete;
+};
+
+// Work on a dock host's draw list after the frame's docking pass: the host keeps
+// its background / foreground channels split until render, and tabs are drawn in
+// the foreground one, so anything drawn over them must go there too.
+struct HostFgChannel {
+    ImDrawList* dl; int prev;
+    explicit HostFgChannel(ImDrawList* d) : dl(d), prev(d->_Splitter._Current) { if (dl->_Splitter._Count >= 2) dl->ChannelsSetCurrent(1); }
+    ~HostFgChannel() { if (dl->_Splitter._Count >= 2) dl->ChannelsSetCurrent(prev); }
+    HostFgChannel(const HostFgChannel&) = delete;
+    HostFgChannel& operator=(const HostFgChannel&) = delete;
+};
+
+// The dock group shown as vertical side tabs (0 = none). Its tab bar is hidden
+// (ImGuiDockNodeFlags_NoTabBar via each window's class, which isn't written to
+// imgui.ini) and ImGui then always shows the group's FIRST window - so switching
+// panels there means moving the chosen window to the front.
+static ImGuiID g_sideTabsNode = 0;
+static std::string g_sideAnchor;     // window whose group is shown (session only; empty = Hierarchy / Inspector)
+static void MoveWindowToFront(ImGuiDockNode* node, ImGuiWindow* w) {
+    const int i = node->Windows.find_index(w);
+    if (i > 0) { node->Windows.erase(node->Windows.Data + i); node->Windows.push_front(w); }
+}
+// Bring a panel forward: select its tab (or side tab) and give it focus.
+static void FocusPanelWindow(ImGuiWindow* w) {
+    if (!w) return;
+    if (ImGuiDockNode* node = w->DockNode; node && node->IsNoTabBar()) MoveWindowToFront(node, w);
+    ImGui::SetWindowFocus(w->Name);
+}
+// Panels to focus once they exist (a tab just added, a layout just built).
+static std::vector<std::string> g_focusQueue;
+static int g_focusQueueFrame = 0;   // wait until this frame: tabs docked by a new layout keep
+                                    // auto-selecting themselves for a frame or two as they appear
+static void PumpFocusQueue() {
+    if (ImGui::GetFrameCount() < g_focusQueueFrame) return;
+    for (std::size_t i = 0; i < g_focusQueue.size();) {
+        ImGuiWindow* fw = ImGui::FindWindowByName(g_focusQueue[i].c_str());
+        const DockPanelDef* d = PanelDefForWindow(g_focusQueue[i].c_str());
+        if (fw && fw->WasActive) FocusPanelWindow(fw);
+        else if (!d || PanelOpen(*d)) { ++i; continue; }   // not drawn yet: wait (a closed panel is dropped)
+        g_focusQueue.erase(g_focusQueue.begin() + (std::ptrdiff_t)i);
+    }
+}
+
+// ---- Layouts: built-in presets + the user's saved ones -------------------------
+static std::vector<okay::edtabs::SavedLayout> g_userLayouts;
+static bool g_openSaveLayout = false;      // open the "Save Layout" dialog next frame
+static void LoadUserLayouts() {
+    std::ifstream f("okay_layouts.txt", std::ios::binary);
+    if (!f) return;
+    std::stringstream ss; ss << f.rdbuf();
+    g_userLayouts = okay::edtabs::ParseLayouts(ss.str());
+}
+static void SaveUserLayouts() {
+    std::ofstream f("okay_layouts.txt", std::ios::binary);
+    if (!f) { ConsoleLog("Couldn't write okay_layouts.txt", 2); return; }
+    f << okay::edtabs::SerializeLayouts(g_userLayouts);
+}
+static void SaveCurrentLayoutAs(const std::string& name) {
+    okay::edtabs::SavedLayout l;
+    l.name = okay::edtabs::CleanLayoutName(name);
+    size_t sz = 0;
+    const char* ini = ImGui::SaveIniSettingsToMemory(&sz);
+    l.ini.assign(ini ? ini : "", ini ? sz : 0);
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    for (int i = 0; i < n; ++i) if (defs[i].open && *defs[i].open) l.open.push_back(defs[i].label);
+    const bool replaced = okay::edtabs::UpsertLayout(g_userLayouts, l);
+    SaveUserLayouts();
+    g_layoutName = l.name;
+    ConsoleLog((replaced ? "Updated layout \"" : "Saved layout \"") + l.name + "\"");
+}
+static void ApplyUserLayout(const okay::edtabs::SavedLayout& l) {
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    for (int i = 0; i < n; ++i)
+        if (defs[i].open) *defs[i].open = std::find(l.open.begin(), l.open.end(), defs[i].label) != l.open.end();
+    if (l.ini.empty()) g_layoutRequest = (int)okay::edtabs::Preset::Default;   // nothing stored: rebuild instead
+    else g_layoutPendingIni = l.ini;
+    g_layoutName = l.name;
+    ConsoleLog("Layout: " + l.name);
+}
+// A saved layout is ImGui ini text. Docking rebuilds its nodes from it, so it's
+// loaded between frames (just before NewFrame), never in the middle of one.
+static void ApplyPendingLayoutIni() {
+    if (g_layoutPendingIni.empty()) return;
+    ImGui::LoadIniSettingsFromMemory(g_layoutPendingIni.c_str(), g_layoutPendingIni.size());
+    g_layoutPendingIni.clear();
+}
+
+// Build a built-in layout preset with DockBuilder. Each one opens the panels it
+// arranges; any other panel that's open goes in as a tab of the preset's "spare"
+// group, so nothing is left floating.
+static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
+    using okay::edtabs::Preset;
+    ImGui::DockBuilderRemoveNode(dockId);
+    ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockId, size);
+    ImGuiID center = dockId, spare = dockId;
+    auto split = [](ImGuiID& from, ImGuiDir dir, float ratio) {
+        return ImGui::DockBuilderSplitNode(from, dir, ratio, nullptr, &from);
+    };
+    std::vector<const char*> placed;
+    auto dock = [&](const char* window, ImGuiID node) { ImGui::DockBuilderDockWindow(window, node); placed.push_back(window); };
+    switch ((Preset)preset) {
+    case Preset::Tall: {   // Scene over Game; tall Hierarchy / Project columns, Inspector at the edge
+        ImGuiID right = split(center, ImGuiDir_Right, 0.44f);
+        ImGuiID insp  = split(right, ImGuiDir_Right, 0.55f);
+        ImGuiID proj  = split(right, ImGuiDir_Down, 0.50f);
+        ImGuiID game  = split(center, ImGuiDir_Down, 0.45f);
+        dock("Scene", center); dock("Game", game);
+        dock("Hierarchy", right);
+        dock("Project", proj); dock("Console###Console", proj);
+        dock("Inspector", insp); dock("Lighting", insp);
+        spare = proj;
+        break;
+    }
+    case Preset::Wide: {   // a wide Scene; Hierarchy | Project | Console underneath
+        ImGuiID right = split(center, ImGuiDir_Right, 0.22f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.32f);
+        ImGuiID dProj = split(down, ImGuiDir_Right, 0.70f);
+        ImGuiID dCon  = split(dProj, ImGuiDir_Right, 0.50f);
+        dock("Scene", center); dock("Game", center);
+        dock("Inspector", right); dock("Lighting", right);
+        dock("Hierarchy", down); dock("Project", dProj); dock("Console###Console", dCon);
+        spare = dCon;
+        break;
+    }
+    case Preset::TwoByThree: {   // [Scene / Game] [Hierarchy] [Project] [Inspector]
+        ImGuiID insp = split(center, ImGuiDir_Right, 0.22f);
+        ImGuiID proj = split(center, ImGuiDir_Right, 0.26f);
+        ImGuiID hier = split(center, ImGuiDir_Right, 0.30f);
+        ImGuiID game = split(center, ImGuiDir_Down, 0.50f);
+        dock("Scene", center); dock("Game", game);
+        dock("Hierarchy", hier);
+        dock("Project", proj); dock("Console###Console", proj);
+        dock("Inspector", insp);
+        spare = proj;
+        break;
+    }
+    case Preset::Scripting: {   // a big Script Editor in the middle
+        ImGuiID left  = split(center, ImGuiDir_Left, 0.18f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.24f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.24f);
+        ImGuiID leftD = split(left, ImGuiDir_Down, 0.55f);
+        dock("Hierarchy", left); dock("Project", leftD);
+        dock("Scene", center); dock("Game", center); dock("Script Editor", center);
+        dock("Console###Console", down);
+        dock("Inspector", right);
+        spare = down;
+        g_focusQueue.push_back("Script Editor");
+        break;
+    }
+    case Preset::Animation: {   // Scene on top, a wide timeline + the Animator underneath
+        ImGuiID left  = split(center, ImGuiDir_Left, 0.18f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.24f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.40f);
+        ImGuiID downR = split(down, ImGuiDir_Right, 0.36f);
+        dock("Hierarchy", left); dock("Inspector", right);
+        dock("Scene", center); dock("Game", center);
+        dock("Animation###AnimationDock", down); dock("Project", down); dock("Console###Console", down);
+        dock("Animator", downR);
+        spare = downR;   // extras go beside the Animator, keeping the timeline's group short
+        g_focusQueue.push_back("Animation###AnimationDock");
+        g_focusQueue.push_back("Animator");
+        break;
+    }
+    default: {   // Default: the original layout
+        ImGuiID left  = split(center, ImGuiDir_Left, 0.18f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.24f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.26f);
+        dock("Hierarchy", left);
+        dock("Inspector", right);
+        dock("Console###Console", down);
+        dock("Project", down);
+        dock("Services", down);
+        dock("Script Editor", down);
+        dock("Animation###AnimationDock", down);
+        dock("Asset Manager", down);
+        dock("Stats", right);
+        dock("Lighting", right);
+        dock("Scene", center);
+        dock("Game", center);   // tab alongside Scene
+        spare = down;
+        break;
+    }
+    }
+    // Open the panels the preset arranges (Default leaves the optional extras as
+    // they were - the old Reset Layout reopens the core ones itself), then tab any
+    // other open panel into the spare group.
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    for (int i = 0; i < n; ++i) {
+        const DockPanelDef& d = defs[i];
+        const bool inPreset = std::find_if(placed.begin(), placed.end(),
+                                           [&](const char* p) { return std::strcmp(p, d.window) == 0; }) != placed.end();
+        if (inPreset) {
+            if (d.open && preset != (int)Preset::Default) *d.open = true;
+        } else if (d.open && *d.open) {
+            ImGui::DockBuilderDockWindow(d.window, spare);
+        }
+    }
+    ImGui::DockBuilderFinish(dockId);
+    g_layoutName = okay::edtabs::PresetName(preset);
+    g_focusQueueFrame = ImGui::GetFrameCount() + 3;
+}
+
+// The Layout menu: presets, saved layouts, save / delete, side tabs. Shared by
+// View > Layout, the Layout dropdown at the top right and the tab right-click menu.
+static void DrawLayoutMenuItems() {
+    using namespace okay::edtabs;
+    ImGui::TextDisabled("Built-in");
+    for (int i = 0; i < kPresetCount; ++i) {
+        if (ImGui::MenuItem(PresetName(i), nullptr, g_layoutName == PresetName(i))) g_layoutRequest = i;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", PresetHint(i));
+    }
+    if (!g_userLayouts.empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled("Saved");
+        for (std::size_t i = 0; i < g_userLayouts.size(); ++i) {
+            ImGui::PushID((int)i);
+            if (ImGui::MenuItem(g_userLayouts[i].name.c_str(), nullptr, g_layoutName == g_userLayouts[i].name))
+                ApplyUserLayout(g_userLayouts[i]);
+            ImGui::PopID();
+        }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Save Layout...")) g_openSaveLayout = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save how the panels are arranged now under a name, to switch back to it later.");
+    if (ImGui::BeginMenu("Delete Layout", !g_userLayouts.empty())) {
+        for (std::size_t i = 0; i < g_userLayouts.size(); ++i) {
+            ImGui::PushID((int)i);
+            if (ImGui::MenuItem(g_userLayouts[i].name.c_str())) {
+                ConsoleLog("Deleted layout \"" + g_userLayouts[i].name + "\"");
+                if (g_layoutName == g_userLayouts[i].name) g_layoutName.clear();
+                g_userLayouts.erase(g_userLayouts.begin() + (std::ptrdiff_t)i);
+                SaveUserLayouts();
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    if (ImGui::BeginMenu("Side Tabs")) {
+        static const char* kSide[3] = {"Off", "Left Edge", "Right Edge"};
+        for (int i = 0; i < 3; ++i)
+            if (ImGui::MenuItem(kSide[i], nullptr, g_sideTabs == i)) { g_sideTabs = i; g_sideAnchor.clear(); SaveSettings(); }
+        ImGui::Separator();
+        ImGui::TextDisabled("Lists one panel group's tabs down the edge of the");
+        ImGui::TextDisabled("window (like VS Code's activity bar) instead of a tab");
+        ImGui::TextDisabled("strip: the Hierarchy's group on the left, the");
+        ImGui::TextDisabled("Inspector's on the right. Right-click any tab >");
+        ImGui::TextDisabled("Show Group as Side Tabs to pick another group.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to the Default layout with the core panels reopened.");
+}
+// The "Save Layout" dialog (drawn once per frame at the top level).
+static void DrawLayoutPopups() {
+    static char s_name[64] = "";
+    if (g_openSaveLayout) {
+        g_openSaveLayout = false;
+        std::snprintf(s_name, sizeof(s_name), "%s", okay::edtabs::PresetFromName(g_layoutName) < 0 ? g_layoutName.c_str() : "");
+        ImGui::OpenPopup("Save Layout");
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Save Layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextUnformatted("Save the current panel arrangement as:");
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(280.0f * g_uiScale);
+    const bool enter = ImGui::InputTextWithHint("##layoutname", "Layout name", s_name, sizeof(s_name), ImGuiInputTextFlags_EnterReturnsTrue);
+    const std::string clean = okay::edtabs::CleanLayoutName(s_name);
+    const bool builtIn = okay::edtabs::PresetFromName(clean) >= 0;
+    const bool exists  = okay::edtabs::FindLayout(g_userLayouts, clean) >= 0;
+    if (builtIn)     ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.35f, 1.0f), "That's a built-in layout's name: pick another.");
+    else if (exists) ImGui::TextDisabled("Replaces your saved layout \"%s\".", clean.c_str());
+    else             ImGui::TextDisabled("Saved in okay_layouts.txt beside the editor.");
+    ImGui::Dummy(ImVec2(0, 2));
+    const bool ok = !clean.empty() && !builtIn;
+    ImGui::BeginDisabled(!ok);
+    if ((ImGui::Button(exists ? "Replace" : "Save", ImVec2(110, 0)) || enter) && ok) {
+        SaveCurrentLayoutAs(clean);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+// One row of a panel list (the tab overflow list, the Ctrl+Tab switcher): icon,
+// label and an optional right-aligned hint. Returns true when clicked.
+static bool PanelListRow(const char* label, int icon, bool selected, const char* hint = nullptr) {
+    ImGui::PushID(label);
+    const float ic = TabIconPx();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = std::max(ImGui::GetContentRegionAvail().x, 250.0f * g_uiScale);
+    const bool hit = ImGui::Selectable("##row", selected, ImGuiSelectableFlags_None, ImVec2(w, 0));
+    const float h = ImGui::GetItemRectSize().y;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    DrawPanelIcon(dl, ImVec2(p.x + 2.0f + ic * 0.5f, p.y + h * 0.5f), ic, icon,
+                  ImGui::GetColorU32(selected ? AccentCol(1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)));
+    const float ty = p.y + (h - ImGui::GetTextLineHeight()) * 0.5f;
+    dl->AddText(ImVec2(p.x + ic + 10.0f * g_uiScale, ty), ImGui::GetColorU32(ImGuiCol_Text), label);
+    if (hint && *hint) {
+        const float hw = ImGui::CalcTextSize(hint).x;
+        dl->AddText(ImVec2(p.x + w - hw - 4.0f, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
+    }
+    ImGui::PopID();
+    return hit;
+}
+
+// Right-click a panel's tab: add another panel as a tab in the same
+// spot, close this one or the others beside it, float it, or switch layouts. Runs once
+// per frame after every panel has been drawn, so it covers all docked windows without
+// each panel wiring its own menu.
+static ImGuiID g_tabMenuRequest = 0;   // a window whose menu to open (right-click on a side tab)
 static void DrawPanelTabMenu() {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     static ImGuiID s_tabWin = 0;            // window whose tab was right-clicked
-    static std::string s_focusNext;         // a panel just added: focus it once it exists
     int n = 0; const DockPanelDef* defs = DockPanels(n);
-    if (!s_focusNext.empty()) {
-        ImGuiWindow* fw = ImGui::FindWindowByName(s_focusNext.c_str());
-        if (fw && fw->WasActive) { ImGui::SetWindowFocus(s_focusNext.c_str()); s_focusNext.clear(); }
-    }
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && g.HoveredWindow && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+    PumpFocusQueue();
+    if (g_tabMenuRequest) {
+        s_tabWin = g_tabMenuRequest; g_tabMenuRequest = 0;
+        ImGui::OpenPopup("##paneltabmenu");
+    } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && g.HoveredWindow && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
         for (ImGuiWindow* w : g.Windows) {
             ImGuiDockNode* node = w->DockNode;
             if (!node || !node->IsVisible || !node->TabBar || node->IsHiddenTabBar() || node->IsNoTabBar()) continue;
@@ -4036,23 +4615,22 @@ static void DrawPanelTabMenu() {
     if (!ImGui::BeginPopup("##paneltabmenu")) return;
     ImGuiWindow* w = ImGui::FindWindowByID(s_tabWin);
     if (!w || !w->DockNode) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    auto defFor = [&](const char* winName) -> const DockPanelDef* {
-        for (int i = 0; i < n; ++i) if (std::strcmp(defs[i].window, winName) == 0) return &defs[i];
-        return nullptr;
-    };
-    const DockPanelDef* self = defFor(w->Name);
-    if (self) ImGui::TextDisabled("%s", self->label);
-    else ImGui::TextDisabled("%s", std::string((const char*)w->Name, ImGui::FindRenderedTextEnd(w->Name)).c_str());
+    const DockPanelDef* self = PanelDefForWindow(w->Name);
+    ImGui::TextDisabled("%s", WindowLabel(w).c_str());
     ImGui::Separator();
     const ImGuiID nodeId = w->DockNode->ID;
+    auto dockedHere = [&](const DockPanelDef& d) {
+        ImGuiWindow* dw = ImGui::FindWindowByName(d.window);
+        return PanelOpen(d) && dw && dw->DockNode && dw->DockNode->ID == nodeId;
+    };
     auto addTab = [&](const DockPanelDef& d) {
-        if (ImGuiWindow* dw = ImGui::FindWindowByName(d.window); dw && dw->DockNode && dw->DockNode->ID == nodeId && *d.open) {
-            ImGui::SetWindowFocus(d.window);   // already a tab here: just bring it forward
+        if (dockedHere(d)) {   // already a tab here: just bring it forward
+            FocusPanelWindow(ImGui::FindWindowByName(d.window));
             return;
         }
         ImGui::DockBuilderDockWindow(d.window, nodeId);
-        *d.open = true;
-        s_focusNext = d.window;
+        if (d.open) *d.open = true;
+        g_focusQueue.push_back(d.window);
     };
     if (ImGui::BeginMenu("Add Tab")) {
         const char* lastGroup = nullptr;
@@ -4061,56 +4639,308 @@ static void DrawPanelTabMenu() {
             if (&d == self) continue;
             if (lastGroup && std::strcmp(lastGroup, d.group) != 0) ImGui::Separator();
             lastGroup = d.group;
-            ImGuiWindow* dw = ImGui::FindWindowByName(d.window);
-            const bool here = *d.open && dw && dw->DockNode && dw->DockNode->ID == nodeId;
-            if (ImGui::MenuItem(d.label, here ? "here" : (*d.open ? "open" : nullptr))) addTab(d);
-            if (ImGui::IsItemHovered() && *d.open && !here)
+            const bool here = dockedHere(d);
+            if (ImGui::MenuItem(d.label, here ? "here" : (PanelOpen(d) ? "open" : nullptr))) addTab(d);
+            if (ImGui::IsItemHovered() && PanelOpen(d) && !here)
                 ImGui::SetTooltip("Already open elsewhere: moves it into this tab group.");
         }
         ImGui::EndMenu();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Close Tab", nullptr, false, self != nullptr)) *self->open = false;
+    if (ImGui::MenuItem("Close Tab", "Middle-click", false, self != nullptr && self->open != nullptr)) *self->open = false;
     {
         int others = 0;
-        for (int i = 0; i < n; ++i) {
-            ImGuiWindow* dw = ImGui::FindWindowByName(defs[i].window);
-            if (&defs[i] != self && *defs[i].open && dw && dw->DockNode && dw->DockNode->ID == nodeId) ++others;
-        }
+        for (int i = 0; i < n; ++i)
+            if (&defs[i] != self && defs[i].open && dockedHere(defs[i])) ++others;
         if (ImGui::MenuItem("Close Other Tabs", nullptr, false, others > 0))
-            for (int i = 0; i < n; ++i) {
-                ImGuiWindow* dw = ImGui::FindWindowByName(defs[i].window);
-                if (&defs[i] != self && dw && dw->DockNode && dw->DockNode->ID == nodeId) *defs[i].open = false;
-            }
+            for (int i = 0; i < n; ++i)
+                if (&defs[i] != self && defs[i].open && dockedHere(defs[i])) *defs[i].open = false;
     }
     if (ImGui::MenuItem("Float (undock)")) ImGui::DockContextQueueUndockWindow(&g, w);
     ImGui::Separator();
-    if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
+    if (g_sideTabs != 0 && nodeId == g_sideTabsNode) {
+        if (ImGui::MenuItem("Side Tabs Off")) { g_sideTabs = 0; g_sideAnchor.clear(); SaveSettings(); }
+    } else if (ImGui::DockNodeGetRootNode(w->DockNode)->ID == g_dockspaceId) {
+        if (ImGui::MenuItem("Show Group as Side Tabs")) {
+            g_sideAnchor = w->Name;
+            if (g_sideTabs == 0) { g_sideTabs = 1; SaveSettings(); }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("List this group's tabs down the edge of the window\n(saves the height of its tab strip).");
+    }
+    if (ImGui::BeginMenu("Layout")) { DrawLayoutMenuItems(); ImGui::EndMenu(); }
     ImGui::EndPopup();
 }
-void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
-    ImGui::DockBuilderRemoveNode(dockId);
-    ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockId, size);
 
-    ImGuiID center = dockId, left, right, down;
-    left  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.18f, nullptr, &center);
-    right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
-    down  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.26f, nullptr, &center);
+// Panel icons on docked tabs: drawn over each tab, in the room TabPaddingScope
+// leaves before the name. The active tab's icon takes the accent colour.
+static void DrawPanelTabIcons() {
+    ImGuiContext& g = *GImGui;
+    g_tabIconPx = std::round(ImGui::GetFontSize() * 0.80f);   // used by next frame's layout
+    const float ic = TabIconPx(), inset = TabIconInset();
+    const ImU32 accent = ImGui::GetColorU32(AccentCol(1.0f));
+    const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text, 0.85f);
+    const ImU32 dim    = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    for (ImGuiWindow* w : g.Windows) {
+        ImGuiDockNode* node = w->DockNode;
+        if (!node || !w->DockIsActive || !node->IsVisible || !node->TabBar || !node->HostWindow) continue;
+        if (node->IsHiddenTabBar() || node->IsNoTabBar() || !(w->Active || w->WasActive)) continue;
+        ImRect r = w->DC.DockTabItemRect;
+        if (r.GetWidth() < ic + inset * 2.0f + 8.0f) continue;   // squeezed: the name needs the room
+        ImRect clip = r;
+        clip.ClipWith(node->TabBar->BarRect);
+        if (clip.GetWidth() <= 0.0f) continue;   // scrolled out of view
+        ImGuiTabBar* tb = node->TabBar;
+        const bool sel = tb->VisibleTabId == w->TabId;
+        const bool focused = (tb->Flags & ImGuiTabBarFlags_IsFocused) != 0;
+        const DockPanelDef* d = PanelDefForWindow(w->Name);
+        ImDrawList* dl = node->HostWindow->DrawList;
+        HostFgChannel fg(dl);
+        dl->PushClipRect(clip.Min, clip.Max, false);
+        DrawPanelIcon(dl, ImVec2(std::floor(r.Min.x + inset + ic * 0.5f) + 0.5f, std::floor((r.Min.y + r.Max.y) * 0.5f + 1.0f) + 0.5f),
+                      ic, d ? d->icon : PI_Generic, sel ? (focused ? accent : normal) : dim);
+        dl->PopClipRect();
+    }
+}
 
-    ImGui::DockBuilderDockWindow("Hierarchy", left);
-    ImGui::DockBuilderDockWindow("Inspector", right);
-    ImGui::DockBuilderDockWindow("Console###Console", down);
-    ImGui::DockBuilderDockWindow("Project", down);
-    ImGui::DockBuilderDockWindow("Services", down);
-    ImGui::DockBuilderDockWindow("Script Editor", down);
-    ImGui::DockBuilderDockWindow("Animation###AnimationDock", down);
-    ImGui::DockBuilderDockWindow("Asset Manager", down);
-    ImGui::DockBuilderDockWindow("Stats", right);
-    ImGui::DockBuilderDockWindow("Lighting", right);
-    ImGui::DockBuilderDockWindow("Scene", center);
-    ImGui::DockBuilderDockWindow("Game", center);   // tab alongside Scene
-    ImGui::DockBuilderFinish(dockId);
+// Tab overflow: when a group's tabs don't fit at full width, a list button joins
+// the end of its tab strip; it opens a searchable list of that group's tabs and of
+// every other open panel.
+static void DrawTabOverflow() {
+    ImGuiContext& g = *GImGui;
+    static ImGuiStorage s_shown;             // node id -> 1 when its list button showed last frame
+    static ImGuiID s_listNode = 0;           // the group whose list is open
+    static ImVec2 s_listPos;                 // where the list drops down from
+    const ImGuiID popupId = ImHashStr("##okaytaboverflow");
+    const float btnW = std::round(ImGui::GetFrameHeight() * 0.95f);
+    for (int i = 0; i < g.DockContext.Nodes.Data.Size; ++i) {
+        ImGuiDockNode* node = (ImGuiDockNode*)g.DockContext.Nodes.Data[i].val_p;
+        if (!node || !node->IsLeafNode() || !node->IsVisible || !node->TabBar || !node->HostWindow) continue;
+        if (node->IsHiddenTabBar() || node->IsNoTabBar() || node->LastFrameActive != g.FrameCount) continue;
+        ImGuiTabBar* tb = node->TabBar;
+        int tabs = 0;
+        for (const ImGuiTabItem& t : tb->Tabs) if (!(t.Flags & ImGuiTabItemFlags_Button)) ++tabs;
+        const bool was = s_shown.GetInt(node->ID, 0) != 0;
+        const float btn = was ? btnW + g.Style.ItemInnerSpacing.x : 0.0f;
+        const float barW = node->Size.x - 2.0f * TabPadX() - 2.0f * node->HostWindow->WindowBorderSize;
+        const bool show = okay::edtabs::TabsOverflow(tb->WidthAllTabsIdeal - btn, barW, tabs, was);
+        s_shown.SetInt(node->ID, show ? 1 : 0);
+        if (!show || !ImGui::DockNodeBeginAmendTabBar(node)) continue;
+        {
+            HostFgChannel fg(ImGui::GetWindowDrawList());
+            ImGui::SetNextItemWidth(btnW);
+            const bool hit = ImGui::TabItemButton("##tablist", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip);
+            const ImRect br(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            if (br.GetWidth() > 2.0f) {   // a chevron (the button has no label)
+                const ImVec2 c = br.GetCenter();
+                const float s = ImGui::GetFontSize() * 0.22f;
+                ImVec2 v[3] = {ImVec2(c.x - s, c.y - s * 0.45f), ImVec2(c.x, c.y + s * 0.55f), ImVec2(c.x + s, c.y - s * 0.45f)};
+                ImGui::GetWindowDrawList()->AddPolyline(v, 3, ImGui::GetColorU32(ImGuiCol_Text), 0, std::max(1.0f, s * 0.45f));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("All %d tabs in this group (and other open panels)", tabs);
+            if (hit) { s_listNode = node->ID; s_listPos = ImVec2(br.Max.x, br.Max.y); ImGui::OpenPopup(popupId); }
+        }
+        ImGui::DockNodeEndAmendTabBar();
+    }
+
+    ImGui::SetNextWindowPos(s_listPos, ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
+    if (!ImGui::BeginPopupEx(popupId, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) return;
+    static char s_q[64] = "";
+    if (ImGui::IsWindowAppearing()) { s_q[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##tabfind", "Search panels", s_q, sizeof(s_q));
+    const bool enter = ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
+    ImGuiWindow* pick = nullptr;
+    ImGuiWindow* first = nullptr;
+    ImGuiDockNode* node = ImGui::DockBuilderGetNode(s_listNode);
+    std::vector<ImGuiWindow*> here;
+    if (node && node->TabBar) {
+        ImGui::SeparatorText("In this group");
+        for (const ImGuiTabItem& t : node->TabBar->Tabs) {
+            if (!t.Window) continue;
+            here.push_back(t.Window);
+            const std::string lbl = WindowLabel(t.Window);
+            if (!okay::edtabs::MatchesFilter(lbl, s_q)) continue;
+            if (!first) first = t.Window;
+            const DockPanelDef* d = PanelDefForWindow(t.Window->Name);
+            if (PanelListRow(lbl.c_str(), d ? d->icon : PI_Generic, t.ID == node->TabBar->SelectedTabId)) pick = t.Window;
+        }
+    }
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    bool header = false;
+    for (int i = 0; i < n; ++i) {
+        ImGuiWindow* w = LivePanelWindow(defs[i]);
+        if (!w || std::find(here.begin(), here.end(), w) != here.end()) continue;
+        if (!okay::edtabs::MatchesFilter(defs[i].label, s_q)) continue;
+        if (!header) { ImGui::SeparatorText("Other open panels"); header = true; }
+        if (!first) first = w;
+        if (PanelListRow(defs[i].label, defs[i].icon, false)) pick = w;
+    }
+    if (!first) ImGui::TextDisabled("No open panel matches \"%s\".", s_q);
+    if (enter && first) pick = first;
+    if (pick) { FocusPanelWindow(pick); ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
+}
+
+// Side tabs: keep the chosen group's tab bar hidden (and only that group's).
+static void UpdateSideTabs() {
+    ImGuiContext& g = *GImGui;
+    ImGuiID want = 0;
+    if (g_sideTabs != 0) {
+        const char* anchor = !g_sideAnchor.empty() ? g_sideAnchor.c_str() : (g_sideTabs == 2 ? "Inspector" : "Hierarchy");
+        ImGuiWindow* a = ImGui::FindWindowByName(anchor);
+        if (a && a->DockNode && a->DockNode->IsLeafNode() && ImGui::DockNodeGetRootNode(a->DockNode)->ID == g_dockspaceId)
+            want = a->DockNode->ID;
+        else if (ImGuiDockNode* prev = g_sideTabsNode ? ImGui::DockBuilderGetNode(g_sideTabsNode) : nullptr; prev && prev->Windows.Size > 0)
+            want = prev->ID;   // the anchor panel closed: keep showing the rest of its group
+    }
+    if (want && want != g_sideTabsNode)   // a newly chosen group: keep its current tab showing
+        if (ImGuiDockNode* nn = ImGui::DockBuilderGetNode(want); nn && nn->TabBar)
+            if (ImGuiTabItem* t = ImGui::TabBarFindTabByID(nn->TabBar, nn->TabBar->SelectedTabId); t && t->Window)
+                MoveWindowToFront(nn, t->Window);
+    g_sideTabsNode = want;
+    for (ImGuiWindow* w : g.Windows) {
+        if (want && w->DockNode && w->DockNode->ID == want) w->WindowClass.DockNodeFlagsOverrideSet |= ImGuiDockNodeFlags_NoTabBar;
+        else                                                w->WindowClass.DockNodeFlagsOverrideSet &= ~ImGuiDockNodeFlags_NoTabBar;
+    }
+}
+static float SideStripWidth() { return std::round(64.0f * g_uiScale); }
+// The vertical strip itself: an icon + short name per panel of the side group.
+// Click shows that panel; right-click opens its tab menu.
+static void DrawSideTabStrip(float height) {
+    const float w = SideStripWidth();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 4.0f * g_uiScale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 2.0f * g_uiScale));
+    ImGui::BeginChild("##sidetabs", ImVec2(w, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+    ImGuiDockNode* node = g_sideTabsNode ? ImGui::DockBuilderGetNode(g_sideTabsNode) : nullptr;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float itemH = std::round(w * 0.88f), ic = std::round(TabIconPx() * 1.3f);
+    if (node && node->Windows.Size > 0) {
+        // List in tab order (DockOrder), not node->Windows order, which switching changes.
+        std::vector<ImGuiWindow*> wins(node->Windows.begin(), node->Windows.end());
+        std::stable_sort(wins.begin(), wins.end(), [](const ImGuiWindow* a, const ImGuiWindow* b) {
+            const int oa = a->DockOrder < 0 ? 0x7fff : a->DockOrder, ob = b->DockOrder < 0 ? 0x7fff : b->DockOrder;
+            return oa != ob ? oa < ob : a->ID < b->ID;
+        });
+        for (ImGuiWindow* win : wins) {
+            ImGui::PushID((void*)win);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const bool clicked = ImGui::InvisibleButton("##side", ImVec2(w, itemH));
+            const bool hov = ImGui::IsItemHovered();
+            const bool active = node->Windows[0] == win;
+            const std::string lbl = WindowLabel(win);
+            if (active || hov)
+                dl->AddRectFilled(p, ImVec2(p.x + w, p.y + itemH), ImGui::GetColorU32(active ? ImGuiCol_TabSelected : ImGuiCol_TabHovered));
+            if (active) {   // accent bar on the outer edge, like VS Code
+                const float bw = std::max(2.0f, std::round(2.0f * g_uiScale));
+                const float x0 = g_sideTabs == 2 ? p.x + w - bw : p.x;
+                dl->AddRectFilled(ImVec2(x0, p.y), ImVec2(x0 + bw, p.y + itemH), ImGui::GetColorU32(AccentCol(1.0f)));
+            }
+            DrawPanelIcon(dl, ImVec2(p.x + w * 0.5f, p.y + itemH * 0.36f), ic, [&] {
+                              const DockPanelDef* d = PanelDefForWindow(win->Name); return d ? d->icon : (int)PI_Generic; }(),
+                          ImGui::GetColorU32(active ? AccentCol(1.0f) : ImGui::GetStyleColorVec4(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled)));
+            {   // the name, small, under the icon (trimmed with ".." to fit)
+                ImFont* f = ImGui::GetFont();
+                const float fs = ImGui::GetFontSize() * 0.78f, maxW = w - 6.0f;
+                std::string t = lbl;
+                while (t.size() > 1 && f->CalcTextSizeA(fs, FLT_MAX, 0.0f, (t + "..").c_str()).x > maxW && f->CalcTextSizeA(fs, FLT_MAX, 0.0f, t.c_str()).x > maxW)
+                    t.pop_back();
+                if (t != lbl) t += "..";
+                const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.0f, t.c_str());
+                dl->AddText(f, fs, ImVec2(std::floor(p.x + (w - ts.x) * 0.5f), std::floor(p.y + itemH * 0.66f)),
+                            ImGui::GetColorU32(active || hov ? ImGuiCol_Text : ImGuiCol_TextDisabled), t.c_str());
+            }
+            if (hov) ImGui::SetTooltip("%s%s", lbl.c_str(), active ? "" : "  (click to show)");
+            if (clicked) FocusPanelWindow(win);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) g_tabMenuRequest = win->ID;
+            ImGui::PopID();
+        }
+    } else {
+        ImGui::Dummy(ImVec2(w, itemH));
+        const ImVec2 mn = ImGui::GetItemRectMin();
+        DrawPanelIcon(dl, ImVec2(mn.x + w * 0.5f, mn.y + itemH * 0.4f), ic, PI_Generic, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Side tabs show the %s's tab group. Open it (View > Panels),\nor right-click any tab > Show Group as Side Tabs.",
+                              g_sideTabs == 2 ? "Inspector" : "Hierarchy");
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+}
+
+// Ctrl+Tab / Ctrl+Shift+Tab: cycle through the open panels, most recently used
+// first. A list shows while Ctrl is held; letting go of Ctrl switches, Esc cancels.
+// (This replaces Dear ImGui's own Ctrl+Tab window switcher, turned off at start-up.
+// The Script Editor's code box never takes Ctrl+Tab, so nothing clashes.)
+static std::vector<std::string> g_panelMru;   // window names, most recently focused first
+static void DrawPanelSwitcher() {
+    ImGuiContext& g = *GImGui;
+    ImGuiIO& io = ImGui::GetIO();
+    static bool s_active = false;
+    static int s_sel = 0;
+    static std::vector<ImGuiWindow*> s_list;
+    if (g.NavWindow && !s_active)
+        if (ImGuiWindow* root = g.NavWindow->RootWindow; root && PanelDefForWindow(root->Name))
+            okay::edtabs::TouchMru(g_panelMru, root->Name);
+    const bool tab = io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Tab, true);
+    const int step = io.KeyShift ? -1 : 1;
+    if (!s_active) {
+        if (!tab || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
+        int n = 0; const DockPanelDef* defs = DockPanels(n);
+        std::vector<std::string> open;
+        for (int i = 0; i < n; ++i) if (LivePanelWindow(defs[i])) open.push_back(defs[i].window);
+        s_list.clear();
+        for (const std::string& name : okay::edtabs::MruOrder(g_panelMru, open))
+            if (ImGuiWindow* w = ImGui::FindWindowByName(name.c_str())) s_list.push_back(w);
+        if (s_list.empty()) return;
+        // Start on the previous panel (one Ctrl+Tab flips between the last two).
+        s_sel = okay::edtabs::CycleIndex(0, (int)s_list.size(), s_list.size() > 1 ? step : 0);
+        s_active = true;
+    } else if (tab) {
+        s_sel = okay::edtabs::CycleIndex(s_sel, (int)s_list.size(), step);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) s_sel = okay::edtabs::CycleIndex(s_sel, (int)s_list.size(), 1);
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   s_sel = okay::edtabs::CycleIndex(s_sel, (int)s_list.size(), -1);
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { s_active = false; return; }
+    ImGuiWindow* pick = nullptr;
+    if (!io.KeyCtrl) pick = s_list[(std::size_t)s_sel];
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowViewport(vp->ID);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * g_uiScale, 10.0f * g_uiScale));
+    ImGui::Begin("##panelswitcher", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                 ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove);
+    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    ImGui::TextDisabled("Open panels");
+    ImGui::Separator();
+    for (int i = 0; i < (int)s_list.size(); ++i) {
+        ImGuiWindow* w = s_list[(std::size_t)i];
+        const DockPanelDef* d = PanelDefForWindow(w->Name);
+        const char* where = !w->DockNode ? "floating" : (w->DockTabIsVisible ? "showing" : "");
+        if (PanelListRow(WindowLabel(w).c_str(), d ? d->icon : PI_Generic, i == s_sel, where)) pick = w;
+        if (i == s_sel) ImGui::SetScrollHereY();
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Tab / Shift+Tab to move   release Ctrl to switch   Esc cancels");
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+    if (pick) { s_active = false; FocusPanelWindow(pick); }
+}
+
+// Everything the tab system does after the panels have been drawn this frame.
+static void DrawPanelTabsExtras() {
+    UpdateSideTabs();
+    DrawPanelTabIcons();
+    DrawTabOverflow();
+    DrawPanelTabMenu();
+    DrawPanelSwitcher();
+    DrawLayoutPopups();
 }
 
 // UI rule: every widget lives under a Canvas, and a scene needs one
@@ -4578,6 +5408,13 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         if (ImGui::BeginMenu("Scene Overlays")) {
             ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
+            if (ImGui::BeginMenu("Physics Debug")) {
+                if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
+                if (ImGui::MenuItem("Rays cast from scripts", nullptr, &g_physDebugRays)) { ApplyPhysicsDebug(); SaveSettings(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also draw the raycasts / sphere casts that scripts, visual\nscripts and Actions make: green to the hit (white normal), yellow on a miss.");
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Skeletons")) {
                 if (ImGui::MenuItem("Selected model", nullptr, g_skeletonMode == 1)) g_skeletonMode = 1;
                 if (ImGui::MenuItem("All rigged models", nullptr, g_skeletonMode == 2)) g_skeletonMode = 2;
@@ -4646,6 +5483,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Layout")) { DrawLayoutMenuItems(); ImGui::EndMenu(); }
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
         ImGui::EndMenu();
     }
@@ -5134,7 +5972,29 @@ void DrawMenuAndToolbar(EditorState& ed) {
     // would otherwise render as tofu).
     float dotR = ImGui::GetFontSize() * 0.28f;
     float dotW = dotR * 2.0f + 8.0f;
-    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - dotW - 16);
+    const float statusX = ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - dotW - 16;
+    {   // Layout dropdown (top-right): presets + saved layouts.
+        const std::string lbl = (g_layoutName.empty() ? std::string("Layout") : g_layoutName);
+        const float chev = ImGui::GetFontSize() * 0.9f;
+        const float lw = ImGui::CalcTextSize(lbl.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f + chev;
+        ImGui::SameLine(statusX - lw - 18.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+        if (ImGui::Button((lbl + "##layoutdd").c_str(), ImVec2(lw, 0))) ImGui::OpenPopup("##layoutdd");
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        {   // chevron
+            const ImVec2 c(mx.x - chev * 0.6f, (mn.y + mx.y) * 0.5f);
+            const float cs = ImGui::GetFontSize() * 0.2f;
+            ImVec2 v[3] = {ImVec2(c.x - cs, c.y - cs * 0.45f), ImVec2(c.x, c.y + cs * 0.55f), ImVec2(c.x + cs, c.y - cs * 0.45f)};
+            ImGui::GetWindowDrawList()->AddPolyline(v, 3, ImGui::GetColorU32(ImGuiCol_Text, 0.8f), 0, std::max(1.0f, cs * 0.45f));
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch the panel layout, or save this one");
+        ImGui::SetNextWindowPos(ImVec2(mx.x, mx.y + 2.0f), ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
+        if (ImGui::BeginPopup("##layoutdd")) { DrawLayoutMenuItems(); ImGui::EndPopup(); }
+    }
+    ImGui::SameLine(statusX);
     ImVec2 dp = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddCircleFilled(
         ImVec2(dp.x + dotR + 1.0f, dp.y + ImGui::GetTextLineHeight() * 0.5f),
@@ -5275,18 +6135,29 @@ void DrawDockSpace(EditorState& ed) {
 
     ImGuiID dockId = ImGui::GetID("OkayDockSpace");
     g_dockspaceId = dockId;   // remembered so panels can dock/undock themselves
-    if (first || g_resetLayout) {
-        first = false;
-        BuildDefaultLayout(dockId, vp->WorkSize);
-        if (g_resetLayout) {
-            // Reopen every panel so a reset always restores the full workspace.
+    if (first || g_resetLayout || g_layoutRequest >= 0) {
+        // A layout preset (Layout menu), Reset Layout, or the start-up default.
+        const bool asked = !first;
+        const int preset = (!g_resetLayout && g_layoutRequest >= 0) ? g_layoutRequest : (int)okay::edtabs::Preset::Default;
+        if (g_resetLayout || (asked && preset == (int)okay::edtabs::Preset::Default)) {
+            // Reopen every core panel so a reset always restores the full workspace.
             g_showHierarchy = g_showInspector = g_showConsole = g_showProject =
                 g_showServices = g_showScriptEditor = g_showStats = g_showSceneSettings = g_showGame = true;
-            g_resetLayout = false;
         }
+        first = false; g_resetLayout = false; g_layoutRequest = -1;
+        if (asked) g_focusQueue.push_back("Scene");   // the preset may queue its own main panel after this
+        BuildLayoutPreset(preset, dockId, vp->WorkSize);
+        if (asked) ConsoleLog(std::string("Layout: ") + okay::edtabs::PresetName(preset));
     }
-    // Reserve one row at the bottom for the status bar, then draw it there.
-    ImGui::DockSpace(dockId, ImVec2(0, -ImGui::GetFrameHeight()), ImGuiDockNodeFlags_None);
+    // Reserve one row at the bottom for the status bar, then draw it there. With
+    // side tabs on, a vertical tab strip sits beside the dockspace at that edge.
+    const float dockH = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeight();
+    if (g_sideTabs == 1) { DrawSideTabStrip(dockH); ImGui::SameLine(0, 0); }
+    {
+        TabPaddingScope tabPad;   // room for the panel icons on the tabs (see TabPaddingScope)
+        ImGui::DockSpace(dockId, ImVec2(g_sideTabs == 2 ? -SideStripWidth() : 0.0f, -ImGui::GetFrameHeight()), ImGuiDockNodeFlags_None);
+    }
+    if (g_sideTabs == 2) { ImGui::SameLine(0, 0); DrawSideTabStrip(dockH); }
     DrawStatusBar(ed);
 
     DrawMenuAndToolbar(ed);
@@ -9052,6 +9923,12 @@ void DrawSceneSettings(EditorState& ed) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Turn off to see meshes against a flat background\n(isolates what's geometry vs. the sky behind it).");
         if (ImGui::Checkbox("Colliders", &g_showColliders)) SaveSettings();
+        if (ImGui::Checkbox("Physics debug (also Game view)", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Colliders, triggers, contact points and query rays while playing.");
+        if (g_physDebug) {
+            ImGui::SameLine();
+            if (ImGui::Checkbox("+ script rays", &g_physDebugRays)) { ApplyPhysicsDebug(); SaveSettings(); }
+        }
         if (ImGui::Checkbox("Gizmos (selection / camera / lights)", &g_showGizmos)) SaveSettings();
         if (ImGui::Checkbox("Wireframe (all meshes)", &g_wireframeAll)) SaveSettings();
         if (ImGui::Checkbox("World axes (origin)", &g_showWorldAxes)) SaveSettings();
@@ -9253,6 +10130,13 @@ void DrawShortcutsWindow() {
         {"Ctrl+1..3",     "Recall camera bookmark"},
         {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
         {"Ctrl+Wheel",    "Zoom UI authoring view"},
+    });
+    section("Panels & tabs", {
+        {"Ctrl+Tab",      "Switch to the previous panel (hold Ctrl, Tab again to go further)"},
+        {"Ctrl+Shift+Tab","Switch panels, going backwards"},
+        {"Middle-click",  "Close a panel tab"},
+        {"Drag a tab",    "Reorder it, dock it elsewhere, or drag it out to float"},
+        {"Right-click tab","Tab menu: add a tab, close, float, layouts, side tabs"},
     });
     section("Hierarchy", {
         {"F2",            "Rename object"},
@@ -9546,6 +10430,8 @@ void DrawScriptDocs() {
         fapi("ui_toggle_value(\"n\") / ui_set_toggle(\"n\", on)", "read / set a toggle");
         fapi("ui_dropdown_value(\"n\") / ui_dropdown_text(\"n\")", "selected index / option text");
         fapi("ui_set_dropdown(\"n\", i)", "select a dropdown option (fires on_change)");
+        fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
+        fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
         fapi("ui_set_fill(\"n\", v)", "set a filled UI Image's amount (cooldowns/health)");
     }
@@ -9806,9 +10692,17 @@ void DrawScriptDocs() {
         fapi("raycast(ox,oy,dx,dy[, maxDist])", "2D ray; returns the name hit (\"\" = miss)");
         fapi("ray_hit()/ray_object()/ray_x()/ray_y()/ray_nx()/ray_ny()/ray_dist()", "details of the last raycast()");
         fapi("raycast_hit3(o.., d..[, maxDist]) / raycast3(...)", "3D ray test / named hit + ray3_* details");
+        fapi("...[, maxDist, layers, ignore_triggers]", "every ray / cast / overlap takes these: layers \"0,3\" or \"Default,Enemy\"");
+        fapi("raycast_all3(o.., d..) / raycast_all(ox,oy,dx,dy)", "names of EVERYTHING hit, nearest first (+ ray_all_*)");
+        fapi("sphere_cast3(o.., d.., r) / box_cast3(c.., half.., d..)", "thick casts (won't slip through gaps)");
+        fapi("capsule_cast3(a.., b.., r, d..)", "would a capsule fit along this path?");
+        fapi("overlap_sphere3 / overlap_box3 / overlap_capsule3", "names of the objects inside a shape");
+        fapi("layer_mask(\"Default\", \"Enemy\")", "a layers number for the queries above");
         fapi("overlap(x, y)", "a 2D collider contains this point?");
         ImGui::TextWrapped("Define on_collision() / on_trigger() — they fire when this "
-            "object's collider hits or overlaps another.");
+            "object's collider hits or overlaps another. on_trigger_stay() runs every frame "
+            "something stays inside. Inside these, contact_point / contact_normal (vectors), "
+            "contact_x/_y/_z, impact_speed and other_tag describe the touch.");
     }
 
     if (sec("Friendly aliases")) {
@@ -9913,7 +10807,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
         "ui_toggle_value","ui_set_progress",
         // raycast
-        "raycast","raycast3","overlap_circle",
+        "raycast","raycast3","overlap_circle","raycast_all3","sphere_cast3","box_cast3","overlap_box3",
     };
     // Merge in EVERY builtin the OkayScript VM actually registers (hundreds), so
     // autocomplete covers the whole language, not just this hand-picked subset.
@@ -10008,6 +10902,9 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         // networking / raycast
         {"net_send","net_send(\"msg\")"}, {"raycast","raycast(x, y, dx, dy)"}, {"raycast3","raycast3(x, y, z, dx, dy, dz)"},
         {"overlap_circle","overlap_circle(x, y, r)"},
+        {"raycast_all3","raycast_all3(x, y, z, dx, dy, dz, dist)"}, {"sphere_cast3","sphere_cast3(x, y, z, dx, dy, dz, r, dist)"},
+        {"box_cast3","box_cast3(x, y, z, hx, hy, hz, dx, dy, dz, dist)"}, {"overlap_box3","overlap_box3(x, y, z, hx, hy, hz)"},
+        {"overlap_sphere3","overlap_sphere3(x, y, z, r)"},
         // timers
         {"after","after(seconds, \"func\")"}, {"every","every(seconds, \"func\")"}, {"cancel_timers","cancel_timers()"},
         // high-level one-liners (call every frame from update)
@@ -10095,6 +10992,9 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"to_num","to_num(s)"}, {"to_str","to_str(v)"}, {"format","format(\"{} {}\", a, b)"},
         // ui widgets
         {"set_slider","set_slider(v)"}, {"set_toggle","set_toggle(on)"}, {"set_progress","set_progress(t)"},
+        {"set_tab","set_tab(i)"}, {"set_tab_badge","set_tab_badge(i, count)"}, {"set_tab_enabled","set_tab_enabled(i, on)"},
+        {"ui_set_tab","ui_set_tab(\"n\", i)"}, {"ui_set_tab_badge","ui_set_tab_badge(\"n\", i, count)"},
+        {"ui_set_tab_enabled","ui_set_tab_enabled(\"n\", i, on)"}, {"ui_tab_value","ui_tab_value(\"n\")"},
         // math checks
         {"is_nan","is_nan(x)"}, {"is_finite","is_finite(x)"}, {"acos","acos(x)"}, {"asin","asin(x)"},
         {"atan","atan(x)"}, {"atan2","atan2(y, x)"}, {"sign","sign(x)"},
@@ -10558,6 +11458,25 @@ static std::vector<std::string> CsMembersFor(const std::string& src, const std::
 struct ScriptHelp { const char* doc; const char* example; };
 static const ScriptHelp* ScriptHelpFor(const std::string& key) {
     static const std::unordered_map<std::string, ScriptHelp> H = {
+        // ---- Physics queries (OkayScript builtins)
+        {"raycast3", {"Cast a 3D ray; returns the name of the first thing hit (\"\" = nothing). "
+            "Optional: max distance, layers (\"0,3\" or \"Default,Enemy\"), ignore triggers. Details via ray3_*.",
+            "if (raycast3(x, y, z, 0, -1, 0, 2, \"Default\", true) != \"\")\n{\n    grounded = true;\n}"}},
+        {"raycast_all3", {"Every object a 3D ray passes through, nearest first (a list of names). "
+            "ray_all_count() / ray_all_dist(i) / ray_all_point(i) give details.",
+            "var hits = raycast_all3(x, y, z, 1, 0, 0, 50);\nfor (var i = 0; i < ray_all_count(); i++)\n{\n    print(ray_all_object(i) + \" at \" + ray_all_dist(i));\n}"}},
+        {"sphere_cast3", {"Sweep a ball along a direction and return the first thing it touches. "
+            "A thick ray that can't slip through gaps; skips triggers.",
+            "string hit = sphere_cast3(x, y, z, 0, 0, 1, 0.5, 10);\nif (hit != \"\") print(\"blocked by \" + hit);"}},
+        {"box_cast3", {"Sweep a box (centre, half size) along a direction; the first thing it touches.",
+            "string hit = box_cast3(x, y, z, 0.5, 1, 0.5, 0, 0, 1, 5);"}},
+        {"overlap_box3", {"Names of the objects inside a box (centre, half size). Optional layers / ignore triggers.",
+            "var inside = overlap_box3(x, y, z, 2, 2, 2);\nprint(count(inside) + \" things nearby\");"}},
+        {"overlap_sphere3", {"Names of the objects inside a ball. Great for explosions.",
+            "var near = overlap_sphere3(x, y, z, 5);\nprint(count(near) + \" caught in the blast\");"}},
+        {"contact_point", {"Inside a collision / trigger handler: where the touch happened (a vector). "
+            "Also contact_normal, contact_x/_y/_z, impact_speed and other_tag.",
+            "void OnCollisionEnter(string other)\n{\n    if (impact_speed > 8) spawn3(\"Sparks\", contact_x, contact_y, contact_z);\n}"}},
         // ---- C# / API
         {"Input.GetAxis", {"-1..1 from the keyboard (A/D, arrows) or a stick. \"Horizontal\" or \"Vertical\".",
             "float h = Input.GetAxis(\"Horizontal\");\nfloat v = Input.GetAxis(\"Vertical\");\ntransform.position += new Vector3(h, 0, v) * speed * Time.deltaTime;"}},
@@ -16811,6 +17730,7 @@ static std::string TriggerPhrase(ActionList::Trigger t, const std::string& key) 
         case T::OnMouseOver:     return "While hovered";
         case T::OnInterval:      return "Every " + (key.empty() ? std::string("0") : key) + "s";
         case T::OnLateUpdate:    return "Every frame (late)";
+        case T::OnTriggerStay:   return "While something is inside";
     }
     return "When triggered";
 }
@@ -16953,7 +17873,7 @@ static std::string ActionListToCode(const ActionList& al) {
             updateB += lead + "}\n";
         }
         else if (trg == T::OnCollision || trg == T::OnCollisionStay || trg == T::OnCollisionExit
-              || trg == T::OnTriggerEnter || trg == T::OnTriggerExit) {
+              || trg == T::OnTriggerEnter || trg == T::OnTriggerExit || trg == T::OnTriggerStay) {
             VsEmitBody(collB, conds, ins, lead);
         }
         else { updateB += lead + "// TODO: " + std::string(TriggerPhrase(trg, key)) + " (add your own trigger check)\n"; VsEmitBody(updateB, conds, ins, lead); }
@@ -20547,7 +21467,7 @@ static bool FlowIsEnder(const std::string& o) {
 static const char* kTriggerLabels[] = {"On Start","On Update","On Key","On Collision","On Click",
     "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
     "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over",
-    "On Collision Exit","On Collision Stay","On Interval","On Late Update"};
+    "On Collision Exit","On Collision Stay","On Interval","On Late Update","On Trigger Stay"};
 
 // Every pickable key as (label, stored-char). Keys are single characters — that's what
 // Input::GetKeyDown(char) matches — so the picker offers letters, digits and Space.
@@ -21108,7 +22028,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
     static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",
         "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
         "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over",
-        "On Collision Exit","On Collision Stay","On Interval","On Late Update"};
+        "On Collision Exit","On Collision Stay","On Interval","On Late Update","On Trigger Stay"};
 
     // ---- Always-visible editor strip -------------------------------------------
     // Change the trigger and edit the currently-selected node right here, so editing
@@ -22334,6 +23254,22 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         ImGui::SetNextItemWidth(80);
         if (ImGui::InputTextWithHint("only", "tag", onb, sizeof(onb))) setMod("only:", onb);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only hit objects with this tag (like a layer mask).");
+        // Thick ray, collider layers and triggers (r: / lm: / nt: tokens).
+        ImGui::SameLine();
+        float rad = getMod("r:").empty() ? 0.0f : (float)std::atof(getMod("r:").c_str());
+        ImGui::SetNextItemWidth(56);
+        if (ImGui::DragFloat("radius", &rad, 0.02f, 0.0f, 50.0f, "%.2f"))
+            setMod("r:", rad <= 0.0f ? std::string() : std::to_string(rad));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = a thin ray. Above 0 casts a ball of this radius instead\n(a sphere cast), so it can't slip through small gaps.");
+        ImGui::SameLine();
+        char lmb[64]; std::strncpy(lmb, getMod("lm:").c_str(), sizeof(lmb)-1); lmb[sizeof(lmb)-1]='\0';
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::InputTextWithHint("layers", "all", lmb, sizeof(lmb))) setMod("lm:", lmb);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only hit colliders on these layers: numbers or names,\nseparated by commas (e.g. 0,3 or Default,Enemy).\nStart with ! to hit everything EXCEPT them. Blank = all.");
+        ImGui::SameLine();
+        bool skipTrig = getMod("nt:") == "1";
+        if (ImGui::Checkbox("skip triggers", &skipTrig)) setMod("nt:", skipTrig ? "1" : "");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pass through trigger colliders (pickups, zones)\nand only hit solid ones.");
     } else if (it.op == "set_text" || it.op == "set_text_on" || it.op == "set_bar" ||
                it.op == "get_prefs") {
         // Friendly, fields so it's clear WHAT you're setting and WHAT
@@ -22846,6 +23782,177 @@ static void TickTweenPreview(EditorState& ed, float dt) {
         p.holdAfter += dt;
         if (p.holdAfter > 0.6f) StopTweenPreview();
     }
+}
+// Inline colour-gradient editor (Particle System colour over life): a preview bar
+// with a marker per stop. Click a marker to select it (drag to move it in time),
+// click the bar to add a stop there, right-click a marker to delete it. The
+// selected stop's colour/time get regular fields underneath.
+static bool ParticleGradientEditor(EditorState& ed, const char* id, okay::ParticleGradient& g) {
+    bool changed = false;
+    ImGui::PushID(id);
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    const ImGuiID selKey = ImGui::GetID("sel");
+    int sel = st->GetInt(selKey, 0);
+    if (sel >= g.count) sel = g.count - 1;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), barH = 18.0f, mkH = 9.0f;
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + w, p0.y + barH);
+    // Checkerboard under the bar so alpha reads.
+    for (int cx = 0; cx * 6.0f < w; ++cx)
+        for (int cy = 0; cy < 3; ++cy)
+            dl->AddRectFilled(ImVec2(p0.x + cx * 6.0f, p0.y + cy * 6.0f),
+                              ImVec2(std::min(p1.x, p0.x + cx * 6.0f + 6.0f), p0.y + cy * 6.0f + 6.0f),
+                              ((cx + cy) & 1) ? IM_COL32(150, 150, 150, 255) : IM_COL32(95, 95, 95, 255));
+    // Sample the gradient in short horizontal strips (handles any stop order).
+    const int kStrips = 32;
+    for (int i = 0; i < kStrips; ++i) {
+        float ta = (float)i / kStrips, tb = (float)(i + 1) / kStrips;
+        ImU32 ca = ToColor(g.Evaluate(ta)), cb = ToColor(g.Evaluate(tb));
+        dl->AddRectFilledMultiColor(ImVec2(p0.x + ta * w, p0.y), ImVec2(p0.x + tb * w, p1.y), ca, cb, cb, ca);
+    }
+    dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255));
+    for (int i = 0; i < g.count; ++i) {
+        float x = p0.x + Mathf::Clamp01(g.stops[i].time) * w;
+        ImVec2 a(x, p1.y), b(x - 5.0f, p1.y + mkH), c(x + 5.0f, p1.y + mkH);
+        dl->AddTriangleFilled(a, b, c, ToColor(Color{g.stops[i].color.r, g.stops[i].color.g, g.stops[i].color.b, 1.0f}));
+        dl->AddTriangle(a, b, c, i == sel ? ImGui::GetColorU32(AccentCol(1.0f)) : IM_COL32(220, 220, 225, 255),
+                        i == sel ? 2.0f : 1.0f);
+    }
+    ImGui::InvisibleButton("##gradbar", ImVec2(w, barH + mkH + 2.0f),
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const float mx = ImGui::GetIO().MousePos.x;
+    const float mt = Mathf::Clamp01((mx - p0.x) / w);
+    auto nearest = [&]() {
+        int best = -1; float bd = 7.0f;
+        for (int i = 0; i < g.count; ++i) {
+            float d = std::fabs(p0.x + g.stops[i].time * w - mx);
+            if (d < bd) { bd = d; best = i; }
+        }
+        return best;
+    };
+    const ImGuiID dragKey = ImGui::GetID("drag");
+    if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        ed.PushUndo();
+        int hit = nearest();
+        if (hit < 0) {   // add a stop with the colour already showing there
+            hit = g.Add(mt, g.Evaluate(mt));
+            if (hit >= 0) changed = true;
+        }
+        if (hit >= 0) sel = hit;
+        st->SetInt(dragKey, hit >= 0 ? 1 : 0);
+    }
+    if (ImGui::IsItemActive() && st->GetInt(dragKey, 0) && sel >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+        if (g.stops[sel].time != mt) { g.stops[sel].time = mt; changed = true; }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) st->SetInt(dragKey, 0);
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        int hit = nearest();
+        if (hit >= 0 && g.count > 1) { ed.PushUndo(); g.Remove(hit); changed = true; if (sel >= g.count) sel = g.count - 1; }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click the bar to add a stop, drag a marker to move it, right-click a marker to delete it.");
+
+    if (sel >= 0 && sel < g.count) {
+        okay::ParticleGradient::Stop& s = g.stops[sel];
+        float col[4] = {s.color.r, s.color.g, s.color.b, s.color.a};
+        if (ImGui::ColorEdit4("Stop Color", col)) { s.color = {col[0], col[1], col[2], col[3]}; changed = true; }
+        if (ImGui::IsItemActivated()) ed.PushUndo();
+        if (ImGui::SliderFloat("Stop Time", &s.time, 0.0f, 1.0f)) changed = true;
+        if (ImGui::IsItemActivated()) ed.PushUndo();
+    }
+    ImGui::TextDisabled("%d / %d stops", g.count, okay::ParticleGradient::kMaxStops);
+    st->SetInt(selKey, sel);
+    ImGui::PopID();
+    return changed;
+}
+// Inline curve editor (Particle System size/speed over life): a small plot of the
+// multiplier across the particle's life with a dot per key. Click empty space to
+// add a key, drag a key to move it, right-click a key to delete it. The y range
+// is 0..max(1, highest key) and is frozen while dragging so keys don't jump.
+static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleCurve& c) {
+    bool changed = false;
+    ImGui::PushID(id);
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    const ImGuiID selKey = ImGui::GetID("sel"), dragKey = ImGui::GetID("drag"), yKey = ImGui::GetID("ymax");
+    int sel = st->GetInt(selKey, 0);
+    if (sel >= c.count) sel = c.count - 1;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), h = 64.0f;
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + w, p0.y + h);
+    const bool dragging = st->GetInt(dragKey, 0) != 0 && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    float yMax = dragging ? st->GetFloat(yKey, 1.0f) : c.MaxValue() * 1.15f;
+    if (yMax < 1.0f) yMax = 1.0f;
+    st->SetFloat(yKey, yMax);
+    auto toScreen = [&](float t, float v) { return ImVec2(p0.x + t * w, p1.y - (v / yMax) * h); };
+
+    dl->AddRectFilled(p0, p1, IM_COL32(28, 30, 36, 255), 3.0f);
+    const float y1 = toScreen(0.0f, 1.0f).y;   // the "x1" line (no change)
+    dl->AddLine(ImVec2(p0.x, y1), ImVec2(p1.x, y1), IM_COL32(70, 74, 86, 255));
+    for (int gx = 1; gx < 4; ++gx)
+        dl->AddLine(ImVec2(p0.x + w * gx * 0.25f, p0.y), ImVec2(p0.x + w * gx * 0.25f, p1.y), IM_COL32(48, 50, 60, 255));
+    const ImU32 lineCol = ImGui::GetColorU32(AccentCol(1.0f));
+    ImVec2 prev = toScreen(0.0f, c.Evaluate(0.0f));
+    for (int i = 1; i <= 48; ++i) {
+        float t = i / 48.0f;
+        ImVec2 cur = toScreen(t, c.Evaluate(t));
+        dl->AddLine(prev, cur, lineCol, 2.0f);
+        prev = cur;
+    }
+    for (int i = 0; i < c.count; ++i) {
+        ImVec2 kp = toScreen(c.keys[i].time, c.keys[i].value);
+        dl->AddCircleFilled(kp, i == sel ? 5.0f : 4.0f, i == sel ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 205, 215, 255));
+        if (i == sel) dl->AddCircle(kp, 6.5f, lineCol, 12, 1.5f);
+    }
+    dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255), 3.0f);
+    char ylab[16]; std::snprintf(ylab, sizeof(ylab), "x%.2g", yMax);
+    dl->AddText(ImVec2(p0.x + 3.0f, p0.y + 1.0f), IM_COL32(140, 145, 160, 255), ylab);
+
+    ImGui::InvisibleButton("##curveplot", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    const float mt = Mathf::Clamp01((m.x - p0.x) / w);
+    const float mv = std::max(0.0f, (p1.y - m.y) / h * yMax);
+    auto nearest = [&]() {
+        int best = -1; float bd = 8.0f * 8.0f;
+        for (int i = 0; i < c.count; ++i) {
+            ImVec2 kp = toScreen(c.keys[i].time, c.keys[i].value);
+            float d = (kp.x - m.x) * (kp.x - m.x) + (kp.y - m.y) * (kp.y - m.y);
+            if (d < bd) { bd = d; best = i; }
+        }
+        return best;
+    };
+    if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        ed.PushUndo();
+        int hit = nearest();
+        if (hit < 0) { hit = c.Add(mt, mv); if (hit >= 0) changed = true; }
+        if (hit >= 0) sel = hit;
+        st->SetInt(dragKey, hit >= 0 ? 1 : 0);
+    }
+    if (ImGui::IsItemActive() && st->GetInt(dragKey, 0) && sel >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+        c.keys[sel].time = mt; c.keys[sel].value = std::min(mv, yMax); changed = true;
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) st->SetInt(dragKey, 0);
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        int hit = nearest();
+        if (hit >= 0 && c.count > 1) { ed.PushUndo(); c.Remove(hit); changed = true; if (sel >= c.count) sel = c.count - 1; }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to add a key, drag a key to move it, right-click a key to delete it.");
+
+    if (sel >= 0 && sel < c.count) {
+        float kv[2] = {c.keys[sel].time, c.keys[sel].value};
+        if (ImGui::DragFloat2("Key (time, x)", kv, 0.01f, 0.0f, 100.0f)) {
+            c.keys[sel].time = Mathf::Clamp01(kv[0]); c.keys[sel].value = std::max(0.0f, kv[1]); changed = true;
+        }
+        if (ImGui::IsItemActivated()) ed.PushUndo();
+    }
+    if (ImGui::Checkbox("Smooth", &c.smooth)) changed = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d / %d keys", c.count, okay::ParticleCurve::kMaxKeys);
+    st->SetInt(selKey, sel);
+    ImGui::PopID();
+    return changed;
 }
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
@@ -24873,82 +25980,19 @@ void DrawInspector(EditorState& ed) {
             // ---- Presets: one-click classic effects (then tweak from there) ----
             SectionHeader("Presets");
             {
-                auto pre = [&](int which) {
-                    ed.PushUndo();
-                    ParticleSystem& P = *ps;
-                    // Common baseline; each preset overrides what it needs.
-                    P.playing = true; P.shape = ParticleSystem::Shape::Point;
-                    P.burstCount = 0; P.duration = 0.0f; P.loop = true;
-                    P.renderMode = ParticleSystem::RenderMode::Billboard;
-                    P.colorOverLife = true; P.sizeOverLife = false; P.fadeOverLife = true;
-                    P.speedRandom = 0.2f; P.damping = 0.0f; P.gravityModifier = 1.0f;
-                    P.rotationSpeed = 0.0f; P.startRotationRandom = 0.0f;
-                    switch (which) {
-                        case 0:   // Fire: rising, orange -> deep red, shrinking
-                            P.emissionRate = 60; P.maxParticles = 400;
-                            P.shape = ParticleSystem::Shape::Circle; P.shapeRadius = 0.25f;
-                            P.startLifetime = 0.9f; P.startLifetimeRandom = 0.3f;
-                            P.startSize = 0.35f; P.startSizeRandom = 0.15f;
-                            P.startColor = {1.0f, 0.75f, 0.25f, 1.0f}; P.endColor = {0.9f, 0.15f, 0.05f, 0.0f};
-                            P.startVelocity = {0, 2.2f, 0}; P.velocityRandom = 0.5f;
-                            P.gravity = {0, 1.2f, 0};   // hot air rises
-                            P.sizeOverLife = true; P.endSize = 0.05f;
-                            break;
-                        case 1:   // Smoke: slow gray puffs that grow and thin out
-                            P.emissionRate = 25; P.maxParticles = 300;
-                            P.shape = ParticleSystem::Shape::Circle; P.shapeRadius = 0.2f;
-                            P.startLifetime = 2.5f; P.startLifetimeRandom = 0.8f;
-                            P.startSize = 0.5f; P.startSizeRandom = 0.2f;
-                            P.startColor = {0.45f, 0.45f, 0.48f, 0.65f}; P.endColor = {0.25f, 0.25f, 0.28f, 0.0f};
-                            P.startVelocity = {0, 1.2f, 0}; P.velocityRandom = 0.3f;
-                            P.gravity = {0, 0.3f, 0}; P.damping = 0.3f;
-                            P.sizeOverLife = true; P.endSize = 1.4f;
-                            P.rotationSpeed = 20.0f; P.startRotationRandom = 180.0f;
-                            break;
-                        case 2:   // Sparks: fast streaks that arc down under gravity
-                            P.emissionRate = 90; P.maxParticles = 500;
-                            P.startLifetime = 0.6f; P.startLifetimeRandom = 0.2f;
-                            P.startSize = 0.08f; P.startSizeRandom = 0.03f;
-                            P.startColor = {1.0f, 0.9f, 0.5f, 1.0f}; P.endColor = {1.0f, 0.4f, 0.1f, 0.0f};
-                            P.startVelocity = {0, 4.0f, 0}; P.velocityRandom = 3.5f;
-                            P.gravity = {0, -9.0f, 0};
-                            P.renderMode = ParticleSystem::RenderMode::Stretch;
-                            break;
-                        case 3:   // Rain: fast streaks falling through a wide box
-                            P.emissionRate = 300; P.maxParticles = 2000;
-                            P.shape = ParticleSystem::Shape::Box; P.boxSize = {12, 0.1f, 12};
-                            P.startLifetime = 1.6f; P.startLifetimeRandom = 0.2f;
-                            P.startSize = 0.06f; P.startSizeRandom = 0.0f;
-                            P.startColor = {0.60f, 0.72f, 1.0f, 0.8f}; P.endColor = {0.60f, 0.72f, 1.0f, 0.4f};
-                            P.startVelocity = {0, -9.0f, 0}; P.velocityRandom = 0.4f;
-                            P.gravityModifier = 0.0f;
-                            P.renderMode = ParticleSystem::RenderMode::Stretch;
-                            break;
-                        case 4:   // Snow: slow drifting flakes over a wide box
-                            P.emissionRate = 80; P.maxParticles = 1500;
-                            P.shape = ParticleSystem::Shape::Box; P.boxSize = {12, 0.1f, 12};
-                            P.startLifetime = 6.0f; P.startLifetimeRandom = 2.0f;
-                            P.startSize = 0.09f; P.startSizeRandom = 0.04f;
-                            P.startColor = {1, 1, 1, 0.95f}; P.endColor = {1, 1, 1, 0.7f};
-                            P.startVelocity = {0, -0.8f, 0}; P.velocityRandom = 0.4f;
-                            P.gravityModifier = 0.0f; P.damping = 0.4f;
-                            break;
-                        case 5:   // Magic: violet-to-cyan motes floating up from a sphere
-                            P.emissionRate = 40; P.maxParticles = 400;
-                            P.shape = ParticleSystem::Shape::Sphere; P.shapeRadius = 0.6f;
-                            P.startLifetime = 1.4f; P.startLifetimeRandom = 0.5f;
-                            P.startSize = 0.15f; P.startSizeRandom = 0.08f;
-                            P.startColor = {0.55f, 0.40f, 1.0f, 1.0f}; P.endColor = {0.20f, 0.90f, 1.0f, 0.0f};
-                            P.startVelocity = {0, 0.6f, 0}; P.velocityRandom = 0.8f;
-                            P.gravityModifier = 0.0f; P.rotationSpeed = 90.0f;
-                            break;
+                // The looks themselves live in the engine (ParticleSystem::ApplyPreset)
+                // so games and tests can apply them too.
+                if (ImGui::BeginCombo("Preset##ps", "Choose a preset...")) {
+                    for (int pi = 0; pi < (int)ParticleSystem::Preset::Count; ++pi) {
+                        const auto pr = (ParticleSystem::Preset)pi;
+                        if (ImGui::Selectable(ParticleSystem::PresetName(pr))) {
+                            ed.PushUndo();
+                            ps->ApplyPreset(pr);
+                            ps->playing = true;
+                            ed.dirty = true;
+                        }
                     }
-                    ed.dirty = true;
-                };
-                static const char* kPsNames[6] = {"Fire", "Smoke", "Sparks", "Rain", "Snow", "Magic"};
-                for (int pi = 0; pi < 6; ++pi) {
-                    if (pi) ImGui::SameLine(0, 4);
-                    if (ImGui::SmallButton(kPsNames[pi])) pre(pi);
+                    ImGui::EndCombo();
                 }
                 ImGui::TextDisabled("Starting points — every value below stays editable.");
             }
@@ -25016,12 +26060,46 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Fade Out##ps", &ps->fadeOverLife)) ed.dirty = true;
             if (ImGui::Checkbox("Color Over Life##ps", &ps->colorOverLife)) ed.dirty = true;
             if (ps->colorOverLife) {
-                float ec[4] = {ps->endColor.r, ps->endColor.g, ps->endColor.b, ps->endColor.a};
-                if (ImGui::ColorEdit4("End Color##ps", ec)) { ps->endColor = {ec[0], ec[1], ec[2], ec[3]}; ed.dirty = true; }
+                // Start -> End is the classic two-colour fade; Gradient adds up to 8 stops.
+                const char* cmodes[] = {"Start -> End", "Gradient"};
+                int cm = ps->colorGradient.Active() ? 1 : 0;
+                if (ImGui::Combo("Color Mode##ps", &cm, cmodes, 2)) {
+                    ed.PushUndo();
+                    if (cm == 1) ps->colorGradient.SetTwo(ps->startColor, ps->endColor);   // seed from the old fields
+                    else         ps->colorGradient.Clear();
+                    ed.dirty = true;
+                }
+                if (ps->colorGradient.Active()) {
+                    if (ParticleGradientEditor(ed, "psgrad", ps->colorGradient)) ed.dirty = true;
+                } else {
+                    float ec[4] = {ps->endColor.r, ps->endColor.g, ps->endColor.b, ps->endColor.a};
+                    if (ImGui::ColorEdit4("End Color##ps", ec)) { ps->endColor = {ec[0], ec[1], ec[2], ec[3]}; ed.dirty = true; }
+                }
             }
             if (ImGui::Checkbox("Size Over Life##ps", &ps->sizeOverLife)) ed.dirty = true;
-            if (ps->sizeOverLife)
-                if (ImGui::DragFloat("End Size##ps", &ps->endSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ps->sizeOverLife) {
+                const char* smodes[] = {"End Size", "Curve"};
+                int sm = ps->sizeCurve.Active() ? 1 : 0;
+                if (ImGui::Combo("Size Mode##ps", &sm, smodes, 2)) {
+                    ed.PushUndo();
+                    if (sm == 1) ps->sizeCurve.SetLinear(1.0f, ps->startSize > 1e-4f ? ps->endSize / ps->startSize : 0.0f);
+                    else         ps->sizeCurve.Clear();
+                    ed.dirty = true;
+                }
+                if (ps->sizeCurve.Active()) {
+                    ImGui::TextDisabled("Size x start size over life");
+                    if (ParticleCurveEditor(ed, "pssize", ps->sizeCurve)) ed.dirty = true;
+                } else if (ImGui::DragFloat("End Size##ps", &ps->endSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Speed Over Life##ps", &ps->speedOverLife)) {
+                if (ps->speedOverLife && !ps->speedCurve.Active()) ps->speedCurve.SetLinear(1.0f, 0.25f);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale how fast particles move as they age (1 = unchanged).");
+            if (ps->speedOverLife && ps->speedCurve.Active()) {
+                ImGui::TextDisabled("Speed x over life");
+                if (ParticleCurveEditor(ed, "psspeed", ps->speedCurve)) ed.dirty = true;
+            }
 
             // ---- Forces ----
             SectionHeader("Forces");
@@ -25029,6 +26107,31 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat3("Gravity##ps", gv, 0.05f)) { ps->gravity = {gv[0], gv[1], gv[2]}; ed.dirty = true; }
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
+
+            // ---- Motion (space, inherited velocity, turbulence, orbit/vortex) ----
+            SectionHeader("Motion");
+            const char* spaces[] = {"World", "Local"};
+            int spi = (int)ps->simulationSpace;
+            if (ImGui::Combo("Space##ps", &spi, spaces, 2)) { ps->simulationSpace = (ParticleSystem::SimulationSpace)spi; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("World = particles stay put when the object moves (trails). Local = they move and turn with it (torch flame).");
+            if (ImGui::DragFloat("Inherit Velocity##ps", &ps->inheritVelocity, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the object's own speed given to each new particle.");
+            if (ImGui::DragFloat("Noise Strength##ps", &ps->noiseStrength, 0.02f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turbulence: a smooth swirling noise field (units/second). 0 = off.");
+            if (ps->noiseStrength > 0.0f) {
+                if (ImGui::DragFloat("Noise Frequency##ps", &ps->noiseFrequency, 0.01f, 0.01f, 50.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Noise Scroll##ps", &ps->noiseScroll, 0.01f, 0.0f, 50.0f)) ed.dirty = true;
+            }
+            if (ImGui::DragFloat("Orbit / sec##ps", &ps->orbitSpeed, 1.0f, -3600.0f, 3600.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spin particles around the axis through the object, in degrees per second.");
+            if (ImGui::DragFloat("Vortex##ps", &ps->vortexStrength, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Whirlwind: push particles sideways around the axis (acceleration).");
+            if (ImGui::DragFloat("Vortex Pull##ps", &ps->vortexPull, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull particles towards the axis (negative pushes them out).");
+            if (ps->orbitSpeed != 0.0f || ps->vortexStrength != 0.0f || ps->vortexPull != 0.0f) {
+                float oa[3] = {ps->orbitAxis.x, ps->orbitAxis.y, ps->orbitAxis.z};
+                if (ImGui::DragFloat3("Axis##ps", oa, 0.02f)) { ps->orbitAxis = {oa[0], oa[1], oa[2]}; ed.dirty = true; }
+            }
 
             // ---- Collision (ground plane) ----
             SectionHeader("Collision");
@@ -26489,6 +27592,8 @@ void DrawInspector(EditorState& ed) {
             if (!rb->freezeRotation) ImGui::DragFloat("Angular Drag", &rb->angularDrag, 0.01f, 0.0f, 10.0f);
             if (ImGui::Checkbox("Allow Sleep", &rb->allowSleep)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
+            if (ImGui::Checkbox("Continuous Collision", &rb->continuousCollision)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
@@ -26500,6 +27605,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc", &bc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(bc, "bc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##bc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##bc", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
@@ -26515,6 +27621,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cc", &cc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cc", &cc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(cc, "cc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##cc", &cc->autoFit)) { if (cc->autoFit) FitColliders(go); ed.dirty = true; }
@@ -26534,6 +27641,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap2", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap2", &cap->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(cap, "cap2")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cap2")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##cap2", &cap->autoFit)) { if (cap->autoFit) FitColliders(go); ed.dirty = true; }
@@ -26549,6 +27657,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##ec2", &ec->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##ec2", &ec->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(ec, "ec2")) ed.dirty = true;
             if (ImGui::Checkbox("One-Way##ec2", &ec->oneWay)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only blocks bodies from the normal side — jump up through it, land on top.");
             if (ec->oneWay) {
@@ -26580,6 +27689,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##pc2", &pc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##pc2", &pc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(pc, "pc2")) ed.dirty = true;
             ImGui::Separator();
             ImGui::Text("Vertices (%d)", (int)pc->points.size());
             for (std::size_t i = 0; i < pc->points.size(); ++i) {
@@ -26620,6 +27730,8 @@ void DrawInspector(EditorState& ed) {
             if (!rb->freezeRotation) ImGui::DragFloat("Angular Drag##rb3", &rb->angularDrag, 0.01f, 0.0f, 10.0f);
             if (ImGui::Checkbox("Allow Sleep##rb3", &rb->allowSleep)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
+            if (ImGui::Checkbox("Continuous Collision##rb3", &rb->continuousCollision)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
@@ -27103,6 +28215,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(bc, "bc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##bc3")) {
                 FitBox(go, bc); ed.dirty = true;
             }
@@ -27130,6 +28243,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(sc, "sc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##sc3")) {
                 FitSphere(go, sc); ed.dirty = true;
             }
@@ -27150,6 +28264,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(cap, "cap3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cap3")) {
                 FitCapsule(go, cap); ed.dirty = true;
             }
@@ -31308,17 +32423,88 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {tb->size.x, tb->size.y};
             if (ImGui::DragFloat2("Size (px)##utb", sz, 1.0f, 8.0f, 4000.0f)) { tb->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##utb", tb->anchor, ed);
-            ShapeCombo("Shape##utb", tb->shape, ed);
-            if (UIShapeUsesRadius(tb->shape))
+            // Style: the tab bar's look. Picking one fills in sensible spacing/shape
+            // (all still editable below).
+            static const char* tabStyles[] = {"Segmented", "Underline", "Folder", "Pills", "Vertical"};
+            int tst = (int)tb->style;
+            if (ImGui::Combo("Style##utb", &tst, tabStyles, 5)) {
+                tb->style = (UITabs::Style)tst;
+                if (tb->style == UITabs::Style::Pills && tb->spacing <= 0.0f) tb->spacing = 8.0f;
+                if (tb->style == UITabs::Style::Vertical && tb->spacing <= 0.0f) tb->spacing = 4.0f;
+                if (tb->style == UITabs::Style::Folder && tb->spacing <= 0.0f) tb->spacing = 2.0f;
+                if ((tb->style == UITabs::Style::Vertical || tb->style == UITabs::Style::Folder) && tb->shape == UIShape::Pill)
+                    tb->shape = UIShape::Rounded;
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Segmented: one-piece control.  Underline: a line under the selected tab.\n"
+                                  "Folder: browser tabs joined to the page.  Pills: separate round buttons.\n"
+                                  "Vertical: stacked down the side (settings menus).");
+            if (tb->style == UITabs::Style::Segmented || tb->style == UITabs::Style::Vertical) {
+                ShapeCombo("Shape##utb", tb->shape, ed);
+                if (UIShapeUsesRadius(tb->shape))
+                    if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            } else if (tb->style != UITabs::Style::Pills) {
                 if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            }
+            static const char* tabSizing[] = {"Equal width", "Fit text"};
+            int tsz = (int)tb->sizing;
+            if (ImGui::Combo("Sizing##utb", &tsz, tabSizing, 2)) { tb->sizing = (UITabs::Sizing)tsz; ed.dirty = true; }
+            if (ImGui::DragFloat("Spacing##utb", &tb->spacing, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Padding##utb", &tb->padding, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Space either side of a tab's text (Fit text sizing, Vertical rows)");
+            if (ImGui::DragFloat("Min Tab Size##utb", &tb->minTabSize, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tabs never get smaller than this; when they no longer fit,\nthe bar scrolls (wheel / drag) with arrow buttons at the ends.");
+            if (ImGui::DragFloat("Font Scale##utb", &tb->fontScale, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
+            if (tb->style != UITabs::Style::Segmented && tb->style != UITabs::Style::Pills)
+                if (ImGui::DragFloat("Indicator##utb", &tb->indicatorThickness, 0.1f, 1.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Icon Size##utb", &tb->iconSize, 0.5f, 4.0f, 128.0f)) ed.dirty = true;
             if (tb->Count() > 0) {
                 int v = tb->value;
-                if (ImGui::SliderInt("Selected##utb", &v, 0, tb->Count() - 1)) { tb->value = v; ed.dirty = true; }
+                // Edit mode doesn't tick the scene: apply the pages here so the preview
+                // shows the selected tab's content straight away.
+                if (ImGui::SliderInt("Selected##utb", &v, 0, tb->Count() - 1)) { tb->value = v; tb->ApplyPages(); ed.dirty = true; }
             }
+            SectionHeader("Colors");
             float se[4] = {tb->selected.r, tb->selected.g, tb->selected.b, tb->selected.a};
             if (ImGui::ColorEdit4("Selected Color##utb", se)) { tb->selected = {se[0], se[1], se[2], se[3]}; ed.dirty = true; }
             float bgc[4] = {tb->background.r, tb->background.g, tb->background.b, tb->background.a};
             if (ImGui::ColorEdit4("Track Color##utb", bgc)) { tb->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            float txc[4] = {tb->textColor.r, tb->textColor.g, tb->textColor.b, tb->textColor.a};
+            if (ImGui::ColorEdit4("Text##utb", txc)) { tb->textColor = {txc[0], txc[1], txc[2], txc[3]}; ed.dirty = true; }
+            float stc[4] = {tb->selectedTextColor.r, tb->selectedTextColor.g, tb->selectedTextColor.b, tb->selectedTextColor.a};
+            if (ImGui::ColorEdit4("Selected Text##utb", stc)) { tb->selectedTextColor = {stc[0], stc[1], stc[2], stc[3]}; ed.dirty = true; }
+            float hvc[4] = {tb->hoverColor.r, tb->hoverColor.g, tb->hoverColor.b, tb->hoverColor.a};
+            if (ImGui::ColorEdit4("Hover Tint##utb", hvc)) { tb->hoverColor = {hvc[0], hvc[1], hvc[2], hvc[3]}; ed.dirty = true; }
+            float prc[4] = {tb->pressedColor.r, tb->pressedColor.g, tb->pressedColor.b, tb->pressedColor.a};
+            if (ImGui::ColorEdit4("Pressed Tint##utb", prc)) { tb->pressedColor = {prc[0], prc[1], prc[2], prc[3]}; ed.dirty = true; }
+            float bdc[4] = {tb->badgeColor.r, tb->badgeColor.g, tb->badgeColor.b, tb->badgeColor.a};
+            if (ImGui::ColorEdit4("Badge##utb", bdc)) { tb->badgeColor = {bdc[0], bdc[1], bdc[2], bdc[3]}; ed.dirty = true; }
+            float btc[4] = {tb->badgeTextColor.r, tb->badgeTextColor.g, tb->badgeTextColor.b, tb->badgeTextColor.a};
+            if (ImGui::ColorEdit4("Badge Text##utb", btc)) { tb->badgeTextColor = {btc[0], btc[1], btc[2], btc[3]}; ed.dirty = true; }
+            SectionHeader("Behavior");
+            if (ImGui::Checkbox("Interactable##utb", &tb->interactable)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Focusable##utb", &tb->focusable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keyboard/gamepad menu focus: Left/Right switch tabs");
+            if (ImGui::Checkbox("Animate##utb", &tb->animate)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The selection slides to the new tab");
+            if (tb->animate) {
+                ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                if (ImGui::DragFloat("Speed##utbanim", &tb->animSpeed, 0.2f, 1.0f, 60.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Prev/Next Keys##utb", &tb->hotkeys)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch tabs with these keys (and the gamepad L / R\nshoulder buttons) while the bar is on screen");
+            if (tb->hotkeys) {
+                char pk[16]; std::strncpy(pk, tb->prevKey.c_str(), sizeof(pk) - 1); pk[sizeof(pk) - 1] = '\0';
+                char nk[16]; std::strncpy(nk, tb->nextKey.c_str(), sizeof(nk) - 1); nk[sizeof(nk) - 1] = '\0';
+                ImGui::SetNextItemWidth(60);
+                if (ImGui::InputText("Prev##utbkey", pk, sizeof(pk))) { tb->prevKey = pk; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                if (ImGui::InputText("Next##utbkey", nk, sizeof(nk))) { tb->nextKey = nk; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Wrap##utb", &tb->wrapAround)) ed.dirty = true;
+            }
             SectionHeader("Tabs & content");
             // Each tab can name a GameObject to show as its content page (others are
             // hidden) — assign one per tab and switching works with no scripting.
@@ -31345,12 +32531,36 @@ void DrawInspector(EditorState& ed) {
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) eraseT = i;
+                // Second row: icon (a texture path, or drop one from the Project panel),
+                // badge (0 none, -1 dot, N number) and whether the tab can be picked.
+                char ib[192]; std::strncpy(ib, tb->IconOf(i).c_str(), sizeof(ib) - 1); ib[sizeof(ib) - 1] = '\0';
+                ImGui::Indent(12.0f);
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::InputText("Icon##ic", ib, sizeof(ib))) { tb->SetIcon(i, ib); ed.dirty = true; }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                        tb->SetIcon(i, (const char*)p->Data); ed.dirty = true;
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                int bdg = tb->BadgeOf(i);
+                if (ImGui::DragInt("Badge##bd", &bdg, 0.1f, -1, 999)) { tb->SetBadge(i, bdg); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = none, -1 = a dot, N = a number");
+                ImGui::SameLine();
+                bool en = tb->IsTabEnabled(i);
+                if (ImGui::Checkbox("Enabled##en", &en)) { tb->SetTabEnabled(i, en); ed.dirty = true; }
+                ImGui::Unindent(12.0f);
                 ImGui::PopID();
             }
             if (eraseT >= 0) {
                 tb->tabs.erase(tb->tabs.begin() + eraseT);
-                if (eraseT < (int)tb->pages.size()) tb->pages.erase(tb->pages.begin() + eraseT);
+                if (eraseT < (int)tb->pages.size())    tb->pages.erase(tb->pages.begin() + eraseT);
+                if (eraseT < (int)tb->icons.size())    tb->icons.erase(tb->icons.begin() + eraseT);
+                if (eraseT < (int)tb->badges.size())   tb->badges.erase(tb->badges.begin() + eraseT);
+                if (eraseT < (int)tb->disabled.size()) tb->disabled.erase(tb->disabled.begin() + eraseT);
                 if (tb->value >= tb->Count()) tb->value = tb->Count() - 1;
+                if (tb->value < 0) tb->value = 0;
                 ed.dirty = true;
             }
             if (ImGui::SmallButton("Add Tab##utb")) { tb->tabs.push_back("Tab"); tb->pages.push_back(""); ed.dirty = true; }
@@ -31361,6 +32571,7 @@ void DrawInspector(EditorState& ed) {
                 ed.PushUndo();
                 GameObject* parent = go->transform->Parent() ? go->transform->Parent()->gameObject : nullptr;
                 tb->pages.resize(tb->tabs.size());
+                const bool side = tb->style == UITabs::Style::Vertical;
                 for (int i = 0; i < (int)tb->tabs.size(); ++i) {
                     std::string nm = go->name + " / " + tb->tabs[i];
                     GameObject* page = ed.scene().Find(nm);
@@ -31368,20 +32579,29 @@ void DrawInspector(EditorState& ed) {
                         page = ed.scene().CreateGameObject(nm);
                         auto* pn = page->AddComponent<UIPanel>();
                         pn->anchor = tb->anchor;
-                        pn->position = {tb->position.x, tb->position.y + tb->size.y + 8.0f};
-                        pn->size = {tb->size.x, 220.0f};
-                        pn->color = Color::FromBytes(28, 32, 42, 235);
+                        // Beside a vertical bar, under a horizontal one (a Folder page
+                        // touches its tabs so the selected tab joins the page).
+                        if (side) {
+                            pn->position = {tb->position.x + tb->size.x + 8.0f, tb->position.y};
+                            pn->size = {360.0f, tb->size.y};
+                        } else {
+                            const float gapY = tb->style == UITabs::Style::Folder ? 0.0f : 8.0f;
+                            pn->position = {tb->position.x, tb->position.y + tb->size.y + gapY};
+                            pn->size = {tb->size.x, 220.0f};
+                        }
+                        pn->color = tb->style == UITabs::Style::Folder ? tb->selected : Color::FromBytes(28, 32, 42, 235);
                         if (parent) page->transform->SetParent(parent->transform, false);
                     }
                     tb->pages[i] = nm;
-                    page->active = (i == tb->value);
                 }
+                tb->ApplyPages();
                 ed.dirty = true; ConsoleLog("Generated tab content pages");
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Make a content Panel per tab and wire it up. Put your\nwidgets under each page; the selected tab shows its page.");
-            ImGui::TextDisabled("Selected tab shows its Page object; others hide. on_change()");
-            ImGui::TextDisabled("still fires on a sibling script if you want extra logic.");
+            ImGui::TextDisabled("Selected tab shows its Page object (and everything under");
+            ImGui::TextDisabled("it); others hide. Long names are shortened with \"...\".");
+            ImGui::TextDisabled("on_change() still fires on a sibling script.");
             if (ImGui::SmallButton("Remove##utb")) toRemove = tb;
         }
     }
@@ -32849,32 +34069,42 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
     }
 
-    // UI tabs: a segmented bar with the selected segment highlighted + labels.
-        else if (_it.kind == K_Tabs) {   // segmented tab bars
+    // UI tabs: replay the bar's shared paint list (UITabs::Paint) — the same layout the
+    // game draws and hit-tests, so the preview matches the built game in every style.
+        else if (_it.kind == K_Tabs) {   // tab bars (segmented / underline / folder / pills / vertical)
         auto* tb = up->GetComponent<UITabs>();
         if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
-        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        if (IsPolyUIShape(tb->shape))
-            DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), tb->shape, tb->cornerRadius, ToColor(tb->background), IM_COL32(0, 0, 0, 0), 0.0f);
-        else
-            dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(tb->background), tb->cornerRadius);
-        int n = tb->Count();
-        float segW = sz.x / (float)n;
-        ImVec2 selA(a.x + segW * tb->value + 2.0f, a.y + 2.0f);
-        ImVec2 selB(a.x + segW * (tb->value + 1) - 2.0f, a.y + sz.y - 2.0f);
-        dl->AddRectFilled(selA, selB, ToColor(tb->selected), tb->cornerRadius);
-        float px = 2.0f * s;
-        for (int i = 0; i < n; ++i) {
-            const std::string& lbl = tb->tabs[i];
-            float tw = UITextW(lbl, px);
-            ImU32 c = ToColor(i == tb->value ? tb->selectedTextColor : tb->textColor);
-            DrawBitmapText(dl, lbl, a.x + segW * i + (segW - tw) * 0.5f,
-                           a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, c);
+        const ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        int clips = 0;
+        for (const UITabsDraw& d : tb->Paint(sz.x, sz.y, s, UITextW)) {
+            const ImVec2 p0(a.x + d.x, a.y + d.y), p1(a.x + d.x + d.w, a.y + d.y + d.h);
+            switch (d.kind) {
+                case UITabsDraw::Kind::Fill: {
+                    const ImU32 c = ToColor(d.color);
+                    if (d.shape == UIShape::Rectangle)    dl->AddRectFilled(p0, p1, c);
+                    else if (d.shape == UIShape::Rounded) dl->AddRectFilled(p0, p1, c, d.radius, CornerFlags(d.cornerMask));
+                    else if (d.shape == UIShape::Circle && std::fabs(d.w - d.h) < 0.5f)
+                        dl->AddCircleFilled(ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f), d.w * 0.5f, c, 24);
+                    else DrawPolyUIShape(dl, p0, ImVec2(d.w, d.h), d.shape, d.radius, c, IM_COL32(0, 0, 0, 0), 0.0f, d.cornerMask);
+                    break;
+                }
+                case UITabsDraw::Kind::Text:
+                    DrawBitmapText(dl, d.text, p0.x, p0.y, d.px, ToColor(d.color));
+                    break;
+                case UITabsDraw::Kind::Icon:
+                    if (SDL_Texture* itex = GetThumb(d.text))
+                        dl->AddImage((ImTextureID)itex, p0, p1, ImVec2(0, 0), ImVec2(1, 1), ToColor(d.color));
+                    else   // missing texture: a placeholder square like the button's icon slot
+                        dl->AddRect(p0, p1, IM_COL32(255, 255, 255, (int)(110 * d.color.a)), 3.0f);
+                    break;
+                case UITabsDraw::Kind::Clip:   dl->PushClipRect(p0, p1, true); ++clips; break;
+                case UITabsDraw::Kind::Unclip: if (clips > 0) { dl->PopClipRect(); --clips; } break;
+            }
         }
-        if (!tb->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), tb->cornerRadius);
+        while (clips-- > 0) dl->PopClipRect();
     }
 
     // In-world UI (3D labels/markers): project each through the main camera onto the
@@ -33738,6 +34968,7 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
     // on-screen rect so a 3D button is clickable where it actually appears.
     if (UIWorld().active) {
         UIWorld().rectOf = [cs](GameObject* go, Vec2& o, Vec2& sz) {
+            if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
             return GetUIScreenRect(go, cs.x, cs.y, o, sz);
         };
     }
@@ -34497,6 +35728,51 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                 worldToScreen(Vec3{wp[(i + 1) % wp.size()], 0}), cg, 1.5f);
                 for (const Vec2& v : wp)
                     dl->AddCircleFilled(worldToScreen(Vec3{v, 0}), 2.5f, cg);
+            }
+        }
+    }
+
+    // Physics debug view (Scene AND Game view): 2D colliders (green solid, blue
+    // trigger), this frame's contacts (red dot + normal) and rays cast by scripts.
+    if (g_physDebug) {
+        auto P = [&](const Vec2& p) { return worldToScreen(Vec3{p, 0}); };
+        for (const auto& up : objs) {
+            if (!up->active) continue;
+            for (Collider2D* col : up->GetComponents<Collider2D>()) {
+                if (!col->enabled) continue;
+                ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230) : IM_COL32(90, 230, 120, 230);
+                if (auto* bx = dynamic_cast<BoxCollider2D*>(col)) {   // oriented box
+                    Vec2 c = bx->WorldCenter(), h = bx->HalfExtents();
+                    float a = bx->WorldAngle(), ca = Mathf::Cos(a), sa = Mathf::Sin(a);
+                    Vec2 ax{ca * h.x, sa * h.x}, ay{-sa * h.y, ca * h.y};
+                    ImVec2 q[4] = {P(c - ax - ay), P(c + ax - ay), P(c + ax + ay), P(c - ax + ay)};
+                    dl->AddPolyline(q, 4, cc, ImDrawFlags_Closed, 1.5f);
+                } else if (auto* ci = dynamic_cast<CircleCollider2D*>(col)) {
+                    dl->AddCircle(P(ci->WorldCenter()), ci->WorldRadius() * scale, cc, 28, 1.5f);
+                } else if (auto* cap = dynamic_cast<CapsuleCollider2D*>(col)) {
+                    Vec2 s0, s1; cap->Segment(s0, s1); float r = cap->WorldRadius();
+                    dl->AddCircle(P(s0), r * scale, cc, 20, 1.5f);
+                    dl->AddCircle(P(s1), r * scale, cc, 20, 1.5f);
+                } else if (auto* poly = dynamic_cast<PolyShapeCollider2D*>(col)) {
+                    std::vector<Vec2> wp = poly->WorldPoints();
+                    std::size_t segs = poly->closedLoop() ? wp.size() : (wp.empty() ? 0 : wp.size() - 1);
+                    for (std::size_t i = 0; i < segs; ++i) dl->AddLine(P(wp[i]), P(wp[(i + 1) % wp.size()]), cc, 1.5f);
+                }
+            }
+        }
+        for (const PhysicsDebugContact2D& ct : ed.scene().physics().DebugContacts()) {
+            ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
+            dl->AddLine(P(ct.point), P(ct.point + ct.normal * 0.5f), kc, 2.0f);
+            dl->AddCircleFilled(P(ct.point), 3.5f, kc);
+        }
+        for (const PhysicsDebugRay2D& r : ed.scene().physics().DebugRays()) {
+            if (r.hit) {
+                dl->AddLine(P(r.from), P(r.point), IM_COL32(80, 230, 120, 255), 2.0f);
+                dl->AddLine(P(r.point), P(r.point + r.normal * 0.4f), IM_COL32(255, 255, 255, 230), 1.5f);
+                if (r.radius > 0.0f) dl->AddCircle(P(r.point + r.normal * r.radius), r.radius * scale, IM_COL32(80, 230, 120, 200), 20, 1.25f);
+                dl->AddCircleFilled(P(r.point), 3.5f, IM_COL32(80, 230, 120, 255));
+            } else {
+                dl->AddLine(P(r.from), P(r.to), IM_COL32(255, 210, 80, 220), 1.5f);
             }
         }
     }
@@ -35438,6 +36714,77 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (auto& h : al->extraHandlers) {
                 for (auto& c : h.conditions)   drawRay(c);
                 for (auto& i : h.instructions) drawRay(i);
+            }
+        }
+    }
+
+    // Physics debug view (Scene AND Game view, so you can watch it while playing):
+    // every 3D collider by its true shape (green solid, blue trigger, grey asleep),
+    // this frame's contacts (red dot + normal) and the rays scripts cast (green to
+    // the hit with a white normal, yellow on a miss). Off = nothing is drawn and the
+    // physics records nothing.
+    if (g_physDebug) {
+        auto C = [&](const Vec3& p) { return vp * Vec4{p.x, p.y, p.z, 1.0f}; };
+        auto line = [&](const Vec3& a, const Vec3& b, ImU32 col, float th = 1.5f) { clipLine(C(a), C(b), col, th); };
+        auto ring = [&](const Vec3& c, const Vec3& u, const Vec3& v, float r, ImU32 col) {
+            Vec3 prev = c + u * r;
+            for (int k = 1; k <= 24; ++k) {
+                float a = (float)k / 24.0f * 6.2831853f;
+                Vec3 cur = c + u * (r * Mathf::Cos(a)) + v * (r * Mathf::Sin(a));
+                line(prev, cur, col, 1.25f);
+                prev = cur;
+            }
+        };
+        // Two unit vectors perpendicular to n (for rings around an axis).
+        auto basis = [](const Vec3& n, Vec3& u, Vec3& v) {
+            Vec3 t = Mathf::Abs(n.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+            u = Vec3::Cross(n, t).Normalized(); v = Vec3::Cross(n, u);
+        };
+        for (const auto& up : objs) {
+            if (!up->active) continue;
+            auto* rb = up->GetComponent<Rigidbody3D>();
+            for (Collider3D* col : up->GetComponents<Collider3D>()) {
+                if (!col->enabled) continue;
+                ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230)
+                         : (rb && rb->sleeping) ? IM_COL32(140, 150, 140, 200) : IM_COL32(90, 230, 120, 230);
+                if (auto* bx = dynamic_cast<BoxCollider3D*>(col)) {   // oriented box (mesh = its bounds)
+                    Vec3 c = bx->WorldCenter(), h = bx->HalfExtents(), ax, ay, az;
+                    bx->WorldAxes(ax, ay, az);
+                    Vec3 cr[8];
+                    for (int i = 0; i < 8; ++i)
+                        cr[i] = c + ax * ((i & 1) ? h.x : -h.x) + ay * ((i & 2) ? h.y : -h.y) + az * ((i & 4) ? h.z : -h.z);
+                    static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+                    for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]], cc, 1.25f);
+                } else if (auto* sp = dynamic_cast<SphereCollider3D*>(col)) {
+                    Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
+                    ring(c, {1, 0, 0}, {0, 1, 0}, r, cc); ring(c, {1, 0, 0}, {0, 0, 1}, r, cc); ring(c, {0, 1, 0}, {0, 0, 1}, r, cc);
+                } else if (auto* cap = dynamic_cast<CapsuleCollider3D*>(col)) {   // capsule / cylinder
+                    Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
+                    Vec3 axis = (b - a).SqrMagnitude() > 1e-10f ? (b - a).Normalized() : Vec3{0, 1, 0}, u, v;
+                    basis(axis, u, v);
+                    ring(a, u, v, r, cc); ring(b, u, v, r, cc);
+                    ring(a, u, axis, r, cc); ring(b, u, axis, r, cc);
+                    line(a + u * r, b + u * r, cc); line(a - u * r, b - u * r, cc);
+                    line(a + v * r, b + v * r, cc); line(a - v * r, b - v * r, cc);
+                }
+            }
+        }
+        for (const PhysicsDebugContact3D& ct : ed.scene().physics3D().DebugContacts()) {
+            ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
+            line(ct.point, ct.point + ct.normal * 0.5f, kc, 2.0f);
+            ImVec2 sp; if (toScreen(C(ct.point), sp)) dl->AddCircleFilled(sp, 3.5f, kc);
+        }
+        for (const PhysicsDebugRay3D& r : ed.scene().physics3D().DebugRays()) {
+            if (r.hit) {
+                line(r.from, r.point, IM_COL32(80, 230, 120, 255), 2.0f);
+                line(r.point, r.point + r.normal * 0.4f, IM_COL32(255, 255, 255, 230), 1.5f);
+                if (r.radius > 0.0f) {   // the cast ball where it stopped
+                    Vec3 u, v, c = r.point + r.normal * r.radius; basis(r.normal, u, v);
+                    ring(c, u, v, r.radius, IM_COL32(80, 230, 120, 200));
+                }
+                ImVec2 sp; if (toScreen(C(r.point), sp)) dl->AddCircleFilled(sp, 3.5f, IM_COL32(80, 230, 120, 255));
+            } else {
+                line(r.from, r.to, IM_COL32(255, 210, 80, 220), 1.5f);
             }
         }
     }
@@ -37775,6 +39122,9 @@ void DrawGameView(EditorState& ed) {
     ImGui::SameLine();
     if (ImGui::Checkbox("Stats", &g_gameStatsOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("FPS / frame time / object + triangle counts, overlaid on the view");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Physics", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Physics debug view: colliders (green), triggers (blue), contact points\nand normals (red), and rays cast from scripts, in the Scene and Game views.\nMore options in View > Scene Overlays > Physics Debug.");
     if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked())) {
         ImGui::SameLine();
         if (g_gameCursorReleased) ImGui::TextDisabled("(click the view to capture)");
@@ -38537,6 +39887,10 @@ int main(int argc, char** argv) {
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
     // button labels like "Load" in a panel) at end users.
     io.ConfigDebugHighlightIdConflicts = false;
+    // Ctrl+Tab cycles the editor's panels (DrawPanelSwitcher) instead of Dear
+    // ImGui's own window switcher, which would list every internal window too.
+    GImGui->ConfigNavWindowingKeyNext = 0;
+    GImGui->ConfigNavWindowingKeyPrev = 0;
     // A clean, modern proportional UI font (Roboto Medium, embedded — the
     // runtime/Material typeface) instead of Dear ImGui's tiny built-in bitmap font.
     // Crisper at any zoom and far more legible across the whole editor. Falls back
@@ -38660,6 +40014,7 @@ int main(int argc, char** argv) {
     }
     LoadRecent();
     LoadSettings();
+    LoadUserLayouts();     // named panel layouts (okay_layouts.txt)
     // Brand-new install on a high-DPI display (common on Windows 11 laptops at
     // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —
     // afterwards the user's own UI Scale choice (saved) wins.
@@ -38951,6 +40306,7 @@ int main(int argc, char** argv) {
         else if (ed.isPlaying()) {   // no camera: screen-space widgets still hit-test where drawn
             ImVec2 cs = g_playCanvasSize;
             UIWorld().rectOf = [cs](GameObject* go, Vec2& o, Vec2& sz) {
+                if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
                 return GetUIScreenRect(go, cs.x, cs.y, o, sz);
             };
         }
@@ -39111,7 +40467,11 @@ int main(int argc, char** argv) {
                 s_skinWas = now;
             }
         }
-        ImGui::NewFrame();
+        ApplyPendingLayoutIni();   // a saved layout picked last frame
+        {
+            TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
+            ImGui::NewFrame();
+        }
 
         // Clear editor globals still pointing at an object deleted last frame (hierarchy
         // delete, Del key, script destroy). Dereferencing a freed GameObject in the
@@ -39434,7 +40794,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
-        DrawPanelTabMenu();   // right-click on any panel tab
+        DrawPanelTabsExtras();   // tab icons, overflow lists, side tabs, Ctrl+Tab, right-click tab menu
         {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
             auto& f = okay::UISafeInsets();
             f = {};

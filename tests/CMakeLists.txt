@@ -150,6 +150,10 @@ add_executable(test_particles_serialize test_particles_serialize.cpp)
 target_link_libraries(test_particles_serialize PRIVATE okay::engine)
 add_test(NAME particles_serialize COMMAND test_particles_serialize)
 
+add_executable(test_particles_fx test_particles_fx.cpp)
+target_link_libraries(test_particles_fx PRIVATE okay::engine)
+add_test(NAME particles_fx COMMAND test_particles_fx)
+
 add_executable(test_profiler test_profiler.cpp)
 target_link_libraries(test_profiler PRIVATE okay::engine)
 add_test(NAME profiler COMMAND test_profiler)
@@ -245,6 +249,10 @@ add_test(NAME animation COMMAND test_animation)
 add_executable(test_queries test_queries.cpp)
 target_link_libraries(test_queries PRIVATE okay::engine)
 add_test(NAME physics_queries COMMAND test_queries)
+
+add_executable(test_physics_queries_ext test_physics_queries_ext.cpp)
+target_link_libraries(test_physics_queries_ext PRIVATE okay::engine)
+add_test(NAME physics_queries_ext COMMAND test_physics_queries_ext)
 
 add_executable(test_particles_tilemap test_particles_tilemap.cpp)
 target_link_libraries(test_particles_tilemap PRIVATE okay::engine)
@@ -773,9 +781,26 @@ add_executable(test_crash_reports test_crash_reports.cpp)
 target_include_directories(test_crash_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_reports COMMAND test_crash_reports)
 
+# The launcher's official game (shared/OfficialGame.hpp): header-only, so no engine link.
+add_executable(test_official_game test_official_game.cpp)
+target_include_directories(test_official_game PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME official_game COMMAND test_official_game)
+# Publishing it from the launcher's Admin page (same header).
+add_executable(test_official_publish test_official_publish.cpp)
+target_include_directories(test_official_publish PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME official_publish COMMAND test_official_publish)
+
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)
 add_test(NAME tween COMMAND test_tween)
+
+add_executable(test_editor_tabs test_editor_tabs.cpp)
+target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME editor_tabs COMMAND test_editor_tabs)
+
+add_executable(test_ui_tabs test_ui_tabs.cpp)
+target_link_libraries(test_ui_tabs PRIVATE okay::engine)
+add_test(NAME ui_tabs COMMAND test_ui_tabs)
 
 add_executable(test_shooter25d test_shooter25d.cpp)
 target_link_libraries(test_shooter25d PRIVATE okay::engine)

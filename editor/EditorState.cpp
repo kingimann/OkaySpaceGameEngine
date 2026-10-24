@@ -2,6 +2,7 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "EditorState.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
@@ -655,6 +656,8 @@ void EditorState::Play() {
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
     Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
+    vs::ForgetSceneVariables(&m_scene);   // scene / global graph variables start empty too
+    vs::ClearGlobalVariables();
     Game::Reset();             // clear stale pause/quit state from a prior session
     // Check every visual script first and say what's wrong in the Console
     // (errors in red: that part won't work; warnings: probably not what you meant).

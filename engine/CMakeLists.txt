@@ -32,6 +32,7 @@ add_library(okay_engine
     src/VisualScript/NodeGraph.cpp
     src/VisualScript/VsTypes.cpp
     src/VisualScript/VsApi.cpp
+    src/VisualScript/VsVariables.cpp
     src/VisualScript/ActionGraph.cpp
     src/Components/VisualScriptComponent.cpp
     src/Components/UIAnimation.cpp

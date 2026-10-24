@@ -485,7 +485,12 @@ struct RepeatNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         int nx = Next(0);
-        for (int i = 0; i < count && nx >= 0 && !g.Aborted(); ++i) g.Run(nx, ctx);
+        g.EnterLoop();
+        for (int i = 0; i < count && nx >= 0 && !g.Aborted(); ++i) {
+            g.Run(nx, ctx);
+            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak) break;
+        }
+        g.LeaveLoop();
         return -1;
     }
 };

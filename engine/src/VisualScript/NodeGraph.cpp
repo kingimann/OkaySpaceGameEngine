@@ -2,6 +2,7 @@
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/NodesFunctions.hpp"
+#include "okay/VisualScript/NodesLoops.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
@@ -136,7 +137,7 @@ void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& 
 void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
     // One budget per event: a top-level Run starts it, loop bodies and sequence
     // outputs (nested Runs) share it, so nested loops can't freeze the game.
-    if (m_runDepth == 0) { m_steps = 0; m_abort = false; }
+    if (m_runDepth == 0) { m_steps = 0; m_abort = false; m_loops.clear(); m_loopSignal = kLoopNone; }
     ++m_runDepth;
     int cur = entryNode;
     bool first = true;
@@ -243,7 +244,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     // same node as "OnKey space": accept both.
     if (const auto colon = type.find(':'); colon != std::string::npos && colon + 1 < type.size()) {
         const std::string base = type.substr(0, colon);
-        if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent") {
+        if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent" ||
+            base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
             std::vector<std::string> a{type.substr(colon + 1)};
             a.insert(a.end(), args.begin(), args.end());
             return MakeNode(base, a, err);
@@ -512,6 +514,33 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         return std::make_unique<CallFunctionNode>(FunctionNameOf(text));
     }
     if (type == "SetLocal")       return std::make_unique<SetLocalNode>(argOr("x"));
+    // Loops, lists, scene / global variables (NodesLoops.hpp).
+    if (type == "While")          return std::make_unique<WhileNode>();
+    if (type == "ForEach")        return std::make_unique<ForEachNode>();
+    if (type == "Break")          return std::make_unique<LoopJumpNode>(true);
+    if (type == "Continue")       return std::make_unique<LoopJumpNode>(false);
+    if (type == "NewList")        return std::make_unique<NewListNode>();
+    if (type == "ListAdd")        return std::make_unique<ListAddNode>();
+    if (type == "ListRemoveAt")   return std::make_unique<ListRemoveAtNode>();
+    if (type == "ListGet")        return std::make_unique<ListGetNode>();
+    if (type == "ListLength")     return std::make_unique<ListLengthNode>();
+    if (type == "ListContains")   return std::make_unique<ListContainsNode>();
+    if (type == "AllWithTag")     return std::make_unique<AllWithTagNode>(argOr("Enemy"));
+    {
+        using S = ScopedVarNode::Scope; using O = ScopedVarNode::Op;
+        if (type == "GetSceneVar")  return std::make_unique<ScopedVarNode>(S::Scene, O::Get, argOr("x"));
+        if (type == "SetSceneVar")  return std::make_unique<ScopedVarNode>(S::Scene, O::Set, argOr("x"));
+        if (type == "AddSceneVar")  return std::make_unique<ScopedVarNode>(S::Scene, O::Add, argOr("x"));
+        if (type == "GetGlobalVar") return std::make_unique<ScopedVarNode>(S::Global, O::Get, argOr("x"));
+        if (type == "SetGlobalVar") return std::make_unique<ScopedVarNode>(S::Global, O::Set, argOr("x"));
+        if (type == "AddGlobalVar") return std::make_unique<ScopedVarNode>(S::Global, O::Add, argOr("x"));
+    }
+    {
+        using S = VarChangedEventNode::Scope;
+        if (type == "OnVarChanged")       return std::make_unique<VarChangedEventNode>(S::Object, argOr("x"));
+        if (type == "OnSceneVarChanged")  return std::make_unique<VarChangedEventNode>(S::Scene, argOr("x"));
+        if (type == "OnGlobalVarChanged") return std::make_unique<VarChangedEventNode>(S::Global, argOr("x"));
+    }
     if (type == "GetLocal")       return std::make_unique<GetLocalNode>(argOr("x"));
     if (type == "Self")           return std::make_unique<SelfNode>();
     if (type == "Other")          return std::make_unique<OtherNode>();

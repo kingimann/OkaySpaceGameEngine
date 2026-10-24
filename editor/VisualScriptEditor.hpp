@@ -9,6 +9,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
+#include "okay/VisualScript/VsTypes.hpp"
 #include "VisualScriptNodeHelp.hpp"
 #include <algorithm>
 #include <cctype>
@@ -61,10 +62,16 @@ struct VsDef {
 inline std::vector<VsDef> VsWithTargetPins(std::vector<VsDef> defs) {
     for (VsDef& d : defs) {
         const int tp = okay::vs::TargetPinFor(d.type);
-        if (tp < 0) continue;
-        if (tp == (int)d.dataIn.size()) d.dataIn.push_back("Target");
-        else std::fprintf(stderr, "Visual Script: node %s expects its Target at pin %d but has %d inputs\n",
-                          d.type, tp, (int)d.dataIn.size());
+        if (tp >= 0) {
+            if (tp == (int)d.dataIn.size()) d.dataIn.push_back("Target");
+            else std::fprintf(stderr, "Visual Script: node %s expects its Target at pin %d but has %d inputs\n",
+                              d.type, tp, (int)d.dataIn.size());
+        }
+        // The engine's pin-type table must describe exactly these pins.
+        const okay::vs::NodeSignature* sig = okay::vs::SignatureFor(d.type);
+        if (!sig || sig->execIn != d.execIn || sig->ins.size() != d.dataIn.size() ||
+            (std::string(d.type) != "Const" && sig->outs.size() != d.dataOut.size()))
+            std::fprintf(stderr, "Visual Script: node %s doesn't match the pin-type table\n", d.type);
     }
     return defs;
 }
@@ -685,6 +692,14 @@ inline void SeedStarterGraph(VsEditGraph& g) {
 inline const VsEditNode* VsFind(const VsEditGraph& g, int id) {
     for (const auto& n : g.nodes) if (n.id == id) return &n;
     return nullptr;
+}
+inline okay::vs::PinType VsOutPinType(const VsEditGraph& g, int nodeId, int pin) {
+    const VsEditNode* n = VsFind(g, nodeId);
+    return n ? okay::vs::OutputType(n->type, pin, n->arg) : okay::vs::PinType::Any;
+}
+inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin) {
+    const VsEditNode* n = VsFind(g, nodeId);
+    return n ? okay::vs::InputType(n->type, pin) : okay::vs::PinType::Any;
 }
 inline int VsExecTarget(const VsEditGraph& g, int fromNode, int pin) {
     for (const auto& l : g.execLinks) if (l.from == fromNode && l.pin == pin) return l.to;
@@ -1328,7 +1343,39 @@ struct VsEditState {
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
     bool   frameSel = false;     // fit the selected nodes (F)
     bool   needsEvent = false;   // nodes but no event node: hint on the canvas
+    // The graph checker's findings for the graph on screen (recomputed when it changes).
+    std::string checkedText; std::vector<okay::vs::VsIssue> issues;
+    bool   showIssues = false;
+    std::string refuseMsg; float refuseTime = 0.0f;   // why a wire was refused (shown a few seconds)
 };
+
+// ---- Pin types (from the engine's table) -------------------------------------
+inline okay::vs::PinType VsOutPinType(const VsEditGraph& g, int nodeId, int pin);
+inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin);
+inline ImU32 VsPinColor(okay::vs::PinType t) {
+    using okay::vs::PinType;
+    switch (t) {
+        case PinType::Number: return IM_COL32(120, 200, 140, 255);
+        case PinType::Bool:   return IM_COL32(225, 95, 95, 255);
+        case PinType::Text:   return IM_COL32(235, 130, 205, 255);
+        case PinType::Vec3:   return IM_COL32(235, 200, 80, 255);
+        case PinType::Object: return IM_COL32(95, 165, 255, 255);
+        case PinType::List:   return IM_COL32(90, 215, 220, 255);
+        default:              return IM_COL32(185, 185, 195, 255);
+    }
+}
+/// Can output `outPin` of `producer` feed input `inPin` of `consumer`? `why` says
+/// what's wrong (and what to use instead) when it can't.
+inline bool VsWireOk(const VsEditGraph& g, int consumer, int inPin, int producer, int outPin, std::string* why = nullptr) {
+    const okay::vs::PinType from = VsOutPinType(g, producer, outPin), to = VsInPinType(g, consumer, inPin);
+    if (okay::vs::PinCompatible(from, to)) return true;
+    if (why) {
+        *why = std::string("A ") + okay::vs::PinTypeName(from) + " can't go into a " + okay::vs::PinTypeName(to) + " input";
+        const std::string h = okay::vs::ConversionHint(from, to);
+        if (!h.empty()) *why += " - " + h;
+    }
+    return false;
+}
 
 inline VsEditState& State() { static VsEditState s; return s; }
 
@@ -1558,11 +1605,35 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::SameLine();
     }
     ImGui::TextDisabled("%s%s", g.path.empty() ? "(unsaved)" : std::filesystem::path(g.path).filename().string().c_str(), g.dirty ? " *" : "");
-    // Right side: Fit, zoom readout (click = 100%), View.
+    // The graph checker: re-run whenever the graph changes (wires that can't
+    // work, nodes nothing runs, unset variables, bad key names, missing prefabs).
     {
-        const float rightW = 230.0f;
+        std::string now = g.toText();
+        if (now != st.checkedText) {
+            st.issues = okay::vs::ValidateGraphText(now, ed.projectDir());
+            st.checkedText = std::move(now);
+        }
+    }
+    // Right side: problems, Fit, zoom readout (click = 100%), View.
+    {
+        int nErr = 0, nWarn = 0;
+        for (const auto& is : st.issues) (is.severity == 0 ? nErr : nWarn)++;
+        const float rightW = 360.0f;
         const float avail = ImGui::GetWindowContentRegionMax().x;
         ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f, avail - rightW));
+        {
+            char lbl[64];
+            if (nErr + nWarn == 0) std::snprintf(lbl, sizeof lbl, "\xE2\x9C\x93 No problems##vsissues");
+            else std::snprintf(lbl, sizeof lbl, "\xE2\x9A\xA0 %d problem%s##vsissues", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
+            const ImVec4 tc = nErr ? ImVec4(1.0f, 0.45f, 0.40f, 1) : nWarn ? ImVec4(0.95f, 0.75f, 0.35f, 1) : ImVec4(0.55f, 0.85f, 0.6f, 1);
+            ImGui::PushStyleColor(ImGuiCol_Text, tc);
+            if (ImGui::Button(lbl) && nErr + nWarn > 0) st.showIssues = !st.showIssues;
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(nErr + nWarn == 0 ? "The graph checker found nothing wrong." :
+                                  "%d error(s), %d warning(s). Click to list them; click one to jump to its node.", nErr, nWarn);
+            ImGui::SameLine();
+        }
         if (ImGui::Button("Fit")) st.frameAll = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every node (Home). F frames the selection.");
         ImGui::SameLine();
@@ -1854,6 +1925,8 @@ inline void Draw(EditorState& ed, bool* open) {
         return rid >= 0 ? live->Node(rid) : nullptr;
     };
 
+    struct VsBadge { ImVec2 c; ImU32 col; std::string tips; };
+    std::vector<VsBadge> badges;   // checker findings, drawn over the nodes
     // ---- Nodes ----------------------------------------------------------------------
     dl->ChannelsSetCurrent(2);
     int pendingDelete = -1, pendingDup = -1;
@@ -1897,6 +1970,19 @@ inline void Draw(EditorState& ed, bool* open) {
         if (fl > 0.0f)
             dl->AddRect(ImVec2(p0.x - 4 * z, p0.y - 4 * z), ImVec2(p1.x + 4 * z, p1.y + 4 * z),
                         IM_COL32(255, 200, 80, (int)(220 * fl)), ROUND + 4 * z, 0, 3.0f * z);
+        // Checker findings for this node: red (error) / amber (warning) dot on the
+        // header, the messages on hover.
+        {
+            int worst = 2; std::string tips;
+            for (const auto& is : st.issues)
+                if (is.node == n.id) { worst = std::min(worst, is.severity); tips += (tips.empty() ? "" : "\n") + std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message; }
+            if (worst < 2) {
+                const ImVec2 bc(p1.x - 12.0f * z, p0.y + HEADER_H * 0.5f);
+                const ImU32 col = worst == 0 ? IM_COL32(255, 85, 75, 255) : IM_COL32(240, 185, 70, 255);
+                dl->AddRect(ImVec2(p0.x - 2 * z, p0.y - 2 * z), ImVec2(p1.x + 2 * z, p1.y + 2 * z), col, ROUND + 2 * z, 0, 2.0f * z);
+                badges.push_back({bc, col, tips});
+            }
+        }
         const bool errNode = live && live->LastErrorNode() == n.id && !live->LastError().empty();
         if (errNode)
             dl->AddRect(ImVec2(p0.x - 5 * z, p0.y - 5 * z), ImVec2(p1.x + 5 * z, p1.y + 5 * z),
@@ -1948,9 +2034,10 @@ inline void Draw(EditorState& ed, bool* open) {
             float r = PIN_R * 1.15f;
             dl->AddTriangleFilled(ImVec2(pp.x - r * 0.8f, pp.y - r), ImVec2(pp.x - r * 0.8f, pp.y + r), ImVec2(pp.x + r, pp.y), execCol);
         };
-        auto dataDot = [&](ImVec2 pp, bool linked) {
-            dl->AddCircleFilled(pp, PIN_R, linked ? dataCol : IM_COL32(38, 39, 44, 255), 16);
-            dl->AddCircle(pp, PIN_R, dataCol, 16, 2.0f * z);
+        auto dataDot = [&](ImVec2 pp, bool linked, ImU32 col = 0) {
+            if (!col) col = dataCol;
+            dl->AddCircleFilled(pp, PIN_R, linked ? col : IM_COL32(38, 39, 44, 255), 16);
+            dl->AddCircle(pp, PIN_R, col, 16, 2.0f * z);
         };
         // Left pins (exec-in then data-in).
         int li = 0;
@@ -1963,7 +2050,10 @@ inline void Draw(EditorState& ed, bool* open) {
         for (int i = 0; i < (int)d->dataIn.size(); ++i, ++li) {
             ImVec2 pp(p0.x, ly + li * ROW_H + ROW_H * 0.5f);
             const bool linked = inputLinked(n.id, i);
-            dataDot(pp, linked);
+            const okay::vs::PinType pt = okay::vs::InputType(n.type, i);
+            dataDot(pp, linked, VsPinColor(pt));
+            if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
+                ImGui::SetTooltip("%s  (%s)", d->dataIn[i], okay::vs::PinTypeName(pt));
             text(ImVec2(p0.x + PAD, pp.y - fs * 0.5f), labelCol, d->dataIn[i]);
             pinPos[pk(n.id, 1, 0, i)] = pp;
             // Nothing wired in: type the value right here (text, number, true/false).
@@ -1998,7 +2088,10 @@ inline void Draw(EditorState& ed, bool* open) {
             ImVec2 pp(p1.x, ly + ri * ROW_H + ROW_H * 0.5f);
             bool used = false;
             for (const auto& l : g.dataLinks) if (l.producer == n.id && l.outPin == i) { used = true; break; }
-            dataDot(pp, used);
+            const okay::vs::PinType pt = okay::vs::OutputType(n.type, i, n.arg);
+            dataDot(pp, used, VsPinColor(pt));
+            if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
+                ImGui::SetTooltip("%s  (%s)", d->dataOut[i], okay::vs::PinTypeName(pt));
             ImVec2 ts = ImGui::CalcTextSize(d->dataOut[i]);
             text(ImVec2(p1.x - PAD - ts.x, pp.y - fs * 0.5f), labelCol, d->dataOut[i]);
             pinPos[pk(n.id, 1, 1, i)] = pp;
@@ -2173,9 +2266,25 @@ inline void Draw(EditorState& ed, bool* open) {
         auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
         if (a == pinPos.end() || b == pinPos.end()) continue;
         const bool hot = hotNode(l.producer) || hotNode(l.consumer);
-        bezier(a->second, b->second, hot ? IM_COL32(150, 240, 170, 255) : IM_COL32(110, 190, 130, 210), (hot ? 3.4f : 2.6f) * std::max(0.7f, z));
+        // A wire whose value can't mean what the input needs (from an older graph
+        // or hand-written file) is drawn red; the checker lists it too.
+        if (!VsWireOk(g, l.consumer, l.inPin, l.producer, l.outPin)) {
+            bezier(a->second, b->second, IM_COL32(255, 80, 70, 240), (hot ? 3.6f : 3.0f) * std::max(0.7f, z));
+            continue;
+        }
+        ImU32 wc = VsPinColor(VsOutPinType(g, l.producer, l.outPin));
+        if (!hot) wc = (wc & 0x00FFFFFF) | (200u << 24);
+        bezier(a->second, b->second, wc, (hot ? 3.4f : 2.6f) * std::max(0.7f, z));
     }
     dl->ChannelsSetCurrent(2);
+    for (const VsBadge& b : badges) {
+        const float r = 7.0f * std::max(0.8f, z);
+        dl->AddCircleFilled(b.c, r, b.col, 16);
+        const ImVec2 ts = ImGui::CalcTextSize("!");
+        dl->AddText(ImVec2(b.c.x - ts.x * 0.5f, b.c.y - ts.y * 0.5f), IM_COL32(20, 20, 24, 255), "!");
+        if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - b.c.x) < r * 1.6f && std::fabs(io.MousePos.y - b.c.y) < r * 1.6f)
+            ImGui::SetTooltip("%s", b.tips.c_str());
+    }
 
     // Live drag wire + release handling.
     bool openPaletteNow = false;
@@ -2208,8 +2317,12 @@ inline void Draw(EditorState& ed, bool* open) {
                     if (st.dragFromOutput) g.linkExec(st.dragNode, st.dragPin, bestNode);
                     else                   g.linkExec(bestNode, bestIdx, st.dragNode);
                 } else {
-                    if (st.dragFromOutput) g.linkData(bestNode, bestIdx, st.dragNode, st.dragPin);
-                    else                   g.linkData(st.dragNode, st.dragPin, bestNode, bestIdx);
+                    // Refuse a wire whose value can't work in that input (and say why).
+                    const int cons = st.dragFromOutput ? bestNode : st.dragNode, inP = st.dragFromOutput ? bestIdx : st.dragPin;
+                    const int prod = st.dragFromOutput ? st.dragNode : bestNode, outP = st.dragFromOutput ? st.dragPin : bestIdx;
+                    std::string why;
+                    if (VsWireOk(g, cons, inP, prod, outP, &why)) g.linkData(cons, inP, prod, outP);
+                    else { st.refuseMsg = why; st.refuseTime = 4.0f; }
                 }
             } else {
                 // Dropped in empty space: offer the palette and wire up what's picked.
@@ -2311,8 +2424,14 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (st.linkFromOutput) { if (d.execIn) g.linkExec(st.linkNode, st.linkPin, nid); }
                 else if (!d.execOut.empty()) g.linkExec(nid, 0, st.linkNode);
             } else {
-                if (st.linkFromOutput) { if (!d.dataIn.empty()) g.linkData(nid, 0, st.linkNode, st.linkPin); }
-                else if (!d.dataOut.empty()) g.linkData(st.linkNode, st.linkPin, nid, 0);
+                // The first pin on the new node that can take / give this value.
+                if (st.linkFromOutput) {
+                    for (int pi = 0; pi < (int)d.dataIn.size(); ++pi)
+                        if (VsWireOk(g, nid, pi, st.linkNode, st.linkPin)) { g.linkData(nid, pi, st.linkNode, st.linkPin); break; }
+                } else {
+                    for (int po = 0; po < (int)d.dataOut.size(); ++po)
+                        if (VsWireOk(g, st.linkNode, st.linkPin, nid, po)) { g.linkData(st.linkNode, st.linkPin, nid, po); break; }
+                }
             }
             // Drop it beside the pin rather than under the cursor tip.
             if (VsEditNode* nn = g.find(nid)) { if (!st.linkFromOutput) nn->x -= 170.0f; }
@@ -2581,6 +2700,39 @@ inline void Draw(EditorState& ed, bool* open) {
     else if (st.needsEvent)
         dl->AddText(ImVec2(canvasMin.x + 18, canvasMin.y + 16), IM_COL32(240, 184, 102, 255),
                     "Nothing runs yet: add an event node (On Start, On Update, On Key...) and wire it in.");
+    // Why the last wire was refused (fades after a few seconds).
+    if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {
+        st.refuseTime -= io.DeltaTime;
+        const float a = std::min(1.0f, st.refuseTime);
+        const ImVec2 ts = ImGui::CalcTextSize(st.refuseMsg.c_str());
+        const ImVec2 bp(canvasMin.x + 18, canvasMin.y + 40);
+        dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + 16, bp.y + ts.y + 10), IM_COL32(70, 24, 24, (int)(230 * a)), 6);
+        dl->AddText(ImVec2(bp.x + 8, bp.y + 5), IM_COL32(255, 170, 160, (int)(255 * a)), st.refuseMsg.c_str());
+    }
+    // The checker's list (toolbar button): click a row to jump to its node.
+    if (st.showIssues && !st.issues.empty()) {
+        const float w = std::min(820.0f, canvasMax.x - canvasMin.x - 36.0f);
+        ImGui::SetCursorScreenPos(ImVec2(canvasMax.x - w - 14, canvasMin.y + 40));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(28, 29, 34, 245));
+        ImGui::BeginChild("##vsissuelist", ImVec2(w, std::min(260.0f, 34.0f + 26.0f * (float)st.issues.size())), ImGuiChildFlags_Borders);
+        ImGui::TextDisabled("Problems the checker found");
+        ImGui::Separator();
+        for (std::size_t i = 0; i < st.issues.size(); ++i) {
+            const auto& is = st.issues[i];
+            ImGui::PushID((int)i);
+            ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.5f, 0.45f, 1) : ImVec4(0.95f, 0.78f, 0.4f, 1));
+            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message;
+            if (ImGui::Selectable(row.c_str()) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
+            if (ImGui::IsItemHovered()) {   // long messages: the whole text
+                ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36.0f);
+                ImGui::TextUnformatted(row.c_str()); ImGui::PopTextWrapPos(); ImGui::EndTooltip();
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
     if (live) {
         std::string lv = "\xE2\x97\x8F LIVE: " + liveName;
         ImVec2 ts = ImGui::CalcTextSize(lv.c_str());

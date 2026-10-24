@@ -2429,6 +2429,10 @@ char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
 bool  g_openBuildResult = false;
+bool  g_vsBuildWantedRun = false;         // "Build & Run" was pressed when visual-script errors stopped the build
+std::vector<std::string> g_vsBuildErrors;  // visual-script errors that stopped the last Build
+constexpr float kVsErrListH = 96.0f;       // their list's height in the Build window (scrolls)
+int   g_vsBuildRetry = 0;                  // 1 = build, 2 = build & run, after "Build anyway"
 int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 = Android
 
 // One entry of "Scenes In Build": a project scene, ticked to ship. The first
@@ -15124,7 +15128,9 @@ void DrawFileDialogs(EditorState& ed) {
             "Renderer and quality: shadows, bloom, ambient occlusion, anti-aliasing.",
             "Volume, cursor and keyboard behaviour.",
             "Output folder layout, encryption and what happens after the build."};
-        const float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f;
+        float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f;
+        if (!g_vsBuildErrors.empty())   // room for the "Build stopped" block above the buttons
+            buildFooterH += kVsErrListH + ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * 3.0f + 16.0f;
         ImGui::BeginChild("##bnav", ImVec2(170, -buildFooterH), ImGuiChildFlags_Borders);
         if (g_buildPlatform == 3) {   // a server has no window/graphics/audio: Scenes, Server, Output
             if (s_buildSec != 0 && s_buildSec != 5 && s_buildSec != 6) s_buildSec = 6;
@@ -15447,6 +15453,22 @@ void DrawFileDialogs(EditorState& ed) {
                 g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
         }
         ImGui::Spacing();
+        // Visual-script errors found when Build was pressed: they stop the build
+        // (the graphs would ship broken) until fixed, or "Build anyway".
+        if (!g_vsBuildErrors.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.45f, 1));
+            ImGui::TextWrapped("Build stopped: %d visual script error%s. Those graphs won't work in the game as they are.",
+                               (int)g_vsBuildErrors.size(), g_vsBuildErrors.size() == 1 ? "" : "s");
+            ImGui::PopStyleColor();
+            ImGui::BeginChild("##vsbuilderrs", ImVec2(0, kVsErrListH), ImGuiChildFlags_Borders);
+            for (const std::string& e : g_vsBuildErrors) ImGui::TextWrapped("%s", e.c_str());
+            ImGui::EndChild();
+            if (ImGui::Button("Build anyway")) { g_vsBuildRetry = g_buildPlatform == 0 && g_vsBuildWantedRun ? 2 : 1; g_vsBuildErrors.clear(); }
+            ImGui::SameLine();
+            if (ImGui::Button("Dismiss")) g_vsBuildErrors.clear();
+            ImGui::TextDisabled("Open each graph in the Visual Script editor: problem nodes are outlined, and its toolbar lists them.");
+            ImGui::Spacing();
+        }
         // Left side: reset the window/graphics/audio options to defaults (keeps
         // product name, company, version, output folder, icon, splash).
         if (ImGui::Button("Reset to Defaults")) {
@@ -15484,6 +15506,29 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
         ImGui::PopStyleColor(3);
+        if (g_vsBuildRetry) { doBuild = true; doRun = g_vsBuildRetry == 2; g_vsBuildRetry = 0; }
+        else if (doBuild) {
+            // Check every visual script in the scenes going into the build.
+            g_vsBuildWantedRun = doRun;
+            g_vsBuildErrors.clear();
+            auto collect = [&](const Scene& sc, const std::string& label) {
+                for (const auto& si : vs::ValidateSceneGraphs(sc, ed.projectDir()))
+                    if (si.issue.severity == 0) g_vsBuildErrors.push_back(label + si.Describe());
+            };
+            collect(ed.scene(), "");
+            for (const BuildScene& bs : g_build.scenes) {
+                if (!bs.on || bs.path.empty()) continue;
+                std::error_code fec;
+                if (!ed.path().empty() && std::filesystem::equivalent(std::filesystem::path(bs.path), std::filesystem::path(ed.path()), fec)) continue;   // the open scene: done above
+                Scene other("check");
+                if (SceneSerializer::LoadFromFile(other, bs.path))
+                    collect(other, "[" + std::filesystem::path(bs.path).filename().string() + "] ");
+            }
+            if (!g_vsBuildErrors.empty()) {
+                doBuild = false;
+                ConsoleLog("Build stopped: " + std::to_string(g_vsBuildErrors.size()) + " visual script error(s) - see Build Settings.");
+            }
+        }
         if (doBuild) {
           if (g_buildPlatform == 3) {   // dedicated server folder
             builder::Options so;

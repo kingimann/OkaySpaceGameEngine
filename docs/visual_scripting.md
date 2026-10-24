@@ -513,3 +513,52 @@ passed, then lets it through every frame.
 
 Every Visual Script on an object is saved with the scene. Before this, only
 the first graph on an object survived a save.
+
+## Pin types and the graph checker
+
+Every data pin has a type, shown by its colour (hover a pin to see it):
+
+| Colour | Type |
+|---|---|
+| green | Number |
+| red | Bool |
+| pink | Text |
+| yellow | Vector3 |
+| blue | Object |
+| cyan | List |
+| grey | Any (variables, events, Select, Equals, Format...) |
+
+A wire is allowed when its value means something in the input:
+- the same type, or Any on either end;
+- Number ↔ Bool;
+- anything → Text;
+- Text → Object (a name);
+- Object → Bool (does it still exist?).
+
+Anything else is **refused when you drop the wire**, with a tip, for example
+"A Vector3 can't go into a Number input - use Vec X / Vec Y / Vec Z or Vec3
+Length". Wires like that in an older or hand-written graph are drawn red.
+
+**The checker** runs whenever the graph changes. The toolbar shows "✓ No
+problems" or "⚠ N problems"; click it for the list, and click a row to jump to
+the node. Problem nodes are outlined, red for errors and amber for warnings,
+with a "!" you can hover for the details. It finds:
+
+- **errors** (that part won't work):
+  - wires whose types don't fit;
+  - key names OkaySpace doesn't know (`F1` would silently act as `f`);
+  - Spawn prefab files that don't exist;
+  - a graph that can't load.
+- **warnings** (probably not what you meant):
+  - nodes no event's chain ever reaches;
+  - events with nothing wired to them;
+  - variables the graph reads but never sets.
+
+**Play** writes every problem in every graph of the scene to the Console.
+**Build** checks every graph in the scenes going into the build. If there are
+errors, the build stops and Build Settings lists them, with **Build anyway** and
+**Dismiss**. Warnings never stop a build.
+
+Not covered yet: integer, Vector2, colour, quaternion and enum values. Pins use
+the types above; colours stay R / G / B / A numbers and rotations stay Euler
+Vector3s.

@@ -2,6 +2,7 @@
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
+#include "okay/VisualScript/NodesPhysics.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <cctype>
@@ -104,7 +105,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
         type == "OnMouseDown" || type == "OnMouseUp" || type == "OnMouseOver" ||
-        type == "OnCollisionStay" || type == "OnLateUpdate")
+        type == "OnCollisionStay" || type == "OnLateUpdate" || type == "OnTriggerStay")
         return std::make_unique<EventNode>();
     if (type == "OnEvent") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
@@ -299,6 +300,18 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "VelY")        return std::make_unique<VelAxisNode>(1);
     if (type == "VelZ")        return std::make_unique<VelAxisNode>(2);
     if (type == "Raycast")     return std::make_unique<RaycastNode>();
+    {   // 3D physics queries (arg = optional layer list) and contact details.
+        std::string layers;   // "Default, Enemy" may arrive split into tokens
+        for (const auto& a : args) { if (!layers.empty()) layers += ' '; layers += a; }
+        if (type == "Raycast3D")       return std::make_unique<Raycast3DNode>(layers);
+        if (type == "SphereCast3D")    return std::make_unique<SphereCast3DNode>(layers);
+        if (type == "RaycastAll3D")    return std::make_unique<RaycastAll3DNode>(layers);
+        if (type == "OverlapSphere3D") return std::make_unique<Overlap3DNode>(false, layers);
+        if (type == "OverlapBox3D")    return std::make_unique<Overlap3DNode>(true, layers);
+        if (type == "ContactPoint")    return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Point);
+        if (type == "ContactNormal")   return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Normal);
+        if (type == "ImpactSpeed")     return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Speed);
+    }
     if (type == "EaseIn")      return std::make_unique<EaseNode>(EaseNode::Mode::In);
     if (type == "EaseOut")     return std::make_unique<EaseNode>(EaseNode::Mode::Out);
     if (type == "EaseInOut")   return std::make_unique<EaseNode>(EaseNode::Mode::InOut);

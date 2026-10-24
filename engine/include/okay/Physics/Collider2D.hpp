@@ -2,6 +2,8 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec2.hpp"
+#include <cstdint>
+#include <string>
 #include <vector>
 
 namespace okay {
@@ -22,6 +24,12 @@ public:
     /// Keep the collider matched to the object's SpriteRenderer bounds — refit
     /// each frame so it tracks size changes (see FitColliders / ColliderFit.hpp).
     bool autoFit = false;
+    /// Trigger filter: a trigger only reacts to objects with this tag (blank = any
+    /// tag), e.g. "Player" so pickups ignore enemies and bullets. Other objects
+    /// pass through without any Enter/Stay/Exit events on either side.
+    std::string triggerTag;
+    /// Trigger filter: which collider layers set this trigger off (bit n = layer n).
+    std::uint32_t triggerLayers = 0xFFFFFFFFu;
 
     virtual Shape shape() const = 0;
 

@@ -715,7 +715,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << rb->mass << " " << rb->drag << " " << rb->bounciness
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
-            << " " << (rb->allowSleep ? 1 : 0) << "\n";
+            << " " << (rb->allowSleep ? 1 : 0)
+            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -747,6 +748,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const Vec2& p : pc->points) out << " " << p.x << " " << p.y;
         out << "\n";
     }
+    // Trigger tag / layer filter (one record for the object's 2D colliders, only
+    // when set, so older scenes and unfiltered triggers read exactly as before).
+    for (Collider2D* c : go->GetComponents<Collider2D>())
+        if (!c->triggerTag.empty() || c->triggerLayers != 0xFFFFFFFFu) {
+            out << "  trigfilter2d " << Quote(c->triggerTag) << " " << c->triggerLayers << "\n";
+            break;
+        }
     if (auto* rb = go->GetComponent<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -755,7 +763,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << rb->maxFallSpeed
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
-            << " " << (rb->allowSleep ? 1 : 0) << "\n";
+            << " " << (rb->allowSleep ? 1 : 0)
+            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
     if (auto* j = go->GetComponent<Joint3D>()) {
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
@@ -884,6 +893,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cap->offset.x << " " << cap->offset.y << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
+    // Trigger tag / layer filter for the object's 3D colliders (only when set).
+    for (Collider3D* c : go->GetComponents<Collider3D>())
+        if (!c->triggerTag.empty() || c->triggerLayers != 0xFFFFFFFFu) {
+            out << "  trigfilter3d " << Quote(c->triggerTag) << " " << c->triggerLayers << "\n";
+            break;
+        }
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -2736,6 +2751,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
+                } else if (field == "trigfilter2d" || field == "trigfilter3d") {
+                    std::string tag = ReadQuoted(in);
+                    std::uint32_t layers = 0xFFFFFFFFu;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> layers;
+                    if (field == "trigfilter2d")
+                        for (Collider2D* c : go->GetComponents<Collider2D>()) { c->triggerTag = tag; c->triggerLayers = layers; }
+                    else
+                        for (Collider3D* c : go->GetComponents<Collider3D>()) { c->triggerTag = tag; c->triggerLayers = layers; }
                 } else if (field == "boxcollider2d") {
                     Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
@@ -2789,6 +2813,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
                 } else if (field == "joint3d") {
                     auto* j = go->AddComponent<Joint3D>();
                     int bk = 0, ac = 1;

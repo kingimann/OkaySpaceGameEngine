@@ -45,19 +45,23 @@ public:
     // Event entries: "OnCollision" / "OnTrigger" (2D and 3D, on enter, plus the
     // "...Exit" pair) and the mouse events run with the other object available
     // to Other Name / Other Tag.
-    void OnCollisionEnter2D(const Collision2D& c) override { Fire("OnCollision", c.gameObject); }
-    void OnCollisionEnter3D(const Collision3D& c) override { Fire("OnCollision", c.gameObject); }
-    void OnTriggerEnter2D(Collider2D* other) override { Fire("OnTrigger", other ? other->gameObject : nullptr); }
-    void OnTriggerEnter3D(Collider3D* other) override { Fire("OnTrigger", other ? other->gameObject : nullptr); }
-    void OnCollisionExit2D(const Collision2D& c) override { Fire("OnCollisionExit", c.gameObject); }
-    void OnCollisionExit3D(const Collision3D& c) override { Fire("OnCollisionExit", c.gameObject); }
-    void OnTriggerExit2D(Collider2D* other) override { Fire("OnTriggerExit", other ? other->gameObject : nullptr); }
-    void OnTriggerExit3D(Collider3D* other) override { Fire("OnTriggerExit", other ? other->gameObject : nullptr); }
+    // Collisions and triggers also leave the contact on the blackboard for the
+    // Contact Point / Contact Normal / Impact Speed nodes.
+    void OnCollisionEnter2D(const Collision2D& c) override { FireContact("OnCollision", c); }
+    void OnCollisionEnter3D(const Collision3D& c) override { FireContact("OnCollision", c); }
+    void OnTriggerEnter2D(Collider2D* other) override { FireTrigger("OnTrigger", other); }
+    void OnTriggerEnter3D(Collider3D* other) override { FireTrigger("OnTrigger", other); }
+    void OnTriggerStay2D(Collider2D* other) override { FireTrigger("OnTriggerStay", other); }
+    void OnTriggerStay3D(Collider3D* other) override { FireTrigger("OnTriggerStay", other); }
+    void OnCollisionExit2D(const Collision2D& c) override { FireContact("OnCollisionExit", c); }
+    void OnCollisionExit3D(const Collision3D& c) override { FireContact("OnCollisionExit", c); }
+    void OnTriggerExit2D(Collider2D* other) override { FireTrigger("OnTriggerExit", other); }
+    void OnTriggerExit3D(Collider3D* other) override { FireTrigger("OnTriggerExit", other); }
     void OnMouseDown() override { Fire("OnClick", gameObject); Fire("OnMouseDown", gameObject); }
     void OnMouseUp() override   { Fire("OnMouseUp", gameObject); }
     void OnMouseOver() override { Fire("OnMouseOver", gameObject); }
-    void OnCollisionStay2D(const Collision2D& c) override { Fire("OnCollisionStay", c.gameObject); }
-    void OnCollisionStay3D(const Collision3D& c) override { Fire("OnCollisionStay", c.gameObject); }
+    void OnCollisionStay2D(const Collision2D& c) override { FireContact("OnCollisionStay", c); }
+    void OnCollisionStay3D(const Collision3D& c) override { FireContact("OnCollisionStay", c); }
     void LateUpdate(float dt) override;
     void OnMouseEnter() override { Fire("OnMouseEnter", gameObject); }
     void OnMouseExit() override { Fire("OnMouseExit", gameObject); }
@@ -83,6 +87,33 @@ public:
 
 private:
     bool m_startDeferred = false;   // Start() arrived while scripts were off
+    void SetContact(const Vec3& point, const Vec3& normal, float impactSpeed) {
+        m_ctx.variables["contact_point"]  = vs::VsValue(point);
+        m_ctx.variables["contact_normal"] = vs::VsValue(normal);
+        m_ctx.variables["impact_speed"]   = vs::VsValue(impactSpeed);
+    }
+    void FireContact(const char* entryName, const Collision2D& c) {
+        if (!m_graph || m_graph->Entries(entryName).empty()) return;
+        SetContact(Vec3{c.point}, Vec3{c.normal}, c.impactSpeed);
+        Fire(entryName, c.gameObject);
+    }
+    void FireContact(const char* entryName, const Collision3D& c) {
+        if (!m_graph || m_graph->Entries(entryName).empty()) return;
+        SetContact(c.point, c.normal, c.impactSpeed);
+        Fire(entryName, c.gameObject);
+    }
+    void FireTrigger(const char* entryName, Collider2D* other) {
+        if (!m_graph || m_graph->Entries(entryName).empty()) return;
+        const TriggerContact2D* tc = Physics2D::CurrentTrigger();
+        SetContact(tc ? Vec3{tc->point} : Vec3::Zero, tc ? Vec3{tc->normal} : Vec3::Zero, 0.0f);
+        Fire(entryName, other ? other->gameObject : nullptr);
+    }
+    void FireTrigger(const char* entryName, Collider3D* other) {
+        if (!m_graph || m_graph->Entries(entryName).empty()) return;
+        const TriggerContact3D* tc = Physics3D::CurrentTrigger();
+        SetContact(tc ? tc->point : Vec3::Zero, tc ? tc->normal : Vec3::Zero, 0.0f);
+        Fire(entryName, other ? other->gameObject : nullptr);
+    }
     void Fire(const char* entryName, GameObject* other) {
         if (!m_graph) return;
         if (m_graph->Entries(entryName).empty()) return;

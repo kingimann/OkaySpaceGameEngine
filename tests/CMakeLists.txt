@@ -250,6 +250,10 @@ add_executable(test_queries test_queries.cpp)
 target_link_libraries(test_queries PRIVATE okay::engine)
 add_test(NAME physics_queries COMMAND test_queries)
 
+add_executable(test_physics_queries_ext test_physics_queries_ext.cpp)
+target_link_libraries(test_physics_queries_ext PRIVATE okay::engine)
+add_test(NAME physics_queries_ext COMMAND test_physics_queries_ext)
+
 add_executable(test_particles_tilemap test_particles_tilemap.cpp)
 target_link_libraries(test_particles_tilemap PRIVATE okay::engine)
 add_test(NAME particles_tilemap COMMAND test_particles_tilemap)

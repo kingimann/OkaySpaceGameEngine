@@ -781,6 +781,10 @@ add_test(NAME crash_reports COMMAND test_crash_reports)
 add_executable(test_official_game test_official_game.cpp)
 target_include_directories(test_official_game PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME official_game COMMAND test_official_game)
+# Publishing it from the launcher's Admin page (same header).
+add_executable(test_official_publish test_official_publish.cpp)
+target_include_directories(test_official_publish PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME official_publish COMMAND test_official_publish)
 
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)

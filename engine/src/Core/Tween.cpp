@@ -8,6 +8,7 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UIImage.hpp"
+#include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
@@ -555,6 +556,7 @@ Color* ColorOf(GameObject* go) {
     if (auto* c = go->GetComponent<SpriteRenderer>()) return &c->color;
     if (auto* c = go->GetComponent<MeshRenderer>())   return &c->color;
     if (auto* c = go->GetComponent<UIImage>())        return &c->color;
+    if (auto* c = go->GetComponent<UIRawImage>())     return &c->color;
     if (auto* c = go->GetComponent<UIPanel>())        return &c->color;
     if (auto* c = go->GetComponent<UIButton>())       return &c->color;
     if (auto* c = go->GetComponent<TextRenderer>())   return &c->color;

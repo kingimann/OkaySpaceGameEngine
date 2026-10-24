@@ -301,9 +301,10 @@ static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float o
                      float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f,
                      bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
                      okay::TtfFont* ttf = nullptr) {
-    if (px < 1.0f) px = 1.0f;
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    if (px < 0.15f) px = 0.15f;   // a smooth font scales below one font pixel; the 8x8 font can't
     if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
+    if (px < 1.0f) px = 1.0f;
     if (!gradient) SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
@@ -1741,6 +1742,12 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
     bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
     if (std::getenv("OKAY_TESTUI")) g_testUI = true;   // dev screenshot hook
+    // Safe-area insets (fractions of the screen: "left,top,right,bottom") for UI Safe
+    // Area containers, from the platform / a launcher, or to test a phone layout.
+    if (const char* si = std::getenv("OKAY_SAFE_INSETS")) {
+        auto& f = okay::UISafeInsets();
+        std::sscanf(si, "%f,%f,%f,%f", &f.left, &f.top, &f.right, &f.bottom);
+    }
     bool g_statsUI = false;           // F3 toggles the OkayUI performance HUD
     char g_uiText[32] = {0}; bool g_uiBack = false;
     float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
@@ -2520,7 +2527,7 @@ int main(int argc, char** argv) {
             if (!g) continue;
             auto add = [&](int k) { uiItems.push_back(UIDrawItem{_qi, k, k}); };
             if (g->GetComponent<UIDropTarget>())    { add(K_DropBg); add(K_DropHi); }
-            if (g->GetComponent<UIImage>())          add(K_Image);
+            if (g->GetComponent<UIImage>() || g->GetComponent<UIRawImage>()) add(K_Image);
             if (g->GetComponent<UIPanel>())          add(K_Panel);
             if (g->GetComponent<UIScrollView>())     add(K_Scroll);
             if (g->GetComponent<UIProgressBar>())    add(K_Progress);
@@ -2601,6 +2608,31 @@ int main(int argc, char** argv) {
         }
             else if (_it.kind == K_Image) {   // images (logos/icons) first
             auto* im = up->GetComponent<UIImage>();
+            if (auto* ri = up->GetComponent<UIRawImage>(); ri && !im) {   // Raw Image: texture through a UV rect
+                if (!ri->enabled || !up->active || UIHidden(up.get())) continue;
+                float op = UIOpacity(up.get());
+                Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+                Vec2 isz = UIResolveSize(up.get(), (float)w, (float)h);
+                enterScroll(up.get(), o);
+                SDL_Texture* tex = GetTexture(renderer, ri->texture, baseDir, textureCache);
+                if (!tex) {
+                    SDL_Rect rr{(int)o.x, (int)o.y, (int)isz.x, (int)isz.y};
+                    FillUIShape(renderer, rr, UIShape::Rectangle, 0.0f, ri->color, ri->color, false, false, op);
+                    continue;
+                }
+                int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+                SDL_SetTextureColorMod(tex, (Uint8)(ri->color.r * 255), (Uint8)(ri->color.g * 255), (Uint8)(ri->color.b * 255));
+                SDL_SetTextureAlphaMod(tex, (Uint8)(ri->color.a * 255 * op));
+                for (const auto& pc : ri->Pieces(isz.x, isz.y)) {
+                    const int flip = (pc.u0 > pc.u1 ? SDL_FLIP_HORIZONTAL : 0) | (pc.v0 > pc.v1 ? SDL_FLIP_VERTICAL : 0);
+                    const float ua = std::min(pc.u0, pc.u1), ub = std::max(pc.u0, pc.u1);
+                    const float va = std::min(pc.v0, pc.v1), vb = std::max(pc.v0, pc.v1);
+                    SDL_Rect src{(int)(ua * tw), (int)(va * th), std::max(1, (int)std::lround((ub - ua) * tw)), std::max(1, (int)std::lround((vb - va) * th))};
+                    SDL_FRect dst{o.x + pc.x, o.y + pc.y, pc.w, pc.h};
+                    SDL_RenderCopyExF(renderer, tex, &src, &dst, 0.0, nullptr, (SDL_RendererFlip)flip);
+                }
+                continue;
+            }
             if (!im || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
             Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
@@ -2658,7 +2690,49 @@ int main(int argc, char** argv) {
                         im->AspectRect((float)r.w, (float)r.h, (float)tw, (float)th, aox, aoy, afw, afh);
                         dst = SDL_Rect{r.x + (int)aox, r.y + (int)aoy, (int)afw, (int)afh};
                     }
-                    SDL_RenderCopyEx(renderer, tex, nullptr, &dst, 0.0, nullptr, flip);
+                    // Rounded / circle / pill pictures (avatars, cards): the texture is
+                    // drawn on the shape's outline as a triangle fan, so the corners are cut.
+                    const bool rounded = (im->shape == UIShape::Rounded && im->cornerRadius > 0.5f) ||
+                                         im->shape == UIShape::Circle || im->shape == UIShape::Pill;
+                    if (rounded && dst.w > 2 && dst.h > 2) {
+                        std::vector<SDL_FPoint> pts;
+                        const float x0 = (float)dst.x, y0 = (float)dst.y, ww = (float)dst.w, hh = (float)dst.h;
+                        if (im->shape == UIShape::Circle) {
+                            for (int k = 0; k < 48; ++k) {
+                                const float a = k / 48.0f * 6.2831853f;
+                                pts.push_back({x0 + ww * 0.5f + std::cos(a) * ww * 0.5f, y0 + hh * 0.5f + std::sin(a) * hh * 0.5f});
+                            }
+                        } else {
+                            float rad = im->shape == UIShape::Pill ? std::min(ww, hh) * 0.5f : std::min(im->cornerRadius, std::min(ww, hh) * 0.5f);
+                            const float cx[4] = {x0 + ww - rad, x0 + ww - rad, x0 + rad, x0 + rad};
+                            const float cy[4] = {y0 + rad, y0 + hh - rad, y0 + hh - rad, y0 + rad};
+                            const int bits[4] = {UICornerTR, UICornerBR, UICornerBL, UICornerTL};
+                            for (int c = 0; c < 4; ++c) {
+                                const float r0 = (im->cornerMask & bits[c]) ? rad : 0.0f;
+                                const float ccx = r0 > 0 ? cx[c] : (c == 0 || c == 1 ? x0 + ww : x0);
+                                const float ccy = r0 > 0 ? cy[c] : (c == 1 || c == 2 ? y0 + hh : y0);
+                                for (int k = 0; k <= 8; ++k) {
+                                    const float a = (-90.0f + c * 90.0f + k * 11.25f) * 0.01745329f;
+                                    pts.push_back({ccx + std::cos(a) * r0, ccy + std::sin(a) * r0});
+                                }
+                            }
+                        }
+                        const SDL_Color vc{255, 255, 255, 255};
+                        std::vector<SDL_Vertex> vx;
+                        vx.push_back({{x0 + ww * 0.5f, y0 + hh * 0.5f}, vc, {0.5f, 0.5f}});
+                        for (const auto& q : pts) {
+                            float u = (q.x - x0) / ww, v = (q.y - y0) / hh;
+                            if (im->flipX) u = 1.0f - u;
+                            if (im->flipY) v = 1.0f - v;
+                            vx.push_back({q, vc, {u, v}});
+                        }
+                        std::vector<int> ix;
+                        const int n = (int)pts.size();
+                        for (int k = 0; k < n; ++k) { ix.push_back(0); ix.push_back(1 + k); ix.push_back(1 + (k + 1) % n); }
+                        SDL_RenderGeometry(renderer, tex, vx.data(), (int)vx.size(), ix.data(), (int)ix.size());
+                    } else {
+                        SDL_RenderCopyEx(renderer, tex, nullptr, &dst, 0.0, nullptr, flip);
+                    }
                 }
             } else {                                        // no image -> colored shape fill
                 const SDL_Rect& rr = filled ? fr : r;

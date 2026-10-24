@@ -1975,7 +1975,11 @@ void LoadSettings() {
         else if (k == "physdebugrays") g_physDebugRays = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
-        else if (k == "gamedevice") g_gameDevice = (v < 0 ? 0 : v);
+        else if (k == "gamedevice") {   // the old, shorter device list: map to the new one
+            static const int kOld[] = {0, 3, 4, 5, 7, 8, 10, 16, 20, 21, 22};
+            g_gameDevice = (v >= 0 && v < (int)(sizeof(kOld) / sizeof(kOld[0]))) ? kOld[v] : 0;
+        }
+        else if (k == "gamedevice2") g_gameDevice = (v < 0 ? 0 : v);
         else if (k == "gamedeviceland") g_gameDeviceLandscape = (v != 0);
         else if (k == "gamesafearea") g_gameSafeArea = (v != 0);
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
@@ -2020,7 +2024,7 @@ void SaveSettings() {
       << "physdebugrays " << (g_physDebugRays ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
-      << "gamedevice " << g_gameDevice << "\n"
+      << "gamedevice2 " << g_gameDevice << "\n"
       << "gamedeviceland " << (g_gameDeviceLandscape ? 1 : 0) << "\n"
       << "gamesafearea " << (g_gameSafeArea ? 1 : 0) << "\n"
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
@@ -4164,6 +4168,7 @@ GameObject* EnsureUIRoot(EditorState& ed) {
     if (!canvas) {
         canvas = ed.scene().CreateGameObject("Canvas");
         auto* cv = canvas->AddComponent<Canvas>();
+        cv->screenMatch = Canvas::ScreenMatch::Expand;   // the whole layout fits phones too
         cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
     }
     if (!hasEvent) {
@@ -4310,6 +4315,10 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
         if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
         if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
+        if (ImGui::MenuItem("Raw Image"))    addUI("RawImage",    [](GameObject* g){ g->AddComponent<UIRawImage>(); });
+        if (ImGui::MenuItem("Safe Area"))    addUI("Safe Area",   [](GameObject* g){ g->AddComponent<UISafeArea>(); });
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A full-screen container that keeps its widgets clear of phone notches and home bars.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A texture through a UV rect: show part of it, tile it or scroll it.");
         if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
         ImGui::EndMenu();
     }
@@ -4902,7 +4911,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             // missing), or inside the selected panel; see DrawUIWidgetItems.
             DrawUIWidgetItems(ed, created);
             ImGui::Separator();
-            if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; }
             if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
             if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
@@ -6360,6 +6369,7 @@ static bool ObjectUsesAsset(GameObject* go, const std::string& fname) {
     if (auto* sr = go->GetComponent<SpriteRenderer>()) if (hit(sr->texture)) return true;
     if (auto* mr = go->GetComponent<MeshRenderer>())   if (hit(mr->texture) || hit(mr->meshPath)) return true;
     if (auto* im = go->GetComponent<UIImage>())        if (hit(im->texture)) return true;
+    if (auto* ri = go->GetComponent<UIRawImage>())     if (hit(ri->texture)) return true;
     if (auto* tr = go->GetComponent<TextRenderer>())   if (hit(tr->fontPath)) return true;
     if (auto* bt = go->GetComponent<UIButton>())       if (hit(bt->fontPath)) return true;
     for (auto* sc : go->GetComponents<ScriptComponent>()) if (hit(sc->Path())) return true;
@@ -15207,7 +15217,7 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
         if (go->GetComponent<UIDropdown>())
             dl->AddTriangleFilled(ImVec2(c.x + r * 0.2f, c.y - r * 0.15f), ImVec2(c.x + r * 0.7f, c.y - r * 0.15f), ImVec2(c.x + r * 0.45f, c.y + r * 0.2f), ic);
         else dl->AddLine(ImVec2(c.x - r * 0.55f, c.y - r * 0.3f), ImVec2(c.x - r * 0.55f, c.y + r * 0.3f), ic, 1.4f);
-    } else if (go->GetComponent<UIImage>()) {                // picture
+    } else if (go->GetComponent<UIImage>() || go->GetComponent<UIRawImage>()) {   // picture
         ImU32 ic = col(130, 220, 150);
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.8f), ImVec2(c.x + r, c.y + r * 0.8f), ic, 1.5f, 0, 1.4f);
         dl->AddTriangleFilled(ImVec2(c.x - r * 0.7f, c.y + r * 0.6f), ImVec2(c.x, c.y - r * 0.1f), ImVec2(c.x + r * 0.7f, c.y + r * 0.6f), ic);
@@ -15466,7 +15476,7 @@ void DrawHierarchy(EditorState& ed) {
                 go->GetComponent<CharacterController3D>() || go->GetComponent<ClickToMoveController>())
                 hay += " player controller";
             if (go->GetComponent<UIButton>() || go->GetComponent<UIPanel>() ||
-                go->GetComponent<UIImage>()  || go->GetComponent<UISlider>() ||
+                go->GetComponent<UIImage>()  || go->GetComponent<UIRawImage>() || go->GetComponent<UISlider>() ||
                 go->GetComponent<UIToggle>() || go->GetComponent<UIProgressBar>())
                 hay += " ui widget canvas";
             for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
@@ -16058,6 +16068,7 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Panel"))        mkUI("Panel",   [](GameObject* g){ g->AddComponent<UIPanel>(); });
             if (ImGui::MenuItem("Button"))       { mkUI("Button", [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
             if (ImGui::MenuItem("Image"))        mkUI("Image",   [](GameObject* g){ g->AddComponent<UIImage>(); });
+            if (ImGui::MenuItem("Raw Image"))    mkUI("RawImage", [](GameObject* g){ g->AddComponent<UIRawImage>(); });
             if (ImGui::MenuItem("Text"))         mkUI("Text",    [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
             if (ImGui::MenuItem("Slider"))       mkUI("Slider",  [](GameObject* g){ g->AddComponent<UISlider>(); });
             if (ImGui::MenuItem("Toggle"))       mkUI("Toggle",  [](GameObject* g){ g->AddComponent<UIToggle>(); });
@@ -29789,12 +29800,23 @@ void DrawInspector(EditorState& ed) {
                 };
                 presetP("9:16", 1080, 1920); presetP("phone", 720, 1280);
 
-                if (ImGui::SliderFloat("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f,
-                                       cv->matchWidthOrHeight < 0.25f ? "Width" :
-                                       cv->matchWidthOrHeight > 0.75f ? "Height" : "%.2f")) ed.dirty = true;
-                if (ImGui::SmallButton("Width##cvm"))  { cv->matchWidthOrHeight = 0.0f; ed.dirty = true; }
-                ImGui::SameLine(); if (ImGui::SmallButton("Match##cvm")) { cv->matchWidthOrHeight = 0.5f; ed.dirty = true; }
-                ImGui::SameLine(); if (ImGui::SmallButton("Height##cvm")) { cv->matchWidthOrHeight = 1.0f; ed.dirty = true; }
+                const char* matches[] = {"Match Width or Height", "Expand (always fits)", "Shrink (always fills)"};
+                int sm = (int)cv->screenMatch;
+                if (ImGui::Combo("Screen Match##cv", &sm, matches, 3)) { cv->screenMatch = (Canvas::ScreenMatch)sm; ed.dirty = true; }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How the reference layout fits a screen of another shape.\n"
+                                      "Expand: the whole layout always fits - a landscape menu stays\n"
+                                      "  whole on a portrait phone (best for phones and tablets).\n"
+                                      "Shrink: the layout always covers the screen (edges may crop).\n"
+                                      "Match: blend width / height with the slider.");
+                if (cv->screenMatch == Canvas::ScreenMatch::MatchWidthOrHeight) {
+                    if (ImGui::SliderFloat("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f,
+                                           cv->matchWidthOrHeight < 0.25f ? "Width" :
+                                           cv->matchWidthOrHeight > 0.75f ? "Height" : "%.2f")) ed.dirty = true;
+                    if (ImGui::SmallButton("Width##cvm"))  { cv->matchWidthOrHeight = 0.0f; ed.dirty = true; }
+                    ImGui::SameLine(); if (ImGui::SmallButton("Match##cvm")) { cv->matchWidthOrHeight = 0.5f; ed.dirty = true; }
+                    ImGui::SameLine(); if (ImGui::SmallButton("Height##cvm")) { cv->matchWidthOrHeight = 1.0f; ed.dirty = true; }
+                }
             }
 
             // Universal extra UI zoom (now applies in both scale modes).
@@ -29817,6 +29839,34 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Billboard (face camera)##cvw", &cv->billboard)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the canvas turned toward the camera. Off = it uses this object's orientation.");
                 ImGui::TextDisabled("Move/rotate this object to place the panel. Needs a main Camera.");
+            }
+
+            SectionHeader("Phones");
+            {   // Safe area: one container that keeps its widgets out of the notch / home bar
+                GameObject* cgo = cv->gameObject;
+                GameObject* safe = nullptr;
+                for (Transform* ch : cgo->transform->Children())
+                    if (ch && ch->gameObject && ch->gameObject->GetComponent<UISafeArea>()) { safe = ch->gameObject; break; }
+                if (!safe) {
+                    if (ImGui::Button("Add Safe Area##cv")) {
+                        ed.PushUndo();
+                        GameObject* sa = ed.scene().CreateGameObject("Safe Area");
+                        sa->AddComponent<UISafeArea>();
+                        sa->transform->SetParent(cgo->transform, false);
+                        // Move the canvas's widgets into it, keeping their order.
+                        std::vector<Transform*> kids(cgo->transform->Children().begin(), cgo->transform->Children().end());
+                        for (Transform* k : kids)
+                            if (k && k->gameObject && k->gameObject != sa && GetUIRect(k->gameObject).valid)
+                                k->SetParent(sa->transform, false);
+                        ed.Select(sa); ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Put this canvas's widgets in a Safe Area container so they keep clear of a\n"
+                                          "phone's notch, rounded corners and home bar. Fills the screen on a desktop.");
+                } else {
+                    ImGui::TextDisabled("Safe Area: \"%s\" keeps its widgets clear of notches.", safe->name.c_str());
+                }
+                if (g_gameDevice <= 0) ImGui::TextDisabled("Pick a phone in the Game view to preview it.");
             }
 
             // Live readout of the resulting scale for the current view.
@@ -30897,19 +30947,83 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uch")) toRemove = cr;
         }
     }
+    if (auto* sa = dynamic_cast<UISafeArea*>(curComp)) {
+        if (CompHeader("UI Safe Area", sa, &toRemove)) {
+            ImGui::TextWrapped("Fills the screen minus a phone's notch, rounded corners and home bar. "
+                               "Widgets inside it stay visible and tappable on any phone.");
+            ImGui::TextDisabled("Keep clear of:");
+            if (ImGui::Checkbox("Top##usa", &sa->top)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Bottom##usa", &sa->bottom)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Left##usa", &sa->left)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Right##usa", &sa->right)) ed.dirty = true;
+            const auto& f = okay::UISafeInsets();
+            if (f.top + f.bottom + f.left + f.right > 0.0f)
+                ImGui::TextDisabled("Now: top %.1f%%  bottom %.1f%%  left %.1f%%  right %.1f%%",
+                                    f.top * 100, f.bottom * 100, f.left * 100, f.right * 100);
+            else
+                ImGui::TextDisabled("No insets now. Pick a phone in the Game view to see it.");
+        }
+    }
+    if (auto* ri = dynamic_cast<UIRawImage*>(curComp)) {
+        if (CompHeader("UI Raw Image", ri, &toRemove)) {
+            AnchorCombo("Anchor##uri", ri->anchor, ed);
+            UIRectFields("uri", ri->anchor, ri->position, ri->size, ed);
+            ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Texture"); ImGui::SameLine(80);
+            if (AssetSlot("uritex", ri->texture, "Image", {".png", ".jpg", ".jpeg", ".bmp", ".tga"})) ed.dirty = true;
+            TexFieldThumb(ri->texture);
+            int tw = 0, th = 0;
+            if (SDL_Texture* t = ri->texture.empty() ? nullptr : GetThumb(ri->texture)) SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+            if (tw > 0) {
+                if (ImGui::SmallButton("Set Native Size##uri")) {
+                    ed.PushUndo();
+                    ri->size = {(float)tw * std::fabs(ri->uvW), (float)th * std::fabs(ri->uvH)};
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the widget the texture's own size (times the UV size)");
+                ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", tw, th);
+            }
+            float c[4] = {ri->color.r, ri->color.g, ri->color.b, ri->color.a};
+            if (ImGui::ColorEdit4("Tint##uri", c)) { ri->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            SectionHeader("UV Rect");
+            float uvp[2] = {ri->uvX, ri->uvY}, uvs[2] = {ri->uvW, ri->uvH};
+            if (ImGui::DragFloat2("Offset (X, Y)##uri", uvp, 0.01f)) { ri->uvX = uvp[0]; ri->uvY = uvp[1]; ed.dirty = true; }
+            if (ImGui::DragFloat2("Size (W, H)##uri", uvs, 0.01f, -64.0f, 64.0f)) { ri->uvW = uvs[0]; ri->uvH = uvs[1]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("1, 1 = the whole image once. 3, 2 tiles it 3 across, 2 down.\nA negative size mirrors it.");
+            if (ImGui::SmallButton("Reset##uriuv")) { ri->uvX = ri->uvY = 0.0f; ri->uvW = ri->uvH = 1.0f; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Tile to fit##uri") && tw > 0) {   // repeat at the texture's own pixel size
+                ri->uvW = ri->size.x / (float)tw; ri->uvH = ri->size.y / (float)th; ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Repeat the texture at its own pixel size across the widget");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Flip X##uri")) { ri->uvX += ri->uvW; ri->uvW = -ri->uvW; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Flip Y##uri")) { ri->uvY += ri->uvH; ri->uvH = -ri->uvH; ed.dirty = true; }
+            float sc[2] = {ri->scroll.x, ri->scroll.y};
+            if (ImGui::DragFloat2("Scroll / s##uri", sc, 0.005f, -10.0f, 10.0f)) { ri->scroll = {sc[0], sc[1]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the UV offset every second while playing (scrolling backgrounds, conveyors).");
+        }
+    }
     if (auto* im = dynamic_cast<UIImage*>(curComp)) {
         if (CompHeader("UI Image", im, &toRemove)) {
             AnchorCombo("Anchor##uim", im->anchor, ed);
             UIRectFields("uim", im->anchor, im->position, im->size, ed);
-            char tx[256];
-            std::strncpy(tx, im->texture.c_str(), sizeof(tx) - 1);
-            tx[sizeof(tx) - 1] = '\0';
-            if (ImGui::InputText("Texture##uim", tx, sizeof(tx))) { im->texture = tx; ed.dirty = true; }
-            if (AcceptAssetPathField(im->texture)) ed.dirty = true;   // drop an image from Project
+            ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Image"); ImGui::SameLine(80);
+            if (AssetSlot("uimtex", im->texture, "Image", {".png", ".jpg", ".jpeg", ".bmp", ".tga"})) ed.dirty = true;
             TexFieldThumb(im->texture);
+            if (!im->texture.empty()) {
+                if (SDL_Texture* t = GetThumb(im->texture)) {
+                    int tw = 0, th = 0; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+                    if (ImGui::SmallButton("Set Native Size##uim")) { ed.PushUndo(); im->size = {(float)tw, (float)th}; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the widget the picture's own size (%d x %d)", tw, th);
+                    ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", tw, th);
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.45f, 1.0f), "Can't load this file.");
+                }
+            }
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
-            ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");
+            if (im->texture.empty()) ImGui::TextDisabled("No image: it draws as a coloured shape.");
             SectionHeader("Texture");
             if (ImGui::Checkbox("Flip X##uim", &im->flipX)) ed.dirty = true; ImGui::SameLine();
             if (ImGui::Checkbox("Flip Y##uim", &im->flipY)) ed.dirty = true;
@@ -31591,7 +31705,7 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("UI");
           if (o) {
-            if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; }
             if (item(!go->GetComponent<EventSystem>(), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
@@ -31601,6 +31715,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRawImage>() && !go->GetComponent<UIImage>(), "UI Raw Image (tile / scroll a texture)")) { go->AddComponent<UIRawImage>(); ed.dirty = true; }
+            if (item(!GetUIRect(go).valid, "UI Safe Area (keep clear of phone notches)")) { go->AddComponent<UISafeArea>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
             if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
@@ -31793,14 +31909,17 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
                     float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f,
                     bool italic = false, bool gradient = false, ImU32 col2 = 0,
                     okay::TtfFont* ttf = nullptr) {
-    if (px < 1.0f) px = 1.0f;
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    // A smooth font scales below one font pixel (a phone preview, a small window), so
+    // text keeps its size relative to its box; only the 8x8 pixel font needs >= 1.
+    if (px < 0.15f) px = 0.15f;
     if (ttf && ttf->Valid()) {
         if (SDL_Texture* tex = TtfAtlasTexture(ttf)) {
             DrawTtfText(dl, ttf, tex, text, ox, oy, px, col, letterSp, lineSp, italic);
             return;
         }
     }
+    if (px < 1.0f) px = 1.0f;
     const float slant = italic ? 0.30f : 0.0f;
     int ca = (col >> IM_COL32_A_SHIFT) & 0xFF, cr = (col >> IM_COL32_R_SHIFT) & 0xFF;
     int cg = (col >> IM_COL32_G_SHIFT) & 0xFF, cb = (col >> IM_COL32_B_SHIFT) & 0xFF;
@@ -31986,7 +32105,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto add = [&](int k) { edItems.push_back(UIDrawItem{_qi, k, k}); };
         if (g->GetComponent<UIScrollView>())     add(K_Scroll);
         if (g->GetComponent<UIDropTarget>())     add(K_DropBg);
-        if (g->GetComponent<UIImage>())          add(K_Image);
+        if (g->GetComponent<UIImage>() || g->GetComponent<UIRawImage>()) add(K_Image);
         if (g->GetComponent<UIPanel>())          add(K_Panel);
         if (g->GetComponent<UIProgressBar>())    add(K_Progress);
         if (g->GetComponent<UISlider>())         add(K_Slider);
@@ -32062,6 +32181,23 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI images (logos/icons): preview as a tinted rect with the path centered.
         else if (_it.kind == K_Image) {   // images (logos/icons)
         auto* im = up->GetComponent<UIImage>();
+        if (auto* ri = up->GetComponent<UIRawImage>(); ri && !im) {   // Raw Image: the texture through its UV rect
+            if (!ri->enabled || !up->active || UIHidden(up.get())) continue;
+            Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+            if (svCull(up.get(), o, sz)) continue;
+            const ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+            SDL_Texture* rtex = ri->texture.empty() ? nullptr : GetThumb(ri->texture);
+            if (!rtex) {
+                dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(ri->color));
+                dl->AddRect(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(255, 255, 255, 90));
+                if (!ri->texture.empty()) DrawBitmapText(dl, "missing: " + ri->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 150, 120, 220));
+                continue;
+            }
+            for (const auto& pc : ri->Pieces(sz.x, sz.y))
+                dl->AddImage((ImTextureID)rtex, ImVec2(a.x + pc.x, a.y + pc.y), ImVec2(a.x + pc.x + pc.w, a.y + pc.y + pc.h),
+                             ImVec2(pc.u0, pc.v0), ImVec2(pc.u1, pc.v1), ToColor(ri->color));
+            continue;
+        }
         if (!im || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
@@ -32075,7 +32211,48 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ImVec2(a.x + im->shadowOffset.x, a.y + im->shadowOffset.y),
                               ImVec2(b.x + im->shadowOffset.x, b.y + im->shadowOffset.y),
                               ToColor(im->shadowColor), im->cornerRadius, icf);
-        if (IsPolyUIShape(im->shape)) {
+        // The picture itself, as the game draws it: tint, flips, 9-slice, fill,
+        // preserve-aspect, and rounded / circle / pill corners.
+        SDL_Texture* itex = im->texture.empty() ? nullptr : GetThumb(im->texture);
+        if (itex) {
+            int tw = 0, th = 0; SDL_QueryTexture(itex, nullptr, nullptr, &tw, &th);
+            const ImU32 tint = ToColor(im->color);
+            const float ux0 = im->flipX ? 1.0f : 0.0f, ux1 = im->flipX ? 0.0f : 1.0f;
+            const float vy0 = im->flipY ? 1.0f : 0.0f, vy1 = im->flipY ? 0.0f : 1.0f;
+            auto uvAt = [&](float fx, float fy) { return ImVec2(ux0 + (ux1 - ux0) * fx, vy0 + (vy1 - vy0) * fy); };
+            const bool filled = im->fillMode != UIImage::FillMode::None;
+            if (im->nineSlice && im->border > 0.0f && tw > 0 && th > 0) {
+                const float bx = std::min(im->border, sz.x * 0.5f), by = std::min(im->border, sz.y * 0.5f);
+                const float su[4] = {0.0f, im->border / tw, 1.0f - im->border / tw, 1.0f};
+                const float sv[4] = {0.0f, im->border / th, 1.0f - im->border / th, 1.0f};
+                const float dx[4] = {a.x, a.x + bx, b.x - bx, b.x};
+                const float dy[4] = {a.y, a.y + by, b.y - by, b.y};
+                for (int yy = 0; yy < 3; ++yy)
+                    for (int xx = 0; xx < 3; ++xx)
+                        if (dx[xx + 1] > dx[xx] && dy[yy + 1] > dy[yy])
+                            dl->AddImage((ImTextureID)itex, ImVec2(dx[xx], dy[yy]), ImVec2(dx[xx + 1], dy[yy + 1]),
+                                         uvAt(su[xx], sv[yy]), uvAt(su[xx + 1], sv[yy + 1]), tint);
+            } else if (filled) {
+                if (sz.x > 0 && sz.y > 0)
+                    dl->AddImage((ImTextureID)itex, fa, fb, uvAt(fox / sz.x, foy / sz.y),
+                                 uvAt((fox + fw) / sz.x, (foy + fh) / sz.y), tint);
+            } else {
+                ImVec2 da = a, db = b;
+                if (im->preserveAspect) {
+                    float aox, aoy, afw, afh;
+                    im->AspectRect(sz.x, sz.y, (float)tw, (float)th, aox, aoy, afw, afh);
+                    da = ImVec2(a.x + aox, a.y + aoy); db = ImVec2(da.x + afw, da.y + afh);
+                }
+                const float rounding = im->shape == UIShape::Circle || im->shape == UIShape::Pill
+                                     ? std::min(db.x - da.x, db.y - da.y) * 0.5f
+                                     : im->shape == UIShape::Rounded ? im->cornerRadius : 0.0f;
+                if (rounding > 0.5f)
+                    dl->AddImageRounded((ImTextureID)itex, da, db, uvAt(0, 0), uvAt(1, 1), tint, rounding,
+                                        im->shape == UIShape::Rounded ? icf : ImDrawFlags_RoundCornersAll);
+                else
+                    dl->AddImage((ImTextureID)itex, da, db, uvAt(0, 0), uvAt(1, 1), tint);
+            }
+        } else if (IsPolyUIShape(im->shape)) {
             DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), im->shape, im->cornerRadius,
                             ToColor(im->color), IM_COL32(255, 255, 255, 90), 1.0f, im->cornerMask);
         } else {
@@ -32084,12 +32261,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
         if (im->borderWidth > 0.0f)   // frame/matte around the image
             dl->AddRect(a, b, ToColor(im->borderColor), im->cornerRadius, icf, im->borderWidth);
-        if (!im->texture.empty()) {
-            DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
-            if (im->flipX || im->flipY)   // preview hint for mirror flags
-                DrawBitmapText(dl, im->flipX && im->flipY ? "flip XY" : im->flipX ? "flip X" : "flip Y",
-                               a.x + 4, a.y + 14, 1.0f, IM_COL32(150, 200, 255, 200));
-        }
+        if (!im->texture.empty() && !itex)   // the file couldn't be loaded: say so on the widget
+            DrawBitmapText(dl, "missing: " + im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 150, 120, 220));
     }
 
     // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
@@ -36139,16 +36312,30 @@ struct MobileDevice {
 };
 static const MobileDevice kMobileDevices[] = {
     {"Off (no device)",          0,    0,    0.00f, DevCutout::None,       0.000f, 0.000f, false},
-    {"iPhone 15 Pro",            1179, 2556, 0.14f, DevCutout::Island,     0.046f, 0.013f, false},
+    {"iPhone 16 Pro",            1206, 2622, 0.14f, DevCutout::Island,     0.047f, 0.013f, false},
+    {"iPhone 16 Pro Max",        1320, 2868, 0.14f, DevCutout::Island,     0.045f, 0.012f, false},
+    {"iPhone 15 / 15 Pro / 16",  1179, 2556, 0.14f, DevCutout::Island,     0.046f, 0.013f, false},
     {"iPhone 15 Pro Max",        1290, 2796, 0.14f, DevCutout::Island,     0.044f, 0.012f, false},
     {"iPhone 13 / 14",           1170, 2532, 0.13f, DevCutout::Notch,      0.047f, 0.013f, false},
+    {"iPhone 13 mini",           1080, 2340, 0.13f, DevCutout::Notch,      0.050f, 0.014f, false},
     {"iPhone SE",                750,  1334, 0.00f, DevCutout::HomeButton, 0.030f, 0.000f, false},
     {"Pixel 8",                  1080, 2400, 0.10f, DevCutout::PunchHole,  0.035f, 0.010f, false},
+    {"Pixel 8 Pro",              1344, 2992, 0.10f, DevCutout::PunchHole,  0.032f, 0.009f, false},
     {"Galaxy S24",               1080, 2340, 0.09f, DevCutout::PunchHole,  0.033f, 0.010f, false},
+    {"Galaxy S24 Ultra",         1440, 3120, 0.05f, DevCutout::PunchHole,  0.030f, 0.009f, false},
+    {"Galaxy A54 / A-series",    1080, 2340, 0.08f, DevCutout::PunchHole,  0.034f, 0.010f, false},
+    {"Galaxy Z Flip (open)",     1080, 2640, 0.08f, DevCutout::PunchHole,  0.033f, 0.010f, false},
+    {"OnePlus 12",               1440, 3168, 0.09f, DevCutout::PunchHole,  0.031f, 0.009f, false},
+    {"Xiaomi 14",                1200, 2670, 0.09f, DevCutout::PunchHole,  0.032f, 0.009f, false},
     {"Small Android (720p)",     720,  1600, 0.07f, DevCutout::PunchHole,  0.035f, 0.010f, false},
-    {"iPad Air",                 1640, 2360, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
+    {"Old Android (16:9)",       720,  1280, 0.00f, DevCutout::None,       0.025f, 0.000f, false},
+    {"iPad Pro 12.9\"",          2048, 2732, 0.05f, DevCutout::None,       0.018f, 0.010f, true},
+    {"iPad Pro 11\"",            1668, 2388, 0.06f, DevCutout::None,       0.019f, 0.010f, true},
+    {"iPad Air / iPad 10",       1640, 2360, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
     {"iPad mini",                1488, 2266, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
-    {"Android tablet",           1600, 2560, 0.04f, DevCutout::PunchHole,  0.016f, 0.008f, true},
+    {"Galaxy Tab S9",            1600, 2560, 0.04f, DevCutout::PunchHole,  0.016f, 0.008f, true},
+    {"Pixel Fold (open)",        1840, 2208, 0.05f, DevCutout::PunchHole,  0.020f, 0.008f, true},
+    {"Amazon Fire HD 10",        1200, 1920, 0.02f, DevCutout::None,       0.018f, 0.000f, true},
 };
 static constexpr int kMobileDeviceCount = (int)(sizeof(kMobileDevices) / sizeof(kMobileDevices[0]));
 static const MobileDevice* ActiveDevice() {
@@ -39245,6 +39432,14 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
         DrawPanelTabMenu();   // right-click on any panel tab
+        {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
+            auto& f = okay::UISafeInsets();
+            f = {};
+            if (const MobileDevice* d = ActiveDevice()) {
+                if (g_gameDeviceLandscape) { f.left = f.right = d->safeTop; f.bottom = d->safeBottom * (float)d->h / (float)d->w; }
+                else { f.top = d->safeTop; f.bottom = d->safeBottom; }
+            }
+        }
         TickTweenPreview(ed, ImGui::GetIO().DeltaTime);
 
         // Play-mode tint: a colored border around the whole window so it's

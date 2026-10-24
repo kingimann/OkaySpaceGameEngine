@@ -202,6 +202,7 @@ private:
         // plus an Event System (button input) if the scene doesn't already have one.
         GameObject* root = s->CreateGameObject("PauseMenu UI");
         auto* cv = root->AddComponent<Canvas>();
+        cv->screenMatch = Canvas::ScreenMatch::Expand;
         cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
         cv->sortOrder = 1000;
         if (gameObject && gameObject->transform) root->transform->SetParent(gameObject->transform, false);

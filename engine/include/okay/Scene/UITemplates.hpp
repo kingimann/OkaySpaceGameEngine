@@ -56,7 +56,9 @@ inline GameObject* EnsureCanvas(Scene& scene) {
     if (Canvas* existing = scene.FindObjectOfType<Canvas>()) canvas = existing->gameObject;
     else {
         canvas = scene.CreateGameObject("Canvas");
-        canvas->AddComponent<Canvas>()->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+        auto* cv = canvas->AddComponent<Canvas>();
+        cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+        cv->screenMatch = Canvas::ScreenMatch::Expand;   // the whole layout fits phones too
     }
     if (!scene.FindObjectOfType<EventSystem>())
         scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();

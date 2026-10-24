@@ -874,8 +874,10 @@ void BuildMode::Destroy(GameObject* go, bool notify) {
     if (!go || !s) return;
     if (m_hl == go->InstanceId()) ClearHighlight();
     if (m_carry == go->InstanceId()) m_carry = 0;
-    if (notify) Notify(go, false);
+    // Marked removed first, so handlers of the removed event already see it gone
+    // (build_count() / PlacedCount() no longer count it).
     if (auto* b = go->GetComponent<Buildable>()) b->MarkRemoved();
+    if (notify) Notify(go, false);
     SetTreeActive(go, false);   // out of raycasts and logic right away
     s->Destroy(go);
 }

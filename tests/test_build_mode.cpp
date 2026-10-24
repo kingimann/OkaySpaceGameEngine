@@ -480,7 +480,7 @@ int main() {
         GameObject* host = s.CreateGameObject("GameScript");
         auto* sc = host->AddComponent<ScriptComponent>("okayscript");
         CHECK(sc->LoadSource(
-            "var placed = 0;\nvar removed = 0;\nvar last = \"\";\nvar slot = -1;\nvar count = 0;\n"
+            "var placed = 0;\nvar removed = 0;\nvar last = \"\";\nvar slot = -1;\nvar count = 0;\nvar countAfter = -1;\n"
             "function start() {\n"
             "  build_enter();\n"
             "  build_palette_clear();\n"
@@ -488,7 +488,7 @@ int main() {
             "  slot = build_palette_add(\"Door\", \"" + std::string(kDoor) + "\", \"\");\n"
             "}\n"
             "function on_object_placed(name) { placed = placed + 1; last = name; count = build_count(); }\n"
-            "function on_object_removed(name) { removed = removed + 1; }\n"));
+            "function on_object_removed(name) { removed = removed + 1; countAfter = build_count(); }\n"));
         auto* vc = host->AddComponent<VisualScriptComponent>();
         std::string err;
         CHECK(vc->LoadFromText(
@@ -509,6 +509,7 @@ int main() {
         CHECK(vc->GetVariable("who").AsString() == "Door");
         CHECK(bm->Remove(d));
         CHECK_NEAR(sc->VM()->GetGlobal("removed").AsFloat(), 1.0f, 1e-4f);
+        CHECK_NEAR(sc->VM()->GetGlobal("countAfter").AsFloat(), 0.0f, 1e-4f);   // the removed piece no longer counts
         CHECK_NEAR(vc->GetVariable("gone").AsFloat(), 1.0f, 1e-4f);
         CHECK(bm->Undo());                                        // undo counts as placing again
         CHECK_NEAR(sc->VM()->GetGlobal("placed").AsFloat(), 2.0f, 1e-4f);

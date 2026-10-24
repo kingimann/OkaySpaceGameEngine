@@ -2905,6 +2905,7 @@ bool   g_gameMouseCapture = false;
 // in the Game view gives it to the game again.
 bool   g_gameCursorReleased = false;
 bool   g_gameCanvasHovered = false;   // mouse over the Game view's picture (last frame)
+int    g_gameCanvasHoveredFrame = -10; // ImGui frame g_gameCanvasHovered was last set (the Game view may be hidden)
 
 // Shortest distance (pixels) from point p to the segment a-b, for handle picking.
 static float SegDistPx(ImVec2 p, ImVec2 a, ImVec2 b) {
@@ -39411,6 +39412,7 @@ void DrawGameView(EditorState& ed) {
     g_playCanvasSize = canvasSize;
     g_playPersp = persp;
     g_gameCanvasHovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(canvasPos, canvasEnd);
+    g_gameCanvasHoveredFrame = ImGui::GetFrameCount();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Dark letterbox bars over the whole region, then the camera background.
@@ -40535,10 +40537,19 @@ int main(int argc, char** argv) {
                 } else {
                     rx = mp.x - g_playCanvasPos.x; ry = mp.y - g_playCanvasPos.y;
                 }
+                // A button only reaches the game when it was pressed on the Game view:
+                // clicking Stop, the Inspector or the Hierarchy during Play mustn't also
+                // click in the game (place a block, fire...). A drag that started on the
+                // Game view keeps its button held until it's released.
+                const bool overGame = g_gameCanvasHovered && ImGui::GetFrameCount() - g_gameCanvasHoveredFrame <= 1;
+                static bool s_heldFromGame[3] = {false, false, false};
+                const ImGuiMouseButton kButtons[3] = {ImGuiMouseButton_Left, ImGuiMouseButton_Right, ImGuiMouseButton_Middle};
                 unsigned mask = 0;
-                if (ImGui::IsMouseDown(ImGuiMouseButton_Left))   mask |= 1u << 0;
-                if (ImGui::IsMouseDown(ImGuiMouseButton_Right))  mask |= 1u << 1;
-                if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) mask |= 1u << 2;
+                for (int b = 0; b < 3; ++b) {
+                    if (!ImGui::IsMouseDown(kButtons[b])) { s_heldFromGame[b] = false; continue; }
+                    if (ImGui::IsMouseClicked(kButtons[b])) s_heldFromGame[b] = overGame;
+                    if (s_heldFromGame[b]) mask |= 1u << b;
+                }
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
         } else if (!ed.isPlaying()) {

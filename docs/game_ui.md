@@ -72,6 +72,29 @@ they keep their layout at any window size. The HUD's health bar and number
 follow the `hp` variable, and the score follows `score`. The Loading Screen's
 bar follows `loading` (0 to 1).
 
+## Phones and tablets
+
+- **The canvas fits any screen shape.** The Canvas's **Screen Match** decides
+  how the 1280×720 reference layout fits a screen of another shape:
+  - **Expand** (new canvases): the whole layout always fits, so a landscape menu
+    stays whole on a portrait phone.
+  - **Shrink**: the layout always covers the screen.
+  - **Match Width or Height**: the blend slider, as before. Saved canvases keep it.
+- **Safe Area.** Phones have notches, rounded corners and a home bar.
+  - Click **Add Safe Area** on the Canvas, or use GameObject → UI → Safe Area.
+  - Widgets inside the Safe Area stay clear of those parts of the screen. On a
+    desktop the Safe Area just fills the screen.
+  - Each side can be turned off, for example a background that should run under
+    the notch.
+- **Preview on a phone.** In the Game view, pick a phone or tablet: iPhone 16 Pro,
+  16 Pro Max, 15, 13 mini, SE, Pixel 8 / 8 Pro, Galaxy S24 / S24 Ultra / A-series /
+  Z Flip, OnePlus 12, Xiaomi 14, iPads, Galaxy Tab, Pixel Fold, Fire HD and more.
+  - **Portrait / Landscape** flips the screen.
+  - **Safe area** tints the unsafe parts.
+  - The Safe Area container uses the chosen phone's insets.
+- Text in the launcher font scales down with the canvas, so small screens and
+  previews keep their layout.
+
 ## Images
 
 - **UI Image** shows a picture. Pick the file with the **Image** slot (or drag

@@ -301,9 +301,10 @@ static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float o
                      float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f,
                      bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
                      okay::TtfFont* ttf = nullptr) {
-    if (px < 1.0f) px = 1.0f;
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    if (px < 0.15f) px = 0.15f;   // a smooth font scales below one font pixel; the 8x8 font can't
     if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
+    if (px < 1.0f) px = 1.0f;
     if (!gradient) SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
@@ -1741,6 +1742,12 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
     bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
     if (std::getenv("OKAY_TESTUI")) g_testUI = true;   // dev screenshot hook
+    // Safe-area insets (fractions of the screen: "left,top,right,bottom") for UI Safe
+    // Area containers, from the platform / a launcher, or to test a phone layout.
+    if (const char* si = std::getenv("OKAY_SAFE_INSETS")) {
+        auto& f = okay::UISafeInsets();
+        std::sscanf(si, "%f,%f,%f,%f", &f.left, &f.top, &f.right, &f.bottom);
+    }
     bool g_statsUI = false;           // F3 toggles the OkayUI performance HUD
     char g_uiText[32] = {0}; bool g_uiBack = false;
     float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame

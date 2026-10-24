@@ -627,5 +627,51 @@ int main() {
         }
     }
 
+    // --- Phones: Expand keeps the whole layout on screen; Safe Area avoids notches --
+    {
+        Canvas cv; cv.referenceResolution = {1280, 720};
+        cv.screenMatch = Canvas::ScreenMatch::Expand;
+        CHECK_NEAR(cv.ScaleFactor(1179, 2556), 1179.0f / 1280.0f, 1e-4f);   // portrait phone: width limits
+        CHECK_NEAR(cv.ScaleFactor(2560, 720), 1.0f, 1e-4f);                   // ultrawide: height limits
+        cv.screenMatch = Canvas::ScreenMatch::Shrink;
+        CHECK_NEAR(cv.ScaleFactor(1179, 2556), 2556.0f / 720.0f, 1e-3f);
+        // A 780-wide menu fits a portrait phone with Expand (logical width >= 780).
+        cv.screenMatch = Canvas::ScreenMatch::Expand;
+        CHECK(1179.0f / cv.ScaleFactor(1179, 2556) >= 780.0f);
+
+        Scene s("safe");
+        GameObject* sa = s.CreateGameObject("Safe Area");
+        sa->AddComponent<UISafeArea>();
+        GameObject* hud = s.CreateGameObject("Score");
+        hud->transform->SetParent(sa->transform, false);
+        auto* p = hud->AddComponent<UIPanel>();
+        p->anchor = UIAnchor::TopLeft; p->position = {0, 0}; p->size = {100, 40};
+        UISafeInsets() = {0.0f, 0.05f, 0.0f, 0.02f};   // a notch at the top, a home bar at the bottom
+        Vec2 o, sz;
+        CHECK(GetUIScreenRect(sa, 1000, 2000, o, sz));
+        CHECK_NEAR(o.y, 100.0f, 1e-3f); CHECK_NEAR(sz.y, 2000.0f - 100.0f - 40.0f, 1e-3f);
+        CHECK(GetUIScreenRect(hud, 1000, 2000, o, sz));
+        CHECK_NEAR(o.y, 100.0f, 1e-3f);                    // the HUD sits below the notch
+        CHECK_NEAR(UIResolveOrigin(hud, 1000, 2000).y, 100.0f, 1e-3f);
+        sa->GetComponent<UISafeArea>()->top = false;       // a side can be switched off
+        CHECK_NEAR(UIResolveOrigin(hud, 1000, 2000).y, 0.0f, 1e-3f);
+        UISafeInsets() = {};                               // desktop: fills the screen
+        CHECK(GetUIScreenRect(sa, 1000, 2000, o, sz));
+        CHECK_NEAR(sz.x, 1000.0f, 1e-3f); CHECK_NEAR(sz.y, 2000.0f, 1e-3f);
+        // Saved with the scene, sides included.
+        sa->GetComponent<UISafeArea>()->left = false;
+        Scene s2("safe2");
+        GameObject* back = SceneSerializer::InstantiateFromText(s2, SceneSerializer::SerializeObject(*sa));
+        auto* sb = back ? back->GetComponent<UISafeArea>() : nullptr;
+        CHECK(sb && !sb->left && !sb->top && sb->right && sb->bottom);
+        // Canvas match mode round-trips; old saves (no field) keep blending.
+        Scene s3("cv");
+        GameObject* cg = s3.CreateGameObject("Canvas");
+        cg->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Shrink;
+        Scene s4("cv2");
+        GameObject* cb = SceneSerializer::InstantiateFromText(s4, SceneSerializer::SerializeObject(*cg));
+        CHECK(cb && cb->GetComponent<Canvas>()->screenMatch == Canvas::ScreenMatch::Shrink);
+    }
+
     TEST_MAIN_RESULT();
 }

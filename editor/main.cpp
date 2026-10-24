@@ -1939,7 +1939,11 @@ void LoadSettings() {
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
-        else if (k == "gamedevice") g_gameDevice = (v < 0 ? 0 : v);
+        else if (k == "gamedevice") {   // the old, shorter device list: map to the new one
+            static const int kOld[] = {0, 3, 4, 5, 7, 8, 10, 16, 20, 21, 22};
+            g_gameDevice = (v >= 0 && v < (int)(sizeof(kOld) / sizeof(kOld[0]))) ? kOld[v] : 0;
+        }
+        else if (k == "gamedevice2") g_gameDevice = (v < 0 ? 0 : v);
         else if (k == "gamedeviceland") g_gameDeviceLandscape = (v != 0);
         else if (k == "gamesafearea") g_gameSafeArea = (v != 0);
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
@@ -1981,7 +1985,7 @@ void SaveSettings() {
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
       << "gamecustomh " << g_gameCustomH << "\n"
-      << "gamedevice " << g_gameDevice << "\n"
+      << "gamedevice2 " << g_gameDevice << "\n"
       << "gamedeviceland " << (g_gameDeviceLandscape ? 1 : 0) << "\n"
       << "gamesafearea " << (g_gameSafeArea ? 1 : 0) << "\n"
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
@@ -4125,6 +4129,7 @@ GameObject* EnsureUIRoot(EditorState& ed) {
     if (!canvas) {
         canvas = ed.scene().CreateGameObject("Canvas");
         auto* cv = canvas->AddComponent<Canvas>();
+        cv->screenMatch = Canvas::ScreenMatch::Expand;   // the whole layout fits phones too
         cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
     }
     if (!hasEvent) {
@@ -4272,6 +4277,8 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
         if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
         if (ImGui::MenuItem("Raw Image"))    addUI("RawImage",    [](GameObject* g){ g->AddComponent<UIRawImage>(); });
+        if (ImGui::MenuItem("Safe Area"))    addUI("Safe Area",   [](GameObject* g){ g->AddComponent<UISafeArea>(); });
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A full-screen container that keeps its widgets clear of phone notches and home bars.");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A texture through a UV rect: show part of it, tile it or scroll it.");
         if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
         ImGui::EndMenu();
@@ -4858,7 +4865,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             // missing), or inside the selected panel; see DrawUIWidgetItems.
             DrawUIWidgetItems(ed, created);
             ImGui::Separator();
-            if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; }
             if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
             if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
@@ -29682,12 +29689,23 @@ void DrawInspector(EditorState& ed) {
                 };
                 presetP("9:16", 1080, 1920); presetP("phone", 720, 1280);
 
-                if (ImGui::SliderFloat("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f,
-                                       cv->matchWidthOrHeight < 0.25f ? "Width" :
-                                       cv->matchWidthOrHeight > 0.75f ? "Height" : "%.2f")) ed.dirty = true;
-                if (ImGui::SmallButton("Width##cvm"))  { cv->matchWidthOrHeight = 0.0f; ed.dirty = true; }
-                ImGui::SameLine(); if (ImGui::SmallButton("Match##cvm")) { cv->matchWidthOrHeight = 0.5f; ed.dirty = true; }
-                ImGui::SameLine(); if (ImGui::SmallButton("Height##cvm")) { cv->matchWidthOrHeight = 1.0f; ed.dirty = true; }
+                const char* matches[] = {"Match Width or Height", "Expand (always fits)", "Shrink (always fills)"};
+                int sm = (int)cv->screenMatch;
+                if (ImGui::Combo("Screen Match##cv", &sm, matches, 3)) { cv->screenMatch = (Canvas::ScreenMatch)sm; ed.dirty = true; }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How the reference layout fits a screen of another shape.\n"
+                                      "Expand: the whole layout always fits - a landscape menu stays\n"
+                                      "  whole on a portrait phone (best for phones and tablets).\n"
+                                      "Shrink: the layout always covers the screen (edges may crop).\n"
+                                      "Match: blend width / height with the slider.");
+                if (cv->screenMatch == Canvas::ScreenMatch::MatchWidthOrHeight) {
+                    if (ImGui::SliderFloat("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f,
+                                           cv->matchWidthOrHeight < 0.25f ? "Width" :
+                                           cv->matchWidthOrHeight > 0.75f ? "Height" : "%.2f")) ed.dirty = true;
+                    if (ImGui::SmallButton("Width##cvm"))  { cv->matchWidthOrHeight = 0.0f; ed.dirty = true; }
+                    ImGui::SameLine(); if (ImGui::SmallButton("Match##cvm")) { cv->matchWidthOrHeight = 0.5f; ed.dirty = true; }
+                    ImGui::SameLine(); if (ImGui::SmallButton("Height##cvm")) { cv->matchWidthOrHeight = 1.0f; ed.dirty = true; }
+                }
             }
 
             // Universal extra UI zoom (now applies in both scale modes).
@@ -29710,6 +29728,34 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Billboard (face camera)##cvw", &cv->billboard)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the canvas turned toward the camera. Off = it uses this object's orientation.");
                 ImGui::TextDisabled("Move/rotate this object to place the panel. Needs a main Camera.");
+            }
+
+            SectionHeader("Phones");
+            {   // Safe area: one container that keeps its widgets out of the notch / home bar
+                GameObject* cgo = cv->gameObject;
+                GameObject* safe = nullptr;
+                for (Transform* ch : cgo->transform->Children())
+                    if (ch && ch->gameObject && ch->gameObject->GetComponent<UISafeArea>()) { safe = ch->gameObject; break; }
+                if (!safe) {
+                    if (ImGui::Button("Add Safe Area##cv")) {
+                        ed.PushUndo();
+                        GameObject* sa = ed.scene().CreateGameObject("Safe Area");
+                        sa->AddComponent<UISafeArea>();
+                        sa->transform->SetParent(cgo->transform, false);
+                        // Move the canvas's widgets into it, keeping their order.
+                        std::vector<Transform*> kids(cgo->transform->Children().begin(), cgo->transform->Children().end());
+                        for (Transform* k : kids)
+                            if (k && k->gameObject && k->gameObject != sa && GetUIRect(k->gameObject).valid)
+                                k->SetParent(sa->transform, false);
+                        ed.Select(sa); ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Put this canvas's widgets in a Safe Area container so they keep clear of a\n"
+                                          "phone's notch, rounded corners and home bar. Fills the screen on a desktop.");
+                } else {
+                    ImGui::TextDisabled("Safe Area: \"%s\" keeps its widgets clear of notches.", safe->name.c_str());
+                }
+                if (g_gameDevice <= 0) ImGui::TextDisabled("Pick a phone in the Game view to preview it.");
             }
 
             // Live readout of the resulting scale for the current view.
@@ -30790,6 +30836,23 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uch")) toRemove = cr;
         }
     }
+    if (auto* sa = dynamic_cast<UISafeArea*>(curComp)) {
+        if (CompHeader("UI Safe Area", sa, &toRemove)) {
+            ImGui::TextWrapped("Fills the screen minus a phone's notch, rounded corners and home bar. "
+                               "Widgets inside it stay visible and tappable on any phone.");
+            ImGui::TextDisabled("Keep clear of:");
+            if (ImGui::Checkbox("Top##usa", &sa->top)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Bottom##usa", &sa->bottom)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Left##usa", &sa->left)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Right##usa", &sa->right)) ed.dirty = true;
+            const auto& f = okay::UISafeInsets();
+            if (f.top + f.bottom + f.left + f.right > 0.0f)
+                ImGui::TextDisabled("Now: top %.1f%%  bottom %.1f%%  left %.1f%%  right %.1f%%",
+                                    f.top * 100, f.bottom * 100, f.left * 100, f.right * 100);
+            else
+                ImGui::TextDisabled("No insets now. Pick a phone in the Game view to see it.");
+        }
+    }
     if (auto* ri = dynamic_cast<UIRawImage*>(curComp)) {
         if (CompHeader("UI Raw Image", ri, &toRemove)) {
             AnchorCombo("Anchor##uri", ri->anchor, ed);
@@ -31531,7 +31594,7 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("UI");
           if (o) {
-            if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; }
             if (item(!go->GetComponent<EventSystem>(), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
@@ -31542,6 +31605,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRawImage>() && !go->GetComponent<UIImage>(), "UI Raw Image (tile / scroll a texture)")) { go->AddComponent<UIRawImage>(); ed.dirty = true; }
+            if (item(!GetUIRect(go).valid, "UI Safe Area (keep clear of phone notches)")) { go->AddComponent<UISafeArea>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
             if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
@@ -31734,14 +31798,17 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
                     float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f,
                     bool italic = false, bool gradient = false, ImU32 col2 = 0,
                     okay::TtfFont* ttf = nullptr) {
-    if (px < 1.0f) px = 1.0f;
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    // A smooth font scales below one font pixel (a phone preview, a small window), so
+    // text keeps its size relative to its box; only the 8x8 pixel font needs >= 1.
+    if (px < 0.15f) px = 0.15f;
     if (ttf && ttf->Valid()) {
         if (SDL_Texture* tex = TtfAtlasTexture(ttf)) {
             DrawTtfText(dl, ttf, tex, text, ox, oy, px, col, letterSp, lineSp, italic);
             return;
         }
     }
+    if (px < 1.0f) px = 1.0f;
     const float slant = italic ? 0.30f : 0.0f;
     int ca = (col >> IM_COL32_A_SHIFT) & 0xFF, cr = (col >> IM_COL32_R_SHIFT) & 0xFF;
     int cg = (col >> IM_COL32_G_SHIFT) & 0xFF, cb = (col >> IM_COL32_B_SHIFT) & 0xFF;
@@ -36018,16 +36085,30 @@ struct MobileDevice {
 };
 static const MobileDevice kMobileDevices[] = {
     {"Off (no device)",          0,    0,    0.00f, DevCutout::None,       0.000f, 0.000f, false},
-    {"iPhone 15 Pro",            1179, 2556, 0.14f, DevCutout::Island,     0.046f, 0.013f, false},
+    {"iPhone 16 Pro",            1206, 2622, 0.14f, DevCutout::Island,     0.047f, 0.013f, false},
+    {"iPhone 16 Pro Max",        1320, 2868, 0.14f, DevCutout::Island,     0.045f, 0.012f, false},
+    {"iPhone 15 / 15 Pro / 16",  1179, 2556, 0.14f, DevCutout::Island,     0.046f, 0.013f, false},
     {"iPhone 15 Pro Max",        1290, 2796, 0.14f, DevCutout::Island,     0.044f, 0.012f, false},
     {"iPhone 13 / 14",           1170, 2532, 0.13f, DevCutout::Notch,      0.047f, 0.013f, false},
+    {"iPhone 13 mini",           1080, 2340, 0.13f, DevCutout::Notch,      0.050f, 0.014f, false},
     {"iPhone SE",                750,  1334, 0.00f, DevCutout::HomeButton, 0.030f, 0.000f, false},
     {"Pixel 8",                  1080, 2400, 0.10f, DevCutout::PunchHole,  0.035f, 0.010f, false},
+    {"Pixel 8 Pro",              1344, 2992, 0.10f, DevCutout::PunchHole,  0.032f, 0.009f, false},
     {"Galaxy S24",               1080, 2340, 0.09f, DevCutout::PunchHole,  0.033f, 0.010f, false},
+    {"Galaxy S24 Ultra",         1440, 3120, 0.05f, DevCutout::PunchHole,  0.030f, 0.009f, false},
+    {"Galaxy A54 / A-series",    1080, 2340, 0.08f, DevCutout::PunchHole,  0.034f, 0.010f, false},
+    {"Galaxy Z Flip (open)",     1080, 2640, 0.08f, DevCutout::PunchHole,  0.033f, 0.010f, false},
+    {"OnePlus 12",               1440, 3168, 0.09f, DevCutout::PunchHole,  0.031f, 0.009f, false},
+    {"Xiaomi 14",                1200, 2670, 0.09f, DevCutout::PunchHole,  0.032f, 0.009f, false},
     {"Small Android (720p)",     720,  1600, 0.07f, DevCutout::PunchHole,  0.035f, 0.010f, false},
-    {"iPad Air",                 1640, 2360, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
+    {"Old Android (16:9)",       720,  1280, 0.00f, DevCutout::None,       0.025f, 0.000f, false},
+    {"iPad Pro 12.9\"",          2048, 2732, 0.05f, DevCutout::None,       0.018f, 0.010f, true},
+    {"iPad Pro 11\"",            1668, 2388, 0.06f, DevCutout::None,       0.019f, 0.010f, true},
+    {"iPad Air / iPad 10",       1640, 2360, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
     {"iPad mini",                1488, 2266, 0.06f, DevCutout::None,       0.020f, 0.010f, true},
-    {"Android tablet",           1600, 2560, 0.04f, DevCutout::PunchHole,  0.016f, 0.008f, true},
+    {"Galaxy Tab S9",            1600, 2560, 0.04f, DevCutout::PunchHole,  0.016f, 0.008f, true},
+    {"Pixel Fold (open)",        1840, 2208, 0.05f, DevCutout::PunchHole,  0.020f, 0.008f, true},
+    {"Amazon Fire HD 10",        1200, 1920, 0.02f, DevCutout::None,       0.018f, 0.000f, true},
 };
 static constexpr int kMobileDeviceCount = (int)(sizeof(kMobileDevices) / sizeof(kMobileDevices[0]));
 static const MobileDevice* ActiveDevice() {
@@ -39121,6 +39202,14 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
         DrawPanelTabMenu();   // right-click on any panel tab
+        {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
+            auto& f = okay::UISafeInsets();
+            f = {};
+            if (const MobileDevice* d = ActiveDevice()) {
+                if (g_gameDeviceLandscape) { f.left = f.right = d->safeTop; f.bottom = d->safeBottom * (float)d->h / (float)d->w; }
+                else { f.top = d->safeTop; f.bottom = d->safeBottom; }
+            }
+        }
         TickTweenPreview(ed, ImGui::GetIO().DeltaTime);
 
         // Play-mode tint: a colored border around the whole window so it's

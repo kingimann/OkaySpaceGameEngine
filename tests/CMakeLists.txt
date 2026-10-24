@@ -776,3 +776,7 @@ add_test(NAME crash_reports COMMAND test_crash_reports)
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)
 add_test(NAME tween COMMAND test_tween)
+
+add_executable(test_ui_tabs test_ui_tabs.cpp)
+target_link_libraries(test_ui_tabs PRIVATE okay::engine)
+add_test(NAME ui_tabs COMMAND test_ui_tabs)

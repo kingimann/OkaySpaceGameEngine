@@ -1600,6 +1600,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Extended (back-compatible trailing): content page name per tab.
         out << " " << tb->pages.size();
         for (const auto& p : tb->pages) out << " " << Quote(p);
+        // --- appended (v3): tab style, sizing, states, motion, keys, per-tab extras ---
+        out << " " << (int)tb->style << " " << (int)tb->sizing << " " << tb->spacing << " " << tb->padding
+            << " " << tb->fontScale << " " << tb->minTabSize << " " << tb->indicatorThickness << " " << tb->iconSize
+            << " " << tb->hoverColor.r << " " << tb->hoverColor.g << " " << tb->hoverColor.b << " " << tb->hoverColor.a
+            << " " << tb->pressedColor.r << " " << tb->pressedColor.g << " " << tb->pressedColor.b << " " << tb->pressedColor.a
+            << " " << tb->badgeColor.r << " " << tb->badgeColor.g << " " << tb->badgeColor.b << " " << tb->badgeColor.a
+            << " " << tb->badgeTextColor.r << " " << tb->badgeTextColor.g << " " << tb->badgeTextColor.b << " " << tb->badgeTextColor.a
+            << " " << (tb->animate ? 1 : 0) << " " << tb->animSpeed
+            << " " << (tb->hotkeys ? 1 : 0) << " " << Quote(tb->prevKey) << " " << Quote(tb->nextKey)
+            << " " << (tb->wrapAround ? 1 : 0) << " " << (tb->focusable ? 1 : 0)
+            << " " << tb->icons.size();
+        for (const auto& ic : tb->icons) out << " " << Quote(ic);
+        out << " " << tb->badges.size();
+        for (int b : tb->badges) out << " " << b;
+        out << " " << tb->disabled.size();
+        for (bool d : tb->disabled) out << " " << (d ? 1 : 0);
         out << "\n";
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
@@ -4278,6 +4294,33 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         std::size_t pc = 0; in >> pc;
                         tb->pages.clear();
                         for (std::size_t k = 0; k < pc; ++k) tb->pages.push_back(ReadQuoted(in));
+                    }
+                    in >> std::ws;   // optional (v3): style, sizing, states, motion, keys, extras
+                    if (std::isdigit(in.peek())) {
+                        int st = 0, sz = 0, an = 1, hk = 1, wr = 0, fo = 1;
+                        Color hc, pc, bc, btc;
+                        in >> st >> sz >> tb->spacing >> tb->padding >> tb->fontScale >> tb->minTabSize
+                           >> tb->indicatorThickness >> tb->iconSize
+                           >> hc.r >> hc.g >> hc.b >> hc.a >> pc.r >> pc.g >> pc.b >> pc.a
+                           >> bc.r >> bc.g >> bc.b >> bc.a >> btc.r >> btc.g >> btc.b >> btc.a
+                           >> an >> tb->animSpeed >> hk;
+                        tb->style = (UITabs::Style)st; tb->sizing = (UITabs::Sizing)sz;
+                        tb->hoverColor = hc; tb->pressedColor = pc; tb->badgeColor = bc; tb->badgeTextColor = btc;
+                        tb->animate = (an != 0); tb->hotkeys = (hk != 0);
+                        tb->prevKey = ReadQuoted(in); tb->nextKey = ReadQuoted(in);
+                        in >> wr >> fo;
+                        tb->wrapAround = (wr != 0); tb->focusable = (fo != 0);
+                        std::size_t ic = 0, bn = 0, dn = 0;
+                        in >> ic; tb->icons.clear();
+                        for (std::size_t k = 0; k < ic && in; ++k) tb->icons.push_back(ReadQuoted(in));
+                        in >> bn; tb->badges.clear();
+                        for (std::size_t k = 0; k < bn && in; ++k) { int b = 0; in >> b; tb->badges.push_back(b); }
+                        in >> dn; tb->disabled.clear();
+                        for (std::size_t k = 0; k < dn && in; ++k) { int d = 0; in >> d; tb->disabled.push_back(d != 0); }
+                    } else {
+                        // Saved before tab keys / tab focus existed: keep Q/E, the gamepad
+                        // shoulders and A/D doing whatever the game already uses them for.
+                        tb->hotkeys = false; tb->focusable = false;
                     }
                 } else if (field == "uidropdown") {
                     auto* dd = go->AddComponent<UIDropdown>();

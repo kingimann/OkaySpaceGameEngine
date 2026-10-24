@@ -337,6 +337,8 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `set_progress(v)` | set this object's UIProgressBar fill (0..1) |
 | `slider_value()` / `set_slider(v)` | read/set this object's UISlider value (fires on its own drag) |
 | `toggle_on()` / `set_toggle(b)` | read/set this object's UIToggle checkbox state |
+| `tab_value()` / `set_tab(i)` | read/select this object's UITabs tab (fires on_change) |
+| `set_tab_badge(i, n)` / `set_tab_enabled(i, b)` | badge a tab (0 none, -1 dot, N number) / enable or disable it |
 | `tile_resize(w,h)` `set_tile(x,y,id)` `get_tile(x,y)` `tile_w()` `tile_h()` | edit a sibling Tilemap |
 | `emit(n)` | burst n particles from this object's ParticleSystem (explosions, dust) |
 | `particles_on(bool)` / `particles_alive()` | start/stop continuous emission / read live count |

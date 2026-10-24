@@ -216,6 +216,10 @@ function update(dt) {
 | `ui_toggle_value("n")` / `ui_set_toggle("n", on)` | Read/set a toggle |
 | `ui_dropdown_value("n")` / `ui_dropdown_text("n")` | Selected index / option text |
 | `ui_set_dropdown("n", i)` | Select a dropdown option (fires on_change) |
+| `ui_tab_value("n")` / `ui_tab_text("n")` | Selected tab index / its label |
+| `ui_set_tab("n", i)` | Select a tab (fires on_change; disabled tabs are skipped) |
+| `ui_set_tab_badge("n", i, count)` | Badge a tab: 0 = none, -1 = a dot, N = a number |
+| `ui_set_tab_enabled("n", i, on)` | Enable / disable (dim) a tab |
 | `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
 | `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
 

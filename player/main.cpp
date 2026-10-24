@@ -2027,6 +2027,7 @@ int main(int argc, char** argv) {
           // Widgets hit-test against where they're really drawn (inside their UI
           // parent, at the Canvas scale): always, camera or not.
           UIWorld().rectOf = [cw, ch](GameObject* go, Vec2& o, Vec2& sz) {
+              if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
               return GetUIScreenRect(go, (float)cw, (float)ch, o, sz);
           };
           if (Camera* wcam = scene.mainCamera) {
@@ -2562,6 +2563,7 @@ int main(int argc, char** argv) {
                 return wcam->WorldToScreen(p, (float)ww, (float)hh, out, &depth);
             };
             UIWorld().rectOf = [ww, hh](GameObject* go, Vec2& o, Vec2& sz) {
+                if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
                 return GetUIScreenRect(go, (float)ww, (float)hh, o, sz);
             };
         }
@@ -3347,32 +3349,54 @@ int main(int argc, char** argv) {
             if (!tg->interactable) { SDL_Rect dr{box.x, box.y, box.w, box.h};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
-            else if (_it.kind == K_Tabs) {   // segmented tab bars
+            else if (_it.kind == K_Tabs) {   // tab bars (segmented / underline / folder / pills / vertical)
             auto* tb = up->GetComponent<UITabs>();
             if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
-            enterScroll(up.get(), o);
-            SDL_Rect bar{(int)o.x, (int)o.y, (int)tb->size.x, (int)tb->size.y};
-            FillUIShape(renderer, bar, tb->shape, tb->cornerRadius,
-                        tb->background, tb->background, false, false, op);
-            // Highlight the selected segment (inset a touch so the track frames it).
-            float sox, soy, sw, sh; tb->SegmentRect(tb->value, sox, soy, sw, sh);
-            SDL_Rect sel{(int)(o.x + sox) + 2, (int)(o.y + soy) + 2, (int)sw - 4, (int)sh - 4};
-            FillUIShape(renderer, sel, tb->shape, tb->cornerRadius,
-                        tb->selected, tb->selected, false, false, op);
-            // Labels centered in each segment.
-            float px = 2.0f;
-            for (int i = 0; i < tb->Count(); ++i) {
-                float ox, oy, sgw, sgh; tb->SegmentRect(i, ox, oy, sgw, sgh);
-                const std::string& lbl = tb->tabs[i];
-                float tw = UITextW(lbl, px);
-                const Color& c = (i == tb->value) ? tb->selectedTextColor : tb->textColor;
-                SDL_Color tc{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op)};
-                DrawText(renderer, lbl, o.x + ox + (sgw - tw) * 0.5f,
-                         o.y + oy + (sgh - Font8x8::Height * px) * 0.5f, px, tc);
+            // Where the bar really is (inside its UI parent, stretch anchors resolved,
+            // world-space projected) and its scale: the same rect its clicks are tested
+            // against, so the tab under the pointer is the one that gets selected.
+            Vec2 o, tsz; float tk = 1.0f;
+            if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, tsz, &tk)) continue;
+            { Vec2 clipOnly = o; enterScroll(up.get(), clipOnly); }   // scroll-view clip (o already scrolled)
+            SDL_Rect outerClip{0, 0, 0, 0};
+            const bool hadClip = SDL_RenderIsClipEnabled(renderer) == SDL_TRUE;
+            if (hadClip) SDL_RenderGetClipRect(renderer, &outerClip);
+            for (const UITabsDraw& d : tb->Paint(tsz.x, tsz.y, tk, UITextW)) {
+                const float dx = o.x + d.x, dy = o.y + d.y;
+                switch (d.kind) {
+                    case UITabsDraw::Kind::Fill: {
+                        SDL_Rect r{(int)dx, (int)dy, (int)d.w, (int)d.h};
+                        FillUIShape(renderer, r, d.shape, d.radius, d.color, d.color, false, false, op, 0, d.cornerMask);
+                        break;
+                    }
+                    case UITabsDraw::Kind::Text: {
+                        SDL_Color tc{(Uint8)(d.color.r * 255), (Uint8)(d.color.g * 255), (Uint8)(d.color.b * 255),
+                                     (Uint8)(d.color.a * 255 * op)};
+                        DrawText(renderer, d.text, dx, dy, d.px, tc);
+                        break;
+                    }
+                    case UITabsDraw::Kind::Icon:
+                        if (SDL_Texture* itex = GetTexture(renderer, d.text, baseDir, textureCache)) {
+                            SDL_Rect ir{(int)dx, (int)dy, (int)d.w, (int)d.h};
+                            SDL_SetTextureColorMod(itex, 255, 255, 255);
+                            SDL_SetTextureAlphaMod(itex, (Uint8)(255 * d.color.a * op));
+                            SDL_RenderCopy(renderer, itex, nullptr, &ir);
+                            SDL_SetTextureAlphaMod(itex, 255);
+                        }
+                        break;
+                    case UITabsDraw::Kind::Clip: {   // the scrolling strip, inside any scroll-view clip
+                        SDL_Rect want{(int)dx, (int)dy, (int)d.w, (int)d.h}, use = want;
+                        if (hadClip) SDL_IntersectRect(&want, &outerClip, &use);
+                        SDL_RenderSetClipRect(renderer, &use);
+                        break;
+                    }
+                    case UITabsDraw::Kind::Unclip:
+                        SDL_RenderSetClipRect(renderer, hadClip ? &outerClip : nullptr);
+                        break;
+                }
             }
-            if (!tb->interactable) { SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &bar); }
+            SDL_RenderSetClipRect(renderer, hadClip ? &outerClip : nullptr);
         }
             else if (_it.kind == K_Button) {   // buttons (box, icon, label)
             auto* btn = up->GetComponent<UIButton>();

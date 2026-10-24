@@ -53,6 +53,7 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITabs.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Spawner.hpp"
@@ -3394,6 +3395,33 @@ struct OkayScriptVM::Impl {
                 if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetValue((int)a[1].AsFloat());
             return Value{};
         };
+        // Tab bars: read / select the tab (fires on_change), badge a tab (0 none,
+        // -1 dot, N number) and enable / disable a tab. Tab indices are 0-based.
+        b["ui_tab_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) return Value{(float)tb->value};
+            return Value{0.0f};
+        };
+        b["ui_tab_text"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) return Value{tb->SelectedLabel()};
+            return Value{std::string{}};
+        };
+        b["ui_set_tab"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->Select((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["ui_set_tab_badge"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge((int)a[1].AsFloat(), (int)a[2].AsFloat());
+            return Value{};
+        };
+        b["ui_set_tab_enabled"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled((int)a[1].AsFloat(), a[2].AsBool());
+            return Value{};
+        };
         b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
@@ -3475,6 +3503,27 @@ struct OkayScriptVM::Impl {
         b["set_toggle"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* tg = g->GetComponent<UIToggle>()) tg->on = !a.empty() && a[0].AsBool();
+            return Value{};
+        };
+        // UI tabs on this object (react to switches via on_change).
+        b["tab_value"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go())
+                if (auto* tb = g->GetComponent<UITabs>()) return Value{(float)tb->value};
+            return Value{0.0f};
+        };
+        b["set_tab"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* tb = g->GetComponent<UITabs>()) tb->Select(a.empty() ? 0 : (int)a[0].AsFloat());
+            return Value{};
+        };
+        b["set_tab_badge"] = [go](std::vector<Value>& a) {
+            if (a.size() >= 2) if (GameObject* g = go())
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge((int)a[0].AsFloat(), (int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_tab_enabled"] = [go](std::vector<Value>& a) {
+            if (a.size() >= 2) if (GameObject* g = go())
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled((int)a[0].AsFloat(), a[1].AsBool());
             return Value{};
         };
         // Sibling Rigidbody2D control (jump, dash, knockback, top-down movement).

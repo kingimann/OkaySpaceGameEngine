@@ -217,6 +217,7 @@
 // Visual scripting (node graphs)
 #include "okay/VisualScript/VsValue.hpp"
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 

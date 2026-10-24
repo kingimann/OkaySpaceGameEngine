@@ -42,6 +42,18 @@ public:
         if (k == "ctrl" || k == "control")   return KeyCtrl;
         return lower1(s[0]);
     }
+    /// True for a key name KeyFromName understands exactly: one character, or
+    /// space / up / down / left / right / enter / return / escape / esc /
+    /// backspace / tab / shift / ctrl / control (any case). Any other name would
+    /// silently become its first letter ("F1" -> 'f').
+    static bool IsKnownKeyName(const std::string& s) {
+        if (s.size() == 1) return true;
+        std::string k; for (char c : s) k += (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+        for (const char* n : {"space", "up", "down", "left", "right", "enter", "return", "escape", "esc",
+                              "backspace", "tab", "shift", "ctrl", "control"})
+            if (k == n) return true;
+        return false;
+    }
 
     /// True while the key is held down.
     static bool GetKey(char key);

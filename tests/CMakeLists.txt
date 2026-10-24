@@ -817,3 +817,7 @@ add_test(NAME okayscript_next COMMAND test_okayscript_next)
 add_executable(test_vs_acceptance test_vs_acceptance.cpp)
 target_link_libraries(test_vs_acceptance PRIVATE okay::engine)
 add_test(NAME vs_acceptance COMMAND test_vs_acceptance)
+
+add_executable(test_vs_types test_vs_types.cpp)
+target_link_libraries(test_vs_types PRIVATE okay::engine)
+add_test(NAME vs_types COMMAND test_vs_types)

@@ -1,6 +1,8 @@
 #include "okay/Net/Matchmaker.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "EditorState.hpp"
+#include "okay/VisualScript/VsTypes.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
 #include <filesystem>
@@ -654,6 +656,17 @@ void EditorState::Play() {
     Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
     Game::Reset();             // clear stale pause/quit state from a prior session
+    // Check every visual script first and say what's wrong in the Console
+    // (errors in red: that part won't work; warnings: probably not what you meant).
+    {
+        const auto issues = vs::ValidateSceneGraphs(m_scene, m_projectDir);
+        int warnings = 0;
+        for (const auto& si : issues) {
+            if (si.issue.severity == 0) Log::Error(si.Describe());
+            else if (++warnings <= 20) Log::Warning(si.Describe());
+        }
+        if (warnings > 20) Log::Warning("Visual Script: ", warnings - 20, " more warnings (open the graph to see them all)");
+    }
     m_scene.runScripts = true;
     m_scene.Start();
     m_playing = true;

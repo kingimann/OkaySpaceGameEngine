@@ -33,7 +33,7 @@ public:
     /// The .okayvs file this graph came from ("" = embedded text only). Saving
     /// the graph in the editor reloads every object that uses the file.
     const std::string& Path() const { return m_path; }
-    void SetPath(const std::string& p) { m_path = p; }
+    void SetPath(const std::string& p) { m_path = p; if (m_graph) m_graph->debugKey = p; }
     /// Re-read the file (keeps variables). False if there's no file or it doesn't parse.
     bool Reload(std::string* error = nullptr);
     /// The last load error ("" = the graph loaded fine).
@@ -174,6 +174,8 @@ private:
     std::vector<KeyEntry> m_keyEntries;
     std::vector<TimerEntry> m_timerEntries;
     std::unique_ptr<vs::NodeGraph> m_graph;
+    std::unique_ptr<vs::NodeGraph> m_pendingGraph;   // a reload that arrived while m_graph was running
+    void ApplyPendingGraph();
     vs::VsContext m_ctx;
     std::string m_source;
     std::string m_path;

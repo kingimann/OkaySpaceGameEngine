@@ -330,6 +330,9 @@ int main(int argc, char** argv) {
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
+#include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
+#include "okay/VisualScript/VsDebug.hpp"
+#include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 
 #include <vector>
@@ -1501,6 +1504,26 @@ ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into 
 bool g_scriptAutoPair = true;      // Script Editor: auto-close ( [ { " '
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
+// Visual-script debugger: while a breakpoint is set (or a step is pending) the game
+// tick runs on this fiber, so a breakpoint can freeze it mid-frame and the editor
+// keeps drawing; Continue / Step resume the tick right where it stopped.
+static okay::editor::GameFiber g_gameFiber;
+static void TickGame(EditorState& ed, float dt) {
+    if (g_gameFiber.Suspended()) return;   // frozen at a breakpoint: Continue / Step carry it on
+    if (ed.isPlaying() && okay::vs::VsDebugger::Get().Active()) g_gameFiber.Run([&ed, dt] { ed.Tick(dt); });
+    else ed.Tick(dt);
+}
+/// Finish a frame frozen at a breakpoint, stopping at nothing (before Stop, undo,
+/// deleting objects or loading a scene: never rebuild a scene mid-frame).
+static void FinishFrozenTick() {
+    if (!g_gameFiber.Suspended()) return;
+    auto& d = okay::vs::VsDebugger::Get();
+    const bool was = d.enabled;
+    d.enabled = false;
+    d.RequestStep(okay::vs::VsDebugger::Step::None);
+    g_gameFiber.Resume();
+    d.enabled = was;
+}
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
@@ -5941,7 +5964,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         dl->AddTriangleFilled(ImVec2(c.x - s * 1.1f, c.y - s), ImVec2(c.x - s * 1.1f, c.y + s), ImVec2(c.x + s * 0.5f, c.y), col);
         dl->AddRectFilled(ImVec2(c.x + s * 0.75f, c.y - s), ImVec2(c.x + s * 0.75f + tb * 0.075f, c.y + s), col, 1.0f);
     }
-    if (stepHit) { g_paused = true; ed.Tick(1.0f / 60.0f); }
+    if (stepHit) { g_paused = true; TickGame(ed, 1.0f / 60.0f); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -40194,6 +40217,40 @@ int main(int argc, char** argv) {
     // the loading screen could use the project's custom splash.)
     // Route the node editor's log messages to the editor console.
     okay::editor::vsed::LogFn = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+    // Visual-script debugger: a breakpoint (or step) freezes the game here, shows
+    // where in the Visual Script window, and waits for Continue / Step.
+    okay::vs::VsDebugger::Get().onStop = [](okay::vs::NodeGraph& g, okay::vs::VsNode& n, okay::vs::VsContext& ctx) {
+        if (!g_gameFiber.InFiber()) return;   // only a tick on the fiber can be frozen
+        auto& v = okay::editor::vsed::DebugView();
+        v = okay::editor::vsed::VsDebugView{};
+        v.stopped = true;
+        v.key = g.debugKey;
+        v.node = n.fileId;
+        v.nodeType = n.type;
+        v.object = ctx.gameObject ? ctx.gameObject->name : std::string("?");
+        v.event = g.CurrentEvent();
+        v.frames = g.DebugFrames();
+        v.graph = &g;
+        v.focusPending = true;
+        auto sorted = [](const okay::vs::VarMap& m) {
+            std::vector<std::pair<std::string, okay::vs::VsValue>> out(m.begin(), m.end());
+            std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            return out;
+        };
+        v.vars = sorted(ctx.variables);
+        v.sceneVars = sorted(okay::vs::SceneVariables(ctx.gameObject ? ctx.gameObject->scene() : nullptr));
+        v.globalVars = sorted(okay::vs::GlobalVariables());
+        auto& vst = okay::editor::vsed::State();
+        if (!v.key.empty() && vst.g.path != v.key && !vst.g.dirty) okay::editor::vsed::OpenFile(v.key);
+        g_showVisualScript = true;
+        ConsoleLog("Visual Script paused before node #" + std::to_string(v.node) + " (" + v.nodeType + ") on '" + v.object +
+                   "'. F5 continue, F10 step, F11 step into.");
+        g_gameFiber.Yield();   // the game stays frozen here until Continue / Step
+        v.stopped = false;
+        v.graph = nullptr;
+        v.resume = false;
+    };
+    EditorState::finishFrozenTick = FinishFrozenTick;
     okay::editor::vsed::StepCatalog = VsStepCatalog;
     okay::editor::vsed::StepEditor = VsStepEditor;
     okay::editor::vsed::StepSummary = [](const ActionList::Item& it) { return ActionOpSummary(it); };
@@ -40642,7 +40699,11 @@ int main(int argc, char** argv) {
                 if (s_bm) s_bm->enabled = s_bmOn;
             }
         }
-        if (!g_paused) ed.Tick(okay::Game::Paused() ? 0.0f : dt);
+        {   // Frozen at a visual-script breakpoint: Continue / Step resume that same tick.
+            auto& dv = okay::editor::vsed::DebugView();
+            if (g_gameFiber.Suspended()) { if (dv.resume) { dv.resume = false; g_gameFiber.Resume(); } }
+            else if (!g_paused) TickGame(ed, okay::Game::Paused() ? 0.0f : dt);
+        }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).
         if (ed.isPlaying() && okay::Game::QuitRequested()) { ed.Stop(); g_paused = false; ConsoleLog("Quit (game requested exit)"); }
         ed.TickServices(dt); // Steam callbacks + networking every frame
@@ -41204,6 +41265,7 @@ int main(int argc, char** argv) {
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
     }
+    FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();

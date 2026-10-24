@@ -464,9 +464,9 @@ unchanged.
   previews the real sound in the editor.
 - **Hierarchy multi-drag**: dragging a multi-selection keeps the group's
   scene order wherever you drop it (above, below, or onto a row).
-- **Particle presets**: the Particle System inspector opens with Fire /
-  Smoke / Sparks / Rain / Snow / Magic one-click starting points — every
-  value stays editable after.
+- **Particle presets**: the Particle System inspector opens with a Preset
+  dropdown (Fire / Smoke / Sparks / Explosion / Rain / Snow / Magic / Dust)
+  — every value stays editable after. See *Particle System* below.
 - **Inspector presets & pickers**: Light temperature presets (Candle→Shade),
   Camera FOV buttons (60/75/90/110) + background swatches, Text color
   swatches, a Uniform toggle that links the scale axes, and `...` browse
@@ -488,3 +488,36 @@ unchanged.
 - **NPC & Spawner presets**: NPC archetypes (Guard / Villager / Predator /
   Skittish) and Spawner shapes (Drip / Horde / 3 Rounds / Triggered) set the
   whole component in one click — all values stay editable.
+
+## Particle System
+
+- **Presets**: pick Fire, Smoke, Sparks, Explosion, Rain, Snow, Magic or Dust
+  from the *Preset* dropdown at the top of the component. A preset resets the
+  simulation settings (it keeps the sprite texture and seed) and restarts the
+  effect. Explosion fires one burst every 2 seconds; untick *Loop* for a
+  one-shot. Code can do the same with
+  `ps->ApplyPreset(ParticleSystem::Preset::Fire)`.
+- **Colour gradient**: with *Color Over Life* on, set *Color Mode* to
+  *Gradient* for up to 8 colour stops. Click the bar to add a stop, drag a
+  marker to move it, right-click a marker to delete it. The selected stop's
+  colour and time are edited underneath. *Start -> End* is the old two-colour
+  fade.
+- **Size and speed curves**: *Size Mode ▸ Curve* scales each particle's start
+  size over its life, and *Speed Over Life* scales how fast it moves. Both use
+  a small plot with up to 8 keys: click to add one, drag to move it,
+  right-click to delete it. *Smooth* eases between keys.
+- **Motion**:
+  - *Space*: *World* (the default) leaves particles where they were born when
+    the object moves. *Local* carries them along with the object's position
+    and rotation.
+  - *Inherit Velocity*: gives new particles part of the object's own speed.
+  - *Noise*: a smooth turbulence field, set by strength, frequency and scroll
+    speed.
+  - *Orbit*: spins particles around an axis through the object, in degrees per
+    second.
+  - *Vortex* / *Vortex Pull*: a whirlwind force around that axis, and a pull
+    towards it.
+
+Scenes saved before these options existed load unchanged: the new settings
+are stored on an extra `particlesfx` line, and every default matches the old
+behaviour.

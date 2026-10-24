@@ -22795,6 +22795,177 @@ static void TickTweenPreview(EditorState& ed, float dt) {
         if (p.holdAfter > 0.6f) StopTweenPreview();
     }
 }
+// Inline colour-gradient editor (Particle System colour over life): a preview bar
+// with a marker per stop. Click a marker to select it (drag to move it in time),
+// click the bar to add a stop there, right-click a marker to delete it. The
+// selected stop's colour/time get regular fields underneath.
+static bool ParticleGradientEditor(EditorState& ed, const char* id, okay::ParticleGradient& g) {
+    bool changed = false;
+    ImGui::PushID(id);
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    const ImGuiID selKey = ImGui::GetID("sel");
+    int sel = st->GetInt(selKey, 0);
+    if (sel >= g.count) sel = g.count - 1;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), barH = 18.0f, mkH = 9.0f;
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + w, p0.y + barH);
+    // Checkerboard under the bar so alpha reads.
+    for (int cx = 0; cx * 6.0f < w; ++cx)
+        for (int cy = 0; cy < 3; ++cy)
+            dl->AddRectFilled(ImVec2(p0.x + cx * 6.0f, p0.y + cy * 6.0f),
+                              ImVec2(std::min(p1.x, p0.x + cx * 6.0f + 6.0f), p0.y + cy * 6.0f + 6.0f),
+                              ((cx + cy) & 1) ? IM_COL32(150, 150, 150, 255) : IM_COL32(95, 95, 95, 255));
+    // Sample the gradient in short horizontal strips (handles any stop order).
+    const int kStrips = 32;
+    for (int i = 0; i < kStrips; ++i) {
+        float ta = (float)i / kStrips, tb = (float)(i + 1) / kStrips;
+        ImU32 ca = ToColor(g.Evaluate(ta)), cb = ToColor(g.Evaluate(tb));
+        dl->AddRectFilledMultiColor(ImVec2(p0.x + ta * w, p0.y), ImVec2(p0.x + tb * w, p1.y), ca, cb, cb, ca);
+    }
+    dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255));
+    for (int i = 0; i < g.count; ++i) {
+        float x = p0.x + Mathf::Clamp01(g.stops[i].time) * w;
+        ImVec2 a(x, p1.y), b(x - 5.0f, p1.y + mkH), c(x + 5.0f, p1.y + mkH);
+        dl->AddTriangleFilled(a, b, c, ToColor(Color{g.stops[i].color.r, g.stops[i].color.g, g.stops[i].color.b, 1.0f}));
+        dl->AddTriangle(a, b, c, i == sel ? ImGui::GetColorU32(AccentCol(1.0f)) : IM_COL32(220, 220, 225, 255),
+                        i == sel ? 2.0f : 1.0f);
+    }
+    ImGui::InvisibleButton("##gradbar", ImVec2(w, barH + mkH + 2.0f),
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const float mx = ImGui::GetIO().MousePos.x;
+    const float mt = Mathf::Clamp01((mx - p0.x) / w);
+    auto nearest = [&]() {
+        int best = -1; float bd = 7.0f;
+        for (int i = 0; i < g.count; ++i) {
+            float d = std::fabs(p0.x + g.stops[i].time * w - mx);
+            if (d < bd) { bd = d; best = i; }
+        }
+        return best;
+    };
+    const ImGuiID dragKey = ImGui::GetID("drag");
+    if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        ed.PushUndo();
+        int hit = nearest();
+        if (hit < 0) {   // add a stop with the colour already showing there
+            hit = g.Add(mt, g.Evaluate(mt));
+            if (hit >= 0) changed = true;
+        }
+        if (hit >= 0) sel = hit;
+        st->SetInt(dragKey, hit >= 0 ? 1 : 0);
+    }
+    if (ImGui::IsItemActive() && st->GetInt(dragKey, 0) && sel >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+        if (g.stops[sel].time != mt) { g.stops[sel].time = mt; changed = true; }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) st->SetInt(dragKey, 0);
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        int hit = nearest();
+        if (hit >= 0 && g.count > 1) { ed.PushUndo(); g.Remove(hit); changed = true; if (sel >= g.count) sel = g.count - 1; }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click the bar to add a stop, drag a marker to move it, right-click a marker to delete it.");
+
+    if (sel >= 0 && sel < g.count) {
+        okay::ParticleGradient::Stop& s = g.stops[sel];
+        float col[4] = {s.color.r, s.color.g, s.color.b, s.color.a};
+        if (ImGui::ColorEdit4("Stop Color", col)) { s.color = {col[0], col[1], col[2], col[3]}; changed = true; }
+        if (ImGui::IsItemActivated()) ed.PushUndo();
+        if (ImGui::SliderFloat("Stop Time", &s.time, 0.0f, 1.0f)) changed = true;
+        if (ImGui::IsItemActivated()) ed.PushUndo();
+    }
+    ImGui::TextDisabled("%d / %d stops", g.count, okay::ParticleGradient::kMaxStops);
+    st->SetInt(selKey, sel);
+    ImGui::PopID();
+    return changed;
+}
+// Inline curve editor (Particle System size/speed over life): a small plot of the
+// multiplier across the particle's life with a dot per key. Click empty space to
+// add a key, drag a key to move it, right-click a key to delete it. The y range
+// is 0..max(1, highest key) and is frozen while dragging so keys don't jump.
+static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleCurve& c) {
+    bool changed = false;
+    ImGui::PushID(id);
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    const ImGuiID selKey = ImGui::GetID("sel"), dragKey = ImGui::GetID("drag"), yKey = ImGui::GetID("ymax");
+    int sel = st->GetInt(selKey, 0);
+    if (sel >= c.count) sel = c.count - 1;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), h = 64.0f;
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + w, p0.y + h);
+    const bool dragging = st->GetInt(dragKey, 0) != 0 && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    float yMax = dragging ? st->GetFloat(yKey, 1.0f) : c.MaxValue() * 1.15f;
+    if (yMax < 1.0f) yMax = 1.0f;
+    st->SetFloat(yKey, yMax);
+    auto toScreen = [&](float t, float v) { return ImVec2(p0.x + t * w, p1.y - (v / yMax) * h); };
+
+    dl->AddRectFilled(p0, p1, IM_COL32(28, 30, 36, 255), 3.0f);
+    const float y1 = toScreen(0.0f, 1.0f).y;   // the "x1" line (no change)
+    dl->AddLine(ImVec2(p0.x, y1), ImVec2(p1.x, y1), IM_COL32(70, 74, 86, 255));
+    for (int gx = 1; gx < 4; ++gx)
+        dl->AddLine(ImVec2(p0.x + w * gx * 0.25f, p0.y), ImVec2(p0.x + w * gx * 0.25f, p1.y), IM_COL32(48, 50, 60, 255));
+    const ImU32 lineCol = ImGui::GetColorU32(AccentCol(1.0f));
+    ImVec2 prev = toScreen(0.0f, c.Evaluate(0.0f));
+    for (int i = 1; i <= 48; ++i) {
+        float t = i / 48.0f;
+        ImVec2 cur = toScreen(t, c.Evaluate(t));
+        dl->AddLine(prev, cur, lineCol, 2.0f);
+        prev = cur;
+    }
+    for (int i = 0; i < c.count; ++i) {
+        ImVec2 kp = toScreen(c.keys[i].time, c.keys[i].value);
+        dl->AddCircleFilled(kp, i == sel ? 5.0f : 4.0f, i == sel ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 205, 215, 255));
+        if (i == sel) dl->AddCircle(kp, 6.5f, lineCol, 12, 1.5f);
+    }
+    dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255), 3.0f);
+    char ylab[16]; std::snprintf(ylab, sizeof(ylab), "x%.2g", yMax);
+    dl->AddText(ImVec2(p0.x + 3.0f, p0.y + 1.0f), IM_COL32(140, 145, 160, 255), ylab);
+
+    ImGui::InvisibleButton("##curveplot", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    const float mt = Mathf::Clamp01((m.x - p0.x) / w);
+    const float mv = std::max(0.0f, (p1.y - m.y) / h * yMax);
+    auto nearest = [&]() {
+        int best = -1; float bd = 8.0f * 8.0f;
+        for (int i = 0; i < c.count; ++i) {
+            ImVec2 kp = toScreen(c.keys[i].time, c.keys[i].value);
+            float d = (kp.x - m.x) * (kp.x - m.x) + (kp.y - m.y) * (kp.y - m.y);
+            if (d < bd) { bd = d; best = i; }
+        }
+        return best;
+    };
+    if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        ed.PushUndo();
+        int hit = nearest();
+        if (hit < 0) { hit = c.Add(mt, mv); if (hit >= 0) changed = true; }
+        if (hit >= 0) sel = hit;
+        st->SetInt(dragKey, hit >= 0 ? 1 : 0);
+    }
+    if (ImGui::IsItemActive() && st->GetInt(dragKey, 0) && sel >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+        c.keys[sel].time = mt; c.keys[sel].value = std::min(mv, yMax); changed = true;
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) st->SetInt(dragKey, 0);
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        int hit = nearest();
+        if (hit >= 0 && c.count > 1) { ed.PushUndo(); c.Remove(hit); changed = true; if (sel >= c.count) sel = c.count - 1; }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to add a key, drag a key to move it, right-click a key to delete it.");
+
+    if (sel >= 0 && sel < c.count) {
+        float kv[2] = {c.keys[sel].time, c.keys[sel].value};
+        if (ImGui::DragFloat2("Key (time, x)", kv, 0.01f, 0.0f, 100.0f)) {
+            c.keys[sel].time = Mathf::Clamp01(kv[0]); c.keys[sel].value = std::max(0.0f, kv[1]); changed = true;
+        }
+        if (ImGui::IsItemActivated()) ed.PushUndo();
+    }
+    if (ImGui::Checkbox("Smooth", &c.smooth)) changed = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d / %d keys", c.count, okay::ParticleCurve::kMaxKeys);
+    st->SetInt(selKey, sel);
+    ImGui::PopID();
+    return changed;
+}
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     ImGui::PushID(comp);
@@ -24821,82 +24992,19 @@ void DrawInspector(EditorState& ed) {
             // ---- Presets: one-click classic effects (then tweak from there) ----
             SectionHeader("Presets");
             {
-                auto pre = [&](int which) {
-                    ed.PushUndo();
-                    ParticleSystem& P = *ps;
-                    // Common baseline; each preset overrides what it needs.
-                    P.playing = true; P.shape = ParticleSystem::Shape::Point;
-                    P.burstCount = 0; P.duration = 0.0f; P.loop = true;
-                    P.renderMode = ParticleSystem::RenderMode::Billboard;
-                    P.colorOverLife = true; P.sizeOverLife = false; P.fadeOverLife = true;
-                    P.speedRandom = 0.2f; P.damping = 0.0f; P.gravityModifier = 1.0f;
-                    P.rotationSpeed = 0.0f; P.startRotationRandom = 0.0f;
-                    switch (which) {
-                        case 0:   // Fire: rising, orange -> deep red, shrinking
-                            P.emissionRate = 60; P.maxParticles = 400;
-                            P.shape = ParticleSystem::Shape::Circle; P.shapeRadius = 0.25f;
-                            P.startLifetime = 0.9f; P.startLifetimeRandom = 0.3f;
-                            P.startSize = 0.35f; P.startSizeRandom = 0.15f;
-                            P.startColor = {1.0f, 0.75f, 0.25f, 1.0f}; P.endColor = {0.9f, 0.15f, 0.05f, 0.0f};
-                            P.startVelocity = {0, 2.2f, 0}; P.velocityRandom = 0.5f;
-                            P.gravity = {0, 1.2f, 0};   // hot air rises
-                            P.sizeOverLife = true; P.endSize = 0.05f;
-                            break;
-                        case 1:   // Smoke: slow gray puffs that grow and thin out
-                            P.emissionRate = 25; P.maxParticles = 300;
-                            P.shape = ParticleSystem::Shape::Circle; P.shapeRadius = 0.2f;
-                            P.startLifetime = 2.5f; P.startLifetimeRandom = 0.8f;
-                            P.startSize = 0.5f; P.startSizeRandom = 0.2f;
-                            P.startColor = {0.45f, 0.45f, 0.48f, 0.65f}; P.endColor = {0.25f, 0.25f, 0.28f, 0.0f};
-                            P.startVelocity = {0, 1.2f, 0}; P.velocityRandom = 0.3f;
-                            P.gravity = {0, 0.3f, 0}; P.damping = 0.3f;
-                            P.sizeOverLife = true; P.endSize = 1.4f;
-                            P.rotationSpeed = 20.0f; P.startRotationRandom = 180.0f;
-                            break;
-                        case 2:   // Sparks: fast streaks that arc down under gravity
-                            P.emissionRate = 90; P.maxParticles = 500;
-                            P.startLifetime = 0.6f; P.startLifetimeRandom = 0.2f;
-                            P.startSize = 0.08f; P.startSizeRandom = 0.03f;
-                            P.startColor = {1.0f, 0.9f, 0.5f, 1.0f}; P.endColor = {1.0f, 0.4f, 0.1f, 0.0f};
-                            P.startVelocity = {0, 4.0f, 0}; P.velocityRandom = 3.5f;
-                            P.gravity = {0, -9.0f, 0};
-                            P.renderMode = ParticleSystem::RenderMode::Stretch;
-                            break;
-                        case 3:   // Rain: fast streaks falling through a wide box
-                            P.emissionRate = 300; P.maxParticles = 2000;
-                            P.shape = ParticleSystem::Shape::Box; P.boxSize = {12, 0.1f, 12};
-                            P.startLifetime = 1.6f; P.startLifetimeRandom = 0.2f;
-                            P.startSize = 0.06f; P.startSizeRandom = 0.0f;
-                            P.startColor = {0.60f, 0.72f, 1.0f, 0.8f}; P.endColor = {0.60f, 0.72f, 1.0f, 0.4f};
-                            P.startVelocity = {0, -9.0f, 0}; P.velocityRandom = 0.4f;
-                            P.gravityModifier = 0.0f;
-                            P.renderMode = ParticleSystem::RenderMode::Stretch;
-                            break;
-                        case 4:   // Snow: slow drifting flakes over a wide box
-                            P.emissionRate = 80; P.maxParticles = 1500;
-                            P.shape = ParticleSystem::Shape::Box; P.boxSize = {12, 0.1f, 12};
-                            P.startLifetime = 6.0f; P.startLifetimeRandom = 2.0f;
-                            P.startSize = 0.09f; P.startSizeRandom = 0.04f;
-                            P.startColor = {1, 1, 1, 0.95f}; P.endColor = {1, 1, 1, 0.7f};
-                            P.startVelocity = {0, -0.8f, 0}; P.velocityRandom = 0.4f;
-                            P.gravityModifier = 0.0f; P.damping = 0.4f;
-                            break;
-                        case 5:   // Magic: violet-to-cyan motes floating up from a sphere
-                            P.emissionRate = 40; P.maxParticles = 400;
-                            P.shape = ParticleSystem::Shape::Sphere; P.shapeRadius = 0.6f;
-                            P.startLifetime = 1.4f; P.startLifetimeRandom = 0.5f;
-                            P.startSize = 0.15f; P.startSizeRandom = 0.08f;
-                            P.startColor = {0.55f, 0.40f, 1.0f, 1.0f}; P.endColor = {0.20f, 0.90f, 1.0f, 0.0f};
-                            P.startVelocity = {0, 0.6f, 0}; P.velocityRandom = 0.8f;
-                            P.gravityModifier = 0.0f; P.rotationSpeed = 90.0f;
-                            break;
+                // The looks themselves live in the engine (ParticleSystem::ApplyPreset)
+                // so games and tests can apply them too.
+                if (ImGui::BeginCombo("Preset##ps", "Choose a preset...")) {
+                    for (int pi = 0; pi < (int)ParticleSystem::Preset::Count; ++pi) {
+                        const auto pr = (ParticleSystem::Preset)pi;
+                        if (ImGui::Selectable(ParticleSystem::PresetName(pr))) {
+                            ed.PushUndo();
+                            ps->ApplyPreset(pr);
+                            ps->playing = true;
+                            ed.dirty = true;
+                        }
                     }
-                    ed.dirty = true;
-                };
-                static const char* kPsNames[6] = {"Fire", "Smoke", "Sparks", "Rain", "Snow", "Magic"};
-                for (int pi = 0; pi < 6; ++pi) {
-                    if (pi) ImGui::SameLine(0, 4);
-                    if (ImGui::SmallButton(kPsNames[pi])) pre(pi);
+                    ImGui::EndCombo();
                 }
                 ImGui::TextDisabled("Starting points — every value below stays editable.");
             }
@@ -24964,12 +25072,46 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Fade Out##ps", &ps->fadeOverLife)) ed.dirty = true;
             if (ImGui::Checkbox("Color Over Life##ps", &ps->colorOverLife)) ed.dirty = true;
             if (ps->colorOverLife) {
-                float ec[4] = {ps->endColor.r, ps->endColor.g, ps->endColor.b, ps->endColor.a};
-                if (ImGui::ColorEdit4("End Color##ps", ec)) { ps->endColor = {ec[0], ec[1], ec[2], ec[3]}; ed.dirty = true; }
+                // Start -> End is the classic two-colour fade; Gradient adds up to 8 stops.
+                const char* cmodes[] = {"Start -> End", "Gradient"};
+                int cm = ps->colorGradient.Active() ? 1 : 0;
+                if (ImGui::Combo("Color Mode##ps", &cm, cmodes, 2)) {
+                    ed.PushUndo();
+                    if (cm == 1) ps->colorGradient.SetTwo(ps->startColor, ps->endColor);   // seed from the old fields
+                    else         ps->colorGradient.Clear();
+                    ed.dirty = true;
+                }
+                if (ps->colorGradient.Active()) {
+                    if (ParticleGradientEditor(ed, "psgrad", ps->colorGradient)) ed.dirty = true;
+                } else {
+                    float ec[4] = {ps->endColor.r, ps->endColor.g, ps->endColor.b, ps->endColor.a};
+                    if (ImGui::ColorEdit4("End Color##ps", ec)) { ps->endColor = {ec[0], ec[1], ec[2], ec[3]}; ed.dirty = true; }
+                }
             }
             if (ImGui::Checkbox("Size Over Life##ps", &ps->sizeOverLife)) ed.dirty = true;
-            if (ps->sizeOverLife)
-                if (ImGui::DragFloat("End Size##ps", &ps->endSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ps->sizeOverLife) {
+                const char* smodes[] = {"End Size", "Curve"};
+                int sm = ps->sizeCurve.Active() ? 1 : 0;
+                if (ImGui::Combo("Size Mode##ps", &sm, smodes, 2)) {
+                    ed.PushUndo();
+                    if (sm == 1) ps->sizeCurve.SetLinear(1.0f, ps->startSize > 1e-4f ? ps->endSize / ps->startSize : 0.0f);
+                    else         ps->sizeCurve.Clear();
+                    ed.dirty = true;
+                }
+                if (ps->sizeCurve.Active()) {
+                    ImGui::TextDisabled("Size x start size over life");
+                    if (ParticleCurveEditor(ed, "pssize", ps->sizeCurve)) ed.dirty = true;
+                } else if (ImGui::DragFloat("End Size##ps", &ps->endSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Speed Over Life##ps", &ps->speedOverLife)) {
+                if (ps->speedOverLife && !ps->speedCurve.Active()) ps->speedCurve.SetLinear(1.0f, 0.25f);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale how fast particles move as they age (1 = unchanged).");
+            if (ps->speedOverLife && ps->speedCurve.Active()) {
+                ImGui::TextDisabled("Speed x over life");
+                if (ParticleCurveEditor(ed, "psspeed", ps->speedCurve)) ed.dirty = true;
+            }
 
             // ---- Forces ----
             SectionHeader("Forces");
@@ -24977,6 +25119,31 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat3("Gravity##ps", gv, 0.05f)) { ps->gravity = {gv[0], gv[1], gv[2]}; ed.dirty = true; }
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
+
+            // ---- Motion (space, inherited velocity, turbulence, orbit/vortex) ----
+            SectionHeader("Motion");
+            const char* spaces[] = {"World", "Local"};
+            int spi = (int)ps->simulationSpace;
+            if (ImGui::Combo("Space##ps", &spi, spaces, 2)) { ps->simulationSpace = (ParticleSystem::SimulationSpace)spi; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("World = particles stay put when the object moves (trails). Local = they move and turn with it (torch flame).");
+            if (ImGui::DragFloat("Inherit Velocity##ps", &ps->inheritVelocity, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the object's own speed given to each new particle.");
+            if (ImGui::DragFloat("Noise Strength##ps", &ps->noiseStrength, 0.02f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turbulence: a smooth swirling noise field (units/second). 0 = off.");
+            if (ps->noiseStrength > 0.0f) {
+                if (ImGui::DragFloat("Noise Frequency##ps", &ps->noiseFrequency, 0.01f, 0.01f, 50.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Noise Scroll##ps", &ps->noiseScroll, 0.01f, 0.0f, 50.0f)) ed.dirty = true;
+            }
+            if (ImGui::DragFloat("Orbit / sec##ps", &ps->orbitSpeed, 1.0f, -3600.0f, 3600.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spin particles around the axis through the object, in degrees per second.");
+            if (ImGui::DragFloat("Vortex##ps", &ps->vortexStrength, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Whirlwind: push particles sideways around the axis (acceleration).");
+            if (ImGui::DragFloat("Vortex Pull##ps", &ps->vortexPull, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull particles towards the axis (negative pushes them out).");
+            if (ps->orbitSpeed != 0.0f || ps->vortexStrength != 0.0f || ps->vortexPull != 0.0f) {
+                float oa[3] = {ps->orbitAxis.x, ps->orbitAxis.y, ps->orbitAxis.z};
+                if (ImGui::DragFloat3("Axis##ps", oa, 0.02f)) { ps->orbitAxis = {oa[0], oa[1], oa[2]}; ed.dirty = true; }
+            }
 
             // ---- Collision (ground plane) ----
             SectionHeader("Collision");

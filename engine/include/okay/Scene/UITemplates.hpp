@@ -553,6 +553,94 @@ inline GameObject* AddLoadingScreen(Scene& scene) {
     return root;
 }
 
+namespace detail {
+    // Shared by the loading screens: a full-screen backdrop, a progress bar that
+    // follows the `loading` variable (0 to 1) and a spinning ring.
+    inline GameObject* LoadingBackdrop(Scene& s, const char* name, Color top, Color bottom) {
+        GameObject* root = Child(s, EnsureCanvas(s), name);
+        auto* p = root->AddComponent<UIPanel>();
+        p->anchor = UIAnchor::StretchFull; p->position = {0, 0}; p->size = {0, 0};
+        p->shape = UIShape::Rectangle; p->cornerRadius = 0.0f;
+        p->color = top; p->useGradient = top.r != bottom.r || top.g != bottom.g || top.b != bottom.b; p->colorBottom = bottom;
+        return root;
+    }
+    inline GameObject* LoadingBar(Scene& s, GameObject* parent, UIAnchor anchor, Vec2 pos, Vec2 size,
+                                  UIShape shape = UIShape::Pill) {
+        GameObject* g = Child(s, parent, "Progress"); auto* pb = g->AddComponent<UIProgressBar>();
+        pb->anchor = anchor; pb->position = pos; pb->size = size;
+        pb->value = 0.4f; pb->shape = shape; pb->fill = slate::Accent(); pb->background = Color::FromBytes(255, 255, 255, 24);
+        auto* bb = g->AddComponent<UIBarBind>(); bb->var = "loading"; bb->min = 0.0f; bb->max = 1.0f;
+        return g;
+    }
+    inline GameObject* LoadingSpinner(Scene& s, GameObject* parent, UIAnchor anchor, Vec2 pos, float d,
+                                      float thickness = 4.0f) {
+        GameObject* g = Child(s, parent, "Spinner"); auto* r = g->AddComponent<UIRadialProgress>();
+        r->anchor = anchor; r->position = pos; r->size = {d, d};
+        r->value = 0.25f; r->thickness = thickness; r->spin = true;
+        r->background = Color::FromBytes(255, 255, 255, 20); r->fill = slate::Accent();
+        return g;
+    }
+}
+
+// Minimal loading: a spinner and a small label in the middle, a thin bar under them.
+inline GameObject* AddLoadingMinimal(Scene& scene) {
+    using namespace detail;
+    GameObject* root = LoadingBackdrop(scene, "Loading (Minimal)", Color::FromBytes(10, 11, 15), Color::FromBytes(10, 11, 15));
+    LoadingSpinner(scene, root, UIAnchor::Center, {0, -36}, 48.0f, 5.0f);
+    Text(scene, root, "Label", "Loading", UIAnchor::Center, {0, 20}, {300, 24}, 16.0f, slate::Text(), 1);
+    LoadingBar(scene, root, UIAnchor::Center, {0, 56}, {240, 4});
+    Text(scene, root, "Tip", "Tip: hold Shift to sprint.", UIAnchor::BottomCenter, {0, -48}, {700, 22}, 14.0f, slate::Dim(), 1);
+    return root;
+}
+
+// Card loading: a raised card in the middle with the level name, a tip and the bar.
+inline GameObject* AddLoadingCard(Scene& scene) {
+    using namespace detail;
+    GameObject* root = LoadingBackdrop(scene, "Loading (Card)", slate::Backdrop(), Color::FromBytes(28, 36, 56, 255));
+    GameObject* card = Panel(scene, root, "Card", UIAnchor::Center, {0, 0}, {540, 210}, slate::Panel(), 16.0f, true);
+    Caption(scene, card, "Caption", "NOW LOADING", UIAnchor::TopLeft, {32, 28}, 300);
+    Text(scene, card, "Title", "Dunes", UIAnchor::TopLeft, {32, 50}, {400, 40}, 30.0f, slate::Text(), 0, true);
+    LoadingSpinner(scene, card, UIAnchor::TopRight, {-32, 32}, 30.0f, 3.5f);
+    Text(scene, card, "Tip", "Tip: hold Shift to sprint.", UIAnchor::BottomLeft, {32, -54}, {476, 22}, 14.0f, slate::Dim());
+    LoadingBar(scene, card, UIAnchor::BottomCenter, {0, -32}, {476, 8});
+    IntroAnim(card, UIAnimation::Intro::Pop);
+    return root;
+}
+
+// Splash loading: a big centred logo and game name with a thin bar under them.
+inline GameObject* AddLoadingSplash(Scene& scene) {
+    using namespace detail;
+    GameObject* root = LoadingBackdrop(scene, "Loading (Splash)", Color::FromBytes(8, 9, 12), Color::FromBytes(8, 9, 12));
+    GameObject* logo = Panel(scene, root, "Logo", UIAnchor::Center, {0, -70}, {120, 120}, slate::Accent(), 28.0f);
+    { auto* p = logo->GetComponent<UIPanel>(); p->useGradient = true; p->colorBottom = Color::FromBytes(120, 90, 240);
+      p->gradientDir = UIPanel::GradientDir::DiagonalDown; p->borderWidth = 0.0f; }
+    Text(scene, logo, "Mark", "OK", UIAnchor::TopLeft, {0, 0}, {120, 120}, 44.0f, Color::White, 1, true);
+    Text(scene, root, "Title", "Star Arena", UIAnchor::Center, {0, 26}, {500, 40}, 32.0f, slate::Text(), 1, true);
+    LoadingBar(scene, root, UIAnchor::Center, {0, 70}, {220, 4});
+    Text(scene, root, "Tip", "Tip: hold Shift to sprint.", UIAnchor::BottomCenter, {0, -48}, {700, 22}, 14.0f, slate::Dim(), 1);
+    IntroAnim(logo, UIAnimation::Intro::Pop);
+    return root;
+}
+
+// Cinematic loading: letterbox bars, the chapter and level bottom-left, the bar along
+// the lower letterbox edge and a spinner at the bottom-right.
+inline GameObject* AddLoadingCinematic(Scene& scene) {
+    using namespace detail;
+    GameObject* root = LoadingBackdrop(scene, "Loading (Cinematic)", Color::FromBytes(20, 24, 32), Color::FromBytes(8, 9, 12));
+    { GameObject* g = Child(scene, root, "Letterbox Top"); auto* p = g->AddComponent<UIPanel>();
+      p->anchor = UIAnchor::StretchHorizontal; p->position = {0, 0}; p->size = {0, 86};
+      p->shape = UIShape::Rectangle; p->cornerRadius = 0.0f; p->color = Color::Black; }
+    { GameObject* g = Child(scene, root, "Letterbox Bottom"); auto* p = g->AddComponent<UIPanel>();
+      p->anchor = UIAnchor::StretchHorizontal; p->position = {0, 634}; p->size = {0, 86};
+      p->shape = UIShape::Rectangle; p->cornerRadius = 0.0f; p->color = Color::Black; }
+    Caption(scene, root, "Chapter", "CHAPTER 2", UIAnchor::BottomLeft, {76, -186}, 400);
+    Text(scene, root, "Title", "The Long Night", UIAnchor::BottomLeft, {76, -126}, {700, 52}, 44.0f, slate::Text(), 0, true);
+    Text(scene, root, "Tip", "Tip: hold Shift to sprint.", UIAnchor::BottomLeft, {76, -32}, {800, 22}, 15.0f, slate::Dim());
+    LoadingBar(scene, root, UIAnchor::BottomCenter, {0, -86}, {1280, 3}, UIShape::Rectangle);
+    LoadingSpinner(scene, root, UIAnchor::BottomRight, {-76, -26}, 32.0f, 3.5f);
+    return root;
+}
+
 // Shop: coins badge + three item cards with a price and Buy.
 inline GameObject* AddShop(Scene& scene) {
     using namespace detail;

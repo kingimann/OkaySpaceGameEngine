@@ -941,6 +941,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (ls->barBorder ? 1 : 0); wc(ls->barBorderColor);
         out << " " << (ls->showPercent ? 1 : 0) << " " << (ls->showSpinner ? 1 : 0); wc(ls->spinnerColor);
         out << " " << ls->spinnerRadius << " " << ls->spinnerDotSize << " " << ls->spinnerSpeed << " " << ls->spinnerY;
+        // Layout block (appended later; numeric-peek guarded on read).
+        out << " " << ls->layout << " " << ls->barStyle << " " << ls->spinnerStyle << " " << ls->logoSize
+            << " " << (ls->logoPulse ? 1 : 0) << " " << (ls->kenBurns ? 1 : 0) << " " << ls->tipInterval;
+        wc(ls->cardColor);
+        out << " " << Quote(ls->subtitle) << " " << Quote(ls->logoImage);
         out << "\n";
     }
     if (auto* ui = go->GetComponent<InventoryUI>()) {
@@ -3051,6 +3056,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> ls->spinnerRadius >> ls->spinnerDotSize >> ls->spinnerSpeed >> ls->spinnerY;
                         ls->gradientBackground = (gb != 0); ls->barBorder = (bb2 != 0);
                         ls->showPercent = (sp != 0); ls->showSpinner = (ss2 != 0);
+                        in >> std::ws;   // optional layout block (added later)
+                        int lpk2 = in.peek();
+                        if (std::isdigit(lpk2) || lpk2 == '-' || lpk2 == '.') {
+                            int lp = 1, kb = 0;
+                            in >> ls->layout >> ls->barStyle >> ls->spinnerStyle >> ls->logoSize >> lp >> kb >> ls->tipInterval;
+                            rc(ls->cardColor);
+                            ls->subtitle = ReadQuoted(in);
+                            ls->logoImage = ReadQuoted(in);
+                            ls->logoPulse = (lp != 0); ls->kenBurns = (kb != 0);
+                        }
                     }
                 } else if (field == "inventoryui") {
                     auto* ui = go->AddComponent<InventoryUI>();

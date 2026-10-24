@@ -5,6 +5,9 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Core/Log.hpp"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -63,6 +66,14 @@ public:
     void OnCollisionStay2D(const Collision2D& c) override { FireContact("OnCollisionStay", c); }
     void OnCollisionStay3D(const Collision3D& c) override { FireContact("OnCollisionStay", c); }
     void LateUpdate(float dt) override;
+    /// "OnDestroy": runs while the object still exists (it may spawn effects).
+    void OnDestroy() override;
+    /// "OnEnable" (when it starts, before On Start, and each time the object is
+    /// switched back on) / "OnDisable" (switched off during play).
+    void OnEnable() override  { if (m_started) Fire("OnEnable", nullptr); }
+    void OnDisable() override { if (m_started) Fire("OnDisable", nullptr); }
+    /// "OnFixedUpdate" runs at this fixed rate (steps per second), before On Update.
+    static constexpr float kFixedStep = 1.0f / 50.0f;
     void OnMouseEnter() override { Fire("OnMouseEnter", gameObject); }
     void OnMouseExit() override { Fire("OnMouseExit", gameObject); }
     /// Clip events run "OnAnimEvent:<name>" (an On Anim Event node filtered to
@@ -76,6 +87,15 @@ public:
     /// code: runs this graph's "On Custom Event" nodes named `name`. `value` is
     /// readable with the Event Value node; `sender` with Other Name.
     void SendEvent(const std::string& name, const vs::VsValue& value = {}, GameObject* sender = nullptr) {
+        // A ping-pong of events between graphs would recurse forever: cap the depth.
+        static int depth = 0;
+        if (depth >= kMaxEventDepth) {
+            if (m_graph) Log::Error("Visual Script on '", gameObject ? gameObject->name : std::string("?"),
+                                    "': event '", name, "' was dropped - events triggered each other more than ",
+                                    kMaxEventDepth, " times in a row (an endless event loop?)");
+            return;
+        }
+        struct Depth { Depth() { ++depth; } ~Depth() { --depth; } } guard;
         m_ctx.variables["event_value"] = value;
         m_ctx.variables["event_name"] = vs::VsValue(name);
         std::string key = name;   // entry names are one token: "Player Hit" -> "Player_Hit"
@@ -85,7 +105,12 @@ public:
     /// Set a blackboard variable from outside (Set Object Var node, gameplay code).
     void SetVariable(const std::string& name, const vs::VsValue& v) { m_ctx.variables[name] = v; }
 
+    /// Most custom events that may trigger each other in a chain within one call.
+    static constexpr int kMaxEventDepth = 64;
+
 private:
+    bool m_started = false;         // Start() ran (OnStart fired)
+    float m_fixedAcc = 0.0f;        // time banked toward the next OnFixedUpdate
     bool m_startDeferred = false;   // Start() arrived while scripts were off
     void SetContact(const Vec3& point, const Vec3& normal, float impactSpeed) {
         m_ctx.variables["contact_point"]  = vs::VsValue(point);
@@ -115,7 +140,7 @@ private:
         Fire(entryName, other ? other->gameObject : nullptr);
     }
     void Fire(const char* entryName, GameObject* other) {
-        if (!m_graph) return;
+        if (!m_graph || !ScriptsRun(gameObject)) return;
         if (m_graph->Entries(entryName).empty()) return;
         m_ctx.gameObject = gameObject; m_ctx.transform = transform;
         GameObject* prev = m_ctx.other;

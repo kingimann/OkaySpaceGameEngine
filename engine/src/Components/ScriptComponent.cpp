@@ -86,6 +86,7 @@ void ScriptComponent::Start() {
     m_host.component  = this;
     m_vm->Bind(&m_host);
     m_vm->CallStart();
+    m_started = true;
 }
 
 void ScriptComponent::Update(float dt) {
@@ -109,8 +110,17 @@ void ScriptComponent::LateUpdate(float) {
 
 void ScriptComponent::OnDestroy() {
     if (!m_vm || m_startDeferred || !ScriptsRun(gameObject)) return;   // never started: nothing to tear down
-    m_vm->CallEvent("on_disable");
+    // OnDisable once: not again if the object was already switched off.
+    if (gameObject && gameObject->active) m_vm->CallEvent("on_disable");
     m_vm->CallEvent("on_destroy");
+}
+
+void ScriptComponent::OnEnable() {
+    if (m_vm && m_started && ScriptsRun(gameObject)) m_vm->CallEvent("on_enable");
+}
+
+void ScriptComponent::OnDisable() {
+    if (m_vm && m_started && ScriptsRun(gameObject)) m_vm->CallEvent("on_disable");
 }
 
 void ScriptComponent::FireWithObject(const char* event, GameObject* other) {

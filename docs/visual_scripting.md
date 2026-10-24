@@ -388,7 +388,7 @@ left jumps to each chain; right- or middle-drag pans; F frames the selection.
 | On Trigger Stay | runs every frame something stays inside this object's trigger (healing zones, lava) |
 | Raycast 3D | a line from Origin along Direction (this object, forward, when unwired). Outputs Hit, Point, Normal, Distance, Object. Ignore Triggers passes through trigger colliders |
 | Sphere Cast | the same with a ball of Radius, so it can't slip through small gaps (skips triggers) |
-| Raycast All 3D | everything along the line, nearest first: Count, Objects (names), Nearest |
+| Raycast All 3D | everything along the line, nearest first: Count, Objects, Nearest |
 | Overlap Sphere / Overlap Box | the objects inside a ball / box (Half Size is half the box): Count, Objects |
 | Contact Point / Contact Normal / Impact Speed | where the collision or trigger touch that started this chain happened, which way the surface faces, and how hard it hit |
 
@@ -411,3 +411,105 @@ grey asleep), this frame's contact points with their normals (red) and, with
 *Rays cast from scripts* on, every ray / cast made by OkayScript, visual scripts
 and Actions (green to the hit with a white normal, yellow on a miss) — in the
 Scene and Game views while playing. When it's off the physics records nothing.
+
+## Objects: Target inputs, Self / Other, Spawn's object
+
+Graphs can now pass **objects** along wires, not just names.
+
+- **Self**, **Other Object** (the other object of a collision, trigger or custom
+  event), **Find Object** (by name), **Find With Tag** and **Nearest With Tag**
+  output an object. **Spawn** outputs the object it just spawned. **Raycast 3D** /
+  **Sphere Cast** output the object they hit, and **Raycast All 3D** / **Overlap**
+  nodes output lists of objects. As text, an object reads as its name.
+- Nodes that act on an object (Translate, Set Position, Rotate, Set Scale,
+  Get Position / X / Y / Z, Add Force, Set Velocity, Set Color, Set Visible, Play
+  Sound, Anim Trigger, Get Name, Get Tag, ...) have a last **Target** input.
+  Leave it empty for this object, wire an object into it, or type a name.
+  Only the node itself acts on the target. Anything wired into its other inputs
+  is still read for this object, so `Get X` (no Target) feeding a targeted
+  `Set Position` reads *your* X.
+- **Destroy** has a **Target** too. Destroying another object carries on to
+  the next node; destroying this object ends the chain.
+- Object Exists / Object Position / Distance To / Look At / Move Towards /
+  Set Active / Set Text / Teleport take an **Object** input that wins over the
+  name typed in the node.
+- An object value is a reference by id. It is safe after the object is
+  destroyed: Branch reads it as false, Print shows nothing, and a node aimed at
+  it is skipped with an error in the Console naming the node.
+- Equals compares two objects by identity, or an object with a name by name.
+
+Collision → destroy the enemy (graph on the player):
+
+```
+node 0 OnCollision
+node 1 Other
+node 2 GetTag
+node 3 Const "Enemy"
+node 4 Equals
+node 5 Branch
+node 6 Destroy
+data 2 0 1 0        # Get Tag of Other
+data 4 0 2 0
+data 4 1 3 0
+data 5 0 4 0
+data 6 0 1 0        # Destroy's Target = Other
+exec 0 0 5
+exec 5 0 6
+entry OnCollision 0
+```
+
+Key → spawn → place the spawned object:
+
+```
+node 0 OnKey space
+node 1 Spawn bullet.okayprefab
+node 2 SetPosition
+default 2 0 7
+default 2 1 8
+default 2 2 9
+data 2 3 1 0        # Set Position's Target = Spawn's object
+exec 0 0 1
+exec 1 0 2
+entry OnKey:space 0
+```
+
+## More events
+
+| Node | Runs |
+|---|---|
+| On Fixed Update | 50 times a second of game time (at most 5 per frame), before On Update. Delta Time reads 0.02. |
+| On Enable | When the object starts (before On Start) and each time it is switched back on. |
+| On Disable | When the object is switched off during play (detected the next frame). |
+| On Destroy | When the object is destroyed, while it still exists. It may spawn effects. |
+
+Text scripts get the same `OnEnable()` / `OnDisable()` calls when their
+object is switched off and on.
+
+`OnKey:space`, `OnTimer:2` and `OnEvent:Hit` are accepted as node types too
+(the same spelling as the `entry` line).
+
+## When a graph goes wrong
+
+Graphs never freeze the game and never fail silently:
+
+- **Runaway loops.** One event may run at most 1,000,000 node steps,
+  including loop bodies and nested loops. Past that, the rest of the event is
+  skipped and the Console gets one error naming the object and node. The next
+  event runs normally.
+- **Data cycles.** A node whose input depends on its own output is reported
+  and the event stops.
+- **Event ping-pong.** Custom events triggering each other more than 64 deep
+  are dropped with an error.
+- **Missing objects.** A Target or Destroy aimed at a destroyed or unknown
+  object, or a Spawn whose prefab file is missing, is reported and skipped.
+
+While playing, the Visual Script editor outlines the node that failed in red
+and shows the message on the canvas. Each distinct error is logged once; the
+canvas shows how many times it happened.
+
+`Wait` now pauses the chain and resumes it by itself (like Delay), so it works
+under On Start too. Under On Update it holds that chain until the time has
+passed, then lets it through every frame.
+
+Every Visual Script on an object is saved with the scene. Before this, only
+the first graph on an object survived a save.

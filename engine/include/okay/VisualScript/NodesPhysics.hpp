@@ -32,18 +32,18 @@ struct VsPhysicsNode : VsNode {
             case 1:  return h.point;
             case 2:  return h.normal;
             case 3:  return h.distance;
-            default: return h.gameObject ? h.gameObject->name : std::string();
+            default: return VsValue::Object(h.gameObject ? h.gameObject->InstanceId() : 0);   // reads as its name
         }
     }
     static VsValue Names(const std::vector<GameObject*>& objs) {
         VsValue out = VsValue::MakeArray();
-        for (GameObject* o : objs) out.AsArray()->push_back(VsValue(o ? o->name : std::string()));
+        for (GameObject* o : objs) out.AsArray()->push_back(VsValue::Object(o ? o->InstanceId() : 0));
         return out;
     }
 };
 
 // Raycast 3D: in0 Origin, in1 Direction, in2 Max Dist, in3 Ignore Triggers ->
-// out Hit, Point, Normal, Distance, Object (name).
+// out Hit, Point, Normal, Distance, Object (an object; reads as its name as text).
 struct Raycast3DNode : VsPhysicsNode {
     using VsPhysicsNode::VsPhysicsNode;
     std::uint64_t recordedFrame = ~0ull;   // record the debug ray once per frame
@@ -81,7 +81,7 @@ struct SphereCast3DNode : VsPhysicsNode {
 };
 
 // Raycast All 3D: in0 Origin, in1 Direction, in2 Max Dist -> out Count, Objects
-// (names, nearest first), Nearest (name).
+// (objects, nearest first), Nearest (object).
 struct RaycastAll3DNode : VsPhysicsNode {
     using VsPhysicsNode::VsPhysicsNode;
     VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
@@ -97,12 +97,12 @@ struct RaycastAll3DNode : VsPhysicsNode {
         }
         if (pin == 0) return (float)objs.size();
         if (pin == 1) return Names(objs);
-        return objs.empty() || !objs.front() ? std::string() : objs.front()->name;
+        return VsValue::Object(objs.empty() || !objs.front() ? 0 : objs.front()->InstanceId());
     }
 };
 
 // Overlap Sphere / Overlap Box: in0 Center, in1 Radius (sphere) or Half Size
-// (box, a vector) -> out Count, Objects (names). This object is left out.
+// (box, a vector) -> out Count, Objects (objects). This object is left out.
 struct Overlap3DNode : VsPhysicsNode {
     bool box;
     Overlap3DNode(bool isBox, const std::string& layers) : VsPhysicsNode(layers), box(isBox) {}

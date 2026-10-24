@@ -40,6 +40,10 @@ public:
     virtual void OnRender(IRenderer& /*renderer*/) {}
     /// Called when the component or its GameObject is destroyed.
     virtual void OnDestroy() {}
+    /// The GameObject was switched on / off (its `active` flag changed). Called by
+    /// the Scene at the start of the next frame, once per change.
+    virtual void OnEnable() {}
+    virtual void OnDisable() {}
     /// Objects in `dying` are about to be destroyed (this component survives):
     /// drop any pointers to them or their transforms.
     virtual void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& /*dying*/) {}

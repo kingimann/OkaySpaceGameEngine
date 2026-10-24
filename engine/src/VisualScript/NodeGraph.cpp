@@ -4,6 +4,7 @@
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Scene/GameObject.hpp"
 
 #include <cctype>
 #include <sstream>
@@ -37,11 +38,37 @@ void NodeGraph::ConnectData(int consumer, int inPin, int producer, int outPin) {
 }
 
 VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
-    // Guard against cycles in data evaluation.
-    if (++m_execGuard > 100000) { --m_execGuard; return {}; }
     VsNode* n = Node(nodeId);
-    VsValue v = n ? n->Eval(outPin, *this, ctx) : VsValue{};
+    if (m_abort) return {};
+    // A data wire that loops back into itself would recurse forever.
+    if (m_execGuard >= kMaxPullDepth) {
+        ReportError(n, ctx, "a data wire loops back into itself (a node's input depends on its own output); "
+                            "the value was treated as 0 and the event stopped");
+        m_abort = true;
+        return {};
+    }
+    // Inputs of a targeted node are evaluated for the graph's own object.
+    GameObject* const curGo = ctx.gameObject;
+    Transform* const curTr = ctx.transform;
+    if (!m_selfStack.empty()) { ctx.gameObject = m_selfStack.back().go; ctx.transform = m_selfStack.back().tr; }
+    ++m_execGuard;
+    VsValue v;
+    if (n) {
+        GameObject* target = nullptr;
+        if (!ResolveTarget(n, ctx, target)) {
+            v = {};
+        } else if (target) {
+            m_selfStack.push_back({ctx.gameObject, ctx.transform});
+            ctx.gameObject = target; ctx.transform = target->transform;
+            v = n->Eval(outPin, *this, ctx);
+            ctx.gameObject = m_selfStack.back().go; ctx.transform = m_selfStack.back().tr;
+            m_selfStack.pop_back();
+        } else {
+            v = n->Eval(outPin, *this, ctx);
+        }
+    }
     --m_execGuard;
+    ctx.gameObject = curGo; ctx.transform = curTr;
     if (n && Tracing() && outPin >= 0 && outPin < 16) {
         if ((int)n->lastOut.size() <= outPin) n->lastOut.resize(outPin + 1);
         n->lastOut[outPin] = v;
@@ -49,16 +76,74 @@ VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     return v;
 }
 
+bool NodeGraph::ResolveTarget(VsNode* n, VsContext& ctx, GameObject*& out) {
+    out = nullptr;
+    if (!n || n->targetPin < 0 || !n->HasInput(n->targetPin)) return true;
+    const VsValue tv = n->InputValue(n->targetPin, *this, ctx);
+    out = VsResolveObject(ctx, tv);
+    if (out && out->transform) return true;
+    const std::string what = tv.IsObject() ? std::string("its Target object no longer exists (it was destroyed)")
+                                           : "no object named '" + tv.AsString() + "' was found for its Target";
+    ReportError(n, ctx, what + "; the node was skipped");
+    out = nullptr;
+    return false;
+}
+
+std::string VsObjectName(std::uint64_t id) {
+    GameObject* o = id ? GameObject::FromInstanceId(id) : nullptr;
+    return o ? o->name : std::string();
+}
+bool VsObjectAlive(std::uint64_t id) { return id && GameObject::FromInstanceId(id) != nullptr; }
+
+void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& what) {
+    const int nodeId = n ? n->fileId : -1;
+    ++m_errorCount;
+    if (what == m_lastError && nodeId == m_lastErrorNode) return;   // already reported
+    m_lastError = what;
+    m_lastErrorNode = nodeId;
+    std::string where;
+    if (n && !n->type.empty()) where = " at node '" + n->type + "' (#" + std::to_string(n->fileId) + ")";
+    const std::string obj = ctx.gameObject ? ctx.gameObject->name : std::string("?");
+    Log::Error("Visual Script on '", obj, "'", where, ": ", what);
+}
+
 void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
+    // One budget per event: a top-level Run starts it, loop bodies and sequence
+    // outputs (nested Runs) share it, so nested loops can't freeze the game.
+    if (m_runDepth == 0) { m_steps = 0; m_abort = false; }
+    ++m_runDepth;
     int cur = entryNode;
-    int guard = 0;
-    while (cur >= 0 && guard++ < 100000) {
+    bool first = true;
+    while (cur >= 0 && !m_abort) {
         VsNode* n = Node(cur);
         if (!n) break;
-        if (Tracing() && !(resume && guard == 1)) ++n->execCount;
-        m_resuming = resume && guard == 1;
-        int outPin = n->Exec(*this, ctx);
-        m_resuming = false;
+        if (++m_steps > kMaxStepsPerEvent) {
+            ReportError(n, ctx, "stopped a runaway loop: more than " + std::to_string(kMaxStepsPerEvent) +
+                                " node steps in one event. The rest of this event was skipped.");
+            m_abort = true;
+            break;
+        }
+        if (Tracing() && !(resume && first)) ++n->execCount;
+        // A node aimed at another object (its Target input) runs with that object
+        // as ctx.gameObject / transform; a target that no longer exists skips it.
+        GameObject* target = nullptr;
+        int outPin;
+        if (!ResolveTarget(n, ctx, target)) {
+            outPin = n->ExecOutCount() > 0 ? 0 : -1;
+        } else if (target) {
+            m_selfStack.push_back({ctx.gameObject, ctx.transform});
+            ctx.gameObject = target; ctx.transform = target->transform;
+            m_resuming = resume && first;
+            outPin = n->Exec(*this, ctx);
+            m_resuming = false;
+            ctx.gameObject = m_selfStack.back().go; ctx.transform = m_selfStack.back().tr;
+            m_selfStack.pop_back();
+        } else {
+            m_resuming = resume && first;
+            outPin = n->Exec(*this, ctx);
+            m_resuming = false;
+        }
+        first = false;
         if (outPin == kSuspend) {   // park here; Resume() continues from this node
             if (!IsSuspended(cur)) m_suspended.push_back(cur);
             break;
@@ -66,6 +151,22 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         if (outPin < 0) break;
         cur = (outPin < (int)n->execOut.size()) ? n->execOut[outPin] : -1;
     }
+    --m_runDepth;
+}
+
+int TargetPinFor(const std::string& type) {
+    static const std::unordered_map<std::string, int> kPins = {
+        {"Translate", 3}, {"SetPosition", 3}, {"Rotate", 1}, {"SetScale", 3}, {"SetRotation", 1},
+        {"SetPositionVec", 1}, {"MoveBy", 1}, {"Rotate3", 3}, {"SetRotation3", 3},
+        {"GetPosition", 0}, {"GetX", 0}, {"GetY", 0}, {"GetZ", 0}, {"GetScale", 0}, {"GetRotation", 0},
+        {"ForwardVector", 0}, {"RightVector", 0}, {"UpVector", 0},
+        {"AddForce", 3}, {"AddImpulse", 3}, {"SetVelocity", 3}, {"VelX", 0}, {"VelY", 0}, {"VelZ", 0},
+        {"SetColor", 4}, {"SetVisible", 1}, {"PlaySound", 0}, {"PlayClip", 0},
+        {"AnimTrigger", 0}, {"AnimSetFloat", 1}, {"AnimSetBool", 1}, {"AnimState", 0},
+        {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
+        {"GetName", 0}, {"GetTag", 0}};
+    auto it = kPins.find(type);
+    return it != kPins.end() ? it->second : -1;
 }
 
 // ---- Node factory -----------------------------------------------------
@@ -101,6 +202,18 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         (void)err;
         return true;
     };
+    // "OnKey:space" / "OnTimer:2" / "OnEvent:Hit" (the entry-name spelling) is the
+    // same node as "OnKey space": accept both.
+    if (const auto colon = type.find(':'); colon != std::string::npos && colon + 1 < type.size()) {
+        const std::string base = type.substr(0, colon);
+        if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent") {
+            std::vector<std::string> a{type.substr(colon + 1)};
+            a.insert(a.end(), args.begin(), args.end());
+            return MakeNode(base, a, err);
+        }
+    }
+    if (type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable")
+        return std::make_unique<EventNode>();
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
@@ -352,6 +465,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "OtherName")      return std::make_unique<OtherNameNode>();
     if (type == "AnimEventName")  return std::make_unique<AnimEventNameNode>();
     if (type == "OtherTag")       return std::make_unique<OtherTagNode>();
+    if (type == "Self")           return std::make_unique<SelfNode>();
+    if (type == "Other")          return std::make_unique<OtherNode>();
+    if (type == "FindObject")     return std::make_unique<FindObjectNode>(argOr(""));
+    if (type == "GetName")        return std::make_unique<ObjectInfoNode>(false);
+    if (type == "GetTag")         return std::make_unique<ObjectInfoNode>(true);
     if (type == "MouseButton" || type == "MouseButtonDown") {
         // 0/1/2 or left/right/middle (what the editor's button picker writes is 0/1/2).
         int b = 0;
@@ -486,6 +604,8 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             if (!node) return fail(e);
             VsNode* added = graph->AddNode(std::move(node));
             added->fileId = fileId;
+            added->type = type;
+            added->targetPin = TargetPinFor(type);
             fileToGraph[fileId] = added->id;
         } else if (kind == "exec") {
             if (tok.size() < 4) return fail("exec needs <from> <pin> <to>");

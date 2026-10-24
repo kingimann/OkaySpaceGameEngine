@@ -5,6 +5,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Components/UIButton.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -74,7 +75,9 @@ void VisualScriptComponent::Start() {
     m_ctx.transform  = transform;
     if (!m_graph) return;
     ScanPolledEvents();
-    m_graph->RunEntries("OnStart", m_ctx);
+    m_started = true;
+    Fire("OnEnable", nullptr);   // like a script: OnEnable, then Start
+    if (m_graph) m_graph->RunEntries("OnStart", m_ctx);
 }
 
 void VisualScriptComponent::Update(float dt) {
@@ -84,8 +87,21 @@ void VisualScriptComponent::Update(float dt) {
     m_ctx.deltaTime = dt;
     m_ctx.gameObject = gameObject;
     m_ctx.transform = transform;
-    m_graph->Resume(m_ctx);   // chains parked by Delay / Actions steps carry on
+    m_graph->Resume(m_ctx);   // chains parked by Delay / Wait / Actions steps carry on
     if (!m_graph) return;
+    // On Fixed Update: whole fixed steps for the time that passed (at most 5 per
+    // frame so a hitch can't snowball), before this frame's On Update - the same
+    // rule as a text script's FixedUpdate(). Delta Time reads the fixed step.
+    if (!m_graph->Entries("OnFixedUpdate").empty()) {
+        m_fixedAcc = std::min(m_fixedAcc + dt, kFixedStep * 5.0f);
+        while (m_fixedAcc >= kFixedStep && m_graph) {
+            m_fixedAcc -= kFixedStep;
+            m_ctx.deltaTime = kFixedStep;
+            m_graph->RunEntries("OnFixedUpdate", m_ctx);
+        }
+        m_ctx.deltaTime = dt;
+        if (!m_graph) return;
+    }
     m_graph->RunEntries("OnUpdate", m_ctx);
     // On Click also covers UI buttons (they don't get scene mouse picks).
     if (!m_graph->Entries("OnClick").empty())
@@ -103,8 +119,13 @@ void VisualScriptComponent::Update(float dt) {
     }
 }
 
+void VisualScriptComponent::OnDestroy() {
+    if (!m_started) return;   // never ran: nothing to tear down
+    Fire("OnDestroy", nullptr);
+}
+
 void VisualScriptComponent::LateUpdate(float dt) {
-    if (!m_graph || m_graph->Entries("OnLateUpdate").empty()) return;
+    if (!m_graph || m_startDeferred || !ScriptsRun(gameObject) || m_graph->Entries("OnLateUpdate").empty()) return;
     m_ctx.deltaTime = dt;
     m_graph->RunEntries("OnLateUpdate", m_ctx);
 }

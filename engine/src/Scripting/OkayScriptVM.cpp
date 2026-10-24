@@ -7758,6 +7758,7 @@ void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue&
         {"on_drag_start",{"OnBeginDrag"}},
         // Lifecycle the ScriptComponent drives.
         {"on_fixed_update", {"FixedUpdate", "fixed_update"}},
+        {"on_enable",       {"OnEnable"}},
         {"on_disable",      {"OnDisable"}},
         {"on_destroy",      {"OnDestroy"}},
     };

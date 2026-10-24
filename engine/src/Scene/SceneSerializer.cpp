@@ -907,7 +907,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& kv : sc->fields) out << " " << Quote(kv.first) << " " << Quote(kv.second);
         out << "\n";
     }
-    if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
+    // Every graph on the object (each `visualscriptpath` belongs to the graph above it).
+    for (auto* vsc : go->GetComponents<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
         if (!vsc->Path().empty()) out << "  visualscriptpath " << Quote(vsc->Path()) << "\n";
     }
@@ -3041,7 +3042,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "visualscriptpath") {
                     // Prefer the file (it may have been edited since the scene was saved).
                     std::string p = ReadQuoted(in);
-                    if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
+                    auto graphs = go->GetComponents<VisualScriptComponent>();
+                    if (auto* vsc = graphs.empty() ? nullptr : graphs.back()) {
                         vsc->SetPath(p);
                         std::ifstream probe(p);
                         if (probe) vsc->Reload();

@@ -54,8 +54,7 @@ struct SendEventNode : VsNode {
     explicit SendEventNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        std::string target = HasInput(0) ? In(0, g, ctx).AsString() : std::string();
-        GameObject* o = VsFindObject(ctx, target);
+        GameObject* o = HasInput(0) ? VsResolveObject(ctx, In(0, g, ctx)) : ctx.gameObject;
         VsValue v = In(1, g, ctx);
         VsDeliverEvent(o, name, v, ctx.gameObject);
         return 0;
@@ -84,7 +83,7 @@ struct SetObjectVarNode : VsNode {
     explicit SetObjectVarNode(std::string v) : var(std::move(v)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        GameObject* o = VsFindObject(ctx, HasInput(0) ? In(0, g, ctx).AsString() : std::string());
+        GameObject* o = HasInput(0) ? VsResolveObject(ctx, In(0, g, ctx)) : ctx.gameObject;
         VsValue v = In(1, g, ctx);
         if (o == ctx.gameObject) ctx.variables[var] = v;
         else if (o) if (auto* vc = o->GetComponent<VisualScriptComponent>()) vc->SetVariable(var, v);
@@ -95,7 +94,7 @@ struct GetObjectVarNode : VsNode {   // in0 = target object
     std::string var;
     explicit GetObjectVarNode(std::string v) : var(std::move(v)) {}
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
-        GameObject* o = VsFindObject(ctx, HasInput(0) ? In(0, g, ctx).AsString() : std::string());
+        GameObject* o = HasInput(0) ? VsResolveObject(ctx, In(0, g, ctx)) : ctx.gameObject;
         if (o == ctx.gameObject) { auto it = ctx.variables.find(var); return it != ctx.variables.end() ? it->second : VsValue{}; }
         if (o) if (auto* vc = o->GetComponent<VisualScriptComponent>()) return vc->GetVariable(var);
         return {};
@@ -230,7 +229,7 @@ struct TagQueryNode : VsNode {
     std::string tag;
     TagQueryNode(Op o, std::string t) : op(o), tag(std::move(t)) {}
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
-        if (!ctx.gameObject || !ctx.gameObject->scene()) return op == Op::CountWithTag ? VsValue{0.0f} : VsValue{std::string()};
+        if (!ctx.gameObject || !ctx.gameObject->scene()) return op == Op::CountWithTag ? VsValue{0.0f} : VsValue::Object(0);
         int count = 0; float best = 1e30f; GameObject* pick = nullptr;
         Vec3 me = ctx.transform ? ctx.transform->Position() : Vec3{0, 0, 0};
         for (const auto& up : ctx.gameObject->scene()->Objects()) {
@@ -244,7 +243,7 @@ struct TagQueryNode : VsNode {
             }
         }
         if (op == Op::CountWithTag) return (float)count;
-        return pick ? pick->name : std::string();
+        return VsValue::Object(pick ? pick->InstanceId() : 0);   // an object (reads as its name as text)
     }
 };
 
@@ -255,7 +254,7 @@ struct TeleportNode : VsNode {
     explicit TeleportNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        GameObject* o = VsFindObject(ctx, name);
+        GameObject* o = VsPinOrName(*this, 3, g, ctx, name);
         if (o && o->transform) {
             Vec3 p = o->transform->Position();
             if (HasInput(0)) p.x = In(0, g, ctx).AsFloat();

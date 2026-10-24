@@ -813,3 +813,7 @@ add_test(NAME script_semantics COMMAND test_script_semantics)
 add_executable(test_okayscript_next test_okayscript_next.cpp)
 target_link_libraries(test_okayscript_next PRIVATE okay::engine)
 add_test(NAME okayscript_next COMMAND test_okayscript_next)
+
+add_executable(test_vs_acceptance test_vs_acceptance.cpp)
+target_link_libraries(test_vs_acceptance PRIVATE okay::engine)
+add_test(NAME vs_acceptance COMMAND test_vs_acceptance)

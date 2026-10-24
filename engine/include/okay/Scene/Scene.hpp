@@ -194,6 +194,7 @@ private:
     /// Pick the object under the cursor (main camera, 2D bounds) and dispatch the
     /// OnMouseEnter/Exit/Over/Down/Up/Click messages, tracking state across frames.
     void DispatchPointer();
+    void DispatchActivation();   // OnEnable / OnDisable for objects switched on/off
 
     GameObject* m_mouseHover = nullptr;   // object the cursor was over last frame
     GameObject* m_mousePress = nullptr;   // object a press began on (for click)

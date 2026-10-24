@@ -113,6 +113,7 @@ void NextScriptVM::CallEvent(const std::string& function) {
     // Engine lifecycle events arrive under their engine names.
     if (function == "on_fixed_update") { RunMethod("FixedUpdate"); return; }
     if (function == "on_late_update") { RunMethod("LateUpdate"); return; }
+    if (function == "on_enable") { RunMethod("OnEnable"); return; }
     if (function == "on_disable") { RunMethod("OnDisable"); return; }
     if (function == "on_destroy") { RunMethod("OnDestroy"); return; }
     // Anything else is a public method by name (e.g. a UI button's On Click).
@@ -131,7 +132,8 @@ vs::VsValue NextScriptVM::GetGlobal(const std::string& name) const {
     if (auto* f = std::get_if<float>(&v)) return vs::VsValue{*f};
     if (auto* s = std::get_if<std::string>(&v)) return vs::VsValue{*s};
     if (auto* p = std::get_if<Vec3>(&v)) return vs::VsValue{*p};
-    if (std::holds_alternative<ObjRef>(v)) return vs::VsValue{ValueToString(v)};
+    // An object field (GameObject / Transform / component) is its object.
+    if (auto* o = std::get_if<ObjRef>(&v)) return vs::VsValue::Object(o->go);
     return vs::VsValue{};
 }
 

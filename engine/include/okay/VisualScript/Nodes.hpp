@@ -15,6 +15,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <random>
 #include <string>
@@ -198,8 +199,10 @@ struct EqualsNode : VsNode {
     explicit EqualsNode(bool inv) : invert(inv) {}
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
         VsValue a = In(0, g, ctx), b = In(1, g, ctx);
-        bool eq = (a.IsString() || b.IsString()) ? (a.AsString() == b.AsString())
-                                                 : (a.AsFloat() == b.AsFloat());
+        bool eq;
+        if (a.IsObject() && b.IsObject()) eq = a.AsObjectId() == b.AsObjectId();   // the same object
+        else if (a.IsObject() || b.IsObject() || a.IsString() || b.IsString()) eq = a.AsString() == b.AsString();   // object vs name
+        else eq = a.AsFloat() == b.AsFloat();
         return invert ? !eq : eq;
     }
 };
@@ -399,12 +402,24 @@ struct SetRotationNode : VsNode {   // in0 = degrees about Z (absolute)
     }
 };
 
-struct DestroyNode : VsNode {   // remove this object from the scene
-    int ExecOutCount() const override { return 0; }   // terminal
-    int Exec(NodeGraph&, VsContext& ctx) override {
-        if (ctx.gameObject && ctx.gameObject->scene())
-            ctx.gameObject->scene()->Destroy(ctx.gameObject);
-        return -1;
+/// Defined with the object helpers in NodesExtra.hpp (an object reference or a name).
+inline GameObject* VsResolveObject(VsContext& ctx, const VsValue& v);
+
+struct DestroyNode : VsNode {   // remove this object - or the Target (in0) - from the scene
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        GameObject* o = ctx.gameObject;
+        if (HasInput(0)) {
+            const VsValue t = In(0, g, ctx);
+            o = VsResolveObject(ctx, t);
+            if (!o) {   // already gone (destroyed twice) or never existed: say so, carry on
+                g.Error(this, ctx, t.IsObject() ? std::string("its Target was already destroyed")
+                                                : "no object named '" + t.AsString() + "' to destroy");
+                return 0;
+            }
+        }
+        if (o && o->scene()) o->scene()->Destroy(o);
+        return o == ctx.gameObject ? -1 : 0;   // this object is going: its chain ends here
     }
 };
 
@@ -418,6 +433,7 @@ struct SequenceNode : VsNode {
         for (int i = 0; i < count; ++i) {
             int nx = Next(i);
             if (nx >= 0) g.Run(nx, ctx);
+            if (g.Aborted()) break;
         }
         return -1;   // we already ran the outputs
     }
@@ -469,7 +485,7 @@ struct RepeatNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         int nx = Next(0);
-        for (int i = 0; i < count && nx >= 0; ++i) g.Run(nx, ctx);
+        for (int i = 0; i < count && nx >= 0 && !g.Aborted(); ++i) g.Run(nx, ctx);
         return -1;
     }
 };
@@ -504,35 +520,54 @@ struct LogNode : VsNode {   // severity: 0 info (Print covers it), 1 warn, 2 err
 // bullets / pickups, all from the graph).
 struct SpawnPrefabNode : VsNode {
     std::string path;
+    std::uint64_t spawned = 0;   // the last object this node spawned (its "Object" output)
     explicit SpawnPrefabNode(std::string p) : path(std::move(p)) {}
     int ExecOutCount() const override { return 1; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue::Object(spawned); }
     // Spawns at X/Y/Z when any of them is given (wired or typed), else where this object is.
     int Exec(NodeGraph& gr, VsContext& ctx) override {
+        spawned = 0;
         if (ctx.gameObject && ctx.gameObject->scene()) {
             GameObject* g = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), path);
-            if (g && g->transform) {
+            if (!g) {
+                gr.Error(this, ctx, "couldn't spawn '" + path + "': the prefab file is missing or invalid");
+                return 0;
+            }
+            if (g->transform) {
                 Vec3 at = ctx.transform ? ctx.transform->Position() : Vec3{0, 0, 0};
                 if (HasInput(0)) at.x = In(0, gr, ctx).AsFloat();
                 if (HasInput(1)) at.y = In(1, gr, ctx).AsFloat();
                 if (HasInput(2)) at.z = In(2, gr, ctx).AsFloat();
                 g->transform->SetPosition(at);
             }
+            spawned = g->InstanceId();
         }
         return 0;
     }
 };
 
-// A one-shot delay: blocks the chain until `seconds` have accumulated, then lets
-// control through from then on (unlike Timer, which repeats). Combine with Once
-// for a single deferred action.
+// A one-shot wait: the first time control reaches it, the chain pauses here
+// (other events keep running) and carries on once `seconds` have passed. From
+// then on control passes straight through. Reaching it again while it is still
+// counting does nothing (no second copy of the chain starts).
 struct WaitNode : VsNode {
     float seconds;
     float acc = 0.0f;
+    bool  waiting = false, done = false;
     explicit WaitNode(float s) : seconds(s) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (done) return 0;
+        if (!g.Resuming()) {
+            if (waiting) return -1;
+            if (seconds <= 0.0f) { done = true; return 0; }
+            waiting = true; acc = 0.0f;
+            return NodeGraph::kSuspend;
+        }
         acc += ctx.deltaTime;
-        return acc >= seconds ? 0 : -1;
+        if (acc < seconds) return NodeGraph::kSuspend;
+        waiting = false; done = true;
+        return 0;
     }
 };
 

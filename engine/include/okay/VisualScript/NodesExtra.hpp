@@ -30,6 +30,19 @@ inline GameObject* VsFindObject(VsContext& ctx, const std::string& name) {
     return ctx.gameObject->scene()->Find(name);
 }
 
+/// An object input: an object reference (Self, Other, Spawn's object, Find,
+/// a raycast hit...) or a name typed into the pin ("self", "other" or an object's
+/// name; empty = self). Null when that object doesn't exist (any more).
+inline GameObject* VsResolveObject(VsContext& ctx, const VsValue& v) {
+    if (v.IsObject()) return v.AsObjectId() ? GameObject::FromInstanceId(v.AsObjectId()) : nullptr;
+    return VsFindObject(ctx, v.AsString());
+}
+/// A node that names its object in its text field may instead get it wired into
+/// data input `pin` (which wins when connected or typed).
+inline GameObject* VsPinOrName(const VsNode& n, int pin, NodeGraph& g, VsContext& ctx, const std::string& name) {
+    return n.HasInput(pin) ? VsResolveObject(ctx, n.InputValue(pin, g, ctx)) : VsFindObject(ctx, name);
+}
+
 // ---- More math ---------------------------------------------------------
 struct MathFn2Node : VsNode {   // in0, in1 (or one input) -> out
     enum class Op { Tan, Atan2, Exp, Log, PingPong, Repeat, DeltaAngle } op;
@@ -123,12 +136,12 @@ struct ToFixedNode : VsNode {   // value -> text with N decimals (arg)
 };
 
 // ---- Objects ---------------------------------------------------------------
-struct ObjectQueryNode : VsNode {   // arg = object name ("self", "other" or a name)
+struct ObjectQueryNode : VsNode {   // arg = object name ("self", "other" or a name); in0 = object (wins)
     enum class Op { Exists, Position, DistanceTo, Name } op;
     std::string name;
     ObjectQueryNode(Op o, std::string n) : op(o), name(std::move(n)) {}
-    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
-        GameObject* o = VsFindObject(ctx, name);
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        GameObject* o = VsPinOrName(*this, 0, g, ctx, name);
         switch (op) {
             case Op::Exists:   return o != nullptr;
             case Op::Position: return (o && o->transform) ? o->transform->Position() : Vec3{0, 0, 0};
@@ -142,6 +155,43 @@ struct ObjectQueryNode : VsNode {   // arg = object name ("self", "other" or a n
 };
 struct OtherNameNode : VsNode {   // the object a collision / trigger / click event is about
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override { return ctx.other ? ctx.other->name : std::string(); }
+};
+// ---- Object references -------------------------------------------------------
+struct SelfNode : VsNode {    // this graph's own object
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { return VsValue::Object(ctx.gameObject ? ctx.gameObject->InstanceId() : 0); }
+};
+struct OtherNode : VsNode {   // the other object of a collision / trigger / custom event
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { return VsValue::Object(ctx.other ? ctx.other->InstanceId() : 0); }
+};
+struct FindObjectNode : VsNode {   // arg = object name ("self" / "other" work too); no match = no object
+    std::string name;
+    explicit FindObjectNode(std::string n) : name(std::move(n)) {}
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        GameObject* o = VsFindObject(ctx, name);
+        return VsValue::Object(o ? o->InstanceId() : 0);
+    }
+};
+struct ObjectInfoNode : VsNode {   // the Target's (default: this object's) name or tag
+    bool tag;
+    explicit ObjectInfoNode(bool t) : tag(t) {}
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        if (!ctx.gameObject) return std::string();
+        return tag ? ctx.gameObject->tag : ctx.gameObject->name;
+    }
+};
+        const Vec3 origin = HasInput(0) ? In(0, g, ctx).AsVec3() : (ctx.transform ? ctx.transform->Position() : Vec3{0, 0, 0});
+        Vec3 dir = HasInput(1) ? In(1, g, ctx).AsVec3() : (ctx.transform ? ctx.transform->Forward() : Vec3{0, 0, -1});
+        const float maxDist = In(2, g, ctx, VsValue{1000.0f}).AsFloat();
+        RaycastHit3D h;
+        if (dir.Magnitude() > 1e-6f) h = sc->physics3D().Raycast(*sc, origin, dir.Normalized(), maxDist, ctx.gameObject);
+        switch (outPin) {
+            case 0: return h.hit;
+            case 1: return VsValue::Object(h.hit && h.gameObject ? h.gameObject->InstanceId() : 0);
+            case 2: return h.point;
+            case 3: return h.normal;
+            default: return h.hit ? h.distance : maxDist;
+        }
+    }
 };
 struct AnimEventNameNode : VsNode {   // the clip event an On Anim Event chain is running for
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
@@ -163,12 +213,12 @@ struct MouseButtonNode : VsNode {   // arg 0 left, 1 right, 2 middle
 };
 
 // ---- Actions ----------------------------------------------------------------
-struct LookAtNode : VsNode {   // turn to face the named object (3D: yaw; 2D: z rotation)
+struct LookAtNode : VsNode {   // turn to face the named / wired (in0) object (3D: yaw; 2D: z rotation)
     std::string name;
     explicit LookAtNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
-        GameObject* o = VsFindObject(ctx, name);
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        GameObject* o = VsPinOrName(*this, 0, g, ctx, name);
         if (o && o->transform && ctx.transform && o != ctx.gameObject) {
             Vec3 d = o->transform->Position() - ctx.transform->Position();
             // 2D objects (sprites / 2D bodies) turn about Z; everything else is 3D
@@ -184,12 +234,12 @@ struct LookAtNode : VsNode {   // turn to face the named object (3D: yaw; 2D: z 
         return 0;
     }
 };
-struct MoveTowardsObjectNode : VsNode {   // in0 = speed (units/s)
+struct MoveTowardsObjectNode : VsNode {   // in0 = speed (units/s), in1 = object to move to (wins over the name)
     std::string name;
     explicit MoveTowardsObjectNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        GameObject* o = VsFindObject(ctx, name);
+        GameObject* o = VsPinOrName(*this, 1, g, ctx, name);
         if (o && o->transform && ctx.transform && o != ctx.gameObject) {
             Vec3 d = o->transform->Position() - ctx.transform->Position();
             float dist = d.Magnitude(), step = In(0, g, ctx, VsValue{2.0f}).AsFloat() * ctx.deltaTime;
@@ -199,14 +249,24 @@ struct MoveTowardsObjectNode : VsNode {   // in0 = speed (units/s)
         return 0;
     }
 };
-struct SetActiveNode : VsNode {   // in0 = on/off
+struct SetActiveNode : VsNode {   // in0 = on/off, in1 = object (wins over the name)
     std::string name;
     explicit SetActiveNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         // A deactivated object isn't found by name, so look through the scene list.
         GameObject* o = nullptr;
-        if (name.empty() || name == "self") o = ctx.gameObject;
+        if (HasInput(1)) {
+            const VsValue t = In(1, g, ctx);
+            if (t.IsObject()) o = t.AsObjectId() ? GameObject::FromInstanceId(t.AsObjectId()) : nullptr;
+            else {
+                const std::string nm = t.AsString();
+                if (nm.empty() || nm == "self") o = ctx.gameObject;
+                else if (nm == "other") o = ctx.other;
+                else if (ctx.gameObject && ctx.gameObject->scene())
+                    for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == nm) { o = up.get(); break; }
+            }
+        } else if (name.empty() || name == "self") o = ctx.gameObject;
         else if (name == "other") o = ctx.other;
         else if (ctx.gameObject && ctx.gameObject->scene())
             for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == name) { o = up.get(); break; }
@@ -214,12 +274,12 @@ struct SetActiveNode : VsNode {   // in0 = on/off
         return 0;
     }
 };
-struct SetTextNode : VsNode {   // in0 = text; the named object's TextRenderer
+struct SetTextNode : VsNode {   // in0 = text; the named (or in1-wired) object's TextRenderer
     std::string name;
     explicit SetTextNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (GameObject* o = VsFindObject(ctx, name))
+        if (GameObject* o = VsPinOrName(*this, 1, g, ctx, name))
             if (auto* t = o->GetComponent<TextRenderer>()) t->text = In(0, g, ctx).AsString();
         return 0;
     }
@@ -311,10 +371,11 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
         const int last  = (int)std::lround(In(1, g, ctx, VsValue{9.0f}).AsFloat());
         const int step = last >= first ? 1 : -1;
         const int body = Next(0);
-        int guard = 0;
-        for (index = first; body >= 0 && guard < 100000; index += step, ++guard) {
+        // No iteration cap of its own: every body run spends the event's step
+        // budget, so a huge loop is stopped (and reported) by the graph.
+        for (index = first; body >= 0; index += step) {
             g.Run(body, ctx);
-            if (index == last) break;
+            if (g.Aborted() || index == last) break;
         }
         return 1;
     }

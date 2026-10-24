@@ -91,6 +91,7 @@ okay-player --server --scene arena.okayscene --port 45000 --max-players 16 --aut
 | `--no-encryption` | don't encrypt traffic |
 | `--status SECONDS` | status line interval (default 60, 0 = off) |
 | `--run-for SECONDS` | stop after this long |
+| `--log FILE` | also write everything the server prints to FILE. On Windows the game has no console, so this is where its output goes |
 | `--advertise` | list it in the launcher's server browser (sign in on this machine; run `docs/sql/game_servers.sql` once) |
 | `--public-addr HOST` | the address players connect to (required with `--advertise`) |
 | `--region TEXT` | region shown in the browser |

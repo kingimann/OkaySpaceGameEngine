@@ -33,6 +33,7 @@ struct DedicatedServerOptions {
     bool  encryption = true;         ///< encrypt traffic when both ends support it
     float statusEvery = 60.0f;       ///< seconds between status lines (0 = never)
     float maxRuntime = 0.0f;         ///< stop after this many seconds (0 = run until stopped)
+    std::string logPath;             ///< --log: also write everything printed to this file ("" = no)
     // Server browser: list this server in the launcher's Internet tab (needs the
     // OkaySpace account signed in on this machine, and an address players reach).
     bool  advertise = false;
@@ -48,7 +49,7 @@ struct DedicatedServerOptions {
 /// Read `--server` and its flags (plus OKAY_SERVER_* environment variables, which
 /// container hosts use) into `out`. Returns true when `--server` was given.
 /// Flags: --port N, --scene PATH, --max-players N, --tick HZ, --name TEXT,
-/// --password TEXT, --auth, --no-encryption, --status SECONDS, --run-for SECONDS,
+/// --password TEXT, --auth, --no-encryption, --status SECONDS, --run-for SECONDS, --log FILE,
 /// --advertise, --public-addr HOST, --region TEXT.
 /// Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,
 /// OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1,

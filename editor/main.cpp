@@ -40033,14 +40033,45 @@ static int VsStepEditor(ActionList::Item& it, bool cond, int id, bool& changed) 
     return a;
 }
 
+// Headless export, the same Build the Build window runs, for CI and scripts:
+//   OkayEngine --build-game SCENE OUT_DIR [--name GAME]
+// Uses the player beside the editor and never downloads one, so what it ships is
+// this build's player. Exit code 0 only when the game was built.
+static int RunBuildGameCli(int argc, char** argv) {
+    std::string scene, out, name;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--build-game" && i + 2 < argc) { scene = argv[i + 1]; out = argv[i + 2]; i += 2; }
+        else if (a == "--name" && i + 1 < argc) name = argv[++i];
+    }
+    if (scene.empty() || out.empty()) {
+        std::fprintf(stderr, "usage: OkayEngine --build-game SCENE OUT_DIR [--name GAME]\n");
+        return 2;
+    }
+    if (name.empty()) name = std::filesystem::path(scene).stem().string();
+    if (builder::FindPlayer().empty()) {
+        std::fprintf(stderr, "build-game: no player runtime (%s) beside the editor\n", builder::kPlayerExe);
+        return 1;
+    }
+    EditorState ed;
+    std::string err;
+    if (!ed.Load(scene, &err)) { std::fprintf(stderr, "build-game: couldn't open %s: %s\n", scene.c_str(), err.c_str()); return 1; }
+    const std::string msg = builder::Build(ed, out, name);
+    const bool ok = msg.rfind("Built '", 0) == 0;
+    std::fprintf(ok ? stdout : stderr, "%s\n", msg.c_str());
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
 #elif defined(__linux__) || defined(__APPLE__)
     InstallCrashSignals();                          // same reports on Linux / macOS
 #endif
-    for (int i = 1; i < argc; ++i)
+    for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
+        if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
+    }
     // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end.
     if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {
         OKAY_TRACE(c);

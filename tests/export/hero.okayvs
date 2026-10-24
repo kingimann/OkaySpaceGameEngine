@@ -1,0 +1,57 @@
+node 10 FunctionStart "Twice(v: Number) -> r: Number"
+pos 10 40 520
+node 11 SetLocal tmp
+pos 11 330 520
+node 12 Mul
+pos 12 330 680
+node 13 Const 2
+pos 13 40 700
+node 14 Return Twice
+pos 14 620 520
+data 12 0 10 0
+data 12 1 13 0
+data 11 0 12 0
+data 14 0 12 0
+exec 10 0 11
+exec 11 0 14
+node 1 OnStart
+pos 1 40 40
+node 2 SetVar hp
+pos 2 300 40
+default 2 0 10
+node 3 ForLoop
+pos 3 560 40
+default 3 0 1
+default 3 1 3
+node 4 AddVar hp
+pos 4 820 40
+default 4 0 -1
+node 5 CallFunction Twice
+pos 5 820 200
+node 6 GetVar hp
+pos 6 560 260
+node 7 SetVar doubled
+pos 7 1080 200
+node 8 Print
+pos 8 820 360
+node 9 Format "EXPORT functions: hp {0} doubled {1}"
+pos 9 560 400
+node 15 GetVar doubled
+pos 15 300 420
+node 16 SendEvent HeroDone
+pos 16 1080 360
+default 16 0 "Manager"
+data 16 1 6 0
+data 5 0 6 0
+data 7 0 5 0
+data 9 0 6 0
+data 9 1 15 0
+data 8 0 9 0
+exec 1 0 2
+exec 2 0 3
+exec 3 0 4
+exec 4 0 5
+exec 5 0 7
+exec 3 1 8
+exec 8 0 16
+entry OnStart 1

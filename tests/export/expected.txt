@@ -1,0 +1,8 @@
+EXPORT functions: hp 7 doubled 14
+EXPORT events: HeroDone with 7
+EXPORT lists: seen 3, last E3, bag 3
+EXPORT break: inner loop ran 3 time(s)
+EXPORT scopes: score 15, coins 3
+EXPORT changed: score 15
+EXPORT api: position (1, 2, 3)
+EXPORT timer: ticked true

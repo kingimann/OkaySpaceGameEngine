@@ -1,0 +1,67 @@
+node 0 OnStart
+pos 0 40 40
+node 1 ForEach
+pos 1 300 40
+node 2 AllWithTag Enemy
+pos 2 40 200
+node 3 AddVar seen
+pos 3 560 40
+node 4 Const 1
+pos 4 300 260
+node 5 SetVar last
+pos 5 820 40
+node 6 Repeat 10
+pos 6 1080 40
+node 7 AddVar inner
+pos 7 1340 40
+node 8 Break
+pos 8 1600 40
+node 9 Print
+pos 9 560 360
+node 10 Format "EXPORT lists: seen {0}, last {1}, bag {2}"
+pos 10 300 400
+node 11 GetVar seen
+pos 11 40 400
+node 12 GetVar last
+pos 12 40 480
+node 13 GetVar inner
+pos 13 40 560
+node 14 SetVar bag
+pos 14 300 600
+node 15 NewList
+pos 15 40 640
+node 16 ListAdd
+pos 16 820 200
+node 17 GetVar bag
+pos 17 560 260
+node 18 ListLength
+pos 18 300 720
+data 1 0 2 0
+data 3 0 4 0
+data 5 0 1 0
+data 7 0 4 0
+data 14 0 15 0
+data 16 0 17 0
+data 16 1 1 0
+data 18 0 17 0
+data 10 0 11 0
+data 10 1 12 0
+data 10 2 18 0
+data 9 0 10 0
+exec 0 0 14
+exec 14 0 1
+exec 1 0 3
+exec 3 0 5
+exec 5 0 16
+exec 16 0 6
+exec 6 0 7
+exec 7 0 8
+exec 1 1 9
+node 19 Print
+pos 19 820 360
+node 20 Format "EXPORT break: inner loop ran {0} time(s)"
+pos 20 560 480
+data 20 0 13 0
+data 19 0 20 0
+exec 9 0 19
+entry OnStart 0

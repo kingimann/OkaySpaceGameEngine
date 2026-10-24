@@ -510,6 +510,7 @@ the rest join over LAN or a forwarded port.
 - [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
 - [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime + no-code Action Lists (incl. **raycasting**).
 - [`docs/survival_kit.md`](docs/survival_kit.md) — ready-made **health / hunger / thirst / stamina / oxygen / temperature** scripts.
+- [`docs/build_mode.md`](docs/build_mode.md) — let **players build** in your game, wire buttons to doors with **logic links**, and save their creations.
 - [`docs/vehicle_controller.md`](docs/vehicle_controller.md) — arcade **vehicle/car controller**.
 - [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
 - [`docs/ui_html.md`](docs/ui_html.md) — author menus/HUDs in an **HTML + CSS** subset (UIDocument).

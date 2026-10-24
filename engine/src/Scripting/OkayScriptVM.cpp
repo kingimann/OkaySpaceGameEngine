@@ -59,6 +59,8 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Spawner.hpp"
+#include "okay/Components/BuildMode.hpp"
+#include "okay/Components/LogicLinks.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
@@ -3195,6 +3197,99 @@ struct OkayScriptVM::Impl {
         b["spawner_alive"] = [spawnerOf](std::vector<Value>& a) -> Value {
             Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
             return Value{(float)(s ? s->AliveCount() : 0)};
+        };
+        // ---- In-game build mode + logic links (docs/build_mode.md) -----------
+        // They drive the scene's Build Mode component (the player's).
+        auto buildOf = [sceneOf]() -> BuildMode* {
+            Scene* s = sceneOf();
+            return s ? s->FindObjectOfType<BuildMode>() : nullptr;
+        };
+        auto argStr = [](std::vector<Value>& a, std::size_t i) { return a.size() > i ? a[i].AsString() : std::string{}; };
+        b["build_enter"] = [buildOf](std::vector<Value>&) -> Value {
+            BuildMode* m = buildOf(); if (!m) return Value{false};
+            m->SetActive(true); return Value{true};
+        };
+        b["build_exit"] = [buildOf](std::vector<Value>&) -> Value {
+            BuildMode* m = buildOf(); if (!m) return Value{false};
+            m->SetActive(false); return Value{true};
+        };
+        b["build_toggle"] = [buildOf](std::vector<Value>&) -> Value {
+            BuildMode* m = buildOf(); if (!m) return Value{false};
+            m->SetActive(!m->Active()); return Value{m->Active()};
+        };
+        b["build_active"] = [buildOf](std::vector<Value>&) -> Value {
+            BuildMode* m = buildOf(); return Value{m && m->Active()};
+        };
+        // build_link_mode(on): link mode on / off (no argument = toggle).
+        b["build_link_mode"] = [buildOf](std::vector<Value>& a) -> Value {
+            BuildMode* m = buildOf(); if (!m) return Value{false};
+            m->SetLinkMode(a.empty() ? !m->LinkMode() : a[0].AsBool()); return Value{m->LinkMode()};
+        };
+        b["build_palette_clear"] = [buildOf](std::vector<Value>&) -> Value {
+            BuildMode* m = buildOf(); if (!m) return Value{false};
+            m->ClearPalette(); return Value{true};
+        };
+        // build_palette_add(name, prefab, icon): returns the new slot (0-based), -1 without Build Mode.
+        b["build_palette_add"] = [buildOf, argStr](std::vector<Value>& a) -> Value {
+            BuildMode* m = buildOf(); if (!m) return Value{-1.0f};
+            return Value{(float)m->AddToPalette(argStr(a, 0), argStr(a, 1), argStr(a, 2))};
+        };
+        b["build_palette_select"] = [buildOf](std::vector<Value>& a) -> Value {
+            BuildMode* m = buildOf(); if (!m || a.empty()) return Value{false};
+            m->SelectSlot((int)a[0].AsFloat()); return Value{true};
+        };
+        b["build_selected"] = [buildOf](std::vector<Value>&) -> Value {
+            BuildMode* m = buildOf(); return Value{(float)(m ? m->SelectedSlot() : -1)};
+        };
+        // Creations: save / load what players placed (a name in the save folder's
+        // "creations" folder, or a path). Work without Build Mode too.
+        b["build_save"] = [buildOf, sceneOf, argStr](std::vector<Value>& a) -> Value {
+            std::string name = argStr(a, 0);
+            if (BuildMode* m = buildOf()) return Value{m->SaveCreation(name)};
+            Scene* s = sceneOf(); if (!s) return Value{false};
+            return Value{BuildCreation::Save(*s, BuildMode::CreationPath(name))};
+        };
+        b["build_load"] = [buildOf, sceneOf, argStr](std::vector<Value>& a) -> Value {
+            std::string name = argStr(a, 0);
+            if (BuildMode* m = buildOf()) return Value{m->LoadCreation(name)};
+            Scene* s = sceneOf(); if (!s) return Value{false};
+            return Value{BuildCreation::Load(*s, BuildMode::CreationPath(name))};
+        };
+        b["build_exists"] = [buildOf, argStr](std::vector<Value>& a) -> Value {
+            BuildMode* m = buildOf();
+            std::ifstream f(BuildMode::CreationPath(argStr(a, 0), m ? m->creationFolder : "creations"));
+            return Value{(bool)f};
+        };
+        b["build_clear"] = [buildOf, sceneOf](std::vector<Value>&) -> Value {
+            if (BuildMode* m = buildOf()) { m->ClearCreation(); return Value{true}; }
+            Scene* s = sceneOf(); if (!s) return Value{false};
+            BuildCreation::Clear(*s); return Value{true};
+        };
+        b["build_undo"] = [buildOf](std::vector<Value>&) -> Value { BuildMode* m = buildOf(); return Value{m && m->Undo()}; };
+        b["build_redo"] = [buildOf](std::vector<Value>&) -> Value { BuildMode* m = buildOf(); return Value{m && m->Redo()}; };
+        // Objects players have placed.
+        b["build_count"] = [sceneOf](std::vector<Value>&) -> Value {
+            Scene* s = sceneOf(); return Value{(float)(s ? BuildCreation::PlacedRoots(*s).size() : 0)};
+        };
+        // logic_press(name): press a Logic Source button (any source: flip its output).
+        b["logic_press"] = [this, sceneOf, argStr](std::vector<Value>& a) -> Value {
+            Scene* s = sceneOf(); if (!s) return Value{false};
+            std::string n = argStr(a, 0);
+            GameObject* g = n.empty() ? (rt.host ? rt.host->gameObject : nullptr) : s->Find(n);
+            LogicSource* ls = g ? g->GetComponent<LogicSource>() : nullptr;
+            if (!ls) return Value{false};
+            if (ls->kind == LogicSource::Kind::Button) ls->Press(); else ls->SetOutput(!ls->Output());
+            return Value{true};
+        };
+        // logic_state(name): a source's output, or a target's on / off state.
+        b["logic_state"] = [this, sceneOf, argStr](std::vector<Value>& a) -> Value {
+            Scene* s = sceneOf(); if (!s) return Value{false};
+            std::string n = argStr(a, 0);
+            GameObject* g = n.empty() ? (rt.host ? rt.host->gameObject : nullptr) : s->Find(n);
+            if (!g) return Value{false};
+            if (auto* lt = g->GetComponent<LogicTarget>()) return Value{lt->State()};
+            if (auto* ls = g->GetComponent<LogicSource>()) return Value{ls->Output()};
+            return Value{false};
         };
         // Distance from this object to a named object (0 if missing).
         b["dist_to"] = [this, sceneOf](std::vector<Value>& a) -> Value {
@@ -7761,6 +7856,10 @@ void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue&
         {"on_enable",       {"OnEnable"}},
         {"on_disable",      {"OnDisable"}},
         {"on_destroy",      {"OnDestroy"}},
+        // Build mode / logic links (BuildMode, LogicTarget).
+        {"on_object_placed",  {"OnObjectPlaced"}},
+        {"on_object_removed", {"OnObjectRemoved"}},
+        {"on_logic_signal",   {"OnLogicSignal"}},
     };
     std::string fn = function;
     if (!m_impl->rt.functions.count(fn)) {

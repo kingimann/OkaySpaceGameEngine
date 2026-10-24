@@ -248,7 +248,7 @@ inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
 }
 
 /// True when the widget's owning Canvas is hidden (Canvas.visible == false), or an
-/// ancestor GameObject is inactive (Unity's activeInHierarchy: hiding a panel — a
+/// ancestor GameObject is inactive (hiding a panel — a
 /// tab's content page, a closed menu — hides every widget under it too). The
 /// renderers skip drawing it and hosts don't hit-test it. No Canvas / no flag and
 /// every ancestor active = visible.

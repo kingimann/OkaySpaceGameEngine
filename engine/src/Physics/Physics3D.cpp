@@ -1333,8 +1333,8 @@ std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_
 // touches. Only the stretch of the path where a collider's (inflated) bounds
 // lie is marched, in steps of half the shape's thinnest size (so a thin wall
 // can't slip between two samples), and each touch is refined by bisection.
-// `skipStartOverlaps` ignores colliders already touching at the start (Unity's
-// casts do; continuous collision needs it so a body resting on the floor can
+// `skipStartOverlaps` ignores colliders already touching at the start (as
+// casts usually do; continuous collision needs it so a body resting on the floor can
 // still slide along it).
 RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
                    GameObject* ignore, std::uint32_t mask, bool queryTriggers,

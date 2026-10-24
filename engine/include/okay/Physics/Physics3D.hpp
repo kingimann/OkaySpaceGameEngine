@@ -121,13 +121,13 @@ public:
                             float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
                             std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
     /// Sweep a box (center, half-extents, rotation) along `direction` and return
-    /// the first collider it touches (Unity's Physics.BoxCast).
+    /// the first collider it touches.
     RaycastHit3D BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                          const Vec3& direction, const Quat& rotation = Quat::Identity,
                          float maxDistance = 1e9f, GameObject* ignore = nullptr,
                          std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
     /// Sweep a capsule (segment a→b, radius) along `direction` and return the
-    /// first collider it touches (Unity's Physics.CapsuleCast) — "would my
+    /// first collider it touches — "would my
     /// character fit through there?".
     RaycastHit3D CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                              const Vec3& direction, float maxDistance = 1e9f, GameObject* ignore = nullptr,

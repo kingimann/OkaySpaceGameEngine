@@ -537,6 +537,26 @@ void EditorState::NewTopDown() {
     dirty = false;
 }
 
+void EditorState::NewTopDownShooter() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::TopDownShooter(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
+void EditorState::NewPlatformer25D() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Platformer25D(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
 void EditorState::NewVehicle3D() {
     NewScene();
     m_suppressUndo = true;

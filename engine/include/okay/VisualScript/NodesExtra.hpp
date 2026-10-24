@@ -359,10 +359,12 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
         const int body = Next(0);
         // No iteration cap of its own: every body run spends the event's step
         // budget, so a huge loop is stopped (and reported) by the graph.
+        g.EnterLoop();
         for (index = first; body >= 0; index += step) {
             g.Run(body, ctx);
-            if (g.Aborted() || index == last) break;
+            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted() || index == last) break;
         }
+        g.LeaveLoop();
         return 1;
     }
 };

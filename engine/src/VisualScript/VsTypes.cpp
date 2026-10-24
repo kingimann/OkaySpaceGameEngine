@@ -249,6 +249,27 @@ const Row kRows[] = {
         {"CallFunction", true, "", ""},
         {"SetLocal", true, "A", ""},
         {"GetLocal", false, "", "A"},
+        // Loops, lists, scene / global variables, Variable Changed events.
+        {"While", true, "B", ""},
+        {"ForEach", true, "L", "AN"},
+        {"Break", true, "", ""},
+        {"Continue", true, "", ""},
+        {"NewList", false, "", "L"},
+        {"ListAdd", true, "LA", ""},
+        {"ListRemoveAt", true, "LN", ""},
+        {"ListGet", false, "LN", "A"},
+        {"ListLength", false, "L", "N"},
+        {"ListContains", false, "LA", "B"},
+        {"AllWithTag", false, "", "L"},
+        {"GetSceneVar", false, "", "A"},
+        {"SetSceneVar", true, "A", ""},
+        {"AddSceneVar", true, "N", ""},
+        {"GetGlobalVar", false, "", "A"},
+        {"SetGlobalVar", true, "A", ""},
+        {"AddGlobalVar", true, "N", ""},
+        {"OnVarChanged", false, "", "AA"},
+        {"OnSceneVarChanged", false, "", "AA"},
+        {"OnGlobalVarChanged", false, "", "AA"},
         {"Substring", false, "TNN", "T"},
         {"Replace", false, "TTT", "T"},
         {"ToNumber", false, "T", "N"},
@@ -486,6 +507,8 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     struct Data { int consumer, inPin, producer, outPin; };
     std::vector<Data> datas;
     std::multimap<int, int> execOut;   // from -> to
+    struct Exec { int from, pin, to; };
+    std::vector<Exec> execList;
     std::set<int> entries, hasExecOut;
     std::map<std::pair<int, int>, std::string> typed;   // (node, pin) -> value typed into the pin
     std::istringstream in(text);
@@ -508,6 +531,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                 datas.push_back({std::stoi(t[1]), std::stoi(t[2]), std::stoi(t[3]), std::stoi(t[4])});
             } else if (t[0] == "exec" && t.size() >= 4) {
                 execOut.emplace(std::stoi(t[1]), std::stoi(t[3]));
+                execList.push_back({std::stoi(t[1]), std::stoi(t[2]), std::stoi(t[3])});
                 hasExecOut.insert(std::stoi(t[1]));
             } else if (t[0] == "entry" && t.size() >= 3) {
                 entries.insert(std::stoi(t[2]));
@@ -641,6 +665,28 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                                            "start the delay after the Call Function instead"});
         if (t == "SetLocal" && owner.empty() && fromEvents.count(kv.first))
             issues.push_back({0, kv.first, "Set Local only works inside a function - use Set Var for graph variables"});
+    }
+    {   // 2c) Break / Continue act on the loop whose Body runs them.
+        auto isLoop = [&](int id) {
+            auto it = nodes.find(id);
+            if (it == nodes.end()) return false;
+            const std::string& t = it->second.type;
+            return t == "ForLoop" || t == "Repeat" || t == "While" || t == "ForEach";
+        };
+        std::vector<int> bodies;
+        std::set<int> hasBody;
+        for (const Exec& e : execList)
+            if (e.pin == 0 && isLoop(e.from)) { bodies.push_back(e.to); hasBody.insert(e.from); }
+        const std::set<int> inLoop = reach(bodies);
+        for (const auto& kv : nodes) {
+            const std::string& t = kv.second.type;
+            if ((t == "Break" || t == "Continue") && reached.count(kv.first) && !inLoop.count(kv.first))
+                issues.push_back({0, kv.first, t + " isn't inside the Body of a loop (For Loop, Repeat, While, For Each), "
+                                                   "so it does nothing"});
+            if ((t == "While" || t == "ForEach") && reached.count(kv.first) && !hasBody.count(kv.first))
+                issues.push_back({1, kv.first, "nothing is wired to Body, so the loop does nothing" +
+                                               std::string(t == "While" ? " (or never ends, while Cond is true)" : "")});
+        }
     }
     {   // Data nodes take the context of the exec nodes that read them.
         std::multimap<int, int> producers;   // consumer -> producer

@@ -147,10 +147,18 @@ private:
         m_ctx.other = other;
         m_graph->RunEntries(entryName, m_ctx);
         m_ctx.other = prev;
+        CheckWatches();
     }
     // Polled events, rebuilt whenever a new graph is loaded.
     struct KeyEntry { std::string entry; char key; bool up; };
     struct TimerEntry { std::string entry; float period; float acc; };
+    // On Variable Changed: the variables this graph watches, with the value each
+    // had when last checked. Checked after every event and every frame.
+    struct WatchEntry { std::string entry; int scope; std::string name; vs::VsValue last; bool had; };
+    std::vector<WatchEntry> m_watches;
+    bool m_checkingWatches = false;
+    const vs::VsValue* WatchedValue(const WatchEntry& w);
+    void CheckWatches();
     void ScanPolledEvents();
     const vs::NodeGraph* m_scanned = nullptr;
     std::vector<KeyEntry> m_keyEntries;

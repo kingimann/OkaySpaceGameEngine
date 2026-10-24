@@ -325,6 +325,38 @@ entry OnStart 0
         CHECK(Has(gone, 0, -1, "no engine binding"));
     }
 
+    // ---- Loops: Break / Continue must be inside a loop's Body ---------------------
+    {
+        auto inLoop = ValidateGraphText("node 0 OnStart\nnode 1 ForEach\nnode 2 AllWithTag Enemy\nnode 3 Branch\nnode 4 Break\n"
+                                        "node 5 Continue\nnode 6 Print\ndata 1 0 2 0\nexec 0 0 1\nexec 1 0 3\nexec 3 0 4\n"
+                                        "exec 3 1 5\nexec 1 1 6\nentry OnStart 0\n");
+        CHECK(Errors(inLoop) == 0);
+        for (const auto& i : inLoop) if (i.severity == 0) std::fprintf(stderr, "  unexpected: %s\n", i.message.c_str());
+        auto outside = ValidateGraphText("node 0 OnStart\nnode 1 Repeat 3\nnode 2 Print\nnode 3 Break\n"
+                                         "exec 0 0 1\nexec 1 0 2\nexec 0 0 3\nentry OnStart 0\n");
+        CHECK(Has(outside, 0, 3, "isn't inside the Body of a loop"));
+        // After the loop (its Done) isn't inside it either.
+        auto afterDone = ValidateGraphText("node 0 OnStart\nnode 1 While\nnode 2 Print\nnode 3 Continue\n"
+                                           "exec 0 0 1\nexec 1 0 2\nexec 1 1 3\nentry OnStart 0\n");
+        CHECK(Has(afterDone, 0, 3, "isn't inside the Body of a loop"));
+        // A function's body without a loop of its own: Break there is an error too.
+        auto inFn = ValidateGraphText("node 10 FunctionStart \"Stop()\"\nnode 11 Break\nexec 10 0 11\n"
+                                      "node 0 OnStart\nnode 1 Repeat 2\nnode 2 CallFunction Stop\nexec 0 0 1\nexec 1 0 2\nentry OnStart 0\n");
+        CHECK(Has(inFn, 0, 11, "isn't inside the Body of a loop"));
+        auto noBody = ValidateGraphText("node 0 OnStart\nnode 1 While\nnode 2 Print\nexec 0 0 1\nexec 1 1 2\nentry OnStart 0\n");
+        CHECK(Has(noBody, 1, 1, "nothing is wired to Body"));
+        // List pins are typed: a number isn't a list.
+        auto notList = ValidateGraphText("node 0 OnStart\nnode 1 ForEach\nnode 2 Const 3\nnode 3 Print\n"
+                                         "data 1 0 2 0\nexec 0 0 1\nexec 1 0 3\nentry OnStart 0\n");
+        CHECK(Has(notList, 0, 1, "List"));
+        CHECK(OutputType("ForEach", 1) == PinType::Number);
+        CHECK(OutputType("AllWithTag", 0) == PinType::List);
+        CHECK(SignatureFor("OnVarChanged:hp") != nullptr);
+        // Variable Changed events are events: unwired ones are flagged like the rest.
+        CHECK(Has(ValidateGraphText("node 0 OnGlobalVarChanged coins\nentry OnGlobalVarChanged:coins 0\n"), 1, 0,
+                  "this event does nothing"));
+    }
+
     // ---- docs/engine_api.md is generated from the binding table and up to date ----
     {
         const std::string path = std::string(OKAY_SOURCE_DIR) + "/docs/engine_api.md";

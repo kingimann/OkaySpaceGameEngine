@@ -4,6 +4,8 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/VisualScript/NodesLoops.hpp"
+#include "okay/VisualScript/VsVariables.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -53,6 +55,7 @@ void VisualScriptComponent::ScanPolledEvents() {
     m_scanned = m_graph.get();
     m_keyEntries.clear();
     m_timerEntries.clear();
+    m_watches.clear();
     if (!m_graph) return;
     for (const auto& kv : m_graph->AllEntries()) {
         const std::string& n = kv.first;
@@ -64,8 +67,61 @@ void VisualScriptComponent::ScanPolledEvents() {
             float p = 1.0f;
             try { p = std::stof(n.substr(8)); } catch (...) {}
             m_timerEntries.push_back({n, p > 0.001f ? p : 0.001f, 0.0f});
+        } else if (n.rfind("OnVarChanged:", 0) == 0 || n.rfind("OnSceneVarChanged:", 0) == 0 ||
+                   n.rfind("OnGlobalVarChanged:", 0) == 0) {
+            for (int id : kv.second)
+                if (auto* ev = dynamic_cast<vs::VarChangedEventNode*>(m_graph->Node(id))) {
+                    // Start from the current value: only later changes fire the event.
+                    WatchEntry w{n, (int)ev->scope, ev->name, {}, false};
+                    if (const vs::VsValue* v = WatchedValue(w)) { w.last = *v; w.had = true; }
+                    m_watches.push_back(std::move(w));
+                    break;
+                }
         }
     }
+}
+
+const vs::VsValue* VisualScriptComponent::WatchedValue(const WatchEntry& w) {
+    using S = vs::VarChangedEventNode::Scope;
+    vs::VarMap* m = &m_ctx.variables;
+    if (w.scope == (int)S::Scene) m = &vs::SceneVariables(gameObject ? gameObject->scene() : nullptr);
+    else if (w.scope == (int)S::Global) m = &vs::GlobalVariables();
+    auto it = m->find(w.name);
+    return it != m->end() ? &it->second : nullptr;
+}
+
+void VisualScriptComponent::CheckWatches() {
+    if (m_watches.empty() || m_checkingWatches || !m_graph) return;
+    m_checkingWatches = true;
+    // A handler may change watched variables again: settle within a few rounds,
+    // and say so if a variable keeps changing (a handler changing its own variable).
+    constexpr int kRounds = 16;
+    for (int round = 0; round < kRounds && m_graph; ++round) {
+        bool any = false;
+        for (std::size_t i = 0; i < m_watches.size() && m_graph; ++i) {
+            const vs::VsValue* cur = WatchedValue(m_watches[i]);
+            WatchEntry& w = m_watches[i];
+            const bool has = cur != nullptr;
+            if (has == w.had && (!has || vs::VsSameValue(*cur, w.last))) continue;
+            if (round == kRounds - 1) {
+                Log::Error("Visual Script on '", gameObject ? gameObject->name : std::string("?"), "': variable '", w.name,
+                           "' kept changing every time its On Variable Changed ran (does the event change it again?); "
+                           "stopped after ", kRounds, " rounds");
+                w.had = has; if (has) w.last = *cur;
+                continue;
+            }
+            const vs::VsValue now = has ? *cur : vs::VsValue{};
+            const vs::VsValue before = w.had ? w.last : vs::VsValue{};
+            w.had = has; w.last = now;
+            for (int id : m_graph->Entries(w.entry))
+                if (auto* ev = dynamic_cast<vs::VarChangedEventNode*>(m_graph->Node(id))) { ev->value = now; ev->old = before; }
+            const std::string entry = w.entry;
+            Fire(entry.c_str(), nullptr);   // its own CheckWatches() returns at once (m_checkingWatches)
+            any = true;
+        }
+        if (!any) break;
+    }
+    m_checkingWatches = false;
 }
 
 void VisualScriptComponent::Start() {
@@ -78,6 +134,7 @@ void VisualScriptComponent::Start() {
     m_started = true;
     Fire("OnEnable", nullptr);   // like a script: OnEnable, then Start
     if (m_graph) m_graph->RunEntries("OnStart", m_ctx);
+    CheckWatches();
 }
 
 void VisualScriptComponent::Update(float dt) {
@@ -117,6 +174,8 @@ void VisualScriptComponent::Update(float dt) {
         while (t.acc >= t.period && guard++ < 4) { t.acc -= t.period; Fire(t.entry.c_str(), nullptr); }
         if (t.acc > t.period) t.acc = 0.0f;
     }
+    // On Variable Changed: also catches changes made by other graphs and scripts.
+    CheckWatches();
 }
 
 void VisualScriptComponent::OnDestroy() {
@@ -128,6 +187,7 @@ void VisualScriptComponent::LateUpdate(float dt) {
     if (!m_graph || m_startDeferred || !ScriptsRun(gameObject) || m_graph->Entries("OnLateUpdate").empty()) return;
     m_ctx.deltaTime = dt;
     m_graph->RunEntries("OnLateUpdate", m_ctx);
+    CheckWatches();
 }
 
 } // namespace okay

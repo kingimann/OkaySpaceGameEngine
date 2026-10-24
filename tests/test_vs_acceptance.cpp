@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Scripting/NextScriptVM.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/VsVariables.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -924,6 +925,351 @@ entry OnStart 0
         CHECK(vs::VsApiFind("Rigidbody.AddForce/1") != nullptr);
         CHECK(vs::VsApiFind("Mathf.Clamp/3") && !vs::VsApiFind("Mathf.Clamp/3")->exec);   // maths: a value node
         CHECK(vs::VsApiFind("Debug.Log/1") && vs::VsApiFind("Debug.Log/1")->exec);         // a step
+    }
+
+    // ==== Loops, lists, scene / global variables, Variable Changed ===============
+    auto runOnce = [&](const std::string& src, const char* name = "Looper") {
+        static Scene* keep = nullptr;
+        delete keep;
+        keep = new Scene("Loops");
+        GameObject* go = keep->CreateGameObject(name);
+        auto* v = Attach(go, src);
+        g_log.clear(); keep->Start(); Tick(*keep, 1);
+        return v;
+    };
+    // ---- While: counts up while i < 5 --------------------------------------------
+    {
+        auto* v = runOnce(R"VS(
+node 0 OnStart
+node 1 While
+node 2 Compare <
+node 3 GetVar i
+node 4 Const 5
+node 5 AddVar i
+node 6 Const 1
+node 7 Print
+node 8 GetVar i
+data 2 0 3 0
+data 2 1 4 0
+data 1 0 2 0
+data 5 0 6 0
+data 7 0 8 0
+exec 0 0 1
+exec 1 0 5
+exec 1 1 7
+entry OnStart 0
+)VS");
+        CHECK(v->GetVariable("i").AsFloat() == 5.0f);
+        CHECK(Logged("5"));
+    }
+    // ---- Break / Continue in a For Loop: sum of odd numbers until 7 -----------------
+    {
+        // For i in 1..9: if i is even Continue; if i > 7 Break; sum += i  -> 1+3+5+7 = 16
+        auto* v = runOnce(R"VS(
+node 0 OnStart
+node 1 ForLoop
+node 2 Const 1
+node 3 Const 9
+node 4 Branch
+node 5 Equals
+node 6 Mod
+node 7 Const 2
+node 8 Const 0
+node 9 Continue
+node 10 Branch
+node 11 Compare >
+node 12 Const 7
+node 13 Break
+node 14 AddVar sum
+node 15 AddVar runs
+node 16 Const 1
+node 17 Print
+node 18 Const "loop done"
+data 1 0 2 0
+data 1 1 3 0
+data 6 0 1 0
+data 6 1 7 0
+data 5 0 6 0
+data 5 1 8 0
+data 4 0 5 0
+data 11 0 1 0
+data 11 1 12 0
+data 10 0 11 0
+data 14 0 1 0
+data 15 0 16 0
+data 17 0 18 0
+exec 0 0 1
+exec 1 0 15
+exec 15 0 4
+exec 4 0 9
+exec 4 1 10
+exec 10 0 13
+exec 10 1 14
+exec 1 1 17
+entry OnStart 0
+)VS");
+        CHECK(v->GetVariable("sum").AsFloat() == 16.0f);
+        CHECK(v->GetVariable("runs").AsFloat() == 9.0f);   // 8 is skipped by Continue, 9 breaks
+        CHECK(Logged("loop done"));                          // Break goes on to Done
+        CHECK(v->Graph()->ErrorCount() == 0);
+    }
+    // ---- For Each over All With Tag, Break inside it; nested loops break the inner one only --
+    {
+        Scene s("Each");
+        for (const char* n : {"E1", "E2", "E3"}) { GameObject* e = s.CreateGameObject(n); e->tag = "Enemy"; }
+        GameObject* go = s.CreateGameObject("Counter");
+        auto* v = Attach(go, R"VS(
+node 0 OnStart
+node 1 ForEach
+node 2 AllWithTag Enemy
+node 3 AddVar seen
+node 4 Const 1
+node 5 SetVar last
+node 6 Repeat 10
+node 7 AddVar inner
+node 8 Break
+node 9 Print
+node 10 Format "seen {0}, last {1}"
+node 11 GetVar seen
+node 12 GetVar last
+node 13 SetVar lastIndex
+data 1 0 2 0
+data 3 0 4 0
+data 5 0 1 0
+data 13 0 1 1
+data 7 0 4 0
+data 10 0 11 0
+data 10 1 12 0
+data 9 0 10 0
+exec 0 0 1
+exec 1 0 3
+exec 3 0 5
+exec 5 0 13
+exec 13 0 6
+exec 6 0 7
+exec 7 0 8
+exec 1 1 9
+entry OnStart 0
+)VS");
+        g_log.clear(); s.Start(); Tick(s, 1);
+        CHECK(v->GetVariable("seen").AsFloat() == 3.0f);   // the outer loop wasn't broken
+        CHECK(v->GetVariable("inner").AsFloat() == 3.0f);  // each inner Repeat broke after one run
+        CHECK(v->GetVariable("lastIndex").AsFloat() == 2.0f);
+        CHECK(Logged("seen 3, last E3"));
+    }
+    // ---- Break outside a loop, and inside a function called from a loop, is reported --
+    {
+        auto* v = runOnce(R"VS(
+node 20 FunctionStart "Quit()"
+node 21 Break
+exec 20 0 21
+node 0 OnStart
+node 1 Break
+node 2 Repeat 3
+node 3 CallFunction Quit
+node 4 AddVar n
+node 5 Const 1
+data 4 0 5 0
+exec 0 0 2
+exec 2 0 3
+exec 3 0 4
+node 6 OnUpdate
+exec 6 0 1
+entry OnStart 0
+entry OnUpdate 6
+)VS");
+        CHECK(v->GetVariable("n").AsFloat() == 3.0f);   // the function's Break didn't stop the caller's Repeat
+        CHECK(Logged("Break isn't inside the Body of a loop"));
+    }
+    // ---- A While that never ends is stopped and reported, the game keeps going ------
+    {
+        auto* v = runOnce(R"VS(
+node 0 OnStart
+node 1 While
+node 2 AddVar spins
+node 3 Const 1
+default 1 0 true
+data 2 0 3 0
+exec 0 0 1
+exec 1 0 2
+entry OnStart 0
+)VS");
+        CHECK(Logged("stopped a runaway loop"));
+        CHECK(v->GetVariable("spins").AsFloat() > 1000.0f);
+    }
+    // ---- Lists: add, length, get, contains, remove ---------------------------------
+    {
+        auto* v = runOnce(R"VS(
+node 0 OnStart
+node 1 SetVar bag
+node 2 NewList
+node 3 ListAdd
+node 4 GetVar bag
+node 5 ListAdd
+node 6 ListAdd
+node 7 ListRemoveAt
+node 8 SetVar len
+node 9 ListLength
+node 10 SetVar second
+node 11 ListGet
+node 12 SetVar hasKey
+node 13 ListContains
+node 14 SetVar hasSword
+node 15 ListContains
+node 16 ListGet
+default 3 1 "sword"
+default 5 1 "shield"
+default 6 1 "key"
+default 7 1 0
+default 11 1 1
+default 13 1 "key"
+default 15 1 "sword"
+default 16 1 7
+data 1 0 2 0
+data 3 0 4 0
+data 5 0 4 0
+data 6 0 4 0
+data 7 0 4 0
+data 9 0 4 0
+data 8 0 9 0
+data 11 0 4 0
+data 10 0 11 0
+data 13 0 4 0
+data 12 0 13 0
+data 15 0 4 0
+data 14 0 15 0
+exec 0 0 1
+exec 1 0 3
+exec 3 0 5
+exec 5 0 6
+exec 6 0 7
+exec 7 0 8
+exec 8 0 10
+exec 10 0 12
+exec 12 0 14
+node 17 SetVar bad
+data 16 0 4 0
+data 17 0 16 0
+exec 14 0 17
+entry OnStart 0
+)VS");
+        CHECK(v->GetVariable("len").AsFloat() == 2.0f);           // sword removed
+        CHECK(v->GetVariable("second").AsString() == "key");
+        CHECK(v->GetVariable("hasKey").AsBool());
+        CHECK(!v->GetVariable("hasSword").AsBool());
+        CHECK(Logged("index 7 is outside the list"));
+    }
+    // ---- Scene variables are shared by the scene's graphs; a new scene starts empty --
+    {
+        Scene s("SceneVars");
+        GameObject* a = s.CreateGameObject("Setter");
+        GameObject* b = s.CreateGameObject("Reader");
+        Attach(a, "node 0 OnStart\nnode 1 SetSceneVar score\ndefault 1 0 10\nnode 2 AddSceneVar score\ndefault 2 0 5\n"
+                  "exec 0 0 1\nexec 1 0 2\nentry OnStart 0\n");
+        auto* rv = Attach(b, "node 0 OnUpdate\nnode 1 SetVar seen\nnode 2 GetSceneVar score\ndata 1 0 2 0\nexec 0 0 1\nentry OnUpdate 0\n");
+        s.Start(); Tick(s, 1);
+        CHECK(rv->GetVariable("seen").AsFloat() == 15.0f);
+        CHECK(vs::SceneVariables(&s).count("score") == 1);
+        CHECK(SceneSerializer::SaveToFile(s, "vs_acceptance_scope.okayscene"));
+        CHECK(SceneSerializer::LoadFromFile(s, "vs_acceptance_scope.okayscene"));   // what loading a level does
+        CHECK(vs::SceneVariables(&s).count("score") == 0);
+        Scene other("Other");
+        CHECK(vs::SceneVariables(&other).count("score") == 0);   // another scene has its own
+        std::remove("vs_acceptance_scope.okayscene");
+    }
+    // ---- Global variables survive loading another scene ------------------------------
+    {
+        vs::ClearGlobalVariables();
+        Scene s("Level1");
+        Attach(s.CreateGameObject("Coins"), "node 0 OnStart\nnode 1 AddGlobalVar coins\ndefault 1 0 3\nexec 0 0 1\nentry OnStart 0\n");
+        s.Start(); Tick(s, 1);
+        Scene level2("Level2");
+        auto* rv = Attach(level2.CreateGameObject("HUD"),
+                          "node 0 OnStart\nnode 1 SetVar c\nnode 2 GetGlobalVar coins\ndata 1 0 2 0\nexec 0 0 1\nentry OnStart 0\n");
+        CHECK(SceneSerializer::SaveToFile(level2, "vs_acceptance_l2.okayscene"));
+        CHECK(SceneSerializer::LoadFromFile(s, "vs_acceptance_l2.okayscene"));   // level 1 replaced by level 2
+        s.Start(); Tick(s, 1);
+        GameObject* hud = s.Find("HUD");
+        CHECK(hud && hud->GetComponent<VisualScriptComponent>() &&
+              hud->GetComponent<VisualScriptComponent>()->GetVariable("c").AsFloat() == 3.0f);
+        (void)rv;
+        vs::ClearGlobalVariables();
+        CHECK(vs::GlobalVariables().empty());
+        std::remove("vs_acceptance_l2.okayscene");
+    }
+    // ---- On Var Changed: new and old value, changes from other graphs, no repeat ----
+    {
+        Scene s("Changed");
+        GameObject* p = s.CreateGameObject("Hero");
+        auto* v = Attach(p, R"VS(
+node 0 OnStart
+node 1 SetVar hp
+default 1 0 10
+exec 0 0 1
+node 2 OnVarChanged hp
+node 3 Print
+node 4 Format "hp {0} was {1}"
+node 5 AddVar changes
+node 6 Const 1
+data 4 0 2 0
+data 4 1 2 1
+data 3 0 4 0
+data 5 0 6 0
+exec 2 0 3
+exec 3 0 5
+node 7 OnKey space
+node 8 AddVar hp
+default 8 0 -3
+exec 7 0 8
+node 9 OnKey a
+node 10 SetVar hp
+default 10 0 7
+exec 9 0 10
+entry OnStart 0
+entry OnVarChanged:hp 2
+entry OnKey:space 7
+entry OnKey:a 9
+)VS");
+        GameObject* other = s.CreateGameObject("Healer");
+        Attach(other, "node 0 OnKey h\nnode 1 SetObjectVar hp\ndefault 1 0 \"Hero\"\ndefault 1 1 50\nexec 0 0 1\nentry OnKey:h 0\n");
+        g_log.clear(); s.Start(); Tick(s, 1);
+        CHECK(Logged("hp 10 was 0"));                      // set in On Start: from unset to 10
+        Input::FeedKeys({' '}); s.Update(1.0f / 60.0f); Input::FeedKeys({}); s.Update(1.0f / 60.0f);
+        CHECK(Logged("hp 7 was 10"));
+        const float before = v->GetVariable("changes").AsFloat();
+        Input::FeedKeys({'a'}); s.Update(1.0f / 60.0f); Input::FeedKeys({}); s.Update(1.0f / 60.0f);
+        CHECK(v->GetVariable("changes").AsFloat() == before);   // set to the same value: no event
+        Input::FeedKeys({'h'}); s.Update(1.0f / 60.0f); Input::FeedKeys({}); s.Update(1.0f / 60.0f); s.Update(1.0f / 60.0f);
+        CHECK(Logged("hp 50 was 7"));                      // changed by another object's graph
+        CHECK(v->GetVariable("changes").AsFloat() == 3.0f);
+        Input::FeedKeys({}); Input::FeedKeys({});
+    }
+    // ---- On Scene Var Changed fires on another graph; a self-feeding handler is stopped --
+    {
+        Scene s("SceneChanged");
+        // Scored after the HUD is watching (a value already set when a graph starts isn't a change).
+        Attach(s.CreateGameObject("Scorer"), "node 0 OnUpdate\nnode 2 Once\nnode 1 AddSceneVar score\ndefault 1 0 5\n"
+                                             "exec 0 0 2\nexec 2 0 1\nentry OnUpdate 0\n");
+        auto* hud = Attach(s.CreateGameObject("HUD"), R"VS(
+node 0 OnSceneVarChanged score
+node 1 SetVar shown
+data 1 0 0 0
+exec 0 0 1
+node 2 OnVarChanged loop
+node 3 AddVar loop
+default 3 0 1
+exec 2 0 3
+node 4 OnStart
+node 5 SetVar loop
+default 5 0 1
+exec 4 0 5
+entry OnSceneVarChanged:score 0
+entry OnVarChanged:loop 2
+entry OnStart 4
+)VS");
+        g_log.clear(); s.Start(); Tick(s, 3);
+        CHECK(hud->GetVariable("shown").AsFloat() == 5.0f);
+        CHECK(Logged("kept changing every time its On Variable Changed ran"));
     }
 
     std::remove(prefab.c_str());

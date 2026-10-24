@@ -662,3 +662,53 @@ The older hand-made nodes (Translate, Get Position, Add Force...) still work and
 in their groups. The **Engine API** nodes are the ones that match the scripts exactly.
 The generated-code preview doesn't translate Engine API nodes yet. It lists them as
 not translated, and each node's tooltip gives the line of script.
+
+## Loops, lists and variable scopes
+
+### Loops
+
+| Node | What it does |
+|---|---|
+| **For Loop** | Runs Body for every number from First to Last (Index), then Done. |
+| **Repeat N** | Runs Body N times. |
+| **While** | Runs Body again and again while Cond is true. Cond is checked before each run. Then Done. |
+| **For Each** | Runs Body once per item of a List, with Item and Index (counted from 0), then Done. It walks the list as it was when the loop started, so the body may add to or remove from it safely. |
+| **Break** | Leaves the loop whose Body runs it. The loop goes on to Done. |
+| **Continue** | Skips the rest of this run of the Body. The loop goes on to the next item. |
+
+- Break and Continue act on the innermost loop. In nested loops they only affect the inner one.
+- Before Play, the checker says when a Break / Continue isn't inside a loop's Body. While playing it's reported in the Console. That includes one that's after the loop's Done, or inside a function that has no loop of its own: Break doesn't reach out of a function into the loop that called it.
+- A loop that never ends (a While whose Cond stays true) is stopped by the event's step budget and reported. The game keeps running.
+
+### Lists
+
+**New List** makes an empty list. Keep it in a variable (Set Var `bag` = New List), then **List Add** items to it.
+Lists are shared: every node that reads `bag` sees the same list. The other list nodes:
+
+- **List Get** (by index, from 0)
+- **List Length**
+- **List Contains**
+- **List Remove At**
+
+**All With Tag** gives every active object with a tag as a list, and so do the 3D Overlap queries. Walk one with For Each.
+Reading or removing past the end of a list is reported, not ignored.
+
+### Scene and global variables
+
+| Scope | Nodes | Who sees it | How long it lasts |
+|---|---|---|---|
+| Object | Get / Set / Add Var | this object's graph (other objects: Get / Set Object Var) | as long as the object |
+| Scene | Get / Set / Add Scene Var | every graph in the scene | until another scene is loaded |
+| Global | Get / Set / Add Global Var | every graph | the whole game run, across scene loads |
+
+Each press of Play in the editor starts with no scene or global variables.
+
+### On Variable Changed
+
+**On Var Changed**, **On Scene Var Changed** and **On Global Var Changed** run when that variable changes.
+They give the new **Value** and the **Old** one.
+
+- **When it's checked:** after every event and every frame, so changes made by other graphs and by scripts count too. The event runs in the same frame or the next one.
+- **What counts as a change:** setting the same value again isn't a change. Neither is a value that was already there when the object started.
+- **Lists:** adding to a list doesn't change the variable that holds it. Setting the variable to another list does.
+- **Runaway handlers:** a handler that changes its own variable every time it runs is stopped after 16 rounds and reported.

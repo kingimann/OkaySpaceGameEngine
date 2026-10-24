@@ -182,7 +182,19 @@ public:
     static constexpr int kMaxPullDepth = 512;
     /// True once the event being run was stopped, or the function being run has
     /// returned (loop nodes check it so they stop too).
-    bool Aborted() const { return m_abort || (!m_frames.empty() && m_frames.back().returned); }
+    bool Aborted() const { return m_abort || m_loopSignal != 0 || (!m_frames.empty() && m_frames.back().returned); }
+
+    // ---- Loops: Break / Continue ----------------------------------------
+    /// Loop nodes bracket their iterations with these, and after each run of the
+    /// body take the signal Break / Continue left (0 none, 1 break, 2 continue).
+    enum LoopSignal { kLoopNone = 0, kLoopBreak = 1, kLoopContinue = 2 };
+    void EnterLoop() { m_loops.push_back((int)m_frames.size()); }
+    void LeaveLoop() { if (!m_loops.empty()) m_loops.pop_back(); m_loopSignal = kLoopNone; }
+    int TakeLoopSignal() { const int s = m_loopSignal; m_loopSignal = kLoopNone; return s; }
+    /// True when a loop of the current function (or event) is running, so
+    /// Break / Continue have a loop to act on.
+    bool InLoop() const { return !m_loops.empty() && m_loops.back() == (int)m_frames.size(); }
+    void SignalLoop(LoopSignal s) { m_loopSignal = s; }
 
     // ---- Functions -------------------------------------------------------
     /// Deepest functions may call each other (or themselves) before a call is refused.
@@ -234,6 +246,8 @@ private:
     int m_runDepth = 0;      // nested Run() calls (loop bodies, sequences)
     long m_steps = 0;        // node executions in the current event
     bool m_abort = false;    // the current event was stopped
+    std::vector<int> m_loops;   // running loops: the function-frame depth each started at
+    int m_loopSignal = 0;       // a Break / Continue waiting for its loop
     struct Frame {
         std::string name;
         std::vector<VsValue> args, rets;

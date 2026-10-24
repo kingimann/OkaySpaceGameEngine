@@ -407,6 +407,30 @@ inline const std::vector<VsDef>& Registry() {
         {"CallFunction",    "Call Function",    CAT_FLOW,  true, {""}, {}, {}, 6, nullptr},
         {"SetLocal",        "Set Local",        CAT_VAR,   true, {""}, {"Value"}, {}, 1, "name"},
         {"GetLocal",        "Get Local",        CAT_VAR,   false, {}, {}, {"Value"}, 1, "name"},
+        // Loops (Break / Continue act on the loop whose Body runs them).
+        {"While",           "While",            CAT_FLOW,  true, {"Body","Done"}, {"Cond"}, {}, 0, nullptr},
+        {"ForEach",         "For Each",         CAT_FLOW,  true, {"Body","Done"}, {"List"}, {"Item","Index"}, 0, nullptr},
+        {"Break",           "Break",            CAT_FLOW,  true, {}, {}, {}, 0, nullptr},
+        {"Continue",        "Continue",         CAT_FLOW,  true, {}, {}, {}, 0, nullptr},
+        // Lists
+        {"NewList",         "New List",         CAT_DATA,  false, {}, {}, {"List"}, 0, nullptr},
+        {"ListAdd",         "List Add",         CAT_DATA,  true, {""}, {"List","Item"}, {}, 0, nullptr},
+        {"ListRemoveAt",    "List Remove At",   CAT_DATA,  true, {""}, {"List","Index"}, {}, 0, nullptr},
+        {"ListGet",         "List Get",         CAT_DATA,  false, {}, {"List","Index"}, {"Item"}, 0, nullptr},
+        {"ListLength",      "List Length",      CAT_DATA,  false, {}, {"List"}, {"Count"}, 0, nullptr},
+        {"ListContains",    "List Contains",    CAT_DATA,  false, {}, {"List","Item"}, {"Bool"}, 0, nullptr},
+        {"AllWithTag",      "All With Tag",     CAT_XFORM, false, {}, {}, {"Objects"}, 1, "tag"},
+        // Scene variables (every graph in the scene) and global ones (kept across scene loads).
+        {"GetSceneVar",     "Get Scene Var",    CAT_VAR,   false, {}, {}, {"Value"}, 1, "name"},
+        {"SetSceneVar",     "Set Scene Var",    CAT_VAR,   true, {""}, {"Value"}, {}, 1, "name"},
+        {"AddSceneVar",     "Add Scene Var",    CAT_VAR,   true, {""}, {"Amount"}, {}, 1, "name"},
+        {"GetGlobalVar",    "Get Global Var",   CAT_VAR,   false, {}, {}, {"Value"}, 1, "name"},
+        {"SetGlobalVar",    "Set Global Var",   CAT_VAR,   true, {""}, {"Value"}, {}, 1, "name"},
+        {"AddGlobalVar",    "Add Global Var",   CAT_VAR,   true, {""}, {"Amount"}, {}, 1, "name"},
+        // Variable Changed events: the new Value and the Old one.
+        {"OnVarChanged",       "On Var Changed",        CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
+        {"OnSceneVarChanged",  "On Scene Var Changed",  CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
+        {"OnGlobalVarChanged", "On Global Var Changed", CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
     }));
     return defs;
 }
@@ -539,6 +563,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
     if (type == "OnTimer") return "OnTimer:" + tok(arg, "1");
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
+    if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
     return {};
 }
 
@@ -1083,6 +1108,14 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         int b = VsExecTarget(g, nodeId, 0); if (b >= 0) VsEmitChain(g, b, out, ind + "    ", visited);
         out += ind + "}\n";
     }
+    else if (t=="While") {
+        out += ind + "while (" + in(0, "false") + ") {\n";
+        int b = VsExecTarget(g, nodeId, 0); if (b >= 0) VsEmitChain(g, b, out, ind + "    ", visited);
+        out += ind + "}\n";
+        int d = VsExecTarget(g, nodeId, 1); if (d >= 0) VsEmitChain(g, d, out, ind, visited);
+    }
+    else if (t=="Break")    out += ind + "break\n";
+    else if (t=="Continue") out += ind + "continue\n";
     else if (t=="FlipFlop") {
         const std::string v = "_ff_" + std::to_string(nodeId);
         out += ind + v + " = !" + v + "\n";
@@ -1200,7 +1233,7 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
         VsEmitNode(g, cur, out, ind, visited);
         static const std::set<std::string> kSelfContinued = {
             "Branch", "Sequence", "Once", "ForLoop", "Repeat", "FlipFlop", "Gate", "DoN", "SwitchInt",
-            "ChanceBranch", "EveryN", "Condition"};
+            "ChanceBranch", "EveryN", "Condition", "While"};
         if (kSelfContinued.count(n->type)) break;
         cur = VsExecTarget(g, cur, 0);
     }
@@ -1227,14 +1260,18 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             const int tp = okay::vs::TargetPinFor(n.type);
             bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" ||
                              IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" || IsApiNode(n.type) ||
+                             n.type == "ForEach" || n.type.rfind("List", 0) == 0 || n.type == "NewList" || n.type == "AllWithTag" ||
+                             n.type.find("SceneVar") != std::string::npos || n.type.find("GlobalVar") != std::string::npos ||
+                             n.type == "OnVarChanged" ||
                              (tp >= 0 && pinUsed(n.id, tp)) || (n.type == "Destroy" && pinUsed(n.id, 0));
             if (n.type == "Spawn")
                 for (const auto& l : g.dataLinks) if (l.producer == n.id) objectUse = true;
             if (objectUse) untranslated.push_back(n.type + " #" + std::to_string(n.id));
         }
         if (!untranslated.empty()) {
-            out += "    // NOT TRANSLATED - these nodes use object references, functions or engine-API\n"
-                   "    // nodes, which this generated code doesn't support yet (the graph itself runs them;\n"
+            out += "    // NOT TRANSLATED - these nodes use object references, functions, engine-API nodes,\n"
+                   "    // lists or scene / global variables, which this generated code doesn't support yet\n"
+                   "    // (the graph itself runs them;\n"
                    "    // an engine-API node's tooltip shows the C#-style line it equals):\n    //  ";
             for (std::size_t i = 0; i < untranslated.size(); ++i) out += (i ? ", " : "") + untranslated[i];
             out += "\n\n";

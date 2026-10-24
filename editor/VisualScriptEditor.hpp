@@ -9,6 +9,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
+#include "VisualScriptNodeHelp.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -2210,7 +2211,7 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
-    ImGui::SetNextWindowSize(ImVec2(600, 440), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(640, 470), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam"};
         auto fits = [&](const VsDef& d) { return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput); };
@@ -2234,9 +2235,11 @@ inline void Draw(EditorState& ed, bool* open) {
                 std::string s; for (const char* p : v) if (p && *p) { if (!s.empty()) s += ", "; s += p; } return s;
             };
             const std::string in = join(d.dataIn), out = join(d.dataOut), ex = join(d.execOut);
-            if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc = "An event: starts a flow. ";
-            else if (d.execIn) e.desc = "Runs when the flow reaches it. ";
-            else e.desc = "Gives a value to other nodes. ";
+            // What it does in plain words (VisualScriptNodeHelp.hpp), then how it plugs in.
+            if (const char* what = VsNodeHelp(d.type)) e.desc = std::string(what) + " ";
+            if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc += "An event: starts a flow. ";
+            else if (d.execIn) e.desc += "Runs when the flow reaches it. ";
+            else e.desc += "Gives a value to other nodes. ";
             if (!in.empty())  e.desc += "Takes: " + in + ". ";
             if (!out.empty()) e.desc += "Gives: " + out + ". ";
             if (!ex.empty())  e.desc += "Continues to: " + ex + ". ";
@@ -2320,7 +2323,7 @@ inline void Draw(EditorState& ed, bool* open) {
         };
 
         // ---- Sidebar ----
-        ImGui::BeginChild("##vspside", ImVec2(150, -66), ImGuiChildFlags_Borders);
+        ImGui::BeginChild("##vspside", ImVec2(150, -86), ImGuiChildFlags_Borders);
         auto sideItem = [&](int id, const char* label, ImU32 dot, int count) {
             ImGui::PushID(id + 10);
             const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -2335,7 +2338,15 @@ inline void Draw(EditorState& ed, bool* open) {
             sdl->AddText(ImVec2(p.x + 16, p.y), ImGui::GetColorU32(ImGuiCol_Text), label);
             sdl->PopClipRect();
             if (count >= 0) sdl->AddText(ImVec2(right - nw, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
-            if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label).x + 16 > right - nw - 6 - p.x) ImGui::SetTooltip("%s", label);
+            if (ImGui::IsItemHovered()) {   // what the category is for
+                const char* blurb = id >= 0 && id < CAT_COUNT ? VsCatBlurb(id) : id == CAT_COUNT ? VsStepCatBlurb(false)
+                                  : id == CAT_COUNT + 1 ? VsStepCatBlurb(true) : nullptr;
+                if (blurb && *blurb) {
+                    ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
+                    ImGui::TextUnformatted(label); ImGui::TextDisabled("%s", blurb);
+                    ImGui::PopTextWrapPos(); ImGui::EndTooltip();
+                } else if (ImGui::CalcTextSize(label).x + 16 > right - nw - 6 - p.x) ImGui::SetTooltip("%s", label);
+            }
             ImGui::PopID();
         };
         auto countIn = [&](int grp) { int n = 0; for (const auto& e : all) if (e.group == grp) ++n; return n; };
@@ -2373,7 +2384,7 @@ inline void Draw(EditorState& ed, bool* open) {
 
         const Entry* hovered = nullptr;
         const Entry* toAdd = nullptr;
-        ImGui::BeginChild("##vspres", ImVec2(0, -66), ImGuiChildFlags_Borders);
+        ImGui::BeginChild("##vspres", ImVec2(0, -86), ImGuiChildFlags_Borders);
         if (rows.empty()) {
             ImGui::TextDisabled(s_side == -1 ? "No favourites yet: click the star on a node to add one."
                               : s_side == -2 ? "Nodes you add show up here."

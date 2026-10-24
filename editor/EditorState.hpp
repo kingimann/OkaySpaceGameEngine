@@ -84,6 +84,8 @@ public:
     void NewPointAndClick();
     void NewMultiplayer();
     void NewTopDown();
+    void NewTopDownShooter();
+    void NewPlatformer25D();
     void NewVehicle3D();
     void NewVehicle2D();
     void NewCoinCollector();

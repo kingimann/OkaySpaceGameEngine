@@ -22,6 +22,9 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/TopDownShooterController.hpp"
+#include "okay/Components/Platformer25DController.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/TopDownController2D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/VehicleController.hpp"
@@ -117,6 +120,26 @@ inline GameObject* AddClickToMovePlayer(Scene& scene, const Vec3& pos = {0, 1, 0
 inline GameObject* AddTopDownPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<TopDownController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Add a 3D top-down shooter player (twin-stick: WASD moves, the mouse aims, left
+/// mouse fires, Space dashes) with a HealthStat so enemies can hurt it.
+inline GameObject* AddTopDownShooterPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<TopDownShooterController>();
+    if (!player->GetComponent<HealthStat>()) player->AddComponent<HealthStat>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Add a 2.5D (LittleBigPlanet-style) platformer player: side view, run + jump,
+/// W / S hop between depth layers, E grabs.
+inline GameObject* AddPlatformer25DPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    auto* pc = player->AddComponent<Platformer25DController>();
+    pc->frontLayerZ = pos.z;
     EnsureMainCamera(scene);
     return player;
 }
@@ -594,6 +617,99 @@ inline void TopDown(Scene& scene) {
         wsr->color = Color::FromBytes(110, 110, 130);
         wsr->size = {1, 4};
     }
+}
+
+namespace detail {
+inline GameObject* Block(Scene& scene, const char* name, const Vec3& pos, const Vec3& scale, Color color,
+                         Rigidbody3D::BodyType body = Rigidbody3D::BodyType::Static) {
+    GameObject* o = scene.CreateGameObject(name);
+    o->transform->localPosition = pos;
+    o->transform->localScale = scale;
+    auto* mr = o->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::Cube(); mr->color = color;
+    o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};   // sized by the Transform scale
+    o->AddComponent<Rigidbody3D>()->bodyType = body;
+    return o;
+}
+} // namespace detail
+
+/// A 3D top-down shooter starter (twin-stick): an arena with cover, shootable
+/// target dummies that come back after a few seconds, a few crates the bullets
+/// knock around, and a player you move with WASD, aim with the mouse, fire with
+/// the left mouse and dash with Space.
+inline void TopDownShooter(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Top-Down Shooter");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({60, -30, 0});
+
+    detail::Block(scene, "Ground", {0, -0.5f, 0}, {40, 1, 40}, Color::FromBytes(70, 76, 86));
+    // Arena walls.
+    const Color wall = Color::FromBytes(110, 116, 128);
+    detail::Block(scene, "Wall N", {0, 1, -20}, {40, 3, 1}, wall);
+    detail::Block(scene, "Wall S", {0, 1, 20}, {40, 3, 1}, wall);
+    detail::Block(scene, "Wall E", {20, 1, 0}, {1, 3, 40}, wall);
+    detail::Block(scene, "Wall W", {-20, 1, 0}, {1, 3, 40}, wall);
+    // Cover.
+    const Vec3 cover[] = {{-6, 0.6f, -5}, {6, 0.6f, -5}, {0, 0.6f, -10}, {-9, 0.6f, 6}, {9, 0.6f, 6}};
+    for (const auto& c : cover) detail::Block(scene, "Cover", c, {3, 1.2f, 1}, Color::FromBytes(150, 120, 80));
+    // Crates the bullets push around.
+    for (int i = 0; i < 4; ++i)
+        detail::Block(scene, "Crate", {-3.0f + (float)i * 2.0f, 0.4f, 4.0f}, {0.8f, 0.8f, 0.8f},
+                      Color::FromBytes(180, 140, 90), Rigidbody3D::BodyType::Dynamic);
+    // Target dummies: they take damage, disappear and come back.
+    const Vec3 dummies[] = {{-8, 0.9f, -13}, {-3, 0.9f, -15}, {3, 0.9f, -15}, {8, 0.9f, -13}, {12, 0.9f, -2}, {-12, 0.9f, -2}};
+    for (const auto& d : dummies) {
+        GameObject* t = detail::Block(scene, "Target Dummy", d, {0.9f, 1.8f, 0.9f}, Color::FromBytes(205, 70, 60));
+        t->GetComponent<MeshRenderer>()->emissive = Color::FromBytes(50, 8, 8);
+        auto* hp = t->AddComponent<HealthStat>();
+        hp->maxHealth = hp->health = 50.0f;
+        hp->respawn = true; hp->respawnDelay = 3.0f;
+    }
+
+    AddTopDownShooterPlayer(scene, {0, 0.05f, 8});
+    if (GameObject* cam = scene.Find("Main Camera"))
+        if (auto* c = cam->GetComponent<Camera>()) { c->projection = Camera::Projection::Perspective; c->main = true; }
+}
+
+/// A 2.5D platformer starter in the LittleBigPlanet style: a side-on level with
+/// three depth layers. Walk right with A / D, jump with Space, press W / S to hop
+/// to the layer behind / in front (walls on one layer are passed on another),
+/// hold E to drag the crate or hang from the bar.
+inline void Platformer25D(Scene& scene) {
+    scene.Clear();
+    scene.SetName("2.5D Platformer");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({40, 155, 0});   // from in front, so the faces you see are lit
+
+    const float sp = 1.5f;                       // layer spacing (matches the controller)
+    auto lz = [&](int layer) { return -(float)layer * sp; };
+    // Floor across all three layers, and a backdrop.
+    detail::Block(scene, "Ground", {10, -0.5f, lz(1)}, {60, 1, sp * 3.0f}, Color::FromBytes(120, 150, 95));
+    detail::Block(scene, "Backdrop", {10, 4, lz(2) - 1.5f}, {60, 10, 0.5f}, Color::FromBytes(150, 170, 200));
+    const Color wood = Color::FromBytes(170, 125, 80), stone = Color::FromBytes(130, 130, 140);
+    // A wall on the front layer only: hop back (W) to walk past it.
+    detail::Block(scene, "Front Wall", {6, 1.25f, lz(0)}, {1, 2.5f, sp * 0.95f}, stone);
+    // Steps up on the middle layer to a ledge.
+    detail::Block(scene, "Step 1", {11, 0.4f, lz(1)}, {2, 0.8f, sp * 0.95f}, wood);
+    detail::Block(scene, "Step 2", {13, 0.9f, lz(1)}, {2, 1.8f, sp * 0.95f}, wood);
+    detail::Block(scene, "Ledge", {17, 1.4f, lz(1)}, {6, 0.4f, sp * 0.95f}, wood);
+    // A back-layer platform reached by jumping and hopping back.
+    detail::Block(scene, "Back Platform", {21, 2.6f, lz(2)}, {4, 0.4f, sp * 0.95f}, wood);
+    // A pushable crate on the front layer (hold E to drag it).
+    detail::Block(scene, "Crate", {3, 0.5f, lz(0)}, {1, 1, 1}, Color::FromBytes(200, 160, 90), Rigidbody3D::BodyType::Dynamic);
+    // A bar to hang from (jump, then hold E).
+    detail::Block(scene, "Hang Bar", {26, 3.4f, lz(0)}, {3, 0.25f, 0.25f}, stone);
+    // A gap and a far platform.
+    detail::Block(scene, "Far Platform", {32, 1.0f, lz(0)}, {6, 0.4f, sp * 0.95f}, wood);
+
+    AddPlatformer25DPlayer(scene, {0, 0.05f, lz(0)});
+    if (GameObject* cam = scene.Find("Main Camera"))
+        if (auto* c = cam->GetComponent<Camera>()) { c->projection = Camera::Projection::Perspective; c->main = true; }
 }
 
 /// A 3D arcade driving starter: a car you steer with WASD/arrows on a wide ground,

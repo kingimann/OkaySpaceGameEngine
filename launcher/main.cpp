@@ -2840,6 +2840,16 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
         d->AddLine(P(16, 24), P(26, 24), col, th); d->AddLine(P(26, 24), P(26, 16), col, th); d->AddLine(P(26, 16), P(34, 16), col, th);
         d->AddRect(P(9, 22), P(14, 29), col, 1.5f * k, 0, th);
         d->PathArcTo(P(20, 22), 7 * k, 3.6f, 5.8f, 10); d->PathStroke(col, 0, th * 0.7f);
+    } else if (t == "Top-Down Shooter") {
+        d->AddRect(P(8, 8), P(32, 32), col, 3 * k, 0, th);
+        d->AddCircleFilled(P(16, 24), 3 * k, col, 12);
+        d->AddLine(P(16, 24), P(28, 12), col, th * 0.8f);
+        d->AddCircle(P(28, 12), 3.5f * k, col, 14, th * 0.8f);
+    } else if (t == "2.5D Platformer") {
+        d->AddRect(P(6, 26), P(34, 32), col, 1.5f * k, 0, th);
+        d->AddRect(P(10, 20), P(30, 26), col, 1.5f * k, 0, th * 0.7f);
+        d->AddRect(P(14, 14), P(26, 20), col, 1.5f * k, 0, th * 0.5f);
+        d->AddCircleFilled(P(20, 9), 3 * k, col, 12);
     } else if (t == "Top-Down") {
         d->AddRect(P(8, 8), P(32, 32), col, 3 * k, 0, th);
         d->AddLine(P(20, 8), P(20, 17), col, th); d->AddLine(P(8, 22), P(16, 22), col, th);
@@ -16467,6 +16477,8 @@ int main(int argc, char** argv) {
                 {"Third Person Shooter", "Over-the-shoulder aiming and shooting.", 2},
                 {"Platformer",           "Side-scrolling jump-and-run.", 2},
                 {"Top-Down",             "Top-down movement and rooms.", 2},
+                {"Top-Down Shooter",     "Twin-stick 3D shooter: mouse aim, dash, ammo.", 2},
+                {"2.5D Platformer",      "LittleBigPlanet-style: side view, depth layers, grab.", 2},
                 {"Point & Click",        "Click-to-move adventure starter.", 2},
                 {"Vehicle (3D)",         "A drivable car with suspension.", 2},
                 {"Vehicle (2D)",         "A side-on car for hill-climb games.", 2},

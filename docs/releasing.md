@@ -40,6 +40,50 @@ Storage and download traffic count against the Supabase plan's quotas.
 Never commit either key. For a Claude cloud session, add `SUPABASE_ACCESS_TOKEN`
 in the environment's settings (Network secrets, or an environment variable).
 
+## Publishing the official game
+
+The official game shows at the top of the launcher's Play page. Players click
+Install, then Play, and the launcher keeps it up to date. To ship a version:
+
+```bash
+# 1. In the editor: File > Build Game for Windows, into its own folder.
+#    Optional extras in that folder: cover.png / cover.jpg (the card's picture)
+#    and VERSION.txt (the version, if you don't pass one).
+# 2. Upload it. Same keys as above, read from the environment only.
+SUPABASE_ACCESS_TOKEN=sbp_... scripts/publish-official-game.sh "path/to/Okay Sandbox" 1.0.0
+DRY_RUN=1 SUPABASE_ACCESS_TOKEN=sbp_... scripts/publish-official-game.sh "path/to/Okay Sandbox"   # check only
+```
+
+The version is the second argument, else the first line of `VERSION.txt` in the
+folder, else today's date (`2026.10.24.1`, then `.2` for a second publish that
+day). It must be newer than the published version (`FORCE=1` to override);
+launchers only ever move forward.
+
+The bucket layout, beside the engine's files:
+
+| Path | What |
+| --- | --- |
+| `official/VERSION.txt` | newest version, uploaded last (cached 30 s) |
+| `official/NOTES.txt` | "what's new" lines (`NOTES_FILE` to choose; default `- <name> v<ver>`) |
+| `official/v<ver>/manifest.json` | name, version, exe, notes, cover image, total size, and each file's path, size and sha256 |
+| `official/v<ver>/<path>` | every file of the built game, as laid out by Build Game |
+
+The game's name is `title=` from `Data/game.okayconfig` (or `NAME=...`); its exe
+is `<title>.exe`, or the only `.exe` at the top of the folder (or `EXE=...`). The
+script refuses a non-Windows exe, a file over 50 MB, and names Windows can't
+store (or that only differ in case). Hidden files (`.git`, `.DS_Store`) are left
+out. As with the engine, `KEEP` (default 3) versions are kept and `DRY_RUN=1`
+uploads nothing (`DRY_RUN_MANIFEST=out.json` saves the manifest it would upload).
+
+What players get: the launcher installs to `Games/Official` beside it, checks
+`official/VERSION.txt` at startup and when the Play page opens (at most every 5
+minutes), and every half hour while installed. Only files whose sha256 changed
+are downloaded, into a staging folder, and each is verified before anything is
+replaced; the swap waits until the game is closed and is undone if it fails, so
+a bad download never breaks an install. Settings > Behavior > "Keep the official
+game up to date" turns background updates off (the card then offers an
+"Update available" button).
+
 ## GitHub Releases (still supported)
 
 The `Release Windows build` workflow builds, makes the zip + installer and

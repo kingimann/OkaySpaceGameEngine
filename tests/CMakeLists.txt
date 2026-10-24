@@ -777,6 +777,11 @@ add_executable(test_crash_reports test_crash_reports.cpp)
 target_include_directories(test_crash_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_reports COMMAND test_crash_reports)
 
+# The launcher's official game (shared/OfficialGame.hpp): header-only, so no engine link.
+add_executable(test_official_game test_official_game.cpp)
+target_include_directories(test_official_game PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME official_game COMMAND test_official_game)
+
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)
 add_test(NAME tween COMMAND test_tween)

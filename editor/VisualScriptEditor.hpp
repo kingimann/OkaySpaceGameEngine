@@ -11,6 +11,7 @@
 #include "okay/VisualScript/ActionGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
 #include <algorithm>
 #include <cctype>
@@ -1535,6 +1536,29 @@ inline bool VsWireOk(const VsEditGraph& g, int consumer, int inPin, int producer
 
 inline VsEditState& State() { static VsEditState s; return s; }
 
+// ---- Debugger (Play mode) ----------------------------------------------------
+// Filled by the editor when the game freezes at a breakpoint or a step: where it
+// stopped and what the running graph could see right then. The game stays frozen
+// until `resume` is set (Continue / Step); the editor then carries on the tick.
+struct VsDebugView {
+    bool stopped = false;
+    std::string key;               // the graph file it stopped in
+    int node = -1;                 // that node's id
+    std::string nodeType, object, event;
+    std::vector<okay::vs::NodeGraph::DebugFrame> frames;   // running function calls, outermost first
+    std::vector<std::pair<std::string, okay::vs::VsValue>> vars, sceneVars, globalVars;
+    okay::vs::NodeGraph* graph = nullptr;                 // the frozen graph (valid while stopped)
+    bool focusPending = false;     // centre the canvas on the stopped node once
+    bool resume = false;           // carry on (the editor's main loop resumes the tick)
+};
+inline VsDebugView& DebugView() { static VsDebugView v; return v; }
+inline std::string VsDebugText(const okay::vs::VsValue& v) {
+    if (v.IsObject()) return v.AsObjectId() ? "'" + v.AsString() + "'" + (v.AsString().empty() ? " (destroyed)" : "") : "(no object)";
+    if (v.IsString()) return "\"" + v.AsString() + "\"";
+    if (v.IsArray()) { auto a = v.AsArray(); return "list (" + std::to_string(a ? a->size() : 0) + "): " + v.AsString(); }
+    return v.AsString();
+}
+
 // Optional log sink (the host wires this to its console); no hard dependency on
 // the host's logging so this header can be included at global scope.
 inline void (*LogFn)(const std::string&, int) = nullptr;
@@ -1813,6 +1837,65 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::EndPopup();
         }
     }
+    // ---- Debugger: breakpoints, and the bar while the game is frozen at one --------
+    VsDebugView& dv = DebugView();
+    auto& dbg = okay::vs::VsDebugger::Get();
+    auto toggleBreakpoint = [&](int id) {
+        const VsEditNode* n = g.find(id);
+        if (!n) return;
+        const VsDef* d = FindDef(n->type);
+        if (!d || !(d->execIn || !VsEntryName(n->type, n->arg).empty() || n->type == "FunctionStart")) {
+            Log("Breakpoints go on steps (nodes the flow runs through). Value nodes run when a step reads them.", 1);
+            return;
+        }
+        if (g.path.empty()) { Log("Save the graph to a file first: breakpoints are kept per graph file.", 1); return; }
+        dbg.ToggleBreakpoint(g.path, id);
+    };
+    auto debugGo = [&](okay::vs::VsDebugger::Step s) {
+        if (!dv.stopped) return;
+        dbg.RequestStep(s);
+        dv.resume = true;
+    };
+    if (dv.stopped) {
+        using S = okay::vs::VsDebugger::Step;
+        if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) debugGo(S::None);
+        if (ImGui::IsKeyPressed(ImGuiKey_F10, false)) debugGo(S::Over);
+        if (ImGui::IsKeyPressed(ImGuiKey_F11, false)) debugGo(io.KeyShift ? S::Out : S::Into);
+        if (dv.focusPending && dv.key == g.path) { st.focusNode = dv.node; st.sel = {dv.node}; dv.focusPending = false; }
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.30f, 0.24f, 0.08f, 1.0f));
+        ImGui::BeginChild("vsdbgbar", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 10.0f), true, ImGuiWindowFlags_NoScrollbar);
+        const VsDef* sd = FindDef(dv.nodeType);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.30f, 1.0f), "Paused");
+        ImGui::SameLine();
+        ImGui::Text("at %s (#%d) on '%s', %s", sd ? sd->title : dv.nodeType.c_str(), dv.node, dv.object.c_str(),
+                    dv.event.empty() ? "?" : dv.event.c_str());
+        if (dv.key != g.path) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Open its graph")) {
+                if (g.dirty) Log("Save or undo your changes to this graph first: opening " + dv.key + " would replace them.", 1);
+                else { OpenFile(dv.key); dv.focusPending = true; }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", dv.key.c_str());
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Continue (F5)")) debugGo(S::None);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Step (F10)")) debugGo(S::Over);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run this step and stop at the next one (a Call Function runs whole).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Step Into (F11)")) debugGo(S::Into);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop at the very next step, even inside a function it calls.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Step Out (Shift+F11)")) debugGo(S::Out);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run until this function returns, then stop.");
+        ImGui::SameLine();
+        // This window keeps Ctrl+P for itself and may cover the toolbar's Stop.
+        if (ImGui::SmallButton("Stop Play")) { ed.Stop(); Log("Stop"); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop the game (the paused frame finishes first, without stopping again).");
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
     // Lightweight validation + live status.
     {
         bool hasEvent = false;
@@ -1834,6 +1917,8 @@ inline void Draw(EditorState& ed, bool* open) {
         VisualScriptComponent* vc = usesThis(ed.selected());
         if (!vc) for (const auto& up : ed.scene().Objects()) if ((vc = usesThis(up.get()))) break;
         if (vc) { live = vc->Graph(); liveName = vc->gameObject ? vc->gameObject->name : std::string(); }
+        // Frozen at a breakpoint in this graph: show that object's instance.
+        if (dv.stopped && dv.graph && dv.key == g.path) { live = dv.graph; liveName = dv.object; }
     }
 
     // ---- Keyboard shortcuts (canvas focused, not typing) -------------------------
@@ -1845,6 +1930,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && !st.sel.empty())
             ImGui::SetClipboardText(VsSelectionText(g, st.sel).c_str());
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) addComment = true;
+        if (ImGui::IsKeyPressed(ImGuiKey_F9, false)) for (int id : std::vector<int>(st.sel.begin(), st.sel.end())) toggleBreakpoint(id);
     }
 
     // ---- Events list: every event chain in the graph; click one to jump to it ----
@@ -1883,6 +1969,30 @@ inline void Draw(EditorState& ed, bool* open) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nCalled from %d place(s). Click to jump there.", n.arg.c_str(), calls);
             ImGui::PopID();
         }
+        // Breakpoints in this graph: the game stops before these steps in Play.
+        if (!g.path.empty()) {
+            bool bpHeader = false;
+            int removeBp = -1;
+            for (const auto& bp : dbg.Breakpoints()) {
+                if (bp.first != g.path) continue;
+                const VsEditNode* bn = g.find(bp.second);
+                if (!bpHeader) { ImGui::Spacing(); ImGui::TextDisabled("BREAKPOINTS"); ImGui::Separator(); bpHeader = true; }
+                const VsDef* bd = bn ? FindDef(bn->type) : nullptr;
+                std::string lbl = "\xE2\x97\x8F " + std::string(bd ? bd->title : bn ? bn->type.c_str() : "(deleted node)") +
+                                  " #" + std::to_string(bp.second);
+                ImGui::PushID(bp.second + 100000);
+                if (ImGui::Selectable(lbl.c_str(), st.sel.count(bp.second) > 0) && bn) { st.sel = {bp.second}; st.selected = bp.second; st.focusNode = bp.second; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to jump there. Right-click to remove.");
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) removeBp = bp.second;
+                ImGui::PopID();
+            }
+            if (removeBp >= 0) dbg.SetBreakpoint(g.path, removeBp, false);
+            if (bpHeader && ImGui::SmallButton("Remove all")) {
+                std::vector<int> ids;
+                for (const auto& bp : dbg.Breakpoints()) if (bp.first == g.path) ids.push_back(bp.second);
+                for (int id : ids) dbg.SetBreakpoint(g.path, id, false);
+            }
+        }
         ImGui::EndChild();
         ImGui::SameLine();
     }
@@ -1890,7 +2000,9 @@ inline void Draw(EditorState& ed, bool* open) {
     // Canvas (leaves room on the right for the OkayScript preview when open).
     const float scriptPanelW = 380.0f;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.105f, 0.105f, 0.112f, 1.0f));
-    ImGui::BeginChild("vscanvas", ImVec2(st.showScript ? -scriptPanelW : 0.0f, 0), true,
+    const float watchW = 300.0f;   // the debugger's watch panel replaces the preview while paused
+    const float rightW = dv.stopped ? watchW : st.showScript ? scriptPanelW : 0.0f;
+    ImGui::BeginChild("vscanvas", ImVec2(rightW > 0.0f ? -rightW : 0.0f, 0), true,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -2156,6 +2268,10 @@ inline void Draw(EditorState& ed, bool* open) {
                 badges.push_back({bc, col, tips});
             }
         }
+        const bool pausedHere = dv.stopped && dv.key == g.path && dv.node == n.id;
+        if (pausedHere)
+            dl->AddRect(ImVec2(p0.x - 7 * z, p0.y - 7 * z), ImVec2(p1.x + 7 * z, p1.y + 7 * z),
+                        IM_COL32(255, 205, 70, 255), ROUND + 7 * z, 0, 4.0f * z);
         const bool errNode = live && live->LastErrorNode() == n.id && !live->LastError().empty();
         if (errNode)
             dl->AddRect(ImVec2(p0.x - 5 * z, p0.y - 5 * z), ImVec2(p1.x + 5 * z, p1.y + 5 * z),
@@ -2170,6 +2286,16 @@ inline void Draw(EditorState& ed, bool* open) {
             dl->AddRect(p0, p1, hovered ? IM_COL32(150, 154, 166, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
         }
         text(ImVec2(p0.x + PAD, p0.y + (HEADER_H - fs) * 0.5f), IM_COL32(244, 246, 250, 255), title.c_str());
+        if (!g.path.empty() && dbg.HasBreakpoint(g.path, n.id)) {   // breakpoint: a red dot left of the header
+            const ImVec2 bc(p0.x - 11.0f * z, p0.y + HEADER_H * 0.5f);
+            dl->AddCircleFilled(bc, 6.5f * z, IM_COL32(225, 60, 55, 255));
+            dl->AddCircle(bc, 6.5f * z, IM_COL32(20, 20, 20, 220), 0, 1.5f * z);
+        }
+        if (pausedHere) {   // the game is frozen right before this step
+            const float ay = p0.y + HEADER_H * 0.5f, ax = p0.x - 24.0f * z;
+            dl->AddTriangleFilled(ImVec2(ax - 10 * z, ay - 8 * z), ImVec2(ax - 10 * z, ay + 8 * z), ImVec2(ax + 2 * z, ay),
+                                  IM_COL32(255, 205, 70, 255));
+        }
 
         // Node drag handle: an invisible button over the header.
         ImGui::SetCursorScreenPos(p0);
@@ -2197,6 +2323,8 @@ inline void Draw(EditorState& ed, bool* open) {
             if (ImGui::MenuItem("Duplicate", "Ctrl+D")) pendingDup = n.id;
             if (ImGui::MenuItem("Copy", "Ctrl+C")) ImGui::SetClipboardText(VsSelectionText(g, st.sel).c_str());
             if (ImGui::MenuItem("Frame in Comment", "C")) addComment = true;
+            const bool hasBp = !g.path.empty() && dbg.HasBreakpoint(g.path, n.id);
+            if (ImGui::MenuItem(hasBp ? "Remove Breakpoint" : "Add Breakpoint", "F9")) toggleBreakpoint(n.id);
             if (ImGui::MenuItem("Break All Wires")) {
                 for (int k = 0; k < 2; ++k) for (int sd = 0; sd < 2; ++sd) for (int pi = 0; pi < 8; ++pi) g.unlinkPin(n.id, k, sd, pi);
             }
@@ -2964,7 +3092,49 @@ inline void Draw(EditorState& ed, bool* open) {
     // the two front-ends stay legibly equivalent. Read-only here (the graph is
     // the source of truth); Copy drops it into the clipboard to paste into the
     // text script editor.
-    if (st.showScript) {
+    if (dv.stopped) {
+        // ---- Debugger watch: where the flow is and what it can see ------------
+        ImGui::SameLine();
+        ImGui::BeginChild("vsdbgwatch", ImVec2(0, 0), true);
+        auto row = [](const std::string& name, const okay::vs::VsValue& v) {
+            ImGui::TextDisabled("%s", name.c_str());
+            ImGui::SameLine(110.0f);
+            ImGui::TextWrapped("%s", VsDebugText(v).c_str());
+        };
+        if (ImGui::CollapsingHeader("Call stack", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (int i = (int)dv.frames.size() - 1; i >= 0; --i)
+                ImGui::BulletText("%s  (function)", dv.frames[(std::size_t)i].name.c_str());
+            ImGui::BulletText("%s  (event on '%s')", dv.event.c_str(), dv.object.c_str());
+        }
+        if (!dv.frames.empty()) {
+            const auto& f = dv.frames.back();
+            const std::string hdr = "Function " + f.name;
+            if (ImGui::CollapsingHeader(hdr.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                okay::vs::FunctionSig sig;
+                bool haveSig = false;
+                for (const auto& m : g.nodes)
+                    if (m.type == "FunctionStart" && okay::vs::FunctionNameOf(m.arg) == f.name) { haveSig = okay::vs::ParseFunctionSignature(m.arg, sig); break; }
+                for (std::size_t i = 0; i < f.args.size(); ++i)
+                    row(haveSig && i < sig.params.size() ? sig.params[i].name : "arg " + std::to_string(i), f.args[i]);
+                std::vector<std::pair<std::string, okay::vs::VsValue>> locals(f.locals.begin(), f.locals.end());
+                std::sort(locals.begin(), locals.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                for (const auto& kv : locals) row("local " + kv.first, kv.second);
+                if (f.args.empty() && locals.empty()) ImGui::TextDisabled("(no parameters or locals)");
+            }
+        }
+        auto section = [&](const char* title, const std::vector<std::pair<std::string, okay::vs::VsValue>>& vars, bool open) {
+            if (!ImGui::CollapsingHeader(title, open ? ImGuiTreeNodeFlags_DefaultOpen : 0)) return;
+            if (vars.empty()) ImGui::TextDisabled("(none)");
+            for (const auto& kv : vars) row(kv.first, kv.second);
+        };
+        const std::string objTitle = "Variables on '" + dv.object + "'";
+        section(objTitle.c_str(), dv.vars, true);
+        section("Scene variables", dv.sceneVars, false);
+        section("Global variables", dv.globalVars, false);
+        ImGui::Separator();
+        ImGui::TextDisabled("Wire values show the last value each node gave.");
+        ImGui::EndChild();
+    } else if (st.showScript) {
         ImGui::SameLine();
         ImGui::BeginChild("vsscript", ImVec2(0, 0), true);
         std::string code = CompileToOkayScript(g);

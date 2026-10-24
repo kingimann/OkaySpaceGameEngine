@@ -77,6 +77,7 @@ void EditorState::Achievement(const std::string& id) {
 // in the scene's object list (names double-check it) — the Inspector and the
 // Animation tab stay on what you were editing instead of going blank.
 void EditorState::RestoreKeepingSelection(const std::string& snapshot) {
+    if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     std::vector<std::pair<int, std::string>> keep;
     auto indexOf = [&](GameObject* g) {
         int i = 0;
@@ -279,6 +280,7 @@ GameObject* EditorState::GroupSelected(const std::string& name) {
 }
 
 void EditorState::DeleteSelected() {
+    if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_multi.empty() && !m_selected) return;
     PushUndo();
     // Delete the whole selection (multi-select), not just the primary object.
@@ -295,6 +297,7 @@ void EditorState::DeleteSelected() {
 }
 
 void EditorState::NewScene() {
+    if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     PushUndo();
     if (m_playing) Stop();
     StopNetwork();
@@ -631,6 +634,7 @@ bool EditorState::Save(const std::string& path) {
 }
 
 bool EditorState::Load(const std::string& path, std::string* error) {
+    if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_playing) Stop();
     PushUndo();
     StopNetwork();
@@ -671,11 +675,15 @@ void EditorState::Play() {
         if (warnings > 20) Log::Warning("Visual Script: ", warnings - 20, " more warnings (open the graph to see them all)");
     }
     m_scene.runScripts = true;
-    m_scene.Start();
+    // No m_scene.Start() here: the first Tick's Update starts every object (it
+    // flushes the same pending list). That tick runs on the game fiber while a
+    // visual-script breakpoint is set, so a breakpoint in On Start can freeze it;
+    // starting here, inside the Play button's handler, it couldn't.
     m_playing = true;
 }
 
 void EditorState::Stop() {
+    if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (!m_playing) return;
     m_playing = false;
     Game::Reset();   // unpause + clear quit so the next Play starts clean

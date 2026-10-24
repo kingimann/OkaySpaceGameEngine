@@ -22,10 +22,20 @@ bool VisualScriptComponent::LoadFromText(const std::string& text, std::string* e
         OKAY_ERROR("VisualScript parse error: ", err);
         return false;
     }
-    m_graph = std::move(graph);
+    graph->debugKey = m_path;
     m_source = text;
     m_error.clear();
+    // Replacing a graph while one of its chains is running (paused at a breakpoint,
+    // or a node that reloads its own graph) would free it under its feet: swap it
+    // in once it has finished.
+    if (m_graph && m_graph->Running()) { m_pendingGraph = std::move(graph); return true; }
+    m_graph = std::move(graph);
+    m_pendingGraph.reset();
     return true;
+}
+
+void VisualScriptComponent::ApplyPendingGraph() {
+    if (m_pendingGraph && !(m_graph && m_graph->Running())) m_graph = std::move(m_pendingGraph);
 }
 
 bool VisualScriptComponent::LoadFromFile(const std::string& path, std::string* error) {
@@ -125,6 +135,7 @@ void VisualScriptComponent::CheckWatches() {
 }
 
 void VisualScriptComponent::Start() {
+    ApplyPendingGraph();
     if (!ScriptsRun(gameObject)) { m_startDeferred = true; return; }
     m_startDeferred = false;
     m_ctx.gameObject = gameObject;
@@ -138,6 +149,7 @@ void VisualScriptComponent::Start() {
 }
 
 void VisualScriptComponent::Update(float dt) {
+    ApplyPendingGraph();
     if (!m_graph || !ScriptsRun(gameObject)) return;
     if (m_startDeferred) Start();
     if (m_scanned != m_graph.get()) ScanPolledEvents();   // reloaded since the last frame

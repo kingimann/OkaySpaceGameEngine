@@ -1,6 +1,7 @@
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/NodesFunctions.hpp"
 #include "okay/VisualScript/NodesLoops.hpp"
 #include "okay/VisualScript/Nodes.hpp"
@@ -41,6 +42,8 @@ void NodeGraph::ConnectData(int consumer, int inPin, int producer, int outPin) {
     if (inPin >= (int)n->dataIn.size()) n->dataIn.resize(inPin + 1);
     n->dataIn[inPin] = {producer, outPin};
 }
+
+NodeGraph::~NodeGraph() { VsDebugger::Get().Forget(this); }
 
 VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     VsNode* n = Node(nodeId);
@@ -152,6 +155,12 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
             break;
         }
         if (Tracing() && !(resume && first)) ++n->execCount;
+        // The debugger may stop here, before the node runs (not when a node parked
+        // by a Delay is only being picked up again).
+        if (!(resume && first) && VsDebugger::Get().Active()) {
+            VsDebugger::Get().Check(*this, *n, ctx);
+            if (m_abort) break;
+        }
         // A node aimed at another object (its Target input) runs with that object
         // as ctx.gameObject / transform; a target that no longer exists skips it.
         GameObject* target = nullptr;

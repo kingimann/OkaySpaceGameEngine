@@ -726,3 +726,53 @@ They give the new **Value** and the **Old** one.
 - **What counts as a change:** setting the same value again isn't a change. Neither is a value that was already there when the object started.
 - **Lists:** adding to a list doesn't change the variable that holds it. Setting the variable to another list does.
 - **Runaway handlers:** a handler that changes its own variable every time it runs is stopped after 16 rounds and reported.
+
+## Debugging: breakpoints, stepping and the watch panel
+
+A breakpoint freezes the game just before a node runs, so you can see the variables at that moment and step through the graph.
+Breakpoints only work in the editor; an exported game ignores them.
+
+### Breakpoints
+
+- **Set one:** select a step node (one with white flow arrows) and press **F9**, or right-click it ▸ **Add Breakpoint**. A red dot appears left of its title.
+- **Save first:** breakpoints are kept per graph file. A graph that has never been saved can't have one.
+- **Find them:** the left sidebar's **BREAKPOINTS** list shows them all. Click one to jump to it; right-click it to remove it; **Remove all** clears the list.
+- **Where they stop:** in every object that uses that graph file, and on every pass through a loop.
+- **Lifetime:** breakpoints stay set when you stop Play, but not when you close the editor.
+
+### When the game pauses
+
+When a breakpoint is reached, the game freezes in the middle of its frame and the Visual Script window opens on that graph. Inside it:
+
+- **The node about to run** gets a yellow ring and arrow.
+- **An amber bar** says where it stopped: the node, the object and the event.
+- **If another graph file is open,** the bar's **Open its graph** button switches to the one that paused (save or undo your changes first).
+- **The watch panel** on the right shows:
+  - **Call stack:** the event, plus any functions it is inside, innermost first.
+  - **Function ‹name›:** the current function's inputs and local variables.
+  - **Variables on ‹object›:** that object's graph variables.
+  - **Scene variables** and **Global variables**.
+- **Wires** show the last value each node gave.
+
+The Console also logs where it paused.
+
+### Stepping
+
+| Button | Key | What it does |
+|---|---|---|
+| Continue | F5 | Run until the next breakpoint |
+| Step | F10 | Run this node and stop at the next one. A **Call Function** runs the whole function. |
+| Step Into | F11 | Stop at the very next node, even inside a function it calls |
+| Step Out | Shift+F11 | Run until the current function returns, then stop after the call |
+| Stop Play | | Stop the game |
+
+The keys work while the Visual Script window has focus.
+
+- **After a step:** if the event ends before there is a next node, the game stops at the next node that runs in any graph.
+- **Stop Play:** the frozen frame finishes first, without pausing again, so the nodes after the breakpoint still run once.
+- **Breakpoints in On Start work too.** Play starts the objects in the first game frame, which the debugger can freeze.
+
+### Editing while paused
+
+- **Saving:** you can edit and save the graph while the game is paused. The running copy keeps going with the old graph until the paused event ends; the next event uses the saved one.
+- **Removing objects:** removing objects, undo, a new scene and loading a scene all let the frozen frame finish first.

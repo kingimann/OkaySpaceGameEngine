@@ -95,6 +95,14 @@ protected:
 /// Build it in code (Add/Connect) or load it from a text description.
 class NodeGraph {
 public:
+    NodeGraph() = default;
+    NodeGraph(const NodeGraph&) = delete;
+    NodeGraph& operator=(const NodeGraph&) = delete;
+    ~NodeGraph();
+
+    /// Which graph this is to the debugger (the .okayvs file it came from; "" = no
+    /// breakpoints). Set by the Visual Script component.
+    std::string debugKey;
     /// Create a node of type T, returning a pointer (ownership stays in graph).
     template <typename T, typename... Args>
     T* Add(Args&&... args) {
@@ -136,7 +144,10 @@ public:
     void Resume(VsContext& ctx) {
         if (m_suspended.empty()) return;
         std::vector<int> ids; ids.swap(m_suspended);
+        const std::string prevEvent = m_event;
+        m_event = "(continuing after a wait)";
         for (int id : ids) Run(id, ctx, true);
+        m_event = prevEvent;
     }
     /// True while a parked node is being resumed (only for that node's own Exec).
     bool Resuming() const { return m_resuming; }
@@ -166,7 +177,10 @@ public:
         auto it = m_entries.find(name);
         if (it == m_entries.end()) return 0;
         const std::vector<int> ids = it->second;   // copy: a chain could reload the graph
+        const std::string prevEvent = m_event;
+        m_event = name;
         for (int id : ids) Run(id, ctx);
+        m_event = prevEvent;
         return (int)ids.size();
     }
     /// All registered event names (for timers / key events that need polling).
@@ -222,6 +236,25 @@ public:
         m_frames.back().returned = true;
     }
     std::unordered_map<std::string, VsValue>* Locals() { return m_frames.empty() ? nullptr : &m_frames.back().locals; }
+
+    // ---- Debugger view -----------------------------------------------------
+    /// True while one of this graph's chains is running.
+    bool Running() const { return m_runDepth > 0; }
+    /// How many functions deep the running chain is (0 = in an event).
+    int CallDepth() const { return (int)m_frames.size(); }
+    /// The event whose chain is running ("OnUpdate", "OnKey:space"...; "" when idle).
+    const std::string& CurrentEvent() const { return m_event; }
+    /// The running function calls, outermost first: name, arguments, locals.
+    struct DebugFrame {
+        std::string name;
+        std::vector<VsValue> args;
+        std::unordered_map<std::string, VsValue> locals;
+    };
+    std::vector<DebugFrame> DebugFrames() const {
+        std::vector<DebugFrame> out;
+        for (const Frame& f : m_frames) out.push_back({f.name, f.args, f.locals});
+        return out;
+    }
     /// The last runtime error ("" if none) and the file id of the node it was
     /// reported on (-1 if unknown). Each distinct error is logged once; repeats count up.
     const std::string& LastError() const { return m_lastError; }
@@ -246,6 +279,7 @@ private:
     int m_runDepth = 0;      // nested Run() calls (loop bodies, sequences)
     long m_steps = 0;        // node executions in the current event
     bool m_abort = false;    // the current event was stopped
+    std::string m_event;        // the event being run (debugger view)
     std::vector<int> m_loops;   // running loops: the function-frame depth each started at
     int m_loopSignal = 0;       // a Break / Continue waiting for its loop
     struct Frame {

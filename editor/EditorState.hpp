@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <Okay.hpp>
 #include <string>
 #include <vector>
@@ -137,6 +138,10 @@ public:
     void Play();
     /// Restore the pre-play snapshot and return to editing.
     void Stop();
+    /// Set by the editor: when the game is frozen mid-frame at a visual-script
+    /// breakpoint, finish that frame (breakpoints off). Called before anything that
+    /// rebuilds or deletes from the scene (Stop, undo, delete, new / load scene).
+    static inline std::function<void()> finishFrozenTick;
     /// Advance the simulation by dt (only has effect while playing).
     void Tick(float dt);
 

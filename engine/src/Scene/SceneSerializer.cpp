@@ -111,6 +111,8 @@
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
+#include "okay/Components/UIRawImage.hpp"
+#include "okay/Components/UISafeArea.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
@@ -1686,7 +1688,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cv->visible ? 1 : 0) << " " << cv->opacity            // optional, back-compat
             << " " << (cv->worldSpace ? 1 : 0) << " " << cv->designResolution.x
             << " " << cv->designResolution.y << " " << cv->worldPixelsPerUnit
-            << " " << (cv->billboard ? 1 : 0) << "\n";   // world-space canvas (optional)
+            << " " << (cv->billboard ? 1 : 0)                                  // world-space canvas (optional)
+            << " " << (int)cv->screenMatch << "\n";                             // newest: screen match mode
     }
     if (go->GetComponent<EventSystem>()) {
         out << "  eventsystem\n";
@@ -1803,6 +1806,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cr->circle ? 1 : 0) << " " << cr->circleRadius << " " << cr->circleThickness
             << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a;
         out << "\n";
+    }
+    if (auto* sa = go->GetComponent<UISafeArea>())
+        out << "  uisafearea " << (sa->left ? 1 : 0) << " " << (sa->top ? 1 : 0) << " " << (sa->right ? 1 : 0)
+            << " " << (sa->bottom ? 1 : 0) << " " << (sa->enabled ? 1 : 0) << "\n";
+    if (auto* ri = go->GetComponent<UIRawImage>()) {
+        out << "  uirawimage " << ri->position.x << " " << ri->position.y << " " << ri->size.x << " " << ri->size.y
+            << " " << ri->color.r << " " << ri->color.g << " " << ri->color.b << " " << ri->color.a
+            << " " << ri->uvX << " " << ri->uvY << " " << ri->uvW << " " << ri->uvH
+            << " " << ri->scroll.x << " " << ri->scroll.y << " " << (ri->enabled ? 1 : 0)
+            << " " << Quote(ri->texture) << " " << (int)ri->anchor << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -4387,6 +4400,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> sm >> cv->referenceResolution.x >> cv->referenceResolution.y
                        >> cv->matchWidthOrHeight >> cv->scaleFactor >> cv->sortOrder;
                     cv->scaleMode = (Canvas::ScaleMode)sm;
+                    cv->screenMatch = Canvas::ScreenMatch::MatchWidthOrHeight;   // what canvases saved before it used
                     in >> std::ws;                       // optional visible + opacity
                     int p = in.peek();
                     if (std::isdigit(p) || p == '-') {
@@ -4400,6 +4414,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             in >> std::ws;
                             int p3 = in.peek();
                             if (std::isdigit(p3) || p3 == '-') { int bb = 1; in >> bb; cv->billboard = (bb != 0); }
+                            in >> std::ws;
+                            if (std::isdigit(in.peek())) { int smm = 0; in >> smm; cv->screenMatch = (Canvas::ScreenMatch)std::clamp(smm, 0, 2); }
                         }
                     }
                 } else if (field == "worldui3d") {
@@ -4594,6 +4610,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cr->lineLeft = (ll != 0); cr->lineRight = (lr != 0);
                         cr->circle = (ci != 0); cr->circleColor = qc;
                     }
+                } else if (field == "uisafearea") {
+                    auto* sa = go->AddComponent<UISafeArea>();
+                    int l = 1, t = 1, r = 1, b = 1, en = 1;
+                    in >> l >> t >> r >> b >> en;
+                    sa->left = l != 0; sa->top = t != 0; sa->right = r != 0; sa->bottom = b != 0; sa->enabled = en != 0;
+                } else if (field == "uirawimage") {
+                    auto* ri = go->AddComponent<UIRawImage>();
+                    int en = 1;
+                    in >> ri->position.x >> ri->position.y >> ri->size.x >> ri->size.y
+                       >> ri->color.r >> ri->color.g >> ri->color.b >> ri->color.a
+                       >> ri->uvX >> ri->uvY >> ri->uvW >> ri->uvH >> ri->scroll.x >> ri->scroll.y >> en;
+                    ri->enabled = en != 0;
+                    ri->texture = ReadQuoted(in);
+                    ReadAnchor(in, ri->anchor);
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;
@@ -4880,6 +4910,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); }
         if (auto* ps = go->GetComponent<ParticleSystem>())  add(ps->texture);
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
+        if (auto* ri = go->GetComponent<UIRawImage>())      add(ri->texture);
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
         if (auto* an = go->GetComponent<SpriteAnimator>())
             for (const auto& f : an->frames) add(f);

@@ -26,6 +26,14 @@ public:
     // size); saved canvases keep the mode they were saved with.
     ScaleMode scaleMode = ScaleMode::ScaleWithScreenSize;
     Vec2  referenceResolution{1280.0f, 720.0f};
+    /// How Scale With Screen Size fits the reference resolution on a screen of a
+    /// different shape (Unity's Screen Match Mode):
+    ///  - MatchWidthOrHeight: blend width / height by `matchWidthOrHeight`.
+    ///  - Expand: the whole reference layout always fits (a 1280x720 menu shows
+    ///    fully on a portrait phone; the canvas grows the other way).
+    ///  - Shrink: the reference layout always covers the screen (may crop).
+    enum class ScreenMatch { MatchWidthOrHeight, Expand, Shrink };
+    ScreenMatch screenMatch = ScreenMatch::MatchWidthOrHeight;   // the editor makes new canvases Expand
     float matchWidthOrHeight = 0.5f;   // 0 = width, 1 = height
     float scaleFactor = 1.0f;          // extra user multiplier (applied in BOTH modes)
     int   sortOrder = 0;
@@ -52,6 +60,9 @@ public:
             return scaleFactor * UIResolutionScale();   // preview a fixed-px HUD at any resolution
         float rw = referenceResolution.x > 1.0f ? referenceResolution.x : 1.0f;
         float rh = referenceResolution.y > 1.0f ? referenceResolution.y : 1.0f;
+        const float sw = screenW > 1.0f ? screenW : 1.0f, sh = screenH > 1.0f ? screenH : 1.0f;
+        if (screenMatch == ScreenMatch::Expand) return std::fmin(sw / rw, sh / rh) * scaleFactor;
+        if (screenMatch == ScreenMatch::Shrink) return std::fmax(sw / rw, sh / rh) * scaleFactor;
         float logW = std::log2((screenW > 1.0f ? screenW : 1.0f) / rw);
         float logH = std::log2((screenH > 1.0f ? screenH : 1.0f) / rh);
         float m = matchWidthOrHeight < 0.0f ? 0.0f : (matchWidthOrHeight > 1.0f ? 1.0f : matchWidthOrHeight);

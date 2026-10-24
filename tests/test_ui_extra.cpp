@@ -586,5 +586,92 @@ int main() {
         Input::FeedKeys({});
     }
 
+    // --- Raw Image: the UV rect tiles, offsets and mirrors the texture --------
+    {
+        UIRawImage ri;
+        auto one = ri.Pieces(200, 100);                    // (0,0,1,1): the image once
+        CHECK(one.size() == 1);
+        CHECK_NEAR(one[0].w, 200.0f, 1e-3f); CHECK_NEAR(one[0].u1, 1.0f, 1e-4f);
+        ri.uvW = 3; ri.uvH = 2;                            // tiled 3 x 2
+        auto tiles = ri.Pieces(300, 200);
+        CHECK(tiles.size() == 6);
+        float area = 0; for (const auto& p : tiles) area += p.w * p.h;
+        CHECK_NEAR(area, 300.0f * 200.0f, 1e-2f);
+        ri.uvX = 0.5f; ri.uvW = 1; ri.uvH = 1;             // offset half an image: two pieces
+        auto off = ri.Pieces(100, 100);
+        CHECK(off.size() == 2);
+        CHECK_NEAR(off[0].w, 50.0f, 1e-3f); CHECK_NEAR(off[0].u0, 0.5f, 1e-4f); CHECK_NEAR(off[1].u0, 0.0f, 1e-4f);
+        ri.uvX = 1; ri.uvW = -1;                           // mirrored
+        auto mir = ri.Pieces(100, 100);
+        CHECK(mir.size() == 1);
+        CHECK(mir[0].u0 > mir[0].u1);
+        ri.uvX = 0; ri.uvW = 1; ri.scroll = {0.25f, 0};    // scrolling wraps the offset
+        for (int i = 0; i < 5; ++i) ri.Update(1.0f);
+        CHECK_NEAR(ri.uvX, 0.25f, 1e-4f);
+        // Saved and loaded with the scene, and laid out like any widget.
+        Scene s("raw");
+        GameObject* g = s.CreateGameObject("Raw");
+        auto* r = g->AddComponent<UIRawImage>();
+        r->texture = "Assets/bg.png"; r->uvW = 4; r->uvH = 2; r->scroll = {0.1f, -0.2f};
+        r->position = {10, 20}; r->size = {300, 150}; r->anchor = UIAnchor::Center;
+        CHECK(GetUIRect(g).valid);
+        Scene s2("raw2");
+        GameObject* back = SceneSerializer::InstantiateFromText(s2, SceneSerializer::SerializeObject(*g));
+        auto* rb = back ? back->GetComponent<UIRawImage>() : nullptr;
+        CHECK(rb != nullptr);
+        if (rb) {
+            CHECK(rb->texture == "Assets/bg.png");
+            CHECK_NEAR(rb->uvW, 4.0f, 1e-4f); CHECK_NEAR(rb->scroll.y, -0.2f, 1e-4f);
+            CHECK_NEAR(rb->size.x, 300.0f, 1e-4f);
+            CHECK(rb->anchor == UIAnchor::Center);
+        }
+    }
+
+    // --- Phones: Expand keeps the whole layout on screen; Safe Area avoids notches --
+    {
+        Canvas cv; cv.referenceResolution = {1280, 720};
+        cv.screenMatch = Canvas::ScreenMatch::Expand;
+        CHECK_NEAR(cv.ScaleFactor(1179, 2556), 1179.0f / 1280.0f, 1e-4f);   // portrait phone: width limits
+        CHECK_NEAR(cv.ScaleFactor(2560, 720), 1.0f, 1e-4f);                   // ultrawide: height limits
+        cv.screenMatch = Canvas::ScreenMatch::Shrink;
+        CHECK_NEAR(cv.ScaleFactor(1179, 2556), 2556.0f / 720.0f, 1e-3f);
+        // A 780-wide menu fits a portrait phone with Expand (logical width >= 780).
+        cv.screenMatch = Canvas::ScreenMatch::Expand;
+        CHECK(1179.0f / cv.ScaleFactor(1179, 2556) >= 780.0f);
+
+        Scene s("safe");
+        GameObject* sa = s.CreateGameObject("Safe Area");
+        sa->AddComponent<UISafeArea>();
+        GameObject* hud = s.CreateGameObject("Score");
+        hud->transform->SetParent(sa->transform, false);
+        auto* p = hud->AddComponent<UIPanel>();
+        p->anchor = UIAnchor::TopLeft; p->position = {0, 0}; p->size = {100, 40};
+        UISafeInsets() = {0.0f, 0.05f, 0.0f, 0.02f};   // a notch at the top, a home bar at the bottom
+        Vec2 o, sz;
+        CHECK(GetUIScreenRect(sa, 1000, 2000, o, sz));
+        CHECK_NEAR(o.y, 100.0f, 1e-3f); CHECK_NEAR(sz.y, 2000.0f - 100.0f - 40.0f, 1e-3f);
+        CHECK(GetUIScreenRect(hud, 1000, 2000, o, sz));
+        CHECK_NEAR(o.y, 100.0f, 1e-3f);                    // the HUD sits below the notch
+        CHECK_NEAR(UIResolveOrigin(hud, 1000, 2000).y, 100.0f, 1e-3f);
+        sa->GetComponent<UISafeArea>()->top = false;       // a side can be switched off
+        CHECK_NEAR(UIResolveOrigin(hud, 1000, 2000).y, 0.0f, 1e-3f);
+        UISafeInsets() = {};                               // desktop: fills the screen
+        CHECK(GetUIScreenRect(sa, 1000, 2000, o, sz));
+        CHECK_NEAR(sz.x, 1000.0f, 1e-3f); CHECK_NEAR(sz.y, 2000.0f, 1e-3f);
+        // Saved with the scene, sides included.
+        sa->GetComponent<UISafeArea>()->left = false;
+        Scene s2("safe2");
+        GameObject* back = SceneSerializer::InstantiateFromText(s2, SceneSerializer::SerializeObject(*sa));
+        auto* sb = back ? back->GetComponent<UISafeArea>() : nullptr;
+        CHECK(sb && !sb->left && !sb->top && sb->right && sb->bottom);
+        // Canvas match mode round-trips; old saves (no field) keep blending.
+        Scene s3("cv");
+        GameObject* cg = s3.CreateGameObject("Canvas");
+        cg->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Shrink;
+        Scene s4("cv2");
+        GameObject* cb = SceneSerializer::InstantiateFromText(s4, SceneSerializer::SerializeObject(*cg));
+        CHECK(cb && cb->GetComponent<Canvas>()->screenMatch == Canvas::ScreenMatch::Shrink);
+    }
+
     TEST_MAIN_RESULT();
 }
